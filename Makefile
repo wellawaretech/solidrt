@@ -13,6 +13,15 @@ lattice:
 flux:
 	$(MAKE) -C flux build
 
+# The apps in apps/, each built into whatever carries it: the console packed
+# for the CLI (`srt console` hands the .srtapp to the runner), the player and
+# its BSOD screen bundled for the go client to embed. `make client` builds
+# the player bundles because it compiles them in; nothing but this builds the
+# console, so run it after a console, core or components change.
+apps:
+	$(MAKE) -C packages/cli console
+	$(MAKE) -C lattice player-bundle
+
 # lattice's clean covers lattice/target and dist/; flux's covers the
 # workspace-root target/ that alloy, forge and flux build into.
 clean:
@@ -28,5 +37,5 @@ test:
 format:
 	cargo fmt --all
 
-# lattice, flux and dist are also directory names at the repo root.
-.PHONY: all lattice flux clean help client runtime player-bundle dist android-client android-run android-run-armeabi-v7a android-runtime android-dist android-dist-armeabi-v7a dist-clean download-fonts test format
+# lattice, flux, apps and dist are also directory names at the repo root.
+.PHONY: all lattice flux apps clean help client runtime player-bundle dist android-client android-run android-run-armeabi-v7a android-runtime android-dist android-dist-armeabi-v7a dist-clean download-fonts test format

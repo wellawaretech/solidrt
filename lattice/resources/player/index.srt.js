@@ -1,4 +1,4 @@
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/error.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/error.js
 class NotReadyError extends Error {
   source;
   constructor(r) {
@@ -36,7 +36,7 @@ class ContextNotFoundError extends Error {
     super("");
   }
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/constants.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/constants.js
 var REACTIVE_NONE = 0;
 var REACTIVE_CHECK = 1 << 0;
 var REACTIVE_DIRTY = 1 << 1;
@@ -69,12 +69,16 @@ var CONFIG_AUTHORITATIVE_OBSERVED = 1 << 14;
 var CONFIG_DIRECT_COMMIT = 1 << 15;
 var CONFIG_FRESH_READ = 1 << 16;
 var CONFIG_HELD_TRUTH = 1 << 17;
+var CONFIG_SLOT_NODE = 1 << 18;
+var CONFIG_OVERRIDE_SUPERSEDED = 1 << 19;
+var CONFIG_INPUTS_PUBLISHED = 1 << 21;
 var STATUS_PENDING = 1 << 0;
 var STATUS_ERROR = 1 << 1;
 var STATUS_UNINITIALIZED = 1 << 2;
 var EFFECT_RENDER = 1;
 var EFFECT_USER = 2;
 var EFFECT_TRACKED = 3;
+var LANE_RUN = 4;
 var NOT_PENDING = {};
 var NO_SNAPSHOT = {};
 var OVERRIDE_UNDEFINED = {};
@@ -85,7 +89,7 @@ var SUPPORTS_PROXY = typeof Proxy === "function";
 var defaultContext = {};
 var $REFRESH = Symbol("refresh");
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/lanes.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/lanes.js
 var signalLanes = new WeakMap;
 var activeLanes = new Set;
 function findLane(n) {
@@ -99,9 +103,9 @@ function mergeLanes(n, e) {
   if (n === e)
     return n;
   e.rn = n;
-  for (const i of e.Oe)
-    n.Oe.add(i);
-  e.Oe.clear();
+  for (const i of e.he)
+    n.he.add(i);
+  e.he.clear();
   n.tn[0].push(...e.tn[0]);
   n.tn[1].push(...e.tn[1]);
   e.tn[0].length = 0;
@@ -109,36 +113,36 @@ function mergeLanes(n, e) {
   return n;
 }
 function resolveLane(n) {
-  const e = n.o?.Je;
+  const e = n.o?.Oe;
   if (!e)
     return;
   const i = findLane(e);
   if (activeLanes.has(i))
     return i;
   if (n.o !== null)
-    n.o.Je = undefined;
+    n.o.Oe = undefined;
   return;
 }
 function resolveTransition(n) {
-  if (hasActiveOverride(n) && n.o?.Nt) {
-    const e = ext(n).Nt = currentTransition(n.o?.Nt);
-    if (e.sn !== true)
+  if (hasActiveOverride(n) && n.o?.Ot) {
+    const e = ext(n).Ot = currentTransition(n.o?.Ot);
+    if (e.ft !== true)
       return e;
     if (n.o !== null)
-      n.o.Nt = null;
+      n.o.Ot = null;
   }
-  return resolveLane(n)?.Ae ?? n.Ae;
+  return resolveLane(n)?.ge ?? n.ge;
 }
 function hasActiveOverride(n) {
   const e = n.o;
-  return e !== null && e.Pe !== undefined && e.Pe !== NOT_PENDING;
+  return e !== null && e.be !== undefined && e.be !== NOT_PENDING;
 }
 function assignOrMergeLane(n, e) {
   const i = findLane(e);
-  const t = n.o?.Je;
+  const t = n.o?.Oe;
   if (t) {
     if (t.rn) {
-      ext(n).Je = e;
+      ext(n).Oe = e;
       n.T |= CONFIG_HAS_LANE;
       return;
     }
@@ -146,7 +150,7 @@ function assignOrMergeLane(n, e) {
     if (activeLanes.has(r)) {
       if (r !== i && !hasActiveOverride(n)) {
         if (i.an && findLane(i.an) === r) {
-          ext(n).Je = e;
+          ext(n).Oe = e;
           n.T |= CONFIG_HAS_LANE;
         } else if (r.an && findLane(r.an) === i)
           ;
@@ -156,22 +160,22 @@ function assignOrMergeLane(n, e) {
       return;
     }
   }
-  ext(n).Je = e;
+  ext(n).Oe = e;
   n.T |= CONFIG_HAS_LANE;
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
 var transitions = new Set;
 var dirtyQueue = {
   eE: new Array(2000).fill(undefined),
   tE: false,
-  Qe: 0,
+  Ke: 0,
   EE: 0
 };
 var zombieQueue = {
   eE: new Array(2000).fill(undefined),
   tE: false,
-  Qe: 0,
+  Ke: 0,
   EE: 0
 };
 function cancelZombieRecompute(e) {
@@ -189,10 +193,11 @@ var halted = false;
 var haltNotified = false;
 var syncDepth = 0;
 var projectionWriteActive = false;
+var actionStepDepth = 0;
 var transientStoreNodes = new Set;
 function canUseSimpleSyncFlush(e) {
   const t = e.m;
-  return transitions.size === 0 && activeLanes.size === 0 && e.Qt.length === 0 && t.ze.length === 0 && t.A.length === 0 && t.En.size === 0 && transientStoreNodes.size === 0;
+  return transitions.size === 0 && activeLanes.size === 0 && e.Xt.length === 0 && t.it.length === 0 && t.A.length === 0 && t.En.size === 0 && transientStoreNodes.size === 0;
 }
 function sweepTransientStoreNodes() {
   if (transientStoreNodes.size === 0)
@@ -202,14 +207,17 @@ function sweepTransientStoreNodes() {
       transientStoreNodes.delete(e);
       continue;
     }
-    if (e.Re !== NOT_PENDING)
+    if (e.Ge !== NOT_PENDING)
       continue;
-    if (e.o?.Pe !== undefined && e.o?.Pe !== NOT_PENDING)
+    if (e.o?.be !== undefined && e.o?.be !== NOT_PENDING)
       continue;
     if (e.o?.t)
       continue;
     transientStoreNodes.delete(e);
-    e.o?.Et?.();
+    if (e.T & CONFIG_SLOT_NODE)
+      slotUnobservedHook(e);
+    else
+      e.o?.Ct?.();
   }
 }
 function setProjectionWriteActive(e) {
@@ -217,60 +225,49 @@ function setProjectionWriteActive(e) {
 }
 function createBatch() {
   return {
-    Te: clock,
-    Lt: [],
-    _e: new Map,
-    ze: [],
+    _e: clock,
+    $t: [],
+    Re: new Map,
+    it: [],
     A: [],
     En: new Set,
     ue: [],
-    Bt: {
-      Mt: [[], []],
-      Qt: []
+    ei: {
+      ti: [[], []],
+      Xt: []
     },
-    sn: false,
-    cn: new Set
+    ft: false,
+    lt: new Set,
+    Et: null
   };
 }
 function mergeTransitionState(e, t) {
-  t.sn = e;
+  t.ft = e;
   e.ue.push(...t.ue);
-  for (const i2 of activeLanes)
-    if (i2.Ae === t)
-      i2.Ae = e;
-  if (t.ze.length) {
-    e.ze.push(...t.ze);
-    t.ze.length = 0;
+  for (const i of activeLanes)
+    if (i.ge === t)
+      i.ge = e;
+  if (t.it.length) {
+    e.it.push(...t.it);
+    t.it.length = 0;
   }
   if (t.A.length) {
     e.A.push(...t.A);
     t.A.length = 0;
   }
-  for (const i2 of t.En)
-    e.En.add(i2);
-  const i = t.wt;
-  if (i !== undefined) {
-    t.wt = undefined;
-    let n = e.wt;
-    if (n !== undefined)
-      n.push(...i);
-    else
-      n = e.wt = i;
-    for (let e2 = 0;e2 < i.length; e2++) {
-      const t2 = i[e2].pc;
-      if (t2 !== undefined && t2.qe === i[e2])
-        t2.qa = n;
-    }
-  }
-  for (const [i2, n] of t._e) {
-    let t2 = e._e.get(i2);
+  for (const i of t.En)
+    e.En.add(i);
+  for (const [i, n] of t.Re) {
+    let t2 = e.Re.get(i);
     if (!t2)
-      e._e.set(i2, t2 = new Set);
+      e.Re.set(i, t2 = new Set);
     for (const e2 of n)
       t2.add(e2);
   }
-  for (const i2 of t.cn)
-    e.cn.add(i2);
+  for (const i of t.lt)
+    e.lt.add(i);
+  if (t.Et)
+    (e.Et ??= []).push(...t.Et);
 }
 function schedule() {
   if (halted) {
@@ -280,7 +277,7 @@ function schedule() {
   if (scheduled)
     return;
   scheduled = true;
-  if (!syncDepth && !globalQueue.fn && !projectionWriteActive)
+  if (!syncDepth && !globalQueue.sn && !projectionWriteActive)
     queueMicrotask(flush);
 }
 function haltReactivity(e) {
@@ -288,7 +285,9 @@ function haltReactivity(e) {
     return;
   halted = true;
   let t = "[REACTIVITY_HALTED]";
-  e === undefined ? console.error(t) : console.error(t, e);
+  const i = e !== undefined && globalThis.reportError;
+  i || e === undefined ? console.error(t) : console.error(t, e);
+  i && i(e);
 }
 function notifyHalted() {
   if (haltNotified)
@@ -299,39 +298,39 @@ function notifyHalted() {
 var queueRunToken = 0;
 
 class Queue {
-  ke = null;
-  Mt = [[], []];
-  Qt = [];
-  jt = 0;
+  qe = null;
+  ti = [[], []];
+  Xt = [];
+  ii = 0;
   created = clock;
   addChild(e) {
-    this.Qt.push(e);
-    e.ke = this;
+    this.Xt.push(e);
+    e.qe = this;
   }
   removeChild(e) {
-    const t = this.Qt.indexOf(e);
+    const t = this.Xt.indexOf(e);
     if (t >= 0) {
-      this.Qt.splice(t, 1);
-      e.ke = null;
+      this.Xt.splice(t, 1);
+      e.qe = null;
     }
   }
   notify(e, t, i, n) {
-    if (this.ke)
-      return this.ke.notify(e, t, i, n);
+    if (this.qe)
+      return this.qe.notify(e, t, i, n);
     return false;
   }
   run(e) {
-    if (this.Mt[e - 1].length) {
-      const t2 = this.Mt[e - 1];
-      this.Mt[e - 1] = [];
+    if (this.ti[e - 1].length) {
+      const t2 = this.ti[e - 1];
+      this.ti[e - 1] = [];
       runQueue(t2, e);
     }
-    const t = this.Qt;
+    const t = this.Xt;
     const i = ++queueRunToken;
     for (let n = 0;n < t.length; ) {
       const r = t[n];
-      if (r.jt !== i) {
-        r.jt = i;
+      if (r.ii !== i) {
+        r.ii = i;
         r.run?.(e);
         if (t[n] !== r) {
           n = 0;
@@ -347,34 +346,34 @@ class Queue {
         const i = findLane(currentOptimisticLane);
         i.tn[e - 1].push(t);
       } else {
-        this.Mt[e - 1].push(t);
+        this.ti[e - 1].push(t);
       }
     }
     schedule();
   }
   stashQueues(e) {
-    e.Mt[0].push(...this.Mt[0]);
-    e.Mt[1].push(...this.Mt[1]);
-    this.Mt = [[], []];
-    for (let t = 0;t < this.Qt.length; t++) {
-      let i = this.Qt[t];
-      let n = e.Qt[t];
+    e.ti[0].push(...this.ti[0]);
+    e.ti[1].push(...this.ti[1]);
+    this.ti = [[], []];
+    for (let t = 0;t < this.Xt.length; t++) {
+      let i = this.Xt[t];
+      let n = e.Xt[t];
       if (!n) {
         n = {
-          Mt: [[], []],
-          Qt: []
+          ti: [[], []],
+          Xt: []
         };
-        e.Qt[t] = n;
+        e.Xt[t] = n;
       }
       i.stashQueues(n);
     }
   }
   restoreQueues(e) {
-    this.Mt[0].push(...e.Mt[0]);
-    this.Mt[1].push(...e.Mt[1]);
-    for (let t = 0;t < e.Qt.length; t++) {
-      const i = e.Qt[t];
-      let n = this.Qt[t];
+    this.ti[0].push(...e.ti[0]);
+    this.ti[1].push(...e.ti[1]);
+    for (let t = 0;t < e.Xt.length; t++) {
+      const i = e.Xt[t];
+      let n = this.Xt[t];
       if (n)
         n.restoreQueues(i);
     }
@@ -382,59 +381,63 @@ class Queue {
 }
 
 class GlobalQueue extends Queue {
-  fn = false;
+  sn = false;
   m = createBatch();
   static Fe;
-  static He;
-  static it;
-  static qt = null;
+  static We;
+  static ct;
+  static ni = null;
   static p = null;
   static G = null;
   static M = null;
   static N = null;
-  static Pt = null;
-  static ht = null;
-  static Ue = null;
-  static de = null;
-  static me = null;
-  static un = null;
-  static gt = null;
-  static Ht = null;
   static kt = null;
-  static et = null;
-  static k = null;
+  static Lt = null;
+  static pe = null;
+  static Ne = null;
+  static ke = null;
+  static un = null;
+  static wt = null;
   static Wt = null;
-  static zt = null;
-  static xt = null;
-  static Tn = null;
+  static jt = null;
+  static st = null;
+  static k = null;
+  static ri = null;
+  static si = null;
+  static Bt = null;
+  static fn = null;
+  static cn = null;
   static dn = null;
   static In = null;
-  static Nn = null;
   static ln = null;
-  static vt = null;
-  static Vt = null;
-  static bt = null;
-  static Be = null;
-  static $e = null;
-  static he = null;
-  static Xe = null;
-  static _n = null;
+  static Zt = null;
+  static qt = null;
+  static Mt = null;
+  static Kt = null;
+  static nt = null;
+  static ot = null;
+  static Qt = null;
+  static ut = null;
+  static ye = null;
+  static Yt = null;
+  static zt = null;
+  static Nn = null;
   flush() {
-    if (this.fn)
+    if (this.sn)
       return;
-    if (activeTransition === null && dirtyQueue.EE < dirtyQueue.Qe && this.Mt[0].length === 0 && this.Mt[1].length === 0 && this.Qt.length === 0 && canUseSimpleSyncFlush(this)) {
-      this.fn = true;
+    if (activeTransition === null && dirtyQueue.EE < dirtyQueue.Ke && this.ti[0].length === 0 && this.ti[1].length === 0 && this.Xt.length === 0 && canUseSimpleSyncFlush(this)) {
+      this.sn = true;
       try {
         sweepDormant();
         commitPendingNodes();
       } finally {
-        this.fn = false;
+        this.sn = false;
       }
       clock++;
-      scheduled = dirtyQueue.EE >= dirtyQueue.Qe || this.Mt[0].length !== 0 || this.Mt[1].length !== 0 || this.m.Lt.length !== 0;
+      scheduled = dirtyQueue.EE >= dirtyQueue.Ke || this.ti[0].length !== 0 || this.ti[1].length !== 0 || this.m.$t.length !== 0;
       return;
     }
-    this.fn = true;
+    this.sn = true;
     try {
       if (false)
         ;
@@ -448,29 +451,29 @@ class GlobalQueue extends Queue {
           if (this.m === e2)
             currentBatch = this.m = createBatch();
           if (activeLanes.size) {
-            GlobalQueue.Nn(EFFECT_RENDER);
-            GlobalQueue.Nn(EFFECT_USER);
+            GlobalQueue.In(EFFECT_RENDER);
+            GlobalQueue.In(EFFECT_USER);
           }
-          this.stashQueues(e2.Bt);
+          this.stashQueues(e2.ei);
           clock++;
-          scheduled = dirtyQueue.EE >= dirtyQueue.Qe || this.m.Lt.length > 0;
-          reassignPendingTransition(e2.Lt);
+          scheduled = dirtyQueue.EE >= dirtyQueue.Ke || this.m.$t.length > 0;
+          reassignPendingTransition(e2.$t);
           activeTransition = null;
           finalizePureQueue(null, true);
           return;
         }
         const t = activeTransition;
         const i = this.m;
-        i !== t && i.Lt.push(...t.Lt);
-        this.restoreQueues(t.Bt);
+        i !== t && i.$t.push(...t.$t);
+        this.restoreQueues(t.ei);
         transitions.delete(t);
         activeTransition = null;
-        reassignPendingTransition(i.Lt);
+        reassignPendingTransition(i.$t);
         finalizePureQueue(t);
         if (i === t) {
           const e2 = createBatch();
-          e2.Lt = i.Lt;
-          e2.ze = i.ze;
+          e2.$t = i.$t;
+          e2.it = i.it;
           e2.A = i.A;
           e2.En = i.En;
           currentBatch = this.m = e2;
@@ -478,7 +481,7 @@ class GlobalQueue extends Queue {
       } else {
         if (canUseSimpleSyncFlush(this)) {
           commitPendingNodes();
-          if (dirtyQueue.EE >= dirtyQueue.Qe) {
+          if (dirtyQueue.EE >= dirtyQueue.Ke) {
             runHeap(dirtyQueue, GlobalQueue.Fe);
             commitPendingNodes();
           }
@@ -489,10 +492,10 @@ class GlobalQueue extends Queue {
         }
       }
       clock++;
-      scheduled = dirtyQueue.EE >= dirtyQueue.Qe;
-      activeLanes.size && GlobalQueue.Nn(EFFECT_RENDER);
+      scheduled = dirtyQueue.EE >= dirtyQueue.Ke || activeTransition !== null;
+      activeLanes.size && GlobalQueue.In(EFFECT_RENDER);
       this.run(EFFECT_RENDER);
-      activeLanes.size && GlobalQueue.Nn(EFFECT_USER);
+      activeLanes.size && GlobalQueue.In(EFFECT_USER);
       this.run(EFFECT_USER);
       if (false)
         ;
@@ -501,25 +504,29 @@ class GlobalQueue extends Queue {
       if (false)
         ;
     } finally {
-      this.fn = false;
+      this.sn = false;
     }
   }
   notify(e, t, i, n) {
     if (t & STATUS_PENDING) {
       if (i & STATUS_PENDING) {
-        const t2 = n !== undefined ? n : e.o?._;
+        const t2 = n ?? e.o?._;
         if (t2?.l)
           return true;
-        if (activeTransition && t2) {
-          const i2 = t2.source;
-          let n2 = activeTransition._e.get(i2);
-          if (!n2)
-            activeTransition._e.set(i2, n2 = new Set);
-          const r = n2.size;
-          n2.add(e);
-          if (n2.size !== r) {
-            schedule();
-            GlobalQueue.zt?.(activeTransition);
+        if (t2) {
+          if (!activeTransition && !e.ge && currentBatch.$t.length)
+            this.initTransition();
+          if (activeTransition) {
+            const i2 = t2.source;
+            let n2 = activeTransition.Re.get(i2);
+            if (!n2)
+              activeTransition.Re.set(i2, n2 = new Set);
+            const r = n2.size;
+            n2.add(e);
+            if (n2.size !== r) {
+              schedule();
+              GlobalQueue.si?.(activeTransition);
+            }
           }
         }
       }
@@ -530,70 +537,77 @@ class GlobalQueue extends Queue {
   initTransition(e) {
     if (e) {
       e = currentTransition(e);
-      if (e.sn === true || e === activeTransition)
+      if (e.ft === true || e === activeTransition)
         return;
     }
-    if (!e && activeTransition && activeTransition.Te === clock)
+    if (!e && activeTransition && activeTransition._e === clock)
       return;
     if (!activeTransition) {
       activeTransition = e ?? createBatch();
     } else if (e) {
       const t2 = activeTransition;
       mergeTransitionState(e, t2);
+      this.restoreQueues(t2.ei);
       transitions.delete(t2);
       activeTransition = e;
     }
     transitions.add(activeTransition);
-    activeTransition.Te = clock;
+    activeTransition._e = clock;
     const t = this.m;
     if (t !== activeTransition) {
-      for (let e2 = 0;e2 < t.Lt.length; e2++) {
-        const i = t.Lt[e2];
-        i.Ae = activeTransition;
-        activeTransition.Lt.push(i);
+      for (let e2 = 0;e2 < t.$t.length; e2++) {
+        const i = t.$t[e2];
+        i.ge = activeTransition;
+        activeTransition.$t.push(i);
       }
-      for (let e2 = 0;e2 < t.ze.length; e2++) {
-        const i = t.ze[e2];
-        i.Ae = activeTransition;
-        activeTransition.ze.push(i);
+      for (let e2 = 0;e2 < t.it.length; e2++) {
+        const i = t.it[e2];
+        i.ge = activeTransition;
+        activeTransition.it.push(i);
       }
       if (t.A.length)
         activeTransition.A.push(...t.A);
       for (const e2 of t.En)
         activeTransition.En.add(e2);
-      if (t.cn.size) {
-        for (const e2 of t.cn)
-          activeTransition.cn.add(e2);
-        t.cn.clear();
+      if (t.lt.size) {
+        for (const e2 of t.lt)
+          activeTransition.lt.add(e2);
+        t.lt.clear();
       }
       currentBatch = this.m = activeTransition;
     }
     for (const e2 of activeLanes) {
-      if (!e2.Ae)
-        e2.Ae = activeTransition;
+      if (!e2.ge)
+        e2.ge = activeTransition;
     }
     schedule();
   }
 }
 function queuePendingNode(e) {
-  currentBatch.Lt.push(e);
+  currentBatch.$t.push(e);
 }
 var reaskArmed = false;
 var notifyEpoch = 0;
 function bumpNotifyEpoch() {
   notifyEpoch++;
 }
+var origin = 0;
+function setOrigin(e) {
+  const t = origin;
+  origin = e;
+  return t;
+}
 function insertSubs(e, t = false) {
-  e.It = notifyEpoch;
+  e.At = notifyEpoch;
   const i = e.T;
-  const n = (i & CONFIG_HAS_LANE ? e.o?.Je : undefined) || currentOptimisticLane;
-  const r = (i & CONFIG_HAS_SNAPSHOT) !== 0 && e.o?.We !== undefined;
+  const n = (i & CONFIG_HAS_LANE ? e.o?.Oe : undefined) || currentOptimisticLane;
+  const r = (i & CONFIG_HAS_SNAPSHOT) !== 0 && e.o?.ze !== undefined;
   const s = reaskArmed;
-  for (let i2 = e.u;i2 !== null; i2 = i2.ae) {
-    const e2 = i2.ce;
+  for (let i2 = e.u;i2 !== null; i2 = i2.Te) {
+    const e2 = i2.Ie;
     if (s)
       e2.ie &= ~REACTIVE_REASK;
-    if (e2.ie & REACTIVE_RECOMPUTING_DEPS && i2.Ft === e2.Ke && i2 !== e2.je)
+    if (e2.ie & REACTIVE_RECOMPUTING_DEPS && i2.yt === e2.tt && i2 !== e2.et)
       e2.ie |= REACTIVE_MISSED_WAKE;
     if (r && e2.T & CONFIG_IN_SNAPSHOT_SCOPE) {
       e2.ie |= REACTIVE_SNAPSHOT_STALE;
@@ -605,7 +619,7 @@ function insertSubs(e, t = false) {
     } else if (t) {
       e2.ie |= REACTIVE_OPTIMISTIC_DIRTY;
       if (e2.o)
-        e2.o.Je = undefined;
+        e2.o.Oe = undefined;
     }
     enqueueSub(e2);
   }
@@ -613,28 +627,30 @@ function insertSubs(e, t = false) {
 function commitPendingNode(e) {
   const t = e;
   if (!t.oe) {
-    if (e.Re !== NOT_PENDING) {
-      e.be = e.Re;
-      e.Re = NOT_PENDING;
+    if (e.Ge !== NOT_PENDING) {
+      e.me = e.Ge;
+      e.Ge = NOT_PENDING;
     }
     if (e.T & CONFIG_HAS_COMPANIONS)
       GlobalQueue.un(e);
     return;
   }
-  if (e.Re !== NOT_PENDING) {
-    e.be = e.Re;
-    e.Re = NOT_PENDING;
-    if (e.ge && e.ge !== EFFECT_TRACKED)
-      e.tt = true;
+  if (e.Ge !== NOT_PENDING) {
+    e.me = e.Ge;
+    e.Ge = NOT_PENDING;
+    if (e.Ce && e.Ce !== EFFECT_TRACKED)
+      e.He = true;
     if (e.o)
-      e.o.De = false;
+      e.o.Ue = false;
   }
-  t.Ne = false;
+  t.Ae = false;
   t.ie &= ~REACTIVE_MANUAL_WRITE;
   if (!(t.S & STATUS_PENDING))
     t.S &= ~STATUS_UNINITIALIZED;
-  if (t.o != null && (t.o.Ye !== null || t.o.qe !== null))
-    GlobalQueue.He(t, false, true);
+  else
+    e.T |= CONFIG_INPUTS_PUBLISHED;
+  if (t.o != null && (t.o.Xe !== null || t.o.Je !== null))
+    GlobalQueue.We(t, false, true);
   if (e.T & CONFIG_HAS_COMPANIONS)
     GlobalQueue.un(e);
 }
@@ -642,14 +658,13 @@ var storeCommitHook = null;
 function setStoreCommitHook(e) {
   storeCommitHook = e;
 }
-var patchCommitHook = null;
 var heldRevealed = [];
 function commitPendingNodes() {
-  const e = currentBatch.Lt;
+  const e = currentBatch.$t;
   for (let t = 0;t < e.length; t++) {
     const i = e[t];
     commitPendingNode(i);
-    i.Ae = null;
+    i.ge = null;
     if (i.T & CONFIG_HELD_TRUTH) {
       i.T &= ~CONFIG_HELD_TRUTH;
       heldRevealed.push(i);
@@ -657,66 +672,85 @@ function commitPendingNodes() {
   }
   e.length = 0;
   storeCommitHook?.();
-  patchCommitHook?.(currentBatch);
 }
 function finalizePureQueue(e = null, t = false) {
-  const i = !t;
-  if (i)
-    commitPendingNodes();
-  if (!t && globalQueue.Qt.length)
-    checkBoundaryChildren(globalQueue);
-  const n = dirtyQueue.EE >= dirtyQueue.Qe;
+  const i = currentBatch;
+  const n = !t;
   if (n)
+    commitPendingNodes();
+  if (!t && globalQueue.Xt.length)
+    checkBoundaryChildren(globalQueue);
+  const r = e?.Et;
+  const s = n && (e ?? i).it.length !== 0;
+  if (r && !s) {
+    for (const e2 of r)
+      if (!(e2.ie & REACTIVE_DISPOSED))
+        enqueueSub(e2);
+  }
+  const o = dirtyQueue.EE >= dirtyQueue.Ke;
+  if (o)
     runHeap(dirtyQueue, GlobalQueue.Fe);
-  if (i) {
-    if (n)
+  if (n) {
+    if (currentBatch !== i) {
+      if (e === null || e === i)
+        return;
+    } else if (o)
       commitPendingNodes();
-    const t2 = e ?? globalQueue.m;
-    if (t2.ze.length)
-      GlobalQueue.Tn(t2.ze);
-    if (t2.cn.size) {
-      for (const e2 of t2.cn) {
+    const t2 = e ?? i;
+    if (t2.it.length)
+      GlobalQueue.fn(t2.it);
+    if (r && s) {
+      for (const e2 of r)
+        if (!(e2.ie & REACTIVE_DISPOSED))
+          enqueueSub(e2);
+      schedule();
+    }
+    if (t2.lt.size) {
+      for (const e2 of t2.lt) {
         if (e2.ie & REACTIVE_DISPOSED)
           continue;
         enqueueSub(e2);
       }
-      t2.cn.clear();
+      t2.lt.clear();
       schedule();
     }
     if (t2.A.length) {
       GlobalQueue.G(t2.A);
-      if (globalQueue.Qt.length)
+      if (globalQueue.Xt.length)
         checkBoundaryChildren(globalQueue);
     }
     if (t2.En.size)
-      GlobalQueue.qt(t2.En, e);
+      GlobalQueue.ni(t2.En, e);
     if (heldRevealed.length !== 0) {
       while (heldRevealed.length)
         insertSubs(heldRevealed.pop());
-      if (dirtyQueue.EE >= dirtyQueue.Qe) {
+      if (dirtyQueue.EE >= dirtyQueue.Ke) {
         runHeap(dirtyQueue, GlobalQueue.Fe);
         commitPendingNodes();
       }
     }
     sweepTransientStoreNodes();
     if (activeLanes.size)
-      GlobalQueue.In(e);
+      GlobalQueue.dn(e);
   }
 }
 function checkBoundaryChildren(e) {
-  for (const t of e.Qt) {
+  for (const t of e.Xt) {
     t.se?.();
     checkBoundaryChildren(t);
   }
 }
 function reassignPendingTransition(e) {
   for (let t = 0;t < e.length; t++) {
-    e[t].Ae = activeTransition;
+    e[t].ge = activeTransition;
   }
 }
 var globalQueue = new GlobalQueue;
 var currentBatch = globalQueue.m;
 function flush(e) {
+  if (actionStepDepth > 0) {
+    return e ? e() : undefined;
+  }
   if (e) {
     syncDepth++;
     try {
@@ -729,7 +763,7 @@ function flush(e) {
       }
     }
   }
-  if (globalQueue.fn) {
+  if (globalQueue.sn) {
     return;
   }
   if (halted)
@@ -737,6 +771,7 @@ function flush(e) {
   while (scheduled || activeTransition) {
     globalQueue.flush();
   }
+  origin = 0;
 }
 function runQueue(e, t) {
   for (let i = 0;i < e.length; i++)
@@ -747,23 +782,24 @@ function reporterBlocksSource(e, t) {
     return false;
   if (e.o?.le?.has(t))
     return true;
-  for (let i = e.ut;i; i = i.lt) {
-    let e2 = i.ot;
+  for (let i = e.fe;i; i = i.ae) {
+    let e2 = i.Se;
     while (e2) {
-      if (e2 === t || e2.st === t)
+      if (e2 === t || e2.ce === t)
         return true;
-      e2 = e2.o?.Tt;
+      e2 = e2.o?.Gt;
     }
   }
   return !!(e.S & STATUS_PENDING && e.o?._ instanceof NotReadyError && e.o?._.source === t);
 }
 function transitionComplete(e) {
-  if (e.sn)
+  if (e.ft)
     return true;
-  if (e.ue.length)
+  if (e.ue.length) {
     return false;
+  }
   let t = true;
-  for (const [i, n] of e._e) {
+  for (const [i, n] of e.Re) {
     let r = false;
     for (const e2 of n) {
       if (reporterBlocksSource(e2, i)) {
@@ -773,21 +809,27 @@ function transitionComplete(e) {
       n.delete(e2);
     }
     if (!r)
-      e._e.delete(i);
+      e.Re.delete(i);
     else if (i.S & STATUS_PENDING && i.o?._?.source === i) {
       t = false;
       break;
     }
   }
-  if (t && GlobalQueue.dn?.(e))
+  if (t && GlobalQueue.cn?.(e))
     t = false;
-  t && (e.sn = true);
+  t && (e.ft = true);
   return t;
 }
 function currentTransition(e) {
-  while (e.sn && typeof e.sn === "object")
-    e = e.sn;
+  while (e.ft && typeof e.ft === "object")
+    e = e.ft;
   return e;
+}
+function waitingTransition(e) {
+  for (const t of transitions)
+    if (t.Re.has(e))
+      return t;
+  return null;
 }
 function runInTransition(e, t) {
   const i = activeTransition;
@@ -799,37 +841,29 @@ function runInTransition(e, t) {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/heap.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/heap.js
 function queueFor(e) {
   return e.ie & REACTIVE_ZOMBIE ? zombieQueue : dirtyQueue;
 }
 function enqueueSub(e) {
-  if (e.ge === EFFECT_TRACKED) {
-    const E2 = e;
-    if (!E2.tt) {
-      E2.tt = true;
-      E2.C.enqueue(EFFECT_USER, E2.yt);
-    }
-    return;
-  }
   const E = queueFor(e);
-  if (E.Qe > e.Me)
-    E.Qe = e.Me;
+  if (E.Ke > e.Be)
+    E.Ke = e.Be;
   insertIntoHeap(e, E);
 }
 function actualInsertIntoHeap(e, E) {
-  const t = (e.ke?.Gt ? e.ke.Dt?.Me : e.ke?.Me) ?? -1;
-  if (t >= e.Me)
-    e.Me = t + 1;
-  const n = e.Me;
+  const t = (e.qe?.gt ? e.qe.bt?.Be : e.qe?.Be) ?? -1;
+  if (t >= e.Be)
+    e.Be = t + 1;
+  const n = e.Be;
   const I = E.eE[n];
   if (I === undefined)
     E.eE[n] = e;
   else {
-    const E2 = I.ct;
-    E2.rt = e;
-    e.ct = E2;
-    I.ct = e;
+    const E2 = I.Tt;
+    E2.Nt = e;
+    e.Tt = E2;
+    I.Tt = e;
   }
   if (n > E.EE)
     E.EE = n;
@@ -842,8 +876,8 @@ function insertIntoHeap(e, E) {
     e.ie = t & -4 | REACTIVE_DIRTY | REACTIVE_IN_HEAP;
   } else {
     e.ie = t | REACTIVE_IN_HEAP;
-    if (E.tE && !(t & REACTIVE_DIRTY))
-      E.tE = false;
+    if (E.tE)
+      markNode(e);
   }
   if (!(t & REACTIVE_IN_HEAP_HEIGHT))
     actualInsertIntoHeap(e, E);
@@ -860,28 +894,28 @@ function deleteFromHeap(e, E) {
   if (!(t & (REACTIVE_IN_HEAP | REACTIVE_IN_HEAP_HEIGHT)))
     return;
   e.ie = t & -25;
-  const n = e.Me;
-  if (e.ct === e)
+  const n = e.Be;
+  if (e.Tt === e)
     E.eE[n] = undefined;
   else {
-    const t2 = e.rt;
+    const t2 = e.Nt;
     const I = E.eE[n];
     const o = t2 ?? I;
     if (e === I)
       E.eE[n] = t2;
     else
-      e.ct.rt = t2;
-    o.ct = e.ct;
+      e.Tt.Nt = t2;
+    o.Tt = e.Tt;
   }
-  e.ct = e;
-  e.rt = undefined;
+  e.Tt = e;
+  e.Nt = undefined;
 }
 function markHeap(e) {
   if (e.tE)
     return;
   e.tE = true;
   for (let E = 0;E <= e.EE; E++) {
-    for (let t = e.eE[E];t !== undefined; t = t.rt) {
+    for (let t = e.eE[E];t !== undefined; t = t.Nt) {
       if (t.ie & REACTIVE_IN_HEAP)
         markNode(t);
     }
@@ -892,52 +926,52 @@ function markNode(e, E = REACTIVE_DIRTY) {
   if ((t & (REACTIVE_CHECK | REACTIVE_DIRTY)) >= E)
     return;
   e.ie = t & -4 | E;
-  for (let E2 = e.u;E2 !== null; E2 = E2.ae) {
-    markNode(E2.ce, REACTIVE_CHECK);
+  for (let E2 = e.u;E2 !== null; E2 = E2.Te) {
+    markNode(E2.Ie, REACTIVE_CHECK);
   }
   if (e.T & CONFIG_FW_CHILDREN) {
-    for (let E2 = e.o.i;E2 !== null; E2 = E2.Se) {
-      for (let e2 = E2.u;e2 !== null; e2 = e2.ae) {
-        markNode(e2.ce, REACTIVE_CHECK);
+    for (let E2 = e.o.i;E2 !== null; E2 = E2.Ee) {
+      for (let e2 = E2.u;e2 !== null; e2 = e2.Te) {
+        markNode(e2.Ie, REACTIVE_CHECK);
       }
     }
   }
 }
 function runHeap(e, E) {
   e.tE = false;
-  for (e.Qe = 0;e.Qe <= e.EE; e.Qe++) {
-    let t = e.eE[e.Qe];
+  for (e.Ke = 0;e.Ke <= e.EE; e.Ke++) {
+    let t = e.eE[e.Ke];
     while (t !== undefined) {
       if (t.ie & REACTIVE_IN_HEAP)
         E(t);
       else
         adjustHeight(t, e);
-      t = e.eE[e.Qe];
+      t = e.eE[e.Ke];
     }
   }
   e.EE = 0;
 }
 function adjustHeight(e, E) {
   deleteFromHeap(e, E);
-  let t = e.Me;
-  for (let E2 = e.ut;E2; E2 = E2.lt) {
-    const e2 = E2.ot;
-    const n = e2.st || e2;
-    if (n.oe && n.Me >= t)
-      t = n.Me + 1;
+  let t = e.Be;
+  for (let E2 = e.fe;E2; E2 = E2.ae) {
+    const e2 = E2.Se;
+    const n = e2.ce || e2;
+    if (n.oe && n.Be >= t)
+      t = n.Be + 1;
   }
-  if (e.Me !== t) {
-    e.Me = t;
-    for (let E2 = e.u;E2 !== null; E2 = E2.ae) {
-      insertIntoHeapHeight(E2.ce, queueFor(E2.ce));
+  if (e.Be !== t) {
+    e.Be = t;
+    for (let E2 = e.u;E2 !== null; E2 = E2.Te) {
+      insertIntoHeapHeight(E2.Ie, queueFor(E2.Ie));
     }
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/owner.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/owner.js
 var PENDING_OWNER = {};
 function markDisposal(e) {
-  let t = e.xe;
+  let t = e.Ye;
   while (t) {
     const e2 = t.ie;
     t.ie = e2 | REACTIVE_ZOMBIE;
@@ -949,7 +983,7 @@ function markDisposal(e) {
         insertIntoHeapHeight(t, zombieQueue);
     }
     markDisposal(t);
-    t = t.Le;
+    t = t.Ze;
   }
 }
 function disposeChildren(e, t = false, n) {
@@ -959,14 +993,14 @@ function disposeChildren(e, t = false, n) {
   if (t) {
     e.ie = i | REACTIVE_DISPOSED;
     const t2 = e;
-    if (t2.o?.ye || t2.o?.Ce)
+    if (t2.o?.Le || t2.o?.Qe)
       GlobalQueue.un(t2);
   }
   if (t && e.oe && e.o !== null)
-    e.o.Ie = null;
-  let o = n ? e.o?.Ye ?? null : e.xe;
+    e.o.Pe = null;
+  let o = n ? e.o?.Xe ?? null : e.Ye;
   while (o) {
-    const e2 = o.Le;
+    const e2 = o.Ze;
     const t2 = o;
     t2.T &= ~CONFIG_AUTO_DISPOSE;
     deleteFromHeap(t2, queueFor(t2));
@@ -976,31 +1010,31 @@ function disposeChildren(e, t = false, n) {
   }
   if (n) {
     if (e.o !== null)
-      e.o.Ye = null;
+      e.o.Xe = null;
   } else {
-    e.xe = null;
-    e.Ze = 0;
+    e.Ye = null;
+    e.$e = 0;
   }
-  if (t && !n && !(i & REACTIVE_ZOMBIE) && e.ke !== null && !(e.ke.ie & REACTIVE_DISPOSED)) {
-    const t2 = e.ft;
-    const n2 = e.Le;
+  if (t && !n && !(i & REACTIVE_ZOMBIE) && e.qe !== null && !(e.qe.ie & REACTIVE_DISPOSED)) {
+    const t2 = e.St;
+    const n2 = e.Ze;
     if (t2 !== null)
-      t2.Le = n2;
+      t2.Ze = n2;
     else
-      e.ke.xe = n2;
+      e.qe.Ye = n2;
     if (n2 !== null)
-      n2.ft = t2;
-    e.ft = null;
+      n2.St = t2;
+    e.St = null;
   }
   runDisposal(e, n);
-  if (t && e.Rt) {
-    const t2 = e.Rt;
-    e.Rt = undefined;
+  if (t && e.Ht) {
+    const t2 = e.Ht;
+    e.Ht = undefined;
     t2();
   }
 }
 function runDisposal(e, t) {
-  let n = t ? e.o?.qe : e.Ge;
+  let n = t ? e.o?.Je : e.we;
   if (!n)
     return;
   if (Array.isArray(n)) {
@@ -1013,16 +1047,16 @@ function runDisposal(e, t) {
   }
   if (t) {
     if (e.o !== null)
-      e.o.qe = null;
+      e.o.Je = null;
   } else
-    e.Ge = null;
+    e.we = null;
 }
 function childId(e, t) {
   let n = e;
-  while (n.T & CONFIG_TRANSPARENT && n.ke)
-    n = n.ke;
+  while (n.T & CONFIG_TRANSPARENT && n.qe)
+    n = n.qe;
   if (n.id != null)
-    return formatId(n.id, t ? n.Ze++ : n.Ze);
+    return formatId(n.id, t ? n.$e++ : n.$e);
   throw new Error("");
 }
 function getNextChildId(e) {
@@ -1046,12 +1080,12 @@ function getOwner() {
 function cleanup(e) {
   if (!context)
     return e;
-  if (!context.Ge)
-    context.Ge = e;
-  else if (Array.isArray(context.Ge))
-    context.Ge.push(e);
+  if (!context.we)
+    context.we = e;
+  else if (Array.isArray(context.we))
+    context.we.push(e);
   else
-    context.Ge = [context.Ge, e];
+    context.we = [context.we, e];
   return e;
 }
 function disposeRootSelf(e = true) {
@@ -1063,27 +1097,27 @@ function createOwner(e) {
   const i = {
     id: inheritId(e, n, t),
     T: n ? CONFIG_TRANSPARENT : 0,
-    Gt: true,
-    Dt: t?.Gt ? t.Dt : t,
-    xe: null,
-    Le: null,
-    ft: null,
-    Ge: null,
+    gt: true,
+    bt: t?.gt ? t.bt : t,
+    Ye: null,
+    Ze: null,
+    St: null,
+    we: null,
     C: t?.C ?? globalQueue,
-    we: t?.we || defaultContext,
-    Ze: 0,
+    xe: t?.xe || defaultContext,
+    $e: 0,
     o: null,
-    ke: t,
+    qe: t,
     dispose: disposeRootSelf
   };
   if (t) {
-    const e2 = t.xe;
+    const e2 = t.Ye;
     if (e2 === null) {
-      t.xe = i;
+      t.Ye = i;
     } else {
-      i.Le = e2;
-      e2.ft = i;
-      t.xe = i;
+      i.Ze = e2;
+      e2.St = i;
+      t.Ye = i;
     }
   }
   return i;
@@ -1093,22 +1127,25 @@ function createRoot(e, t) {
   return runWithOwner(n, () => e(() => n.dispose()));
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/graph.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/graph.js
 function unlinkSubs(e) {
-  const n = e.ot;
-  const l = e.lt;
-  const o = e.ae;
-  const u = e.en;
+  const n = e.Se;
+  const l = e.ae;
+  const o = e.Te;
+  const s = e.en;
   if (o !== null)
-    o.en = u;
+    o.en = s;
   else
-    n._t = u;
-  if (u !== null)
-    u.ae = o;
+    n.dt = s;
+  if (s !== null)
+    s.Te = o;
   else {
     n.u = o;
     if (o === null) {
-      n.o?.Et?.();
+      if (n.T & CONFIG_SLOT_NODE)
+        slotUnobservedHook(n);
+      else
+        n.o?.Ct?.();
       const e2 = n;
       e2.oe && e2.T & CONFIG_AUTO_DISPOSE && !(e2.ie & REACTIVE_ZOMBIE) && !(e2.S & STATUS_PENDING) && unobserved(e2);
     }
@@ -1116,27 +1153,27 @@ function unlinkSubs(e) {
   return l;
 }
 function trimStaleDeps(e) {
-  const n = e.je;
-  let l = n !== null ? n.lt : e.ut;
+  const n = e.et;
+  let l = n !== null ? n.ae : e.fe;
   if (l !== null) {
     do {
       l = unlinkSubs(l);
     } while (l !== null);
     if (n !== null)
-      n.lt = null;
+      n.ae = null;
     else
-      e.ut = null;
+      e.fe = null;
   }
 }
 function clearDeps(e) {
-  let n = e.ut;
+  let n = e.fe;
   if (!n)
     return;
   do {
     n = unlinkSubs(n);
   } while (n !== null);
-  e.ut = null;
-  e.je = null;
+  e.fe = null;
+  e.et = null;
 }
 function unobserved(e) {
   deleteFromHeap(e, queueFor(e));
@@ -1155,51 +1192,51 @@ function sweepDormant() {
   dormantNodes.clear();
 }
 function link(e, n, l = false) {
-  const o = n.je;
-  if (o !== null && o.ot === e) {
-    o.ve &&= l;
+  const o = n.et;
+  if (o !== null && o.Se === e) {
+    o.je &&= l;
     return;
   }
-  let u = null;
+  let s = null;
   const t = n.ie & REACTIVE_RECOMPUTING_DEPS;
   if (t) {
-    u = o !== null ? o.lt : n.ut;
-    if (u !== null && u.ot === e) {
-      u.Ft = n.Ke;
-      n.je = u;
-      u.ve = l;
+    s = o !== null ? o.ae : n.fe;
+    if (s !== null && s.Se === e) {
+      s.yt = n.tt;
+      n.et = s;
+      s.je = l;
       return;
     }
   }
-  const s = e._t;
-  if (s !== null && s.ce === n && (!t || s.Ft === n.Ke)) {
+  const r = e.dt;
+  if (r !== null && r.Ie === n && (!t || r.yt === n.tt)) {
     if (t)
-      s.ve &&= l;
+      r.je &&= l;
     else
-      s.ve = l;
+      r.je = l;
     return;
   }
-  const r = n.je = e._t = {
-    ot: e,
-    ce: n,
-    lt: u,
-    en: s,
-    ae: null,
-    Ft: n.Ke,
-    ve: l
+  const u = n.et = e.dt = {
+    Se: e,
+    Ie: n,
+    ae: s,
+    en: r,
+    Te: null,
+    yt: n.tt,
+    je: l
   };
   if (o !== null)
-    o.lt = r;
+    o.ae = u;
   else
-    n.ut = r;
-  if (s !== null)
-    s.ae = r;
+    n.fe = u;
+  if (r !== null)
+    r.Te = u;
   else
-    e.u = r;
+    e.u = u;
   bumpNotifyEpoch();
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/async.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/async.js
 function addPendingSource(e, n) {
   if (e.o?.le?.has(n))
     return false;
@@ -1218,8 +1255,16 @@ function clearPendingSources(e) {
   if (e.o !== null)
     e.o.le = undefined;
 }
+function retryReaches(e, n) {
+  for (let t = e.fe;t; t = t.ae) {
+    const e2 = t.Se.ce || t.Se;
+    if (e2 === n || e2.o?.le?.has(n))
+      return true;
+  }
+  return false;
+}
 function parkLoadingWindow(e, n) {
-  ext(e).fe = true;
+  ext(e).de = true;
   if (n.source)
     addPendingSource(e, n.source);
   if (!(e.S & STATUS_ERROR))
@@ -1241,11 +1286,11 @@ function setPendingError(e, n, t) {
   }
 }
 function forEachDependent(e, n) {
-  for (let t = e.u;t !== null; t = t.ae)
-    n(t.ce, t);
-  for (let t = e.o?.i ?? null;t !== null; t = t.Se) {
-    for (let e2 = t.u;e2 !== null; e2 = e2.ae)
-      n(e2.ce, e2);
+  for (let t = e.u;t !== null; t = t.Te)
+    n(t.Ie, t);
+  for (let t = e.o?.i ?? null;t !== null; t = t.Ee) {
+    for (let e2 = t.u;e2 !== null; e2 = e2.Te)
+      n(e2.Ie, e2);
   }
 }
 function releaseIfSettledUnobserved(e) {
@@ -1284,53 +1329,57 @@ function settleErroredDependents(e, n) {
   if (t)
     schedule();
 }
-function settlePendingSource(e) {
-  removePendingSource(e, e);
-  let n = false;
-  let t;
-  const r = new Set;
-  const o = GlobalQueue.de;
-  const settle = (i) => {
-    if (r.has(i) || !removePendingSource(i, e))
+function settlePendingSource(e, n = e) {
+  removePendingSource(e, n);
+  let t = false;
+  let r;
+  const o = new Set;
+  const i = GlobalQueue.Ne;
+  const settle = (s) => {
+    if (o.has(s))
       return;
-    r.add(i);
-    i.Te = clock;
-    const l = i.o?.le?.values().next().value;
-    const s = i.S & STATUS_ERROR;
+    if (n !== e && retryReaches(s, n))
+      return;
+    if (!removePendingSource(s, n))
+      return;
+    o.add(s);
+    s._e = clock;
+    const l = s.o?.le?.values().next().value;
+    const u = s.S & STATUS_ERROR;
     if (l) {
-      if (!s)
-        setPendingError(i, l);
-      o?.(i);
+      if (!u)
+        setPendingError(s, l);
+      i?.(s);
     } else {
-      i.S &= ~STATUS_PENDING;
-      if (!s)
-        setPendingError(i);
-      o?.(i);
-      if (i.o?.fe) {
-        enqueueSub(i);
-        n = true;
+      s.S &= ~STATUS_PENDING;
+      if (!u)
+        setPendingError(s);
+      i?.(s);
+      if (s.o?.de) {
+        enqueueSub(s);
+        t = true;
       }
-      if (i.o !== null)
-        i.o.fe = false;
-      if (!i.u && i.T & CONFIG_AUTO_DISPOSE)
-        (t ??= []).push(i);
+      if (s.o !== null)
+        s.o.de = false;
+      if (!s.u && s.T & CONFIG_AUTO_DISPOSE)
+        (r ??= []).push(s);
     }
-    forEachDependent(i, settle);
+    forEachDependent(s, settle);
   };
   forEachDependent(e, settle);
-  if (t)
-    for (const e2 of t)
+  if (r)
+    for (const e2 of r)
       releaseIfSettledUnobserved(e2);
-  if (n)
+  if (t)
     schedule();
 }
 function isThenable(e) {
   return e != null && typeof e === "object" && typeof e.then === "function";
 }
 function releaseFlightTeardown(e) {
-  const n = e.o?.Ee;
+  const n = e.o?.De;
   if (n != null) {
-    e.o.Ee = null;
+    e.o.De = null;
     n();
   }
 }
@@ -1345,78 +1394,86 @@ function handleAsync(e, n, t) {
   }
   if (!o && !r) {
     if (e.o !== null)
-      e.o.Ie = null;
-    e.Ne = false;
+      e.o.Pe = null;
+    e.Ae = false;
     return n;
   }
-  ext(e).Ie = n;
-  let i;
+  ext(e).Pe = n;
+  const i = origin;
+  let s;
   const settleTransition = () => {
-    const n2 = resolveTransition(e);
-    if (n2 && e.S & STATUS_UNINITIALIZED && !currentTransition(n2)._e.has(e)) {
-      e.Ae = null;
+    let n2 = resolveTransition(e);
+    if (e.o?.Oe)
+      n2 = waitingTransition(e) ?? n2;
+    if (n2 && e.S & STATUS_UNINITIALIZED && !currentTransition(n2).Re.has(e)) {
+      e.ge = null;
       return;
     }
     globalQueue.initTransition(n2);
   };
   const handleError = (t2) => {
-    if (e.o?.Ie !== n)
+    if (e.o?.Pe !== n)
       return;
     let r2 = t2 instanceof NotReadyError;
-    if (r2 && e.Ne) {
+    if (r2 && e.Ae) {
       if (e.o !== null)
-        e.o.Ie = null;
+        e.o.Pe = null;
       parkLoadingWindow(e, t2);
-      e.Te = clock;
+      e._e = clock;
       return;
     }
     settleTransition();
     notifyStatus(e, r2 ? STATUS_PENDING : STATUS_ERROR, t2);
     if (r2)
       settlePendingSource(e);
-    e.Te = clock;
+    e._e = clock;
     if (!r2)
       releaseSettledDependents(e);
   };
   const asyncWrite = (r2, o2) => {
-    if (e.o?.Ie !== n)
+    if (e.o?.Pe !== n)
       return;
     if (e.ie & (REACTIVE_DIRTY | REACTIVE_OPTIMISTIC_DIRTY))
       return;
+    setOrigin(i);
     settleTransition();
-    const i2 = !!(e.S & STATUS_UNINITIALIZED);
-    const l2 = e.o?.De;
+    const s2 = !!(e.S & STATUS_UNINITIALIZED);
+    const l2 = e.o?.Ue;
     trimStaleDeps(e);
     clearStatus(e);
     if (l2)
-      e.o.De = true;
-    const s = resolveLane(e);
-    if (s)
-      s.Oe.delete(e);
+      e.o.Ue = true;
+    const u = resolveLane(e);
+    if (u)
+      u.he.delete(e);
     if (t) {
-      t(r2);
-      if (i2)
+      try {
+        t(r2);
+      } catch (e2) {
+        handleError(e2);
+        return;
+      }
+      if (s2)
         clearStatus(e, true);
-    } else if (e.o?.Pe !== undefined) {
-      if (e.Re === NOT_PENDING)
+    } else if (e.o?.be !== undefined) {
+      if (e.Ge === NOT_PENDING)
         queuePendingNode(e);
-      e.Re = r2;
-      GlobalQueue.Ue?.(e, r2);
+      e.Ge = r2;
+      GlobalQueue.pe?.(e, r2);
       if (!hasActiveOverride(e)) {
         insertSubs(e);
-      } else if (e.T & CONFIG_AUTHORITATIVE_OBSERVED) {
-        GlobalQueue.he?.(e);
-      }
-      e.Te = clock;
-    } else if (s) {
-      const n2 = e.ge;
-      const t2 = e.be;
-      const o3 = e.pe;
+      } else
+        GlobalQueue.ye(e, r2);
+      e._e = clock;
+    } else if (u) {
+      const n2 = e.Ce;
+      const t2 = e.me;
+      const o3 = e.ve;
       try {
-        if (!n2 && i2 || !o3 || !o3(r2, t2)) {
-          e.be = r2;
-          e.Te = clock;
-          GlobalQueue.Ue?.(e, r2);
+        if (!n2 && s2 || !o3 || !o3(r2, t2)) {
+          e.me = r2;
+          e._e = clock;
+          GlobalQueue.pe?.(e, r2);
           insertSubs(e, true);
         }
       } catch (n3) {
@@ -1429,10 +1486,10 @@ function handleAsync(e, n, t) {
         notifyStatus(e, STATUS_ERROR, n2);
       }
     }
-    if (e.Re === NOT_PENDING) {
-      e.Ne = false;
+    if (e.Ge === NOT_PENDING) {
+      e.Ae = false;
       if (l2)
-        e.o.De = false;
+        e.o.Ue = false;
     }
     settlePendingSource(e);
     schedule();
@@ -1448,13 +1505,13 @@ function handleAsync(e, n, t) {
   };
   const consumeIterator = (t2, r2) => {
     const o2 = t2[Symbol.asyncIterator]();
+    let i2 = false;
     let l2 = false;
-    let s = false;
     let u = !r2;
     const close = () => {
-      if (s)
+      if (l2)
         return;
-      s = true;
+      l2 = true;
       try {
         const e2 = o2.return?.();
         if (isThenable(e2))
@@ -1462,7 +1519,7 @@ function handleAsync(e, n, t) {
       } catch {}
     };
     r2 ? r2(close) : cleanup(close);
-    ext(e).Ee = close;
+    ext(e).De = close;
     const iterateOrRelease = () => {
       if (!settleAutodispose())
         iterate();
@@ -1478,15 +1535,15 @@ function handleAsync(e, n, t) {
           t3 = r4;
           f2 = true;
           if (r4.done)
-            s = true;
-        } else if (e.o?.Ie !== n) {
+            l2 = true;
+        } else if (e.o?.Pe !== n) {
           return;
         } else if (!r4.done) {
-          l2 = true;
+          i2 = true;
           asyncWrite(r4.value, iterateOrRelease);
         } else {
-          s = true;
-          if (l2) {
+          l2 = true;
+          if (i2) {
             schedule();
             flush();
           } else {
@@ -1498,30 +1555,30 @@ function handleAsync(e, n, t) {
         if (c && u) {
           r3 = t4;
           a = true;
-        } else if (e.o?.Ie === n) {
-          s = true;
+        } else if (e.o?.Pe === n) {
+          l2 = true;
           handleError(t4);
           settleAutodispose();
         }
       });
       c = false;
       if (a) {
-        s = true;
+        l2 = true;
         handleError(r3);
         if (u)
           throw r3;
         return true;
       }
       if (f2 && !t3.done) {
-        i = t3.value;
-        l2 = true;
+        s = t3.value;
+        i2 = true;
         return iterate();
       }
       return f2 && t3.done;
     };
     const f = iterate();
     u = false;
-    return l2 || f;
+    return i2 || f;
   };
   let l = null;
   const flattenIfIterable = (e2, n2) => {
@@ -1539,27 +1596,27 @@ function handleAsync(e, n, t) {
     return true;
   };
   if (o) {
-    let t2 = false, r2 = false, o2, l2 = true;
+    let t2 = false, r2 = false, o2, i2 = true;
     const registerDeferredClose = (n2) => {
-      if (!e.Ge)
-        e.Ge = n2;
-      else if (Array.isArray(e.Ge))
-        e.Ge.push(n2);
+      if (!e.we)
+        e.we = n2;
+      else if (Array.isArray(e.we))
+        e.we.push(n2);
       else
-        e.Ge = [e.Ge, n2];
+        e.we = [e.we, n2];
     };
     n.then((r3) => {
-      if (l2) {
-        i = r3;
+      if (i2) {
+        s = r3;
         t2 = true;
-      } else if (e.o?.Ie === n && !(e.ie & REACTIVE_DISPOSED) && flattenIfIterable(r3, registerDeferredClose))
+      } else if (e.o?.Pe === n && !(e.ie & REACTIVE_DISPOSED) && flattenIfIterable(r3, registerDeferredClose))
         ;
       else {
         asyncWrite(r3);
         settleAutodispose();
       }
     }, (e2) => {
-      if (l2) {
+      if (i2) {
         o2 = e2;
         r2 = true;
       } else {
@@ -1567,48 +1624,48 @@ function handleAsync(e, n, t) {
         settleAutodispose();
       }
     });
-    l2 = false;
+    i2 = false;
     if (r2) {
       handleError(o2);
       throw o2;
     } else if (!t2) {
-      if (e.Ne)
-        return e.be;
+      if (e.Ae)
+        return e.me;
       globalQueue.initTransition(resolveTransition(e));
       throw new NotReadyError(context);
-    } else if (!flattenIfIterable(i)) {
-      e.Ne = false;
+    } else if (!flattenIfIterable(s)) {
+      e.Ae = false;
     }
   }
   if (r)
     flattenIfIterable(n);
   if (l !== null) {
     if (!l) {
-      if (e.Ne)
-        return e.be;
+      if (e.Ae)
+        return e.me;
       globalQueue.initTransition(resolveTransition(e));
       throw new NotReadyError(context);
     }
-    e.Ne = false;
+    e.Ae = false;
   }
-  return i;
+  return s;
 }
 function clearStatus(e, n = false) {
   if (e.o?.le)
     clearPendingSources(e);
-  if (e.o?.fe) {
+  if (e.o?.de) {
     if (e.o !== null)
-      e.o.fe = false;
+      e.o.de = false;
   }
   if (e.o !== null)
-    e.o.De = false;
+    e.o.Ue = false;
   e.S = n ? 0 : e.S & STATUS_UNINITIALIZED;
   if (e.o?._)
     setPendingError(e);
-  if (e.o?.ye || e.o?.Ce)
-    GlobalQueue.de(e);
-  if (e.o?.i && e.T & CONFIG_CHILD_COMPANIONS && GlobalQueue.me !== null)
-    GlobalQueue.me(e);
+  if (e.o?.Le || e.o?.Qe)
+    GlobalQueue.Ne(e);
+  if (e.o?.i && e.T & CONFIG_CHILD_COMPANIONS && GlobalQueue.ke !== null)
+    GlobalQueue.ke(e);
   const t = statusNotifierOf(e);
   if (t)
     t.call(e);
@@ -1617,12 +1674,14 @@ function notifyStatus(e, n, t, r, o) {
   if (n === STATUS_ERROR && !(t instanceof StatusError) && !(t instanceof NotReadyError))
     t = new StatusError(e, t);
   const i = n === STATUS_PENDING && t instanceof NotReadyError ? t.source : undefined;
-  const l = i === e;
-  const s = n === STATUS_PENDING && e.o?.Pe !== undefined && !l;
-  const u = s && hasActiveOverride(e);
+  const s = i === e;
+  const l = n === STATUS_PENDING && e.o?.be !== undefined && !s;
+  const u = l && hasActiveOverride(e);
   if (!r) {
     if (n === STATUS_PENDING && i) {
       addPendingSource(e, i);
+      if (!(e.S & STATUS_PENDING))
+        e.T &= ~CONFIG_INPUTS_PUBLISHED;
       e.S = STATUS_PENDING | e.S & STATUS_UNINITIALIZED;
       setPendingError(e, i, t);
     } else {
@@ -1630,15 +1689,15 @@ function notifyStatus(e, n, t, r, o) {
       e.S = n | (n !== STATUS_ERROR ? e.S & STATUS_UNINITIALIZED : 0);
       ext(e)._ = t;
     }
-    GlobalQueue.de?.(e);
-    if (e.o?.i && e.T & CONFIG_CHILD_COMPANIONS && GlobalQueue.me !== null)
-      GlobalQueue.me(e);
+    GlobalQueue.Ne?.(e);
+    if (e.o?.i && e.T & CONFIG_CHILD_COMPANIONS && GlobalQueue.ke !== null)
+      GlobalQueue.ke(e);
   }
   if (o && !r) {
     assignOrMergeLane(e, o);
   }
   const f = r || u;
-  const a = r || s ? undefined : o;
+  const a = r || l ? undefined : o;
   const c = statusNotifierOf(e);
   if (c) {
     if (r && n === STATUS_PENDING) {
@@ -1652,23 +1711,30 @@ function notifyStatus(e, n, t, r, o) {
     return;
   }
   forEachDependent(e, (e2, r2) => {
-    e2.Te = clock;
+    e2._e = clock;
     if (n === STATUS_PENDING && i && !e2.o?.le?.has(i) || n !== STATUS_PENDING && (e2.o?._ !== t || e2.o?.le)) {
-      if (r2.ve && n !== STATUS_PENDING && !(t instanceof NotReadyError)) {
+      if (r2.je && n !== STATUS_PENDING && !(t instanceof NotReadyError)) {
         enqueueSub(e2);
         schedule();
         return;
       }
-      if (!f && !e2.Ae)
+      if (!f && !e2.ge)
         queuePendingNode(e2);
       notifyStatus(e2, n, t, f, a);
     }
   });
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/core.js
-GlobalQueue.Fe = recompute;
-GlobalQueue.He = disposeChildren;
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/core.js
+GlobalQueue.Fe = (e) => {
+  if (e.Ce === EFFECT_TRACKED) {
+    deleteFromHeap(e, queueFor(e));
+    e.He = true;
+    e.C.enqueue(EFFECT_USER, e.Ve);
+  } else
+    recompute(e);
+};
+GlobalQueue.We = disposeChildren;
 var tracking = false;
 function setLatestReadActive(e) {
   latestReadActive = e;
@@ -1682,178 +1748,199 @@ var snapshotCaptureActive = false;
 var snapshotSources = null;
 function ownerInSnapshotScope(e) {
   while (e) {
-    if (e.Ve)
+    if (e.Me)
       return true;
-    e = e.ke;
+    e = e.qe;
   }
   return false;
 }
 function recompute(e, t = false) {
   bumpNotifyEpoch();
-  const n = e.ge;
+  const n = e.Ce;
   if (!t) {
-    if (e.Ae && (!n || activeTransition) && activeTransition !== e.Ae)
-      globalQueue.initTransition(e.Ae);
+    if (e.ge && (!n || activeTransition) && activeTransition !== e.ge)
+      globalQueue.initTransition(e.ge);
     deleteFromHeap(e, queueFor(e));
     if (e.o !== null) {
-      e.o.Ie = null;
+      e.o.Pe = null;
       releaseFlightTeardown(e);
     }
-    if (e.Ae || n === EFFECT_TRACKED)
+    if (e.ge || n === EFFECT_TRACKED)
       disposeChildren(e);
-    else if (e.xe !== null || e.Ge !== null) {
+    else if (e.Ye !== null || e.we !== null) {
       markDisposal(e);
       const t2 = ext(e);
-      t2.qe = e.Ge;
-      t2.Ye = e.xe;
-      e.Ge = null;
-      e.xe = null;
-      e.Ze = 0;
+      t2.Je = e.we;
+      t2.Xe = e.Ye;
+      e.we = null;
+      e.Ye = null;
+      e.$e = 0;
     }
   }
   let i = !!(e.ie & REACTIVE_OPTIMISTIC_DIRTY);
-  const u = (e.T & CONFIG_OPTIMISTIC) !== 0 && e.o?.Pe !== NOT_PENDING && e.o?.Pe !== undefined;
-  const l = !!(e.S & STATUS_UNINITIALIZED);
+  const l = (e.T & CONFIG_OPTIMISTIC) !== 0 && e.o?.be !== NOT_PENDING && e.o?.be !== undefined;
+  const u = !!(e.S & STATUS_UNINITIALIZED);
   const o = e.S & STATUS_ERROR ? e.o?._ : undefined;
-  const s = e.o?.le?.has(e);
-  const a = (e.ie & REACTIVE_REASK) !== 0;
-  const r = e.Ne;
-  const c = context;
+  const s = e.S & STATUS_PENDING ? e.o?.le : undefined;
+  const a = e.o?.le?.has(e);
+  const r = (e.ie & REACTIVE_REASK) !== 0;
+  const c = e.Ae;
+  const _ = context;
   context = e;
-  e.je = null;
-  e.Ke++;
+  e.et = null;
+  e.tt++;
   e.ie = REACTIVE_RECOMPUTING_DEPS;
-  e.Te = clock;
-  let _ = e.Re === NOT_PENDING ? e.be : e.Re;
-  let f = e.Me;
+  e._e = clock;
+  let f = e.Ge === NOT_PENDING ? e.me : e.Ge;
+  let E = e.Be;
   let I = false;
-  let E = tracking;
-  let N = currentOptimisticLane;
+  let N = tracking;
+  let T = currentOptimisticLane;
   tracking = true;
-  const T = latestReadActive;
+  const d = latestReadActive;
   latestReadActive = false;
   if (i) {
-    const t2 = GlobalQueue.Be(e, true);
+    const t2 = GlobalQueue.nt(e, true);
     if (t2)
       currentOptimisticLane = t2;
     else if (t2 === false)
       i = false;
-  } else if (activeTransition && !t && activeTransition.ze.length) {
-    const t2 = GlobalQueue.Be(e, false);
+  } else if (activeTransition && !t && activeTransition.it.length) {
+    const t2 = GlobalQueue.nt(e, false);
     if (t2) {
       i = true;
       currentOptimisticLane = t2;
     }
   }
   const S = n && n !== EFFECT_USER;
-  const d = stale;
+  const A = stale;
   if (S)
     stale = true;
+  if (n && activeTransition !== null && activeTransition.lt.size)
+    activeTransition.lt.delete(e);
   try {
     if (e.T & CONFIG_SYNC) {
-      _ = e.oe(_);
+      f = e.oe(f);
       if (e.o !== null)
-        e.o.Ie = null;
-      e.Ne = false;
+        e.o.Pe = null;
+      e.Ae = false;
     } else {
-      const t2 = e.o?.Ie;
-      const n2 = e.oe(_);
+      const t2 = e.o?.Pe;
+      const n2 = e.oe(f);
       const i2 = typeof n2 === "object" && n2 !== null;
-      const u2 = e.o?.Ie !== t2;
-      _ = u2 || !i2 ? n2 : handleAsync(e, n2);
-      if (!u2 && !i2) {
+      const l2 = e.o?.Pe !== t2;
+      f = l2 || !i2 ? n2 : handleAsync(e, n2);
+      if (!l2 && !i2) {
         if (e.o !== null)
-          e.o.Ie = null;
-        e.Ne = false;
+          e.o.Pe = null;
+        e.Ae = false;
       }
     }
     if (e.S !== 0 || e.o !== null)
       clearStatus(e, t);
-    if (e.T & CONFIG_HAS_LANE && e.o?.Je)
-      GlobalQueue.Xe(e);
+    if (e.T & CONFIG_HAS_LANE && e.o?.Oe)
+      GlobalQueue.ut(e);
   } catch (t2) {
     const n2 = t2 instanceof NotReadyError;
-    if (n2 && e.Ne) {
+    if (n2 && e.Ae) {
       parkLoadingWindow(e, t2);
     } else {
       if (n2 && currentOptimisticLane)
-        GlobalQueue.$e(e);
+        GlobalQueue.ot(e);
       let i2 = false;
       if (n2) {
-        ext(e).fe = true;
-        if (GlobalQueue.et !== null)
-          i2 = GlobalQueue.et(e, a);
+        ext(e).de = true;
+        if (GlobalQueue.st !== null)
+          i2 = GlobalQueue.st(e, r);
       }
-      notifyStatus(e, n2 ? STATUS_PENDING : STATUS_ERROR, t2, undefined, n2 ? e.o?.Je : undefined);
-      if (n2 && s && !e.o?.Ie)
+      notifyStatus(e, n2 ? STATUS_PENDING : STATUS_ERROR, t2, undefined, n2 ? e.o?.Oe : undefined);
+      if (n2 && a && !e.o?.Pe)
         settlePendingSource(e);
       if (i2)
         GlobalQueue.k(e);
     }
   } finally {
-    tracking = E;
-    latestReadActive = T;
+    tracking = N;
+    latestReadActive = d;
     if (S)
-      stale = d;
+      stale = A;
     I = (e.ie & REACTIVE_MISSED_WAKE) !== 0;
     e.ie = REACTIVE_NONE | (t ? e.ie & REACTIVE_SNAPSHOT_STALE : 0);
-    context = c;
+    context = _;
   }
   if (!e.o?._) {
     trimStaleDeps(e);
-    const a2 = u ? unwrapOverride(e.o?.Pe) : e.Re === NOT_PENDING ? e.be : e.Re;
-    let c2 = false;
+    const r2 = l ? unwrapOverride(e.o?.be) : i || e.Ge === NOT_PENDING ? e.me : e.Ge;
+    let _2 = false;
     try {
-      c2 = !n && l || !e.pe || !e.pe(a2, _);
+      _2 = !n && u || !e.ve || !e.ve(r2, f);
     } catch (t2) {
       notifyStatus(e, STATUS_ERROR, t2);
     }
-    if (n && c2) {
-      e.tt = !e.o?._;
-      if (!t)
-        e.C.enqueue(n, e.nt ??= GlobalQueue.it.bind(null, e));
+    if (n && _2) {
+      e.He = !e.o?._;
+      if (!t) {
+        e.C.enqueue(n, e.rt ??= GlobalQueue.ct.bind(null, e));
+        let t2 = e._t;
+        if (t2 !== activeTransition) {
+          e._t = activeTransition;
+          if (t2 !== null && (t2 = currentTransition(t2)) !== activeTransition && !t2.ft) {
+            (t2.Et ??= []).push(e);
+            if (activeTransition !== null)
+              (activeTransition.Et ??= []).push(e);
+          }
+        }
+      }
     }
     if (e.o?._)
       ;
-    else if (c2) {
-      const l2 = u ? e.o?.Pe : undefined;
-      if (t || n && (activeTransition !== e.Ae || activeTransition === null || e.T & CONFIG_DIRECT_COMMIT) || i) {
-        e.be = _;
-        if (u && i) {
-          ext(e).Pe = _ === undefined ? OVERRIDE_UNDEFINED : _;
-          e.Re = NOT_PENDING;
+    else if (_2) {
+      const u2 = l ? e.o?.be : undefined;
+      if (t || n && (activeTransition !== e.ge || activeTransition === null || e.T & CONFIG_DIRECT_COMMIT) || i) {
+        e.me = f;
+        if (l && i) {
+          ext(e).be = f === undefined ? OVERRIDE_UNDEFINED : f;
+          e.Ge = NOT_PENDING;
         }
       } else {
-        e.Re = _;
-        if (r)
-          e.Ne = true;
-        if ((activeTransition || e.Ae) && GlobalQueue.Ue !== null)
-          GlobalQueue.Ue(e, _);
+        e.Ge = f;
+        if (c)
+          e.Ae = true;
+        if ((activeTransition || e.ge) && GlobalQueue.pe !== null)
+          GlobalQueue.pe(e, f);
       }
-      if (e.u !== null && (!u || i || e.o?.Pe !== l2))
-        insertSubs(e, i || u);
-    } else if (u) {
-      if (e.Re === NOT_PENDING)
+      if (e.u !== null && (!l || i || e.o?.be !== u2))
+        insertSubs(e, i || l);
+      else if (l && !i && e.o.It !== clock)
+        GlobalQueue.ye(e, f);
+    } else if (l) {
+      if (e.Ge === NOT_PENDING)
         queuePendingNode(e);
-      e.Re = _;
-      if (r)
-        e.Ne = true;
-      if (e.T & CONFIG_AUTHORITATIVE_OBSERVED)
-        GlobalQueue.he(e);
-    } else if (e.Me != f) {
-      for (let t2 = e.u;t2 !== null; t2 = t2.ae) {
-        insertIntoHeapHeight(t2.ce, queueFor(t2.ce));
+      e.Ge = f;
+      if (c)
+        e.Ae = true;
+      GlobalQueue.ye(e, f);
+    } else if (e.Be != E) {
+      for (let t2 = e.u;t2 !== null; t2 = t2.Te) {
+        insertIntoHeapHeight(t2.Ie, queueFor(t2.Ie));
       }
     }
-    if (o !== undefined && !c2 && !e.o?._)
-      settleErroredDependents(e, o);
-    if (s && !(e.S & (STATUS_PENDING | STATUS_UNINITIALIZED)))
+    if (!_2 && !e.o?._) {
+      if (o !== undefined)
+        settleErroredDependents(e, o);
+      if (s) {
+        for (const t2 of s)
+          if (t2 !== e)
+            settlePendingSource(e, t2);
+      }
+    }
+    if (a && !(e.S & (STATUS_PENDING | STATUS_UNINITIALIZED)))
       settlePendingSource(e);
   }
-  currentOptimisticLane = N;
-  const A = e.Re !== NOT_PENDING || e.o !== null && (e.o.Ye !== null || e.o.qe !== null) || (e.S & (STATUS_PENDING | STATUS_UNINITIALIZED)) !== 0;
-  A && (!t || e.S & STATUS_PENDING) && (!e.Ae || u) && queuePendingNode(e);
-  e.Ae && n && activeTransition !== e.Ae && runInTransition(e.Ae, () => recompute(e));
+  currentOptimisticLane = T;
+  const C = e.Ge !== NOT_PENDING || e.o !== null && (e.o.Xe !== null || e.o.Je !== null) || (e.S & (STATUS_PENDING | STATUS_UNINITIALIZED)) !== 0;
+  C && (!t || e.S & STATUS_PENDING) && (!e.ge || l) && queuePendingNode(e);
+  e.ge && n && activeTransition !== e.ge && runInTransition(e.ge, () => recompute(e));
   if (I) {
     enqueueSub(e);
     schedule();
@@ -1863,9 +1950,9 @@ function updateIfNecessary(e) {
   if (e.ie & (REACTIVE_RECOMPUTING_DEPS | REACTIVE_DISPOSED))
     return;
   if (e.ie & REACTIVE_CHECK) {
-    for (let t = e.ut;t; t = t.lt) {
-      const n = t.ot;
-      const i = n.st || n;
+    for (let t = e.fe;t; t = t.ae) {
+      const n = t.Se;
+      const i = n.ce || n;
       if (i.oe) {
         updateIfNecessary(i);
       }
@@ -1874,7 +1961,7 @@ function updateIfNecessary(e) {
       }
     }
   }
-  if (e.ie & (REACTIVE_DIRTY | REACTIVE_OPTIMISTIC_DIRTY) || e.o?._ && e.Te < clock && !e.o?.Ie) {
+  if (e.ie & (REACTIVE_DIRTY | REACTIVE_OPTIMISTIC_DIRTY) || e.o?._ && e._e < clock && !e.o?.Pe) {
     recompute(e);
   }
   e.ie = e.ie & (REACTIVE_SNAPSHOT_STALE | REACTIVE_IN_HEAP | REACTIVE_IN_HEAP_HEIGHT);
@@ -1882,107 +1969,110 @@ function updateIfNecessary(e) {
 function computed(e, t) {
   const n = t?.transparent ?? false;
   const i = t !== null && typeof t === "object" && "loadingValue" in t;
-  const u = {
+  const l = {
     id: inheritId(t, n, context),
     T: (n ? CONFIG_TRANSPARENT : 0) | (t?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (!context || t?.lazy ? CONFIG_AUTO_DISPOSE : 0) | (t?.sync ? CONFIG_SYNC : 0) | (t?.H ? CONFIG_NO_SNAPSHOT : 0) | (snapshotCaptureActive && ownerInSnapshotScope(context) ? CONFIG_IN_SNAPSHOT_SCOPE : 0),
-    pe: t?.equals ?? isEqual,
-    Ge: null,
+    ve: t?.equals ?? isEqual,
+    we: null,
     C: context?.C ?? globalQueue,
-    we: context?.we ?? defaultContext,
-    Ze: 0,
+    xe: context?.xe ?? defaultContext,
+    $e: 0,
     oe: e,
-    be: i ? t.loadingValue : undefined,
-    Me: 0,
-    rt: undefined,
-    ct: null,
-    ut: null,
-    je: null,
-    Ke: 0,
+    me: i ? t.loadingValue : undefined,
+    Be: 0,
+    Nt: undefined,
+    Tt: null,
+    fe: null,
+    et: null,
+    tt: 0,
     u: null,
-    _t: null,
-    ke: context,
-    Le: null,
-    ft: null,
-    xe: null,
+    dt: null,
+    qe: context,
+    Ze: null,
+    St: null,
+    Ye: null,
     ie: t?.lazy ? REACTIVE_LAZY : REACTIVE_NONE,
     S: i ? 0 : STATUS_UNINITIALIZED,
-    Te: clock,
-    Re: NOT_PENDING,
-    Ae: null,
-    It: -1,
-    Ne: i,
+    _e: clock,
+    Ge: NOT_PENDING,
+    ge: null,
+    At: -1,
+    Ae: i,
     o: null
   };
   if (t?.unobserved)
-    ext(u).Et = t.unobserved;
-  setupComputedNode(u, t);
-  return u;
+    ext(l).Ct = t.unobserved;
+  setupComputedNode(l, t);
+  return l;
 }
 function ext(e) {
   return e.o ??= {
-    Pe: undefined,
-    Nt: undefined,
-    Je: undefined,
-    ye: undefined,
-    Ce: undefined,
-    Tt: undefined,
+    be: undefined,
+    Ot: undefined,
+    It: 0,
+    Rt: 0,
+    Oe: undefined,
+    Le: undefined,
+    Qe: undefined,
+    Gt: undefined,
     t: 0,
-    Ie: null,
-    Ee: null,
+    Pe: null,
+    De: null,
     _: undefined,
-    fe: undefined,
+    de: undefined,
     le: undefined,
     h: undefined,
-    De: false,
+    Ue: false,
     i: null,
-    Et: undefined,
-    We: undefined,
-    qe: null,
-    Ye: null,
-    St: undefined
+    Ct: undefined,
+    ze: undefined,
+    Je: null,
+    Xe: null,
+    Dt: undefined
   };
 }
-function createEffectNode(e, t, n, i, u) {
-  const l = u?.transparent ?? false;
+function createEffectNode(e, t, n, i, l) {
+  const u = l?.transparent ?? false;
   const o = {
-    id: inheritId(u, l, context),
-    T: (l ? CONFIG_TRANSPARENT : 0) | (u?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (u?.sync ? CONFIG_SYNC : 0) | (u?.dt ?? 0) | (snapshotCaptureActive && ownerInSnapshotScope(context) ? CONFIG_IN_SNAPSHOT_SCOPE : 0),
-    pe: false,
-    Ge: null,
+    id: inheritId(l, u, context),
+    T: (u ? CONFIG_TRANSPARENT : 0) | (l?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (l?.sync ? CONFIG_SYNC : 0) | (l?.Pt ?? 0) | (snapshotCaptureActive && ownerInSnapshotScope(context) ? CONFIG_IN_SNAPSHOT_SCOPE : 0),
+    ve: false,
+    we: null,
     C: context?.C ?? globalQueue,
-    we: context?.we ?? defaultContext,
-    Ze: 0,
+    xe: context?.xe ?? defaultContext,
+    $e: 0,
     oe: e,
-    be: undefined,
-    Me: 0,
-    rt: undefined,
-    ct: null,
-    ut: null,
-    je: null,
-    Ke: 0,
+    me: undefined,
+    Be: 0,
+    Nt: undefined,
+    Tt: null,
+    fe: null,
+    et: null,
+    tt: 0,
     u: null,
-    _t: null,
-    ke: context,
-    Le: null,
-    ft: null,
-    xe: null,
+    dt: null,
+    qe: context,
+    Ze: null,
+    St: null,
+    Ye: null,
     ie: REACTIVE_LAZY,
     S: STATUS_UNINITIALIZED,
-    Te: clock,
-    Re: NOT_PENDING,
-    Ae: null,
-    It: -1,
-    Ne: false,
-    tt: false,
-    At: undefined,
-    Ot: t,
-    Ct: n,
-    Rt: undefined,
-    ge: i,
+    _e: clock,
+    Ge: NOT_PENDING,
+    ge: null,
+    At: -1,
+    Ae: false,
+    He: false,
+    Ft: undefined,
+    ht: t,
+    vt: n,
+    Ht: undefined,
+    Ce: i,
+    _t: null,
     o: null
   };
-  if (u?.unobserved)
-    ext(o).Et = u.unobserved;
+  if (l?.unobserved)
+    ext(o).Ct = l.unobserved;
   setupComputedNode(o, lazyOptions);
   return o;
 }
@@ -1994,32 +2084,32 @@ function statusNotifierOf(e) {
   const t = e.o?.h;
   if (t !== undefined)
     return t;
-  return e.ge ? effectStatusNotify ?? undefined : undefined;
+  return e.Ce ? effectStatusNotify ?? undefined : undefined;
 }
 var lazyOptions = {
   lazy: true
 };
 function setupComputedNode(e, t) {
-  e.ct = e;
-  const n = context?.Gt ? context.Dt : context;
+  e.Tt = e;
+  const n = context?.gt ? context.bt : context;
   if (context) {
-    const t2 = context.xe;
+    const t2 = context.Ye;
     if (t2 === null) {
-      context.xe = e;
+      context.Ye = e;
     } else {
-      e.Le = t2;
-      t2.ft = e;
-      context.xe = e;
+      e.Ze = t2;
+      t2.St = e;
+      context.Ye = e;
     }
   }
   if (n)
-    e.Me = n.Me + 1;
-  if (GlobalQueue.Pt !== null)
-    GlobalQueue.Pt(e);
+    e.Be = n.Be + 1;
+  if (GlobalQueue.kt !== null)
+    GlobalQueue.kt(e);
   !t?.lazy && recompute(e, true);
   if (snapshotCaptureActive && !t?.lazy) {
     if (!(e.S & STATUS_PENDING) && !(e.T & CONFIG_NO_SNAPSHOT)) {
-      ext(e).We = e.be === undefined ? NO_SNAPSHOT : e.be;
+      ext(e).ze = e.me === undefined ? NO_SNAPSHOT : e.me;
       e.T |= CONFIG_HAS_SNAPSHOT;
       snapshotSources.add(e);
     }
@@ -2027,43 +2117,98 @@ function setupComputedNode(e, t) {
 }
 function signal(e, t, n = null) {
   const i = {
-    pe: t?.equals ?? isEqual,
+    ve: t?.equals ?? isEqual,
     T: (t?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (t?.H ? CONFIG_NO_SNAPSHOT : 0),
-    be: e,
+    me: e,
     u: null,
-    _t: null,
-    Te: clock,
-    st: n,
-    Se: n?.o?.i || null,
-    Re: NOT_PENDING,
-    Ae: null,
-    It: -1,
+    dt: null,
+    _e: clock,
+    ce: n,
+    Ee: n?.o?.i || null,
+    Vt: null,
+    Ge: NOT_PENDING,
+    ge: null,
+    At: -1,
     o: null
   };
   if (t?.unobserved)
-    ext(i).Et = t.unobserved;
-  if (n) {
-    ext(n).i = i;
-    n.T |= CONFIG_FW_CHILDREN;
-  }
+    ext(i).Ct = t.unobserved;
+  if (n)
+    linkFirewallChild(n, i);
   if (snapshotCaptureActive && !(i.T & CONFIG_NO_SNAPSHOT) && !((n?.S ?? 0) & STATUS_PENDING)) {
-    ext(i).We = e === undefined ? NO_SNAPSHOT : e;
+    ext(i).ze = e === undefined ? NO_SNAPSHOT : e;
     i.T |= CONFIG_HAS_SNAPSHOT;
     snapshotSources.add(i);
   }
   return i;
 }
+var slotUnobservedHook;
+function setSlotUnobserved(e) {
+  slotUnobservedHook = e;
+}
+function linkFirewallChild(e, t) {
+  const n = t.Ee;
+  if (n !== null)
+    n.Vt = t;
+  ext(e).i = t;
+  e.T |= CONFIG_FW_CHILDREN;
+}
+function unlinkFirewallChild(e) {
+  const t = e;
+  const n = t.ce;
+  if (!n)
+    return;
+  const i = t.Vt;
+  const l = t.Ee;
+  if (i !== null)
+    i.Ee = l;
+  else if (n.o.i === t)
+    n.o.i = l;
+  if (l !== null)
+    l.Vt = i;
+  t.Vt = null;
+}
+function slotSignal(e, t, n, i, l, u = null) {
+  const o = {
+    ve: t,
+    T: CONFIG_OWNED_WRITE | CONFIG_SLOT_NODE,
+    me: e,
+    u: null,
+    dt: null,
+    _e: clock,
+    ce: u,
+    Ee: u?.o?.i || null,
+    Vt: null,
+    Ge: NOT_PENDING,
+    ge: null,
+    At: -1,
+    o: null,
+    Ut: n,
+    xt: i,
+    acc: l,
+    px: undefined,
+    pxv: undefined
+  };
+  if (u)
+    linkFirewallChild(u, o);
+  if (snapshotCaptureActive && !((u?.S ?? 0) & STATUS_PENDING)) {
+    ext(o).ze = e === undefined ? NO_SNAPSHOT : e;
+    o.T |= CONFIG_HAS_SNAPSHOT;
+    snapshotSources.add(o);
+  }
+  return o;
+}
 function isEqual(e, t) {
   return e === t;
 }
 function untrack(e, t) {
-  if (GlobalQueue.ht === null && !tracking && true)
+  if (GlobalQueue.Lt === null && !tracking && true)
     return e();
   const n = tracking;
   tracking = false;
   try {
-    if (GlobalQueue.ht !== null)
-      return GlobalQueue.ht(e);
+    if (GlobalQueue.Lt !== null)
+      return GlobalQueue.Lt(e);
     return e();
   } finally {
     tracking = n;
@@ -2081,119 +2226,133 @@ function prepareComputed(e, t) {
   }
 }
 var READ_SLOW = Symbol("read-slow");
+function heldFromStale(e, t) {
+  const n = e.ge;
+  if (n === null || n === activeTransition)
+    return false;
+  const i = currentTransition(n);
+  const l = t._t;
+  if (l == null || currentTransition(l) !== i)
+    i.lt.add(t);
+  return true;
+}
 function readNodeFast(e) {
-  if (latestReadActive || pendingCheckActive || e.oe || e.st || e.o?.Pe !== undefined || e.o?.We !== undefined || activeTransition !== null || currentOptimisticLane !== null || snapshotCaptureActive || false)
+  if (latestReadActive || pendingCheckActive || e.oe || e.ce || e.o?.be !== undefined || e.o?.ze !== undefined || activeTransition !== null || currentOptimisticLane !== null || snapshotCaptureActive || false)
     return READ_SLOW;
   let t = context;
-  if (t?.Gt)
-    t = t.Dt;
+  if (t?.gt)
+    t = t.bt;
   if (t && tracking)
     link(e, t);
-  return !t || e.Re === NOT_PENDING || t.T & CONFIG_CHILDREN_FORBIDDEN ? e.be : e.Re;
+  return !t || e.Ge === NOT_PENDING || t.T & CONFIG_CHILDREN_FORBIDDEN || stale && heldFromStale(e, t) ? e.me : e.Ge;
 }
 function read(e) {
   if (latestReadActive)
-    return GlobalQueue.gt(e);
+    return GlobalQueue.wt(e);
   let t = context;
-  if (t?.Gt)
-    t = t.Dt;
+  if (t?.gt)
+    t = t.bt;
   const n = e;
-  const i = e.st;
-  const u = i || e;
+  const i = e.ce;
+  const l = i || e;
   if (pendingCheckActive) {
-    GlobalQueue.Ht(e, t, u, i);
+    GlobalQueue.Wt(e, t, l, i);
   } else if (typeof n.oe === "function") {
     prepareComputed(e, false);
   }
-  if (!n.oe && u === e && e.o?.Pe === undefined && e.o?.We === undefined && activeTransition === null && currentOptimisticLane === null && !snapshotCaptureActive && true) {
+  if (!n.oe && l === e && e.o?.be === undefined && e.o?.ze === undefined && activeTransition === null && currentOptimisticLane === null && !snapshotCaptureActive && true) {
     if (t && tracking)
       link(e, t);
-    return !t || e.Re === NOT_PENDING || t.T & CONFIG_CHILDREN_FORBIDDEN ? e.be : e.Re;
+    return !t || e.Ge === NOT_PENDING || t.T & CONFIG_CHILDREN_FORBIDDEN || stale && heldFromStale(e, t) ? e.me : e.Ge;
   }
   if (t && tracking) {
     link(e, t, pendingCheckActive);
-    if (u.oe) {
+    if (l.oe) {
       const n2 = queueFor(e);
-      if (u.Me >= n2.Qe) {
+      if (l.Be >= n2.Ke) {
         markNode(t);
         markHeap(n2);
-        updateIfNecessary(u);
+        updateIfNecessary(l);
       } else if (t.T & CONFIG_FRESH_READ)
-        updateIfNecessary(u);
-      const i2 = u.Me;
-      if (i2 >= t.Me && e.ke !== t) {
-        t.Me = i2 + 1;
+        updateIfNecessary(l);
+      const i2 = l.Be;
+      if (i2 >= t.Be && e.qe !== t) {
+        t.Be = i2 + 1;
       }
     }
   }
-  if (u.S & STATUS_PENDING) {
-    if (t && !(stale && u.Ae && activeTransition !== u.Ae)) {
-      if (currentOptimisticLane === null || GlobalQueue.Vt(u)) {
+  if (l.S & STATUS_PENDING) {
+    if (t && !(stale && !(l.S & STATUS_UNINITIALIZED) && !(l.T & CONFIG_INPUTS_PUBLISHED) && !(l.T & CONFIG_HAS_LANE && GlobalQueue.Mt(l)) && heldFromStale(l, t))) {
+      if (currentOptimisticLane === null || GlobalQueue.qt(l)) {
         if (!tracking && e !== t)
           link(e, t);
-        throw u.o?._;
+        throw l.o?._;
       }
-    } else if (t && u.S & STATUS_UNINITIALIZED) {
-      if (!tracking && e !== t)
-        link(e, t);
-      throw u.o?._;
-    } else if (!t && u.S & STATUS_UNINITIALIZED) {
-      throw u.o?._;
+    } else if (!t && l.S & STATUS_UNINITIALIZED) {
+      throw l.o?._;
     }
   }
-  if (u.oe && u.S & STATUS_ERROR) {
-    if (tracking && !pendingCheckActive && u.Te < clock) {
-      recompute(u);
+  if (l.oe && l.S & STATUS_ERROR) {
+    if (tracking && !pendingCheckActive && l._e < clock) {
+      recompute(l);
       return read(e);
     } else
-      throw u.o?._;
+      throw l.o?._;
   }
   if (snapshotCaptureActive && t && t.T & CONFIG_IN_SNAPSHOT_SCOPE) {
-    const n2 = e.o?.We;
+    const n2 = e.o?.ze;
     if (n2 !== undefined) {
       const i2 = n2 === NO_SNAPSHOT ? undefined : n2;
-      const u2 = e.Re !== NOT_PENDING ? e.Re : e.be;
-      if (u2 !== i2)
+      const l2 = e.Ge !== NOT_PENDING ? e.Ge : e.me;
+      if (l2 !== i2)
         t.ie |= REACTIVE_SNAPSHOT_STALE;
       return i2;
     }
   }
-  if (e.o?.Pe !== undefined && e.o?.Pe !== NOT_PENDING) {
-    if (!(t && t.T & CONFIG_AUTHORITATIVE_READ))
-      return unwrapOverride(e.o?.Pe);
+  if (e.o?.be !== undefined && e.o?.be !== NOT_PENDING) {
+    if (!(t && t.T & CONFIG_AUTHORITATIVE_READ)) {
+      if (t && e.T & CONFIG_OVERRIDE_SUPERSEDED)
+        return GlobalQueue.Yt(e);
+      return unwrapOverride(e.o?.be);
+    }
     e.T |= CONFIG_AUTHORITATIVE_OBSERVED;
   }
-  if (currentOptimisticLane !== null && activeTransition !== null && t !== null && GlobalQueue.vt(e, u, t)) {
-    return e.be;
+  if (currentOptimisticLane !== null && activeTransition !== null && t !== null && GlobalQueue.Zt(e, l, t)) {
+    return e.me;
   }
-  const l = !t || currentOptimisticLane !== null && GlobalQueue.bt(e, u, t) || e.Re === NOT_PENDING || t.T & CONFIG_CHILDREN_FORBIDDEN || stale && e.Ae && activeTransition !== e.Ae || e.T & CONFIG_HELD_TRUTH && !latestReadActive && !(t.T & CONFIG_AUTHORITATIVE_READ) ? e.be : e.Re;
+  const u = !t || currentOptimisticLane !== null && GlobalQueue.Kt(e, l, t) || e.Ge === NOT_PENDING || t.T & CONFIG_CHILDREN_FORBIDDEN || stale && heldFromStale(e, t) || e.T & CONFIG_HELD_TRUTH && !latestReadActive && !(t.T & CONFIG_AUTHORITATIVE_READ) ? e.me : e.Ge;
   if (pendingCheckActive)
-    GlobalQueue.kt(e, l);
-  if (!t && u === e && typeof n.oe === "function" && e.T & CONFIG_AUTO_DISPOSE && !(u.S & STATUS_PENDING) && !e.u) {
+    GlobalQueue.jt(e, u);
+  if (!t && l === e && typeof n.oe === "function" && e.T & CONFIG_AUTO_DISPOSE && !(l.S & STATUS_PENDING) && !e.u) {
     dormantNodes.add(e);
     schedule();
   }
-  return l;
+  return u;
 }
 function setSignal(e, t) {
-  if (e.Ae && activeTransition !== e.Ae)
-    globalQueue.initTransition(e.Ae);
-  if (e.T & CONFIG_OPTIMISTIC && !projectionWriteActive)
-    return GlobalQueue.xt(e, t);
-  const n = e.Re === NOT_PENDING ? e.be : e.Re;
+  if (e.ge && activeTransition !== e.ge)
+    globalQueue.initTransition(e.ge);
+  if (e.T & CONFIG_OPTIMISTIC) {
+    if (!projectionWriteActive)
+      return GlobalQueue.Bt(e, t);
+    const n2 = e.o?.be;
+    if (n2 !== undefined && n2 !== NOT_PENDING)
+      return GlobalQueue.zt(e, t);
+  }
+  const n = e.Ge === NOT_PENDING ? e.me : e.Ge;
   if (typeof t === "function")
     t = t(n);
-  const i = !!(e.S & STATUS_UNINITIALIZED) || !e.pe || !e.pe(n, t);
+  const i = !!(e.S & STATUS_UNINITIALIZED) || !e.ve || !e.ve(n, t);
   if (!i)
     return t;
-  const u = e.Re !== NOT_PENDING;
-  if (!u)
+  const l = e.Ge !== NOT_PENDING;
+  if (!l)
     queuePendingNode(e);
-  e.Re = t;
-  e.T & CONFIG_HAS_COMPANIONS && GlobalQueue.Ue !== null && GlobalQueue.Ue(e, t);
+  e.Ge = t;
+  e.T & CONFIG_HAS_COMPANIONS && GlobalQueue.pe !== null && GlobalQueue.pe(e, t);
   if (e.oe !== undefined)
-    e.Te = clock;
-  if (u && e.It === notifyEpoch && currentOptimisticLane === null && !reaskArmed)
+    e._e = clock;
+  if (l && e.At === notifyEpoch && currentOptimisticLane === null && !reaskArmed)
     return t;
   insertSubs(e);
   schedule();
@@ -2201,12 +2360,12 @@ function setSignal(e, t) {
 }
 function suppressComputedRecompute(e) {
   deleteFromHeap(e, queueFor(e));
-  if (!(e.ie & REACTIVE_MANUAL_WRITE) && e.Re === NOT_PENDING) {
+  if (!(e.ie & REACTIVE_MANUAL_WRITE) && e.Ge === NOT_PENDING) {
     queuePendingNode(e);
     schedule();
   }
   e.ie = e.ie & -4 | REACTIVE_MANUAL_WRITE;
-  e.Ut = clock;
+  e.Jt = clock;
 }
 function setMemo(e, t) {
   const n = setSignal(e, t);
@@ -2234,7 +2393,7 @@ function staleValues(e, t = true) {
     stale = n;
   }
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/context.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/context.js
 function createContext(e, t) {
   return {
     id: Symbol(t),
@@ -2245,65 +2404,65 @@ function getContext(e, t = getOwner()) {
   if (!t) {
     throw new NoOwnerError;
   }
-  const n = hasContext(e, t) ? t.we[e.id] : e.defaultValue;
-  if (isUndefined(n)) {
+  let r = t.xe[e.id];
+  if (r === undefined)
+    r = e.defaultValue;
+  if (r === undefined) {
     throw new ContextNotFoundError;
   }
-  return n;
+  return r;
 }
-function setContext(e, t, n = getOwner()) {
-  if (!n) {
+function setContext(e, t, r = getOwner()) {
+  if (!r) {
     throw new NoOwnerError;
   }
-  n.we = {
-    ...n.we,
-    [e.id]: isUndefined(t) ? e.defaultValue : t
+  r.xe = {
+    ...r.xe,
+    [e.id]: t === undefined ? e.defaultValue : t
   };
 }
-function hasContext(e, t) {
-  return !isUndefined(t?.we[e.id]);
-}
-function isUndefined(e) {
-  return typeof e === "undefined";
-}
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/core/effect.js
-function effect(t, e, E, f) {
-  const r = !!f?.user;
-  const R = createEffectNode(t, e, E, r ? EFFECT_USER : EFFECT_RENDER, f);
-  recompute(R, true);
-  !f?.defer && (R.ge === EFFECT_USER || f?.schedule ? R.C.enqueue(R.ge, runEffect.bind(null, R)) : runEffect(R));
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/core/effect.js
+function effect(t, e, E, r) {
+  const n = !!r?.user;
+  const f = createEffectNode(t, e, E, n ? EFFECT_USER : EFFECT_RENDER, r);
+  recompute(f, true);
+  !r?.defer && (f.Ce === EFFECT_USER || r?.schedule ? f.C.enqueue(f.Ce, runEffect.bind(null, f)) : runEffect(f, LANE_RUN));
 }
 function notifyEffectStatus(t, e) {
   const E = t !== undefined ? t : this.S;
-  const f = e !== undefined ? e : this.o?._;
+  const r = e !== undefined ? e : this.o?._;
   if (E & STATUS_ERROR) {
     this.C.notify(this, STATUS_PENDING, 0);
-    if (this.ge === EFFECT_USER) {
+    if (this.Ce === EFFECT_USER) {
       if (this.S & STATUS_ERROR) {
-        this.tt = true;
-        this.C.enqueue(this.ge, this.nt ??= runEffect.bind(null, this));
+        this.He = true;
+        this.C.enqueue(this.Ce, this.rt ??= runEffect.bind(null, this));
       }
       return;
     }
     if (!this.C.notify(this, STATUS_ERROR, STATUS_ERROR)) {
-      haltReactivity(unwrapStatusError(f));
-      throw f;
+      haltReactivity(unwrapStatusError(r));
+      throw r;
     }
-  } else if (this.ge === EFFECT_RENDER) {
-    this.C.notify(this, STATUS_PENDING | STATUS_ERROR, E, f);
+  } else if (this.Ce === EFFECT_RENDER) {
+    this.C.notify(this, STATUS_PENDING | STATUS_ERROR, E, r);
   }
 }
-function runEffect(t) {
-  if (!t.tt || t.ie & REACTIVE_DISPOSED)
+function runEffect(t, e) {
+  if (!t.He || t.ie & REACTIVE_DISPOSED)
     return;
-  if (t.S & STATUS_ERROR && t.ge === EFFECT_USER) {
+  if (t._t !== null && !currentTransition(t._t).ft && (e & LANE_RUN ? !t.o?.Oe : activeTransition !== null)) {
+    t.C.enqueue(t.Ce, t.rt);
+    return;
+  }
+  if (t.S & STATUS_ERROR && t.Ce === EFFECT_USER) {
     const e2 = unwrapStatusError(t.o?._);
-    t.At = t.be;
-    t.tt = false;
+    t.Ft = t.me;
+    t.He = false;
     try {
-      t.Ct ? t.Ct(e2, () => {
-        const e3 = t.Rt;
-        t.Rt = undefined;
+      t.vt ? t.vt(e2, () => {
+        const e3 = t.Ht;
+        t.Ht = undefined;
         e3?.();
       }) : console.error(e2);
     } catch (e3) {
@@ -2314,14 +2473,14 @@ function runEffect(t) {
     }
     return;
   }
-  const e = t.Rt;
-  t.Rt = undefined;
+  const E = t.Ht;
+  t.Ht = undefined;
   try {
-    e?.();
-    const E = t.Ot(t.be, t.At);
+    E?.();
+    const e2 = t.ht(t.me, t.Ft);
     if (false)
       ;
-    t.Rt = E;
+    t.Ht = e2;
   } catch (e2) {
     ext(t)._ = new StatusError(t, e2);
     t.S |= STATUS_ERROR;
@@ -2330,40 +2489,41 @@ function runEffect(t) {
       throw e2;
     }
   } finally {
-    t.At = t.be;
-    t.tt = false;
+    t.Ft = t.me;
+    t.He = false;
   }
 }
-GlobalQueue.it = runEffect;
+GlobalQueue.ct = runEffect;
 function trackedEffect(t, e) {
   const run = () => {
-    if (!E.tt || E.ie & REACTIVE_DISPOSED)
+    if (!E.He || E.ie & REACTIVE_DISPOSED)
       return;
     try {
-      E.tt = false;
+      E.He = false;
       recompute(E);
     } finally {}
   };
   const E = computed(() => {
-    const e2 = E.Rt;
-    E.Rt = undefined;
+    const e2 = E.Ht;
+    E.Ht = undefined;
     e2?.();
-    const f = staleValues(t);
-    E.Rt = f;
+    const r = staleValues(t);
+    E.Ht = r;
   }, {
     ...e,
     lazy: true
   });
-  E.Rt = undefined;
+  E.Ht = undefined;
   E.T = E.T & ~CONFIG_AUTO_DISPOSE | CONFIG_CHILDREN_FORBIDDEN;
-  E.tt = true;
-  E.ge = EFFECT_TRACKED;
-  E.yt = run;
-  E.C.enqueue(EFFECT_USER, run);
+  E.He = true;
+  E.Ce = EFFECT_TRACKED;
+  E.Ve = run;
+  enqueueSub(E);
+  schedule();
 }
 setEffectStatusNotify(notifyEffectStatus);
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/signals.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/signals.js
 function onCleanup(e) {
   return cleanup(e);
 }
@@ -2393,31 +2553,35 @@ function createEffect(e, t, n) {
 function createRenderEffect(e, t, n) {
   effect(e, t, undefined, n);
 }
-function createTrackedEffect(e, t) {
-  trackedEffect(e, t);
-}
 function onSettled(e) {
   const t = getOwner();
-  t && !(t.T & CONFIG_CHILDREN_FORBIDDEN) ? createTrackedEffect(() => untrack(e), undefined) : globalQueue.enqueue(EFFECT_USER, () => {
+  t && !(t.T & CONFIG_CHILDREN_FORBIDDEN) ? trackedEffect(() => untrack(e), undefined) : globalQueue.enqueue(EFFECT_USER, () => {
     e();
   });
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/store/next/target.js
-var ownedRaw = new WeakSet;
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/store/next/target.js
+var $OWNER = Symbol(0);
 var storeNextLookup = new WeakMap;
+function isOwned(e) {
+  return e[$OWNER] !== undefined;
+}
+function lookupTarget(e, o) {
+  const t = e[$OWNER];
+  return t !== undefined && t.fam === o ? t : (o?.map ?? storeNextLookup).get(e);
+}
 function devAssertNeverUserMutation(e) {
   return;
 }
 var optHooks = null;
 function markDescendants(e) {
-  let t = e;
-  while (t && !t.d) {
-    t.d = true;
-    t = t.u;
+  let o = e;
+  while (o && !o.d) {
+    o.d = true;
+    o = o.u;
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/store/store.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/store/store.js
 var $TRACK = Symbol(0);
 var $TARGET = Symbol(0);
 var $PROXY = Symbol(0);
@@ -2492,7 +2656,7 @@ function affectsScopesLive() {
 function witnessAffectsMark(e, t) {
   const o = e[STORE_NODE]?.[$AFFECTS];
   if (o?.o?.t)
-    GlobalQueue.Wt(o);
+    GlobalQueue.ri(o);
   if (affectsScopes.size) {
     let r = e[STORE_VALUE];
     for (const [e2, s] of affectsScopes) {
@@ -2500,7 +2664,7 @@ function witnessAffectsMark(e, t) {
         let t2 = r;
         for (;; ) {
           if (s.scope.has(t2)) {
-            GlobalQueue.Wt(e2);
+            GlobalQueue.ri(e2);
             break;
           }
           const o2 = t2?.[$TARGET];
@@ -2516,11 +2680,7 @@ function witnessAffectsMark(e, t) {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/store/next/patch-hooks.js
-var patchHooks = null;
-var rowHooks = null;
-
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/store/next/store.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/store/next/store.js
 function TargetShape() {
   this.v = undefined;
   this.ch = undefined;
@@ -2535,27 +2695,18 @@ function TargetShape() {
   this.d = undefined;
   this.a = undefined;
   this.sc = undefined;
+  this.kc = undefined;
   this.nc = undefined;
-  this.adopted = undefined;
+  this.ab = undefined;
   this.fam = undefined;
   this.s = undefined;
   this.ovl = undefined;
   this.del = undefined;
-  this.pc = undefined;
+  this.wk = undefined;
   this.hv = undefined;
   this.ht = undefined;
 }
 TargetShape.prototype = Object.prototype;
-function pcOf(e) {
-  return e.pc ?? (e.pc = {
-    sp: null,
-    p: null,
-    ro: null,
-    wk: null,
-    qa: null,
-    qe: null
-  });
-}
 function createTarget(e, t, n, r = t?.fam ?? null) {
   const i = Array.isArray(e) ? [] : new TargetShape;
   i.v = e;
@@ -2565,15 +2716,16 @@ function createTarget(e, t, n, r = t?.fam ?? null) {
   i.h = null;
   i.k = null;
   i.dk = null;
-  i.pc = null;
+  i.wk = null;
   i.u = t;
   i.pk = n;
   i.px = null;
   i.d = false;
   i.a = false;
-  i.sc = false;
+  i.sc = 0;
+  i.kc = 0;
   i.nc = 0;
-  i.adopted = false;
+  i.ab = null;
   i.fam = r;
   i.s = false;
   i.ovl = false;
@@ -2588,7 +2740,7 @@ function createTarget(e, t, n, r = t?.fam ?? null) {
 function wrapNext(e, t = null, n = null, r = t?.fam ?? null) {
   if (rawValuesUsed && isRawValue(e))
     return e;
-  const i = (r?.map ?? storeNextLookup).get(e);
+  const i = lookupTarget(e, r);
   if (i !== undefined)
     return i.px;
   const o = e[$TARGET];
@@ -2610,43 +2762,60 @@ function unwrapValue(e) {
   }
   return e;
 }
-function getNode(e, t, n) {
-  const r = e.n ??= Object.create(null);
-  let i = r[t];
-  if (i === undefined) {
-    const o = i = signal(n, {
-      equals: (t2, n2) => isEqual(t2, n2) || sameLogicalSlot(e, t2, n2),
-      unobserved() {
-        if (o.o?.t)
-          return;
-        if (e.n && e.n[t] === o) {
-          delete e.n[t];
-          e.nc--;
-        }
-      }
-    }, e.fam?.node ?? undefined);
-    o.T |= CONFIG_OWNED_WRITE;
-    o.acc = isOwnAccessor(e.pb ?? e.v, t);
-    o.px = undefined;
-    o.pxv = undefined;
+var slotNodeEquals = function(e, t) {
+  return isEqual(e, t) || sameLogicalSlot(this.Ut, e, t);
+};
+setSlotUnobserved((e) => {
+  if (e.o?.t)
+    return;
+  const t = e.Ut;
+  const n = e.xt;
+  if (t.n && t.n[n] === e) {
+    delete t.n[n];
+    t.nc--;
+    unlinkFirewallChild(e);
+  }
+});
+function getNode(e, t, n, r = -1) {
+  const i = e.n ??= Object.create(null);
+  let o = i[t];
+  if (o === undefined) {
+    const l = heldAdoptionTransition(e);
+    if (l !== null)
+      n = e.hv[t];
+    const f = o = slotSignal(n, slotNodeEquals, e, t, r === -1 ? isOwnAccessor(e.pb ?? e.v, t) : r === 1, e.fam?.node ?? undefined);
     if (e.fam?.opt) {
-      ext(o).Pe = NOT_PENDING;
-      o.T |= CONFIG_OPTIMISTIC;
+      ext(f).be = NOT_PENDING;
+      f.T |= CONFIG_OPTIMISTIC;
     }
     if (t !== $AFFECTS && affectsScopesLive())
-      inheritAffectsMarks(o, e.v, t);
-    r[t] = i;
+      inheritAffectsMarks(f, e.v, t);
+    if (l !== null)
+      stageHeldKey(f, e.v[t], l);
+    i[t] = o;
     e.nc++;
     markDescendants(e);
   }
-  return i;
+  return o;
+}
+function heldAdoptionTransition(e) {
+  if (e.ht === null || e.ht === PLAIN_HOLD || heldMaskView(e) === null)
+    return null;
+  const t = currentTransition(e.ht);
+  return t.ft === false ? t : null;
+}
+function stageHeldKey(e, t, n) {
+  if (slotNodeEquals.call(e, e.me, t))
+    return;
+  e.Ge = t;
+  e.ge = n;
+  n.$t.push(e);
 }
 function sameLogicalSlot(e, t, n) {
   if (t === null || typeof t !== "object" || n === null || typeof n !== "object")
     return false;
-  const r = e.fam?.map ?? storeNextLookup;
-  const i = r.get(t);
-  return i !== undefined && i === r.get(n);
+  const r = lookupTarget(t, e.fam);
+  return r !== undefined && r === lookupTarget(n, e.fam);
 }
 function getHasNode(e, t, n) {
   const r = e.h ??= Object.create(null);
@@ -2657,13 +2826,15 @@ function getHasNode(e, t, n) {
       unobserved() {
         if (o.o?.t)
           return;
-        if (e.h && e.h[t] === o)
+        if (e.h && e.h[t] === o) {
           delete e.h[t];
+          unlinkFirewallChild(o);
+        }
       }
     }, e.fam?.node ?? undefined);
     o.T |= CONFIG_OWNED_WRITE;
     if (e.fam?.opt) {
-      ext(o).Pe = NOT_PENDING;
+      ext(o).be = NOT_PENDING;
       o.T |= CONFIG_OPTIMISTIC;
     }
     if (affectsScopesLive())
@@ -2679,13 +2850,15 @@ function getKeySetNode(e) {
     const n = t = signal(0, {
       equals: false,
       unobserved() {
-        if (e.k === n)
+        if (e.k === n) {
           e.k = null;
+          unlinkFirewallChild(n);
+        }
       }
     }, e.fam?.node ?? undefined);
     n.T |= CONFIG_OWNED_WRITE;
     if (e.fam?.opt) {
-      ext(n).Pe = NOT_PENDING;
+      ext(n).be = NOT_PENDING;
       n.T |= CONFIG_OPTIMISTIC;
     }
     e.k = t;
@@ -2700,51 +2873,66 @@ function bumpDeep(e) {
 var foldOlds = new Map;
 var hookInstalled = false;
 function cloneRaw(e, t) {
+  t.sc || scanAccessorsOnce(t);
+  if (t.sc === 2) {
+    const n2 = {
+      ...e
+    };
+    n2[$OWNER] = t;
+    return n2;
+  }
   const n = Object.getOwnPropertyDescriptors(e);
-  for (const r of Reflect.ownKeys(n)) {
-    const i = n[r];
-    if (r === "length" && Array.isArray(e))
+  for (const r2 of Reflect.ownKeys(n)) {
+    const i = n[r2];
+    if (r2 === "length" && Array.isArray(e))
       continue;
     i.configurable = true;
     if (!i.get && !i.set)
       i.writable = true;
-    else if (t)
+    else
       t.a = true;
   }
-  return Array.isArray(e) ? Object.defineProperties([], n) : Object.create(Object.getPrototypeOf(e), n);
+  const r = Array.isArray(e) ? Object.defineProperties([], n) : Object.create(Object.getPrototypeOf(e), n);
+  r[$OWNER] = t;
+  return r;
+}
+function copyOwn(e, t, n) {
+  const r = Object.getOwnPropertyDescriptor(t, n);
+  if (r.get || r.set || !r.enumerable || !r.writable || !r.configurable)
+    Object.defineProperty(e, n, r);
+  else
+    e[n] = r.value;
 }
 function scanAccessorsOnce(e) {
   const t = e.v;
-  for (const n of Reflect.ownKeys(t)) {
-    if (lookupGetter.call(t, n) !== undefined || lookupSetter.call(t, n) !== undefined) {
+  const n = Reflect.ownKeys(t);
+  let r = Object.getPrototypeOf(t) === Object.prototype;
+  for (const i of n) {
+    if (lookupGetter.call(t, i) !== undefined || lookupSetter.call(t, i) !== undefined) {
       e.a = true;
+      r = false;
       break;
     }
+    if (r && !propertyIsEnumerable.call(t, i))
+      r = false;
   }
-  e.sc = true;
+  e.sc = r ? 2 : 1;
+  e.kc = n.length;
   return !e.a;
 }
+var OVERLAY_MIN_KEYS = 32;
 function materializePB(e) {
   if (!e.ovl)
     return;
   const t = e.pb;
   const n = cloneRaw(e.v, e);
-  for (const e2 of Reflect.ownKeys(t)) {
-    const r2 = Object.getOwnPropertyDescriptor(t, e2);
-    if (r2.get || r2.set || !r2.enumerable || !r2.writable || !r2.configurable)
-      Object.defineProperty(n, e2, r2);
-    else
-      n[e2] = r2.value;
-  }
+  for (const e2 of Reflect.ownKeys(t))
+    copyOwn(n, t, e2);
   if (e.del !== null) {
     for (const t2 of e.del)
       delete n[t2];
     e.del = null;
   }
-  const r = e.fam?.map ?? storeNextLookup;
-  r.delete(t);
-  ownedRaw.add(n);
-  r.set(n, e);
   e.pb = n;
   e.ovl = false;
 }
@@ -2757,32 +2945,31 @@ function ensurePB(e) {
   if (activeTransition !== null)
     foldBatches.set(e, activeTransition);
   if (t === null) {
-    if (e.fam === null && !Array.isArray(e.v) && (e.sc ? !e.a : scanAccessorsOnce(e))) {
-      t = e.pb = Object.create(e.v);
+    const n = e.v;
+    if (!e.fam?.opt && !e.ch && !Array.isArray(n) && (e.sc !== 0 ? !e.a : scanAccessorsOnce(e)) && e.kc > OVERLAY_MIN_KEYS && isOwned(n)) {
+      t = e.pb = Object.create(n);
       e.ovl = true;
     } else
-      t = e.pb = cloneRaw(e.v, e);
+      t = e.pb = cloneRaw(n, e);
     if (e.fam?.opt && !projectionWriteActive && !getWriteOverride()) {
       tentativePBs.add(t);
-      const n = e.n;
-      if (n !== null) {
-        for (const e2 of Reflect.ownKeys(n)) {
-          const r2 = n[e2];
+      const n2 = e.n;
+      if (n2 !== null) {
+        for (const e2 of Reflect.ownKeys(n2)) {
+          const r2 = n2[e2];
           if (hasActiveOverride2(r2))
-            t[e2] = unwrapOverride(r2.o?.Pe);
+            t[e2] = unwrapOverride(r2.o?.be);
         }
       }
       const r = e.h;
       if (r !== null) {
         for (const e2 of Reflect.ownKeys(r)) {
-          const n2 = r[e2];
-          if (hasActiveOverride2(n2) && !unwrapOverride(n2.o?.Pe))
+          const n3 = r[e2];
+          if (hasActiveOverride2(n3) && !unwrapOverride(n3.o?.be))
             delete t[e2];
         }
       }
     }
-    ownedRaw.add(t);
-    (e.fam?.map ?? storeNextLookup).set(t, e);
     queueFold(e);
   }
   return t;
@@ -2793,34 +2980,42 @@ function heldMaskView(e) {
   const t = e.ht;
   if (t === null)
     return null;
-  if (t !== PLAIN_HOLD && currentTransition(t)?.sn === true)
+  if (t !== PLAIN_HOLD && currentTransition(t)?.ft === true)
     return e.ht = e.hv = null;
   return e.hv;
 }
 function adoptPB(e, t, n = false) {
   if (!n) {
     queueFold(e);
-    e.adopted = true;
-    if (e.fam?.opt !== true) {
-      if (getWriteOverride()) {
-        e.ht = e.hv = null;
-      } else if (activeTransition !== null || latestPullActive) {
-        if (heldMaskView(e) === null)
-          e.hv = e.v;
-        e.ht = activeTransition ?? PLAIN_HOLD;
-      }
-    }
+    if (e.pb !== null) {
+      if (e.ovl)
+        materializePB(e);
+      e.ab = e.pb;
+    } else
+      e.ab ??= foldOlds.get(e);
+  }
+  if (getWriteOverride()) {
+    e.ht = e.hv = null;
+  } else if (activeTransition !== null || !n && latestPullActive) {
+    if (heldMaskView(e) === null)
+      e.hv = e.v;
+    e.ht = activeTransition ?? PLAIN_HOLD;
+    if (!n && activeTransition !== null)
+      heldAdoptions.add(e);
   }
   e.pb = null;
   e.ovl = false;
   e.del = null;
-  e.sc = false;
+  e.sc = 0;
   e.a = false;
-  if (e.pc !== null)
-    e.pc.wk = null;
+  e.wk = null;
   e.v = t;
   e.ch = t[$TARGET] !== undefined;
-  (e.fam?.map ?? storeNextLookup).set(t, e);
+  const r = t[$OWNER];
+  if (r !== undefined && r.fam === e.fam)
+    t[$OWNER] = e;
+  else
+    (e.fam?.map ?? storeNextLookup).set(t, e);
 }
 var WK_ALL = new Set;
 var plainProto = (e) => {
@@ -2840,19 +3035,49 @@ function queueFold(e) {
 var foldBatches = new WeakMap;
 var stagedTruthPB = new WeakMap;
 var tentativePBs = new WeakSet;
+function draftSeesOverrides(e) {
+  return e.pb === null || !tentativePBs.has(e.pb);
+}
 function privatizeCommitted(e) {
-  if (ownedRaw.has(e.v))
+  if (isOwned(e.v))
     return;
-  const t = cloneRaw(e.v, e);
-  ownedRaw.add(t);
-  storeNextLookup.set(t, e);
-  e.v = t;
+  const t = e.v;
+  const n = cloneRaw(t, e);
+  e.v = n;
   e.ch = false;
   if (e.u) {
     privatizeCommitted(e.u);
     devAssertNeverUserMutation(e.u.v);
-    e.u.v[e.pk] = e.v;
+    const n2 = e.u.v;
+    const r = parentSlotKey(e, t);
+    if (n2[r] === t)
+      n2[r] = e.v;
   }
+}
+function parentSlotKey(e, t) {
+  const n = e.pk;
+  const r = e.u.v;
+  if (r[n] === t || !Array.isArray(r))
+    return n;
+  const i = r.indexOf(t);
+  if (i === -1)
+    return n;
+  e.pk = i;
+  return i;
+}
+function flattenOverlay(e, t) {
+  privatizeCommitted(e);
+  const n = e.v;
+  for (const r of Reflect.ownKeys(t))
+    e.sc === 2 ? n[r] = t[r] : copyOwn(n, t, r);
+  if (e.del !== null) {
+    for (const t2 of e.del)
+      delete n[t2];
+    e.del = null;
+  }
+  e.pb = null;
+  e.ovl = false;
+  e.wk = null;
 }
 function drainFolds() {
   if (foldOlds.size === 0)
@@ -2862,11 +3087,10 @@ function drainFolds() {
   for (const [t, n] of e) {
     if (t.ht === PLAIN_HOLD)
       t.ht = t.hv = null;
-    const e2 = t.pb === null;
     if (t.pb !== null) {
       const e3 = foldBatches.get(t);
       if (e3 !== undefined) {
-        if (currentTransition(e3).sn === false) {
+        if (currentTransition(e3).ft === false) {
           foldOlds.set(t, n);
           continue;
         }
@@ -2876,11 +3100,11 @@ function drainFolds() {
       const i = t.pb;
       const o = t.n;
       if (o !== null) {
-        const e4 = t.pc !== null ? t.pc.wk : null;
+        const e4 = t.wk;
         const n2 = e4 === null || e4 === WK_ALL || t.a === true || !plainProto(t.ovl ? t.v : i) ? Reflect.ownKeys(o) : e4;
         for (const e5 of n2) {
           const t2 = o[e5];
-          if (t2 !== undefined && t2.Re !== NOT_PENDING) {
+          if (t2 !== undefined && t2.Ge !== NOT_PENDING) {
             r = true;
             break;
           }
@@ -2891,55 +3115,54 @@ function drainFolds() {
         continue;
       }
       if (t.ovl) {
+        flattenOverlay(t, i);
+      } else if (t.v !== n) {
         privatizeCommitted(t);
         const e4 = t.v;
-        for (const t2 of Reflect.ownKeys(i)) {
-          const n2 = Object.getOwnPropertyDescriptor(i, t2);
-          if (n2.get || n2.set || !n2.enumerable || !n2.writable || !n2.configurable)
-            Object.defineProperty(e4, t2, n2);
-          else
-            e4[t2] = n2.value;
+        const r2 = t.wk;
+        if (r2 !== null && r2 !== WK_ALL) {
+          for (const t2 of r2) {
+            if (hasOwn.call(i, t2))
+              copyOwn(e4, i, t2);
+            else
+              delete e4[t2];
+          }
+        } else {
+          for (const t2 of Reflect.ownKeys(i)) {
+            const r3 = Object.getOwnPropertyDescriptor(i, t2);
+            if (r3.get || r3.set || !r3.enumerable || !r3.writable || !r3.configurable)
+              Object.defineProperty(e4, t2, r3);
+            else if (r3.value !== n[t2] || !hasOwn.call(n, t2))
+              e4[t2] = r3.value;
+          }
+          for (const t2 of Reflect.ownKeys(n)) {
+            if (!hasOwn.call(i, t2))
+              delete e4[t2];
+          }
         }
-        if (t.del !== null) {
-          for (const n2 of t.del)
-            delete e4[n2];
-          t.del = null;
-        }
-        (t.fam?.map ?? storeNextLookup).delete(i);
         t.pb = null;
-        t.ovl = false;
-        if (t.pc !== null)
-          t.pc.wk = null;
+        t.wk = null;
       } else {
-        if (t.pc !== null && t.pc.ro !== null && !t.adopted && t.fam?.opt !== true && Array.isArray(i) && Array.isArray(t.v))
-          rowHooks.emitSetterRowOps(t, t.v, i);
         t.v = i;
         t.ch = false;
         t.pb = null;
-        if (t.pc !== null)
-          t.pc.wk = null;
+        t.wk = null;
       }
     }
-    if (t.v === n) {
-      t.adopted = false;
-      continue;
-    }
-    if (t.pc !== null && (t.fam !== null || t.adopted)) {
-      if (t.pc.ro !== null && t.fam?.opt !== true && (t.fam !== null ? e2 && !t.adopted : t.adopted) && Array.isArray(t.v) && Array.isArray(n))
-        rowHooks.emitSetterRowOps(t, n, t.v);
-      if (t.pc.p !== null) {
-        patchHooks.emitPatchLocal(t, t.v, n);
+    const e2 = t.ab;
+    t.ab = null;
+    if (t.v !== n) {
+      if (t.u) {
+        const e3 = parentSlotKey(t, n);
+        if (t.u.v[e3] === n) {
+          privatizeCommitted(t.u);
+          devAssertNeverUserMutation(t.u.v);
+          t.u.v[e3] = t.v;
+        }
       }
     }
-    if (t.u && t.u.v[t.pk] === n) {
-      privatizeCommitted(t.u);
-      devAssertNeverUserMutation(t.u.v);
-      t.u.v[t.pk] = t.v;
-    }
-    if (t.adopted) {
-      t.adopted = false;
-      notifyFold(t, n, t.v);
-    }
+    if (e2 !== null && e2 !== t.v)
+      notifyFold(t, e2, t.v);
   }
 }
 function notifyWrites(e) {
@@ -2963,7 +3186,7 @@ function notifyWrites(e) {
   }
   const n = e.v;
   const r = e.n;
-  const i = e.pc !== null ? e.pc.wk : null;
+  const i = e.wk;
   const o = i === WK_ALL || e.a === true || !plainProto(e.ovl ? e.v : t) ? null : i;
   if (r !== null) {
     const i2 = o ?? Reflect.ownKeys(r);
@@ -3002,6 +3225,8 @@ function notifyWrites(e) {
       bumpDeep(e);
     else
       for (const r2 of o ?? Reflect.ownKeys(t)) {
+        if (r2 === $OWNER)
+          continue;
         const i2 = t[r2];
         const o2 = n[r2];
         if (i2 !== null && typeof i2 === "object" ? !targetsEqual(o2, i2) : !isEqual(o2, i2)) {
@@ -3028,28 +3253,31 @@ function notifyWrites(e) {
     if (r2)
       setSignal(e.k, (e2) => e2 + 1);
   }
-  if (e.fam === null && patchHooks !== null && patchHooks.hasPatches())
-    patchHooks.emitPatch(e, t, n);
   if (e.fam !== null && e.pb !== null && getWriteOverride() && activeTransition === null) {
     if (e.ht !== null)
       e.ht = e.hv = null;
+    if (e.ovl)
+      return flattenOverlay(e, t);
     const n2 = e.v;
     e.pb = null;
     e.v = t;
     e.ch = false;
-    if (e.u && e.u.v[e.pk] === n2) {
-      privatizeCommitted(e.u);
-      devAssertNeverUserMutation(e.u.v);
-      e.u.v[e.pk] = t;
+    if (e.u) {
+      const r2 = parentSlotKey(e, n2);
+      if (e.u.v[r2] === n2) {
+        privatizeCommitted(e.u);
+        devAssertNeverUserMutation(e.u.v);
+        e.u.v[r2] = t;
+      }
     }
   }
 }
 var FORCE = Symbol();
 function targetsEqual(e, t) {
-  if (e === null || typeof e !== "object")
+  if (e === null || typeof e !== "object" || t === null || typeof t !== "object")
     return false;
-  const n = storeNextLookup.get(e);
-  return n !== undefined && n === storeNextLookup.get(t);
+  const n = lookupTarget(e, null);
+  return n !== undefined && n === lookupTarget(t, null);
 }
 function arrayStructureChanged(e, t) {
   if (e.length !== t.length)
@@ -3064,10 +3292,10 @@ function arrayStructureChanged(e, t) {
 }
 function membershipChanged(e, t) {
   const n = Reflect.ownKeys(t);
-  if (Reflect.ownKeys(e).length !== n.length)
+  if (Reflect.ownKeys(e).length - +isOwned(e) !== n.length - +isOwned(t))
     return true;
   for (const t2 of n)
-    if (!(t2 in e))
+    if (t2 !== $OWNER && !(t2 in e))
       return true;
   return false;
 }
@@ -3171,19 +3399,31 @@ function draftServe(e, t) {
   return t;
 }
 var pendingNotify = new Set;
+var heldAdoptions = new Set;
+function stageHeldAdoptions() {
+  const e = [...heldAdoptions];
+  heldAdoptions.clear();
+  for (const t of e) {
+    const e2 = t.ab;
+    if (e2 === null || e2 === t.v)
+      continue;
+    notifyFold(t, e2, t.v);
+    t.ab = t.v;
+  }
+}
 var UNSAFE_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 function inOwnerContext() {
   const e = getOwner();
   if (e === null)
     return false;
-  const t = e.Gt ? e.Dt : e;
+  const t = e.gt ? e.bt : e;
   return t != null && !(t.T & CONFIG_CHILDREN_FORBIDDEN);
 }
 function inForbiddenScope() {
   const e = getOwner();
   if (e === null)
     return false;
-  const t = e.Gt ? e.Dt : e;
+  const t = e.gt ? e.bt : e;
   return t != null && !!(t.T & CONFIG_CHILDREN_FORBIDDEN);
 }
 function foldHeld(e) {
@@ -3192,7 +3432,7 @@ function foldHeld(e) {
     return false;
   for (const e2 of Reflect.ownKeys(t)) {
     const n = t[e2];
-    if (n.Re !== NOT_PENDING && n.Ae != null && n.Ae.sn !== true)
+    if (n.Ge !== NOT_PENDING && n.ge != null && n.ge.ft !== true)
       return true;
   }
   return false;
@@ -3217,11 +3457,12 @@ function heldTruthMasked(e) {
 var hasOwn = Object.prototype.hasOwnProperty;
 var lookupGetter = Object.prototype.__lookupGetter__;
 var lookupSetter = Object.prototype.__lookupSetter__;
+var propertyIsEnumerable = Object.prototype.propertyIsEnumerable;
 function isOwnAccessor(e, t) {
   return hasOwn.call(e, t) && (lookupGetter.call(e, t) !== undefined || lookupSetter.call(e, t) !== undefined);
 }
 function hasActiveOverride2(e) {
-  return e.o?.Pe !== undefined && e.o?.Pe !== NOT_PENDING;
+  return e.o?.be !== undefined && e.o?.be !== NOT_PENDING;
 }
 function authoritativeRead() {
   const e = context;
@@ -3231,13 +3472,26 @@ function authoritativeServe() {
   return projectionWriteActive || getWriteOverride() || authoritativeRead();
 }
 function nodeValue(e, t) {
-  const n = !authoritativeServe() && hasActiveOverride2(e) ? unwrapOverride(e.o?.Pe) : e.Re !== NOT_PENDING && (latestReadActive || (inOwnerContext() || authoritativeServe()) && !(e.T & CONFIG_HELD_TRUTH && !authoritativeServe())) ? e.Re : t;
+  const n = !authoritativeServe() && hasActiveOverride2(e) ? unwrapOverride(e.o?.be) : e.Ge !== NOT_PENDING && (latestReadActive || (inOwnerContext() || authoritativeServe()) && !(e.T & CONFIG_HELD_TRUTH && !authoritativeServe())) ? e.Ge : t;
   return n === FORCE ? t : n;
 }
-function serveDataKey(e, t, n, r, i) {
-  const o = e.ch && r === e.v;
-  let l = n;
-  if (t === "length" && e.fam?.opt === true && !o && Array.isArray(r)) {
+function resolveChainedRaw(e, t, n) {
+  const r = e.v[$TARGET];
+  if (r.ch) {
+    const e2 = resolveChainedRaw(r, t, n);
+    return e2 === n ? n : wrapNext(e2, r, t);
+  }
+  const i = lookupTarget(n, r.fam);
+  if (i !== undefined)
+    return i.px;
+  if ((r.v[t] === n || r.pb?.[t] === n) && isWrappable(n))
+    return wrapNext(n, r, t);
+  return n;
+}
+function serveDataKey(e, t, n, r, i, o = -1) {
+  const l = e.ch && r === e.v;
+  let f = n;
+  if (t === "length" && e.fam?.opt === true && !l && Array.isArray(r)) {
     if (!inDraft(e)) {
       const r2 = e.n?.length;
       if (r2 !== undefined) {
@@ -3250,10 +3504,10 @@ function serveDataKey(e, t, n, r, i) {
     return (authoritativeServe() ? r : optHooks.optimisticView(e, r)).length;
   }
   if (inDraft(e)) {
-    if (e.fam?.opt && e.pb === null && !authoritativeServe()) {
+    if (e.fam?.opt && draftSeesOverrides(e) && !authoritativeServe()) {
       const n2 = e.n?.[t];
       if (n2 !== undefined && hasActiveOverride2(n2))
-        l = unwrapOverride(n2.o?.Pe);
+        f = unwrapOverride(n2.o?.be);
     }
   } else {
     if (i !== undefined) {
@@ -3261,30 +3515,32 @@ function serveDataKey(e, t, n, r, i) {
         let e2 = readNodeFast(i);
         if (e2 === READ_SLOW)
           e2 = read(i);
-        if (!o || hasActiveOverride2(i))
-          l = e2 === FORCE ? n : e2;
-      } else if (!o || hasActiveOverride2(i)) {
-        l = nodeValue(i, n);
+        if (!l || hasActiveOverride2(i))
+          f = e2 === FORCE ? n : e2;
+      } else if (!l || hasActiveOverride2(i)) {
+        f = nodeValue(i, n);
       }
     } else if (getObserver() !== null) {
-      read(getNode(e, t, n));
+      read(i = getNode(e, t, n, o));
     }
   }
   if (e.s)
-    return serveShallow(e, t, l);
+    return serveShallow(e, t, f);
+  if (e.ch && !l && f !== null && typeof f === "object" && f[$TARGET] === undefined)
+    f = resolveChainedRaw(e, t, f);
   if (i !== undefined) {
-    if (i.pxv === l && l !== undefined)
+    if (i.pxv === f && f !== undefined)
       return draftServe(e, i.px);
-    if (!isWrappable(l))
-      return l;
-    const n2 = wrapNext(l, e, t);
+    if (!isWrappable(f))
+      return f;
+    const n2 = wrapNext(f, e, t);
     i.px = n2;
-    i.pxv = l;
+    i.pxv = f;
     return draftServe(e, n2);
   }
-  if (!isWrappable(l))
-    return l;
-  return draftServe(e, wrapNext(l, e, t));
+  if (!isWrappable(f))
+    return f;
+  return draftServe(e, wrapNext(f, e, t));
 }
 function firewallGate(e) {
   if (projectionWriteActive || getWriteOverride())
@@ -3315,6 +3571,8 @@ var traps = {
         return e;
       if (t === $PROXY)
         return n;
+      if (t === $OWNER)
+        return;
       if (t === $REFRESH)
         return e.fam?.node ?? undefined;
       if (t === $TRACK) {
@@ -3343,8 +3601,9 @@ var traps = {
         read(getNode(e, t, undefined));
       return;
     }
+    const i = e.n?.[t];
     if (e.ch === false && writeScopes === null) {
-      const n2 = e.n?.[t];
+      const n2 = i;
       if (n2 !== undefined && n2.acc !== true && getObserver() !== null) {
         let r2 = readNodeFast(n2);
         if (r2 === READ_SLOW)
@@ -3364,29 +3623,37 @@ var traps = {
         return r2;
       }
     }
-    const i = e.n?.[t];
+    let o = -1;
     {
-      const o2 = i !== undefined ? i.acc === true : !inDraft(e) && getObserver() !== null && isOwnAccessor(r, t);
-      if (o2) {
+      let l2;
+      if (i !== undefined)
+        l2 = i.acc === true;
+      else if (!inDraft(e) && getObserver() !== null) {
+        l2 = isOwnAccessor(r, t);
+        if (r === (e.pb ?? e.v))
+          o = l2 ? 1 : 0;
+      } else
+        l2 = false;
+      if (l2) {
         if (!inDraft(e) && getObserver() !== null)
-          read(i ?? getNode(e, t, undefined));
-        const o3 = Reflect.get(r, t, n);
+          read(i ?? getNode(e, t, undefined, o));
+        const l3 = Reflect.get(r, t, n);
         if (e.s)
-          return serveShallow(e, t, o3);
-        return isWrappable(o3) ? draftServe(e, wrapNext(o3, e, t)) : o3;
+          return serveShallow(e, t, l3);
+        return isWrappable(l3) ? draftServe(e, wrapNext(l3, e, t)) : l3;
       }
     }
-    const o = e.ovl && r === e.pb;
-    if ((t === "constructor" || t === "__proto__" || t === "prototype") && !hasOwn.call(r, t) && !(o && hasOwn.call(e.v, t)))
+    const l = e.ovl && r === e.pb;
+    if ((t === "constructor" || t === "__proto__" || t === "prototype") && !hasOwn.call(r, t) && !(l && hasOwn.call(e.v, t)))
       return;
-    let l = r[t];
-    if (l === undefined ? !hasOwn.call(r, t) && !(o && hasOwn.call(e.v, t)) : false) {
-      l = Reflect.get(r, t, n);
-      if (typeof l === "function")
-        return l;
-      if (l === undefined && !inDraft(e)) {
+    let f = r[t];
+    if (f === undefined ? !hasOwn.call(r, t) && !(l && hasOwn.call(e.v, t)) : false) {
+      f = Reflect.get(r, t, n);
+      if (typeof f === "function")
+        return f;
+      if (f === undefined && !inDraft(e)) {
         if (getObserver() !== null)
-          read(getNode(e, t, undefined));
+          read(getNode(e, t, undefined, o));
         const n2 = e.n?.[t];
         if (n2) {
           const r2 = nodeValue(n2, undefined);
@@ -3394,22 +3661,24 @@ var traps = {
             return serveShallow(e, t, r2);
           return isWrappable(r2) ? draftServe(e, wrapNext(r2, e, t)) : r2;
         }
-      } else if (l === undefined && inDraft(e) && e.fam?.opt && e.pb === null && !authoritativeServe()) {
+      } else if (f === undefined && inDraft(e) && e.fam?.opt && draftSeesOverrides(e) && !authoritativeServe()) {
         const n2 = e.n?.[t];
         if (n2 !== undefined && hasActiveOverride2(n2))
-          l = unwrapOverride(n2.o?.Pe);
+          f = unwrapOverride(n2.o?.be);
       }
       if (e.s)
-        return serveShallow(e, t, l);
-      return isWrappable(l) ? draftServe(e, wrapNext(l, e, t)) : l;
+        return serveShallow(e, t, f);
+      return isWrappable(f) ? draftServe(e, wrapNext(f, e, t)) : f;
     }
-    if (typeof l === "function" && !hasOwn.call(r, t) && !(o && hasOwn.call(e.v, t)))
-      return l;
-    return serveDataKey(e, t, l, r, i);
+    if (typeof f === "function" && !hasOwn.call(r, t) && !(l && hasOwn.call(e.v, t)))
+      return f;
+    return serveDataKey(e, t, f, r, i, o);
   },
   has(e, t) {
     if (t === $TARGET || t === $PROXY || t === $TRACK)
       return true;
+    if (t === $OWNER)
+      return false;
     if (pendingCheckActive)
       witnessAffectsMark(e, t);
     if (e.fam !== null && getObserver() === null && !inDraft(e))
@@ -3427,12 +3696,12 @@ var traps = {
       } else if (!authoritativeServe()) {
         const n2 = e.h?.[t];
         if (n2 !== undefined && hasActiveOverride2(n2))
-          r = !!unwrapOverride(n2.o?.Pe);
+          r = !!unwrapOverride(n2.o?.be);
       }
-    } else if (e.fam?.opt && e.pb === null && !authoritativeServe()) {
+    } else if (e.fam?.opt && draftSeesOverrides(e) && !authoritativeServe()) {
       const n2 = e.h?.[t];
       if (n2 !== undefined && hasActiveOverride2(n2))
-        r = !!unwrapOverride(n2.o?.Pe);
+        r = !!unwrapOverride(n2.o?.be);
     }
     return r;
   },
@@ -3443,66 +3712,17 @@ var traps = {
       firewallGate(e);
     if (!inDraft(e) && getObserver() !== null)
       read(getKeySetNode(e));
-    const t = readSource(e);
-    let n;
-    if (e.ovl && t === e.pb) {
-      n = Reflect.ownKeys(e.v);
-      const r = e.del;
-      if (r !== null && r.size !== 0)
-        n = n.filter((e2) => !r.has(e2));
-      for (const r2 of Reflect.ownKeys(t)) {
-        if (!hasOwn.call(e.v, r2))
-          n.push(r2);
-      }
-    } else
-      n = Reflect.ownKeys(t);
-    if (!authoritativeServe() && e.fam?.opt && e.h !== null && (!inDraft(e) || e.pb === null)) {
-      let t2 = null;
-      for (const r of Reflect.ownKeys(e.h)) {
-        const i = e.h[r];
-        if (!hasActiveOverride2(i))
-          continue;
-        t2 ??= new Set(n);
-        if (unwrapOverride(i.o?.Pe))
-          t2.add(r);
-        else
-          t2.delete(r);
-      }
-      if (t2 !== null)
-        return [...t2];
-    }
-    return n;
+    return visibleKeys(e, readSource(e));
   },
   getOwnPropertyDescriptor(e, t) {
-    const n = readSource(e);
-    let r = Object.getOwnPropertyDescriptor(n, t);
-    if (e.ovl && n === e.pb) {
-      if (e.del !== null && e.del.has(t))
-        return;
-      if (r === undefined)
-        r = Object.getOwnPropertyDescriptor(e.v, t);
-    }
-    if (!authoritativeServe() && e.fam?.opt && !inDraft(e)) {
-      const n2 = e.h?.[t];
-      if (n2 !== undefined && hasActiveOverride2(n2)) {
-        if (!unwrapOverride(n2.o?.Pe))
-          return;
-        if (r === undefined) {
-          const n3 = e.n?.[t];
-          return {
-            value: n3 !== undefined ? nodeValue(n3, undefined) : undefined,
-            writable: true,
-            enumerable: true,
-            configurable: true
-          };
-        }
-      }
-    }
-    if (r === undefined)
+    if (t === $OWNER)
+      return;
+    const n = visibleDescriptor(e, readSource(e), t);
+    if (n === undefined)
       return;
     if (!(t === "length" && Array.isArray(e)))
-      r.configurable = true;
-    return r;
+      n.configurable = true;
+    return n;
   },
   set(e, t, n) {
     const r = inDraft(e);
@@ -3514,17 +3734,20 @@ var traps = {
     const o = e.s ? n : unwrapValue(n);
     const l = ensurePB(e);
     pendingNotify.add(e);
-    const f = pcOf(e);
     if (Array.isArray(l)) {
       if (t === "length")
-        f.wk = WK_ALL;
-      else if (f.wk !== WK_ALL) {
-        const e2 = f.wk ??= new Set;
-        e2.add(t);
-        e2.add("length");
+        e.wk = WK_ALL;
+      else if (e.wk !== WK_ALL) {
+        const n2 = e.wk ??= new Set;
+        n2.add(t);
+        n2.add("length");
       }
-    } else if (f.wk !== WK_ALL)
-      (f.wk ??= new Set).add(t);
+    } else {
+      if (e.wk !== WK_ALL)
+        (e.wk ??= new Set).add(t);
+      if (!(t in l))
+        e.kc++;
+    }
     if (UNSAFE_KEYS.has(t)) {
       Object.defineProperty(l, t, {
         value: o,
@@ -3536,7 +3759,7 @@ var traps = {
         e.del.delete(t);
       return true;
     }
-    if (e.ovl && !hasOwn.call(l, t)) {
+    if (e.ovl && e.sc !== 2 && !hasOwn.call(l, t)) {
       Object.defineProperty(l, t, {
         value: o,
         writable: true,
@@ -3560,21 +3783,19 @@ var traps = {
       return true;
     if (t === "__proto__")
       return true;
-    if (n.get || n.set) {
+    if (n.get || n.set)
       e.a = true;
-      if (e.pc !== null && e.pc.p !== null)
-        patchHooks.demoteToEffects(e);
-    }
     if ("value" in n)
       n = {
         ...n,
         value: unwrapValue(n.value)
       };
     const o = ensurePB(e);
+    if (e.a || !(n.enumerable && n.writable && n.configurable))
+      e.sc = 1;
     pendingNotify.add(e);
-    const l = pcOf(e);
-    if (l.wk !== WK_ALL)
-      (l.wk ??= new Set).add(t);
+    if (e.wk !== WK_ALL)
+      (e.wk ??= new Set).add(t);
     Object.defineProperty(o, t, n);
     if (e.del !== null)
       e.del.delete(t);
@@ -3589,9 +3810,8 @@ var traps = {
       return true;
     const i = ensurePB(e);
     pendingNotify.add(e);
-    const o = pcOf(e);
-    if (o.wk !== WK_ALL)
-      (o.wk ??= new Set).add(t);
+    if (e.wk !== WK_ALL)
+      (e.wk ??= new Set).add(t);
     delete i[t];
     if (e.ovl && hasOwn.call(e.v, t))
       (e.del ??= new Set).add(t);
@@ -3626,6 +3846,8 @@ function storeSetterNext(e, t, n = true) {
       adoptPB(r, unwrapValue(o));
     }
   }
+  if (writing === 0 && heldAdoptions.size)
+    stageHeldAdoptions();
 }
 setNextAffectsNodeResolver((e, t) => t === $AFFECTS ? getNode(e, $AFFECTS, undefined) : getNode(e, t, (e.pb ?? e.v)[t]));
 function createStoreNext(e, t = false) {
@@ -3637,525 +3859,648 @@ function createStoreNext(e, t = false) {
   const setter = (e2) => storeSetterNext(n, e2);
   return [n, setter];
 }
+function visibleKeys(e, t) {
+  let n;
+  if (e.ovl && t === e.pb) {
+    n = Reflect.ownKeys(e.v);
+    const r = e.del;
+    if (r !== null && r.size !== 0)
+      n = n.filter((e2) => !r.has(e2));
+    for (const r2 of Reflect.ownKeys(t)) {
+      if (!hasOwn.call(e.v, r2))
+        n.push(r2);
+    }
+  } else
+    n = Reflect.ownKeys(t);
+  for (let e2 = n.length - 1;e2 >= 0 && typeof n[e2] === "symbol"; e2--) {
+    if (n[e2] === $OWNER) {
+      n.splice(e2, 1);
+      break;
+    }
+  }
+  if (!authoritativeServe() && e.fam?.opt && e.h !== null && (!inDraft(e) || draftSeesOverrides(e))) {
+    let t2 = null;
+    for (const r of Reflect.ownKeys(e.h)) {
+      const i = e.h[r];
+      if (!hasActiveOverride2(i))
+        continue;
+      t2 ??= new Set(n);
+      if (unwrapOverride(i.o?.be))
+        t2.add(r);
+      else
+        t2.delete(r);
+    }
+    if (t2 !== null)
+      return [...t2];
+  }
+  return n;
+}
+function visibleDescriptor(e, t, n) {
+  let r = Object.getOwnPropertyDescriptor(t, n);
+  if (e.ovl && t === e.pb) {
+    if (e.del !== null && e.del.has(n))
+      return;
+    if (r === undefined)
+      r = Object.getOwnPropertyDescriptor(e.v, n);
+  }
+  if (!authoritativeServe() && e.fam?.opt && !inDraft(e)) {
+    const t2 = e.h?.[n];
+    if (t2 !== undefined && hasActiveOverride2(t2)) {
+      if (!unwrapOverride(t2.o?.be))
+        return;
+      if (r === undefined) {
+        const t3 = e.n?.[n];
+        return {
+          value: t3 !== undefined ? nodeValue(t3, undefined) : undefined,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        };
+      }
+    }
+  }
+  return r;
+}
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/map.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/map.js
 function mapArray(t, s, i) {
   const e = typeof i?.keyed === "function" ? i.keyed : undefined;
   const r = s.length > 1;
   const n = s;
-  const h = {
-    Kt: createOwner(),
-    $t: 0,
-    Jt: t,
-    Xt: [],
-    Yt: n,
-    Zt: [],
-    ts: [],
-    ss: e,
-    es: e || i?.keyed === false ? [] : undefined,
-    rs: r && i?.keyed !== false ? [] : undefined,
-    ns: i?.keyed === false,
-    hs: i?.fallback
+  const o = {
+    ts: createOwner(),
+    ss: 0,
+    es: t,
+    rs: [],
+    ns: n,
+    hs: [],
+    fs: [],
+    xt: e,
+    cs: e || i?.keyed === false ? [] : undefined,
+    ls: r && i?.keyed !== false ? [] : undefined,
+    us: i?.keyed === false,
+    ps: i?.fallback
   };
-  const o = computed(updateKeyedMap.bind(h));
-  h.Kt.Dt = o;
-  o.T &= ~CONFIG_AUTO_DISPOSE;
-  return accessor(o);
+  const h = computed(updateKeyedMap.bind(o), undefined);
+  o.ts.bt = h;
+  h.T &= ~CONFIG_AUTO_DISPOSE;
+  return accessor(h);
 }
 var pureOptions = {
   ownedWrite: true
 };
+function trySmallMove(t, s, i, e) {
+  const r = t.rs;
+  const n = t.ss - 1;
+  const o = [];
+  const h = [];
+  const f = [];
+  let c = 256;
+  let a = e;
+  let l = e;
+  let u = false;
+  while (a <= n && l <= i - 1) {
+    const t2 = r[a];
+    const e2 = s[l];
+    if (t2 === e2) {
+      if (!u) {
+        f.push(a, l, 0);
+        u = true;
+      }
+      f[f.length - 1]++;
+      a++;
+      l++;
+      continue;
+    }
+    u = false;
+    let p = -1;
+    let d = Math.min(32 - o.length, n - a, c);
+    for (let t3 = 1;t3 <= d; t3++) {
+      if (r[a + t3] === e2) {
+        p = t3;
+        break;
+      }
+    }
+    c -= p === -1 ? d : p;
+    let w = -1;
+    d = Math.min(32 - h.length, i - 1 - l, c);
+    for (let i2 = 1;i2 <= d; i2++) {
+      if (s[l + i2] === t2) {
+        w = i2;
+        break;
+      }
+    }
+    c -= w === -1 ? d : w;
+    if (p !== -1 && (w === -1 || p <= w)) {
+      while (p-- > 0)
+        o.push(a++);
+      continue;
+    }
+    if (w !== -1) {
+      while (w-- > 0)
+        h.push(l++);
+      continue;
+    }
+    if (c <= 0 || o.length === 32 || h.length === 32)
+      return false;
+    o.push(a++);
+    h.push(l++);
+  }
+  for (;a <= n; a++) {
+    if (o.length === 32)
+      return false;
+    o.push(a);
+  }
+  for (;l <= i - 1; l++) {
+    if (h.length === 32)
+      return false;
+    h.push(l);
+  }
+  return commitSmallMove(t, s, i, o, h, f);
+}
+function commitSmallMove(t, s, i, e, r, n) {
+  const o = t.rs;
+  let h;
+  let f;
+  let c;
+  if (r.length !== 0) {
+    c = new Array(e.length);
+    for (f = 0;f < r.length; f++) {
+      let t2 = -1;
+      for (h = 0;h < e.length; h++) {
+        if (!c[h] && o[e[h]] === s[r[f]]) {
+          t2 = h;
+          break;
+        }
+      }
+      if (t2 === -1)
+        return false;
+      c[t2] = true;
+      r[f] = r[f] << 6 | t2;
+    }
+  }
+  if (e.length !== 0 || r.length !== 0) {
+    const t2 = new Set;
+    for (h = 0;h < e.length; h++)
+      t2.add(o[e[h]]);
+    for (f = 0;f < r.length; f++)
+      t2.add(s[r[f] >> 6]);
+    for (let s2 = 0;s2 < n.length; s2 += 3) {
+      const i2 = n[s2];
+      for (let e2 = 0, r2 = n[s2 + 2];e2 < r2; e2++)
+        if (t2.has(o[i2 + e2]))
+          return false;
+    }
+  }
+  const a = t.hs;
+  const l = t.fs;
+  const u = a.slice(0, i);
+  const p = l.slice(0, i);
+  for (let t2 = 0;t2 < n.length; t2 += 3) {
+    const s2 = n[t2];
+    const i2 = n[t2 + 1];
+    if (s2 !== i2) {
+      for (let e2 = 0;e2 < n[t2 + 2]; e2++) {
+        u[i2 + e2] = a[s2 + e2];
+        p[i2 + e2] = l[s2 + e2];
+      }
+    }
+  }
+  for (f = 0;f < r.length; f++) {
+    const t2 = r[f] >> 6;
+    const s2 = e[r[f] & 63];
+    u[t2] = a[s2];
+    p[t2] = l[s2];
+  }
+  t.hs = u;
+  t.fs = p;
+  t.ss = i;
+  t.rs = s.slice(0);
+  for (h = 0;h < e.length; h++) {
+    if (c === undefined || !c[h])
+      l[e[h]].dispose();
+  }
+  return true;
+}
 function updateKeyedMap() {
-  const t = this.Jt() || [], s = t.length;
+  const t = this.es() || [], s = t.length;
   t[$TRACK];
-  runWithOwner(this.Kt, () => {
-    let i, e, r, n, h = this.es ? this.ns ? () => {
+  runWithOwner(this.ts, () => {
+    let i, e, r, n, o = this.cs ? this.us ? () => {
       r[e] = signal(t[e], pureOptions);
-      return this.Yt(accessor(r[e]), e);
+      return this.ns(accessor(r[e]), e);
     } : () => {
       r[e] = signal(t[e], pureOptions);
       n && (n[e] = signal(e, pureOptions));
-      return this.Yt(accessor(r[e]), n ? accessor(n[e]) : undefined);
-    } : this.rs ? () => {
+      return this.ns(accessor(r[e]), n ? accessor(n[e]) : undefined);
+    } : this.ls ? () => {
       const s2 = t[e];
       n[e] = signal(e, pureOptions);
-      return this.Yt(s2, accessor(n[e]));
+      return this.ns(s2, accessor(n[e]));
     } : () => {
       const s2 = t[e];
-      return this.Yt(s2);
+      return this.ns(s2);
     };
     if (s === 0) {
-      if (this.$t !== 0) {
-        this.Kt.dispose(false);
-        this.ts = [];
-        this.Xt = [];
-        this.Zt = [];
-        this.$t = 0;
-        this.es && (this.es = []);
-        this.rs && (this.rs = []);
+      if (this.ss !== 0) {
+        this.ts.dispose(false);
+        this.fs = [];
+        this.rs = [];
+        this.hs = [];
+        this.ss = 0;
+        this.cs && (this.cs = []);
+        this.ls && (this.ls = []);
       }
-      if (this.hs && !this.Zt[0]) {
-        this.ts[0]?.dispose();
-        this.Zt[0] = runWithOwner(this.ts[0] = createOwner(), this.hs);
+      if (this.ps && !this.hs[0]) {
+        this.fs[0]?.dispose();
+        this.hs[0] = runWithOwner(this.fs[0] = createOwner(), this.ps);
       }
-    } else if (this.$t === 0) {
-      const o = new Array(s);
-      const c = new Array(s);
-      r = this.es && new Array(s);
-      n = this.rs && new Array(s);
+    } else if (this.ss === 0) {
+      const h = new Array(s);
+      const f = new Array(s);
+      r = this.cs && new Array(s);
+      n = this.ls && new Array(s);
       try {
         for (e = 0;e < s; e++)
-          o[e] = runWithOwner(c[e] = createOwner(), h);
+          h[e] = runWithOwner(f[e] = createOwner(), o);
       } catch (t2) {
         for (i = 0;i <= e; i++)
-          c[i]?.dispose();
+          f[i]?.dispose();
         throw t2;
       }
-      if (this.ts[0])
-        this.ts[0].dispose();
-      this.Zt = o;
-      this.ts = c;
-      r && (this.es = r);
-      n && (this.rs = n);
-      this.Xt = t.slice(0);
-      this.$t = s;
+      if (this.fs[0])
+        this.fs[0].dispose();
+      this.hs = h;
+      this.fs = f;
+      r && (this.cs = r);
+      n && (this.ls = n);
+      this.rs = t.slice(0);
+      this.ss = s;
     } else {
-      let o, c, a, f, u, p, w, l, d;
-      for (o = 0, c = Math.min(this.$t, s);o < c && (this.Xt[o] === t[o] || this.es && compare(this.ss, this.Xt[o], t[o])); o++) {
-        if (this.es)
-          setSignal(this.es[o], t[o]);
+      let h, f, c, a, l, u, p, d, w, m, O;
+      for (h = 0, f = Math.min(this.ss, s);h < f && (this.rs[h] === t[h] || this.cs && compare(this.xt, this.rs[h], t[h])); h++) {
+        if (this.cs)
+          setSignal(this.cs[h], t[h]);
       }
-      for (c = this.$t - 1, a = s - 1;c >= o && a >= o && (this.Xt[c] === t[a] || this.es && compare(this.ss, this.Xt[c], t[a])); c--, a--)
+      for (f = this.ss - 1, c = s - 1;f >= h && c >= h && (this.rs[f] === t[c] || this.cs && compare(this.xt, this.rs[f], t[c])); f--, c--)
         ;
-      if (o === s && this.$t === s) {
-        this.Xt = t.slice(0);
+      if (h === s && this.ss === s) {
+        this.rs = t.slice(0);
         return;
       }
-      const O = s - this.$t;
-      const m = new Array(s);
-      const _ = new Array(s);
-      r = this.es ? new Array(s) : undefined;
-      n = this.rs ? new Array(s) : undefined;
-      p = new Map;
-      w = new Array(a + 1);
-      for (e = a;e >= o; e--) {
-        f = t[e];
-        u = this.ss ? this.ss(f) : f;
-        i = p.get(u);
-        w[e] = i === undefined ? -1 : i;
-        p.set(u, e);
+      if (s <= this.ss && f - h > 64 && this.cs === undefined && this.ls === undefined) {
+        const i2 = h + (c - h >> 1);
+        const e2 = t[i2];
+        const r2 = Math.min(f, i2 + 32);
+        let n2 = Math.max(h, i2 - 32);
+        while (n2 <= r2 && this.rs[n2] !== e2)
+          n2++;
+        if (n2 <= r2 && trySmallMove(this, t, s, h))
+          return;
       }
-      for (i = o;i <= c; i++) {
-        f = this.Xt[i];
-        u = this.ss ? this.ss(f) : f;
-        e = p.get(u);
+      const _ = s - this.ss;
+      const y = new Array(s);
+      const A = new Array(s);
+      r = this.cs ? new Array(s) : undefined;
+      n = this.ls ? new Array(s) : undefined;
+      u = new Map;
+      p = new Array(c + 1);
+      for (e = c;e >= h; e--) {
+        a = t[e];
+        l = this.xt ? this.xt(a) : a;
+        i = u.get(l);
+        p[e] = i === undefined ? -1 : i;
+        u.set(l, e);
+      }
+      for (i = h;i <= f; i++) {
+        a = this.rs[i];
+        l = this.xt ? this.xt(a) : a;
+        e = u.get(l);
         if (e !== undefined && e !== -1) {
-          m[e] = this.Zt[i];
-          _[e] = this.ts[i];
-          r && (r[e] = this.es[i]);
-          n && (n[e] = this.rs[i]);
-          e = w[e];
-          p.set(u, e);
-        } else
-          (l ??= []).push(this.ts[i]);
+          y[e] = this.hs[i];
+          A[e] = this.fs[i];
+          r && (r[e] = this.cs[i]);
+          n && (n[e] = this.ls[i]);
+          e = p[e];
+          u.set(l, e);
+        } else {
+          (d ??= []).push(this.fs[i]);
+          if (false)
+            ;
+        }
       }
       try {
-        for (e = o;e <= a; e++) {
-          if (_[e] !== undefined)
+        for (e = h;e <= c; e++) {
+          if (A[e] !== undefined)
             continue;
-          (d ??= []).push(_[e] = createOwner());
-          m[e] = runWithOwner(_[e], h);
+          (w ??= []).push(A[e] = createOwner());
+          if (false)
+            ;
+          y[e] = runWithOwner(A[e], o);
         }
       } catch (t2) {
-        if (d)
-          for (i = 0;i < d.length; i++)
-            d[i].dispose();
+        if (w)
+          for (i = 0;i < w.length; i++)
+            w[i].dispose();
         throw t2;
       }
-      for (i = 0;i < o; i++) {
-        m[i] = this.Zt[i];
-        _[i] = this.ts[i];
-        r && (r[i] = this.es[i]);
-        n && (n[i] = this.rs[i]);
+      for (i = 0;i < h; i++) {
+        y[i] = this.hs[i];
+        A[i] = this.fs[i];
+        r && (r[i] = this.cs[i]);
+        n && (n[i] = this.ls[i]);
       }
-      for (e = o;e <= a; e++) {
+      for (e = h;e <= c; e++) {
         if (r)
           setSignal(r[e], t[e]);
         if (n)
           setSignal(n[e], e);
       }
-      for (e = a + 1;e < s; e++) {
-        m[e] = this.Zt[e - O];
-        _[e] = this.ts[e - O];
+      for (e = c + 1;e < s; e++) {
+        y[e] = this.hs[e - _];
+        A[e] = this.fs[e - _];
         if (r) {
-          r[e] = this.es[e - O];
+          r[e] = this.cs[e - _];
           setSignal(r[e], t[e]);
         }
         if (n) {
-          n[e] = this.rs[e - O];
-          if (O !== 0)
+          n[e] = this.ls[e - _];
+          if (_ !== 0)
             setSignal(n[e], e);
         }
       }
-      this.Zt = m;
-      this.ts = _;
-      r && (this.es = r);
-      n && (this.rs = n);
-      this.$t = s;
-      this.Xt = t.slice(0);
-      if (l)
-        for (i = 0;i < l.length; i++)
-          l[i].dispose();
+      this.hs = y;
+      this.fs = A;
+      r && (this.cs = r);
+      n && (this.ls = n);
+      this.ss = s;
+      this.rs = t.slice(0);
+      if (d)
+        for (i = 0;i < d.length; i++)
+          d[i].dispose();
+      if (false)
+        ;
     }
   });
-  return this.Zt;
+  return this.hs;
 }
 function compare(t, s, i) {
   return t ? t(s) === t(i) : true;
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/store/next/reconcile.js
-function reconcileNextState(e, n, t, o = false) {
-  if (n == null)
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/store/next/reconcile.js
+function reconcileNextState(e, t, n, o = false) {
+  if (t == null)
     throw new Error("");
-  const l = n?.[$TARGET];
-  if (l === undefined || l.px !== n)
+  const f = t?.[$TARGET];
+  if (f === undefined || f.px !== t)
     throw new Error("");
-  if (l.ovl)
-    materializePB(l);
-  let i = t === null ? null : typeof t === "string" ? (e2) => e2?.[t] : t;
-  if (o && e !== n && e?.[$TARGET] !== undefined) {
-    const n2 = l.pb ?? l.v;
-    if (n2 === e)
+  if (f.ovl)
+    materializePB(f);
+  let i = n === null ? null : typeof n === "string" ? (e2) => e2?.[n] : n;
+  if (o && e !== t && e?.[$TARGET] !== undefined) {
+    const t2 = f.pb ?? f.v;
+    if (t2 === e)
       return;
-    adoptPB(l, e);
+    adoptPB(f, e);
     return;
   }
-  const u = unwrapValue(e);
+  const l = unwrapValue(e);
   if (i) {
-    const e2 = l.pb ?? l.v;
-    const n2 = i(e2);
-    if (n2 !== undefined && !sameKey(i(u), n2)) {
+    const e2 = f.pb ?? f.v;
+    const t2 = i(e2);
+    if (t2 !== undefined && !sameKey(i(l), t2)) {
       if (!o)
         throw new Error("");
-      (l.fam?.map ?? storeNextLookup).delete(l.pb ?? l.v);
-      adoptPB(l, u);
+      const e3 = f.pb ?? f.v;
+      if (isOwned(e3))
+        delete e3[$OWNER];
+      else
+        (f.fam?.map ?? storeNextLookup).delete(e3);
+      adoptPB(f, l);
       return;
     }
   }
-  if (l.fam?.opt === true && !projectionWriteActive && !getWriteOverride()) {
-    optHooks.applyTentative(l, u, i);
+  if (f.fam?.opt === true && !projectionWriteActive && !getWriteOverride()) {
+    optHooks.applyTentative(f, l, i);
     return;
   }
-  applyAdopt(l, u, i, o);
+  applyAdopt(f, l, i, o);
 }
-function applyAdopt(e, n, t, o = false) {
-  const l = e.pb ?? e.v;
-  if (n === l && !ownedRaw.has(l))
+function applyAdopt(e, t, n, o = false) {
+  const f = e.pb ?? e.v;
+  if (t === f && !isOwned(f))
     return;
   const i = e.fam;
-  const u = i?.opt === true ? optHooks.optimisticView(e, l) : l;
-  const f = Array.isArray(n);
+  const l = i?.opt === true ? optHooks.optimisticView(e, f) : f;
+  const r = Array.isArray(t);
   const s = i === null;
-  const r = e.s === true;
-  const c = e.v;
-  adoptPB(e, n, s);
-  if (patchHooks !== null && s && e.pc !== null && e.pc.p !== null) {
-    {
-      patchHooks.emitPatchLocal(e, n, c);
-    }
-  }
-  if (r)
-    markRawIngest(n);
-  if (Array.isArray(u) !== f) {
+  const u = e.s === true;
+  const a = f;
+  adoptPB(e, t, s);
+  if (u)
+    markRawIngest(t);
+  if (Array.isArray(l) !== r) {
     if (s)
-      notifyFold(e, c, n);
+      notifyFold(e, a, t);
     return;
   }
-  if (f) {
-    const l2 = u;
-    const f2 = n;
-    const a = s ? e.n : null;
-    let p = 0;
-    if (t && !r) {
-      const u2 = l2.length;
-      const s2 = f2.length;
-      let r2 = false;
-      let d = 0;
-      for (const y2 = Math.min(u2, s2);d < y2; d++) {
-        const u3 = f2[d];
-        const s3 = l2[d];
-        if (s3 !== u3 && !(s3 !== null && typeof s3 === "object" && u3 !== null && typeof u3 === "object" && sameKey(t(s3), t(u3))))
+  if (r) {
+    const f2 = l;
+    const r2 = t;
+    const c = s ? e.n : null;
+    let d = 0;
+    if (n && !u) {
+      const l2 = f2.length;
+      const s2 = r2.length;
+      let u2 = false;
+      let p = 0;
+      for (const y2 = Math.min(l2, s2);p < y2; p++) {
+        const l3 = r2[p];
+        const s3 = f2[p];
+        if (s3 !== l3 && !(s3 !== null && typeof s3 === "object" && l3 !== null && typeof l3 === "object" && sameKey(n(s3), n(l3))))
           break;
-        if ((s3 !== u3 || u3 !== null && typeof u3 === "object" && ownedRaw.has(u3)) && u3 !== null && typeof u3 === "object")
-          descend(unwrapValue(s3), u3, t, i, o);
-        if (e.dk !== null && !r2 && !(u3 !== null && typeof u3 === "object" ? targetsEqual(s3, u3) : isEqual(s3, u3))) {
+        if ((s3 !== l3 || l3 !== null && typeof l3 === "object" && isOwned(l3)) && l3 !== null && typeof l3 === "object")
+          descend(unwrapValue(s3), l3, n, i, o);
+        if (e.dk !== null && !u2 && !(l3 !== null && typeof l3 === "object" ? targetsEqual(s3, l3) : isEqual(s3, l3))) {
           bumpDeep(e);
-          r2 = true;
+          u2 = true;
         }
-        if (a !== null) {
-          const e2 = a[d];
+        if (c !== null) {
+          const e2 = c[p];
           if (e2 !== undefined) {
-            p++;
-            notifyKeyValue(e2, d, c[d], u3, c, n);
+            d++;
+            notifyKeyValue(e2, p, a[p], l3, a, t);
           }
         }
       }
-      if (e.dk !== null && !r2 && d < f2.length)
+      if (e.dk !== null && !u2 && p < r2.length)
         bumpDeep(e);
-      const y = d;
+      const y = p;
       let w = null;
-      for (;d < f2.length; d++) {
-        const e2 = f2[d];
+      for (;p < r2.length; p++) {
+        const e2 = r2[p];
         if (e2 !== null && typeof e2 === "object") {
-          const n2 = t(e2);
-          let u3;
-          if (n2 !== undefined) {
+          const t2 = n(e2);
+          let l3;
+          if (t2 !== undefined) {
             if (w === null) {
               w = new Map;
-              for (let e4 = y;e4 < l2.length; e4++) {
-                const n3 = unwrapValue(l2[e4]);
-                if (n3 !== null && typeof n3 === "object") {
-                  const o2 = t(n3);
+              for (let e4 = y;e4 < f2.length; e4++) {
+                const t3 = unwrapValue(f2[e4]);
+                if (t3 !== null && typeof t3 === "object") {
+                  const o2 = n(t3);
                   if (o2 === undefined)
                     continue;
-                  const l3 = w.get(o2);
-                  if (l3 === undefined)
+                  const f3 = w.get(o2);
+                  if (f3 === undefined)
                     w.set(o2, e4);
-                  else if (Array.isArray(l3))
-                    l3.push(e4);
+                  else if (Array.isArray(f3))
+                    f3.push(e4);
                   else
-                    w.set(o2, [l3, e4]);
+                    w.set(o2, [f3, e4]);
                 }
               }
             }
-            const e3 = w.get(n2);
+            const e3 = w.get(t2);
             if (e3 === undefined)
-              u3 = undefined;
+              l3 = undefined;
             else if (Array.isArray(e3)) {
-              u3 = unwrapValue(l2[e3.shift()]);
+              l3 = unwrapValue(f2[e3.shift()]);
               if (e3.length === 1)
-                w.set(n2, e3[0]);
+                w.set(t2, e3[0]);
             } else {
-              u3 = unwrapValue(l2[e3]);
-              w.delete(n2);
+              l3 = unwrapValue(f2[e3]);
+              w.delete(t2);
             }
           } else {
-            u3 = unwrapValue(l2[d]);
+            l3 = unwrapValue(f2[p]);
           }
-          descend(u3, e2, t, i, o);
+          descend(l3, e2, n, i, o);
         }
-        if (a !== null) {
-          const e3 = a[d];
+        if (c !== null) {
+          const e3 = c[p];
           if (e3 !== undefined) {
-            p++;
-            notifyKeyDiff(e3, d, c, n, false);
+            d++;
+            notifyKeyDiff(e3, p, a, t, false);
           }
         }
       }
-      if (rowHooks !== null && e.pc !== null && e.pc.ro !== null && (y < s2 || u2 !== s2))
-        buildAndEmitRowOps(e, l2, f2, y, t);
     } else {
-      const u2 = Math.min(l2.length, f2.length);
-      const s2 = f2.length;
-      let d = false;
-      const y = rowHooks !== null && e.pc !== null ? e.pc.sp : null;
-      const w = rowHooks !== null && e.pc !== null ? e.pc.ro : null;
-      let b = t !== null && (w !== null || y !== null);
-      let m = 0;
-      for (let w2 = 0;w2 < s2; w2++) {
-        const s3 = f2[w2];
-        if (b && w2 < u2) {
-          const e2 = l2[w2];
-          if (e2 !== null && typeof e2 === "object" && s3 !== null && typeof s3 === "object" && sameKey(t(e2), t(s3)))
-            m++;
-          else
-            b = false;
-        }
-        if (y !== null && w2 < u2 && (t === null || b)) {
-          const n2 = l2[w2];
-          if (n2 !== s3)
-            rowHooks.emitSlotPatch(e, w2, s3, n2);
-        }
-        if (!r && w2 < u2 && s3 !== null && typeof s3 === "object")
-          descend(unwrapValue(l2[w2]), s3, t, i, o);
-        if (e.dk !== null && !d && !(s3 !== null && typeof s3 === "object" ? targetsEqual(l2[w2], s3) : isEqual(l2[w2], s3))) {
+      const l2 = Math.min(f2.length, r2.length);
+      const s2 = r2.length;
+      let p = false;
+      for (let y = 0;y < s2; y++) {
+        const s3 = r2[y];
+        if (!u && y < l2 && s3 !== null && typeof s3 === "object")
+          descend(unwrapValue(f2[y]), s3, n, i, o);
+        if (e.dk !== null && !p && !(s3 !== null && typeof s3 === "object" ? targetsEqual(f2[y], s3) : isEqual(f2[y], s3))) {
           bumpDeep(e);
-          d = true;
+          p = true;
         }
-        if (a !== null) {
-          const e2 = a[w2];
+        if (c !== null) {
+          const e2 = c[y];
           if (e2 !== undefined) {
-            p++;
-            notifyKeyDiff(e2, w2, c, n, false);
+            d++;
+            notifyKeyDiff(e2, y, a, t, false);
           }
-        }
-      }
-      if (w !== null) {
-        const n2 = l2.length;
-        if (t !== null) {
-          if (m < s2 || n2 !== s2)
-            buildAndEmitRowOps(e, l2, f2, m, t);
-        } else if (n2 !== s2) {
-          buildAndEmitRowOps(e, l2, f2, u2, null);
         }
       }
     }
     if (s) {
-      if (a !== null && p < e.nc) {
-        for (const e2 of Reflect.ownKeys(a)) {
-          const t2 = typeof e2 === "string" ? +e2 : NaN;
-          if (!(t2 >= 0 && t2 < f2.length))
-            notifyKeyDiff(a[e2], e2, c, n, false);
+      if (c !== null && d < e.nc) {
+        for (const e2 of Reflect.ownKeys(c)) {
+          const n2 = typeof e2 === "string" ? +e2 : NaN;
+          if (!(n2 >= 0 && n2 < r2.length))
+            notifyKeyDiff(c[e2], e2, a, t, false);
         }
       }
-      notifyFoldTail(e, c, n);
+      notifyFoldTail(e, a, t);
     }
     return;
   } else {
-    if (e.pc !== null && e.pc.p !== null && s && e.n === null && e.h === null && e.k === null && e.dk === null && i === null) {
-      return;
-    }
-    const l2 = s ? e.n : null;
-    let f2 = 0;
-    let a = false;
-    for (const s2 in n) {
-      const p2 = n[s2];
-      const d = c[s2];
-      const y = p2 !== null && typeof p2 === "object";
-      if (d === p2 && (!y || !ownedRaw.has(p2)) && (l2 === null || l2[s2] === undefined || !hasAccessorFlag(l2[s2]))) {
-        if (l2 !== null && l2[s2] !== undefined)
-          f2++;
+    const f2 = s ? e.n : null;
+    let r2 = 0;
+    let c = false;
+    for (const s2 in t) {
+      const d2 = t[s2];
+      const p = a[s2];
+      const y = d2 !== null && typeof d2 === "object";
+      if (p === d2 && (!y || !isOwned(d2)) && (f2 === null || f2[s2] === undefined || !hasAccessorFlag(f2[s2]))) {
+        if (f2 !== null && f2[s2] !== undefined)
+          r2++;
         continue;
       }
-      if (y && !r)
-        descend(unwrapValue(u[s2]), p2, t, i, o);
-      if (e.dk !== null && !a && !(y ? targetsEqual(d, p2) : isEqual(d, p2))) {
+      if (y && !u)
+        descend(unwrapValue(l[s2]), d2, n, i, o);
+      if (e.dk !== null && !c && !(y ? targetsEqual(p, d2) : isEqual(p, d2))) {
         bumpDeep(e);
-        a = true;
+        c = true;
       }
-      if (l2 !== null) {
-        const e2 = l2[s2];
+      if (f2 !== null) {
+        const e2 = f2[s2];
         if (e2 !== undefined) {
-          f2++;
-          notifyKeyValue(e2, s2, d, p2, c, n);
+          r2++;
+          notifyKeyValue(e2, s2, p, d2, a, t);
         }
       }
     }
-    const p = Object.getOwnPropertySymbols(n);
-    for (let e2 = 0;e2 < p.length; e2++) {
-      const s2 = p[e2];
-      const a2 = n[s2];
-      if (!r && a2 !== null && typeof a2 === "object")
-        descend(unwrapValue(u[s2]), a2, t, i, o);
-      if (l2 !== null) {
-        const e3 = l2[s2];
+    const d = Object.getOwnPropertySymbols(t);
+    for (let e2 = 0;e2 < d.length; e2++) {
+      const s2 = d[e2];
+      if (s2 === $OWNER)
+        continue;
+      const c2 = t[s2];
+      if (!u && c2 !== null && typeof c2 === "object")
+        descend(unwrapValue(l[s2]), c2, n, i, o);
+      if (f2 !== null) {
+        const e3 = f2[s2];
         if (e3 !== undefined) {
-          f2++;
-          notifyKeyValue(e3, s2, c[s2], a2, c, n);
+          r2++;
+          notifyKeyValue(e3, s2, a[s2], c2, a, t);
         }
       }
     }
     if (s) {
-      if (l2 !== null && f2 < e.nc) {
-        for (const e2 of Reflect.ownKeys(l2)) {
-          if (!hasOwnP.call(n, e2))
-            notifyKeyDiff(l2[e2], e2, c, n, false);
+      if (f2 !== null && r2 < e.nc) {
+        for (const e2 of Reflect.ownKeys(f2)) {
+          if (!hasOwnP.call(t, e2))
+            notifyKeyDiff(f2[e2], e2, a, t, false);
         }
       }
-      notifyFoldTail(e, c, n);
+      notifyFoldTail(e, a, t);
     }
     return;
   }
 }
 var hasOwnP = Object.prototype.hasOwnProperty;
-function sameKey(e, n) {
-  return e === n || e !== e && n !== n;
+function sameKey(e, t) {
+  return e === t || e !== e && t !== t;
 }
-function buildAndEmitRowOps(e, n, t, o, l) {
-  rowHooks.emitRowOps(e, t, buildRowOps(n, t, o, l));
-}
-function buildRowOps(e, n, t, o) {
-  const l = e.length;
-  const i = n.length;
-  const u = new Array(i - t);
-  let f = null;
-  if (o !== null && t < l) {
-    f = new Map;
-    for (let n2 = t;n2 < l; n2++) {
-      const t2 = unwrapValue(e[n2]);
-      if (t2 !== null && typeof t2 === "object") {
-        const e2 = o(t2);
-        if (e2 === undefined)
-          continue;
-        const l2 = f.get(e2);
-        if (l2 === undefined)
-          f.set(e2, n2);
-        else if (Array.isArray(l2))
-          l2.push(n2);
-        else
-          f.set(e2, [l2, n2]);
-      }
-    }
-  }
-  const s = f !== null ? new Set : null;
-  for (let e2 = t;e2 < i; e2++) {
-    const l2 = n[e2];
-    let i2 = -1;
-    if (l2 !== null && typeof l2 === "object" && f !== null) {
-      const e3 = o(l2);
-      if (e3 !== undefined) {
-        const n2 = f.get(e3);
-        if (n2 !== undefined) {
-          if (Array.isArray(n2)) {
-            i2 = n2.shift();
-            if (n2.length === 1)
-              f.set(e3, n2[0]);
-          } else {
-            i2 = n2;
-            f.delete(e3);
-          }
-          s.add(i2);
-        }
-      }
-    }
-    u[e2 - t] = i2;
-  }
-  const r = [];
-  for (let n2 = t;n2 < l; n2++) {
-    if (s === null || !s.has(n2))
-      r.push(unwrapValue(e[n2]));
-  }
-  return {
-    prefix: t,
-    sources: u,
-    removed: r
-  };
-}
-function descend(e, n, t, o, l = false) {
-  if (e === null || typeof e !== "object" || n === null || typeof n !== "object")
+function descend(e, t, n, o, f = false) {
+  if (e === null || typeof e !== "object" || t === null || typeof t !== "object")
     return;
-  const i = (o?.map ?? storeNextLookup).get(e);
+  const i = lookupTarget(e, o);
   if (i === undefined)
     return;
-  if (!isWrappable(n))
+  if (!isWrappable(t))
     return;
-  if (rawValuesUsed && isRawValue(n))
+  if (rawValuesUsed && isRawValue(t))
     return;
-  n = unwrapValue(n);
-  if (Array.isArray(e) !== Array.isArray(n))
+  t = unwrapValue(t);
+  if (Array.isArray(e) !== Array.isArray(t))
     return;
-  if (t) {
-    const o2 = t(e);
-    const l2 = t(n);
-    if (o2 !== undefined && l2 !== undefined && !sameKey(o2, l2))
+  if (n) {
+    const o2 = n(e);
+    const f2 = n(t);
+    if (o2 !== undefined && f2 !== undefined && !sameKey(o2, f2))
       return;
   }
-  if (!l && t !== null && !i.d)
+  if (!f && n !== null && !i.d)
     return;
-  applyAdopt(i, n, t, l);
+  applyAdopt(i, t, n, f);
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/store/next/projection.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/store/next/projection.js
 function wrapDraft(e, t, r) {
   const write = (e2) => r ? r(e2) : e2();
   const i = {
@@ -4303,8 +4648,8 @@ function runProjectionComputedNext(e, t, r, i, o) {
   const n = getOwner();
   let c = false;
   let s;
-  const u = n.Ne ? JSON.parse(JSON.stringify(e[$TARGET][STORE_VALUE])) : null;
-  const l = wrapDraft(e, () => !c || n.o?.Ie === s, o);
+  const u = n.Ae ? JSON.parse(JSON.stringify(e[$TARGET][STORE_VALUE])) : null;
+  const l = wrapDraft(e, () => !c || n.o?.Pe === s, o);
   storeSetterNext(l, (o2) => {
     s = t(u ?? o2);
     c = true;
@@ -4317,19 +4662,19 @@ function runProjectionComputedNext(e, t, r, i, o) {
       i ? i(write, t2) : write();
     };
     const l2 = handleAsync(n, s, commit);
-    if (!n.Ne)
+    if (!n.Ae)
       commit(l2);
   }, false);
   return n;
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/store/index.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/store/index.js
 function createStore(e, t, r) {
   if (typeof e === "function")
     return createStoreDerivedNext(e, t, r);
   return createStoreNext(e, !!t?.shallow);
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/boundaries.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/boundaries.js
 function boundaryComputed(e, t) {
   const r = computed(e, {
     lazy: true
@@ -4562,8 +4907,9 @@ class CollectionQueue extends Queue {
       if (t2) {
         const e2 = this.v.size === 0;
         this.v.add(t2);
-        if (e2)
+        if (e2) {
           setSignal(this.D, true);
+        }
         if (this.ee & STATUS_ERROR) {
           setSignal(this._, unwrapStatusError(t2.o?._));
         }
@@ -4705,7 +5051,7 @@ function flattenArray(e, t = [], r) {
     throw n;
   return s;
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.6/node_modules/@solidjs/signals/dist/prod/store/utils.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.8/node_modules/@solidjs/signals/dist/prod/store/utils.js
 function trueFn() {
   return true;
 }
@@ -4749,10 +5095,10 @@ function merge(...e) {
   for (let n2 = 0;n2 < e.length; n2++) {
     const o2 = e[n2];
     r = r || !!o2 && $PROXY in o2;
-    const s2 = !!o2 && o2[$SOURCES];
-    if (s2) {
-      for (let e2 = 0;e2 < s2.length; e2++)
-        t.push(s2[e2]);
+    const u2 = !!o2 && o2[$SOURCES];
+    if (u2) {
+      for (let e2 = 0;e2 < u2.length; e2++)
+        t.push(u2[e2]);
     } else
       t.push(typeof o2 === "function" ? (r = true, createMemo(o2)) : o2);
   }
@@ -4787,22 +5133,22 @@ function merge(...e) {
   }
   const n = Object.create(null);
   let o = false;
-  let s = t.length - 1;
-  for (let e2 = s;e2 >= 0; e2--) {
+  let u = t.length - 1;
+  for (let e2 = u;e2 >= 0; e2--) {
     const r2 = t[e2];
     if (!r2) {
-      e2 === s && s--;
+      e2 === u && u--;
       continue;
     }
-    const u2 = Object.getOwnPropertyNames(r2);
-    for (let t2 = u2.length - 1;t2 >= 0; t2--) {
-      const c2 = u2[t2];
-      if (c2 === "__proto__" || c2 === "constructor")
+    const c2 = Object.getOwnPropertyNames(r2);
+    for (let t2 = c2.length - 1;t2 >= 0; t2--) {
+      const s2 = c2[t2];
+      if (s2 === "__proto__" || s2 === "constructor")
         continue;
-      if (!n[c2]) {
-        o = o || e2 !== s;
-        const t3 = Object.getOwnPropertyDescriptor(r2, c2);
-        n[c2] = t3.get ? {
+      if (!n[s2]) {
+        o = o || e2 !== u;
+        const t3 = Object.getOwnPropertyDescriptor(r2, s2);
+        n[s2] = t3.get ? {
           enumerable: true,
           configurable: true,
           get: t3.get.bind(r2)
@@ -4811,20 +5157,20 @@ function merge(...e) {
     }
   }
   if (!o)
-    return t[s];
-  const u = {};
-  const c = Object.keys(n);
-  for (let e2 = c.length - 1;e2 >= 0; e2--) {
-    const r2 = c[e2], t2 = n[r2];
+    return t[u];
+  const c = {};
+  const s = Object.keys(n);
+  for (let e2 = s.length - 1;e2 >= 0; e2--) {
+    const r2 = s[e2], t2 = n[r2];
     if (t2.get)
-      Object.defineProperty(u, r2, t2);
+      Object.defineProperty(c, r2, t2);
     else
-      u[r2] = t2.value;
+      c[r2] = t2.value;
   }
-  u[$SOURCES] = t;
-  return u;
+  c[$SOURCES] = t;
+  return c;
 }
-// ../../node_modules/.bun/solid-js@2.0.0-rc.6/node_modules/solid-js/dist/solid.js
+// ../../node_modules/.bun/solid-js@2.0.0-rc.8/node_modules/solid-js/dist/solid.js
 var IS_DEV = false;
 var $DEVCOMP = Symbol(0);
 function createContext2(defaultValue, options) {
@@ -4883,7 +5229,7 @@ var _fragments = new Map;
 var _truncated = new Set;
 var _revealSubs = new Set;
 var _truncationRejectors = new Map;
-function createComponent(Comp, props) {
+function createComponent(Comp, props, name) {
   return untrack(() => Comp(props || {}));
 }
 var narrowedError = (name) => `Stale read from <${name}>.`;
@@ -4900,12 +5246,6 @@ function For(props) {
   if (sharedConfig.hydrating)
     mapped = create();
   const list = () => (mapped ?? (mapped = create()))();
-  if (props.keyed !== false && !("fallback" in props) && props.children.length < 2)
-    list.$ll = {
-      each: () => props.each,
-      row: props.children,
-      keyed: props.keyed
-    };
   return list;
 }
 function Show(props) {
@@ -4981,7 +5321,7 @@ function Match(props) {
   return props;
 }
 
-// ../../node_modules/.bun/@solidjs+universal@2.0.0-rc.6+7f7c04572bc85ca7/node_modules/@solidjs/universal/dist/universal.js
+// ../../node_modules/.bun/@solidjs+universal@2.0.0-rc.8+df9aec17228584f1/node_modules/@solidjs/universal/dist/universal.js
 var transparentOptions = {
   transparent: true,
   sync: true
@@ -5321,10 +5661,7 @@ function createRenderer({
     memo,
     createComponent,
     applyRef,
-    ref,
-    patchDriver(subject, body) {
-      effect2(() => body(subject, subject, false), () => body(subject, undefined, true), undefined);
-    }
+    ref
   };
 }
 
@@ -6736,7 +7073,7 @@ function createScroll(viewport, content, options = {}) {
   });
   let [behavior, setBehavior] = createSignal("auto");
   let lastBehavior = "auto";
-  let origin = new Error().stack ?? "";
+  let origin2 = new Error().stack ?? "";
   let warnedCollapsed = false;
   let maxX = 0;
   let maxY = 0;
@@ -6770,7 +7107,7 @@ function createScroll(viewport, content, options = {}) {
         warnedCollapsed = true;
         let axisName = zeroY ? "height" : "width";
         console.warn(`Scroll container resolved to ${axisName} 0, so its content is invisible. ` + `Give it an explicit ${axisName} or flex; maxHeight/maxWidth alone does not size it.
-${origin}`);
+${origin2}`);
       }
     }
     maxX = Math.max(0, cb.width - vb.width);
@@ -6835,14 +7172,14 @@ var arena = {
 // ../../packages/core/src/pan.ts
 var PAN_SLOP = 8;
 function createPan(options) {
-  let origin = null;
+  let origin2 = null;
   let active = null;
   let armed = null;
   let past = (e) => {
-    if (!origin)
+    if (!origin2)
       return false;
-    let dx = Math.abs(e.clientX - origin.x);
-    let dy = Math.abs(e.clientY - origin.y);
+    let dx = Math.abs(e.clientX - origin2.x);
+    let dy = Math.abs(e.clientY - origin2.y);
     let axis = options.axis ?? "both";
     if (axis === "vertical")
       return dy >= PAN_SLOP;
@@ -6856,7 +7193,7 @@ function createPan(options) {
       active = null;
     }
     armed = null;
-    origin = null;
+    origin2 = null;
   };
   let cancel = reset;
   let owner = {
@@ -6869,7 +7206,7 @@ function createPan(options) {
         return;
       if (armed == null && active == null) {
         armed = e.pointerId;
-        origin = {
+        origin2 = {
           x: e.clientX,
           y: e.clientY
         };
@@ -6880,7 +7217,7 @@ function createPan(options) {
         if (arena.steal(e.pointerId, owner)) {
           active = e.pointerId;
           armed = null;
-          origin = {
+          origin2 = {
             x: e.parentX,
             y: e.parentY
           };
@@ -6890,9 +7227,9 @@ function createPan(options) {
         }
         return;
       }
-      if (active === e.pointerId && origin) {
-        options.onPanMove?.(e.parentX - origin.x, e.parentY - origin.y);
-        origin = {
+      if (active === e.pointerId && origin2) {
+        options.onPanMove?.(e.parentX - origin2.x, e.parentY - origin2.y);
+        origin2 = {
           x: e.parentX,
           y: e.parentY
         };
