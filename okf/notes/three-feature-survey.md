@@ -79,7 +79,11 @@ real follow-up, not a nicety.
 
 - `CapsuleGeometry`. `Capsule` already exists as a collision volume in
   `scene.ts` and nothing can draw one, which is an odd asymmetry.
-  Roadmap item 10 already carries it as a tube special case.
+  Landed 2026-09-11 as `capsule({ radius, height, capSegments,
+  radialSegments })` with `height` the total extent (Godot and Unity
+  against Three's middle-section length), plus `capsuleHelper(volume)`
+  drawing the collision volume itself
+  (okf/done/3d-capsule-primitive.md).
 - The polyhedron family: `Tetrahedron`, `Octahedron`, `Icosahedron`,
   `Dodecahedron` and the generic `PolyhedronGeometry` with `detail`
   subdivision. Gets you an icosphere, which is the better sphere for

@@ -13,13 +13,16 @@
 //      one - unless the query passes its own { layers }, which sees it
 //      (the undrawn collision-mesh pattern).
 //   5. { meshes } is an include-list: hits only from the listed meshes.
+//   6. updateVertices moves the pick with the mesh: a geometry deformed
+//      out of its rest box is found where it went (box and triangles)
+//      on the next frame, and no longer where it was.
 // The scene is GPU state, so like core's gpu-lease-check this runs on the
 // playback client, from the repo root:
 //
 //   bunx srt render packages/3d/checks/raycast-check.tsx --project --duration 3 --size 128x128
 //
-// Asserts on the second frame and prints one PASS/FAIL summary, then
-// exits; read the output, not the exit code.
+// Asserts on the second and third frames and prints one PASS/FAIL
+// summary, then exits; read the output, not the exit code.
 import { exit, onFrame, pct, render } from "@solidrt/core"
 import { glsl } from "@solidrt/core/gpu"
 import {
@@ -28,12 +31,15 @@ import {
   createRecordMesh,
   createMesh,
   createScene,
+  geometryAttribute,
+  geometryVertexCount,
   mergeGeometries,
   setLayers,
   setTransform,
   shaderMaterialClass,
   transformGeometry,
   unlit,
+  updateVertices,
 } from "@solidrt/3d"
 
 const SIZE = 128
@@ -92,9 +98,29 @@ function App() {
   setLayers(collision, 2)
   add(scene.root, collision)
 
+  // The deforming mesh: a cube whose vertices are carried 6 up in place
+  // between the two asserting frames, clear of its rest box.
+  let deforming = createMesh(box(), grey)
+  setTransform(deforming, { position: [3, -3, 0] })
+  add(scene.root, deforming)
+  const LIFT = 6
+
   onFrame((_tick, frame) => {
-    if (frame !== 2) return
     let down: [number, number, number] = [0, 0, -1]
+    if (frame === 3) {
+      // 6. The pick follows updateVertices: gone from the rest pose,
+      // triangle-accurate where the vertices went.
+      if (scene.raycast([3, -3, 10], down).length !== 0) fail("a deformed mesh must no longer pick at its rest pose")
+      let moved = scene.raycast([3, -3 + LIFT, 10], down)
+      if (moved.length !== 1 || moved[0]!.mesh !== deforming) fail("a deformed mesh must pick where its vertices went")
+      else if (moved[0]!.face === undefined) fail("the moved pick should be triangle-accurate")
+      else if (Math.abs(moved[0]!.distance - 9.5) > 1e-3) fail(`the moved pick should land at 9.5, got ${moved[0]!.distance}`)
+
+      if (failures === 0) console.log("PASS: triangle accuracy, box tier, pick/raycast parity, layer masks, mesh filter, update follow")
+      else console.log(`${failures} FAILURES`)
+      exit()
+    }
+    if (frame !== 2) return
 
     // 1. Triangle accuracy on the merged mesh.
     let solid = scene.raycast([-2, 0, 10], down)
@@ -135,9 +161,12 @@ function App() {
     let included = scene.raycast([0, 3, 10], down, { meshes: [merged] })
     if (included.length !== 0) fail("{ meshes } must exclude hits from unlisted meshes")
 
-    if (failures === 0) console.log("PASS: triangle accuracy, box tier, pick/raycast parity, layer masks, mesh filter")
-    else console.log(`${failures} FAILURES`)
-    exit()
+    // 6, first half: at rest the deforming mesh picks; then deform it.
+    if (scene.raycast([3, -3, 10], down).length !== 1) fail("the deforming mesh should pick at its rest pose")
+    let pos = geometryAttribute(deforming.geometry, "aPos")!
+    let count = geometryVertexCount(deforming.geometry, "raycast-check")
+    for (let i = 0; i < count; i++) pos.set(i, 1, pos.get(i, 1) + LIFT)
+    updateVertices(deforming.geometry)
   })
 
   return (

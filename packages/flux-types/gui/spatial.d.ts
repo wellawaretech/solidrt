@@ -189,8 +189,9 @@ declare module "flux:spatial" {
     uv?: [number, number]
   }
 
-  /** Set (null clears) the node's LOCAL tight box [minX, minY, minZ, maxX,
-   * maxY, maxZ]. With one the node is in the picking index: its world box
+  /** Set (null clears) the LOCAL tight box [minX, minY, minZ, maxX, maxY,
+   * maxZ] of a node without a shape (a shaped node's box is its shape's:
+   * throws). With one the node is in the picking index: its world box
    * follows the flush; hidden nodes stay in and are skipped at query time. */
   export function setBounds(node: NodeId, bounds: Float32Array | null): void
   /**
@@ -214,15 +215,29 @@ declare module "flux:spatial" {
    * node is not culled. */
   export function setCullGroup(node: NodeId, members: NodeId[]): void
   /**
-   * Triangle data for the picking narrowphase, one copy shared by every
-   * node that references it: positions read from an interleaved vertex
-   * array (`stride` floats per vertex, xyz at `posOffset`, uv at
-   * `uvOffset`, -1 for none) and a Uint16Array/Uint32Array triangle list.
-   * Throws on out-of-range indices.
+   * A geometry's positions as the core keeps them, one copy shared by
+   * every node that references it: the source of those nodes' local
+   * boxes, and the picking narrowphase's triangles when `indices` (a
+   * Uint16Array/Uint32Array triangle list) is given - without it the
+   * shape only gives its box. Positions are read from an interleaved
+   * vertex array (`stride` floats per vertex, xyz at `posOffset`, uv at
+   * `uvOffset`, -1 for none). Throws on out-of-range indices.
    */
-  export function createShape(vertices: Float32Array, stride: number, posOffset: number, uvOffset: number, indices: Uint16Array | Uint32Array): ShapeId
-  /** Free a shape; nodes still referencing it fall back to their box. */
+  export function createShape(vertices: Float32Array, stride: number, posOffset: number, uvOffset: number, indices?: Uint16Array | Uint32Array): ShapeId
+  /**
+   * Rewrite the shape's vertices from `first` on with those in
+   * `vertices`, laid out as for createShape (uvs exactly when the shape
+   * has them). The box follows at the next flush on every node carrying
+   * the shape; the triangle index is rebuilt by the next query. Throws
+   * when the range runs past the shape's vertices.
+   */
+  export function updateShape(shape: ShapeId, vertices: Float32Array, stride: number, posOffset: number, uvOffset: number, first: number): void
+  /** Free a shape; nodes still referencing it keep their last box and
+   * fall back to it. */
   export function destroyShape(shape: ShapeId): void
+  /** Give the node a shape (null takes it away): its box is the shape's
+   * from here on, and setBounds is refused. A shape with no vertices
+   * leaves the node without a box. */
   export function setShape(node: NodeId, shape: ShapeId | null): void
   /** The node's layer membership bitmask (default 1), what a query's
    * `layers` mask is tested against. Query-only: needs no flush. */

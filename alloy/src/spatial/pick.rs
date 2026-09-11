@@ -25,12 +25,16 @@ const RAY_DET_EPSILON: f32 = 1e-12;
 /// Generation-tagged like NodeId; a destroyed shape's id never resolves.
 pub type ShapeId = u64;
 
+/// A geometry's positions as the core keeps them: the source of a node's
+/// local box, and the narrowphase's triangles when `indices` name any.
 pub struct Shape {
   /// xyz per vertex.
   pub positions: Vec<f32>,
   /// uv per vertex, same vertex count, or None.
   pub uvs: Option<Vec<f32>>,
-  /// Triangle list, three indices per face.
+  /// Triangle list, three indices per face; empty for a shape that only
+  /// gives its box (a line or point geometry), tested like a node
+  /// without one.
   pub indices: Vec<u32>,
 }
 
@@ -52,15 +56,36 @@ pub struct Hit {
 struct Slot {
   generation: u32,
   shape: Option<Shape>,
+  /// The tight box of the positions; None for a shape without any.
+  bounds: Option<Box3>,
   /// The shape's triangle BVH, built by the first ray that reaches it;
-  /// None until then, and forever for shapes under BVH_MIN_TRIANGLES.
+  /// None until then, dropped by an update, and forever None for shapes
+  /// under BVH_MIN_TRIANGLES.
   index: Option<TriBvh>,
+  /// Updated since the last flush: the nodes carrying the shape owe a
+  /// box refit.
+  dirty: bool,
 }
 
 #[derive(Default)]
 pub(crate) struct Shapes {
   slots: Vec<Slot>,
   free: Vec<u32>,
+  /// Some slot is dirty (the flush's cheap pre-check).
+  any_dirty: bool,
+}
+
+/// The tight box over xyz triples; None when there are none.
+fn positions_box(positions: &[f32]) -> Option<Box3> {
+  let mut b: Box3 =
+    [f32::INFINITY, f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+  for p in positions.chunks_exact(3) {
+    for k in 0..3 {
+      b[k] = b[k].min(p[k]);
+      b[k + 3] = b[k + 3].max(p[k]);
+    }
+  }
+  (b[0] <= b[3]).then_some(b)
 }
 
 impl Shapes {
@@ -80,20 +105,93 @@ impl Shapes {
     if let Some(bad) = shape.indices.iter().find(|&&i| i as usize >= count) {
       return Err(format!("shape index {bad} out of range for {count} vertices"));
     }
+    let bounds = positions_box(&shape.positions);
     let i = match self.free.pop() {
       Some(i) => {
         let slot = &mut self.slots[i as usize];
         slot.generation = slot.generation.wrapping_add(1);
         slot.shape = Some(shape);
+        slot.bounds = bounds;
         slot.index = None;
+        slot.dirty = false;
         i
       }
       None => {
-        self.slots.push(Slot { generation: 0, shape: Some(shape), index: None });
+        self.slots.push(Slot { generation: 0, shape: Some(shape), bounds, index: None, dirty: false });
         (self.slots.len() - 1) as u32
       }
     };
     Ok(((self.slots[i as usize].generation as u64) << 32) | i as u64)
+  }
+
+  /// Overwrite vertices `[first, first + n)` of a shape in place, `n` the
+  /// triples in `positions`; `uvs` (2 per vertex) must be given exactly
+  /// when the shape has them. The box follows now, the triangle index is
+  /// rebuilt by the next query, and the nodes carrying the shape refit
+  /// their leaves at the next flush.
+  pub fn update(&mut self, id: ShapeId, first: usize, positions: &[f32], uvs: Option<&[f32]>) -> Result<(), String> {
+    let i = self.index(id).ok_or_else(|| format!("spatial shape {id} not found"))?;
+    let slot = &mut self.slots[i as usize];
+    let shape = slot.shape.as_mut().ok_or_else(|| format!("spatial shape {id} not found"))?;
+    if positions.len() % 3 != 0 {
+      return Err("shape positions must be xyz triples".to_string());
+    }
+    let n = positions.len() / 3;
+    let count = shape.positions.len() / 3;
+    if first + n > count {
+      return Err(format!("shape update [{first}, {}) is outside the shape's {count} vertices", first + n));
+    }
+    match (&mut shape.uvs, uvs) {
+      (Some(have), Some(given)) => {
+        if given.len() != n * 2 {
+          return Err(format!("shape uvs must be {} floats (2 per vertex), got {}", n * 2, given.len()));
+        }
+        have[first * 2..(first + n) * 2].copy_from_slice(given);
+      }
+      (None, None) => {}
+      (Some(_), None) => return Err("shape update without uvs on a shape that has them".to_string()),
+      (None, Some(_)) => return Err("shape update with uvs on a shape without them".to_string()),
+    }
+    shape.positions[first * 3..(first + n) * 3].copy_from_slice(positions);
+    slot.bounds = positions_box(&shape.positions);
+    slot.index = None;
+    slot.dirty = true;
+    self.any_dirty = true;
+    Ok(())
+  }
+
+  /// The shape's local tight box: Some(None) for a resolvable shape with
+  /// no vertices, None for an unresolvable id.
+  pub fn bounds(&self, id: ShapeId) -> Option<Option<Box3>> {
+    self.index(id).map(|i| self.slots[i as usize].bounds)
+  }
+
+  /// Whether the shape names any triangles; a box-only shape (or an
+  /// unresolvable id) is tested like a node without one.
+  pub fn has_triangles(&self, id: ShapeId) -> bool {
+    self.get(id).is_some_and(|s| !s.indices.is_empty())
+  }
+
+  /// The box of a shape updated since the last `clear_dirty`, or None for
+  /// a clean or unresolvable id.
+  pub fn dirty_bounds(&self, id: ShapeId) -> Option<Option<Box3>> {
+    let i = self.index(id)?;
+    let slot = &self.slots[i as usize];
+    slot.dirty.then_some(slot.bounds)
+  }
+
+  pub fn any_dirty(&self) -> bool {
+    self.any_dirty
+  }
+
+  pub fn clear_dirty(&mut self) {
+    if !self.any_dirty {
+      return;
+    }
+    for slot in &mut self.slots {
+      slot.dirty = false;
+    }
+    self.any_dirty = false;
   }
 
   fn index(&self, id: ShapeId) -> Option<u32> {
@@ -115,7 +213,9 @@ impl Shapes {
   pub fn destroy(&mut self, id: ShapeId) -> Result<(), String> {
     let i = self.index(id).ok_or_else(|| format!("spatial shape {id} not found"))?;
     self.slots[i as usize].shape = None;
+    self.slots[i as usize].bounds = None;
     self.slots[i as usize].index = None;
+    self.slots[i as usize].dirty = false;
     self.free.push(i);
     Ok(())
   }
@@ -263,11 +363,12 @@ pub fn ray_shape(shape: &Shape, o: [f32; 3], d: [f32; 3]) -> Option<(f32, u32, O
 /// walk holds one deferred child per level.
 const TRAVERSAL_STACK: usize = 48;
 
-/// A static triangle BVH over one shape. Shapes are immutable, so the
-/// tree is built once - median split on the widest centroid axis, flat
-/// node storage - and never refit (the scene's dynamic `Bvh` in bvh.rs is
-/// a different animal: fat boxes, insert/remove, rotations). `faces` is
-/// the face-id list permuted so every leaf owns a contiguous run.
+/// A static triangle BVH over one shape: built whole - median split on
+/// the widest centroid axis, flat node storage - by the first query
+/// after the shape's create or update, and never refit (an update drops
+/// it; the scene's dynamic `Bvh` in bvh.rs is a different animal: fat
+/// boxes, insert/remove, rotations). `faces` is the face-id list permuted
+/// so every leaf owns a contiguous run.
 struct TriBvh {
   nodes: Vec<TriNode>,
   faces: Vec<u32>,

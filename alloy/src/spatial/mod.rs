@@ -416,7 +416,9 @@ struct Node {
   cull_group: Vec<NodeId>,
   /// Nodes whose cull group this node is in: a move here re-tests them.
   cull_owners: Vec<NodeId>,
-  /// Triangle data for the picking narrowphase; None = box only.
+  /// The geometry the node stands for: its local box, and the picking
+  /// narrowphase when the shape names triangles. None = the box set by
+  /// set_bounds only.
   shape: Option<ShapeId>,
   /// Layer membership bitmask the queries test against their mask
   /// (default 1, Three's Object3D.layers).
@@ -802,12 +804,21 @@ impl Spatial {
     ((self.nodes[i as usize].generation as u64) << 32) | i as u64
   }
 
-  /// Set (or with None clear) the node's local tight box. With a box the
+  /// Set (or with None clear) the local tight box of a node without a
+  /// shape (a shaped node's box is its shape's: refused). With a box the
   /// node is in the index: its leaf follows the world matrix through the
   /// flush, and hidden nodes stay in (skipped at query time, so unhiding
   /// never queries a stale box).
   pub fn set_bounds(&mut self, id: NodeId, bounds: Option<Box3>) -> Result<(), String> {
     let i = self.resolve(id)?;
+    if self.nodes[i as usize].shape.is_some() {
+      return Err("the node's box comes from its shape".to_string());
+    }
+    self.put_bounds(i, bounds);
+    Ok(())
+  }
+
+  fn put_bounds(&mut self, i: u32, bounds: Option<Box3>) {
     if bounds.is_none() {
       if let Some(leaf) = self.nodes[i as usize].leaf.take() {
         self.bvh.remove(leaf);
@@ -815,7 +826,6 @@ impl Spatial {
     }
     self.nodes[i as usize].bounds = bounds;
     self.enqueue(i);
-    Ok(())
   }
 
   /// The clip volume gating every draw sink on `target` (None lifts it):
@@ -978,14 +988,18 @@ impl Spatial {
     }
   }
 
-  /// Attach (or with None detach) triangle data for the narrowphase. The
-  /// node still needs bounds to be found at all.
+  /// Give the node a shape (or with None take it away): its local box is
+  /// the shape's from here on, following every update of the shape, and
+  /// its triangles are the narrowphase when the shape names any. A shape
+  /// with no vertices leaves the node without a box.
   pub fn set_shape(&mut self, id: NodeId, shape: Option<ShapeId>) -> Result<(), String> {
     let i = self.resolve(id)?;
-    if let Some(sid) = shape {
-      self.shapes.check(sid)?;
-    }
+    let bounds = match shape {
+      Some(sid) => self.shapes.bounds(sid).ok_or_else(|| format!("spatial shape {sid} not found"))?,
+      None => None,
+    };
     self.nodes[i as usize].shape = shape;
+    self.put_bounds(i, bounds);
     Ok(())
   }
 
@@ -1304,6 +1318,37 @@ impl Spatial {
     self.shapes.destroy(id)
   }
 
+  /// Rewrite a vertex range of a shape in place (see `Shapes::update`);
+  /// the nodes carrying it refit their boxes at the next flush.
+  pub fn update_shape(
+    &mut self,
+    id: ShapeId,
+    first: usize,
+    positions: &[f32],
+    uvs: Option<&[f32]>,
+  ) -> Result<(), String> {
+    self.shapes.update(id, first, positions, uvs)
+  }
+
+  /// Carry the boxes of shapes updated since the last flush onto the
+  /// nodes holding them, queued so the walk refits their leaves.
+  fn refit_shaped(&mut self) {
+    if !self.shapes.any_dirty() {
+      return;
+    }
+    for i in 0..self.nodes.len() as u32 {
+      let n = &self.nodes[i as usize];
+      if !n.alive {
+        continue;
+      }
+      let Some(bounds) = n.shape.and_then(|sid| self.shapes.dirty_bounds(sid)) else {
+        continue;
+      };
+      self.put_bounds(i, bounds);
+    }
+    self.shapes.clear_dirty();
+  }
+
   /// The leaf's tight world box from the local box carried through the
   /// world matrix (the standard AABB-of-a-transformed-AABB construction).
   fn refit_leaf(&mut self, i: u32) {
@@ -1476,9 +1521,9 @@ impl Spatial {
     if filter.nodes.as_ref().is_some_and(|ids| !ids.contains(&self.id_of(i))) {
       return None;
     }
-    // A shape id that no longer resolves (destroyed) falls back to the
-    // box, like a node that never had one.
-    let shape = n.shape.filter(|&sid| self.shapes.get(sid).is_some());
+    // A shape id that no longer resolves (destroyed), or one naming no
+    // triangles, falls back to the box, like a node that never had one.
+    let shape = n.shape.filter(|&sid| self.shapes.has_triangles(sid));
     Some((bounds, n.world, shape))
   }
 
@@ -1950,6 +1995,7 @@ impl Spatial {
   /// the slots still naming it stage nothing, so it never writes again.
   pub fn flush(&mut self, out: &mut dyn SinkWriter) {
     self.flush_id += 1;
+    self.refit_shaped();
     if !self.queue.is_empty() {
       let queue = std::mem::take(&mut self.queue);
       for &i in &queue {

@@ -1,7 +1,8 @@
 // Geometry on the GPU: the lazy buffer step for geometry.ts's data. Buffers
-// (and the picking shape - the spatial core's own copy of positions, UVs
-// and indices for the triangle narrowphase, one per geometry however many
-// meshes share it) are created on first acquire and shared by every mesh
+// (and the shape - the spatial core's own copy of positions, UVs and, for
+// a triangle list, indices, one per geometry however many meshes share
+// it: the box of every node drawing the geometry and the triangle
+// narrowphase) are created on first acquire and shared by every mesh
 // and scene drawing the geometry; each draw entry holds one reference, and
 // the buffers are
 // freed when the last reference is released - deferred to a microtask, so
@@ -13,7 +14,7 @@
 
 import { createBuffer, destroyBuffer, writeBuffer } from "@solidrt/core/gpu"
 import type { BufferId, IndexFormat } from "@solidrt/core/gpu"
-import { createShape, destroyShape } from "flux:spatial"
+import { createShape, destroyShape, updateShape } from "flux:spatial"
 import type { ShapeId } from "flux:spatial"
 import { geometryStreams, geometryTopology, geometryVertexCount, layoutSlot, layoutStride, vertexBytes } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
@@ -28,10 +29,10 @@ export type GeometryBuffers = {
   buffers: BufferId[]
   index: BufferId
   indexFormat: IndexFormat
-  /** The picking shape (positions and, when the layout carries a
-   * float32x2 aUV, uvs); null for anything but a triangle list, which
-   * picks by its box. */
-  shape: ShapeId | null
+  /** The core's shape: positions (and, when the layout carries a
+   * float32x2 aUV, uvs) for every topology, the box of each node set to
+   * it; the triangle narrowphase too for a triangle list. */
+  shape: ShapeId
 }
 
 type GpuEntry = GeometryBuffers & { geometry: Geometry; streams: ArrayBufferView[]; refs: number }
@@ -64,18 +65,27 @@ function releaseVertices(vertices: ArrayBufferView): void {
   destroyBuffer(upload.buffer)
 }
 
-// The picking shape reads positions (and uvs, when they are plain floats
-// in stream 0) through a Float32Array view over the main buffer's bytes:
+// The shape reads positions (and uvs, when they are plain floats in
+// stream 0) through a Float32Array view over the main buffer's bytes:
 // every stride and offset is a multiple of 4, so the view is exact
 // whatever the layout packs elsewhere. A uv in a packed format or in
 // another stream is left out (hits carry no uv); positions are float32x3
 // in stream 0 by the layout rule.
-function createPickingShape(geometry: Geometry): ShapeId {
+type ShapeView = { floats: Float32Array; stride: number; uvAt: number }
+
+function shapeView(geometry: Geometry): ShapeView {
   let v = geometry.vertices
   let floats = new Float32Array(v.buffer, v.byteOffset, v.byteLength / Float32Array.BYTES_PER_ELEMENT)
   let uv = layoutSlot(geometry.layout, "aUV")
   let uvAt = uv !== null && uv.format === "float32x2" ? uv.offset / Float32Array.BYTES_PER_ELEMENT : -1
-  return createShape(floats, layoutStride(geometry.layout) / Float32Array.BYTES_PER_ELEMENT, 0, uvAt, geometry.indices)
+  return { floats, stride: layoutStride(geometry.layout) / Float32Array.BYTES_PER_ELEMENT, uvAt }
+}
+
+// Only a triangle list hands the core its indices: any other topology is
+// box-only, its shape there for the box alone.
+function createGeometryShape(geometry: Geometry): ShapeId {
+  let { floats, stride, uvAt } = shapeView(geometry)
+  return createShape(floats, stride, 0, uvAt, geometryTopology(geometry) === "triangles" ? geometry.indices : undefined)
 }
 
 /** The geometry's GPU buffers, created on first use, plus the index format
@@ -95,7 +105,7 @@ export function acquireGeometryBuffers(geometry: Geometry): GeometryBuffers {
         label: geometry.label ? geometry.label + "-indices" : undefined,
       }),
       indexFormat: geometry.indices instanceof Uint32Array ? "uint32" : "uint16",
-      shape: geometryTopology(geometry) === "triangles" ? createPickingShape(geometry) : null,
+      shape: createGeometryShape(geometry),
       refs: 0,
     }
     entries.set(geometry, entry)
@@ -119,7 +129,7 @@ export function releaseGeometryBuffers(acquired: GeometryBuffers): void {
     entries.delete(entry.geometry)
     for (let vertices of entry.streams) releaseVertices(vertices)
     destroyBuffer(entry.index)
-    if (entry.shape !== null) destroyShape(entry.shape)
+    destroyShape(entry.shape)
   })
 }
 
@@ -136,7 +146,7 @@ export function disposeGeometry(geometry: Geometry): void {
   entries.delete(geometry)
   for (let vertices of entry.streams) releaseVertices(vertices)
   destroyBuffer(entry.index)
-  if (entry.shape !== null) destroyShape(entry.shape)
+  destroyShape(entry.shape)
 }
 
 /** Options of `updateVertices`: the stream (default 0, the main buffer)
@@ -150,11 +160,13 @@ export type UpdateVerticesOptions = { stream?: number; first?: number; count?: n
  * fillAttribute), then call this; every mesh, view and wireframe over the
  * geometry sees the new bytes, and the other streams are untouched -
  * which is what a per-frame channel in a stream of its own buys. A
- * stream-0 update drops the cached bounds. The picking shape keeps the
- * positions it was built from (a collision shape never follows a mesh
- * update in Unity or Godot either); a deforming geometry that must pick
- * re-attaches. A geometry not yet on the GPU has nothing to update: its
- * first acquire uploads the array as it is then.
+ * stream-0 update drops the cached bounds and rewrites the same range of
+ * the core's shape, so every node drawing the geometry picks and culls
+ * where it is now drawn: the box follows at the next flush, the triangle
+ * index is rebuilt by the next query (Three's raycast reads the live
+ * attribute the same way; Unity's and Godot's colliders never follow). A
+ * geometry not yet on the GPU has nothing to update: its first acquire
+ * uploads the array as it is then.
  */
 export function updateVertices(geometry: Geometry, options: UpdateVerticesOptions = {}): void {
   let streams = geometryStreams(geometry)
@@ -174,4 +186,9 @@ export function updateVertices(geometry: Geometry, options: UpdateVerticesOption
   if (upload === undefined || count === 0) return
   let stride = layoutStride(stream.layout)
   writeBuffer(upload.buffer, vertexBytes(stream.vertices).subarray(first * stride, (first + count) * stride), first * stride)
+  let entry = entries.get(geometry)
+  if (index === 0 && entry !== undefined) {
+    let view = shapeView(geometry)
+    updateShape(entry.shape, view.floats.subarray(first * view.stride, (first + count) * view.stride), view.stride, 0, view.uvAt, first)
+  }
 }

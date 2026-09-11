@@ -63,6 +63,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("setCullBounds")?;
     decl.declare("setCullGroup")?;
     decl.declare("createShape")?;
+    decl.declare("updateShape")?;
     decl.declare("destroyShape")?;
     decl.declare("setShape")?;
     decl.declare("setLayers")?;
@@ -111,6 +112,7 @@ impl ModuleDef for SpatialModule {
     exports.export("setCullBounds", Function::new(ctx.clone(), set_cull_bounds)?)?;
     exports.export("setCullGroup", Function::new(ctx.clone(), set_cull_group)?)?;
     exports.export("createShape", Function::new(ctx.clone(), create_shape)?)?;
+    exports.export("updateShape", Function::new(ctx.clone(), update_shape)?)?;
     exports.export("destroyShape", Function::new(ctx.clone(), destroy_shape)?)?;
     exports.export("setShape", Function::new(ctx.clone(), set_shape)?)?;
     exports.export("setLayers", Function::new(ctx.clone(), set_layers)?)?;
@@ -406,24 +408,23 @@ fn set_cull_group(ctx: Ctx<'_>, id: u64, members: Vec<u64>) -> rquickjs::Result<
     .map_err(|e| throw_str(&ctx, &format!("setCullGroup: {e}")))
 }
 
-/// Triangle data for the narrowphase: positions are read from an
-/// interleaved vertex array (`stride` floats per vertex, xyz at
-/// `posOffset`, uv at `uvOffset` or -1 for none); `indices` is a
-/// Uint16Array or Uint32Array triangle list. Returns the shape id.
-fn create_shape<'js>(
-  ctx: Ctx<'js>,
-  vertices: TypedArray<'js, f32>,
+/// Positions (and uvs, when `uv_offset` is not -1) gathered out of an
+/// interleaved vertex array: `stride` floats per vertex, xyz at
+/// `pos_offset`, uv at `uv_offset`.
+fn gather_vertices<'js>(
+  ctx: &Ctx<'js>,
+  vertices: &TypedArray<'js, f32>,
   stride: u32,
   pos_offset: u32,
   uv_offset: i32,
-  indices: Value<'js>,
-) -> rquickjs::Result<u64> {
-  let v = floats(&ctx, &vertices, "createShape")?;
+  api: &str,
+) -> rquickjs::Result<(Vec<f32>, Option<Vec<f32>>)> {
+  let v = floats(ctx, vertices, api)?;
   let stride = stride as usize;
   if stride < 3 || pos_offset as usize + 3 > stride || (uv_offset >= 0 && uv_offset as usize + 2 > stride) {
-    return Err(throw_str(&ctx, "createShape: offsets do not fit the stride"));
+    return Err(throw_str(ctx, &format!("{api}: offsets do not fit the stride")));
   }
-  let count = if stride == 0 { 0 } else { v.len() / stride };
+  let count = v.len() / stride;
   let mut positions = Vec::with_capacity(count * 3);
   let mut uvs = if uv_offset >= 0 { Some(Vec::with_capacity(count * 2)) } else { None };
   for i in 0..count {
@@ -434,24 +435,65 @@ fn create_shape<'js>(
       uvs.extend_from_slice(&v[base..base + 2]);
     }
   }
-  let indices: Vec<u32> =
-    if let Some(u16s) = indices.as_object().and_then(|o| TypedArray::<u16>::from_object(o.clone()).ok()) {
-      let raw = u16s.as_raw().ok_or_else(|| throw_str(&ctx, "createShape: detached buffer"))?;
-      unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const u16, raw.len / 2) }
-        .iter()
-        .map(|&i| i as u32)
-        .collect()
-    } else if let Some(u32s) = indices.as_object().and_then(|o| TypedArray::<u32>::from_object(o.clone()).ok()) {
-      let raw = u32s.as_raw().ok_or_else(|| throw_str(&ctx, "createShape: detached buffer"))?;
-      unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const u32, raw.len / 4) }.to_vec()
-    } else {
-      return Err(throw_str(&ctx, "createShape: indices must be a Uint16Array or Uint32Array"));
-    };
+  Ok((positions, uvs))
+}
+
+/// A geometry's positions for the core: read from an interleaved vertex
+/// array (`stride` floats per vertex, xyz at `posOffset`, uv at
+/// `uvOffset` or -1 for none), with `indices` a Uint16Array or
+/// Uint32Array triangle list for the narrowphase, or absent for a shape
+/// that only gives its box. Returns the shape id.
+fn create_shape<'js>(
+  ctx: Ctx<'js>,
+  vertices: TypedArray<'js, f32>,
+  stride: u32,
+  pos_offset: u32,
+  uv_offset: i32,
+  indices: OptArg<Value<'js>>,
+) -> rquickjs::Result<u64> {
+  let (positions, uvs) = gather_vertices(&ctx, &vertices, stride, pos_offset, uv_offset, "createShape")?;
+  let indices: Vec<u32> = match indices.0 {
+    None => Vec::new(),
+    Some(indices) => {
+      if let Some(u16s) = indices.as_object().and_then(|o| TypedArray::<u16>::from_object(o.clone()).ok()) {
+        let raw = u16s.as_raw().ok_or_else(|| throw_str(&ctx, "createShape: detached buffer"))?;
+        unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const u16, raw.len / 2) }
+          .iter()
+          .map(|&i| i as u32)
+          .collect()
+      } else if let Some(u32s) = indices.as_object().and_then(|o| TypedArray::<u32>::from_object(o.clone()).ok()) {
+        let raw = u32s.as_raw().ok_or_else(|| throw_str(&ctx, "createShape: detached buffer"))?;
+        unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const u32, raw.len / 4) }.to_vec()
+      } else {
+        return Err(throw_str(&ctx, "createShape: indices must be a Uint16Array or Uint32Array"));
+      }
+    }
+  };
   super::gui(&ctx)
     .alloy
     .spatial()
     .create_shape(Shape { positions, uvs, indices })
     .map_err(|e| throw_str(&ctx, &format!("createShape: {e}")))
+}
+
+/// Rewrite the shape's vertices from `first` on with the ones in
+/// `vertices`, laid out as for createShape (uvs exactly when the shape
+/// has them).
+fn update_shape<'js>(
+  ctx: Ctx<'js>,
+  id: u64,
+  vertices: TypedArray<'js, f32>,
+  stride: u32,
+  pos_offset: u32,
+  uv_offset: i32,
+  first: u32,
+) -> rquickjs::Result<()> {
+  let (positions, uvs) = gather_vertices(&ctx, &vertices, stride, pos_offset, uv_offset, "updateShape")?;
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .update_shape(id, first as usize, &positions, uvs.as_deref())
+    .map_err(|e| throw_str(&ctx, &format!("updateShape: {e}")))
 }
 
 fn destroy_shape(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {

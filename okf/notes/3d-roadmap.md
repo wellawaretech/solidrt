@@ -95,9 +95,10 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    [gpu-target-antialiasing](../done/gpu-target-antialiasing.md).
    Silhouette jaggies are the dominant artifact on filled geometry.
 10. [ ] **Geometry breadth and the vertex-layout ceiling.** Library. Still
-    demand-gated: closed sweep loops (twist reconciliation around a loop),
-    capsule (a tube special case now that sweep exists), and further named
-    layouts (tangents, skin weights) when items 7 and 16 force them. The
+    demand-gated: closed sweep loops (twist reconciliation around a loop)
+    and further named layouts (tangents, skin weights) when items 7 and 16
+    force them; the capsule landed as a sphere-grid primitive
+    ([3d-capsule-primitive](../done/3d-capsule-primitive.md)). The
     direction stays a small set of named layouts, not an open
     BufferGeometry-style model.
 11. [x] **Rotation: aiming and quaternions.** Library. Only on-demand sugar is

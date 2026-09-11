@@ -50,7 +50,7 @@ import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } fro
 import type { Camera, CameraState, CameraUpdate } from "./camera.ts"
 import { makeShadowSystem } from "./scene-shadows.ts"
 import { makePointerInput } from "./scene-pointer.ts"
-import { geometryBounds, geometryKey, geometryTopology, validateGeometry } from "./geometry.ts"
+import { geometryKey, geometryTopology, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
@@ -1694,24 +1694,22 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // Record writes made while the mesh was out of a scene kept their
       // dirty ranges: publish them now.
       if (inst !== null && inst.streams.some(s => s.dirty !== null)) recordsDirty.add(mesh)
-      // Picking: the local box puts the node in the core index; an
-      // ordinary mesh also gets its geometry's triangle shape, a
-      // populated one is box-only (its instances are the leaves that
-      // pick, each with the shape; a record mesh's records are opaque, so
-      // without explicit bounds it is not picked at all), as is a sprite
-      // (its triangles lie wherever the camera is, not where the geometry
-      // says).
-      spatial.setBounds(mesh._node!, localBounds(mesh))
-      spatial.setShape(mesh._node!, inst === null && !mesh._sprite ? bufs.shape : null)
-      // A rebuilt entry (setGeometry) re-boxes the live instances to the
+      // Picking: an ordinary mesh's node carries its geometry's shape,
+      // which is its box in the core index (following every
+      // updateVertices) and its triangle narrowphase. A populated mesh is
+      // box-only by its explicit population bounds (its instances are the
+      // leaves that pick, each with the shape; a record mesh's records are
+      // opaque, so without explicit bounds it is not picked at all), as is
+      // a sprite by the unit box (its triangles lie wherever the camera
+      // is, not where the geometry says).
+      if (inst === null && !mesh._sprite) spatial.setShape(mesh._node!, bufs.shape)
+      else spatial.setBounds(mesh._node!, localBounds(mesh))
+      // A rebuilt entry (setGeometry) re-shapes the live instances to the
       // new geometry; their record bindings are untouched. On a first
       // entry none has a core node yet - they enter after the mesh.
       if (inst !== null && inst.nodes !== null) {
         for (let n of inst.nodes.slots) {
-          if (n !== null && n._node !== null) {
-            spatial.setBounds(n._node, geometryBounds(mesh.geometry))
-            spatial.setShape(n._node, bufs.shape)
-          }
+          if (n !== null && n._node !== null) spatial.setShape(n._node, bufs.shape)
         }
       }
       // Culling: the gate and margin only when off the defaults, and a
@@ -1761,7 +1759,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // geometry buffers and core node are live - a mesh masked out of
       // the scene included, whose instances still pick.
       if (mesh === null || mesh._buffers === null || mesh._node === null || instance._node === null) return
-      spatial.setBounds(instance._node, geometryBounds(mesh.geometry))
       spatial.setShape(instance._node, mesh._buffers.shape)
       spatial.setLayers(instance._node, mesh.layers)
       // The record is the instance's placement inside the mesh (the mesh

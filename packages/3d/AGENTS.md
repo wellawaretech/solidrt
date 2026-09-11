@@ -402,8 +402,10 @@ that stream from the geometry's own array in place (write the array
 through the accessor first; Three's `needsUpdate` with an update
 range), reaching every mesh, view and wireframe over the geometry
 while the other streams never move; a stream-0 update drops the cached
-bounds, and the picking shape keeps the positions it was built from
-(re-attach a deforming geometry that must pick). transformGeometry and
+bounds and rewrites the same range of the core's copy of the positions,
+so the mesh picks and culls where it is now drawn (the box follows at
+the next flush, the triangle index is rebuilt by the next query - a
+deforming mesh needs no re-attach). transformGeometry and
 the edge builders share extra streams with their source; merge
 concatenates every stream; the `.srtm` container refuses streams (run
 time data). `setDrawRange(mesh, first, count?)` draws indices `[first,
@@ -421,8 +423,9 @@ SetIndices topology), a material builds one pipeline per (layout,
 topology) pair its meshes bring, and validateGeometry enforces the
 count rule at add() (a whole number of triangles or lines, one
 primitive's worth for a strip). Materials have no topology of their
-own. Only a triangle list gets a picking shape; lines and points pick
-and collide by their bounds box, and cast no shadow. `geometryTopology`
+own. Only a triangle list gets a triangle narrowphase; lines and points
+pick and collide by their bounds box (which follows `updateVertices` all
+the same), and cast no shadow. `geometryTopology`
 reads the field with the default applied. POINTS: a point cloud is
 ordinary indexed geometry - one vertex per point, the index buffer
 listing them, `topology: "points"`, no constraint on the index count.
@@ -709,7 +712,9 @@ The index and the narrowphase live in the spatial core: every attached
 mesh's local box is a leaf in a dynamic AABB tree the flush refits from
 the fresh world matrices (O(moved) per frame, a query O(log meshes)), and
 an ordinary mesh is then tested per triangle against its geometry's
-shape (one CPU copy per distinct geometry, created with its GPU buffers),
+shape (one CPU copy of the positions per distinct geometry, created with
+its GPU buffers and rewritten by `updateVertices`; the mesh's box comes
+from the same copy, so a deforming mesh is found where it is drawn),
 so hits carry `face`, `uv` and a world-space `normal` facing the ray, and
 a ray through a knot's hole misses. A large geometry's triangles are
 BVH-indexed too - built by the first ray that reaches the shape, log-cost
@@ -842,8 +847,14 @@ a default, named as Three names them: `box({ width, height, depth })`
 `ring({ innerRadius, outerRadius, segments })` (XY, facing +z - rotate
 `[-Math.PI/2, 0, 0]` for a floor); `sphere({ radius, widthSegments,
 heightSegments })`; `cylinder({ radiusTop, radiusBottom, height,
-radialSegments })` (y axis, capped; unequal radii taper it) and
-`cone({ radius, height, radialSegments })`; `torus({ radius, tube,
+radialSegments, heightSegments })` (y axis, capped; unequal radii taper
+it) and `cone({ radius, height, radialSegments, heightSegments })`;
+`capsule({ radius, height, capSegments, radialSegments, heightSegments
+})` (y axis, `height` the TOTAL extent like
+cylinder's and Godot's/Unity's where Three's is the middle section
+only, so `height: 2 * radius` is a sphere and less throws; its collision
+volume is `{ a: [0, -(height / 2 - radius), 0], b: [0, height / 2 -
+radius, 0], radius }`); `torus({ radius, tube,
 radialSegments, tubularSegments })` (lying flat, hole on the y axis) and
 `torusKnot({ radius, tube, tubularSegments, radialSegments, p, q })`
 (standing y-up) - both oriented for the y-up world, unlike Three's z-up.
@@ -924,13 +935,17 @@ origin take `centerColor` and exist only for an even `divisions`),
 normal tick in the XY plane facing +z, placed like `plane()`, and
 `arrowHelper({ length?, headLength?, headWidth? })` an arrow along +y
 with a pyramid-outline head, aimed by the node's rotation
-(`quatFromTo(out, [0, 1, 0], direction)`). Godot and
+(`quatFromTo(out, [0, 1, 0], direction)`), and `capsuleHelper(volume,
+{ segments? })` the outline of a `{ a, b, radius }` collision capsule
+(rings at both ends, four lines, two half circles per cap; `a == b`
+draws a sphere's three great circles) in the volume's own space, the
+gizmo Unity and Godot draw for a capsule collider. Godot and
 Unity keep these in the editor and Three makes them scene objects; here
 they are plain geometry a node places and a material draws. The grid and
 the triad are "colored" layout (sRGB colors in, premultiplied linear
 aColor out, the material contract) drawn by `unlit({ vertexColors:
 true })`; a material that reads no aColor draws them in its own color.
-The box, the plane and the arrow are standard layout. For a bounds box that moves
+The box, the plane, the arrow and the capsule are standard layout. For a bounds box that moves
 every frame, draw `edgesGeometry(box())` on a node whose position is the
 box center and whose scale is its size and update the transform (Three's
 Box3Helper does exactly that) instead of rebuilding.
@@ -2378,7 +2393,8 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   otherwise the shape is simply wrong, there is no open-profile mode.
 - `useScene()`/`Group`/`Mesh` throw outside `<Scene>` (default-less
   context).
-- Geometry local bounds cache on the Geometry (like its GPU buffers):
-  geometry is immutable after creation. Mutating `vertices` after a mesh
-  used them leaves stale bounds AND a stale GPU buffer - make a new
-  Geometry instead.
+- Geometry local bounds cache on the Geometry (like its GPU buffers and
+  the core's picking copy): mutating `vertices` after a mesh used them
+  leaves stale bounds, a stale GPU buffer AND a stale picking shape
+  until `updateVertices` publishes the range - write through the
+  accessor and call it, or make a new Geometry.

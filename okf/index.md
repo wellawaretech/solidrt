@@ -128,11 +128,6 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, per-material samplers and runtime-fetched content, each
   demand-gated.
-- **[A geometry updated in place keeps picking against its old positions](backlog/3d-picking-shape-after-update.md)** [2026-09-11]
-  updateVertices re-uploads a stream and drops the cached bounds, but the
-  picking shape the spatial core built at first draw keeps the positions it
-  was built from, so a deforming mesh picks where it used to be until it is
-  re-attached.
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
@@ -889,6 +884,11 @@ Finished, kept for the reasoning.
   top-level headings across 1910 lines, with individual APIs documented inside
   multi-hundred-word paragraphs, so finding one prop means grepping the source
   instead.
+- **[Capsule primitive and helper - the collision volume gets a mesh and a gizmo](done/3d-capsule-primitive.md)** [2026-09-11]
+  capsule() as a geometry generator next to sphere() and cylinder(), height
+  the total extent as in Godot and Unity, and capsuleHelper(volume) drawing
+  the { a, b, radius } collision volume as lines; closes the survey's
+  asymmetry of a Capsule query volume nothing could draw.
 - **[Colored geometry generates twice](done/3d-colored-generators.md)** [2026-08-19]
   Building coloured geometry generated twice (generate, then withColors
   repacked). Fixed in two stages 2026-08-23 - vertex layouts became open
@@ -962,6 +962,11 @@ Finished, kept for the reasoning.
   through scene.texture), the standard set carries no camera basis so
   billboards reconstruct it from uViewProj rows, and shaderMaterial cannot
   express one program with many parameterisations.
+- **[A geometry updated in place keeps picking against its old positions](done/3d-picking-shape-after-update.md)** [2026-09-11]
+  updateVertices re-uploads a stream and drops the cached bounds, but the
+  picking shape the spatial core built at first draw keeps the positions it
+  was built from, so a deforming mesh picks where it used to be until it is
+  re-attached.
 - **[Point light shadows](done/3d-point-light-shadows.md)** [2026-08-27]
   A PointLight lit but could not cast. Landed 2026-09-02 as six 90-degree face
   tiles in the existing shadow atlas with a dominant-axis face select in

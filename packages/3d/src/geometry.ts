@@ -44,6 +44,7 @@ import type { Topology, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
 import { premultipliedColor } from "./color.ts"
 import { add, compose, cross, mat4, normalize, normalMatrix, sub, updateRotation, updateScale } from "./math.ts"
 import type { Quat, TransformUpdate, Vec2, Vec3 } from "./math.ts"
+import type { Capsule } from "./scene.ts"
 
 /** A vertex layout: the named presets, or an explicit attribute list
  * that begins with `aPos` float32x3 (placement is universal) and carries
@@ -580,10 +581,12 @@ export type Geometry = {
 
 /**
  * The geometry's LOCAL axis-aligned bounds as [minX, minY, minZ, maxX,
- * maxY, maxZ], computed from the vertices on first use and cached (like
- * the GPU buffers, geometry is treated as immutable after creation).
- * Picking's narrowphase volume; a flat geometry legitimately has zero
- * extent on an axis. An empty geometry yields a zero box at the origin.
+ * maxY, maxZ], computed from the vertices on first use and cached; a
+ * stream-0 updateVertices drops the cache. What the transparent sort and
+ * a model's bounds read (the picking index keeps its own copy of the
+ * positions and derives its box there); a flat geometry legitimately has
+ * zero extent on an axis. An empty geometry yields a zero box at the
+ * origin.
  */
 export function geometryBounds(geometry: Geometry): Float32Array {
   let bounds = geometry._bounds
@@ -1125,6 +1128,77 @@ export function box3Helper(bounds: ArrayLike<number>, options: GeometryOptions =
 }
 
 /**
+ * A collision capsule's outline as "lines" geometry (Unity's capsule
+ * collider gizmo, Godot's CapsuleShape3D gizmo; Three has no capsule
+ * helper): the `{ a, b, radius }` volume overlap()/sweep()/moveAndSlide
+ * take, drawn in the space it was given, so a scene-space volume goes
+ * under a node with the identity transform like a box3Helper of query
+ * bounds. A ring around each end of the segment, four lines between the
+ * rings, and two half circles over each cap in perpendicular planes; a
+ * == b is a sphere and draws its three great circles. `segments` is the
+ * ring resolution, a multiple of 4 so the lines and arcs land on ring
+ * points. Standard layout, normals radial from the segment.
+ */
+export type CapsuleHelperOptions = GeometryOptions & {
+  /** Points per ring, a positive multiple of 4, default 32. */
+  segments?: number
+}
+
+export function capsuleHelper(volume: Capsule, options: CapsuleHelperOptions = {}): Geometry {
+  let { segments = 32 } = options
+  if (!Number.isInteger(segments) || segments < 4 || segments % 4 !== 0) throw new Error("capsuleHelper: segments must be a positive multiple of 4")
+  let { a, b, radius } = volume
+  let span = sub(b, a)
+  let single = Math.hypot(span[0], span[1], span[2]) === 0
+  let axis = single ? [0, 1, 0] as Vec3 : normalize(span)
+  // A frame around the axis: u from the world axis least aligned with it.
+  let ax = Math.abs(axis[0]), ay = Math.abs(axis[1]), az = Math.abs(axis[2])
+  let pick: Vec3 = ax <= ay && ax <= az ? [1, 0, 0] : ay <= az ? [0, 1, 0] : [0, 0, 1]
+  let u = normalize(cross(axis, pick))
+  let v = cross(axis, u)
+  let verts: number[] = []
+  let indices: number[] = []
+  // A point on the cap sphere at `center` in direction c*p + s*q.
+  let push = (center: Vec3, p: Vec3, q: Vec3, c: number, sn: number): void => {
+    let nx = c * p[0] + sn * q[0]
+    let ny = c * p[1] + sn * q[1]
+    let nz = c * p[2] + sn * q[2]
+    verts.push(center[0] + radius * nx, center[1] + radius * ny, center[2] + radius * nz, nx, ny, nz, 0, 0)
+  }
+  let ring = (center: Vec3): number => {
+    let base = verts.length / STANDARD_FLOATS
+    for (let i = 0; i < segments; i++) {
+      let t = (i / segments) * Math.PI * 2
+      push(center, u, v, Math.cos(t), Math.sin(t))
+      indices.push(base + i, base + ((i + 1) % segments))
+    }
+    return base
+  }
+  // Half circle from +p over `out` (the cap's pole direction) to -p.
+  let arc = (center: Vec3, p: Vec3, out: Vec3): void => {
+    let base = verts.length / STANDARD_FLOATS
+    let cells = segments / 2
+    for (let i = 0; i <= cells; i++) {
+      let t = (i / cells) * Math.PI
+      push(center, p, out, Math.cos(t), Math.sin(t))
+      if (i > 0) indices.push(base + i - 1, base + i)
+    }
+  }
+  let ringA = ring(a)
+  if (!single) {
+    let ringB = ring(b)
+    let quarter = segments / 4
+    for (let k = 0; k < 4; k++) indices.push(ringA + k * quarter, ringB + k * quarter)
+  }
+  let down: Vec3 = [-axis[0], -axis[1], -axis[2]]
+  arc(a, u, down)
+  arc(a, v, down)
+  arc(b, u, axis)
+  arc(b, v, axis)
+  return packLines(verts, indices, options)
+}
+
+/**
  * A plane marker as "lines" geometry (Three's PlaneHelper without its
  * translucent fill): a `size` square in the XY plane at the origin facing
  * +z exactly like plane(), its two diagonals, and a unit segment from the
@@ -1343,17 +1417,20 @@ export function torusKnot(options: TorusKnotOptions = {}): Geometry {
  * case); side normals tilt with the taper. Side UVs: u around the
  * circumference, v 0 at the top to 1 at the bottom; caps get a planar
  * disc map. A zero radius skips that cap and the degenerate side
- * triangles at the apex.
+ * triangles at the apex. heightSegments subdivides the side top to
+ * bottom (Three's, default 1) for deformation and per-vertex gradients.
  */
 export type CylinderOptions = GeometryOptions & {
   radiusTop?: number
   radiusBottom?: number
   height?: number
   radialSegments?: number
+  heightSegments?: number
 }
 
 export function cylinder(options: CylinderOptions = {}): Geometry {
-  let { radiusTop = 0.5, radiusBottom = 0.5, height = 1, radialSegments = 24 } = options
+  let { radiusTop = 0.5, radiusBottom = 0.5, height = 1, radialSegments = 24, heightSegments = 1 } = options
+  if (!Number.isInteger(heightSegments) || heightSegments < 1) throw new Error("cylinder: heightSegments must be a positive integer")
   let h = height / 2
   let cols = radialSegments + 1
   let verts: number[] = []
@@ -1361,20 +1438,19 @@ export function cylinder(options: CylinderOptions = {}): Geometry {
   let slant = Math.hypot(height, radiusBottom - radiusTop) || 1
   let nr = height / slant
   let ny = (radiusBottom - radiusTop) / slant
-  let rows = [
-    { r: radiusTop, y: h, v: 0 },
-    { r: radiusBottom, y: -h, v: 1 },
-  ]
-  for (let row of rows) {
+  for (let iy = 0; iy <= heightSegments; iy++) {
+    let v = iy / heightSegments
+    let r = radiusTop + (radiusBottom - radiusTop) * v
+    let y = h - height * v
     for (let ix = 0; ix < cols; ix++) {
       let u = ix / radialSegments
       let phi = u * Math.PI * 2
       let dx = -Math.cos(phi)
       let dz = Math.sin(phi)
-      verts.push(row.r * dx, row.y, row.r * dz, nr * dx, ny, nr * dz, u, row.v)
+      verts.push(r * dx, y, r * dz, nr * dx, ny, nr * dz, u, v)
     }
   }
-  let indices = gridIndices(1, radialSegments, radiusTop <= 0, radiusBottom <= 0)
+  let indices = gridIndices(heightSegments, radialSegments, radiusTop <= 0, radiusBottom <= 0)
   // Caps fan around a center vertex; the planar UV map has no seam, so the
   // ring wraps with modulo instead of duplicating a column.
   let cap = (r: number, y: number, up: number) => {
@@ -1405,6 +1481,68 @@ export type ConeOptions = GeometryOptions & { radius?: number; height?: number; 
 export function cone(options: ConeOptions = {}): Geometry {
   let { radius = 0.5, height = 1, radialSegments = 24, ...rest } = options
   return cylinder({ ...rest, radiusTop: 0, radiusBottom: radius, height, radialSegments })
+}
+
+/**
+ * A capsule on the y axis, centered on the origin: a cylinder of `radius`
+ * closed by two hemispheres. `height` is the TOTAL extent pole to pole
+ * like cylinder()'s (Godot's CapsuleMesh and Unity's capsule agree;
+ * Three's `height` is the middle section only, ours minus 2 * radius),
+ * so `height: 2 * radius` is a sphere and anything less throws.
+ * capSegments subdivides each hemisphere pole to equator, radialSegments
+ * the circumference, heightSegments the band (Three's, default 1).
+ * Normals are radial from each cap's center, so the band shades as a
+ * cylinder. UVs: u around, v 0 at the top pole to 1 at the bottom by arc
+ * length. The matching collision volume is
+ * `{ a: [0, -(height / 2 - radius), 0], b: [0, height / 2 - radius, 0], radius }`.
+ */
+export type CapsuleOptions = GeometryOptions & {
+  radius?: number
+  height?: number
+  capSegments?: number
+  radialSegments?: number
+  heightSegments?: number
+}
+
+export function capsule(options: CapsuleOptions = {}): Geometry {
+  let { radius = 0.5, height = 1, capSegments = 8, radialSegments = 24, heightSegments = 1 } = options
+  if (!Number.isInteger(heightSegments) || heightSegments < 1) throw new Error("capsule: heightSegments must be a positive integer")
+  // Half the middle section: each hemisphere's center sits at +-half.
+  let half = height / 2 - radius
+  if (half < 0) throw new Error("capsule: height must be at least 2 * radius")
+  // Arc length pole to pole: two quarter circles and the band.
+  let arc = Math.PI * radius + 2 * half
+  let verts: number[] = []
+  // A sphere() row at polar angle theta, its center shifted along y.
+  let row = (theta: number, offset: number, v: number): void => {
+    let sinT = Math.sin(theta)
+    let cosT = Math.cos(theta)
+    for (let ix = 0; ix <= radialSegments; ix++) {
+      let u = ix / radialSegments
+      let phi = u * Math.PI * 2
+      let nx = -Math.cos(phi) * sinT
+      let ny = cosT
+      let nz = Math.sin(phi) * sinT
+      verts.push(radius * nx, radius * ny + offset, radius * nz, nx, ny, nz, u, v)
+    }
+  }
+  // capSegments + 1 rows per hemisphere; the two equator rows sit at the
+  // ends of the band, with heightSegments - 1 equator rows between them.
+  for (let i = 0; i <= capSegments; i++) {
+    let theta = (i / capSegments) * (Math.PI / 2)
+    row(theta, half, (radius * theta) / arc)
+  }
+  for (let i = 1; i < heightSegments; i++) {
+    let t = i / heightSegments
+    row(Math.PI / 2, half - 2 * half * t, (radius * (Math.PI / 2) + 2 * half * t) / arc)
+  }
+  for (let i = 0; i <= capSegments; i++) {
+    let theta = Math.PI / 2 + (i / capSegments) * (Math.PI / 2)
+    row(theta, -half, (radius * theta + 2 * half) / arc)
+  }
+  // Both pole rows are collapsed to the pole point, as in sphere().
+  let indices = gridIndices(2 * capSegments + heightSegments, radialSegments, true, true)
+  return packGeometry(verts, indices, options)
 }
 
 /**

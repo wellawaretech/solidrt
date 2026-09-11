@@ -9,7 +9,7 @@
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { arrowHelper, axesHelper, box, box3Helper, cylinder, dodecahedron, edgesGeometry, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, geometryKey, geometrySlot, geometryStreams, geometryVertexCount, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, STANDARD_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import { arrowHelper, axesHelper, box, box3Helper, capsule, capsuleHelper, cone, cylinder, dodecahedron, edgesGeometry, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, geometryKey, geometrySlot, geometryStreams, geometryVertexCount, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, STANDARD_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
 import { cross, normalize, rayBoxDistance, sub } from "../src/math.ts"
 import type { Geometry, PolyhedronOptions } from "../src/geometry.ts"
 import type { VertexFormat } from "@solidrt/core/gpu"
@@ -226,6 +226,7 @@ throws("merge empty", () => mergeGeometries([]))
   check("box", box({ width: 1, height: 2, depth: 3 }), box({ width: 1, height: 2, depth: 3, layout: "colored" }))
   check("sphere", sphere({ radius: 0.7, widthSegments: 6, heightSegments: 4 }), sphere({ radius: 0.7, widthSegments: 6, heightSegments: 4, layout: "colored" }))
   check("cylinder", cylinder({ radiusTop: 0.2, radialSegments: 5 }), cylinder({ radiusTop: 0.2, radialSegments: 5, layout: "colored" }))
+  check("capsule", capsule({ radius: 0.3, height: 1.2, capSegments: 3, radialSegments: 5 }), capsule({ radius: 0.3, height: 1.2, capSegments: 3, radialSegments: 5, layout: "colored" }))
   check("torus", torus({ radius: 1, tube: 0.3, radialSegments: 4, tubularSegments: 6 }), torus({ radius: 1, tube: 0.3, radialSegments: 4, tubularSegments: 6, layout: "colored" }))
   check("torusKnot", torusKnot({ tube: 0.3, tubularSegments: 8, radialSegments: 4 }), torusKnot({ tube: 0.3, tubularSegments: 8, radialSegments: 4, layout: "colored" }))
   check("icosahedron", icosahedron({ detail: 1 }), icosahedron({ detail: 1, layout: "colored" }))
@@ -571,6 +572,84 @@ throws("merge empty", () => mergeGeometries([]))
   throws("duplicate across streams", () => withAttribute(waved, { name: "aWave", format: "float32" }, () => [0]))
   throws("mixed stream layouts merge", () => mergeGeometries([waved, base]))
   if (geometryStreams(base).length !== 1) fail("a plain geometry is one stream")
+}
+
+// capsule(): the sphere grid split by the band. Counts, bounds from the
+// total height, every normal unit and radial from its own cap's center
+// (the band vertices shade as a cylinder), v monotone in 0..1 by arc
+// length, the height = 2r case a sphere, and the too-short throw.
+{
+  let radius = 0.3
+  let height = 1.4
+  let capSegments = 3
+  let radialSegments = 8
+  let heightSegments = 3
+  let g = capsule({ radius, height, capSegments, radialSegments, heightSegments })
+  let n = g.vertices.length / STANDARD_FLOATS
+  if (n !== (2 * (capSegments + 1) + heightSegments - 1) * (radialSegments + 1)) fail("capsule vertex count " + n)
+  if (g.indices.length !== (2 * (2 * capSegments + heightSegments) - 2) * radialSegments * 3) fail("capsule index count " + g.indices.length)
+  expectVec("capsule bounds", geometryBounds(g), [-radius, -height / 2, -radius, radius, height / 2, radius])
+  let half = height / 2 - radius
+  let lastV = -1
+  for (let i = 0; i < n; i++) {
+    let at = i * STANDARD_FLOATS
+    let y = g.vertices[at + 1]!
+    // The nearest segment point: a cap center beyond the band, y itself on it.
+    let cy = Math.min(half, Math.max(-half, y))
+    let radial = normalize([g.vertices[at]!, y - cy, g.vertices[at + 2]!])
+    let nrm = [g.vertices[at + 3]!, g.vertices[at + 4]!, g.vertices[at + 5]!]
+    if (!near(Math.hypot(nrm[0]!, nrm[1]!, nrm[2]!), 1)) fail("capsule normal not unit at " + i)
+    expectVec("capsule normal radial " + i, nrm, radial)
+    if (!near(Math.hypot(g.vertices[at]!, y - cy, g.vertices[at + 2]!), radius)) fail("capsule vertex off its cap at " + i)
+    let u = g.vertices[at + 6]!
+    let v = g.vertices[at + 7]!
+    if (u < 0 || u > 1 || v < 0 || v > 1) fail("capsule uv out of range at " + i)
+    if (v < lastV - 1e-9) fail("capsule v not monotone at " + i)
+    lastV = v
+  }
+  if (!near(g.vertices[7]!, 0) || !near(g.vertices[(n - 1) * STANDARD_FLOATS + 7]!, 1)) fail("capsule v does not span the poles")
+  let round = capsule({ radius, height: 2 * radius, capSegments, radialSegments })
+  expectVec("capsule as sphere bounds", geometryBounds(round), [-radius, -radius, -radius, radius, radius, radius])
+  throws("capsule shorter than its diameter", () => capsule({ radius, height: 2 * radius - 0.01 }))
+  throws("capsule zero heightSegments", () => capsule({ heightSegments: 0 }))
+  let tapered = cylinder({ radiusTop: 0.2, radiusBottom: 0.6, height: 2, radialSegments: 8, heightSegments: 4 })
+  if (tapered.vertices.length / STANDARD_FLOATS !== 5 * 9 + 2 * 9) fail("cylinder heightSegments vertex count")
+  if (tapered.indices.length !== (4 * 8 * 2 + 2 * 8) * 3) fail("cylinder heightSegments index count")
+  expectVec("cylinder middle row radius", tapered.vertices.subarray(2 * 9 * STANDARD_FLOATS, 2 * 9 * STANDARD_FLOATS + 3), [-0.4, 0, 0])
+  if (cone({ radialSegments: 8, heightSegments: 3 }).indices.length !== (3 * 8 * 2 - 8 + 8) * 3) fail("cone heightSegments index count")
+  throws("cylinder fractional heightSegments", () => cylinder({ heightSegments: 1.5 }))
+}
+
+// capsuleHelper(volume): lines, every vertex at `radius` from the segment
+// with its normal pointing away from the nearest segment point, the
+// counts (rings, four lines, four half circles), the sphere case with one
+// ring and no lines, and the segments validation.
+{
+  let volume = { a: [1, 0, 0] as Vec3, b: [1, 2, 1] as Vec3, radius: 0.4 }
+  let segments = 8
+  let h = capsuleHelper(volume, { segments, label: "cap" })
+  if (h.topology !== "lines" || h.layout !== undefined || h.label !== "cap") fail("capsuleHelper shape")
+  let n = h.vertices.length / STANDARD_FLOATS
+  if (n !== 2 * segments + 4 * (segments / 2 + 1)) fail("capsuleHelper vertex count " + n)
+  if (h.indices.length !== (2 * segments + 4 * (segments / 2) + 4) * 2) fail("capsuleHelper index count " + h.indices.length)
+  let axis = sub(volume.b, volume.a)
+  let len2 = axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]
+  for (let i = 0; i < n; i++) {
+    let at = i * STANDARD_FLOATS
+    let p: Vec3 = [h.vertices[at]!, h.vertices[at + 1]!, h.vertices[at + 2]!]
+    let d = sub(p, volume.a)
+    let t = Math.min(1, Math.max(0, (d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2]) / len2))
+    let nearest: Vec3 = [volume.a[0] + axis[0] * t, volume.a[1] + axis[1] * t, volume.a[2] + axis[2] * t]
+    let away = sub(p, nearest)
+    if (!near(Math.hypot(away[0], away[1], away[2]), volume.radius)) fail("capsuleHelper vertex " + i + " off the surface")
+    expectVec("capsuleHelper normal " + i, h.vertices.subarray(at + 3, at + 6), normalize(away))
+  }
+  let ball = capsuleHelper({ a: [0, 0, 0], b: [0, 0, 0], radius: 1 }, { segments })
+  if (ball.vertices.length / STANDARD_FLOATS !== segments + 4 * (segments / 2 + 1)) fail("capsuleHelper sphere vertex count")
+  if (ball.indices.length !== (segments + 4 * (segments / 2)) * 2) fail("capsuleHelper sphere index count")
+  expectVec("capsuleHelper sphere bounds", geometryBounds(ball), [-1, -1, -1, 1, 1, 1])
+  throws("capsuleHelper segments not a multiple of 4", () => capsuleHelper(volume, { segments: 6 }))
+  throws("capsuleHelper zero segments", () => capsuleHelper(volume, { segments: 0 }))
 }
 
 if (failures > 0) throw new Error(failures + " geometry check(s) failed")

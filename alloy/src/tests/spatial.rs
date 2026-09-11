@@ -1133,3 +1133,81 @@ fn a_cull_group_follows_its_members_boxes() {
   let writes = flush(&mut s);
   assert!(writes.contains(&Write::Count { target: 1, draw: 1, count: 1 }));
 }
+
+#[test]
+fn shape_update_moves_the_hit_and_the_box() {
+  // A shaped node needs no set_bounds: its box is the shape's. An update
+  // that carries the whole grid 20 units along x must move the box (the
+  // leaf refits at the flush) and the triangles (the index is rebuilt by
+  // the next ray), so the old ray misses and the new one hits.
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  let shape = grid_shape(12);
+  assert!(shape.indices.len() / 3 >= BVH_MIN_TRIANGLES, "the grid must be big enough to index");
+  let sid = s.create_shape(shape).expect("shape");
+  s.set_shape(n, Some(sid)).expect("set shape");
+  flush(&mut s);
+  let at_rest = s.raycast([6.0, 5.0, 6.0], [0.0, -1.0, 0.0], &QueryFilter::default()).expect("raycast");
+  assert_eq!(at_rest.len(), 1, "the shape's own box puts the node in the index");
+  assert!(at_rest[0].face.is_some());
+  assert!(s.set_bounds(n, Some([0.0; 6])).is_err(), "a shaped node's box is not the caller's to set");
+
+  let mut moved = grid_shape(12);
+  for p in moved.positions.chunks_exact_mut(3) {
+    p[0] += 20.0;
+  }
+  s.update_shape(sid, 0, &moved.positions, moved.uvs.as_deref()).expect("update");
+  flush(&mut s);
+  assert!(
+    s.raycast([6.0, 5.0, 6.0], [0.0, -1.0, 0.0], &QueryFilter::default()).expect("raycast").is_empty(),
+    "the old position is gone from box and triangles"
+  );
+  let hit = s.raycast([26.0, 5.0, 6.0], [0.0, -1.0, 0.0], &QueryFilter::default()).expect("raycast");
+  assert_eq!(hit.len(), 1, "the moved grid is found where it went");
+  assert!(hit[0].face.is_some() && hit[0].uv.is_some());
+}
+
+#[test]
+fn shape_update_range_rewrites_only_its_vertices() {
+  // A flat (unindexed) quad in z = 0; lifting its two right-hand vertices
+  // to z = 2 by a ranged update puts both triangles on the plane z = x +
+  // 1, so a ray down z meets the quad at a height that follows x.
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  let sid = s.create_shape(quad_shape(false)).expect("shape");
+  s.set_shape(n, Some(sid)).expect("set shape");
+  flush(&mut s);
+  s.update_shape(sid, 1, &[1.0, -1.0, 2.0, 1.0, 1.0, 2.0], None).expect("ranged update");
+  flush(&mut s);
+  let left = s.raycast([-0.9, 0.0, 5.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast");
+  assert_eq!(left.len(), 1);
+  assert!((left[0].distance - 4.9).abs() < 1e-4, "near the untouched left edge z is 0.1, got {}", left[0].distance);
+  let right = s.raycast([0.9, 0.0, 5.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast");
+  assert_eq!(right.len(), 1);
+  assert!((right[0].distance - 3.1).abs() < 1e-4, "near the lifted right edge z is 1.9, got {}", right[0].distance);
+  assert!(s.update_shape(sid, 3, &[0.0; 6], None).is_err(), "a range past the last vertex is refused");
+  assert!(s.update_shape(sid, 0, &[0.0; 3], Some(&[0.0; 2])).is_err(), "uvs on a shape without them are refused");
+}
+
+#[test]
+fn box_only_shape_picks_by_its_box() {
+  // No indices: the shape gives the node its box and nothing else, so a
+  // ray meets the box face, carries its normal and no face or uv.
+  let mut s = Spatial::new();
+  let n = s.create([0.0, 0.0, -3.0], Q, ONE, true);
+  let quad = quad_shape(true);
+  let sid = s.create_shape(Shape { positions: quad.positions, uvs: quad.uvs, indices: Vec::new() }).expect("shape");
+  s.set_shape(n, Some(sid)).expect("set shape");
+  flush(&mut s);
+  let hits = s.raycast([0.5, 0.5, 0.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast");
+  assert_eq!(hits.len(), 1);
+  assert!((hits[0].distance - 3.0).abs() < 1e-5);
+  assert!(hits[0].face.is_none() && hits[0].uv.is_none());
+  assert!((hits[0].normal[2] - 1.0).abs() < 1e-5, "the struck box face's normal, facing the ray");
+  s.set_shape(n, None).expect("clear shape");
+  flush(&mut s);
+  assert!(
+    s.raycast([0.5, 0.5, 0.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast").is_empty(),
+    "taking the shape away takes the box with it"
+  );
+}

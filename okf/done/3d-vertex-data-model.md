@@ -252,10 +252,8 @@ matching the engine's spelling.
   first + count)` of that stream in place (`writeBuffer` at the byte
   offset) into the shared GPU buffer, which every mesh, view and
   wireframe over the geometry sees. A stream-0 update drops the cached
-  bounds. The picking shape keeps the positions it was built from
-  (Unity's and Godot's collision shapes never follow a mesh update
-  either); a deforming geometry that must pick re-attaches. Updating a
-  shape in place is an additive `flux:spatial` change later.
+  bounds. The picking shape kept the positions it was built from at
+  first; okf/done/3d-picking-shape-after-update.md made it follow.
 - `setDrawRange(mesh, first, count?)` draws indices `[first, first +
   count)` of the mesh's geometry (`count` absent = the rest), applied
   to the mesh's entry and its per-view entries through core's
@@ -317,8 +315,8 @@ shape; the flux gpu_split and gpu_order examples were ported.
 
 - okf/done/gpu-integer-vertex-inputs.md: integer shader inputs and
   the 32-bit integer formats (done 2026-09-11).
-- okf/backlog/3d-picking-shape-after-update.md: the picking shape does
-  not follow updateVertices.
+- okf/done/3d-picking-shape-after-update.md: the picking shape did not
+  follow updateVertices (done 2026-09-11).
 - okf/done/3d-instance-records-as-bytes.md: the 3d package's instance
   buffers are float32 records, so packed instance formats stop at the
   engine.
