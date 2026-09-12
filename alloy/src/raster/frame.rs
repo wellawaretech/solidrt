@@ -245,6 +245,21 @@ impl RasterState {
   /// failed swap gets one rebind-and-redraw recovery attempt (see `frame`);
   /// a confirmed loss exits instead: see okf/backlog/gpu-context-loss.md.
   fn present(&mut self) -> bool {
+    // A video plane beneath the window is composited with it in one atomic
+    // commit, and that commit waits for every buffer in it to be ready. A
+    // window buffer queued with GPU work still outstanding therefore holds
+    // the video frame that shares its commit, and the commit behind it -
+    // measured on a Samsung SM-T500 (Android 12), where an overlay
+    // repainting five times a second cost 40% of the video's frame intervals
+    // while the same overlay repainting every frame cost 7%. Finishing here
+    // spends that wait on this thread instead: the window frame lands a
+    // commit later and the video keeps its slot, which is the trade worth
+    // making while a video is on screen. Only while a plane exists; a paused
+    // plane pays it for nothing, which is a refinement, not a defect
+    // (okf/plans/android-video-punch-through.md).
+    if crate::video_plane_active() {
+      self.finish_gpu_work();
+    }
     if self.binding.swap() {
       self.present_failures = 0;
       // At most one fence joins per frame (a retried present only follows a
@@ -280,6 +295,27 @@ impl RasterState {
       std::process::exit(1);
     }
     false
+  }
+
+  /// Block until the work drawn into this frame has completed on the GPU, so
+  /// the buffer the swap queues carries none of it into the compositor's
+  /// commit. Bounded by the same timeout as the pacing wait: a GPU over
+  /// budget loses the protection for this frame rather than stalling the
+  /// raster thread, and counts as a fence timeout like any other.
+  fn finish_gpu_work(&mut self) {
+    let fence = match unsafe { glow::HasContext::fence_sync(&self.gl, glow::SYNC_GPU_COMMANDS_COMPLETE, 0) } {
+      Ok(fence) => fence,
+      Err(_) => return,
+    };
+    let status = unsafe {
+      let status =
+        glow::HasContext::client_wait_sync(&self.gl, fence, glow::SYNC_FLUSH_COMMANDS_BIT, PRESENT_FENCE_TIMEOUT_NS);
+      glow::HasContext::delete_sync(&self.gl, fence);
+      status
+    };
+    if status == glow::TIMEOUT_EXPIRED {
+      self.stats.fence_timeouts.fetch_add(1, Ordering::Relaxed);
+    }
   }
 
   /// Rebind the context to the window's current EGL surface (see the

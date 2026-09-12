@@ -22,10 +22,25 @@ static PLANE_LOST: AtomicBool = AtomicBool::new(false);
 // for the same reason as PLANE_LOST.
 static PLANE_VSYNC_NS: AtomicI64 = AtomicI64::new(0);
 
+// Whether a plane exists right now. The raster thread reads it to decide
+// whether the window's buffer must carry finished GPU work (see `active`);
+// a static for the same reason as PLANE_LOST, and read from the raster
+// thread rather than the one that owns the plane.
+static PLANE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 /// Report that the platform destroyed the video plane's surface. Called
 /// from the activity (Android JNI); thread-safe.
 pub fn set_lost() {
   PLANE_LOST.store(true, Ordering::Relaxed);
+}
+
+/// Whether a video plane is presenting beneath the window. The compositor
+/// commits the plane and the window together, so while this is true the
+/// window's buffer must not carry unfinished GPU work into that commit -
+/// it would hold the video frame sharing it
+/// (okf/plans/android-video-punch-through.md). Any thread.
+pub fn active() -> bool {
+  PLANE_ACTIVE.load(Ordering::Relaxed)
 }
 
 /// Report one display vsync time (a Choreographer frame time, CLOCK_MONOTONIC
@@ -107,6 +122,7 @@ impl VideoPlane {
     .ok_or_else(|| "video plane not created (one exists already, or its surface did not come up)".to_string())?;
     PLANE_LOST.store(false, Ordering::Relaxed);
     PLANE_VSYNC_NS.store(0, Ordering::Relaxed);
+    PLANE_ACTIVE.store(true, Ordering::Relaxed);
     Ok(VideoPlane { window, view, refresh_period_ns })
   }
 
@@ -131,6 +147,7 @@ impl VideoPlane {
 
 impl Drop for VideoPlane {
   fn drop(&mut self) {
+    PLANE_ACTIVE.store(false, Ordering::Relaxed);
     let result = with_activity(|env, activity| {
       env.call_method(
         activity,

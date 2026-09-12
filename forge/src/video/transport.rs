@@ -15,15 +15,14 @@ use std::sync::Arc;
 // the display's grid is unknown: a fallback (ExoPlayer's 50 ms), see
 // RELEASE_LEAD_PERIODS for the rule.
 pub const RELEASE_LEAD_NS: i64 = 50_000_000;
-// The release lead when the vsync grid is known, in refresh periods. One:
-// the compositor wakes one period before each vsync (plus its phase
-// offset), so the frame is there in time, and no earlier frame is still
-// waiting in front of it. A client-side queue (Android 12's BLAST
-// SurfaceView) forwards only one pending buffer to the compositor and holds
-// the next until a release comes back; a frame handed over two or three
-// periods early sat behind that hold and reached the compositor after the
-// wake for its vsync, slipping a period or more (measured on the tablet
-// with the 50 ms lead: 37% of frames one to three vsyncs late).
+// The release lead when the vsync grid is known, in refresh periods. One is
+// enough and nothing is gained by more: the compositor's arrival deadline
+// for a target vsync is one period minus its own phase offset before that
+// vsync (0.94 of a period on the devices measured), so a hand-over one
+// period ahead clears it. Handing over earlier is harmless rather than
+// better - a transaction whose desired time has not come is queued and
+// re-examined at every following compositor wake - which is why 50 ms and
+// one period measure the same (okf/plans/android-video-punch-through.md).
 pub const RELEASE_LEAD_PERIODS: i64 = 1;
 // A frame later than this is dropped rather than shown: decode fell behind
 // and skipping is how it catches up. One and a half 50 Hz periods.

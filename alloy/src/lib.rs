@@ -30,6 +30,19 @@ pub mod spatial;
 mod threads;
 #[cfg(target_os = "android")]
 pub mod video_plane;
+
+/// Whether a video plane is presenting beneath the window, false on every
+/// platform that has none. The raster thread's present path reads it.
+pub(crate) fn video_plane_active() -> bool {
+  #[cfg(target_os = "android")]
+  {
+    video_plane::active()
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    false
+  }
+}
 mod vsync;
 pub mod yuv;
 

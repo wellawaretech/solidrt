@@ -220,6 +220,11 @@ Shaped, not started.
   live render tree", because the Recording branch replays the cached display
   list without descending, so the paint walk that services captures never
   reaches the node.
+- **[Correct the Choreographer vsync phase by the app vsync offset](backlog/choreographer-vsync-phase-offset.md)** [2026-09-12]
+  Our Android vsync grid sits one millisecond after the true hardware vsyncs,
+  because a Choreographer frame time is the app's target wake-up time and not
+  the vsync it is waking for. Everything that snaps to the grid is off by that
+  much.
 - **[Move the srt dev flow into flux and make ports an output](backlog/cli-flux-migration.md)** [2026-07-13]
   Host run/server/client/mcp in one flux process that binds its own port, owns
   the server registry, and shells out to bun for bundling and typechecking
@@ -326,6 +331,11 @@ Shaped, not started.
   deadline, so an overrunning critical path jitters between 1 and 2 vsyncs
   instead of degrading to a stable cadence. Harness first, then
   deadline-scheduled frames.
+- **[Frame production is capped near 50 a second whatever the display rate](backlog/frame-production-capped-at-50hz.md)** [2026-09-12]
+  An animating app on a 60 Hz Android tablet presents in an exact 1,1,1,1,2
+  pattern over refresh periods, five presents per six vsyncs, which is exactly
+  50 fps. The build costs 0.11 ms, so nothing is over budget; the producer's
+  period is simply 20 ms and the display quantises it.
 - **[Gamepad rumble](backlog/gamepad-haptics.md)** [2026-08-30]
   gamepads() is a read-only snapshot; there is no path from the app back to
   the pad, so a collision, a landing or an engine can be seen and heard but

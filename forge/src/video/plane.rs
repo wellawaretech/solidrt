@@ -329,9 +329,7 @@ impl Worker {
         let now_ns = monotonic_ns();
         let due_ns = release_ns(&mut self.anchor, &self.vsync, pts_us, now_ns);
         let lead_ns = self.vsync.as_ref().map_or(RELEASE_LEAD_NS, VsyncGrid::lead_ns);
-        let cls = classify(due_ns - now_ns, lead_ns);
-        let vs = self.vsync.as_ref().and_then(|g| (g.sample_ns)()).unwrap_or(0);
-        let r = match cls {
+        match classify(due_ns - now_ns, lead_ns) {
           Release::Wait(wait_ns) => {
             wait_for_release(&self.rx, &mut self.pending, wait_ns);
             self.codec.release_output_buffer_at_time(buf, due_ns)
@@ -346,13 +344,7 @@ impl Worker {
             let due_ns = release_ns(&mut self.anchor, &self.vsync, pts_us, monotonic_ns());
             self.codec.release_output_buffer_at_time(buf, due_ns)
           }
-        };
-        // PROBE (temporary): one line per frame for the tablet cadence hunt.
-        log::warn!(
-          "PROBE pts={pts_us} out={now_ns} due={due_ns} rel={} vs={vs} lead={lead_ns} cls={cls:?}",
-          monotonic_ns()
-        );
-        r
+        }
       };
       match result {
         Ok(()) => self.shared.set_position_us(pts_us),
