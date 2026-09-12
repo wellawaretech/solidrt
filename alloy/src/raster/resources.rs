@@ -83,7 +83,10 @@ impl RasterState {
   }
 
   pub(super) fn update_texture(&mut self, id: u64, pixels: &[u8]) -> Result<(), String> {
-    let gpu = self.textures.get(&id).ok_or_else(|| format!("texture {id} not found"))?;
+    // Destructured so the texture lookup and the staging buffers are
+    // borrowed as the separate fields they are.
+    let Self { gl, staging, textures, dirty, .. } = self;
+    let gpu = textures.get(&id).ok_or_else(|| format!("texture {id} not found"))?;
     let expected = gpu.format.byte_len(gpu.width, gpu.height);
     if pixels.len() != expected {
       return Err(format!(
@@ -94,10 +97,20 @@ impl RasterState {
       ));
     }
     let size = ISize::new(gpu.width as i64, gpu.height as i64);
-    gpu.upload(&self.gl, pixels, size);
+    // Through a pixel-unpack buffer, so the driver's copy out of client
+    // memory (13.4 ms per MB on the Philips TV, on the raster thread)
+    // becomes our own memcpy plus an upload the GPU services itself
+    // (4.5 + 0.5 ms per MB there).
+    match staging.stage(gl, pixels) {
+      Some(()) => {
+        gpu.upload_staged(gl, size);
+        staging.unbind(gl);
+      }
+      None => gpu.upload(gl, pixels, size),
+    }
     // Shader targets sampling this texture re-render at the next flush, so
     // data-texture changes are visible without a params change.
-    self.dirty.insert(id);
+    dirty.insert(id);
     Ok(())
   }
 

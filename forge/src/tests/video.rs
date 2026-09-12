@@ -1,8 +1,9 @@
-use crate::video::{AacDecoder, H264Decoder, Mp4Demuxer, PixelLayout, VideoDecoder};
+use crate::video::{AacDecoder, Mp4Demuxer, VideoAu, VideoDecoder, VideoPlayer, YuvFrame};
 
 // 2 s of ffmpeg testsrc2 160x120 at 25 fps (H.264 high profile, no
-// B-frames - the openh264 decoder has no B-slice support) with a 440 Hz
-// sine as mono AAC at 44100 Hz.
+// B-frames, so the demuxer's pts are monotonic) with a 440 Hz sine as mono
+// AAC at 44100 Hz. Decode is not covered here: the only decoder is the
+// Android platform one, which no host test can run.
 fn fixture() -> String {
   concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/data/video_av.mp4").to_string()
 }
@@ -44,33 +45,6 @@ fn video_aus_are_annexb_with_sps_pps_at_sync() {
 }
 
 #[test]
-fn openh264_decodes_the_full_clip_to_packed_i420() {
-  let mut demux = Mp4Demuxer::open(&fixture()).expect("open fixture");
-  let mut decoder = H264Decoder::new().expect("create decoder");
-  let mut frames = Vec::new();
-  while let Some(au) = demux.next_video().expect("read") {
-    frames.extend(decoder.decode(&au).expect("decode AU"));
-  }
-  frames.extend(decoder.flush().expect("flush"));
-  assert_eq!(frames.len(), 50);
-
-  let expected_len = PixelLayout::I420.frame_size(160, 120);
-  for (i, frame) in frames.iter().enumerate() {
-    assert_eq!((frame.width, frame.height), (160, 120));
-    assert_eq!(frame.layout, PixelLayout::I420);
-    assert_eq!(frame.data.len(), expected_len);
-    assert_eq!(frame.pts_us, i as i64 * 40_000, "output pts pairs back to its AU");
-  }
-  // Content sanity: testsrc2 is colorful, so the Y plane is not flat and
-  // the chroma planes are not neutral.
-  let y = &frames[10].data[..160 * 120];
-  let (min, max) = y.iter().fold((255u8, 0u8), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-  assert!(max - min > 100, "Y plane should span a wide range, got {min}..{max}");
-  let u = &frames[10].data[160 * 120..160 * 120 + 80 * 60];
-  assert!(u.iter().any(|&v| (v as i32 - 128).abs() > 30), "U plane should carry color");
-}
-
-#[test]
 fn aac_decodes_every_packet_to_pcm() {
   let mut demux = Mp4Demuxer::open(&fixture()).expect("open fixture");
   let info = demux.info().audio.as_ref().expect("audio track");
@@ -91,11 +65,41 @@ fn aac_decodes_every_packet_to_pcm() {
   assert!(peak > 0.1 && peak <= 1.0, "peak {peak} out of range");
 }
 
+// Stands in for the platform decoder (the only real one is Android's, which
+// no host test can run): one frame out per AU, at the AU's own pts, mid-gray
+// so plane sizes and ordering are still checked.
+struct StubDecoder;
+
+impl VideoDecoder for StubDecoder {
+  fn decode(&mut self, au: &VideoAu) -> Result<Vec<YuvFrame>, String> {
+    let layout = crate::video::decoded_layout();
+    Ok(vec![YuvFrame {
+      pts_us: au.pts_us,
+      width: 160,
+      height: 120,
+      layout,
+      data: vec![128; layout.frame_size(160, 120)],
+    }])
+  }
+
+  fn flush(&mut self) -> Result<Vec<YuvFrame>, String> {
+    Ok(Vec::new())
+  }
+}
+
+#[test]
+fn opening_without_a_platform_decoder_errs() {
+  // Every host the suite runs on is a platform whose decoder rung has not
+  // landed; the failure must reach the caller, not hang in the worker.
+  let Err(err) = VideoPlayer::open(&fixture()) else { panic!("no host has a decoder rung yet") };
+  assert!(err.contains("decoder"), "unhelpful error: {err}");
+}
+
 #[test]
 fn player_advances_against_a_caller_clock() {
-  let mut player = crate::video::VideoPlayer::open(&fixture()).expect("open player");
+  let mut player = VideoPlayer::open_with(&fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
   assert_eq!((player.info().width, player.info().height), (160, 120));
-  assert_eq!(player.layout(), PixelLayout::I420);
+  assert_eq!(player.layout(), crate::video::decoded_layout());
 
   // Paused: nothing comes out no matter the clock.
   assert!(player.advance(1_000_000).is_none());
@@ -141,7 +145,7 @@ fn player_advances_against_a_caller_clock() {
 
 #[test]
 fn player_skips_stale_frames_when_the_clock_runs_ahead() {
-  let mut player = crate::video::VideoPlayer::open(&fixture()).expect("open player");
+  let mut player = VideoPlayer::open_with(&fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
   player.play();
   // A clock permanently ahead of the whole clip: each advance drains the
   // queue and hands out only the newest frame, dropping the ones between.
@@ -163,6 +167,28 @@ fn player_skips_stale_frames_when_the_clock_runs_ahead() {
   // practice; anywhere under 50 proves stale frames drop instead of replay,
   // 25 leaves slack for scheduling noise.
   assert!(handed.len() < 25, "most frames skipped, handed {}", handed.len());
+}
+
+#[test]
+fn a_stalled_master_clock_plays_out_the_tail() {
+  // An audio-clocked stream's clock stops at the end of the audio track,
+  // which in an MP4 routinely falls a frame or more short of the last video
+  // frame. The tail must still come out, and the stream must end.
+  let mut player = VideoPlayer::open_with(&fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
+  player.play();
+  let stall_us = 44 * 40_000;
+  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+  let mut last = -1;
+  while !player.finished() {
+    while player.next_pcm().is_some() {}
+    if let Some(frame) = player.advance(stall_us) {
+      last = frame.pts_us;
+    }
+    assert!(std::time::Instant::now() < deadline, "stalled clock never finished, reached {last}us");
+    std::thread::sleep(std::time::Duration::from_millis(1));
+  }
+  assert_eq!(last, 49 * 40_000, "the real final frame is the one left on screen");
+  assert_eq!(player.position_us(), 49 * 40_000);
 }
 
 #[test]

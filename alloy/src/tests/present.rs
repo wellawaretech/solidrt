@@ -34,6 +34,28 @@ fn jitter_is_smoothed_and_drift_converges() {
 }
 
 #[test]
+fn extra_calls_within_a_period_do_not_advance_the_clock() {
+  let clock = PresentClock::new();
+  for n in 1..=10u32 {
+    clock.on_present(n as f64 * P60);
+  }
+  let settled = clock.on_present(11.0 * P60);
+  // Frame signals that are not presents arrive between them (an app whose
+  // content changes at half the refresh rate ticks in between), and the
+  // timeline must not count them as time.
+  for _ in 0..5 {
+    let t = clock.on_present(11.0 * P60);
+    assert!((t - settled).abs() < 1e-9, "an extra call at the same instant advanced the clock to {t}");
+  }
+  // A raw reading a quarter period on is still the same period.
+  let t = clock.on_present(11.0 * P60 + P60 / 4.0);
+  assert!(t < settled + P60, "a call inside the period advanced a whole one: {t} vs {settled}");
+  // The next real period advances normally.
+  let t = clock.on_present(12.0 * P60);
+  assert!((t - 12.0 * P60).abs() < 0.5, "cadence not resumed: {t}");
+}
+
+#[test]
 fn stall_snaps_to_raw() {
   let clock = PresentClock::new();
   for n in 1..=10u32 {

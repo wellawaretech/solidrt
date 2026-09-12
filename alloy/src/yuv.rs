@@ -28,8 +28,8 @@ pub enum YuvLayout {
   /// Y plane, then one interleaved UV plane at half resolution (the
   /// MediaCodec buffer-mode output on the probed TV).
   Nv12,
-  /// Y plane, then U, then V, each chroma plane at half resolution (the
-  /// openh264 software decoder output).
+  /// Y plane, then U, then V, each chroma plane at half resolution (what
+  /// software decoders and some capture sources hand out).
   I420,
 }
 

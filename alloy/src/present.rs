@@ -69,17 +69,34 @@ impl PresentClock {
     1000.0 / f64::from_bits(self.hz.load(Ordering::Relaxed))
   }
 
-  /// The modeled timestamp of the present that just completed: one period
-  /// after the previous one, nudged toward `raw_ms` (see GAIN), or snapped to
-  /// it after a stall (see STALL_MS).
+  /// The modeled timestamp of the frame signal that just completed: the
+  /// previous reading plus however many whole refresh periods have actually
+  /// passed since it, nudged toward `raw_ms` (see GAIN), or snapped to it
+  /// after a stall (see STALL_MS).
+  ///
+  /// Asking how much of a period has actually passed, rather than assuming
+  /// exactly one per call, is what makes this safe to drive from every frame
+  /// signal instead of only from presents: a second call inside the same
+  /// refresh period advances nothing. Without that, the timeline runs fast
+  /// by however many extra calls it gets - measured at 55 calls a second on
+  /// a 50 Hz panel playing 25 fps video, because an app that presents only
+  /// when its content changes still ticks at the refresh cadence in
+  /// between. The advance stays capped at one period, so a stream that is
+  /// behind still converges by GAIN rather than jumping; catching up in one
+  /// step is a policy change this does not make.
   pub fn on_present(&self, raw_ms: f64) -> f64 {
     let mut clock = f64::from_bits(self.now_ms.load(Ordering::Relaxed));
-    clock += self.period_ms();
+    let period = self.period_ms();
     let gap = raw_ms - clock;
     if gap.abs() > STALL_MS {
       clock = raw_ms;
     } else {
-      clock += gap * GAIN;
+      // Zero when the caller is early (the model may also lead the raw
+      // reading by a fraction of a period, and a timeline must not go
+      // back), one otherwise.
+      let periods = (gap / period).round().clamp(0.0, 1.0);
+      clock += periods * period;
+      clock += (raw_ms - clock) * GAIN;
     }
     self.now_ms.store(clock.to_bits(), Ordering::Relaxed);
     clock

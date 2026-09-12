@@ -17,6 +17,7 @@ mod pass;
 mod program;
 mod readback;
 mod rig;
+mod staging;
 mod storage;
 mod target;
 mod texture;
@@ -36,6 +37,7 @@ pub(crate) use program::{
 #[cfg(test)]
 pub(crate) use program::declared_uniform_names;
 pub(crate) use entry::EntryBuffers;
+pub(crate) use staging::UploadStaging;
 pub(crate) use storage::create_layer_target;
 pub(crate) use target::ShaderTexture;
 pub(crate) use texture::{GpuTexture, SamplerCache};

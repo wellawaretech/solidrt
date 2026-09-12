@@ -273,7 +273,20 @@ impl GpuTexture {
     }
   }
 
+  /// Upload `data` from client memory: the driver copies it out before the
+  /// call returns.
   pub fn upload(&self, gl: &glow::Context, data: &[u8], size: ISize) {
+    self.upload_inner(gl, Some(data), size);
+  }
+
+  /// Upload from whatever is currently bound as GL_PIXEL_UNPACK_BUFFER (see
+  /// UploadStaging), reading it from offset 0. The pixels are already in GPU
+  /// memory, so the driver is free to service the copy asynchronously.
+  pub fn upload_staged(&self, gl: &glow::Context, size: ISize) {
+    self.upload_inner(gl, None, size);
+  }
+
+  fn upload_inner(&self, gl: &glow::Context, data: Option<&[u8]>, size: ISize) {
     if self.shape == TextureShape::Cube {
       // Gated UI-side (a cube map is create-once); backstop.
       log::warn!("[alloy] upload into a cube map ignored: cube maps are create-once");
@@ -304,7 +317,10 @@ impl GpuTexture {
         height,
         gl_format,
         ty,
-        glow::PixelUnpackData::Slice(Some(data)),
+        match data {
+          Some(pixels) => glow::PixelUnpackData::Slice(Some(pixels)),
+          None => glow::PixelUnpackData::BufferOffset(0),
+        },
       );
       // Unpack alignment is context state shared with Impeller's own uploads
       // (glyph atlas), which assume the GL default of 4; restore it.

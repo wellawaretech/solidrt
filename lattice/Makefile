@@ -44,6 +44,24 @@ GO_FEATURES      = --features go,speech
 RUNTIME_FEATURES = --features speech
 endif
 
+# Video playback (forge::video + flux:video + @solidrt/core/video) is opt-in
+# the same way, and for the same reason: the stack is incomplete, so a plain
+# build carries no decoder, no flux:video module and no `video` capability.
+# Dist builds force it off until the stack is finished; H.264 decode itself
+# is the platform's (no software codec is bundled), so nothing here carries
+# a codec license. See okf/backlog/video-playback.md.
+VIDEO ?= 0
+ifeq ($(DIST),1)
+override VIDEO = 0
+endif
+ifeq ($(VIDEO),0)
+VIDEO_FEATURES =
+else
+VIDEO_FEATURES = ,video
+endif
+GO_FEATURES      := $(GO_FEATURES)$(VIDEO_FEATURES)
+RUNTIME_FEATURES := $(RUNTIME_FEATURES)$(VIDEO_FEATURES)
+
 SRT_HOME ?= $(abspath $(CURDIR)/..)
 
 # The player app sources live in apps/player like any regular app; the
@@ -116,6 +134,7 @@ help:
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
+	@echo "Pass VIDEO=1 to build with video playback (default: off)."
 	@echo "dist targets always build speech-free; solidrt and fluxrt use release-opt,"
 	@echo "as does the Android runner (ANDROID_RUNTIME_PROFILE=$(ANDROID_RUNTIME_PROFILE))."
 	@echo ""

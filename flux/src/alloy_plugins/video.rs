@@ -10,20 +10,19 @@
 //! has audio, an engine-timeline accumulator otherwise), ask the forge
 //! player for the frame due, and upload it into the YUV texture.
 //!
-//! Behind `video-timeline-pacing` (default OFF, see the flux Cargo.toml and
-//! okf/backlog/video-playback.md): silent streams clock on the engine
-//! timeline (`timeline_now_ms`: the paced frame clock in a lattice run)
-//! instead of wall time, frame selection gets a half-period lookahead, and a
-//! mid-playback player reports standing frame demand. Wall time is the wrong
-//! master clock because the tick's JS work executes at jittery wall moments
-//! even when presents are metronomic - a wall read inside the tick inherits
-//! that jitter and frame selection holds and double-steps (measured ~11% of
-//! frames on a 50 Hz TV while presents were clean). The paced timeline
-//! advances one period per frame whatever the execution jitter. The
-//! lookahead keeps comparisons off the pts boundary that play() anchors the
-//! grids in phase on; without it sub-ms timeline noise flips them. With the
-//! feature off, behavior is the previous one: wall-clock selection, frame
-//! demand only on upload.
+//! Three properties make the schedule hold (see okf/backlog/video-playback.md):
+//! silent streams clock on the engine timeline (`timeline_now_ms`: the paced
+//! frame clock in a lattice run) rather than wall time, frame selection gets
+//! a half-period lookahead, and a mid-playback player reports standing frame
+//! demand so the loop runs on the vsync grid instead of free-running on its
+//! own uploads. Wall time is the wrong master clock because the tick's JS
+//! work executes at jittery wall moments even when presents are metronomic -
+//! a wall read inside the tick inherits that jitter and frame selection holds
+//! and double-steps. The paced timeline advances one period per frame
+//! whatever the execution jitter. The lookahead keeps comparisons off the pts
+//! boundary that play() anchors the grids in phase on; without it sub-ms
+//! timeline noise flips them. Measured on the 50 Hz TV, 50 fps content:
+//! 2.8% of steps held or double-stepped without these, 0.07% with.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -34,19 +33,10 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Ctx, Exception, Function, JsLifetime, Object};
 
-// The silent-stream master clock reading in us: the engine timeline behind
-// `video-timeline-pacing`, a process-monotonic wall origin otherwise.
-#[cfg(feature = "video-timeline-pacing")]
+// The silent-stream master clock reading in us: the engine timeline, which
+// advances one refresh period per frame however jittery the execution is.
 fn clock_now_us(ctx: &Ctx<'_>) -> i64 {
   (crate::standards_plugins::time::timeline_now_ms(ctx) * 1000.0) as i64
-}
-
-#[cfg(not(feature = "video-timeline-pacing"))]
-fn clock_now_us(_ctx: &Ctx<'_>) -> i64 {
-  use std::sync::OnceLock;
-  use std::time::Instant;
-  static ORIGIN: OnceLock<Instant> = OnceLock::new();
-  ORIGIN.get_or_init(Instant::now).elapsed().as_micros() as i64
 }
 
 // How much decoded audio the sink holds ahead of the device. Small enough
@@ -294,10 +284,11 @@ pub(crate) fn tick(ctx: &Ctx<'_>, period_us: i64) -> VideoTick {
     if !entry.player.playing() {
       continue;
     }
-    if cfg!(feature = "video-timeline-pacing") {
-      result.playing = result.playing || !entry.player.finished();
-    }
-    let lookahead_us = if cfg!(feature = "video-timeline-pacing") { period_us / 2 } else { 0 };
+    result.playing = result.playing || !entry.player.finished();
+    // Half a period: play() anchors the pts grid in phase with the tick
+    // grid, so without the offset every comparison sits on a boundary that
+    // sub-ms timeline noise flips.
+    let lookahead_us = period_us / 2;
     let clock_us = match entry.sink {
       Some(sink) => state.0.gui.alloy.pcm_sink_position_us(sink).unwrap_or(0),
       None => {

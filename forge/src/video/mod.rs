@@ -3,38 +3,31 @@
 // produces compressed access units, a decoder produces timestamped planar
 // YUV frames as plain CPU bytes, and the consumer (alloy, via the flux
 // binding) uploads the planes as textures and converts YUV to RGB on the
-// GPU. Decoders are swappable producers of the same frames - the openh264
-// software decoder is the PoC/dev fallback, platform hardware decoders
-// (MediaCodec, VA-API, V4L2, VideoToolbox, Media Foundation) are the
-// shipped rungs.
+// GPU. Decoders are swappable producers of the same frames, and every one
+// of them is the platform's own (MediaCodec, VA-API, V4L2, VideoToolbox,
+// Media Foundation): no software H.264 decoder is bundled, so the codec
+// licensing stays with the vendor. MediaCodec is the only rung implemented
+// so far - other platforms have no decoder and opening a clip fails there.
 //
 // No GL, SDL, or scripting-engine types anywhere in this module.
 
 mod aac;
 mod demux;
-#[cfg(not(target_os = "android"))]
-mod h264;
 #[cfg(target_os = "android")]
 mod mediacodec;
 mod player;
 
 pub use aac::{AacDecoder, PcmChunk};
 pub use demux::{AudioInfo, AudioPacket, MediaInfo, Mp4Demuxer, VideoAu};
-#[cfg(not(target_os = "android"))]
-pub use h264::H264Decoder;
 #[cfg(target_os = "android")]
 pub use mediacodec::MediaCodecDecoder;
 pub use player::VideoPlayer;
 
-/// The layout the platform's decoder emits: NV12 from MediaCodec on Android,
-/// I420 from openh264 elsewhere. Fixed per platform so consumers can size
-/// textures before the first decoded frame exists.
+/// The layout the platform's decoder emits. Fixed per platform so consumers
+/// can size textures before the first decoded frame exists; NV12 everywhere
+/// so far, which is what every platform decoder in the plan hands out.
 pub fn decoded_layout() -> PixelLayout {
-  if cfg!(target_os = "android") {
-    PixelLayout::Nv12
-  } else {
-    PixelLayout::I420
-  }
+  PixelLayout::Nv12
 }
 
 /// Plane arrangement of a tightly packed YUV 4:2:0 frame: plane rows are
@@ -47,7 +40,7 @@ pub enum PixelLayout {
   /// Y plane, then one interleaved UV plane at half resolution (MediaCodec
   /// buffer-mode output).
   Nv12,
-  /// Y plane, then U, then V, each at half resolution (openh264 output).
+  /// Y plane, then U, then V, each at half resolution.
   I420,
 }
 

@@ -42,6 +42,16 @@ pub fn advance(ctx: &Ctx<'_>, now_ms: f64, period_ms: Option<f64>) {
     // Same for a video frame uploaded into its player's texture; a
     // mid-playback player is standing demand for the next tick, so video
     // rides the frame grid instead of free-running on its own uploads.
+    //
+    // Demanding a frame per tick does present the same pixels twice for
+    // 25 fps content on a 50 Hz panel. Measured on the TV, demanding only
+    // on upload halves the presents exactly as expected - and looks worse:
+    // the presents then land wherever the tick phase has walked to (27 at
+    // one period, 76 at two, 21 at three), where standing demand holds
+    // 124 of 125 on the grid with the content stepping an even 40 ms. A
+    // duplicate present is invisible; an early or late one is judder. The
+    // efficiency is worth having, but only once frames are scheduled
+    // against a deadline (okf/backlog/frame-driver-pacing-contract.md).
     let period_us = period_ms.map(|p| (p * 1000.0) as i64).unwrap_or(0);
     let video = super::video::tick(ctx, period_us);
     demand |= video.uploaded || video.playing;

@@ -325,6 +325,8 @@ pub(crate) struct RasterState {
   // flight below the driver's own depth. Empty in capture mode, which never
   // presents.
   present_fences: std::collections::VecDeque<glow::Fence>,
+  // Pixel-unpack buffers per-frame uploads stage through (see UploadStaging).
+  staging: gl::UploadStaging,
   // GL-side view of every registered texture (id -> name + dims), for sampler
   // resolution, re-uploads, and readbacks. Mirrors the UI side's registry
   // through the command stream.
@@ -555,6 +557,7 @@ impl RasterState {
       demand_latch: None,
       present_run: None,
       present_fences: std::collections::VecDeque::new(),
+      staging: gl::UploadStaging::new(),
       textures: HashMap::new(),
       unadopted: HashSet::new(),
       shaders: HashMap::new(),

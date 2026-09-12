@@ -2,8 +2,8 @@
 // Philips TPM171E 2026-08-12 (see okf/backlog/video-playback.md): the buffer
 // tap emits an honest layout (color-format 21 = NV12, stride/slice-height
 // padded) at ~3x realtime for 1080p; surface-attached taps are per-device
-// untrustworthy and are not used. Unlike openh264 this decoder handles
-// B-frames, so arbitrary real-world H.264 plays.
+// untrustworthy and are not used. It handles B-frames, so arbitrary
+// real-world H.264 plays.
 //
 // The codec's padded output (stride, slice-height, crop) is repacked into
 // the tightly packed frame contract during the mandatory copy out of the

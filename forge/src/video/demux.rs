@@ -6,8 +6,8 @@
 //
 // Video samples come out of the container as AVCC (length-prefixed NALs);
 // the demuxer normalizes them to Annex-B access units with SPS/PPS
-// prepended at every sync sample, which is what both openh264 and
-// AMediaCodec want fed.
+// prepended at every sync sample, which is what the platform decoders
+// (AMediaCodec and the rungs after it) want fed.
 
 use std::io::{Seek, SeekFrom};
 
