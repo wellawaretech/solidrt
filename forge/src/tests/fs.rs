@@ -80,6 +80,31 @@ async fn rename_moves_files_and_dirs() {
   let _ = std::fs::remove_dir_all(&dir);
 }
 
+// Sequential appends land in call order and only resolve once the bytes are
+// in the file. Each append opens its own O_APPEND handle; without a flush the
+// background write of one append can race the next one's (seen as swapped
+// chunks in a downloaded file on a slow device).
+#[tokio::test]
+async fn append_keeps_sequential_chunks_in_order() {
+  // Enough chunks of varying sizes to give a race a fair chance; a fast
+  // desktop may still not hit it, so this is a regression guard.
+  const CHUNKS: usize = 400;
+  let path = std::env::temp_dir().join(format!("forge-fs-append-{}", std::process::id()));
+  let path = path.to_string_lossy().into_owned();
+  let _ = std::fs::remove_file(&path);
+
+  let mut expected = Vec::new();
+  for i in 0..CHUNKS {
+    let chunk: Vec<u8> = format!("chunk-{i:04}|").repeat(1 + i % 7).into_bytes();
+    crate::fs::append(&path, &chunk).await.expect("append chunk");
+    expected.extend_from_slice(&chunk);
+  }
+  let actual = crate::fs::read(&path).await.expect("read appended file");
+  assert_eq!(actual.len(), expected.len());
+  assert!(actual == expected, "appended chunks are out of order");
+  let _ = std::fs::remove_file(&path);
+}
+
 #[tokio::test]
 async fn realpath_resolves_symlinks_and_dots() {
   let dir = std::env::temp_dir().join(format!("forge-fs-realpath-{}", std::process::id()));

@@ -213,7 +213,12 @@ pub async fn append(path: &str, bytes: &[u8]) -> Result<(), String> {
   check_writable(path, "append")?;
   let err = |e| format!("append {path}: {e}");
   let mut file = tokio::fs::OpenOptions::new().create(true).append(true).open(path).await.map_err(err)?;
-  file.write_all(bytes).await.map_err(err)
+  file.write_all(bytes).await.map_err(err)?;
+  // write_all resolves once tokio has queued the bytes for a background
+  // blocking write, not once they are in the file. Without the flush the next
+  // append (a new O_APPEND handle) can land before this one, and a failed
+  // write would be reported as success.
+  file.flush().await.map_err(err)
 }
 
 /// Open a file for seekable, on-demand reads (e.g. feeding a streaming audio
