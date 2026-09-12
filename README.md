@@ -13,6 +13,8 @@ SolidRT takes a different path: JavaScript you already know, Flutter's renderer 
 
 Write SolidJS, ship native applications. SolidRT is not a webview and not a browser engine. Your components run on an embedded JavaScript engine and render straight to the GPU. Runs today on Linux, macOS, Windows, and Android.
 
+The thinking behind that path is written up in [HTML: New Beginnings](https://wellawaretech.com/blog/html-new-beginnings/).
+
 ## Quick start
 
 SolidRT development runs on [Bun](https://bun.sh), so install that first. Nothing else is needed: the runtime binary for your platform comes with the CLI.
