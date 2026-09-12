@@ -47,9 +47,9 @@ endif
 # Video playback (forge::video + flux:video + @solidrt/core/video) is opt-in
 # the same way, and for the same reason: the stack is incomplete, so a plain
 # build carries no decoder, no flux:video module and no `video` capability.
-# Dist builds force it off until the stack is finished; H.264 decode itself
-# is the platform's (no software codec is bundled), so nothing here carries
-# a codec license. See okf/backlog/video-playback.md.
+# Dist builds force it off until the stack is finished. The codec is VP9
+# (royalty-free): MediaCodec on Android, the vendored libvpx elsewhere, so
+# nothing here carries a codec license. See okf/backlog/video-playback.md.
 VIDEO ?= 0
 ifeq ($(DIST),1)
 override VIDEO = 0

@@ -36,13 +36,14 @@ declare module "flux:video" {
   }
 
   /**
-   * Open a video file (MP4 with H.264 video; AAC audio plays, other audio
-   * tracks are ignored). The path resolves like file() paths (through the
-   * app's assets in a packed app). Playback starts paused; call `play()`.
-   * Rejects when the file is unreadable or its codec unsupported.
+   * Open a video file (MP4 with 8-bit 4:2:0 VP9 video, i.e. profile 0;
+   * AAC audio plays, other audio tracks are ignored). The path resolves
+   * like file() paths (through the app's assets in a packed app). Playback
+   * starts paused; call `play()`. Rejects when the file is unreadable or
+   * its codec unsupported.
    *
-   * The built-in software decoder does not decode B-frames; encode dev
-   * content with `-bf 0` until the platform hardware decoders land.
+   * Encode with `ffmpeg -c:v libvpx-vp9 -c:a aac out.mp4`; VP9 is
+   * royalty-free, so the decoder ships on every platform.
    */
   export function open(path: string): Promise<VideoPlayer>
 }

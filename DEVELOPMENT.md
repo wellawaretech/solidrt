@@ -7,6 +7,10 @@ This document covers working on SolidRT itself. For building applications with S
 - [Bun](https://bun.sh) - for development only
 - [Rust](https://rustup.rs) - for building `solidrt-go` and the runtime
 
+Video playback (`VIDEO=1`, opt-in) builds the vendored libvpx from the
+`forge/vendor/libvpx` submodule, so it needs `git submodule update --init`
+once, plus `nasm` (or `yasm`) for libvpx's x86 SIMD code.
+
 ### Windows
 
 The makefiles are POSIX shell scripts, so run `make` from **Git Bash** (shipped

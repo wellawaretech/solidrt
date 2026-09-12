@@ -134,14 +134,15 @@ fn build_player<'js>(ctx: Ctx<'js>, path: &str) -> Result<Object<'js>, String> {
     PixelLayout::I420 => alloy::YuvLayout::I420,
   };
   let matrix = if player.color_is_bt709() { alloy::YuvMatrix::Bt709 } else { alloy::YuvMatrix::Bt601 };
+  // Both from the container's vpcC box (the matrix falls back to the
+  // resolution default when it is unspecified there).
+  let range = if player.color_is_full_range() { alloy::YuvRange::Full } else { alloy::YuvRange::Limited };
   let texture = state.0.gui.alloy.create_yuv_texture(
     width,
     height,
     layout,
     matrix,
-    // Container metadata carries no range signal (see the demuxer); H.264
-    // video is studio range in practice.
-    alloy::YuvRange::Limited,
+    range,
     alloy::SamplerState::default(),
     Some(format!("video:{path}")),
   )?;

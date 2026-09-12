@@ -1,17 +1,31 @@
-// MP4 demux via the `mp4` crate. Probed 2026-08-12: symphonia's isomp4
-// reader delivers the H.264 track's packets but not the avcC extra data,
-// and in MP4 the SPS/PPS live only there - so the container is read with
-// `mp4` (avcC, sync flags, per-track timescales, AAC config) and symphonia
-// stays a pure audio decoder (see aac.rs).
+// MP4 demux via the `mp4` crate: it reads the vp09 sample entry (and its
+// vpcC box: profile, bit depth, chroma layout, color range and matrix),
+// sync flags, per-track timescales and the AAC config; symphonia stays a
+// pure audio decoder (see aac.rs).
 //
-// Video samples come out of the container as AVCC (length-prefixed NALs);
-// the demuxer normalizes them to Annex-B access units with SPS/PPS
-// prepended at every sync sample, which is what the platform decoders
-// (AMediaCodec and the rungs after it) want fed.
+// VP9 needs no bitstream rewriting: a sample is one coded frame (or a
+// superframe packing a hidden ALT-REF with its shown frame) exactly as the
+// decoders want it fed, and VP9 has no out-of-band parameter sets.
 
 use std::io::{Seek, SeekFrom};
 
 use crate::seek::SeekableReader;
+
+// vpcC facts the pipeline accepts: 8-bit 4:2:0 is VP9 profile 0, and the
+// two chroma_subsampling values below 2 are both 4:2:0 (vertical vs.
+// co-located chroma siting, which the upload does not distinguish).
+const VP9_PROFILE_8BIT_420: u8 = 0;
+const BIT_DEPTH_8: u8 = 8;
+const CHROMA_420_MAX: u8 = 1;
+// vpcC matrix_coefficients (ISO/IEC 23001-8): BT.709 and the two BT.601
+// codes; anything else (2 = unspecified, what ffmpeg writes) falls back to
+// the resolution default.
+const MATRIX_BT709: u8 = 1;
+const MATRIX_BT470BG: u8 = 5;
+const MATRIX_BT601: u8 = 6;
+// The resolution default when the container does not say: HD content (this
+// many lines and up) is BT.709, SD is BT.601.
+const HD_LINES: u32 = 720;
 
 /// Stream facts read from the container header.
 #[derive(Clone)]
@@ -33,7 +47,9 @@ pub struct AudioInfo {
   pub asc: Vec<u8>,
 }
 
-/// One Annex-B video access unit, SPS/PPS prepended when `sync`.
+/// One coded VP9 frame (a superframe when the container packs a hidden
+/// ALT-REF with its shown frame), exactly as stored; decoders split
+/// superframes themselves. `sync` marks a keyframe.
 pub struct VideoAu {
   pub pts_us: i64,
   pub sync: bool,
@@ -49,12 +65,12 @@ pub struct AudioPacket {
 pub struct Mp4Demuxer {
   reader: mp4::Mp4Reader<SeekableReader>,
   info: MediaInfo,
+  bt709: bool,
+  full_range: bool,
   video_track: u32,
   video_timescale: u32,
   video_next: u32,
   video_count: u32,
-  sps: Vec<u8>,
-  pps: Vec<u8>,
   audio_track: Option<(u32, u32)>,
   audio_next: u32,
   audio_count: u32,
@@ -63,9 +79,10 @@ pub struct Mp4Demuxer {
 impl Mp4Demuxer {
   /// Open an MP4 and read its header. The path resolves like every forge
   /// file read (through the assets mount when one is set, so packed apps
-  /// work unchanged). Errs when the file is not a readable MP4 or has no
-  /// H.264 video track. A missing or non-AAC audio track is not an error:
-  /// `info().audio` is None and playback is silent.
+  /// work unchanged). Errs when the file is not a readable MP4, has no VP9
+  /// video track, or the VP9 stream is not 8-bit 4:2:0 (profile 0). A
+  /// missing or non-AAC audio track is not an error: `info().audio` is
+  /// None and playback is silent.
   pub fn open(path: &str) -> Result<Self, String> {
     let mut file = crate::fs::open_seekable(path)?;
     let size = file.seek(SeekFrom::End(0)).map_err(|e| format!("size {path}: {e}"))?;
@@ -83,11 +100,33 @@ impl Mp4Demuxer {
     }
     let (video_track, vtrack) = video.ok_or_else(|| "no video track".to_string())?;
     match vtrack.media_type() {
-      Ok(mp4::MediaType::H264) => {}
-      other => return Err(format!("unsupported video codec {other:?} (H.264 only for now)")),
+      Ok(mp4::MediaType::VP9) => {}
+      other => return Err(format!("unsupported video codec {other:?} (VP9 only)")),
     }
-    let sps = vtrack.sequence_parameter_set().map_err(|e| format!("read SPS: {e}"))?.to_vec();
-    let pps = vtrack.picture_parameter_set().map_err(|e| format!("read PPS: {e}"))?.to_vec();
+    let vpcc = &vtrack
+      .trak
+      .mdia
+      .minf
+      .stbl
+      .stsd
+      .vp09
+      .as_ref()
+      .ok_or_else(|| "VP9 track without a vp09 sample entry".to_string())?
+      .vpcc;
+    if vpcc.profile != VP9_PROFILE_8BIT_420 || vpcc.bit_depth != BIT_DEPTH_8 || vpcc.chroma_subsampling > CHROMA_420_MAX
+    {
+      return Err(format!(
+        "unsupported VP9 stream: profile {}, {}-bit, chroma_subsampling {} (8-bit 4:2:0, profile 0, only)",
+        vpcc.profile, vpcc.bit_depth, vpcc.chroma_subsampling
+      ));
+    }
+    let height = vtrack.height() as u32;
+    let bt709 = match vpcc.matrix_coefficients {
+      MATRIX_BT709 => true,
+      MATRIX_BT470BG | MATRIX_BT601 => false,
+      _ => height >= HD_LINES,
+    };
+    let full_range = vpcc.video_full_range_flag;
 
     let audio_info = audio.and_then(|(id, track)| match audio_config(track) {
       Ok(info) => Some((id, track.timescale(), info)),
@@ -99,22 +138,30 @@ impl Mp4Demuxer {
 
     let info = MediaInfo {
       width: vtrack.width() as u32,
-      height: vtrack.height() as u32,
+      height,
       duration_us: reader.duration().as_micros() as i64,
       frame_count: vtrack.sample_count(),
-      audio: audio_info.as_ref().map(|(_, _, a)| AudioInfo { sample_rate: a.sample_rate, channels: a.channels, asc: a.asc.clone() }),
+      audio: audio_info.as_ref().map(|(_, _, a)| AudioInfo {
+        sample_rate: a.sample_rate,
+        channels: a.channels,
+        asc: a.asc.clone(),
+      }),
     };
     Ok(Mp4Demuxer {
       video_timescale: vtrack.timescale(),
       video_count: vtrack.sample_count(),
       audio_track: audio_info.as_ref().map(|&(id, ts, _)| (id, ts)),
-      audio_count: audio_info.as_ref().and_then(|(id, _, _)| reader.tracks().get(id)).map(|t| t.sample_count()).unwrap_or(0),
+      audio_count: audio_info
+        .as_ref()
+        .and_then(|(id, _, _)| reader.tracks().get(id))
+        .map(|t| t.sample_count())
+        .unwrap_or(0),
       reader,
       info,
+      bt709,
+      full_range,
       video_track,
       video_next: 1,
-      sps,
-      pps,
       audio_next: 1,
     })
   }
@@ -123,15 +170,18 @@ impl Mp4Demuxer {
     &self.info
   }
 
-  /// The layout decoded frames will arrive in is the DECODER's business, not
-  /// the container's; this is the color default: BT.709 for HD (720 lines
-  /// and up), BT.601 below, absent explicit container metadata (the mp4
-  /// crate exposes none, matching the probed TV stream which carried none).
+  /// The conversion matrix: what the container's vpcC says when it says
+  /// anything, else BT.709 for HD (720 lines and up) and BT.601 below.
   pub fn color_is_bt709(&self) -> bool {
-    self.info.height >= 720
+    self.bt709
   }
 
-  /// Next video access unit in decode order, None past the end.
+  /// Full-range (0..255) samples rather than studio range, from vpcC.
+  pub fn color_is_full_range(&self) -> bool {
+    self.full_range
+  }
+
+  /// Next coded video frame in decode order, None past the end.
   pub fn next_video(&mut self) -> Result<Option<VideoAu>, String> {
     if self.video_next > self.video_count {
       return Ok(None);
@@ -143,19 +193,12 @@ impl Mp4Demuxer {
       .read_sample(self.video_track, id)
       .map_err(|e| format!("read video sample {id}: {e}"))?
       .ok_or_else(|| format!("video sample {id} missing"))?;
-    // Presentation time: decode time plus the composition offset (the
-    // rendering offset is 0 for streams without reordering).
+    // Presentation time: decode time plus the composition offset (0 for
+    // VP9, whose hidden frames travel inside superframes rather than as
+    // reordered samples).
     let ts = sample.start_time as i64 + sample.rendering_offset as i64;
     let pts_us = ts * 1_000_000 / self.video_timescale as i64;
-    let mut data = Vec::with_capacity(sample.bytes.len() + 16);
-    if sample.is_sync {
-      data.extend_from_slice(&[0, 0, 0, 1]);
-      data.extend_from_slice(&self.sps);
-      data.extend_from_slice(&[0, 0, 0, 1]);
-      data.extend_from_slice(&self.pps);
-    }
-    avcc_to_annexb(&sample.bytes, &mut data)?;
-    Ok(Some(VideoAu { pts_us, sync: sample.is_sync, data }))
+    Ok(Some(VideoAu { pts_us, sync: sample.is_sync, data: sample.bytes.to_vec() }))
   }
 
   /// Next raw AAC frame, None past the end or when there is no audio track.
@@ -176,33 +219,6 @@ impl Mp4Demuxer {
     let pts_us = sample.start_time as i64 * 1_000_000 / timescale as i64;
     Ok(Some(AudioPacket { pts_us, data: sample.bytes.to_vec() }))
   }
-
-  /// Raw SPS and PPS from the avcC box (no start codes), for decoder
-  /// configuration (MediaCodec csd).
-  pub fn parameter_sets(&self) -> (&[u8], &[u8]) {
-    (&self.sps, &self.pps)
-  }
-}
-
-/// AVCC sample (length-prefixed NALs) -> Annex-B start codes, appended to
-/// `out`. The NAL length size is practically always 4; a sample that does
-/// not parse as 4-byte lengths errs rather than feeding garbage downstream.
-fn avcc_to_annexb(sample: &[u8], out: &mut Vec<u8>) -> Result<(), String> {
-  let mut i = 0;
-  while i < sample.len() {
-    if i + 4 > sample.len() {
-      return Err("truncated NAL length".to_string());
-    }
-    let len = u32::from_be_bytes([sample[i], sample[i + 1], sample[i + 2], sample[i + 3]]) as usize;
-    i += 4;
-    if len == 0 || i + len > sample.len() {
-      return Err(format!("NAL length {len} out of bounds (not 4-byte AVCC?)"));
-    }
-    out.extend_from_slice(&[0, 0, 0, 1]);
-    out.extend_from_slice(&sample[i..i + len]);
-    i += len;
-  }
-  Ok(())
 }
 
 struct AudioConfig {

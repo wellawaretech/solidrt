@@ -41,7 +41,7 @@ export type VideoStream = {
 }
 
 /**
- * Opens a video file (MP4, H.264 + AAC) and exposes it as reactive signals:
+ * Opens a video file (MP4, VP9 + AAC) and exposes it as reactive signals:
  * read texture() in JSX and the frames appear once playback starts. Closes
  * automatically when the reactive owner is disposed (e.g. the component
  * unmounts). For imperative use, call open() from "flux:video" directly.

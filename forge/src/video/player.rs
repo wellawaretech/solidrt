@@ -36,6 +36,7 @@ pub struct VideoPlayer {
   info: MediaInfo,
   layout: PixelLayout,
   bt709: bool,
+  full_range: bool,
   playing: bool,
   frame_rx: Receiver<YuvFrame>,
   pcm_rx: Receiver<PcmChunk>,
@@ -49,8 +50,8 @@ pub struct VideoPlayer {
 impl VideoPlayer {
   /// Open a local MP4 and start its decode worker. The worker prefetches
   /// until the queues fill, so opening is cheap and nothing plays until the
-  /// caller starts advancing the clock. Errs on an unreadable file, an
-  /// unsupported video codec, or a platform with no decoder.
+  /// caller starts advancing the clock. Errs on an unreadable file or an
+  /// unsupported video stream (anything but 8-bit 4:2:0 VP9).
   ///
   /// Opening never blocks on the decoder itself. Constructing one is the
   /// platform's business and can take as long as it likes (a hardware codec
@@ -60,21 +61,18 @@ impl VideoPlayer {
   /// failure there ends the stream like any other: the queues close,
   /// `finished` goes true, and the reason is logged.
   pub fn open(path: &str) -> Result<VideoPlayer, String> {
-    if !platform_has_decoder() {
-      return Err(NO_DECODER.to_string());
-    }
     Self::open_with(path, create_decoder)
   }
 
   /// The seam `open` is built on: the decoder factory runs ON the worker
-  /// thread, because platform decoder handles are not `Send`. Tests pass a
-  /// stub here, which is the only way to exercise playback on a host that
-  /// has no decoder of its own.
+  /// thread, because decoder handles are not `Send`. Tests pass a stub here
+  /// to exercise the player's selection logic apart from any decoder.
   pub(crate) fn open_with(path: &str, make_decoder: DecoderFactory) -> Result<VideoPlayer, String> {
     let mut demux = Mp4Demuxer::open(path)?;
     let info = demux.info().clone();
     let layout = super::decoded_layout();
     let bt709 = demux.color_is_bt709();
+    let full_range = demux.color_is_full_range();
     let audio = info.audio.clone();
 
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel(FRAME_QUEUE);
@@ -88,6 +86,7 @@ impl VideoPlayer {
       info,
       layout,
       bt709,
+      full_range,
       playing: false,
       frame_rx,
       pcm_rx,
@@ -108,9 +107,15 @@ impl VideoPlayer {
     self.layout
   }
 
-  /// The color default for this stream: BT.709 for HD, BT.601 for SD.
+  /// The conversion matrix for this stream: the container's when it says,
+  /// else BT.709 for HD and BT.601 for SD.
   pub fn color_is_bt709(&self) -> bool {
     self.bt709
+  }
+
+  /// Full-range samples (0..255) rather than studio range, per the container.
+  pub fn color_is_full_range(&self) -> bool {
+    self.full_range
   }
 
   pub fn play(&mut self) {
@@ -203,31 +208,19 @@ impl VideoPlayer {
 
 // Decodes both streams in pts order into the bounded queues. Blocking sends
 // are the backpressure; when the player drops, the sends fail and the worker
-// exits. Per-AU decode errors skip the AU (fail-soft playback: one bad AU
-// must not kill the stream).
-// The platform decoder: MediaCodec on Android, and nothing anywhere else
-// until the remaining platform rungs land (VA-API, V4L2, VideoToolbox,
-// Media Foundation - see the note). There is no software fallback by
-// design; a creation failure ends the stream like any decoder-init failure.
+// exits. Per-frame decode errors skip the frame (fail-soft playback: one bad
+// frame must not kill the stream).
 /// How a worker gets its decoder. A plain fn pointer: the factory crosses
-/// to the worker thread, the decoder itself never does.
+/// to the worker thread, the decoder itself never does. MediaCodec on
+/// Android (hardware VP9), libvpx everywhere else (see mod.rs); a creation
+/// failure ends the stream like any decoder-init failure.
 pub(crate) type DecoderFactory = fn(&Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String>;
 
-const NO_DECODER: &str = "no video decoder on this platform yet (H.264 decode is implemented for Android only)";
-
-/// Whether this platform has a decoder at all - a compile-time fact, since
-/// the rungs land one platform at a time (see the note). Where none has,
-/// opening fails outright rather than starting a worker that can only
-/// report having nothing to decode with.
-fn platform_has_decoder() -> bool {
-  cfg!(target_os = "android")
-}
-
-// A hardware decoder is a limited resource: this device allows few enough
-// AVC instances that switching clips - where the incoming player is built
-// before the outgoing one is closed - can find them all taken. Retry across
-// that handover rather than failing a clip for a codec that is about to be
-// free. Total wait stays well inside the time a player takes to start.
+// A hardware decoder is a limited resource: the target TV allows two VP9
+// instances, so switching clips - where the incoming player is built before
+// the outgoing one is closed - can find them both taken. Retry across that
+// handover rather than failing a clip for a codec that is about to be free.
+// Total wait stays well inside the time a player takes to start.
 #[cfg(target_os = "android")]
 const DECODER_ATTEMPTS: u32 = 10;
 #[cfg(target_os = "android")]
@@ -236,10 +229,9 @@ const DECODER_RETRY_MS: u64 = 50;
 #[cfg(target_os = "android")]
 fn create_decoder(demux: &Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String> {
   let info = demux.info();
-  let (sps, pps) = demux.parameter_sets();
   let mut last = String::new();
   for attempt in 0..DECODER_ATTEMPTS {
-    match super::mediacodec::MediaCodecDecoder::new(info.width, info.height, sps, pps) {
+    match super::mediacodec::MediaCodecDecoder::new(info.width, info.height) {
       Ok(decoder) => return Ok(Box::new(decoder)),
       Err(e) => last = e,
     }
@@ -251,8 +243,9 @@ fn create_decoder(demux: &Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String> {
 }
 
 #[cfg(not(target_os = "android"))]
-fn create_decoder(_demux: &Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String> {
-  Err(NO_DECODER.to_string())
+fn create_decoder(demux: &Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String> {
+  let info = demux.info();
+  Ok(Box::new(super::vpx::Vp9Decoder::new(info.width, info.height)?))
 }
 
 fn worker(
@@ -294,7 +287,7 @@ fn worker(
       (None, None) => break,
     };
     if video_turn {
-      let au = next_video.take().expect("video_turn implies an AU");
+      let au = next_video.take().expect("video_turn implies a frame");
       match decoder.decode(&au) {
         Ok(frames) => {
           for frame in frames {
@@ -303,7 +296,7 @@ fn worker(
             }
           }
         }
-        Err(e) => log::warn!("[forge::video] skipping AU at {}us: {e}", au.pts_us),
+        Err(e) => log::warn!("[forge::video] skipping frame at {}us: {e}", au.pts_us),
       }
       next_video = demux.next_video().unwrap_or_else(|e| {
         log::warn!("[forge::video] {e}");

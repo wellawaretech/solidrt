@@ -9,9 +9,10 @@ name = "forge"
 path = "src/lib.rs"
 
 [features]
-# forge::video: MP4/H.264 demux + AAC decode, plus the platform video
-# decoder - AMediaCodec on Android, nothing yet elsewhere. Incomplete and
-# opt-in. See okf/backlog/video-playback.md.
+# forge::video: MP4/VP9 demux + AAC decode, plus the video decoder:
+# AMediaCodec on Android, the vendored libvpx (forge/vendor/libvpx, built by
+# build.rs) everywhere else. Opt-in while the playback stack is incomplete.
+# See okf/backlog/video-playback.md.
 video = ["dep:mp4", "dep:symphonia", "dep:ndk", "dep:ndk-sys"]
 
 [dependencies]
@@ -86,12 +87,12 @@ usvg = { version = "=0.47.0", default-features = false }
 # dependency), see okf/backlog/avif-decode.md.
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
 
-# forge::video (see okf/backlog/video-playback.md). mp4 parses the container:
-# probed 2026-08-12, symphonia's isomp4 delivers the H.264 packets but not
-# the avcC extra data, and the SPS/PPS live only there in MP4. symphonia
+# forge::video (see okf/backlog/video-playback.md). mp4 parses the container
+# (vp09/vpcC sample entry, sync flags, timescales, AAC config); symphonia
 # decodes AAC (pure Rust, patents expired) and later grows into the
-# SDL3_mixer replacement. No software VIDEO decoder ships at all: the
-# platform decoders carry the H.264 licensing (see the note).
+# SDL3_mixer replacement. The VP9 decoder off Android is libvpx, vendored as
+# a submodule and bound by hand (src/video/vpx): no crate, see CLAUDE.md on
+# dependency reliability.
 mp4 = { version = "=0.14.0", optional = true }
 symphonia = { version = "=0.5.5", default-features = false, features = ["aac"], optional = true }
 

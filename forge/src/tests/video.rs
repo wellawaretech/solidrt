@@ -1,9 +1,7 @@
-use crate::video::{AacDecoder, Mp4Demuxer, VideoAu, VideoDecoder, VideoPlayer, YuvFrame};
+use crate::video::{AacDecoder, Mp4Demuxer, PixelLayout, VideoAu, VideoDecoder, VideoPlayer, YuvFrame};
 
-// 2 s of ffmpeg testsrc2 160x120 at 25 fps (H.264 high profile, no
-// B-frames, so the demuxer's pts are monotonic) with a 440 Hz sine as mono
-// AAC at 44100 Hz. Decode is not covered here: the only decoder is the
-// Android platform one, which no host test can run.
+// 2 s of ffmpeg testsrc2 160x120 at 25 fps as VP9 (libvpx-vp9, profile 0)
+// with a 440 Hz sine as mono AAC at 44100 Hz, in MP4 (vp09 + mp4a).
 fn fixture() -> String {
   concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/data/video_av.mp4").to_string()
 }
@@ -19,24 +17,29 @@ fn header_reports_the_stream_facts() {
   assert_eq!((audio.sample_rate, audio.channels), (44100, 1));
   // AAC-LC (object type 2), 44100 (freq index 4), mono (channel config 1).
   assert_eq!(audio.asc, vec![0x12, 0x08]);
+  // ffmpeg writes matrix_coefficients 2 (unspecified): the resolution
+  // default applies, and the range flag says studio.
   assert!(!demux.color_is_bt709(), "SD content defaults to BT.601");
+  assert!(!demux.color_is_full_range(), "libvpx-vp9 writes studio range");
 }
 
 #[test]
-fn video_aus_are_annexb_with_sps_pps_at_sync() {
+fn video_samples_are_raw_vp9_frames() {
   let mut demux = Mp4Demuxer::open(&fixture()).expect("open fixture");
-  let first = demux.next_video().expect("read").expect("first AU");
-  assert!(first.sync, "first AU is the keyframe");
+  let first = demux.next_video().expect("read").expect("first frame");
+  assert!(first.sync, "first frame is the keyframe");
   assert_eq!(first.pts_us, 0);
-  assert_eq!(&first.data[..4], &[0, 0, 0, 1], "Annex-B start code");
-  assert_eq!(first.data[4] & 0x1f, 7, "sync AU starts with the SPS");
+  // A VP9 uncompressed header opens with frame_marker 0b10, then profile
+  // bits 0,0 for profile 0 and show_existing_frame 0: the sample is the
+  // coded frame itself, no container framing in front of it.
+  assert_eq!(first.data[0] >> 4, 0b1000, "VP9 frame marker, profile 0, shown frame");
 
   let mut count = 1;
   let mut last_pts = first.pts_us;
   while let Some(au) = demux.next_video().expect("read") {
-    assert!(au.pts_us > last_pts, "pts must be monotonic without B-frames");
+    assert!(au.pts_us > last_pts, "VP9 pts are monotonic (no reordered samples)");
     assert_eq!(au.pts_us - last_pts, 40_000, "25 fps spacing");
-    assert_eq!(&au.data[..4], &[0, 0, 0, 1]);
+    assert_eq!(au.data[0] >> 6, 0b10, "every sample starts at a VP9 frame marker");
     last_pts = au.pts_us;
     count += 1;
   }
@@ -65,8 +68,8 @@ fn aac_decodes_every_packet_to_pcm() {
   assert!(peak > 0.1 && peak <= 1.0, "peak {peak} out of range");
 }
 
-// Stands in for the platform decoder (the only real one is Android's, which
-// no host test can run): one frame out per AU, at the AU's own pts, mid-gray
+// Stands in for the decoder in the player tests, so they exercise frame
+// selection alone: one frame out per coded frame, at its own pts, mid-gray
 // so plane sizes and ordering are still checked.
 struct StubDecoder;
 
@@ -87,12 +90,55 @@ impl VideoDecoder for StubDecoder {
   }
 }
 
+#[cfg(not(target_os = "android"))]
 #[test]
-fn opening_without_a_platform_decoder_errs() {
-  // Every host the suite runs on is a platform whose decoder rung has not
-  // landed; the failure must reach the caller, not hang in the worker.
-  let Err(err) = VideoPlayer::open(&fixture()) else { panic!("no host has a decoder rung yet") };
-  assert!(err.contains("decoder"), "unhelpful error: {err}");
+fn libvpx_decodes_every_frame() {
+  let mut demux = Mp4Demuxer::open(&fixture()).expect("open fixture");
+  let mut decoder = crate::video::Vp9Decoder::new(160, 120).expect("create libvpx decoder");
+  let mut frames = Vec::new();
+  while let Some(au) = demux.next_video().expect("read") {
+    frames.extend(decoder.decode(&au).expect("decode"));
+  }
+  frames.extend(decoder.flush().expect("flush"));
+  assert_eq!(frames.len(), 50, "one shown frame per sample");
+  for (n, frame) in frames.iter().enumerate() {
+    assert_eq!((frame.width, frame.height), (160, 120));
+    assert_eq!(frame.layout, PixelLayout::I420);
+    assert_eq!(frame.data.len(), PixelLayout::I420.frame_size(160, 120));
+    assert_eq!(frame.pts_us, n as i64 * 40_000, "frames carry their sample's pts");
+  }
+  // testsrc2 is a high-contrast pattern: a decoded luma plane spans most
+  // of the range, a mis-stepped copy or a wrong plane offset does not.
+  let luma = &frames[0].data[..160 * 120];
+  let (lo, hi) = luma.iter().fold((u8::MAX, u8::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+  assert!(hi - lo > 100, "luma range {lo}..{hi} is not a test pattern");
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn open_plays_the_stream_through_libvpx() {
+  // The real factory end to end: the worker builds the libvpx decoder and
+  // every frame reaches the consumer against a running clock.
+  let mut player = VideoPlayer::open(&fixture()).expect("open player");
+  player.play();
+  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+  let mut handed = 0;
+  for n in 0..50i64 {
+    let clock_us = n * 40_000;
+    loop {
+      while player.next_pcm().is_some() {}
+      if let Some(frame) = player.advance(clock_us) {
+        assert_eq!(frame.pts_us, clock_us);
+        assert_eq!(frame.data.len(), PixelLayout::I420.frame_size(160, 120));
+        handed += 1;
+        break;
+      }
+      assert!(std::time::Instant::now() < deadline, "timed out waiting for frame {n}");
+      std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+  }
+  assert_eq!(handed, 50);
+  assert_eq!(player.position_us(), 49 * 40_000);
 }
 
 #[test]

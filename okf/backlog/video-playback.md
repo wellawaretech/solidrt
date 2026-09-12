@@ -1,6 +1,6 @@
 ---
 title: Video playback
-description: One decode-to-YUV pipeline on every platform, the platform's own decoder everywhere (MediaCodec buffer mode on Android; no software codec bundled), planar YUV textures + shader conversion in alloy, player core in forge, no video primitive - texture/d-texture display the player's texture id. Fluency target is the Philips MT5891 TV; punch-through reversed 2026-09-12 for fullscreen only (android-video-punch-through.md), this pipeline keeps every other use. Measured there 2026-09-12: 360p50 frame-for-frame on the vsync grid, 720p25 nearly so, 1080p25 over budget; audio-clocked selection drops ~10% of frames at every resolution.
+description: VP9 in MP4 since 2026-09-12 (royalty-free, replaces H.264). One decode-to-YUV pipeline on every platform - MediaCodec buffer mode on Android, the vendored libvpx bound by hand everywhere else - planar YUV textures + shader conversion in alloy, player core in forge, no video primitive - texture/d-texture display the player's texture id. Fluency target is the Philips MT5891 TV; punch-through reversed 2026-09-12 for fullscreen only (android-video-punch-through.md), this pipeline keeps every other use. Measured there 2026-09-12: 360p50 frame-for-frame on the vsync grid, 720p25 nearly so, 1080p25 over budget; audio-clocked selection drops ~10% of frames at every resolution.
 created: 2026-08-12
 ---
 
@@ -15,21 +15,21 @@ carries no decoder, no `flux:video` module and no `video` capability. Enable
 with `--features video` while the work is incomplete, or `VIDEO=1` on any
 lattice make goal (2026-09-12); dist builds force it off.
 
-No software decoder ships at all (2026-09-12, user decision): openh264 is
-removed - dependency, `h264.rs` and its tests. H.264 decode is the
-platform's, so its licensing is the vendor's, and a platform whose rung has
-not landed fails `openVideo` outright ("no video decoder on this platform
-yet") rather than playing nothing. Android is the only implemented rung, so
-desktop video is currently open-and-error; the player tests cover the
-selection logic through a `pub(crate) open_with(path, factory)` seam with a
-stub decoder, since platform decoder handles are not `Send` and the factory
-is what crosses to the worker thread.
+Codec: VP9 (2026-09-12, user decision, replacing H.264; see the dated
+section below). The `video` feature builds the vendored libvpx submodule
+(`forge/vendor/libvpx`, needs `nasm` on x86), so every desktop platform
+decodes; Android decodes through MediaCodec, which has hardware VP9 on the
+target TV. The earlier "no software decoder ships at all" rule (also
+2026-09-12, openh264 removed) was an H.264 licensing stance and is moot for
+a royalty-free codec. The player tests still cover the selection logic
+through the `pub(crate) open_with(path, factory)` seam with a stub decoder,
+and now also run the real libvpx decoder end to end on the host.
 
 ## Goal and scope
 
 Video playback as a SolidRT capability, fluent on ALL devices including the
-weakest connected target: the Philips TPM171E Android TV. First format
-scope: H.264 + AAC in MP4 (the dominant baseline). Breadth later; the
+weakest connected target: the Philips TPM171E Android TV. Format scope:
+VP9 + AAC in MP4 (H.264 until 2026-09-12, see below). Breadth later; the
 pipeline shape is codec-agnostic.
 
 ## Target device facts (probed via adb, read-only, 2026-08-12)
@@ -172,6 +172,10 @@ resolution (BT.709 for HD) unless the container says otherwise.
 
 ## Decoder decision (2026-08-12): openh264 is the PoC, hardware per platform ships
 
+SUPERSEDED 2026-09-12 by the VP9 section below for everything that was
+about H.264 licensing; the platform-hardware rungs remain the optimization
+path they were, on top of a software decoder that now ships everywhere.
+
 openh264 is pure software decode and exists to prove the pipeline with the
 smallest possible producer; it does not ship as the release path. Per
 platform, the shipped decoder is the hardware one:
@@ -205,6 +209,62 @@ codec would put downstream commercial apps in the uncovered position.
 Hardware/platform decoders carry the vendor's licensing (the Flutter
 precedent: bundle no codec). openh264 stays a dev/examples fallback;
 AV1/VP9 recommended for app-bundled content on codec-less devices.
+
+## 2026-09-12: codec is VP9, decoder is libvpx off Android
+
+User decision: replace H.264 by VP9 and make video work on all platforms.
+VP9 is royalty-free (Google's VP8/VP9 patent grant), so the whole reason
+the H.264 era bundled no software decoder - and hence decoded on Android
+only - is gone. Encoding is wanted later, which shaped the decoder pick.
+
+What stayed: the MP4 container and the demuxer shape. The `mp4` crate
+reads VP9 natively (`vp09` sample entry with its `vpcC` box,
+`MediaType::VP9`), and VP9 samples are coded frames exactly as a decoder
+wants them - no Annex-B rewrite, no out-of-band parameter sets - so
+`avcc_to_annexb` and `parameter_sets()` are simply gone. A superframe
+(hidden ALT-REF packed with its shown frame) is one sample and every VP9
+decoder splits it itself; VP9 never reorders samples, so pts are monotonic
+in decode order. `vpcC` also carries facts the H.264 path never had:
+profile/bit depth/chroma layout (the demuxer rejects anything but 8-bit
+4:2:0, profile 0, at `open`) and the range flag (honored; the matrix is
+honored when set, but ffmpeg writes it unspecified, so the resolution
+default BT.709-from-720-lines stays as the fallback).
+
+Decoder: libvpx, Google's reference implementation (Chrome, Firefox,
+ffmpeg), vendored as a git submodule at `forge/vendor/libvpx` pinned to
+v1.17.0 and built out of tree by `forge/build.rs` (configure + make,
+VP9 decoder AND encoder, no VP8/examples/tools/docs; `cargo clean -p
+forge` after a submodule bump that changes configure options). Bound BY
+HAND in `forge/src/video/vpx/ffi.rs`: eight functions, three structs,
+`VPX_DECODER_ABI_VERSION` pinned (3 + 4 + 5 for v1.17.0; init fails
+loudly on a mismatch). Reasoning, now a CLAUDE.md rule: reliability
+decides a dependency. A 0.1.1 pure-Rust VP9 crate was probed first
+(decoded correctly, 1080p at 150 fps single-threaded, but one publisher
+and months old) and every libvpx wrapper crate was either pkg-config-only,
+0.2.x, or a canary that git-clones at build time; none is battle-tested,
+libvpx is, and ~150 lines of `extern "C"` we own is the smaller risk.
+The encoder joins the same ffi block later (`vpx_codec_vp9_cx`, the
+vpx_encoder.h entry points); the library is already built with it.
+
+Per platform: Android keeps MediaCodec, mime `video/x-vnd.on2.vp9`, no
+csd. The TV has `OMX.MTK.VIDEO.DECODER.VP9` (4096x2304, vendor-measured
+110-200 fps at 1080p) and every Android device has at least the platform
+software VP9 decoder behind that mime, so no fallback is needed there
+and libvpx is not built for Android at all (no NDK cross-build). One new
+fact: the TV allows `concurrent-instances max=2` for VP9 where AVC
+allowed more, so the clip-handover retry in the Android factory matters
+more, not less. `decoded_layout()` is now per platform: NV12 on Android
+(MediaCodec's native buffer), I420 elsewhere (libvpx's native planes);
+alloy already had both shaders, so neither path repacks.
+
+Windows is NOT wired: libvpx builds there through `configure
+--target=x86_64-win64-vs17` + msbuild, which `build.rs` does not drive
+yet (it panics with that message; build without the `video` feature).
+Follow-up.
+
+Assets: every clip under examples/video/assets and the forge fixture are
+re-encoded to VP9 (`ffmpeg -c:v libvpx-vp9 -c:a aac`); the `-bf 0`
+constraint died with openh264.
 
 ## Open questions
 - If 1080p upload cost ever shows in traces: the per-frame copy is the
@@ -439,6 +499,16 @@ Two bugs fixed the same session, both in the player:
 
 ## Staging
 
+0. DONE 2026-09-12: H.264 -> VP9 (section above). forge: demux accepts
+   `MediaType::VP9` + vpcC validation/color, raw samples; `src/video/vpx/`
+   (ffi.rs + libvpx Vp9Decoder) off Android; mediacodec.rs on the VP9
+   mime without csd; player.rs without the platform gate; build.rs builds
+   the `forge/vendor/libvpx` submodule; tests + fixture re-encoded, with
+   real-decoder tests on the host. flux video.rs passes the vpcC range;
+   docs (video.d.ts, core video.ts, lattice Makefile, examples/video,
+   DEVELOPMENT.md prerequisites: submodule + nasm). Windows build of
+   libvpx is the open follow-up.
+
 1. Bare minimum, desktop: forge::video (mp4 demux + openh264 + player),
    alloy YUV plane textures + conversion pass, flux gui/video.rs binding,
    @solidrt/core/video; play/pause only; verified in an example app on
@@ -483,12 +553,12 @@ Two bugs fixed the same session, both in the player:
    [[texture-upload-staging]] anticipated: staging item 5 is now
    MEASURED-NEEDED for 1080p-on-TV, not speculative.
 3. POSTPONED (user decision 2026-08-12): hardware decoders per remaining
-   platform, replacing openh264 as the shipped path (decoder decision
-   above): VA-API via cros-codecs on desktop Linux, V4L2 stateful on
+   platform: VA-API via cros-codecs on desktop Linux, V4L2 stateful on
    Pi 4, VideoToolbox on macOS, Media Foundation on Windows. One rung per
-   platform, each behind the same decoder trait. Until then openh264 is
-   the decoder everywhere except Android; the patent stance must be
-   resolved before any desktop RELEASE ships video.
+   platform, each behind the same decoder trait. Since 2026-09-12 these
+   are optimizations over the libvpx software decoder that ships
+   everywhere, not prerequisites for a release (VP9 has no patent
+   stance to resolve).
 4. Seek, loop, playback rate; plane-texture exposure (tier 2) when
    something consumes it.
 5. Only if measured insufficient: staging-buffer upload via

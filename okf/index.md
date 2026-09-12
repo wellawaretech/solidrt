@@ -767,10 +767,11 @@ Shaped, not started.
   Windows and Android, but neither has been run there - the Windows console
   ANSI path and Android termios from a terminal emulator are unverified.
 - **[Video playback](backlog/video-playback.md)** [2026-08-12]
-  One decode-to-YUV pipeline on every platform, the platform's own decoder
-  everywhere (MediaCodec buffer mode on Android; no software codec bundled),
-  planar YUV textures + shader conversion in alloy, player core in forge, no
-  video primitive - texture/d-texture display the player's texture id. Fluency
+  VP9 in MP4 since 2026-09-12 (royalty-free, replaces H.264). One
+  decode-to-YUV pipeline on every platform - MediaCodec buffer mode on
+  Android, the vendored libvpx bound by hand everywhere else - planar YUV
+  textures + shader conversion in alloy, player core in forge, no video
+  primitive - texture/d-texture display the player's texture id. Fluency
   target is the Philips MT5891 TV; punch-through reversed 2026-09-12 for
   fullscreen only (android-video-punch-through.md), this pipeline keeps every
   other use. Measured there 2026-09-12: 360p50 frame-for-frame on the vsync

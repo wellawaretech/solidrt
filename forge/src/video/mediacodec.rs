@@ -1,9 +1,13 @@
-// The Android hardware decoder: AMediaCodec in buffer mode. Probed on the
-// Philips TPM171E 2026-08-12 (see okf/backlog/video-playback.md): the buffer
-// tap emits an honest layout (color-format 21 = NV12, stride/slice-height
-// padded) at ~3x realtime for 1080p; surface-attached taps are per-device
-// untrustworthy and are not used. It handles B-frames, so arbitrary
-// real-world H.264 plays.
+// The Android hardware decoder: AMediaCodec in buffer mode, `video/x-vnd.on2.vp9`.
+// Probed on the Philips TPM171E 2026-08-12 with AVC (see
+// okf/backlog/video-playback.md): the buffer tap emits an honest layout
+// (color-format 21 = NV12, stride/slice-height padded); surface-attached
+// taps are per-device untrustworthy and are not used. The TV's VP9 decoder
+// (OMX.MTK.VIDEO.DECODER.VP9, up to 4096x2304) is the same OMX family, and
+// every Android device has at least the platform's software VP9 decoder
+// behind this mime. VP9 has no out-of-band parameter sets, so there is no
+// csd: the codec takes the container's samples as they are, superframes
+// included.
 //
 // The codec's padded output (stride, slice-height, crop) is repacked into
 // the tightly packed frame contract during the mandatory copy out of the
@@ -19,6 +23,8 @@ use ndk::media::media_format::MediaFormat;
 
 use super::{PixelLayout, VideoAu, VideoDecoder, YuvFrame};
 
+/// The MediaCodec mime for VP9 (MediaFormat.MIMETYPE_VIDEO_VP9).
+const MIME_VP9: &str = "video/x-vnd.on2.vp9";
 const FLAG_END_OF_STREAM: u32 = ndk_sys::AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM as u32;
 const FLAG_CODEC_CONFIG: u32 = ndk_sys::AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG as u32;
 // MediaCodecInfo.CodecCapabilities color formats (Java-level constants, no
@@ -50,27 +56,18 @@ pub struct MediaCodecDecoder {
 }
 
 impl MediaCodecDecoder {
-  /// Create and start a `video/avc` decoder for the stream. `sps`/`pps` are
-  /// the raw parameter sets from the container (no start codes); they go in
-  /// as csd, and the demuxer also prepends them in-band at sync samples -
-  /// the probed-working combination.
-  pub fn new(width: u32, height: u32, sps: &[u8], pps: &[u8]) -> Result<Self, String> {
-    let codec = MediaCodec::from_decoder_type("video/avc")
-      .ok_or_else(|| "no video/avc decoder on this device".to_string())?;
+  /// Create and start a VP9 decoder for the stream.
+  pub fn new(width: u32, height: u32) -> Result<Self, String> {
+    let codec =
+      MediaCodec::from_decoder_type(MIME_VP9).ok_or_else(|| format!("no {MIME_VP9} decoder on this device"))?;
     let mut format = MediaFormat::new();
-    format.set_str("mime", "video/avc");
+    format.set_str("mime", MIME_VP9);
     format.set_i32("width", width as i32);
     format.set_i32("height", height as i32);
-    let mut csd0 = vec![0, 0, 0, 1];
-    csd0.extend_from_slice(sps);
-    let mut csd1 = vec![0, 0, 0, 1];
-    csd1.extend_from_slice(pps);
-    format.set_buffer("csd-0", &csd0);
-    format.set_buffer("csd-1", &csd1);
     codec
       .configure(&format, None, MediaCodecDirection::Decoder)
-      .map_err(|e| format!("configure video/avc decoder: {e:?}"))?;
-    codec.start().map_err(|e| format!("start video/avc decoder: {e:?}"))?;
+      .map_err(|e| format!("configure {MIME_VP9} decoder: {e:?}"))?;
+    codec.start().map_err(|e| format!("start {MIME_VP9} decoder: {e:?}"))?;
     Ok(MediaCodecDecoder { codec, configured: (width, height), facts: None })
   }
 
@@ -110,10 +107,8 @@ impl MediaCodecDecoder {
   fn feed(&mut self, data: &[u8], pts_us: u64, flags: u32, frames: &mut Vec<YuvFrame>) -> Result<(), String> {
     let mut waited_ms = 0u32;
     loop {
-      let dequeued = self
-        .codec
-        .dequeue_input_buffer(Duration::from_millis(10))
-        .map_err(|e| format!("dequeue input: {e:?}"))?;
+      let dequeued =
+        self.codec.dequeue_input_buffer(Duration::from_millis(10)).map_err(|e| format!("dequeue input: {e:?}"))?;
       let sent = match dequeued {
         DequeuedInputBufferResult::Buffer(mut buf) => {
           let target = buf.buffer_mut();
@@ -182,10 +177,9 @@ fn read_facts(codec: &MediaCodec, configured: (u32, u32)) -> Result<OutputFacts,
   // otherwise (the probed TV emits no crop keys and pads height to 1088;
   // the container's size is the display truth there).
   let (width, height) = match (format.i32("crop-right"), format.i32("crop-bottom")) {
-    (Some(right), Some(bottom)) => (
-      (right - crop_left as i32 + 1).max(0) as u32,
-      (bottom - crop_top as i32 + 1).max(0) as u32,
-    ),
+    (Some(right), Some(bottom)) => {
+      ((right - crop_left as i32 + 1).max(0) as u32, (bottom - crop_top as i32 + 1).max(0) as u32)
+    }
     _ => configured,
   };
   Ok(OutputFacts { color_format, stride, slice_height, crop_left, crop_top, width, height })
@@ -204,8 +198,7 @@ fn repack(f: &OutputFacts, src: &[u8], offset: usize, pts_us: i64) -> Result<Yuv
   match f.color_format {
     COLOR_NV12 => {
       let uv_base = chroma_base + (f.crop_top / 2) * f.stride + f.crop_left;
-      let need = (uv_base + ch.saturating_sub(1) * f.stride + cw * 2)
-        .max(y_base + h.saturating_sub(1) * f.stride + w);
+      let need = (uv_base + ch.saturating_sub(1) * f.stride + cw * 2).max(y_base + h.saturating_sub(1) * f.stride + w);
       if src.len() < need {
         return Err(format!("output buffer too small: {} < {need}", src.len()));
       }
@@ -221,8 +214,7 @@ fn repack(f: &OutputFacts, src: &[u8], offset: usize, pts_us: i64) -> Result<Yuv
       let cslice = f.slice_height / 2;
       let u_base = chroma_base + (f.crop_top / 2) * cstride + f.crop_left / 2;
       let v_base = chroma_base + cstride * cslice + (f.crop_top / 2) * cstride + f.crop_left / 2;
-      let need = (v_base + ch.saturating_sub(1) * cstride + cw)
-        .max(y_base + h.saturating_sub(1) * f.stride + w);
+      let need = (v_base + ch.saturating_sub(1) * cstride + cw).max(y_base + h.saturating_sub(1) * f.stride + w);
       if src.len() < need {
         return Err(format!("output buffer too small: {} < {need}", src.len()));
       }
