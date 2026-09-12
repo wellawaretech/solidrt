@@ -20,11 +20,11 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 - **[Fullscreen video by surface punch-through on Android](plans/android-video-punch-through.md)** [2026-09-12]
   Fullscreen VP9 playback decodes straight into its own SurfaceView,
   composited by SurfaceFlinger under a translucent UI, off our frame loop
-  entirely. Round one (planned 2026-09-12) is silent playback with
-  play/pause/seek on the TV and the tablet; audio and the texture path's
-  transport come after. Decided 2026-09-12, reversing the 2026-08-12
-  rejection; the texture pipeline keeps every non-fullscreen use and is not
-  touched in this round.
+  entirely. Round one (2026-09-12) is silent playback with play/pause/seek on
+  the TV and the tablet; round two (built 2026-09-12, device verification
+  open) adds Opus audio from WebM, with the sink position correcting the clock
+  anchor instead of selecting frames. Decided 2026-09-12, reversing the
+  2026-08-12 rejection; the texture pipeline keeps every non-fullscreen use.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
@@ -575,6 +575,10 @@ Shaped, not started.
   friction stepped inside the solver, which is per-wheel-per-substep work no
   app can do in JS. Rapier has no vehicle module of its own; shape it as the
   physics core's first higher-level controller after the core lands.
+- **[Make the fence wait over a video plane adaptive](backlog/plane-adaptive-fence-wait.md)** [2026-09-12]
+  An app animating over a playing video plane runs at 16 fps because every
+  window present waits for its GPU work while a plane exists; wait only for
+  isolated presents, and not while the plane is paused.
 - **[srt render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
   On Windows the offscreen video driver fails every time (SDL's offscreen path
   needs EGL_EXT_device_enumeration, which ANGLE does not implement) and
@@ -617,6 +621,11 @@ Shaped, not started.
   load/reload, because the backlog lives in the raster command channel rather
   than in the app; the dev has no way out short of restarting the process, and
   no reason to suspect the runtime.
+- **[Remote control input device for the input map](backlog/remote-control-input-device.md)** [2026-09-12]
+  A TV remote reaches the app as key events or as gamepad buttons depending on
+  whether alloy opened it as a joystick, and Android's auto-mapping can drop
+  buttons it sends; a core remoteControl() device for createInputMap should
+  hide both so an app binds select, navigate and back once.
 - **[srt render cannot fail, so it is not the gate the docs sell](backlog/render-as-a-verification-gate.md)** [2026-09-08]
   A scene whose build throws is contained, writes an empty frame and exits 0,
   and --duration is app time so an app that loads asynchronously is captured
@@ -785,13 +794,14 @@ Shaped, not started.
   Windows and Android, but neither has been run there - the Windows console
   ANSI path and Android termios from a terminal emulator are unverified.
 - **[Video playback](backlog/video-playback.md)** [2026-08-12]
-  The TEXTURE video path - VP9 in MP4 since 2026-09-12 (royalty-free, replaces
-  H.264), one decode-to-YUV pipeline on every platform (MediaCodec buffer mode
-  on Android, vendored libvpx bound by hand elsewhere), planar YUV textures +
-  shader conversion in alloy, player core in forge, no video primitive. Status
-  2026-09-12: plays and is in sync, but fullscreen 1080p is over the TV's
-  budget by construction, audio-clocked selection drops ~10% of frames, and
-  there is no seek/rate/step. Fullscreen on Android goes through
+  The TEXTURE video path - VP9 since 2026-09-12 (royalty-free, replaces
+  H.264), WebM + Opus since 2026-09-12 (own reader, vendored libopus; MP4 and
+  AAC removed), one decode-to-YUV pipeline on every platform (MediaCodec
+  buffer mode on Android, vendored libvpx bound by hand elsewhere), planar YUV
+  textures + shader conversion in alloy, player core in forge, no video
+  primitive. Status 2026-09-12: plays and is in sync, but fullscreen 1080p is
+  over the TV's budget by construction, audio-clocked selection drops ~10% of
+  frames, and there is no seek/rate/step. Fullscreen on Android goes through
   android-video-punch-through.md instead; this path is not being fixed while
   that round runs.
 - **[The armed wake-word detector burns ~40% of a core while idle](backlog/wakeword-detector-cost.md)** [2026-08-14]

@@ -1,32 +1,38 @@
-use crate::video::{AacDecoder, Mp4Demuxer, PixelLayout, VideoAu, VideoDecoder, VideoPlayer, YuvFrame};
+use crate::video::transport::AudioSink;
+use crate::video::{Demuxer, OpusDecoder, PixelLayout, VideoAu, VideoDecoder, VideoPlayer, WebmDemuxer, YuvFrame};
 
 // 2 s of ffmpeg testsrc2 160x120 at 25 fps as VP9 (libvpx-vp9, profile 0)
-// with a 440 Hz sine as mono AAC at 44100 Hz, in MP4 (vp09 + mp4a).
+// with a 440 Hz sine as mono Opus (20 ms packets), in WebM.
 fn fixture() -> String {
-  concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/data/video_av.mp4").to_string()
+  concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/data/video_av.webm").to_string()
 }
+
+// Opus packets in the fixture: 20 ms each, so 960 samples at 48 kHz.
+const OPUS_PACKET_SAMPLES: usize = 960;
+const FIXTURE_AUDIO_PACKETS: usize = 101;
 
 #[test]
 fn header_reports_the_stream_facts() {
-  let demux = Mp4Demuxer::open(&fixture()).expect("open fixture");
+  let demux = WebmDemuxer::open(&fixture()).expect("open fixture");
   let info = demux.info();
   assert_eq!((info.width, info.height), (160, 120));
-  assert_eq!(info.frame_count, 50);
   let duration_us = info.duration_us.expect("a file has a duration");
   assert!((duration_us - 2_000_000).abs() < 100_000, "duration {duration_us} not ~2s");
   let audio = info.audio.as_ref().expect("audio track");
-  assert_eq!((audio.sample_rate, audio.channels), (44100, 1));
-  // AAC-LC (object type 2), 44100 (freq index 4), mono (channel config 1).
-  assert_eq!(audio.asc, vec![0x12, 0x08]);
-  // ffmpeg writes matrix_coefficients 2 (unspecified): the resolution
-  // default applies, and the range flag says studio.
+  assert_eq!((audio.sample_rate, audio.channels), (48000, 1));
+  // libopus primes with 6.5 ms (312 samples); ffmpeg writes the 80 ms
+  // preroll the Opus spec asks for.
+  assert_eq!(audio.pre_skip, 312);
+  assert_eq!(audio.seek_preroll_us, 80_000);
+  // ffmpeg writes no Colour for an unspecified matrix: the resolution
+  // default applies, and the range defaults to studio.
   assert!(!demux.color_is_bt709(), "SD content defaults to BT.601");
-  assert!(!demux.color_is_full_range(), "libvpx-vp9 writes studio range");
+  assert!(!demux.color_is_full_range(), "studio range by default");
 }
 
 #[test]
 fn video_samples_are_raw_vp9_frames() {
-  let mut demux = Mp4Demuxer::open(&fixture()).expect("open fixture");
+  let mut demux = WebmDemuxer::open(&fixture()).expect("open fixture");
   let first = demux.next_video().expect("read").expect("first frame");
   assert!(first.sync, "first frame is the keyframe");
   assert_eq!(first.pts_us, 0);
@@ -49,24 +55,124 @@ fn video_samples_are_raw_vp9_frames() {
 }
 
 #[test]
-fn aac_decodes_every_packet_to_pcm() {
-  let mut demux = Mp4Demuxer::open(&fixture()).expect("open fixture");
-  let info = demux.info().audio.as_ref().expect("audio track");
-  let mut decoder = AacDecoder::new(info).expect("create aac decoder");
+fn opus_decodes_every_packet_to_pcm() {
+  let mut demux = WebmDemuxer::open(&fixture()).expect("open fixture");
+  let info = demux.info().audio.clone().expect("audio track");
+  let mut decoder = OpusDecoder::new(info.sample_rate, info.channels).expect("create opus decoder");
   let mut packets = 0;
   let mut pcm_frames = 0;
   let mut peak = 0.0f32;
+  let mut last_pts = -1;
   while let Some(packet) = demux.next_audio().expect("read") {
+    assert!(packet.pts_us > last_pts, "audio pts are monotonic");
+    last_pts = packet.pts_us;
     let chunk = decoder.decode(packet.pts_us, &packet.data).expect("decode");
-    assert_eq!((chunk.sample_rate, chunk.channels), (44100, 1));
+    assert_eq!((chunk.sample_rate, chunk.channels), (48000, 1));
     pcm_frames += chunk.samples.len() / chunk.channels as usize;
     peak = chunk.samples.iter().fold(peak, |p, &s| p.max(s.abs()));
     packets += 1;
   }
-  assert_eq!(packets, 88);
-  assert_eq!(pcm_frames, 88 * 1024, "AAC frames are 1024 samples");
+  assert_eq!(packets, FIXTURE_AUDIO_PACKETS);
+  assert_eq!(pcm_frames, FIXTURE_AUDIO_PACKETS * OPUS_PACKET_SAMPLES, "20 ms packets");
   // A sine at default ffmpeg volume: clearly audible, never clipping.
   assert!(peak > 0.1 && peak <= 1.0, "peak {peak} out of range");
+}
+
+// A sink standing in for the platform's: what was pushed, consumed on
+// demand by the test, so the feeder's trims and clock mapping can be read
+// back exactly. The state is shared so the test keeps a hand on it after
+// the track has taken the sink.
+#[derive(Default)]
+struct FakeSinkState {
+  pushed_frames: usize,
+  consumed_frames: usize,
+  paused: bool,
+}
+
+impl FakeSinkState {
+  fn consume(&mut self, frames: usize) {
+    self.consumed_frames = self.consumed_frames.saturating_add(frames).min(self.pushed_frames);
+  }
+  fn queued_us(&self) -> i64 {
+    (self.pushed_frames - self.consumed_frames) as i64 * 1_000_000 / 48_000
+  }
+}
+
+struct FakeSink(std::sync::Arc<std::sync::Mutex<FakeSinkState>>);
+
+impl AudioSink for FakeSink {
+  fn push(&mut self, samples: &[f32]) -> Result<(), String> {
+    self.0.lock().expect("sink state").pushed_frames += samples.len();
+    Ok(())
+  }
+  fn queued_us(&self) -> i64 {
+    self.0.lock().expect("sink state").queued_us()
+  }
+  fn position_us(&self) -> i64 {
+    self.0.lock().expect("sink state").consumed_frames as i64 * 1_000_000 / 48_000
+  }
+  fn set_paused(&mut self, paused: bool) {
+    self.0.lock().expect("sink state").paused = paused;
+  }
+  fn clear(&mut self) {
+    let mut state = self.0.lock().expect("sink state");
+    state.consumed_frames = state.pushed_frames;
+  }
+}
+
+#[test]
+fn audio_track_trims_pre_skip_and_maps_the_sink_position_to_content_time() {
+  use crate::video::audio::{AudioTrack, AUDIO_LOOKAHEAD_US, AUDIO_OUTPUT_LATENCY_US};
+  let mut demux = WebmDemuxer::open(&fixture()).expect("open fixture");
+  let info = demux.info().audio.clone().expect("audio track");
+  let state = std::sync::Arc::new(std::sync::Mutex::new(FakeSinkState::default()));
+  let sink: Box<dyn AudioSink> = Box::new(FakeSink(state.clone()));
+  let mut track = AudioTrack::new(&info, sink).expect("create audio track");
+  assert!(track.content_time_us().is_none(), "no clock before the first push");
+
+  // One feed fills the lookahead and no more.
+  track.feed(&mut demux);
+  let queued = state.lock().expect("state").queued_us();
+  assert!(queued >= AUDIO_LOOKAHEAD_US && queued < AUDIO_LOOKAHEAD_US + 20_000, "queued {queued}us");
+  // The first chunk lost its pre-skip: the sink starts at content time 0
+  // (minus the output latency the mapping assumes) and the queue holds
+  // exactly the content pushed. WebM keeps block times in whole
+  // milliseconds while Opus packets start at 20 ms steps minus the 6.5 ms
+  // pre-skip, so the mapping carries up to half a millisecond of rounding.
+  let content = track.content_time_us().expect("a clock after the first push");
+  assert!((content + AUDIO_OUTPUT_LATENCY_US).abs() <= 1_000, "content time {content}us");
+  let pushed = state.lock().expect("state").pushed_frames;
+  let packets = (pushed + info.pre_skip as usize).div_ceil(OPUS_PACKET_SAMPLES);
+  assert_eq!(pushed, packets * OPUS_PACKET_SAMPLES - info.pre_skip as usize);
+
+  // Consuming moves content time one for one.
+  state.lock().expect("state").consume(48_000 / 10);
+  let later = track.content_time_us().expect("a clock");
+  assert_eq!(later - content, 100_000);
+
+  // A seek clears the queue, and the preroll packets before the target
+  // are decoded but not pushed: the first sample pushed is the target.
+  demux.seek(1_000_000).expect("seek");
+  track.seek(1_000_000);
+  assert!(track.content_time_us().is_none());
+  let before = state.lock().expect("state").pushed_frames;
+  track.feed(&mut demux);
+  let content = track.content_time_us().expect("a clock after the seek's first push");
+  assert!((content - (1_000_000 - AUDIO_OUTPUT_LATENCY_US)).abs() <= 1_000, "content time {content}us");
+
+  // The end of the track: everything left drains, then feed is a no-op.
+  loop {
+    state.lock().expect("state").consume(usize::MAX);
+    let pushed = state.lock().expect("state").pushed_frames;
+    track.feed(&mut demux);
+    if state.lock().expect("state").pushed_frames == pushed {
+      break;
+    }
+  }
+  let total = state.lock().expect("state").pushed_frames - before;
+  // From the 1 s target to the end of the 2.008 s track.
+  let expected = FIXTURE_AUDIO_PACKETS * OPUS_PACKET_SAMPLES - 48_000;
+  assert!((total as i64 - expected as i64).abs() <= OPUS_PACKET_SAMPLES as i64, "pushed {total}, expected ~{expected}");
 }
 
 // Stands in for the decoder in the player tests, so they exercise frame
@@ -94,7 +200,7 @@ impl VideoDecoder for StubDecoder {
 #[cfg(not(target_os = "android"))]
 #[test]
 fn libvpx_decodes_every_frame() {
-  let mut demux = Mp4Demuxer::open(&fixture()).expect("open fixture");
+  let mut demux = WebmDemuxer::open(&fixture()).expect("open fixture");
   let mut decoder = crate::video::Vp9Decoder::new(160, 120).expect("create libvpx decoder");
   let mut frames = Vec::new();
   while let Some(au) = demux.next_video().expect("read") {
@@ -187,7 +293,8 @@ fn player_advances_against_a_caller_clock() {
     pcm += chunk.samples.len();
   }
   assert!(player.finished());
-  assert_eq!(pcm, 88 * 1024, "all audio reached the consumer");
+  let pre_skip = player.info().audio.as_ref().expect("audio").pre_skip as usize;
+  assert_eq!(pcm, FIXTURE_AUDIO_PACKETS * OPUS_PACKET_SAMPLES - pre_skip, "all audio reached the consumer");
 }
 
 #[test]
@@ -219,8 +326,7 @@ fn player_skips_stale_frames_when_the_clock_runs_ahead() {
 #[test]
 fn a_stalled_master_clock_plays_out_the_tail() {
   // An audio-clocked stream's clock stops at the end of the audio track,
-  // which in an MP4 routinely falls a frame or more short of the last video
-  // frame. The tail must still come out, and the stream must end.
+  // which routinely falls a frame or more short of the last video frame. The tail must still come out, and the stream must end.
   let mut player = VideoPlayer::open_with(&fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
   player.play();
   let stall_us = 44 * 40_000;
@@ -239,23 +345,23 @@ fn a_stalled_master_clock_plays_out_the_tail() {
 }
 
 #[test]
-fn non_mp4_input_errs() {
-  let err = match Mp4Demuxer::open(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")) {
-    Ok(_) => panic!("not an mp4, open must err"),
+fn non_webm_input_errs() {
+  let err = match WebmDemuxer::open(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")) {
+    Ok(_) => panic!("not a webm, open must err"),
     Err(e) => e,
   };
-  assert!(err.contains("header"), "unexpected error: {err}");
+  assert!(err.contains("not a webm"), "unexpected error: {err}");
 }
 
 // 4 s of ffmpeg testsrc2 160x120 at 25 fps as VP9 with a keyframe every
 // second (-g 25), no audio: the seek fixture.
 fn keyframe_fixture() -> String {
-  concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/data/video_kf.mp4").to_string()
+  concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/data/video_kf.webm").to_string()
 }
 
 #[test]
 fn seek_lands_on_the_keyframe_at_or_before_the_target() {
-  let mut demux = Mp4Demuxer::open(&keyframe_fixture()).expect("open fixture");
+  let mut demux = WebmDemuxer::open(&keyframe_fixture()).expect("open fixture");
   assert!(demux.info().audio.is_none());
   assert_eq!(demux.info().duration_us, Some(4_000_000));
 
@@ -276,20 +382,60 @@ fn seek_lands_on_the_keyframe_at_or_before_the_target() {
 }
 
 #[test]
-fn seek_repositions_audio_to_the_target() {
-  let mut demux = Mp4Demuxer::open(&fixture()).expect("open fixture");
+fn seek_repositions_audio_to_the_preroll_before_the_target() {
+  let mut demux = WebmDemuxer::open(&fixture()).expect("open fixture");
   // The A/V fixture has a single keyframe: video restarts at 0, audio at
-  // the target (the first packet at or after it; packets are 1024 samples
-  // at 44.1 kHz, ~23 ms).
+  // the first packet at or after the target minus the 80 ms preroll
+  // (packets are 20 ms).
   demux.seek(1_000_000).expect("seek");
   let au = demux.next_video().expect("read").expect("a frame");
   assert!(au.sync);
   assert_eq!(au.pts_us, 0);
   let packet = demux.next_audio().expect("read").expect("a packet");
-  assert!(packet.pts_us >= 1_000_000 && packet.pts_us < 1_000_000 + 24_000, "audio at {}us", packet.pts_us);
+  assert!(packet.pts_us >= 920_000 && packet.pts_us < 940_000, "audio at {}us", packet.pts_us);
   // Back to the start reads the whole audio track again.
   demux.seek(0).expect("seek");
   assert_eq!(demux.next_audio().expect("read").expect("a packet").pts_us, 0);
+}
+
+#[test]
+fn transport_audio_sync_moves_the_anchor_once_past_the_threshold() {
+  use crate::video::transport::{Anchor, AudioSync, AUDIO_SYNC_SMOOTHING, AUDIO_SYNC_THRESHOLD_US};
+  let mut sync = AudioSync::new();
+  // A device-buffer sawtooth under the threshold never fires.
+  for k in 0..100 {
+    assert_eq!(sync.observe((k % 5) * 5_000), None, "sawtooth at {k}");
+  }
+  // A steady lead past the threshold fires once, after the smoothing has
+  // caught up, and the smoothing restarts from nothing.
+  let lead = AUDIO_SYNC_THRESHOLD_US * 2;
+  let mut fired = None;
+  for _ in 0..AUDIO_SYNC_SMOOTHING * 4 {
+    if let Some(shift) = sync.observe(lead) {
+      fired = Some(shift);
+      break;
+    }
+  }
+  let shift = fired.expect("a lead past the threshold fires");
+  assert!(shift > AUDIO_SYNC_THRESHOLD_US && shift <= lead, "shift {shift}");
+  assert_eq!(sync.observe(0), None, "restarted from the corrected state");
+  // A lead a stall would hide behind is closed in capped steps, one per
+  // frame, never in one move.
+  use crate::video::transport::{AUDIO_SYNC_MAX_SHIFT_US, STALL_REANCHOR_NS};
+  let mut sync = AudioSync::new();
+  assert_eq!(sync.observe(STALL_REANCHOR_NS / 1000 * 3), Some(AUDIO_SYNC_MAX_SHIFT_US));
+  assert_eq!(sync.observe(-STALL_REANCHOR_NS / 1000 * 3), Some(-AUDIO_SYNC_MAX_SHIFT_US));
+  assert!(AUDIO_SYNC_MAX_SHIFT_US * 1000 < STALL_REANCHOR_NS);
+
+  // The shift moves what the anchor reads at any instant.
+  let mut anchor = Anchor::new();
+  assert_eq!(anchor.content_at(0), None);
+  anchor.due_ns(5_000_000, 1_000_000_000);
+  assert_eq!(anchor.content_at(1_500_000_000), Some(5_500_000));
+  anchor.shift(40_000);
+  assert_eq!(anchor.content_at(1_500_000_000), Some(5_540_000));
+  // And a frame at a given pts is now due earlier by the same amount.
+  assert_eq!(anchor.due_ns(6_000_000, 0), 1_000_000_000 + 960_000_000);
 }
 
 #[test]

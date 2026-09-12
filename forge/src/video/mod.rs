@@ -1,7 +1,8 @@
 // forge::video - the video playback capability core, engine-free (see
 // okf/plans/android-video-punch-through.md and
-// okf/backlog/video-playback.md). Demux produces coded VP9 frames from a
-// container; two players consume them:
+// okf/backlog/video-playback.md). The container is WebM (webm.rs): coded
+// VP9 frames and Opus packets come out of it as they are stored, and two
+// players consume them:
 //
 // - the TEXTURE player (player.rs): a decoder produces timestamped planar
 //   YUV frames as plain CPU bytes and the consumer (alloy, via the flux
@@ -14,46 +15,90 @@
 //   a platform surface and the compositor presents it, off our frame loop
 //   entirely. No frames ever cross into Rust.
 //
-// Both share the demuxer contract (`Demuxer`) and the transport
-// (transport.rs: clock anchor, play/pause/seek, published state).
+// Audio is Opus through the vendored libopus (opus/) on every platform.
+// Both players share the demuxer contract (`Demuxer`), the transport
+// (transport.rs: clock anchor, play/pause/seek, published state, the audio
+// sink contract) and the audio track feeder (audio.rs).
 //
 // No GL, SDL, or scripting-engine types anywhere in this module.
 
-mod aac;
-mod demux;
+pub(crate) mod audio;
 #[cfg(target_os = "android")]
 mod mediacodec;
+mod opus;
 #[cfg(target_os = "android")]
 mod plane;
 mod player;
 pub mod transport;
 #[cfg(not(target_os = "android"))]
 mod vpx;
+mod webm;
 
-pub use aac::{AacDecoder, PcmChunk};
-pub use demux::{AudioInfo, AudioPacket, MediaInfo, Mp4Demuxer, VideoAu};
 #[cfg(target_os = "android")]
 pub use mediacodec::MediaCodecDecoder;
+pub use opus::{OpusDecoder, PcmChunk};
 #[cfg(target_os = "android")]
 pub use plane::PlanePlayer;
 pub use player::VideoPlayer;
+pub use transport::AudioSink;
 #[cfg(not(target_os = "android"))]
 pub use vpx::Vp9Decoder;
+pub use webm::WebmDemuxer;
 
-/// A demultiplexed media source: coded VP9 frames and raw AAC packets, each
+/// Stream facts read from the container header.
+#[derive(Clone)]
+pub struct MediaInfo {
+  pub width: u32,
+  pub height: u32,
+  /// None when the source does not say (a live stream).
+  pub duration_us: Option<i64>,
+  pub audio: Option<AudioInfo>,
+}
+
+/// The Opus track's facts: what a sink is opened at, and the two trims the
+/// stream asks for (RFC 7845): the priming samples at the very start, and
+/// how far before a seek target decoding has to begin to converge.
+#[derive(Clone)]
+pub struct AudioInfo {
+  pub sample_rate: u32,
+  pub channels: u16,
+  /// Samples (per channel) to discard from the start of the stream.
+  pub pre_skip: u32,
+  /// After a seek, packets from this long before the target are decoded
+  /// and their output discarded.
+  pub seek_preroll_us: i64,
+}
+
+/// One coded VP9 frame (a superframe when the container packs a hidden
+/// ALT-REF with its shown frame), exactly as stored; decoders split
+/// superframes themselves. `sync` marks a keyframe.
+pub struct VideoAu {
+  pub pts_us: i64,
+  pub sync: bool,
+  pub data: Vec<u8>,
+}
+
+/// One Opus packet.
+pub struct AudioPacket {
+  pub pts_us: i64,
+  pub data: Vec<u8>,
+}
+
+/// A demultiplexed media source: coded VP9 frames and Opus packets, each
 /// track in decode order, read from a byte source that may be unbounded (a
-/// live stream) and may not seek. One implementation per container (MP4
-/// today; WebM is the live round's); players never see a sample table.
+/// live stream) and may not seek. Players never see a container.
 pub trait Demuxer: Send {
   fn info(&self) -> &MediaInfo;
   /// Next coded video frame, None past the end (never, on a live stream).
   fn next_video(&mut self) -> Result<Option<VideoAu>, String>;
-  /// Next raw AAC frame, None past the end or when there is no audio track.
+  /// Next Opus packet, None past the end or when there is no audio track.
   fn next_audio(&mut self) -> Result<Option<AudioPacket>, String>;
   /// Reposition so the next video frame is the last keyframe at or before
   /// `target_us` (or the next keyframe, for a source that cannot go back)
-  /// and the next audio packet the first at or after `target_us`. A source
-  /// that cannot seek at all errs; a player treats that as unsupported.
+  /// and the next audio packet the first at or after `target_us` minus the
+  /// track's seek preroll (the packets before the target are decoded and
+  /// discarded by the player). A source that cannot seek at all errs; a
+  /// player treats that as unsupported.
   fn seek(&mut self, target_us: i64) -> Result<(), String>;
 }
 

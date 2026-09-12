@@ -1,3 +1,6 @@
 [submodule "forge/vendor/libvpx"]
 	path = forge/vendor/libvpx
 	url = https://chromium.googlesource.com/webm/libvpx
+[submodule "forge/vendor/opus"]
+	path = forge/vendor/opus
+	url = https://github.com/xiph/opus.git

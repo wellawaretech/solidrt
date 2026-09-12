@@ -9,11 +9,12 @@ name = "forge"
 path = "src/lib.rs"
 
 [features]
-# forge::video: MP4/VP9 demux + AAC decode, plus the video decoder:
-# AMediaCodec on Android, the vendored libvpx (forge/vendor/libvpx, built by
-# build.rs) everywhere else. Opt-in while the playback stack is incomplete.
-# See okf/backlog/video-playback.md.
-video = ["dep:mp4", "dep:symphonia", "dep:ndk", "dep:ndk-sys"]
+# forge::video: WebM demux (own reader), Opus decode (the vendored libopus,
+# forge/vendor/opus, built by build.rs), plus the video decoder: AMediaCodec
+# on Android, the vendored libvpx (forge/vendor/libvpx, built by build.rs)
+# everywhere else. Opt-in while the playback stack is incomplete. See
+# okf/backlog/video-playback.md.
+video = ["dep:ndk", "dep:ndk-sys"]
 
 [dependencies]
 log = { workspace = true }
@@ -87,14 +88,11 @@ usvg = { version = "=0.47.0", default-features = false }
 # dependency), see okf/backlog/avif-decode.md.
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
 
-# forge::video (see okf/backlog/video-playback.md). mp4 parses the container
-# (vp09/vpcC sample entry, sync flags, timescales, AAC config); symphonia
-# decodes AAC (pure Rust, patents expired) and later grows into the
-# SDL3_mixer replacement. The VP9 decoder off Android is libvpx, vendored as
-# a submodule and bound by hand (src/video/vpx): no crate, see CLAUDE.md on
-# dependency reliability.
-mp4 = { version = "=0.14.0", optional = true }
-symphonia = { version = "=0.5.5", default-features = false, features = ["aac"], optional = true }
+# forge::video (see okf/backlog/video-playback.md) has no crate
+# dependencies of its own: the WebM reader is ours (src/video/webm.rs), and
+# the codecs are libopus and (off Android) libvpx, both vendored as
+# submodules and bound by hand (src/video/opus, src/video/vpx): no wrapper
+# crates, see CLAUDE.md on dependency reliability.
 
 # forge::video's Android decoder: AMediaCodec in buffer mode. Same ndk crate
 # alloy uses; api-level-26 matches the oldest target (the Philips TV), so no
@@ -114,3 +112,6 @@ rustix = { version = "=1.1.4", features = ["termios", "process", "time"] }
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the
 # Android build can link clang_rt.builtins; see build.rs.
 cc = "=1.4.4"
+# Drives the vendored libopus's CMake project (build.rs); already in the tree
+# (sdl3-sys builds SDL with it).
+cmake = "=0.1.58"

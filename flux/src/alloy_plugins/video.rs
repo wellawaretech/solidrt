@@ -1,6 +1,7 @@
 //! JS bindings for video playback: a thin marshaling layer over
 //! forge::video (demux, decode, sync decisions) and alloy (YUV texture,
-//! PCM sink, the Android video plane). There is NO video primitive: `open()`
+//! PCM sink, the Android video plane). A plane player's audio is pushed
+//! from its own worker through alloy's cross-thread sink handle. There is NO video primitive: `open()`
 //! resolves to a player handle whose `texture` id is displayed with
 //! `<texture>`/`<d-texture>`, and a richer Video component composes in a
 //! higher layer.
@@ -67,13 +68,68 @@ struct PlayerEntry {
   origin_us: Option<i64>,
 }
 
-// A plane player and its plane. Field order is drop order: the player
-// (whose drop joins the codec worker, releasing the surface) before the
-// plane (which removes the view).
+// A plane player, its plane and its audio sink. Field order is drop order:
+// the player (whose drop joins the codec worker, releasing the surface and
+// the sink handle) before the plane (which removes the view); the sink is
+// destroyed after both by `close_plane_entry`.
 #[cfg(target_os = "android")]
 struct PlaneEntry {
   player: forge::video::PlanePlayer,
   plane: alloy::video_plane::VideoPlane,
+  sink: Option<u64>,
+}
+
+// Tear a plane entry down in order: player, plane, then the sink the
+// player's worker was pushing into.
+#[cfg(target_os = "android")]
+fn close_plane_entry(gui: &super::Gui, entry: PlaneEntry) {
+  let PlaneEntry { player, plane, sink } = entry;
+  drop(player);
+  drop(plane);
+  if let Some(sink) = sink {
+    gui.alloy.destroy_pcm_sink(sink);
+  }
+}
+
+// alloy's cross-thread sink handle under forge's sink contract: pure
+// forwarding, the marshalling between the two crates.
+struct SinkAdapter(alloy::audio::PcmSinkHandle);
+
+impl forge::video::AudioSink for SinkAdapter {
+  fn push(&mut self, samples: &[f32]) -> Result<(), String> {
+    self.0.push(samples)
+  }
+  fn queued_us(&self) -> i64 {
+    self.0.queued_us()
+  }
+  fn position_us(&self) -> i64 {
+    self.0.position_us()
+  }
+  fn set_paused(&mut self, paused: bool) {
+    self.0.set_paused(paused)
+  }
+  fn clear(&mut self) {
+    self.0.clear()
+  }
+}
+
+// A paused sink for the stream's audio track, None when the stream has no
+// audio or no output device could be opened (the video then plays silent
+// rather than failing).
+fn open_sink(gui: &super::Gui, info: &forge::video::MediaInfo) -> Option<u64> {
+  let audio = info.audio.as_ref()?;
+  match gui.alloy.create_pcm_sink(audio.sample_rate, audio.channels) {
+    Ok(sink) => {
+      if let Err(e) = gui.alloy.set_pcm_sink_paused(sink, true) {
+        log::warn!("[video] {e}");
+      }
+      Some(sink)
+    }
+    Err(e) => {
+      log::warn!("[video] no audio sink, playing silent: {e}");
+      None
+    }
+  }
 }
 
 struct Inner {
@@ -97,6 +153,10 @@ impl Drop for Inner {
       if let Some(sink) = entry.sink {
         self.gui.alloy.destroy_pcm_sink(sink);
       }
+    }
+    #[cfg(target_os = "android")]
+    for (_, entry) in self.planes.borrow_mut().drain() {
+      close_plane_entry(&self.gui, entry);
     }
   }
 }
@@ -160,7 +220,10 @@ fn read_present(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result
         None | Some("contain") => PlaneFit::Contain,
         Some("cover") => PlaneFit::Cover,
         Some(other) => {
-          return Err(Exception::throw_type(ctx, &format!("openVideo: fit must be \"contain\" or \"cover\", got \"{other}\"")))
+          return Err(Exception::throw_type(
+            ctx,
+            &format!("openVideo: fit must be \"contain\" or \"cover\", got \"{other}\""),
+          ))
         }
       };
       Ok(Present::Plane { fit })
@@ -201,13 +264,13 @@ fn build_plane_player<'js>(_ctx: Ctx<'js>, _path: &str, _fit: PlaneFit) -> Resul
 fn build_plane_player<'js>(ctx: Ctx<'js>, path: &str, fit: PlaneFit) -> Result<Object<'js>, String> {
   use alloy::video_plane::{PlaneFit as AlloyFit, VideoPlane};
   use forge::video::transport::VsyncGrid;
-  use forge::video::{Mp4Demuxer, PlanePlayer};
+  use forge::video::{AudioSink, PlanePlayer, WebmDemuxer};
 
   let state = ctx.userdata::<VideoPluginState>().expect("video state");
   if !state.0.planes.borrow().is_empty() {
     return Err("a video plane is already open (one at a time; close it first)".to_string());
   }
-  let demux = Mp4Demuxer::open(path)?;
+  let demux = WebmDemuxer::open(path)?;
   let info = demux.info().clone();
   let fit = match fit {
     PlaneFit::Contain => AlloyFit::Contain,
@@ -219,22 +282,40 @@ fn build_plane_player<'js>(ctx: Ctx<'js>, path: &str, fit: PlaneFit) -> Result<O
   let vsync = plane
     .refresh_period_ns()
     .map(|period_ns| VsyncGrid { period_ns, sample_ns: Box::new(alloy::video_plane::vsync_ns) });
-  let player = PlanePlayer::open(Box::new(demux), plane.native_window().clone(), vsync)?;
+  let sink = open_sink(&state.0.gui, &info);
+  let handle = match sink.map(|id| state.0.gui.alloy.pcm_sink_handle(id)).transpose() {
+    Ok(handle) => handle.map(|h| Box::new(SinkAdapter(h)) as Box<dyn AudioSink>),
+    Err(e) => {
+      if let Some(sink) = sink {
+        state.0.gui.alloy.destroy_pcm_sink(sink);
+      }
+      return Err(e);
+    }
+  };
+  let player = match PlanePlayer::open(Box::new(demux), plane.native_window().clone(), vsync, handle) {
+    Ok(player) => player,
+    Err(e) => {
+      if let Some(sink) = sink {
+        state.0.gui.alloy.destroy_pcm_sink(sink);
+      }
+      return Err(e);
+    }
+  };
+  let has_audio = sink.is_some();
 
   let id = {
     let mut next = state.0.next_id.borrow_mut();
     *next += 1;
     *next
   };
-  state.0.planes.borrow_mut().insert(id, PlaneEntry { player, plane });
+  state.0.planes.borrow_mut().insert(id, PlaneEntry { player, plane, sink });
 
   let build = || -> rquickjs::Result<Object<'js>> {
     let obj = Object::new(ctx.clone())?;
     obj.set("width", info.width)?;
     obj.set("height", info.height)?;
     obj.set("duration", info.duration_us.map(|d| d as f64 / 1_000_000.0))?;
-    // No audio on the plane in this round (okf/plans/android-video-punch-through.md).
-    obj.set("hasAudio", false)?;
+    obj.set("hasAudio", has_audio)?;
     obj.set("play", Function::new(ctx.clone(), move |ctx: Ctx<'_>| with_plane(&ctx, id, |e| e.player.play()))?)?;
     obj.set("pause", Function::new(ctx.clone(), move |ctx: Ctx<'_>| with_plane(&ctx, id, |e| e.player.pause()))?)?;
     obj.set(
@@ -243,7 +324,10 @@ fn build_plane_player<'js>(ctx: Ctx<'js>, path: &str, fit: PlaneFit) -> Result<O
         with_plane(&ctx, id, |e| e.player.seek((seconds.max(0.0) * 1_000_000.0) as i64))
       })?,
     )?;
-    obj.set("playing", Function::new(ctx.clone(), move |ctx: Ctx<'_>| with_plane(&ctx, id, |e| e.player.playing()).unwrap_or(false))?)?;
+    obj.set(
+      "playing",
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>| with_plane(&ctx, id, |e| e.player.playing()).unwrap_or(false))?,
+    )?;
     obj.set(
       "currentTime",
       Function::new(ctx.clone(), move |ctx: Ctx<'_>| {
@@ -276,10 +360,13 @@ fn with_plane<T>(ctx: &Ctx<'_>, id: u64, f: impl FnOnce(&PlaneEntry) -> T) -> Op
 #[cfg(target_os = "android")]
 fn close_plane(ctx: &Ctx<'_>, id: u64) {
   let state = ctx.userdata::<VideoPluginState>().expect("video state");
-  // Take it out first, then drop outside the borrow: the drop joins the
-  // codec worker and removes the view, neither of which should hold the map.
+  // Take it out first, then tear down outside the borrow: the drop joins
+  // the codec worker and removes the view, neither of which should hold
+  // the map.
   let entry = state.0.planes.borrow_mut().remove(&id);
-  drop(entry);
+  if let Some(entry) = entry {
+    close_plane_entry(&state.0.gui, entry);
+  }
 }
 
 fn build_player<'js>(ctx: Ctx<'js>, path: &str) -> Result<Object<'js>, String> {

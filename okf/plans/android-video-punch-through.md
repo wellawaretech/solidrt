@@ -1,6 +1,6 @@
 ---
 title: Fullscreen video by surface punch-through on Android
-description: Fullscreen VP9 playback decodes straight into its own SurfaceView, composited by SurfaceFlinger under a translucent UI, off our frame loop entirely. Round one (planned 2026-09-12) is silent playback with play/pause/seek on the TV and the tablet; audio and the texture path's transport come after. Decided 2026-09-12, reversing the 2026-08-12 rejection; the texture pipeline keeps every non-fullscreen use and is not touched in this round.
+description: Fullscreen VP9 playback decodes straight into its own SurfaceView, composited by SurfaceFlinger under a translucent UI, off our frame loop entirely. Round one (2026-09-12) is silent playback with play/pause/seek on the TV and the tablet; round two (built 2026-09-12, device verification open) adds Opus audio from WebM, with the sink position correcting the clock anchor instead of selecting frames. Decided 2026-09-12, reversing the 2026-08-12 rejection; the texture pipeline keeps every non-fullscreen use.
 created: 2026-09-12
 ---
 
@@ -101,16 +101,20 @@ Punch-through does not shorten that chain, it removes it. The decoder
 renders into its own surface, SurfaceFlinger composites it, and none of
 upload, conversion, repaint or our present cadence is involved at all.
 
-## Container: MP4 for files, a chunked container for live
+## Container: WebM for files and live
 
 The container never reaches the decoder: MediaCodec takes the coded VP9
 frames the demuxer hands it, superframes included, with no parameter sets
-and no rewriting. So the container is purely a demuxer question, and the
-answer differs by source:
+and no rewriting. So the container is purely a demuxer question. Decided
+2026-09-12: WebM for files and live alike, with Opus audio, replacing MP4.
+The reasoning:
 
-- **Files: MP4, as today.** `forge/src/video/demux.rs` reads `vp09`/`vpcC`
-  (profile, bit depth, chroma, range), the sample table is in memory after
-  `open`, and every clip and fixture is already in it. Nothing to redo.
+- **Files: WebM too, not MP4.** Round one read MP4
+  (`forge/src/video/demux.rs`, `vp09`/`vpcC`). Keeping MP4 beside WebM means
+  two demuxers, and Opus in MP4 is a sample entry the `mp4` crate (0.14.0)
+  does not read; one container for files and live is one demuxer. Existing
+  clips move by remux: the VP9 stream copies as is, AAC tracks re-encode to
+  Opus.
 - **Live: not plain MP4, ever.** A plain MP4's sample table is written when
   the file ends, so a reader needs the whole file before its first frame.
   Live needs a chunked container with no up-front table: WebM (Matroska,
@@ -118,26 +122,30 @@ answer differs by source:
   emits with `-f webm` to a pipe or socket and what YouTube's live ingest
   took for years) or fragmented MP4 (CMAF, `moov` with empty tables plus
   `moof`/`mdat` fragments, what HLS and DASH segments are). WebM is the
-  candidate: it is designed for exactly this, it is small enough that a
+  choice: it is designed for exactly this, it is small enough that a
   reader for our subset (EBML, Segment, Tracks, Cluster, SimpleBlock) is a
   few hundred lines if symphonia's Matroska reader turns out not to hand
   out video packets, and a WRITER is the same size again, which matters
   because the likely live producer is our own (the vendored libvpx already
   builds the VP9 encoder; camera, p2p and serve exist). The `mp4` crate's
   fragmented-MP4 reading is partial and it cannot write fragments at all.
-  The decision is taken when the live round starts, on a probe of the
-  reader; adaptive streaming later would pull toward CMAF only if the
-  streams come from third-party HLS/DASH servers, which is not the case.
-- **Audio in WebM is Opus or Vorbis, not AAC.** symphonia decodes Vorbis;
-  Opus would be libopus, vendored and hand-bound like libvpx. That is the
-  audio round's question, noted here so the container choice does not
-  forget it.
+  A probe of symphonia's Matroska reader decides, when the demuxer is built,
+  whether we use it or our own subset reader; adaptive streaming later
+  would pull toward CMAF only if the streams come from third-party
+  HLS/DASH servers, which is not the case.
+- **Audio is Opus (decided 2026-09-12).** WebM carries Opus or Vorbis,
+  never AAC, and AAC is patent-pooled where VP9 and Opus are royalty-free.
+  Opus over Vorbis: newer, better, and built for low latency, which live
+  wants. Decode through libopus, vendored and hand-bound like libvpx; Android
+  also has a platform Opus decoder (MediaCodec, since 5.0), and which one
+  Android uses is the audio round's call.
 
 What round one does about this: the demuxer becomes a trait, `Demuxer`
 (`info`, `next_video`, `next_audio`, `seek`), over a byte source that may be
 unbounded and non-seekable (a file, a fetch body, a p2p or socket stream).
-The MP4 demuxer is its first implementation; WebM is the second, added in
-the live round. The player never sees a sample table. Android's own
+The MP4 demuxer was its first implementation; the WebM demuxer replaces
+it, arriving with audio rather than with live, because audio clips are WebM.
+The player never sees a sample table. Android's own
 `AMediaExtractor` is not used: it would give Android a container contract of
 its own, and the point of one demuxer per container is that a stream plays
 the same on every platform.
@@ -829,18 +837,84 @@ closes).
   specific: sharing a commit with the plane is what costs the frame, and
   Android 8 shares it too.
 
+- 2026-09-12, TV colours on the plane checked by eye: correct. The MediaTek
+  colour risk named under verification did not show, so both devices meet
+  the colour criterion.
+
+## Round two: audio (built 2026-09-12)
+
+The audio round, as the design above said it would land: audio never
+selects frames, it corrects the anchor. What was built, and the decisions
+taken on the way:
+
+- **Container: our own WebM reader** (`forge/src/video/webm.rs`, ~400
+  lines): the EBML subset ffmpeg and a future writer of ours produce (EBML
+  header, Segment, SeekHead, Info, Tracks with the VP9 and Opus entries,
+  Cues, Cluster with SimpleBlock and BlockGroup), unknown-size Segment and
+  Cluster accepted for the live round. `symphonia-format-mkv` was measured
+  first: it reads the files fine, but it cannot be used without
+  symphonia-core, common and metadata, and links at 265 KB (fat LTO,
+  stripped) for a reader we would use 6k lines of, more than half of
+  libvpx's whole VP9 decoder. MP4, the `mp4` crate, symphonia and the AAC
+  decoder are gone; the texture player reads the same WebM reader and Opus
+  decoder through the `Demuxer` trait, its frame scheduling untouched.
+- **Opus: the vendored libopus** (`forge/vendor/opus` at v1.5.2, built by
+  build.rs through the `cmake` crate that already builds SDL, five
+  functions bound by hand in `forge/src/video/opus/ffi.rs`), on Android
+  too. There is no Opus hardware: Android's `audio/opus` MediaCodec is
+  libopus behind the codec framework, so going through it would cost
+  buffer copies and gain nothing. Decode cost is one to two percent of a
+  core at 48 kHz stereo.
+- **Trims by one rule.** A WebM block time counts from the first shown
+  sample, so a packet's first sample sits pre-skip before its block time;
+  the audio track (`forge/src/video/audio.rs`) tags each decoded chunk
+  with that start time and discards samples before a discard point: 0 at
+  the start of the stream (that is the pre-skip), the target after a seek
+  (that is the preroll: the demuxer resumes audio from `target -
+  SeekPreRoll`, 80 ms, so the decoder has converged by the target).
+- **The sink across threads.** forge defines `AudioSink` (push, queued,
+  position, pause, clear); alloy hands out a `PcmSinkHandle` over the
+  SDL audio stream, which SDL documents as safe from any thread, and the
+  flux plugin adapts one to the other. The registry keeps ownership and
+  destroys the sink after the player's worker has been joined (the plane
+  entry's teardown order). The plane worker tops the sink up to 500 ms
+  between frame releases, whatever the play state, so play starts with
+  audio ready and a seek's preroll decodes while the picture holds.
+- **The clock correction** (`transport::AudioSync`): per released frame,
+  the audio clock's lead over the anchor is smoothed over ~8 frames (the
+  sink position advances a device buffer at a time, a sawtooth that must
+  never look like drift) and, above 40 ms, the anchor moves by it once.
+  Not a slope: with release times snapped to the vsync grid a slow slope
+  lands as the same one-period step, only later. Crystal drift between the
+  DAC and CLOCK_MONOTONIC is tens of ppm, so this fires every several
+  minutes at most, and each firing is logged. `AUDIO_OUTPUT_LATENCY_US`
+  is the net output offset (sound path minus picture path, which is about
+  two vsyncs from release to scan-out); the picture is held back by it
+  when the sound starts. Not measurable through SDL, so it is set with
+  `examples/video/assets/avsync.webm` (flash + beep every 2 s): 60 ms on
+  the Philips TV's own speakers (2026-09-13). An external speaker path
+  differs and needs an app-level audio delay setting (parked in tiny.md).
+- **Sound and picture start together.** The sink starts on the first frame
+  released after play or a seek, not on the play command: MediaCodec takes
+  up to a few hundred ms to produce that frame on the TV, and a sound
+  started before it led by that much. A lead above the stall threshold
+  then made every corrected frame re-anchor behind the sound for good,
+  which is also why one anchor move is capped at half that threshold.
+- **Not in this round:** volume and mute (the sink has gain; no JS surface
+  yet), rate (audio above 1x drops out unless time-stretched, not
+  planned), the texture path's own audio-clock smoothing.
+
+Verification: on the TV (2026-09-13) lip sync is on the flash with the
+sync clip and the crawl clip, with zero anchor moves logged over a run.
+Still open: the vsync-interval pattern read from round one with audio on,
+the tablet, and pause, resume and seek by hand.
+
 ## Follow-ups (not this round, in likely order)
 
-- **Audio.** AAC decode and the PCM sink as on the texture path; the sink
-  position corrects the anchor (slope, thresholded), it does not select
-  frames. Above 1x audio drops out unless time-stretched, which is not
-  planned. If live lands on WebM, its audio is Opus (libopus, vendored and
-  hand-bound) or Vorbis (symphonia).
-- **Live streaming.** The second `Demuxer` (WebM, after a probe of
-  symphonia's Matroska reader; own subset reader otherwise), a byte source
-  over fetch and p2p, a latency target on the anchor, `open` taking a URL
-  or stream handle. Resolution changes mid-stream are free on a plane. A
-  WebM writer of the same subset is what makes our own producer possible.
+- **Live streaming.** The WebM demuxer over an unbounded byte source (fetch
+  and p2p), a latency target on the anchor, `open` taking a URL or stream
+  handle. Resolution changes mid-stream are free on a plane. A WebM writer
+  of the same subset is what makes our own producer possible.
 - **Adaptive streaming**, maybe, after live: manifest, segment fetching
   and a bitrate policy inside the player; no change to the app surface.
 - **Transport on both contracts.** `rate` (anchor slope; keyframe-only trick
@@ -851,6 +925,8 @@ closes).
 - **Position across a background trip** (surface destroyed and re-created).
 - **Fallback off Android**: `present: "plane"` presenting the texture player
   fullscreen behind the UI, so the same app runs everywhere.
+- **Adaptive fence wait**, so an app animating over the plane is not held
+  to 16 fps: [[plane-adaptive-fence-wait]].
 
 Related: [[video-playback]], [[live-texture-content-damage]],
 [[texture-upload-leases]], [[frame-driver-pacing-contract]],

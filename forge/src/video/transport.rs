@@ -1,9 +1,10 @@
 //! Transport, shared by every player: the clock that maps content time to
-//! system time, the command channel a player is driven through, the state it
-//! publishes back, and the policy for releasing a frame against that clock.
-//! Engine-free and sink-agnostic: the plane player feeds the due time to
-//! `releaseOutputBufferAtTime`, and the texture player adopts the same
-//! anchor when its frame selection moves off the frame loop
+//! system time, the audio clock's correction of it, the command channel a
+//! player is driven through, the state it publishes back, the policy for
+//! releasing a frame against that clock, and the contract of the audio sink
+//! a caller provides. Engine-free and sink-agnostic: the plane player feeds
+//! the due time to `releaseOutputBufferAtTime`, and the texture player
+//! adopts the same anchor when its frame selection moves off the frame loop
 //! (okf/plans/android-video-punch-through.md). Building the anchor inside one
 //! player would have the other duplicate it, which is why it lives here.
 
@@ -38,6 +39,20 @@ pub const STALL_REANCHOR_NS: i64 = 250_000_000;
 // vsync slips a whole period; pulling it most of a period back keeps it
 // on the intended vsync whatever the phase offsets are (ExoPlayer's 80%).
 pub const VSYNC_OFFSET_PERCENT: i64 = 80;
+// How far the audio clock may lead or trail the anchor before the anchor
+// moves to it. Above the sink position's granularity (a device buffer,
+// ~20 ms), below what lip sync notices (audio 45 ms early or 125 ms late).
+pub const AUDIO_SYNC_THRESHOLD_US: i64 = 40_000;
+// The audio clock error is averaged over about this many frames before it
+// is judged, so the sink position's sawtooth (it advances a device buffer
+// at a time) never looks like drift.
+pub const AUDIO_SYNC_SMOOTHING: i64 = 8;
+// The most one correction moves the anchor: half the stall threshold, so a
+// frame made late by the move is dropped (the picture catches up to the
+// sound through drops) and never mistaken for a stall, which would
+// re-anchor behind the sound and start over. A larger lead is closed in
+// several moves, one per frame.
+pub const AUDIO_SYNC_MAX_SHIFT_US: i64 = STALL_REANCHOR_NS / 2000;
 
 /// The system clock frames are scheduled on: CLOCK_MONOTONIC in nanoseconds
 /// on unix (Android's `System.nanoTime`, which
@@ -181,6 +196,85 @@ impl Anchor {
     let (origin_ns, origin_pts_us) = *self.origin.get_or_insert((now_ns, pts_us));
     origin_ns + (pts_us - origin_pts_us) * 1000
   }
+
+  /// The content time the anchor puts at `now_ns`; None until anchored.
+  pub fn content_at(&self, now_ns: i64) -> Option<i64> {
+    let (origin_ns, origin_pts_us) = self.origin?;
+    Some(origin_pts_us + (now_ns - origin_ns) / 1000)
+  }
+
+  /// Move the anchor so content time at any instant reads `delta_us`
+  /// later: what the audio clock's correction applies when the sound has
+  /// run ahead of (positive) or behind the picture.
+  pub fn shift(&mut self, delta_us: i64) {
+    if let Some((_, origin_pts_us)) = self.origin.as_mut() {
+      *origin_pts_us += delta_us;
+    }
+  }
+}
+
+/// The audio clock's hold on the anchor: the audio track plays at its
+/// sink's rate and the anchor at the system clock's, and the two drift by
+/// tens of ppm plus whatever offset play or seek started them with. Each
+/// released frame reports the audio clock's lead over the anchor; the lead
+/// is smoothed, and once it exceeds the threshold the anchor is moved by
+/// it, once. Audio never selects frames: with release times snapped to the
+/// vsync grid, a slow slope would land as the same one-period step, only
+/// later, so a step at the threshold is the whole visible cost, and a rare
+/// one. Pure, so it is testable apart from any sink.
+#[derive(Debug, Default)]
+pub struct AudioSync {
+  lead_ema_us: Option<i64>,
+}
+
+impl AudioSync {
+  pub fn new() -> AudioSync {
+    AudioSync { lead_ema_us: None }
+  }
+
+  /// Forget the smoothed lead (with the anchor: play, seek, stall).
+  pub fn reset(&mut self) {
+    self.lead_ema_us = None;
+  }
+
+  /// Observe the audio clock's lead over the anchor at one frame. Some
+  /// when the anchor should shift by that much (the caller applies it and
+  /// the smoothing restarts; a lead beyond the cap is closed over several
+  /// frames).
+  pub fn observe(&mut self, lead_us: i64) -> Option<i64> {
+    let ema = match self.lead_ema_us {
+      Some(ema) => ema + (lead_us - ema) / AUDIO_SYNC_SMOOTHING,
+      None => lead_us,
+    };
+    if ema.abs() > AUDIO_SYNC_THRESHOLD_US {
+      self.lead_ema_us = None;
+      Some(ema.clamp(-AUDIO_SYNC_MAX_SHIFT_US, AUDIO_SYNC_MAX_SHIFT_US))
+    } else {
+      self.lead_ema_us = Some(ema);
+      None
+    }
+  }
+}
+
+/// A PCM sink a caller provides for a player's audio: interleaved f32 at
+/// the track's rate and channel count, consumed at the sink's own pace.
+/// The player pushes ahead up to a lookahead and reads the consumed
+/// position back as its audio clock. Implemented by the platform (an SDL
+/// audio stream in alloy) and handed to the player, which uses it from its
+/// worker thread; the implementation must therefore be safe to drive from
+/// that thread while the caller owns the device.
+pub trait AudioSink: Send {
+  /// Queue samples (a whole number of frames) after what is queued.
+  fn push(&mut self, samples: &[f32]) -> Result<(), String>;
+  /// Microseconds queued and not yet consumed.
+  fn queued_us(&self) -> i64;
+  /// Microseconds consumed since the sink was created (a cleared queue
+  /// counts as consumed).
+  fn position_us(&self) -> i64;
+  /// Paused, the queue holds and the position freezes.
+  fn set_paused(&mut self, paused: bool);
+  /// Drop everything queued.
+  fn clear(&mut self);
 }
 
 /// The display's vsync grid, for snapping release times onto it: the

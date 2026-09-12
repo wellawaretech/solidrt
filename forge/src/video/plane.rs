@@ -5,11 +5,19 @@
 // on that vsync. Our frame loop is not involved at all
 // (okf/plans/android-video-punch-through.md).
 //
-// One worker thread owns the demuxer, the codec and the transport anchor,
-// drains commands between frames, and publishes position/playing/finished.
-// It never blocks the caller: the codec is constructed on the worker (with
-// the clip-handover retry the texture path also uses), and the caller reads
-// state from atomics.
+// One worker thread owns the demuxer, the codec, the audio track and the
+// transport anchor, drains commands between frames, and publishes
+// position/playing/finished. It never blocks the caller: the codec is
+// constructed on the worker (with the clip-handover retry the texture path
+// also uses), and the caller reads state from atomics.
+//
+// Audio never selects frames. The picture keeps its own clock (the anchor
+// on the system clock, snapped to the vsync grid); the audio track is
+// decoded and pushed ahead into the caller's sink between frame releases,
+// and the sink's position only nudges the anchor, once, when the smoothed
+// lead crosses a threshold (transport::AudioSync). That is what keeps the
+// plane's cadence untouched by audio, unlike the texture path's per-frame
+// selection against a sink position that advances in device-buffer steps.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -23,8 +31,11 @@ use ndk::media::media_codec::{
 use ndk::media::media_format::MediaFormat;
 use ndk::native_window::NativeWindow;
 
+use super::audio::{AudioTrack, AUDIO_OUTPUT_LATENCY_US};
 use super::mediacodec::{create_with_retry, FLAG_END_OF_STREAM, MIME_VP9};
-use super::transport::{classify, monotonic_ns, Anchor, Command, Controls, Release, Shared, VsyncGrid, RELEASE_LEAD_NS};
+use super::transport::{
+  classify, monotonic_ns, Anchor, AudioSink, AudioSync, Command, Controls, Release, Shared, VsyncGrid, RELEASE_LEAD_NS,
+};
 use super::{Demuxer, MediaInfo};
 
 // How long one output dequeue waits when the codec has nothing ready: the
@@ -44,13 +55,21 @@ pub struct PlanePlayer {
 
 impl PlanePlayer {
   /// Start decoding `demux` into `window`, snapping release times onto
-  /// `vsync` when the display's grid is known. Playback starts paused; the
-  /// first frame is shown on `play`. A codec that cannot be created ends the
-  /// stream (`finished` goes true, the reason is logged), like the texture
-  /// path.
-  pub fn open(demux: Box<dyn Demuxer>, window: NativeWindow, vsync: Option<VsyncGrid>) -> Result<PlanePlayer, String> {
+  /// `vsync` when the display's grid is known, and its audio track (when
+  /// the stream has one and the caller provides a `sink` for it, opened at
+  /// the track's rate and channels) into that sink. Playback starts paused;
+  /// the first frame is shown on `play`. A codec that cannot be created
+  /// ends the stream (`finished` goes true, the reason is logged), like the
+  /// texture path; an audio decoder that cannot be created plays silent.
+  pub fn open(
+    demux: Box<dyn Demuxer>,
+    window: NativeWindow,
+    vsync: Option<VsyncGrid>,
+    sink: Option<Box<dyn AudioSink>>,
+  ) -> Result<PlanePlayer, String> {
     let info = demux.info().clone();
     let (width, height) = (info.width, info.height);
+    let audio_info = info.audio.clone();
     let (controls, rx, shared) = Controls::new();
     let worker = thread::Builder::new()
       .name("srt-video-plane".to_string())
@@ -63,12 +82,25 @@ impl PlanePlayer {
             return;
           }
         };
+        let audio = match (audio_info, sink) {
+          (Some(info), Some(sink)) => match AudioTrack::new(&info, sink) {
+            Ok(track) => Some(track),
+            Err(e) => {
+              log::warn!("[forge::video] {e} (playing silent)");
+              None
+            }
+          },
+          _ => None,
+        };
         Worker {
           codec,
           demux,
+          audio,
+          audio_running: false,
           rx,
           shared,
           anchor: Anchor::new(),
+          sync: AudioSync::new(),
           vsync,
           playing: false,
           input_eos: false,
@@ -130,8 +162,7 @@ impl Drop for PlanePlayer {
 }
 
 fn open_codec(window: &NativeWindow, width: u32, height: u32) -> Result<MediaCodec, String> {
-  let codec =
-    MediaCodec::from_decoder_type(MIME_VP9).ok_or_else(|| format!("no {MIME_VP9} decoder on this device"))?;
+  let codec = MediaCodec::from_decoder_type(MIME_VP9).ok_or_else(|| format!("no {MIME_VP9} decoder on this device"))?;
   let mut format = MediaFormat::new();
   format.set_str("mime", MIME_VP9);
   format.set_i32("width", width as i32);
@@ -146,9 +177,17 @@ fn open_codec(window: &NativeWindow, width: u32, height: u32) -> Result<MediaCod
 struct Worker {
   codec: MediaCodec,
   demux: Box<dyn Demuxer>,
+  // The audio track when the stream has one and a sink was provided.
+  audio: Option<AudioTrack>,
+  // The sink is consuming: started by the first frame released after play
+  // or a seek (so sound and picture start together, however long the
+  // codec takes to produce that frame), stopped by pause and seek.
+  audio_running: bool,
   rx: Receiver<Command>,
   shared: Arc<Shared>,
   anchor: Anchor,
+  // The audio clock's hold on the anchor.
+  sync: AudioSync,
   // The display's vsync grid, when the plane's owner could read it.
   vsync: Option<VsyncGrid>,
   playing: bool,
@@ -169,6 +208,12 @@ struct Worker {
 impl Worker {
   fn run(mut self) {
     loop {
+      // Keep the sink fed whatever the play state (a paused sink holds its
+      // queue), so play starts with audio ready and a seek's preroll is
+      // decoded while the picture is still held.
+      if let Some(audio) = self.audio.as_mut() {
+        audio.feed(self.demux.as_mut());
+      }
       // Nothing to do but wait for a command: block instead of spinning.
       // (Ending the stream also parks here, until a seek restarts it.)
       if self.idle() {
@@ -204,13 +249,14 @@ impl Worker {
         if !self.playing {
           self.playing = true;
           // Resume anchors on the next frame: content continues from where
-          // it paused, at the wall time it resumes.
-          self.anchor.reset();
+          // it paused, at the wall time it resumes, and the sound with it.
+          self.reset_clock();
           self.shared.set_playing(true);
         }
       }
       Command::Pause => {
         self.playing = false;
+        self.stop_audio();
         self.shared.set_playing(false);
       }
       Command::Seek(target_us) => self.seek(target_us),
@@ -235,11 +281,47 @@ impl Worker {
         self.skip_until = None;
       }
     }
+    self.stop_audio();
+    if let Some(audio) = self.audio.as_mut() {
+      audio.seek(target_us);
+    }
     self.input_eos = false;
     self.output_eos = false;
     self.shared.set_finished(false);
     self.show_one = !self.playing;
+    self.reset_clock();
+  }
+
+  // Forget the anchor and the audio lead with it (play, resume, seek,
+  // stall): the next frame anchors the clock afresh.
+  fn reset_clock(&mut self) {
     self.anchor.reset();
+    self.sync.reset();
+  }
+
+  fn stop_audio(&mut self) {
+    if self.audio_running {
+      if let Some(audio) = self.audio.as_mut() {
+        audio.set_playing(false);
+      }
+      self.audio_running = false;
+    }
+  }
+
+  // The first frame after play or a seek has just been handed to the
+  // surface: the sound starts now, so it cannot run ahead while the codec
+  // was producing that frame. The sound reaches the speaker the output
+  // latency later than the sink starts consuming, so the picture is held
+  // back by that much from here on: the anchor, just set by this frame,
+  // moves by the latency. The sync then only has drift to correct.
+  fn start_audio(&mut self) {
+    if self.playing && !self.audio_running {
+      if let Some(audio) = self.audio.as_mut() {
+        audio.set_playing(true);
+        self.anchor.shift(-AUDIO_OUTPUT_LATENCY_US);
+      }
+      self.audio_running = true;
+    }
   }
 
   /// Queue coded frames while the codec has free input buffers.
@@ -327,6 +409,7 @@ impl Worker {
         self.codec.release_output_buffer(buf, true)
       } else {
         let now_ns = monotonic_ns();
+        correct_clock(&self.audio, &mut self.anchor, &mut self.sync, now_ns);
         let due_ns = release_ns(&mut self.anchor, &self.vsync, pts_us, now_ns);
         let lead_ns = self.vsync.as_ref().map_or(RELEASE_LEAD_NS, VsyncGrid::lead_ns);
         match classify(due_ns - now_ns, lead_ns) {
@@ -341,13 +424,17 @@ impl Worker {
           }
           Release::Reanchor => {
             self.anchor.reset();
+            self.sync.reset();
             let due_ns = release_ns(&mut self.anchor, &self.vsync, pts_us, monotonic_ns());
             self.codec.release_output_buffer_at_time(buf, due_ns)
           }
         }
       };
       match result {
-        Ok(()) => self.shared.set_position_us(pts_us),
+        Ok(()) => {
+          self.shared.set_position_us(pts_us);
+          self.start_audio();
+        }
         Err(e) => log::warn!("[forge::video] release output: {e:?}"),
       }
     }
@@ -365,9 +452,27 @@ impl Worker {
   }
 }
 
+// Let the audio clock correct the anchor before a frame is scheduled: when
+// the sound's lead over the anchor, smoothed over frames, crosses the
+// threshold, the anchor moves to it. Nothing happens before the first
+// frame has anchored or before audio has started. (A free function, like
+// release_ns: the caller holds the codec's output buffer.)
+fn correct_clock(audio: &Option<AudioTrack>, anchor: &mut Anchor, sync: &mut AudioSync, now_ns: i64) {
+  let Some(audio) = audio.as_ref() else {
+    return;
+  };
+  let (Some(audio_us), Some(expected_us)) = (audio.content_time_us(), anchor.content_at(now_ns)) else {
+    return;
+  };
+  if let Some(shift_us) = sync.observe(audio_us - expected_us) {
+    log::info!("[forge::video] audio clock lead {shift_us}us: anchor moved");
+    anchor.shift(shift_us);
+  }
+}
+
 // The system time to release the frame at `pts_us` for: its due time on
 // the anchor, snapped onto the vsync grid when one is known. (A free
-// function: the caller holds the codec's output buffer, so only these two
+// function: the caller holds the codec's output buffer, so only these
 // fields may be borrowed.)
 fn release_ns(anchor: &mut Anchor, vsync: &Option<VsyncGrid>, pts_us: i64, now_ns: i64) -> i64 {
   let due_ns = anchor.due_ns(pts_us, now_ns);

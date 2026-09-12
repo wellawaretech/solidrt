@@ -1,6 +1,6 @@
 ---
 title: Video playback
-description: The TEXTURE video path - VP9 in MP4 since 2026-09-12 (royalty-free, replaces H.264), one decode-to-YUV pipeline on every platform (MediaCodec buffer mode on Android, vendored libvpx bound by hand elsewhere), planar YUV textures + shader conversion in alloy, player core in forge, no video primitive. Status 2026-09-12: plays and is in sync, but fullscreen 1080p is over the TV's budget by construction, audio-clocked selection drops ~10% of frames, and there is no seek/rate/step. Fullscreen on Android goes through android-video-punch-through.md instead; this path is not being fixed while that round runs.
+description: The TEXTURE video path - VP9 since 2026-09-12 (royalty-free, replaces H.264), WebM + Opus since 2026-09-12 (own reader, vendored libopus; MP4 and AAC removed), one decode-to-YUV pipeline on every platform (MediaCodec buffer mode on Android, vendored libvpx bound by hand elsewhere), planar YUV textures + shader conversion in alloy, player core in forge, no video primitive. Status 2026-09-12: plays and is in sync, but fullscreen 1080p is over the TV's budget by construction, audio-clocked selection drops ~10% of frames, and there is no seek/rate/step. Fullscreen on Android goes through android-video-punch-through.md instead; this path is not being fixed while that round runs.
 created: 2026-08-12
 ---
 
@@ -29,8 +29,9 @@ and now also run the real libvpx decoder end to end on the host.
 
 Video playback as a SolidRT capability, fluent on ALL devices including the
 weakest connected target: the Philips TPM171E Android TV. Format scope:
-VP9 + AAC in MP4 (H.264 until 2026-09-12, see below). Breadth later; the
-pipeline shape is codec-agnostic.
+VP9 + Opus in WebM (decided 2026-09-12; VP9 + AAC in MP4 until that lands,
+H.264 before that, see below). Breadth later; the pipeline shape is
+codec-agnostic.
 
 ## Target device facts (probed via adb, read-only, 2026-08-12)
 
@@ -97,8 +98,10 @@ was the reliable one.
 No new crate edges: alloy does not depend on forge and still will not.
 
 - `forge::video` - the capability core, engine-free (YUV planes as plain
-  bytes, no GL/SDL types). Demux via the `mp4` crate, AAC decode via
-  symphonia (pure Rust, cheap on CPU). Video decoder trait with two impls:
+  bytes, no GL/SDL types). Demux via the `mp4` crate and AAC decode via
+  symphonia today, both replaced by the WebM demuxer and Opus decode shared
+  with [[android-video-punch-through]] (decided 2026-09-12). Video decoder
+  trait with two impls:
   libvpx (vendored, hand-bound) off Android, and AMediaCodec buffer mode
   via the ndk crate under cfg(android) (platform-specific code in forge
   has precedent: subprocess, p2p). Player logic lives here: play/pause
@@ -278,6 +281,23 @@ Follow-up.
 Assets: every clip under examples/video/assets and the forge fixture are
 re-encoded to VP9 (`ffmpeg -c:v libvpx-vp9 -c:a aac`); the `-bf 0`
 constraint died with openh264.
+
+## 2026-09-12: container is WebM, audio is Opus
+
+Decided together with the plane path (the container section of
+[[android-video-punch-through]]): WebM replaces MP4 for files and live, and
+Opus replaces AAC. AAC is patent-pooled where VP9 and Opus are royalty-free,
+the same problem H.264 had; WebM carries Opus or Vorbis, never AAC, and Opus
+is the newer, better and lower-latency of the two. One container for files
+and live is one demuxer, and both paths share it.
+
+Landed 2026-09-12 with the plane path's audio round: the `mp4` crate and
+symphonia's AAC decoder left `forge::video`, and the texture player reads
+the WebM reader (`forge/src/video/webm.rs`, ours) and decodes Opus through
+the vendored libopus like the plane player; its sync (`advance(clock_pos)`)
+is untouched, the stream's pre-skip samples are dropped in the worker. The
+clips under examples/video/assets and the forge fixtures moved to WebM: the
+VP9 streams remuxed as they were, AAC tracks re-encoded to Opus.
 
 ## Open on this path (2026-09-12)
 

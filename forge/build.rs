@@ -10,7 +10,12 @@
 // clang wrapper cargo-ndk points CC_<target> at) where its builtins archive
 // is and link it explicitly.
 //
-// Everywhere else, with the `video` feature: build the vendored libvpx
+// Everywhere, with the `video` feature: build the vendored libopus
+// (forge/vendor/opus, a submodule pinned to a release tag) through its own
+// CMake project and link it statically; the cmake crate picks up the
+// cross toolchain cargo-ndk exports on Android, as it does for SDL.
+//
+// Everywhere but Android, with the `video` feature: build the vendored libvpx
 // (forge/vendor/libvpx, a submodule pinned to a release tag) and link it
 // statically. libvpx has its own configure + make (no cmake); the build runs
 // out of tree in OUT_DIR so the checkout stays clean, and configure runs
@@ -30,11 +35,38 @@ use std::process::Command;
 fn main() {
   let target_os = std::env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
   println!("cargo:rerun-if-changed=build.rs");
+  let video = std::env::var_os("CARGO_FEATURE_VIDEO").is_some();
   if target_os == "android" {
     link_android_builtins();
-  } else if std::env::var_os("CARGO_FEATURE_VIDEO").is_some() {
+  } else if video {
     build_libvpx(&target_os);
   }
+  if video {
+    build_libopus();
+  }
+}
+
+fn build_libopus() {
+  let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
+  let src = manifest_dir.join("vendor").join("opus");
+  println!("cargo:rerun-if-changed={}", src.display());
+  if !src.join("CMakeLists.txt").exists() {
+    panic!(
+      "forge/vendor/opus is empty; fetch the opus submodule first:\n  git submodule update --init forge/vendor/opus"
+    );
+  }
+  // The library only: no programs, tests, docs or install modules, and a
+  // fixed lib dir so the link search path is the same on every distro.
+  let dst = cmake::Config::new(&src)
+    .define("OPUS_BUILD_SHARED_LIBRARY", "OFF")
+    .define("OPUS_BUILD_PROGRAMS", "OFF")
+    .define("OPUS_BUILD_TESTING", "OFF")
+    .define("OPUS_INSTALL_PKG_CONFIG_MODULE", "OFF")
+    .define("OPUS_INSTALL_CMAKE_CONFIG_MODULE", "OFF")
+    .define("CMAKE_INSTALL_LIBDIR", "lib")
+    .build();
+  println!("cargo:rustc-link-search=native={}", dst.join("lib").display());
+  println!("cargo:rustc-link-lib=static=opus");
 }
 
 fn link_android_builtins() {

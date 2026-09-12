@@ -45,7 +45,8 @@ declare module "flux:video" {
    * A plane player: the decoder renders into the platform's own video
    * surface, fullscreen beneath the UI, on the video's clock. Exists from
    * open until close; one at a time. The UI draws over it wherever it
-   * paints, and the window's uncovered pixels show the video.
+   * paints, and the window's uncovered pixels show the video. Its audio
+   * track plays on the default output, in sync with the picture.
    */
   export type VideoPlane = VideoTransport & {
     /**
@@ -67,15 +68,15 @@ declare module "flux:video" {
   }
 
   /**
-   * Open a video file (MP4 with 8-bit 4:2:0 VP9 video, i.e. profile 0;
-   * AAC audio plays, other audio tracks are ignored). The path resolves
+   * Open a video file (WebM with 8-bit 4:2:0 VP9 video, i.e. profile 0;
+   * Opus audio plays, other audio tracks are ignored). The path resolves
    * like file() paths (through the app's assets in a packed app). Playback
    * starts paused; call `play()`. Rejects when the file is unreadable or
    * its codec unsupported, and for `present: "plane"` on a platform without
    * a video plane (Android only) or while another plane is open.
    *
-   * Encode with `ffmpeg -c:v libvpx-vp9 -c:a aac out.mp4`; VP9 is
-   * royalty-free, so the decoder ships on every platform.
+   * Encode with `ffmpeg -c:v libvpx-vp9 -c:a libopus out.webm`; VP9 and
+   * Opus are royalty-free, so both decoders ship on every platform.
    */
   export function open(path: string, options?: VideoOpenOptions): Promise<VideoPlayer>
   export function open(path: string, options: VideoPlaneOptions): Promise<VideoPlane>

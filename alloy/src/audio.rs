@@ -11,6 +11,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -307,14 +308,82 @@ struct PcmSink {
   stream: *mut sdl3::sys::audio::SDL_AudioStream,
   sample_rate: u32,
   channels: u16,
-  /// Frames pushed since creation; position = pushed - queued.
-  pushed_frames: u64,
+  /// Frames pushed since creation, shared with the sink's handles;
+  /// position = pushed - queued.
+  pushed_frames: Arc<AtomicU64>,
 }
 
 impl Drop for PcmSink {
   fn drop(&mut self) {
     // Destroying the stream also closes the device it opened.
     sdl_utils::audio_stream_destroy(self.stream);
+  }
+}
+
+/// A PCM sink driven from another thread (a video player's worker): the
+/// same stream, pushed, read and paused through SDL's audio stream calls,
+/// which SDL documents as safe from any thread. The registry keeps the
+/// stream's ownership: a handle must be dropped before `destroy_pcm_sink`
+/// runs (the player that holds it is closed first), since the stream is
+/// gone after that.
+pub struct PcmSinkHandle {
+  stream: *mut sdl3::sys::audio::SDL_AudioStream,
+  sample_rate: u32,
+  channels: u16,
+  pushed_frames: Arc<AtomicU64>,
+}
+
+// See the type's contract: every call is thread-safe on SDL's side and the
+// registry outlives the handle.
+unsafe impl Send for PcmSinkHandle {}
+
+impl PcmSinkHandle {
+  fn queued_frames(&self) -> u64 {
+    sdl_utils::audio_stream_queued_bytes(self.stream).max(0) as u64 / (4 * self.channels as u64)
+  }
+
+  fn frames_to_us(&self, frames: u64) -> i64 {
+    (frames as i128 * 1_000_000 / self.sample_rate as i128) as i64
+  }
+
+  /// Queue interleaved f32 samples (a whole number of frames).
+  pub fn push(&mut self, samples: &[f32]) -> Result<(), String> {
+    if samples.len() % self.channels as usize != 0 {
+      return Err(format!("{} samples is not whole {}-channel frames", samples.len(), self.channels));
+    }
+    if !sdl_utils::audio_stream_put_f32(self.stream, samples) {
+      return Err(format!("pcm push failed: {}", sdl_utils::sdl_error()));
+    }
+    self.pushed_frames.fetch_add((samples.len() / self.channels as usize) as u64, Ordering::Relaxed);
+    Ok(())
+  }
+
+  /// Microseconds queued and not yet consumed by the device.
+  pub fn queued_us(&self) -> i64 {
+    self.frames_to_us(self.queued_frames())
+  }
+
+  /// Microseconds consumed since creation (pushed minus queued, so a clear
+  /// counts what it dropped as consumed).
+  pub fn position_us(&self) -> i64 {
+    let consumed = self.pushed_frames.load(Ordering::Relaxed).saturating_sub(self.queued_frames());
+    self.frames_to_us(consumed)
+  }
+
+  /// Pause or resume consumption; paused, the queue holds.
+  pub fn set_paused(&mut self, paused: bool) {
+    let ok =
+      if paused { sdl_utils::audio_stream_pause(self.stream) } else { sdl_utils::audio_stream_resume(self.stream) };
+    if !ok {
+      log::warn!("[alloy::audio] pcm sink pause failed: {}", sdl_utils::sdl_error());
+    }
+  }
+
+  /// Drop everything queued.
+  pub fn clear(&mut self) {
+    if !sdl_utils::audio_stream_clear(self.stream) {
+      log::warn!("[alloy::audio] pcm sink clear failed: {}", sdl_utils::sdl_error());
+    }
   }
 }
 
@@ -704,8 +773,25 @@ impl crate::context::Context {
       *next += 1;
       *next
     };
-    self.audio.sinks.borrow_mut().insert(id, PcmSink { stream, sample_rate, channels, pushed_frames: 0 });
+    self
+      .audio
+      .sinks
+      .borrow_mut()
+      .insert(id, PcmSink { stream, sample_rate, channels, pushed_frames: Arc::new(AtomicU64::new(0)) });
     Ok(id)
+  }
+
+  /// A handle on a sink for another thread to drive (see `PcmSinkHandle`
+  /// for the lifetime contract).
+  pub fn pcm_sink_handle(&self, id: u64) -> Result<PcmSinkHandle, String> {
+    let sinks = self.audio.sinks.borrow();
+    let sink = sinks.get(&id).ok_or_else(|| format!("pcm sink {id} not found"))?;
+    Ok(PcmSinkHandle {
+      stream: sink.stream,
+      sample_rate: sink.sample_rate,
+      channels: sink.channels,
+      pushed_frames: sink.pushed_frames.clone(),
+    })
   }
 
   /// Queue interleaved f32 samples on a sink (non-blocking, SDL buffers).
@@ -719,7 +805,7 @@ impl crate::context::Context {
     if !sdl_utils::audio_stream_put_f32(sink.stream, samples) {
       return Err(format!("pcm push failed: {}", sdl_utils::sdl_error()));
     }
-    sink.pushed_frames += (samples.len() / sink.channels as usize) as u64;
+    sink.pushed_frames.fetch_add((samples.len() / sink.channels as usize) as u64, Ordering::Relaxed);
     Ok(())
   }
 
@@ -730,7 +816,7 @@ impl crate::context::Context {
     let sinks = self.audio.sinks.borrow();
     let sink = sinks.get(&id).ok_or_else(|| format!("pcm sink {id} not found"))?;
     let queued_frames = sdl_utils::audio_stream_queued_bytes(sink.stream).max(0) as u64 / (4 * sink.channels as u64);
-    let consumed = sink.pushed_frames.saturating_sub(queued_frames);
+    let consumed = sink.pushed_frames.load(Ordering::Relaxed).saturating_sub(queued_frames);
     Ok((consumed as i128 * 1_000_000 / sink.sample_rate as i128) as i64)
   }
 

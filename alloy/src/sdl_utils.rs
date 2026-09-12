@@ -334,10 +334,11 @@ pub fn camera_close(camera: *mut SDL_Camera) {
 // crate::microphone.
 
 use sdl3::sys::audio::{
-  SDL_AudioDeviceID, SDL_AudioSpec, SDL_AudioStream, SDL_DestroyAudioStream, SDL_GetAudioDeviceName,
-  SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable, SDL_GetAudioStreamData, SDL_GetAudioStreamQueued,
-  SDL_OpenAudioDeviceStream, SDL_PauseAudioStreamDevice, SDL_PutAudioStreamData, SDL_ResumeAudioStreamDevice,
-  SDL_SetAudioStreamGain, SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, SDL_AUDIO_DEVICE_DEFAULT_RECORDING, SDL_AUDIO_F32,
+  SDL_AudioDeviceID, SDL_AudioSpec, SDL_AudioStream, SDL_ClearAudioStream, SDL_DestroyAudioStream,
+  SDL_GetAudioDeviceName, SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable, SDL_GetAudioStreamData,
+  SDL_GetAudioStreamQueued, SDL_OpenAudioDeviceStream, SDL_PauseAudioStreamDevice, SDL_PutAudioStreamData,
+  SDL_ResumeAudioStreamDevice, SDL_SetAudioStreamGain, SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+  SDL_AUDIO_DEVICE_DEFAULT_RECORDING, SDL_AUDIO_F32,
 };
 use sdl3::sys::init::SDL_INIT_AUDIO;
 
@@ -410,6 +411,11 @@ pub fn audio_stream_queued_bytes(stream: *mut SDL_AudioStream) -> i32 {
 
 pub fn audio_stream_set_gain(stream: *mut SDL_AudioStream, gain: f32) -> bool {
   unsafe { SDL_SetAudioStreamGain(stream, gain) }
+}
+
+/// Drop everything queued on the stream (input and converted output).
+pub fn audio_stream_clear(stream: *mut SDL_AudioStream) -> bool {
+  unsafe { SDL_ClearAudioStream(stream) }
 }
 
 /// Bytes buffered in the stream, already converted to the app-side spec.
@@ -700,8 +706,7 @@ pub fn packed_asset_location(name: &str) -> Option<(std::path::PathBuf, u64, u64
       // the activity for the process lifetime); no ownership transfers here.
       // The casts bridge the jni crate (jni-sys 0.4) and ndk-sys (jni-sys
       // 0.3), which name the same ABI types in different crates.
-      let manager =
-        unsafe { ndk_sys::AAssetManager_fromJava(env.get_raw() as *mut _, assets.as_raw() as *mut _) };
+      let manager = unsafe { ndk_sys::AAssetManager_fromJava(env.get_raw() as *mut _, assets.as_raw() as *mut _) };
       let Some(manager) = std::ptr::NonNull::new(manager) else { return Ok(None) };
       let manager = unsafe { ndk::asset::AssetManager::from_ptr(manager) };
       let Some(asset) = manager.open(&asset_name) else { return Ok(None) };

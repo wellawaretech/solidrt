@@ -10,13 +10,13 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::thread;
 
-use super::aac::{AacDecoder, PcmChunk};
-use super::demux::{MediaInfo, Mp4Demuxer};
-use super::{PixelLayout, VideoDecoder, YuvFrame};
+use super::{
+  AudioInfo, AudioPacket, Demuxer, MediaInfo, OpusDecoder, PcmChunk, PixelLayout, VideoDecoder, WebmDemuxer, YuvFrame,
+};
 
-// Frames are ~3 MB at 1080p, so the lookahead is small; PCM chunks are ~4 KB
-// AAC frames, so a deeper queue (~1.5 s at 44.1 kHz) keeps audio fed while
-// the consumer paces itself against its sink.
+// Frames are ~3 MB at 1080p, so the lookahead is small; PCM chunks are 20 ms
+// Opus frames (~4-8 KB decoded), so a deeper queue (~1.3 s) keeps audio fed
+// while the consumer paces itself against its sink.
 const FRAME_QUEUE: usize = 4;
 const PCM_QUEUE: usize = 64;
 // Frames held on the consumer side, ahead of the one being shown. Two is
@@ -48,7 +48,7 @@ pub struct VideoPlayer {
 }
 
 impl VideoPlayer {
-  /// Open a local MP4 and start its decode worker. The worker prefetches
+  /// Open a local WebM and start its decode worker. The worker prefetches
   /// until the queues fill, so opening is cheap and nothing plays until the
   /// caller starts advancing the clock. Errs on an unreadable file or an
   /// unsupported video stream (anything but 8-bit 4:2:0 VP9).
@@ -68,7 +68,7 @@ impl VideoPlayer {
   /// thread, because decoder handles are not `Send`. Tests pass a stub here
   /// to exercise the player's selection logic apart from any decoder.
   pub(crate) fn open_with(path: &str, make_decoder: DecoderFactory) -> Result<VideoPlayer, String> {
-    let mut demux = Mp4Demuxer::open(path)?;
+    let mut demux = WebmDemuxer::open(path)?;
     let info = demux.info().clone();
     let layout = super::decoded_layout();
     let bt709 = demux.color_is_bt709();
@@ -214,10 +214,10 @@ impl VideoPlayer {
 /// to the worker thread, the decoder itself never does. MediaCodec on
 /// Android (hardware VP9), libvpx everywhere else (see mod.rs); a creation
 /// failure ends the stream like any decoder-init failure.
-pub(crate) type DecoderFactory = fn(&Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String>;
+pub(crate) type DecoderFactory = fn(&WebmDemuxer) -> Result<Box<dyn VideoDecoder>, String>;
 
 #[cfg(target_os = "android")]
-fn create_decoder(demux: &Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String> {
+fn create_decoder(demux: &WebmDemuxer) -> Result<Box<dyn VideoDecoder>, String> {
   let info = demux.info();
   super::mediacodec::create_with_retry(|| {
     super::mediacodec::MediaCodecDecoder::new(info.width, info.height).map(|d| Box::new(d) as Box<dyn VideoDecoder>)
@@ -225,15 +225,15 @@ fn create_decoder(demux: &Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String> {
 }
 
 #[cfg(not(target_os = "android"))]
-fn create_decoder(demux: &Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String> {
+fn create_decoder(demux: &WebmDemuxer) -> Result<Box<dyn VideoDecoder>, String> {
   let info = demux.info();
   Ok(Box::new(super::vpx::Vp9Decoder::new(info.width, info.height)?))
 }
 
 fn worker(
-  demux: &mut Mp4Demuxer,
+  demux: &mut WebmDemuxer,
   make_decoder: DecoderFactory,
-  audio: Option<&super::demux::AudioInfo>,
+  audio: Option<&AudioInfo>,
   frame_tx: &SyncSender<YuvFrame>,
   pcm_tx: &SyncSender<PcmChunk>,
 ) {
@@ -246,19 +246,22 @@ fn worker(
       return;
     }
   };
-  let mut aac = match audio.map(AacDecoder::new).transpose() {
+  let mut opus = match audio.map(|a| OpusDecoder::new(a.sample_rate, a.channels)).transpose() {
     Ok(d) => d,
     Err(e) => {
       log::warn!("[forge::video] {e} (playing silent)");
       None
     }
   };
+  // The stream's priming samples (RFC 7845 pre-skip), dropped from the
+  // start of the decoded output.
+  let mut skip_samples = audio.map_or(0, |a| a.pre_skip as usize * a.channels as usize);
 
   let mut next_video = demux.next_video().unwrap_or_else(|e| {
     log::warn!("[forge::video] {e}");
     None
   });
-  let mut next_audio = if aac.is_some() { read_audio(demux) } else { None };
+  let mut next_audio = if opus.is_some() { read_audio(demux) } else { None };
 
   loop {
     // Feed in pts order so neither bounded queue starves the other.
@@ -286,10 +289,15 @@ fn worker(
       });
     } else {
       let packet = next_audio.take().expect("audio turn implies a packet");
-      let dec = aac.as_mut().expect("audio packets only flow with a decoder");
+      let dec = opus.as_mut().expect("audio packets only flow with a decoder");
       match dec.decode(packet.pts_us, &packet.data) {
-        Ok(chunk) => {
-          if pcm_tx.send(chunk).is_err() {
+        Ok(mut chunk) => {
+          if skip_samples > 0 {
+            let drop = skip_samples.min(chunk.samples.len());
+            chunk.samples.drain(..drop);
+            skip_samples -= drop;
+          }
+          if !chunk.samples.is_empty() && pcm_tx.send(chunk).is_err() {
             return;
           }
         }
@@ -312,7 +320,7 @@ fn worker(
   // Senders drop here; the receivers read that as end of stream.
 }
 
-fn read_audio(demux: &mut Mp4Demuxer) -> Option<super::demux::AudioPacket> {
+fn read_audio(demux: &mut WebmDemuxer) -> Option<AudioPacket> {
   demux.next_audio().unwrap_or_else(|e| {
     log::warn!("[forge::video] {e}");
     None

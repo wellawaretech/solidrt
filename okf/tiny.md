@@ -60,3 +60,4 @@ alloy, forge, flux, lattice.
 
 - alloy examples: a panic inside the `app.run` closure (srt-ui thread) strands the SDL window black until killed, since main keeps pumping events; `alloy/examples/depth_texture.rs` installs an exiting panic hook locally, lift that into `alloy::setup` for `Mode::Run` so every probe fails fast.
 - alloy spatial `bind_texture_slot`: the palette anchor must be an ancestor of every bound node (documented, unchecked; createModel and bindSkeleton both rely on it); add a debug-build ancestry check so a row bound across hierarchies errors instead of posing wrong.
+- video plane audio: `AUDIO_OUTPUT_LATENCY_US` (forge/src/video/audio.rs, 60 ms for the Philips TV's speakers) is a build constant; an external speaker path (HDMI, Bluetooth) needs its own value, so expose it as an `audioDelay` seconds option on `present: "plane"` (default the constant) for an app settings screen, set by the flash-and-beep clip examples/video/assets/avsync.webm.
