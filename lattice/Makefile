@@ -50,7 +50,7 @@ endif
 # Dist builds force it off until the stack is finished. The codec is VP9
 # (royalty-free): MediaCodec on Android, the vendored libvpx elsewhere, so
 # nothing here carries a codec license. See okf/backlog/video-playback.md.
-VIDEO ?= 0
+VIDEO ?= 1
 ifeq ($(DIST),1)
 override VIDEO = 0
 endif
