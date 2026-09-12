@@ -175,9 +175,12 @@ const VSYNC_SLACK: std::time::Duration = std::time::Duration::from_millis(4);
 
 /// What `FrameRelease::on_present` asks of the caller.
 pub(crate) enum Release {
-  /// Emit the frame signal now (no vsync backend, or SwapPaced): the
-  /// blocking swap paces production.
-  Emit,
+  /// Emit the frame signal now: no vsync backend or SwapPaced (the blocking
+  /// swap paces production), or the present's vsync signal already arrived
+  /// and was banked (see `FrameRelease::banked`). `arm` is Some when a
+  /// VsyncSource request must be armed with that delay (never without a
+  /// backend; normally None here, the banked signal's release pre-armed).
+  Emit { arm: Option<std::time::Duration> },
   /// The present's frame signal waits for the vsync signal; when `arm` is
   /// Some the caller must arm one VsyncSource request with that delay (the
   /// chain start out of idle - normally the release below pre-armed it).
@@ -188,6 +191,11 @@ pub(crate) enum Release {
 pub(crate) enum Wake {
   /// Nothing to release.
   Idle,
+  /// The vsync signal arrived ahead of the in-flight frame's present: it is
+  /// kept for that present, which releases on arrival (see
+  /// `FrameRelease::banked`). Arm a VsyncSource request with `arm`'s delay
+  /// when Some, so the next vsync is still served on time.
+  Banked { arm: Option<std::time::Duration> },
   /// Release the deferred presents: emit `emit` frame signals, then arm a
   /// VsyncSource request with `arm`'s delay when Some (the pre-arm for the
   /// next vsync). `timed_out` = the fallback fired instead of a signal
@@ -204,7 +212,9 @@ pub(crate) enum PacingChange {
   /// request's signal drains harmlessly with nothing pending); 0 when
   /// nothing was deferred, in which case no signal fires and the
   /// frame-signal clock stays untouched.
-  Changed { released: u32 },
+  Changed {
+    released: u32,
+  },
 }
 
 /// The vsync frame-release state machine (see FramePacing): which presents'
@@ -244,8 +254,23 @@ pub(crate) struct FrameRelease {
   /// vsync-released emission and close at the matching present.
   budget: PacingBudget,
   /// The open sample's emission instant. Tick-triggered presents (first
-  /// frame out of idle) have no open mark and are not sampled.
+  /// frame out of idle) have no open mark and are not sampled. Doubles as
+  /// the in-flight mark: Some between a frame signal and the present it
+  /// produces, which is the window a banked signal and the idle-tick gate
+  /// (`idle`) care about.
   signal_emitted: Option<std::time::Instant>,
+  /// A vsync signal taken while the frame it should release was still in
+  /// flight - emitted, not yet presented. On Android the swap itself
+  /// blocks until the previous frame's GPU work retires (libgui throttles
+  /// EGL production one frame deep, and that retirement is bound to the
+  /// compositor releasing the buffer), so the present-return lands after
+  /// the next vsync signal about one frame in six on a 60 Hz panel. Ending
+  /// the chain there cost a whole period each time (measured 1,1,1,1,2
+  /// present intervals, 51 fps). The banked signal releases the present
+  /// the moment it returns instead; a second signal with nothing pending
+  /// still ends the chain (demand stopped), so an animation that stops
+  /// costs one spare callback more than before.
+  banked: bool,
 }
 
 impl FrameRelease {
@@ -258,16 +283,24 @@ impl FrameRelease {
       deadline: now,
       budget: PacingBudget::new(),
       signal_emitted: None,
+      banked: false,
     }
   }
 
   /// Feed one present-return; `period` is the current refresh period.
   pub fn on_present(&mut self, now: std::time::Instant, period: std::time::Duration) -> Release {
     if !self.backend || self.pacing != FramePacing::VsyncLocked {
-      return Release::Emit;
+      return Release::Emit { arm: None };
     }
     if let Some(emitted) = self.signal_emitted.take() {
       self.budget.record(now.duration_since(emitted).as_secs_f32() * 1000.0, period);
+    }
+    if self.banked {
+      // Its vsync signal already came and went (see `banked`): release now,
+      // a couple of milliseconds into the period rather than a period late.
+      self.banked = false;
+      self.signal_emitted = Some(now);
+      return Release::Emit { arm: self.arm(now, period) };
     }
     self.pending += 1;
     // Normally the signal releasing this present is already armed
@@ -279,12 +312,25 @@ impl FrameRelease {
   /// Feed one loop wake with the VsyncSource drain's result. One signal
   /// releases all pending; a signal past the fallback deadline is replaced
   /// by the fallback, which also disarms so the release pre-arms a fresh
-  /// request superseding the late one.
+  /// request superseding the late one. A signal with nothing pending is
+  /// banked while a frame is in flight and ends the chain otherwise; an
+  /// in-flight window that sees neither present nor signal by the deadline
+  /// is given up (the present, if it ever comes, starts a fresh chain).
   pub fn on_wake(&mut self, now: std::time::Instant, period: std::time::Duration, signal_taken: bool) -> Wake {
     if signal_taken {
       self.armed = false;
     }
     if self.pending == 0 {
+      let in_flight = self.signal_emitted.is_some();
+      if signal_taken && in_flight && !self.banked {
+        self.banked = true;
+        return Wake::Banked { arm: self.arm(now, period) };
+      }
+      if signal_taken || (in_flight && now >= self.deadline) {
+        self.banked = false;
+        self.signal_emitted = None;
+        self.armed = false;
+      }
       return Wake::Idle;
     }
     let timed_out = !signal_taken && now >= self.deadline;
@@ -322,22 +368,29 @@ impl FrameRelease {
       self.pending = 0;
       self.armed = false;
       self.signal_emitted = None;
+      self.banked = false;
       PacingChange::Changed { released }
     } else {
       PacingChange::Changed { released: 0 }
     }
   }
 
-  /// The fallback deadline to wake at; None when no present is deferred
-  /// (the caller sleeps toward its idle-tick deadline instead).
+  /// The fallback deadline to wake at; None when no present is deferred and
+  /// no frame is in flight (the caller sleeps toward its idle-tick deadline
+  /// instead). In flight, the deadline bounds the wait for the present or
+  /// its signal; `on_wake` gives the window up when it passes.
   pub fn wait_deadline(&self) -> Option<std::time::Instant> {
-    (self.pending > 0).then_some(self.deadline)
+    (self.pending > 0 || self.signal_emitted.is_some()).then_some(self.deadline)
   }
 
-  /// Whether no present is deferred: the idle-tick gate (while one is, the
-  /// real frame signal is at most a refresh period away, fallback included).
+  /// Whether no present is deferred and no frame is in flight: the
+  /// idle-tick gate. While a present is deferred, the real frame signal is
+  /// at most a refresh period away (fallback included); while a frame is in
+  /// flight, its present is - a Tick there drives an extra frame into a
+  /// pipeline that is already producing one (the swap can outlast a period,
+  /// see `banked`).
   pub fn idle(&self) -> bool {
-    self.pending == 0
+    self.pending == 0 && self.signal_emitted.is_none()
   }
 
   /// Last armed signal delay in ms, for the 1/s diagnostics line.
@@ -408,9 +461,16 @@ mod android {
   }
 
   // Runs on the vsync thread, inside looper.poll_once(). The frame timestamp
-  // is deliberately unused for now: the frame signal is emitted (and timed)
+  // is deliberately unused: the frame signal is emitted (and timed)
   // sub-millisecond later on the main loop, and the paced clock models time
-  // as frame counts, not wall-clock samples.
+  // as frame counts, not wall-clock samples. It was once suspected to be the
+  // missing cadence feedback behind the 51 fps cap on 60 Hz Android panels;
+  // a trace showed the callbacks on cadence (one per tick, requests posted
+  // ~8 ms ahead) and the loss downstream, in the present-return racing the
+  // signal (see FrameRelease::banked). Should a consumer ever need the
+  // vsync phase from here, note the value is the app's wake-up time, one
+  // Display.getAppVsyncOffsetNanos() after a true vsync (the video plane's
+  // sampler in VideoPlaneView.java applies that correction).
   unsafe extern "C" fn frame_callback(_frame_time_nanos: core::ffi::c_long, data: *mut core::ffi::c_void) {
     (*(data as *const Cell<bool>)).set(true);
   }

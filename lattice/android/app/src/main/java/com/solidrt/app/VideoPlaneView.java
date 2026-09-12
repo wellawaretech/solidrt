@@ -30,15 +30,24 @@ public class VideoPlaneView extends SurfaceView implements SurfaceHolder.Callbac
     // Set by the owner before it removes the view, so a destroy the owner
     // asked for is not reported as a loss.
     volatile boolean releasing;
+    // How far after a true hardware vsync the platform wakes this app for
+    // it (Display.getAppVsyncOffsetNanos). A Choreographer frame time is
+    // that wake-up time, not the vsync, so the grid derived from raw frame
+    // times sits this much late (1 ms on a Samsung SM-T500, measured as
+    // release requests landing 0.74 of a period before their present where
+    // the code asks for 0.80). Read at attach; 0 until then.
+    private long appVsyncOffsetNs;
 
     // One vsync sample per display frame while the view is attached; the
     // UI thread does nothing else while a plane plays, and the fresh phase
-    // keeps native's extrapolation (a few periods at most) drift-free.
+    // keeps native's extrapolation (a few periods at most) drift-free. The
+    // sample handed on is a true vsync: the frame time less the app's
+    // wake-up offset (see appVsyncOffsetNs).
     private final Choreographer.FrameCallback vsync = new Choreographer.FrameCallback() {
         @Override
         public void doFrame(long frameTimeNanos) {
             if (releasing || !isAttachedToWindow()) return;
-            SolidRTActivity.nativeVideoPlaneVsync(frameTimeNanos);
+            SolidRTActivity.nativeVideoPlaneVsync(frameTimeNanos - appVsyncOffsetNs);
             Choreographer.getInstance().postFrameCallback(this);
         }
     };
@@ -86,6 +95,7 @@ public class VideoPlaneView extends SurfaceView implements SurfaceHolder.Callbac
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        appVsyncOffsetNs = ((Activity) getContext()).getWindowManager().getDefaultDisplay().getAppVsyncOffsetNanos();
         Choreographer.getInstance().postFrameCallback(vsync);
     }
 

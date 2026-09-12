@@ -476,12 +476,18 @@ impl App {
             match release.on_present(Instant::now(), tick_period) {
               // No vsync backend, or SwapPaced policy: the frame signal
               // follows the present directly and the blocking swap paces.
-              crate::vsync::Release::Emit => {
+              // Under VsyncLocked, a present whose vsync signal was banked
+              // (arrived while the frame was still in the swap) releases
+              // here too.
+              crate::vsync::Release::Emit { arm } => {
                 let time = start_time.elapsed().as_secs_f64();
                 event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
                 frame += 1;
                 last_frame_signal = Instant::now();
                 liveness.on_frame_signal(last_frame_signal);
+                if let (Some(v), Some(delay)) = (&vsync, arm) {
+                  v.request(delay);
+                }
               }
               crate::vsync::Release::Deferred { arm } => {
                 if let (Some(v), Some(delay)) = (&vsync, arm) {
@@ -630,6 +636,14 @@ impl App {
       if let Some(v) = &vsync {
         match release.on_wake(Instant::now(), tick_period, v.try_take()) {
           crate::vsync::Wake::Idle => {}
+          // The signal beat the in-flight frame's present (the swap is
+          // still blocking): it releases that present on return; keep the
+          // next vsync armed meanwhile.
+          crate::vsync::Wake::Banked { arm } => {
+            if let Some(delay) = arm {
+              v.request(delay);
+            }
+          }
           crate::vsync::Wake::Release { emit, timed_out, arm } => {
             if timed_out {
               // Debug, not warn: a GPU-saturated device (Android TV) misses

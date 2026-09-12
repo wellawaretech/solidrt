@@ -10,7 +10,7 @@ use impellers::{DisplayList, ISize};
 
 use super::repaint::WindowRoute;
 use super::{
-  RasterState, DamageRect, PresentDamage, PresentRun, FALLBACK_REFRESH_HZ, JANK_JITTER_SLACK,
+  DamageRect, PresentDamage, PresentRun, RasterState, FALLBACK_REFRESH_HZ, JANK_JITTER_SLACK,
   PRESENT_FAILURE_EXIT_THRESHOLD, PRESENT_FENCE_DEPTH, PRESENT_FENCE_TIMEOUT_NS,
 };
 use crate::backend::FrameOutput;
@@ -330,6 +330,9 @@ impl RasterState {
       log::warn!("[alloy] rebind window surface failed: {}", self.binding.error());
       return false;
     }
+    // FBO 0 is a different surface now; its sample count (the fast-path
+    // decision) must be asked again, not trusted from before the bind.
+    gl::forget_window_samples();
     if !self.capture_frames && !self.binding.set_swap_interval() {
       log::warn!("[alloy] set swap interval failed: {}", self.binding.error());
     }

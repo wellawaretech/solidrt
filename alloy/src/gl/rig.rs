@@ -305,23 +305,54 @@ pub(crate) fn window_fast_path(gl: &glow::Context) -> bool {
   window_samples(gl) >= 2
 }
 
-/// FBO 0's multisample count, queried once per process. Positive when the
-/// window backbuffer itself is multisampled (Android requests this, see
-/// configure_opengl); the driver then resolves in-tile at swap and plain
-/// window frames skip the rig entirely.
+// The cached FBO 0 sample count before any query, and again after each
+// window-surface bind (see forget_window_samples).
+const WINDOW_SAMPLES_UNKNOWN: i32 = -1;
+static WINDOW_SAMPLES: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(WINDOW_SAMPLES_UNKNOWN);
+
+/// FBO 0's multisample count, queried once per window-surface binding.
+/// Positive when the window backbuffer itself is multisampled (Android
+/// requests this, see configure_opengl); the driver then resolves in-tile
+/// at swap and plain window frames skip the rig entirely.
 pub(super) fn window_samples(gl: &glow::Context) -> i32 {
-  static N: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
-  *N.get_or_init(|| unsafe {
+  let cached = WINDOW_SAMPLES.load(std::sync::atomic::Ordering::Relaxed);
+  if cached != WINDOW_SAMPLES_UNKNOWN {
+    return cached;
+  }
+  let gl_samples = unsafe {
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
     gl.bind_framebuffer(glow::FRAMEBUFFER, None);
     let sample_buffers = gl.get_parameter_i32(glow::SAMPLE_BUFFERS);
     let samples = if sample_buffers > 0 { gl.get_parameter_i32(glow::SAMPLES) } else { 0 };
     gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-    if samples >= 2 {
-      log::info!("[alloy] window backbuffer is {samples}x multisampled (in-tile resolve at swap)");
-    } else {
-      log::info!("[alloy] window backbuffer is single-sample");
-    }
     samples
-  })
+  };
+  // GL's answer is the surface's own on every stack but one: Adreno reports
+  // no sample buffers on FBO 0 of a multisampled window surface, so when GL
+  // denies it the surface's EGL config gets the last word (see
+  // egl_headless::current_surface_samples). Under-reporting only costs the
+  // in-tile fast path (every frame through the rig and a full-frame
+  // resolve), never correctness, which is why GL is asked first.
+  let samples =
+    if gl_samples >= 2 { gl_samples } else { crate::egl_headless::current_surface_samples().unwrap_or(gl_samples) };
+  if samples >= 2 {
+    log::info!(
+      "[alloy] window backbuffer is {samples}x multisampled (in-tile resolve at swap; GL reports {gl_samples})"
+    );
+  } else {
+    log::info!("[alloy] window backbuffer is single-sample");
+  }
+  WINDOW_SAMPLES.store(samples, std::sync::atomic::Ordering::Relaxed);
+  samples
+}
+
+/// Forget the cached sample count: the window surface was (re)bound, so
+/// FBO 0 may be a different surface. On Android the first frames run before
+/// the SurfaceView's surface is current on the raster thread, on a binding
+/// that reports single-sample; a count latched there sent every later frame
+/// through the rig and its full-frame resolve, which on an Adreno 610 cost
+/// the difference between 15 and 19 ms of GPU time per frame and capped
+/// production at ~51 fps (okf/notes/android-vsync-release-chain.md).
+pub(crate) fn forget_window_samples() {
+  WINDOW_SAMPLES.store(WINDOW_SAMPLES_UNKNOWN, std::sync::atomic::Ordering::Relaxed);
 }

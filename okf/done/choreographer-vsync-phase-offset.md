@@ -2,6 +2,7 @@
 title: Correct the Choreographer vsync phase by the app vsync offset
 description: Our Android vsync grid sits one millisecond after the true hardware vsyncs, because a Choreographer frame time is the app's target wake-up time and not the vsync it is waking for. Everything that snaps to the grid is off by that much.
 created: 2026-09-12
+completed: 2026-09-12
 ---
 
 # Correct the Choreographer vsync phase by the app vsync offset
@@ -83,3 +84,14 @@ and compare `(actualPresentTime - desiredPresentTime)` modulo the refresh
 period against `100 - VSYNC_OFFSET_PERCENT`. The recipe and the traps are in
 [[android-video-punch-through]]; note that an overlay repainting a few times a
 second wrecks the census on its own, so hide it first.
+
+## Outcome
+
+The video sampler now subtracts `Display.getAppVsyncOffsetNanos()` at the
+source (`VideoPlaneView.java`, read at attach), so `set_vsync_ns` receives
+true vsyncs. The "bigger prize" above did not hold: the pacing backend's
+unused timestamp was not what capped frame production - a trace showed the
+callbacks on cadence and the loss in the present-return racing the signal
+([[frame-production-capped-at-50hz]], [[android-vsync-release-chain]]). The
+backend still ignores the timestamp; its comment now says why and where
+the corrected phase lives should a consumer ever need it.

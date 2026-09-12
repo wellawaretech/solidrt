@@ -2,6 +2,7 @@
 title: Frame production is capped near 50 a second whatever the display rate
 description: An animating app on a 60 Hz Android tablet presents in an exact 1,1,1,1,2 pattern over refresh periods, five presents per six vsyncs, which is exactly 50 fps. The build costs 0.11 ms, so nothing is over budget; the producer's period is simply 20 ms and the display quantises it.
 created: 2026-09-12
+completed: 2026-09-12
 ---
 
 # Frame production is capped near 50 a second whatever the display rate
@@ -155,3 +156,27 @@ Related: this is the same territory as the parked
 [[frame-pacing-fluency-hunt]], but with a sharper symptom than that hunt had.
 The video plane work is a separate matter and its fence wait is not involved:
 these numbers are from a page with no video in it at all.
+
+## Outcome
+
+Traced on 2026-09-12; the mechanism is neither of the suspects above. The
+Choreographer callbacks are on cadence (294 in 5 s, requests posted ~8 ms
+ahead of their tick). The loss is downstream: `eglSwapBuffers` itself
+blocks behind the previous frame's GPU work (libgui's EGL production
+throttle, bound to the compositor releasing the buffer), so the
+present-return reaches the main loop 3 to 19 ms after the swap and lands
+after the next vsync signal about one frame in six. `FrameRelease` then
+ended the chain on a signal with nothing pending, and the late present
+re-armed a period later - 43 of the 50 two-period gaps in the trace, the
+other 7 being slipped callbacks. Fixed by banking such a signal for the
+in-flight present (`banked` in `alloy/src/vsync.rs`); the in-flight window
+also gates idle ticks now, which closes the "idle ticks mid-animation"
+lead. That alone left the rate at 51: the swap chain then paced production
+at the GPU's ~19 ms per frame, which turned out to be the rig path taken
+because GL reports FBO 0 as single-sample on this Adreno while its EGL
+config has 4 samples (the second half of the bisect window, arrived at
+independently: the sample query moved ahead of the draw in 0.0.56). The
+fast path now trusts EGL when GL denies multisampling. Verified: 300
+frames per 5 s window, census all single intervals, on the tablet. Findings, numbers and the trace recipe: [[android-vsync-release-chain]].
+Left open, as its own item: the pacing budget sampling the swap wait
+([[pacing-budget-samples-swap-throttle]]).

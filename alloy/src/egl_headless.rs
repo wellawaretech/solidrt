@@ -184,3 +184,21 @@ impl GlBinding for HeadlessEglBinding {
     self.0.egl.get_error().map(|e| e.to_string()).unwrap_or_else(|| "no EGL error".into())
   }
 }
+
+/// The sample count of the calling thread's current EGL draw surface, from
+/// its config: Some(n) on an EGL binding with a surface, None otherwise (no
+/// libEGL, no current display, a surfaceless binding). The window fast path
+/// asks this because Adreno answers GL_SAMPLE_BUFFERS = 0 for the default
+/// framebuffer of a multisampled window surface (Samsung SM-T500, driver
+/// V@0502), while EGL reports the surface's 4 samples truthfully.
+pub(crate) fn current_surface_samples() -> Option<i32> {
+  let instance = load_egl().ok()?;
+  let display = instance.get_current_display()?;
+  let surface = instance.get_current_surface(egl::DRAW)?;
+  let id = instance.query_surface(display, surface, egl::CONFIG_ID).ok()?;
+  let mut configs = Vec::with_capacity(256);
+  instance.get_configs(display, &mut configs).ok()?;
+  let config =
+    configs.into_iter().find(|c| instance.get_config_attrib(display, *c, egl::CONFIG_ID).ok() == Some(id))?;
+  instance.get_config_attrib(display, config, egl::SAMPLES).ok()
+}

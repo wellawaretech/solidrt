@@ -47,7 +47,7 @@ pub(crate) use draw::{
   render_display_list_to_window,
 };
 pub(crate) use readback::{read_fbo0_pixels, read_texture_pixels};
-pub(crate) use rig::{msrtt, supports_invalidate, window_fast_path, MsrttFns, OffscreenRig};
+pub(crate) use rig::{forget_window_samples, msrtt, supports_invalidate, window_fast_path, MsrttFns, OffscreenRig};
 
 use std::num::NonZeroU32;
 

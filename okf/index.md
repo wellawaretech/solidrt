@@ -168,6 +168,17 @@ Shaped, not started.
   On a touch-only Android device the capability layer gains "keyboard" as soon
   as the virtual keyboard opens, so any keyboard-first behavior gated on it
   would switch on for users who have no keyboard.
+- **[The main loop thread rarely sleeps on Android](backlog/android-main-loop-rarely-sleeps.md)** [2026-09-12]
+  In a 5 s scheduler trace of an animating app on the SM-T500, SDLThread (the
+  alloy main loop) was switched out 259 times and only 15 of those were
+  sleeps; the client's stats read 135% CPU against 7% for the same probe on
+  Linux. The loop is meant to block on the SDL event queue between wakes.
+- **[A display refresh-rate change is not observed by the client](backlog/android-refresh-rate-change-unobserved.md)** [2026-09-12]
+  A Pixel 7 forced from 90 to 60 Hz while the client ran kept reporting
+  periodMs 11.11, so the jank accounting counted every frame against 90 Hz
+  (149 missed presents in a window that presented on every vsync); the
+  refresh-rate fact is read at init and by a polled safety net that did not
+  pick the change up.
 - **[ANGLE textures and teardown crash](backlog/angle-cross-context-impeller-textures.md)** [2026-07-27]
   "The two Windows client killers (a snapshot boundary's cross-context texture
   blacking the window under ANGLE, and the engine-restart GL teardown race)
@@ -220,11 +231,6 @@ Shaped, not started.
   live render tree", because the Recording branch replays the cached display
   list without descending, so the paint walk that services captures never
   reaches the node.
-- **[Correct the Choreographer vsync phase by the app vsync offset](backlog/choreographer-vsync-phase-offset.md)** [2026-09-12]
-  Our Android vsync grid sits one millisecond after the true hardware vsyncs,
-  because a Choreographer frame time is the app's target wake-up time and not
-  the vsync it is waking for. Everything that snaps to the grid is off by that
-  much.
 - **[Move the srt dev flow into flux and make ports an output](backlog/cli-flux-migration.md)** [2026-07-13]
   Host run/server/client/mcp in one flux process that binds its own port, owns
   the server registry, and shells out to bun for bundling and typechecking
@@ -331,11 +337,6 @@ Shaped, not started.
   deadline, so an overrunning critical path jitters between 1 and 2 vsyncs
   instead of degrading to a stable cadence. Harness first, then
   deadline-scheduled frames.
-- **[Frame production is capped near 50 a second whatever the display rate](backlog/frame-production-capped-at-50hz.md)** [2026-09-12]
-  An animating app on a 60 Hz Android tablet presents in an exact 1,1,1,1,2
-  pattern over refresh periods, five presents per six vsyncs, which is exactly
-  50 fps. The build costs 0.11 ms, so nothing is over budget; the producer's
-  period is simply 20 ms and the display quantises it.
 - **[Gamepad rumble](backlog/gamepad-haptics.md)** [2026-08-30]
   gamepads() is a read-only snapshot; there is no path from the app back to
   the pad, so a collision, a landing or an engine can be seen and heard but
@@ -537,6 +538,12 @@ Shaped, not started.
   - which forces any app state a command touches up to module scope; an
   owner-scoped variant auto-cleaned like onFrame lets both live in the
   component they belong to.
+- **[The pacing budget measures the swap's throttle wait as pipeline cost](backlog/pacing-budget-samples-swap-throttle.md)** [2026-09-12]
+  On Android the vsync signal delay sits at its 8 ms floor for a 0.1 ms frame,
+  because the emission-to-present sample the budget takes includes
+  eglSwapBuffers blocking behind the previous frame's GPU work; the signal
+  could fire ~6 ms later, which is that much input-to-glass latency given
+  away.
 - **[Signable single-file packed executables (macOS Mach-O segment, Windows PE resource)](backlog/packed-exe-signable-container.md)** [2026-08-18]
   The pack trailer is appended after the runner's code signature, so a packed
   macOS binary fails codesign strict validation and Gatekeeper, and a signed
@@ -1161,6 +1168,11 @@ Finished, kept for the reasoning.
   "Done 2026-08-06: captureSnapshot now resolves { width, height, data }
   directly and no texture is created; the padding-aware capture texture
   (variant 2) stays unbuilt until a caller wants a texture."
+- **[Correct the Choreographer vsync phase by the app vsync offset](done/choreographer-vsync-phase-offset.md)** [2026-09-12]
+  Our Android vsync grid sits one millisecond after the true hardware vsyncs,
+  because a Choreographer frame time is the app's target wake-up time and not
+  the vsync it is waking for. Everything that snaps to the grid is off by that
+  much.
 - **[Client build info in list_clients](done/client-build-info.md)** [2026-07-27]
   Git hash, version and profile per connected client in list_clients, so "does
   this binary have my engine fix" is checkable; build timestamp and HEAD
@@ -1315,6 +1327,11 @@ Finished, kept for the reasoning.
   "Cut Android touch-drag latency and the 60/60 input-versus-frame stutter:
   fire the frame signal from an AChoreographer vsync callback, then late
   submit, then input resampling."
+- **[Frame production is capped near 50 a second whatever the display rate](done/frame-production-capped-at-50hz.md)** [2026-09-12]
+  An animating app on a 60 Hz Android tablet presents in an exact 1,1,1,1,2
+  pattern over refresh periods, five presents per six vsyncs, which is exactly
+  50 fps. The build costs 0.11 ms, so nothing is over budget; the producer's
+  period is simply 20 ms and the display quantises it.
 - **[Recognizer deltas are window pixels, so a scaled input element pans at the wrong rate](done/gesture-deltas-window-logical.md)** [2026-09-06]
   createPan and createTransform measure dx/dy in clientX/clientY while every
   consumer applies them in the element's local frame; under a designSize fit
@@ -1976,6 +1993,14 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   hit/routing) are covered by a 168-test suite. Remaining gaps are the
   unenforced unsafe Send/Sync (now four types), hot-path expect(&format!), and
   panics at the tree boundary.
+- **[The Android vsync release chain, traced against the compositor](notes/android-vsync-release-chain.md)** [2026-09-12]
+  What a 5 s atrace of an animating app on a 60 Hz Android 12 tablet shows
+  about the vsync-locked frame chain - the Choreographer callbacks are on
+  cadence, the swap blocks up to a period behind the previous frame's GPU work
+  so the present-return races the next vsync signal, and the GPU cost behind
+  that was the rig path taken because GL denies FBO 0's multisampling on
+  Adreno while EGL reports it - with the numbers, the census recipe and the
+  traps.
 - **[ANGLE's ES 3.0 ceiling and per-platform Vulkan support](notes/angle-es-ceiling-and-vulkan-survey.md)** [2026-09-07]
   ANGLE caps both the Metal and D3D11 backends at ES 3.0 in its own source, so
   no compute shaders on macOS or Windows and rebuilding ANGLE would not change
