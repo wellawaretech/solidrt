@@ -19,7 +19,7 @@
 // repeats.
 import { createSignal, flush, onFrame, pct, render } from "@solidrt/core"
 import { registerDebug } from "srt:dev"
-import { cone, cylinder, DirectionalLight, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit } from "@solidrt/3d"
+import { cone, cylinder, DirectionalLight, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit } from "@solidrt/3d"
 import type { FogOptions, Vec3 } from "@solidrt/3d"
 
 const FAR = 400
@@ -132,10 +132,10 @@ function App() {
     return [a * PAN_SWING, 6, -60] as Vec3
   }
 
-  let ground = lit({ color: [0.36, 0.48, 0.3] })
-  let rock = lit({ color: [0.5, 0.47, 0.42] })
-  let needles = lit({ color: [0.16, 0.36, 0.22] })
-  let trunk = lit({ color: [0.35, 0.25, 0.16] })
+  let ground = phong({ color: [0.36, 0.48, 0.3] })
+  let rock = phong({ color: [0.5, 0.47, 0.42] })
+  let needles = phong({ color: [0.16, 0.36, 0.22] })
+  let trunk = phong({ color: [0.35, 0.25, 0.16] })
   let sunLit = unlit({ color: [1, 0.92, 0.6], fog: false })
   let sunFogged = unlit({ color: [1, 0.92, 0.6] })
 

@@ -16,7 +16,7 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   `detail` 1, 2 and 3 turning into the icosphere, and a wireframe pair
   showing why - `sphere()` bunches slivers at its poles at the same
   triangle count where the icosphere's triangles stay uniform.
-- `lit.tsx` - the lit material and light nodes: `<HemisphereLight>` plus
+- `phong.tsx` - the Blinn-Phong material and light nodes: `<HemisphereLight>` plus
   a warm key `<DirectionalLight>` turning inside a spinning `<Group>` and
   a fixed cool fill,
   a glossy sphere (specular/shininess), a transparent glass sphere, and
@@ -47,7 +47,7 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   rotation }}>`) baked in JS at startup (horizon gradient, sun disc and
   glow, no image assets), and the same cube as the environment
   (`environment={{ cube, rotation }}`) mirrored by a chrome sphere
-  (`lit({ reflectivity: 1 })`) and, blurred by shininess, a glossy knot.
+  (`phong({ reflectivity: 1 })`) and, blurred by shininess, a glossy knot.
   The sky turns and the sun light turns with it, the `rotation` knobs
   updating in place; drag to look around.
 - `standard.tsx` - the `standard` material, the sphere grid every PBR
@@ -72,7 +72,7 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   ball out of its own probe. Drag to look around.
 - `morph.tsx` - morph targets: a sphere given two named targets with
   `withMorphTargets` (a top-half spike, the sparse case, and a squash
-  with bent normals), drawn under `lit({ morph: true })` with weights
+  with bent normals), drawn under `phong({ morph: true })` with weights
   driven per frame by `setMorphWeights`, flipped through the
   `morphWeights` prop under a `transition={{ weights }}` spring (the
   core animates each flip), ignored by a plain material on the same
@@ -110,7 +110,7 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   with them.
 - `fleet.tsx` - instanced meshes, the node-backed population: one
   `<InstancedMesh>` of a thousand `<Instance>` nodes under the stock
-  `lit` material with `instanceColors` (lighting, shadows, fog and a
+  `phong` material with `instanceColors` (lighting, shadows, fog and a
   per-instance tint with no GLSL). Every few seconds a signal picks the
   next formation and the core springs every instance to its place
   through its `transition` - one signal write, zero JS per frame after
@@ -148,7 +148,7 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   `castShadow` sun swinging through its arc (one setTransform per frame
   on the light node), a fixed cool fill and a low rim light, `castShadow`
   meshes turning in a group throwing three crossing shadows each, the
-  ground and the casters receiving through plain `lit` (the default);
+  ground and the casters receiving through plain `phong` (the default);
   each shadow camera follows its light's world matrix, each map is
   rendered by an internal view.
 - `cascades.tsx` - cascaded shadow maps: a sun with `shadow: { cascades:

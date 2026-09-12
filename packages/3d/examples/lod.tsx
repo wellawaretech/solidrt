@@ -19,7 +19,7 @@
 // snapshot is deterministic; `state` reports the camera and the tree
 // count.
 import { onFrame, pct, render } from "@solidrt/core"
-import { addInstance, cone, cylinder, DirectionalLight, HemisphereLight, icosahedron, InstancedLod, lit, Lod, Mesh, mergeGeometries, plane, Scene, transformGeometry, useScene } from "@solidrt/3d"
+import { addInstance, cone, cylinder, DirectionalLight, HemisphereLight, icosahedron, InstancedLod, phong, Lod, Mesh, mergeGeometries, plane, Scene, transformGeometry, useScene } from "@solidrt/3d"
 import type { InstancedMeshNode } from "@solidrt/3d"
 import { registerDebug } from "srt:dev"
 
@@ -91,9 +91,9 @@ function App() {
   let hi = tree(24)
   let mid = tree(7)
   let lo = tree(3)
-  let leafHi = lit({ color: [0.2, 0.55, 0.2], instanced: true })
-  let leafMid = lit({ color: [0.5, 0.55, 0.15], instanced: true })
-  let leafLo = lit({ color: [0.2, 0.35, 0.6], instanced: true })
+  let leafHi = phong({ color: [0.2, 0.55, 0.2], instanced: true })
+  let leafMid = phong({ color: [0.5, 0.55, 0.15], instanced: true })
+  let leafLo = phong({ color: [0.2, 0.35, 0.6], instanced: true })
   let ground = plane({ width: FIELD * 2.4, height: FIELD * 2.4 })
   return (
     <window>
@@ -101,7 +101,7 @@ function App() {
         <Flight />
         <HemisphereLight sky={[0.7, 0.8, 1]} ground={[0.3, 0.28, 0.22]} intensity={0.9} />
         <DirectionalLight direction={[-0.5, -1, -0.3]} intensity={1.1} />
-        <Mesh geometry={ground} material={lit({ color: [0.36, 0.42, 0.24] })} rotation={[-Math.PI / 2, 0, 0]} />
+        <Mesh geometry={ground} material={phong({ color: [0.36, 0.42, 0.24] })} rotation={[-Math.PI / 2, 0, 0]} />
         <InstancedLod
           capacity={TREES}
           levels={[
@@ -113,9 +113,9 @@ function App() {
           ref={scatter}
         />
         <Lod fade={HERO_FADE} position={[0, 3.5, 0]}>
-          <Mesh lodSize={HERO_SIZES[0]!} geometry={icosahedron({ radius: 3, detail: 3 })} material={lit({ color: [0.9, 0.35, 0.25], specular: 0.6 })} />
-          <Mesh lodSize={HERO_SIZES[1]!} geometry={icosahedron({ radius: 3, detail: 1 })} material={lit({ color: [0.9, 0.6, 0.2], specular: 0.6 })} />
-          <Mesh lodSize={HERO_SIZES[2]!} geometry={icosahedron({ radius: 3, detail: 0 })} material={lit({ color: [0.85, 0.8, 0.3] })} />
+          <Mesh lodSize={HERO_SIZES[0]!} geometry={icosahedron({ radius: 3, detail: 3 })} material={phong({ color: [0.9, 0.35, 0.25], specular: 0.6 })} />
+          <Mesh lodSize={HERO_SIZES[1]!} geometry={icosahedron({ radius: 3, detail: 1 })} material={phong({ color: [0.9, 0.6, 0.2], specular: 0.6 })} />
+          <Mesh lodSize={HERO_SIZES[2]!} geometry={icosahedron({ radius: 3, detail: 0 })} material={phong({ color: [0.85, 0.8, 0.3] })} />
         </Lod>
       </Scene>
     </window>

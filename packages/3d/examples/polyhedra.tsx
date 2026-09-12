@@ -10,7 +10,7 @@
 // sphere for flat shading and displacement. The textured sphere stays
 // sphere(): the polyhedra's spherical UVs stretch toward the poles.
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
-import { DirectionalLight, dodecahedron, Group, HemisphereLight, icosahedron, lit, Mesh, octahedron, PerspectiveCamera, plane, Scene, sphere, tetrahedron, unlit, wireframeGeometry } from "@solidrt/3d"
+import { DirectionalLight, dodecahedron, Group, HemisphereLight, icosahedron, phong, Mesh, octahedron, PerspectiveCamera, plane, Scene, sphere, tetrahedron, unlit, wireframeGeometry } from "@solidrt/3d"
 
 // One circumsphere radius for every solid, so the rows read at one scale.
 const RADIUS = 0.45
@@ -24,13 +24,13 @@ function App() {
   let [t, setT] = createSignal(0)
   onFrame(tick => setT(tick / 1000))
 
-  let red = lit({ color: [0.85, 0.3, 0.25] })
-  let amber = lit({ color: [0.9, 0.7, 0.3] })
-  let green = lit({ color: [0.4, 0.75, 0.4] })
-  let blue = lit({ color: [0.35, 0.55, 0.9] })
-  let ivory = lit({ color: [0.85, 0.82, 0.75], specular: 0.4, shininess: 40 })
+  let red = phong({ color: [0.85, 0.3, 0.25] })
+  let amber = phong({ color: [0.9, 0.7, 0.3] })
+  let green = phong({ color: [0.4, 0.75, 0.4] })
+  let blue = phong({ color: [0.35, 0.55, 0.9] })
+  let ivory = phong({ color: [0.85, 0.82, 0.75], specular: 0.4, shininess: 40 })
   let wire = unlit({ color: [0.9, 0.9, 0.95] })
-  let floor = lit({ color: [0.16, 0.17, 0.22] })
+  let floor = phong({ color: [0.16, 0.17, 0.22] })
 
   return (
     <window>

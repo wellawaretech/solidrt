@@ -57,7 +57,7 @@ Contents:
   - [Lighting GLSL](#lighting-glsl)
   - [Custom looks: three tiers](#custom-looks-three-tiers)
   - [Lights](#lights)
-  - [lit](#lit)
+  - [phong](#phong)
   - [standard](#standard)
 - [Models](#models)
   - [Three layers](#three-layers)
@@ -277,7 +277,8 @@ the `castShadow` meshes (`<Mesh castShadow>`, `setCastShadow`) from an
 orthographic camera at the light's WORLD position along its world
 direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum.
 Any light may cast, bounded by the shadow-slot budget
-(MAX_SHADOW_MAPS = 8, its own constant: a directional light claims
+(`MAX_SHADOW_MAPS` = 8, its own constant, exported from the root and
+`/glsl` with `MAX_LIGHTS` and `MAX_CASCADES`: a directional light claims
 `shadow.cascades` consecutive slots, a point light six, a spot one).
 The budget is checked when the set settles (the scene's sync), never
 at attach, so a `<Show>`/`<Switch>` swap whose branches each fit is
@@ -337,8 +338,8 @@ its view's own view-projection (the whole array is one write per
 shadow-camera move) - and per light i `uShadowFirst[i]`/`uShadowCount[i]`
 name its slots (count 0 = it does not cast) with
 `uShadowBias[i]`/`uShadowNormalBias[i]` its knobs; `SHADOW_SLOTS` in
-glsl declares the set. Every `lit` material RECEIVES by default
-(Godot's and Three's default); `lit({ receiveShadow: false })` opts a
+glsl declares the set. Every `phong` material RECEIVES by default
+(Godot's and Three's default); `phong({ receiveShadow: false })` opts a
 material out and drops the map from its program - a material option,
 as with vertexColors/triplanar, because the material picks the program
 (Godot's `disable_receive_shadows`). The factor is `SHADOW`'s one
@@ -391,7 +392,7 @@ flux:spatial consumers.
 ### Geometry layout, indices and topology
 
 One interleaved vertex buffer per geometry, described by an open layout
-(`Geometry.layout`, absent = "standard"): an ordered attribute list that
+(`Geometry.layout`, absent = "base"): an ordered attribute list that
 starts with `aPos` float32x3 and may carry any named channels after it,
 each in a vertex format. Formats are WebGPU's spelling of (component
 type, count, normalized): the float32 family (`float32` .. `float32x4`),
@@ -408,7 +409,7 @@ exact at every width - so a per-vertex id or an index into a wide
 table rides as `uint32` into `in uint aId`, and the "skinned" layout's
 `aJoints` is `uint8x4` into `in uvec4 aJoints`. A layout that crosses
 kinds (`uint8x4` into `in vec4`) is the missing-attribute error at
-add() (`formatFeeds` is the rule). The standard prefix `aPos` float32x3 + `aNormal`
+add() (`formatFeeds` is the rule). The base prefix `aPos` float32x3 + `aNormal`
 float32x3 + `aUV` float32x2 is what every generator emits and what the
 stock materials read, not a rule: a hand-built geometry declares what
 it has, so a point cloud may carry `[aPos float32x3, aData float32]` at
@@ -446,7 +447,7 @@ so a geometry may carry more than a material reads. The whole layout
 ships whether a material reads every attribute or not (inactive
 attributes only keep the stride), so extra channels cost their bytes on
 every draw of that geometry - keep data-light passes (a wireframe
-reading only aPos) on standard geometry. `layoutStride` (bytes)/
+reading only aPos) on base-layout geometry. `layoutStride` (bytes)/
 `layoutSlot` (byte offset, format, components)/`layoutKey`/
 `layoutAttributes` are the layout arithmetic; two layouts with equal
 keys interleave identically (merge requires that).
@@ -512,9 +513,9 @@ free.
 
 Materials dedupe hard: one program + one pipeline per material CLASS
 (a `shaderMaterialClass` per option combination for unlit, lit and
-sprite alike: map x transparent x cull x alphaTest, lit's extras on
+sprite alike: map x transparent x cull x alphaTest, phong's extras on
 top), `depth: true` + `cull: "back"` unless the material says otherwise
-(`cull: "none"` for double-sided geometry; lit flips the normal on back
+(`cull: "none"` for double-sided geometry; phong flips the normal on back
 faces); an instance is just per-entry uniforms (`uColor`) and bindings
 (`uMap`).
 
@@ -978,7 +979,7 @@ stretched toward the poles: the textured sphere stays `sphere()`, the
 polyhedra are for flat-shaded, low-poly and procedurally shaded looks
 (examples/polyhedra.tsx). Every options object (the profile kit's `extrude`/`lathe`/
 `sweep`/`tube` too) also takes `label` and `layout` - `layout` makes the
-generator emit that layout in one pass (standard channels written, the
+generator emit that layout in one pass (base channels written, the
 extra slots zero), so `box({ layout: "colored" })` then
 `fillColors(g, fill)` builds colored geometry without the
 generate-then-repack copy; the result is byte-identical to
@@ -1047,7 +1048,7 @@ they are plain geometry a node places and a material draws. The grid and
 the triad are "colored" layout (sRGB colors in, premultiplied linear
 aColor out, the material contract) drawn by `unlit({ vertexColors:
 true })`; a material that reads no aColor draws them in its own color.
-The box, the plane, the arrow and the capsule are standard layout. For a bounds box that moves
+The box, the plane, the arrow and the capsule are base layout. For a bounds box that moves
 every frame, draw `edgesGeometry(box())` on a node whose position is the
 box center and whose scale is its size and update the transform (Three's
 Box3Helper does exactly that) instead of rebuilding.
@@ -1127,8 +1128,8 @@ Closed loops are NOT supported yet - overlap the ends by a segment to
 fake one. `tube(path, { radius, radialSegments })` is the round-profile
 shorthand (wire, rope, pipe), and `pathFrames(path)` exports the
 per-segment frames (tangents, cross-section axes, arc lengths) for
-custom work along a path. `shape(profile, options?)` fills one flat (facing +z,
-like circle); `triangulate(points)` is the ear-clipping core (fan
+custom work along a path. `polygon(profile, options?)` fills one flat (facing
++z, like circle); `triangulate(points)` is the ear-clipping core (fan
 fallback, never drops a cap), exported for custom flat work. These pick
 uint16/uint32 indices by vertex count automatically.
 
@@ -1144,7 +1145,7 @@ gridHelper or axesHelper); `blend` the factors of a transparent draw,
 "alpha" when absent, `"add"` for a glow (any mode but "none" implies
 `transparent` unless told `transparent: false`, the shaderMaterial
 rule); `cull` and
-`alphaTest` as on lit (a mapped cutout casts its cutout); `fog: false`
+`alphaTest` as on phong (a mapped cutout casts its cutout); `fog: false`
 opts out of the scene's fog (all four library materials take it).
 
 #### sprite
@@ -1414,7 +1415,7 @@ prop - the cube map every `standard` material is lit by (always: the
 split sum `envRadiance` at its roughness times PBR's `envBrdf` for the
 specular, `envIrradiance` - the fully rough sample along the normal, as
 Three's getIBLIrradiance and Godot read it - added to the hemisphere
-for the diffuse) and every `lit({ reflectivity })` material mirrors,
+for the diffuse) and every `phong({ reflectivity })` material mirrors,
 typically the skybox's own cube turned with it. The cube to use is a
 BAKED one: `bunx srt tool 3d/environment sky.hdr -o assets/sky.srte`
 turns an equirectangular Radiance .hdr (Poly Haven's are CC0) into the
@@ -1450,7 +1451,7 @@ tints instead; not offered). The reflection blurs with `shininess`:
 roughness `sqrt(2 / (shininess + 2))` picks a mip level of the cube
 (`textureLod`), so the environment cube wants `mipmap: true`; a cube
 without mipmaps stays sharp. `specularMap`'s red scales it like
-`specular`. For `lit` it is not an ambient light source: the hemisphere
+`specular`. For `phong` it is not an ambient light source: the hemisphere
 light stays its only ambient term (`standard` adds envIrradiance; SH9
 is a later, additive mode). A declared `reflectivity` with no
 environment set contributes nothing (uEnvOn 0), not a black reflection.
@@ -1675,10 +1676,10 @@ three) and `SHADOW_LOOKUP`
 cast; it walks the light's slots and samples the first map that covers
 the point, which is the cascade select, blended into the next map over
 the outer `SHADOW_BLEND` of the map). A receiving fragment
-multiplies light i's term by `lightShadow(i, ...)`, exactly what `lit`
+multiplies light i's term by `lightShadow(i, ...)`, exactly what `phong`
 composes; a non-receiving one composes none of the three and declares no
 samplers. Lights, colors and exponents are arguments, so
-nothing is pinned but the function names; `lit` is composed from these
+nothing is pinned but the function names; `phong` is composed from these
 same constants - customizing never means leaving the system.
 
 ### Custom looks: three tiers
@@ -1689,8 +1690,8 @@ resolve - at one of three tiers, top first:
 
 1. STANDARD FRAGMENT, CUSTOM VERTEX. Any vertex stage that writes the lit
    varyings (vWorldPos, vNormal, vUv, plus vColor with `vertexColors`,
-   vUv2 with `lightMap`) pairs with `litFragment(options)` /
-   `standardFragment(options)` (`/glsl`): the exact fragment `lit` /
+   vUv2 with `lightMap`) pairs with `phongFragment(options)` /
+   `standardFragment(options)` (`/glsl`): the exact fragment `phong` /
    `standard` compile, the same option names and defaults as their
    options with the texture options boolean. An instanced or displaced
    mesh keeps the stock shading whole (`examples/instanced.tsx`: the
@@ -1702,7 +1703,7 @@ resolve - at one of three tiers, top first:
    params: { uColor: [1, 1, 1, 1], uSpecular: 0.12, uShininess: 24 } })`
    is the white starting point (the stock materials seed exactly this
    from their `color` option).
-2. A SURFACE FUNCTION inside the stock fragment. `litFragment({ surface,
+2. A SURFACE FUNCTION inside the stock fragment. `phongFragment({ surface,
    prelude })`: `prelude` is file scope (uniforms and helpers; a uniform
    it declares is an ordinary `instance()` param), `surface` declares
    `void surface(inout Surface s)`, called once the program has filled
@@ -1738,7 +1739,7 @@ resolve - at one of three tiers, top first:
    materials are built from this same set, so the tiers cannot drift.
    The demo `the-third-dimension.tsx` has tier 2 (the ground) and tier 3
    (the knot's rim term).
-`standardFragment(options)` is the same for `standard`: lit's options
+`standardFragment(options)` is the same for `standard`: phong's options
 minus `specularMap`/`env` (the environment is always composed) plus
 `metalnessMap`/`roughnessMap`, on the same `litVertex(options)`, with
 `uMetalness`/`uRoughness` in place of `uSpecular`/`uShininess`.
@@ -1757,7 +1758,7 @@ instance or every caster move warns about the skipped write.
 
 ### Lights
 
-Lights and `lit`: lights are graph NODES, like Three. `createDirectionalLight({
+Lights and `phong`: lights are graph NODES, like Three. `createDirectionalLight({
 direction?, color?, intensity? })` / `<DirectionalLight>` is parallel light
 travelling along `direction` in the node's LOCAL space (default `[0, -1,
 0]`, a sun overhead; length ignored), so a parent Group's rotation turns it
@@ -1779,7 +1780,7 @@ only, same falloff, no cone. `createHemisphereLight({ sky?, ground?, intensity?
 normal's tilt (fixed to world up, the node's transform is ignored); one per
 scene, the last attached wins. Placement goes through setTransform, the
 light's own fields through `setLight(light, { ... })` (frame-rate-safe,
-like setMeshParams). At most `MAX_LIGHTS` (8, exported from `/glsl`)
+like setMeshParams). At most `MAX_LIGHTS` (8, exported from the root and `/glsl`)
 lights per scene, directional, spot and point together (the hemisphere
 is not in the list) - a ninth is reported at the sync that settles the
 set, not at add() (a declarative swap's transient overlap is fine),
@@ -1795,7 +1796,7 @@ LIGHT_POINT), `uLightDir[N]`/`uLightPos[N]`/`uLightColor[N]` (intensity
 folded into the color) and `uLightParams[N]` (cosInner, cosOuter,
 distance, decay) - so a custom fragment composing `LIGHT_SLOTS` +
 `LIGHT_LOOKUP` from `/glsl` reads the same list through `lightVector(i,
-worldPos, out l)` (returns the attenuation, 0 = skip the light; `lit`
+worldPos, out l)` (returns the attenuation, 0 = skip the light; `phong`
 is the shape), and a light change costs one write however many meshes.
 A custom fragment that declares only the old directional subset
 (`uLightCount`/`uLightDir`/`uLightColor`) still works - it just shades
@@ -1804,10 +1805,10 @@ scenes. Everything starts black: a lit scene with no light shows
 nothing, on purpose, like Three. `examples/lamps.tsx` is the spot/point
 shape (soft vs hard cone, casting spots, an orbiting bulb).
 
-### lit
+### phong
 
-`lit(opts)` is the standard look beside `unlit`: hemisphere ambient plus
-the directional list, Lambert diffuse, Blinn-Phong highlight when
+`phong(opts)` is the Blinn-Phong material (Three's MeshPhongMaterial, Unity
+URP's Simple Lit) beside `unlit`: hemisphere ambient plus the light list, Lambert diffuse, Blinn-Phong highlight when
 `specular` (0..1 strength) is set with `shininess` (default 30), a
 mirror of the scene's environment when `reflectivity` (0..1, the
 face-on weight; see Environment above) is set, blurred by the same
@@ -1887,7 +1888,7 @@ split sum, `envRadiance` at the roughness over the cube's mip chain
 times the analytic `envBrdf` for the specular, `envIrradiance` on the
 diffuse beside the hemisphere - with no `reflectivity` switch: the
 environment is intrinsic to the model, and a baked environment with no
-lights at all lights a scene (`examples/environment.tsx`). Light intensities read as lit's
+lights at all lights a scene (`examples/environment.tsx`). Light intensities read as phong's
 (1 lights a white matte surface to 1; Godot's and Unity's convention -
 a Three scene's intensities divide by pi). Without an environment a
 metal shows only its highlights: no diffuse, nothing to reflect (Three
@@ -1921,7 +1922,7 @@ pre-order - name, parent index, local TRS; matrix-form nodes are
 TRS-decomposed, shear dropped; nodes that carry no part, joint or
 animation target anywhere - cameras, lights, unused empties - are
 pruned), `parts` (one per mesh primitive, its node's NAME kept, `node`
-index, vertices in the standard layout LOCAL to the node - except
+index, vertices in the base layout LOCAL to the node - except
 skinned parts: "skinned" layout, model-space bind pose, `skin` index),
 `skins` (joint node indices + inverse binds), `clips` (the animations
 as baked channel buffers: node/path/interpolation, times, values),
@@ -1956,7 +1957,7 @@ with the file's color, maps, normal scale, metalness/roughness and
 packed map, emissive and transparency - the glTF material model, so a
 scene showing a model wants an `environment` (a glTF metal in a scene
 with none renders near black); `material: (m, maps, skinned) =>
-lit({ color: m.color, map: maps.map ?? undefined, skinned })` for the
+phong({ color: m.color, map: maps.map ?? undefined, skinned })` for the
 Blinn-Phong look, or any other material; it is called once per material and shared), the node table as nested
 Groups with the file's local TRS, and one mesh per part under its node,
 all inside the returned `Model` (a Group): `add(scene.root, model)`,
@@ -2063,9 +2064,9 @@ Applied: `doubleSided` (the default material draws it with `cull:
 factor (a zero factor skips the map too - glTF's product rule, emission
 off), `pbrMetallicRoughness` factors as `m.metalness`/`m.roughness` and
 its packed texture as BOTH `maps.metalnessMap` and `maps.roughnessMap`
-(standard's channel-select options; the default `lit` ignores them).
+(standard's channel-select options; the default `phong` ignores them).
 The `material(m, maps, skinned, vertexColors)` callback receives every
-uploaded texture by lit()/standard() option name (`maps.map`/
+uploaded texture by phong()/standard() option name (`maps.map`/
 `maps.normalMap`/`maps.emissiveMap`/`maps.metalnessMap`/
 `maps.roughnessMap`); `data.materials` is in file order, so the calls
 arrive in file order. A primitive's `COLOR_0` lands in its geometry's
@@ -2172,7 +2173,7 @@ for a hand-built shape, the loader's primitive targets for a glTF (its
 SPARSE BY VERTEX on `geometry.morphs` (a header texel per vertex, then
 only the entries of the targets that move it; memory follows the
 authored deltas, never vertices x targets) and uploaded once per
-geometry as one rgba32f texture. A `morph: true` material (`lit`,
+geometry as one rgba32f texture. A `morph: true` material (`phong`,
 `unlit`, `standard`; a custom class splices MORPH_DECLS and MORPH_APPLY
 from `@solidrt/3d/glsl` before its skin math) walks each vertex's
 entries in the vertex stage, before any skinning; a mesh under it
@@ -2264,8 +2265,8 @@ with `srt tool 3d/model`.
   ambient probe, this does not). glTF's default metallic factor is 1,
   so an untextured asset is all metal, and createModel's default is
   `standard`: give a model scene an `environment` (loadEnvironment's
-  baked .srte, or the skybox's cube), or pass `lit` as the material.
-- Light intensities are the same numbers for `lit` and `standard`: 1
+  baked .srte, or the skybox's cube), or pass `phong` as the material.
+- Light intensities are the same numbers for `phong` and `standard`: 1
   lights a white matte surface to 1 face-on. A Three scene's intensities
   are a factor pi larger for the same look; divide when porting.
 - Transparency is an EXPLICIT material flag, Three's rule: `unlit({ color:
@@ -2334,7 +2335,7 @@ with `srt tool 3d/model`.
 - The environment binds through the light rewrite's map set (uEnv
   beside uShadowAtlas on every receiving target, new views included) and
   directly on setEnvironment; the placeholder cube is app-lifetime like
-  the shadow placeholder. A `lit` without `reflectivity` declares no
+  the shadow placeholder. A `phong` without `reflectivity` declares no
   environment sampler - the flag is part of the class key.
 
 ### Coordinates and rotation
@@ -2540,7 +2541,7 @@ with `srt tool 3d/model`.
   `overrideMaterial` is validated against every mesh's layout (at
   createView for the meshes present, at add() for later ones) exactly like
   a mesh's own material, so an override reading `aColor` throws for a
-  standard-layout mesh. An instanced mesh the override cannot place (it
+  base-layout mesh. An instanced mesh the override cannot place (it
   declares no `instanceBuffers`) is skipped, which the view's output
   cannot show, so the scene warns once per view naming it and the count
   (over the settled set, at the flush after the attach). Views are disposed by the scene; `view.dispose()`

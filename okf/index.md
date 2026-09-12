@@ -43,6 +43,11 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
+- **[Two names drifted apart between @solidrt/2d and @solidrt/3d after the symmetry passes](backlog/2d-3d-vocabulary-drift.md)** [2026-09-11]
+  Reading a camera control is camera() in 2d against pose() in 3d with a
+  Camera2dPose type nothing returns, and "is it playing" is a boolean field
+  against a method returning names; both landed separately after the 08-31 and
+  09-06 unison reviews.
 - **[Extrude atlas cells into gutters so a mipmapped sheet does not bleed](backlog/2d-atlas-extrude.md)** [2026-09-07]
   The layer shaders clamp samples into their frame, which stops edge bleed at
   mip level 0, but a mip chain averages blocks that straddle cell edges before
@@ -121,12 +126,6 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), merge-by-material,
   per-material samplers and runtime-fetched content, each demand-gated (morph
   targets have their own item).
-- **[Four names in the 3d public surface say the wrong thing](backlog/3d-naming-inconsistencies.md)** [2026-09-11]
-  shape() wears Three's name for the INPUT class on a geometry output,
-  MAX_SHADOWS is the light cap rather than the shadow budget it names, the
-  lit/standard pair mixes two engine vocabularies with URP's meaning of Lit
-  inverted, and "standard" names both a vertex layout and the PBR material on
-  axes that never correlate; each is a rename with no compat constraint.
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
@@ -452,6 +451,12 @@ Shaped, not started.
   discovery, no CI step. Decide the runner (flux, not bun, is the runtime
   under test), the file convention, and the CI hook, then fold the existing
   rigs into it.
+- **[Content damage for live-sampled textures](backlog/live-texture-content-damage.md)** [2026-09-12]
+  A texture whose pixels change behind an unchanged id produces no damage,
+  because nodes displaying it hold a live reference and need none to show the
+  new pixels. Correct for the tree, wrong for the repaint - every video,
+  camera or GPU-content frame repaints the whole window, measured at 11-13.5
+  ms of a 20 ms budget on the TV whatever the content's size.
 - **[Location module (geolocation)](backlog/location-module.md)** [2026-08-15]
   The runtime exposes camera, microphone, speech-recognition and sound as
   @solidrt/core subpath modules but has no geolocation API, so apps fall back
@@ -723,6 +728,12 @@ Shaped, not started.
   Textures always blit once into their destination rect, so a repeating
   background has to be faked with one element per tile or a shader bake;
   Impeller already exposes wrap-mode addressing that would make it a prop.
+- **[Zero-copy texture upload leases](backlog/texture-upload-leases.md)** [2026-09-12]
+  The remaining half of the staging work - the raster thread now uploads
+  through mapped pixel-unpack buffers, but the pixels are still memcpy'd into
+  them on that thread (~5.6 ms per 1080p frame on the TV). Leasing the mapped
+  memory out to the producer, so a decoder or a guest writes straight into it,
+  is the only honestly zero-copy shape.
 - **[Decide the shape of the transform props against CSS, all at once](backlog/transform-props-css-shape.md)** [2026-08-14]
   scale/scaleX/scaleY, x/y, rotate and originX/originY each landed on their
   own; CSS gives per-axis tuples for scale and translate but nothing for
@@ -747,13 +758,14 @@ Shaped, not started.
   Windows and Android, but neither has been run there - the Windows console
   ANSI path and Android termios from a terminal emulator are unverified.
 - **[Video playback](backlog/video-playback.md)** [2026-08-12]
-  One decode-to-YUV pipeline on every platform (software decoders on desktop,
-  MediaCodec buffer mode on Android), planar YUV textures + shader conversion
-  in alloy, player core in forge, no video primitive - texture/d-texture
-  display the player's texture id. Fluency target is the Philips MT5891 TV;
-  punch-through rejected. Probed 2026-08-12: the MTK decoder emits honest NV12
-  in buffer mode at 3x realtime for 1080p; the AImageReader fallback tap is
-  unsupported on the device (not needed).
+  One decode-to-YUV pipeline on every platform, the platform's own decoder
+  everywhere (MediaCodec buffer mode on Android; no software codec bundled),
+  planar YUV textures + shader conversion in alloy, player core in forge, no
+  video primitive - texture/d-texture display the player's texture id. Fluency
+  target is the Philips MT5891 TV; punch-through rejected. Measured there
+  2026-09-12: 360p50 frame-for-frame on the vsync grid, 720p25 nearly so,
+  1080p25 over budget; audio-clocked selection drops ~10% of frames at every
+  resolution.
 - **[The armed wake-word detector burns ~40% of a core while idle](backlog/wakeword-detector-cost.md)** [2026-08-14]
   Every 100ms the armed speech worker scores a 2.2s window with the stateless
   livekit-wakeword predict, ~35-40ms a check whether or not anyone is
@@ -1000,6 +1012,12 @@ Finished, kept for the reasoning.
   float texture, with weights a node register the spatial core publishes as a
   row of a weights texture through the palette sink, driven by clip players,
   node transitions and setMorphWeights, per instance included.
+- **[Four names in the 3d public surface say the wrong thing](done/3d-naming-inconsistencies.md)** [2026-09-11]
+  shape() wears Three's name for the INPUT class on a geometry output,
+  MAX_SHADOWS is the light cap rather than the shadow budget it names, the
+  lit/standard pair mixes two engine vocabularies with URP's meaning of Lit
+  inverted, and "standard" names both a vertex layout and the PBR material on
+  axes that never correlate; each is a rename with no compat constraint.
 - **[A geometry updated in place keeps picking against its old positions](done/3d-picking-shape-after-update.md)** [2026-09-11]
   updateVertices re-uploads a stream and drops the cached bounds, but the
   picking shape the spatial core built at first draw keeps the positions it

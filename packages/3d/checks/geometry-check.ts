@@ -9,7 +9,7 @@
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { arrowHelper, axesHelper, box, box3Helper, capsule, capsuleHelper, cone, cylinder, dodecahedron, edgesGeometry, mergeVertices, normalsHelper, toNonIndexed, withMorphTargets, withNormals, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, geometryKey, geometrySlot, geometryStreams, geometryVertexCount, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, STANDARD_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import { arrowHelper, axesHelper, box, box3Helper, capsule, capsuleHelper, cone, cylinder, dodecahedron, edgesGeometry, mergeVertices, normalsHelper, toNonIndexed, withMorphTargets, withNormals, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, geometryKey, geometrySlot, geometryStreams, geometryVertexCount, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, BASE_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
 import { cross, normalize, rayBoxDistance, sub } from "../src/math.ts"
 import type { Geometry, PolyhedronOptions } from "../src/geometry.ts"
 import type { VertexFormat } from "@solidrt/core/gpu"
@@ -21,7 +21,7 @@ let fail = (msg: string): void => {
   console.log("FAIL:", msg)
 }
 let near = (a: number, b: number, eps = 1e-5): boolean => Math.abs(a - b) <= eps
-// The rigs here build standard all-float layouts, so the vertex bytes read
+// The rigs here build base all-float layouts, so the vertex bytes read
 // back as floats; the view type is not the geometry contract.
 let floats = (g: Geometry): Float32Array => new Float32Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength / Float32Array.BYTES_PER_ELEMENT)
 let expectVec = (label: string, got: ArrayLike<number>, want: ArrayLike<number>): void => {
@@ -120,7 +120,7 @@ throws("rotation and quaternion", () => transformGeometry(tri(), { rotation: [0,
   let a = box()
   let b = transformGeometry(box(), { position: [3, 0, 0] })
   let m = mergeGeometries([a, b], "pair")
-  let va = floats(a).length / STANDARD_FLOATS
+  let va = floats(a).length / BASE_FLOATS
   if (floats(m).length !== floats(a).length + floats(b).length) fail("merge vertex count")
   if (m.indices.length !== a.indices.length + b.indices.length) fail("merge index count")
   if (m.indices[a.indices.length]! !== b.indices[0]! + va) fail("merge index offset")
@@ -143,7 +143,7 @@ throws("rotation and quaternion", () => transformGeometry(tri(), { rotation: [0,
 throws("merge mixed layouts", () => mergeGeometries([tri(), withColors(tri(), () => [1, 1, 1, 1])]))
 throws("merge empty", () => mergeGeometries([]))
 
-// Open layouts: withAttribute appends a channel after the standard prefix,
+// Open layouts: withAttribute appends a channel after the base prefix,
 // stride and slots follow the list, and withColors is the aColor spelling
 // (preset name kept, identical bytes).
 {
@@ -255,7 +255,7 @@ throws("merge empty", () => mergeGeometries([]))
   let U_MAX = 1.2
   let inspect = (name: string, g: Geometry, faces: number, radius: number, detail: number): void => {
     let tris = faces * (detail + 1) * (detail + 1)
-    if (floats(g).length !== tris * 3 * STANDARD_FLOATS) fail(name + ": vertex count " + floats(g).length / STANDARD_FLOATS)
+    if (floats(g).length !== tris * 3 * BASE_FLOATS) fail(name + ": vertex count " + floats(g).length / BASE_FLOATS)
     if (g.indices.length !== tris * 3) fail(name + ": index count " + g.indices.length)
     for (let i = 0; i < g.indices.length; i++) {
       if (g.indices[i] !== i) {
@@ -264,7 +264,7 @@ throws("merge empty", () => mergeGeometries([]))
       }
     }
     let v = floats(g)
-    let at = (i: number, k: number): Vec3 => [v[i * STANDARD_FLOATS + k]!, v[i * STANDARD_FLOATS + k + 1]!, v[i * STANDARD_FLOATS + k + 2]!]
+    let at = (i: number, k: number): Vec3 => [v[i * BASE_FLOATS + k]!, v[i * BASE_FLOATS + k + 1]!, v[i * BASE_FLOATS + k + 2]!]
     for (let t = 0; t < tris; t++) {
       let p = [at(t * 3, 0), at(t * 3 + 1, 0), at(t * 3 + 2, 0)]
       let n = normalize(cross(sub(p[1]!, p[0]!), sub(p[2]!, p[0]!)))
@@ -288,8 +288,8 @@ throws("merge empty", () => mergeGeometries([]))
           fail(name + ": normal of triangle " + t + " corner " + k)
           return
         }
-        let u = v[(t * 3 + k) * STANDARD_FLOATS + 6]!
-        let vv = v[(t * 3 + k) * STANDARD_FLOATS + 7]!
+        let u = v[(t * 3 + k) * BASE_FLOATS + 6]!
+        let vv = v[(t * 3 + k) * BASE_FLOATS + 7]!
         if (u < 0 || u > U_MAX || vv < 0 || vv > 1) {
           fail(name + ": uv out of range " + u + "," + vv)
           return
@@ -334,8 +334,8 @@ throws("merge empty", () => mergeGeometries([]))
   if (icosahedron({ label: "ico" }).label !== "ico") fail("polyhedron label")
   // The generic builder over one open triangle: F * (detail + 1)^2.
   let open = polyhedron([1, 0, 0, 0, 1, 0, 0, 0, 1], [0, 1, 2], { detail: 2 })
-  if (floats(open).length !== 9 * 3 * STANDARD_FLOATS) fail("open polyhedron count " + floats(open).length / STANDARD_FLOATS)
-  expectVec("open polyhedron corner", floats(open).subarray(2 * STANDARD_FLOATS, 2 * STANDARD_FLOATS + 3), [0.5, 0, 0])
+  if (floats(open).length !== 9 * 3 * BASE_FLOATS) fail("open polyhedron count " + floats(open).length / BASE_FLOATS)
+  expectVec("open polyhedron corner", floats(open).subarray(2 * BASE_FLOATS, 2 * BASE_FLOATS + 3), [0.5, 0, 0])
   throws("polyhedron fractional detail", () => icosahedron({ detail: 1.5 }))
   throws("polyhedron negative detail", () => icosahedron({ detail: -1 }))
   throws("polyhedron ragged vertices", () => polyhedron([1, 0], [0, 1, 2]))
@@ -370,7 +370,7 @@ throws("merge empty", () => mergeGeometries([]))
   validateGeometry(wire)
   // No welded edge twice: the box's 24 split vertices name each cube
   // edge from two faces, and only one may survive.
-  let posKey = (i: number): string => Array.from(floats(b).subarray(i * STANDARD_FLOATS, i * STANDARD_FLOATS + 3)).join()
+  let posKey = (i: number): string => Array.from(floats(b).subarray(i * BASE_FLOATS, i * BASE_FLOATS + 3)).join()
   let seen = new Set<string>()
   for (let i = 0; i < wire.indices.length; i += 2) {
     let key = [posKey(wire.indices[i]!), posKey(wire.indices[i + 1]!)].sort().join("|")
@@ -431,7 +431,7 @@ throws("merge empty", () => mergeGeometries([]))
   expectVec("gridHelper default bounds", geometryBounds(dflt), [-5, 0, -5, 5, 0, 5])
   let odd = gridHelper({ divisions: 3, color: [1, 0, 0], centerColor: [0, 0, 1] })
   for (let i = 0; i < 16; i++) if (colorAt(odd, i)[2] !== 0) fail("gridHelper odd divisions has a center line at vertex " + i)
-  throws("gridHelper standard layout", () => gridHelper({ layout: "standard" }))
+  throws("gridHelper base layout", () => gridHelper({ layout: "base" }))
   throws("gridHelper zero divisions", () => gridHelper({ divisions: 0 }))
 
   let axes = axesHelper({ size: 2 })
@@ -452,11 +452,11 @@ throws("merge empty", () => mergeGeometries([]))
   let bounds = [-1, -2, -3, 4, 5, 6]
   let b3 = box3Helper(bounds, { label: "b3" })
   if (b3.topology !== "lines" || b3.layout !== undefined || b3.label !== "b3") fail("box3Helper shape")
-  if (floats(b3).length !== 8 * STANDARD_FLOATS || b3.indices.length !== 24) fail("box3Helper counts")
+  if (floats(b3).length !== 8 * BASE_FLOATS || b3.indices.length !== 24) fail("box3Helper counts")
   validateGeometry(b3)
   expectVec("box3Helper bounds", geometryBounds(b3), bounds)
   for (let e = 0; e < 24; e += 2) {
-    let a = b3.indices[e]! * STANDARD_FLOATS, b = b3.indices[e + 1]! * STANDARD_FLOATS
+    let a = b3.indices[e]! * BASE_FLOATS, b = b3.indices[e + 1]! * BASE_FLOATS
     let differ = 0
     for (let k = 0; k < 3; k++) if (floats(b3)[a + k] !== floats(b3)[b + k]) differ++
     if (differ !== 1) fail("box3Helper edge " + e / 2 + " is not axis-aligned")
@@ -465,20 +465,20 @@ throws("merge empty", () => mergeGeometries([]))
 
   let pl = planeHelper({ size: 4 })
   if (pl.topology !== "lines" || pl.layout !== undefined) fail("planeHelper shape")
-  if (floats(pl).length !== 6 * STANDARD_FLOATS || pl.indices.length !== 14) fail("planeHelper counts")
+  if (floats(pl).length !== 6 * BASE_FLOATS || pl.indices.length !== 14) fail("planeHelper counts")
   validateGeometry(pl)
   expectVec("planeHelper bounds", geometryBounds(pl), [-2, -2, 0, 2, 2, 1])
-  expectVec("planeHelper normal tick", floats(pl).subarray(5 * STANDARD_FLOATS, 5 * STANDARD_FLOATS + 3), [0, 0, 1])
+  expectVec("planeHelper normal tick", floats(pl).subarray(5 * BASE_FLOATS, 5 * BASE_FLOATS + 3), [0, 0, 1])
 
   // Head a fifth of the length (0.4) and a fifth as wide (0.08): the base
   // sits at y 1.6 with a half-width of 0.04.
   let arrow = arrowHelper({ length: 2 })
   if (arrow.topology !== "lines" || arrow.layout !== undefined) fail("arrowHelper shape")
-  if (floats(arrow).length !== 7 * STANDARD_FLOATS || arrow.indices.length !== 18) fail("arrowHelper counts")
+  if (floats(arrow).length !== 7 * BASE_FLOATS || arrow.indices.length !== 18) fail("arrowHelper counts")
   validateGeometry(arrow)
   expectVec("arrowHelper bounds", geometryBounds(arrow), [-0.04, 0, -0.04, 0.04, 2, 0.04])
-  expectVec("arrowHelper tip", floats(arrow).subarray(2 * STANDARD_FLOATS, 2 * STANDARD_FLOATS + 3), [0, 2, 0])
-  expectVec("arrowHelper base corner", floats(arrow).subarray(3 * STANDARD_FLOATS, 3 * STANDARD_FLOATS + 3), [0.04, 1.6, 0])
+  expectVec("arrowHelper tip", floats(arrow).subarray(2 * BASE_FLOATS, 2 * BASE_FLOATS + 3), [0, 2, 0])
+  expectVec("arrowHelper base corner", floats(arrow).subarray(3 * BASE_FLOATS, 3 * BASE_FLOATS + 3), [0.04, 1.6, 0])
   let custom = arrowHelper({ length: 1, headLength: 0.5, headWidth: 1 })
   expectVec("arrowHelper custom head", geometryBounds(custom), [-0.5, 0, -0.5, 0.5, 1, 0.5])
 }
@@ -531,7 +531,7 @@ throws("merge empty", () => mergeGeometries([]))
   if (wire.indices.length !== 10) fail("packed wireframe edges: " + wire.indices.length)
   throws("packed byte count", () => validateGeometry({ ...packed, vertices: vertexBytes(packed.vertices).subarray(0, 50) }))
   throws("unaligned view", () => validateGeometry({ ...packed, vertices: new Uint8Array(new ArrayBuffer(packed.vertices.byteLength + 1), 1) }))
-  throws("packed generator layout", () => box({ layout: [...VERTEX_LAYOUTS.standard, { name: "aColor", format: "unorm8x4" }] }))
+  throws("packed generator layout", () => box({ layout: [...VERTEX_LAYOUTS.base, { name: "aColor", format: "unorm8x4" }] }))
 }
 
 // Streams: a channel in a buffer of its own, found by name across streams,
@@ -588,14 +588,14 @@ throws("merge empty", () => mergeGeometries([]))
   let radialSegments = 8
   let heightSegments = 3
   let g = capsule({ radius, height, capSegments, radialSegments, heightSegments })
-  let n = floats(g).length / STANDARD_FLOATS
+  let n = floats(g).length / BASE_FLOATS
   if (n !== (2 * (capSegments + 1) + heightSegments - 1) * (radialSegments + 1)) fail("capsule vertex count " + n)
   if (g.indices.length !== (2 * (2 * capSegments + heightSegments) - 2) * radialSegments * 3) fail("capsule index count " + g.indices.length)
   expectVec("capsule bounds", geometryBounds(g), [-radius, -height / 2, -radius, radius, height / 2, radius])
   let half = height / 2 - radius
   let lastV = -1
   for (let i = 0; i < n; i++) {
-    let at = i * STANDARD_FLOATS
+    let at = i * BASE_FLOATS
     let y = floats(g)[at + 1]!
     // The nearest segment point: a cap center beyond the band, y itself on it.
     let cy = Math.min(half, Math.max(-half, y))
@@ -610,15 +610,15 @@ throws("merge empty", () => mergeGeometries([]))
     if (v < lastV - 1e-9) fail("capsule v not monotone at " + i)
     lastV = v
   }
-  if (!near(floats(g)[7]!, 0) || !near(floats(g)[(n - 1) * STANDARD_FLOATS + 7]!, 1)) fail("capsule v does not span the poles")
+  if (!near(floats(g)[7]!, 0) || !near(floats(g)[(n - 1) * BASE_FLOATS + 7]!, 1)) fail("capsule v does not span the poles")
   let round = capsule({ radius, height: 2 * radius, capSegments, radialSegments })
   expectVec("capsule as sphere bounds", geometryBounds(round), [-radius, -radius, -radius, radius, radius, radius])
   throws("capsule shorter than its diameter", () => capsule({ radius, height: 2 * radius - 0.01 }))
   throws("capsule zero heightSegments", () => capsule({ heightSegments: 0 }))
   let tapered = cylinder({ radiusTop: 0.2, radiusBottom: 0.6, height: 2, radialSegments: 8, heightSegments: 4 })
-  if (floats(tapered).length / STANDARD_FLOATS !== 5 * 9 + 2 * 9) fail("cylinder heightSegments vertex count")
+  if (floats(tapered).length / BASE_FLOATS !== 5 * 9 + 2 * 9) fail("cylinder heightSegments vertex count")
   if (tapered.indices.length !== (4 * 8 * 2 + 2 * 8) * 3) fail("cylinder heightSegments index count")
-  expectVec("cylinder middle row radius", floats(tapered).subarray(2 * 9 * STANDARD_FLOATS, 2 * 9 * STANDARD_FLOATS + 3), [-0.4, 0, 0])
+  expectVec("cylinder middle row radius", floats(tapered).subarray(2 * 9 * BASE_FLOATS, 2 * 9 * BASE_FLOATS + 3), [-0.4, 0, 0])
   if (cone({ radialSegments: 8, heightSegments: 3 }).indices.length !== (3 * 8 * 2 - 8 + 8) * 3) fail("cone heightSegments index count")
   throws("cylinder fractional heightSegments", () => cylinder({ heightSegments: 1.5 }))
 }
@@ -632,13 +632,13 @@ throws("merge empty", () => mergeGeometries([]))
   let segments = 8
   let h = capsuleHelper(volume, { segments, label: "cap" })
   if (h.topology !== "lines" || h.layout !== undefined || h.label !== "cap") fail("capsuleHelper shape")
-  let n = floats(h).length / STANDARD_FLOATS
+  let n = floats(h).length / BASE_FLOATS
   if (n !== 2 * segments + 4 * (segments / 2 + 1)) fail("capsuleHelper vertex count " + n)
   if (h.indices.length !== (2 * segments + 4 * (segments / 2) + 4) * 2) fail("capsuleHelper index count " + h.indices.length)
   let axis = sub(volume.b, volume.a)
   let len2 = axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]
   for (let i = 0; i < n; i++) {
-    let at = i * STANDARD_FLOATS
+    let at = i * BASE_FLOATS
     let p: Vec3 = [floats(h)[at]!, floats(h)[at + 1]!, floats(h)[at + 2]!]
     let d = sub(p, volume.a)
     let t = Math.min(1, Math.max(0, (d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2]) / len2))
@@ -648,7 +648,7 @@ throws("merge empty", () => mergeGeometries([]))
     expectVec("capsuleHelper normal " + i, floats(h).subarray(at + 3, at + 6), normalize(away))
   }
   let ball = capsuleHelper({ a: [0, 0, 0], b: [0, 0, 0], radius: 1 }, { segments })
-  if (floats(ball).length / STANDARD_FLOATS !== segments + 4 * (segments / 2 + 1)) fail("capsuleHelper sphere vertex count")
+  if (floats(ball).length / BASE_FLOATS !== segments + 4 * (segments / 2 + 1)) fail("capsuleHelper sphere vertex count")
   if (ball.indices.length !== (segments + 4 * (segments / 2)) * 2) fail("capsuleHelper sphere index count")
   expectVec("capsuleHelper sphere bounds", geometryBounds(ball), [-1, -1, -1, 1, 1, 1])
   throws("capsuleHelper segments not a multiple of 4", () => capsuleHelper(volume, { segments: 6 }))
@@ -659,8 +659,8 @@ throws("merge empty", () => mergeGeometries([]))
 // The normals ops and the index pair. Standard-layout readers: vertex i's
 // position and normal as Vec3.
 {
-  let posOf = (g: Geometry, i: number): Vec3 => [floats(g)[i * STANDARD_FLOATS]!, floats(g)[i * STANDARD_FLOATS + 1]!, floats(g)[i * STANDARD_FLOATS + 2]!]
-  let nrmOf = (g: Geometry, i: number): Vec3 => [floats(g)[i * STANDARD_FLOATS + 3]!, floats(g)[i * STANDARD_FLOATS + 4]!, floats(g)[i * STANDARD_FLOATS + 5]!]
+  let posOf = (g: Geometry, i: number): Vec3 => [floats(g)[i * BASE_FLOATS]!, floats(g)[i * BASE_FLOATS + 1]!, floats(g)[i * BASE_FLOATS + 2]!]
+  let nrmOf = (g: Geometry, i: number): Vec3 => [floats(g)[i * BASE_FLOATS + 3]!, floats(g)[i * BASE_FLOATS + 4]!, floats(g)[i * BASE_FLOATS + 5]!]
   let count = (g: Geometry): number => geometryVertexCount(g, "check")
   let dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
   // The unit normal of face f from its corner positions.
@@ -732,7 +732,7 @@ throws("merge empty", () => mergeGeometries([]))
   // One normal per position now, so the vertices left are the distinct
   // (position, uv) pairs: two faces hand some corners the same uv.
   let pairs = new Set<string>()
-  for (let i = 0; i < 24; i++) pairs.add(floats(want).subarray(i * STANDARD_FLOATS, i * STANDARD_FLOATS + 3).join(",") + "|" + floats(want).subarray(i * STANDARD_FLOATS + 6, i * STANDARD_FLOATS + 8).join(","))
+  for (let i = 0; i < 24; i++) pairs.add(floats(want).subarray(i * BASE_FLOATS, i * BASE_FLOATS + 3).join(",") + "|" + floats(want).subarray(i * BASE_FLOATS + 6, i * BASE_FLOATS + 8).join(","))
   if (count(rounded) !== pairs.size) fail("withNormals box 180 vertex count " + count(rounded) + ", want " + pairs.size)
   let d = 1 / Math.sqrt(3)
   for (let i = 0; i < count(rounded); i++) {

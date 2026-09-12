@@ -64,6 +64,20 @@ Either the runtime's idle-tick gate is over-gating a standing request
 progress), or the contract in debugging.md and core's `onFrame` doc no
 longer holds and needs rewriting - one of the two must give.
 
+## Not universal: the TV ticks at the refresh rate (2026-09-12)
+
+Measured on the Philips TPM171E with exactly this probe's shape (a static
+picture, no onFrame, nothing demanding a frame): `idleTicks` grew by 495
+over ten seconds - 49.5 a second against a 49.994 Hz panel - while `frame`
+grew by 1 a second. So the contract holds there and the gap is
+platform-specific, which narrows this to the desktop path (SwapPaced on
+Wayland) rather than the idle-tick design.
+
+Worth knowing because a feature can be tempted to rely on it: video tried
+taking its clock from idle ticks instead of holding standing demand
+([[video-playback]]), which works on the TV and would stutter badly on a
+desktop client at 2-3 Hz.
+
 ## Done looks like
 
 The probe ticks at the refresh rate, or the docs say what a standing

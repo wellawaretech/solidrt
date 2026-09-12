@@ -35,7 +35,7 @@ import type { WornPiece } from "./skeleton.ts"
  * the device by the runtime. */
 const MODEL_ANISOTROPY = 4
 
-/** A glTF material's uploaded textures, by lit()/standard() option name;
+/** A glTF material's uploaded textures, by phong()/standard() option name;
  * null where the material has none. */
 export type ModelMaps = {
   map: TextureId | null
@@ -51,13 +51,13 @@ export type ModelOptions = {
   /** The material for each glTF material (default: `standard` with its
    * color, maps, normal scale, metalness/roughness, emissive and
    * transparency - the glTF material model; a scene with no `environment`
-   * renders its metals near black, so set one, or return `lit` here for
+   * renders its metals near black, so set one, or return `phong` here for
    * the Blinn-Phong look). `maps` holds the uploaded textures by
-   * lit()/standard() option name. Called once per material -
+   * phong()/standard() option name. Called once per material -
    * or once per (material, skinned, vertexColors, morphed) combination
    * when parts that differ in any share a material - and shared by every
    * part using it. `skinned` is true when the material must skin (pass it
-   * through to `lit`/`unlit`, or read aJoints/aWeights + uBones yourself);
+   * through to `phong`/`unlit`, or read aJoints/aWeights + uBones yourself);
    * `vertexColors` is true when the part carries COLOR_0 in aColor (pass
    * it through, or read aColor yourself); `morphed` is true when the part
    * carries morph targets (pass it through as `morph`, or splice

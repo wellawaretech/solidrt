@@ -25,7 +25,7 @@
 //
 // The fleets are also lit, shadowed and fogged exactly like the ground,
 // with no lighting code of their own: the class pairs its instanced
-// vertex stage with the stock `litFragment` (the fragment `lit` compiles),
+// vertex stage with the stock `phongFragment` (the fragment `phong` compiles),
 // which is the first tier of custom looks - a vertex stage that writes
 // the lit varyings gets the whole scene for free. The per-instance tint
 // rides the `vertexColors` path as vColor.
@@ -40,7 +40,7 @@ import {
   HemisphereLight,
   layoutStride,
   RecordMesh,
-  lit,
+  phong,
   Mesh,
   PerspectiveCamera,
   plane,
@@ -51,7 +51,7 @@ import {
 } from "@solidrt/3d"
 import type { RecordMeshNode } from "@solidrt/3d"
 import type { VertexAttribute } from "@solidrt/core/gpu"
-import { litFragment } from "@solidrt/3d/glsl"
+import { phongFragment } from "@solidrt/3d/glsl"
 
 // The lit varyings (vWorldPos, vNormal, vUv, and vColor for the tint), as
 // LIT_VERTEX writes them, from an instanced placement.
@@ -178,7 +178,7 @@ function App() {
             castShadow
             shadow={{ normalBias: 0.02, camera: { near: 1, far: 20 } }}
           />
-          <Mesh geometry={plane({ width: 9, height: 9, label: "meadow" })} material={lit({ color: [0.24, 0.27, 0.24] })} rotation={[-Math.PI / 2, 0, 0]} />
+          <Mesh geometry={plane({ width: 9, height: 9, label: "meadow" })} material={phong({ color: [0.24, 0.27, 0.24] })} rotation={[-Math.PI / 2, 0, 0]} />
           <Group rotation={[0, spin(), 0]}>
             <RecordMesh
               geometry={box({ label: "rock" })}
@@ -204,13 +204,13 @@ function App() {
 
 // One class, one compiled pipeline; each mesh gets its own instance() so
 // per-mesh uniforms stay independent. The fragment is the stock lit one,
-// so the instance carries lit's per-entry uniforms: a white base (the
+// so the instance carries phong's per-entry uniforms: a white base (the
 // tint arrives per instance through vColor) and a modest highlight.
 const LOOK = { uColor: [1, 1, 1, 1], uSpecular: 0.25, uShininess: 30 }
 let instancedLook = shaderMaterialClass({
   vertex: INSTANCE_VERTEX,
   shadowVertex: INSTANCE_SHADOW_VERTEX,
-  fragment: litFragment({ vertexColors: true }),
+  fragment: phongFragment({ vertexColors: true }),
   instanceBuffers: [{ attributes: RECORD }],
   label: "instanced-look",
 })

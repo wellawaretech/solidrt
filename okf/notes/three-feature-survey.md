@@ -97,10 +97,8 @@ At parity. Every generator in Three's set has a counterpart, including
 `ShapeGeometry` and the `detail` subdivision that gets you an icosphere. The
 one qualifier is `Shape.holes`, under Curves and shapes below.
 
-The gloss that parenthetical used to need is itself a finding: our flat fill is
-`shape(profile)`, so Three's name for the INPUT class sits on our output while
-our input type is `Profile`. Filed as
-[3d-naming-inconsistencies](../backlog/3d-naming-inconsistencies.md).
+Our flat fill is `polygon(profile)`: Three's `Shape` name stays free for the
+input side (an outline with holes) should we grow one.
 
 ## Curves and shapes
 
@@ -112,7 +110,7 @@ Two gaps that feed builders we already have:
   a spline samples it themselves. A curve sampler in front of
   `tube`/`sweep`/`pathFrames` is the missing piece.
 - `Shape.holes`. Our `triangulate` is ear-clip over a single simple contour, so
-  `shape()` and `extrude()` cannot produce a washer, a letter O, or a panel
+  `polygon()` and `extrude()` cannot produce a washer, a letter O, or a panel
   with a cutout. Ear-clipping with hole bridging is the standard fix.
 
 ## Multi-material groups
@@ -130,7 +128,7 @@ themselves. Related but not the same: merge-by-material in the model loader
 
 | Three | us |
 | --- | --- |
-| MeshBasic / Lambert / Phong / Standard | `unlit` / `lit` / `standard` |
+| MeshBasic / Lambert / Phong / Standard | `unlit` / `phong` / `standard` |
 | MeshPhysical (clearcoat, sheen, transmission, iridescence, anisotropy) | missing |
 | MeshToon | missing |
 | MeshMatcap | missing |

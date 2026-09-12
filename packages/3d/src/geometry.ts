@@ -2,7 +2,7 @@
 // ordered attribute list that starts with the position (float32x3) and
 // may carry any named channels after it, each in one of the vertex formats
 // (the float32 family, halves, normalized integers, and unsigned and
-// signed integers up to 32 bits; see VERTEX_FORMATS). The standard prefix (position, normal, uv: 8 floats)
+// signed integers up to 32 bits; see VERTEX_FORMATS). The base prefix (position, normal, uv: 8 floats)
 // is what every generator emits and what the stock materials read; a
 // hand-built layout may leave the normal and uv out when nothing reads
 // them, and may pack a channel (a color in unorm8x4 is 4 bytes, not 16).
@@ -48,35 +48,35 @@ import type { Capsule } from "./scene.ts"
 
 /** A vertex layout: the named presets, or an explicit attribute list
  * that begins with `aPos` float32x3 (placement is universal) and carries
- * any named channels after it. The standard prefix (aPos float32x3,
+ * any named channels after it. The base prefix (aPos float32x3,
  * aNormal float32x3, aUV float32x2) is what every generator emits and
  * what the stock materials read, not a rule a layout must follow: a
  * material reads channels by name and a missing one throws at add(), so
  * a point carrying a position and one packed channel is 16 bytes, not
- * 48. Absent on a Geometry means "standard". */
-export type VertexLayout = "standard" | "colored" | "skinned" | VertexAttribute[]
+ * 48. Absent on a Geometry means "base". */
+export type VertexLayout = "base" | "colored" | "skinned" | VertexAttribute[]
 
-const STANDARD_ATTRIBUTES: VertexAttribute[] = [
+const BASE_ATTRIBUTES: VertexAttribute[] = [
   { name: "aPos", format: "float32x3" },
   { name: "aNormal", format: "float32x3" },
   { name: "aUV", format: "float32x2" },
 ]
 
 /** The attribute lists behind the named layouts. Every layout shares the
- * standard prefix, so one shader vocabulary serves all of them. */
-export const VERTEX_LAYOUTS: Record<"standard" | "colored" | "skinned", VertexAttribute[]> = {
-  standard: STANDARD_ATTRIBUTES,
-  colored: [...STANDARD_ATTRIBUTES, { name: "aColor", format: "float32x4" }],
+ * base prefix, so one shader vocabulary serves all of them. */
+export const VERTEX_LAYOUTS: Record<"base" | "colored" | "skinned", VertexAttribute[]> = {
+  base: BASE_ATTRIBUTES,
+  colored: [...BASE_ATTRIBUTES, { name: "aColor", format: "float32x4" }],
   // The rigged-model layout: 4 joint indices (unsigned bytes, what an
   // exporter writes for a rig under 256 joints; a wider rig lands in list
   // form with uint16x4) and their weights per vertex, what a skinned
   // vertex stage reads (`in uvec4 aJoints`).
-  skinned: [...STANDARD_ATTRIBUTES, { name: "aJoints", format: "uint8x4" }, { name: "aWeights", format: "float32x4" }],
+  skinned: [...BASE_ATTRIBUTES, { name: "aJoints", format: "uint8x4" }, { name: "aWeights", format: "float32x4" }],
 }
 
-/** Floats per vertex in the "standard" layout (the generators' own write
+/** Floats per vertex in the "base" layout (the generators' own write
  * format before packing). */
-export const STANDARD_FLOATS = 8
+export const BASE_FLOATS = 8
 
 /** The shader `in` family a vertex format feeds (WebGPU's rule: the
  * format decides): "float" for the float and normalized formats (`in
@@ -219,7 +219,7 @@ export function isFloatFormat(format: VertexFormat): boolean {
 
 /** The attribute list of a layout (a preset name resolves to its list). */
 export function layoutAttributes(layout?: VertexLayout): VertexAttribute[] {
-  if (layout === undefined || layout === "standard") return VERTEX_LAYOUTS.standard
+  if (layout === undefined || layout === "base") return VERTEX_LAYOUTS.base
   if (layout === "colored") return VERTEX_LAYOUTS.colored
   if (layout === "skinned") return VERTEX_LAYOUTS.skinned
   return layout
@@ -472,11 +472,11 @@ export type GeometryOptions = { label?: string; layout?: VertexLayout }
  * (`withAttribute` with a packed format), not a generator option. */
 function checkGeneratorLayout(layout: VertexAttribute[], where: string): void {
   checkLayout(layout, where)
-  for (let i = 0; i < STANDARD_ATTRIBUTES.length; i++) {
-    let want = STANDARD_ATTRIBUTES[i]!
+  for (let i = 0; i < BASE_ATTRIBUTES.length; i++) {
+    let want = BASE_ATTRIBUTES[i]!
     let got = layout[i]
     if (got === undefined || got.name !== want.name || got.format !== want.format) {
-      throw new Error(where + ": a generator layout must start with the standard prefix (aPos float32x3, aNormal float32x3, aUV float32x2)")
+      throw new Error(where + ": a generator layout must start with the base prefix (aPos float32x3, aNormal float32x3, aUV float32x2)")
     }
   }
   for (let attr of layout) {
@@ -486,9 +486,9 @@ function checkGeneratorLayout(layout: VertexAttribute[], where: string): void {
   }
 }
 
-/** The generator tail: pack standard-layout vertices (number[] of 8 per
+/** The generator tail: pack base-layout vertices (number[] of 8 per
  * vertex, or an already-written Float32Array) and indices into a Geometry
- * of the requested layout. A wider layout spreads the standard channels
+ * of the requested layout. A wider layout spreads the base channels
  * to its stride, leaving the extra slots zero. */
 export function packGeometry(
   verts: ArrayLike<number>,
@@ -496,21 +496,21 @@ export function packGeometry(
   options: GeometryOptions = {},
 ): Geometry {
   let { label, layout } = options
-  if (verts.length % STANDARD_FLOATS !== 0) {
-    throw new Error("packGeometry: vertex data is not a whole number of standard-layout vertices")
+  if (verts.length % BASE_FLOATS !== 0) {
+    throw new Error("packGeometry: vertex data is not a whole number of base-layout vertices")
   }
-  let count = verts.length / STANDARD_FLOATS
+  let count = verts.length / BASE_FLOATS
   let packedIndices = indices instanceof Uint16Array || indices instanceof Uint32Array ? indices : packIndices(indices, count)
   let stride = generatorStride(options, "packGeometry")
-  if (stride === STANDARD_FLOATS) {
+  if (stride === BASE_FLOATS) {
     let vertices = verts instanceof Float32Array ? verts : new Float32Array(verts)
     return layout === undefined ? { vertices, indices: packedIndices, label } : { vertices, indices: packedIndices, layout, label }
   }
   let vertices = new Float32Array(count * stride)
   for (let i = 0; i < count; i++) {
-    let s = i * STANDARD_FLOATS
+    let s = i * BASE_FLOATS
     let d = i * stride
-    for (let k = 0; k < STANDARD_FLOATS; k++) vertices[d + k] = verts[s + k]!
+    for (let k = 0; k < BASE_FLOATS; k++) vertices[d + k] = verts[s + k]!
   }
   return { vertices, indices: packedIndices, layout, label }
 }
@@ -571,7 +571,7 @@ export type Geometry = {
    * wireframeGeometry/edgesGeometry build "lines" over a triangle
    * geometry's own vertices. */
   topology?: Topology
-  /** Vertex layout; absent means "standard". Must match the material's
+  /** Vertex layout; absent means "base". Must match the material's
    * layout - the scene rejects a mismatched pair at add(). */
   layout?: VertexLayout
   /** Morph targets (blend shapes), packed sparse by vertex - see
@@ -746,7 +746,7 @@ export function geometryBounds(geometry: Geometry): Float32Array {
 
 /** Per-vertex values for withAttribute/fillAttribute: a flat array of the
  * attribute's size per vertex, or a callback deriving each vertex's value
- * from the standard channels (what a baker wants). A channel the layout
+ * from the base channels (what a baker wants). A channel the layout
  * lacks (a point cloud without a normal or uv) arrives as zeros. */
 export type AttributeFill = ArrayLike<number> | ((index: number, pos: Vec3, normal: Vec3, uv: Vec2) => ArrayLike<number>)
 /** AttributeFill for the aColor vec4 channel (4 per vertex). */
@@ -828,7 +828,7 @@ export function withAttribute(geometry: Geometry, attr: VertexAttribute, fill: A
 }
 
 /**
- * Derive a "colored"-layout geometry from a standard one: the same
+ * Derive a "colored"-layout geometry from a base one: the same
  * positions, normals, uvs and indices, plus an aColor float32x4 per
  * vertex - the data channel for materials whose vertex stage reads `in
  * vec4 aColor` (a tint, baked ambient occlusion, any four scalars; the
@@ -1378,7 +1378,7 @@ export function withNormals(geometry: Geometry, creaseAngle = CREASE_ANGLE, labe
 // PlaneHelper as "lines" builders (Godot and Unity keep the equivalents in
 // the editor; with no editor and topology on the geometry they are plain
 // data here). A helper is a Geometry like any other: a node places it, a
-// material draws it. Normals and uvs fill the standard prefix and mean
+// material draws it. Normals and uvs fill the base prefix and mean
 // nothing on a line.
 
 // Three's GridHelper defaults, sRGB: the subdivision lines (0x888888) and
@@ -1450,7 +1450,7 @@ export function gridHelper(options: GridHelperOptions = {}): Geometry {
     for (let end = 0; end < 4; end++) colors.push(c[0]!, c[1]!, c[2]!, c[3]!)
   }
   let indices: number[] = []
-  for (let i = 0; i < verts.length / STANDARD_FLOATS; i++) indices.push(i)
+  for (let i = 0; i < verts.length / BASE_FLOATS; i++) indices.push(i)
   return packLines(verts, indices, { label: options.label, layout: helperLayout(options, "gridHelper") }, colors)
 }
 
@@ -1481,7 +1481,7 @@ export function axesHelper(options: AxesHelperOptions = {}): Geometry {
  * The twelve edges of an axis-aligned box given as `[minX, minY, minZ,
  * maxX, maxY, maxZ]` - what geometryBounds, a model's `bounds` and the
  * spatial queries return - as "lines" geometry (Three's Box3Helper): 8
- * vertices, 24 indices, standard layout, so a plain `unlit({ color })`
+ * vertices, 24 indices, base layout, so a plain `unlit({ color })`
  * draws it. The bounds are baked in local space: put the helper under the
  * node whose bounds they are. For a box that moves every frame do what
  * Three does - draw `edgesGeometry(box())`, a unit cube's edges, on a
@@ -1543,7 +1543,7 @@ export function capsuleHelper(volume: Capsule, options: CapsuleHelperOptions = {
     verts.push(center[0] + radius * nx, center[1] + radius * ny, center[2] + radius * nz, nx, ny, nz, 0, 0)
   }
   let ring = (center: Vec3): number => {
-    let base = verts.length / STANDARD_FLOATS
+    let base = verts.length / BASE_FLOATS
     for (let i = 0; i < segments; i++) {
       let t = (i / segments) * Math.PI * 2
       push(center, u, v, Math.cos(t), Math.sin(t))
@@ -1553,7 +1553,7 @@ export function capsuleHelper(volume: Capsule, options: CapsuleHelperOptions = {
   }
   // Half circle from +p over `out` (the cap's pole direction) to -p.
   let arc = (center: Vec3, p: Vec3, out: Vec3): void => {
-    let base = verts.length / STANDARD_FLOATS
+    let base = verts.length / BASE_FLOATS
     let cells = segments / 2
     for (let i = 0; i <= cells; i++) {
       let t = (i / cells) * Math.PI
@@ -1582,7 +1582,7 @@ export function capsuleHelper(volume: Capsule, options: CapsuleHelperOptions = {
  * center along the normal so the facing reads. Place it with the node
  * transform the way plane() is placed (Three's takes a Plane and does the
  * lookAt itself; there is no Plane type here). 6 vertices, 14 indices,
- * standard layout.
+ * base layout.
  */
 export type PlaneHelperOptions = GeometryOptions & {
   /** Side length of the square, default 1. */
@@ -1617,7 +1617,7 @@ const ARROW_HEAD_WIDTH = 0.2
  * diamond base, and the base itself. Aim it with the node transform -
  * `quatFromTo(out, [0, 1, 0], direction)` is the rotation - and put the
  * origin in `position`; Three's constructor takes both, here they are the
- * node's. 7 vertices, 18 indices, standard layout.
+ * node's. 7 vertices, 18 indices, base layout.
  */
 export type ArrowHelperOptions = GeometryOptions & {
   /** Tip distance from the origin, default 1. */
@@ -1720,7 +1720,7 @@ export function box(options: BoxOptions = {}): Geometry {
   type P = [number, number, number]
   // Corners a (bottom-left) through d (top-left), CCW seen from outside.
   let quad = (a: P, b: P, c: P, d: P, n: P) => {
-    let base = verts.length / STANDARD_FLOATS
+    let base = verts.length / BASE_FLOATS
     let uv = [[0, 1], [1, 1], [1, 0], [0, 0]]
     let corners = [a, b, c, d]
     for (let i = 0; i < 4; i++) {
@@ -1870,7 +1870,7 @@ export function cylinder(options: CylinderOptions = {}): Geometry {
   // Caps fan around a center vertex; the planar UV map has no seam, so the
   // ring wraps with modulo instead of duplicating a column.
   let cap = (r: number, y: number, up: number) => {
-    let base = verts.length / STANDARD_FLOATS
+    let base = verts.length / BASE_FLOATS
     verts.push(0, y, 0, 0, up, 0, 0.5, 0.5)
     for (let i = 0; i < radialSegments; i++) {
       let phi = (i / radialSegments) * Math.PI * 2
@@ -2162,13 +2162,13 @@ export function polyhedron(vertices: ArrayLike<number>, indices: ArrayLike<numbe
     }
   }
   let count = dirs.length / 3
-  let verts = new Float32Array(count * STANDARD_FLOATS)
+  let verts = new Float32Array(count * BASE_FLOATS)
   for (let i = 0; i < count; i++) {
     let d = i * 3
     let x = dirs[d]!
     let y = dirs[d + 1]!
     let z = dirs[d + 2]!
-    let o = i * STANDARD_FLOATS
+    let o = i * BASE_FLOATS
     verts[o] = x * radius
     verts[o + 1] = y * radius
     verts[o + 2] = z * radius
@@ -2181,9 +2181,9 @@ export function polyhedron(vertices: ArrayLike<number>, indices: ArrayLike<numbe
     verts[o + 7] = Math.atan2(-y, Math.hypot(x, z)) / Math.PI + 0.5
   }
   for (let t = 0; t < count; t += 3) {
-    let o0 = t * STANDARD_FLOATS
-    let o1 = o0 + STANDARD_FLOATS
-    let o2 = o1 + STANDARD_FLOATS
+    let o0 = t * BASE_FLOATS
+    let o1 = o0 + BASE_FLOATS
+    let o2 = o1 + BASE_FLOATS
     // Three's UV fixes, keyed on the triangle's own azimuth: a corner on
     // the y axis (atan2(0, 0) says nothing) takes it, and on the -x side
     // of the seam a u of exactly 1 becomes 0 so the triangle stays whole.

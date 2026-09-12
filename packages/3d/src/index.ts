@@ -9,7 +9,9 @@ export { add, createGroup, destroy, getMorphNames, getMorphWeights, getRotation,
 export type { LodConfig, MorphWeights, NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
 export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setDrawRange, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, instanceAttribute, updateRecords, INSTANCE_FLOATS } from "./mesh.ts"
 export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceSlots, InstanceStream, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions, UpdateRecordsOptions } from "./mesh.ts"
-export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight, MAX_SHADOWS } from "./light.ts"
+export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight } from "./light.ts"
+// The shader-source caps, also on the /glsl subpath next to the sources they size.
+export { MAX_CASCADES, MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
 export type {
   DirectionalLight as DirectionalLightNode,
   DirectionalLightOptions,
@@ -39,14 +41,14 @@ export type { CameraState, CameraUpdate, OrthoExtent } from "./camera.ts"
 export type { NodeMotionSpec, NodeTransition, NodeTransitionSpec } from "flux:spatial"
 export { computeVertexNormals, disposeGeometry, updateVertices } from "./geometry-gpu.ts"
 export type { GeometryBuffers, UpdateVerticesOptions } from "./geometry-gpu.ts"
-export { arrowHelper, axesHelper, box, box3Helper, capsule, capsuleHelper, circle, cone, cylinder, dodecahedron, fillAttribute, fillColors, edgesGeometry, mergeVertices, normalsHelper, toNonIndexed, withNormals, geometryBounds, geometryTopology, gridHelper, icosahedron, attributeAccess, geometryAttribute, geometryKey, geometryLayouts, geometrySlot, geometryStreams, geometryVertexCount, isFloatFormat, isFloatLayout, layoutAttributes, layoutKey, layoutSlot, layoutStride, mergeGeometries, octahedron, packGeometry, packMorphTargets, plane, planeHelper, polyhedron, ring, sphere, tetrahedron, torus, torusKnot, transformGeometry, validateGeometry, wireframeGeometry, vertexBytes, vertexCount, vertexView, withAttribute, withColors, withMorphTargets, MORPH_ENTRY_TEXELS, MORPH_TEXEL_FLOATS, STANDARD_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "./geometry.ts"
+export { arrowHelper, axesHelper, box, box3Helper, capsule, capsuleHelper, circle, cone, cylinder, dodecahedron, fillAttribute, fillColors, edgesGeometry, mergeVertices, normalsHelper, toNonIndexed, withNormals, geometryBounds, geometryTopology, gridHelper, icosahedron, attributeAccess, geometryAttribute, geometryKey, geometryLayouts, geometrySlot, geometryStreams, geometryVertexCount, isFloatFormat, isFloatLayout, layoutAttributes, layoutKey, layoutSlot, layoutStride, mergeGeometries, octahedron, packGeometry, packMorphTargets, plane, planeHelper, polyhedron, ring, sphere, tetrahedron, torus, torusKnot, transformGeometry, validateGeometry, wireframeGeometry, vertexBytes, vertexCount, vertexView, withAttribute, withColors, withMorphTargets, MORPH_ENTRY_TEXELS, MORPH_TEXEL_FLOATS, BASE_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "./geometry.ts"
 export type { ArrowHelperOptions, AttributeAccess, AttributeFill, VertexStream, WithAttributeOptions, AxesHelperOptions, BoxOptions, CapsuleHelperOptions, CapsuleOptions, CircleOptions, ColorFill, ConeOptions, CylinderOptions, FormatCodec, Geometry, GeometryOptions, GridHelperOptions, MorphTarget, MorphTargets, NormalsHelperOptions, PlaneHelperOptions, PlaneOptions, PolyhedronOptions, RingOptions, SphereOptions, TorusKnotOptions, TorusOptions, VertexLayout } from "./geometry.ts"
-export { fillet, roundRect, shape, triangulate } from "./profile.ts"
+export { fillet, roundRect, triangulate } from "./profile.ts"
 export type { Profile, ProfilePoint } from "./profile.ts"
-export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
+export { extrude, lathe, pathFrames, polygon, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
-export { lit, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
-export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
+export { phong, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
+export type { LitOptions, Material, PhongOptions, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
 export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedLod, InstancedMesh, Lod, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SpotLight, Sprite, View3d, useScene } from "./components/index.ts"
 export type {
   CameraTarget,

@@ -36,12 +36,15 @@ const MAGIC = 0x4d545253
 // the sparse-by-vertex texels, the extent - see packMorphTargets), the
 // mesh weights on the node table, and clip channels on the "weights"
 // path. A version-7 file has none, so it is rejected the same way.
-const VERSION = 8
+// Version 9 names the plain layout "base" (position, normal, uv - the
+// prefix "colored" and "skinned" extend) where version 8 wrote
+// "standard"; a version-8 file's layout word does not parse.
+const VERSION = 9
 
 // The named layouts the container writes by name; a custom attribute-list
 // layout (a skinned primitive with COLOR_0, a withAttribute channel) is
 // written as its list.
-const NAMED_LAYOUTS = ["standard", "colored", "skinned"]
+const NAMED_LAYOUTS = ["base", "colored", "skinned"]
 
 // A part's layout as written: a named preset, or a custom attribute list
 // checked to the shape the stride and the pipeline are built from.
@@ -114,7 +117,7 @@ export function encodeModel(data: ModelData): Uint8Array {
     if (g.streams !== undefined && g.streams.length > 0) {
       throw new Error("encodeModel: part '" + part.name + "' carries extra vertex streams; the container writes one interleaved buffer per part")
     }
-    let layout = g.layout === undefined ? "standard" : g.layout
+    let layout = g.layout === undefined ? "base" : g.layout
     let vertices = push(new Uint8Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength))
     let index = push(new Uint8Array(g.indices.buffer, g.indices.byteOffset, g.indices.byteLength))
     let header: PartHeader = {
@@ -192,7 +195,7 @@ export function decodeModel(bytes: Uint8Array): ModelData {
       indices: part.indexBits === 32 ? new Uint32Array(buffer, payload + part.index.offset, indexCount) : new Uint16Array(buffer, payload + part.index.offset, indexCount),
       label: part.name,
     }
-    if (part.layout !== "standard") geometry.layout = layout
+    if (part.layout !== "base") geometry.layout = layout
     if (part.morphs !== undefined) {
       let m = part.morphs
       geometry.morphs = { names: m.names, texels: new Float32Array(buffer, payload + m.texels.offset, m.texels.bytes / 4), extent: Float32Array.from(m.extent) }

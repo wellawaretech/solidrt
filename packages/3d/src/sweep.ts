@@ -1,14 +1,14 @@
-// Swept solids: the generators that run a Profile (profile.ts) along a
-// path. extrude() sweeps along a straight line (z), lathe() around a
-// circle (about y), sweep() along an arbitrary 3D polyline with mitred
-// joints, and tube() is sweep() with a circular profile - the wire, rope
-// and pipe primitive. Output is the shared vertex layout of geometry.ts
+// Profile generators: polygon() fills a Profile (profile.ts) as a flat
+// face, the rest sweep it along a path. extrude() sweeps along a straight
+// line (z), lathe() around a circle (about y), sweep() along an arbitrary
+// 3D polyline with mitred joints, and tube() is sweep() with a circular
+// profile - the wire, rope and pipe primitive. Output is the shared vertex layout of geometry.ts
 // with real texture UVs; winding is CCW seen from outside like every
 // generator, so cull: "back" works. Indices pick Uint16Array or
 // Uint32Array by vertex count - filleted profiles times many path points
 // make dense outputs routine here.
 
-import { STANDARD_FLOATS, packGeometry } from "./geometry.ts"
+import { BASE_FLOATS, packGeometry } from "./geometry.ts"
 import type { Geometry, GeometryOptions } from "./geometry.ts"
 import { add, cross, dot, normalize, scale, sub } from "./math.ts"
 import type { Vec3 } from "./math.ts"
@@ -58,7 +58,7 @@ function emitCap(
   mirrorU: boolean,
   flip: boolean,
 ): void {
-  let base = verts.length / STANDARD_FLOATS
+  let base = verts.length / BASE_FLOATS
   for (let i = 0; i < px.length; i++) {
     let p = place(px[i]!, py[i]!)
     let u = mirrorU ? (b.maxX - px[i]!) / b.w : (px[i]! - b.minX) / b.w
@@ -68,6 +68,25 @@ function emitCap(
     if (flip) indices.push(base + tris[i]!, base + tris[i + 2]!, base + tris[i + 1]!)
     else indices.push(base + tris[i]!, base + tris[i + 1]!, base + tris[i + 2]!)
   }
+}
+
+/**
+ * The profile filled as a flat face in the XY plane facing +z - the
+ * general case of circle()/ring() for arbitrary outlines, and the 2D
+ * counterpart of polyhedron(). UVs map the
+ * profile's bounding box to the unit square like plane(); rotate flat the
+ * same way: `rotation={[-Math.PI / 2, 0, 0]}`.
+ */
+export function polygon(profile: Profile, options: GeometryOptions = {}): Geometry {
+  let pts = normalizeProfile(profile)
+  let { minX, maxY, w, h } = profileBounds(pts)
+  let px = pts.map((p) => p.x)
+  let py = pts.map((p) => p.y)
+  let verts: number[] = []
+  for (let p of pts) {
+    verts.push(p.x, p.y, 0, 0, 0, 1, (p.x - minX) / w, (maxY - p.y) / h)
+  }
+  return packGeometry(verts, earClip(px, py), options)
 }
 
 /**
@@ -348,7 +367,7 @@ export function sweep(profile: Profile, path: SweepPath, options: GeometryOption
   let verts: number[] = []
   let indices: number[] = []
   let emitRing = (pos: Vec3[], normals: Vec3[], v: number): number => {
-    let base = verts.length / STANDARD_FLOATS
+    let base = verts.length / BASE_FLOATS
     for (let k = 0; k < entries.length; k++) {
       let q = pos[k]!
       let m = normals[k]!

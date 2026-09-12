@@ -6,10 +6,10 @@
 // the base color and dark wherever the sky is; the dielectric row keeps
 // its diffuse color and shows the sky as a faint gloss, a mirror highlight
 // at the left that widens to the right and brightens toward every
-// silhouette; the rows between blend the two. standard takes lit's base,
+// silhouette; the rows between blend the two. standard takes phong's base,
 // maps, cutout, shadow, emissive and fog options - only the Blinn-Phong
 // knobs are gone, replaced by metalness/roughness and their packed maps.
-// Light intensities read as lit's: 1 lights a white matte surface to 1.
+// Light intensities read as phong's: 1 lights a white matte surface to 1.
 // Drag to look around.
 
 import { createInputMap, createPointerFeed, gamepad, pct, render } from "@solidrt/core"

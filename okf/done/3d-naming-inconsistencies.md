@@ -2,6 +2,7 @@
 title: Four names in the 3d public surface say the wrong thing
 description: shape() wears Three's name for the INPUT class on a geometry output, MAX_SHADOWS is the light cap rather than the shadow budget it names, the lit/standard pair mixes two engine vocabularies with URP's meaning of Lit inverted, and "standard" names both a vertex layout and the PBR material on axes that never correlate; each is a rename with no compat constraint.
 created: 2026-09-11
+completed: 2026-09-11
 ---
 
 # Four names in the 3d public surface say the wrong thing
@@ -115,3 +116,30 @@ alone.
 Each rename carries the standing gate from `packages/3d/CLAUDE.md`: the
 Three/Godot/Unity comparison in the proposal. There is no compat
 constraint, so all four are mechanical once named.
+
+## Outcome
+
+All four renamed on 2026-09-11, no compat shims:
+
+1. `shape()` is `polygon(profile, options?)`, living in `sweep.ts` with the
+   other profile consumers; `profile.ts` is outline vocabulary only. It
+   also stops colliding with the spatial core's picking "shape"
+   (`ShapeId`/`setShape`), which both trees use.
+2. `MAX_SHADOWS` is gone. The root exports `MAX_LIGHTS`, `MAX_SHADOW_MAPS`
+   and `MAX_CASCADES` straight from `glsl.ts`, the same three the `/glsl`
+   subpath already had.
+3. `lit()` is `phong()`, `PhongOptions`; `/glsl`'s `litFragment` is
+   `phongFragment`. `LitOptions` survives as the shared lineage base
+   (`PhongOptions` and `StandardOptions` both extend it), as do
+   `litVertex`, `litShadowFragment`, `LIT_VERTEX*` and `LitSourceOptions`:
+   "lit" now means only "reads the scene's lights", the umbrella `unlit`
+   already implied. Three-way: `unlit` (Unity Unlit, Godot Unshaded) and
+   `standard` (all three) converge and stay; for Blinn-Phong Three says
+   `MeshPhongMaterial`, URP `Simple Lit`, Godot nothing, so `phong` names
+   the model and the parity consumer with no engine reading it inverted.
+   `examples/lit.tsx` is `examples/phong.tsx`.
+4. The `"standard"` vertex layout is `"base"` (`VERTEX_LAYOUTS.base`,
+   `BASE_FLOATS`): `"colored"` and `"skinned"` are literally the base list
+   plus channels, and "base" carries no material meaning in any engine
+   (unlike "basic", Three's unlit). The name is serialized in `.srtm`, so
+   the container is version 9; no `.srtm` is checked in.

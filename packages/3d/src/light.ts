@@ -2,7 +2,7 @@
 // hemisphere ambient, their constructors and the setLight write path.
 // Scene reactions go through the node's SceneHooks (node.ts).
 
-import { MAX_CASCADES, MAX_LIGHTS } from "./glsl.ts"
+import { MAX_CASCADES } from "./glsl.ts"
 import type { Vec3 } from "./math.ts"
 import { makeNode } from "./node.ts"
 import type { SceneNode } from "./node.ts"
@@ -204,13 +204,12 @@ export type PointLightOptions = {
 }
 export type HemisphereLightOptions = { sky?: Vec3; ground?: Vec3; intensity?: number }
 
-/** Every light may cast; the real bound is the shadow-slot budget
- * (MAX_SHADOW_MAPS: a directional light claims `shadow.cascades` slots,
- * a point light six, a spot one, and a caster past the budget throws at
- * attach). Every map is a tile of the scene's one shadow atlas, so the
- * pass count never follows the caster count, the fill does. */
-export const MAX_SHADOWS = MAX_LIGHTS
-export { MAX_CASCADES }
+// Every light may cast; the bound is the shadow-slot budget
+// (MAX_SHADOW_MAPS in glsl.ts, exported from the root with MAX_LIGHTS and
+// MAX_CASCADES: a directional light claims `shadow.cascades` slots, a
+// point light six, a spot one). Every map is a tile of the scene's one
+// shadow atlas, so the pass count never follows the caster count, the
+// fill does.
 
 // The spot cone bounds: a half-angle in (0, 90] degrees, penumbra a
 // 0..1 fraction of it.

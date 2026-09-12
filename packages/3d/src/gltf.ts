@@ -5,7 +5,7 @@
 // generated when absent, per the spec, for triangles), one UV set and
 // indices in the primitive's topology (strips and fans unrolled to
 // triangle lists, a line loop closed into a strip; lines and points keep
-// theirs on the geometry), and materials reduced to what lit()/unlit()
+// theirs on the geometry), and materials reduced to what phong()/unlit()
 // draw - base color
 // factor and texture, normal map (with scale), emissive factor and map
 // (KHR_materials_emissive_strength as the intensity), double-sidedness, alpha
@@ -41,11 +41,11 @@ import type { AttributeAccess, MorphTarget, VertexLayout } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Topology, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
 
-/** What lit()/unlit() take from a glTF material. */
+/** What phong()/unlit() take from a glTF material. */
 export type ModelMaterial = {
   name: string
   /** Straight [r, g, b, a] 0..1: glTF's LINEAR baseColorFactor encoded
-   * to sRGB, what lit({ color }) takes. */
+   * to sRGB, what phong({ color }) takes. */
   color: [number, number, number, number]
   /** Index into ModelData.images (the base color texture), or null. */
   map: number | null
@@ -64,9 +64,9 @@ export type ModelMaterial = {
   /** glTF normalTexture.scale (default 1); meaningful with normalMap. */
   normalScale: number
   /** glTF's linear emissiveFactor (default [0, 0, 0] = off) encoded to
-   * sRGB, what lit({ emissive }) takes. */
+   * sRGB, what phong({ emissive }) takes. */
   emissive: [number, number, number]
-  /** KHR_materials_emissive_strength (default 1): lit's emissiveIntensity. */
+  /** KHR_materials_emissive_strength (default 1): phong's emissiveIntensity. */
   emissiveIntensity: number
   /** Index into ModelData.images (the emissive map), or null. */
   emissiveMap: number | null
@@ -114,16 +114,16 @@ export type ModelPart = {
    * this part (unused for placement when `skin` is set). */
   node: number
   /** Index into ModelData.skins, or null. A skinned part's geometry has
-   * the "skinned" layout (aJoints/aWeights after the standard prefix). */
+   * the "skinned" layout (aJoints/aWeights after the base prefix). */
   skin: number | null
-  /** The part's vertices and indices. The layout is the standard prefix,
+  /** The part's vertices and indices. The layout is the base prefix,
    * aJoints/aWeights for a rigged primitive, aColor for one with COLOR_0
    * (premultiplied linear), each channel in the file's own format when
    * the vertex vocabulary has it (a quantized uv, a byte color, u8/u16
    * joints) and float otherwise - except joints, an integer channel:
    * an off-spec float JOINTS_0 lands in uint16x4. Positions and normals
    * are always float.
-   * The preset name ("standard", "colored", "skinned") is used when the
+   * The preset name ("base", "colored", "skinned") is used when the
    * list equals it. */
   geometry: Geometry
   /** Index into ModelData.materials. */
@@ -279,11 +279,11 @@ function channelFormat(format: VertexFormat | null, elements: number): VertexFor
 }
 
 // A part's layout as the preset it equals, else its list: what the
-// container writes and what the presets' docs promise ("standard",
+// container writes and what the presets' docs promise ("base",
 // "colored", "skinned" when the file carried floats).
 function presetOrList(attrs: VertexAttribute[]): VertexLayout | undefined {
   let key = layoutKey(attrs)
-  if (key === layoutKey("standard")) return undefined
+  if (key === layoutKey("base")) return undefined
   if (key === layoutKey("colored")) return "colored"
   if (key === layoutKey("skinned")) return "skinned"
   return attrs
@@ -548,7 +548,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       joints = j
       weights = w
     }
-    // The layout the vertices are written in: the standard prefix (a
+    // The layout the vertices are written in: the base prefix (a
     // position is always float; a uv keeps a quantized form), the skin
     // channels for a skinned primitive in the file's own integer forms
     // (joints feed an integer `in`, so a float JOINTS_0 narrows to u16),

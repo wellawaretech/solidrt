@@ -1,6 +1,6 @@
 ---
 title: Video playback
-description: One decode-to-YUV pipeline on every platform (software decoders on desktop, MediaCodec buffer mode on Android), planar YUV textures + shader conversion in alloy, player core in forge, no video primitive - texture/d-texture display the player's texture id. Fluency target is the Philips MT5891 TV; punch-through rejected. Probed 2026-08-12: the MTK decoder emits honest NV12 in buffer mode at 3x realtime for 1080p; the AImageReader fallback tap is unsupported on the device (not needed).
+description: One decode-to-YUV pipeline on every platform, the platform's own decoder everywhere (MediaCodec buffer mode on Android; no software codec bundled), planar YUV textures + shader conversion in alloy, player core in forge, no video primitive - texture/d-texture display the player's texture id. Fluency target is the Philips MT5891 TV; punch-through rejected. Measured there 2026-09-12: 360p50 frame-for-frame on the vsync grid, 720p25 nearly so, 1080p25 over budget; audio-clocked selection drops ~10% of frames at every resolution.
 created: 2026-08-12
 ---
 
@@ -10,10 +10,20 @@ Designed 2026-08-12 in discussion; decisions below are settled, the module
 internals wait on one on-device probe.
 
 Build gate (2026-08-16): the whole stack is opt-in behind the `video` cargo
-feature (forge owns it, flux and lattice pass through; `video-timeline-pacing`
-implies it). A default build carries no decoder, no `flux:video` module, no
-`video` capability, and `@solidrt/core` exposes no `/video` subpath. Enable
-with `--features video` while the work is incomplete.
+feature (forge owns it, flux and lattice pass through). A default build
+carries no decoder, no `flux:video` module and no `video` capability. Enable
+with `--features video` while the work is incomplete, or `VIDEO=1` on any
+lattice make goal (2026-09-12); dist builds force it off.
+
+No software decoder ships at all (2026-09-12, user decision): openh264 is
+removed - dependency, `h264.rs` and its tests. H.264 decode is the
+platform's, so its licensing is the vendor's, and a platform whose rung has
+not landed fails `openVideo` outright ("no video decoder on this platform
+yet") rather than playing nothing. Android is the only implemented rung, so
+desktop video is currently open-and-error; the player tests cover the
+selection logic through a `pub(crate) open_with(path, factory)` seam with a
+stub decoder, since platform decoder handles are not `Send` and the factory
+is what crosses to the worker thread.
 
 ## Goal and scope
 
@@ -238,6 +248,10 @@ plus "pump"/"cadence" debug commands):
   model) and presents duplicate content, shoving the next real frame a
   slot late. Invisible to the SF census (latch grid stays 20ms) and to
   position sampling (records a 0-step); visible to the eye.
+- SUPERSEDED 2026-09-12 by the session above: shipped unconditionally, the
+  flag deleted, and the residual hitch not reproducible. The next step in
+  this chain is item (3), audio-clock smoothing, now measured at ~10% of
+  frames.
 - Next steps, in order: (1) alloy idle-tick gate - no idle tick while a
   standing frame request is in flight (suspect: race between the JS
   executor's request_frame and the loop's idle decision; alloy app.rs /
@@ -315,6 +329,106 @@ that outlive video.
    quantized clock (item 2 of the list above) and audio-clock smoothing
    (item 3). Both keep their places; the point of the reordering is that
    neither can be evaluated honestly until the ledger exists.
+
+## 2026-09-12: measured on the TV after the summer's frame-pacing work
+
+Re-enabled and re-measured end to end on the TPM171E. What changed since
+August: the base frame-loop latency the August probe found (~27 ms
+independent of resolution) is GONE - the 360p case now holds the vsync grid
+exactly - and the residual ~1/s hitch that kept the frame scheduling behind
+a feature flag could not be found at all.
+
+Facts the session established, in the order they matter:
+
+- **The panel is 49.9942 Hz, not 50.** Measured by stitching overlapping
+  SurfaceFlinger latency censuses into one continuous series: 4546 presents
+  over 91.16 s, single-period intervals averaging 20.00231 ms. A 50.000 fps
+  clip therefore cannot be shown 1:1 indefinitely - one repeated frame every
+  ~172 s is arithmetic, not a fault. Separately, ~5 of those 4545 intervals
+  were longer than one period: one genuinely missed present per ~18 s.
+- **360p50 is fluent, provably.** 125 of 125 present intervals at exactly
+  one refresh period (19.6-20.4 ms), video position stepping exactly 20 ms
+  on 1481 of 1496 ticks.
+- **The frame scheduling is no longer optional.** A/B build with and
+  without what was `video-timeline-pacing`, both with a standing frame
+  request held: 0.07% of content steps held or double-stepped with it,
+  2.8% without. Neutral at 1080p, where the limiter is elsewhere. The
+  feature flag is deleted and the behavior is the only behavior
+  (2026-09-12).
+- **Audio-clocked streams drop ~10% of frames, at every resolution.** The
+  same 1080p content, same raster load, differing only in whether it has an
+  audio track: 22.9 of 25 frames delivered with audio (54-62 frames dropped
+  outright per run), 25.0 of 25 silent (2 dropped). The sink position is
+  the master clock and it quantizes in audio-callback chunks, so selection
+  sees the clock jump a chunk and skips the frame it stepped over. This is
+  stage 3 of the frame-scheduling list below, and it is now the single
+  biggest quality item in the pipeline.
+- **720p is fluent; 1080p is not.** Silent 720p: 124 of 126 present
+  intervals at exactly one period, 49.2 presents a second, all 25 frames a
+  second delivered, content stepping an even 40 ms. That is the target
+  reached for this panel. Silent 1080p: 101 of 125 single, 23 double, 41.7
+  a second - every frame delivered, but shown for uneven durations.
+- **1080p does not fit the TV's frame budget; 720p does.** Per loop
+  iteration at 1080p: window draw 11 ms + present 4.5 ms + ~10 ms of
+  upload commands = ~26 ms against a 20 ms period, giving the uneven
+  1-vs-2-vsync cadence (97/26/3 at 20/40/60 ms, 40 presents/s). At 720p:
+  48.8 presents/s, 123 of 126 intervals single-period, missedPresents 0.
+  At 360p: 50.0/s, all single-period.
+- **The upload is no longer the bottleneck; the window draw is.** Staged
+  uploads cut the 1080p upload from 27.5 to 10.4 ms of raster thread (see
+  [[texture-upload-leases]] for the numbers), and the cadence did not
+  change - exactly as in August, when a 25% raster saving bought no frames.
+  The window draw costs 11-13.5 ms per frame whatever the video's
+  resolution, because a texture whose pixels change behind an unchanged id
+  produces no damage and the whole 1920x1080 window repaints for a 640x360
+  node: [[live-texture-content-damage]].
+
+### Present-on-upload: measured, and it costs more than it saves
+
+Tried the same session, because 25 fps content on a 50 Hz panel presents
+every frame twice and each duplicate pays a full window draw. Video asked
+for a frame only when it actually uploaded one and took its clock from idle
+ticks instead, which on the TV arrive at the refresh cadence with nothing
+demanding them (measured: 49.5 idle ticks a second against a static picture
+and no onFrame, while one frame a second is presented - note this is NOT
+true on desktop, see [[idle-onframe-tick-rate]]).
+
+It halves the presents exactly as intended (1080p: 43.4 -> 25.4 a second,
+every frame still delivered) and it looks worse. The presents land wherever
+the tick phase has walked to rather than on a grid: at 720p, 27 intervals
+of one period, 76 of two, 21 of three, with the ones and threes pairing up,
+against 124 of 126 on the grid for standing demand. A duplicate present is
+invisible; an early or late one is judder.
+
+So standing demand stays, and the efficiency is only available once frames
+are scheduled against a deadline ([[frame-driver-pacing-contract]] stage 2),
+which is what would hold the phase. Kept from the attempt: the timeline
+advance is now idempotent (alloy `PresentClock::on_present` counts whether a
+refresh period has actually passed instead of assuming one per call, capped
+at one so the GAIN convergence policy is unchanged). That was the August
+amendment's item 2, and the attempt showed why it matters - driving the
+clock from every frame signal had it running 10% fast at 55 calls a second
+on a 50 Hz panel.
+
+Two bugs fixed the same session, both in the player:
+
+- An MP4's audio track routinely ends a frame before its last video frame,
+  and with the sink position as master clock that frame was due at a time
+  the clock could never reach. It stayed staged forever: `finished()` never
+  went true, so the app held a standing frame request at 50 fps for a
+  picture that never changed, and nothing could loop or advance to a next
+  clip. `advance` now learns end of stream while a frame is still in hand
+  (a staging queue of two, so a receive can always be attempted) and
+  releases the tail one frame per call once the clock has stopped moving
+  for ~200 ms.
+- Opening a player must never block on its decoder. Solid's keyed swap
+  builds the incoming branch before disposing the outgoing one, so two
+  players briefly coexist; on a device with few AVC instances the new
+  codec waits for one the old player has yet to release, and since
+  `build_player` runs on the JS thread - the same thread that has to close
+  that old player - a blocking construction deadlocks the app. It did, on
+  the TV. Decoder construction stays on the worker thread, and the Android
+  factory retries across the handover (10 attempts, 50 ms apart).
 
 ## Staging
 

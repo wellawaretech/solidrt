@@ -21,7 +21,7 @@ import {
   firstPersonActions,
   firstPersonBindings,
   HemisphereLight,
-  lit,
+  phong,
   Mesh,
   moveAndSlide,
   PerspectiveCamera,
@@ -88,11 +88,11 @@ function App() {
   let stopFall: (() => void) | null = null
   let pickups: MeshNode[] = []
 
-  let dim = lit({ color: [0.55, 0.45, 0.2] })
-  let bright = lit({ color: [1, 0.85, 0.3], specular: 0.8, shininess: 60 })
-  let ground = lit({ color: [0.48, 0.52, 0.46] })
-  let stone = lit({ color: [0.72, 0.7, 0.66] })
-  let brick = lit({ color: [0.6, 0.34, 0.28] })
+  let dim = phong({ color: [0.55, 0.45, 0.2] })
+  let bright = phong({ color: [1, 0.85, 0.3], specular: 0.8, shininess: 60 })
+  let ground = phong({ color: [0.48, 0.52, 0.46] })
+  let stone = phong({ color: [0.72, 0.7, 0.66] })
+  let brick = phong({ color: [0.6, 0.34, 0.28] })
 
   // Every move ends here: the walker's new eye, the ground state, and the
   // pickups in reach of its feet (an include-list query, so the level

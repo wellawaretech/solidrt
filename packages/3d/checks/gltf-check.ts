@@ -16,7 +16,7 @@ import { gltfExternalUris, isGlb, parseGltf } from "../src/gltf.ts"
 import type { ModelData } from "../src/gltf.ts"
 import { decodeModel, encodeModel } from "../src/model-file.ts"
 import { channelElements, sampleChannel } from "../src/clip.ts"
-import { box, geometryAttribute, geometryBounds, layoutKey, layoutStride, validateGeometry, vertexBytes, withAttribute, MORPH_ENTRY_TEXELS, MORPH_TEXEL_FLOATS, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import { box, geometryAttribute, geometryBounds, layoutKey, layoutStride, validateGeometry, vertexBytes, withAttribute, MORPH_ENTRY_TEXELS, MORPH_TEXEL_FLOATS, BASE_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
 import type { Geometry } from "../src/geometry.ts"
 import { linearToSrgb } from "../src/color.ts"
 
@@ -26,7 +26,7 @@ let fail = (msg: string): void => {
   console.log("FAIL:", msg)
 }
 let near = (a: number, b: number, eps = 1e-5): boolean => Math.abs(a - b) <= eps
-// The rigs here build standard all-float layouts, so the vertex bytes read
+// The rigs here build base all-float layouts, so the vertex bytes read
 // back as floats; the view type is not the geometry contract.
 let floats = (g: Geometry): Float32Array => new Float32Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength / Float32Array.BYTES_PER_ELEMENT)
 let nearAll = (a: ArrayLike<number>, b: number[]): boolean => a.length === b.length && b.every((v, i) => near(a[i]!, v))
@@ -42,12 +42,12 @@ let throws = (label: string, fn: () => unknown, needle?: string): void => {
 // --- a glb from the box generator ---------------------------------------
 
 let cube = box({ width: 1, height: 1, depth: 1 })
-let vertexCount = floats(cube).length / STANDARD_FLOATS
+let vertexCount = floats(cube).length / BASE_FLOATS
 let positions = new Float32Array(vertexCount * 3)
 let normals = new Float32Array(vertexCount * 3)
 let uvs = new Float32Array(vertexCount * 2)
 for (let i = 0; i < vertexCount; i++) {
-  let at = i * STANDARD_FLOATS
+  let at = i * BASE_FLOATS
   positions.set(floats(cube).subarray(at, at + 3), i * 3)
   normals.set(floats(cube).subarray(at + 3, at + 6), i * 3)
   uvs.set(floats(cube).subarray(at + 6, at + 8), i * 2)
@@ -350,7 +350,7 @@ if (gltfExternalUris(file).length !== 0) fail("gltfExternalUris: a self-containe
   let wires = geometryOf("wires")
   if (wires.topology !== "lines") fail(`wires topology: ${String(wires.topology)}`)
   if (wires.indices.join() !== cube.indices.join()) fail("wires: indices changed")
-  if (floats(wires).length !== vertexCount * STANDARD_FLOATS) fail("wires: un-indexed, the flat-shading path ran on lines")
+  if (floats(wires).length !== vertexCount * BASE_FLOATS) fail("wires: un-indexed, the flat-shading path ran on lines")
   if (floats(wires)[3] !== 0 || floats(wires)[4] !== 0 || floats(wires)[5] !== 0) fail("wires: normals are not zero")
   if (geometryOf("dots").topology !== "points") fail("dots topology")
   let strip = geometryOf("strip")
@@ -406,9 +406,9 @@ if (vertexBytes(skinny.vertices).byteLength !== vertexCount * skinnedStride) {
   fail(`skinny stride: ${vertexBytes(skinny.vertices).byteLength / vertexCount} bytes per vertex, expected ${skinnedStride}`)
 }
 for (let i = 0; i < vertexCount; i++) {
-  let standard = [...read(skinny, "aPos", i), ...read(skinny, "aNormal", i), ...read(skinny, "aUV", i)]
-  if (!nearAll(standard, Array.from(floats(cube).subarray(i * STANDARD_FLOATS, (i + 1) * STANDARD_FLOATS)))) {
-    fail(`skinny: vertex ${i} standard prefix differs (node transform baked?)`)
+  let base = [...read(skinny, "aPos", i), ...read(skinny, "aNormal", i), ...read(skinny, "aUV", i)]
+  if (!nearAll(base, Array.from(floats(cube).subarray(i * BASE_FLOATS, (i + 1) * BASE_FLOATS)))) {
+    fail(`skinny: vertex ${i} base prefix differs (node transform baked?)`)
   }
   if (!nearAll(read(skinny, "aJoints", i), [0, 1, 0, 0])) fail(`skinny: vertex ${i} joints ${read(skinny, "aJoints", i)}`)
   if (!nearAll(read(skinny, "aWeights", i), [0.6, 0.4, 0, 0])) fail(`skinny: vertex ${i} weights not renormalized: ${read(skinny, "aWeights", i)}`)
@@ -437,7 +437,7 @@ if (!near(flatNode.scale[0], 1) || !near(flatNode.scale[1], 1) || !near(flatNode
 // untranslated - the node carries the placement.
 let shifted = model.parts[0]!.geometry
 if (floats(shifted).length !== floats(cube).length) fail("shifted: vertex count changed")
-for (let i = 0; i < vertexCount * STANDARD_FLOATS; i++) {
+for (let i = 0; i < vertexCount * BASE_FLOATS; i++) {
   if (!near(floats(shifted)[i]!, floats(cube)[i]!)) {
     fail(`shifted: vertex float ${i} = ${floats(shifted)[i]}, expected ${floats(cube)[i]} (local, unbaked)`)
     break
@@ -450,7 +450,7 @@ if (shifted.indices.join() !== cube.indices.join()) fail("shifted: indices chang
 let windingAgrees = (g: Geometry): boolean => {
   let v = floats(g)
   for (let t = 0; t < g.indices.length; t += 3) {
-    let a = g.indices[t]! * STANDARD_FLOATS, b = g.indices[t + 1]! * STANDARD_FLOATS, c = g.indices[t + 2]! * STANDARD_FLOATS
+    let a = g.indices[t]! * BASE_FLOATS, b = g.indices[t + 1]! * BASE_FLOATS, c = g.indices[t + 2]! * BASE_FLOATS
     let abx = v[b]! - v[a]!, aby = v[b + 1]! - v[a + 1]!, abz = v[b + 2]! - v[a + 2]!
     let acx = v[c]! - v[a]!, acy = v[c + 1]! - v[a + 1]!, acz = v[c + 2]! - v[a + 2]!
     let nx = aby * acz - abz * acy, ny = abz * acx - abx * acz, nz = abx * acy - aby * acx
@@ -467,7 +467,7 @@ if (!windingAgrees(shifted)) fail("shifted: winding disagrees with normals")
 // normals - the node's mirroring transform turns both right at render.
 if (windingAgrees(mirrored)) fail("mirrored: winding was not flipped under the mirroring transform")
 for (let i = 0; i < vertexCount; i++) {
-  let at = i * STANDARD_FLOATS
+  let at = i * BASE_FLOATS
   if (!near(floats(mirrored)[at]!, floats(cube)[at]!) || !near(floats(mirrored)[at + 3]!, floats(cube)[at + 3]!)) {
     fail(`mirrored: vertex ${i} x/nx not local (baked?)`)
     break
@@ -479,14 +479,14 @@ if (mirrored.indices.join() !== flippedIndices.join()) fail("mirrored: indices a
 
 let flat = model.parts[2]!.geometry
 let triangles = cube.indices.length / 3
-if (floats(flat).length !== triangles * 3 * STANDARD_FLOATS) fail(`flat: ${floats(flat).length / STANDARD_FLOATS} vertices, expected ${triangles * 3} (un-indexed)`)
+if (floats(flat).length !== triangles * 3 * BASE_FLOATS) fail(`flat: ${floats(flat).length / BASE_FLOATS} vertices, expected ${triangles * 3} (un-indexed)`)
 if (!windingAgrees(flat)) fail("flat: generated normals disagree with winding")
 for (let t = 0; t < triangles; t++) {
-  let a = t * 3 * STANDARD_FLOATS
+  let a = t * 3 * BASE_FLOATS
   let len = Math.hypot(floats(flat)[a + 3]!, floats(flat)[a + 4]!, floats(flat)[a + 5]!)
   if (!near(len, 1)) fail(`flat: triangle ${t} normal length ${len}`)
   for (let k = 1; k < 3; k++) {
-    let b = a + k * STANDARD_FLOATS
+    let b = a + k * BASE_FLOATS
     if (!near(floats(flat)[a + 3]!, floats(flat)[b + 3]!) || !near(floats(flat)[a + 4]!, floats(flat)[b + 4]!) || !near(floats(flat)[a + 5]!, floats(flat)[b + 5]!)) {
       fail(`flat: triangle ${t} corners disagree on the normal`)
       break
@@ -496,7 +496,7 @@ for (let t = 0; t < triangles; t++) {
 // Local flat normals of an axis-aligned cube are axis-aligned - the
 // node's rotation is NOT baked in.
 for (let t = 0; t < triangles; t++) {
-  let a = t * 3 * STANDARD_FLOATS
+  let a = t * 3 * BASE_FLOATS
   let axisAligned = [3, 4, 5].filter((k) => near(Math.abs(floats(flat)[a + k]!), 1)).length === 1
   if (!axisAligned) fail(`flat: triangle ${t} normal is not axis aligned in local space`)
 }
@@ -684,14 +684,14 @@ throws("unknown required extension", () => parseGltf(glb(unknownExt, binBlocks, 
   for (let part of painted.parts) validateGeometry(part.geometry)
   if (painted.parts.length !== 2) fail(`painted parts: ${painted.parts.length}`)
   let flat = painted.parts[0]!.geometry
-  let paintedKey = layoutKey([...VERTEX_LAYOUTS.standard, { name: "aColor", format: "unorm8x4" }])
+  let paintedKey = layoutKey([...VERTEX_LAYOUTS.base, { name: "aColor", format: "unorm8x4" }])
   if (layoutKey(flat.layout) !== paintedKey) fail(`painted layout: ${layoutKey(flat.layout)}`)
   if (!(flat.vertices instanceof Uint8Array)) fail("painted: a packed layout is bytes")
   if (!nearAll(read(flat, "aColor", 0), [half, 0, 0, half])) fail(`painted color: ${read(flat, "aColor", 0)}`)
   if (flat.vertices.byteLength !== vertexCount * layoutStride(flat.layout) || layoutStride(flat.layout) !== 36) fail(`painted stride: ${layoutStride(flat.layout)}`)
-  if (!near(read(flat, "aUV", 1)[0]!, floats(cube)[STANDARD_FLOATS + 6]!)) fail("painted: the standard prefix shifted")
+  if (!near(read(flat, "aUV", 1)[0]!, floats(cube)[BASE_FLOATS + 6]!)) fail("painted: the base prefix shifted")
   let rig = painted.parts[1]!.geometry
-  let want = layoutKey([...VERTEX_LAYOUTS.standard, { name: "aJoints", format: "uint8x4" }, { name: "aWeights", format: "unorm8x4" }, { name: "aColor", format: "unorm8x4" }])
+  let want = layoutKey([...VERTEX_LAYOUTS.base, { name: "aJoints", format: "uint8x4" }, { name: "aWeights", format: "unorm8x4" }, { name: "aColor", format: "unorm8x4" }])
   if (layoutKey(rig.layout) !== want) fail(`paintedskin layout: ${layoutKey(rig.layout)}`)
   if (!nearAll(read(rig, "aColor", 0), [half, 0, 0, half])) fail("paintedskin color")
   if (!nearAll(read(rig, "aJoints", 0), [0, 1, 0, 0])) fail(`paintedskin joints: ${read(rig, "aJoints", 0)}`)

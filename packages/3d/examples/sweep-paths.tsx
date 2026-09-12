@@ -3,11 +3,11 @@
 // over the crate's edges like real webbing - while smooth-tagged points
 // share averaged normals, so the helix sweeps into ONE continuous coil
 // (per-segment boxes with unmitred gaps are exactly what this replaces).
-// tube() is the round-profile shorthand. lit() materials on purpose:
+// tube() is the round-profile shorthand. phong() materials on purpose:
 // creased vs smooth joints differ only in normals, which unlit color
 // would hide.
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
-import { box, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, roundRect, Scene, sweep, tube, unlit } from "@solidrt/3d"
+import { box, DirectionalLight, Group, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, roundRect, Scene, sweep, tube, unlit } from "@solidrt/3d"
 import type { SweepPath } from "@solidrt/3d"
 
 function App() {
@@ -48,9 +48,9 @@ function App() {
             rotation={[-Math.PI / 2, 0, 0]}
           />
           <Group rotation={[0, spin(), 0]}>
-            <Mesh geometry={box({ width: 1, height: 0.6, depth: 0.8 })} material={lit({ color: [0.55, 0.42, 0.28] })} position={[-0.8, 0.3, 0]} />
-            <Mesh geometry={strap} material={lit({ color: [0.9, 0.55, 0.2] })} />
-            <Mesh geometry={coil} material={lit({ color: [0.45, 0.6, 0.8] })} />
+            <Mesh geometry={box({ width: 1, height: 0.6, depth: 0.8 })} material={phong({ color: [0.55, 0.42, 0.28] })} position={[-0.8, 0.3, 0]} />
+            <Mesh geometry={strap} material={phong({ color: [0.9, 0.55, 0.2] })} />
+            <Mesh geometry={coil} material={phong({ color: [0.45, 0.6, 0.8] })} />
           </Group>
         </Scene>
       </view>

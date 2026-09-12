@@ -20,7 +20,7 @@
 // (`examples/fog.tsx` is the fog tour).
 import { createSignal, flush, onFrame, pct, render } from "@solidrt/core"
 import { registerDebug } from "srt:dev"
-import { box, DirectionalLight, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, sphere } from "@solidrt/3d"
+import { box, DirectionalLight, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene, sphere } from "@solidrt/3d"
 import type { Geometry, Vec3 } from "@solidrt/3d"
 
 const FIELD = 260
@@ -90,9 +90,9 @@ function App() {
     return [Math.sin(a) * RADIUS, 1.5, Math.cos(a) * RADIUS]
   }
 
-  let ground = lit({ color: [0.5, 0.55, 0.45] })
-  let stone = lit({ color: [0.75, 0.7, 0.62] })
-  let ball = lit({ color: [0.85, 0.35, 0.3], specular: 0.4, shininess: 30 })
+  let ground = phong({ color: [0.5, 0.55, 0.45] })
+  let stone = phong({ color: [0.75, 0.7, 0.62] })
+  let ball = phong({ color: [0.85, 0.35, 0.3], specular: 0.4, shininess: 30 })
 
   return (
     <window>

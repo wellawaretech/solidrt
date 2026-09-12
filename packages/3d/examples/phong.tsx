@@ -1,4 +1,4 @@
-// The lit material and the scene's lights. lit() is the standard look -
+// The Blinn-Phong material and the scene's lights. phong() is the stock lit look -
 // hemisphere ambient, the scene's directional lights, Lambert diffuse,
 // optional Blinn-Phong highlight - with the same color/map/transparent
 // options as unlit. Lights are NODES: <HemisphereLight> plus up to four
@@ -8,11 +8,11 @@
 // uniform write. The three boxes share one checker map: the
 // UV-mapped one stretches it per face (every generator emits 0..1 UVs),
 // the two triplanar ones tile it at one world density whatever their
-// size - the reason triplanar is an option on lit.
+// size - the reason triplanar is an option on phong.
 
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { createTexture } from "@solidrt/core/gpu"
-import { box, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, Scene, sphere, torusKnot, plane } from "@solidrt/3d"
+import { box, DirectionalLight, Group, HemisphereLight, phong, Mesh, PerspectiveCamera, Scene, sphere, torusKnot, plane } from "@solidrt/3d"
 
 function checker(): ReturnType<typeof createTexture> {
   let n = 64
@@ -31,16 +31,16 @@ function App() {
   onFrame(tick => setT(tick / 1000))
 
   let map = checker()
-  let uvMapped = lit({ map })
-  let tiled = lit({ map, triplanar: 2 })
-  let glossy = lit({ color: [0.85, 0.3, 0.25], specular: 0.6, shininess: 60 })
-  let matte = lit({ color: [0.3, 0.55, 0.85] })
-  let glass = lit({ color: [0.9, 0.95, 1, 0.35], specular: 1, shininess: 120, transparent: true })
+  let uvMapped = phong({ map })
+  let tiled = phong({ map, triplanar: 2 })
+  let glossy = phong({ color: [0.85, 0.3, 0.25], specular: 0.6, shininess: 60 })
+  let matte = phong({ color: [0.3, 0.55, 0.85] })
+  let glass = phong({ color: [0.9, 0.95, 1, 0.35], specular: 1, shininess: 120, transparent: true })
 
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.07, 0.07, 0.1, 1]} samples={4} label="lit">
+        <Scene clearColor={[0.07, 0.07, 0.1, 1]} samples={4} label="phong">
           <PerspectiveCamera fov={50} position={[0, 2.6, 5]} lookAt={[0, 0.4, 0]} />
           <HemisphereLight sky={[0.35, 0.38, 0.45]} ground={[0.12, 0.1, 0.08]} />
           <Group rotation={[0, t(), 0]}>

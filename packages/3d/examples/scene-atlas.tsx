@@ -12,7 +12,7 @@
 
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { createDrawTarget, createShaderTexture } from "@solidrt/core/gpu"
-import { box, bufferFormat, cone, DirectionalLight, Group, HemisphereLight, lit, Mesh, plane, resolveParams, Scene, sphere, View3d } from "@solidrt/3d"
+import { box, bufferFormat, cone, DirectionalLight, Group, HemisphereLight, phong, Mesh, plane, resolveParams, Scene, sphere, View3d } from "@solidrt/3d"
 import { resolveFragment } from "@solidrt/3d/glsl"
 
 // The atlas: two by two tiles.
@@ -52,11 +52,11 @@ function App() {
         <Scene width={TILE_W} height={TILE_H} layers={0} label="atlas-scene" output={() => <texture src={resolved} width={ATLAS_W} height={ATLAS_H} />}>
           <HemisphereLight sky={[0.6, 0.7, 0.9]} ground={[0.25, 0.2, 0.15]} intensity={0.7} />
           <DirectionalLight direction={[-1, -2, -1]} intensity={1.2} />
-          <Mesh geometry={floor} material={lit({ color: [0.55, 0.55, 0.5] })} rotation={[-Math.PI / 2, 0, 0]} />
+          <Mesh geometry={floor} material={phong({ color: [0.55, 0.55, 0.5] })} rotation={[-Math.PI / 2, 0, 0]} />
           <Group rotation={[0, spin(), 0]}>
-            <Mesh geometry={box()} material={lit({ color: [0.85, 0.3, 0.3] })} position={[1.2, 0.5, 0]} />
-            <Mesh geometry={sphere({ radius: 0.5 })} material={lit({ color: [0.3, 0.6, 0.9], specular: 0.5, shininess: 40 })} position={[-1.2, 0.5, 0]} />
-            <Mesh geometry={cone({ radius: 0.5, height: 1.2 })} material={lit({ color: [0.9, 0.8, 0.3] })} position={[0, 0.6, 1.4]} />
+            <Mesh geometry={box()} material={phong({ color: [0.85, 0.3, 0.3] })} position={[1.2, 0.5, 0]} />
+            <Mesh geometry={sphere({ radius: 0.5 })} material={phong({ color: [0.3, 0.6, 0.9], specular: 0.5, shininess: 40 })} position={[-1.2, 0.5, 0]} />
+            <Mesh geometry={cone({ radius: 0.5, height: 1.2 })} material={phong({ color: [0.9, 0.8, 0.3] })} position={[0, 0.6, 1.4]} />
           </Group>
           {tiles.map(t => (
             <View3d width={TILE_W} height={TILE_H} into={atlas} x={t.x} y={t.y} clearColor={CLEAR} camera={t.camera} output={() => null} />

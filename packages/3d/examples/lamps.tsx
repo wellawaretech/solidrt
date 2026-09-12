@@ -22,7 +22,7 @@
 // intensity ~40 for a bright pool, not ~2. `distance` then windows the
 // falloff to zero so the pool ends instead of trailing off forever.
 import { onFrame, pct, render } from "@solidrt/core"
-import { box, cylinder, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, PointLight, Scene, setTransform, SpotLight, torusKnot } from "@solidrt/3d"
+import { box, cylinder, Group, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, PointLight, Scene, setTransform, SpotLight, torusKnot } from "@solidrt/3d"
 import type { SceneNode } from "@solidrt/3d"
 
 function App() {
@@ -35,9 +35,9 @@ function App() {
     setTransform(orbit, { rotation: [0, tick / 1500, 0] })
   })
 
-  let ground = lit({ color: [0.6, 0.6, 0.62] })
-  let crate = lit({ color: [0.7, 0.55, 0.4] })
-  let gold = lit({ color: [0.9, 0.75, 0.3], specular: 0.6, shininess: 50 })
+  let ground = phong({ color: [0.6, 0.6, 0.62] })
+  let crate = phong({ color: [0.7, 0.55, 0.4] })
+  let gold = phong({ color: [0.9, 0.75, 0.3], specular: 0.6, shininess: 50 })
 
   return (
     <window>

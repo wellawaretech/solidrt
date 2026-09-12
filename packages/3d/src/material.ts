@@ -49,7 +49,7 @@ import {
   INSTANCE_COLOR_ATTRIBUTES,
   INSTANCE_MATRIX,
   INSTANCE_MATRIX_ATTRIBUTES,
-  litFragment,
+  phongFragment,
   litShadowFragment,
   litVertex,
   SKIN_DECLS,
@@ -139,7 +139,7 @@ export type Material = {
 }
 
 // One shaderMaterialClass per unlit option combination (map x transparent
-// x cull x alphaTest), cached for the app's lifetime like lit's; one
+// x cull x alphaTest), cached for the app's lifetime like phong's; one
 // pipeline per vertex layout inside each.
 let unlitClasses = new Map<string, ShaderMaterialClass>()
 
@@ -309,11 +309,10 @@ export function unlit(opts: UnlitOptions = {}): Material {
   })
 }
 
+/** The options every lit material takes, `phong` and `standard` alike:
+ * unlit's plus the surface maps, emission, baked light and shadow
+ * receipt the light loop reads. */
 export type LitOptions = UnlitOptions & {
-  /** Blinn-Phong highlight strength, 0..1 (default 0: pure diffuse). */
-  specular?: number
-  /** Highlight tightness, wide sheen (~8) to mirror dot (~150); default 30. */
-  shininess?: number
   /** Sample `map` by WORLD position instead of UV - the value is the
    * texture repeats per world unit - blended across the three axis planes
    * by the normal. Tiles generated geometry at one density regardless of
@@ -348,21 +347,6 @@ export type LitOptions = UnlitOptions & {
    * nitro glow baked into one map. Sampled at the same uv as `map`;
    * create it with `format: "rgba8-srgb"` like `map`. */
   emissiveMap?: TextureId
-  /** A texture whose RED channel scales `specular` per fragment (Three's
-   * specularMap) - chrome and rubber on one mesh. With it, `specular`
-   * defaults to 1 (the map is the strength). */
-  specularMap?: TextureId
-  /** Mirror the scene's environment (scene.setEnvironment), 0..1: the
-   * face-on reflection weight, rising to 1 at grazing angles (Schlick) -
-   * 1 is chrome, ~0.05 a glossy dielectric with rim reflections. The
-   * reflection blurs with `shininess` (a wide sheen reflects a blurred
-   * sky, a mirror dot a sharp one; the environment cube needs mipmaps
-   * for the blur) and `specularMap`'s red scales it like `specular`.
-   * Three's Phong `reflectivity` with MixOperation and a fresnel weight
-   * (Three's default MultiplyOperation tints instead; not offered). Off
-   * while the scene has no environment. Undefined declares no
-   * environment sampler at all. */
-  reflectivity?: number
   /** A baked-light texture (an offline render, an AO+GI bake), sampled by
    * the geometry's aUV2 channel and ADDED to the light sum like the
    * hemisphere term - a fully baked scene runs with no lights at all
@@ -387,8 +371,32 @@ export type LitOptions = UnlitOptions & {
   receiveShadow?: boolean
 }
 
-// The lit program is built by litFragment in ./glsl - the same builder an
-// app calls to get a lit material with its own GLSL in it, composed from
+/** `phong`'s options: the lit set plus the Blinn-Phong highlight and the
+ * environment mirror. */
+export type PhongOptions = LitOptions & {
+  /** Blinn-Phong highlight strength, 0..1 (default 0: pure diffuse). */
+  specular?: number
+  /** Highlight tightness, wide sheen (~8) to mirror dot (~150); default 30. */
+  shininess?: number
+  /** A texture whose RED channel scales `specular` per fragment (Three's
+   * specularMap) - chrome and rubber on one mesh. With it, `specular`
+   * defaults to 1 (the map is the strength). */
+  specularMap?: TextureId
+  /** Mirror the scene's environment (scene.setEnvironment), 0..1: the
+   * face-on reflection weight, rising to 1 at grazing angles (Schlick) -
+   * 1 is chrome, ~0.05 a glossy dielectric with rim reflections. The
+   * reflection blurs with `shininess` (a wide sheen reflects a blurred
+   * sky, a mirror dot a sharp one; the environment cube needs mipmaps
+   * for the blur) and `specularMap`'s red scales it like `specular`.
+   * Three's Phong `reflectivity` with MixOperation and a fresnel weight
+   * (Three's default MultiplyOperation tints instead; not offered). Off
+   * while the scene has no environment. Undefined declares no
+   * environment sampler at all. */
+  reflectivity?: number
+}
+
+// The phong program is built by phongFragment in ./glsl - the same builder an
+// app calls to get a Blinn-Phong material with its own GLSL in it, composed from
 // the same exported constants. What varies per flag: map x vertexColors x
 // triplanar x receiveShadow x transparent x blend x cull (a class that shows back
 // faces lights them with the normal flipped, else a double-sided leaf's
@@ -409,8 +417,8 @@ export type LitOptions = UnlitOptions & {
 // 0 means it does not cast; SHADOW_LOOKUP turns the index into the factor.
 // The option combination that picks a lit class: the class-cache key is
 // its values in this order, and the same object builds the program, so
-// the two cannot drift apart. `lit` fills no slot - an app that does
-// reaches for litFragment directly, and owns the class it builds.
+// the two cannot drift apart. `phong` fills no slot - an app that does
+// reaches for phongFragment directly, and owns the class it builds.
 type LitClass = {
   map: boolean
   vertexColors: boolean
@@ -437,19 +445,20 @@ type LitClass = {
 function litClassKey(c: LitClass): string {
   return Object.values(c).join("|")
 }
-let litClasses = new Map<string, ShaderMaterialClass>()
+let phongClasses = new Map<string, ShaderMaterialClass>()
 
 /**
- * A lit material: hemisphere ambient plus the scene's directional lights
- * (DirectionalLight nodes), Lambert diffuse, optional
- * Blinn-Phong highlight. Same options as unlit (color, map, transparent,
- * cull, alphaTest) plus vertexColors, specular/shininess and triplanar mapping. One program
- * per option combination, one pipeline per vertex layout met, shared by
- * every instance - a thousand lit meshes still share one pipeline. No
- * lights set means black except for the hemisphere term, which also
- * starts at zero: set at least one of the two.
+ * The Blinn-Phong material (Three's MeshPhongMaterial, Unity URP's Simple
+ * Lit; Godot has no Phong): hemisphere ambient plus the scene's lights,
+ * Lambert diffuse, optional Blinn-Phong highlight. Same options as unlit
+ * (color, map, transparent, cull, alphaTest) plus vertexColors,
+ * specular/shininess and triplanar mapping. One program per option
+ * combination, one pipeline per vertex layout met, shared by every
+ * instance - a thousand phong meshes still share one pipeline. No lights
+ * set means black except for the hemisphere term, which also starts at
+ * zero: set at least one of the two.
  */
-export function lit(opts: LitOptions = {}): Material {
+export function phong(opts: PhongOptions = {}): Material {
   let uColor = premultipliedColor(opts.color ?? [1, 1, 1])
   let map = opts.map !== undefined
   let triplanar = map && opts.triplanar !== undefined
@@ -463,12 +472,12 @@ export function lit(opts: LitOptions = {}): Material {
   let lightMap = opts.lightMap !== undefined
   let mapTransform = opts.mapTransform !== undefined
   if (env && !(Number.isFinite(opts.reflectivity) && opts.reflectivity! >= 0 && opts.reflectivity! <= 1)) {
-    throw new Error("lit: reflectivity must be a number in 0..1, got " + opts.reflectivity)
+    throw new Error("phong: reflectivity must be a number in 0..1, got " + opts.reflectivity)
   }
-  if (triplanar && normalMap) throw new Error("lit: normalMap cannot combine with triplanar (normal maps sample by uv)")
-  if (triplanar && mapTransform) throw new Error("lit: mapTransform cannot combine with triplanar (its repeat is the triplanar value)")
+  if (triplanar && normalMap) throw new Error("phong: normalMap cannot combine with triplanar (normal maps sample by uv)")
+  if (triplanar && mapTransform) throw new Error("phong: mapTransform cannot combine with triplanar (its repeat is the triplanar value)")
   if (mapTransform && !map && !normalMap && !emissiveMap && !specularMap) {
-    throw new Error("lit: mapTransform without a map to transform")
+    throw new Error("phong: mapTransform without a map to transform")
   }
   let flags: LitClass = {
     map,
@@ -493,20 +502,20 @@ export function lit(opts: LitOptions = {}): Material {
     morph: opts.morph === true,
   }
   let key = litClassKey(flags)
-  let cls = litClasses.get(key)
+  let cls = phongClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
       vertex: litVertex(flags),
-      fragment: litFragment(flags),
+      fragment: phongFragment(flags),
       shadowVertex: flags.instanced ? shadowDepthVertex(flags.skinned, true, flags.morph) : undefined,
       instanceBuffers: stockInstanceBuffers(flags.instanced, flags.instanceColors),
       instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
       blend: flags.blend,
       cull,
-      label: "scene-lit-" + key,
+      label: "scene-phong-" + key,
     })
-    litClasses.set(key, cls)
+    phongClasses.set(key, cls)
   }
   let params: ShaderParams = {
     uColor,
@@ -547,7 +556,8 @@ export function lit(opts: LitOptions = {}): Material {
   return material
 }
 
-export type StandardOptions = Omit<LitOptions, "specular" | "shininess" | "specularMap" | "reflectivity"> & {
+/** `standard`'s options: the lit set plus the metalness/roughness model. */
+export type StandardOptions = LitOptions & {
   /** How metallic the surface is, 0..1 (default 0; 1 when `metalnessMap`
    * is given - the map is the value): a metal has no diffuse and
    * reflects tinted by `color`, a dielectric reflects 4% face-on.
@@ -566,10 +576,10 @@ export type StandardOptions = Omit<LitOptions, "specular" | "shininess" | "specu
   roughnessMap?: TextureId
 }
 
-// The `standard` class key: lit's minus the Blinn-Phong slots (env is
+// The `standard` class key: phong's minus the Blinn-Phong slots (env is
 // always on, the environment being intrinsic to the model) plus the two
-// packed maps. Its cutout shadow is lit's own, keyed on the shared subset
-// in lit's order, so the two materials share shadow programs.
+// packed maps. Its cutout shadow is the shared lit one, keyed on the
+// subset in phong's order, so the two materials share shadow programs.
 type StandardClass = Omit<LitClass, "specularMap" | "env"> & { metalnessMap: boolean; roughnessMap: boolean }
 
 function standardClassKey(c: StandardClass): string {
@@ -606,14 +616,14 @@ function standardShadowFlags(c: StandardClass): LitClass {
  * The metalness/roughness material, the look authored assets expect
  * (Three's MeshStandardMaterial, Godot's StandardMaterial3D, Unity's
  * Standard): the same base, maps, cutout, shadows, emissive, fog and
- * lights as `lit`, shaded with GGX specular (PBR in `@solidrt/3d/glsl`)
+ * lights as `phong`, shaded with GGX specular (PBR in `@solidrt/3d/glsl`)
  * and the scene's environment sampled ALWAYS as the split sum over its
  * mip chain - no `reflectivity` switch, the environment is intrinsic to
- * the model. Light intensities read as lit's (1 lights a white matte
+ * the model. Light intensities read as phong's (1 lights a white matte
  * surface to 1). Without an environment set a metal shows only its
  * highlights - its diffuse is zero and there is nothing to reflect, as
  * in Three and Godot - so give the scene one. One program per option
- * combination, shared by every instance, like lit.
+ * combination, shared by every instance, like phong.
  */
 export function standard(opts: StandardOptions = {}): Material {
   let uColor = premultipliedColor(opts.color ?? [1, 1, 1])

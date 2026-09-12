@@ -21,7 +21,7 @@
 
 import { createSignal, onCleanup, onFrame, pct, render } from "@solidrt/core"
 import { registerDebug } from "srt:dev"
-import { DirectionalLight, geometryAttribute, geometryVertexCount, getMorphNames, getMorphWeights, HemisphereLight, Instance, InstancedMesh, lit, Mesh, PerspectiveCamera, plane, Scene, setMorphWeights, sphere, withMorphTargets } from "@solidrt/3d"
+import { DirectionalLight, geometryAttribute, geometryVertexCount, getMorphNames, getMorphWeights, HemisphereLight, Instance, InstancedMesh, phong, Mesh, PerspectiveCamera, plane, Scene, setMorphWeights, sphere, withMorphTargets } from "@solidrt/3d"
 import type { InstanceNode, MeshNode } from "@solidrt/3d"
 
 // The blob's authored shape: a sphere with two targets - "bulge", a
@@ -110,13 +110,13 @@ function blob() {
 
 function App() {
   let geometry = blob()
-  let morphing = lit({ color: [0.9, 0.55, 0.3], morph: true, specular: 0.4, shininess: 40 })
-  let plain = lit({ color: [0.35, 0.6, 0.85] })
-  let ground = lit({ color: [0.75, 0.75, 0.72] })
+  let morphing = phong({ color: [0.9, 0.55, 0.3], morph: true, specular: 0.4, shininess: 40 })
+  let plain = phong({ color: [0.35, 0.6, 0.85] })
+  let ground = phong({ color: [0.75, 0.75, 0.72] })
   let live: MeshNode | undefined
   let right: MeshNode | undefined
   let row: InstanceNode[] = []
-  let instanced = lit({ color: [0.45, 0.7, 0.5], morph: true, instanced: true, specular: 0.4, shininess: 40 })
+  let instanced = phong({ color: [0.45, 0.7, 0.5], morph: true, instanced: true, specular: 0.4, shininess: 40 })
   let rowWeights = (i: number) => ({ bulge: i / (ROW_COUNT - 1), squash: 1 - i / (ROW_COUNT - 1) })
   // The per-frame driver, until a debug command pins the weights:
   // `POST /__control__/debug?name=morph` with `{ "bulge": 1, "squash": 0 }`

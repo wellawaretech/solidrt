@@ -1,15 +1,15 @@
 // Directional shadow maps: three `castShadow` lights, `castShadow` meshes
-// and `lit` materials, which receive shadows by default. The warm sun
+// and `phong` materials, which receive shadows by default. The warm sun
 // swings through its arc from onFrame - ONE setTransform on the light
 // node per frame; the scene re-places its shadow camera from the light's
 // world matrix, so its shadows sweep across the ground while the casters
 // turn inside their group. A cool fill from the opposite side and a low
 // rim light stand still, so every caster throws three shadows that cross
-// as the sun moves (each casting light is its own map and pass, capped
-// by MAX_LIGHTS). Three's vocabulary throughout: `castShadow` on the
+// as the sun moves (each casting light claims its tiles of the scene's
+// atlas from the MAX_SHADOW_MAPS budget). Three's vocabulary throughout: `castShadow` on the
 // light and on meshes, `shadow.mapSize/bias/normalBias/camera` on the
 // light; the one divergence is that opting OUT of receiving is a material
-// option (`lit({ receiveShadow: false })`, Godot's split), because the
+// option (`phong({ receiveShadow: false })`, Godot's split), because the
 // material picks the program (like vertexColors and triplanar).
 //
 // Placement matters for a casting light: its shadow camera sits at the
@@ -18,7 +18,7 @@
 // above it). The light frustum is `shadow.camera`, +-5 world units by
 // default - anything outside it is lit.
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
-import { box, cylinder, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, setTransform, sphere, torusKnot } from "@solidrt/3d"
+import { box, cylinder, DirectionalLight, Group, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene, setTransform, sphere, torusKnot } from "@solidrt/3d"
 import type { DirectionalLightNode } from "@solidrt/3d"
 
 function App() {
@@ -34,10 +34,10 @@ function App() {
     setTransform(sun, { position: [Math.sin(a) * 6, Math.cos(a) * 6, 2], rotation: [0.32, 0, -a] })
   })
 
-  let ground = lit({ color: [0.55, 0.58, 0.6] })
-  let red = lit({ color: [0.85, 0.3, 0.25] })
-  let blue = lit({ color: [0.3, 0.55, 0.85] })
-  let gold = lit({ color: [0.9, 0.75, 0.3], specular: 0.5, shininess: 40 })
+  let ground = phong({ color: [0.55, 0.58, 0.6] })
+  let red = phong({ color: [0.85, 0.3, 0.25] })
+  let blue = phong({ color: [0.3, 0.55, 0.85] })
+  let gold = phong({ color: [0.9, 0.75, 0.3], specular: 0.5, shininess: 40 })
 
   return (
     <window>

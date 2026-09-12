@@ -18,7 +18,7 @@
 
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { registerDebug } from "srt:dev"
-import { computeVertexNormals, cylinder, DirectionalLight, fillAttribute, geometryAttribute, geometryVertexCount, Group, HemisphereLight, lit, Mesh, normalsHelper, PerspectiveCamera, Scene, sphere, toNonIndexed, unlit, updateVertices, withNormals } from "@solidrt/3d"
+import { computeVertexNormals, cylinder, DirectionalLight, fillAttribute, geometryAttribute, geometryVertexCount, Group, HemisphereLight, phong, Mesh, normalsHelper, PerspectiveCamera, Scene, sphere, toNonIndexed, unlit, updateVertices, withNormals } from "@solidrt/3d"
 
 // The crease angles in degrees: flat, the default, everything smoothed.
 const ANGLES = [0, 60, 180] as const
@@ -50,7 +50,7 @@ function App() {
 
   let soup = toNonIndexed(cylinder({ radialSegments: RADIAL_SEGMENTS }), "soup")
   let shaded = ANGLES.map(angle => withNormals(soup, angle, "cylinder-" + angle))
-  let shade = lit({ color: SHADE_COLOR, specular: 0.5, shininess: 40 })
+  let shade = phong({ color: SHADE_COLOR, specular: 0.5, shininess: 40 })
   let lines = unlit({ vertexColors: true })
 
   // The rippling sphere. Base positions are kept aside: fillAttribute's
@@ -106,7 +106,7 @@ function App() {
             </Group>
           ))}
           <Group position={[0, -1.3, 0]}>
-            <Mesh geometry={ball} material={lit({ color: SPHERE_COLOR, specular: 0.4, shininess: 30 })} />
+            <Mesh geometry={ball} material={phong({ color: SPHERE_COLOR, specular: 0.4, shininess: 30 })} />
             <Mesh geometry={ballLines} material={lines} visible={helpers()} />
           </Group>
         </Scene>

@@ -15,7 +15,7 @@
 // map keeps the top-down view clear (its fog names are view-owned, so
 // scene-wide fog writes never clobber them).
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
-import { box, circle, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit, View3d } from "@solidrt/3d"
+import { box, circle, DirectionalLight, Group, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit, View3d } from "@solidrt/3d"
 
 // Layer bits: the world everything defaults to, and the map-only markers.
 const WORLD_LAYER = 1
@@ -46,16 +46,16 @@ function App() {
           <PerspectiveCamera fov={55} position={[0, 1.6, 3.6]} lookAt={[0, 0.3, 0]} />
           <HemisphereLight sky={[0.6, 0.7, 0.9]} ground={[0.25, 0.2, 0.15]} intensity={0.6} />
           <DirectionalLight direction={[-0.5, -1, -0.3]} color={[1, 0.95, 0.85]} intensity={0.9} />
-          <Mesh geometry={floor} material={lit({ color: [0.3, 0.32, 0.38] })} rotation={[-Math.PI / 2, 0, 0]} />
+          <Mesh geometry={floor} material={phong({ color: [0.3, 0.32, 0.38] })} rotation={[-Math.PI / 2, 0, 0]} />
           <Group rotation={[0, spin(), 0]}>
-            <Mesh geometry={cube} material={lit({ color: [0.85, 0.3, 0.3] })} position={[0, 0.5, 0]} />
+            <Mesh geometry={cube} material={phong({ color: [0.85, 0.3, 0.3] })} position={[0, 0.5, 0]} />
             <Mesh
               geometry={cube}
-              material={lit({ color: [0.9, 0.8, 0.35] })}
+              material={phong({ color: [0.9, 0.8, 0.35] })}
               position={[-1.1, 0.7, 0]}
               scale={[0.5, 1.4, 0.5]}
             />
-            <Mesh geometry={ball} material={lit({ color: [0.35, 0.65, 0.9] })} position={[1.1, 0.35, 0]} />
+            <Mesh geometry={ball} material={phong({ color: [0.35, 0.65, 0.9] })} position={[1.1, 0.35, 0]} />
             {/* The ball's map marker: drawn by the map view alone. */}
             <Mesh
               geometry={marker}

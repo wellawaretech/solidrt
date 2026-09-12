@@ -11,7 +11,7 @@
 // command reads and sets the pose for headless checks.
 import { createInputMap, createPointerFeed, createSignal, gamepad, keyboard, lockPointer, onFrame, pct, pointerLocked, render } from "@solidrt/core"
 import type { PointerEvent } from "@solidrt/core"
-import { box, cylinder, DirectionalLight, FirstPersonCamera, firstPersonActions, firstPersonBindings, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene } from "@solidrt/3d"
+import { box, cylinder, DirectionalLight, FirstPersonCamera, firstPersonActions, firstPersonBindings, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene } from "@solidrt/3d"
 import type { FirstPersonCameraHandle, Vec3 } from "@solidrt/3d"
 import { registerDebug } from "srt:dev"
 
@@ -65,10 +65,10 @@ function App() {
     return camera.pose()
   })
 
-  let ground = lit({ color: [0.5, 0.52, 0.48] })
-  let stone = lit({ color: [0.75, 0.72, 0.66] })
-  let brick = lit({ color: [0.6, 0.32, 0.26] })
-  let gold = lit({ color: [0.9, 0.75, 0.3], specular: 0.5, shininess: 40 })
+  let ground = phong({ color: [0.5, 0.52, 0.48] })
+  let stone = phong({ color: [0.75, 0.72, 0.66] })
+  let brick = phong({ color: [0.6, 0.32, 0.26] })
+  let gold = phong({ color: [0.9, 0.75, 0.3], specular: 0.5, shininess: 40 })
 
   let pillars = Array.from({ length: PILLARS }, (_, i) => {
     let a = (i / PILLARS) * Math.PI * 2

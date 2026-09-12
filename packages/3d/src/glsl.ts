@@ -1,7 +1,7 @@
 // The exported lighting GLSL: string constants an app composes into its
 // own shaderMaterial sources with plain template literals - the same
 // pieces the package's lit materials are built from (sceneSource is the
-// whole scene in one set; the lit, standard and unlit programs are
+// whole scene in one set; the phong, standard and unlit programs are
 // assembled from it), so a custom material never becomes second-class
 // (no preprocessor, no include resolver; the policy is argued in
 // okf/notes/3d-differentiators.md).
@@ -24,7 +24,7 @@ import type { CullMode, VertexAttribute } from "@solidrt/core/gpu"
 let glsl = String.raw
 
 /** The cap of the scene's light list (directional, spot and point nodes
- * alike; the hemisphere ambient is not in it) and of the `lit` fragment;
+ * alike; the hemisphere ambient is not in it) and of the stock lit fragments;
  * a custom fragment composes LIGHT_SLOTS and LIGHT_LOOKUP and loops to
  * `uLightCount`. A shader-source constant, so it is fixed for the app
  * (see okf/backlog/app-runtime-config.md). */
@@ -207,7 +207,7 @@ function instancedNormal(skinned: boolean, instanced: boolean, morphed = false):
   return instanced ? `mat3(uNormal) * (instanceNormalMatrix() * ${local})` : `mat3(uNormal) * ${local}`
 }
 
-// The one lit vertex template: the standard prefix always, aColor and
+// The one lit vertex template: the base prefix always, aColor and
 // aUV2 only when the fragment reads them (an `in` the source mentions
 // makes the material require that channel, so the blocks must be absent,
 // not inactive), the skin blocks only for a skinned material (they make
@@ -371,7 +371,7 @@ export const PBR = glsl`
  * folded in) and `uLightParams[i]` (cosInner, cosOuter, distance, decay
  * - the cone cosines a spot fades between, the falloff cutoff and
  * exponent a spot or point attenuates by; unused for a directional).
- * Compose it before LIGHT_LOOKUP; `lit` is the shape.
+ * Compose it before LIGHT_LOOKUP; the stock lit program is the shape.
  */
 export const LIGHT_SLOTS = glsl`
   uniform int uLightCount;
@@ -394,7 +394,7 @@ export const LIGHT_SLOTS = glsl`
  * zero at `distance` (0 = no cutoff; Three's punctual-light falloff), a
  * spot's additionally faded across its cone from cosInner to cosOuter.
  * Zero means the light cannot reach the fragment - skip its shadow
- * lookup and its terms (`lit` does exactly that).
+ * lookup and its terms (the stock lit program does exactly that).
  */
 export const LIGHT_LOOKUP = glsl`
   // Floors the falloff divisors so a fragment at the light's own
@@ -783,7 +783,7 @@ export function resolveFragment(source: string = DEFAULT_RESOLVE): string {
  * camera) at roughness `sqrt(2 / (shininess + 2))`, so a wide sheen
  * reflects a blurred environment and a mirror dot a sharp one. `envWeight(n, v,
  * reflectivity)` is the Schlick fresnel weight: `reflectivity` face-on,
- * 1 at grazing, 0 with no environment. `lit` applies them as
+ * 1 at grazing, 0 with no environment. `phong` applies them as
  * `rgb = mix(rgb, envReflection(n, v, uShininess), envWeight(n, v,
  * uReflectivity))` - Three's MixOperation with a fresnel weight. Every
  * lookup is a plain `texture(uEnv, dir)` in world space: a cube map here
@@ -837,7 +837,8 @@ export const ENVIRONMENT = glsl`
  * LIGHT_SLOTS, this, SHADOW, then SHADOW_LOOKUP (in that order - the
  * lookup reads the light type and position for a point light's face
  * select) and multiplies
- * light i's term by `lightShadow(i, worldPos, n)` - `lit` is the shape. A
+ * light i's term by `lightShadow(i, worldPos, n)` - the stock lit program
+ * is the shape. A
  * material that does not receive composes none of it, so it declares no
  * sampler for nothing.
  */
@@ -975,7 +976,7 @@ export const SHADOW_LOOKUP = glsl`
 
 /**
  * The material defaults every Surface starts from (`surfaceOf`) and the
- * `lit`/`standard` options fall back to: one table, so a custom fragment
+ * `phong`/`standard` options fall back to: one table, so a custom fragment
  * that builds its own Surface and a stock material agree on what
  * "unspecified" means.
  */
@@ -1009,7 +1010,7 @@ export const SURFACE_DEFAULTS = {
  * `Surface surfaceOf(vec4 base, vec3 normal)` fills the rest with
  * SURFACE_DEFAULTS (no emissive, no ambient), so a fragment sets only
  * what it means. One struct for both light models, as Godot and Unity
- * have it, so a `surface` function (litFragment's slot) has one
+ * have it, so a `surface` function (phongFragment's slot) has one
  * signature whatever material it sits in; the model that shades reads
  * its own fields and ignores the other's. Included by sceneSource - never
  * compose both.
@@ -1084,7 +1085,7 @@ export type SceneSourceOptions = {
  * `uLightCount` (URP's GetAdditionalLight, Godot's light() inputs), and
  * the one that makes a spot light impossible to render as a directional.
  *
- * The shade functions are the whole light loop of `lit` (Blinn-Phong)
+ * The shade functions are the whole light loop of `phong` (Blinn-Phong)
  * and `standard` (GGX): hemisphere plus `Surface.ambient` plus every
  * light's diffuse and specular, the environment term, then the emissive,
  * returning linear PREMULTIPLIED rgb. A term added by hand after them is
@@ -1159,7 +1160,8 @@ export const SCENE = sceneSource()
 
 // The light accessor and the two shade functions, over the sets
 // sceneSource composed before them. A light that cannot reach the point
-// is skipped whole (no shadow tap, no terms), the gate `lit` always had.
+// is skipped whole (no shadow tap, no terms), the gate the stock lit
+// program always had.
 function sceneShadeSource(receiveShadow: boolean, env: boolean): string {
   return glsl`
     struct SceneLight {
@@ -1362,7 +1364,7 @@ export type StandardSourceOptions = Omit<LitSourceOptions, "specularMap" | "env"
 }
 
 // The resolved option set: every flag concrete, every slot a string, so
-// the builders below never re-apply a default and `lit`'s class key and
+// the builders below never re-apply a default and a stock material's class key and
 // its program cannot drift apart.
 type LitSource = {
   map: boolean
@@ -1386,7 +1388,7 @@ type LitSource = {
   morph: boolean
   prelude: string
   surface: string
-  // The light model: Blinn-Phong (`lit`) or GGX metalness/roughness
+  // The light model: Blinn-Phong (`phong`) or GGX metalness/roughness
   // (`standard`, which also samples the environment unconditionally).
   brdf: "blinn" | "ggx"
   metalnessMap: boolean
@@ -1481,7 +1483,7 @@ function litBase(c: LitSource, flip: boolean): string {
 }
 
 /**
- * The vertex stage `lit` pairs with a given option set: LIT_VERTEX, or
+ * The vertex stage the stock lit materials pair with a given option set: LIT_VERTEX, or
  * LIT_VERTEX_COLORED when the fragment reads vColor. The shadow source
  * takes this same stage, which is what lets a surface function read the
  * same varyings in both passes.
@@ -1492,9 +1494,9 @@ export function litVertex(o: LitSourceOptions = {}): string {
 }
 
 /**
- * The `lit` fragment source for an option set - the exact program `lit`
+ * The `phong` fragment source for an option set - the exact program `phong`
  * itself builds, composed from the constants above. Pair it with
- * litVertex(o) in a shaderMaterialClass to get a lit material with your
+ * litVertex(o) in a shaderMaterialClass to get a Blinn-Phong material with your
  * own GLSL in it, and pass litShadowFragment(o) alongside when it can
  * discard.
  *
@@ -1506,7 +1508,7 @@ export function litVertex(o: LitSourceOptions = {}): string {
  * Everything else - the lights, the hemisphere, the camera position, the
  * shadow set, the fog - is written by the scene.
  */
-export function litFragment(o: LitSourceOptions = {}): string {
+export function phongFragment(o: LitSourceOptions = {}): string {
   return lightingFragment(resolveLit(o))
 }
 
@@ -1517,7 +1519,7 @@ export function litFragment(o: LitSourceOptions = {}): string {
  * metalness/roughness model (PBR) instead of Blinn-Phong, and the
  * scene's ENVIRONMENT sampled unconditionally as the split sum
  * (envRadiance times envBrdf). Pair it with litVertex(o), and with
- * litShadowFragment(o) when it can discard, exactly as litFragment.
+ * litShadowFragment(o) when it can discard, exactly as phongFragment.
  *
  * Per-entry uniforms: `uColor` (premultiplied vec4), `uMetalness`,
  * `uRoughness`, `uMetalnessMap` (blue channel) and `uRoughnessMap`
@@ -1587,7 +1589,7 @@ function lightingFragment(c: LitSource): string {
 /**
  * The depth-pass source that makes a discarding lit material cast what it
  * actually draws: the same base, cutout and surface function as
- * litFragment(o), and nothing after them (no lighting, no fog - a shadow
+ * phongFragment(o), and nothing after them (no lighting, no fog - a shadow
  * has neither). Undefined when the option set cannot discard (no
  * alphaTest, no surface), which means the scene's default depth material
  * is already right and the material should carry no `shadow` of its own.

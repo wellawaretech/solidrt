@@ -1,5 +1,5 @@
 // A fleet of a thousand instance NODES: one `<InstancedMesh>` under the
-// stock `lit` material with `instanceColors`, so lighting, shadows, fog
+// stock `phong` material with `instanceColors`, so lighting, shadows, fog
 // and a per-instance tint come with no GLSL at all. Each `<Instance>`
 // declares a spring `transition`; every few seconds a signal picks the
 // next formation (grid, rings, shell, helix), the thousand `position`
@@ -16,7 +16,7 @@
 // scene pixel instance i projects to and what a pick there finds, for a
 // synthetic tap).
 import { createInputMap, createPointerFeed, createSignal, flush, For, gamepad, pct, render } from "@solidrt/core"
-import { box, DirectionalLight, HemisphereLight, Instance, InstancedMesh, lit, Mesh, OrbitCamera, orbitActions, orbitBindings, plane, Scene, worldPosition } from "@solidrt/3d"
+import { box, DirectionalLight, HemisphereLight, Instance, InstancedMesh, phong, Mesh, OrbitCamera, orbitActions, orbitBindings, plane, Scene, worldPosition } from "@solidrt/3d"
 import type { InstanceNode, NodeTransition, SceneHandle, Vec3 } from "@solidrt/3d"
 import { registerDebug } from "srt:dev"
 
@@ -169,12 +169,12 @@ function App() {
           />
           <Mesh
             geometry={plane({ width: 3 * REACH, height: 3 * REACH, label: "ground" })}
-            material={lit({ color: [0.26, 0.28, 0.27] })}
+            material={phong({ color: [0.26, 0.28, 0.27] })}
             rotation={[-Math.PI / 2, 0, 0]}
           />
           <InstancedMesh
             geometry={box({ width: UNIT, height: UNIT, depth: UNIT, label: "unit" })}
-            material={lit({ instanceColors: true, specular: 0.3, shininess: 40 })}
+            material={phong({ instanceColors: true, specular: 0.3, shininess: 40 })}
             capacity={COUNT}
             castShadow
             label="fleet"

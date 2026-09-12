@@ -50,10 +50,10 @@ import {
   useScene,
   View3d,
   layoutStride,
-  STANDARD_FLOATS,
+  BASE_FLOATS,
 } from "@solidrt/3d"
 import type { CameraUpdate, OrbitCameraHandle, OrbitPoseState, SceneNode, SpotShadowOptions, Vec3 } from "@solidrt/3d"
-import { FRESNEL, LIT_VERTEX, litFragment, SCENE } from "@solidrt/3d/glsl"
+import { FRESNEL, LIT_VERTEX, phongFragment, SCENE } from "@solidrt/3d/glsl"
 import { registerDebug } from "srt:dev"
 
 const KNOT_P = 2
@@ -257,7 +257,7 @@ let GROUND_SURFACE = glsl`
   }
 `
 
-let GROUND_FRAGMENT = litFragment({ transparent: true, prelude: GROUND_PRELUDE, surface: GROUND_SURFACE })
+let GROUND_FRAGMENT = phongFragment({ transparent: true, prelude: GROUND_PRELUDE, surface: GROUND_SURFACE })
 
 /**
  * Backdrop: a static radial gradient with a touch of hash grain so the ramp
@@ -360,7 +360,7 @@ function App() {
   })
   let groundGeometry = plane({ width: FLOOR_SIZE, height: FLOOR_SIZE, label: "ground" })
   let triangles = (knotGeometry.indices.length + groundGeometry.indices.length) / 3
-  let vertexCount = (knotGeometry.vertices.byteLength + groundGeometry.vertices.byteLength) / layoutStride("standard")
+  let vertexCount = (knotGeometry.vertices.byteLength + groundGeometry.vertices.byteLength) / layoutStride("base")
   let bytes =
     knotGeometry.vertices.byteLength +
     knotGeometry.indices.byteLength +
@@ -748,7 +748,7 @@ registerDebug("camera", (args?: Record<string, unknown>) => {
   return { panel, ...cam.pose(), orbiting: cam.orbiting() }
 })
 
-registerDebug("vertexLayout", () => ({ floatsPerVertex: STANDARD_FLOATS }))
+registerDebug("vertexLayout", () => ({ floatsPerVertex: BASE_FLOATS }))
 
 // Where the light rig has turned to, radians. Its spin is paused with the
 // orbit, so parking both is what makes a snapshot repeat.
@@ -762,9 +762,9 @@ registerDebug("rig", (args?: Record<string, unknown>) => {
 })
 
 // Switch one light's shadow off or on: `{ light: 1, cast: false }`. Every
-// light casts by default now that a scene takes MAX_SHADOWS = MAX_LIGHTS of
-// them, so this is how the effect comes apart - leave one caster and its
-// shadow is a plain complement, leave none and the floor is flat again.
+// light casts by default (the bound is the MAX_SHADOW_MAPS slot budget, one
+// slot per spot), so this is how the effect comes apart - leave one caster
+// and its shadow is a plain complement, leave none and the floor is flat again.
 // One signal write: the light's <SpotLight castShadow> prop and the
 // subtitle's count both follow it.
 registerDebug("shadow", (args?: Record<string, unknown>) => {

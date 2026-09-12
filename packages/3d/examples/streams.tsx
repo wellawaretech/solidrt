@@ -31,7 +31,7 @@ import {
   withAttribute,
 } from "@solidrt/3d"
 import type { MeshNode } from "@solidrt/3d"
-import { litFragment } from "@solidrt/3d/glsl"
+import { phongFragment } from "@solidrt/3d/glsl"
 
 // The lit varyings from a position pushed along its normal by the
 // per-vertex aWave, which the pipeline fetches from the second stream.
@@ -79,7 +79,7 @@ const LINE_FRAGMENT = glsl`
 const WAVE_HEIGHT = 0.06
 const REVEAL_SECONDS = 3
 
-let surfaceLook = shaderMaterialClass({ vertex: WAVE_VERTEX, fragment: litFragment(), label: "wave-surface" })
+let surfaceLook = shaderMaterialClass({ vertex: WAVE_VERTEX, fragment: phongFragment(), label: "wave-surface" })
 let lineLook = shaderMaterialClass({ vertex: WAVE_LINE_VERTEX, fragment: LINE_FRAGMENT, label: "wave-lines" })
 
 function App() {

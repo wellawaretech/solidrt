@@ -31,7 +31,7 @@ What that costs, in the order a game hits it:
   section states there is "no shader-side answer", so apps rewrite `w`/`h`
   from JS every camera change.
 
-`@solidrt/3d` answers all three: `unlit`/`lit`/`standard`/`sprite` as
+`@solidrt/3d` answers all three: `unlit`/`phong`/`standard`/`sprite` as
 stock materials, `shaderMaterial`/`shaderMaterialClass` for custom GLSL,
 `setMaterial` per mesh, `overrideMaterial` per view, and `blend` on any
 material with "add" called out for glows

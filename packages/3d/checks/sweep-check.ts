@@ -1,5 +1,5 @@
 // Check rig for the profile kit's solids (src/sweep.ts, src/profile.ts):
-// extrude / lathe / sweep / tube / shape structure - index ranges, unit
+// extrude / lathe / sweep / tube / polygon structure - index ranges, unit
 // normals, cap orientation and placement, bevel clamping, lathe angle
 // rejection, the tube -> sweep pass-through - and the generator layout
 // option's byte identity with withColors. Pure-module inputs only, so it
@@ -9,10 +9,10 @@
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { extrude, lathe, pathFrames, sweep, tube } from "../src/sweep.ts"
-import { roundRect, shape } from "../src/profile.ts"
+import { extrude, lathe, pathFrames, polygon, sweep, tube } from "../src/sweep.ts"
+import { roundRect } from "../src/profile.ts"
 import type { Profile } from "../src/profile.ts"
-import { geometryAttribute, geometryBounds, layoutKey, layoutStride, validateGeometry, withColors, STANDARD_FLOATS } from "../src/geometry.ts"
+import { geometryAttribute, geometryBounds, layoutKey, layoutStride, validateGeometry, withColors, BASE_FLOATS } from "../src/geometry.ts"
 import type { Geometry } from "../src/geometry.ts"
 import type { Vec3 } from "../src/math.ts"
 
@@ -22,7 +22,7 @@ let fail = (msg: string): void => {
   console.log("FAIL:", msg)
 }
 let near = (a: number, b: number, eps = 1e-5): boolean => Math.abs(a - b) <= eps
-// The rigs here build standard all-float layouts, so the vertex bytes read
+// The rigs here build base all-float layouts, so the vertex bytes read
 // back as floats; the view type is not the geometry contract.
 let floats = (g: Geometry): Float32Array => new Float32Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength / Float32Array.BYTES_PER_ELEMENT)
 let throws = (label: string, fn: () => unknown): void => {
@@ -97,7 +97,7 @@ let square: Profile = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
   let g = extrude(square, { depth: 2 })
   structure("extrude plain", g)
   outward("extrude plain", g, [0, 0, 0])
-  let count = floats(g).length / STANDARD_FLOATS
+  let count = floats(g).length / BASE_FLOATS
   if (count !== 9 * 2 + 4 * 2) fail("extrude plain vertex count: " + count)
   let b = geometryBounds(g)
   if (!near(b[2]!, -1) || !near(b[5]!, 1)) fail("extrude depth centered: " + b[2] + ".." + b[5])
@@ -112,7 +112,7 @@ let square: Profile = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
   outward("extrude bevel", g, [0, 0, 0])
   let b = geometryBounds(g)
   if (!near(b[5]!, 0.5) || !near(b[3]!, 0.5)) fail("extrude bevel bounds")
-  let count = floats(g).length / STANDARD_FLOATS
+  let count = floats(g).length / BASE_FLOATS
   if (count !== 9 * 8 + 4 * 2) fail("extrude bevel vertex count: " + count)
   let huge = extrude(square, { depth: 1, bevel: 5, bevelSegments: 2 })
   structure("extrude bevel clamp", huge)
@@ -120,20 +120,20 @@ let square: Profile = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
   if (!near(hb[5]!, 0.5)) fail("extrude bevel clamp keeps depth")
 }
 
-// shape: one flat face, facing +z, UVs mapping the box.
+// polygon: one flat face, facing +z, UVs mapping the box.
 {
-  let g = shape(roundRect(1, 0.5, 0.1, 3))
-  structure("shape", g)
-  let stride = STANDARD_FLOATS
+  let g = polygon(roundRect(1, 0.5, 0.1, 3))
+  structure("polygon", g)
+  let stride = BASE_FLOATS
   let count = floats(g).length / stride
   for (let i = 0; i < count; i++) {
     if (!near(floats(g)[i * stride + 5]!, 1)) {
-      fail("shape normal +z")
+      fail("polygon normal +z")
       break
     }
   }
-  if (g.indices.length !== (count - 2) * 3) fail("shape triangulation count: " + g.indices.length)
-  if (shape(square, { label: "sq" }).label !== "sq") fail("shape label option")
+  if (g.indices.length !== (count - 2) * 3) fail("polygon triangulation count: " + g.indices.length)
+  if (polygon(square, { label: "sq" }).label !== "sq") fail("polygon label option")
 }
 
 // lathe: a closed ring profile (tube wall) revolved fully is watertight-ish:
@@ -224,7 +224,7 @@ let straight: Vec3[] = [[0, 0, -1], [0, 0, 1]]
   same("lathe", lathe(wall, { segments: 6, angle: 2 }), lathe(wall, { segments: 6, angle: 2, layout: "colored" }))
   same("sweep", sweep(square, straight), sweep(square, straight, { layout: "colored" }))
   same("tube", tube(straight, { radialSegments: 5 }), tube(straight, { radialSegments: 5, layout: "colored" }))
-  same("shape", shape(square), shape(square, { layout: "colored" }))
+  same("polygon", polygon(square), polygon(square, { layout: "colored" }))
 }
 
 if (failures > 0) throw new Error(failures + " sweep check(s) failed")

@@ -1,4 +1,4 @@
-// The surface maps on lit(), all procedural so the example is
+// The surface maps on phong(), all procedural so the example is
 // self-contained. normalMap bends the lighting per texel with NO tangent
 // channel (the frame comes from screen-space derivatives) - the flat
 // plane and the sphere both show relief from one bump texture.
@@ -12,7 +12,7 @@
 
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { createTexture } from "@solidrt/core/gpu"
-import { box, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, setMeshParams, sphere, withAttribute } from "@solidrt/3d"
+import { box, DirectionalLight, Group, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene, setMeshParams, sphere, withAttribute } from "@solidrt/3d"
 import type { MeshNode } from "@solidrt/3d"
 
 // A tangent-space normal map from a procedural height field (a grid of
@@ -108,18 +108,18 @@ function App() {
   })
 
   let bumps = bumpNormalMap()
-  let bumpy = lit({ color: [0.75, 0.5, 0.3], normalMap: bumps, specular: 0.5, shininess: 40 })
-  let flat = lit({ color: [0.75, 0.5, 0.3], specular: 0.5, shininess: 40 })
-  let city = lit({ color: [0.25, 0.28, 0.34], emissiveMap: windowMap() })
-  let striped = lit({ color: [0.2, 0.22, 0.26], specularMap: stripeMap(), shininess: 90 })
-  let belt = lit({ map: chevronMap(), mapTransform: { repeat: [3, 1] } })
+  let bumpy = phong({ color: [0.75, 0.5, 0.3], normalMap: bumps, specular: 0.5, shininess: 40 })
+  let flat = phong({ color: [0.75, 0.5, 0.3], specular: 0.5, shininess: 40 })
+  let city = phong({ color: [0.25, 0.28, 0.34], emissiveMap: windowMap() })
+  let striped = phong({ color: [0.2, 0.22, 0.26], specularMap: stripeMap(), shininess: 90 })
+  let belt = phong({ map: chevronMap(), mapTransform: { repeat: [3, 1] } })
   // The ground carries its own uv2 island (here just the 0..1 plane UVs
   // recomputed from position) and adds the "baked" glow with no light.
   let groundGeometry = withAttribute(plane({ width: 8, height: 8 }), { name: "aUV2", format: "float32x2" }, (_i, pos) => [
     pos[0] / 8 + 0.5,
     pos[1] / 8 + 0.5,
   ])
-  let ground = lit({ color: [0.45, 0.45, 0.5], lightMap: bakedGlowMap(), lightMapIntensity: 1.5 })
+  let ground = phong({ color: [0.45, 0.45, 0.5], lightMap: bakedGlowMap(), lightMapIntensity: 1.5 })
 
   return (
     <window>

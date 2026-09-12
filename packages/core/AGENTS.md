@@ -115,8 +115,14 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
 `bun install` only warns ("incorrect peer dependency") and keeps the old
 ones, and `bun update solid-js @solidjs/signals @solidjs/universal` does
 not read the pin either: it adds all three to package.json at registry
-latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
-`rm -rf bun.lock node_modules/solid-js node_modules/@solidjs && bun install`.
+latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works
+deletes the installed copies and leaves the lockfile alone:
+`rm -rf node_modules/solid-js node_modules/@solidjs && bun install`
+(delete any nested `node_modules/@solidjs` too, or the old copy keeps
+resolving). Removing the directories is what forces re-resolution. Do not
+delete `bun.lock` to force it: that re-resolves every unrelated dependency
+as well, and a package that floats elsewhere fails the typecheck in a way
+that reads exactly like Solid fallout.
 
 ## Element model (the parts that are easy to get wrong)
 

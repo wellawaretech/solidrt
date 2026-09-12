@@ -13,7 +13,7 @@
 // place, no recompile. Drag to look around, wheel to zoom.
 import { createInputMap, createPointerFeed, createSignal, gamepad, onFrame, pct, render } from "@solidrt/core"
 import { createCubeTexture } from "@solidrt/core/gpu"
-import { box, DirectionalLight, HemisphereLight, lit, Mesh, OrbitCamera, orbitActions, orbitBindings, plane, Scene, sphere, torusKnot } from "@solidrt/3d"
+import { box, DirectionalLight, HemisphereLight, phong, Mesh, OrbitCamera, orbitActions, orbitBindings, plane, Scene, sphere, torusKnot } from "@solidrt/3d"
 import { normalize } from "@solidrt/3d/math"
 import type { Vec3 } from "@solidrt/3d/math"
 
@@ -107,13 +107,13 @@ function App() {
   })
   let sun = () => turnedSun(turn())
 
-  let ground = lit({ color: [0.36, 0.4, 0.3] })
+  let ground = phong({ color: [0.36, 0.4, 0.3] })
   // Glossy: a blurred reflection (shininess 48) at a dielectric's face-on
   // weight, rising toward the silhouette.
-  let brass = lit({ color: [0.85, 0.6, 0.3], specular: 0.6, shininess: 48, reflectivity: 0.15 })
-  let stone = lit({ color: [0.6, 0.6, 0.62] })
+  let brass = phong({ color: [0.85, 0.6, 0.3], specular: 0.6, shininess: 48, reflectivity: 0.15 })
+  let stone = phong({ color: [0.6, 0.6, 0.62] })
   // Chrome: the environment itself, sharp.
-  let chrome = lit({ color: [1, 1, 1], specular: 1, shininess: 400, reflectivity: 1 })
+  let chrome = phong({ color: [1, 1, 1], specular: 1, shininess: 400, reflectivity: 1 })
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>

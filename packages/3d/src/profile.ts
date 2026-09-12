@@ -2,14 +2,11 @@
 // Profile is a closed simple polygon in the XY plane - bare [x, y] tuples
 // are sharp (creased) corners, tagged { p, smooth } points shade round -
 // and winding is normalized to CCW on use, so either authoring direction
-// works. fillet() and roundRect() produce smooth-tagged arc corners,
-// shape() fills a profile as a flat +z face in the shared vertex layout,
-// and triangulate() (the ear-clipping core behind every cap) is exported
-// for custom flat work. The swept-solid generators consuming this
-// vocabulary - extrude, lathe, sweep, tube - live in sweep.ts.
+// works. fillet() and roundRect() produce smooth-tagged arc corners, and
+// triangulate() (the ear-clipping core behind every cap) is exported for
+// custom flat work. The generators consuming this vocabulary - polygon,
+// extrude, lathe, sweep, tube - live in sweep.ts.
 
-import { packGeometry } from "./geometry.ts"
-import type { Geometry, GeometryOptions } from "./geometry.ts"
 import type { Vec2 } from "./math.ts"
 
 /** A profile point: `p` in profile space, `smooth` to share an averaged
@@ -290,22 +287,4 @@ export function roundRect(
   let y = height / 2
   let corners: Vec2[] = [[-x, -y], [x, -y], [x, y], [-x, y]]
   return fillet(corners, radius, segments)
-}
-
-/**
- * The profile filled as a flat face in the XY plane facing +z - the
- * general case of circle()/ring() for arbitrary outlines. UVs map the
- * profile's bounding box to the unit square like plane(); rotate flat the
- * same way: `rotation={[-Math.PI / 2, 0, 0]}`.
- */
-export function shape(profile: Profile, options: GeometryOptions = {}): Geometry {
-  let pts = normalizeProfile(profile)
-  let { minX, maxY, w, h } = profileBounds(pts)
-  let px = pts.map((p) => p.x)
-  let py = pts.map((p) => p.y)
-  let verts: number[] = []
-  for (let p of pts) {
-    verts.push(p.x, p.y, 0, 0, 0, 1, (p.x - minX) / w, (maxY - p.y) / h)
-  }
-  return packGeometry(verts, earClip(px, py), options)
 }
