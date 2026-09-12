@@ -33,6 +33,11 @@ identifies it as the window composite rather than the content.
 
 The video node covers 12% of that window.
 
+Fullscreen video leaves this path on 2026-09-12
+([[android-video-punch-through]]), which removes the case that found the
+problem but none of the problem: camera and every non-fullscreen video or
+GPU-content app still repaint the whole window per frame.
+
 ## Why it matters beyond video
 
 Every producer of GPU content behind a stable texture id has the same

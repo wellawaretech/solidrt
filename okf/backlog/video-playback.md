@@ -1,6 +1,6 @@
 ---
 title: Video playback
-description: One decode-to-YUV pipeline on every platform, the platform's own decoder everywhere (MediaCodec buffer mode on Android; no software codec bundled), planar YUV textures + shader conversion in alloy, player core in forge, no video primitive - texture/d-texture display the player's texture id. Fluency target is the Philips MT5891 TV; punch-through rejected. Measured there 2026-09-12: 360p50 frame-for-frame on the vsync grid, 720p25 nearly so, 1080p25 over budget; audio-clocked selection drops ~10% of frames at every resolution.
+description: One decode-to-YUV pipeline on every platform, the platform's own decoder everywhere (MediaCodec buffer mode on Android; no software codec bundled), planar YUV textures + shader conversion in alloy, player core in forge, no video primitive - texture/d-texture display the player's texture id. Fluency target is the Philips MT5891 TV; punch-through reversed 2026-09-12 for fullscreen only (android-video-punch-through.md), this pipeline keeps every other use. Measured there 2026-09-12: 360p50 frame-for-frame on the vsync grid, 720p25 nearly so, 1080p25 over budget; audio-clocked selection drops ~10% of frames at every resolution.
 created: 2026-08-12
 ---
 
@@ -50,13 +50,20 @@ Hardware decode is what makes the TV fluent; the upload is ~3 MB/frame at
 1080p YUV420 (vs 8 MB RGBA), well inside the TV's budget on the Kodi
 precedent below.
 
-Rejected and settled:
+Rejected and settled, except where noted:
 
 - Surface punch-through (decoder output composited by SurfaceFlinger under
-  the UI, Kodi's "MediaCodec (Surface)" mode): NOT an option (user
-  decision). Breaks video-as-texture composability, Android-only special
-  path against the single-rendering-path principle, needs JNI + meddling
-  with SDL's Android view.
+  the UI, Kodi's "MediaCodec (Surface)" mode): REVERSED 2026-09-12 (user
+  decision), for FULLSCREEN playback only, as a path of its own beside this
+  one: [[android-video-punch-through]]. It was rejected 2026-08-12 because
+  it breaks video-as-texture composability, is an Android-only special path
+  against the single-rendering-path principle, and needs JNI plus meddling
+  with SDL's Android view - all three still true, and now paid deliberately
+  for the case they buy: fullscreen 1080p on the TV never became fluent
+  through this pipeline (the measurements below), and punch-through deletes
+  the entire per-frame chain that made it not fit rather than shortening
+  it. The texture pipeline stays exactly as it is for video in a UI, video
+  on a mesh, and every non-fullscreen use.
 - Zero-copy surface import (AImageReader -> AHardwareBuffer -> EGLImage ->
   external-OES texture): not built now. If measurement ever demands it, it
   is a per-player OPT-IN rung, never the default, and lands in alloy (it is

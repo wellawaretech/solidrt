@@ -160,6 +160,13 @@ Shaped, not started.
   On a touch-only Android device the capability layer gains "keyboard" as soon
   as the virtual keyboard opens, so any keyboard-first behavior gated on it
   would switch on for users who have no keyboard.
+- **[Fullscreen video by surface punch-through on Android](backlog/android-video-punch-through.md)** [2026-09-12]
+  Fullscreen playback decodes straight into its own SurfaceView, composited by
+  SurfaceFlinger under a translucent UI, instead of through the texture
+  pipeline. Deletes the whole per-frame chain (upload, YUV conversion,
+  full-window repaint, our present cadence) that kept fullscreen 1080p from
+  fitting the TV's 20 ms budget. Decided 2026-09-12, reversing the 2026-08-12
+  rejection; the texture pipeline keeps every non-fullscreen use.
 - **[ANGLE textures and teardown crash](backlog/angle-cross-context-impeller-textures.md)** [2026-07-27]
   "The two Windows client killers (a snapshot boundary's cross-context texture
   blacking the window under ANGLE, and the engine-restart GL teardown race)
@@ -733,7 +740,9 @@ Shaped, not started.
   through mapped pixel-unpack buffers, but the pixels are still memcpy'd into
   them on that thread (~5.6 ms per 1080p frame on the TV). Leasing the mapped
   memory out to the producer, so a decoder or a guest writes straight into it,
-  is the only honestly zero-copy shape.
+  is the only honestly zero-copy shape. Its urgent consumer left on 2026-09-12
+  when fullscreen video moved to punch-through; camera and the wasm/JS upload
+  API remain.
 - **[Decide the shape of the transform props against CSS, all at once](backlog/transform-props-css-shape.md)** [2026-08-14]
   scale/scaleX/scaleY, x/y, rotate and originX/originY each landed on their
   own; CSS gives per-axis tuples for scale and translate but nothing for
@@ -762,10 +771,11 @@ Shaped, not started.
   everywhere (MediaCodec buffer mode on Android; no software codec bundled),
   planar YUV textures + shader conversion in alloy, player core in forge, no
   video primitive - texture/d-texture display the player's texture id. Fluency
-  target is the Philips MT5891 TV; punch-through rejected. Measured there
-  2026-09-12: 360p50 frame-for-frame on the vsync grid, 720p25 nearly so,
-  1080p25 over budget; audio-clocked selection drops ~10% of frames at every
-  resolution.
+  target is the Philips MT5891 TV; punch-through reversed 2026-09-12 for
+  fullscreen only (android-video-punch-through.md), this pipeline keeps every
+  other use. Measured there 2026-09-12: 360p50 frame-for-frame on the vsync
+  grid, 720p25 nearly so, 1080p25 over budget; audio-clocked selection drops
+  ~10% of frames at every resolution.
 - **[The armed wake-word detector burns ~40% of a core while idle](backlog/wakeword-detector-cost.md)** [2026-08-14]
   Every 100ms the armed speech worker scores a 2.2s window with the stateless
   livekit-wakeword predict, ~35-40ms a check whether or not anyone is

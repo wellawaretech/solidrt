@@ -1,6 +1,6 @@
 ---
 title: Zero-copy texture upload leases
-description: The remaining half of the staging work - the raster thread now uploads through mapped pixel-unpack buffers, but the pixels are still memcpy'd into them on that thread (~5.6 ms per 1080p frame on the TV). Leasing the mapped memory out to the producer, so a decoder or a guest writes straight into it, is the only honestly zero-copy shape.
+description: The remaining half of the staging work - the raster thread now uploads through mapped pixel-unpack buffers, but the pixels are still memcpy'd into them on that thread (~5.6 ms per 1080p frame on the TV). Leasing the mapped memory out to the producer, so a decoder or a guest writes straight into it, is the only honestly zero-copy shape. Its urgent consumer left on 2026-09-12 when fullscreen video moved to punch-through; camera and the wasm/JS upload API remain.
 created: 2026-09-12
 ---
 
@@ -35,6 +35,18 @@ Map flags make no difference on this driver: invalidate-buffer,
 invalidate-range and plain reuse all measured within noise of each other
 (map ~0.3 ms, copy identical), so the ring keeps the flag that states the
 intent.
+
+## Scope changed 2026-09-12
+
+The case that made this measured-necessary was fullscreen 1080p video on
+the TV, and that case left: fullscreen playback goes to
+[[android-video-punch-through]], which uploads nothing. What remains is
+camera frames (`alloy/src/camera.rs` uploads through the same path), the
+JS `updateTexture` API, and the original wasm/JS motivation below - all
+real, none of them yet measured against a budget the way video was. Worth
+re-checking who the consumer is before building this, rather than
+inheriting video's urgency. The numbers above stay valid; they are facts
+about the upload path, not about video.
 
 ## What is left
 
