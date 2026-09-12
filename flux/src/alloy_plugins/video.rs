@@ -1,8 +1,17 @@
 //! JS bindings for video playback: a thin marshaling layer over
 //! forge::video (demux, decode, sync decisions) and alloy (YUV texture,
-//! PCM sink). There is NO video primitive: `open()` resolves to a player
-//! handle whose `texture` id is displayed with `<texture>`/`<d-texture>`,
-//! and a richer Video component composes in a higher layer.
+//! PCM sink, the Android video plane). There is NO video primitive: `open()`
+//! resolves to a player handle whose `texture` id is displayed with
+//! `<texture>`/`<d-texture>`, and a richer Video component composes in a
+//! higher layer.
+//!
+//! Two players, chosen at open (`present`): the texture player below, and
+//! on Android the PLANE player - decoder output on its own surface beneath
+//! a translucent UI, composited by the platform, no texture, no `tick`, no
+//! frame demand (okf/plans/android-video-punch-through.md). This module
+//! joins alloy's plane (the surface) and forge's plane player (the codec):
+//! open creates the plane then the player on its window, close drops the
+//! player first so the codec has released the surface before the plane goes.
 //!
 //! `tick`, the per-frame hook driven by the FrameRendered handler (the
 //! camera precedent), does the plumbing per player: feed the PCM sink up to
@@ -33,6 +42,8 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Ctx, Exception, Function, JsLifetime, Object};
 
+use crate::plugins::marshal::OptArg;
+
 // The silent-stream master clock reading in us: the engine timeline, which
 // advances one refresh period per frame however jittery the execution is.
 fn clock_now_us(ctx: &Ctx<'_>) -> i64 {
@@ -56,16 +67,30 @@ struct PlayerEntry {
   origin_us: Option<i64>,
 }
 
+// A plane player and its plane. Field order is drop order: the player
+// (whose drop joins the codec worker, releasing the surface) before the
+// plane (which removes the view).
+#[cfg(target_os = "android")]
+struct PlaneEntry {
+  player: forge::video::PlanePlayer,
+  plane: alloy::video_plane::VideoPlane,
+}
+
 struct Inner {
   // The shared host handles; alloy also takes the teardown release in Drop.
   gui: Rc<super::Gui>,
   players: RefCell<HashMap<u64, PlayerEntry>>,
+  // Plane players, keyed in the same id space. One at a time (the plane is
+  // fullscreen; the platform side refuses a second as well).
+  #[cfg(target_os = "android")]
+  planes: RefCell<HashMap<u64, PlaneEntry>>,
   next_id: RefCell<u64>,
 }
 
 impl Drop for Inner {
   // Engine teardown: release what the players hold in alloy (their decode
-  // workers exit when the VideoPlayer drops its queue receivers).
+  // workers exit when the VideoPlayer drops its queue receivers; plane
+  // entries tear down in their own drop).
   fn drop(&mut self) {
     for (_, entry) in self.players.borrow_mut().drain() {
       self.gui.alloy.destroy_texture(entry.texture);
@@ -86,14 +111,17 @@ pub(crate) fn store_state(ctx: &Ctx<'_>) {
     .store_userdata(VideoPluginState(Rc::new(Inner {
       gui: super::gui(ctx),
       players: RefCell::new(HashMap::new()),
+      #[cfg(target_os = "android")]
+      planes: RefCell::new(HashMap::new()),
       next_id: RefCell::new(0),
     })))
     .expect("store video state");
 }
 
-/// The `flux:video` module: `open(path)` resolves to a bound player object
-/// (`{ texture, width, height, duration, hasAudio, play, pause, playing,
-/// currentTime, finished, close }`), so the raw handle never leaves Rust.
+/// The `flux:video` module: `open(path, options?)` resolves to a bound
+/// player object (`{ texture, width, height, duration, hasAudio, play,
+/// pause, playing, currentTime, finished, close }`; a plane player has no
+/// `texture` and adds `seek`), so the raw handle never leaves Rust.
 pub struct VideoModule;
 
 impl ModuleDef for VideoModule {
@@ -108,11 +136,53 @@ impl ModuleDef for VideoModule {
   }
 }
 
-fn open_impl<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Promise<'js>> {
-  // An unreadable or unsupported file is environmental: reject, never throw
-  // (the async-binding contract). The header read is synchronous but small.
+/// How a player presents, from the `present` option: through its texture
+/// (default) or on the platform's video plane.
+enum Present {
+  Texture,
+  Plane { fit: PlaneFit },
+}
+
+enum PlaneFit {
+  Contain,
+  Cover,
+}
+
+fn read_present(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result<Present> {
+  let Some(opts) = options.0.as_ref() else {
+    return Ok(Present::Texture);
+  };
+  let present = opts.get::<_, Option<String>>("present")?;
+  match present.as_deref() {
+    None | Some("texture") => Ok(Present::Texture),
+    Some("plane") => {
+      let fit = match opts.get::<_, Option<String>>("fit")?.as_deref() {
+        None | Some("contain") => PlaneFit::Contain,
+        Some("cover") => PlaneFit::Cover,
+        Some(other) => {
+          return Err(Exception::throw_type(ctx, &format!("openVideo: fit must be \"contain\" or \"cover\", got \"{other}\"")))
+        }
+      };
+      Ok(Present::Plane { fit })
+    }
+    Some(other) => {
+      Err(Exception::throw_type(ctx, &format!("openVideo: present must be \"texture\" or \"plane\", got \"{other}\"")))
+    }
+  }
+}
+
+fn open_impl<'js>(ctx: Ctx<'js>, path: String, options: OptArg<Object<'js>>) -> rquickjs::Result<Promise<'js>> {
+  // A malformed option is a programming error and throws; an unreadable or
+  // unsupported file, or a platform without a plane, is environmental:
+  // reject, never throw (the async-binding contract). The header read is
+  // synchronous but small.
+  let present = read_present(&ctx, &options)?;
   let (promise, resolve, reject) = Promise::new(&ctx)?;
-  match build_player(ctx.clone(), &path) {
+  let built = match present {
+    Present::Texture => build_player(ctx.clone(), &path),
+    Present::Plane { fit } => build_plane_player(ctx.clone(), &path, fit),
+  };
+  match built {
     Ok(obj) => resolve.call::<_, ()>((obj,))?,
     Err(e) => {
       let error = Exception::from_message(ctx.clone(), &format!("openVideo: {e}"))?;
@@ -122,12 +192,103 @@ fn open_impl<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Promise<'js>>
   Ok(promise)
 }
 
+#[cfg(not(target_os = "android"))]
+fn build_plane_player<'js>(_ctx: Ctx<'js>, _path: &str, _fit: PlaneFit) -> Result<Object<'js>, String> {
+  Err("no video plane on this platform (present: \"plane\" is Android only)".to_string())
+}
+
+#[cfg(target_os = "android")]
+fn build_plane_player<'js>(ctx: Ctx<'js>, path: &str, fit: PlaneFit) -> Result<Object<'js>, String> {
+  use alloy::video_plane::{PlaneFit as AlloyFit, VideoPlane};
+  use forge::video::transport::VsyncGrid;
+  use forge::video::{Mp4Demuxer, PlanePlayer};
+
+  let state = ctx.userdata::<VideoPluginState>().expect("video state");
+  if !state.0.planes.borrow().is_empty() {
+    return Err("a video plane is already open (one at a time; close it first)".to_string());
+  }
+  let demux = Mp4Demuxer::open(path)?;
+  let info = demux.info().clone();
+  let fit = match fit {
+    PlaneFit::Contain => AlloyFit::Contain,
+    PlaneFit::Cover => AlloyFit::Cover,
+  };
+  let plane = VideoPlane::create(info.width, info.height, fit)?;
+  // The display's vsync grid: the period the plane read from the display,
+  // the phase from the samples its view keeps reporting.
+  let vsync = plane
+    .refresh_period_ns()
+    .map(|period_ns| VsyncGrid { period_ns, sample_ns: Box::new(alloy::video_plane::vsync_ns) });
+  let player = PlanePlayer::open(Box::new(demux), plane.native_window().clone(), vsync)?;
+
+  let id = {
+    let mut next = state.0.next_id.borrow_mut();
+    *next += 1;
+    *next
+  };
+  state.0.planes.borrow_mut().insert(id, PlaneEntry { player, plane });
+
+  let build = || -> rquickjs::Result<Object<'js>> {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("width", info.width)?;
+    obj.set("height", info.height)?;
+    obj.set("duration", info.duration_us.map(|d| d as f64 / 1_000_000.0))?;
+    // No audio on the plane in this round (okf/plans/android-video-punch-through.md).
+    obj.set("hasAudio", false)?;
+    obj.set("play", Function::new(ctx.clone(), move |ctx: Ctx<'_>| with_plane(&ctx, id, |e| e.player.play()))?)?;
+    obj.set("pause", Function::new(ctx.clone(), move |ctx: Ctx<'_>| with_plane(&ctx, id, |e| e.player.pause()))?)?;
+    obj.set(
+      "seek",
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, seconds: f64| {
+        with_plane(&ctx, id, |e| e.player.seek((seconds.max(0.0) * 1_000_000.0) as i64))
+      })?,
+    )?;
+    obj.set("playing", Function::new(ctx.clone(), move |ctx: Ctx<'_>| with_plane(&ctx, id, |e| e.player.playing()).unwrap_or(false))?)?;
+    obj.set(
+      "currentTime",
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>| {
+        with_plane(&ctx, id, |e| e.player.position_us()).unwrap_or(0) as f64 / 1_000_000.0
+      })?,
+    )?;
+    // A plane whose surface the platform took (backgrounded) is finished
+    // too: the codec has nothing to render into.
+    obj.set(
+      "finished",
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>| {
+        with_plane(&ctx, id, |e| e.player.finished() || e.plane.lost()).unwrap_or(true)
+      })?,
+    )?;
+    obj.set("close", Function::new(ctx.clone(), move |ctx: Ctx<'_>| close_plane(&ctx, id))?)?;
+    Ok(obj)
+  };
+  build().map_err(|e| format!("build plane player object: {e}"))
+}
+
+// Run `f` on the plane entry `id`, None once closed (a late call on a closed
+// player is a no-op, not an error).
+#[cfg(target_os = "android")]
+fn with_plane<T>(ctx: &Ctx<'_>, id: u64, f: impl FnOnce(&PlaneEntry) -> T) -> Option<T> {
+  let state = ctx.userdata::<VideoPluginState>().expect("video state");
+  let planes = state.0.planes.borrow();
+  planes.get(&id).map(f)
+}
+
+#[cfg(target_os = "android")]
+fn close_plane(ctx: &Ctx<'_>, id: u64) {
+  let state = ctx.userdata::<VideoPluginState>().expect("video state");
+  // Take it out first, then drop outside the borrow: the drop joins the
+  // codec worker and removes the view, neither of which should hold the map.
+  let entry = state.0.planes.borrow_mut().remove(&id);
+  drop(entry);
+}
+
 fn build_player<'js>(ctx: Ctx<'js>, path: &str) -> Result<Object<'js>, String> {
   let state = ctx.userdata::<VideoPluginState>().expect("video state");
   let player = VideoPlayer::open(path)?;
   let info = player.info();
   let (width, height) = (info.width, info.height);
-  let duration_s = info.duration_us as f64 / 1_000_000.0;
+  // None (undefined in JS) when the source has no duration: a live stream.
+  let duration_s = info.duration_us.map(|d| d as f64 / 1_000_000.0);
 
   let layout = match player.layout() {
     PixelLayout::Nv12 => alloy::YuvLayout::Nv12,

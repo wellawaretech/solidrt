@@ -1,6 +1,6 @@
 ---
 title: Video playback
-description: VP9 in MP4 since 2026-09-12 (royalty-free, replaces H.264). One decode-to-YUV pipeline on every platform - MediaCodec buffer mode on Android, the vendored libvpx bound by hand everywhere else - planar YUV textures + shader conversion in alloy, player core in forge, no video primitive - texture/d-texture display the player's texture id. Fluency target is the Philips MT5891 TV; punch-through reversed 2026-09-12 for fullscreen only (android-video-punch-through.md), this pipeline keeps every other use. Measured there 2026-09-12: 360p50 frame-for-frame on the vsync grid, 720p25 nearly so, 1080p25 over budget; audio-clocked selection drops ~10% of frames at every resolution.
+description: The TEXTURE video path - VP9 in MP4 since 2026-09-12 (royalty-free, replaces H.264), one decode-to-YUV pipeline on every platform (MediaCodec buffer mode on Android, vendored libvpx bound by hand elsewhere), planar YUV textures + shader conversion in alloy, player core in forge, no video primitive. Status 2026-09-12: plays and is in sync, but fullscreen 1080p is over the TV's budget by construction, audio-clocked selection drops ~10% of frames, and there is no seek/rate/step. Fullscreen on Android goes through android-video-punch-through.md instead; this path is not being fixed while that round runs.
 created: 2026-08-12
 ---
 
@@ -50,6 +50,15 @@ Hardware decode is what makes the TV fluent; the upload is ~3 MB/frame at
 1080p YUV420 (vs 8 MB RGBA), well inside the TV's budget on the Kodi
 precedent below.
 
+Read as "one DECODE pipeline everywhere, several sinks" since 2026-09-12. The
+sink described here - upload, convert, composite into our own frame - is the
+texture contract, and its fluency is capped by the UI's, because a shared
+surface is a shared clock: video whose pixels land in our composited frame is
+presented when that frame is presented. That cap, not a missing optimization,
+is why "well inside the TV's budget" turned out wrong for 1080p (the
+2026-09-12 measurements below) and why fullscreen gets a sink of its own.
+Demux, decode, the player and the audio clock are shared by both.
+
 Rejected and settled, except where noted:
 
 - Surface punch-through (decoder output composited by SurfaceFlinger under
@@ -88,13 +97,16 @@ was the reliable one.
 No new crate edges: alloy does not depend on forge and still will not.
 
 - `forge::video` - the capability core, engine-free (YUV planes as plain
-  bytes, no GL/SDL types). Demux via symphonia (all platforms; AAC decode
-  too, pure Rust, cheap on CPU). Video decoder trait with two impls first:
-  openh264 software decoder (PoC and dev fallback, see the decoder
-  decision below), and AMediaCodec via the ndk crate under cfg(android)
-  (platform-specific code in forge has precedent: subprocess, p2p). Player logic lives here: play/pause/seek state, decode worker
-  thread, frame queue, and clock-agnostic sync - `advance(clock_pos) ->
-  Option<YuvFrame>`; the caller feeds the master clock in.
+  bytes, no GL/SDL types). Demux via the `mp4` crate, AAC decode via
+  symphonia (pure Rust, cheap on CPU). Video decoder trait with two impls:
+  libvpx (vendored, hand-bound) off Android, and AMediaCodec buffer mode
+  via the ndk crate under cfg(android) (platform-specific code in forge
+  has precedent: subprocess, p2p). Player logic lives here: play/pause
+  state, decode worker thread, frame queue, and clock-agnostic sync -
+  `advance(clock_pos) -> Option<YuvFrame>`; the caller feeds the master
+  clock in. No seek yet (2026-09-12): the demuxer seek lands with the
+  plane path and the texture player picks it up in that item's transport
+  follow-up.
 - alloy - a video-agnostic texture-system feature: planar YUV textures in
   the TextureRegistry plus a YUV-to-RGB conversion pass in the raster
   path, with color metadata (BT.601/709 matrix, limited/full range) as
@@ -104,8 +116,9 @@ No new crate edges: alloy does not depend on forge and still will not.
   tick precedent): read the audio clock, call the forge player's
   advance(), hand the due frame's planes to alloy's upload. Sync decisions
   stay in forge, upload mechanics in alloy.
-- `@solidrt/core/video` - openVideo() -> player handle (texture id, dims,
-  duration, currentTime, play/pause/seek, close). NO video primitive
+- `@solidrt/core/video` - createVideo() -> reactive stream over the
+  `flux:video` player (texture id, dims, duration, currentTime,
+  play/pause, close; auto-closed with the owner). NO video primitive
   (user decision 2026-08-12): `<texture>`/`<d-texture>` are the display
   targets (d-* first for animation-frequency content), matching the
   no-image-primitive texture-id currency. The player exposes its handles
@@ -266,10 +279,23 @@ Assets: every clip under examples/video/assets and the forge fixture are
 re-encoded to VP9 (`ffmpeg -c:v libvpx-vp9 -c:a aac`); the `-bf 0`
 constraint died with openh264.
 
-## Open questions
-- If 1080p upload cost ever shows in traces: the per-frame copy is the
-  load [[texture-upload-staging]] anticipated; that item is the fix, not
-  a new design here.
+## Open on this path (2026-09-12)
+
+None of these is being worked while the plane round runs; they are what
+"this path is not fixed" means, so that they are not rediscovered:
+
+- Audio-clocked streams drop ~10% of frames at every resolution, on both
+  Android devices identically (sink-position quantisation, stage 3 of the
+  frame-scheduling list). The biggest quality item on this path.
+- No seek, rate or step. The demuxer seek arrives with the plane path;
+  the player-side flush-and-refill is the texture path's own work.
+- Fullscreen 1080p on the TV is outside the UI clock's budget by
+  construction ([[android-video-punch-through]] explains why no rung here
+  lifts it); 720p is the ceiling on that device through this path.
+- Windows: the libvpx build (vs17 + msbuild) is not driven by `build.rs`.
+- The upload question is answered: staged uploads landed
+  ([[texture-upload-leases]]) and the window draw, not the upload, is the
+  remaining per-frame cost ([[live-texture-content-damage]]).
 
 ## Frame scheduling (2026-08-13): timeline clock + standing demand, behind `video-timeline-pacing`
 
@@ -559,22 +585,19 @@ Two bugs fixed the same session, both in the player:
    are optimizations over the libvpx software decoder that ships
    everywhere, not prerequisites for a release (VP9 has no patent
    stance to resolve).
-4. Seek, loop, playback rate; plane-texture exposure (tier 2) when
-   something consumes it.
-5. Only if measured insufficient: staging-buffer upload via
-   [[texture-upload-staging]], and/or the opt-in surface-import rung.
-   PICKED UP 2026-08-13 (the 1080p TV raster bound made it
-   measured-needed): that item's stages 1+2 are implemented - update_yuv
-   moves the owned frame across the raster channel (no per-plane copies)
-   and uploads into double-buffered plane sets so no in-flight conversion
-   pass is written under. TV re-measured 2026-08-13: raster busy -25%,
-   correctness holds, but fps UNCHANGED at 17-19/25 - the limiter is
-   critical-path latency against the 50 Hz vsync grid (details and the
-   stage-3 rationale in that item), not raster capacity.
-6. Frame scheduling: timeline clock + standing demand IMPLEMENTED
-   2026-08-13 behind `video-timeline-pacing`, default OFF until the
-   idle-tick residual is resolved (see the Frame scheduling section
-   above for measurements, the residual chain, and next steps).
+4. Transport on this path: seek (player-side flush and refill over the
+   shared demuxer seek from [[android-video-punch-through]]), loop, rate,
+   step; plane-texture exposure (tier 2) when something consumes it.
+   Designed together with the plane path's transport follow-up, so both
+   contracts get one shape.
+5. DONE 2026-08-13 / 2026-09-12: staged uploads via
+   [[texture-upload-leases]] (owned frame across the raster channel,
+   double-buffered plane sets). Raster busy -25%, fps unchanged: the
+   limiter was critical-path latency against the vsync grid, and after
+   the summer's pacing work, the full-window draw.
+6. DONE 2026-09-12: frame scheduling (timeline clock + half-period
+   lookahead + standing demand) ships unconditionally; the feature flag is
+   deleted. Stage 3 of that chain, audio-clock smoothing, is open (above).
 7. Audio unification (after the video PCM path is proven on desktop and
    the TV): replace SDL3_mixer with symphonia decode (Vorbis + WAV, and
    MP3/FLAC/AAC clips become feature flags) feeding one SDL3 audio

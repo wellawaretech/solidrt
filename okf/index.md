@@ -17,6 +17,14 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   An instanced sprite layer as the third extension, built on a new zero-copy
   GPU buffer write lease in core; tiers, measurements, and the design
   decisions
+- **[Fullscreen video by surface punch-through on Android](plans/android-video-punch-through.md)** [2026-09-12]
+  Fullscreen VP9 playback decodes straight into its own SurfaceView,
+  composited by SurfaceFlinger under a translucent UI, off our frame loop
+  entirely. Round one (planned 2026-09-12) is silent playback with
+  play/pause/seek on the TV and the tablet; audio and the texture path's
+  transport come after. Decided 2026-09-12, reversing the 2026-08-12
+  rejection; the texture pipeline keeps every non-fullscreen use and is not
+  touched in this round.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
@@ -160,13 +168,6 @@ Shaped, not started.
   On a touch-only Android device the capability layer gains "keyboard" as soon
   as the virtual keyboard opens, so any keyboard-first behavior gated on it
   would switch on for users who have no keyboard.
-- **[Fullscreen video by surface punch-through on Android](backlog/android-video-punch-through.md)** [2026-09-12]
-  Fullscreen playback decodes straight into its own SurfaceView, composited by
-  SurfaceFlinger under a translucent UI, instead of through the texture
-  pipeline. Deletes the whole per-frame chain (upload, YUV conversion,
-  full-window repaint, our present cadence) that kept fullscreen 1080p from
-  fitting the TV's 20 ms budget. Decided 2026-09-12, reversing the 2026-08-12
-  rejection; the texture pipeline keeps every non-fullscreen use.
 - **[ANGLE textures and teardown crash](backlog/angle-cross-context-impeller-textures.md)** [2026-07-27]
   "The two Windows client killers (a snapshot boundary's cross-context texture
   blacking the window under ANGLE, and the engine-restart GL teardown race)
@@ -767,16 +768,15 @@ Shaped, not started.
   Windows and Android, but neither has been run there - the Windows console
   ANSI path and Android termios from a terminal emulator are unverified.
 - **[Video playback](backlog/video-playback.md)** [2026-08-12]
-  VP9 in MP4 since 2026-09-12 (royalty-free, replaces H.264). One
-  decode-to-YUV pipeline on every platform - MediaCodec buffer mode on
-  Android, the vendored libvpx bound by hand everywhere else - planar YUV
-  textures + shader conversion in alloy, player core in forge, no video
-  primitive - texture/d-texture display the player's texture id. Fluency
-  target is the Philips MT5891 TV; punch-through reversed 2026-09-12 for
-  fullscreen only (android-video-punch-through.md), this pipeline keeps every
-  other use. Measured there 2026-09-12: 360p50 frame-for-frame on the vsync
-  grid, 720p25 nearly so, 1080p25 over budget; audio-clocked selection drops
-  ~10% of frames at every resolution.
+  The TEXTURE video path - VP9 in MP4 since 2026-09-12 (royalty-free, replaces
+  H.264), one decode-to-YUV pipeline on every platform (MediaCodec buffer mode
+  on Android, vendored libvpx bound by hand elsewhere), planar YUV textures +
+  shader conversion in alloy, player core in forge, no video primitive. Status
+  2026-09-12: plays and is in sync, but fullscreen 1080p is over the TV's
+  budget by construction, audio-clocked selection drops ~10% of frames, and
+  there is no seek/rate/step. Fullscreen on Android goes through
+  android-video-punch-through.md instead; this path is not being fixed while
+  that round runs.
 - **[The armed wake-word detector burns ~40% of a core while idle](backlog/wakeword-detector-cost.md)** [2026-08-14]
   Every 100ms the armed speech worker scores a 2.2s window with the stateless
   livekit-wakeword predict, ~35-40ms a check whether or not anyone is

@@ -24,9 +24,33 @@ use ndk::media::media_format::MediaFormat;
 use super::{PixelLayout, VideoAu, VideoDecoder, YuvFrame};
 
 /// The MediaCodec mime for VP9 (MediaFormat.MIMETYPE_VIDEO_VP9).
-const MIME_VP9: &str = "video/x-vnd.on2.vp9";
-const FLAG_END_OF_STREAM: u32 = ndk_sys::AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM as u32;
+pub(crate) const MIME_VP9: &str = "video/x-vnd.on2.vp9";
+pub(crate) const FLAG_END_OF_STREAM: u32 = ndk_sys::AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM as u32;
 const FLAG_CODEC_CONFIG: u32 = ndk_sys::AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG as u32;
+
+// A hardware decoder is a limited resource: the target TV allows two VP9
+// instances, so switching clips - where the incoming player is built before
+// the outgoing one is closed - can find them both taken. Retry across that
+// handover rather than failing a clip for a codec that is about to be free.
+// Total wait stays well inside the time a player takes to start.
+const DECODER_ATTEMPTS: u32 = 10;
+const DECODER_RETRY_MS: u64 = 50;
+
+/// Run a codec constructor with the clip-handover retry above (used by both
+/// decoder modes). The last error is reported when every attempt fails.
+pub(crate) fn create_with_retry<T>(mut make: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+  let mut last = String::new();
+  for attempt in 0..DECODER_ATTEMPTS {
+    match make() {
+      Ok(value) => return Ok(value),
+      Err(e) => last = e,
+    }
+    if attempt + 1 < DECODER_ATTEMPTS {
+      std::thread::sleep(Duration::from_millis(DECODER_RETRY_MS));
+    }
+  }
+  Err(format!("{last} (after {DECODER_ATTEMPTS} attempts)"))
+}
 // MediaCodecInfo.CodecCapabilities color formats (Java-level constants, no
 // ndk-sys symbols): 21 = YUV420SemiPlanar (NV12), 19 = YUV420Planar (I420).
 const COLOR_NV12: i32 = 21;

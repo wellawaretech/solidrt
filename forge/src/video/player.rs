@@ -216,30 +216,12 @@ impl VideoPlayer {
 /// failure ends the stream like any decoder-init failure.
 pub(crate) type DecoderFactory = fn(&Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String>;
 
-// A hardware decoder is a limited resource: the target TV allows two VP9
-// instances, so switching clips - where the incoming player is built before
-// the outgoing one is closed - can find them both taken. Retry across that
-// handover rather than failing a clip for a codec that is about to be free.
-// Total wait stays well inside the time a player takes to start.
-#[cfg(target_os = "android")]
-const DECODER_ATTEMPTS: u32 = 10;
-#[cfg(target_os = "android")]
-const DECODER_RETRY_MS: u64 = 50;
-
 #[cfg(target_os = "android")]
 fn create_decoder(demux: &Mp4Demuxer) -> Result<Box<dyn VideoDecoder>, String> {
   let info = demux.info();
-  let mut last = String::new();
-  for attempt in 0..DECODER_ATTEMPTS {
-    match super::mediacodec::MediaCodecDecoder::new(info.width, info.height) {
-      Ok(decoder) => return Ok(Box::new(decoder)),
-      Err(e) => last = e,
-    }
-    if attempt + 1 < DECODER_ATTEMPTS {
-      thread::sleep(std::time::Duration::from_millis(DECODER_RETRY_MS));
-    }
-  }
-  Err(format!("{last} (after {DECODER_ATTEMPTS} attempts)"))
+  super::mediacodec::create_with_retry(|| {
+    super::mediacodec::MediaCodecDecoder::new(info.width, info.height).map(|d| Box::new(d) as Box<dyn VideoDecoder>)
+  })
 }
 
 #[cfg(not(target_os = "android"))]

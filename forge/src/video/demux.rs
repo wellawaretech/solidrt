@@ -32,7 +32,8 @@ const HD_LINES: u32 = 720;
 pub struct MediaInfo {
   pub width: u32,
   pub height: u32,
-  pub duration_us: i64,
+  /// None when the source does not say (a live stream).
+  pub duration_us: Option<i64>,
   /// Frames in the video track (0 when the container does not say).
   pub frame_count: u32,
   pub audio: Option<AudioInfo>,
@@ -71,9 +72,15 @@ pub struct Mp4Demuxer {
   video_timescale: u32,
   video_next: u32,
   video_count: u32,
+  // Keyframes of the video track as (pts_us, sample id), ascending: what
+  // `seek` binary-searches. Every sample when the container marks none.
+  sync_samples: Vec<(i64, u32)>,
   audio_track: Option<(u32, u32)>,
   audio_next: u32,
   audio_count: u32,
+  // The audio track's time-to-sample runs as (sample count, delta ticks),
+  // for repositioning it on seek.
+  audio_stts: Vec<(u32, u32)>,
 }
 
 impl Mp4Demuxer {
@@ -136,10 +143,30 @@ impl Mp4Demuxer {
       }
     });
 
+    let video_timescale = vtrack.timescale();
+    let stbl = &vtrack.trak.mdia.minf.stbl;
+    let sync_ids: Vec<u32> = match &stbl.stss {
+      Some(stss) => stss.entries.clone(),
+      // No sync table means every sample is a sync sample (ISO 14496-12).
+      None => (1..=vtrack.sample_count()).collect(),
+    };
+    // Time-to-sample runs as (sample count, delta ticks): one run for
+    // constant-rate content.
+    let video_runs: Vec<(u32, u32)> = stbl.stts.entries.iter().map(|e| (e.sample_count, e.sample_delta)).collect();
+    let sync_samples = sync_ids
+      .into_iter()
+      .map(|id| (ticks_to_us(sample_start_ticks(&video_runs, id), video_timescale), id))
+      .collect();
+    let audio_stts = audio_info
+      .as_ref()
+      .and_then(|(id, _, _)| reader.tracks().get(id))
+      .map(|t| t.trak.mdia.minf.stbl.stts.entries.iter().map(|e| (e.sample_count, e.sample_delta)).collect())
+      .unwrap_or_default();
+
     let info = MediaInfo {
       width: vtrack.width() as u32,
       height,
-      duration_us: reader.duration().as_micros() as i64,
+      duration_us: Some(reader.duration().as_micros() as i64),
       frame_count: vtrack.sample_count(),
       audio: audio_info.as_ref().map(|(_, _, a)| AudioInfo {
         sample_rate: a.sample_rate,
@@ -148,8 +175,9 @@ impl Mp4Demuxer {
       }),
     };
     Ok(Mp4Demuxer {
-      video_timescale: vtrack.timescale(),
+      video_timescale,
       video_count: vtrack.sample_count(),
+      sync_samples,
       audio_track: audio_info.as_ref().map(|&(id, ts, _)| (id, ts)),
       audio_count: audio_info
         .as_ref()
@@ -163,7 +191,22 @@ impl Mp4Demuxer {
       video_track,
       video_next: 1,
       audio_next: 1,
+      audio_stts,
     })
+  }
+
+  /// Reposition both tracks (see `Demuxer::seek`): video to the last
+  /// keyframe at or before `target_us` (the first keyframe for a target
+  /// before it), audio to the first packet at or after `target_us`.
+  pub fn seek(&mut self, target_us: i64) -> Result<(), String> {
+    let at = self.sync_samples.partition_point(|&(pts, _)| pts <= target_us);
+    let (_, sample_id) = *self.sync_samples.get(at.saturating_sub(1)).ok_or("video track has no samples")?;
+    self.video_next = sample_id;
+    if let Some((_, timescale)) = self.audio_track {
+      let ticks = (target_us.max(0) as u128 * timescale as u128 / 1_000_000) as u64;
+      self.audio_next = sample_at_or_after(&self.audio_stts, ticks).min(self.audio_count + 1);
+    }
+    Ok(())
   }
 
   pub fn info(&self) -> &MediaInfo {
@@ -218,6 +261,56 @@ impl Mp4Demuxer {
       .ok_or_else(|| format!("audio sample {id} missing"))?;
     let pts_us = sample.start_time as i64 * 1_000_000 / timescale as i64;
     Ok(Some(AudioPacket { pts_us, data: sample.bytes.to_vec() }))
+  }
+}
+
+// Start time in track ticks of 1-based `sample_id`, walking the runs.
+fn sample_start_ticks(runs: &[(u32, u32)], sample_id: u32) -> u64 {
+  let mut remaining = sample_id.saturating_sub(1) as u64;
+  let mut ticks = 0u64;
+  for &(count, delta) in runs {
+    let count = count as u64;
+    if remaining < count {
+      return ticks + remaining * delta as u64;
+    }
+    remaining -= count;
+    ticks += count * delta as u64;
+  }
+  ticks
+}
+
+// 1-based id of the first sample starting at or after `ticks`; one past
+// the last sample when none does.
+fn sample_at_or_after(runs: &[(u32, u32)], ticks: u64) -> u32 {
+  let mut id = 1u32;
+  let mut start = 0u64;
+  for &(count, delta) in runs {
+    let span = count as u64 * delta as u64;
+    if ticks < start + span {
+      return id + ((ticks - start).div_ceil(delta.max(1) as u64)) as u32;
+    }
+    start += span;
+    id += count;
+  }
+  id
+}
+
+fn ticks_to_us(ticks: u64, timescale: u32) -> i64 {
+  (ticks as u128 * 1_000_000 / timescale.max(1) as u128) as i64
+}
+
+impl super::Demuxer for Mp4Demuxer {
+  fn info(&self) -> &MediaInfo {
+    &self.info
+  }
+  fn next_video(&mut self) -> Result<Option<VideoAu>, String> {
+    Mp4Demuxer::next_video(self)
+  }
+  fn next_audio(&mut self) -> Result<Option<AudioPacket>, String> {
+    Mp4Demuxer::next_audio(self)
+  }
+  fn seek(&mut self, target_us: i64) -> Result<(), String> {
+    Mp4Demuxer::seek(self, target_us)
   }
 }
 

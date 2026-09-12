@@ -1,6 +1,7 @@
 package com.solidrt.app;
 
 import android.content.Context;
+import android.graphics.PixelFormat;
 import android.hardware.input.InputManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -8,8 +9,13 @@ import android.util.Log;
 import android.view.InputDevice;
 import android.view.View;
 import android.view.WindowInsets;
+import android.widget.RelativeLayout;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import org.libsdl.app.SDLActivity;
+import org.libsdl.app.SDLSurface;
 
 // The SolidRT activity body shared by both flavors: the go dev client and the
 // production runtime (each flavor's MainActivity subclasses this; the
@@ -34,6 +40,104 @@ public class SolidRTActivity extends SDLActivity {
             "impeller",
             "main"
         };
+    }
+
+    // Reports that the system destroyed the video plane's surface (see
+    // VideoPlaneView): the decoder rendering into it has to stop.
+    static native void nativeVideoPlaneLost();
+
+    // Forwards one Choreographer frame time (System.nanoTime base) while a
+    // video plane is attached: the phase of the display's vsync grid.
+    static native void nativeVideoPlaneVsync(long frameTimeNanos);
+
+    // The video plane (okf/plans/android-video-punch-through.md): at most one
+    // SurfaceView beneath SDL's, created and removed on request from native.
+    private VideoPlaneView videoPlane;
+
+    // Milliseconds to wait for the plane's surface to come up on the UI
+    // thread; a view added to a resumed window gets its surface within a
+    // frame or two, so this only bounds a wedged UI thread.
+    private static final long VIDEO_PLANE_CREATE_TIMEOUT_MS = 2000;
+
+    // SDL's surface sits above the video plane and lets it show through: the
+    // media-overlay z-order puts it over other SurfaceViews (both stay beneath
+    // the activity window), and the translucent format is what makes
+    // SurfaceFlinger blend it instead of treating the layer as opaque
+    // whatever its buffers hold. The GL side asks for alpha bits to match
+    // (alloy configure_opengl) and already clears the backbuffer to
+    // transparent black, so uncovered pixels show what is beneath: the video
+    // plane while one exists, else the window's black background as before.
+    // Both settings must precede the window attaching, which is why they are
+    // made at surface creation rather than in onCreate.
+    @Override
+    protected SDLSurface createSDLSurface(Context context) {
+        SDLSurface surface = super.createSDLSurface(context);
+        surface.getHolder().setFormat(PixelFormat.TRANSLUCENT);
+        surface.setZOrderMediaOverlay(true);
+        return surface;
+    }
+
+    // Creates the video plane sized to fit a videoWidth x videoHeight picture
+    // (fit: VideoPlaneView.FIT_*) and returns the view once its surface
+    // exists (VideoPlaneView.surface() is what the decoder takes). Called
+    // from native on a non-UI thread; the view work runs on the UI thread and
+    // this blocks until the surface is created. Null when a plane already
+    // exists (one at a time) or the surface did not come up.
+    //
+    // The view is the handle, and destroyVideoPlane takes it back by
+    // identity rather than "the current plane": a reload tears the old
+    // engine down after the new one has opened its plane, so the posted
+    // removal of the old view can run after the new view was added.
+    public VideoPlaneView createVideoPlane(final int videoWidth, final int videoHeight, final int fit) {
+        final VideoPlaneView[] made = new VideoPlaneView[1];
+        final CountDownLatch added = new CountDownLatch(1);
+        runOnUiThread(() -> {
+            try {
+                if (videoPlane != null) return;
+                VideoPlaneView view = new VideoPlaneView(this, videoWidth, videoHeight, fit);
+                RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(
+                    RelativeLayout.LayoutParams.MATCH_PARENT, RelativeLayout.LayoutParams.MATCH_PARENT);
+                params.addRule(RelativeLayout.CENTER_IN_PARENT);
+                // Index 0: beneath SDL's surface in the view order as well.
+                mLayout.addView(view, 0, params);
+                videoPlane = view;
+                made[0] = view;
+                Log.v(TAG, "Video plane added (" + videoWidth + "x" + videoHeight + ", fit " + fit + ")");
+            } finally {
+                added.countDown();
+            }
+        });
+        try {
+            if (!added.await(VIDEO_PLANE_CREATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "Video plane not created: UI thread stalled");
+                return null;
+            }
+            VideoPlaneView view = made[0];
+            if (view == null) {
+                Log.w(TAG, "Video plane not created: one already exists");
+                return null;
+            }
+            if (!view.created.await(VIDEO_PLANE_CREATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "Video plane surface did not come up");
+                destroyVideoPlane(view);
+                return null;
+            }
+            return view;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    // Removes the given video plane. Native calls this after the decoder
+    // released the surface; a view already removed is a no-op.
+    public void destroyVideoPlane(final VideoPlaneView view) {
+        runOnUiThread(() -> {
+            view.releasing = true;
+            if (videoPlane == view) videoPlane = null;
+            mLayout.removeView(view);
+            Log.v(TAG, "Video plane removed");
+        });
     }
 
     // Forwards the soft keyboard (IME) inset height in pixels to native. The

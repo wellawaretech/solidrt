@@ -125,6 +125,17 @@ pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
   gl_attr.set_green_size(8);
   gl_attr.set_blue_size(8);
 
+  // Alpha bits on Android, so the window buffer carries the transparency
+  // the frame draw already writes (it clears to transparent black): with
+  // SDL's SurfaceView flagged translucent (SolidRTActivity), uncovered
+  // pixels then show the video plane beneath the UI
+  // (okf/plans/android-video-punch-through.md). Without alpha bits the
+  // buffer is RGBX and the hole never opens. Android only: nowhere else is
+  // there a plane to show through to, and a desktop window's alpha means
+  // something else to its compositor.
+  #[cfg(target_os = "android")]
+  gl_attr.set_alpha_size(8);
+
   // On Android the window backbuffer itself is multisampled: the tiled GPU
   // resolves in-tile at swap, so plain window frames draw straight into
   // FBO 0 with no rig pass and no resolve copy - the only MSAA

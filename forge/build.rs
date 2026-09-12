@@ -15,9 +15,13 @@
 // statically. libvpx has its own configure + make (no cmake); the build runs
 // out of tree in OUT_DIR so the checkout stays clean, and configure runs
 // once (make is incremental after that; `cargo clean -p forge` after a
-// submodule bump that changes the configure options). VP9 decoder and
-// encoder are built (encoding is planned), VP8 is not, nor are the examples,
-// tools and docs. Android needs none of this: its VP9 decoder is MediaCodec
+// submodule bump that changes the configure options). The VP9 DECODER only:
+// the encoder costs 1.28 MB of linked binary (1732 KiB with it, 448 KiB
+// without, measured x86_64 2026-09-12) and no amount of not calling it helps,
+// because the RTCD tables name every dsp function and pull the encoder objects
+// in regardless. Re-enable it in the same breath as the encoder ffi, not
+// before. VP8 is not built, nor are the examples, tools and docs. Android
+// needs none of this: its VP9 decoder is MediaCodec
 // (forge/src/video/mediacodec.rs).
 
 use std::path::PathBuf;
@@ -100,6 +104,7 @@ fn build_libvpx(target_os: &str) {
         "--disable-vp9-postproc",
         "--disable-webm-io",
         "--disable-libyuv",
+        "--disable-vp9-encoder",
       ])
       .env("CC", compiler.path())
       .current_dir(&build_dir);

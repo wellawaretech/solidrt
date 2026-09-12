@@ -28,6 +28,8 @@ pub mod resample;
 mod script;
 pub mod spatial;
 mod threads;
+#[cfg(target_os = "android")]
+pub mod video_plane;
 mod vsync;
 pub mod yuv;
 

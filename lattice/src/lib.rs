@@ -319,6 +319,31 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeHardwareKeyboard(
   alloy::set_hardware_keyboard(present != 0);
 }
 
+// Receives "the system destroyed the video plane's surface" from
+// SolidRTActivity (the activity went to the background while a plane
+// existed); the plane's owner reads it and ends playback.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeVideoPlaneLost(
+  _env: *mut core::ffi::c_void,
+  _class: *mut core::ffi::c_void,
+) {
+  alloy::video_plane::set_lost();
+}
+
+// Receives one Choreographer frame time from the video plane view (every
+// display frame while a plane is attached): the vsync phase the decoder
+// worker snaps its release times to.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeVideoPlaneVsync(
+  _env: *mut core::ffi::c_void,
+  _class: *mut core::ffi::c_void,
+  frame_time_ns: i64,
+) {
+  alloy::video_plane::set_vsync_ns(frame_time_ns);
+}
+
 // --- End Android entry point ------------------------------
 
 // The player is the go client's home; the production runtime never

@@ -12,7 +12,8 @@ fn header_reports_the_stream_facts() {
   let info = demux.info();
   assert_eq!((info.width, info.height), (160, 120));
   assert_eq!(info.frame_count, 50);
-  assert!((info.duration_us - 2_000_000).abs() < 100_000, "duration {} not ~2s", info.duration_us);
+  let duration_us = info.duration_us.expect("a file has a duration");
+  assert!((duration_us - 2_000_000).abs() < 100_000, "duration {duration_us} not ~2s");
   let audio = info.audio.as_ref().expect("audio track");
   assert_eq!((audio.sample_rate, audio.channels), (44100, 1));
   // AAC-LC (object type 2), 44100 (freq index 4), mono (channel config 1).
@@ -244,4 +245,122 @@ fn non_mp4_input_errs() {
     Err(e) => e,
   };
   assert!(err.contains("header"), "unexpected error: {err}");
+}
+
+// 4 s of ffmpeg testsrc2 160x120 at 25 fps as VP9 with a keyframe every
+// second (-g 25), no audio: the seek fixture.
+fn keyframe_fixture() -> String {
+  concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/data/video_kf.mp4").to_string()
+}
+
+#[test]
+fn seek_lands_on_the_keyframe_at_or_before_the_target() {
+  let mut demux = Mp4Demuxer::open(&keyframe_fixture()).expect("open fixture");
+  assert!(demux.info().audio.is_none());
+  assert_eq!(demux.info().duration_us, Some(4_000_000));
+
+  demux.seek(2_500_000).expect("seek");
+  let au = demux.next_video().expect("read").expect("a frame");
+  assert!(au.sync, "the first frame after a seek is a keyframe");
+  assert_eq!(au.pts_us, 2_000_000);
+  let next = demux.next_video().expect("read").expect("a frame");
+  assert_eq!(next.pts_us, 2_040_000, "and decoding continues from it");
+
+  // Exactly on a keyframe, before the first one, and past the end.
+  demux.seek(1_000_000).expect("seek");
+  assert_eq!(demux.next_video().expect("read").expect("a frame").pts_us, 1_000_000);
+  demux.seek(-5).expect("seek");
+  assert_eq!(demux.next_video().expect("read").expect("a frame").pts_us, 0);
+  demux.seek(60_000_000).expect("seek");
+  assert_eq!(demux.next_video().expect("read").expect("a frame").pts_us, 3_000_000);
+}
+
+#[test]
+fn seek_repositions_audio_to_the_target() {
+  let mut demux = Mp4Demuxer::open(&fixture()).expect("open fixture");
+  // The A/V fixture has a single keyframe: video restarts at 0, audio at
+  // the target (the first packet at or after it; packets are 1024 samples
+  // at 44.1 kHz, ~23 ms).
+  demux.seek(1_000_000).expect("seek");
+  let au = demux.next_video().expect("read").expect("a frame");
+  assert!(au.sync);
+  assert_eq!(au.pts_us, 0);
+  let packet = demux.next_audio().expect("read").expect("a packet");
+  assert!(packet.pts_us >= 1_000_000 && packet.pts_us < 1_000_000 + 24_000, "audio at {}us", packet.pts_us);
+  // Back to the start reads the whole audio track again.
+  demux.seek(0).expect("seek");
+  assert_eq!(demux.next_audio().expect("read").expect("a packet").pts_us, 0);
+}
+
+#[test]
+fn transport_anchor_starts_on_the_first_frame_and_resets() {
+  use crate::video::transport::Anchor;
+  let mut anchor = Anchor::new();
+  assert!(!anchor.anchored());
+  // A stream starting at 7 s anchors there, at the wall time it arrives.
+  assert_eq!(anchor.due_ns(7_000_000, 1_000_000_000), 1_000_000_000);
+  assert!(anchor.anchored());
+  assert_eq!(anchor.due_ns(7_040_000, 1_000_000_000), 1_040_000_000);
+  // Wall time passing does not move the anchor.
+  assert_eq!(anchor.due_ns(7_080_000, 5_000_000_000), 1_080_000_000);
+  // Reset (play, resume, seek, stall): the next frame is due at once.
+  anchor.reset();
+  assert_eq!(anchor.due_ns(2_000_000, 9_000_000_000), 9_000_000_000);
+}
+
+#[test]
+fn transport_release_policy_thresholds() {
+  use crate::video::transport::{classify, Release, DROP_LATE_NS, RELEASE_LEAD_NS, STALL_REANCHOR_NS};
+  let lead = RELEASE_LEAD_NS;
+  assert_eq!(classify(lead + 10, lead), Release::Wait(10));
+  assert_eq!(classify(lead, lead), Release::AtTime);
+  assert_eq!(classify(0, lead), Release::AtTime);
+  assert_eq!(classify(-DROP_LATE_NS, lead), Release::AtTime);
+  assert_eq!(classify(-DROP_LATE_NS - 1, lead), Release::Drop);
+  assert_eq!(classify(-STALL_REANCHOR_NS, lead), Release::Drop);
+  assert_eq!(classify(-STALL_REANCHOR_NS - 1, lead), Release::Reanchor);
+  // On a known grid the lead is one refresh period.
+  assert_eq!(classify(20_000_000, 16_666_667), Release::Wait(3_333_333));
+}
+
+#[test]
+fn transport_snaps_release_times_onto_the_vsync_grid() {
+  use crate::video::transport::{snap_to_vsync, VsyncGrid, VSYNC_OFFSET_PERCENT};
+  // A 60 Hz grid sampled at 1 s; the offset pulls each release most of a
+  // period before its vsync.
+  let period = 16_666_667;
+  let offset = period * VSYNC_OFFSET_PERCENT / 100;
+  let vsync = 1_000_000_000;
+  assert_eq!(snap_to_vsync(vsync, vsync, period), vsync - offset);
+  // Just past a vsync goes back to it, just before the next goes forward.
+  assert_eq!(snap_to_vsync(vsync + 1_000_000, vsync, period), vsync - offset);
+  assert_eq!(snap_to_vsync(vsync + period - 1_000_000, vsync, period), vsync + period - offset);
+  // A due time before the sample snaps on the grid extended backwards.
+  assert_eq!(snap_to_vsync(vsync - 2 * period + 500_000, vsync, period), vsync - 2 * period - offset);
+  // 25 fps on 60 Hz: due times 2.4 periods apart land on two- and
+  // three-period steps only (five frames per twelve vsyncs), never a single
+  // or a quadruple.
+  let mut last = snap_to_vsync(vsync, vsync, period);
+  let mut steps = Vec::new();
+  for k in 1..=10 {
+    let next = snap_to_vsync(vsync + k * 40_000_000, vsync, period);
+    steps.push(((next - last) as f64 / period as f64).round() as i64);
+    last = next;
+  }
+  assert_eq!(steps, [2, 3, 2, 3, 2, 2, 3, 2, 3, 2]);
+  // Without a sample the grid passes due times through.
+  let grid = VsyncGrid { period_ns: period, sample_ns: Box::new(|| None) };
+  assert_eq!(grid.snap(123), 123);
+  assert_eq!(grid.lead_ns(), period);
+  let grid = VsyncGrid { period_ns: period, sample_ns: Box::new(move || Some(vsync)) };
+  assert_eq!(grid.snap(vsync + 1_000_000), vsync - offset);
+}
+
+#[test]
+fn transport_clock_is_monotonic() {
+  use crate::video::transport::monotonic_ns;
+  let a = monotonic_ns();
+  std::thread::sleep(std::time::Duration::from_millis(2));
+  let b = monotonic_ns();
+  assert!(b >= a + 2_000_000, "{a} -> {b}");
 }
