@@ -9,8 +9,57 @@ created: 2026-09-13
 Both players open local paths only (`WebmDemuxer::open(path)` reads through
 `fs::open_seekable`). An app that plays a clip from a server has to download
 the whole file first and open the copy, which is what
-`projects/video-streaming` does today. Streaming means the player reads the
+`projects/video-streaming` did before this item. Streaming means the player reads the
 network itself, starts after a short buffer and never needs the whole file.
+
+## Status
+
+- Built (steps 1-3, 2026-09-13): Design 1-7 in full - byte source, source
+  rule, demuxer, reader thread, buffering, plane player, JS surface - with
+  forge tests. Departures are under Findings.
+- Test app (step 4): done. `projects/video-streaming` opens the clip by URL
+  with no copy, shows buffering, and falls back to a texture only on
+  `no-plane`. Debug commands (open, close, seek, toggle, state) drive it,
+  and `server/faults.ts` serves a paced, stallable avsync.webm and a URL
+  that never answers.
+- Tablet (step 4), verified 2026-09-13:
+  - The served clip plays from its URL start to finish: the VIDEO census is
+    strict 2/3 alternation (23.976 fps on 60 Hz) and memory is flat.
+  - An ffmpeg `-listen 1` HTTP feed plays as an unseekable stream: first
+    frame 0.65 s after open, no buffering, clean end when ffmpeg stops.
+  - Seeks land on the first frame at or after the target: inside and past
+    the read-ahead, backward, paused or playing (after the fix under
+    Findings).
+  - A 5 s server stall gives one buffering episode; a 12 s one gives one
+    episode and a single reconnect at the stalled byte with If-Range.
+    Neither drops or re-anchors a frame.
+  - Close during a stall or a pending open returns at once (tearing the
+    plane down holds the JS thread about 0.3 s), a reload during a stall
+    brings the app back in 1.4 s, a hanging open fails with `network` after
+    15 s, and seek on an unseekable stream does nothing.
+  - Every start of playback is in step with the sound: the first start,
+    play after a pause, a paused seek then play, a seek while playing and
+    the resumes after both stalls log no audio-sync anchor move (after the
+    change under Findings).
+- Desktop, verified 2026-09-13: the texture player rejects a URL with
+  `unsupported`.
+- TV (step 4), verified 2026-09-13 with the same code as the tablet:
+  - avsync.webm from the fault server: the VIDEO census is every interval
+    two periods on the 50 Hz panel (one run had a single 3-then-1 pair).
+  - By eye and ear the beep is on the flash straight through, right after a
+    5 s server stall (one buffering episode) and right after a 3 s pause;
+    the log shows no audio-sync anchor move, re-anchor or drop for those.
+  - Seeks land on the first frame at or after the target, paused or
+    playing; seek on an unseekable stream does nothing.
+  - A 12 s stall gives one episode and a single reconnect with If-Range.
+  - Close during a pending open returns at once and the next open plays, a
+    hanging open fails with `network` after 15 s, and a reload during a
+    stall brings the app back in 1.8 s.
+- TV, open: a close during a stall holds the JS thread about 1 s (about
+  0.4 s during playback), and two stream starts each logged one anchor move
+  just past the 40 ms threshold (Findings).
+- Not yet run on either device: memory under the byte cap at a high
+  bitrate.
 
 ## Two modes
 
@@ -396,6 +445,82 @@ The texture player's browser-style rework builds on steps 1 and 2.
     builds forge (with `plane.rs`) but stops at sdl3-sys for flux, so the
     plane binding in `flux/src/alloy_plugins/video.rs` was reviewed by hand
     and waits for the first device build.
+- Step 4, first device build and tablet runs (2026-09-13):
+  - The first Android build failed in the flux plane binding: the player's
+    `error` method, a closure capturing the player id and returning
+    `Value<'js>`, hit the lifetime trap in flux/CLAUDE.md ("Ctx and the 'js
+    lifetime"). A `value_builder` coercion helper fixed it.
+  - A plain server pause cannot produce the stall check: the tablet held
+    about 10 MB beyond the playback position (the 6 s read-ahead, the 1 MiB
+    ring, TCP buffers), and avsync.webm is 145 KB in all. The check needs a
+    source that sends at playback pace.
+  - Re-anchors were silent (`Release::Reanchor` in `plane.rs`), and dropped
+    frames are only counted when playback finishes; the plane now logs a
+    re-anchor at info. No forge info line reached a client's log anyway:
+    alloy's logger passed every level only for the alloy, flux and lattice
+    targets and cut the rest, forge included, to warnings. forge is on that
+    list now.
+  - The first seek over HTTP failed for good. `Reader::seek` always
+    interrupts the source, but a reader parked at its read-ahead bound has
+    no read to wake, so the sticky interrupt failed the seek's own first
+    read, the jump to the tail Cues. `load_cues` had already taken the one
+    Cues position, so it gave up and the seek failed as `unsupported`. The
+    reader loop now clears a pending interrupt when it takes a command (a
+    command and its interrupt are queued under the same lock), and an
+    interrupted `load_cues` keeps the position and returns the interruption.
+    The existing seek test opens a local file, which has nothing to
+    interrupt; `a_seek_after_the_thread_parked_reaches_the_tail_cues_over_http`
+    covers HTTP and fails without the fix.
+  - Review of that fix found two more holes on the same path, neither hit
+    on the devices. A seek queued behind a track change lost its
+    interrupt: the track change's pop cleared it and fell through to the
+    next read, which blocks on a stalled body until the stall ends; every
+    command now continues the loop, so the queue drains before a read. And
+    a read the source interrupts part-way (blocked on a stalled body)
+    consumes bytes the demuxer's walk never counted, so the relative seek
+    that followed landed past its target ("seek head does not point at
+    cues"); `Ebml::seek_to` now measures the jump from the inner reader's
+    real position. `a_seek_queued_behind_a_track_change_is_taken_during_a_stall`
+    covers both and fails without either.
+  - Resumes after buffering were not in sync. The first frame set the
+    anchor to the paused sink's content time plus `AUDIO_OUTPUT_LATENCY_US`,
+    and `correct_clock` ran on that frame before `start_audio` shifted the
+    latency back off: it read a lead of exactly -60 ms against the 40 ms
+    threshold and moved the anchor at once. Play after a pause showed a
+    single move too, -45 to -84 ms: after a paused seek the next frame is
+    one frame past the target the sound starts at, and the paused SDL
+    audio device takes a moment to consume again. Skipping the observation
+    while the sink was paused would only have traded one move for the other.
+  - So every start now waits for the sound. The first frame after play, a
+    seek or buffering starts the sink while that frame is still in hand,
+    waits until the sink's position moves (at most `AUDIO_START_TIMEOUT`,
+    300 ms; nothing queued or a command ends the wait at once), and anchors
+    on the sound's content time, which is net of the output latency. That
+    one path replaces the separate buffering resume and the latency shift
+    after the first release. On the tablet the first start, play after a
+    pause, a paused seek then play, a seek while playing and both stall
+    resumes then logged no anchor move, no re-anchor and no timeout.
+- Step 4, TV sync run (2026-09-13, armeabi-v7a, the tablet's code):
+  - The first playback right after installing the client stumbled once in
+    its first second: two audio-sync anchor moves (-113 ms, -71 ms), a frame
+    at 0.64 s re-anchored 418 ms late and 2 late frames dropped, with the
+    picture up 2.3 s after the open. The next two opens, and a relaunch of
+    the client followed by an open, started cleanly, so it most likely was
+    the first run after an install warming up rather than the start path.
+  - The replay's census had one 3-period interval followed by a 1-period
+    one: a frame a vsync late and the next a vsync early, nothing lost. The
+    first run's window was all two-period intervals.
+  - The remaining checks passed as on the tablet (seeks, the unseekable
+    seek, the 12 s stall's reconnect, close and reload, the hanging open),
+    with two differences. A close during a stall held the JS thread about
+    1 s, against about 0.4 s for a close during playback (and 0.36 s on the
+    tablet during a stall); which teardown step takes the extra time is not
+    known yet. And the first starts of crawl and of the unseekable avsync
+    each logged one anchor move, -40.1 and -40.3 ms, just past the 40 ms
+    threshold, while the stall resumes, seeks and other starts logged none.
+    Likely cause: the start anchor is taken right when the sink position
+    jumps by a whole device buffer, larger on the TV than on the tablet,
+    which leaves the first frames early by about half a buffer.
 
 ## Mode 2 (deferred): what it adds, and what this item holds for it
 

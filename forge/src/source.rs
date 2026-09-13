@@ -377,6 +377,13 @@ impl Handle {
     self.shared.data.notify_all();
   }
 
+  /// Drop an interrupt no read has taken yet, once the reading thread has
+  /// taken the command it announced: left pending, it would fail that
+  /// command's own first read.
+  pub fn clear_interrupt(&self) {
+    self.shared.lock().interrupt = false;
+  }
+
   /// Cancel the producer and fail every blocked or later call. Returns at
   /// once; the pump task winds down on the I/O runtime.
   pub fn close(&self) {

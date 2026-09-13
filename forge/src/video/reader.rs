@@ -379,6 +379,16 @@ fn run(shared: Arc<Shared>, open: Opener, answer: oneshot::Sender<Result<MediaIn
           return;
         }
         if let Some(command) = state.commands.pop_front() {
+          // The interrupt that announced a command has done its job. Left
+          // pending (the thread was parked, not reading), it would fail the
+          // command's own first read, such as a seek's jump to the tail
+          // Cues. Commands are queued under this lock, so a newer one's
+          // interrupt comes after this; and every command below continues
+          // the loop, so a seek queued behind this one is taken before the
+          // next read, not left to wait on a stalled body.
+          if let Some(source) = &state.source {
+            source.clear_interrupt();
+          }
           break Some(command);
         }
         let parked = state.ended || state.error.is_some() || state.lead_us() >= STREAM_READ_AHEAD_US || state.capped();
@@ -390,7 +400,10 @@ fn run(shared: Arc<Shared>, open: Opener, answer: oneshot::Sender<Result<MediaIn
     };
     match command {
       None => {}
-      Some(Command::Tracks { video, audio }) => demux.set_tracks(video, audio),
+      Some(Command::Tracks { video, audio }) => {
+        demux.set_tracks(video, audio);
+        continue;
+      }
       Some(Command::Seek(target_us)) => {
         serving = shared.lock().epoch;
         match demux.seek(target_us) {

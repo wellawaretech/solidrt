@@ -1,9 +1,11 @@
-// The reader thread over a stalling scripted server and over a file: a
-// stall shows as an empty queue and never blocks the consumer, close
-// returns promptly during one, a seek starts a fresh epoch measured from
-// its target, an unplayed track never queues, and open failures carry
+// The reader thread over a scripted server and over a file: a stall shows
+// as an empty queue and never blocks the consumer, close returns promptly
+// during one, a seek starts a fresh epoch measured from its target (over
+// HTTP too, once the thread has parked, and queued behind a track change
+// during a stall), an unplayed track never queues, and open failures carry
 // their kind.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,12 +16,15 @@ use crate::source::Source;
 use crate::video::reader::{Next, Reader, Status};
 use crate::video::{ErrorKind, MediaInfo};
 
-/// How long a close may take to return during a stall.
+/// How long a close or a seek may take to answer during a stall.
 const PROMPT: Duration = Duration::from_secs(2);
 /// How long to wait for the reader to deliver or settle.
 const PATIENCE: Duration = Duration::from_secs(10);
 /// A queue empty for this long is a stalled source, not a slow thread.
 const QUIET: Duration = Duration::from_millis(300);
+/// Bytes a stalling restart sends before it holds: enough to get the walk
+/// going again, well short of the cluster the first seek is after.
+const TASTE: usize = 1000;
 /// The fixture's Opus packets are 20 ms.
 const OPUS_PACKET_US: i64 = 20_000;
 
@@ -27,29 +32,42 @@ fn gop_path() -> String {
   concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/data/video_gop.webm").to_string()
 }
 
+/// A 206 for `data` from byte `start`, its body sent as `steps`.
+fn partial(data: &[u8], start: usize, steps: Vec<Step>) -> Script {
+  Script {
+    head: head(
+      "206 Partial Content",
+      &[
+        ("content-range", format!("bytes {start}-{}/{}", data.len() - 1, data.len())),
+        ("content-length", (data.len() - start).to_string()),
+        ("etag", "\"gop\"".to_string()),
+      ],
+    ),
+    steps,
+  }
+}
+
+/// A Range-honouring server for `data`.
+fn serving(data: Arc<Vec<u8>>) -> impl Fn(&Req) -> Script + Send + Sync {
+  move |req| {
+    let start = req.range_start();
+    partial(&data, start, vec![Step::Send(data[start..].to_vec())])
+  }
+}
+
 /// A Range-honouring server for `data` that stops sending at byte
 /// `stall_at` until `resume` is notified (once per connection).
 fn stalling(data: Arc<Vec<u8>>, stall_at: usize, resume: Arc<Notify>) -> impl Fn(&Req) -> Script + Send + Sync {
   move |req| {
     let start = req.range_start();
-    let body = data[start..].to_vec();
+    let body = &data[start..];
     let steps = if start < stall_at {
       let (first, rest) = body.split_at(stall_at - start);
       vec![Step::Send(first.to_vec()), Step::Wait(resume.clone()), Step::Send(rest.to_vec())]
     } else {
-      vec![Step::Send(body.clone())]
+      vec![Step::Send(body.to_vec())]
     };
-    Script {
-      head: head(
-        "206 Partial Content",
-        &[
-          ("content-range", format!("bytes {start}-{}/{}", data.len() - 1, data.len())),
-          ("content-length", body.len().to_string()),
-          ("etag", "\"gop\"".to_string()),
-        ],
-      ),
-      steps,
-    }
+    partial(&data, start, steps)
   }
 }
 
@@ -148,6 +166,82 @@ fn a_stalled_source_shows_as_an_empty_queue_and_close_returns_promptly() {
   assert!(audio > 150, "{audio} audio packets");
   let status = reader.status();
   assert!(status.ended && status.error.is_none(), "{status:?}");
+}
+
+#[test]
+fn a_seek_after_the_thread_parked_reaches_the_tail_cues_over_http() {
+  // The whole clip queues up and the thread parks, so the seek's interrupt
+  // finds no read to wake. Left pending, it failed the seek's own jump to
+  // the tail Cues, and the stream took itself for one without cues.
+  let data = Arc::new(std::fs::read(gop_path()).expect("read fixture"));
+  let (addr, _) = serve(serving(data));
+  let (reader, info) = open(&format!("http://{addr}/clip.webm"));
+  info.expect("open");
+  let epoch = reader.status().epoch;
+  wait_until(&reader, "the end of the clip", |s| s.ended);
+  assert_eq!(reader.seek(3_000_000), epoch + 1);
+  let landed = wait_until(&reader, "the seek to settle", |s| s.resume_us.is_some() || s.error.is_some());
+  assert!(landed.error.is_none(), "{:?}", landed.error);
+  assert_eq!(landed.resume_us, Some(3_000_000));
+  let (frames, _) = drain_video(&reader);
+  assert_eq!(frames.first(), Some(&(3_000_000, true)), "the epoch opens on the keyframe at the target");
+}
+
+#[test]
+fn a_seek_queued_behind_a_track_change_is_taken_during_a_stall() {
+  // The first body stalls half way, inside a block, so the walk is mid-clip
+  // with a read cut short. A first seek loads the tail cues (the stall is
+  // released for that; its jump is measured from where the cut read really
+  // left the source) and restarts the source, where the server sends a
+  // little and stalls again. A track change and a second seek queue up
+  // behind that blocked read. Taking the track change must not leave the
+  // seek behind a read of the stalled body: the thread drains the queue
+  // first, and the seek restarts the source at its own cluster while the
+  // stall holds.
+  let data = Arc::new(std::fs::read(gop_path()).expect("read fixture"));
+  let stall_at = data.len() / 2;
+  let resume = Arc::new(Notify::new());
+  let hold = Arc::new(Notify::new());
+  let requests = AtomicUsize::new(0);
+  let stalled = resume.clone();
+  let (addr, log) = serve(move |req| {
+    let start = req.range_start();
+    let body = &data[start..];
+    let steps = match requests.fetch_add(1, Ordering::SeqCst) + 1 {
+      1 => {
+        let (first, rest) = body.split_at(stall_at - start);
+        vec![Step::Send(first.to_vec()), Step::Wait(stalled.clone()), Step::Send(rest.to_vec())]
+      }
+      2 => {
+        let (first, rest) = body.split_at(TASTE);
+        vec![Step::Send(first.to_vec()), Step::Wait(hold.clone()), Step::Send(rest.to_vec())]
+      }
+      _ => vec![Step::Send(body.to_vec())],
+    };
+    partial(&data, start, steps)
+  });
+  let (reader, info) = open(&format!("http://{addr}/clip.webm"));
+  info.expect("open");
+  let (before, ended) = drain_video(&reader);
+  assert!(!ended && !before.is_empty());
+  reader.seek(3_000_000);
+  resume.notify_one();
+  let deadline = Instant::now() + PATIENCE;
+  while lock(&log).len() < 2 {
+    assert!(Instant::now() < deadline, "timed out waiting for the first seek's restart");
+    std::thread::sleep(Duration::from_millis(5));
+  }
+  reader.set_tracks(true, false);
+  let asked = Instant::now();
+  let epoch = reader.seek(1_000_000);
+  let landed = wait_until(&reader, "the seek to settle", |s| s.resume_us.is_some() || s.error.is_some());
+  assert!(asked.elapsed() < PROMPT, "the seek waited on the stall: {:?}", asked.elapsed());
+  assert!(landed.error.is_none(), "{:?}", landed.error);
+  assert_eq!((landed.epoch, landed.resume_us), (epoch, Some(1_000_000)));
+  let (frames, _) = drain_video(&reader);
+  assert_eq!(frames.first(), Some(&(1_000_000, true)), "the epoch opens on the keyframe at the target");
+  let starts: Vec<usize> = lock(&log).iter().map(Req::range_start).collect();
+  assert_eq!(starts.len(), 3, "open, the first seek's restart, the second seek's, and no reconnect: {starts:?}");
 }
 
 #[test]

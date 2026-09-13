@@ -257,10 +257,11 @@ impl Anchor {
     self.origin.is_some()
   }
 
-  /// Anchor so that content time `content_us` is at `now_ns`: what a
-  /// resume after buffering does with the audio clock's position, so the
-  /// picture continues in step with the sound instead of anchoring on its
-  /// own first frame and getting corrected later.
+  /// Anchor so that content time `content_us` is at `now_ns`: what the
+  /// first frame after play, a seek or buffering does with the audio
+  /// clock's position once the sink consumes, so the picture starts in
+  /// step with the sound instead of anchoring on its own first frame and
+  /// getting corrected later.
   pub fn set(&mut self, now_ns: i64, content_us: i64) {
     self.origin = Some((now_ns, content_us));
   }

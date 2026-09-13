@@ -3,7 +3,8 @@ struct SdlLogger;
 impl log::Log for SdlLogger {
   fn enabled(&self, metadata: &log::Metadata) -> bool {
     let t = metadata.target();
-    if t.starts_with("alloy") || t.starts_with("flux") || t.starts_with("lattice") {
+    if t.starts_with("alloy") || t.starts_with("flux") || t.starts_with("forge") || t.starts_with("lattice") {
+      // Our own crates log at every level.
       true
     } else if t.starts_with("whisper_rs") {
       // whisper.cpp/ggml route through the whisper_rs log hooks and are chatty

@@ -23,7 +23,7 @@
 // streamed source costs one request.
 
 use std::collections::VecDeque;
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader, Read, Seek};
 
 use super::{AudioInfo, AudioPacket, Demuxer, ErrorKind, MediaInfo, Packet, StreamError, VideoAu};
 use crate::seek::SeekableReader;
@@ -459,9 +459,10 @@ impl WebmDemuxer {
   }
 
   /// Visit tail Cues the SeekHead points at, once, keeping the walk where
-  /// it was.
-  fn load_cues(&mut self) {
-    let Some(offset) = self.cues_position.take() else { return };
+  /// it was. An interrupted visit does not count: the position stays for
+  /// the newer seek that retries it, and the interruption is returned.
+  fn load_cues(&mut self) -> Result<(), StreamError> {
+    let Some(offset) = self.cues_position.take() else { return Ok(()) };
     let here = self.reader.pos;
     let loaded = self.reader.seek_to(self.segment_start + offset).and_then(|()| match self.reader.header()? {
       Some((ID_CUES, size)) => read_cues(&mut self.reader, size),
@@ -472,11 +473,16 @@ impl WebmDemuxer {
         let scale = self.timestamp_scale_ns;
         self.cues = cues.iter().map(|&(t, pos)| ((t as u128 * scale as u128 / 1000) as i64, pos)).collect();
       }
+      Err(e) if e.kind == ErrorKind::Interrupted => {
+        self.cues_position = Some(offset);
+        return Err(e);
+      }
       Err(e) => log::warn!("[forge::video] cues unavailable: {e}"),
     }
     if let Err(e) = self.reader.seek_to(here) {
       self.failed = Some(e);
     }
+    Ok(())
   }
 }
 
@@ -520,7 +526,7 @@ impl Demuxer for WebmDemuxer {
       return Err(StreamError::unsupported("source cannot seek"));
     }
     if self.cues.is_empty() {
-      self.load_cues();
+      self.load_cues()?;
     }
     if self.cues.is_empty() {
       return Err(StreamError::unsupported("stream has no cues, cannot seek"));
@@ -896,8 +902,12 @@ impl Ebml {
   }
 
   fn seek_to(&mut self, pos: u64) -> Result<(), StreamError> {
-    // Relative seeks keep the buffer when the target is inside it.
-    let delta = pos as i64 - self.pos as i64;
+    // Relative to where the inner reader really is, not to `self.pos`: a
+    // read the source interrupted part-way (blocked on a stalled body)
+    // consumed bytes the walk never counted. Relative seeks keep the
+    // buffer when the target is inside it.
+    let here = self.inner.stream_position().map_err(|e| self.io_error("position", e))?;
+    let delta = pos as i64 - here as i64;
     self.inner.seek_relative(delta).map_err(|e| self.io_error(&format!("seek to {pos}"), e))?;
     self.pos = pos;
     Ok(())

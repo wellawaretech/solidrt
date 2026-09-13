@@ -131,6 +131,13 @@ impl AudioTrack {
     self.sink.queued_us()
   }
 
+  /// Microseconds of audio the sink has consumed: it moves once the device
+  /// pulls, which the plane player waits for before anchoring the picture.
+  #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+  pub fn sink_position_us(&self) -> i64 {
+    self.sink.position_us()
+  }
+
   /// Restart at `target_us`: queued audio goes, the decoder forgets its
   /// state, and the preroll packets the demuxer now delivers are decoded
   /// with their output discarded up to the target.

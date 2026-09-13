@@ -13,8 +13,9 @@
 // retry the texture path also uses), and the caller reads state from
 // atomics. A source that stalls empties the queues, and the transport's
 // buffering rule holds releases and the sink until the reader is ahead
-// again; the first frame after that anchors on the audio clock, so the
-// resume needs no correction (okf/plans/video-streaming.md).
+// again (okf/plans/video-streaming.md). The first frame after play, a seek
+// or buffering waits for the sink to consume and anchors on the audio
+// clock, so picture and sound start together without a correction.
 //
 // Audio never selects frames. The picture keeps its own clock (the anchor
 // on the system clock, snapped to the vsync grid); the audio track is
@@ -36,7 +37,7 @@ use ndk::media::media_codec::{
 use ndk::media::media_format::MediaFormat;
 use ndk::native_window::NativeWindow;
 
-use super::audio::{AudioTrack, AUDIO_OUTPUT_LATENCY_US};
+use super::audio::AudioTrack;
 use super::mediacodec::{create_with_retry, FLAG_END_OF_STREAM, MIME_VP9};
 use super::reader::{Next, Reader, ReaderHandle};
 use super::transport::{
@@ -57,6 +58,13 @@ const IDLE_POLL: Duration = Duration::from_millis(250);
 // waiting means it is wedged, not busy (decode itself runs at 3x realtime
 // on the slowest target); the stream fails rather than hangs.
 const INPUT_STALL: Duration = Duration::from_millis(2000);
+// How long the first frame after play, a seek or buffering waits for the
+// sink to start consuming before it anchors on itself instead (a device
+// that does not resume). Well above a paused device's resume delay, which
+// is tens of milliseconds.
+const AUDIO_START_TIMEOUT: Duration = Duration::from_millis(300);
+// How often that wait looks at the sink's position.
+const AUDIO_START_POLL: Duration = Duration::from_millis(2);
 
 /// Whether the platform took the surface beneath the plane (the activity
 /// went to the background): sampled every pass, the player then stops and
@@ -144,7 +152,6 @@ impl PlanePlayer {
           epoch: 0,
           resume_pending: false,
           buffering: Buffering::new(),
-          resume_on_audio: false,
           input_stalled_since: None,
           pending: VecDeque::new(),
           dropped: 0,
@@ -241,10 +248,9 @@ struct Worker {
   reader: Reader,
   // The audio track when the stream has one and a sink was provided.
   audio: Option<AudioTrack>,
-  // The sink is consuming: started by the first frame released after play,
-  // a seek or buffering (so sound and picture start together, however long
-  // the codec takes to produce that frame), stopped by pause, seek and
-  // buffering.
+  // The sink is consuming: started when the first frame after play, a seek
+  // or buffering is in hand (that frame waits for it, see start_audio),
+  // stopped by pause, seek and buffering.
   audio_running: bool,
   rx: Receiver<Command>,
   shared: Arc<Shared>,
@@ -272,9 +278,6 @@ struct Worker {
   epoch: u64,
   resume_pending: bool,
   buffering: Buffering,
-  // The next frame anchors on the audio clock rather than on itself: set
-  // when buffering ends.
-  resume_on_audio: bool,
   // When the codec first refused input with a packet waiting.
   input_stalled_since: Option<Instant>,
   // Commands received while waiting for a frame's release time, handled at
@@ -423,7 +426,6 @@ impl Worker {
       Some(false) => {
         self.shared.set_buffering(false);
         self.reset_clock();
-        self.resume_on_audio = true;
       }
       None => {}
     }
@@ -434,7 +436,6 @@ impl Worker {
   fn reset_clock(&mut self) {
     self.anchor.reset();
     self.sync.reset();
-    self.resume_on_audio = false;
   }
 
   fn stop_audio(&mut self) {
@@ -443,22 +444,6 @@ impl Worker {
         audio.set_playing(false);
       }
       self.audio_running = false;
-    }
-  }
-
-  // The first frame after play or a seek has just been handed to the
-  // surface: the sound starts now, so it cannot run ahead while the codec
-  // was producing that frame. The sound reaches the speaker the output
-  // latency later than the sink starts consuming, so the picture is held
-  // back by that much from here on: the anchor, just set by this frame,
-  // moves by the latency. The sync then only has drift to correct.
-  fn start_audio(&mut self) {
-    if self.playing && !self.audio_running {
-      if let Some(audio) = self.audio.as_mut() {
-        audio.set_playing(true);
-        self.anchor.shift(-AUDIO_OUTPUT_LATENCY_US);
-      }
-      self.audio_running = true;
     }
   }
 
@@ -597,16 +582,11 @@ impl Worker {
         self.show_one = false;
         self.codec.release_output_buffer(buf, true)
       } else {
-        let now_ns = monotonic_ns();
-        if self.resume_on_audio && !self.anchor.anchored() {
-          // Resume in step with the sound: the sink's content time is
-          // reported net of the output latency, which start_audio takes
-          // off the anchor again when the sink resumes on this frame.
-          if let Some(content_us) = self.audio.as_ref().and_then(AudioTrack::content_time_us) {
-            self.anchor.set(now_ns, content_us + AUDIO_OUTPUT_LATENCY_US);
-          }
-          self.resume_on_audio = false;
+        if !self.audio_running {
+          self.audio_running = true;
+          start_audio(&mut self.audio, &mut self.anchor, &self.rx, &mut self.pending);
         }
+        let now_ns = monotonic_ns();
         correct_clock(&self.audio, &mut self.anchor, &mut self.sync, now_ns);
         let due_ns = release_ns(&mut self.anchor, &self.vsync, pts_us, now_ns);
         let lead_ns = self.vsync.as_ref().map_or(RELEASE_LEAD_NS, VsyncGrid::lead_ns);
@@ -621,6 +601,8 @@ impl Worker {
             self.codec.release_output_buffer(buf, false)
           }
           Release::Reanchor => {
+            let late_ms = (now_ns - due_ns) / 1_000_000;
+            log::info!("[forge::video] frame at {pts_us}us released {late_ms} ms late: clock re-anchored");
             self.anchor.reset();
             self.sync.reset();
             let due_ns = release_ns(&mut self.anchor, &self.vsync, pts_us, monotonic_ns());
@@ -632,7 +614,6 @@ impl Worker {
         Ok(()) => {
           self.shared.set_position_us(pts_us);
           self.reader.released(pts_us);
-          self.start_audio();
         }
         Err(e) => log::warn!("[forge::video] release output: {e:?}"),
       }
@@ -651,6 +632,54 @@ impl Worker {
     if self.dropped > 0 {
       log::info!("[forge::video] plane playback dropped {} late frames", self.dropped);
     }
+  }
+}
+
+// The first frame after play, a seek or buffering is in hand, not yet
+// released: start the sink, and once it consumes (its position moves)
+// anchor the picture on the sound's content time, which is net of the
+// output latency, so the two start together however long the device takes
+// to resume. With nothing queued, no consumption within
+// AUDIO_START_TIMEOUT, or a command arriving (queued for the next
+// iteration), the frame anchors on itself instead and the sync corrects
+// what is left. (A free function: the caller holds the codec's output
+// buffer, so only these fields may be borrowed.)
+fn start_audio(
+  audio: &mut Option<AudioTrack>,
+  anchor: &mut Anchor,
+  rx: &Receiver<Command>,
+  pending: &mut VecDeque<Command>,
+) {
+  let Some(audio) = audio.as_mut() else {
+    return;
+  };
+  let from_us = audio.sink_position_us();
+  audio.set_playing(true);
+  if audio.queued_us() == 0 {
+    return;
+  }
+  let deadline = Instant::now() + AUDIO_START_TIMEOUT;
+  while audio.sink_position_us() <= from_us {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+      let waited_ms = AUDIO_START_TIMEOUT.as_millis();
+      log::info!("[forge::video] sink did not start within {waited_ms} ms: picture anchored on itself");
+      return;
+    }
+    match rx.recv_timeout(left.min(AUDIO_START_POLL)) {
+      Ok(cmd) => {
+        pending.push_back(cmd);
+        return;
+      }
+      Err(RecvTimeoutError::Timeout) => {}
+      Err(RecvTimeoutError::Disconnected) => {
+        pending.push_back(Command::Close);
+        return;
+      }
+    }
+  }
+  if let Some(content_us) = audio.content_time_us() {
+    anchor.set(monotonic_ns(), content_us);
   }
 }
 
