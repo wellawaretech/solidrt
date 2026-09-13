@@ -23,11 +23,11 @@
 // streamed source costs one request.
 
 use std::collections::VecDeque;
-use std::io::{self, BufReader, ErrorKind, Read, Seek, SeekFrom};
+use std::io::{self, BufReader, Read};
 
-use super::{AudioInfo, AudioPacket, Demuxer, MediaInfo, VideoAu};
+use super::{AudioInfo, AudioPacket, Demuxer, ErrorKind, MediaInfo, Packet, StreamError, VideoAu};
 use crate::seek::SeekableReader;
-use crate::source::Facts;
+use crate::source::{open_file, Facts};
 
 // EBML and Matroska element ids, as they appear in the file (the id's own
 // length bits included).
@@ -150,24 +150,23 @@ pub struct WebmDemuxer {
   audio_skip_until: Option<i64>,
   ended: bool,
   // A stream or read error, repeated until a seek.
-  failed: Option<String>,
+  failed: Option<StreamError>,
 }
 
 impl WebmDemuxer {
   /// Open a local WebM file (tests, the texture player). The path resolves
   /// like every forge file read (through the assets mount when one is set).
-  pub fn open_path(path: &str) -> Result<Self, String> {
-    let mut file = crate::fs::open_seekable(path)?;
-    let len = file.seek(SeekFrom::End(0)).ok();
-    file.seek(SeekFrom::Start(0)).map_err(|e| format!("{path}: {e}"))?;
-    Self::open(file, Facts { len, seekable: true }).map_err(|e| format!("{path}: {e}"))
+  pub fn open_path(path: &str) -> Result<Self, StreamError> {
+    let source = open_file(path).map_err(|e| StreamError::network(e.to_string()))?;
+    let facts = source.facts().map_err(|e| StreamError::network(e.to_string()))?;
+    Self::open(source.into_reader(), facts).map_err(|e| e.context(path))
   }
 
   /// Open a stream and read its header up to the first keyframe. Errs when
   /// the stream is not WebM, has no VP9 track, or its VP9 is not profile 0.
   /// A missing or non-Opus audio track is not an error: `info().audio` is
   /// None and playback is silent.
-  pub fn open(reader: SeekableReader, facts: Facts) -> Result<Self, String> {
+  pub fn open(reader: SeekableReader, facts: Facts) -> Result<Self, StreamError> {
     let mut reader = Ebml::new(reader, facts.seekable);
 
     // The magic first, before any EBML interpretation: an MP4 or an empty
@@ -176,7 +175,9 @@ impl WebmDemuxer {
     let magic = reader.magic()?;
     if u32::from_be_bytes(magic) != ID_EBML {
       let what = if &magic[..] == MP4_MAGIC_PREFIX { "an MP4" } else { "no EBML header" };
-      return Err(format!("not a webm file ({what}; video plays WebM with VP9 and Opus only)"));
+      return Err(StreamError::unsupported(format!(
+        "not a webm file ({what}; video plays WebM with VP9 and Opus only)"
+      )));
     }
     let size = reader.vint()?;
     let end = reader.end_of(size).ok_or("EBML header of unknown size")?;
@@ -189,12 +190,12 @@ impl WebmDemuxer {
       }
     }
     if doctype != "webm" && doctype != "matroska" {
-      return Err(format!("not a webm file (doctype \"{doctype}\")"));
+      return Err(StreamError::unsupported(format!("not a webm file (doctype \"{doctype}\")")));
     }
 
     let (id, segment_size) = reader.header()?.ok_or("no segment")?;
     if id != ID_SEGMENT {
-      return Err("not a webm file (no segment)".to_string());
+      return Err(StreamError::unsupported("not a webm file (no segment)"));
     }
     let segment_start = reader.pos;
 
@@ -208,7 +209,7 @@ impl WebmDemuxer {
     let mut cues_position: Option<u64> = None;
     loop {
       let Some((id, size)) = reader.header()? else {
-        return Err("no clusters in file".to_string());
+        return Err("no clusters in file".into());
       };
       match id {
         ID_CLUSTER => break,
@@ -230,11 +231,13 @@ impl WebmDemuxer {
       }
     }
 
-    let video =
-      tracks.iter().find(|t| t.kind == TRACK_TYPE_VIDEO && t.codec == CODEC_VP9).ok_or("no VP9 video track")?;
+    let video = tracks
+      .iter()
+      .find(|t| t.kind == TRACK_TYPE_VIDEO && t.codec == CODEC_VP9)
+      .ok_or_else(|| StreamError::unsupported("no VP9 video track"))?;
     let (width, height) = (video.width, video.height);
     if width == 0 || height == 0 {
-      return Err("VP9 track has no pixel size".to_string());
+      return Err("VP9 track has no pixel size".into());
     }
     let bt709 = match video.matrix {
       Some(MATRIX_BT709) => true,
@@ -288,10 +291,10 @@ impl WebmDemuxer {
     let first = demux.video_q.front().ok_or("video track has no keyframe")?;
     let marker = first.data.first().copied().unwrap_or(0);
     if marker >> 6 != VP9_FRAME_MARKER {
-      return Err("video track is not VP9 (no frame marker)".to_string());
+      return Err(StreamError::unsupported("video track is not VP9 (no frame marker)"));
     }
     if marker & VP9_PROFILE_MASK != 0 {
-      return Err("unsupported VP9 stream: only profile 0 (8-bit 4:2:0) plays".to_string());
+      return Err(StreamError::unsupported("unsupported VP9 stream: only profile 0 (8-bit 4:2:0) plays"));
     }
     demux.info.start_us = demux.resume_us;
     Ok(demux)
@@ -313,7 +316,7 @@ impl WebmDemuxer {
 
   /// Read elements until one block has been queued (on either track);
   /// false at the end of the stream. Errors stick until a seek.
-  fn read_block(&mut self) -> Result<bool, String> {
+  fn read_block(&mut self) -> Result<bool, StreamError> {
     if let Some(e) = &self.failed {
       return Err(e.clone());
     }
@@ -325,7 +328,7 @@ impl WebmDemuxer {
       Err(e) => {
         // An interrupted read (a command for the reading thread) leaves the
         // walk mid-element: the next call must be a seek, not sticky.
-        if !self.reader.take_interrupted() {
+        if e.kind != ErrorKind::Interrupted {
           self.failed = Some(e.clone());
         }
         Err(e)
@@ -333,7 +336,7 @@ impl WebmDemuxer {
     }
   }
 
-  fn read_block_inner(&mut self) -> Result<bool, String> {
+  fn read_block_inner(&mut self) -> Result<bool, StreamError> {
     loop {
       let Some((id, size)) = self.reader.header()? else {
         self.ended = true;
@@ -371,7 +374,9 @@ impl WebmDemuxer {
         }
         // A producer started a new stream on the same bytes (a live relay
         // switching sources): not something the decoders can follow yet.
-        ID_EBML => return Err(format!("unsupported: a new stream starts at {}", self.reader.pos)),
+        ID_EBML => {
+          return Err(StreamError::unsupported(format!("unsupported: a new stream starts at {}", self.reader.pos)))
+        }
         // Anything after the clusters (Cues, Tags) or unknown: skip when
         // the size allows, else the stream is over for us.
         _ => match size {
@@ -389,7 +394,7 @@ impl WebmDemuxer {
   /// block on a track we do not play, a pre-keyframe video block, a held
   /// or dropped audio packet is not). `keyframe` is known for a
   /// BlockGroup; a SimpleBlock says so in its flags.
-  fn queue_block(&mut self, data: &[u8], keyframe: Option<bool>) -> Result<bool, String> {
+  fn queue_block(&mut self, data: &[u8], keyframe: Option<bool>) -> Result<bool, StreamError> {
     let (track, rel_ts, flags, header_len) = block_header(data)?;
     if flags & BLOCK_FLAG_LACING != 0 {
       // Lacing packs several frames per block; neither ffmpeg's WebM muxer
@@ -460,7 +465,7 @@ impl WebmDemuxer {
     let here = self.reader.pos;
     let loaded = self.reader.seek_to(self.segment_start + offset).and_then(|()| match self.reader.header()? {
       Some((ID_CUES, size)) => read_cues(&mut self.reader, size),
-      _ => Err("seek head does not point at cues".to_string()),
+      _ => Err("seek head does not point at cues".into()),
     });
     match loaded {
       Ok(cues) => {
@@ -480,7 +485,7 @@ impl Demuxer for WebmDemuxer {
     &self.info
   }
 
-  fn next_video(&mut self) -> Result<Option<VideoAu>, String> {
+  fn next_video(&mut self) -> Result<Option<VideoAu>, StreamError> {
     if !self.play_video {
       return Ok(None);
     }
@@ -488,7 +493,7 @@ impl Demuxer for WebmDemuxer {
     Ok(self.video_q.pop_front())
   }
 
-  fn next_audio(&mut self) -> Result<Option<AudioPacket>, String> {
+  fn next_audio(&mut self) -> Result<Option<AudioPacket>, StreamError> {
     if self.audio_track.is_none() || !self.play_audio {
       return Ok(None);
     }
@@ -496,24 +501,37 @@ impl Demuxer for WebmDemuxer {
     Ok(self.audio_q.pop_front())
   }
 
-  fn seek(&mut self, target_us: i64) -> Result<i64, String> {
+  fn next_packet(&mut self) -> Result<Option<Packet>, StreamError> {
+    loop {
+      if let Some(au) = self.video_q.pop_front() {
+        return Ok(Some(Packet::Video(au)));
+      }
+      if let Some(packet) = self.audio_q.pop_front() {
+        return Ok(Some(Packet::Audio(packet)));
+      }
+      if !self.read_block()? {
+        return Ok(None);
+      }
+    }
+  }
+
+  fn seek(&mut self, target_us: i64) -> Result<i64, StreamError> {
     if !self.info.seekable {
-      return Err("source cannot seek".to_string());
+      return Err(StreamError::unsupported("source cannot seek"));
     }
     if self.cues.is_empty() {
       self.load_cues();
     }
     if self.cues.is_empty() {
-      return Err("stream has no cues, cannot seek".to_string());
+      return Err(StreamError::unsupported("stream has no cues, cannot seek"));
     }
     self.failed = None;
-    self.reader.take_interrupted();
     let at = self.cues.partition_point(|&(t, _)| t <= target_us);
     let (_, offset) = self.cues[at.saturating_sub(1)];
     self.reader.seek_to(self.segment_start + offset)?;
     match self.reader.header()? {
       Some((ID_CLUSTER, _)) => {}
-      _ => return Err("cue points at something that is not a cluster".to_string()),
+      _ => return Err("cue points at something that is not a cluster".into()),
     }
     self.cluster_ts = None;
     self.video_q.clear();
@@ -546,7 +564,7 @@ struct TrackEntry {
   range: Option<u64>,
 }
 
-fn read_tracks(reader: &mut Ebml, size: Option<u64>) -> Result<Vec<TrackEntry>, String> {
+fn read_tracks(reader: &mut Ebml, size: Option<u64>) -> Result<Vec<TrackEntry>, StreamError> {
   let end = reader.end_of(size).ok_or("tracks of unknown size")?;
   let mut tracks = Vec::new();
   while reader.pos < end {
@@ -618,7 +636,7 @@ fn read_tracks(reader: &mut Ebml, size: Option<u64>) -> Result<Vec<TrackEntry>, 
 
 /// The Cues element as (cue time in ticks, cluster offset from the segment
 /// start), one entry per cue point (the first track position of each).
-fn read_cues(reader: &mut Ebml, size: Option<u64>) -> Result<Vec<(u64, u64)>, String> {
+fn read_cues(reader: &mut Ebml, size: Option<u64>) -> Result<Vec<(u64, u64)>, StreamError> {
   let end = reader.end_of(size).ok_or("cues of unknown size")?;
   let mut cues = Vec::new();
   while reader.pos < end {
@@ -660,7 +678,7 @@ fn read_cues(reader: &mut Ebml, size: Option<u64>) -> Result<Vec<(u64, u64)>, St
 
 /// The SeekHead's position of the Cues element, relative to the segment
 /// start, when it lists one.
-fn read_seek_head(reader: &mut Ebml, size: Option<u64>) -> Result<Option<u64>, String> {
+fn read_seek_head(reader: &mut Ebml, size: Option<u64>) -> Result<Option<u64>, StreamError> {
   let end = reader.end_of(size).ok_or("seek head of unknown size")?;
   let mut cues = None;
   while reader.pos < end {
@@ -751,27 +769,22 @@ struct Ebml {
   inner: BufReader<SeekableReader>,
   pos: u64,
   seekable: bool,
-  // The last read failed with WouldBlock: the source's interrupt, not a
-  // fault of the stream.
-  interrupted: bool,
 }
 
 impl Ebml {
   fn new(source: SeekableReader, seekable: bool) -> Ebml {
-    Ebml { inner: BufReader::new(source), pos: 0, seekable, interrupted: false }
+    Ebml { inner: BufReader::new(source), pos: 0, seekable }
   }
 
-  fn take_interrupted(&mut self) -> bool {
-    std::mem::take(&mut self.interrupted)
-  }
-
-  fn io_error(&mut self, what: &str, e: io::Error) -> String {
-    self.interrupted = e.kind() == ErrorKind::WouldBlock;
-    format!("{what} at {}: {e}", self.pos)
+  // A read that failed: the source's fault (network), unless it was the
+  // source's interrupt (WouldBlock), a command for the reading thread.
+  fn io_error(&self, what: &str, e: io::Error) -> StreamError {
+    let kind = if e.kind() == io::ErrorKind::WouldBlock { ErrorKind::Interrupted } else { ErrorKind::Network };
+    StreamError::new(kind, format!("{what} at {}: {e}", self.pos))
   }
 
   /// The stream's first four bytes, an element id or not.
-  fn magic(&mut self) -> Result<[u8; 4], String> {
+  fn magic(&mut self) -> Result<[u8; 4], StreamError> {
     let mut magic = [0u8; 4];
     self.inner.read_exact(&mut magic).map_err(|e| self.io_error("read", e))?;
     self.pos += magic.len() as u64;
@@ -780,7 +793,7 @@ impl Ebml {
 
   /// The next element's id and data size (None for an unknown size); None
   /// at a clean end of stream.
-  fn header(&mut self) -> Result<Option<(u32, Option<u64>)>, String> {
+  fn header(&mut self) -> Result<Option<(u32, Option<u64>)>, StreamError> {
     let mut first = [0u8; 1];
     match self.inner.read(&mut first) {
       Ok(0) => return Ok(None),
@@ -790,7 +803,7 @@ impl Ebml {
     // Ids keep their length marker; a 4-byte id is the longest allowed.
     let len = first[0].leading_zeros() as usize + 1;
     if len > 4 {
-      return Err(format!("bad element id at {}", self.pos - 1));
+      return Err(format!("bad element id at {}", self.pos - 1).into());
     }
     let mut id = first[0] as u32;
     for _ in 1..len {
@@ -801,11 +814,11 @@ impl Ebml {
   }
 
   /// A size vint: None when every value bit is set (unknown size).
-  fn vint(&mut self) -> Result<Option<u64>, String> {
+  fn vint(&mut self) -> Result<Option<u64>, StreamError> {
     let first = self.byte()?;
     let len = first.leading_zeros() as usize + 1;
     if len > 8 {
-      return Err(format!("bad element size at {}", self.pos - 1));
+      return Err(format!("bad element size at {}", self.pos - 1).into());
     }
     let mask = vint_mask(len);
     let mut value = (first & mask) as u64;
@@ -823,7 +836,7 @@ impl Ebml {
     size.map(|s| self.pos + s)
   }
 
-  fn byte(&mut self) -> Result<u8, String> {
+  fn byte(&mut self) -> Result<u8, StreamError> {
     let mut b = [0u8; 1];
     self.inner.read_exact(&mut b).map_err(|e| self.io_error("read", e))?;
     self.pos += 1;
@@ -831,14 +844,14 @@ impl Ebml {
   }
 
   /// A size the stream can ask for; checked on the u64 before any cast.
-  fn bounded(&self, size: u64) -> Result<usize, String> {
+  fn bounded(&self, size: u64) -> Result<usize, StreamError> {
     if size > MAX_ELEMENT_BYTES {
-      return Err(format!("element of {size} bytes at {} exceeds the {MAX_ELEMENT_BYTES} byte limit", self.pos));
+      return Err(format!("element of {size} bytes at {} exceeds the {MAX_ELEMENT_BYTES} byte limit", self.pos).into());
     }
     Ok(size as usize)
   }
 
-  fn bytes(&mut self, size: Option<u64>) -> Result<Vec<u8>, String> {
+  fn bytes(&mut self, size: Option<u64>) -> Result<Vec<u8>, StreamError> {
     let size = size.ok_or("binary element of unknown size")?;
     let len = self.bounded(size)?;
     let mut buf = vec![0u8; len];
@@ -847,24 +860,24 @@ impl Ebml {
     Ok(buf)
   }
 
-  fn uint(&mut self, size: Option<u64>) -> Result<u64, String> {
+  fn uint(&mut self, size: Option<u64>) -> Result<u64, StreamError> {
     let bytes = self.bytes(size)?;
     if bytes.len() > 8 {
-      return Err("integer element too long".to_string());
+      return Err("integer element too long".into());
     }
     Ok(bytes.iter().fold(0u64, |v, &b| (v << 8) | b as u64))
   }
 
-  fn float(&mut self, size: Option<u64>) -> Result<f64, String> {
+  fn float(&mut self, size: Option<u64>) -> Result<f64, StreamError> {
     let bytes = self.bytes(size)?;
     match bytes.len() {
       4 => Ok(f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64),
       8 => Ok(f64::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]])),
-      n => Err(format!("float element of {n} bytes")),
+      n => Err(format!("float element of {n} bytes").into()),
     }
   }
 
-  fn string(&mut self, size: Option<u64>) -> Result<String, String> {
+  fn string(&mut self, size: Option<u64>) -> Result<String, StreamError> {
     let bytes = self.bytes(size)?;
     // Strings may be zero-padded to a fixed width.
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
@@ -874,7 +887,7 @@ impl Ebml {
   /// Past an element. On a source that cannot seek this reads the bytes
   /// through, so the size is bounded like an allocation; a seekable
   /// source's own policy decides between reading through and restarting.
-  fn skip(&mut self, size: Option<u64>) -> Result<(), String> {
+  fn skip(&mut self, size: Option<u64>) -> Result<(), StreamError> {
     let size = size.ok_or("cannot skip an element of unknown size")?;
     if !self.seekable {
       self.bounded(size)?;
@@ -882,7 +895,7 @@ impl Ebml {
     self.seek_to(self.pos + size)
   }
 
-  fn seek_to(&mut self, pos: u64) -> Result<(), String> {
+  fn seek_to(&mut self, pos: u64) -> Result<(), StreamError> {
     // Relative seeks keep the buffer when the target is inside it.
     let delta = pos as i64 - self.pos as i64;
     self.inner.seek_relative(delta).map_err(|e| self.io_error(&format!("seek to {pos}"), e))?;

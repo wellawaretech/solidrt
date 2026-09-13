@@ -14,6 +14,15 @@
 //! open creates the plane then the player on its window, close drops the
 //! player first so the codec has released the surface before the plane goes.
 //!
+//! A plane player streams: its source (a path, an http(s) URL, a `file()`)
+//! is read by forge's reader thread, and `open` is asynchronous - the
+//! one-plane slot is reserved at the call, the header comes off the JS
+//! thread, and the promise settles when the plane exists, the open fails,
+//! the `signal` aborts or `OPEN_TIMEOUT_MS` passes. Failures, at open and
+//! mid-stream, are `VideoError`s with a `kind` the app keys on
+//! (okf/plans/video-streaming.md). The texture player keeps reading local
+//! files inline on the frame loop; a URL rejects as unsupported there.
+//!
 //! `tick`, the per-frame hook driven by the FrameRendered handler (the
 //! camera precedent), does the plumbing per player: feed the PCM sink up to
 //! a lookahead, read the master clock (the sink position when the stream
@@ -34,16 +43,30 @@
 //! timeline noise flips them. Measured on the 50 Hz TV, 50 fps content:
 //! 2.8% of steps held or double-stepped without these, 0.07% with.
 
+#[cfg(target_os = "android")]
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io;
 use std::rc::Rc;
 
-use forge::video::{PixelLayout, VideoPlayer};
+use forge::source::{ByteSource, Source};
+use forge::video::reader::Opener;
+use forge::video::{ErrorKind, PixelLayout, StreamError, VideoPlayer, WebmDemuxer};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
-use rquickjs::{Ctx, Exception, Function, JsLifetime, Object};
+use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 
 use crate::plugins::marshal::OptArg;
+use crate::plugins::seekable::{SeekableOpener, SeekableSource};
+use crate::standards_plugins::abort::AbortSignal;
+
+// How long a plane open may wait for the source to answer with the header
+// and the first keyframe before it rejects (kind "network"): a server that
+// never answers must not hold an app's open forever. Generous, since the
+// reader reconnects through short outages itself.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+const OPEN_TIMEOUT_MS: u64 = 15_000;
 
 // The silent-stream master clock reading in us: the engine timeline, which
 // advances one refresh period per frame however jittery the execution is.
@@ -93,8 +116,10 @@ fn close_plane_entry(gui: &super::Gui, entry: PlaneEntry) {
 
 // alloy's cross-thread sink handle under forge's sink contract: pure
 // forwarding, the marshalling between the two crates.
+#[cfg(target_os = "android")]
 struct SinkAdapter(alloy::audio::PcmSinkHandle);
 
+#[cfg(target_os = "android")]
 impl forge::video::AudioSink for SinkAdapter {
   fn push(&mut self, samples: &[f32]) -> Result<(), String> {
     self.0.push(samples)
@@ -116,6 +141,7 @@ impl forge::video::AudioSink for SinkAdapter {
 // A paused sink for the stream's audio track, None when the stream has no
 // audio or no output device could be opened (the video then plays silent
 // rather than failing).
+#[cfg(target_os = "android")]
 fn open_sink(gui: &super::Gui, info: &forge::video::MediaInfo) -> Option<u64> {
   let audio = info.audio.as_ref()?;
   match gui.alloy.create_pcm_sink(audio.sample_rate, audio.channels) {
@@ -140,6 +166,10 @@ struct Inner {
   // fullscreen; the platform side refuses a second as well).
   #[cfg(target_os = "android")]
   planes: RefCell<HashMap<u64, PlaneEntry>>,
+  // A plane open in flight holds the slot too, so two concurrent opens
+  // cannot both pass.
+  #[cfg(target_os = "android")]
+  plane_pending: Cell<bool>,
   next_id: RefCell<u64>,
 }
 
@@ -173,15 +203,18 @@ pub(crate) fn store_state(ctx: &Ctx<'_>) {
       players: RefCell::new(HashMap::new()),
       #[cfg(target_os = "android")]
       planes: RefCell::new(HashMap::new()),
+      #[cfg(target_os = "android")]
+      plane_pending: Cell::new(false),
       next_id: RefCell::new(0),
     })))
     .expect("store video state");
 }
 
-/// The `flux:video` module: `open(path, options?)` resolves to a bound
-/// player object (`{ texture, width, height, duration, hasAudio, play,
-/// pause, playing, currentTime, finished, close }`; a plane player has no
-/// `texture` and adds `seek`), so the raw handle never leaves Rust.
+/// The `flux:video` module: `open(source, options?)` resolves to a bound
+/// player object (`{ texture, width, height, duration, hasAudio, seekable,
+/// play, pause, seek, playing, currentTime, finished, buffering, error,
+/// failed, close }`; a plane player has no `texture`), so the raw handle
+/// never leaves Rust.
 pub struct VideoModule;
 
 impl ModuleDef for VideoModule {
@@ -234,49 +267,198 @@ fn read_present(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result
   }
 }
 
-fn open_impl<'js>(ctx: Ctx<'js>, path: String, options: OptArg<Object<'js>>) -> rquickjs::Result<Promise<'js>> {
-  // A malformed option is a programming error and throws; an unreadable or
-  // unsupported file, or a platform without a plane, is environmental:
-  // reject, never throw (the async-binding contract). The header read is
-  // synchronous but small.
-  let present = read_present(&ctx, &options)?;
-  let (promise, resolve, reject) = Promise::new(&ctx)?;
-  let built = match present {
-    Present::Texture => build_player(ctx.clone(), &path),
-    Present::Plane { fit } => build_plane_player(ctx.clone(), &path, fit),
-  };
-  match built {
-    Ok(obj) => resolve.call::<_, ()>((obj,))?,
-    Err(e) => {
-      let error = Exception::from_message(ctx.clone(), &format!("openVideo: {e}"))?;
-      reject.call::<_, ()>((error,))?;
+/// What `open` was given: a path or URL under the one source rule, or a
+/// `file()` object's own opener (a packed asset reads out of the exe).
+enum MediaSource {
+  Spec(Source),
+  File(SeekableOpener),
+}
+
+impl MediaSource {
+  fn is_url(&self) -> bool {
+    matches!(self, MediaSource::Spec(Source::Http(_)))
+  }
+
+  /// A name for the texture label.
+  fn label(&self) -> String {
+    match self {
+      MediaSource::Spec(Source::Path(path)) | MediaSource::Spec(Source::Http(path)) => path.clone(),
+      MediaSource::File(_) => "file".to_string(),
     }
+  }
+
+  /// The opener the reader thread runs (or the texture player, inline).
+  fn into_opener(self, user_agent: String) -> Opener {
+    match self {
+      MediaSource::Spec(source) => Box::new(move || source.open(&user_agent)),
+      MediaSource::File(open) => Box::new(move || {
+        let reader = open().map_err(io::Error::other)?;
+        forge::source::from_seekable(reader)
+      }),
+    }
+  }
+}
+
+// A string goes through the source rule (a bad scheme is a programming
+// error and throws); an object must be a file().
+fn read_source<'js>(ctx: &Ctx<'js>, source: Value<'js>) -> rquickjs::Result<MediaSource> {
+  if let Some(spec) = source.as_string() {
+    let spec = spec.to_string()?;
+    return Source::parse(&spec)
+      .map(MediaSource::Spec)
+      .map_err(|e| Exception::throw_type(ctx, &format!("openVideo: {e}")));
+  }
+  if let Some(obj) = source.as_object() {
+    return SeekableSource::opener(obj).map(MediaSource::File).map_err(|e| {
+      Exception::throw_type(ctx, &format!("openVideo: source must be a path, an http(s) URL or a file() ({e})"))
+    });
+  }
+  Err(Exception::throw_type(ctx, "openVideo: source must be a path, an http(s) URL or a file()"))
+}
+
+fn read_signal<'js>(options: &OptArg<Object<'js>>) -> rquickjs::Result<Option<Class<'js, AbortSignal<'js>>>> {
+  match options.0.as_ref() {
+    Some(opts) => opts.get::<_, Option<Class<AbortSignal>>>("signal"),
+    None => Ok(None),
+  }
+}
+
+/// A `VideoError`: an Error whose `kind` names what went wrong, for the app
+/// to key on (a plane-to-texture fallback on "no-plane" only).
+fn video_error<'js>(ctx: &Ctx<'js>, error: &StreamError, prefix: &str) -> rquickjs::Result<Value<'js>> {
+  let err = Exception::from_message(ctx.clone(), &format!("{prefix}{}", error.message))?;
+  err.set("kind", error.kind.name())?;
+  Ok(err.into_value())
+}
+
+fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>>) -> rquickjs::Result<Promise<'js>> {
+  // A malformed option or source is a programming error and throws; an
+  // unreadable or unsupported stream, or a platform without a plane, is
+  // environmental: reject, never throw (the async-binding contract).
+  let present = read_present(&ctx, &options)?;
+  let source = read_source(&ctx, source)?;
+  let signal = read_signal(&options)?;
+  let (promise, resolve, reject) = Promise::new(&ctx)?;
+  match present {
+    Present::Texture => match build_player(ctx.clone(), source) {
+      Ok(obj) => resolve.call::<_, ()>((obj,))?,
+      Err(e) => reject.call::<_, ()>((video_error(&ctx, &e, "openVideo: ")?,))?,
+    },
+    Present::Plane { fit } => open_plane(ctx.clone(), source, fit, signal, resolve, reject)?,
   }
   Ok(promise)
 }
 
 #[cfg(not(target_os = "android"))]
-fn build_plane_player<'js>(_ctx: Ctx<'js>, _path: &str, _fit: PlaneFit) -> Result<Object<'js>, String> {
-  Err("no video plane on this platform (present: \"plane\" is Android only)".to_string())
+fn open_plane<'js>(
+  ctx: Ctx<'js>,
+  _source: MediaSource,
+  _fit: PlaneFit,
+  _signal: Option<Class<'js, AbortSignal<'js>>>,
+  _resolve: Function<'js>,
+  reject: Function<'js>,
+) -> rquickjs::Result<()> {
+  let error =
+    StreamError::new(ErrorKind::NoPlane, "no video plane on this platform (present: \"plane\" is Android only)");
+  reject.call::<_, ()>((video_error(&ctx, &error, "openVideo: ")?,))
+}
+
+/// The plane open: the slot is taken now, the reader thread reads the
+/// header, and the promise settles from a task racing that answer against
+/// the abort signal and the timeout. The plane and the codec are created
+/// on this thread once the header is in, as before.
+#[cfg(target_os = "android")]
+fn open_plane<'js>(
+  ctx: Ctx<'js>,
+  source: MediaSource,
+  fit: PlaneFit,
+  signal: Option<Class<'js, AbortSignal<'js>>>,
+  resolve: Function<'js>,
+  reject: Function<'js>,
+) -> rquickjs::Result<()> {
+  use forge::video::reader::Reader;
+  use std::time::Duration;
+
+  let state = ctx.userdata::<VideoPluginState>().expect("video state");
+  if !state.0.planes.borrow().is_empty() || state.0.plane_pending.get() {
+    let error = StreamError::new(ErrorKind::NoPlane, "a video plane is already open (one at a time; close it first)");
+    return reject.call::<_, ()>((video_error(&ctx, &error, "openVideo: ")?,));
+  }
+  if let Some(sig) = &signal {
+    if sig.borrow().aborted() {
+      let reason = sig.borrow().reason(ctx.clone());
+      return reject.call::<_, ()>((reason,));
+    }
+  }
+  state.0.plane_pending.set(true);
+  let user_agent = crate::standards_plugins::http::user_agent(&ctx);
+  let (reader, opened) = Reader::open(source.into_opener(user_agent));
+  let aborted = signal.as_ref().map(|sig| sig.borrow().subscribe());
+  let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
+  let task_ctx = ctx.clone();
+  ctx.spawn(async move {
+    enum Outcome {
+      Opened(Result<forge::video::MediaInfo, StreamError>),
+      Aborted,
+      TimedOut,
+    }
+    pending.hold();
+    let timeout = tokio::time::sleep(Duration::from_millis(OPEN_TIMEOUT_MS));
+    tokio::pin!(timeout);
+    let outcome = tokio::select! {
+      answer = opened => Outcome::Opened(answer.unwrap_or_else(|_| Err(StreamError::network("the reader stopped before answering")))),
+      _ = async { match aborted { Some(rx) => { let _ = rx.await; } None => std::future::pending::<()>().await } } => Outcome::Aborted,
+      _ = &mut timeout => Outcome::TimedOut,
+    };
+    pending.release();
+    let ctx = task_ctx;
+    let state = ctx.userdata::<VideoPluginState>().expect("video state");
+    state.0.plane_pending.set(false);
+    let settled = match outcome {
+      Outcome::Opened(Ok(info)) => match build_plane_player(ctx.clone(), reader, info, fit) {
+        Ok(obj) => resolve.call::<_, ()>((obj,)),
+        Err(e) => video_error(&ctx, &e, "openVideo: ").and_then(|err| reject.call::<_, ()>((err,))),
+      },
+      Outcome::Opened(Err(e)) => {
+        drop(reader);
+        video_error(&ctx, &e, "openVideo: ").and_then(|err| reject.call::<_, ()>((err,)))
+      }
+      Outcome::Aborted => {
+        // Dropping the reader interrupts its read and cancels the source.
+        drop(reader);
+        let reason = signal.as_ref().map(|sig| sig.borrow().reason(ctx.clone()));
+        reject.call::<_, ()>((reason,))
+      }
+      Outcome::TimedOut => {
+        drop(reader);
+        let error = StreamError::network(format!("no answer from the source within {OPEN_TIMEOUT_MS} ms"));
+        video_error(&ctx, &error, "openVideo: ").and_then(|err| reject.call::<_, ()>((err,)))
+      }
+    };
+    if let Err(e) = settled {
+      log::warn!("[video] settle open: {e}");
+    }
+  });
+  Ok(())
 }
 
 #[cfg(target_os = "android")]
-fn build_plane_player<'js>(ctx: Ctx<'js>, path: &str, fit: PlaneFit) -> Result<Object<'js>, String> {
+fn build_plane_player<'js>(
+  ctx: Ctx<'js>,
+  reader: forge::video::reader::Reader,
+  info: forge::video::MediaInfo,
+  fit: PlaneFit,
+) -> Result<Object<'js>, StreamError> {
   use alloy::video_plane::{PlaneFit as AlloyFit, VideoPlane};
   use forge::video::transport::VsyncGrid;
-  use forge::video::{AudioSink, PlanePlayer, WebmDemuxer};
+  use forge::video::{AudioSink, PlanePlayer};
 
   let state = ctx.userdata::<VideoPluginState>().expect("video state");
-  if !state.0.planes.borrow().is_empty() {
-    return Err("a video plane is already open (one at a time; close it first)".to_string());
-  }
-  let demux = WebmDemuxer::open_path(path)?;
-  let info = demux.info().clone();
   let fit = match fit {
     PlaneFit::Contain => AlloyFit::Contain,
     PlaneFit::Cover => AlloyFit::Cover,
   };
-  let plane = VideoPlane::create(info.width, info.height, fit)?;
+  let plane = VideoPlane::create(info.width, info.height, fit).map_err(|e| StreamError::new(ErrorKind::NoPlane, e))?;
   // The display's vsync grid: the period the plane read from the display,
   // the phase from the samples its view keeps reporting.
   let vsync = plane
@@ -289,19 +471,21 @@ fn build_plane_player<'js>(ctx: Ctx<'js>, path: &str, fit: PlaneFit) -> Result<O
       if let Some(sink) = sink {
         state.0.gui.alloy.destroy_pcm_sink(sink);
       }
-      return Err(e);
+      return Err(StreamError::decode(e));
     }
   };
-  let player = match PlanePlayer::open(Box::new(demux), plane.native_window().clone(), vsync, handle) {
+  let lost = Box::new(alloy::video_plane::lost);
+  let player = match PlanePlayer::open(reader, plane.native_window().clone(), vsync, handle, lost) {
     Ok(player) => player,
     Err(e) => {
       if let Some(sink) = sink {
         state.0.gui.alloy.destroy_pcm_sink(sink);
       }
-      return Err(e);
+      return Err(StreamError::decode(e));
     }
   };
   let has_audio = sink.is_some();
+  let shared = player.shared();
 
   let id = {
     let mut next = state.0.next_id.borrow_mut();
@@ -316,6 +500,7 @@ fn build_plane_player<'js>(ctx: Ctx<'js>, path: &str, fit: PlaneFit) -> Result<O
     obj.set("height", info.height)?;
     obj.set("duration", info.duration_us.map(|d| d as f64 / 1_000_000.0))?;
     obj.set("hasAudio", has_audio)?;
+    obj.set("seekable", info.seekable)?;
     obj.set("play", Function::new(ctx.clone(), move |ctx: Ctx<'_>| with_plane(&ctx, id, |e| e.player.play()))?)?;
     obj.set("pause", Function::new(ctx.clone(), move |ctx: Ctx<'_>| with_plane(&ctx, id, |e| e.player.pause()))?)?;
     obj.set(
@@ -342,10 +527,48 @@ fn build_plane_player<'js>(ctx: Ctx<'js>, path: &str, fit: PlaneFit) -> Result<O
         with_plane(&ctx, id, |e| e.player.finished() || e.plane.lost()).unwrap_or(true)
       })?,
     )?;
+    obj.set(
+      "buffering",
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>| with_plane(&ctx, id, |e| e.player.buffering()).unwrap_or(false))?,
+    )?;
+    obj.set("error", Function::new(ctx.clone(), value_builder(move |ctx| plane_error_impl(ctx, id)))?)?;
+    // The one-shot: resolves with the failure that stops playback, with
+    // undefined when the player closes without one.
+    let (failed, resolve_failed, _reject) = Promise::new(&ctx)?;
+    let failed_ctx = ctx.clone();
+    ctx.spawn(async move {
+      let outcome = shared.failed().await;
+      let value = match outcome.as_ref() {
+        Some(error) => video_error(&failed_ctx, error, ""),
+        None => Ok(Value::new_undefined(failed_ctx.clone())),
+      };
+      if let Err(e) = value.and_then(|v| resolve_failed.call::<_, ()>((v,))) {
+        log::warn!("[video] settle failed: {e}");
+      }
+    });
+    obj.set("failed", failed)?;
     obj.set("close", Function::new(ctx.clone(), move |ctx: Ctx<'_>| close_plane(&ctx, id))?)?;
     Ok(obj)
   };
-  build().map_err(|e| format!("build plane player object: {e}"))
+  build().map_err(|e| StreamError::decode(format!("build plane player object: {e}")))
+}
+
+#[cfg(target_os = "android")]
+fn plane_error_impl<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Value<'js>> {
+  match with_plane(&ctx, id, |e| e.player.error()).flatten() {
+    Some(error) => video_error(&ctx, &error, ""),
+    None => Ok(Value::new_undefined(ctx)),
+  }
+}
+
+/// Force the `for<'js>` HRTB on a capturing closure that returns a `'js`-bound
+/// `Value` (see flux/CLAUDE.md "Ctx and the 'js lifetime").
+#[cfg(target_os = "android")]
+fn value_builder<F>(f: F) -> F
+where
+  F: for<'js> Fn(Ctx<'js>) -> rquickjs::Result<Value<'js>>,
+{
+  f
 }
 
 // Run `f` on the plane entry `id`, None once closed (a late call on a closed
@@ -369,9 +592,22 @@ fn close_plane(ctx: &Ctx<'_>, id: u64) {
   }
 }
 
-fn build_player<'js>(ctx: Ctx<'js>, path: &str) -> Result<Object<'js>, String> {
+// The texture player reads inline on the frame loop, so it takes local
+// sources only: a URL rejects until its browser-style rework
+// (okf/plans/android-video-punch-through.md).
+fn build_player<'js>(ctx: Ctx<'js>, source: MediaSource) -> Result<Object<'js>, StreamError> {
   let state = ctx.userdata::<VideoPluginState>().expect("video state");
-  let player = VideoPlayer::open(path)?;
+  if source.is_url() {
+    return Err(StreamError::unsupported(
+      "streaming plays on a plane until the texture player moves off the frame loop",
+    ));
+  }
+  let label = source.label();
+  let bytes: ByteSource = source.into_opener(crate::standards_plugins::http::user_agent(&ctx))()
+    .map_err(|e| StreamError::network(e.to_string()))?;
+  let facts = bytes.facts().map_err(|e| StreamError::network(e.to_string()))?;
+  let demux = WebmDemuxer::open(bytes.into_reader(), facts)?;
+  let player = VideoPlayer::open(demux)?;
   let info = player.info();
   let (width, height) = (info.width, info.height);
   // None (undefined in JS) when the source has no duration: a live stream.
@@ -385,15 +621,20 @@ fn build_player<'js>(ctx: Ctx<'js>, path: &str) -> Result<Object<'js>, String> {
   // Both from the container's vpcC box (the matrix falls back to the
   // resolution default when it is unspecified there).
   let range = if player.color_is_full_range() { alloy::YuvRange::Full } else { alloy::YuvRange::Limited };
-  let texture = state.0.gui.alloy.create_yuv_texture(
-    width,
-    height,
-    layout,
-    matrix,
-    range,
-    alloy::SamplerState::default(),
-    Some(format!("video:{path}")),
-  )?;
+  let texture = state
+    .0
+    .gui
+    .alloy
+    .create_yuv_texture(
+      width,
+      height,
+      layout,
+      matrix,
+      range,
+      alloy::SamplerState::default(),
+      Some(format!("video:{label}")),
+    )
+    .map_err(StreamError::decode)?;
   // The player owns its texture: freed by close(), never by the app.
   state.0.gui.alloy.borrow_texture(texture);
 
@@ -431,15 +672,27 @@ fn build_player<'js>(ctx: Ctx<'js>, path: &str) -> Result<Object<'js>, String> {
     obj.set("height", height)?;
     obj.set("duration", duration_s)?;
     obj.set("hasAudio", has_audio)?;
+    // The same shape as a plane player, with the transport this player
+    // does not have yet: no seek, never buffering, no mid-stream failure.
+    obj.set("seekable", false)?;
     obj.set("play", Function::new(ctx.clone(), move |ctx: Ctx<'_>| play_impl(ctx, id, true))?)?;
     obj.set("pause", Function::new(ctx.clone(), move |ctx: Ctx<'_>| play_impl(ctx, id, false))?)?;
+    obj.set("seek", Function::new(ctx.clone(), |_seconds: f64| ())?)?;
     obj.set("playing", Function::new(ctx.clone(), move |ctx: Ctx<'_>| playing_impl(ctx, id))?)?;
     obj.set("currentTime", Function::new(ctx.clone(), move |ctx: Ctx<'_>| current_time_impl(ctx, id))?)?;
     obj.set("finished", Function::new(ctx.clone(), move |ctx: Ctx<'_>| finished_impl(ctx, id))?)?;
+    obj.set("buffering", Function::new(ctx.clone(), || false)?)?;
+    obj.set("error", Function::new(ctx.clone(), undefined)?)?;
+    let (never, _resolve, _reject) = Promise::new(&ctx)?;
+    obj.set("failed", never)?;
     obj.set("close", Function::new(ctx.clone(), move |ctx: Ctx<'_>| close_impl(ctx, id))?)?;
     Ok(obj)
   };
-  build().map_err(|e| format!("build player object: {e}"))
+  build().map_err(|e| StreamError::decode(format!("build player object: {e}")))
+}
+
+fn undefined(ctx: Ctx<'_>) -> Value<'_> {
+  Value::new_undefined(ctx)
 }
 
 fn play_impl(ctx: Ctx<'_>, id: u64, play: bool) {

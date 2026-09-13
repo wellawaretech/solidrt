@@ -11,12 +11,18 @@ const USER_AGENT: &str = concat!("FluxRT/", env!("FLUX_VERSION"));
 #[derive(Clone, JsLifetime)]
 pub(crate) struct HttpClient(#[qjs(skip_trace)] pub Client);
 
-pub(crate) fn init_http(ctx: &Ctx<'_>) {
-  // `FluxEngineBuilder::user_agent`, read off the stored engine config.
-  let agent = ctx
+/// The user agent every HTTP request from this engine carries:
+/// `FluxEngineBuilder::user_agent`, read off the stored engine config, else
+/// the runtime's own token.
+pub(crate) fn user_agent(ctx: &Ctx<'_>) -> String {
+  ctx
     .userdata::<crate::engine::EngineConfig>()
     .and_then(|config| config.user_agent.clone())
-    .unwrap_or_else(|| USER_AGENT.to_string());
+    .unwrap_or_else(|| USER_AGENT.to_string())
+}
+
+pub(crate) fn init_http(ctx: &Ctx<'_>) {
+  let agent = user_agent(ctx);
   let client = HttpClient(Client::new(&agent).expect("build http client"));
   ctx.store_userdata(client).expect("store http client");
 }

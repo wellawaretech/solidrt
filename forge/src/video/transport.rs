@@ -10,7 +10,9 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use super::StreamError;
 
 // How long before its release time a frame is handed to the surface when
 // the display's grid is unknown: a fallback (ExoPlayer's 50 ms), see
@@ -53,6 +55,18 @@ pub const AUDIO_SYNC_SMOOTHING: i64 = 8;
 // re-anchor behind the sound and start over. A larger lead is closed in
 // several moves, one per frame.
 pub const AUDIO_SYNC_MAX_SHIFT_US: i64 = STALL_REANCHOR_NS / 2000;
+// Buffering starts when the reader's lead over the head falls below this:
+// the source is not keeping up, and stopping here (with a little still to
+// show) beats stopping on an empty queue. Above the sink's low water plus
+// the release lead, so the picture never starves before the rule fires.
+pub const STREAM_LOW_WATER_US: i64 = 500_000;
+// Buffering ends once the lead has grown back to this: enough that a
+// source delivering in bursts does not start and stop every few frames.
+pub const STREAM_RESUME_BUFFER_US: i64 = 2_000_000;
+// Buffering also starts when the audio queue is empty and the sink holds
+// less than this: the sound is about to underrun, which would freeze the
+// audio clock (an underrun is padded with silence the sink does not count).
+pub const SINK_LOW_WATER_US: i64 = 100_000;
 
 /// The system clock frames are scheduled on: CLOCK_MONOTONIC in nanoseconds
 /// on unix (Android's `System.nanoTime`, which
@@ -92,6 +106,12 @@ pub struct Shared {
   position_us: AtomicI64,
   playing: AtomicBool,
   finished: AtomicBool,
+  buffering: AtomicBool,
+  closed: AtomicBool,
+  error: Mutex<Option<StreamError>>,
+  // Fires once when the error is set or the player closes, for the one
+  // async waiter (`failed`).
+  changed: tokio::sync::Notify,
 }
 
 impl Shared {
@@ -114,6 +134,39 @@ impl Shared {
   }
   pub fn set_finished(&self, finished: bool) {
     self.finished.store(finished, Ordering::Relaxed);
+  }
+  /// Playback is held for the source to catch up (see `Buffering`).
+  pub fn buffering(&self) -> bool {
+    self.buffering.load(Ordering::Relaxed)
+  }
+  pub fn set_buffering(&self, buffering: bool) {
+    self.buffering.store(buffering, Ordering::Relaxed);
+  }
+  /// The failure that stopped playback, if one did. Sticky: a later seek
+  /// may play on, the record stays.
+  pub fn error(&self) -> Option<StreamError> {
+    self.error.lock().unwrap_or_else(PoisonError::into_inner).clone()
+  }
+  pub fn set_error(&self, error: StreamError) {
+    *self.error.lock().unwrap_or_else(PoisonError::into_inner) = Some(error);
+    self.changed.notify_one();
+  }
+  pub fn set_closed(&self) {
+    self.closed.store(true, Ordering::Relaxed);
+    self.changed.notify_one();
+  }
+  /// Resolves with the failure once one is set, or with None once the
+  /// player closes without one. For the caller's one async watcher.
+  pub async fn failed(&self) -> Option<StreamError> {
+    loop {
+      if let Some(error) = self.error() {
+        return Some(error);
+      }
+      if self.closed.load(Ordering::Relaxed) {
+        return None;
+      }
+      self.changed.notified().await;
+    }
   }
 }
 
@@ -145,11 +198,25 @@ impl Controls {
   }
 
   pub fn close(&self) {
+    self.shared.set_closed();
     self.send(Command::Close);
   }
 
   pub fn playing(&self) -> bool {
     self.shared.playing()
+  }
+
+  pub fn buffering(&self) -> bool {
+    self.shared.buffering()
+  }
+
+  pub fn error(&self) -> Option<StreamError> {
+    self.shared.error()
+  }
+
+  /// The published state itself, for a watcher that outlives a borrow.
+  pub fn shared(&self) -> Arc<Shared> {
+    self.shared.clone()
   }
 
   pub fn position_us(&self) -> i64 {
@@ -188,6 +255,14 @@ impl Anchor {
 
   pub fn anchored(&self) -> bool {
     self.origin.is_some()
+  }
+
+  /// Anchor so that content time `content_us` is at `now_ns`: what a
+  /// resume after buffering does with the audio clock's position, so the
+  /// picture continues in step with the sound instead of anchoring on its
+  /// own first frame and getting corrected later.
+  pub fn set(&mut self, now_ns: i64, content_us: i64) {
+    self.origin = Some((now_ns, content_us));
   }
 
   /// The system time a frame at `pts_us` is due, anchoring on it (at
@@ -253,6 +328,76 @@ impl AudioSync {
       self.lead_ema_us = Some(ema);
       None
     }
+  }
+}
+
+/// What the reader has on hand, as buffering judges it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Supply {
+  /// The newest demuxed pts minus the player's head.
+  pub lead_us: i64,
+  /// The stream has been read to its end.
+  pub ended: bool,
+  /// The reader stopped on a failure.
+  pub failed: bool,
+  /// The reader's byte cap binds: no more is coming until the player
+  /// consumes.
+  pub capped: bool,
+  /// The audio side, when the stream plays audio.
+  pub audio: Option<AudioSupply>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AudioSupply {
+  /// Packets queued for the audio decoder.
+  pub queued_packets: usize,
+  /// Decoded audio the sink holds ahead of the device.
+  pub sink_us: i64,
+}
+
+/// The buffering state, keyed on something observable: the reader's lead
+/// and the sink's queue (a hardware decoder cannot report that it is
+/// drained, so nothing waits for that). Entered while playing when the
+/// lead falls under the low water, or the audio queue is empty with the
+/// sink about to underrun (both short of the resume buffer, so the two
+/// rules never disagree); left once the lead is back at the resume
+/// buffer, or when nothing more is coming: the end, a failure, the byte
+/// cap. A paused player is not buffering. Pure, like AudioSync.
+#[derive(Debug, Default)]
+pub struct Buffering {
+  active: bool,
+}
+
+impl Buffering {
+  pub fn new() -> Buffering {
+    Buffering { active: false }
+  }
+
+  pub fn active(&self) -> bool {
+    self.active
+  }
+
+  /// Judge the supply: Some(true) when buffering starts now, Some(false)
+  /// when it ends, None when nothing changes.
+  pub fn update(&mut self, playing: bool, supply: &Supply) -> Option<bool> {
+    let settled = supply.ended || supply.failed || supply.capped;
+    if self.active {
+      if !playing || settled || supply.lead_us >= STREAM_RESUME_BUFFER_US {
+        self.active = false;
+        return Some(false);
+      }
+      return None;
+    }
+    if !playing || settled {
+      return None;
+    }
+    let audio_starving = supply.audio.is_some_and(|a| a.queued_packets == 0 && a.sink_us < SINK_LOW_WATER_US);
+    let short = supply.lead_us < STREAM_LOW_WATER_US || (audio_starving && supply.lead_us < STREAM_RESUME_BUFFER_US);
+    if short {
+      self.active = true;
+      return Some(true);
+    }
+    None
   }
 }
 

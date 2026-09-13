@@ -26,7 +26,7 @@ fn file(n: usize) -> Vec<u8> {
   (0..n).map(|i| (i * 7 + 3) as u8).collect()
 }
 
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(super) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
   m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -78,16 +78,16 @@ fn opened(body: ByteStream, len: Option<u64>, seekable: bool) -> io::Result<Open
 
 // --- A scripted HTTP server ---
 
-struct Req {
-  headers: Vec<(String, String)>,
+pub(super) struct Req {
+  pub(super) headers: Vec<(String, String)>,
 }
 
 impl Req {
-  fn header(&self, name: &str) -> Option<&str> {
+  pub(super) fn header(&self, name: &str) -> Option<&str> {
     self.headers.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str())
   }
 
-  fn range_start(&self) -> usize {
+  pub(super) fn range_start(&self) -> usize {
     self
       .header("range")
       .and_then(|r| r.strip_prefix("bytes="))
@@ -97,19 +97,19 @@ impl Req {
   }
 }
 
-enum Step {
+pub(super) enum Step {
   Send(Vec<u8>),
   Wait(Arc<Notify>),
 }
 
 /// The status line and headers, then the steps; the socket closes after the
 /// last step (which is the truncation when the body is not complete).
-struct Script {
-  head: String,
-  steps: Vec<Step>,
+pub(super) struct Script {
+  pub(super) head: String,
+  pub(super) steps: Vec<Step>,
 }
 
-fn head(status: &str, headers: &[(&str, String)]) -> String {
+pub(super) fn head(status: &str, headers: &[(&str, String)]) -> String {
   let mut s = format!("HTTP/1.1 {status}\r\nconnection: close\r\n");
   for (name, value) in headers {
     s += &format!("{name}: {value}\r\n");
@@ -140,7 +140,7 @@ async fn read_request(sock: &mut tokio::net::TcpStream) -> Req {
 
 /// Serve `handler` on a runtime of its own, one task per connection,
 /// recording every request.
-fn serve(handler: impl Fn(&Req) -> Script + Send + Sync + 'static) -> (SocketAddr, Arc<Mutex<Vec<Req>>>) {
+pub(super) fn serve(handler: impl Fn(&Req) -> Script + Send + Sync + 'static) -> (SocketAddr, Arc<Mutex<Vec<Req>>>) {
   let requests = Arc::new(Mutex::new(Vec::new()));
   let seen = requests.clone();
   let handler = Arc::new(handler);
@@ -174,7 +174,7 @@ fn serve(handler: impl Fn(&Req) -> Script + Send + Sync + 'static) -> (SocketAdd
 }
 
 /// A file served with Range support: a 206 from the requested offset.
-fn ranged(data: Arc<Vec<u8>>, etag: &'static str) -> impl Fn(&Req) -> Script + Send + Sync + 'static {
+pub(super) fn ranged(data: Arc<Vec<u8>>, etag: &'static str) -> impl Fn(&Req) -> Script + Send + Sync + 'static {
   move |req| {
     let start = req.range_start();
     let body = data[start..].to_vec();
@@ -192,7 +192,7 @@ fn ranged(data: Arc<Vec<u8>>, etag: &'static str) -> impl Fn(&Req) -> Script + S
   }
 }
 
-fn chunk(bytes: &[u8]) -> Vec<u8> {
+pub(super) fn chunk(bytes: &[u8]) -> Vec<u8> {
   let mut out = format!("{:x}\r\n", bytes.len()).into_bytes();
   out.extend_from_slice(bytes);
   out.extend_from_slice(b"\r\n");
@@ -501,4 +501,19 @@ fn a_transient_open_failure_on_a_seekable_source_is_retried() {
   end.expect("clean end after the reconnects");
   assert_eq!(got, b"0123456789");
   assert_eq!(*lock(&opens), [0, 5, 5]);
+}
+
+// --- The source rule ---
+
+#[test]
+fn source_rule_takes_paths_and_http_urls_only() {
+  use crate::source::Source;
+  assert_eq!(Source::parse("clip.webm"), Ok(Source::Path("clip.webm".into())));
+  assert_eq!(Source::parse("/media/clip.webm"), Ok(Source::Path("/media/clip.webm".into())));
+  assert_eq!(Source::parse("C:\\media\\clip.webm"), Ok(Source::Path("C:\\media\\clip.webm".into())));
+  assert_eq!(Source::parse("http://host:8080/clip.webm"), Ok(Source::Http("http://host:8080/clip.webm".into())));
+  assert_eq!(Source::parse("HTTPS://host/clip.webm"), Ok(Source::Http("HTTPS://host/clip.webm".into())));
+  assert!(Source::parse("file:///media/clip.webm").is_err());
+  assert!(Source::parse("ftp://host/clip.webm").is_err());
+  assert!(Source::parse("data:video/webm;base64,AAAA").is_err());
 }

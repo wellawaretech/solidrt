@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::seek::SeekableReader;
 use crate::source::Facts;
-use crate::video::{Demuxer, WebmDemuxer};
+use crate::video::{Demuxer, ErrorKind, StreamError, WebmDemuxer};
 
 const ID_SEGMENT: &[u8] = &[0x18, 0x53, 0x80, 0x67];
 const ID_CLUSTER: &[u8] = &[0x1F, 0x43, 0xB6, 0x75];
@@ -30,12 +30,12 @@ fn gop_fixture() -> Vec<u8> {
   std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/data/video_gop.webm")).expect("read fixture")
 }
 
-fn open_bytes(bytes: Vec<u8>, seekable: bool) -> Result<WebmDemuxer, String> {
+fn open_bytes(bytes: Vec<u8>, seekable: bool) -> Result<WebmDemuxer, StreamError> {
   let len = bytes.len() as u64;
   WebmDemuxer::open(Box::new(Cursor::new(bytes)), Facts { len: Some(len), seekable })
 }
 
-fn open_error(bytes: Vec<u8>, seekable: bool, why: &str) -> String {
+fn open_error(bytes: Vec<u8>, seekable: bool, why: &str) -> StreamError {
   match open_bytes(bytes, seekable) {
     Ok(_) => panic!("open must fail: {why}"),
     Err(e) => e,
@@ -43,7 +43,7 @@ fn open_error(bytes: Vec<u8>, seekable: bool, why: &str) -> String {
 }
 
 /// Every video frame and audio packet until the end or an error.
-fn drain(demux: &mut WebmDemuxer) -> (Vec<(i64, bool)>, Vec<i64>, Result<(), String>) {
+fn drain(demux: &mut WebmDemuxer) -> (Vec<(i64, bool)>, Vec<i64>, Result<(), StreamError>) {
   let mut video = Vec::new();
   let mut audio = Vec::new();
   loop {
@@ -283,7 +283,8 @@ fn garbage_sizes_error_before_any_allocation() {
   bent.extend(size8(GARBAGE_SIZE));
   bent.extend_from_slice(&bytes[block + 1 + size_len..]);
   let err = open_error(bent, true, "a garbage block size");
-  assert!(err.contains("exceeds"), "{err}");
+  assert!(err.message.contains("exceeds"), "{err}");
+  assert_eq!(err.kind, ErrorKind::Decode);
 
   // A skip past a terabyte on a source that cannot seek.
   let mut bent = bytes[..first_cluster].to_vec();
@@ -291,7 +292,7 @@ fn garbage_sizes_error_before_any_allocation() {
   bent.extend(size8(GARBAGE_SIZE));
   bent.extend_from_slice(&bytes[first_cluster..]);
   let err = open_error(with_unknown_sizes(bent), false, "a garbage skip");
-  assert!(err.contains("exceeds"), "{err}");
+  assert!(err.message.contains("exceeds"), "{err}");
 }
 
 #[test]
@@ -360,7 +361,7 @@ fn a_new_ebml_header_ends_the_stream_as_unsupported() {
   let mut demux = open_bytes(joined, false).expect("open");
   let (video, _, end) = drain(&mut demux);
   let err = end.expect_err("a second stream is not followed");
-  assert!(err.contains("unsupported"), "{err}");
+  assert_eq!(err.kind, ErrorKind::Unsupported, "{err}");
   assert_eq!(video.len(), 13, "the first cluster's frames (0 to 480 ms) came out");
   assert!(demux.next_video().is_err(), "sticky");
 }

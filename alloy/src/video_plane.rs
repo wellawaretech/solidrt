@@ -34,6 +34,12 @@ pub fn set_lost() {
   PLANE_LOST.store(true, Ordering::Relaxed);
 }
 
+/// Whether the platform destroyed the current plane's surface (see
+/// `VideoPlane::lost`). Any thread: the decoder's worker samples it.
+pub fn lost() -> bool {
+  PLANE_LOST.load(Ordering::Relaxed)
+}
+
 /// Whether a video plane is presenting beneath the window. The compositor
 /// commits the plane and the window together, so while this is true the
 /// window's buffer must not carry unfinished GPU work into that commit -
@@ -109,8 +115,10 @@ impl VideoPlane {
       if view.is_null() {
         return Ok(None);
       }
-      let surface = env.call_method(&view, jni::jni_str!("surface"), jni::jni_sig!("()Landroid/view/Surface;"), &[])?.l()?;
-      let refresh_period_ns = env.call_method(&view, jni::jni_str!("refreshPeriodNs"), jni::jni_sig!("()J"), &[])?.j()?;
+      let surface =
+        env.call_method(&view, jni::jni_str!("surface"), jni::jni_sig!("()Landroid/view/Surface;"), &[])?.l()?;
+      let refresh_period_ns =
+        env.call_method(&view, jni::jni_str!("refreshPeriodNs"), jni::jni_sig!("()J"), &[])?.j()?;
       // The casts bridge the jni crate (jni-sys 0.4) and ndk-sys (jni-sys
       // 0.3), which name the same ABI types in different crates. The
       // NativeWindow holds its own reference to the surface; the local

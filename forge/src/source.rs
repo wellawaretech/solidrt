@@ -698,3 +698,93 @@ fn parse_content_range(value: &str) -> Option<(u64, Option<u64>)> {
   };
   Some((start, total))
 }
+
+// --- The one source rule for media openers ---
+
+/// What a media opener takes, from one rule shared by every media API: an
+/// `http:` or `https:` spec (case-insensitive) is a URL, any other scheme is
+/// refused, and anything else is a path resolved like every forge file read
+/// (through the assets mount when one is set). A Windows drive letter is a
+/// path, not a scheme.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+  Path(String),
+  Http(String),
+}
+
+impl Source {
+  pub fn parse(spec: &str) -> Result<Source, String> {
+    let scheme = spec
+      .split_once(':')
+      .map(|(scheme, _)| scheme)
+      .filter(|s| s.len() > 1 && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')));
+    match scheme {
+      Some(s) if s.eq_ignore_ascii_case("http") || s.eq_ignore_ascii_case("https") => {
+        Ok(Source::Http(spec.to_string()))
+      }
+      Some(s) => Err(format!("unsupported source scheme \"{s}:\" (a path, or an http or https URL)")),
+      None => Ok(Source::Path(spec.to_string())),
+    }
+  }
+
+  /// Open the bytes. Returns at once for a URL (the request is in flight;
+  /// [`ByteSource::facts`] waits for its answer), after the open for a
+  /// file. `user_agent` is the HTTP request's.
+  pub fn open(&self, user_agent: &str) -> io::Result<ByteSource> {
+    match self {
+      Source::Path(path) => open_file(path),
+      Source::Http(url) => {
+        let reader = Reader::open(HttpSource::new(url, user_agent)?, STREAM_RING_BYTES);
+        Ok(ByteSource { handle: Some(reader.handle()), inner: SourceBytes::Http(reader) })
+      }
+    }
+  }
+}
+
+/// A local file as a byte source, resolved like every forge file read.
+pub fn open_file(path: &str) -> io::Result<ByteSource> {
+  from_seekable(crate::fs::open_seekable(path).map_err(io::Error::other)?)
+}
+
+/// Any seekable reader (a file, a packed asset's window) as a byte source;
+/// its length is read by seeking to its end.
+pub fn from_seekable(mut reader: crate::seek::SeekableReader) -> io::Result<ByteSource> {
+  let len = reader.seek(SeekFrom::End(0))?;
+  reader.seek(SeekFrom::Start(0))?;
+  Ok(ByteSource { handle: None, inner: SourceBytes::File(reader, len) })
+}
+
+enum SourceBytes {
+  File(crate::seek::SeekableReader, u64),
+  Http(Reader),
+}
+
+/// An opened media source: its reader once the facts are known, and the
+/// handle that interrupts or closes it while a read blocks on the network
+/// (None for a file, whose reads never wait on anything but the disk).
+pub struct ByteSource {
+  handle: Option<Handle>,
+  inner: SourceBytes,
+}
+
+impl ByteSource {
+  pub fn handle(&self) -> Option<Handle> {
+    self.handle.clone()
+  }
+
+  /// The length and seekability. Blocks until a URL's first response has
+  /// answered (a close from the handle ends the wait with an error).
+  pub fn facts(&self) -> io::Result<Facts> {
+    match &self.inner {
+      SourceBytes::File(_, len) => Ok(Facts { len: Some(*len), seekable: true }),
+      SourceBytes::Http(reader) => reader.facts(),
+    }
+  }
+
+  pub fn into_reader(self) -> crate::seek::SeekableReader {
+    match self.inner {
+      SourceBytes::File(file, _) => file,
+      SourceBytes::Http(reader) => Box::new(reader),
+    }
+  }
+}

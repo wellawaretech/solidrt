@@ -29,10 +29,13 @@ mod opus;
 #[cfg(target_os = "android")]
 mod plane;
 mod player;
+pub mod reader;
 pub mod transport;
 #[cfg(not(target_os = "android"))]
 mod vpx;
 mod webm;
+
+use std::fmt;
 
 #[cfg(target_os = "android")]
 pub use mediacodec::MediaCodecDecoder;
@@ -45,8 +48,90 @@ pub use transport::AudioSink;
 pub use vpx::Vp9Decoder;
 pub use webm::WebmDemuxer;
 
+/// What went wrong with a stream, for the app to key on: the same kinds
+/// reach JS as `VideoError.kind`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorKind {
+  /// The source could not be opened or stopped delivering: an unreachable
+  /// or failing server, an unreadable file, a truncated body.
+  Network,
+  /// The bytes are not a stream the decoders can follow: a corrupt
+  /// container, a codec that failed on it.
+  Decode,
+  /// A stream, codec or feature this player does not play.
+  Unsupported,
+  /// No video plane: not on this platform, or one is open already.
+  NoPlane,
+  /// A read interrupted by the reading thread's own command (a seek, a
+  /// close). Internal: never published to a player's caller.
+  Interrupted,
+}
+
+impl ErrorKind {
+  /// The kind's name on the JS surface.
+  pub fn name(self) -> &'static str {
+    match self {
+      ErrorKind::Network => "network",
+      ErrorKind::Decode => "decode",
+      ErrorKind::Unsupported => "unsupported",
+      ErrorKind::NoPlane => "no-plane",
+      ErrorKind::Interrupted => "interrupted",
+    }
+  }
+}
+
+/// A stream failure: its kind and a message for the log and the app.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StreamError {
+  pub kind: ErrorKind,
+  pub message: String,
+}
+
+impl StreamError {
+  pub fn new(kind: ErrorKind, message: impl Into<String>) -> StreamError {
+    StreamError { kind, message: message.into() }
+  }
+
+  pub fn network(message: impl Into<String>) -> StreamError {
+    StreamError::new(ErrorKind::Network, message)
+  }
+
+  pub fn decode(message: impl Into<String>) -> StreamError {
+    StreamError::new(ErrorKind::Decode, message)
+  }
+
+  pub fn unsupported(message: impl Into<String>) -> StreamError {
+    StreamError::new(ErrorKind::Unsupported, message)
+  }
+
+  /// The same error with `prefix: ` in front of the message.
+  pub fn context(self, prefix: &str) -> StreamError {
+    StreamError { kind: self.kind, message: format!("{prefix}: {}", self.message) }
+  }
+}
+
+impl fmt::Display for StreamError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(&self.message)
+  }
+}
+
+// A bare message is a decode error: the container said something the
+// walk could not follow. The other kinds are named where they arise.
+impl From<&str> for StreamError {
+  fn from(message: &str) -> StreamError {
+    StreamError::decode(message)
+  }
+}
+
+impl From<String> for StreamError {
+  fn from(message: String) -> StreamError {
+    StreamError::decode(message)
+  }
+}
+
 /// Stream facts read from the container header and the source.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MediaInfo {
   pub width: u32,
   pub height: u32,
@@ -71,7 +156,7 @@ pub struct MediaInfo {
 /// The Opus track's facts: what a sink is opened at, and the two trims the
 /// stream asks for (RFC 7845): the priming samples at the very start, and
 /// how far before a seek target decoding has to begin to converge.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AudioInfo {
   pub sample_rate: u32,
   pub channels: u16,
@@ -97,15 +182,25 @@ pub struct AudioPacket {
   pub data: Vec<u8>,
 }
 
+/// One packet of either track, in the order the container stores them.
+pub enum Packet {
+  Video(VideoAu),
+  Audio(AudioPacket),
+}
+
 /// A demultiplexed media source: coded VP9 frames and Opus packets, each
 /// track in decode order, read from a byte source that may be unbounded (a
 /// live stream) and may not seek. Players never see a container.
 pub trait Demuxer: Send {
   fn info(&self) -> &MediaInfo;
   /// Next coded video frame, None past the end (never, on a live stream).
-  fn next_video(&mut self) -> Result<Option<VideoAu>, String>;
+  fn next_video(&mut self) -> Result<Option<VideoAu>, StreamError>;
   /// Next Opus packet, None past the end or when there is no audio track.
-  fn next_audio(&mut self) -> Result<Option<AudioPacket>, String>;
+  fn next_audio(&mut self) -> Result<Option<AudioPacket>, StreamError>;
+  /// Next packet of either played track in container order, None past the
+  /// end. What a reader filling both queues at once takes, so neither
+  /// track is read ahead of the other.
+  fn next_packet(&mut self) -> Result<Option<Packet>, StreamError>;
   /// Reposition so the next video frame is the last keyframe at or before
   /// `target_us` (or the next keyframe, for a source that cannot go back)
   /// and the next audio packet the first at or after the resume position
@@ -113,7 +208,7 @@ pub trait Demuxer: Send {
   /// target, or that next keyframe when it comes later. The player skips
   /// video and discards decoded audio before it. A source that cannot seek
   /// errs without touching its state; a player treats that as unsupported.
-  fn seek(&mut self, target_us: i64) -> Result<i64, String>;
+  fn seek(&mut self, target_us: i64) -> Result<i64, StreamError>;
 }
 
 /// The layout the platform's decoder emits. Fixed per platform so consumers

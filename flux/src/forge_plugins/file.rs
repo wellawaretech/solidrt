@@ -1,5 +1,6 @@
 use rquickjs::{function::MutFn, promise::Promised, Ctx, Exception, Function, Object, TypedArray, Value};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::pending::PendingOps;
 use crate::plugins::marshal::with_pending;
@@ -138,8 +139,8 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   // off the JS thread (audio streaming) can open the file on demand. The opener
   // resolves through forge::fs, so a packed asset hands out a range-read window
   // into the exe instead of a plain disk file.
-  let path_for_open = path.clone();
-  SeekableSource::attach(&ctx, &obj, Rc::new(move || fs::open_seekable(&path_for_open)))?;
+  let path_for_open = path.as_ref().clone();
+  SeekableSource::attach(&ctx, &obj, Arc::new(move || fs::open_seekable(&path_for_open)))?;
 
   Ok(obj)
 }

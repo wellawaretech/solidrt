@@ -1,10 +1,26 @@
+use crate::video::reader::Next;
 use crate::video::transport::AudioSink;
-use crate::video::{Demuxer, OpusDecoder, PixelLayout, VideoAu, VideoDecoder, VideoPlayer, WebmDemuxer, YuvFrame};
+use crate::video::{
+  AudioPacket, Demuxer, OpusDecoder, PixelLayout, VideoAu, VideoDecoder, VideoPlayer, WebmDemuxer, YuvFrame,
+};
 
 // 2 s of ffmpeg testsrc2 160x120 at 25 fps as VP9 (libvpx-vp9, profile 0)
 // with a 440 Hz sine as mono Opus (20 ms packets), in WebM.
 fn fixture() -> String {
   concat!(env!("CARGO_MANIFEST_DIR"), "/src/tests/data/video_av.webm").to_string()
+}
+
+// The demuxer as an audio feeder's queue, for the track tests.
+fn audio_from(demux: &mut WebmDemuxer) -> Next<AudioPacket> {
+  match demux.next_audio() {
+    Ok(Some(packet)) => Next::Packet(packet),
+    Ok(None) => Next::End,
+    Err(e) => panic!("read audio: {e}"),
+  }
+}
+
+fn open_fixture() -> WebmDemuxer {
+  WebmDemuxer::open_path(&fixture()).expect("open fixture")
 }
 
 // Opus packets in the fixture: 20 ms each, so 960 samples at 48 kHz.
@@ -131,7 +147,7 @@ fn audio_track_trims_pre_skip_and_maps_the_sink_position_to_content_time() {
   assert!(track.content_time_us().is_none(), "no clock before the first push");
 
   // One feed fills the lookahead and no more.
-  track.feed(&mut demux);
+  track.feed(|| audio_from(&mut demux));
   let queued = state.lock().expect("state").queued_us();
   assert!(queued >= AUDIO_LOOKAHEAD_US && queued < AUDIO_LOOKAHEAD_US + 20_000, "queued {queued}us");
   // The first chunk lost its pre-skip: the sink starts at content time 0
@@ -156,7 +172,7 @@ fn audio_track_trims_pre_skip_and_maps_the_sink_position_to_content_time() {
   track.seek(1_000_000);
   assert!(track.content_time_us().is_none());
   let before = state.lock().expect("state").pushed_frames;
-  track.feed(&mut demux);
+  track.feed(|| audio_from(&mut demux));
   let content = track.content_time_us().expect("a clock after the seek's first push");
   assert!((content - (1_000_000 - AUDIO_OUTPUT_LATENCY_US)).abs() <= 1_000, "content time {content}us");
 
@@ -164,7 +180,7 @@ fn audio_track_trims_pre_skip_and_maps_the_sink_position_to_content_time() {
   loop {
     state.lock().expect("state").consume(usize::MAX);
     let pushed = state.lock().expect("state").pushed_frames;
-    track.feed(&mut demux);
+    track.feed(|| audio_from(&mut demux));
     if state.lock().expect("state").pushed_frames == pushed {
       break;
     }
@@ -226,7 +242,7 @@ fn libvpx_decodes_every_frame() {
 fn open_plays_the_stream_through_libvpx() {
   // The real factory end to end: the worker builds the libvpx decoder and
   // every frame reaches the consumer against a running clock.
-  let mut player = VideoPlayer::open(&fixture()).expect("open player");
+  let mut player = VideoPlayer::open(open_fixture()).expect("open player");
   player.play();
   let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
   let mut handed = 0;
@@ -250,7 +266,7 @@ fn open_plays_the_stream_through_libvpx() {
 
 #[test]
 fn player_advances_against_a_caller_clock() {
-  let mut player = VideoPlayer::open_with(&fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
+  let mut player = VideoPlayer::open_with(open_fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
   assert_eq!((player.info().width, player.info().height), (160, 120));
   assert_eq!(player.layout(), crate::video::decoded_layout());
 
@@ -299,7 +315,7 @@ fn player_advances_against_a_caller_clock() {
 
 #[test]
 fn player_skips_stale_frames_when_the_clock_runs_ahead() {
-  let mut player = VideoPlayer::open_with(&fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
+  let mut player = VideoPlayer::open_with(open_fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
   player.play();
   // A clock permanently ahead of the whole clip: each advance drains the
   // queue and hands out only the newest frame, dropping the ones between.
@@ -327,7 +343,7 @@ fn player_skips_stale_frames_when_the_clock_runs_ahead() {
 fn a_stalled_master_clock_plays_out_the_tail() {
   // An audio-clocked stream's clock stops at the end of the audio track,
   // which routinely falls a frame or more short of the last video frame. The tail must still come out, and the stream must end.
-  let mut player = VideoPlayer::open_with(&fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
+  let mut player = VideoPlayer::open_with(open_fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
   player.play();
   let stall_us = 44 * 40_000;
   let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -350,7 +366,8 @@ fn non_webm_input_errs() {
     Ok(_) => panic!("not a webm, open must err"),
     Err(e) => e,
   };
-  assert!(err.contains("not a webm"), "unexpected error: {err}");
+  assert!(err.message.contains("not a webm"), "unexpected error: {err}");
+  assert_eq!(err.kind, crate::video::ErrorKind::Unsupported);
 }
 
 // 4 s of ffmpeg testsrc2 160x120 at 25 fps as VP9 with a keyframe every
@@ -511,4 +528,73 @@ fn transport_clock_is_monotonic() {
   std::thread::sleep(std::time::Duration::from_millis(2));
   let b = monotonic_ns();
   assert!(b >= a + 2_000_000, "{a} -> {b}");
+}
+
+#[test]
+fn transport_buffering_holds_until_the_resume_buffer_and_resumes_on_the_audio_clock() {
+  use crate::video::transport::{
+    Anchor, AudioSupply, Buffering, Supply, SINK_LOW_WATER_US, STREAM_LOW_WATER_US, STREAM_RESUME_BUFFER_US,
+  };
+  let mut buffering = Buffering::new();
+  let plenty = Supply { lead_us: STREAM_RESUME_BUFFER_US * 2, ..Supply::default() };
+  // Paused: never.
+  assert_eq!(buffering.update(false, &Supply::default()), None);
+  // Playing with the lead under the low water: starts; the same again is
+  // no change; back above the low water but short of the resume buffer:
+  // still held; at the resume buffer: ends.
+  let short = Supply { lead_us: STREAM_LOW_WATER_US - 1, ..Supply::default() };
+  assert_eq!(buffering.update(true, &short), Some(true));
+  assert!(buffering.active());
+  assert_eq!(buffering.update(true, &short), None);
+  let between = Supply { lead_us: STREAM_LOW_WATER_US + 1, ..Supply::default() };
+  assert_eq!(buffering.update(true, &between), None);
+  assert_eq!(buffering.update(true, &plenty), Some(false));
+  assert!(!buffering.active());
+  assert_eq!(buffering.update(true, &plenty), None);
+  // A pause while buffering ends it; play with a short lead starts again.
+  assert_eq!(buffering.update(true, &short), Some(true));
+  assert_eq!(buffering.update(false, &short), Some(false));
+  assert_eq!(buffering.update(true, &short), Some(true));
+  // Nothing more is coming: the end, a failure, the byte cap all end it,
+  // and none of them starts it.
+  for settled in [Supply { ended: true, ..short }, Supply { failed: true, ..short }, Supply { capped: true, ..short }] {
+    assert_eq!(buffering.update(true, &settled), Some(false));
+    assert_eq!(buffering.update(true, &settled), None);
+    assert_eq!(buffering.update(true, &short), Some(true));
+  }
+  assert_eq!(buffering.update(true, &plenty), Some(false));
+  // The audio side: an empty audio queue with the sink about to underrun
+  // starts it, but only short of the resume buffer, so it cannot flap
+  // against the exit rule when an audio track ends before the video.
+  let starving = Some(AudioSupply { queued_packets: 0, sink_us: SINK_LOW_WATER_US - 1 });
+  assert_eq!(buffering.update(true, &Supply { audio: starving, ..plenty }), None);
+  let audio_short = Supply { lead_us: STREAM_RESUME_BUFFER_US - 1, audio: starving, ..Supply::default() };
+  assert_eq!(buffering.update(true, &audio_short), Some(true));
+  assert_eq!(buffering.update(true, &plenty), Some(false));
+  let fed = Some(AudioSupply { queued_packets: 3, sink_us: 0 });
+  assert_eq!(buffering.update(true, &Supply { audio: fed, ..audio_short }), None);
+
+  // The resume anchors on the audio clock: a frame is due where the sound
+  // puts it, not at the wall time it arrives.
+  let mut anchor = Anchor::new();
+  anchor.set(5_000_000_000, 2_000_000);
+  assert!(anchor.anchored());
+  assert_eq!(anchor.due_ns(2_040_000, 5_000_000_000), 5_040_000_000);
+  assert_eq!(anchor.due_ns(1_960_000, 9_000_000_000), 4_960_000_000);
+  assert_eq!(anchor.content_at(5_500_000_000), Some(2_500_000));
+}
+
+#[test]
+fn transport_constants_are_ordered() {
+  use crate::video::audio::AUDIO_LOOKAHEAD_US;
+  use crate::video::reader::{PEAK_BITRATE_BPS, STREAM_MAX_BUFFER_BYTES, STREAM_READ_AHEAD_US};
+  use crate::video::transport::{RELEASE_LEAD_NS, SINK_LOW_WATER_US, STREAM_LOW_WATER_US, STREAM_RESUME_BUFFER_US};
+  // The reader reads ahead past the resume buffer plus the sink's share.
+  assert!(STREAM_READ_AHEAD_US > STREAM_RESUME_BUFFER_US + AUDIO_LOOKAHEAD_US);
+  // The byte cap holds the read-ahead at the peak bitrate.
+  let peak_bytes = PEAK_BITRATE_BPS / 8 * (STREAM_READ_AHEAD_US as usize / 1_000_000);
+  assert!(STREAM_MAX_BUFFER_BYTES > peak_bytes, "{STREAM_MAX_BUFFER_BYTES} <= {peak_bytes}");
+  // Buffering starts before the picture or the sound can starve.
+  assert!(STREAM_LOW_WATER_US > SINK_LOW_WATER_US + RELEASE_LEAD_NS / 1000);
+  assert!(STREAM_RESUME_BUFFER_US > STREAM_LOW_WATER_US);
 }

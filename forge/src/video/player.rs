@@ -11,7 +11,8 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
 use std::thread;
 
 use super::{
-  AudioInfo, AudioPacket, Demuxer, MediaInfo, OpusDecoder, PcmChunk, PixelLayout, VideoDecoder, WebmDemuxer, YuvFrame,
+  AudioInfo, AudioPacket, Demuxer, MediaInfo, OpusDecoder, PcmChunk, PixelLayout, StreamError, VideoDecoder,
+  WebmDemuxer, YuvFrame,
 };
 
 // Frames are ~3 MB at 1080p, so the lookahead is small; PCM chunks are 20 ms
@@ -46,10 +47,10 @@ pub struct VideoPlayer {
 }
 
 impl VideoPlayer {
-  /// Open a local WebM and start its decode worker. The worker prefetches
-  /// until the queues fill, so opening is cheap and nothing plays until the
-  /// caller starts advancing the clock. Errs on an unreadable file or an
-  /// unsupported video stream (anything but 8-bit 4:2:0 VP9).
+  /// Start the decode worker on an opened stream (a local file: this
+  /// player reads inline, so a source that can stall is not for it). The
+  /// worker prefetches until the queues fill, so opening is cheap and
+  /// nothing plays until the caller starts advancing the clock.
   ///
   /// Opening never blocks on the decoder itself. Constructing one is the
   /// platform's business and can take as long as it likes (a hardware codec
@@ -58,15 +59,14 @@ impl VideoPlayer {
   /// close that previous player. So the worker builds the decoder, and a
   /// failure there ends the stream like any other: the queues close,
   /// `finished` goes true, and the reason is logged.
-  pub fn open(path: &str) -> Result<VideoPlayer, String> {
-    Self::open_with(path, create_decoder)
+  pub fn open(demux: WebmDemuxer) -> Result<VideoPlayer, StreamError> {
+    Self::open_with(demux, create_decoder)
   }
 
   /// The seam `open` is built on: the decoder factory runs ON the worker
   /// thread, because decoder handles are not `Send`. Tests pass a stub here
   /// to exercise the player's selection logic apart from any decoder.
-  pub(crate) fn open_with(path: &str, make_decoder: DecoderFactory) -> Result<VideoPlayer, String> {
-    let mut demux = WebmDemuxer::open_path(path)?;
+  pub(crate) fn open_with(mut demux: WebmDemuxer, make_decoder: DecoderFactory) -> Result<VideoPlayer, StreamError> {
     let info = demux.info().clone();
     let layout = super::decoded_layout();
     let audio = info.audio.clone();
@@ -76,7 +76,7 @@ impl VideoPlayer {
     thread::Builder::new()
       .name("srt-video".to_string())
       .spawn(move || worker(&mut demux, make_decoder, audio.as_ref(), &frame_tx, &pcm_tx))
-      .map_err(|e| format!("spawn video worker: {e}"))?;
+      .map_err(|e| StreamError::decode(format!("spawn video worker: {e}")))?;
 
     Ok(VideoPlayer {
       info,

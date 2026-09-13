@@ -6,8 +6,9 @@
 // transport's clock correction. Engine-free and sink-agnostic (`AudioSink`
 // is the caller's).
 
+use super::reader::Next;
 use super::transport::AudioSink;
-use super::{AudioInfo, Demuxer, OpusDecoder};
+use super::{AudioInfo, AudioPacket, OpusDecoder};
 
 // How much decoded audio the sink holds ahead of playback. Small enough to
 // keep pause and seek latency low (a paused sink holds its queue, a seek
@@ -63,18 +64,15 @@ impl AudioTrack {
     })
   }
 
-  /// Decode and push packets until the sink holds the lookahead or the
-  /// track ends. Cheap when the sink is full: one queue read.
-  pub fn feed(&mut self, demux: &mut dyn Demuxer) {
+  /// Decode and push the packets `next` hands out until the sink holds the
+  /// lookahead, the source has nothing yet, or the track ends. Cheap when
+  /// the sink is full: one queue read.
+  pub fn feed(&mut self, mut next: impl FnMut() -> Next<AudioPacket>) {
     while !self.done && self.sink.queued_us() < AUDIO_LOOKAHEAD_US {
-      let packet = match demux.next_audio() {
-        Ok(Some(packet)) => packet,
-        Ok(None) => {
-          self.done = true;
-          return;
-        }
-        Err(e) => {
-          log::warn!("[forge::video] {e}");
+      let packet = match next() {
+        Next::Packet(packet) => packet,
+        Next::Waiting => return,
+        Next::End => {
           self.done = true;
           return;
         }
@@ -125,6 +123,12 @@ impl AudioTrack {
   #[cfg_attr(not(target_os = "android"), allow(dead_code))]
   pub fn set_playing(&mut self, playing: bool) {
     self.sink.set_paused(!playing);
+  }
+
+  /// Microseconds of decoded audio the sink holds ahead of the device.
+  #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+  pub fn queued_us(&self) -> i64 {
+    self.sink.queued_us()
   }
 
   /// Restart at `target_us`: queued audio goes, the decoder forgets its

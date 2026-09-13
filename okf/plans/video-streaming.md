@@ -360,6 +360,42 @@ The texture player's browser-style rework builds on steps 1 and 2.
   BlockGroup is not necessarily video. The new fixture `video_gop.webm`
   (clusters every 500 ms, keyframes every second, tail Cues) is what the
   gating and lazy-cues tests need; `video_av.webm` has a single cluster.
+- Steps 2 and 3 (`forge/src/video/reader.rs`, `transport.rs`, `plane.rs`,
+  `flux/src/alloy_plugins/video.rs`, 2026-09-13), built together since the
+  reader is only exercised through the plane. Departures and findings:
+  - Errors are typed at the source: `forge::video::StreamError { kind,
+    message }` replaces the demuxer's and players' `String` errors, so the
+    JS `kind` is decided where the failure happens (the EBML cursor knows an
+    io error from a malformed size) instead of by matching messages. A read
+    interrupted by the reader's own command is a kind of its own
+    (`Interrupted`), never published.
+  - The demuxer gained `next_packet` (both tracks in container order), which
+    is what the reader fills its queues with; `next_video`/`next_audio` stay
+    for the texture player and the tests.
+  - The reader's consumer never blocks and never finishes on a failure:
+    `Next::{Packet, Waiting, End}` from the queues, and the error, the
+    epoch's resume position, the lead and the byte cap from `status()`. The
+    plane player feeds no audio until the epoch's resume position is known,
+    so the audio discard point is the keyframe the demuxer actually landed
+    on, not the target.
+  - A seek whose target opens a cluster gets no audio preroll: the preroll
+    packets sit in the cluster before, which the seek does not visit (a cue
+    points at the keyframe's cluster). Opus converges within its first
+    packets, so the cost is a slightly wrong first 80 ms after such a seek;
+    reading the previous cluster would cost a whole second of data.
+  - The audio-starvation buffering rule applies only short of the resume
+    buffer, otherwise it flaps against the exit rule on a stream whose audio
+    track ends before its video.
+  - The mid-stream failure reaches core through a one-shot `failed` promise
+    on the player (a plane worker has no JS-thread tick to poll from); the
+    texture player's never settles. `error()` is sticky: a seek after a
+    failure retries the source, but the record stays.
+  - `SeekableOpener` is `Arc<dyn Fn + Send + Sync>` now; `file()` objects
+    open on the reader thread through it.
+  - The Android half of flux cannot be type-checked here: `cargo ndk check`
+    builds forge (with `plane.rs`) but stops at sdl3-sys for flux, so the
+    plane binding in `flux/src/alloy_plugins/video.rs` was reviewed by hand
+    and waits for the first device build.
 
 ## Mode 2 (deferred): what it adds, and what this item holds for it
 

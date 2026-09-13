@@ -14,7 +14,7 @@
 //! the consumer stays backend-agnostic: whichever `file()` is installed hands
 //! out the matching reader.
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use rquickjs::class::Trace;
 use rquickjs::{Class, Ctx, JsLifetime, Object};
@@ -22,9 +22,9 @@ use rquickjs::{Class, Ctx, JsLifetime, Object};
 use forge::SeekableReader;
 
 /// Opens a fresh reader over the source. Fallible: the open may touch disk or
-/// the network. Not `Send` itself (it runs on the JS thread when a consumer asks
-/// for the source); only the reader it yields must be.
-pub type SeekableOpener = Rc<dyn Fn() -> Result<SeekableReader, String>>;
+/// the network. `Send`, so a consumer can run it on its own thread (a video
+/// reader opens off the JS thread) as well as here.
+pub type SeekableOpener = Arc<dyn Fn() -> Result<SeekableReader, String> + Send + Sync>;
 
 /// The property key the source is stashed under on a `file()` object. Internal;
 /// not part of the public `file` surface.
@@ -58,8 +58,14 @@ impl SeekableSource {
   /// Errors if the object carries no source (i.e. is not a `file()`), or if the
   /// open fails.
   pub fn open_from(obj: &Object<'_>) -> Result<SeekableReader, String> {
+    Self::opener(obj)?()
+  }
+
+  /// The opener itself, for a consumer that opens on another thread. Errors
+  /// if the object carries no source (i.e. is not a `file()`).
+  pub fn opener(obj: &Object<'_>) -> Result<SeekableOpener, String> {
     let instance: Class<SeekableSource> = obj.get(KEY).map_err(|_| "expected a file() from flux:fs".to_string())?;
     let open = instance.borrow().open.clone();
-    open()
+    Ok(open)
   }
 }
