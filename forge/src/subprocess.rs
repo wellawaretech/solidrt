@@ -209,7 +209,7 @@ pub struct Spawned {
 
 /// A child's output pipe as a `ByteStream`; `None` (a detached child's null
 /// stdio) is an empty stream, so consumers need no special case.
-fn pipe_stream<R: AsyncRead + 'static>(pipe: Option<R>) -> ByteStream {
+fn pipe_stream<R: AsyncRead + Send + 'static>(pipe: Option<R>) -> ByteStream {
   match pipe {
     Some(pipe) => to_byte_stream(ReaderStream::new(pipe)),
     None => to_byte_stream(ReaderStream::new(tokio::io::empty())),

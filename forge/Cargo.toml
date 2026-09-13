@@ -33,7 +33,8 @@ fastrand = "=2.5.0"
 # Entry file names for forge::cache (hash of the cache key). Already in the
 # tree (iroh depends on it).
 blake3 = "=1.8.7"
-# ReaderStream: cached entry file -> ByteStream for forge::cache lookups.
+# ReaderStream: cached entry file -> ByteStream for forge::cache lookups;
+# CancellationToken (no feature needed): close of a forge::source pump.
 # Already in the tree (hyper-util/iroh depend on it).
 tokio-util = { version = "=0.7.19", features = ["io"] }
 # The fetch cache's metadata blob (response snapshot stored next to the body).

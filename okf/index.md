@@ -42,6 +42,12 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
+- **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
+  Client-initiated streaming - open(url) plays a WebM served over HTTP on the
+  Android plane with buffering, seek by Range and a cancel-safe close, built
+  on a generic forge byte source and a reader thread that the texture player's
+  browser-style rework reuses; live streams are deferred as an explicit
+  latency option.
 - **[Documentation website](plans/website.md)** [2026-07-16]
   "A monorepo website/ generated statically by a flux script: section nav, a
   Core-first Start page, and generate-what-we-can content (API reference from
@@ -804,12 +810,6 @@ Shaped, not started.
   frames, and there is no seek/rate/step. Fullscreen on Android goes through
   android-video-punch-through.md instead; this path is not being fixed while
   that round runs.
-- **[Stream video from an HTTP source on the plane](backlog/video-streaming.md)** [2026-09-13]
-  Client-initiated streaming - open(url) plays a WebM served over HTTP on the
-  Android plane with buffering, seek by Range and a cancel-safe close, built
-  on a generic forge byte source and a reader thread that the texture player's
-  browser-style rework reuses; live streams are deferred as an explicit
-  latency option.
 - **[The armed wake-word detector burns ~40% of a core while idle](backlog/wakeword-detector-cost.md)** [2026-08-14]
   Every 100ms the armed speech worker scores a 2.2s window with the stateless
   livekit-wakeword predict, ~35-40ms a check whether or not anyone is

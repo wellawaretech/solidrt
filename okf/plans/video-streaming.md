@@ -335,6 +335,20 @@ The texture player's browser-style rework builds on steps 1 and 2.
 - Device, the TV first and the tablet second, reading the SurfaceFlinger
   census, logcat and memory as in [[android-video-punch-through]].
 
+## Findings
+
+- Step 1 (`forge/src/source.rs`, 2026-09-13). Two departures from the design
+  text above. The reconnect loop lives in the pump, not the producer: the
+  pump knows `seekable`, the stall limit and the backoff, and a producer only
+  has to refuse a reopened source that is not the one it first saw (an
+  `InvalidData` error, the one kind the pump never retries). And
+  `interrupt()` surfaces as `WouldBlock`, not `Interrupted`: std's
+  `read_exact` swallows `Interrupted` and blocks again, so the demuxer would
+  never see it.
+- The ring is a transfer buffer with its own cap (`STREAM_RING_BYTES`);
+  `STREAM_MAX_BUFFER_BYTES` stays the reader thread's packet cap.
+- `tokio_util::sync::CancellationToken` needs no cargo feature in 0.7.19.
+
 ## Mode 2 (deferred): what it adds, and what this item holds for it
 
 Already here, so mode 2 is additive: the source union and the producer

@@ -7,6 +7,7 @@ mod isolate;
 mod mdns;
 mod net;
 mod process;
+mod source;
 mod sqlite;
 mod stream;
 mod svg;

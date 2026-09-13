@@ -14,15 +14,17 @@ use std::task::{Context, Poll};
 
 /// A network-sourced byte stream (e.g. a fetch response, an incoming request
 /// body), with its error flattened to `io::Error` so consumers stay
-/// producer-crate-free.
-pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, io::Error>>>>;
+/// producer-crate-free. `Send` so a body can feed a worker thread (the
+/// streamed byte source in [`source`](crate::source) pumps one from the I/O
+/// runtime); every producer behind it is Send anyway.
+pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, io::Error>> + Send>>;
 
 /// Adapts a foreign byte stream into the common `ByteStream`, flattening its error
 /// to `io::Error`. The single bridge from a producer crate's stream (reqwest for
 /// fetch responses, hyper for incoming request bodies) into our engine-internal
 /// body type.
 struct MapErrStream<E> {
-  inner: Pin<Box<dyn Stream<Item = Result<Bytes, E>>>>,
+  inner: Pin<Box<dyn Stream<Item = Result<Bytes, E>> + Send>>,
 }
 
 impl<E: Into<Box<dyn std::error::Error + Send + Sync>>> Stream for MapErrStream<E> {
@@ -35,7 +37,7 @@ impl<E: Into<Box<dyn std::error::Error + Send + Sync>>> Stream for MapErrStream<
 
 pub fn to_byte_stream<S, E>(stream: S) -> ByteStream
 where
-  S: Stream<Item = Result<Bytes, E>> + 'static,
+  S: Stream<Item = Result<Bytes, E>> + Send + 'static,
   E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
 {
   Box::pin(MapErrStream { inner: Box::pin(stream) })

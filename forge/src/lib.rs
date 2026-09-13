@@ -23,6 +23,7 @@ pub mod p2p;
 pub mod path;
 pub mod process;
 pub mod seek;
+pub mod source;
 pub mod sqlite;
 pub mod stream;
 pub mod subprocess;
