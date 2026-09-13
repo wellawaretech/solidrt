@@ -35,8 +35,6 @@ const STALLED_CALLS: u32 = 10;
 pub struct VideoPlayer {
   info: MediaInfo,
   layout: PixelLayout,
-  bt709: bool,
-  full_range: bool,
   playing: bool,
   frame_rx: Receiver<YuvFrame>,
   pcm_rx: Receiver<PcmChunk>,
@@ -68,11 +66,9 @@ impl VideoPlayer {
   /// thread, because decoder handles are not `Send`. Tests pass a stub here
   /// to exercise the player's selection logic apart from any decoder.
   pub(crate) fn open_with(path: &str, make_decoder: DecoderFactory) -> Result<VideoPlayer, String> {
-    let mut demux = WebmDemuxer::open(path)?;
+    let mut demux = WebmDemuxer::open_path(path)?;
     let info = demux.info().clone();
     let layout = super::decoded_layout();
-    let bt709 = demux.color_is_bt709();
-    let full_range = demux.color_is_full_range();
     let audio = info.audio.clone();
 
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel(FRAME_QUEUE);
@@ -85,8 +81,6 @@ impl VideoPlayer {
     Ok(VideoPlayer {
       info,
       layout,
-      bt709,
-      full_range,
       playing: false,
       frame_rx,
       pcm_rx,
@@ -110,12 +104,12 @@ impl VideoPlayer {
   /// The conversion matrix for this stream: the container's when it says,
   /// else BT.709 for HD and BT.601 for SD.
   pub fn color_is_bt709(&self) -> bool {
-    self.bt709
+    self.info.bt709
   }
 
   /// Full-range samples (0..255) rather than studio range, per the container.
   pub fn color_is_full_range(&self) -> bool {
-    self.full_range
+    self.info.full_range
   }
 
   pub fn play(&mut self) {
@@ -214,19 +208,17 @@ impl VideoPlayer {
 /// to the worker thread, the decoder itself never does. MediaCodec on
 /// Android (hardware VP9), libvpx everywhere else (see mod.rs); a creation
 /// failure ends the stream like any decoder-init failure.
-pub(crate) type DecoderFactory = fn(&WebmDemuxer) -> Result<Box<dyn VideoDecoder>, String>;
+pub(crate) type DecoderFactory = fn(&MediaInfo) -> Result<Box<dyn VideoDecoder>, String>;
 
 #[cfg(target_os = "android")]
-fn create_decoder(demux: &WebmDemuxer) -> Result<Box<dyn VideoDecoder>, String> {
-  let info = demux.info();
+fn create_decoder(info: &MediaInfo) -> Result<Box<dyn VideoDecoder>, String> {
   super::mediacodec::create_with_retry(|| {
     super::mediacodec::MediaCodecDecoder::new(info.width, info.height).map(|d| Box::new(d) as Box<dyn VideoDecoder>)
   })
 }
 
 #[cfg(not(target_os = "android"))]
-fn create_decoder(demux: &WebmDemuxer) -> Result<Box<dyn VideoDecoder>, String> {
-  let info = demux.info();
+fn create_decoder(info: &MediaInfo) -> Result<Box<dyn VideoDecoder>, String> {
   Ok(Box::new(super::vpx::Vp9Decoder::new(info.width, info.height)?))
 }
 
@@ -237,7 +229,7 @@ fn worker(
   frame_tx: &SyncSender<YuvFrame>,
   pcm_tx: &SyncSender<PcmChunk>,
 ) {
-  let mut decoder = match make_decoder(demux) {
+  let mut decoder = match make_decoder(demux.info()) {
     Ok(d) => d,
     Err(e) => {
       // Dropping the senders here is what the consumer reads as end of

@@ -69,6 +69,7 @@ impl PlanePlayer {
   ) -> Result<PlanePlayer, String> {
     let info = demux.info().clone();
     let (width, height) = (info.width, info.height);
+    let start_us = info.start_us;
     let audio_info = info.audio.clone();
     let (controls, rx, shared) = Controls::new();
     let worker = thread::Builder::new()
@@ -83,7 +84,7 @@ impl PlanePlayer {
           }
         };
         let audio = match (audio_info, sink) {
-          (Some(info), Some(sink)) => match AudioTrack::new(&info, sink) {
+          (Some(info), Some(sink)) => match AudioTrack::new(&info, start_us, sink) {
             Ok(track) => Some(track),
             Err(e) => {
               log::warn!("[forge::video] {e} (playing silent)");
@@ -272,18 +273,24 @@ impl Worker {
     }
     // The surface keeps its last latched frame across the flush, so the old
     // picture holds until the frame at the target is released.
-    match self.demux.seek(target_us) {
-      Ok(()) => self.skip_until = Some(target_us),
+    // The resume position is the target, or the keyframe after it when
+    // the source starts later: picture and sound both start there.
+    let resume_us = match self.demux.seek(target_us) {
+      Ok(resume_us) => {
+        self.skip_until = Some(resume_us);
+        resume_us
+      }
       Err(e) => {
         // Not seekable (a live source): the flushed codec resumes from the
         // next frame the source delivers.
         log::warn!("[forge::video] seek: {e}");
         self.skip_until = None;
+        target_us
       }
-    }
+    };
     self.stop_audio();
     if let Some(audio) = self.audio.as_mut() {
-      audio.seek(target_us);
+      audio.seek(resume_us);
     }
     self.input_eos = false;
     self.output_eos = false;

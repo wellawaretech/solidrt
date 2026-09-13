@@ -46,8 +46,9 @@ pub struct AudioTrack {
 
 impl AudioTrack {
   /// A track feeding `sink` (opened at the stream's rate and channels),
-  /// positioned at the start of the stream.
-  pub fn new(info: &AudioInfo, sink: Box<dyn AudioSink>) -> Result<AudioTrack, String> {
+  /// positioned at `start_us` (the stream's `MediaInfo::start_us`):
+  /// decoded samples before it are discarded, the pre-skip among them.
+  pub fn new(info: &AudioInfo, start_us: i64, sink: Box<dyn AudioSink>) -> Result<AudioTrack, String> {
     let decoder = OpusDecoder::new(info.sample_rate, info.channels)?;
     let pre_skip_us = info.pre_skip as i64 * 1_000_000 / info.sample_rate as i64;
     Ok(AudioTrack {
@@ -56,7 +57,7 @@ impl AudioTrack {
       sample_rate: info.sample_rate,
       channels: info.channels,
       pre_skip_us,
-      discard_until_us: Some(0),
+      discard_until_us: Some(start_us.max(0)),
       base: None,
       done: false,
     })

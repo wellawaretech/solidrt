@@ -348,6 +348,18 @@ The texture player's browser-style rework builds on steps 1 and 2.
 - The ring is a transfer buffer with its own cap (`STREAM_RING_BYTES`);
   `STREAM_MAX_BUFFER_BYTES` stays the reader thread's packet cap.
 - `tokio_util::sync::CancellationToken` needs no cargo feature in 0.7.19.
+- Step 1, demuxer half (`forge/src/video/webm.rs`, 2026-09-13). `seek`
+  returns the resume position (the target, or the epoch's first keyframe
+  when that comes later) and `MediaInfo` gains `start_us` (the first
+  keyframe at open), because keyframe gating moves where playback resumes
+  and the players' audio discard point has to move with it: the plane skips
+  video and discards decoded audio up to that one position. A read
+  interrupted by the source (`WouldBlock`) is the one error that is not
+  sticky: it leaves the walk mid-element, and the only valid next call is a
+  seek. ffmpeg writes each track's last packet as a BlockGroup, so a trailing
+  BlockGroup is not necessarily video. The new fixture `video_gop.webm`
+  (clusters every 500 ms, keyframes every second, tail Cues) is what the
+  gating and lazy-cues tests need; `video_av.webm` has a single cluster.
 
 ## Mode 2 (deferred): what it adds, and what this item holds for it
 

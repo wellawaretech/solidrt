@@ -14,4 +14,6 @@ mod svg;
 mod trailer;
 #[cfg(feature = "video")]
 mod video;
+#[cfg(feature = "video")]
+mod webm;
 mod wasm;

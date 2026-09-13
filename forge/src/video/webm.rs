@@ -7,17 +7,27 @@
 // and a general Matroska reader links at more than half a VP9 decoder
 // (okf/plans/android-video-punch-through.md).
 //
-// The byte source may be unbounded (an unknown-size Segment of unknown-size
-// Clusters, what a live producer writes): the walk never needs an element's
-// end unless it skips it, and it descends into Segment and Cluster instead
-// of skipping them. Seeking needs Cues and a seekable source; without them
-// `seek` errs and a player treats the stream as unseekable.
+// The byte source is any `SeekableReader` plus the facts about it (a local
+// file, or a streamed source from `forge::source`): it may be unbounded (an
+// unknown-size Segment of unknown-size Clusters, what a live producer
+// writes) and may not seek. The walk never needs an element's end unless it
+// skips it, and it descends into Segment and Cluster instead of skipping
+// them. Nothing here trusts the source: a size is checked against
+// MAX_ELEMENT_BYTES before it reaches an allocation, and a read error is
+// sticky until a seek. Every epoch (open, seek) starts on a keyframe: video
+// before the first sync block is dropped and audio is held back so the
+// preroll before that keyframe still plays.
+//
+// Seeking needs Cues and a seekable source. Tail Cues (ffmpeg's default
+// placement) are loaded by the first seek, never by open, so opening a
+// streamed source costs one request.
 
 use std::collections::VecDeque;
-use std::io::{BufReader, Read};
+use std::io::{self, BufReader, ErrorKind, Read, Seek, SeekFrom};
 
 use super::{AudioInfo, AudioPacket, Demuxer, MediaInfo, VideoAu};
 use crate::seek::SeekableReader;
+use crate::source::Facts;
 
 // EBML and Matroska element ids, as they appear in the file (the id's own
 // length bits included).
@@ -96,55 +106,79 @@ const OPUS_MAX_CHANNELS: u16 = 2;
 // low and high bits: the pipeline takes profile 0 (8-bit 4:2:0) only.
 const VP9_FRAME_MARKER: u8 = 0b10;
 const VP9_PROFILE_MASK: u8 = 0b0011_0000;
+// The largest element read into memory, or skipped by reading on a source
+// that cannot seek: a coded 4K VP9 keyframe is a few MB, Cues of a long
+// file a few hundred KB. A size past this is garbage from the wire, refused
+// before any allocation.
+const MAX_ELEMENT_BYTES: u64 = 32 * 1024 * 1024;
+// How much audio is held back while an epoch waits for its first keyframe,
+// so the preroll before that keyframe still plays. Muxers interleave audio
+// at most a cluster ahead of video; this covers that with room to spare.
+const GATING_HOLD_US: i64 = 2_000_000;
 
-/// A WebM file: VP9 video, optional Opus audio, read block by block.
+/// A WebM stream: VP9 video, optional Opus audio, read block by block.
 pub struct WebmDemuxer {
   reader: Ebml,
   info: MediaInfo,
-  bt709: bool,
-  full_range: bool,
   timestamp_scale_ns: u64,
   // Byte offset of the Segment's data, what cue positions are relative to.
   segment_start: u64,
   video_track: u64,
   audio_track: Option<u64>,
+  play_video: bool,
+  play_audio: bool,
   // Keyframe cue points as (time in us, cluster offset from segment_start),
-  // ascending: what `seek` binary-searches. Empty when the file has none.
+  // ascending: what `seek` binary-searches. Empty until loaded or when the
+  // file has none.
   cues: Vec<(i64, u64)>,
+  // Where the SeekHead says tail Cues are, until the first seek visits them.
+  cues_position: Option<u64>,
   cluster_ts: Option<u64>,
   // Blocks read past what the caller asked for on the other track.
   video_q: VecDeque<VideoAu>,
   audio_q: VecDeque<AudioPacket>,
-  // After a seek: audio packets before this pts are dropped (they precede
-  // the target by more than the track's seek preroll).
+  // The epoch's start: where playback was asked to resume.
+  epoch_target_us: i64,
+  // Where it does resume: the target, or the first keyframe when that comes
+  // later.
+  resume_us: i64,
+  // Waiting for the epoch's first keyframe: video is dropped and audio held.
+  gating: bool,
+  held_audio: VecDeque<AudioPacket>,
+  // Audio packets before this pts are dropped (they precede the resume
+  // position by more than the track's seek preroll).
   audio_skip_until: Option<i64>,
   ended: bool,
+  // A stream or read error, repeated until a seek.
+  failed: Option<String>,
 }
 
 impl WebmDemuxer {
-  /// Open a WebM file and read its header up to the first cluster. The path
-  /// resolves like every forge file read (through the assets mount when one
-  /// is set). Errs when the file is not WebM, has no VP9 track, or its VP9
-  /// is not profile 0. A missing or non-Opus audio track is not an error:
-  /// `info().audio` is None and playback is silent.
-  pub fn open(path: &str) -> Result<Self, String> {
-    let file = crate::fs::open_seekable(path)?;
-    let mut reader = Ebml::new(file);
+  /// Open a local WebM file (tests, the texture player). The path resolves
+  /// like every forge file read (through the assets mount when one is set).
+  pub fn open_path(path: &str) -> Result<Self, String> {
+    let mut file = crate::fs::open_seekable(path)?;
+    let len = file.seek(SeekFrom::End(0)).ok();
+    file.seek(SeekFrom::Start(0)).map_err(|e| format!("{path}: {e}"))?;
+    Self::open(file, Facts { len, seekable: true }).map_err(|e| format!("{path}: {e}"))
+  }
+
+  /// Open a stream and read its header up to the first keyframe. Errs when
+  /// the stream is not WebM, has no VP9 track, or its VP9 is not profile 0.
+  /// A missing or non-Opus audio track is not an error: `info().audio` is
+  /// None and playback is silent.
+  pub fn open(reader: SeekableReader, facts: Facts) -> Result<Self, String> {
+    let mut reader = Ebml::new(reader, facts.seekable);
 
     // The magic first, before any EBML interpretation: an MP4 or an empty
-    // file must say what it is, not fail on a malformed element id.
-    let mut magic = [0u8; 4];
-    reader.inner.read_exact(&mut magic).map_err(|e| format!("read {path}: {e}"))?;
+    // file must say what it is, not fail on a malformed element id. The
+    // four bytes are the EBML element's id, so no rewind.
+    let magic = reader.magic()?;
     if u32::from_be_bytes(magic) != ID_EBML {
       let what = if &magic[..] == MP4_MAGIC_PREFIX { "an MP4" } else { "no EBML header" };
       return Err(format!("not a webm file ({what}; video plays WebM with VP9 and Opus only)"));
     }
-    reader.inner.seek_relative(-(magic.len() as i64)).map_err(|e| format!("rewind {path}: {e}"))?;
-
-    let (id, size) = reader.header()?.ok_or("empty file")?;
-    if id != ID_EBML {
-      return Err("not a webm file (no EBML header)".to_string());
-    }
+    let size = reader.vint()?;
     let end = reader.end_of(size).ok_or("EBML header of unknown size")?;
     let mut doctype = String::new();
     while reader.pos < end {
@@ -158,15 +192,15 @@ impl WebmDemuxer {
       return Err(format!("not a webm file (doctype \"{doctype}\")"));
     }
 
-    let (id, _) = reader.header()?.ok_or("no segment")?;
+    let (id, segment_size) = reader.header()?.ok_or("no segment")?;
     if id != ID_SEGMENT {
       return Err("not a webm file (no segment)".to_string());
     }
     let segment_start = reader.pos;
 
     // The Segment's header children, up to the first Cluster. ffmpeg puts
-    // Cues after the clusters and points at them from the SeekHead; a
-    // seekable source visits them once and comes back.
+    // Cues after the clusters and points at them from the SeekHead; the
+    // first seek visits them.
     let mut timestamp_scale_ns = DEFAULT_TIMESTAMP_SCALE_NS;
     let mut duration_ticks: Option<f64> = None;
     let mut tracks: Vec<TrackEntry> = Vec::new();
@@ -195,19 +229,6 @@ impl WebmDemuxer {
         _ => reader.skip(size)?,
       }
     }
-    // The first cluster's header has been consumed: the block walk resumes
-    // inside it.
-    let first_cluster = reader.pos;
-    if cues.is_empty() {
-      if let Some(offset) = cues_position {
-        if let Ok(()) = reader.seek_to(segment_start + offset) {
-          if let Ok(Some((ID_CUES, size))) = reader.header() {
-            cues = read_cues(&mut reader, size).unwrap_or_default();
-          }
-          reader.seek_to(first_cluster)?;
-        }
-      }
-    }
 
     let video =
       tracks.iter().find(|t| t.kind == TRACK_TYPE_VIDEO && t.codec == CODEC_VP9).ok_or("no VP9 video track")?;
@@ -230,29 +251,41 @@ impl WebmDemuxer {
       }
       None => None,
     };
-    let duration_us = duration_ticks.map(|d| ((d * timestamp_scale_ns as f64) / 1000.0).round() as i64);
+    // Duration is a fact only when the Segment has a known size: a muxer
+    // writing to a pipe leaves a Duration it could not know.
+    let duration_us = match segment_size {
+      Some(_) => duration_ticks.map(|d| ((d * timestamp_scale_ns as f64) / 1000.0).round() as i64),
+      None => None,
+    };
     let to_us = |ticks: u64| (ticks as u128 * timestamp_scale_ns as u128 / 1000) as i64;
 
     let mut demux = WebmDemuxer {
       reader,
-      info: MediaInfo { width, height, duration_us, audio },
-      bt709,
-      full_range,
+      info: MediaInfo { width, height, duration_us, start_us: 0, seekable: facts.seekable, bt709, full_range, audio },
       timestamp_scale_ns,
       segment_start,
       video_track: video.number,
       audio_track: audio_track.map(|t| t.number),
+      play_video: true,
+      play_audio: true,
       cues: cues.iter().map(|&(t, pos)| (to_us(t), pos)).collect(),
+      cues_position,
       cluster_ts: None,
       video_q: VecDeque::new(),
       audio_q: VecDeque::new(),
+      epoch_target_us: 0,
+      resume_us: 0,
+      gating: true,
+      held_audio: VecDeque::new(),
       audio_skip_until: None,
       ended: false,
+      failed: None,
     };
-    // Peek at the first frame for the stream's profile: WebM does not
-    // always carry VP9 codec metadata, the bitstream always does.
-    while demux.video_q.is_empty() && demux.read_block()? {}
-    let first = demux.video_q.front().ok_or("video track has no frames")?;
+    // The first keyframe: the stream's start, and the frame whose header
+    // says the profile (WebM does not always carry VP9 codec metadata, the
+    // bitstream always does).
+    while demux.gating && demux.read_block()? {}
+    let first = demux.video_q.front().ok_or("video track has no keyframe")?;
     let marker = first.data.first().copied().unwrap_or(0);
     if marker >> 6 != VP9_FRAME_MARKER {
       return Err("video track is not VP9 (no frame marker)".to_string());
@@ -260,30 +293,47 @@ impl WebmDemuxer {
     if marker & VP9_PROFILE_MASK != 0 {
       return Err("unsupported VP9 stream: only profile 0 (8-bit 4:2:0) plays".to_string());
     }
+    demux.info.start_us = demux.resume_us;
     Ok(demux)
   }
 
-  pub fn info(&self) -> &MediaInfo {
-    &self.info
-  }
-
-  /// The conversion matrix: what the track's Colour element says when it
-  /// says anything, else BT.709 for HD (720 lines and up) and BT.601 below.
-  pub fn color_is_bt709(&self) -> bool {
-    self.bt709
-  }
-
-  /// Full-range (0..255) samples rather than studio range, from Colour.
-  pub fn color_is_full_range(&self) -> bool {
-    self.full_range
+  /// Which tracks are played: blocks of the other are dropped at the
+  /// source instead of queueing for a reader that never comes.
+  pub fn set_tracks(&mut self, video: bool, audio: bool) {
+    self.play_video = video;
+    self.play_audio = audio;
+    if !video {
+      self.video_q.clear();
+    }
+    if !audio {
+      self.audio_q.clear();
+      self.held_audio.clear();
+    }
   }
 
   /// Read elements until one block has been queued (on either track);
-  /// false at the end of the stream.
+  /// false at the end of the stream. Errors stick until a seek.
   fn read_block(&mut self) -> Result<bool, String> {
+    if let Some(e) = &self.failed {
+      return Err(e.clone());
+    }
     if self.ended {
       return Ok(false);
     }
+    match self.read_block_inner() {
+      Ok(queued) => Ok(queued),
+      Err(e) => {
+        // An interrupted read (a command for the reading thread) leaves the
+        // walk mid-element: the next call must be a seek, not sticky.
+        if !self.reader.take_interrupted() {
+          self.failed = Some(e.clone());
+        }
+        Err(e)
+      }
+    }
+  }
+
+  fn read_block_inner(&mut self) -> Result<bool, String> {
     loop {
       let Some((id, size)) = self.reader.header()? else {
         self.ended = true;
@@ -319,6 +369,9 @@ impl WebmDemuxer {
             }
           }
         }
+        // A producer started a new stream on the same bytes (a live relay
+        // switching sources): not something the decoders can follow yet.
+        ID_EBML => return Err(format!("unsupported: a new stream starts at {}", self.reader.pos)),
         // Anything after the clusters (Cues, Tags) or unknown: skip when
         // the size allows, else the stream is over for us.
         _ => match size {
@@ -333,9 +386,9 @@ impl WebmDemuxer {
   }
 
   /// Queue one block's frame on its track; true when it was queued (a
-  /// block on a track we do not play, or a dropped post-seek audio packet,
-  /// is not). `keyframe` is known for a BlockGroup; a SimpleBlock says so
-  /// in its flags.
+  /// block on a track we do not play, a pre-keyframe video block, a held
+  /// or dropped audio packet is not). `keyframe` is known for a
+  /// BlockGroup; a SimpleBlock says so in its flags.
   fn queue_block(&mut self, data: &[u8], keyframe: Option<bool>) -> Result<bool, String> {
     let (track, rel_ts, flags, header_len) = block_header(data)?;
     if flags & BLOCK_FLAG_LACING != 0 {
@@ -347,20 +400,77 @@ impl WebmDemuxer {
     let cluster_ts = self.cluster_ts.ok_or("block before its cluster timestamp")?;
     let ticks = cluster_ts as i64 + rel_ts as i64;
     let pts_us = (ticks as i128 * self.timestamp_scale_ns as i128 / 1000) as i64;
-    let payload = data[header_len..].to_vec();
     if track == self.video_track {
-      let sync = keyframe.unwrap_or(flags & BLOCK_FLAG_KEYFRAME != 0);
-      self.video_q.push_back(VideoAu { pts_us, sync, data: payload });
-      Ok(true)
-    } else if Some(track) == self.audio_track {
-      if self.audio_skip_until.is_some_and(|until| pts_us < until) {
+      if !self.play_video {
         return Ok(false);
       }
-      self.audio_skip_until = None;
-      self.audio_q.push_back(AudioPacket { pts_us, data: payload });
+      let sync = keyframe.unwrap_or(flags & BLOCK_FLAG_KEYFRAME != 0);
+      if self.gating {
+        if !sync {
+          return Ok(false);
+        }
+        self.open_gate(pts_us);
+      }
+      self.video_q.push_back(VideoAu { pts_us, sync, data: data[header_len..].to_vec() });
       Ok(true)
+    } else if Some(track) == self.audio_track {
+      if !self.play_audio {
+        return Ok(false);
+      }
+      let packet = AudioPacket { pts_us, data: data[header_len..].to_vec() };
+      if self.gating {
+        self.held_audio.push_back(packet);
+        while self.held_audio.front().is_some_and(|p| p.pts_us < pts_us - GATING_HOLD_US) {
+          self.held_audio.pop_front();
+        }
+        return Ok(false);
+      }
+      Ok(self.queue_audio(packet))
     } else {
       Ok(false)
+    }
+  }
+
+  /// The epoch's first keyframe at `keyframe_us`: playback resumes there or
+  /// at the target, whichever is later, and the audio held meanwhile is
+  /// released from the preroll before that point.
+  fn open_gate(&mut self, keyframe_us: i64) {
+    self.gating = false;
+    self.resume_us = self.epoch_target_us.max(keyframe_us);
+    let preroll_us = self.info.audio.as_ref().map_or(0, |a| a.seek_preroll_us);
+    self.audio_skip_until = Some(self.resume_us - preroll_us);
+    while let Some(packet) = self.held_audio.pop_front() {
+      self.queue_audio(packet);
+    }
+  }
+
+  fn queue_audio(&mut self, packet: AudioPacket) -> bool {
+    if self.audio_skip_until.is_some_and(|until| packet.pts_us < until) {
+      return false;
+    }
+    self.audio_skip_until = None;
+    self.audio_q.push_back(packet);
+    true
+  }
+
+  /// Visit tail Cues the SeekHead points at, once, keeping the walk where
+  /// it was.
+  fn load_cues(&mut self) {
+    let Some(offset) = self.cues_position.take() else { return };
+    let here = self.reader.pos;
+    let loaded = self.reader.seek_to(self.segment_start + offset).and_then(|()| match self.reader.header()? {
+      Some((ID_CUES, size)) => read_cues(&mut self.reader, size),
+      _ => Err("seek head does not point at cues".to_string()),
+    });
+    match loaded {
+      Ok(cues) => {
+        let scale = self.timestamp_scale_ns;
+        self.cues = cues.iter().map(|&(t, pos)| ((t as u128 * scale as u128 / 1000) as i64, pos)).collect();
+      }
+      Err(e) => log::warn!("[forge::video] cues unavailable: {e}"),
+    }
+    if let Err(e) = self.reader.seek_to(here) {
+      self.failed = Some(e);
     }
   }
 }
@@ -371,22 +481,33 @@ impl Demuxer for WebmDemuxer {
   }
 
   fn next_video(&mut self) -> Result<Option<VideoAu>, String> {
+    if !self.play_video {
+      return Ok(None);
+    }
     while self.video_q.is_empty() && self.read_block()? {}
     Ok(self.video_q.pop_front())
   }
 
   fn next_audio(&mut self) -> Result<Option<AudioPacket>, String> {
-    if self.audio_track.is_none() {
+    if self.audio_track.is_none() || !self.play_audio {
       return Ok(None);
     }
     while self.audio_q.is_empty() && self.read_block()? {}
     Ok(self.audio_q.pop_front())
   }
 
-  fn seek(&mut self, target_us: i64) -> Result<(), String> {
+  fn seek(&mut self, target_us: i64) -> Result<i64, String> {
+    if !self.info.seekable {
+      return Err("source cannot seek".to_string());
+    }
+    if self.cues.is_empty() {
+      self.load_cues();
+    }
     if self.cues.is_empty() {
       return Err("stream has no cues, cannot seek".to_string());
     }
+    self.failed = None;
+    self.reader.take_interrupted();
     let at = self.cues.partition_point(|&(t, _)| t <= target_us);
     let (_, offset) = self.cues[at.saturating_sub(1)];
     self.reader.seek_to(self.segment_start + offset)?;
@@ -397,10 +518,18 @@ impl Demuxer for WebmDemuxer {
     self.cluster_ts = None;
     self.video_q.clear();
     self.audio_q.clear();
+    self.held_audio.clear();
     self.ended = false;
-    let preroll_us = self.info.audio.as_ref().map_or(0, |a| a.seek_preroll_us);
-    self.audio_skip_until = Some(target_us - preroll_us);
-    Ok(())
+    self.epoch_target_us = target_us;
+    self.resume_us = target_us;
+    self.audio_skip_until = None;
+    self.gating = self.play_video;
+    if !self.gating {
+      let preroll_us = self.info.audio.as_ref().map_or(0, |a| a.seek_preroll_us);
+      self.audio_skip_until = Some(target_us - preroll_us);
+    }
+    while self.gating && self.read_block()? {}
+    Ok(self.resume_us)
   }
 }
 
@@ -616,15 +745,37 @@ fn vint_mask(len: usize) -> u8 {
 }
 
 /// The byte cursor: EBML element headers and payloads over a buffered
-/// seekable source, tracking its own offset.
+/// source, tracking its own offset. Sizes are checked here, before they
+/// reach an allocation or a read-through skip.
 struct Ebml {
   inner: BufReader<SeekableReader>,
   pos: u64,
+  seekable: bool,
+  // The last read failed with WouldBlock: the source's interrupt, not a
+  // fault of the stream.
+  interrupted: bool,
 }
 
 impl Ebml {
-  fn new(source: SeekableReader) -> Ebml {
-    Ebml { inner: BufReader::new(source), pos: 0 }
+  fn new(source: SeekableReader, seekable: bool) -> Ebml {
+    Ebml { inner: BufReader::new(source), pos: 0, seekable, interrupted: false }
+  }
+
+  fn take_interrupted(&mut self) -> bool {
+    std::mem::take(&mut self.interrupted)
+  }
+
+  fn io_error(&mut self, what: &str, e: io::Error) -> String {
+    self.interrupted = e.kind() == ErrorKind::WouldBlock;
+    format!("{what} at {}: {e}", self.pos)
+  }
+
+  /// The stream's first four bytes, an element id or not.
+  fn magic(&mut self) -> Result<[u8; 4], String> {
+    let mut magic = [0u8; 4];
+    self.inner.read_exact(&mut magic).map_err(|e| self.io_error("read", e))?;
+    self.pos += magic.len() as u64;
+    Ok(magic)
   }
 
   /// The next element's id and data size (None for an unknown size); None
@@ -634,7 +785,7 @@ impl Ebml {
     match self.inner.read(&mut first) {
       Ok(0) => return Ok(None),
       Ok(_) => self.pos += 1,
-      Err(e) => return Err(format!("read: {e}")),
+      Err(e) => return Err(self.io_error("read", e)),
     }
     // Ids keep their length marker; a 4-byte id is the longest allowed.
     let len = first[0].leading_zeros() as usize + 1;
@@ -674,15 +825,24 @@ impl Ebml {
 
   fn byte(&mut self) -> Result<u8, String> {
     let mut b = [0u8; 1];
-    self.inner.read_exact(&mut b).map_err(|e| format!("read at {}: {e}", self.pos))?;
+    self.inner.read_exact(&mut b).map_err(|e| self.io_error("read", e))?;
     self.pos += 1;
     Ok(b[0])
   }
 
+  /// A size the stream can ask for; checked on the u64 before any cast.
+  fn bounded(&self, size: u64) -> Result<usize, String> {
+    if size > MAX_ELEMENT_BYTES {
+      return Err(format!("element of {size} bytes at {} exceeds the {MAX_ELEMENT_BYTES} byte limit", self.pos));
+    }
+    Ok(size as usize)
+  }
+
   fn bytes(&mut self, size: Option<u64>) -> Result<Vec<u8>, String> {
     let size = size.ok_or("binary element of unknown size")?;
-    let mut buf = vec![0u8; size as usize];
-    self.inner.read_exact(&mut buf).map_err(|e| format!("read {size} bytes at {}: {e}", self.pos))?;
+    let len = self.bounded(size)?;
+    let mut buf = vec![0u8; len];
+    self.inner.read_exact(&mut buf).map_err(|e| self.io_error(&format!("read {size} bytes"), e))?;
     self.pos += size;
     Ok(buf)
   }
@@ -711,15 +871,21 @@ impl Ebml {
     Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
   }
 
+  /// Past an element. On a source that cannot seek this reads the bytes
+  /// through, so the size is bounded like an allocation; a seekable
+  /// source's own policy decides between reading through and restarting.
   fn skip(&mut self, size: Option<u64>) -> Result<(), String> {
     let size = size.ok_or("cannot skip an element of unknown size")?;
+    if !self.seekable {
+      self.bounded(size)?;
+    }
     self.seek_to(self.pos + size)
   }
 
   fn seek_to(&mut self, pos: u64) -> Result<(), String> {
     // Relative seeks keep the buffer when the target is inside it.
     let delta = pos as i64 - self.pos as i64;
-    self.inner.seek_relative(delta).map_err(|e| format!("seek to {pos}: {e}"))?;
+    self.inner.seek_relative(delta).map_err(|e| self.io_error(&format!("seek to {pos}"), e))?;
     self.pos = pos;
     Ok(())
   }

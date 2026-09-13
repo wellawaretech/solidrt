@@ -270,7 +270,7 @@ fn build_plane_player<'js>(ctx: Ctx<'js>, path: &str, fit: PlaneFit) -> Result<O
   if !state.0.planes.borrow().is_empty() {
     return Err("a video plane is already open (one at a time; close it first)".to_string());
   }
-  let demux = WebmDemuxer::open(path)?;
+  let demux = WebmDemuxer::open_path(path)?;
   let info = demux.info().clone();
   let fit = match fit {
     PlaneFit::Contain => AlloyFit::Contain,

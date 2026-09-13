@@ -45,13 +45,26 @@ pub use transport::AudioSink;
 pub use vpx::Vp9Decoder;
 pub use webm::WebmDemuxer;
 
-/// Stream facts read from the container header.
+/// Stream facts read from the container header and the source.
 #[derive(Clone)]
 pub struct MediaInfo {
   pub width: u32,
   pub height: u32,
-  /// None when the source does not say (a live stream).
+  /// None when the source does not say: a live stream, or a container
+  /// whose Segment has no known size (a muxer writing to a pipe).
   pub duration_us: Option<i64>,
+  /// Where playback starts: the first keyframe's pts, 0 for a whole file,
+  /// later for a stream cut from a longer one. Audio before it is
+  /// discarded by the players.
+  pub start_us: i64,
+  /// Whether `seek` can do anything; false means it errs and playback
+  /// carries on where it was.
+  pub seekable: bool,
+  /// The conversion matrix: the container's when it says, else BT.709 for
+  /// HD (720 lines and up) and BT.601 below.
+  pub bt709: bool,
+  /// Full-range (0..255) samples rather than studio range.
+  pub full_range: bool,
   pub audio: Option<AudioInfo>,
 }
 
@@ -95,11 +108,12 @@ pub trait Demuxer: Send {
   fn next_audio(&mut self) -> Result<Option<AudioPacket>, String>;
   /// Reposition so the next video frame is the last keyframe at or before
   /// `target_us` (or the next keyframe, for a source that cannot go back)
-  /// and the next audio packet the first at or after `target_us` minus the
-  /// track's seek preroll (the packets before the target are decoded and
-  /// discarded by the player). A source that cannot seek at all errs; a
-  /// player treats that as unsupported.
-  fn seek(&mut self, target_us: i64) -> Result<(), String>;
+  /// and the next audio packet the first at or after the resume position
+  /// minus the track's seek preroll. Returns the resume position: the
+  /// target, or that next keyframe when it comes later. The player skips
+  /// video and discards decoded audio before it. A source that cannot seek
+  /// errs without touching its state; a player treats that as unsupported.
+  fn seek(&mut self, target_us: i64) -> Result<i64, String>;
 }
 
 /// The layout the platform's decoder emits. Fixed per platform so consumers

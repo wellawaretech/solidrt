@@ -13,7 +13,7 @@ const FIXTURE_AUDIO_PACKETS: usize = 101;
 
 #[test]
 fn header_reports_the_stream_facts() {
-  let demux = WebmDemuxer::open(&fixture()).expect("open fixture");
+  let demux = WebmDemuxer::open_path(&fixture()).expect("open fixture");
   let info = demux.info();
   assert_eq!((info.width, info.height), (160, 120));
   let duration_us = info.duration_us.expect("a file has a duration");
@@ -26,13 +26,13 @@ fn header_reports_the_stream_facts() {
   assert_eq!(audio.seek_preroll_us, 80_000);
   // ffmpeg writes no Colour for an unspecified matrix: the resolution
   // default applies, and the range defaults to studio.
-  assert!(!demux.color_is_bt709(), "SD content defaults to BT.601");
-  assert!(!demux.color_is_full_range(), "studio range by default");
+  assert!(!demux.info().bt709, "SD content defaults to BT.601");
+  assert!(!demux.info().full_range, "studio range by default");
 }
 
 #[test]
 fn video_samples_are_raw_vp9_frames() {
-  let mut demux = WebmDemuxer::open(&fixture()).expect("open fixture");
+  let mut demux = WebmDemuxer::open_path(&fixture()).expect("open fixture");
   let first = demux.next_video().expect("read").expect("first frame");
   assert!(first.sync, "first frame is the keyframe");
   assert_eq!(first.pts_us, 0);
@@ -56,7 +56,7 @@ fn video_samples_are_raw_vp9_frames() {
 
 #[test]
 fn opus_decodes_every_packet_to_pcm() {
-  let mut demux = WebmDemuxer::open(&fixture()).expect("open fixture");
+  let mut demux = WebmDemuxer::open_path(&fixture()).expect("open fixture");
   let info = demux.info().audio.clone().expect("audio track");
   let mut decoder = OpusDecoder::new(info.sample_rate, info.channels).expect("create opus decoder");
   let mut packets = 0;
@@ -123,11 +123,11 @@ impl AudioSink for FakeSink {
 #[test]
 fn audio_track_trims_pre_skip_and_maps_the_sink_position_to_content_time() {
   use crate::video::audio::{AudioTrack, AUDIO_LOOKAHEAD_US, AUDIO_OUTPUT_LATENCY_US};
-  let mut demux = WebmDemuxer::open(&fixture()).expect("open fixture");
+  let mut demux = WebmDemuxer::open_path(&fixture()).expect("open fixture");
   let info = demux.info().audio.clone().expect("audio track");
   let state = std::sync::Arc::new(std::sync::Mutex::new(FakeSinkState::default()));
   let sink: Box<dyn AudioSink> = Box::new(FakeSink(state.clone()));
-  let mut track = AudioTrack::new(&info, sink).expect("create audio track");
+  let mut track = AudioTrack::new(&info, 0, sink).expect("create audio track");
   assert!(track.content_time_us().is_none(), "no clock before the first push");
 
   // One feed fills the lookahead and no more.
@@ -200,7 +200,7 @@ impl VideoDecoder for StubDecoder {
 #[cfg(not(target_os = "android"))]
 #[test]
 fn libvpx_decodes_every_frame() {
-  let mut demux = WebmDemuxer::open(&fixture()).expect("open fixture");
+  let mut demux = WebmDemuxer::open_path(&fixture()).expect("open fixture");
   let mut decoder = crate::video::Vp9Decoder::new(160, 120).expect("create libvpx decoder");
   let mut frames = Vec::new();
   while let Some(au) = demux.next_video().expect("read") {
@@ -346,7 +346,7 @@ fn a_stalled_master_clock_plays_out_the_tail() {
 
 #[test]
 fn non_webm_input_errs() {
-  let err = match WebmDemuxer::open(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")) {
+  let err = match WebmDemuxer::open_path(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")) {
     Ok(_) => panic!("not a webm, open must err"),
     Err(e) => e,
   };
@@ -361,11 +361,13 @@ fn keyframe_fixture() -> String {
 
 #[test]
 fn seek_lands_on_the_keyframe_at_or_before_the_target() {
-  let mut demux = WebmDemuxer::open(&keyframe_fixture()).expect("open fixture");
+  let mut demux = WebmDemuxer::open_path(&keyframe_fixture()).expect("open fixture");
   assert!(demux.info().audio.is_none());
   assert_eq!(demux.info().duration_us, Some(4_000_000));
+  assert!(demux.info().seekable);
+  assert_eq!(demux.info().start_us, 0);
 
-  demux.seek(2_500_000).expect("seek");
+  assert_eq!(demux.seek(2_500_000).expect("seek"), 2_500_000, "playback resumes at the target");
   let au = demux.next_video().expect("read").expect("a frame");
   assert!(au.sync, "the first frame after a seek is a keyframe");
   assert_eq!(au.pts_us, 2_000_000);
@@ -383,7 +385,7 @@ fn seek_lands_on_the_keyframe_at_or_before_the_target() {
 
 #[test]
 fn seek_repositions_audio_to_the_preroll_before_the_target() {
-  let mut demux = WebmDemuxer::open(&fixture()).expect("open fixture");
+  let mut demux = WebmDemuxer::open_path(&fixture()).expect("open fixture");
   // The A/V fixture has a single keyframe: video restarts at 0, audio at
   // the first packet at or after the target minus the 80 ms preroll
   // (packets are 20 ms).
