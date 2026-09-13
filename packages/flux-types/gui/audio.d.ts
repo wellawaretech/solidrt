@@ -144,9 +144,10 @@ declare module "flux:audio" {
   /**
    * Open a clip for streaming: it is decoded on demand instead of loaded fully
    * into memory, so a large track needs little RAM. Takes a `file()` from
-   * `flux:fs` (not a path), so the source rides the `file()` proxy override - a
-   * dev-server-proxied file streams from the server. Play the result as a single
-   * playback; do not overlap a stream with itself. Call `unload()` when done.
+   * `flux:fs` (not a path), read from local storage like any `file()` (the
+   * app's assets in a packed app); there is no network streaming. Play the
+   * result as a single playback; do not overlap a stream with itself. Call
+   * `unload()` when done.
    */
   export function stream(source: ReturnType<typeof import("flux:fs").file>): Clip
   /**

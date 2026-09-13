@@ -30,6 +30,12 @@ has to know how a remote travels through SDL on Android:
   no slot sums every pad, which works but also admits presses from the
   platform input devices.
 
+Measured on the Android TV test device (2026-09-13), with an app logging
+every key, pointer and pad press: the remote's OK arrives as pad button
+"south" on one of the remote devices, so its auto-mapping has "a" and the
+key path does not fire there. The select gap is not seen on that device;
+the back gap is.
+
 Components' `uiBindings` binds both known paths (key "Select" and pad
 "south") for focus navigation; an app outside components rebuilds that
 knowledge by hand, and neither covers the missing-mapping gap.
@@ -47,10 +53,6 @@ knowledge by hand, and neither covers the missing-mapping gap.
 
 ## Open
 
-- Which path the TV's OK press takes today, and whether its mapping has
-  "a". The launcher's TV-verified center-key nav (2026-07-28) bound both
-  paths, so it does not say which one fired; a round that logs every key
-  and pad press (2026-09-12) answers it.
 - Whether the remote can be told apart from the other pads (names are
   device-arbitrary; source flags would need a surface through SDL's Java
   layer), or summing all pads is the contract.

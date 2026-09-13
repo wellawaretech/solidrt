@@ -911,16 +911,22 @@ the tablet, and pause, resume and seek by hand.
 
 ## Follow-ups (not this round, in likely order)
 
-- **Live streaming.** The WebM demuxer over an unbounded byte source (fetch
-  and p2p), a latency target on the anchor, `open` taking a URL or stream
-  handle. Resolution changes mid-stream are free on a plane. A WebM writer
-  of the same subset is what makes our own producer possible.
+- **Streaming.** Client-initiated streaming from an HTTP source (the app
+  opens a URL, playback starts at the beginning, seek by Range) is shaped in
+  [[video-streaming]], with live streaming (joining a running stream, a
+  latency target on the anchor) deferred there as an explicit `latency`
+  option. Mid-stream resolution changes are not handled on the plane today:
+  it configures no max-width/max-height and its release loop ignores
+  OutputFormatChanged. A WebM writer of the same subset is what makes our own
+  producer possible.
 - **Adaptive streaming**, maybe, after live: manifest, segment fetching
   and a bitrate policy inside the player; no change to the app surface.
 - **Transport on both contracts.** `rate` (anchor slope; keyframe-only trick
   play above 2x), `step` while paused, settable `currentTime`; the texture
   path gets `seek` from the shared demuxer trait. Designed once, for both.
-- **The texture path off the frame loop**, per the section above.
+- **The texture path off the frame loop**, per the section above. It builds
+  on the byte source, reader thread and transport of [[video-streaming]], and
+  is what brings URL sources, buffering and seek to the texture player.
 - **Hole opens on the first latched frame**, and closes before teardown.
 - **Position across a background trip** (surface destroyed and re-created).
 - **Fallback off Android**: `present: "plane"` presenting the texture player
@@ -928,6 +934,6 @@ the tablet, and pause, resume and seek by hand.
 - **Adaptive fence wait**, so an app animating over the plane is not held
   to 16 fps: [[plane-adaptive-fence-wait]].
 
-Related: [[video-playback]], [[live-texture-content-damage]],
-[[texture-upload-leases]], [[frame-driver-pacing-contract]],
-[[app-lifecycle-events]].
+Related: [[video-playback]], [[video-streaming]],
+[[live-texture-content-damage]], [[texture-upload-leases]],
+[[frame-driver-pacing-contract]], [[app-lifecycle-events]].

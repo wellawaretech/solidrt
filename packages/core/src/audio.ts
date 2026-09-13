@@ -218,9 +218,10 @@ export function createPcmSound(
  * Streams a large track, decoding on demand instead of loading it into memory.
  * Single-voice: each play() restarts it. Pass a path (resolved like flux:fs,
  * relative to the process cwd) or a `file()` from flux:fs; a path is wrapped in
- * `file()` for you, so a dev-server-proxied file streams over the proxy. Owns
- * the stream's lifecycle: stopped and released when the reactive owner is
- * disposed. For imperative use, call stream()/play() from "flux:audio".
+ * `file()` for you. The track is read from local storage (the app's assets in
+ * a packed app), not over the network. Owns the stream's lifecycle: stopped
+ * and released when the reactive owner is disposed. For imperative use, call
+ * stream()/play() from "flux:audio".
  */
 export function createSoundStream(source: string | FluxFile, options: SoundStreamOptions = {}): Sound {
   let src = typeof source === "string" ? file(source) : source
