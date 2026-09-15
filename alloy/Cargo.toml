@@ -99,7 +99,7 @@ lyon_algorithms = "=1.0.21"
 unicode-linebreak = "=0.1.5"
 unicode-segmentation = "=1.13.3"
 # Bounded LRU for the shared shaped-word cache (rendertree/text/words.rs).
-lru = "=0.18.3"
+lru = "=0.18.4"
 # f32 -> f16 packing for rgba16f uploads (gpu/texture.rs `f16_bytes`).
 half = "=2.7.1"
 # Headless playback context (src/egl_headless.rs): a bare EGL pbuffer on a
