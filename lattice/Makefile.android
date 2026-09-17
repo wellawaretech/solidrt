@@ -86,6 +86,25 @@ define ndk-build
 	  $(SOLIDRT_VERSION) cargo ndk -t $(ANDROID_ABI) build --lib $(3)
 endef
 
+# Fail the build when a staged .so is not 16 KB page aligned: Android 15+
+# flags such libs as incompatible, and the linker flags that prevent it
+# (.cargo/config.toml, android/cmake/android-abi.toolchain.cmake) have
+# regressed silently before. Only the 64-bit ABIs are held to it; the NDK's
+# own 32-bit libc++_shared.so is 4 KB aligned.
+# $(1) = directory holding the staged .so files
+ELF_MIN_ALIGN = 16384
+ALIGNED_ABIS  = arm64-v8a x86_64
+READELF       = $(firstword $(wildcard $(NDK_HOME)/toolchains/llvm/prebuilt/*/bin/llvm-readelf))
+define check-elf-align
+	$(if $(filter $(ANDROID_ABI),$(ALIGNED_ABIS)),@for so in $(1)/*.so; do \
+	  for align in $$($(READELF) -lW $$so | awk '$$1 == "LOAD" { print $$NF }'); do \
+	    if [ $$(($$align)) -lt $(ELF_MIN_ALIGN) ]; then \
+	      echo "$$so: LOAD segment aligned to $$align; need >= $(ELF_MIN_ALIGN)"; exit 1; \
+	    fi; \
+	  done; \
+	done; echo "Checked 16 KB ELF alignment in $(1)/")
+endef
+
 # Stage .so files into dist/android/ for the Gradle project to pick up.
 # $(1) = profile (release|debug)
 define ndk-stage
@@ -97,6 +116,7 @@ define ndk-stage
 	# whisper-rs links the NDK's shared C++ runtime, so the APK must carry it
 	cp $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so $(ANDROID_DIST)/
 	@echo "Staged Android .so files into $(ANDROID_DIST)/"
+	$(call check-elf-align,$(ANDROID_DIST))
 endef
 
 android-client: $(PLAYER_JS) $(BSOD_JS)
@@ -188,6 +208,7 @@ android-runtime: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
 	cp target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/libSDL3.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
 	cp "$$(ls -t target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
 	cp $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
+	$(call check-elf-align,$(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI))
 	cd android && ./gradlew assembleProdDebug -PsrtAbi=$(ANDROID_ABI)
 	cp $(APK_PROD_DEBUG) $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/solidrt.apk
 	@echo "Staged solidrt.apk ($(ANDROID_ABI)) into $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/"
