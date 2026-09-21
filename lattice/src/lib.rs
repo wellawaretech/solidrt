@@ -667,9 +667,12 @@ fn ui_thread(
         // swapchain - the loop falls arbitrarily far behind, re-animating
         // old hover states and starving input and dev queries. Only the
         // newest signal matters; the dropped ones are exactly the catch-up
-        // frames a browser skips too. Playback mode is lockstep (one
-        // FrameRendered in flight, no Ticks), so its captures never see a
-        // collapse. Pointer moves never appear here: their producers
+        // frames a browser skips too - but their refresh counts are not
+        // dropped: the delivered signal carries the sum, so the app
+        // timeline still advances by every refresh the display went
+        // through (see runtime::coalesce_frame_signals). Playback mode is
+        // lockstep (one FrameRendered in flight, no Ticks), so its captures
+        // never see a collapse. Pointer moves never appear here: their producers
         // consume them into the resampler (see alloy's resample.rs) and the
         // frame verb samples one position per pointer per signal, so a
         // stalled drain replays no stale positions either.
@@ -686,7 +689,12 @@ fn ui_thread(
             },
           };
           match event {
-            signal @ (AlloyEvent::FrameRendered { .. } | AlloyEvent::Tick { .. }) => frame_signal = Some(signal),
+            signal @ (AlloyEvent::FrameRendered { .. } | AlloyEvent::Tick { .. }) => {
+              frame_signal = Some(match frame_signal.take() {
+                Some(older) => runtime::coalesce_frame_signals(older, signal),
+                None => signal,
+              });
+            }
             event => events.push(event),
           }
         }
@@ -769,10 +777,10 @@ fn ui_thread(
             // shift the field by +1. The JS-side bootstrap owns frame 0;
             // without the shift, playback mode re-runs frame 0 at tick 0 and
             // duplicates a PNG.
-            AlloyEvent::FrameRendered { frame, .. } => ui_runtime.frame(frame + 1),
+            AlloyEvent::FrameRendered { frame, refreshes, .. } => ui_runtime.frame(frame + 1, refreshes),
             // Tick's frame is already the next present index (one past the
             // last FrameRendered), so no +1 here.
-            AlloyEvent::Tick { frame, .. } => ui_runtime.frame(frame),
+            AlloyEvent::Tick { frame, refreshes, .. } => ui_runtime.frame(frame, refreshes),
             // The back intent dispatches to JS like any window event, backed
             // by a liveness watchdog: the emit just queued runs synchronously
             // on the JS executor, so a probe queued behind it proves the

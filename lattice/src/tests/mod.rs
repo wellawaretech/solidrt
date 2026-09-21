@@ -1,5 +1,6 @@
 #[cfg(feature = "go")]
 mod input;
+mod frame_signal;
 mod paced_clock;
 mod storage;
 #[cfg(feature = "go")]

@@ -34,9 +34,22 @@ counting sees it.
 
 ## Implemented: missedPresents (stage 1)
 
-Measured at the present, where the truth lives:
-`record_present_interval` in alloy/src/raster/mod.rs runs as each
-interactive present returns from the swap, accumulates into
+Since 2026-09-21 the count comes from the refresh count on every frame
+signal ([frame-signal-refresh-count](../plans/frame-signal-refresh-count.md),
+stage 2): the main loop counts the display refreshes each signal covers
+(`alloy/src/present.rs`), and for a present that follows a demanded one,
+the refreshes of the interval beyond the first are the misses
+(`RefreshCounting::count`; idle Ticks between the two presents fold into
+the interval). The raster thread now only samples the demand latch at
+present time and sends it with the present's instant
+(`FrameOutput::Presented`). One mechanism produces the app timeline's
+advance and the jank count, on the same instants. The paragraphs below
+describe the raster-side run accounting this replaced; the two design
+points still hold, the second now being the counter's own tolerance.
+
+As first implemented, measured at the present, where the truth lives:
+`record_present_interval` in alloy/src/raster/mod.rs ran as each
+interactive present returned from the swap, accumulated into
 `RasterStats::missed_presents`, and the count rides `RasterCounters`
 into `/stats` - cumulative next to `fenceTimeouts`, and as a count over
 the window (frame_history `RasterRates`) next to the per-frame rates.
@@ -73,11 +86,12 @@ Two design points that settled the shape:
 
 Answers to the questions that were open:
 
-- The paced frame clock does NOT derive its tick timestamps from actual
-  presents: it accumulates one period per frame signal precisely to hide
-  swap jitter. So a JS-side tick-gap counter is structurally blind (in
-  paced time) or jitter-poisoned (in wall time); the raster-side count is
-  the only implementation, not merely the authoritative one.
+- The paced frame clock advances by the display refreshes alloy counts per
+  frame signal (since [frame-signal-refresh-count](../plans/frame-signal-refresh-count.md);
+  before that it accumulated one period per signal to hide swap jitter, and
+  a JS-side tick-gap counter was structurally blind). A tick delta of two
+  periods is now a readable miss from JS; the ledger that count is recorded
+  in is where `missedPresents` moves in that plan's second stage.
 - The skip half of 4-4-6 needs no count of its own: a missed present
   implies the content skip on a paced timeline. Revisit only if a report
   ever shows content skipping without missed presents (a pacing bug, not

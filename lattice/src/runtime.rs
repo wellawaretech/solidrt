@@ -9,7 +9,7 @@ use alloy::{AlloyEvent, InputState};
 use flux::gui::input::InputEvent;
 use flux::ExecHandle;
 
-use crate::paced_clock::PacedClock;
+use crate::paced_clock::{Advance, PacedClock};
 
 /// Dev-tool clock control, shared between the dev-server connection (any
 /// thread) and the frame verb: a time scale (0 pauses frame delivery to JS)
@@ -75,8 +75,28 @@ pub trait UiRuntime {
   /// through here; they become `frame` calls.
   fn event(&mut self, event: &AlloyEvent);
   /// A frame signal (present or idle tick): run the engine's per-frame work
-  /// computing frame `next_frame`.
-  fn frame(&mut self, next_frame: u64);
+  /// computing frame `next_frame`. `refreshes` is the display refreshes the
+  /// signal covered, as alloy counted them.
+  fn frame(&mut self, next_frame: u64, refreshes: u32);
+}
+
+/// Collapse two frame signals into the newer one carrying both refresh
+/// counts. The event loop keeps only the newest signal of a batch (the
+/// superseded ones are the catch-up frames a browser skips too), but the
+/// display went through every refresh they counted, so the frame that does
+/// run advances the app timeline by all of them. Whether the survivor is a
+/// present or an idle Tick is the newer signal's own fact. Anything else
+/// passed here is a caller bug and is returned unchanged.
+pub(crate) fn coalesce_frame_signals(older: AlloyEvent, newer: AlloyEvent) -> AlloyEvent {
+  let carried = match older {
+    AlloyEvent::FrameRendered { refreshes, .. } | AlloyEvent::Tick { refreshes, .. } => refreshes,
+    _ => 0,
+  };
+  match newer {
+    AlloyEvent::FrameRendered { frame, fps, refreshes } => AlloyEvent::FrameRendered { frame, fps, refreshes: refreshes + carried },
+    AlloyEvent::Tick { frame, fps, refreshes } => AlloyEvent::Tick { frame, fps, refreshes: refreshes + carried },
+    other => other,
+  }
 }
 
 /// Drives a flux (QuickJS) engine: events are marshalled onto the JS thread
@@ -290,7 +310,7 @@ impl UiRuntime for FluxRuntime {
   /// paced clock, then drive flux's frame protocol (`frame::advance`, the
   /// speech pump, and `frame::deliver` unless the clock is paused).
   /// `next_frame` is the present index the frame being computed would get.
-  fn frame(&mut self, next_frame: u64) {
+  fn frame(&mut self, next_frame: u64, refreshes: u32) {
     let exec = self.exec.borrow();
     let Some(eh) = exec.as_ref() else {
       return;
@@ -365,32 +385,25 @@ impl UiRuntime for FluxRuntime {
       let scale = clock_control.scale();
       let deliver = scale != 0.0 || clock_control.take_step();
       // rAF and the render event march on the frame timeline (which
-      // flux::Timeline also reports): the paced clock in run mode, the
+      // flux::Timeline also reports): the paced clock in run mode, advancing
+      // by the display refreshes alloy counted for this signal, the
       // frame-derived virtual clock in playback. The virtual timers march on
       // the paced clock's wall-anchored timer reading instead - same
-      // pause/step/scale policy, but deadlines stay wall-accurate when slow
-      // frames make the smoothed animation reading lag (see paced_clock). In
-      // playback both are the deterministic frame clock. performance.now()
-      // is on NEITHER - that stays real elapsed time. Idle Ticks arrive at
-      // the refresh cadence, so ticking the paced clock for them preserves
-      // its one-period-per-call model. Render event carries seconds; JS
-      // scales to ms.
+      // pause/step/scale policy, deadlines wall-accurate whatever the frames
+      // do (see paced_clock). In playback both are the deterministic frame
+      // clock. performance.now() is on NEITHER - that stays real elapsed
+      // time. Render event carries seconds; JS scales to ms.
       let (ts, timer_ts) = match &paced {
         Some(pc) => {
-          // The correction target is wall time. A gated frame ticks at scale
-          // 0 (no advance, accrue the offset); a stepped frame advances one
-          // exact period.
           let raw = wall_start.elapsed().as_secs_f64() * 1000.0;
-          pc.tick(
-            raw,
-            if !deliver {
-              0.0
-            } else if scale == 0.0 {
-              1.0
-            } else {
-              scale
-            },
-          );
+          let advance = if !deliver {
+            Advance::Paused
+          } else if scale == 0.0 {
+            Advance::Step
+          } else {
+            Advance::Run(scale)
+          };
+          pc.tick(raw, refreshes, advance);
           (pc.now_ms(), pc.timer_now_ms())
         }
         None => {

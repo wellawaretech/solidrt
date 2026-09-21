@@ -34,7 +34,11 @@ pub enum FramePacing {
 
 pub struct VsyncSource {
   req_tx: mpsc::Sender<(u64, Duration)>,
-  signal_rx: mpsc::Receiver<u64>,
+  // Each signal carries the generation of the request it answers and the
+  // instant of the vsync it was woken for (the Choreographer frame time on
+  // the main loop's clock; the answer instant where no choreographer is
+  // available), which is the reference the refresh count is taken from.
+  signal_rx: mpsc::Receiver<(u64, std::time::Instant)>,
   // Generation of the latest request. Each signal carries the generation of
   // the request it answers; try_take discards signals from superseded
   // requests, so a late signal (its present already released by the caller's
@@ -52,7 +56,7 @@ impl VsyncSource {
     #[cfg(target_os = "android")]
     {
       let (req_tx, req_rx) = mpsc::channel::<(u64, Duration)>();
-      let (signal_tx, signal_rx) = mpsc::channel::<u64>();
+      let (signal_tx, signal_rx) = mpsc::channel::<(u64, std::time::Instant)>();
       std::thread::Builder::new()
         .name("srt-vsync".into())
         .spawn(move || android::run(req_rx, signal_tx, wake))
@@ -76,15 +80,15 @@ impl VsyncSource {
     self.req_tx.send((self.generation.get(), delay)).ok();
   }
 
-  /// Drain queued vsync signals; true if the latest request's own signal was
-  /// among them. Signals from superseded requests are discarded silently -
-  /// their newer request is still outstanding, so a false return leaves the
-  /// armed state untouched at the caller.
-  pub fn try_take(&self) -> bool {
-    let mut took = false;
-    while let Ok(g) = self.signal_rx.try_recv() {
+  /// Drain queued vsync signals; Some(vsync instant) if the latest request's
+  /// own signal was among them. Signals from superseded requests are
+  /// discarded silently - their newer request is still outstanding, so a
+  /// None leaves the armed state untouched at the caller.
+  pub fn try_take(&self) -> Option<std::time::Instant> {
+    let mut took = None;
+    while let Ok((g, vsync)) = self.signal_rx.try_recv() {
       if g == self.generation.get() {
-        took = true;
+        took = Some(vsync);
       }
     }
     took
@@ -180,7 +184,11 @@ pub(crate) enum Release {
   /// and was banked (see `FrameRelease::banked`). `arm` is Some when a
   /// VsyncSource request must be armed with that delay (never without a
   /// backend; normally None here, the banked signal's release pre-armed).
-  Emit { arm: Option<std::time::Duration> },
+  /// `vsync` is the banked signal's vsync instant when there was one: the
+  /// reference this release's refreshes are counted from, on the vsync grid
+  /// like every other released signal's, rather than the swap's return,
+  /// which sits a variable throttle wait past the vsync.
+  Emit { arm: Option<std::time::Duration>, vsync: Option<std::time::Instant> },
   /// The present's frame signal waits for the vsync signal; when `arm` is
   /// Some the caller must arm one VsyncSource request with that delay (the
   /// chain start out of idle - normally the release below pre-armed it).
@@ -260,17 +268,17 @@ pub(crate) struct FrameRelease {
   /// (`idle`) care about.
   signal_emitted: Option<std::time::Instant>,
   /// A vsync signal taken while the frame it should release was still in
-  /// flight - emitted, not yet presented. On Android the swap itself
-  /// blocks until the previous frame's GPU work retires (libgui throttles
-  /// EGL production one frame deep, and that retirement is bound to the
-  /// compositor releasing the buffer), so the present-return lands after
-  /// the next vsync signal about one frame in six on a 60 Hz panel. Ending
-  /// the chain there cost a whole period each time (measured 1,1,1,1,2
-  /// present intervals, 51 fps). The banked signal releases the present
-  /// the moment it returns instead; a second signal with nothing pending
-  /// still ends the chain (demand stopped), so an animation that stops
-  /// costs one spare callback more than before.
-  banked: bool,
+  /// flight - emitted, not yet presented - with the instant of its vsync.
+  /// On Android the swap itself blocks until the previous frame's GPU work
+  /// retires (libgui throttles EGL production one frame deep, and that
+  /// retirement is bound to the compositor releasing the buffer), so the
+  /// present-return lands after the next vsync signal about one frame in
+  /// six on a 60 Hz panel. Ending the chain there cost a whole period each
+  /// time (measured 1,1,1,1,2 present intervals, 51 fps). The banked signal
+  /// releases the present the moment it returns instead; a second signal
+  /// with nothing pending still ends the chain (demand stopped), so an
+  /// animation that stops costs one spare callback more than before.
+  banked: Option<std::time::Instant>,
 }
 
 impl FrameRelease {
@@ -283,24 +291,23 @@ impl FrameRelease {
       deadline: now,
       budget: PacingBudget::new(),
       signal_emitted: None,
-      banked: false,
+      banked: None,
     }
   }
 
   /// Feed one present-return; `period` is the current refresh period.
   pub fn on_present(&mut self, now: std::time::Instant, period: std::time::Duration) -> Release {
     if !self.backend || self.pacing != FramePacing::VsyncLocked {
-      return Release::Emit { arm: None };
+      return Release::Emit { arm: None, vsync: None };
     }
     if let Some(emitted) = self.signal_emitted.take() {
       self.budget.record(now.duration_since(emitted).as_secs_f32() * 1000.0, period);
     }
-    if self.banked {
+    if let Some(vsync) = self.banked.take() {
       // Its vsync signal already came and went (see `banked`): release now,
       // a couple of milliseconds into the period rather than a period late.
-      self.banked = false;
       self.signal_emitted = Some(now);
-      return Release::Emit { arm: self.arm(now, period) };
+      return Release::Emit { arm: self.arm(now, period), vsync: Some(vsync) };
     }
     self.pending += 1;
     // Normally the signal releasing this present is already armed
@@ -309,25 +316,28 @@ impl FrameRelease {
     Release::Deferred { arm: self.arm(now, period) }
   }
 
-  /// Feed one loop wake with the VsyncSource drain's result. One signal
-  /// releases all pending; a signal past the fallback deadline is replaced
-  /// by the fallback, which also disarms so the release pre-arms a fresh
-  /// request superseding the late one. A signal with nothing pending is
-  /// banked while a frame is in flight and ends the chain otherwise; an
-  /// in-flight window that sees neither present nor signal by the deadline
-  /// is given up (the present, if it ever comes, starts a fresh chain).
-  pub fn on_wake(&mut self, now: std::time::Instant, period: std::time::Duration, signal_taken: bool) -> Wake {
+  /// Feed one loop wake with the VsyncSource drain's result: `signal` is the
+  /// vsync instant of the latest request's signal when it was among the
+  /// drained ones. One signal releases all pending; a signal past the
+  /// fallback deadline is replaced by the fallback, which also disarms so
+  /// the release pre-arms a fresh request superseding the late one. A
+  /// signal with nothing pending is banked while a frame is in flight and
+  /// ends the chain otherwise; an in-flight window that sees neither
+  /// present nor signal by the deadline is given up (the present, if it
+  /// ever comes, starts a fresh chain).
+  pub fn on_wake(&mut self, now: std::time::Instant, period: std::time::Duration, signal: Option<std::time::Instant>) -> Wake {
+    let signal_taken = signal.is_some();
     if signal_taken {
       self.armed = false;
     }
     if self.pending == 0 {
       let in_flight = self.signal_emitted.is_some();
-      if signal_taken && in_flight && !self.banked {
-        self.banked = true;
+      if let (Some(vsync), true, None) = (signal, in_flight, self.banked) {
+        self.banked = Some(vsync);
         return Wake::Banked { arm: self.arm(now, period) };
       }
       if signal_taken || (in_flight && now >= self.deadline) {
-        self.banked = false;
+        self.banked = None;
         self.signal_emitted = None;
         self.armed = false;
       }
@@ -368,7 +378,7 @@ impl FrameRelease {
       self.pending = 0;
       self.armed = false;
       self.signal_emitted = None;
-      self.banked = false;
+      self.banked = None;
       PacingChange::Changed { released }
     } else {
       PacingChange::Changed { released: 0 }
@@ -416,7 +426,11 @@ mod android {
   use std::cell::Cell;
   use std::sync::mpsc;
 
-  pub fn run(req_rx: mpsc::Receiver<(u64, std::time::Duration)>, signal_tx: mpsc::Sender<u64>, wake: impl Fn()) {
+  pub fn run(
+    req_rx: mpsc::Receiver<(u64, std::time::Duration)>,
+    signal_tx: mpsc::Sender<(u64, std::time::Instant)>,
+    wake: impl Fn(),
+  ) {
     // The choreographer instance is per-thread and requires that thread to
     // own a looper; callbacks are dispatched from this thread's poll calls.
     let looper = ndk::looper::ThreadLooper::prepare();
@@ -424,7 +438,8 @@ mod android {
     if choreographer.is_null() {
       log::warn!("[alloy] no choreographer on this device; vsync pacing disabled");
     }
-    let fired = Cell::new(false);
+    // The vsync instant of the callback that fired, None until it does.
+    let fired: Cell<Option<std::time::Instant>> = Cell::new(None);
     while let Ok((mut generation, mut delay)) = req_rx.recv() {
       // A burst of requests collapses into one callback answering the latest
       // generation: the consumer flushes everything pending on each signal.
@@ -432,16 +447,17 @@ mod android {
         generation = g;
         delay = d;
       }
+      let mut vsync = None;
       if !choreographer.is_null() {
-        fired.set(false);
+        fired.set(None);
         unsafe {
           ndk_sys::AChoreographer_postFrameCallback(
             choreographer,
             Some(frame_callback),
-            &fired as *const Cell<bool> as *mut core::ffi::c_void,
+            &fired as *const Cell<Option<std::time::Instant>> as *mut core::ffi::c_void,
           );
         }
-        while !fired.get() {
+        while fired.get().is_none() {
           if looper.poll_once().is_err() {
             // A broken looper cannot dispatch the callback; answer now
             // instead of stalling frame production (= present-return pacing).
@@ -449,29 +465,39 @@ mod android {
             break;
           }
         }
-        if fired.get() && !delay.is_zero() {
+        vsync = fired.get();
+        if vsync.is_some() && !delay.is_zero() {
           std::thread::sleep(delay);
         }
       }
-      if signal_tx.send(generation).is_err() {
+      // No choreographer, or a broken looper: the answer instant is the
+      // best reference there is.
+      let vsync = vsync.unwrap_or_else(std::time::Instant::now);
+      if signal_tx.send((generation, vsync)).is_err() {
         return;
       }
       wake();
     }
   }
 
-  // Runs on the vsync thread, inside looper.poll_once(). The frame timestamp
-  // is deliberately unused: the frame signal is emitted (and timed)
-  // sub-millisecond later on the main loop, and the paced clock models time
-  // as frame counts, not wall-clock samples. It was once suspected to be the
-  // missing cadence feedback behind the 51 fps cap on 60 Hz Android panels;
-  // a trace showed the callbacks on cadence (one per tick, requests posted
-  // ~8 ms ahead) and the loss downstream, in the present-return racing the
-  // signal (see FrameRelease::banked). Should a consumer ever need the
-  // vsync phase from here, note the value is the app's wake-up time, one
-  // Display.getAppVsyncOffsetNanos() after a true vsync (the video plane's
-  // sampler in VideoPlaneView.java applies that correction).
-  unsafe extern "C" fn frame_callback(_frame_time_nanos: core::ffi::c_long, data: *mut core::ffi::c_void) {
-    (*(data as *const Cell<bool>)).set(true);
+  // Runs on the vsync thread, inside looper.poll_once(). The frame time is
+  // CLOCK_MONOTONIC nanoseconds; it becomes an Instant by subtracting its
+  // age (read on the same clock, here, before the pacing delay adds to it).
+  // It is the reference the refresh count is taken from: on the vsync grid
+  // rather than delay-plus-wake later. Note the value is the app's wake-up
+  // time, a constant Display.getAppVsyncOffsetNanos() off a true vsync; a
+  // constant phase offset does not change a refresh COUNT, so it is not
+  // corrected here. A consumer needing the absolute vsync phase takes it
+  // from the video plane's sampler (VideoPlaneView.java), which applies the
+  // correction at its source.
+  unsafe extern "C" fn frame_callback(frame_time_nanos: core::ffi::c_long, data: *mut core::ffi::c_void) {
+    let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let age_ns = if libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) == 0 {
+      (now.tv_sec as i64 * 1_000_000_000 + now.tv_nsec as i64 - frame_time_nanos as i64).max(0)
+    } else {
+      0
+    };
+    let vsync = std::time::Instant::now() - std::time::Duration::from_nanos(age_ns as u64);
+    (*(data as *const Cell<Option<std::time::Instant>>)).set(Some(vsync));
   }
 }

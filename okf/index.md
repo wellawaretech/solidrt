@@ -846,6 +846,13 @@ Shaped, not started.
   frames, and there is no seek/rate/step. Fullscreen on Android goes through
   android-video-punch-through.md instead; this path is not being fixed while
   that round runs.
+- **[A JS-bound app under VsyncLocked gets two frame signals per present](backlog/vsync-locked-js-bound-double-signal.md)** [2026-09-21]
+  When the JS thread builds a frame for longer than the fallback deadline
+  (~1.6 periods), FrameRelease gives the in-flight window up, idle Ticks
+  resume while JS is still busy, and the eventual present adds its own
+  vsync-released signal - so a 25 fps app on the Pixel 7 runs two JS frames
+  per present, with honest but ragged tick deltas (1 and 6 periods alongside
+  the compositor's 3 and 4).
 - **[The armed wake-word detector burns ~40% of a core while idle](backlog/wakeword-detector-cost.md)** [2026-08-14]
   Every 100ms the armed speech worker scores a 2.2s window with the stateless
   livekit-wakeword predict, ~35-40ms a check whether or not anyone is

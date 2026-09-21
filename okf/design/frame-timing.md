@@ -113,7 +113,13 @@ change; still open ([idle-onframe-tick-rate]).
 **Collapsing.** Lattice drains the alloy event channel per batch and keeps
 only the newest frame signal (`lattice/src/lib.rs`): a frame is a request
 for the newest state, and two signals in one batch mean one frame was
-missed, not that two are owed.
+missed, not that two are owed. The survivor carries the superseded
+signals' refresh counts (`runtime::coalesce_frame_signals`), because the
+display went through those refreshes whether or not a frame ran for them.
+This matters more than it looks: a JS-bound app leaves the main loop idle
+in its own terms, so idle Ticks keep firing at the refresh rate while JS is
+busy and two or three signals collapse per frame; without the carry the
+timeline ran at a third of wall time at 20 fps.
 
 ## The clocks
 
@@ -186,9 +192,10 @@ it. Four designs have been tried or considered, in this order:
    on a Pixel 7 at 21 fps was the second ([timer-deadlines-lag-frame-timeline],
    `~/solidrt/demoes/sponza/SOLIDRT-FEEDBACK.md` item 28).
 
-The decision, 2026-09-21 ([frame-signal-refresh-count]): the platform
-reports **how many refreshes passed since the previous frame signal**, and
-the timeline advances by exactly that. This is the browser and Choreographer
+The decision, 2026-09-21, implemented the same day
+([frame-signal-refresh-count]): the platform reports **how many refreshes
+passed since the previous frame signal**, and the timeline advances by
+exactly that. This is the browser and Choreographer
 model (a `requestAnimationFrame` timestamp is a vsync time; deltas below the
 refresh rate are whole multiples of the period) and what Unity moved to in
 2020.2, Godot ships as delta smoothing, and Croteam's frame-timing work
@@ -279,15 +286,27 @@ observed; an adaptive fallback is specified in
 
 ### D8. What the reference instant is, per signal
 
-Until tier 1 lands, the reference instant is: the raster thread's
-present-return instant for a SwapPaced or banked release; the vsync
-release instant minus the armed pacing delay for a VsyncLocked release
-(the delay is known, so the reference lands on the vsync rather than
-delay-plus-wake later); the tick deadline for an idle Tick. The
-Choreographer's `frameTimeNanos` is the app's wake-up time, one
-`Display.getAppVsyncOffsetNanos()` after the true vsync
-([choreographer-vsync-phase-offset]); when it becomes a reference it is
-corrected at the source, as the video plane's sampler already does.
+The reference instant is: the raster thread's present-return instant for
+a SwapPaced release; the Choreographer frame time of the signal for a
+VsyncLocked release, banked releases included (carried through the vsync
+channel as an Instant and kept with the bank, so every VsyncLocked
+reference sits on the vsync grid; a fallback release without a signal
+uses the wake minus the armed delay); the tick deadline for an idle Tick.
+Mixing a swap-return reference into the vsync-grid stream (the banked
+release before this was settled) cost a 2 percent flap rate at full rate
+on the Pixel 7: the throttle wait between vsync and swap return is a
+variable 3-19 ms. The Choreographer's `frameTimeNanos` is the app's
+wake-up time, a constant `Display.getAppVsyncOffsetNanos()` off the true
+vsync ([choreographer-vsync-phase-offset]); a constant phase offset does
+not change a refresh count, so it is left uncorrected there, and a
+consumer that needs the absolute phase takes it from the video plane's
+sampler, which corrects at its source.
+
+Presentation feedback (tier 1) cannot replace the reference on a platform
+where the frame signal is released at swap return: the feedback for frame
+k arrives after frame k+1's signal has been counted. There it calibrates
+the anchor and validates the count; only a vsync-released signal knows
+its refresh at signal time ([presentation-feedback]).
 
 ## Known limits and open items
 

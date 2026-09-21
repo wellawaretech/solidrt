@@ -9,10 +9,7 @@ use std::sync::atomic::Ordering;
 use impellers::{DisplayList, ISize};
 
 use super::repaint::WindowRoute;
-use super::{
-  DamageRect, PresentDamage, PresentRun, RasterState, FALLBACK_REFRESH_HZ, JANK_JITTER_SLACK,
-  PRESENT_FAILURE_EXIT_THRESHOLD, PRESENT_FENCE_DEPTH, PRESENT_FENCE_TIMEOUT_NS,
-};
+use super::{DamageRect, PresentDamage, RasterState, PRESENT_FAILURE_EXIT_THRESHOLD, PRESENT_FENCE_DEPTH, PRESENT_FENCE_TIMEOUT_NS};
 use crate::backend::FrameOutput;
 use crate::gl;
 use crate::gl::Timed;
@@ -98,9 +95,10 @@ impl RasterState {
       } else {
         self.damage.not_presented(own_damage);
       }
-      let present_ms = present_start.elapsed().as_secs_f32() * 1000.0;
+      let presented_at = std::time::Instant::now();
+      let present_ms = presented_at.duration_since(present_start).as_secs_f32() * 1000.0;
       self.timing.record(wait_ms, draw_ms, present_ms);
-      self.record_present_interval(drawn);
+      let demanded = self.demand_at_present(drawn);
       // A frame's native cost beyond ~2 vsync periods means this thread is
       // being stalled in the driver; log which step, rate-limited to one line
       // per second so a sustained stall stays readable. Debug, not warn: a
@@ -117,7 +115,7 @@ impl RasterState {
       if (now_w as i64, now_h as i64) != (width as i64, height as i64) {
         log::warn!("[alloy] surface size changed during frame: drew {width}x{height}, now {now_w}x{now_h}");
       }
-      self.tx.send(FrameOutput::Presented).map_err(|_| ())?;
+      self.tx.send(FrameOutput::Presented { at: presented_at, demanded }).map_err(|_| ())?;
     }
     // Wake only after the frame is in the channel, so the woken loop finds it.
     if let Some(wake) = &self.wake {
@@ -126,45 +124,16 @@ impl RasterState {
     Ok(())
   }
 
-  /// Missed-present (jank) accounting, run as each interactive present
-  /// returns from the swap. A miss is a refresh the screen repeated the old
-  /// frame through while a next frame was demanded; the demand gate makes
-  /// presents legitimately stop when nothing changes, so only gaps with the
-  /// frame-request latch set at present time can count - a gap with no
-  /// demand is idle, not jank. Counting compares whole periods elapsed
-  /// against presents delivered over each contiguous demanded run (span
-  /// first, then divide), because individual swap-return intervals jitter by
-  /// over half a period on healthy pacing (see JANK_JITTER_SLACK); `fps` and
-  /// the per-second averages cannot see a single repeat, this can.
-  fn record_present_interval(&mut self, drawn: bool) {
-    // No swap happened (minimized zero-size window, failed draw): presents
-    // are not pacing anything, so accounting restarts when they resume.
-    if !drawn {
-      self.present_run = None;
-      return;
-    }
-    let now = std::time::Instant::now();
-    let hz = crate::refresh_rate().unwrap_or(FALLBACK_REFRESH_HZ).max(1.0);
-    if self.present_run.as_ref().is_some_and(|run| run.hz != hz) {
-      self.present_run = None;
-    }
-    if let Some(run) = self.present_run.as_mut() {
-      run.intervals += 1;
-      let span_periods = now.duration_since(run.start).as_secs_f64() * hz as f64;
-      let expected = (span_periods - JANK_JITTER_SLACK).round().max(0.0) as u64;
-      let new = expected.saturating_sub(run.intervals).saturating_sub(run.reported);
-      if new > 0 {
-        run.reported += new;
-        self.stats.missed_presents.fetch_add(new, Ordering::Relaxed);
-      }
-    }
+  /// Whether a next frame was already demanded as this present left the
+  /// swap, for the present notification: the main loop's missed-present
+  /// accounting (see `present::RefreshCounting::count`) judges only the
+  /// intervals a demanded present opens, since the demand gate makes
+  /// presents legitimately stop when nothing changes - a gap with no demand
+  /// is idle, not jank. A present that swapped nothing (minimized zero-size
+  /// window, failed draw) paces nothing and opens no demanded interval.
+  fn demand_at_present(&self, drawn: bool) -> bool {
     // Sampled, never consumed - the UI thread's draw gate owns take().
-    let demanded = self.demand_latch.as_ref().is_some_and(|latch| latch.load(Ordering::Relaxed));
-    if !demanded {
-      self.present_run = None;
-    } else if self.present_run.is_none() {
-      self.present_run = Some(PresentRun { start: now, hz, intervals: 0, reported: 0 });
-    }
+    drawn && self.demand_latch.as_ref().is_some_and(|latch| latch.load(Ordering::Relaxed))
   }
 
   /// Block until outstanding presents are back under PRESENT_FENCE_DEPTH (or

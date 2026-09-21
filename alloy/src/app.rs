@@ -405,10 +405,27 @@ impl App {
     let mut gamepads = crate::gamepad::Gamepads::new(&sdl_context);
     let mut frame: u64 = 0;
 
-    // Raw facts only: a wall-clock timestamp sampled at present, plus the display
-    // refresh rate (its own event, delivered on init and on change). Smoothing
-    // and pacing are userspace policy.
+    // The refresh count on every frame signal (see present.rs): reference
+    // instants become ms on this origin, the counter turns them into whole
+    // display refreshes, and the ledger keeps the last few seconds of counts.
+    // The refresh rate is its own event (delivered on init and on change);
+    // what a count means for the app timeline is the embedder's policy.
     let start_time = Instant::now();
+    let ms_since_start = |at: Instant| at.saturating_duration_since(start_time).as_secs_f64() * 1000.0;
+    let mut refreshes = crate::present::RefreshCounting::new();
+    // Demand flags of the presents whose frame signal is deferred to a vsync
+    // (FrameRelease keeps only their number), in present order, so a release
+    // hands each signal its own present's flag.
+    let mut deferred_demand: std::collections::VecDeque<bool> = std::collections::VecDeque::new();
+    // Count one frame signal, record it, and add the misses it closed to the
+    // shared counter the stats read.
+    let count_signal = |refreshes: &mut crate::present::RefreshCounting, reference: Instant, frame: u64, presented: bool, demanded: bool| -> u32 {
+      let counted = refreshes.count(ms_since_start(reference), frame, presented, demanded);
+      if counted.missed > 0 {
+        stats.missed_presents.fetch_add(counted.missed as u64, Ordering::Relaxed);
+      }
+      counted.refreshes
+    };
     // The polled platform facts (keyboard, power, refresh-rate safety net);
     // polled at the bottom of each iteration, emitting on transitions.
     let mut watch = PlatformWatch::new(&window);
@@ -443,6 +460,7 @@ impl App {
     // the process until SIGKILL.
     'run: loop {
       let tick_period = Duration::from_secs_f64(1.0 / watch.refresh_rate().max(1.0) as f64);
+      refreshes.set_hz(watch.refresh_rate());
       // Sleep on the SDL event queue until the next idle-tick deadline: input
       // wakes it directly and each submitted frame pushes a FrameReady user
       // event (see Context::submit), so nothing needs polling. The woken-for
@@ -471,17 +489,19 @@ impl App {
       let mut disconnected = false;
       loop {
         match rx.try_recv() {
-          Ok(FrameOutput::Presented) => {
+          Ok(FrameOutput::Presented { at, demanded }) => {
             fps_frame_count += 1;
             match release.on_present(Instant::now(), tick_period) {
               // No vsync backend, or SwapPaced policy: the frame signal
               // follows the present directly and the blocking swap paces.
               // Under VsyncLocked, a present whose vsync signal was banked
               // (arrived while the frame was still in the swap) releases
-              // here too.
-              crate::vsync::Release::Emit { arm } => {
-                let time = start_time.elapsed().as_secs_f64();
-                event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
+              // here too, referenced at its banked vsync; otherwise the
+              // swap's return is the reference the refreshes are counted
+              // from.
+              crate::vsync::Release::Emit { arm, vsync: banked } => {
+                let count = count_signal(&mut refreshes, banked.unwrap_or(at), frame, true, demanded);
+                event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: count }).ok();
                 frame += 1;
                 last_frame_signal = Instant::now();
                 liveness.on_frame_signal(last_frame_signal);
@@ -490,6 +510,7 @@ impl App {
                 }
               }
               crate::vsync::Release::Deferred { arm } => {
+                deferred_demand.push_back(demanded);
                 if let (Some(v), Some(delay)) = (&vsync, arm) {
                   v.request(delay);
                 }
@@ -524,6 +545,18 @@ impl App {
           let delay_ms = release.current_delay_ms();
           log::debug!("[alloy] pacing: signal delay {delay_ms:.1}ms");
         }
+        // The refresh counts of the last second (see CountTally).
+        let t = refreshes.take_tally();
+        if t.signals > 0 {
+          log::debug!(
+            "[alloy] refresh count: {} signals, {} refreshes, zero {}, multi {}, max {}",
+            t.signals,
+            t.refreshes,
+            t.zero,
+            t.multi,
+            t.max
+          );
+        }
       }
 
       // No idle Tick while a present awaits its vsync signal: the real frame
@@ -541,7 +574,8 @@ impl App {
         if stats.queue_depth.load(Ordering::Acquire) == 0 {
           // The Tick is the loop's heartbeat, so an idle app with a finished
           // producer winds down within one tick period (see 'run).
-          if event_tx.send(AlloyEvent::Tick { frame, fps }).is_err() {
+          let count = count_signal(&mut refreshes, Instant::now(), frame, false, false);
+          if event_tx.send(AlloyEvent::Tick { frame, fps, refreshes: count }).is_err() {
             break 'run;
           }
           stats.idle_ticks.fetch_add(1, Ordering::Relaxed);
@@ -634,7 +668,16 @@ impl App {
       // arriving after its present was released by the fallback, cannot
       // release a future present early.
       if let Some(v) = &vsync {
-        match release.on_wake(Instant::now(), tick_period, v.try_take()) {
+        // A taken signal carries the instant of its vsync, the reference a
+        // vsync-released frame's refreshes are counted from. A fallback
+        // release has no signal: its reference is the wake minus the delay
+        // the signal would have slept (armed at the previous emission;
+        // on_wake below re-arms with the next one), which puts it near the
+        // vsync it stood in for.
+        let signal_delay = Duration::from_secs_f32(release.current_delay_ms() / 1000.0);
+        let woke = Instant::now();
+        let vsync = v.try_take();
+        match release.on_wake(woke, tick_period, vsync) {
           crate::vsync::Wake::Idle => {}
           // The signal beat the in-flight frame's present (the swap is
           // still blocking): it releases that present on return; keep the
@@ -652,9 +695,13 @@ impl App {
               // itself.
               log::debug!("[alloy] vsync signal missed; emitting frame signal after timeout");
             }
+            // Several presents released at once share one reference: the
+            // first takes the refreshes, the rest count as zero.
+            let reference = vsync.unwrap_or_else(|| woke.checked_sub(signal_delay).unwrap_or(woke));
             for _ in 0..emit {
-              let time = start_time.elapsed().as_secs_f64();
-              event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
+              let demanded = deferred_demand.pop_front().unwrap_or(true);
+              let count = count_signal(&mut refreshes, reference, frame, true, demanded);
+              event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: count }).ok();
               frame += 1;
             }
             last_frame_signal = Instant::now();
@@ -699,7 +746,7 @@ impl App {
           }
           AlloyCommand::SetFrameRequestLatch(latch) => {
             // The raster thread samples the same latch at present time for
-            // missed-present accounting (see record_present_interval).
+            // demand flag on each present notification (see demand_at_present).
             raster.send(RasterCmd::SetDemandLatch { latch: latch.clone() }).ok();
             liveness.set_latch(latch);
           }
@@ -710,9 +757,11 @@ impl App {
               // The clock reset belongs to an actual emission: a switch that
               // released nothing must not delay the next idle Tick.
               if released > 0 {
+                let reference = Instant::now();
                 for _ in 0..released {
-                  let time = start_time.elapsed().as_secs_f64();
-                  event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
+                  let demanded = deferred_demand.pop_front().unwrap_or(true);
+                  let count = count_signal(&mut refreshes, reference, frame, true, demanded);
+                  event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: count }).ok();
                   frame += 1;
                 }
                 last_frame_signal = Instant::now();

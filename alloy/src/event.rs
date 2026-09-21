@@ -295,21 +295,25 @@ pub enum AlloyEvent {
     safe_area: Rect,
     display_scale: f32,
   },
-  // `time` is raw wall-clock seconds since render-thread start, sampled right
-  // after present. Intentionally unsmoothed: pacing is userspace policy.
+  // A frame was presented. `refreshes` is how many display refreshes passed
+  // since the previous frame signal (FrameRendered or Tick), as counted by
+  // the main loop (see present.rs): one at full rate, more when the frame
+  // took longer than a period. It is the fact the app timeline advances by;
+  // what a count worth a suspension means is the embedder's policy.
   FrameRendered {
     frame: u64,
     fps: u32,
-    time: f64,
+    refreshes: u32,
   },
   // Idle tick: emitted at the refresh cadence when no display list has arrived
   // for a full refresh period, so the UI thread keeps running its per-frame
   // logic (timers, signal flush, camera pump) while nothing is presented.
   // `frame` is the present counter, i.e. one past the last FrameRendered's
-  // frame: the index the next present will get.
+  // frame: the index the next present will get. `refreshes` as above.
   Tick {
     frame: u64,
     fps: u32,
+    refreshes: u32,
   },
   // Display refresh rate in Hz. Its own event (independent of frames): emitted
   // at startup and whenever the rate changes (e.g. Android 90 <-> 60Hz).

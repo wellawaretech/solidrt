@@ -71,11 +71,12 @@ pub struct RasterStats {
   /// within the fence timeout, i.e. the GPU is over budget and pacing was
   /// lost for that frame.
   pub(crate) fence_timeouts: AtomicU64,
-  /// Presents the screen missed while a next frame was demanded: over each
-  /// contiguous run of demanded presents, the whole periods elapsed minus the
-  /// presents delivered (see `record_present_interval`). The direct jank
-  /// count - a repeated frame lands here even when every per-second average
-  /// reads clean.
+  /// Presents the screen missed while a next frame was demanded: for each
+  /// present that follows a demanded one, the display refreshes of the
+  /// interval beyond the first (counted by the frame loop from the refresh
+  /// count, see `present::RefreshCounting::count`; app.rs adds). The direct
+  /// jank count - a repeated frame lands here even when every per-second
+  /// average reads clean.
   pub(crate) missed_presents: AtomicU64,
   /// Shader/pipeline target renders executed by `flush_dirty`. Passes
   /// racing ahead of presented frames means redundant target re-renders
@@ -255,18 +256,6 @@ const PRESENT_FENCE_TIMEOUT_NS: i32 = 100_000_000;
 // okf/backlog/adaptive-present-fence-depth.md.
 const PRESENT_FENCE_DEPTH: usize = 2;
 
-// Slack, in refresh periods, subtracted from a demanded run's elapsed span
-// before rounding it to the presents the display expected. Swap-return times
-// jitter by more than half a period under mailbox/triple-buffered
-// compositors (the reason lattice's animation clock paces by present count,
-// not timestamps), so judging intervals with a plain round() would latch
-// phantom misses on healthy runs; a real missed present overshoots by a full
-// period and still counts through this slack.
-const JANK_JITTER_SLACK: f64 = 0.25;
-
-// Refresh rate assumed for miss accounting until the event loop has queried
-// the display mode (same fallback the frame loop uses).
-const FALLBACK_REFRESH_HZ: f32 = 60.0;
 
 pub(crate) struct RasterState {
   gl: glow::Context,
@@ -311,12 +300,10 @@ pub(crate) struct RasterState {
   // Once-per-second frame phase trace (see FrameTiming).
   timing: FrameTiming,
   // The UI-side frame-request latch, sampled (never consumed) at present
-  // time to tell a demanded gap from an idle one; None until the embedder
-  // registers it (SetDemandLatch), and miss accounting stays off without it.
+  // time to tell a demanded gap from an idle one (`demand_at_present`, sent
+  // with each present notification); None until the embedder registers it
+  // (SetDemandLatch), and miss accounting stays off without it.
   demand_latch: Option<Arc<AtomicBool>>,
-  // The contiguous run of demanded presents miss accounting is currently
-  // spanning; None while the app is idle (see record_present_interval).
-  present_run: Option<PresentRun>,
   // Fences signaled as each present's GPU work completes, awaited before a
   // draw once PRESENT_FENCE_DEPTH are outstanding. Vsync alone lets the CPU
   // swap several frames ahead of what is on glass (Android's BufferQueue
@@ -439,26 +426,6 @@ struct OverlayState {
   stale: bool,
 }
 
-/// One contiguous run of demanded presents, the unit miss accounting works
-/// over (see `record_present_interval`): misses are counted as the whole
-/// refresh periods the run has spanned minus the presents delivered, judged
-/// over the accumulated span rather than per interval so per-swap timestamp
-/// jitter cancels instead of latching phantom misses.
-struct PresentRun {
-  /// Instant of the present that opened the run (demand was latched when it
-  /// left the swap).
-  start: std::time::Instant,
-  /// Refresh rate the run is judged against; a mid-run mode change mixes
-  /// periods, so the run restarts instead.
-  hz: f32,
-  /// Presents delivered since `start` (each closes one interval).
-  intervals: u64,
-  /// Misses already added to `RasterStats::missed_presents` for this run;
-  /// only growth beyond this high-water mark is added, so a jittery reading
-  /// can never count the same miss twice.
-  reported: u64,
-}
-
 /// Reply to an RPC; a dead requester (UI thread shutting down) is not an error.
 fn reply<T>(tx: mpsc::Sender<T>, value: T) {
   tx.send(value).ok();
@@ -555,7 +522,6 @@ impl RasterState {
       stats,
       timing: FrameTiming::new(),
       demand_latch: None,
-      present_run: None,
       present_fences: std::collections::VecDeque::new(),
       staging: gl::UploadStaging::new(),
       textures: HashMap::new(),

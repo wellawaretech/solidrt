@@ -10,8 +10,14 @@ use crate::Context;
 /// main loop only does frame bookkeeping (fps, FrameRendered events) and
 /// playback encoding.
 pub enum FrameOutput {
-  /// Interactive: the frame is on screen.
-  Presented,
+  /// Interactive: the frame is on screen. `at` is the instant the swap
+  /// returned on the raster thread - the reference the main loop counts
+  /// display refreshes from (see present.rs), taken there rather than at
+  /// receipt so channel and wake latency do not add to its jitter.
+  /// `demanded` is the frame-request latch sampled at that instant: whether
+  /// a next frame was already wanted, which separates a missed present from
+  /// an idle gap.
+  Presented { at: std::time::Instant, demanded: bool },
   /// Playback: the frame was drawn to the hidden window's backbuffer and read
   /// back. RGBA8, bottom-up rows, at the fixed capture size.
   Captured(Vec<u8>),

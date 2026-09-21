@@ -54,7 +54,7 @@ pub(crate) fn run_playback_loop(
       Ok(FrameOutput::Captured(rgba)) => rgba,
       // Presented is interactive-only; a closed channel means the raster
       // thread is gone.
-      Ok(FrameOutput::Presented) | Err(_) => break,
+      Ok(FrameOutput::Presented { .. }) | Err(_) => break,
     };
     if draw > 0 {
       let frame = draw - 1;
@@ -81,8 +81,8 @@ pub(crate) fn run_playback_loop(
       event_tx.send(scripted).ok();
     }
 
-    let time = draw as f64 / playback.fps as f64;
-    event_tx.send(AlloyEvent::FrameRendered { frame: draw, fps: playback.fps, time }).ok();
+    // Playback derives time from frame / fps; every frame is one refresh.
+    event_tx.send(AlloyEvent::FrameRendered { frame: draw, fps: playback.fps, refreshes: 1 }).ok();
   }
   raster.drain();
 

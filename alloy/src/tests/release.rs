@@ -61,7 +61,7 @@ fn signal_releases_all_pending_and_prearms() {
   let mut fr = FrameRelease::new(true, t0);
   deferred_arm(fr.on_present(t0, PERIOD));
   deferred_arm(fr.on_present(t0, PERIOD));
-  match fr.on_wake(t0 + PERIOD, PERIOD, true) {
+  match fr.on_wake(t0 + PERIOD, PERIOD, Some(t0 + PERIOD)) {
     Wake::Release { emit, timed_out, arm } => {
       assert_eq!(emit, 2);
       assert!(!timed_out);
@@ -83,10 +83,10 @@ fn fallback_fires_only_at_the_deadline() {
   deferred_arm(fr.on_present(t0, PERIOD));
   let deadline = fr.wait_deadline().expect("deferred");
   // Before the deadline with no signal: keep waiting.
-  assert!(matches!(fr.on_wake(deadline - Duration::from_millis(1), PERIOD, false), Wake::Idle));
+  assert!(matches!(fr.on_wake(deadline - Duration::from_millis(1), PERIOD, None), Wake::Idle));
   // At the deadline: release with the timeout marked, and a fresh request
   // armed (superseding the late signal, which try_take will discard).
-  match fr.on_wake(deadline, PERIOD, false) {
+  match fr.on_wake(deadline, PERIOD, None) {
     Wake::Release { emit, timed_out, arm } => {
       assert_eq!(emit, 1);
       assert!(timed_out);
@@ -102,14 +102,14 @@ fn signal_with_nothing_pending_ends_the_chain() {
   let mut fr = FrameRelease::new(true, t0);
   deferred_arm(fr.on_present(t0, PERIOD));
   let t1 = t0 + PERIOD;
-  assert!(matches!(fr.on_wake(t1, PERIOD, true), Wake::Release { .. }));
+  assert!(matches!(fr.on_wake(t1, PERIOD, Some(t1)), Wake::Release { .. }));
   // Demand stops (the UI built nothing for the emission). The pre-armed
   // request's signal finds nothing pending with a frame nominally in
   // flight, so it is banked (one spare callback); the signal after it ends
   // the chain (a second spare) and idle ticks resume.
-  assert!(matches!(fr.on_wake(t1 + PERIOD, PERIOD, true), Wake::Banked { .. }));
+  assert!(matches!(fr.on_wake(t1 + PERIOD, PERIOD, Some(t1 + PERIOD)), Wake::Banked { .. }));
   assert!(!fr.idle());
-  assert!(matches!(fr.on_wake(t1 + 2 * PERIOD, PERIOD, true), Wake::Idle));
+  assert!(matches!(fr.on_wake(t1 + 2 * PERIOD, PERIOD, Some(t1 + 2 * PERIOD)), Wake::Idle));
   assert!(fr.idle(), "the chain ended: ticks may resume");
   assert!(fr.wait_deadline().is_none());
   // The next present out of idle starts a fresh chain.
@@ -154,7 +154,7 @@ fn signal_ahead_of_the_in_flight_present_is_banked() {
   let mut fr = FrameRelease::new(true, t0);
   deferred_arm(fr.on_present(t0, PERIOD));
   let t1 = t0 + PERIOD;
-  assert!(matches!(fr.on_wake(t1, PERIOD, true), Wake::Release { .. }));
+  assert!(matches!(fr.on_wake(t1, PERIOD, Some(t1)), Wake::Release { .. }));
   // The frame this emission triggers is in flight: not idle, and the loop
   // waits toward the armed deadline rather than ticking through the swap.
   assert!(!fr.idle(), "a frame in flight is not idle");
@@ -162,21 +162,25 @@ fn signal_ahead_of_the_in_flight_present_is_banked() {
   // Its signal arrives first (the swap is still blocking): banked, the
   // request for the following vsync armed (the signal disarmed the last).
   let t2 = t1 + PERIOD;
-  match fr.on_wake(t2, PERIOD, true) {
+  match fr.on_wake(t2, PERIOD, Some(t2)) {
     Wake::Banked { arm } => assert!(arm.is_some(), "the bank keeps the next vsync armed"),
     Wake::Release { .. } => panic!("nothing is pending to release"),
     Wake::Idle => panic!("a signal ahead of an in-flight present must be banked, not end the chain"),
   }
   assert!(!fr.idle());
-  // The present returns: released at once, nothing to arm (already armed).
+  // The present returns: released at once, nothing to arm (already armed),
+  // and referenced at the banked signal's vsync, not at the swap's return.
   match fr.on_present(t2 + Duration::from_millis(2), PERIOD) {
-    Release::Emit { arm } => assert!(arm.is_none()),
+    Release::Emit { arm, vsync } => {
+      assert!(arm.is_none());
+      assert_eq!(vsync, Some(t2), "a banked release carries its vsync as the reference");
+    }
     Release::Deferred { .. } => panic!("a banked signal releases the present on arrival"),
   }
   // Back to the normal chain: the next present defers to its signal.
   let t3 = t2 + PERIOD;
   assert!(deferred_arm(fr.on_present(t3, PERIOD)).is_none());
-  assert!(matches!(fr.on_wake(t3 + Duration::from_millis(8), PERIOD, true), Wake::Release { emit: 1, .. }));
+  assert!(matches!(fr.on_wake(t3 + Duration::from_millis(8), PERIOD, Some(t3 + Duration::from_millis(8))), Wake::Release { emit: 1, .. }));
 }
 
 // Neither present nor signal by the armed deadline (a dead vsync source
@@ -188,11 +192,11 @@ fn in_flight_window_is_given_up_at_the_deadline() {
   let mut fr = FrameRelease::new(true, t0);
   deferred_arm(fr.on_present(t0, PERIOD));
   let t1 = t0 + PERIOD;
-  assert!(matches!(fr.on_wake(t1, PERIOD, true), Wake::Release { .. }));
+  assert!(matches!(fr.on_wake(t1, PERIOD, Some(t1)), Wake::Release { .. }));
   let deadline = fr.wait_deadline().expect("in flight waits toward the deadline");
-  assert!(matches!(fr.on_wake(deadline - Duration::from_millis(1), PERIOD, false), Wake::Idle));
+  assert!(matches!(fr.on_wake(deadline - Duration::from_millis(1), PERIOD, None), Wake::Idle));
   assert!(!fr.idle());
-  assert!(matches!(fr.on_wake(deadline, PERIOD, false), Wake::Idle));
+  assert!(matches!(fr.on_wake(deadline, PERIOD, None), Wake::Idle));
   assert!(fr.idle(), "past the deadline the window is given up");
   assert!(fr.wait_deadline().is_none());
   assert!(deferred_arm(fr.on_present(deadline + PERIOD, PERIOD)).is_some());
@@ -206,12 +210,12 @@ fn leaving_vsync_locked_forgets_the_bank() {
   let mut fr = FrameRelease::new(true, t0);
   deferred_arm(fr.on_present(t0, PERIOD));
   let t1 = t0 + PERIOD;
-  assert!(matches!(fr.on_wake(t1, PERIOD, true), Wake::Release { .. }));
-  assert!(matches!(fr.on_wake(t1 + PERIOD, PERIOD, true), Wake::Banked { .. }));
+  assert!(matches!(fr.on_wake(t1, PERIOD, Some(t1)), Wake::Release { .. }));
+  assert!(matches!(fr.on_wake(t1 + PERIOD, PERIOD, Some(t1 + PERIOD)), Wake::Banked { .. }));
   assert!(matches!(fr.set_pacing(FramePacing::SwapPaced), PacingChange::Changed { released: 0 }));
   assert!(fr.idle());
   match fr.on_present(t1 + PERIOD + Duration::from_millis(2), PERIOD) {
-    Release::Emit { arm } => assert!(arm.is_none(), "SwapPaced never arms"),
+    Release::Emit { arm, .. } => assert!(arm.is_none(), "SwapPaced never arms"),
     Release::Deferred { .. } => panic!("SwapPaced emits directly"),
   }
 }

@@ -37,8 +37,8 @@
 //! own uploads. Wall time is the wrong master clock because the tick's JS
 //! work executes at jittery wall moments even when presents are metronomic -
 //! a wall read inside the tick inherits that jitter and frame selection holds
-//! and double-steps. The paced timeline advances one period per frame
-//! whatever the execution jitter. The lookahead keeps comparisons off the pts
+//! and double-steps. The paced timeline advances by the display refreshes
+//! each frame covered, whatever the execution jitter. The lookahead keeps comparisons off the pts
 //! boundary that play() anchors the grids in phase on; without it sub-ms
 //! timeline noise flips them. Measured on the 50 Hz TV, 50 fps content:
 //! 2.8% of steps held or double-stepped without these, 0.07% with.

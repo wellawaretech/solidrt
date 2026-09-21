@@ -28,16 +28,19 @@ frame's feedback has not arrived by signal time, the estimator stands.
 
 ## Per platform
 
-**Android, Choreographer frame time.** Already in hand: `frame_callback`
-in `alloy/src/vsync.rs` receives `frameTimeNanos` and discards it. Carry
-it through the signal channel as `(generation, frame_time)`, convert to
-the main loop's `Instant` by reading `CLOCK_MONOTONIC` on the vsync thread
-(the same clock) and subtracting the difference, and correct by
-`Display.getAppVsyncOffsetNanos()` as the video plane's sampler does
+**Android, Choreographer frame time.** DONE 2026-09-21: `frame_callback`
+in `alloy/src/vsync.rs` converts `frameTimeNanos` to an `Instant` on the
+vsync thread (age on `CLOCK_MONOTONIC`, the same clock, subtracted from
+`Instant::now()`), the signal channel carries `(generation, vsync)`, and
+the main loop counts a vsync-released signal from that instant. A banked
+release is counted from its banked vsync too (`Release::Emit { vsync }`),
+which keeps every VsyncLocked reference on the grid; counting it at the
+swap's return (vsync plus libgui's 3-19 ms throttle wait) produced a
+2 percent rate of zero-then-2 pairs at full rate on the Pixel 7. The
+`Display.getAppVsyncOffsetNanos()` correction is deliberately not applied:
+a constant phase offset does not change a refresh count; a consumer that
+needs the absolute phase takes it from the video plane's sampler
 ([choreographer-vsync-phase-offset](../done/choreographer-vsync-phase-offset.md)).
-Applies to vsync-released signals only: a banked release fires at present
-return and its refresh is the one after the present, not the vsync that
-was banked.
 
 **Android, `EGL_ANDROID_get_frame_timestamps`.** Per frame: requested
 present, latch, actual present, display retire, GPU composition done. The
@@ -69,6 +72,33 @@ signals is the refresh count directly. Check the extension list on both
 ANGLE backends; DXGI `GetFrameStatistics` and `CVDisplayLink` are the
 fallbacks if the extension is missing. Note the D3D11 present-fence
 behavior recorded in [angle-present-fence-pacing](angle-present-fence-pacing.md).
+
+## What feedback can and cannot do for the count (2026-09-21)
+
+Read against the code before starting the Wayland backend: the refresh
+count rides the frame signal, and the frame signal for frame k+1 is
+emitted at frame k's swap return, before the compositor has said which
+refresh frame k went out on. `wp_presentation` feedback for frame k
+arrives up to a refresh later (more under mailbox presentation), so it
+cannot decide frame k+1's count at the moment that count is needed. What
+it can do: calibrate the counter's anchor to the true grid (the phase
+error becomes zero instead of the warm-up residual), report discarded
+frames, and give `missedPresents` the compositor's own sequence numbers.
+Making the count exact at signal time would take a pacing mode that defers
+the frame signal to the feedback itself, the way VsyncLocked defers it to
+the Choreographer - a frame of latency, the trade the TV policy already
+makes for fluency, and a decision of its own.
+
+The Android Choreographer path has no such gap: the vsync instant is known
+when the signal is released (implemented 2026-09-21; device verification
+pending). The same holds for any platform whose frame signal is released
+by a vsync callback.
+
+So the Wayland and ANGLE items below are calibration and validation
+sources first. The measured need decides when they are built: the 1/s
+`refresh count` debug line's `zero` and `multi` columns at full rate are
+the reading (this laptop, Wayland/Hyprland, SwapPaced, 2026-09-21: both 0
+over minutes, one 0-then-2 pair in 361 frames near full rate).
 
 ## Done looks like
 

@@ -74,7 +74,7 @@ pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;
 pub use mode::Mode;
 pub use playback::PlaybackConfig;
-pub use present::PresentClock;
+pub use present::{CountTally, Counted, RefreshCounter, RefreshCounting, SignalLedger, SignalRecord};
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
 pub use vsync::FramePacing;
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
