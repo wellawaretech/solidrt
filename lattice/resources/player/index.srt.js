@@ -9683,32 +9683,30 @@ function createTextBuffer(options = {}) {
   };
 }
 function createTextEditorLayout(viewport, input) {
-  let [viewportSize, setViewportSize] = createSignal({
-    width: 0,
-    height: 0
-  }, {
-    equals: (a, b) => a.width === b.width && a.height === b.height
+  let [viewportWidth, setViewportWidth] = createSignal(0);
+  let [viewportHeight, setViewportHeight] = createSignal(0);
+  let font = createMemo(() => input().font, {
+    equals: sameOptions
   });
+  let space = createMemo(() => measureText2(" ", font()));
   let prepared = createMemo(() => {
     let {
       text,
-      font,
       runs
     } = input();
     return prepareText2(text, {
-      ...font,
+      ...font(),
       runs,
       carets: true
     });
   });
-  let placed = createMemo(() => {
+  let placed = createMemo((prev) => {
     let {
       text,
-      font,
       wrap,
       caretWidth = 0
     } = input();
-    let width = wrap ? Math.max(0, viewportSize().width - caretWidth) : Infinity;
+    let width = wrap ? Math.max(0, viewportWidth() - caretWidth) : Infinity;
     let units = wrap ? splitWide(prepared(), width) : prepared();
     let out = [];
     let y = 0;
@@ -9730,22 +9728,29 @@ function createTextEditorLayout(viewport, input) {
       line = layoutNextLine(units, line.cursor, width);
     }
     if (out.length === 0 || hardBreak) {
-      let height = measureText2(" ", font).height;
       let n = units.units.length;
       out.push({
         start: text.length,
         end: text.length,
         y,
-        height,
+        height: space().height,
         width: 0,
         from: n,
         to: n
       });
     }
+    if (prev && prev.units === units.units) {
+      for (let i = 0;i < out.length && i < prev.lines.length; i++) {
+        if (sameLine(prev.lines[i], out[i]))
+          out[i] = prev.lines[i];
+      }
+    }
     return {
       units: units.units,
       lines: out
     };
+  }, {
+    equals: samePlacement
   });
   let lines = createMemo(() => placed().lines);
   let lineStops = (index) => {
@@ -9828,7 +9833,7 @@ function createTextEditorLayout(viewport, input) {
     let ls = lines();
     let first = lineOf(start);
     let last = lineOf(end);
-    let breakWidth = measureText2(" ", input().font).width;
+    let breakWidth = space().width;
     let out = [];
     for (let i = first;i <= last; i++) {
       let line = ls[i];
@@ -9889,23 +9894,21 @@ function createTextEditorLayout(viewport, input) {
       return 0;
     let contentWidth = lines().reduce((w, l) => Math.max(w, l.width), 0);
     let c = caret();
-    return follow(prev ?? 0, c.x, caretWidth, viewportSize().width, contentWidth + caretWidth);
+    return follow(prev ?? 0, c.x, caretWidth, viewportWidth(), contentWidth + caretWidth);
   });
   let scrollY = createMemo((prev) => {
     let ls = lines();
     let last = ls[ls.length - 1];
     let c = caret();
-    return follow(prev ?? 0, c.y, c.height, viewportSize().height, last.y + last.height);
+    return follow(prev ?? 0, c.y, c.height, viewportHeight(), last.y + last.height);
   });
   onLayout(() => {
     let node = viewport();
     if (!node)
       return;
     let box = getLayoutBox2(node);
-    setViewportSize({
-      width: box?.width ?? 0,
-      height: box?.height ?? 0
-    });
+    setViewportWidth(box?.width ?? 0);
+    setViewportHeight(box?.height ?? 0);
   });
   return {
     lines,
@@ -9964,6 +9967,19 @@ function splitWide(prepared, width) {
     text: prepared.text,
     units
   };
+}
+function sameOptions(a, b) {
+  let ka = Object.keys(a);
+  let kb = Object.keys(b);
+  return ka.length === kb.length && ka.every((k) => a[k] === b[k]);
+}
+function sameLine(a, b) {
+  return a.start === b.start && a.end === b.end && a.y === b.y && a.height === b.height && a.width === b.width;
+}
+function samePlacement(a, b) {
+  if (a.units !== b.units || a.lines.length !== b.lines.length)
+    return false;
+  return a.lines.every((l, i) => sameLine(l, b.lines[i]));
 }
 function follow(current, pos, size, extent, content) {
   if (extent <= 0)
@@ -10269,6 +10285,17 @@ function EditorField(props) {
     let id2 = focusedNode();
     return id2 != null && id2 === node?.id;
   });
+  let editing = createMemo(() => focused() && textInputActive());
+  createEffect(() => editing(), (active) => {
+    if (!active)
+      return;
+    startBlink();
+    return () => {
+      if (blinkId != null)
+        clearInterval(blinkId);
+      blinkId = null;
+    };
+  });
   let buffer = untrack(() => props.buffer)((_text, offset, direction) => editor.step(offset, direction));
   let value = buffer.value;
   let selectedText = () => {
@@ -10330,14 +10357,9 @@ function EditorField(props) {
     }
   };
   let handleFocus = () => {
-    startBlink();
     untrack(() => props.onFocus)?.();
   };
   let handleBlur = () => {
-    if (blinkId != null) {
-      clearInterval(blinkId);
-      blinkId = null;
-    }
     untrack(() => props.onBlur)?.();
   };
   let handleKeyDown = (e) => {
@@ -10439,8 +10461,6 @@ function EditorField(props) {
   };
   let unregisterNav = null;
   onCleanup(() => {
-    if (blinkId != null)
-      clearInterval(blinkId);
     unregisterNav?.();
     if (dragActive != null)
       arena.release(dragActive, dragOwner);
@@ -10452,7 +10472,7 @@ function EditorField(props) {
   let borderWidth = () => props.style?.borderWidth ?? (ring() ? theme.borderWidth.focus : theme.borderWidth.sm);
   let borderRadius = () => props.style?.borderRadius ?? theme.radius.md;
   let showPlaceholder = () => !focused() && value().length === 0 && (props.placeholder ?? "").length > 0;
-  let showCaret = () => focused() && caretOn() && !showPlaceholder();
+  let showCaret = () => editing() && caretOn() && !showPlaceholder();
   let layout = createMemo(() => splitTextLayout(props.layout));
   let layoutFont = () => layout().text;
   let fontSize = () => (layoutFont().fontSize ?? theme.text.body.size) * policy.textScale;

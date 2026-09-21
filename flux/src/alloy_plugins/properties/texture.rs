@@ -1,4 +1,4 @@
-use super::{decode_params, describe, opt, opt_f32, str_of};
+use super::{decode_params, describe, opt, opt_f32, opt_radius, str_of};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::{Texture, TextureFit};
@@ -37,6 +37,7 @@ pub fn apply(
     "y" => tex.set_y(opt_f32(value, "y")?),
     "w" => tex.set_w(opt_f32(value, "w")?),
     "h" => tex.set_h(opt_f32(value, "h")?),
+    "radius" => tex.set_radius(opt_radius(value, "radius")?),
     // Params are target state, written through the GPU channel like the
     // imperative setTargetParams (one write path; unknown names, arities,
     // and non-target ids all error there). Target state is not element

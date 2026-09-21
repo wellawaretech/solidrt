@@ -1072,6 +1072,16 @@ export interface TextProps extends PaintProps, PointerProps, TextRunProps {
 export interface TextureProps extends PaintProps, PointerProps {
   src?: TextureId
   /**
+   * Corner radius, as on a rect: the image is drawn as a rounded rect filled
+   * with the texture, in one draw and with no clip, so a frosted or image
+   * pane keeps rounded corners at the cost of the plain draw (a rounded
+   * `clipRadius` around it costs a tiled GPU a third of the frame per ten
+   * panes while the box is in flight). A single number rounds all four
+   * corners; an array is [top-left, top-right, bottom-right, bottom-left].
+   * Animatable in its single-number form, like a rect's.
+   */
+  radius?: number | [number, number, number, number]
+  /**
    * How the texture's pixels map to the element box (CSS object-fit).
    * "fill" (default) stretches; "cover" and "none" crop; "contain" and
    * "scale-down" letterbox. Everything centers - there is no object-position.

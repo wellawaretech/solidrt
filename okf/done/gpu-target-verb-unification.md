@@ -30,7 +30,7 @@ day: core gpu.ts CreateOptions + all guards (`opts?.autoFree !== false`),
 3d SceneOptions + createScene internals + geometryBuffers, docs/core.md.
 The audit found NO other wrappers carrying the option (image/audio/camera
 creates have no lifetime opt-out today) and no example/app usage in or out
-of repo (cheezed checked). The render-vs-lifetime disambiguation sentences
+of repo (a customer app checked). The render-vs-lifetime disambiguation sentences
 were deleted rather than reworded - with distinct names they said nothing.
 Semantics byte-for-byte unchanged: default true, registration still
 conditional on a current owner.

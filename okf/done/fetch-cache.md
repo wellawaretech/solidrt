@@ -140,7 +140,7 @@ revalidation.
   keyed, explicitly fetch-adjacent), not a bespoke KV API. The standalone
   forge cache core is what keeps that cheap to add.
 
-## 2026-07-23 additions (cheezed 429 debugging)
+## 2026-07-23 additions (429 debugging on a customer app)
 
 Driven by an app loading ~185 remote images: rate-limited hosts
 (upload.wikimedia.org) returned 429s that surfaced as broken images, and the

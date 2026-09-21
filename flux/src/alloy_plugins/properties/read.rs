@@ -184,6 +184,9 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       num(&mut out, "y", tex.y);
       num(&mut out, "w", tex.w);
       num(&mut out, "h", tex.h);
+      if let Some(r) = tex.radius {
+        out.push(("radius", ReadValue::Nums(r.iter().map(|v| *v as f64).collect())));
+      }
     }
   }
   // Element-level, mirroring apply_jsx's encodings. The JSX write side is

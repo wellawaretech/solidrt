@@ -141,9 +141,9 @@ Decided: runner APKs are per ABI, built for the target device - a shipped
 app carries neither an emulator ABI nor a fat penalty (`solidrt-go.apk`, fat
 arm64 + x86_64, is 101 MB against the 40.8 MB arm64 runner). CI publishes
 one runner per ABI (arm64-v8a first; x86_64 only as a dev artifact for the
-emulator). Play Store publishing is a separate future item and a different
-artifact: an AAB carrying all ABIs (bundletool container, protobuf
-manifest, Play signing, split per device at delivery), not a fat APK.
+emulator). Play Store publishing is a different artifact, an AAB, shaped in
+`play-store-aab.md`: a runner bundle skeleton patched the same way, with
+the libs lifted from these per-ABI runner APKs.
 
 ## Related
 

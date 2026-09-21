@@ -62,6 +62,14 @@ const SETTLE_PRESENTS: u32 = 3;
 // rate, with every interval 1), so the estimate alone is not evidence.
 const MISS_MEMORY_PRESENTS: u32 = 30;
 
+// An idle gap this long between presents ends the frame stream the hold was
+// learned on: the next interaction starts unheld and the measured rule
+// decides afresh. Without it a hold that a mount or a heavier scene raised
+// outlives it indefinitely, because idle feeds the controller nothing to
+// step down on, and every later animation inherits it (a tablet measured
+// stuck at three refreshes through minutes of idle, 2026-09-22).
+const IDLE_RESET_MS: f64 = 500.0;
+
 // Slack when turning the policy's maximum slot length into whole slots, in
 // slots: 50 ms at a 16.667 ms period is three slots, not 2.9999.
 const MAX_HOLD_SLACK: f64 = 0.01;
@@ -220,6 +228,7 @@ impl CadenceController {
     };
     let from = self.hold;
     let work_ms = cpu_ms + gpu_ms;
+    let idle = self.fed > 0 && now_ms - self.last_now_ms >= IDLE_RESET_MS;
     self.fed += 1;
     self.last_interval = interval;
     self.last_work_ms = work_ms;
@@ -228,6 +237,21 @@ impl CadenceController {
     }
     self.recent.push_back((interval, cpu_ms, gpu_ms, now_ms - self.last_now_ms));
     self.last_now_ms = now_ms;
+    // The first present after an idle gap carries the gap as its interval,
+    // evidence of nothing: it only resets a hold above 1 (see IDLE_RESET_MS).
+    if idle {
+      self.over = 0;
+      self.window_start_ms = None;
+      self.window_unfit = 0;
+      self.down_window_ms = DOWN_WINDOW_MS;
+      self.last_down_ms = None;
+      if self.hold > 1 {
+        self.hold = 1;
+        self.since_change = 0;
+        return Some(HoldChange { from, to: 1, need: 1, work_ms });
+      }
+      return None;
+    }
     let settling = self.since_change < SETTLE_PRESENTS;
     self.since_change = self.since_change.saturating_add(1);
     let max_hold = ((max_ms as f64 / period_ms + MAX_HOLD_SLACK).floor() as u32).max(1);
@@ -269,7 +293,8 @@ impl CadenceController {
     self.over = 0;
     // Down, on prediction: the frame's slot use fits one slot fewer, for a
     // whole window.
-    let fits_below = self.hold > 1 && (start_offset_ms + work_ms + DOWN_MARGIN_MS) as f64 <= (self.hold - 1) as f64 * period_ms;
+    let fits_below =
+      self.hold > 1 && (start_offset_ms + work_ms + DOWN_MARGIN_MS) as f64 <= (self.hold - 1) as f64 * period_ms;
     if !fits_below {
       self.window_unfit += 1;
       if self.window_unfit >= UP_FRAMES || self.hold == 1 {

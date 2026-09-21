@@ -254,6 +254,12 @@ Shaped, not started.
   Give dev, render and pack one gitignored output root (dist/) with a subdir
   per flow, fixing render's missing isolate support and clearing the ground
   for pack formats and asset pre-processing.
+- **[The cadence hold never steps down on Android and reads the held interval as GPU time](backlog/cadence-hold-sticky-android.md)** [2026-09-22]
+  get_stats' gpuFrameExecMsPerFrame tracked the held interval (43-51 ms at a
+  hold of 3) while SurfaceFlinger's queue-to-ready spans were 25-32 ms, so the
+  step-down prediction never fits, the hold stays at 3 through idle, and every
+  later animation starts at 20 fps even when its frames would fit; reload
+  resets it.
 - **[Camera and controls extensions](backlog/camera-and-controls-extensions.md)** [2026-09-17]
   SolidRT has two stock controls (OrbitCamera, FirstPersonCamera) where
   Three.js and Babylon.js ship many with more options; the concrete gap is
@@ -595,6 +601,12 @@ Shaped, not started.
   Windows runner would lose Authenticode the same way; embed the pack inside
   the executable image (Mach-O segment, PE resource) and re-sign after
   packing.
+- **[Gradient fills, non-source-over blends and many small draws each cost a frame's worth on Android](backlog/paint-costs-android-gradients-blends.md)** [2026-09-22]
+  On the Tab A7 a linear-gradient d-rect over each of ten panes costs ~15 ms a
+  frame, four tiny destination-out/over draws per pane ~16 ms, seventy small
+  texture draws ~10 ms - measured by subtraction from compositor timestamps;
+  performance.md needs the numbers and get_stats per-frame draw/blend/layer
+  counters.
 - **[Paint viewport culling](backlog/paint-viewport-culling.md)** [2026-08-18]
   The paint walk visits and builds every mounted node whether or not it can be
   seen, so paint cost is O(mounted content) - ~7 us/node, ~155 ms/frame at 17k
@@ -624,6 +636,12 @@ Shaped, not started.
   An app animating over a playing video plane runs at 16 fps because every
   window present waits for its GPU work while a plane exists; wait only for
   isolated presents, and not while the plane is paused.
+- **[Play Store publishing with srt pack --aab](backlog/play-store-aab.md)** [2026-09-21]
+  A packed app can be sideloaded as an APK but not uploaded to Google Play,
+  which only accepts an Android App Bundle signed with an app-specific upload
+  key; patch a runner AAB skeleton the way the runner APK is patched, with the
+  native libs lifted from the per-ABI runner APKs and packaging config grouped
+  per target in package.json.
 - **[srt render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
   On Windows the offscreen video driver fails every time (SDL's offscreen path
   needs EGL_EXT_device_enumeration, which ANGLE does not implement) and
@@ -692,6 +710,11 @@ Shaped, not started.
   in-app; build a separate editor over the same buffer/geometry layers,
   starting with prepareText over styled runs so caret geometry knows about run
   boundaries.
+- **[A rounded clip on a box whose size is in flight costs a third of the frame on Android](backlog/rounded-clip-cost-android.md)** [2026-09-22]
+  Ten panes with overflow hidden + clipRadius sliding and resizing on a layout
+  transition take the Tab A7 from 60 to 20 fps; a static rounded clip is
+  nearly free, one resizing pane ~8 ms, ten ~13 ms, an image under the clip
+  pays most; cause not yet located below the display list.
 - **[Runtime policies - tracked, app-readable, app-overridable](backlog/runtime-policy-registry.md)** [2026-08-13]
   The runtime is accumulating behavior policies it selects on the app's behalf
   from device facts (frame pacing being the first with real consequences).
@@ -723,6 +746,10 @@ Shaped, not started.
   A numeric pixel-delta mode on get_snapshot against the previous capture of
   the same node, so "does it still render the same" is one call with a number
   instead of two images an agent has to eyeball.
+- **[Snapshot boundary textures leak across dev reloads](backlog/snapshot-texture-leak-reload.md)** [2026-09-22]
+  get_gpu_resources on the Tab A7 listed 51 window-sized rgba8 snapshot
+  textures (~440 MB) after a session of reloads, one more per reload; the old
+  instance's boundary is never freed when the next bundle is pushed.
 - **[Reactivity diagnostics carry no source location](backlog/solid-diagnostics-source-location.md)** [2026-09-08]
   A STRICT_READ_UNTRACKED warning names the shape of the mistake but not the
   file or line, so finding it in an app with a dozen effects is a manual hunt;
@@ -762,6 +789,10 @@ Shaped, not started.
   implemented and is the figure probes quote; remaining are maxPresentGapMs
   and per-platform validation of the present timestamps (ANGLE/D3D11, macOS,
   Android).
+- **[get_stats' time window reports frames 0 for an animation that just ran](backlog/stats-window-frames-zero.md)** [2026-09-22]
+  Called right after a 2 s animation with window_ms 3500-8000, get_stats
+  answered frames 0 in most calls while the compositor held ~120 presents;
+  only the frozen-clock window_frames path was reliable.
 - **[Elements built before a suspending read are orphaned on every retry](backlog/suspend-retry-orphan-elements.md)** [2026-09-03]
   A component that creates an element and then reads a pending async value
   throws NotReadyError to the nearest <Loading>, which discards the
@@ -787,6 +818,11 @@ Shaped, not started.
   solid. Extend it to a CSS-style list with line-through/overline,
   textDecorationColor and dashed/dotted/wavy/double, on the same self-drawn
   per-line mechanism.
+- **[A TextInput whose box changes each frame still costs ~2.4 ms per empty field in the post-layout flush](backlog/text-input-resize-post-layout.md)** [2026-09-22]
+  Nine empty multiline fields inside resizing panes cost the Tab A7 22 ms of
+  postLayout per frame after the same-breaks fix; a field sized to its settled
+  tile drops it to 1 ms - the field should skip its geometry work when a box
+  change re-breaks nothing.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves

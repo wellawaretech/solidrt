@@ -1006,3 +1006,21 @@ fn stagger_is_a_positive_number_of_ms_on_either_tree() {
   assert!(decode_stagger(&num(0.0)).unwrap_err().contains("positive"));
   assert!(decode_stagger(&text("40ms")).unwrap_err().contains("number of ms"));
 }
+
+// A texture's `radius` decodes like a rect's (a number rounds all four
+// corners, null clears) and reads back, so a rounded image draw is one
+// property away from a plain texture draw.
+#[test]
+fn texture_radius_applies_and_reads_back() {
+  let mut el = Element::from_kind("texture").expect("known kind");
+  apply_el(&mut el, "radius", num(12.0)).expect("radius applies");
+  let alloy::rendertree::ElementKind::Texture(tex) = &el.kind else {
+    panic!("texture kind");
+  };
+  assert_eq!(tex.radius, Some([12.0; 4]));
+  apply_el(&mut el, "radius", PropValue::Null).expect("null clears");
+  let alloy::rendertree::ElementKind::Texture(tex) = &el.kind else {
+    panic!("texture kind");
+  };
+  assert_eq!(tex.radius, None);
+}

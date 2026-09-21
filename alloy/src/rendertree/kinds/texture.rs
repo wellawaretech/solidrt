@@ -1,5 +1,7 @@
 use super::PaintState;
-use crate::impellers::{DisplayListBuilder, Point, Rect, Size, TextureSampling};
+use crate::impellers::{
+  ColorSource, DisplayListBuilder, Matrix, Point, Rect, RoundingRadii, Size, TextureSampling, TileMode,
+};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{
@@ -65,6 +67,11 @@ pub struct Texture {
   pub y: Option<f32>,
   pub w: Option<f32>,
   pub h: Option<f32>,
+  // Corner radii [top-left, top-right, bottom-right, bottom-left], CSS
+  // border-radius order, like Rectangle's. Set, the image is drawn as a
+  // rounded rect filled with the texture (an image color source) instead of
+  // a plain texture draw: one draw, no clip.
+  pub radius: Option<[f32; 4]>,
   // The same paint every other kind carries, so a texture composites like one:
   // `blend_mode` is the reason it is here (stacking GPU layers additively in
   // the tree instead of hand-writing a compositing shader pass). A raster draw
@@ -119,7 +126,41 @@ impl Buildable for Texture {
       crate::gpu::SamplerFilter::Linear => TextureSampling::Linear,
       crate::gpu::SamplerFilter::Nearest => TextureSampling::NearestNeighbor,
     };
-    builder.draw_texture_rect(impeller, &src_rect, &dst_rect, sampling, Some(&paint));
+    match self.radius {
+      // A rounded image: the rounded rect filled with the texture as its
+      // color source, transformed so the source rect lands on the
+      // destination rect. The same geometry path a rounded d-rect takes,
+      // and nothing is clipped: a rounded clip around a texture costs a
+      // tiled GPU a third of the frame per ten panes while the clip's box
+      // is in flight (okf/backlog/rounded-clip-cost-android.md); this
+      // draw costs what the plain texture draw does.
+      Some([tl, tr, br, bl]) if src_rect.size.width > 0.0 && src_rect.size.height > 0.0 => {
+        let sx = dst_rect.size.width / src_rect.size.width;
+        let sy = dst_rect.size.height / src_rect.size.height;
+        let to_dst = Matrix::new_2d(
+          sx,
+          0.0,
+          0.0,
+          sy,
+          dst_rect.origin.x - src_rect.origin.x * sx,
+          dst_rect.origin.y - src_rect.origin.y * sy,
+        );
+        let source = ColorSource::new_image(impeller, TileMode::Clamp, TileMode::Clamp, sampling, Some(&to_dst));
+        let mut paint = paint;
+        paint.set_color_source(&source);
+        let corner = |r: f32| Point::new(r, r);
+        let radii = RoundingRadii {
+          top_left: corner(tl),
+          top_right: corner(tr),
+          bottom_right: corner(br),
+          bottom_left: corner(bl),
+        };
+        builder.draw_rounded_rect(&dst_rect, &radii, &paint);
+      }
+      _ => {
+        builder.draw_texture_rect(impeller, &src_rect, &dst_rect, sampling, Some(&paint));
+      }
+    }
   }
 }
 
@@ -204,6 +245,12 @@ impl Texture {
   }
   pub fn set_h(&mut self, v: Option<f32>) -> Damage {
     self.h = v;
+    Damage::Paint
+  }
+  // Paint-only: the rounding changes which pixels the draw covers, never
+  // the element box.
+  pub fn set_radius(&mut self, radius: Option<[f32; 4]>) -> Damage {
+    self.radius = radius;
     Damage::Paint
   }
 

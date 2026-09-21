@@ -622,6 +622,11 @@ impl Element {
         Some([a, b, c, d]) if a == b && b == c && c == d => Some(a),
         Some(_) => None,
       },
+      (ElementKind::Texture(t), Radius) => match t.radius {
+        None => Some(0.0),
+        Some([a, b, c, d]) if a == b && b == c && c == d => Some(a),
+        Some(_) => None,
+      },
 
       (ElementKind::Oval(o), X) if detached => Some(o.x.unwrap_or(0.0)),
       (ElementKind::Oval(o), Y) if detached => Some(o.y.unwrap_or(0.0)),
@@ -731,6 +736,7 @@ impl Element {
       (ElementKind::Rectangle(r), W) if detached => r.set_w(Some(v)),
       (ElementKind::Rectangle(r), H) if detached => r.set_h(Some(v)),
       (ElementKind::Rectangle(r), Radius) => r.set_radius(Some([v.max(0.0); 4])),
+      (ElementKind::Texture(t), Radius) => t.set_radius(Some([v.max(0.0); 4])),
 
       (ElementKind::Oval(o), X) if detached => o.set_x(Some(v)),
       (ElementKind::Oval(o), Y) if detached => o.set_y(Some(v)),

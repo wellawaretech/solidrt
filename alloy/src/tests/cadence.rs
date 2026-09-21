@@ -361,3 +361,27 @@ fn the_first_presents_after_a_change_do_not_revert_it() {
   assert_eq!(run(&mut c, &mut t, 1, 4, 14.0), 3);
   assert_eq!(run(&mut c, &mut t, 2, 4, 14.0), 4);
 }
+
+// An idle gap ends the stream the hold was learned on: the first present
+// after it resets the hold to 1 (reporting the change), whatever interval
+// the gap left it with, and the controller learns afresh from there.
+#[test]
+fn an_idle_gap_resets_the_hold() {
+  let mut c = auto();
+  let mut t = 0.0;
+  assert_eq!(run(&mut c, &mut t, 6, 3, 30.0), 3, "held at three after a run of long intervals");
+  t += 2000.0;
+  let change = c.on_present(180, 5.0, 0.0, 0.0, false, t, P90);
+  assert_eq!(change.map(|h| (h.from, h.to)), Some((3, 1)));
+  assert_eq!(c.hold(), 1);
+  // A held stream that keeps missing after the gap still rises again.
+  t += P90;
+  assert_eq!(run(&mut c, &mut t, 6, 3, 30.0), 3);
+  // A gap with the hold already at 1 changes nothing and reports nothing.
+  let mut c1 = auto();
+  let mut t1 = 0.0;
+  run(&mut c1, &mut t1, 3, 1, 5.0);
+  t1 += 2000.0;
+  assert!(c1.on_present(180, 5.0, 0.0, 0.0, false, t1, P90).is_none());
+  assert_eq!(c1.hold(), 1);
+}
