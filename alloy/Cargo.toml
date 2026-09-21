@@ -88,7 +88,7 @@ rxing = { version = "=0.9.2", default-features = false, features = ["decoders", 
 # Rect/Matrix are euclid aliases, and the Vector alias in rendertree only
 # unifies with them while both resolve to the same euclid version.
 euclid = "=0.22.14"
-taffy = "=0.12.2"
+taffy = "=0.14.0"
 svgtypes = "=0.16.1"
 lyon_path = "=1.0.19"
 lyon_algorithms = "=1.0.21"

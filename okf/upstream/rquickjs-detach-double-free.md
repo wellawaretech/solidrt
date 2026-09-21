@@ -3,7 +3,7 @@ title: rquickjs external ArrayBuffer callbacks double-invoked on detach
 description: QuickJS invokes an external ArrayBuffer's free callback on detach AND again at finalization (with data == NULL); rquickjs's shims ignore the data pointer and consume their opaque unconditionally, so safe from_source + detach() - or pure JS transfer(0) on any Rust-minted buffer - is a double free.
 project: rquickjs (github.com/DelSkayn/rquickjs)
 versions: rquickjs 0.12.2 (rquickjs-core 0.12.2, rquickjs-sys 0.12.2 vendoring quickjs-ng 0.15.1)
-status: fixed-upstream
+status: resolved
 link: https://github.com/DelSkayn/rquickjs/pull/723
 created: 2026-08-03
 ---
@@ -92,3 +92,27 @@ with a source holding the instance Rc, and the registry pin
 (`MemoryView._instance`) comes out; the isolate StealSlot hook can shrink to
 safe `from_source` over a slot-holding source (the steal itself stays, but
 needs no unsafe once detach fires the callback exactly once).
+
+## Outcome
+
+Resolved in rquickjs 0.14.0 (bumped 2026-09-21, from 0.12.2): PR #723
+shipped in 0.13.0 (2026-09-08) and vendors a quickjs-ng whose
+`JS_DetachArrayBuffer` clears the callback and opaque, so every external
+buffer's callback fires exactly once. rquickjs's shims are sound again and
+nothing in flux needs a NULL-tolerant hook any more.
+
+What stayed, on its own merits: `array_buffer_over` still mints its views
+with no callback at all, because the bytes it aliases (wasmi memory, an
+alloy staging block) are owned and pinned by someone else and must never
+be freed by the engine; the `MemoryView._instance` pin is that ownership.
+Its doc comment no longer cites this file. The `transfer*` removal at
+context setup also stays, for flux:isolate's vocabulary (see
+[[quickjs-ng-transfer-external-buffers]]).
+
+Same bump: `JS_NewArrayBuffer` grew `max_len` plus a realloc callback in
+place of the free func, `as_raw()` returns `NonNull<[u8]>` (#738), and
+`as_bytes()` became `unsafe` (#737, an aliasing contract: no JS may run
+while the slice lives). flux now borrows every JS buffer through
+`marshal::JsBytes` (`bytes_of` / `elements_of` / `elements_mut_of`,
+`CopyBytes` for copies): the one place that states the contract, in
+place of the per-plugin `as_raw` + `from_raw_parts` blocks.

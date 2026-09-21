@@ -202,12 +202,13 @@ pub(crate) async fn init_context(
   (runtime, context, pending, rejections)
 }
 
-/// The vendored quickjs-ng's `ArrayBuffer.prototype.transfer` family mishandles
-/// externally backed buffers - every buffer flux mints from Rust bytes - with
-/// heap UB reachable from pure JS (fixed upstream after the version we vendor;
-/// see okf/upstream/quickjs-ng-transfer-external-buffers.md). The methods come
-/// off the prototype until the rquickjs bump lands; flux:isolate's planned
-/// `transfer()` is the replacement vocabulary.
+/// `ArrayBuffer.prototype.transfer` and friends come off the prototype:
+/// flux:isolate's planned `transfer()` is the vocabulary for moving bytes
+/// between runtimes (okf/backlog/isolate-transfer-and-abort.md), and one
+/// word for it is enough. (The removal began as a soundness fix - the
+/// quickjs-ng we used to vendor corrupted the heap on `transfer` of an
+/// externally backed buffer - which the rquickjs 0.14 bump resolved; see
+/// okf/upstream/quickjs-ng-transfer-external-buffers.md.)
 fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
   let Ok(ab) = ctx.globals().get::<_, Object>("ArrayBuffer") else { return };
   let Ok(proto) = ab.get::<_, Object>("prototype") else { return };

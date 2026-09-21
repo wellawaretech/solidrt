@@ -5,7 +5,7 @@ use rquickjs::{Ctx, Exception, Function, Object, TypedArray, Value};
 use std::rc::Rc;
 
 use crate::pending::PendingOps;
-use crate::plugins::marshal::{with_pending, OptArg};
+use crate::plugins::marshal::{with_pending, CopyBytes, OptArg};
 use crate::standards_plugins::body::byte_stream_iterable;
 use crate::plugins::value::Neutral;
 use forge::subprocess::{self, CommandSpec, Spawned};
@@ -90,7 +90,7 @@ fn value_to_bytes(ctx: &Ctx<'_>, value: &Value<'_>) -> rquickjs::Result<Vec<u8>>
   if let Some(s) = value.as_string() {
     Ok(s.to_string()?.into_bytes())
   } else if let Ok(ta) = TypedArray::<u8>::from_value(value.clone()) {
-    Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
+    Ok(ta.copy_bytes())
   } else {
     Err(Exception::throw_message(ctx, "stdin must be a string or Uint8Array"))
   }

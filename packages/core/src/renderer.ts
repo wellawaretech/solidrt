@@ -1,6 +1,8 @@
-import { createRoot, onCleanup, NotReadyError, untrack } from "@solidjs/signals"
+// createErrorBoundary comes from signals, not solid-js: solid-js marks it
+// @internal (an app writes <Errored>, a renderer reaches for the primitive)
+// and strips it from its .d.ts, so the solid-js re-export types as any.
+import { createErrorBoundary, createRoot, onCleanup, NotReadyError, untrack } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
-import { createErrorBoundary } from "solid-js"
 import type { Element } from "solid-js"
 import * as tree from "flux:rendertree"
 import { attachWindow, setWindowRoot } from "./window"

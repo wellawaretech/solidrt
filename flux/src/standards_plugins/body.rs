@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, Step};
+use crate::plugins::marshal::{attach_async_iterator, CopyBytes, Step};
 
 // Re-exported so the `crate::standards_plugins::body::ByteStream` importers
 // (response, request) stay unchanged; the engine-free primitive itself lives
@@ -211,7 +211,7 @@ pub(crate) fn extract_body_value<'js>(val: &Value<'js>, for_class: &'static str)
     return Ok(s.to_string()?.into_bytes());
   }
   if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
-    return Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default());
+    return Ok(ta.copy_bytes());
   }
   Err(rquickjs::Error::new_from_js_message("body", for_class, "must be string, Uint8Array, null, or undefined"))
 }

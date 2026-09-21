@@ -3,8 +3,8 @@ title: taffy measure cache evicts entries it can still hit
 description: Cache::store picks a slot from the input shape alone (9 slots) while Cache::get matches on shape AND parent width, so the same-shape/different-parent-width probes a single flex pass makes evict each other; the cache is defeated frame-internally and one dirty node re-measures the whole tree.
 project: taffy (github.com/DioxusLabs/taffy)
 versions: taffy 0.12.1
-status: unfiled
-link:
+status: resolved
+link: https://github.com/DioxusLabs/taffy/pull/1010
 created: 2026-08-03
 ---
 
@@ -81,3 +81,22 @@ On `resolved`: cache.rs and its tests can come out and the `CacheTree` impl
 can go back to `taffy::Cache`. Not urgent even then - the ring is bounded
 and behaves well - so this is a maintenance reduction, not a fix we are
 waiting on.
+
+## Outcome
+
+Fixed upstream before we filed, then resolved here. taffy PR #1010 (merged
+2026-08-24, released in 0.14.0 the same day) removes `compute_cache_slot`
+and stores measures with second-chance (clock) eviction plus update-in-
+place on an exact key, which is the decoupling suggested above, and on top
+of it keys entries on the requested axis and definiteness so a width-only
+block measure is never served for a height query. `Cache::get` and
+`CacheTree::cache_get` take `&mut self` for the recently-used bookkeeping.
+
+Bumped taffy 0.12.2 -> 0.14.0 on 2026-09-21: `LayoutCache` (cache.rs plus
+its six tests) is gone and `LayoutData.cache` is `taffy::tree::Cache`
+again. Same bump: `Layout::content_size` became `scrollable_overflow_rect`,
+`LayoutInput` gained `known_dimensions_are_definite`, `Display::FlowRoot`
+appeared (we lay it out as Block), and `min_size`/`max_size` are
+`LengthPercentageAuto`. Watch signal unchanged: get_stats cacheGets/
+cacheHits - taffy's cache is 9 slots to the ring's 16, so a hit rate that
+sags at scale is the tell.

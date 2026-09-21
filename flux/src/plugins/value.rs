@@ -33,6 +33,8 @@
 
 use rquickjs::{Array, ArrayBuffer, Ctx, Exception, FromJs, IntoJs, Object, TypedArray, Value as JsValue};
 
+use super::marshal::CopyBytes;
+
 use forge::{Elem, Value};
 
 /// Nesting limit for JS -> Value; deeper (or cyclic) input throws.
@@ -171,13 +173,13 @@ fn number(f: f64) -> Value {
 /// covers, or `None` if `obj` is neither. A detached buffer reads as empty.
 fn view_bytes(obj: &Object<'_>) -> Option<(Elem, Vec<u8>)> {
   if let Some(ab) = obj.as_array_buffer() {
-    return Some((Elem::U8, ab.as_bytes().map(|b| b.to_vec()).unwrap_or_default()));
+    return Some((Elem::U8, ab.copy_bytes()));
   }
   macro_rules! try_view {
     ($($t:ty => $elem:expr),*) => {
       $(
         if let Some(ta) = obj.as_typed_array::<$t>() {
-          return Some(($elem, ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()));
+          return Some(($elem, ta.copy_bytes()));
         }
       )*
     };

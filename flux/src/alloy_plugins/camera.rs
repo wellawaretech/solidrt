@@ -15,7 +15,7 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
 
-use crate::plugins::marshal::OptArg;
+use crate::plugins::marshal::{bytes_of, OptArg};
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
@@ -169,12 +169,11 @@ fn scan_image_impl<'js>(
   width: u32,
   height: u32,
 ) -> rquickjs::Result<Array<'js>> {
-  let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "scanImage: detached buffer"))?;
+  let pixels = bytes_of(&ctx, &data, "scanImage")?;
   let expected = (width as usize) * (height as usize) * 4;
-  if raw.len != expected {
-    return Err(throw_str(&ctx, &format!("scanImage: expected {expected} RGBA8 bytes, got {}", raw.len)));
+  if pixels.len() != expected {
+    return Err(throw_str(&ctx, &format!("scanImage: expected {expected} RGBA8 bytes, got {}", pixels.len())));
   }
-  let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
 
   let arr = Array::new(ctx.clone())?;
   for (i, content) in alloy::barcode::scan_rgba(pixels, width, height).into_iter().enumerate() {

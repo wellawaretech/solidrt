@@ -7,13 +7,12 @@ use taffy::{
 };
 
 use super::super::tree::RenderTree;
-use super::cache::LayoutCache;
 use crate::rendertree::{replaced_size, ElementKind, Measurable, MeasureContext, PlatformContext};
 
 pub struct LayoutData {
   pub style: Style,
   pub computed: Layout,
-  pub cache: LayoutCache,
+  pub cache: taffy::tree::Cache,
   pub layout_children: Vec<NodeId>,
   // True only when JSX explicitly set `position="relative"`. taffy's default
   // position is Relative for every node, so this flag is what distinguishes a
@@ -34,7 +33,7 @@ impl LayoutData {
     Self {
       style,
       computed: Layout::new(),
-      cache: LayoutCache::new(),
+      cache: taffy::tree::Cache::new(),
       layout_children: vec![],
       positioning_context: false,
       laid_out: false,
@@ -107,6 +106,7 @@ impl<'a> LayoutContext<'a> {
         sizing_mode: SizingMode::InherentSize,
         axis: RequestedAxis::Both,
         known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size { width: false, height: false },
         parent_size: Size::NONE,
         available_space: Size::MAX_CONTENT,
         vertical_margins_are_collapsible: Line::FALSE,
@@ -125,7 +125,7 @@ impl<'a> LayoutContext<'a> {
     let (padding, border) = self.insets(atom);
     let mut layout = self.render_tree.node(u64::from(atom)).layout_data().computed;
     layout.size = output.size;
-    layout.content_size = output.content_size;
+    layout.scrollable_overflow_rect = output.scrollable_overflow_rect;
     layout.padding = padding;
     layout.border = border;
     layout.margin = margin;
@@ -172,8 +172,8 @@ impl<'a> TraversePartialTree for LayoutContext<'a> {
 }
 
 impl<'a> CacheTree for LayoutContext<'a> {
-  fn cache_get(&self, node_id: NodeId, input: &LayoutInput) -> Option<taffy::LayoutOutput> {
-    let out = self.render_tree.node(u64::from(node_id)).layout_data().cache.get(input);
+  fn cache_get(&mut self, node_id: NodeId, input: &LayoutInput) -> Option<taffy::LayoutOutput> {
+    let out = self.render_tree.node_mut(u64::from(node_id)).layout_data_mut().cache.get(input);
     crate::rendertree::counters::note_cache_get(out.is_some());
     out
   }
@@ -201,7 +201,7 @@ impl<'a> LayoutContext<'a> {
   fn container_layout(&mut self, node_id: NodeId, display: Display, inputs: LayoutInput) -> taffy::LayoutOutput {
     match display {
       Display::Flex => compute_flexbox_layout(self, node_id, inputs),
-      Display::Block => compute_block_layout(self, node_id, inputs, None),
+      Display::Block | Display::FlowRoot => compute_block_layout(self, node_id, inputs, None),
       Display::Grid => compute_grid_layout(self, node_id, inputs),
       Display::None => self.hidden_layout(node_id),
     }
@@ -252,6 +252,7 @@ impl<'a> LayoutContext<'a> {
         sizing_mode: SizingMode::ContentSize,
         axis: RequestedAxis::Both,
         known_dimensions: known,
+        known_dimensions_are_definite: Size { width: true, height: true },
         parent_size: known,
         available_space: Size {
           width: AvailableSpace::Definite(design.width),

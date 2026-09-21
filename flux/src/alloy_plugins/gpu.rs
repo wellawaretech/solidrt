@@ -8,7 +8,7 @@ use rquickjs::{Array, ArrayBuffer, Ctx, Exception, Function, JsLifetime, Object,
 
 use super::properties::{decode_params, decode_texture_bindings};
 use super::tree::to_prop_value;
-use crate::plugins::marshal::{array_buffer_over, OptArg};
+use crate::plugins::marshal::{array_buffer_over, bytes_of, OptArg};
 use alloy::CaptureInfo;
 
 // Per-engine texture bookkeeping, held in context userdata so engine teardown
@@ -208,9 +208,7 @@ impl<'js> PixelData<'js> {
       let floats = TypedArray::<f32>::from_value(data)
         .map_err(|_| throw_str(ctx, &format!("{api}: {} data must be a Float32Array", format.name())))?;
       if format == alloy::TextureFormat::Rgba16f {
-        let raw = floats.as_raw().ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
-        let f32_bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
-        return Ok(PixelData::Halves(alloy::TextureFormat::f16_bytes(f32_bytes)));
+        return Ok(PixelData::Halves(alloy::TextureFormat::f16_bytes(bytes_of(ctx, &floats, api)?)));
       }
       Ok(PixelData::Floats(floats))
     } else {
@@ -220,17 +218,14 @@ impl<'js> PixelData<'js> {
     }
   }
 
-  // The viewed range as raw bytes (`len` from as_raw is a byte count for
-  // every element type). Zero-copy but for the packed halves; valid while
-  // self is held.
+  // The viewed range as raw bytes. Zero-copy but for the packed halves;
+  // valid while self is held.
   fn bytes(&self, ctx: &Ctx<'_>, api: &str) -> rquickjs::Result<&[u8]> {
-    let raw = match self {
-      PixelData::Bytes(a) => a.as_raw(),
-      PixelData::Floats(a) => a.as_raw(),
-      PixelData::Halves(v) => return Ok(v.as_slice()),
-    };
-    let raw = raw.ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
-    Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) })
+    match self {
+      PixelData::Bytes(a) => bytes_of(ctx, a, api),
+      PixelData::Floats(a) => bytes_of(ctx, a, api),
+      PixelData::Halves(v) => Ok(v.as_slice()),
+    }
   }
 }
 
@@ -1289,8 +1284,7 @@ fn create_buffer(ctx: Ctx<'_>, data: Value<'_>, opts: OptArg<Object<'_>>) -> rqu
   } else {
     let data = TypedArray::<u8>::from_value(data)
       .map_err(|_| throw_str(&ctx, "createBuffer: expected a Uint8Array or a byteLength number"))?;
-    let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createBuffer: detached buffer"))?;
-    let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+    let bytes = bytes_of(&ctx, &data, "createBuffer")?;
     st.gui.alloy.create_gpu_buffer(bytes, label).map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?
   };
   st.created_buffers.borrow_mut().insert(id);
@@ -1350,8 +1344,7 @@ fn end_buffer_write(ctx: Ctx<'_>, id: u64, byte_length: OptArg<usize>) -> rquick
 // A write re-renders the pipelines drawing from the buffer (alloy does
 // that), so the screen changes without any tree mutation: request a frame.
 fn write_buffer(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: OptArg<usize>) -> rquickjs::Result<()> {
-  let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "writeBuffer: detached buffer"))?;
-  let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+  let bytes = bytes_of(&ctx, &data, "writeBuffer")?;
   let st = state(&ctx);
   st.gui
     .alloy

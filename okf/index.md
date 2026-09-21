@@ -2301,6 +2301,11 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   non-keyed For, but not that the child function's body is an untracked scope,
   so the default "destructure at the top, use below" style silently freezes;
   the trap should sit next to For keyed={false}.
+- **[solid-js types re-export boundary primitives its d.ts strips](upstream/solid-js-internal-boundary-types.md)** [2026-09-21]
+  solid-js 2.0.0-rc.9 types/index.d.ts re-exports createErrorBoundary,
+  createLoadingBoundary and createRevealOrder from client/hydration.js, but
+  those are @internal and stripped from client/hydration.d.ts; with
+  skipLibCheck they silently type as any, without it TS2305.
 - **[taffy measure cache evicts entries it can still hit](upstream/taffy-measure-cache-clobber.md)** [2026-08-03]
   Cache::store picks a slot from the input shape alone (9 slots) while
   Cache::get matches on shape AND parent width, so the

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::pending::PendingOps;
-use crate::plugins::marshal::with_pending;
+use crate::plugins::marshal::{with_pending, CopyBytes};
 use crate::plugins::seekable::SeekableSource;
 use crate::plugins::value::Neutral;
 use crate::standards_plugins::body::{attach_body, JsBytes};
@@ -17,7 +17,7 @@ fn data_bytes<'js, 'v>(ctx: &Ctx<'js>, data: &Value<'v>, what: &str) -> rquickjs
   if let Some(s) = data.as_string() {
     Ok(s.to_string()?.into_bytes())
   } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
-    Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
+    Ok(ta.copy_bytes())
   } else {
     Err(Exception::throw_message(ctx, &format!("{what}: data must be string or Uint8Array")))
   }

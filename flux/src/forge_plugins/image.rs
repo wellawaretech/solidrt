@@ -1,7 +1,7 @@
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Exception, Function, Object, TypedArray, Value};
 
-use crate::plugins::marshal::OptArg;
+use crate::plugins::marshal::{bytes_of, OptArg};
 
 // Marshalling for `flux:image`: adapt JS typed arrays and the options object
 // to the engine-free `forge::image` codec. Quality is web-style 0..1 on this
@@ -48,9 +48,7 @@ fn decode_image<'js>(
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Object<'js>> {
   let premultiply = premultiplied_opt(&ctx, &opts, "decodeImage")?;
-  let raw = bytes.as_raw().ok_or_else(|| Exception::throw_message(&ctx, "decodeImage: detached buffer"))?;
-  let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
-  let decoded = forge::image::decode(bytes, premultiply)
+  let decoded = forge::image::decode(bytes_of(&ctx, &bytes, "decodeImage")?, premultiply)
     .map_err(|e| Exception::throw_message(&ctx, &format!("decodeImage: {e}")))?;
   let result = Object::new(ctx.clone())?;
   result.set("data", TypedArray::<u8>::new(ctx.clone(), decoded.data)?)?;
@@ -94,8 +92,7 @@ fn encode_image<'js>(
     return Err(Exception::throw_message(&ctx, &format!("encodeImage: quality {quality} out of range 0..1")));
   }
 
-  let raw = data.as_raw().ok_or_else(|| Exception::throw_message(&ctx, "encodeImage: detached buffer"))?;
-  let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+  let pixels = bytes_of(&ctx, &data, "encodeImage")?;
   let out = match format.as_str() {
     "png" => forge::image::encode_png(pixels, width, height, unpremultiply),
     "jpeg" => forge::image::encode_jpeg(pixels, width, height, (quality * 100.0).round() as u8),

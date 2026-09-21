@@ -1,4 +1,4 @@
-use crate::plugins::marshal::OptArg;
+use crate::plugins::marshal::{CopyBytes, OptArg};
 use rquickjs::class::Trace;
 use rquickjs::{ArrayBuffer, Class, Ctx, Exception, JsLifetime, Object, TypedArray, Value};
 use std::cell::RefCell;
@@ -144,10 +144,10 @@ fn input_bytes<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> rquickjs::Result<Vec<u8
     return Ok(Vec::new());
   }
   if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
-    return Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default());
+    return Ok(ta.copy_bytes());
   }
   if let Some(ab) = ArrayBuffer::from_value(val.clone()) {
-    return Ok(ab.as_bytes().map(|b| b.to_vec()).unwrap_or_default());
+    return Ok(ab.copy_bytes());
   }
   Err(Exception::throw_type(ctx, "TextDecoder.decode: input must be a Uint8Array or ArrayBuffer"))
 }

@@ -89,10 +89,10 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Result<Option<
     // Size
     "width" => style.size.width = parse_dimension(value)?,
     "height" => style.size.height = parse_dimension(value)?,
-    "minWidth" => style.min_size.width = parse_dimension(value)?,
-    "minHeight" => style.min_size.height = parse_dimension(value)?,
-    "maxWidth" => style.max_size.width = parse_dimension(value)?,
-    "maxHeight" => style.max_size.height = parse_dimension(value)?,
+    "minWidth" => style.min_size.width = parse_length_percentage_auto(value)?,
+    "minHeight" => style.min_size.height = parse_length_percentage_auto(value)?,
+    "maxWidth" => style.max_size.width = parse_length_percentage_auto(value)?,
+    "maxHeight" => style.max_size.height = parse_length_percentage_auto(value)?,
     "aspectRatio" => style.aspect_ratio = Some(parse_aspect_ratio(value)?),
 
     // Padding

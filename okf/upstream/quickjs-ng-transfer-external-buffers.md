@@ -3,7 +3,7 @@ title: quickjs-ng ArrayBuffer.prototype.transfer mishandles external buffers
 description: transfer() on a JS_NewArrayBuffer-backed (external) buffer calls js_realloc on a pointer the JS allocator does not own when the length changes (heap corruption), and re-homes the pointer with a NULL opaque when it does not (breaks the free-callback contract, escapes embedder invalidation). resize() guards external buffers; transfer() lacks the same guard.
 project: quickjs-ng (github.com/quickjs-ng/quickjs)
 versions: quickjs-ng 0.15.1 (as vendored by rquickjs-sys 0.12.2)
-status: fixed-upstream
+status: resolved
 link: https://github.com/quickjs-ng/quickjs/pull/1594
 created: 2026-08-03
 ---
@@ -92,3 +92,17 @@ memory. The isolate transfer() plan
 delete all three `transfer*` methods at context setup: flux:isolate's own
 `transfer()` vocabulary replaces them, which closes this path locally until
 upstream guards it.
+
+## Outcome
+
+Resolved with the rquickjs 0.14.0 bump (2026-09-21): its vendored
+quickjs-ng carries PR #1594, so an external buffer transfers and resizes
+through its realloc callback, and a buffer minted without one (every
+`array_buffer_over` view) is refused a resize or a length-changing
+transfer instead of corrupting the heap.
+
+Revisited the context-setup deletion of `prototype.transfer*` as this file
+asked: it stays, on the vocabulary argument alone (flux:isolate's
+`transfer()` is the one word for moving bytes, see
+okf/backlog/isolate-transfer-and-abort.md). The comment on
+`remove_array_buffer_transfer` in flux/src/plugins/mod.rs now says so.

@@ -43,7 +43,7 @@ half = "=2.7.1"
 rquickjs = { workspace = true }
 # taffy stays: the properties plugins assign taffy Style directly. The render
 # tree (and its lyon/svgtypes path deps) moved to alloy.
-taffy = "=0.12.2"
+taffy = "=0.14.0"
 base64 = { version = "=0.22.1", optional = true }
 tokio = { workspace = true }
 tokio-websockets = { version = "=0.13.3", features = ["client", "fastrand", "sha1_smol"], optional = true }

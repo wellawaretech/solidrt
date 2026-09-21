@@ -8,7 +8,7 @@
 
 use rquickjs::{function::MutFn, promise::Promised, ArrayBuffer, Ctx, Function, IntoJs, Object, TypedArray, Value};
 
-use crate::plugins::marshal::with_pending;
+use crate::plugins::marshal::{with_pending, CopyBytes};
 
 /// A digest as an `ArrayBuffer` (what the standard resolves to).
 struct DigestBytes(Vec<u8>);
@@ -30,9 +30,9 @@ fn algorithm_name<'js>(val: &Value<'js>) -> Option<String> {
 /// The bytes of a `Uint8Array` or `ArrayBuffer` input; anything else is None.
 fn input_bytes<'js>(val: &Value<'js>) -> Option<Vec<u8>> {
   if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
-    return Some(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default());
+    return Some(ta.copy_bytes());
   }
-  ArrayBuffer::from_value(val.clone()).map(|ab| ab.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
+  ArrayBuffer::from_value(val.clone()).map(|ab| ab.copy_bytes())
 }
 
 fn digest(algorithm: &Value<'_>, data: &Value<'_>) -> Result<DigestBytes, String> {

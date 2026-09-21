@@ -27,10 +27,12 @@ let OKF = join(REPO, "okf");
 let INDEX = join(OKF, "index.md");
 let WIDTH = 78;
 
-// Order matters: this is the order of the generated index, and it reads as the
-// life of a document - active, queued, finished, learned - with upstream, which
-// has no lifecycle of ours, at the end.
+// Order matters: this is the order of the generated index. Design comes
+// first because it is what to read before working in an area; the rest reads
+// as the life of a document - active, queued, finished, learned - with
+// upstream, which has no lifecycle of ours, at the end.
 let SECTIONS = [
+  ["design", "Design", "The architecture of an area and the decisions behind it, kept current. Read before working there."],
   ["plans", "Plans", "Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md."],
   ["backlog", "Backlog", "Shaped, not started."],
   ["done", "Done", "Finished, kept for the reasoning."],

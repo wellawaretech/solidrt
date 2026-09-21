@@ -82,7 +82,7 @@ fn bytes_option(ctx: &Ctx<'_>, options: &Object<'_>, key: &str) -> flux::rquickj
   let value: Option<TypedArray<u8>> = options.get(key)?;
   let value = value.ok_or_else(|| throw_str(ctx, &format!("startRecognition: {key} must be a Uint8Array")))?;
   let raw = value.as_raw().ok_or_else(|| throw_str(ctx, &format!("startRecognition: {key} buffer is detached")))?;
-  Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) }.to_vec())
+  Ok(unsafe { std::slice::from_raw_parts(raw.as_ptr().cast::<u8>(), raw.len()) }.to_vec())
 }
 
 fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Result<Promise<'js>> {
@@ -105,7 +105,7 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
       let arr = TypedArray::<u8>::from_js(&ctx, v)
         .map_err(|_| throw_str(&ctx, "startRecognition: wakeWord must be a Uint8Array of classifier model bytes"))?;
       let raw = arr.as_raw().ok_or_else(|| throw_str(&ctx, "startRecognition: wakeWord buffer is detached"))?;
-      Some(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) }.to_vec())
+      Some(unsafe { std::slice::from_raw_parts(raw.as_ptr().cast::<u8>(), raw.len()) }.to_vec())
     }
   };
   let wake_threshold: Option<f64> = options.get("wakeThreshold")?;

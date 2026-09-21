@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
-use crate::plugins::marshal::{with_pending, OptArg};
+use crate::plugins::marshal::{with_pending, CopyBytes, OptArg};
 use crate::standards_plugins::abort::AbortSignal;
 use crate::standards_plugins::body::{is_async_iterable, pump_async_iterable};
 use crate::standards_plugins::headers::header_pairs_from_init;
@@ -167,7 +167,7 @@ pub fn request_body_from_value<'js>(val: Value<'js>) -> rquickjs::Result<Option<
     return Ok(Some(RequestBody::bytes(s.to_string()?.into_bytes())));
   }
   if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
-    return Ok(Some(RequestBody::bytes(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())));
+    return Ok(Some(RequestBody::bytes(ta.copy_bytes())));
   }
   if is_async_iterable(&val)? {
     // Use the value's own context so the result's lifetime unifies with it.

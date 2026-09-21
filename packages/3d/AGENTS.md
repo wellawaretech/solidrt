@@ -2107,10 +2107,11 @@ writes to such a node always go through (setTransform skips its
 usual equal-value short-circuit there, so a teleport back to the last
 JS-written spot is not lost); (3) a channel nothing plays leaves the node's pose
 alone; (4) known gap: native pose writes bypass the scene's moved list,
-so a TRANSPARENT mesh parented under a player-animated joint does not
-re-trigger the back-to-front re-sort while it animates (opaque meshes,
-palettes and picking are unaffected) - nudge the scene with any
-setTransform if it shows, until the core-side transparent sort lands.
+so a mesh parented under a player-animated joint does not re-trigger
+the depth re-sort while it animates (harmless for an opaque mesh, whose
+order is a hint; visible on a TRANSPARENT one; palettes and picking are
+unaffected) - nudge the scene with any setTransform if it shows, until
+the core-side transparent sort lands.
 
 ### Root motion
 
@@ -2283,14 +2284,25 @@ with `srt tool 3d/model`.
   a stock material or `shaderMaterial` with any `blend` but "none" is transparent
   unless told `transparent: false` - every blended draw belongs after the opaques, and
   back-to-front is harmless for add/multiply. The scene owns the
-  order: background, opaque meshes by `renderOrder` then add order,
-  transparent meshes by `renderOrder` then back-to-front by the CENTER of
-  the mesh's world bounds in view space (not the origin: off-origin geometry
-  sorts by where it is; not the nearest bounds point: a big translucent
-  ground plane would cover the small translucents on it) - one `setDrawOrder` from sync() whenever the list changed, a
-  renderOrder changed, or (with two or more transparent meshes) the camera
-  or a transparent mesh moved, and skipped when the resort lands on the
-  permutation already issued. Per-mesh sort only: one non-convex translucent
+  order: background, opaque meshes by `renderOrder` then front-to-back by
+  their distance to the camera, transparent meshes by `renderOrder` then
+  back-to-front by their view-space depth, both measured at the CENTER of
+  the mesh's world bounds (not the origin: off-origin geometry sorts by
+  where it is; not the nearest bounds point: a big translucent ground
+  plane would cover the small translucents on it), add order breaking
+  ties. The opaque key is coarse on purpose - a logarithmic distance
+  bucket, four per doubling - because early-z only needs near layers
+  before far ones, and a coarse key keeps the order (and the meshes'
+  add-order material grouping within a bucket) stable while the camera
+  moves: a look-around changes no distance, and a step shorter than 16%
+  of the nearest opaque center's distance can cross no bucket edge, so
+  neither re-sorts. Dense geometry added base-first therefore no longer
+  needs the app to sort it (Godot and Unity sort opaques the same way,
+  Three exactly). One `setDrawOrder` from sync() whenever the list changed, a
+  renderOrder changed, a node moved (two or more meshes), or the camera
+  moved (two or more transparents, or past that opaque step), and skipped
+  when the resort lands on the permutation already issued. Per-mesh sort
+  only: one non-convex translucent
   mesh still overlaps itself in vertex order, and two large interpenetrating
   translucents can sort wrong (center distance, not per-pixel) - that is the
   engine contract, no OIT. A `shaderMaterial({ transparent: true })`

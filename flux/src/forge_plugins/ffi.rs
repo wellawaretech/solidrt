@@ -398,10 +398,10 @@ fn buffer_address(value: &Value<'_>) -> Option<Result<u64, String>> {
 /// `None` if `value` is neither, an error if the buffer is detached.
 fn buffer_raw(value: &Value<'_>) -> Option<Result<(*const u8, usize), String>> {
   const DETACHED: &str = "buffer argument is detached";
-  // rquickjs does not export RawArrayBuffer, so unpack it inline.
+  // as_raw() hands back a NonNull<[u8]>; split it into the (ptr, len) pair.
   macro_rules! raw {
     ($e:expr) => {
-      $e.map(|r| (r.ptr.as_ptr() as *const u8, r.len)).ok_or_else(|| DETACHED.to_string())
+      $e.map(|r| (r.as_ptr().cast::<u8>().cast_const(), r.len())).ok_or_else(|| DETACHED.to_string())
     };
   }
   if let Some(ab) = ArrayBuffer::from_value(value.clone()) {

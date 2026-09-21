@@ -11,7 +11,7 @@ use crate::alloy_plugins::properties::transition::{
   decode_node_entry, decode_node_motion, decode_stagger, LaneRule, NodeEntryDecoded,
 };
 use crate::alloy_plugins::value::PropValue;
-use crate::plugins::marshal::OptArg;
+use crate::plugins::marshal::{elements_mut_of, elements_of, OptArg};
 use alloy::spatial::{
   vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink,
   InstanceProjection, InstanceRecordSink, LodLevel, LodView, MoveOptions, NodeEndpoint, NodeMotion,
@@ -28,14 +28,13 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
 
 /// The 10 floats of a transform argument: position, quaternion, scale.
 fn transform(ctx: &Ctx<'_>, data: &TypedArray<'_, f32>, api: &str) -> rquickjs::Result<([f32; 3], [f32; 4], [f32; 3])> {
-  let raw = data.as_raw().ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
-  if raw.len != 10 * 4 {
+  let f = elements_of(ctx, data, api)?;
+  if f.len() != 10 {
     return Err(throw_str(
       ctx,
       &format!("{api}: transform must be a Float32Array of 10 (position, quaternion, scale)"),
     ));
   }
-  let f = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const f32, 10) };
   Ok(([f[0], f[1], f[2]], [f[3], f[4], f[5], f[6]], [f[7], f[8], f[9]]))
 }
 
@@ -343,11 +342,10 @@ fn set_draw_count(ctx: Ctx<'_>, id: u64, count: u32) -> rquickjs::Result<()> {
 /// Fill `out` (a Float32Array of 16) with the node's current world matrix.
 fn world_matrix(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Result<()> {
   let world = super::gui(&ctx).alloy.spatial().world(id).map_err(|e| throw_str(&ctx, &format!("worldMatrix: {e}")))?;
-  let raw = out.as_raw().ok_or_else(|| throw_str(&ctx, "worldMatrix: detached buffer"))?;
-  if raw.len != 16 * 4 {
+  let dst = elements_mut_of(&ctx, &out, "worldMatrix")?;
+  if dst.len() != 16 {
     return Err(throw_str(&ctx, "worldMatrix: out must be a Float32Array of 16"));
   }
-  let dst = unsafe { std::slice::from_raw_parts_mut(raw.ptr.as_ptr() as *mut f32, 16) };
   dst.copy_from_slice(&world);
   Ok(())
 }
@@ -364,33 +362,12 @@ fn flush(ctx: Ctx<'_>) -> rquickjs::Result<()> {
   Ok(())
 }
 
-/// Read a Float32Array as a slice (valid for the call).
-fn floats<'a, 'js>(ctx: &Ctx<'_>, data: &'a TypedArray<'js, f32>, api: &str) -> rquickjs::Result<&'a [f32]> {
-  let raw = data.as_raw().ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
-  Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const f32, raw.len / 4) })
-}
-
-/// The writable view of a Float32Array, for an op that writes results
-/// back into the caller's buffer. Never held across another borrow of
-/// the same array: read first, drop the read slice, then take this.
-fn floats_mut<'a, 'js>(ctx: &Ctx<'_>, data: &'a TypedArray<'js, f32>, api: &str) -> rquickjs::Result<&'a mut [f32]> {
-  let raw = data.as_raw().ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
-  Ok(unsafe { std::slice::from_raw_parts_mut(raw.ptr.as_ptr() as *mut f32, raw.len / 4) })
-}
-
 /// A triangle list argument, a Uint16Array or Uint32Array, widened to u32.
 fn index_list<'js>(ctx: &Ctx<'js>, indices: &Value<'js>, api: &str) -> rquickjs::Result<Vec<u32>> {
   if let Some(u16s) = indices.as_object().and_then(|o| TypedArray::<u16>::from_object(o.clone()).ok()) {
-    let raw = u16s.as_raw().ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
-    Ok(
-      unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const u16, raw.len / 2) }
-        .iter()
-        .map(|&i| i as u32)
-        .collect(),
-    )
+    Ok(elements_of(ctx, &u16s, api)?.iter().map(|&i| i as u32).collect())
   } else if let Some(u32s) = indices.as_object().and_then(|o| TypedArray::<u32>::from_object(o.clone()).ok()) {
-    let raw = u32s.as_raw().ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
-    Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const u32, raw.len / 4) }.to_vec())
+    Ok(elements_of(ctx, &u32s, api)?.to_vec())
   } else {
     Err(throw_str(ctx, &format!("{api}: indices must be a Uint16Array or Uint32Array")))
   }
@@ -401,7 +378,7 @@ fn index_list<'js>(ctx: &Ctx<'js>, indices: &Value<'js>, api: &str) -> rquickjs:
 fn set_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
   let b = match &bounds.0 {
     Some(data) => {
-      let f = floats(&ctx, data, "setBounds")?;
+      let f = elements_of(&ctx, data, "setBounds")?;
       if f.len() != 6 {
         return Err(throw_str(&ctx, "setBounds: bounds must be a Float32Array of 6 (min xyz, max xyz)"));
       }
@@ -416,7 +393,7 @@ fn set_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -> rqu
 fn box_arg(ctx: &Ctx<'_>, bounds: &OptArg<TypedArray<'_, f32>>, api: &str) -> rquickjs::Result<Option<[f32; 6]>> {
   match &bounds.0 {
     Some(data) => {
-      let f = floats(ctx, data, api)?;
+      let f = elements_of(ctx, data, api)?;
       if f.len() != 6 {
         return Err(throw_str(ctx, &format!("{api}: bounds must be a Float32Array of 6 (min xyz, max xyz)")));
       }
@@ -431,7 +408,7 @@ fn box_arg(ctx: &Ctx<'_>, bounds: &OptArg<TypedArray<'_, f32>>, api: &str) -> rq
 fn set_frustum(ctx: Ctx<'_>, target: u64, view_proj: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
   let m = match &view_proj.0 {
     Some(data) => {
-      let f = floats(&ctx, data, "setFrustum")?;
+      let f = elements_of(&ctx, data, "setFrustum")?;
       if f.len() != 16 {
         return Err(throw_str(&ctx, "setFrustum: viewProj must be a Float32Array of 16"));
       }
@@ -490,7 +467,7 @@ fn set_lod<'js>(ctx: Ctx<'js>, id: u64, levels: Array<'js>, fade: f64, reference
 fn set_lod_view(ctx: Ctx<'_>, target: u64, view: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
   let v = match &view.0 {
     Some(data) => {
-      let f = floats(&ctx, data, "setLodView")?;
+      let f = elements_of(&ctx, data, "setLodView")?;
       if f.len() != 6 {
         return Err(throw_str(&ctx, "setLodView: view must be a Float32Array of 6 (eye xyz, focal, ortho, bias)"));
       }
@@ -513,7 +490,7 @@ fn gather_vertices<'js>(
   uv_offset: i32,
   api: &str,
 ) -> rquickjs::Result<(Vec<f32>, Option<Vec<f32>>)> {
-  let v = floats(ctx, vertices, api)?;
+  let v = elements_of(ctx, vertices, api)?;
   let stride = stride as usize;
   if stride < 3 || pos_offset as usize + 3 > stride || (uv_offset >= 0 && uv_offset as usize + 2 > stride) {
     return Err(throw_str(ctx, &format!("{api}: offsets do not fit the stride")));
@@ -604,11 +581,11 @@ fn compute_normals<'js>(
 ) -> rquickjs::Result<()> {
   let indices = index_list(&ctx, &indices, "computeNormals")?;
   let computed = {
-    let v = floats(&ctx, &positions.data, "computeNormals")?;
+    let v = elements_of(&ctx, &positions.data, "computeNormals")?;
     vertex_normals(v, positions.stride as usize, positions.offset as usize, &indices)
       .map_err(|e| throw_str(&ctx, &format!("computeNormals: {e}")))?
   };
-  let target = floats_mut(&ctx, &normals.data, "computeNormals")?;
+  let target = elements_mut_of(&ctx, &normals.data, "computeNormals")?;
   write_channel(&computed, 3, target, normals.stride as usize, normals.offset as usize)
     .map_err(|e| throw_str(&ctx, &format!("computeNormals: {e}")))
 }
@@ -650,8 +627,8 @@ fn raycast<'js>(
   direction: TypedArray<'js, f32>,
   filter: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Array<'js>> {
-  let o = floats(&ctx, &origin, "raycast")?;
-  let d = floats(&ctx, &direction, "raycast")?;
+  let o = elements_of(&ctx, &origin, "raycast")?;
+  let d = elements_of(&ctx, &direction, "raycast")?;
   if o.len() != 3 || d.len() != 3 {
     return Err(throw_str(&ctx, "raycast: origin and direction must be Float32Arrays of 3"));
   }
@@ -683,7 +660,7 @@ fn raycast<'js>(
 /// radius (7 floats; a sphere when a == b), "box" is center, half
 /// extents, rotation quaternion (10).
 fn volume_arg(ctx: &Ctx<'_>, kind: &str, data: &TypedArray<'_, f32>, api: &str) -> rquickjs::Result<Volume> {
-  let v = floats(ctx, data, api)?;
+  let v = elements_of(ctx, data, api)?;
   match (kind, v.len()) {
     ("capsule", 7) => Ok(Volume::Capsule { a: [v[0], v[1], v[2]], b: [v[3], v[4], v[5]], radius: v[6] }),
     ("box", 10) => Ok(Volume::Box {
@@ -740,7 +717,7 @@ fn sweep<'js>(
   filter: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Array<'js>> {
   let volume = volume_arg(&ctx, &kind, &data, "sweep")?;
-  let m = floats(&ctx, &motion, "sweep")?;
+  let m = elements_of(&ctx, &motion, "sweep")?;
   if m.len() != 3 {
     return Err(throw_str(&ctx, "sweep: motion must be a Float32Array of 3"));
   }
@@ -809,7 +786,7 @@ fn move_and_slide<'js>(
   filter: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Object<'js>> {
   let volume = volume_arg(&ctx, &kind, &data, "moveAndSlide")?;
-  let m = floats(&ctx, &motion, "moveAndSlide")?;
+  let m = elements_of(&ctx, &motion, "moveAndSlide")?;
   if m.len() != 3 {
     return Err(throw_str(&ctx, "moveAndSlide: motion must be a Float32Array of 3"));
   }
@@ -848,7 +825,7 @@ fn bind_direction_slot(
   index: u32,
   vector: TypedArray<'_, f32>,
 ) -> rquickjs::Result<()> {
-  let v = floats(&ctx, &vector, "bindDirectionSlot")?;
+  let v = elements_of(&ctx, &vector, "bindDirectionSlot")?;
   if v.len() != 3 {
     return Err(throw_str(&ctx, "bindDirectionSlot: vector must be a Float32Array of 3"));
   }
@@ -883,7 +860,7 @@ fn bind_texture_slot(
   post: TypedArray<'_, f32>,
   anchor: OptArg<u64>,
 ) -> rquickjs::Result<()> {
-  let p = floats(&ctx, &post, "bindTextureSlot")?;
+  let p = elements_of(&ctx, &post, "bindTextureSlot")?;
   if p.len() != 16 {
     return Err(throw_str(&ctx, "bindTextureSlot: post must be a Float32Array of 16 (a column-major mat4)"));
   }
@@ -925,7 +902,7 @@ fn unbind_weights_slot(ctx: Ctx<'_>, id: u64, texture: OptArg<u64>) -> rquickjs:
 
 /// Write the node's weights register (a Float32Array of any length).
 fn set_weights(ctx: Ctx<'_>, id: u64, weights: TypedArray<'_, f32>) -> rquickjs::Result<()> {
-  let w = floats(&ctx, &weights, "setWeights")?;
+  let w = elements_of(&ctx, &weights, "setWeights")?;
   super::gui(&ctx).alloy.spatial().set_weights(id, w).map_err(|e| throw_str(&ctx, &format!("setWeights: {e}")))
 }
 
@@ -940,7 +917,7 @@ fn write_weights<'js>(
   weights: TypedArray<'js, f32>,
   transition: OptArg<Value<'js>>,
 ) -> rquickjs::Result<()> {
-  let w = floats(&ctx, &weights, "writeWeights")?;
+  let w = elements_of(&ctx, &weights, "writeWeights")?;
   let motion = match &transition.0 {
     Some(v) if !v.is_null() && !v.is_undefined() => {
       let pv = super::tree::to_prop_value(v)?;
@@ -963,8 +940,7 @@ fn read_weights(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Re
   let gui = super::gui(&ctx);
   let spatial = gui.alloy.spatial();
   let weights = spatial.weights_of(id).map_err(|e| throw_str(&ctx, &format!("readWeights: {e}")))?;
-  let raw = out.as_raw().ok_or_else(|| throw_str(&ctx, "readWeights: detached buffer"))?;
-  let dst = unsafe { std::slice::from_raw_parts_mut(raw.ptr.as_ptr() as *mut f32, raw.len / 4) };
+  let dst = elements_mut_of(&ctx, &out, "readWeights")?;
   for (k, slot) in dst.iter_mut().enumerate() {
     *slot = weights.get(k).copied().unwrap_or(0.0);
   }
@@ -986,10 +962,9 @@ fn create_clip<'js>(
   times: TypedArray<'js, f32>,
   values: TypedArray<'js, f32>,
 ) -> rquickjs::Result<u64> {
-  let meta_raw = meta.as_raw().ok_or_else(|| throw_str(&ctx, "createClip: detached buffer"))?;
-  let meta: &[u32] = unsafe { std::slice::from_raw_parts(meta_raw.ptr.as_ptr() as *const u32, meta_raw.len / 4) };
-  let times = floats(&ctx, &times, "createClip")?;
-  let values = floats(&ctx, &values, "createClip")?;
+  let meta = elements_of(&ctx, &meta, "createClip")?;
+  let times = elements_of(&ctx, &times, "createClip")?;
+  let values = elements_of(&ctx, &values, "createClip")?;
   if meta.len() % CLIP_META_WORDS != 0 {
     return Err(throw_str(&ctx, "createClip: meta must be 5 words per channel"));
   }
@@ -1121,11 +1096,10 @@ fn destroy_player(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
 fn read_transform(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Result<()> {
   let (p, q, s) =
     super::gui(&ctx).alloy.spatial().transform_of(id).map_err(|e| throw_str(&ctx, &format!("readTransform: {e}")))?;
-  let raw = out.as_raw().ok_or_else(|| throw_str(&ctx, "readTransform: detached buffer"))?;
-  if raw.len != 10 * 4 {
+  let dst = elements_mut_of(&ctx, &out, "readTransform")?;
+  if dst.len() != 10 {
     return Err(throw_str(&ctx, "readTransform: out must be a Float32Array of 10"));
   }
-  let dst = unsafe { std::slice::from_raw_parts_mut(raw.ptr.as_ptr() as *mut f32, 10) };
   dst[0..3].copy_from_slice(&p);
   dst[3..7].copy_from_slice(&q);
   dst[7..10].copy_from_slice(&s);

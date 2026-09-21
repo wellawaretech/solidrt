@@ -9,11 +9,12 @@
 //! bridge) land here as the plugins shrink.
 
 use std::future::Future;
+use std::ptr::NonNull;
 
 use rquickjs::atom::PredefinedAtom;
 use rquickjs::function::{FromParam, ParamRequirement, ParamsAccessor, This};
 use rquickjs::promise::Promised;
-use rquickjs::{qjs, ArrayBuffer, Ctx, FromJs, Function, IntoJs, Object, Value};
+use rquickjs::{qjs, ArrayBuffer, Ctx, Exception, FromJs, Function, IntoJs, Object, TypedArray, Value};
 
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
@@ -138,21 +139,113 @@ pub fn mark_observed<'js>(val: &Value<'js>) {
   let _ = catch.call::<_, Value<'_>>((This(promise.clone()), noop));
 }
 
-/// Create an ArrayBuffer aliasing external bytes, with NO free callback:
-/// QuickJS never frees or touches the bytes, on detach or at finalization.
+/// A JS buffer whose bytes native code can read in place: an ArrayBuffer, or
+/// a typed array (its own viewed range, not the whole buffer behind it).
 ///
-/// Not `ArrayBuffer::from_source`, deliberately: its drop closure is unsound
-/// against detach. `JS_DetachArrayBuffer` invokes the buffer's `free_func`
-/// but does not clear it, so the finalizer invokes it AGAIN at teardown with
-/// the same opaque pointer, and rquickjs's shim then double-drops its boxed
-/// closure (double `Box::from_raw`) - a crash (see
-/// okf/upstream/rquickjs-detach-double-free.md). With no callback registered,
-/// both sites are no-ops and the bytes' lifetime is the caller's contract:
-/// the wasm plugin pins the instance in its registry, the gpu plugin's write
-/// lease pins the staging block in alloy's Context until end/destroy.
+/// The borrow is the engine's memory. It stays valid only while no JS runs:
+/// a script can write into, detach or (resizable buffers) move the backing
+/// store. Every accessor below hands out a slice for synchronous native use
+/// during the binding call, which is the one pattern the plugins have, so
+/// the unsafety lives here and nowhere else.
+pub trait JsBytes {
+  /// The viewed bytes, `None` when the buffer is detached.
+  fn raw_bytes(&self) -> Option<NonNull<[u8]>>;
+}
+
+impl JsBytes for ArrayBuffer<'_> {
+  fn raw_bytes(&self) -> Option<NonNull<[u8]>> {
+    self.as_raw()
+  }
+}
+
+impl<T> JsBytes for TypedArray<'_, T> {
+  fn raw_bytes(&self) -> Option<NonNull<[u8]>> {
+    self.as_raw()
+  }
+}
+
+/// The element types a typed array can be viewed as; each is plain data
+/// that any byte pattern is valid for, which is what `elements` relies on.
+pub trait Element: Copy {}
+
+macro_rules! elements {
+  ($($t:ty),*) => { $(impl Element for $t {})* };
+}
+
+elements!(u8, i8, u16, i16, u32, i32, f32, f64, u64, i64);
+
+/// The buffer's bytes, `None` when it is detached.
+pub fn bytes<'a>(buf: &'a impl JsBytes) -> Option<&'a [u8]> {
+  // SAFETY: see `JsBytes`; a typed array's view is exactly `len` bytes.
+  buf.raw_bytes().map(|raw| unsafe { raw.as_ref() })
+}
+
+/// The typed array's elements, `None` when its buffer is detached.
+pub fn elements<'a, T: Element>(ta: &'a TypedArray<'_, T>) -> Option<&'a [T]> {
+  // SAFETY: see `JsBytes`; a typed array's view starts element-aligned and
+  // spans a whole number of elements, and `Element` types accept any bytes.
+  bytes(ta).map(|b| unsafe { std::slice::from_raw_parts(b.as_ptr().cast::<T>(), b.len() / std::mem::size_of::<T>()) })
+}
+
+/// The typed array's elements for writing (an `out` parameter), `None` when
+/// its buffer is detached.
+pub fn elements_mut<'a, T: Element>(ta: &'a TypedArray<'_, T>) -> Option<&'a mut [T]> {
+  // SAFETY: as for `elements`; the engine hands out no other reference to
+  // its bytes while JS is not running.
+  ta.raw_bytes().map(|raw| unsafe {
+    std::slice::from_raw_parts_mut(raw.as_ptr().cast::<T>(), raw.len() / std::mem::size_of::<T>())
+  })
+}
+
+/// `bytes`, throwing `"<api>: detached buffer"` for a detached buffer.
+pub fn bytes_of<'a>(ctx: &Ctx<'_>, buf: &'a impl JsBytes, api: &str) -> rquickjs::Result<&'a [u8]> {
+  bytes(buf).ok_or_else(|| Exception::throw_message(ctx, &format!("{api}: detached buffer")))
+}
+
+/// `elements`, throwing `"<api>: detached buffer"` for a detached buffer.
+pub fn elements_of<'a, T: Element>(ctx: &Ctx<'_>, ta: &'a TypedArray<'_, T>, api: &str) -> rquickjs::Result<&'a [T]> {
+  elements(ta).ok_or_else(|| Exception::throw_message(ctx, &format!("{api}: detached buffer")))
+}
+
+/// `elements_mut`, throwing `"<api>: detached buffer"` for a detached buffer.
+pub fn elements_mut_of<'a, T: Element>(
+  ctx: &Ctx<'_>,
+  ta: &'a TypedArray<'_, T>,
+  api: &str,
+) -> rquickjs::Result<&'a mut [T]> {
+  elements_mut(ta).ok_or_else(|| Exception::throw_message(ctx, &format!("{api}: detached buffer")))
+}
+
+/// Copy a buffer's bytes out of the engine; empty when the buffer is
+/// detached. For bytes that outlive the binding call (a request body, a
+/// file write, a subprocess payload).
+pub trait CopyBytes {
+  fn copy_bytes(&self) -> Vec<u8>;
+}
+
+impl<B: JsBytes> CopyBytes for B {
+  fn copy_bytes(&self) -> Vec<u8> {
+    bytes(self).map(<[u8]>::to_vec).unwrap_or_default()
+  }
+}
+
+/// `JS_NewArrayBuffer` max_len sentinel for a fixed-length buffer: QuickJS
+/// refuses to resize it or transfer it to a different length.
+const FIXED_LENGTH: qjs::size_t = 0;
+
+/// Create an ArrayBuffer aliasing external bytes, with NO realloc/free
+/// callback: QuickJS never frees, moves or resizes the bytes, on detach or at
+/// finalization, and rejects `resize`/length-changing `transfer` on it.
+///
+/// Not `ArrayBuffer::from_source`, deliberately: that hands ownership of the
+/// bytes to the buffer (its source is dropped when the buffer is freed).
+/// Here the bytes belong to someone else and outlive the view: the wasm
+/// plugin pins the instance in its registry, the gpu plugin's write lease
+/// pins the staging block in alloy's Context until end/destroy.
 pub fn array_buffer_over<'js>(ctx: &Ctx<'js>, ptr: *mut u8, len: usize) -> rquickjs::Result<ArrayBuffer<'js>> {
   let value = unsafe {
-    let raw = qjs::JS_NewArrayBuffer(ctx.as_raw().as_ptr(), ptr, len as _, None, std::ptr::null_mut(), false);
+    let raw =
+      qjs::JS_NewArrayBuffer(ctx.as_raw().as_ptr(), ptr, len as _, FIXED_LENGTH, None, std::ptr::null_mut(), false);
     Value::from_raw(ctx.clone(), raw)
   };
   if value.is_exception() {

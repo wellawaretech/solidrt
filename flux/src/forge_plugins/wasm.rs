@@ -57,7 +57,7 @@ use rquickjs::{
   ArrayBuffer, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, TypedArray, Value,
 };
 
-use crate::plugins::marshal::array_buffer_over;
+use crate::plugins::marshal::{array_buffer_over, bytes_of, CopyBytes};
 use forge::wasm::{ExportInfo, FuncSig, ImportInfo, WasmType, WasmValue};
 
 // Per-instance JS state lives here, in context userdata, NOT in the
@@ -322,11 +322,11 @@ impl Instance {
   /// ranges never alias.
   #[qjs(rename = "writeMemory")]
   pub fn write_memory<'js>(&self, ctx: Ctx<'js>, ptr: usize, bytes: Value<'js>) -> rquickjs::Result<()> {
-    let (src, src_len) = value_raw_bytes(&ctx, &bytes)?;
+    let slice = value_bytes(&ctx, &bytes)?;
+    let (src, src_len) = (slice.as_ptr(), slice.len());
     let overlaps = self.inner.memory_data_ptr().is_some_and(|(mem, mem_len)| {
       (src as usize) < mem as usize + mem_len && (mem as usize) < src as usize + src_len
     });
-    let slice = unsafe { std::slice::from_raw_parts(src, src_len) };
     let result = if overlaps {
       let staged = slice.to_vec();
       self.inner.memory_write(ptr, &staged)
@@ -432,26 +432,23 @@ fn type_names<'js>(ctx: &Ctx<'js>, types: &[WasmType]) -> rquickjs::Result<rquic
 /// Decode a JS `Uint8Array` or `ArrayBuffer` into owned bytes.
 fn value_to_bytes(ctx: &Ctx<'_>, value: &Value<'_>) -> rquickjs::Result<Vec<u8>> {
   if let Ok(ta) = TypedArray::<u8>::from_value(value.clone()) {
-    Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
+    Ok(ta.copy_bytes())
   } else if let Some(ab) = ArrayBuffer::from_value(value.clone()) {
-    Ok(ab.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
+    Ok(ab.copy_bytes())
   } else {
     Err(Exception::throw_message(ctx, "expected a Uint8Array or ArrayBuffer"))
   }
 }
 
-/// Borrow the bytes of a JS `Uint8Array` or `ArrayBuffer` in place. The
-/// returned pointer is only valid while no JS runs.
-fn value_raw_bytes(ctx: &Ctx<'_>, value: &Value<'_>) -> rquickjs::Result<(*const u8, usize)> {
-  let raw = if let Ok(ta) = TypedArray::<u8>::from_value(value.clone()) {
-    ta.as_raw()
-  } else if let Some(ab) = ArrayBuffer::from_value(value.clone()) {
-    ab.as_raw()
-  } else {
-    return Err(Exception::throw_message(ctx, "expected a Uint8Array or ArrayBuffer"));
-  };
-  let raw = raw.ok_or_else(|| Exception::throw_message(ctx, "detached buffer"))?;
-  Ok((raw.ptr.as_ptr(), raw.len))
+/// Borrow the bytes of a JS `Uint8Array` or `ArrayBuffer` in place.
+fn value_bytes<'a>(ctx: &Ctx<'_>, value: &'a Value<'_>) -> rquickjs::Result<&'a [u8]> {
+  if let Some(ta) = value.as_object().and_then(|o| o.as_typed_array::<u8>()) {
+    return bytes_of(ctx, ta, "writeMemory");
+  }
+  if let Some(ab) = value.as_object().and_then(|o| o.as_array_buffer()) {
+    return bytes_of(ctx, ab, "writeMemory");
+  }
+  Err(Exception::throw_message(ctx, "expected a Uint8Array or ArrayBuffer"))
 }
 
 /// Coerce a JS value to a scalar wasm value of the declared type.

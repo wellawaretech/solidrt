@@ -8,7 +8,7 @@ use alloy::audio::PcmFormat;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, FromJs, Function, Object, TypedArray, Value};
 
-use crate::plugins::marshal::OptArg;
+use crate::plugins::marshal::{bytes_of, OptArg};
 use crate::plugins::seekable::SeekableSource;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -151,13 +151,6 @@ fn check_rate(ctx: &Ctx<'_>, who: &str, rate: f32) -> rquickjs::Result<()> {
   Ok(())
 }
 
-/// Borrow a TypedArray's bytes. The caller only decodes during the call, so the
-/// borrow need not outlive it.
-fn typed_bytes<'a>(ctx: &Ctx<'_>, data: &'a TypedArray<'_, u8>, who: &str) -> rquickjs::Result<&'a [u8]> {
-  let raw = data.as_raw().ok_or_else(|| throw_str(ctx, &format!("{who}: detached buffer")))?;
-  Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) })
-}
-
 /// Wrap a started track id in a playback handle (`{ stop, setGain, setPan,
 /// setRate, ended }`) so the raw id stays in Rust.
 fn playback_handle<'js>(ctx: &Ctx<'js>, track_id: u64) -> rquickjs::Result<Object<'js>> {
@@ -191,7 +184,7 @@ fn play_impl<'js>(
   options: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Object<'js>> {
   let play_options = read_options(&ctx, &options)?;
-  let bytes = typed_bytes(&ctx, &data, "play")?;
+  let bytes = bytes_of(&ctx, &data, "play")?;
   let gui = super::gui(&ctx);
   let id = gui.alloy.play_audio(bytes, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
   playback_handle(&ctx, id)
@@ -212,7 +205,7 @@ fn clip_handle<'js>(ctx: &Ctx<'js>, sound_id: u64) -> rquickjs::Result<Object<'j
 /// load(bytes) -> clip. Decodes the clip once; each `play` starts a fresh
 /// overlapping playback with no decode.
 fn load_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> rquickjs::Result<Object<'js>> {
-  let bytes = typed_bytes(&ctx, &data, "load")?;
+  let bytes = bytes_of(&ctx, &data, "load")?;
   let gui = super::gui(&ctx);
   let sound_id = gui.alloy.load_sound(bytes).map_err(|e| throw_str(&ctx, &format!("load: {e}")))?;
   clip_handle(&ctx, sound_id)
@@ -255,11 +248,10 @@ fn load_pcm_impl<'js>(
     return Err(throw_str(&ctx, "loadPcm: channels must be 1 or 2"));
   }
   let (bytes, format) = match &data {
-    PcmData::U8(a) => (a.as_bytes(), PcmFormat::U8),
-    PcmData::S16(a) => (a.as_bytes(), PcmFormat::S16),
-    PcmData::F32(a) => (a.as_bytes(), PcmFormat::F32),
+    PcmData::U8(a) => (bytes_of(&ctx, a, "loadPcm")?, PcmFormat::U8),
+    PcmData::S16(a) => (bytes_of(&ctx, a, "loadPcm")?, PcmFormat::S16),
+    PcmData::F32(a) => (bytes_of(&ctx, a, "loadPcm")?, PcmFormat::F32),
   };
-  let bytes = bytes.ok_or_else(|| throw_str(&ctx, "loadPcm: detached buffer"))?;
   let gui = super::gui(&ctx);
   let sound_id = gui
     .alloy
