@@ -49,6 +49,13 @@ type TransitionEntries<P extends string> = {
   all?: Transition
   /** Group stagger (ms) for descendant enter/exit animations; see core. */
   stagger?: number
+  /**
+   * Layout slide on the component's root view: a reflow that moves or
+   * resizes the component slides it from the box it was painted at, as
+   * core's `layout` entry does (`true` borrows `all`). Never covered by
+   * `all` or a shorthand on its own.
+   */
+  layout?: Transition | boolean
 } & { [K in P]?: Transition }
 
 /** A component's transition declaration: view-level and style names, `all`, or a shorthand string. */

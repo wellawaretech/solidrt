@@ -173,9 +173,10 @@ when exactly one client is connected.
     `exit: { <prop>: "200ms ease-in delay 70ms" }` on every node of it, the
     motion in force per exiting property; freeze the clock
     (`/clock?scale=0`) and step to read an exit's curve off `props`.
-  - `slide: { x, y }` on a node mid-slide (a `layout` transition): the box
-    above is where it is painted, `slide` the offset it has still to cover
-    to its solved box, so a slide and a jump read apart frame by frame.
+  - `slide: { x, y, w, h }` on a node mid-slide (a `layout` transition):
+    the box above is the one it is painted at, `slide` the offset (`x`,
+    `y`) and growth (`w`, `h`) it has still to cover to its solved box, so
+    a slide and a jump read apart frame by frame.
 - `/snapshot?node=<id>` - `{ width, height, pngBase64 }`, display-scaled;
   add `&format=raw` for `rgbaBase64` (RGBA8 bytes, no decoder needed for
   pixel assertions), `&x=&y=&width=&height=` (all four) to crop,

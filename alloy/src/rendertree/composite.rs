@@ -29,10 +29,12 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &c
 
   let available_space =
     taffy::Size { width: AvailableSpace::Definite(width), height: AvailableSpace::Definite(height) };
-  let mut layout_ctx = LayoutContext { render_tree: tree, platform, alloy, hidden_depth: 0 };
+  let mut layout_ctx = LayoutContext { render_tree: tree, platform, alloy, hidden_depth: 0, animated: false };
   taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
-  // Declaring nodes the pass moved slide from where they were painted.
-  tree.start_layout_slides();
+  // Declaring nodes the pass moved or resized slide from the box they were
+  // painted at; the children of the resizing ones lay out against it.
+  layout_ctx.render_tree.start_layout_slides();
+  layout_ctx.animated_layouts();
 }
 
 /// Repaint-boundary counts for one painted frame: subtrees drawn from their
@@ -86,8 +88,7 @@ pub fn paint_phase(
     // The root's boxes come from its layout like every other node's (the hit
     // side derives them per element, so a padded root must agree here too);
     // before the first layout the window is the frame.
-    ctx.content =
-      tree.node(root_id).layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), ctx.size));
+    ctx.content = tree.node(root_id).content_box().unwrap_or(Rect::new(Point::zero(), ctx.size));
     // Nothing outside the window is visible: the root cull rect is the window.
     ctx.cull = Some(window_rect);
     ctx.to_window = Some(euclid::default::Transform2D::identity());
@@ -264,8 +265,7 @@ pub(super) fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
   if !clip_x && !clip_y {
     return;
   }
-  let layout = element.layout.as_ref().expect("overflow clip requires layout");
-  let size = layout.size();
+  let size = element.painted_size().expect("overflow clip requires layout");
   let (w, h) = (size.width, size.height);
   // Rounded clip only applies when the whole box is clipped (both axes);
   // a single-axis clip has no meaningful corners to round.
@@ -806,8 +806,8 @@ pub(super) fn record_node<'a>(
         ctx.cull = ctx.cull.map(|r| r.inflate(reach, reach));
       }
     }
-    if let Some(l) = &element.layout {
-      ctx.cull = ctx.cull.clipped(l.size(), clip_x, clip_y);
+    if let Some(size) = element.painted_size() {
+      ctx.cull = ctx.cull.clipped(size, clip_x, clip_y);
     }
     if let ElementKind::View(v) = &element.kind {
       if let Some(s) = v.scroll {
@@ -896,13 +896,13 @@ pub(super) fn record_node<'a>(
 
     builder.translate(pos.x, pos.y);
 
-    if child.has_layout() {
-      // The child's border box, and its content box derived from the same
-      // layout - the split hit testing makes too, so paint and hit size a
-      // kind against the same boxes (okf/done/padding-box-divergence.md).
-      let layout = child.layout.as_ref().expect("has_layout checked above");
-      ctx.size = layout.size();
-      ctx.content = layout.content_box();
+    if let (Some(size), Some(content)) = (child.painted_size(), child.content_box()) {
+      // The child's border box (painted: a layout slide's mid-motion box
+      // included), and its content box derived from the same layout - the
+      // split hit testing makes too, so paint and hit size a kind against
+      // the same boxes (okf/done/padding-box-divergence.md).
+      ctx.size = size;
+      ctx.content = content;
       build_recursive(scene, child_id, ctx, builder);
     } else {
       // A detached child inherits the frame whole (the design size under a

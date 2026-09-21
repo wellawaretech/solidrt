@@ -1,5 +1,5 @@
 use crate::color::{color_to_oklab, oklab_to_color};
-use crate::impellers::{Color, Point};
+use crate::impellers::{Color, Point, Rect, Size};
 use crate::motion::spring_step;
 use crate::rendertree::{Damage, Element, ElementKind, OriginCoord};
 use std::cell::Cell;
@@ -65,11 +65,11 @@ pub enum AnimProp {
   Color,
   // Rect corner radius, single-number form only.
   Radius,
-  // The layout slide (okf/backlog/transition-layout-animations.md): the
-  // node's painted location in its parent's frame, animated toward the
-  // solved one after a reflow. Not a writable property - the JSX name table
-  // never maps to it and the lifecycle passes never seed it; the tree
-  // starts its tracks itself (tree/transitions.rs start_layout_slides).
+  // The layout slide (okf/done/transition-layout-animations.md): the
+  // node's painted box in its parent's frame, animated toward the solved
+  // one after a reflow. Not a writable property - the JSX name table never
+  // maps to it and the lifecycle passes never seed it; the tree starts its
+  // tracks itself (tree/transitions.rs start_layout_slides).
   Layout,
 }
 
@@ -79,7 +79,7 @@ pub enum AnimProp {
 pub enum AnimKind {
   Scalar,
   Color,
-  Point,
+  Box,
 }
 
 impl AnimProp {
@@ -89,7 +89,7 @@ impl AnimProp {
     use AnimProp::*;
     match self {
       Color => AnimKind::Color,
-      Layout => AnimKind::Point,
+      Layout => AnimKind::Box,
       X | Y | W | H | X1 | Y1 | X2 | Y2 | ScrollX | ScrollY | Opacity | OriginX | OriginY | Perspective
       | ClipRadius | SrcX | SrcY | SrcW | SrcH | OnLength | OffLength | DashOffset | Rotate | RotateX | RotateY
       | Scale | ScaleX | ScaleY | StrokeWidth | Radius => AnimKind::Scalar,
@@ -98,14 +98,14 @@ impl AnimProp {
 }
 
 /// A value an animatable property carries: the scalar set, solid colors,
-/// and a point (the layout slide's location). Colors interpolate in oklab
+/// and a box (the layout slide's painted box). Colors interpolate in oklab
 /// (with alpha as its own linear lane), so a red-to-blue transition passes
 /// through neither gray nor purple mud.
 #[derive(Clone, Copy, Debug)]
 pub enum AnimValue {
   Scalar(f32),
   Color(Color),
-  Point(Point),
+  Box(Rect),
 }
 
 impl AnimValue {
@@ -113,7 +113,7 @@ impl AnimValue {
     match self {
       AnimValue::Scalar(_) => AnimKind::Scalar,
       AnimValue::Color(_) => AnimKind::Color,
-      AnimValue::Point(_) => AnimKind::Point,
+      AnimValue::Box(_) => AnimKind::Box,
     }
   }
 }
@@ -172,7 +172,7 @@ pub struct TransitionConfig {
   pub all: Option<TransitionEntry>,
   pub stagger_ms: Option<f32>,
   // The layout slide's motion (`layout` in the declaration): a reflow moves
-  // the node from where it was painted to its new solved location on it.
+  // the node from the box it was painted at to its new solved box on it.
   // Not a property entry - `entry_for` never answers with it, and its
   // `from`/`exit` are always None.
   pub layout: Option<TransitionEntry>,
@@ -185,8 +185,9 @@ impl TransitionConfig {
 }
 
 /// Layout slide state, carried by the nodes declaring a `layout` transition
-/// (okf/backlog/transition-layout-animations.md); the tree keeps it in step
-/// with the declaration on every edit (tree/transitions.rs reconcile_slide).
+/// (okf/done/transition-layout-animations.md, okf/done/transition-layout-size.md);
+/// the tree keeps it in step with the declaration on every edit
+/// (tree/transitions.rs reconcile_slide).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Slide {
   /// The parent the node was last laid out under. A reflow under another
@@ -194,10 +195,13 @@ pub struct Slide {
   /// snaps there and anchors; None until its first layout under the
   /// current parent.
   pub under: Option<u64>,
-  /// The painted location while a slide runs, in the parent's frame: the
-  /// slide lane's value, written by its track. None when the node sits on
-  /// its solved box.
-  pub at: Option<Point>,
+  /// The painted box while a slide runs, in the parent's frame: the slide
+  /// lane's value, written by its track. None when the node sits on its
+  /// solved box. Its origin is where the node is placed, its size the box
+  /// the node's own paint, clip, backdrop and hit test cover and the box
+  /// its children are laid out against (layout/context.rs
+  /// animated_layouts).
+  pub at: Option<Rect>,
 }
 
 /// The runtime lifecycle state the transition machinery keeps per node, as
@@ -252,16 +256,17 @@ pub struct PendingWrite {
   pub at_ms: f64,
 }
 
-// Track values are lane vectors: scalars use one lane, points two, colors
-// four (oklab L/a/b plus alpha). Tween and spring math run per lane; a
-// color spring is four independent oscillators sharing one spec.
+// Track values are lane vectors: scalars use one lane, colors four (oklab
+// L/a/b plus alpha), boxes four (x, y, width, height). Tween and spring
+// math run per lane; a color spring is four independent oscillators sharing
+// one spec.
 pub type Lanes = [f32; 4];
 
 fn to_lanes(v: AnimValue) -> (Lanes, AnimKind) {
   let lanes = match v {
     AnimValue::Scalar(s) => [s, 0.0, 0.0, 0.0],
     AnimValue::Color(c) => color_to_oklab(c),
-    AnimValue::Point(p) => [p.x, p.y, 0.0, 0.0],
+    AnimValue::Box(r) => [r.origin.x, r.origin.y, r.size.width, r.size.height],
   };
   (lanes, v.kind())
 }
@@ -270,7 +275,7 @@ fn from_lanes(lanes: Lanes, kind: AnimKind) -> AnimValue {
   match kind {
     AnimKind::Scalar => AnimValue::Scalar(lanes[0]),
     AnimKind::Color => AnimValue::Color(oklab_to_color(lanes)),
-    AnimKind::Point => AnimValue::Point(Point::new(lanes[0], lanes[1])),
+    AnimKind::Box => AnimValue::Box(Rect::new(Point::new(lanes[0], lanes[1]), Size::new(lanes[2], lanes[3]))),
   }
 }
 
@@ -554,9 +559,9 @@ impl Element {
       return Some(AnimValue::Color(paint.color));
     }
     if prop == Layout {
-      // The slide lane reads where the node is painted; only a laid-out
-      // node has a box to slide.
-      return self.layout.as_ref().map(|_| AnimValue::Point(self.placement()));
+      // The slide lane reads the box the node is painted at; only a
+      // laid-out node has a box to slide.
+      return self.painted_box().map(AnimValue::Box);
     }
     let scalar = match (&self.kind, prop) {
       (ElementKind::View(v), X) => Some(v.translate.map(|t| t.x).unwrap_or(0.0)),
@@ -660,17 +665,24 @@ impl Element {
         _ => Damage::None,
       };
     }
-    if let AnimValue::Point(p) = value {
+    if let AnimValue::Box(r) = value {
       return match (prop, &self.layout) {
         (Layout, Some(layout)) => {
+          let was = self.frame_size(Size::zero());
           // Back on the solved box (a settle writes the target exactly)
           // the lane drops, so the node reads as not sliding.
-          let at = (p != layout.location()).then_some(p);
+          let at = (r != layout.solved_box()).then_some(r);
           self.lifecycle.slide.get_or_insert_with(Slide::default).at = at;
-          // The parent's walk places the child, so the parent's recording
-          // is what goes stale; the node's own content is untouched (a
-          // translate write's damage).
-          Damage::Compose
+          // A size change redraws the node's own content (its fill, clip,
+          // backdrop) and re-lays out its children, so its own recording
+          // is stale; a move alone is a translate write's damage: the
+          // parent's walk places the child, so only the parent's
+          // recording goes stale.
+          if self.frame_size(Size::zero()) != was {
+            Damage::Paint
+          } else {
+            Damage::Compose
+          }
         }
         _ => Damage::None,
       };

@@ -75,10 +75,9 @@ The contract:
   slides; a window resize reflows everything, so every declaring node slides
   then, as under Framer.
 
-This stage implements the position half of that contract; a size change
-snaps until the size stage lands (transition-layout-size.md in the
-backlog). The spelling does not change between the stages, which is what
-makes the size stage additive.
+This stage implemented the position half of that contract; the size half
+landed as okf/done/transition-layout-size.md. The spelling did not change
+between the stages, which is what made the size stage additive.
 
 ## What landed
 

@@ -51,12 +51,19 @@ impl LayoutData {
     crate::impellers::Size::new(self.computed.size.width, self.computed.size.height)
   }
 
-  // The border box inset by padding and border, origin included: the box a
-  // kind's own content sizes and places against, matching the inset
-  // place_atoms applies to a text's inline atoms
-  // (okf/done/padding-box-divergence.md). Paint and hit both derive it
-  // from here, so they cannot disagree.
-  pub fn content_box(&self) -> crate::impellers::Rect {
+  /// The solved box in the parent's frame: location and size as the pass
+  /// wrote them, whatever a layout slide paints (`Element::painted_box`).
+  pub fn solved_box(&self) -> crate::impellers::Rect {
+    crate::impellers::Rect::new(self.location(), self.size())
+  }
+
+  // A border box of `size` inset by this layout's padding and border,
+  // origin included: the box a kind's own content sizes and places against,
+  // matching the inset place_atoms applies to a text's inline atoms
+  // (okf/done/padding-box-divergence.md). Paint and hit both derive it from
+  // here (through Element::content_box, which passes the painted size), so
+  // they cannot disagree.
+  pub fn content_box_of(&self, size: crate::impellers::Size) -> crate::impellers::Rect {
     let c = &self.computed;
     let left = c.padding.left + c.border.left;
     let top = c.padding.top + c.border.top;
@@ -64,7 +71,7 @@ impl LayoutData {
     let bottom = c.padding.bottom + c.border.bottom;
     crate::impellers::Rect::new(
       crate::impellers::Point::new(left, top),
-      crate::impellers::Size::new(c.size.width - left - right, c.size.height - top - bottom),
+      crate::impellers::Size::new(size.width - left - right, size.height - top - bottom),
     )
   }
 }
@@ -77,6 +84,11 @@ pub struct LayoutContext<'a> {
   // above zero every box written is the hidden pass's zero box, which
   // set_unrounded_layout records as not laid out.
   pub hidden_depth: u32,
+  // An animated sub-layout is in flight (`animated_layouts`): the boxes
+  // written are a resizing ancestor's animation, not a reflow, so
+  // set_unrounded_layout starts no slide from them and drops any slide of
+  // the nodes it places.
+  pub animated: bool,
 }
 
 impl<'a> LayoutContext<'a> {
@@ -280,6 +292,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
   fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
     let id = u64::from(node_id);
     let laid_out = self.hidden_depth == 0;
+    let animated = self.animated;
     let element = self.render_tree.node_mut(id);
     let slides = element.transitions.as_ref().is_some_and(|t| t.layout.is_some());
     let data = element.layout_data_mut();
@@ -288,12 +301,14 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
     // node are stale.
     if data.computed != *layout {
       // The layout slide (tree/transitions.rs start_layout_slides) needs
-      // the location a declaring node had before this write, and this is
-      // the one seam a solved box changes at. A box that was never a
-      // placement (before the first layout, or hidden) is no previous
-      // position.
-      let moved = slides && data.computed.location != layout.location;
-      let old = data.laid_out.then(|| data.location());
+      // the box a declaring node had before this write, and this is the
+      // one seam a solved box changes at. A box that was never a placement
+      // (before the first layout, or hidden) is no previous box. Under an
+      // animated sub-layout the write is a resizing ancestor's animation
+      // carrying the node (one motion, as a SwiftUI transaction), never a
+      // reflow of its own.
+      let moved = slides && !animated && (data.computed.location != layout.location || data.computed.size != layout.size);
+      let old = data.laid_out.then(|| data.solved_box());
       data.computed = *layout;
       // Partial repaint: this is the one place a node moved by someone
       // else's relayout (a sibling grew) becomes visible, so its old and
@@ -303,6 +318,9 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
       if moved {
         self.render_tree.note_reflow(id, old);
       }
+    }
+    if animated && slides {
+      self.render_tree.drop_slide(id);
     }
     self.render_tree.node_mut(id).layout_data_mut().laid_out = laid_out;
   }
@@ -314,7 +332,18 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
     if inputs.run_mode == RunMode::PerformHiddenLayout {
       return self.hidden_layout(node_id);
     }
-    compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
+    compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| tree.perform(node_id, inputs))
+  }
+}
+
+impl<'a> LayoutContext<'a> {
+  // The layout of one node for `inputs`, uncached: the kind's measure for a
+  // leaf, the container algorithm for a display. compute_child_layout wraps
+  // it in the node's cache; animated_layouts calls it straight, since a
+  // cached answer would skip placing the children.
+  fn perform(&mut self, node_id: NodeId, inputs: LayoutInput) -> taffy::LayoutOutput {
+    let tree = self;
+    {
       let id = u64::from(node_id);
       // A Text's computed_text and runs are kept current eagerly by
       // RenderTree::sync_text on every span or structural change, so the
@@ -372,7 +401,69 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
           None => tree.container_layout(node_id, display, inputs),
         }
       }
-    })
+    }
+  }
+
+  /// Layout slides that change size (okf/done/transition-layout-size.md):
+  /// the children of every node whose painted box is in flight are laid
+  /// out against the painted box, so a card growing to fit a second line
+  /// re-wraps its text and re-flows its rows on every frame of the motion,
+  /// as under SwiftUI, Compose or a CSS width transition - never clipped or
+  /// scaled from their final layout. The parent keeps placing the node at
+  /// its solved box (the pass above wrote it; nothing here returns a size
+  /// to it). One subtree layout per resizing node per frame, on the node's
+  /// own children caches; the node's own cache is bypassed, since a hit
+  /// there would place nothing. Runs after the pass and the slide diff, so
+  /// a reflow that re-solved the children is overwritten at once, and
+  /// re-runs while the node is in flight (`RenderTree::resizing`, which
+  /// remembers the size each run used so the frame's second layout_phase
+  /// skips an unchanged box); the last run, at the solved size, lands the
+  /// children exactly on their solved boxes. Boxes written here are the
+  /// animation, not a reflow: they start no slide and drop the slides of
+  /// the nodes they place.
+  pub(crate) fn animated_layouts(&mut self) {
+    let resizing = self.render_tree.take_resizing();
+    if resizing.is_empty() {
+      return;
+    }
+    self.animated = true;
+    for (id, last) in resizing {
+      let Some(el) = self.render_tree.try_node(id) else { continue };
+      let Some(layout) = el.layout.as_ref() else { continue };
+      if !layout.laid_out || el.is_hidden() {
+        continue;
+      }
+      let solved = layout.size();
+      let painted = el.painted_size().unwrap_or(solved);
+      let display = layout.style.display;
+      let known = Size { width: Some(painted.width), height: Some(painted.height) };
+      // Only the known dimensions count (ContentSize mode): the node's own
+      // size styles belong to the box its parent solved, not to the one its
+      // children see mid-motion.
+      let inputs = LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        sizing_mode: SizingMode::ContentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: known,
+        known_dimensions_are_definite: Size { width: true, height: true },
+        parent_size: known,
+        available_space: Size {
+          width: AvailableSpace::Definite(painted.width),
+          height: AvailableSpace::Definite(painted.height),
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+      };
+      if display == Display::None {
+        continue;
+      }
+      if last != Some(painted) {
+        self.perform(NodeId::from(id), inputs);
+      }
+      if painted != solved {
+        self.render_tree.keep_resizing(id, painted);
+      }
+    }
+    self.animated = false;
   }
 }
 

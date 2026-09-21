@@ -1920,11 +1920,16 @@ fn node_json(
       if !exits.is_empty() {
         map.insert("exit".into(), exits.into());
       }
-      // A layout slide in flight: the box above is where the node is
-      // painted, `slide` what it has still to cover to its solved box, so
-      // a slide and a jump read apart frame by frame.
+      // A layout slide in flight: the box above is the one the node is
+      // painted at, `slide` what it has still to cover to its solved box
+      // (offset and growth), so a slide and a jump read apart frame by
+      // frame.
       if let Some(remaining) = tree.slide_remaining(node.id) {
-        map.insert("slide".into(), serde_json::json!({ "x": round2(remaining.x), "y": round2(remaining.y) }));
+        let (offset, growth) = (remaining.offset, remaining.growth);
+        map.insert(
+          "slide".into(),
+          serde_json::json!({ "x": round2(offset.x), "y": round2(offset.y), "w": round2(growth.x), "h": round2(growth.y) }),
+        );
       }
     }
     if let Some(quad) = tree.painted_quad(node.id) {

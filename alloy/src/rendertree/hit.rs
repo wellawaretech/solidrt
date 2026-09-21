@@ -131,7 +131,7 @@ pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: Point) -> Vec<
   for (i, &id) in chain.iter().enumerate() {
     let Some(element) = tree.try_node(id) else { break };
     let size = element.frame_size(parent_size);
-    let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), size));
+    let content = element.content_box().unwrap_or(Rect::new(Point::zero(), size));
     if i > 0 {
       let pos = element.placement();
       point = point - pos.to_vector() + parent_scroll;
@@ -166,7 +166,7 @@ impl HitTester for DefaultHitTester {
     let Some(root_id) = tree.root else {
       return vec![];
     };
-    let size = tree.node(root_id).layout.as_ref().map(|l| l.size()).unwrap_or_default();
+    let size = tree.node(root_id).painted_size().unwrap_or_default();
     let mut path = Vec::new();
     hit_recursive(tree, root_id, point, size, PointerEvents::Auto, &mut path);
     path
@@ -197,7 +197,7 @@ fn hit_recursive(
   // The content box paint derives from the same layout, so text geometry
   // resolves identically on both paths
   // (okf/done/padding-box-divergence.md). No layout: the whole frame.
-  let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), size));
+  let content = element.content_box().unwrap_or(Rect::new(Point::zero(), size));
 
   let ctx = HitContext { size, content };
   let local = element.kind.transform_to_local(point, &ctx);

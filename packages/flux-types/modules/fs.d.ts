@@ -77,9 +77,11 @@ declare module "flux:fs" {
   /**
    * Reference a file by path. Lazy: no I/O happens until a method is called.
    *
-   * Relative paths resolve against the process cwd. Exception: in a SolidRT
-   * app running an installed version, paths under `assets/` resolve read-only
-   * into that version's immutable assets tree (writes there error).
+   * Relative paths resolve against the process cwd, which in a SolidRT app
+   * is the app's per-app persistent storage folder (kept across updates), so
+   * `flux.file("notes.json")` is the app's own durable file. Exception: in a
+   * SolidRT app running an installed version, paths under `assets/` resolve
+   * read-only into that version's immutable assets tree (writes there error).
    *
    * @param path  Path to the file.
    */

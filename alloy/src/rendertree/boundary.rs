@@ -245,8 +245,8 @@ impl<'e> BoundaryComposite<'e> {
 // quad's dst - except for a View, whose offset (translate) lives in the
 // matrix that Hoist::Transform keeps out of the recording anyway.
 pub(super) fn painted_box(element: &Element, frame: Size) -> (f32, f32, (f32, f32)) {
-  match element.layout.as_ref() {
-    Some(l) => (l.size().width, l.size().height, (0.0, 0.0)),
+  match element.painted_size() {
+    Some(size) => (size.width, size.height, (0.0, 0.0)),
     None => {
       let local = element.kind.local_bounds(frame);
       let offset = match &element.kind {

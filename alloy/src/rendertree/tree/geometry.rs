@@ -129,16 +129,14 @@ impl RenderTree {
       }
       if let ElementKind::View(v) = &parent.kind {
         if v.scroll.is_some() {
-          let size =
-            parent.layout.as_ref().map(|l| l.size()).or_else(|| self.content_fallback(parent_id)).unwrap_or_default();
+          let size = parent.painted_size().or_else(|| self.content_fallback(parent_id)).unwrap_or_default();
           // Scroll means box pixels; these corners are in the parent's child
           // frame (design space under a design-size fit), so the offset divides
           // by the fit scale, matching the hit descent and the paint order.
           shift -= v.content_scroll(size);
         }
         if v.needs_matrix() {
-          let size =
-            parent.layout.as_ref().map(|l| l.size()).or_else(|| self.content_fallback(parent_id)).unwrap_or_default();
+          let size = parent.painted_size().or_else(|| self.content_fallback(parent_id)).unwrap_or_default();
           let m = v.paint_matrix(size);
           for p in corners.iter_mut() {
             *p = transform_point(&m, *p + shift);
@@ -179,7 +177,7 @@ impl RenderTree {
         if !layout.laid_out {
           return None;
         }
-        return Some(layout.size());
+        return node.painted_size();
       }
       cur = node.parent?;
     }

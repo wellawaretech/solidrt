@@ -133,7 +133,7 @@ pub fn decode(value: &PropValue) -> Result<Option<Box<TransitionConfig>>, String
 }
 
 /// The `layout` key: the layout slide's motion
-/// (okf/backlog/transition-layout-animations.md). An entry object or
+/// (okf/done/transition-layout-animations.md). An entry object or
 /// shorthand of its own, or `true` to borrow the `all` entry's motion - an
 /// error without one, since `all` never covers layout by itself (a bare
 /// `transition="300ms"` on every button must not make buttons slide on
@@ -428,7 +428,7 @@ fn decode_endpoint_value(at: &str, key: &str, value: &PropValue, prop: AnimProp)
       }
       Ok(AnimValue::Scalar(n))
     }
-    AnimKind::Point => Err(format!("{at}: {key} does not apply to layout")),
+    AnimKind::Box => Err(format!("{at}: {key} does not apply to layout")),
   }
 }
 

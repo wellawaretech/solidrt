@@ -190,7 +190,7 @@ pub(crate) fn child_frame(element: &Element, inherited: Size) -> Size {
 // Text the extent cannot be read from is unbounded.
 fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) -> Extent {
   let frame = element.frame_size(inherited);
-  let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), frame));
+  let content = element.content_box().unwrap_or(Rect::new(Point::zero(), frame));
   let inflate = |r: Rect, by: f32| Extent::Bounded(r.inflate(by, by));
   // A shape's shadow paints past its geometry: union the shadow's own
   // reach (offset + spread + blur falloff) into the extent.
@@ -225,8 +225,8 @@ fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) ->
   // A laid-out node's box is a harmless superset of what its own build draws
   // inside it, and it is what everything else (clip, hit) already means by
   // the node.
-  if let Some(l) = &element.layout {
-    extent = extent.union(Extent::Bounded(Rect::new(Point::zero(), l.size())));
+  if let Some(size) = element.painted_size() {
+    extent = extent.union(Extent::Bounded(Rect::new(Point::zero(), size)));
   }
   extent
 }
@@ -249,7 +249,7 @@ pub fn envelope(scene: &RenderTree, node_id: u64, platform: &PlatformContext, in
 }
 
 fn compute_envelope(scene: &RenderTree, element: &Element, platform: &PlatformContext, inherited: Size) -> Extent {
-  let box_size = element.layout.as_ref().map(|l| l.size());
+  let box_size = element.painted_size();
   let (clip_x, clip_y) = element
     .layout
     .as_ref()

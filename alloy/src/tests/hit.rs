@@ -306,7 +306,7 @@ fn content_box_insets_padding_and_border() {
   let l = tree.node_mut(1).layout_data_mut();
   l.computed.padding = taffy::Rect { left: 10.0, right: 6.0, top: 4.0, bottom: 2.0 };
   l.computed.border = taffy::Rect { left: 1.0, right: 1.0, top: 1.0, bottom: 1.0 };
-  let c = tree.node(1).layout.as_ref().expect("laid out above").content_box();
+  let c = tree.node(1).content_box().expect("laid out above");
   assert_xy(c.origin, 11.0, 5.0);
   assert_xy(Point::new(c.size.width, c.size.height), 82.0, 72.0);
 }

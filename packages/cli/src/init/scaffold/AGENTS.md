@@ -50,6 +50,12 @@ that matches the work; do not work from memory of what a web framework does.
   node_modules/@solidrt/core/agents/performance.md
 - use an installed extension (UI components, 2D, 3D) ->
   node_modules/@solidrt/<name>/AGENTS.md and its examples/
+- persist data (a settings file, a database, anything that must survive a
+  restart) -> node_modules/@solidrt/flux-types/modules/fs.d.ts and
+  sqlite.d.ts (`flux:fs`, `flux:sqlite`; a relative path is the app's own
+  persistent storage folder), and node_modules/@solidrt/core/src/data.ts
+  (`createQuery`/`createQueryRow` from `@solidrt/core/data`, reactive reads
+  over a `flux:sqlite` database)
 - debug a running app, or drive it over MCP to verify a change ->
   node_modules/@solidrt/cli/agents/debugging.md
 - add an asset or font, set the app's identity, or build for distribution ->

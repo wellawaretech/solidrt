@@ -403,7 +403,7 @@ fn set_property(ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>) 
     // for compatibility); the scalar properties as plain numbers. Anything
     // else (null, a gradient object, an unparsable string) never animates
     // - the normal write path raises the proper error for the bad string.
-    // A point is the layout slide's, which anim_prop never maps a name to:
+    // A box is the layout slide's, which anim_prop never maps a name to:
     // no JS write reaches that arm.
     let target = match prop.kind() {
       alloy::rendertree::AnimKind::Color => {
@@ -415,7 +415,7 @@ fn set_property(ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>) 
         packed.or_else(parsed).map(AnimValue::Color)
       }
       alloy::rendertree::AnimKind::Scalar => value.as_number().map(|n| AnimValue::Scalar(n as f32)),
-      alloy::rendertree::AnimKind::Point => None,
+      alloy::rendertree::AnimKind::Box => None,
     };
     if s.tree.borrow_mut().transition_write(node_id, prop, target) {
       s.gui.platform.request_frame();

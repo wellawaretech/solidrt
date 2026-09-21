@@ -40,6 +40,7 @@ CPU and 358 voluntary switches per 5 s, and the animating probe 5% CPU,
 785 switches, 60 fps, 0 missed presents. Report and upstream status:
 [[sdl-android-wait-event-poll-sentinel-spin]].
 
-The probe's process cpuPct still reads 71, not tens: the raster thread's
-GL driver work is about 56% of it (roughly 9 ms CPU per frame on a 0.1 ms
-build). That is a separate question, not the loop.
+The probe's process cpuPct still reads 55 to 70, not tens: the raster
+thread's driver and compositor work is about 56 points of it, roughly 8 ms
+of CPU per frame on a 0.3 ms build. Profiled and found to be the device's
+floor, not the loop: [[android-raster-thread-cpu-per-frame]].

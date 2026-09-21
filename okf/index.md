@@ -834,12 +834,6 @@ Shaped, not started.
   Element and node transitions share the artifact; spatial is more exposed
   because writing initial targets during scene setup is a natural pattern. An
   install-time (or first-JS-entry) clock stamp is the likely few-line fix.
-- **[A node whose box changes size snaps to it while its position slides](backlog/transition-layout-size.md)** [2026-09-10]
-  The layout slide covers position only, so a row that grows or shrinks (an
-  expanding card, a re-wrapped line, a column that widens) jumps to its new
-  size while its neighbours glide; done means `layout` covers the whole box,
-  the meaning it has in every peer, on the child model that owning layout
-  makes a choice rather than a constraint.
 - **[The dev-server repl has only run on Linux](backlog/tty-repl-platform-runs.md)** [2026-08-26]
   flux:tty raw mode and the srt repl are crossterm-backed and compile for
   Windows and Android, but neither has been run there - the Windows console
@@ -2047,6 +2041,12 @@ Finished, kept for the reasoning.
   one, and a reordered list teleports; done means a node declaring a layout
   transition slides from the box it had to the box it gets, the piece every
   peer pairs with exit pop-out.
+- **[A node whose box changes size snaps to it while its position slides](done/transition-layout-size.md)** [2026-09-21]
+  The layout slide covered position only, so a row that grew or shrank (an
+  expanding card, a re-wrapped line, a column that widened) jumped to its new
+  size while its neighbours glided; `layout` now covers the whole box, the
+  meaning it has in every peer, with the children laid out against the painted
+  box every frame of the motion.
 - **[An exit plays the enter's curve backwards](done/transition-per-direction-curves.md)** [2026-09-10]
   A transition entry carries one curve and serves the property both ways, so
   an ease-out enter runs its exit with all the motion in the first frames;
@@ -2109,6 +2109,13 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   hit/routing) are covered by a 168-test suite. Remaining gaps are the
   unenforced unsafe Send/Sync (now four types), hot-path expect(&format!), and
   panics at the tree boundary.
+- **[The raster thread's CPU per frame on Android is the driver's swap, not our code](notes/android-raster-thread-cpu-per-frame.md)** [2026-09-21]
+  On the SM-T500 (Adreno 610, Android 12) the raster thread spends about 8 ms
+  of CPU per 60 fps frame on a one-rectangle fullscreen frame; a DWARF
+  simpleperf profile puts 63% of it inside eglSwapBuffers (the Adreno driver's
+  pre-queue work plus the BLAST binder transaction) and 25% in the draw, with
+  no busy-wait anywhere; HWUI pays a similar price on the same device, and the
+  recipe for profiling the client's threads is here.
 - **[The Android vsync release chain, traced against the compositor](notes/android-vsync-release-chain.md)** [2026-09-12]
   What a 5 s atrace of an animating app on a 60 Hz Android 12 tablet shows
   about the vsync-locked frame chain - the Choreographer callbacks are on

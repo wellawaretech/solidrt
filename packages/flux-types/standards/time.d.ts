@@ -1,6 +1,5 @@
 // Timers, microtask scheduling, and the monotonic clock. flux's timers differ
-// from the browser in two ways: the delay is required, and no extra callback
-// arguments are forwarded.
+// from the browser in one way: no extra callback arguments are forwarded.
 //
 // In a GUI runtime the timers are FRAME-QUANTIZED but WALL-ACCURATE: a
 // deadline is measured against the real clock from the moment of
@@ -18,17 +17,18 @@
 // servers) keeps ordinary wall-clock timers.
 
 /**
- * Run `callback` after at least `ms` milliseconds. Returns a timer id for
+ * Run `callback` after at least `ms` milliseconds (default 0, as on the
+ * web: the next frame in a GUI runtime). Returns a timer id for
  * {@link clearTimeout}.
  */
-declare function setTimeout(callback: () => void, ms: number): number
+declare function setTimeout(callback: () => void, ms?: number): number
 /** Cancel a pending timeout. Unknown or missing ids are ignored. */
 declare function clearTimeout(id?: number): void
 /**
- * Run `callback` every `ms` milliseconds. Returns a timer id for
- * {@link clearInterval}.
+ * Run `callback` every `ms` milliseconds (default 0: once per frame in a
+ * GUI runtime). Returns a timer id for {@link clearInterval}.
  */
-declare function setInterval(callback: () => void, ms: number): number
+declare function setInterval(callback: () => void, ms?: number): number
 /** Cancel a running interval. Unknown or missing ids are ignored. */
 declare function clearInterval(id?: number): void
 /**

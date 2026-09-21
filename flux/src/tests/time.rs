@@ -38,6 +38,23 @@ fn timeout_fires_at_deadline_once() {
   });
 }
 
+// The web default: no delay (or undefined, null, a negative one) is 0, so
+// the callback runs on the next advance, and never throws at registration.
+#[test]
+fn omitted_delay_means_zero() {
+  with_virtual_ctx(|ctx| {
+    ctx
+      .eval::<(), _>(
+        "setTimeout(() => log.push('none')); setTimeout(() => log.push('undef'), undefined); \
+         setTimeout(() => log.push('neg'), -5); setInterval(() => log.push('i'))",
+      )
+      .expect("register");
+    assert_eq!(log(ctx), "");
+    advance_virtual_time(ctx, 1.0);
+    assert_eq!(log(ctx), "none,undef,neg,i");
+  });
+}
+
 #[test]
 fn due_timers_fire_in_deadline_order() {
   with_virtual_ctx(|ctx| {

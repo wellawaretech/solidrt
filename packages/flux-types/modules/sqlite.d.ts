@@ -38,7 +38,10 @@ declare module "flux:sqlite" {
     /**
      * Open a connection to the database at `path`.
      *
-     * @param path  Database file path.
+     * @param path  Database file path. A relative path resolves against the
+     *   process cwd, which in a SolidRT app is the app's per-app persistent
+     *   storage folder (kept across updates), so `"app.db"` is the app's own
+     *   durable database.
      * @param mode  Open mode; defaults to "ro".
      */
     static open(path: string, mode?: OpenMode): Promise<Database>

@@ -331,6 +331,12 @@ fn timer_id(arg: OptArg<Value<'_>>) -> Option<u32> {
   }
 }
 
+// The delay argument as the web reads it: omitted, undefined or null is 0
+// (the next frame), a negative or NaN value is 0, a fraction truncates.
+fn delay_ms(ms: OptArg<f64>) -> u64 {
+  ms.0.filter(|v| v.is_finite()).unwrap_or(0.0).max(0.0) as u64
+}
+
 fn init_timers(ctx: &Ctx<'_>) {
   let timers = Timers::new(ctx);
   let globals = ctx.globals();
@@ -339,9 +345,9 @@ fn init_timers(ctx: &Ctx<'_>) {
     ctx.clone(),
     MutFn::from({
       let timers = timers.clone();
-      move |cb: Function<'_>, ms: u64| -> u32 {
+      move |cb: Function<'_>, ms: OptArg<f64>| -> u32 {
         let ctx = cb.ctx().clone();
-        timers.set_timeout(&ctx, cb, ms)
+        timers.set_timeout(&ctx, cb, delay_ms(ms))
       }
     }),
   )
@@ -364,9 +370,9 @@ fn init_timers(ctx: &Ctx<'_>) {
     ctx.clone(),
     MutFn::from({
       let timers = timers.clone();
-      move |cb: Function<'_>, ms: u64| -> u32 {
+      move |cb: Function<'_>, ms: OptArg<f64>| -> u32 {
         let ctx = cb.ctx().clone();
-        timers.set_interval(&ctx, cb, ms)
+        timers.set_interval(&ctx, cb, delay_ms(ms))
       }
     }),
   )

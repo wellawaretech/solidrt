@@ -5,10 +5,11 @@ use crate::rendertree::*;
 use std::sync::Arc;
 use taffy::prelude::*;
 
-// Layout slides (okf/backlog/transition-layout-animations.md): a node
-// declaring a `layout` transition slides from where it was painted to the
-// box a layout gives it. Driven through the real layout phase with the
-// headless context the layout tests use.
+// Layout slides (okf/done/transition-layout-animations.md,
+// okf/done/transition-layout-size.md): a node declaring a `layout`
+// transition slides from the box it was painted at to the box a layout
+// gives it, position and size. Driven through the real layout phase with
+// the headless context the layout tests use.
 
 const LINEAR_100: TransitionSpec = TransitionSpec::Tween { duration_ms: 100.0, curve: Curve::Linear };
 
@@ -92,6 +93,29 @@ fn sliding(tree: &RenderTree, id: u64) -> bool {
   tree.slide_remaining(id).is_some()
 }
 
+fn painted_h(tree: &RenderTree, id: u64) -> f32 {
+  tree.node(id).painted_size().expect("laid out").height
+}
+
+fn solved_h(tree: &RenderTree, id: u64) -> f32 {
+  tree.node(id).layout_data().size().height
+}
+
+fn set_height(tree: &mut RenderTree, id: u64, h: f32) {
+  tree.edit(id, |el| {
+    el.style_mut().expect("laid-out node").size.height = length(h);
+    Damage::Layout
+  });
+}
+
+// A child of row 3 filling it (`fraction` of its height), so the box the
+// row's children are laid out against is readable from the child's size.
+fn fill_row_3(tree: &mut RenderTree, id: u64, fraction: f32) {
+  tree.create_node(id, attached());
+  tree.node_mut(id).style_mut().expect("child").size = taffy::Size { width: percent(1.0), height: percent(fraction) };
+  tree.insert_node(3, id, None).expect("insert child");
+}
+
 fn assert_near(got: f32, want: f32) {
   assert!((got - want).abs() < 0.01, "expected {want}, got {got}");
 }
@@ -107,7 +131,8 @@ fn removing_a_row_slides_the_rows_below_up() {
   layout(&mut tree, &platform, &alloy);
   assert_eq!((solved_y(&tree, 3), solved_y(&tree, 4)), (0.0, 50.0));
   assert_eq!((painted_y(&tree, 3), painted_y(&tree, 4)), (50.0, 100.0));
-  assert_eq!(tree.slide_remaining(3), Some(Vector::new(0.0, -50.0)));
+  let remaining = tree.slide_remaining(3).expect("mid-slide");
+  assert_eq!((remaining.offset, remaining.growth), (Vector::new(0.0, -50.0), Vector::zero()));
   assert!(tree.advance_transitions(), "slides run");
   assert_eq!(painted_y(&tree, 3), 50.0, "nothing moves at the start clock");
 
@@ -355,6 +380,126 @@ fn the_snapshot_reports_the_painted_position() {
   let node = tree.snapshot_from(Some(3), Some(0)).expect("row 3");
   assert_near(node.y, 25.0);
   let remaining = tree.slide_remaining(3).expect("mid-slide");
-  assert_near(remaining.x, 0.0);
-  assert_near(remaining.y, -25.0);
+  assert_near(remaining.offset.x, 0.0);
+  assert_near(remaining.offset.y, -25.0);
+}
+
+// The lane is the whole box: a row that grows slides its size from the
+// painted one, its children are laid out against the painted box on every
+// frame of the motion, and the rows below slide with its bottom edge.
+#[test]
+fn growing_a_row_slides_its_size_and_lays_its_children_out_against_it() {
+  let (mut tree, platform, alloy) = shown();
+  fill_row_3(&mut tree, 5, 1.0);
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(solved_h(&tree, 5), 50.0);
+  paint(&tree, &[5]);
+
+  set_height(&mut tree, 3, 150.0);
+  tree.set_transition_now(1000.0);
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!((solved_h(&tree, 3), painted_h(&tree, 3)), (150.0, 50.0));
+  assert_eq!(solved_h(&tree, 5), 50.0, "the child fills the painted box, not the solved one");
+  assert_eq!((solved_y(&tree, 4), painted_y(&tree, 4)), (200.0, 100.0));
+  let remaining = tree.slide_remaining(3).expect("mid-slide");
+  assert_eq!((remaining.offset, remaining.growth), (Vector::zero(), Vector::new(0.0, 100.0)));
+
+  tree.set_transition_now(1050.0);
+  tree.advance_transitions();
+  layout(&mut tree, &platform, &alloy);
+  assert_near(painted_h(&tree, 3), 100.0);
+  assert_near(solved_h(&tree, 5), 100.0);
+  assert_near(painted_y(&tree, 4), 150.0);
+  let node = tree.snapshot_from(Some(3), Some(0)).expect("row 3");
+  assert_near(node.height, 100.0);
+
+  tree.set_transition_now(1100.0);
+  assert!(!tree.advance_transitions(), "settled");
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(painted_h(&tree, 3), 150.0);
+  assert_eq!(solved_h(&tree, 5), 150.0, "the settle lands the child on its solved box");
+  assert!(!sliding(&tree, 3));
+  assert!(tree.take_settled_transitions().contains(&(3, AnimProp::Layout)));
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(solved_h(&tree, 5), 150.0, "a settled row lays its children out once more, then no more");
+}
+
+// A declaring child under a resizing ancestor is carried by the ancestor's
+// motion: the animated sub-layout places it every frame, and a slide of its
+// own would fight that box, so none runs.
+#[test]
+fn a_resizing_ancestor_carries_its_declaring_children() {
+  let (mut tree, platform, alloy) = shown();
+  fill_row_3(&mut tree, 5, 0.5);
+  declare_layout(&mut tree, 5);
+  layout(&mut tree, &platform, &alloy);
+  paint(&tree, &[5]);
+  assert_eq!(solved_h(&tree, 5), 25.0);
+
+  set_height(&mut tree, 3, 150.0);
+  tree.set_transition_now(1000.0);
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(solved_h(&tree, 5), 25.0, "half of the painted 50");
+  assert!(!sliding(&tree, 5), "no slide of its own");
+  tree.set_transition_now(1050.0);
+  tree.advance_transitions();
+  layout(&mut tree, &platform, &alloy);
+  assert_near(solved_h(&tree, 5), 50.0);
+  assert!(!sliding(&tree, 5));
+
+  // Its own reflow, once the ancestor rests, slides again.
+  tree.set_transition_now(1100.0);
+  tree.advance_transitions();
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(solved_h(&tree, 5), 75.0);
+  tree.edit(5, |el| {
+    el.style_mut().expect("child").size.height = percent(1.0);
+    Damage::Layout
+  });
+  tree.set_transition_now(2000.0);
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!((solved_h(&tree, 5), painted_h(&tree, 5)), (150.0, 75.0));
+  assert!(sliding(&tree, 5));
+}
+
+// Clearing the declaration mid-resize snaps the node to its solved box and
+// its children with it.
+#[test]
+fn clearing_the_declaration_mid_resize_snaps_the_children_too() {
+  let (mut tree, platform, alloy) = shown();
+  fill_row_3(&mut tree, 5, 1.0);
+  layout(&mut tree, &platform, &alloy);
+  paint(&tree, &[5]);
+  set_height(&mut tree, 3, 150.0);
+  tree.set_transition_now(1000.0);
+  layout(&mut tree, &platform, &alloy);
+  tree.set_transition_now(1050.0);
+  tree.advance_transitions();
+  layout(&mut tree, &platform, &alloy);
+  assert_near(solved_h(&tree, 5), 100.0);
+  tree.edit(3, |el| {
+    el.transitions = None;
+    Damage::None
+  });
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(painted_h(&tree, 3), 150.0);
+  assert_eq!(solved_h(&tree, 5), 150.0);
+}
+
+// What you see is what you tap, in size too: the hit test reads the painted
+// box, so the grown row's solved area below its painted bottom still
+// belongs to the row painted there.
+#[test]
+fn hit_testing_follows_the_painted_size() {
+  let (mut tree, platform, alloy) = shown();
+  set_height(&mut tree, 3, 150.0);
+  tree.set_transition_now(1000.0);
+  layout(&mut tree, &platform, &alloy);
+  let hit =
+    |tree: &RenderTree, y: f32| DefaultHitTester.hit_test(tree, Point::new(10.0, y)).last().map(|&(id, _, _)| id);
+  assert_eq!(hit(&tree, 75.0), Some(3));
+  assert_eq!(hit(&tree, 120.0), Some(4), "row 4 is painted where row 3's solved box now reaches");
+  tree.set_transition_now(1100.0);
+  tree.advance_transitions();
+  assert_eq!(hit(&tree, 120.0), Some(3));
 }

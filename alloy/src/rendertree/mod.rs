@@ -27,7 +27,7 @@ pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextAnchor, Tex
 pub use transitions::{
   AnimKind, AnimProp, AnimValue, Curve, Endpoint, Lifecycle, Slide, TransitionConfig, TransitionEntry, TransitionSpec,
 };
-pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
+pub use tree::{NodeMatch, NodeSnapshot, RenderTree, SlideRemaining};
 
 use crate::impellers::DisplayListBuilder;
 use std::cell::{Cell, RefCell};
@@ -507,26 +507,46 @@ impl Element {
     self.layout.is_some()
   }
 
-  /// Where the node is placed in its parent's frame: its solved layout
-  /// location, or the painted one while a layout slide runs (`Slide::at`).
-  /// Zero for a detached node, which has no placement of its own. Every
-  /// consumer of a node's position - the paint walk, the envelope, hit
-  /// testing, bounding boxes and so the tree dump - reads through here, so
-  /// they cannot disagree on where a sliding node is. `LayoutData::location`
-  /// is the solved box alone (the offsetLeft-style `layout_box` query).
-  pub fn placement(&self) -> crate::impellers::Point {
-    match (&self.layout, self.lifecycle.slide.and_then(|s| s.at)) {
-      (Some(_), Some(at)) => at,
-      (Some(layout), None) => layout.location(),
-      (None, _) => crate::impellers::Point::zero(),
-    }
+  /// The box the node is painted at, in its parent's frame: its solved
+  /// layout box, or the slide lane's while a layout slide runs
+  /// (`Slide::at`). None for a detached node, which has no box of its own.
+  /// Every consumer of a node's box - the paint walk, the envelope, hit
+  /// testing, bounding boxes and so the tree dump - reads through here (or
+  /// `placement`, `painted_size`, `content_box`, its projections), so they
+  /// cannot disagree on where a sliding node is or how big. The solved box
+  /// alone is `LayoutData::solved_box` (the offsetLeft-style `layout_box`
+  /// query).
+  pub fn painted_box(&self) -> Option<Rect> {
+    let layout = self.layout.as_ref()?;
+    Some(self.lifecycle.slide.and_then(|s| s.at).unwrap_or_else(|| layout.solved_box()))
+  }
+
+  /// Where the node is placed in its parent's frame (`painted_box`'s
+  /// origin); zero for a detached node.
+  pub fn placement(&self) -> Point {
+    self.painted_box().map(|r| r.origin).unwrap_or_else(Point::zero)
+  }
+
+  /// The node's border box when laid out (`painted_box`'s size); None for a
+  /// detached node.
+  pub fn painted_size(&self) -> Option<Size> {
+    self.painted_box().map(|r| r.size)
   }
 
   /// The element's frame: its border box when laid out, else the size it
   /// inherited (a detached node has no box of its own). The one spelling of
   /// the layout-size-else-inherited derivation every walk uses.
   pub fn frame_size(&self, inherited: Size) -> Size {
-    self.layout.as_ref().map(|l| l.size()).unwrap_or(inherited)
+    self.painted_size().unwrap_or(inherited)
+  }
+
+  /// The painted border box inset by the layout's padding and border, origin
+  /// included: the box the kind's own content sizes and places against
+  /// (`LayoutData::content_box_of`). None for a detached node, whose content
+  /// covers the frame it inherits.
+  pub fn content_box(&self) -> Option<Rect> {
+    let layout = self.layout.as_ref()?;
+    Some(layout.content_box_of(self.painted_size().unwrap_or_else(|| layout.size())))
   }
 
   /// Whether this element references any texture-registry id: a texture

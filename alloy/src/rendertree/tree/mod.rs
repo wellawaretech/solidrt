@@ -3,6 +3,7 @@ mod inspect;
 mod transitions;
 
 pub use inspect::{NodeMatch, NodeSnapshot};
+pub use transitions::SlideRemaining;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -12,7 +13,7 @@ use taffy::NodeId;
 use crate::rendertree::damage::DamageLedger;
 use crate::rendertree::transitions::Transitions;
 use crate::rendertree::{
-  BoundaryMode, Damage, Element, ElementKind, FrameDamage, PaintCache, Point, RunOverrides, Size, TextRun, ATOM_CHAR,
+  BoundaryMode, Damage, Element, ElementKind, FrameDamage, PaintCache, Rect, RunOverrides, Size, TextRun, ATOM_CHAR,
 };
 
 pub struct RenderTree {
@@ -43,12 +44,22 @@ pub struct RenderTree {
   // (see damage.rs). Every damage and structural mutation path funnels into
   // note_damage; the composite damage resolves drain and settle it.
   damage: DamageLedger,
-  // Nodes declaring a `layout` transition whose solved location a layout
-  // pass changed, with the location they had (None: the empty box, never
-  // laid out or hidden). Filled at the one seam a solved box changes
+  // Nodes declaring a `layout` transition whose solved box a layout pass
+  // changed, with the box they had (None: the empty box, never laid out or
+  // hidden). Filled at the one seam a solved box changes
   // (layout/context.rs set_unrounded_layout), drained by the pass that ran
   // (tree/transitions.rs start_layout_slides).
-  reflowed: Vec<(u64, Option<Point>)>,
+  reflowed: Vec<(u64, Option<Rect>)>,
+  // Nodes whose children need a layout against their painted box: a
+  // layout slide changing size is in flight on them, or has just settled
+  // (one last run at the solved size lands the children on their solved
+  // boxes). The value is the painted size the last run laid them out
+  // against, so the second layout_phase of a frame (paint_phase re-runs
+  // it) skips an unchanged box; None forces a run (a fresh entry, or a
+  // layout invalidation anywhere, which may have re-solved the children).
+  // Fed by the slide diff and the advance, drained by layout/context.rs
+  // animated_layouts, which re-adds the ones still in flight.
+  resizing: HashMap<u64, Option<Size>>,
 }
 
 // Taffy's CompactLength stores f32 values as tagged pointers (*const ()),
@@ -67,6 +78,7 @@ impl RenderTree {
       texture_referencers: HashSet::new(),
       damage: DamageLedger::new(),
       reflowed: Vec::new(),
+      resizing: HashMap::new(),
     }
   }
 
@@ -675,6 +687,11 @@ impl RenderTree {
   }
 
   pub fn invalidate_cache(&mut self, node_id: u64) {
+    // The pass may re-solve a resizing node's children: lay them out
+    // against the painted box again whatever its size.
+    for last in self.resizing.values_mut() {
+      *last = None;
+    }
     let mut current = Some(node_id);
     while let Some(id) = current {
       let element = self.node_mut(id);

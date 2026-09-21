@@ -490,12 +490,16 @@ that reads exactly like Solid fallout.
   replay it, remount the subtree (`<Show when={epoch()} keyed>` around it,
   then bump `epoch`). See examples/stagger.tsx. The companion to the exit
   pop-out is `layout` on the same spec: an element declaring it slides
-  from where it was painted to the box a layout gives it (a row removed
-  above it, one inserted, a `<For>` reorder) instead of jumping, retargets
-  if the layout changes again mid-slide, and is hit-tested where it is
-  drawn. It is parent-relative, so declare it on every level that should
-  glide; `layout: true` borrows the `all` motion, and `all` alone never
-  slides. Position only today, a size change snaps. See
+  from the box it was painted at to the box a layout gives it (a row
+  removed above it, one inserted, a `<For>` reorder, a card growing to fit
+  more content), position and size, instead of jumping; it retargets if
+  the layout changes again mid-slide, and is painted, clipped, hit-tested
+  and backdrop-filtered at the box it is drawn at. While its size is in
+  flight its children are laid out against that box every frame (text
+  re-wraps, rows re-flow, like a CSS width transition), and a child's own
+  `layout` slide yields to the parent's motion. It is parent-relative, so
+  declare it on every level that should glide; `layout: true` borrows the
+  `all` motion, and `all` alone never slides. See
   examples/layout-slide.tsx.
   Per-frame work is for genuinely procedural motion, and a game or a
   simulation is that in full: its natural shape is ONE `onFrame` doing one

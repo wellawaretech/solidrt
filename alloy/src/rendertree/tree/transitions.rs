@@ -6,7 +6,17 @@
 
 use super::RenderTree;
 use crate::rendertree::transitions::{AnimValue, PendingWrite};
-use crate::rendertree::{AnimProp, Damage, Endpoint, Point, Slide, Vector};
+use crate::rendertree::{AnimProp, Damage, Endpoint, Rect, Size, Slide, Vector};
+use std::collections::HashMap;
+
+/// What a sliding node has still to cover to its solved box: the offset of
+/// its painted origin and the growth of its painted size, for the dev
+/// tooling's dump.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlideRemaining {
+  pub offset: Vector,
+  pub growth: Vector,
+}
 
 impl RenderTree {
   /// Mount-time enter animations: a per-property `from` in the node's
@@ -340,28 +350,30 @@ impl RenderTree {
     }
   }
 
-  /// Note that a layout pass moved a node declaring a `layout` transition:
-  /// the location it had (None for the empty box) is what
+  /// Note that a layout pass moved or resized a node declaring a `layout`
+  /// transition: the box it had (None for the empty box) is what
   /// `start_layout_slides` slides it from.
-  pub(crate) fn note_reflow(&mut self, id: u64, old: Option<Point>) {
+  pub(crate) fn note_reflow(&mut self, id: u64, old: Option<Rect>) {
     self.reflowed.push((id, old));
   }
 
-  /// Layout slides (okf/backlog/transition-layout-animations.md): after a
-  /// layout pass, every declaring node the pass moved slides from where it
-  /// was painted to its new solved location. The slide lane is the painted
-  /// location itself, so a reflow mid-slide is the ordinary retarget (a
-  /// spring keeps position and velocity, a tween restarts from the painted
-  /// point), and the paint that follows this pass draws the node where it
-  /// was (`Slide::at` snapped, the enter pass's snap-to-from) with motion
-  /// starting at the next advance. Nothing slides from nowhere: a node's
-  /// first layout, a reparent (the old box is in another parent's frame),
-  /// a node not yet painted and a hidden box on either side (the pass
-  /// says which, `LayoutData::laid_out`) all snap and anchor the node
-  /// where it now is. Runs from
-  /// `layout_phase`, which the frame builder and the paint phase both call:
-  /// a post-layout hook that reflows again is picked up, and an unchanged
-  /// second run has nothing to drain.
+  /// Layout slides (okf/done/transition-layout-animations.md,
+  /// okf/done/transition-layout-size.md): after a layout pass, every
+  /// declaring node the pass moved or resized slides from the box it was
+  /// painted at to its new solved box. The slide lane is the painted box
+  /// itself, so a reflow mid-slide is the ordinary retarget (a spring keeps
+  /// position and velocity, a tween restarts from the painted box), and the
+  /// paint that follows this pass draws the node where it was (`Slide::at`
+  /// snapped, the enter pass's snap-to-from) with motion starting at the
+  /// next advance. Nothing slides from nowhere: a node's first layout, a
+  /// reparent (the old box is in another parent's frame), a node not yet
+  /// painted and a hidden box on either side (the pass says which,
+  /// `LayoutData::laid_out`) all snap and anchor the node where it now is.
+  /// A node whose size is in flight joins `resizing`, so its children are
+  /// laid out against the painted box (layout/context.rs
+  /// animated_layouts). Runs from `layout_phase`, which the frame builder
+  /// and the paint phase both call: a post-layout hook that reflows again
+  /// is picked up, and an unchanged second run has nothing to drain.
   pub(crate) fn start_layout_slides(&mut self) {
     if self.reflowed.is_empty() {
       return;
@@ -373,7 +385,7 @@ impl RenderTree {
       let Some(entry) = el.transitions.as_ref().and_then(|t| t.layout) else { continue };
       let Some(layout) = el.layout.as_ref() else { continue };
       let placed = layout.laid_out;
-      let to = layout.location();
+      let to = layout.solved_box();
       let parent = el.parent;
       let painted = el.lifecycle.painted.get();
       let slide = el.lifecycle.slide.get_or_insert_with(Slide::default);
@@ -382,24 +394,30 @@ impl RenderTree {
       let from = match old {
         Some(old) if anchored && painted && placed => slide.at.unwrap_or(old),
         _ => {
+          let was_resizing = slide.at.is_some_and(|at| at.size != to.size);
           slide.at = None;
           self.transitions.cancel(id, AnimProp::Layout);
+          if was_resizing {
+            self.resizing.insert(id, None);
+          }
           continue;
         }
       };
       slide.at = Some(from);
+      if from.size != to.size {
+        self.resizing.insert(id, None);
+      }
       let running = if entry.delay_ms > 0.0 {
         let at_ms = now + entry.delay_ms as f64;
-        let write =
-          PendingWrite { node: id, prop: AnimProp::Layout, to: AnimValue::Point(to), spec: entry.spec, at_ms };
+        let write = PendingWrite { node: id, prop: AnimProp::Layout, to: AnimValue::Box(to), spec: entry.spec, at_ms };
         self.transitions.schedule(write);
         true
       } else {
         self.transitions.unschedule(id, AnimProp::Layout);
-        self.transitions.retarget(id, AnimProp::Layout, AnimValue::Point(from), AnimValue::Point(to), entry.spec, now)
+        self.transitions.retarget(id, AnimProp::Layout, AnimValue::Box(from), AnimValue::Box(to), entry.spec, now)
       };
       if !running {
-        // Nowhere to move (the painted point is the new box): on it.
+        // Nowhere to move (the painted box is the new box): on it.
         slide.at = None;
       }
     }
@@ -416,11 +434,40 @@ impl RenderTree {
     match (declares, el.lifecycle.slide.is_some()) {
       (true, false) => el.lifecycle.slide = Some(Slide { under: el.parent, at: None }),
       (false, true) => {
+        let resized = el.lifecycle.slide.and_then(|s| s.at).is_some_and(|at| at.size != el.layout.as_ref().map(|l| l.size()).unwrap_or(at.size));
         el.lifecycle.slide = None;
         self.transitions.cancel(node_id, AnimProp::Layout);
+        // Its children were laid out against the painted box; one run at
+        // the solved size puts them back.
+        if resized {
+          self.resizing.insert(node_id, None);
+        }
       }
       _ => {}
     }
+  }
+
+  /// Drop a node's running slide, keeping its declaration and anchor: the
+  /// node snaps to its solved box. For the nodes a resizing ancestor's
+  /// animated sub-layout places - the ancestor's motion carries them, and a
+  /// slide of their own would fight the box that layout just wrote.
+  pub(crate) fn drop_slide(&mut self, node_id: u64) {
+    let Some(el) = self.nodes.get_mut(&node_id) else { return };
+    let Some(slide) = el.lifecycle.slide.as_mut() else { return };
+    if slide.at.take().is_some() {
+      self.transitions.cancel(node_id, AnimProp::Layout);
+    }
+  }
+
+  /// The nodes whose children need a layout against their painted box (see
+  /// `resizing`), with the size the last run used; taken, so the caller
+  /// re-adds the ones still in flight through `keep_resizing`.
+  pub(crate) fn take_resizing(&mut self) -> HashMap<u64, Option<Size>> {
+    std::mem::take(&mut self.resizing)
+  }
+
+  pub(crate) fn keep_resizing(&mut self, node_id: u64, laid_out_against: Size) {
+    self.resizing.insert(node_id, Some(laid_out_against));
   }
 
   /// The exit endpoints in force on a node on its way out - for each
@@ -439,12 +486,16 @@ impl RenderTree {
       .unwrap_or_default()
   }
 
-  /// The offset a sliding node has still to cover, solved minus painted
-  /// location, for the dev tooling's dump; None when it sits on its box.
-  pub fn slide_remaining(&self, node_id: u64) -> Option<Vector> {
+  /// What a sliding node has still to cover, solved minus painted box, for
+  /// the dev tooling's dump; None when it sits on its box.
+  pub fn slide_remaining(&self, node_id: u64) -> Option<SlideRemaining> {
     let el = self.nodes.get(&node_id)?;
     let at = el.lifecycle.slide?.at?;
-    Some(el.layout.as_ref()?.location() - at)
+    let solved = el.layout.as_ref()?.solved_box();
+    Some(SlideRemaining {
+      offset: solved.origin - at.origin,
+      growth: Vector::new(solved.size.width - at.size.width, solved.size.height - at.size.height),
+    })
   }
 
   /// Settled (node, prop) pairs since the last drain, for the embedder's
@@ -509,6 +560,17 @@ impl RenderTree {
       let (value, settled) = t.advance(now);
       let damage = self.nodes.get_mut(&t.node).map(|el| el.set_anim_value(t.prop, value)).unwrap_or(Damage::None);
       damages.push((t.node, damage));
+      // A painted size off the solved one needs the children laid out
+      // against it this frame (layout/context.rs animated_layouts); the
+      // settle's run at the solved size is owed by the frame before.
+      if t.prop == AnimProp::Layout {
+        let resizing = self.nodes.get(&t.node).is_some_and(|el| {
+          el.lifecycle.slide.and_then(|s| s.at).is_some_and(|at| el.layout.as_ref().is_some_and(|l| at.size != l.size()))
+        });
+        if resizing {
+          self.resizing.insert(t.node, None);
+        }
+      }
       if settled {
         // Anything under an exit root settles into the root's free, not
         // into onTransitionEnd: the components that could observe the
