@@ -47,7 +47,12 @@ The code this describes: `alloy/src/app.rs` (the main loop),
 - **Demand.** Rendering is demand-driven: a frame is built only when
   something asked for one (a property write, a standing `onFrame`, a
   playing video). No demand, no present, and the idle Tick keeps the
-  per-frame logic alive at the refresh cadence instead.
+  per-frame logic alive at the refresh cadence instead. Standing demand
+  (a callback registered for the next frame, a running transition, a
+  playing video) is declared as such and re-latched past the draw gate,
+  so between one gate and the next the latch says whether a next frame
+  is wanted; the raster thread samples it at present time to tell a
+  missed present from an idle gap.
 
 ## The chain, per platform and pacing mode
 
@@ -103,10 +108,14 @@ fact is gated on Android's touchscreen feature.
 **Idle Tick.** When no frame signal fired for a period and nothing is in
 flight, the main loop emits `Tick` so timers, the reactive flush and the
 camera pump keep running. "Nothing in flight" means no present awaiting its
-vsync signal, no frame between emission and present, and an empty raster
-queue; the last condition is what stopped the runaway where ticks fed a
-backlogged raster thread more work per period than it retired
-([idle-tick-gpu-backlog-runaway]). On a SwapPaced desktop client the tick
+vsync signal, no frame between emission and present, an empty raster
+queue, and a JS executor that is not running a closure (the flux engine's
+busy flag, `SetUiBusyFlag`); the queue condition is what stopped the
+runaway where ticks fed a backlogged raster thread more work per period
+than it retired ([idle-tick-gpu-backlog-runaway]), and the busy flag is
+what stopped a JS-bound app under VsyncLocked from running two frames per
+present (the fallback deadline gave the in-flight window up mid-build and
+Ticks resumed while JS was still building; [cadence-hold], stage 0). On a SwapPaced desktop client the tick
 runs at 2-3 Hz rather than the refresh rate when the picture does not
 change; still open ([idle-onframe-tick-rate]).
 
@@ -239,8 +248,9 @@ this document is updated as the other two land.
    Android's Frame Pacing library (Swappy) is the reference. It holds a
    swap interval that is a whole number of refreshes, so a 21 fps app runs
    a metronomic 22.5 (every fourth refresh) instead of a 4/5 wobble. Policy,
-   fed by the honest count; costs frame rate for regularity; open
-   ([frame-driver-pacing-contract], stage 2).
+   fed by the honest count; costs frame rate for regularity. D9, built
+   2026-09-21 ([cadence-hold]; the deadline framing it grew out of is
+   [frame-driver-pacing-contract], stage 2).
 
 ### D3. Timers are wall-anchored; animation is not
 
@@ -308,10 +318,81 @@ k arrives after frame k+1's signal has been counted. There it calibrates
 the anchor and validates the count; only a vsync-released signal knows
 its refresh at signal time ([presentation-feedback]).
 
+### D9. Below the refresh rate the frame interval is held to whole refreshes
+
+Tier 3 (D2), built 2026-09-21 ([cadence-hold]). A frame that cannot make
+the refresh rate is otherwise shown for a varying number of refreshes (3
+and 4 alternating at 25 fps on 90 Hz), which reads as judder although the
+timeline is honest. The hold is applied at the frame signal, not at the
+swap: the frame after a present starts at the beginning of its slot (the
+previous frame's start plus `hold` periods), so it samples input as late
+as the slot allows. Under VsyncLocked the release skips the vsync
+callbacks inside the slot; under SwapPaced the present defers to the slot
+end as a timer deadline. A frame that outruns its slot releases at once
+and starts a new grid there. The count is unchanged by any of this: a
+held release is referenced on the grid it defines and counts `hold`
+refreshes, and the app sees a constant delta.
+
+The controller (`alloy/src/cadence.rs`) reads two facts per demanded
+present: the interval the display showed the previous frame for (the
+honest count) and the frame's work time (emission to swap call, plus the
+GPU time of the last retired window draw). Up and down use different
+evidence on purpose. A hold that is too short shows itself as an interval
+longer than the hold, so it rises on two consecutive measured intervals,
+to the worst of them, with no prediction and no margin; the first three
+presents after any change are not evidence, because they show the
+pipeline re-forming. Under an unheld swap-paced chain the pipeline hides
+the work (a 21 ms frame shows 1,1,2 at 60 Hz and never two long intervals
+in a row), so there the pipelined estimate `max(cpu, gpu)` also counts as
+evidence for a rise, as in the Frame Pacing library, but only within
+thirty presents of a measured long interval: a pipelined chain's CPU and
+GPU readings are stretched by its own fence and buffer waits (the 50 Hz
+TV read 19 and 20 ms for a 7 ms frame at a clean 50 fps), so without a
+long interval they prove nothing. A hold that is too long shows nothing, so the step
+down is a prediction, `offset + cpu + gpu + 2 ms` fitting one slot fewer
+for a whole second of presents (an isolated non-fit is a spike and is
+tolerated, two in a row close the window, mirroring the up rule), where
+the offset is the pacing delay after the vsync under VsyncLocked; a
+wrong step is reverted by the measured rule as soon as two long
+intervals coincide and each reverted step doubles the wait before the
+next try (to 32 s). The first controller predicted both
+directions with a quarter-period margin and held an empty full-rate
+frame at half rate on the Pixel, because 6.7 ms of pacing delay plus the
+margin leave 1.6 ms of a 90 Hz period; the fit boundary under
+VsyncLocked is device-specific, which is why prediction only proposes.
+
+Policy is the embedder's (`AlloyCommand::SetCadenceHold`: Off, Auto with
+a maximum slot length, Fixed), chosen in lattice from the input-modality
+fact beside the pacing policy: Auto where fluency beats frame rate, touch
+clients and clients with neither touch nor mouse; Off where a mouse is
+present, because a pointer-driven client pipelines and a sequential hold
+costs it more than the boundary rounding. The maximum is 50 ms (no hold
+slower than 20 fps; a workload that needs more is held at the maximum
+and its longer intervals are misses, Swappy's rule; dropping to unheld
+beyond it flapped on a workload sitting on the maximum).
+`SRT_CADENCE_HOLD=off|auto|<k>` overrides it until the policy registry
+exists ([runtime-policy-registry]). The expected interval for the miss
+accounting is the hold: a held interval is not a miss.
+
+Two facts had to be made true for the controller to see anything, and
+both are general fixes: the idle Tick is gated on the JS executor's busy
+flag (set by the flux engine around each closure it runs, handed to alloy
+as `SetUiBusyFlag`), which ended the double frame signal per present of a
+JS-bound app under VsyncLocked; and standing demand is declared by its
+sources and re-requested past the draw gate, because the gate consumed
+the frame-request latch after `onFrame` had re-registered, so at present
+time the latch read false for exactly the apps that animate (the earlier
+miss counts had come out right only because the stray Ticks re-set it).
+
 ## Known limits and open items
 
 - Presentation timestamps are modeled, not measured: [presentation-feedback].
-- No cadence hold below the refresh rate: [frame-driver-pacing-contract].
+- The cadence hold runs a sequential chain: a frame whose CPU and GPU
+  halves would pipeline into a shorter slot is held to their sum, and a
+  held frame starts at its slot's first vsync plus the pacing delay rather
+  than as late as its budget allows. Both are follow-ons listed in
+  [cadence-hold]; the second is what would give the Pixel's 20 ms frame
+  its third slot back (held at four today).
 - Idle `onFrame` on a SwapPaced desktop ticks at 2-3 Hz: [idle-onframe-tick-rate].
 - A display mode change is not observed on Android: [android-refresh-rate-change-unobserved].
 - The pacing budget samples the swap's throttle wait as pipeline cost, so
@@ -372,3 +453,5 @@ Open: listed above.
 [runtime-policy-registry]: ../backlog/runtime-policy-registry.md
 [video-playback]: ../backlog/video-playback.md
 [frame-signal-refresh-count]: ../plans/frame-signal-refresh-count.md
+[cadence-hold]: ../plans/cadence-hold.md
+[vsync-locked-js-bound-double-signal]: ../done/vsync-locked-js-bound-double-signal.md

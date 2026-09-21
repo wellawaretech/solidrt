@@ -51,6 +51,9 @@ pub struct PlatformContext {
   // thread (pointer input, resize), and the dev-server connection thread (see
   // go/connection.rs).
   frame_requested: Arc<AtomicBool>,
+  // A frame request's caller declared it standing (see
+  // declare_standing_demand); consumed by the draw gate after the request.
+  standing_demand: AtomicBool,
   // Bypass the demand-driven gate and render every frame (playback mode).
   always_render: Cell<bool>,
   // Whether the debug stats overlay (HUD) is drawn. Arc'd so the dev-server
@@ -78,6 +81,7 @@ impl PlatformContext {
       safe_area: Cell::new(Rect::new(Point::new(0.0, 0.0), Size::new(0.0, 0.0))),
       fps: Cell::new(0),
       frame_requested: Arc::new(AtomicBool::new(false)),
+      standing_demand: AtomicBool::new(false),
       always_render: Cell::new(false),
       stats_enabled: Arc::new(AtomicBool::new(false)),
     }
@@ -157,6 +161,24 @@ impl PlatformContext {
   /// Consume the latch. Called once per render tick (from draw).
   pub fn take_frame_requested(&self) -> bool {
     self.frame_requested.swap(false, Ordering::Relaxed)
+  }
+
+  /// Declare standing demand: the caller will want the frame after the one
+  /// being built too (an animation loop that re-registers its callback
+  /// every frame). The draw gate consumes this frame's request and then,
+  /// seeing the declaration, latches the request again
+  /// (`take_standing_demand`), so between one gate and the next the latch
+  /// says truthfully whether a next frame is wanted - which is what the
+  /// raster thread samples at present time to tell a missed present from an
+  /// idle gap. Requests made by a one-shot write do not declare it.
+  pub fn declare_standing_demand(&self) {
+    self.standing_demand.store(true, Ordering::Relaxed);
+  }
+
+  /// Consume the standing-demand declaration (the draw gate, after taking
+  /// the frame request).
+  pub fn take_standing_demand(&self) -> bool {
+    self.standing_demand.swap(false, Ordering::Relaxed)
   }
 
   pub fn window_size(&self) -> (f32, f32) {

@@ -1120,6 +1120,9 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
     put("partialPresents", rc.partial_presents.into());
     put("fenceTimeouts", rc.fence_timeouts.into());
     put("missedPresents", rc.missed_presents.into());
+    put("cadenceHold", rc.cadence_hold.into());
+    put("frameWorkMeanMs", round2(rc.work_mean_ms).into());
+    put("frameWorkMaxMs", round2(rc.work_max_ms).into());
     put("gpuPasses", rc.passes.into());
     // Integer ms: sub-ms increments accumulate in the microsecond counters
     // before this division, so the cumulative rounding loss stays under 1ms.

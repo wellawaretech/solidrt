@@ -41,7 +41,20 @@ The probe at `busy 40` shows one JS frame per compositor present: tick
 deltas of 3 and 4 periods in the census's proportions, nothing else. The
 same on the tablet (60 Hz).
 
-## What it involves
+## Resolution (2026-09-21)
+
+Fixed as stage 0 of [cadence-hold](../plans/cadence-hold.md). The missing
+fact is whether the JS executor is running a closure: the flux engine sets
+a busy flag around each one (`FluxEngineBuilder::busy_flag`), lattice
+hands it to alloy (`AlloyCommand::SetUiBusyFlag`), and the idle-tick gate
+reads it beside the raster queue depth. A flag set around lattice's batch
+loop was tried first and did nothing, because the frame verb posts its JS
+work to the executor and the batch returns before the frame runs. With
+the flag in place the probe at `busy 40` on the Pixel runs one JS frame
+per compositor present (268 tick deltas for 179 presents in 15 s became
+268 deltas of 4, 5 and 6 periods with 179 presents: every delta a
+present), and every frame work time measured from the emission is the
+frame's own.
 
 The in-flight window should end at the present, not at a deadline, while
 the raster queue or the UI thread is demonstrably busy: the idle gate

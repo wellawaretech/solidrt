@@ -413,18 +413,74 @@ impl App {
     let start_time = Instant::now();
     let ms_since_start = |at: Instant| at.saturating_duration_since(start_time).as_secs_f64() * 1000.0;
     let mut refreshes = crate::present::RefreshCounting::new();
-    // Demand flags of the presents whose frame signal is deferred to a vsync
-    // (FrameRelease keeps only their number), in present order, so a release
-    // hands each signal its own present's flag.
-    let mut deferred_demand: std::collections::VecDeque<bool> = std::collections::VecDeque::new();
+    // The cadence hold (see cadence.rs): the controller reads each present's
+    // work time and sets the hold FrameRelease enforces; the policy comes
+    // from the embedder (SetCadenceHold), Off until it arrives.
+    let mut cadence = crate::cadence::CadenceController::new();
+    // The UI thread's busy flag (SetUiBusyFlag), read by the idle-tick gate;
+    // None until the embedder registers it, and the gate ignores it then.
+    let mut ui_busy: Option<Arc<AtomicBool>> = None;
+    // Instant of the last frame signal emission (FrameRendered or Tick),
+    // the start of the frame it triggers; with the swap-call instant the
+    // raster thread reports, the CPU side of that frame's work time.
+    let mut last_emission = Instant::now();
+    // Demand flag and work time of the presents whose frame signal is
+    // deferred (FrameRelease keeps only their number), in present order, so
+    // a release hands each signal its own present's facts.
+    let mut deferred: std::collections::VecDeque<(bool, (f32, f32))> = std::collections::VecDeque::new();
     // Count one frame signal, record it, and add the misses it closed to the
     // shared counter the stats read.
-    let count_signal = |refreshes: &mut crate::present::RefreshCounting, reference: Instant, frame: u64, presented: bool, demanded: bool| -> u32 {
-      let counted = refreshes.count(ms_since_start(reference), frame, presented, demanded);
+    let count_signal = |refreshes: &mut crate::present::RefreshCounting,
+                        reference: Instant,
+                        frame: u64,
+                        presented: bool,
+                        demanded: bool,
+                        work_ms: Option<f32>|
+     -> crate::present::Counted {
+      let counted = refreshes.count(ms_since_start(reference), frame, presented, demanded, work_ms);
       if counted.missed > 0 {
         stats.missed_presents.fetch_add(counted.missed as u64, Ordering::Relaxed);
       }
-      counted.refreshes
+      counted
+    };
+    // After a counted present: feed the cadence controller the interval the
+    // display showed the previous frame for and this frame's work time, and
+    // apply a hold change to the release chain (which enforces it from the
+    // next frame signal), the miss accounting (whose open interval follows
+    // it) and the stats.
+    let learn = |cadence: &mut crate::cadence::CadenceController,
+                 release: &mut crate::vsync::FrameRelease,
+                 refreshes: &mut crate::present::RefreshCounting,
+                 counted: crate::present::Counted,
+                 (cpu_ms, gpu_ms): (f32, f32),
+                 at: Instant,
+                 period: Duration| {
+      if counted.interval == 0 {
+        return;
+      }
+      let period_ms = period.as_secs_f64() * 1000.0;
+      let change = cadence.on_present(
+        counted.interval,
+        cpu_ms,
+        gpu_ms,
+        release.slot_offset_ms(),
+        release.pipelined(),
+        ms_since_start(at),
+        period_ms,
+      );
+      if let Some(change) = change {
+        release.set_hold(change.to, period);
+        refreshes.set_hold(change.to);
+        stats.cadence_hold.store(change.to, Ordering::Relaxed);
+        log::info!(
+          "[alloy] cadence hold: {} -> {} refreshes (interval {}, work {:.1}ms) [{}]",
+          change.from,
+          change.to,
+          change.need,
+          change.work_ms,
+          cadence.diagnostics(ms_since_start(at))
+        );
+      }
     };
     // The polled platform facts (keyboard, power, refresh-rate safety net);
     // polled at the bottom of each iteration, emitting on transitions.
@@ -489,28 +545,40 @@ impl App {
       let mut disconnected = false;
       loop {
         match rx.try_recv() {
-          Ok(FrameOutput::Presented { at, demanded }) => {
+          Ok(FrameOutput::Presented { at, ready_at, gpu_micros, demanded }) => {
             fps_frame_count += 1;
-            match release.on_present(Instant::now(), tick_period) {
+            // The frame's work time (see cadence.rs): its signal's emission
+            // to the swap call on the raster thread, plus the GPU time of
+            // the last retired window draw (a frame or two behind; the
+            // controller windows it). Independent of any hold, which only
+            // delays the next emission.
+            let cpu_ms = ready_at.saturating_duration_since(last_emission).as_secs_f32() * 1000.0;
+            let gpu_ms = gpu_micros.map_or(0.0, |us| us as f32 / 1000.0);
+            let work = (cpu_ms, gpu_ms);
+            let work_ms = cpu_ms + gpu_ms;
+            match release.on_present(at, tick_period) {
               // No vsync backend, or SwapPaced policy: the frame signal
-              // follows the present directly and the blocking swap paces.
-              // Under VsyncLocked, a present whose vsync signal was banked
+              // follows the present directly and the blocking swap paces,
+              // unless a cadence hold defers it to the slot end. Under
+              // VsyncLocked, a present whose vsync signal was banked
               // (arrived while the frame was still in the swap) releases
               // here too, referenced at its banked vsync; otherwise the
               // swap's return is the reference the refreshes are counted
               // from.
               crate::vsync::Release::Emit { arm, vsync: banked } => {
-                let count = count_signal(&mut refreshes, banked.unwrap_or(at), frame, true, demanded);
-                event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: count }).ok();
+                let counted = count_signal(&mut refreshes, banked.unwrap_or(at), frame, true, demanded, Some(work_ms));
+                learn(&mut cadence, &mut release, &mut refreshes, counted, work, at, tick_period);
+                event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes }).ok();
                 frame += 1;
                 last_frame_signal = Instant::now();
+                last_emission = last_frame_signal;
                 liveness.on_frame_signal(last_frame_signal);
                 if let (Some(v), Some(delay)) = (&vsync, arm) {
                   v.request(delay);
                 }
               }
               crate::vsync::Release::Deferred { arm } => {
-                deferred_demand.push_back(demanded);
+                deferred.push_back((demanded, work));
                 if let (Some(v), Some(delay)) = (&vsync, arm) {
                   v.request(delay);
                 }
@@ -548,14 +616,21 @@ impl App {
         // The refresh counts of the last second (see CountTally).
         let t = refreshes.take_tally();
         if t.signals > 0 {
+          let work_mean = if t.work_n > 0 { t.work_sum_ms / t.work_n as f32 } else { 0.0 };
+          stats.work_mean_micros.store((work_mean * 1000.0) as u32, Ordering::Relaxed);
+          stats.work_max_micros.store((t.work_max_ms * 1000.0) as u32, Ordering::Relaxed);
           log::debug!(
-            "[alloy] refresh count: {} signals, {} refreshes, zero {}, multi {}, max {}",
+            "[alloy] refresh count: {} signals, {} refreshes, zero {}, multi {}, max {}, hold {}, work mean {:.1}ms max {:.1}ms",
             t.signals,
             t.refreshes,
             t.zero,
             t.multi,
-            t.max
+            t.max,
+            cadence.hold(),
+            work_mean,
+            t.work_max_ms
           );
+          log::debug!("[alloy] cadence: {}", cadence.diagnostics(ms_since_start(Instant::now())));
         }
       }
 
@@ -565,21 +640,29 @@ impl App {
       // raster thread also shows pending_presents == 0 (nothing has come back
       // to present), and ticking through that backlog feeds it more per-frame
       // work than it retires - frame time diverges without bound (see
-      // okf/backlog/idle-tick-gpu-backlog-runaway.md). Idle means idle: no
-      // presents in flight AND an empty raster queue. The deadline resets on
-      // suppression too, or `remaining` above stays zero and the loop spins
-      // through the backlog instead of sleeping; ticks resume within one
-      // refresh period of the queue draining.
+      // okf/backlog/idle-tick-gpu-backlog-runaway.md). And no idle Tick
+      // while the UI thread is executing a batch: the frame it is building
+      // will present and bring its own signal, so a Tick now is a second
+      // frame signal for one present - a JS-bound app under vsync pacing
+      // ran two frames per present because the fallback deadline gave the
+      // in-flight window up mid-build (see AlloyCommand::SetUiBusyFlag).
+      // Idle means idle: no presents in flight, an empty raster queue AND a
+      // free UI thread. The deadline resets on suppression too, or
+      // `remaining` above stays zero and the loop spins through the
+      // backlog instead of sleeping; ticks resume within one refresh
+      // period of the queue draining.
       if release.idle() && last_frame_signal.elapsed() >= tick_period {
-        if stats.queue_depth.load(Ordering::Acquire) == 0 {
+        let ui_free = !ui_busy.as_ref().is_some_and(|b| b.load(Ordering::Acquire));
+        if stats.queue_depth.load(Ordering::Acquire) == 0 && ui_free {
           // The Tick is the loop's heartbeat, so an idle app with a finished
           // producer winds down within one tick period (see 'run).
-          let count = count_signal(&mut refreshes, Instant::now(), frame, false, false);
+          let count = count_signal(&mut refreshes, Instant::now(), frame, false, false, None).refreshes;
           if event_tx.send(AlloyEvent::Tick { frame, fps, refreshes: count }).is_err() {
             break 'run;
           }
           stats.idle_ticks.fetch_add(1, Ordering::Relaxed);
-          liveness.on_frame_signal(Instant::now());
+          last_emission = Instant::now();
+          liveness.on_frame_signal(last_emission);
         }
         last_frame_signal = Instant::now();
       }
@@ -658,36 +741,31 @@ impl App {
           }
         }
       }
-      // Flush presents deferred to vsync - after the SDL event drain, so the
-      // input delivered at the same vsync is already in the event channel and
-      // the UI batch runs it before this frame signal (a signal processed
-      // ahead of its vsync's input finds nothing dirty and wastes the frame).
-      // One signal releases all pending (at most one in practice: the UI
-      // thread builds the next frame only after this emission). try_take
-      // drains superseded-generation signals internally, so a late one,
-      // arriving after its present was released by the fallback, cannot
-      // release a future present early.
-      if let Some(v) = &vsync {
-        // A taken signal carries the instant of its vsync, the reference a
-        // vsync-released frame's refreshes are counted from. A fallback
-        // release has no signal: its reference is the wake minus the delay
-        // the signal would have slept (armed at the previous emission;
-        // on_wake below re-arms with the next one), which puts it near the
-        // vsync it stood in for.
-        let signal_delay = Duration::from_secs_f32(release.current_delay_ms() / 1000.0);
+      // Flush presents deferred to vsync or to a cadence-hold slot end -
+      // after the SDL event drain, so the input delivered at the same vsync
+      // is already in the event channel and the UI batch runs it before
+      // this frame signal (a signal processed ahead of its vsync's input
+      // finds nothing dirty and wastes the frame). One signal releases all
+      // pending (at most one in practice: the UI thread builds the next
+      // frame only after this emission). try_take drains
+      // superseded-generation signals internally, so a late one, arriving
+      // after its present was released by the fallback, cannot release a
+      // future present early. The release names the reference the released
+      // signals' refreshes are counted from (see Wake::Release).
+      {
         let woke = Instant::now();
-        let vsync = v.try_take();
-        match release.on_wake(woke, tick_period, vsync) {
+        let signal = vsync.as_ref().and_then(|v| v.try_take());
+        match release.on_wake(woke, tick_period, signal) {
           crate::vsync::Wake::Idle => {}
           // The signal beat the in-flight frame's present (the swap is
-          // still blocking): it releases that present on return; keep the
-          // next vsync armed meanwhile.
-          crate::vsync::Wake::Banked { arm } => {
-            if let Some(delay) = arm {
+          // still blocking) and releases it on return, or fell inside the
+          // held slot and is skipped: keep the next vsync armed meanwhile.
+          crate::vsync::Wake::Banked { arm } | crate::vsync::Wake::Held { arm } => {
+            if let (Some(v), Some(delay)) = (&vsync, arm) {
               v.request(delay);
             }
           }
-          crate::vsync::Wake::Release { emit, timed_out, arm } => {
+          crate::vsync::Wake::Release { emit, timed_out, arm, reference } => {
             if timed_out {
               // Debug, not warn: a GPU-saturated device (Android TV) misses
               // vsyncs in steady state, one line per missed frame.
@@ -697,16 +775,19 @@ impl App {
             }
             // Several presents released at once share one reference: the
             // first takes the refreshes, the rest count as zero.
-            let reference = vsync.unwrap_or_else(|| woke.checked_sub(signal_delay).unwrap_or(woke));
             for _ in 0..emit {
-              let demanded = deferred_demand.pop_front().unwrap_or(true);
-              let count = count_signal(&mut refreshes, reference, frame, true, demanded);
-              event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: count }).ok();
+              let (demanded, work) = deferred.pop_front().map_or((true, None), |(d, w)| (d, Some(w)));
+              let counted = count_signal(&mut refreshes, reference, frame, true, demanded, work.map(|(c, g)| c + g));
+              if let Some(work) = work {
+                learn(&mut cadence, &mut release, &mut refreshes, counted, work, reference, tick_period);
+              }
+              event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes }).ok();
               frame += 1;
             }
             last_frame_signal = Instant::now();
+            last_emission = last_frame_signal;
             liveness.on_frame_signal(last_frame_signal);
-            if let Some(delay) = arm {
+            if let (Some(v), Some(delay)) = (&vsync, arm) {
               v.request(delay);
             }
           }
@@ -759,16 +840,31 @@ impl App {
               if released > 0 {
                 let reference = Instant::now();
                 for _ in 0..released {
-                  let demanded = deferred_demand.pop_front().unwrap_or(true);
-                  let count = count_signal(&mut refreshes, reference, frame, true, demanded);
-                  event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: count }).ok();
+                  let (demanded, work) = deferred.pop_front().map_or((true, None), |(d, w)| (d, Some(w)));
+                  let counted = count_signal(&mut refreshes, reference, frame, true, demanded, work.map(|(c, g)| c + g));
+                  if let Some(work) = work {
+                    learn(&mut cadence, &mut release, &mut refreshes, counted, work, reference, tick_period);
+                  }
+                  event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes }).ok();
                   frame += 1;
                 }
                 last_frame_signal = Instant::now();
+                last_emission = last_frame_signal;
                 liveness.on_frame_signal(last_frame_signal);
               }
             }
           },
+          AlloyCommand::SetUiBusyFlag(flag) => {
+            ui_busy = Some(flag);
+          }
+          AlloyCommand::SetCadenceHold(p) => {
+            log::info!("[alloy] cadence hold policy: {p:?}");
+            if let Some(hold) = cadence.set_policy(p) {
+              release.set_hold(hold, tick_period);
+              refreshes.set_hold(hold);
+              stats.cadence_hold.store(hold, Ordering::Relaxed);
+            }
+          }
           AlloyCommand::SetTitle(t) => {
             if let Err(e) = window.set_title(&t) {
               log::warn!("set_title failed: {e}");

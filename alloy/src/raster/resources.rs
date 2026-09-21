@@ -158,9 +158,16 @@ impl RasterState {
           if let Some(shader) = self.shaders.get(&target) {
             shader.record_exec(exec.micros);
           }
+          // Passes retire in issue order ahead of the window draw they
+          // precede (one GL queue), so what has accumulated when a frame's
+          // query retires is that frame's pass work: a 3d scene renders as
+          // a pass and is most of such a frame's GPU time.
+          self.pending_pass_micros += exec.micros;
         }
         Timed::Frame => {
           self.stats.frame_exec_micros.fetch_add(exec.micros, Ordering::Relaxed);
+          self.last_frame_gpu_micros = Some(self.pending_pass_micros + exec.micros);
+          self.pending_pass_micros = 0;
         }
       }
     }

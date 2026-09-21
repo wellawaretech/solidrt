@@ -66,6 +66,11 @@ that genuinely need hardware.
 
 ## Stage 2: deadline-scheduled frames
 
+Built as [cadence-hold](../plans/cadence-hold.md) (2026-09-21), which
+holds the frame interval at a whole number of refreshes chosen from the
+measured interval and the frame work time; the text below is the framing
+it grew out of. What remains of this item is stage 1, the harness.
+
 This is tier 3 of [frame-timing](../design/frame-timing.md), and it reads
 its input from the present ledger and the refresh count that
 [frame-signal-refresh-count](../plans/frame-signal-refresh-count.md) builds

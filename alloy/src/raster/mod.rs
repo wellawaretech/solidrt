@@ -37,7 +37,7 @@ use repaint::DamageTracker;
 use impellers::{Context as ImpellerContext, ISize};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 
 use crate::backend::{FrameOutput, GlBinding};
@@ -78,6 +78,16 @@ pub struct RasterStats {
   /// jank count - a repeated frame lands here even when every per-second
   /// average reads clean.
   pub(crate) missed_presents: AtomicU64,
+  /// The cadence hold in force: the whole number of display refreshes each
+  /// frame interval is held to (1 = no hold), as the frame loop's
+  /// controller last set it (see cadence.rs; app.rs writes).
+  pub(crate) cadence_hold: AtomicU32,
+  /// Frame work time over the last second (see present::SignalRecord's
+  /// `work_ms`): mean and worst, microseconds, written once a second by
+  /// the frame loop. What the cadence controller's step-down prediction
+  /// reads, made visible for a census.
+  pub(crate) work_mean_micros: AtomicU32,
+  pub(crate) work_max_micros: AtomicU32,
   /// Shader/pipeline target renders executed by `flush_dirty`. Passes
   /// racing ahead of presented frames means redundant target re-renders
   /// (the ~900-passes-per-frame failure this counter exists to catch).
@@ -132,6 +142,11 @@ pub struct RasterCounters {
   /// Presents missed while a next frame was demanded - the direct jank
   /// count (see `RasterStats::missed_presents`).
   pub missed_presents: u64,
+  /// The cadence hold in force, in refreshes per frame (1 = no hold).
+  pub cadence_hold: u32,
+  /// Frame work time over the last second, ms: mean and worst.
+  pub work_mean_ms: f32,
+  pub work_max_ms: f32,
   /// Shader/pipeline target passes executed on the raster thread.
   pub passes: u64,
   /// Raster-thread wall time spent issuing those passes, microseconds
@@ -158,6 +173,9 @@ impl RasterStats {
       idle_ticks: self.idle_ticks.load(Ordering::Relaxed),
       fence_timeouts: self.fence_timeouts.load(Ordering::Relaxed),
       missed_presents: self.missed_presents.load(Ordering::Relaxed),
+      cadence_hold: self.cadence_hold.load(Ordering::Relaxed),
+      work_mean_ms: self.work_mean_micros.load(Ordering::Relaxed) as f32 / 1000.0,
+      work_max_ms: self.work_max_micros.load(Ordering::Relaxed) as f32 / 1000.0,
       passes: self.passes.load(Ordering::Relaxed),
       pass_issue_micros: self.pass_issue_micros.load(Ordering::Relaxed),
       pass_exec_micros: self
@@ -179,6 +197,9 @@ impl RasterStats {
       idle_ticks: AtomicU64::new(0),
       fence_timeouts: AtomicU64::new(0),
       missed_presents: AtomicU64::new(0),
+      cadence_hold: AtomicU32::new(1),
+      work_mean_micros: AtomicU32::new(0),
+      work_max_micros: AtomicU32::new(0),
       passes: AtomicU64::new(0),
       pass_issue_micros: AtomicU64::new(0),
       pass_exec_micros: AtomicU64::new(0),
@@ -291,6 +312,13 @@ pub(crate) struct RasterState {
   present_failures: u32,
   // Instant of the last slow-frame warning, for the 1/s rate limit.
   slow_frame_log: Option<std::time::Instant>,
+  // GPU execution time of the most recently retired frame - its window
+  // draw plus the passes issued ahead of it - sent with each present
+  // notification for the frame work time the cadence hold reads; None
+  // without timer queries. `pending_pass_micros` accumulates the retired
+  // passes since the last retired window draw.
+  last_frame_gpu_micros: Option<u64>,
+  pending_pass_micros: u64,
   // Instant of the last fence-timeout/-failure warning, same rate limit.
   fence_wait_log: Option<std::time::Instant>,
   // Shared live counters (see RasterStats): this thread decrements the queue
@@ -518,6 +546,8 @@ impl RasterState {
       capture_frames,
       present_failures: 0,
       slow_frame_log: None,
+      last_frame_gpu_micros: None,
+      pending_pass_micros: 0,
       fence_wait_log: None,
       stats,
       timing: FrameTiming::new(),

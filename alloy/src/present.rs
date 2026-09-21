@@ -129,7 +129,9 @@ impl RefreshCounter {
 /// idle Tick; `demanded` is the frame-request latch as the raster thread
 /// sampled it at present time (false for a Tick), which is what separates a
 /// miss from an idle gap; `missed` is the misses this signal closed (see
-/// `RefreshCounting::count`).
+/// `RefreshCounting::count`); `hold` is the cadence hold in force (refreshes
+/// per frame, 1 = none; see cadence.rs) and `work_ms` the present's frame
+/// work time (emission to swap call plus GPU time; None for a Tick).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SignalRecord {
   pub frame: u64,
@@ -138,14 +140,20 @@ pub struct SignalRecord {
   pub presented: bool,
   pub demanded: bool,
   pub missed: u32,
+  pub hold: u32,
+  pub work_ms: Option<f32>,
 }
 
-/// What one frame signal counted: the refreshes it covered, and the presents
-/// the display missed in the interval it closed.
+/// What one frame signal counted: the refreshes it covered, the presents
+/// the display missed in the interval it closed, and that interval itself
+/// when it was a demanded one (the refreshes the display showed the previous
+/// frame for; 0 for a Tick and for an interval opened by an idle present),
+/// which is the cadence controller's measured fact.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Counted {
   pub refreshes: u32,
   pub missed: u32,
+  pub interval: u32,
 }
 
 // Frame signals the ledger keeps; enough for a few seconds at any refresh
@@ -194,6 +202,10 @@ pub struct CountTally {
   pub zero: u32,
   pub multi: u32,
   pub max: u32,
+  /// Presents with a work time, their summed and worst work (ms).
+  pub work_n: u32,
+  pub work_sum_ms: f32,
+  pub work_max_ms: f32,
 }
 
 /// The main loop's refresh counting in one place: the counter, the ledger it
@@ -213,6 +225,9 @@ pub struct RefreshCounting {
   // present and a refresh-rate change, so the interval that follows any of
   // those is not judged.
   prev_present_demanded: bool,
+  // The cadence hold in force (see `set_hold`): the interval the display is
+  // expected to show the current frame for.
+  hold: u32,
 }
 
 impl RefreshCounting {
@@ -223,7 +238,16 @@ impl RefreshCounting {
       tally: CountTally::default(),
       since_present: 0,
       prev_present_demanded: false,
+      hold: 1,
     }
+  }
+
+  /// Feed the cadence hold in force (1 = none). It is the interval a
+  /// demanded present is expected to be shown for, including the interval
+  /// open right now: a hold change applies to the release of the next frame
+  /// signal, so the open interval follows it.
+  pub fn set_hold(&mut self, hold: u32) {
+    self.hold = hold.max(1);
   }
 
   /// A refresh-rate change re-anchors the counter and drops the interval in
@@ -236,33 +260,44 @@ impl RefreshCounting {
   }
 
   /// Count one frame signal's refreshes from its reference instant and
-  /// record it; `presented` / `demanded` distinguish a present from a Tick.
-  /// A present also closes an interval: the refreshes since the previous
-  /// present, Ticks included. When that previous present left the swap with
-  /// a next frame demanded, every refresh of the interval beyond the first
-  /// is a present the display expected and did not get - jank as a count,
-  /// not a rate - and is reported as `missed`. An interval opened by an
-  /// idle present is idle, not jank, whatever its length.
-  pub fn count(&mut self, reference_ms: f64, frame: u64, presented: bool, demanded: bool) -> Counted {
+  /// record it; `presented` / `demanded` distinguish a present from a Tick
+  /// and `work_ms` is the present's frame work time when known. A present
+  /// also closes an interval: the refreshes since the previous present,
+  /// Ticks included. When that previous present left the swap with a next
+  /// frame demanded, the interval is reported (the cadence controller's
+  /// measured fact) and every refresh of it beyond the hold in force is a
+  /// present the display expected and did not get - jank as a count, not a
+  /// rate - reported as `missed`; a held interval is by definition not a
+  /// miss. An interval opened by an idle present is idle, not jank,
+  /// whatever its length.
+  pub fn count(&mut self, reference_ms: f64, frame: u64, presented: bool, demanded: bool, work_ms: Option<f32>) -> Counted {
     let refreshes = self.counter.on_signal(reference_ms);
     let mut missed = 0;
+    let mut interval = 0;
     if presented {
-      let interval = self.since_present + refreshes;
+      let closed = self.since_present + refreshes;
       if self.prev_present_demanded {
-        missed = interval.saturating_sub(1);
+        interval = closed;
+        missed = closed.saturating_sub(self.hold);
       }
       self.since_present = 0;
       self.prev_present_demanded = demanded;
     } else {
       self.since_present += refreshes;
     }
-    self.ledger.push(SignalRecord { frame, reference_ms, refreshes, presented, demanded, missed });
+    let hold = self.hold;
+    self.ledger.push(SignalRecord { frame, reference_ms, refreshes, presented, demanded, missed, hold, work_ms });
     self.tally.signals += 1;
     self.tally.refreshes += refreshes;
     self.tally.zero += (refreshes == 0) as u32;
     self.tally.multi += (refreshes > 1) as u32;
     self.tally.max = self.tally.max.max(refreshes);
-    Counted { refreshes, missed }
+    if let Some(work) = work_ms {
+      self.tally.work_n += 1;
+      self.tally.work_sum_ms += work;
+      self.tally.work_max_ms = self.tally.work_max_ms.max(work);
+    }
+    Counted { refreshes, missed, interval }
   }
 
   /// The tally since the last take, reset to zero.

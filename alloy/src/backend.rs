@@ -16,8 +16,14 @@ pub enum FrameOutput {
   /// receipt so channel and wake latency do not add to its jitter.
   /// `demanded` is the frame-request latch sampled at that instant: whether
   /// a next frame was already wanted, which separates a missed present from
-  /// an idle gap.
-  Presented { at: std::time::Instant, demanded: bool },
+  /// an idle gap. `ready_at` is the instant the swap was called (the frame
+  /// was drawn and ready), which with the frame signal's emission gives the
+  /// CPU side of the frame's work time; `gpu_micros` is the GPU execution
+  /// time of the most recently retired frame, its window draw plus the
+  /// passes issued ahead of it (a frame or two behind, timer queries retire
+  /// late), None without timer queries. Both feed the cadence hold
+  /// (cadence.rs).
+  Presented { at: std::time::Instant, ready_at: std::time::Instant, gpu_micros: Option<u64>, demanded: bool },
   /// Playback: the frame was drawn to the hidden window's backbuffer and read
   /// back. RGBA8, bottom-up rows, at the fixed capture size.
   Captured(Vec<u8>),

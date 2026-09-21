@@ -451,8 +451,15 @@ fn set_event_interest(ctx: Ctx<'_>, node_id: u64, bits: u32) -> rquickjs::Result
   Ok(())
 }
 
+// The JS-facing frame request (core's `onFrame` registration): a pending
+// frame callback is a standing request for the next frame, so it declares
+// standing demand as well as latching the request (see
+// PlatformContext::declare_standing_demand). One-shot demand never comes
+// through here; property writes latch on the tree edit path.
 fn request_frame(ctx: Ctx<'_>) {
-  state(&ctx).gui.platform.request_frame();
+  let platform = &state(&ctx).gui.platform;
+  platform.request_frame();
+  platform.declare_standing_demand();
 }
 
 // The direct draw path: put the current tree on screen now. Lets a

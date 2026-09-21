@@ -124,11 +124,13 @@ impl PacingBudget {
     PacingBudget { samples: [0.0; Self::WINDOW], idx: 0, filled: 0, delay_ms: None }
   }
 
-  /// Record one emission-to-present duration. Samples beyond 1.5 periods are
-  /// slipped frames (the chain waited out an extra vsync), not steady-state
-  /// cost; folding them in would drag the start earlier for a whole window.
-  pub fn record(&mut self, ms: f32, period: std::time::Duration) {
-    if ms > period.as_secs_f32() * 1500.0 {
+  /// Record one emission-to-present duration. `slot` is the frame's slot:
+  /// the refresh period, times the cadence hold when one is in force.
+  /// Samples beyond 1.5 slots are slipped frames (the chain waited out an
+  /// extra vsync), not steady-state cost; folding them in would drag the
+  /// start earlier for a whole window.
+  pub fn record(&mut self, ms: f32, slot: std::time::Duration) {
+    if ms > slot.as_secs_f32() * 1500.0 {
       return;
     }
     self.samples[self.idx] = ms;
@@ -204,11 +206,19 @@ pub(crate) enum Wake {
   /// `FrameRelease::banked`). Arm a VsyncSource request with `arm`'s delay
   /// when Some, so the next vsync is still served on time.
   Banked { arm: Option<std::time::Duration> },
+  /// The vsync fell inside the cadence-hold slot (see `FrameRelease::hold`):
+  /// the deferred presents keep waiting for the slot's own vsync. Arm a
+  /// VsyncSource request with `arm`'s delay when Some.
+  Held { arm: Option<std::time::Duration> },
   /// Release the deferred presents: emit `emit` frame signals, then arm a
   /// VsyncSource request with `arm`'s delay when Some (the pre-arm for the
   /// next vsync). `timed_out` = the fallback fired instead of a signal
   /// (diagnostics; the superseded signal will be discarded by try_take).
-  Release { emit: u32, timed_out: bool, arm: Option<std::time::Duration> },
+  /// `reference` is the instant the released signals' refreshes are counted
+  /// from: the signal's vsync, the slot end of a held SwapPaced release, or
+  /// for a fallback the wake minus the delay the signal would have slept,
+  /// which puts it near the vsync it stood in for.
+  Release { emit: u32, timed_out: bool, arm: Option<std::time::Duration>, reference: std::time::Instant },
 }
 
 /// What `FrameRelease::set_pacing` asks of the caller.
@@ -256,8 +266,25 @@ pub(crate) struct FrameRelease {
   /// production gap instead of the 2-3 a present-return anchor allowed -
   /// while never firing before a healthy signal could still arrive. Racing
   /// a merely-late one is harmless: the fallback supersedes it (new request
-  /// generation) and the chain re-locks at the next vsync.
+  /// generation) and the chain re-locks at the next vsync. Under SwapPaced
+  /// it is instead the slot end a held present waits for (see `hold`).
   deadline: std::time::Instant,
+  /// The cadence hold in force (cadence.rs): the whole number of refresh
+  /// periods each frame interval is held to, 1 for none. A held present's
+  /// frame signal waits for the slot end - the previous frame's start plus
+  /// `hold` periods - under both policies: VsyncLocked skips the vsync
+  /// signals inside the slot (`Wake::Held`), SwapPaced defers to the slot
+  /// end as a timer deadline. Frames are held at the signal, not at the
+  /// swap, so a held frame starts at its slot and samples input as late as
+  /// the slot allows; a frame that outruns its slot releases at once and
+  /// starts a new grid there.
+  hold: u32,
+  /// Start of the current slot: the instant of the last released frame
+  /// signal on the grid the hold defines (a vsync instant under
+  /// VsyncLocked, the slot end for a held SwapPaced release, the present's
+  /// return otherwise). None until the first release; never cleared, since
+  /// a stale slot lies in the past and holds nothing.
+  slot_start: Option<std::time::Instant>,
   /// Pipeline cost estimator for the signal delay; samples open at each
   /// vsync-released emission and close at the matching present.
   budget: PacingBudget,
@@ -292,22 +319,38 @@ impl FrameRelease {
       budget: PacingBudget::new(),
       signal_emitted: None,
       banked: None,
+      hold: 1,
+      slot_start: None,
     }
   }
 
-  /// Feed one present-return; `period` is the current refresh period.
+  /// Feed one present-return at `now` (the swap's return instant); `period`
+  /// is the current refresh period.
   pub fn on_present(&mut self, now: std::time::Instant, period: std::time::Duration) -> Release {
     if !self.backend || self.pacing != FramePacing::VsyncLocked {
+      // Present-return pacing, with the cadence hold as a timer deadline: a
+      // present that returns inside its slot defers to the slot end.
+      if let Some(end) = self.slot_end(period).filter(|end| self.hold > 1 && now < *end) {
+        self.pending += 1;
+        self.deadline = end;
+        return Release::Deferred { arm: None };
+      }
+      self.slot_start = Some(now);
       return Release::Emit { arm: None, vsync: None };
     }
     if let Some(emitted) = self.signal_emitted.take() {
-      self.budget.record(now.duration_since(emitted).as_secs_f32() * 1000.0, period);
+      self.budget.record(now.duration_since(emitted).as_secs_f32() * 1000.0, period * self.hold);
     }
     if let Some(vsync) = self.banked.take() {
       // Its vsync signal already came and went (see `banked`): release now,
-      // a couple of milliseconds into the period rather than a period late.
-      self.signal_emitted = Some(now);
-      return Release::Emit { arm: self.arm(now, period), vsync: Some(vsync) };
+      // a couple of milliseconds into the period rather than a period late
+      // - unless that vsync fell inside the slot, in which case the present
+      // waits for the slot's own vsync like any other.
+      if !self.too_early(vsync, period) {
+        self.signal_emitted = Some(now);
+        self.slot_start = Some(vsync);
+        return Release::Emit { arm: self.arm(now, period), vsync: Some(vsync) };
+      }
     }
     self.pending += 1;
     // Normally the signal releasing this present is already armed
@@ -326,6 +369,19 @@ impl FrameRelease {
   /// present nor signal by the deadline is given up (the present, if it
   /// ever comes, starts a fresh chain).
   pub fn on_wake(&mut self, now: std::time::Instant, period: std::time::Duration, signal: Option<std::time::Instant>) -> Wake {
+    if !self.backend || self.pacing != FramePacing::VsyncLocked {
+      // Present-return pacing: the one thing to wake for is a held present
+      // whose slot has ended. Its reference is the slot end itself, so the
+      // grid stays exact however late the wake lands.
+      if self.pending > 0 && now >= self.deadline {
+        let emit = self.pending;
+        self.pending = 0;
+        let reference = self.deadline;
+        self.slot_start = Some(reference);
+        return Wake::Release { emit, timed_out: false, arm: None, reference };
+      }
+      return Wake::Idle;
+    }
     let signal_taken = signal.is_some();
     if signal_taken {
       self.armed = false;
@@ -350,15 +406,50 @@ impl FrameRelease {
     if !signal_taken && !timed_out {
       return Wake::Idle;
     }
+    // The vsync this wake stands for (see Wake::Release's reference).
+    let reference = signal.unwrap_or_else(|| now.checked_sub(self.delay()).unwrap_or(now));
+    if self.too_early(reference, period) {
+      // Inside the slot: skip this vsync, keep the chain armed for the next.
+      return Wake::Held { arm: self.arm(now, period) };
+    }
     let emit = self.pending;
     self.pending = 0;
     self.signal_emitted = Some(now);
+    self.slot_start = Some(reference);
     // Pre-arm the signal for the next vsync while this frame is being
     // built: the signal timing must not depend on when the build's present
     // returns (see `armed`). The frame this emission triggers has until
     // that signal - a full period plus the delay - to present, or it slips
     // a frame.
-    Wake::Release { emit, timed_out, arm: self.arm(now, period) }
+    Wake::Release { emit, timed_out, arm: self.arm(now, period), reference }
+  }
+
+  /// Feed the cadence hold (see `hold`); a change re-times a SwapPaced
+  /// present already deferred to the old slot end.
+  pub fn set_hold(&mut self, hold: u32, period: std::time::Duration) {
+    self.hold = hold.max(1);
+    if self.pending > 0 && (!self.backend || self.pacing != FramePacing::VsyncLocked) {
+      if let Some(end) = self.slot_end(period) {
+        self.deadline = end;
+      }
+    }
+  }
+
+  // The end of the current slot: its start plus the hold's periods.
+  fn slot_end(&self, period: std::time::Duration) -> Option<std::time::Instant> {
+    self.slot_start.map(|start| start + period * self.hold)
+  }
+
+  // Whether a vsync at `reference` falls inside the slot: before its end by
+  // more than half a period, so the slot's own vsync - the first at or after
+  // the end - is recognized through the reference's jitter against the grid.
+  fn too_early(&self, reference: std::time::Instant, period: std::time::Duration) -> bool {
+    self.hold > 1 && self.slot_end(period).is_some_and(|end| reference + period / 2 < end)
+  }
+
+  // The armed signal delay as a duration (the budget's last pick).
+  fn delay(&self) -> std::time::Duration {
+    std::time::Duration::from_secs_f32(self.budget.current_ms() / 1000.0)
   }
 
   /// Feed a frame-pacing policy write. Leaving VsyncLocked releases the
@@ -406,6 +497,30 @@ impl FrameRelease {
   /// Last armed signal delay in ms, for the 1/s diagnostics line.
   pub fn current_delay_ms(&self) -> f32 {
     self.budget.current_ms()
+  }
+
+  /// How far into its slot a released frame starts, ms: the signal delay
+  /// after the vsync under VsyncLocked (the cadence controller counts it as
+  /// slot use), zero under SwapPaced, where the slot starts at the emission.
+  pub fn slot_offset_ms(&self) -> f32 {
+    if self.vsync_locked() {
+      self.budget.current_ms()
+    } else {
+      0.0
+    }
+  }
+
+  /// Whether an unheld chain pipelines: under present-return pacing the
+  /// next frame's signal follows the swap's return, so its CPU work overlaps
+  /// this frame's GPU work and the throughput is the larger of the two,
+  /// not their sum; a vsync-locked chain runs one frame at a time. The
+  /// cadence controller reads it to judge an unheld frame's true cost.
+  pub fn pipelined(&self) -> bool {
+    !self.vsync_locked()
+  }
+
+  fn vsync_locked(&self) -> bool {
+    self.backend && self.pacing == FramePacing::VsyncLocked
   }
 
   // Arm a request if none is outstanding: pick the delay, set the fallback

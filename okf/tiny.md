@@ -27,6 +27,8 @@ symptom shows. A heading that outgrows this file splits into its own.
 `flux/` - the JavaScript runtime and its plugins.
 
 - `flux:fs` has no `rename`, so an app doing its own atomic write (temp file, then replace) cannot; add `FluxFile.rename(to)` over `std::fs::rename`. Load-bearing now that `onSuspend`/`onQuit` make the app own its persistence.
+- `setTimeout(fn)` / `setInterval(fn)` without a delay throw an arity error (standards_plugins/time.rs takes `ms: u64`); make `ms` optional, defaulting to 0 as on the web, and mark it optional in flux-types standards/time.d.ts ([[quartz-heron]] 4).
+- flux-types fs.d.ts and sqlite.d.ts say relative paths resolve against the process cwd but not that an app's cwd is its per-app persistent storage folder; add that sentence to both, and to the scaffold AGENTS.md storage mention ([[quartz-heron]] 7).
 
 ## Extensions
 
@@ -46,10 +48,14 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 `packages/components`.
 
+- `TransitionEntries` (types.ts) has no `layout` key, so `<Pressable transition={{ layout }}>` is a type error and a control that should glide on reflow needs a wrapping core `<view>`; add `layout` to the component transition vocabulary and check it reaches the root node ([[quartz-heron]] 4b).
+- editor-field.tsx says "Outside-click-to-blur is the caller's job", but core's window.ts blurs on an outside tap since 93b14b3b; confirm a click in a container's padding blurs, then drop the comment and state the behavior in docs/text-input.md ([[quartz-heron]] 12).
+
 ## DX
 
 The `srt` CLI, the dev server, MCP, debug commands, examples and probes.
 
+- Scaffold AGENTS.md "Read before you" list has no trigger for persistence: `flux:sqlite` and `createQuery`/`createQueryRow` from `@solidrt/core/data` are findable only by grepping node_modules; add a line pointing at them ([[quartz-heron]] 8).
 - `srt:dev` registerDebug: an async command's Promise JSON-encodes as `{}` with no warning; reject async commands loudly at registration (async is known-unsupported, okf/done/mcp-debug-commands.md).
 - Control API `POST /input` wheel: `deltaY: 300` reaches the app as about 14 (examples/pick.tsx's ring spun 0.14 rad at 0.01 rad per px); find where the synthetic wheel delta is scaled between the server and the client's wheel event and make it mean pixels like a real wheel, or state the unit in debugging.md.
 - `srt render` passes a startup failure: a module that throws before `render()` gets the error window, which renders, so the capture completes and the exit-code gate reads success for a broken app; fail the run instead of building the error engine.

@@ -46,6 +46,16 @@ fn request_animation_frame<'js>(ctx: Ctx<'js>, callback: Function<'js>) -> u32 {
   id
 }
 
+/// Whether callbacks are registered for the next frame: after a flush, a
+/// standing animation loop (an `onFrame` that re-registers every frame) is
+/// exactly the case, and it is standing demand the draw gate must see as
+/// such after it has consumed this frame's request (see `frame::draw`).
+pub(crate) fn has_pending(ctx: &Ctx<'_>) -> bool {
+  let store = ctx.userdata::<RafCallbacks>().expect("raf callbacks userdata");
+  let pending = !store.0.borrow().pending.is_empty();
+  pending
+}
+
 fn cancel_animation_frame(ctx: Ctx<'_>, id: u32) {
   let store = ctx.userdata::<RafCallbacks>().expect("raf callbacks userdata");
   store.0.borrow_mut().pending.retain(|(i, _)| *i != id);

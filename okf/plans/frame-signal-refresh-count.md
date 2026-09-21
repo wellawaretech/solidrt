@@ -233,7 +233,7 @@ the laptop.
   the 3s and 4s) because a JS-bound app under VsyncLocked gets two frame
   signals per present; each delta is still the true count between the two
   JS frames that ran. Filed as
-  [vsync-locked-js-bound-double-signal](../backlog/vsync-locked-js-bound-double-signal.md);
+  [vsync-locked-js-bound-double-signal](../done/vsync-locked-js-bound-double-signal.md);
   not a counting matter.
 - Third APK (banked releases referenced at their vsync), Pixel 7, same
   probe: full rate 1363 of 1371 deltas exactly one period and no 2s at

@@ -66,10 +66,16 @@ Two design points that settled the shape:
   idle, not jank. The raster thread samples (never consumes) the
   frame-request latch at present time - forwarded once at startup via
   `RasterCmd::SetDemandLatch` from the platform loop's
-  `SetFrameRequestLatch` handler. The timing works out because a raf
-  re-registration latches during the JS phase of the frame being
-  presented, so the latch is reliably set at present time mid-animation
-  and clear after a one-shot frame.
+  `SetFrameRequestLatch` handler. The timing did NOT work out by itself
+  (found 2026-09-21 while building the cadence hold): the draw gate
+  consumes the latch after the frame's JS has re-registered its `onFrame`
+  callback, so at present time it read false for exactly the apps that
+  animate, and the counts had only come out right because a stray idle
+  Tick re-set it between the gate and the present. Standing demand is now
+  declared by its sources (core's `requestFrame` export, the rAF queue,
+  running transitions) and re-latched past the gate, so the latch is set
+  at present time mid-animation and clear after a one-shot frame by
+  construction (okf/plans/cadence-hold.md, Findings).
 - RUN-BASED COUNTING, not a per-interval threshold: swap-return
   timestamps jitter by more than half a refresh period under
   mailbox/triple-buffered compositors - the documented reason the

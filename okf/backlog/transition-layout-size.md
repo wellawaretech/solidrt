@@ -27,6 +27,14 @@ animates. Layout size is not animatable here on purpose
 exiting row pops out and its neighbours slide instead; a size lane is the
 one place that idiom could land.
 
+The paint-side workaround stops at clips and backdrops ([[quartz-heron]]
+4c): an app can paint a card's background as a `d-rect` with transitioned
+`w`/`h` fed from `onLayout`, but `backdropFilter` and the `clipRadius`
+clip follow the layout box, so a frosted card's blur area jumps to its new
+box with square-cut corners while its painted outline is still animating.
+Whichever child model lands, the backdrop region and the clip must follow
+the painted box, not the solved one.
+
 ## Cause
 
 The slide lane is a point (`AnimValue::Point`, `Slide::at`): the diff at

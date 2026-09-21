@@ -115,7 +115,15 @@ impl RasterState {
       if (now_w as i64, now_h as i64) != (width as i64, height as i64) {
         log::warn!("[alloy] surface size changed during frame: drew {width}x{height}, now {now_w}x{now_h}");
       }
-      self.tx.send(FrameOutput::Presented { at: presented_at, demanded }).map_err(|_| ())?;
+      self
+        .tx
+        .send(FrameOutput::Presented {
+          at: presented_at,
+          ready_at: present_start,
+          gpu_micros: self.last_frame_gpu_micros,
+          demanded,
+        })
+        .map_err(|_| ())?;
     }
     // Wake only after the frame is in the channel, so the woken loop finds it.
     if let Some(wake) = &self.wake {

@@ -159,8 +159,8 @@ fn misses_are_the_extra_refreshes_of_a_demanded_interval() {
   let mut c = RefreshCounting::new();
   let mut t = 0.0;
   // A present at `t`, then the reference moves on by `gap` ms.
-  let mut present = |c: &mut RefreshCounting, t: &mut f64, demanded: bool, gap: f64| {
-    let counted = c.count(*t, 0, true, demanded);
+  let present = |c: &mut RefreshCounting, t: &mut f64, demanded: bool, gap: f64| {
+    let counted = c.count(*t, 0, true, demanded, None);
     *t += gap;
     counted.missed
   };
@@ -183,30 +183,65 @@ fn misses_are_the_extra_refreshes_of_a_demanded_interval() {
 #[test]
 fn ticks_between_presents_fold_into_the_interval() {
   let mut c = RefreshCounting::new();
-  assert_eq!(c.count(0.0, 0, true, true).missed, 0);
+  assert_eq!(c.count(0.0, 0, true, true, None).missed, 0);
   // JS is busy for three refreshes; the loop ticks twice meanwhile, then
   // the present lands on the third refresh: the present missed two.
-  assert_eq!(c.count(P60, 1, false, false).missed, 0);
-  assert_eq!(c.count(2.0 * P60, 1, false, false).missed, 0);
-  assert_eq!(c.count(3.0 * P60, 1, true, true).missed, 2);
+  assert_eq!(c.count(P60, 1, false, false, None).missed, 0);
+  assert_eq!(c.count(2.0 * P60, 1, false, false, None).missed, 0);
+  assert_eq!(c.count(3.0 * P60, 1, true, true, None).missed, 2);
   // The loop feeds the rate every iteration; an unchanged rate must not
   // drop the interval (it did once: every present read as undemanded).
   c.set_hz(60.0);
-  assert_eq!(c.count(5.0 * P60, 2, true, true).missed, 1);
+  assert_eq!(c.count(5.0 * P60, 2, true, true, None).missed, 1);
   // A rate change drops the interval in flight.
   c.set_hz(120.0);
-  assert_eq!(c.count(5.0 * P60 + 5.0 * 1000.0 / 120.0, 3, true, true).missed, 0);
+  assert_eq!(c.count(5.0 * P60 + 5.0 * 1000.0 / 120.0, 3, true, true, None).missed, 0);
 }
 
 #[test]
 fn ledger_keeps_the_newest_records_oldest_first() {
   let mut ledger = SignalLedger::new();
   for frame in 0..600u64 {
-    ledger.push(SignalRecord { frame, reference_ms: frame as f64, refreshes: 1, presented: true, demanded: true, missed: 0 });
+    ledger.push(SignalRecord {
+      frame,
+      reference_ms: frame as f64,
+      refreshes: 1,
+      presented: true,
+      demanded: true,
+      missed: 0,
+      hold: 1,
+      work_ms: None,
+    });
   }
   let frames: Vec<u64> = ledger.records().map(|r| r.frame).collect();
   assert_eq!(frames.len(), 512);
   assert_eq!(frames[0], 88);
   assert_eq!(*frames.last().expect("records"), 599);
   assert!(frames.windows(2).all(|w| w[1] == w[0] + 1), "records out of order");
+}
+
+// Under a cadence hold the expected interval is the hold: a held 3:1
+// cadence misses nothing, a frame shown one refresh longer than its hold
+// missed one, and a hold change applies to the interval open at the time.
+// The interval is reported for demanded intervals only.
+#[test]
+fn a_held_interval_is_not_a_miss() {
+  let mut c = RefreshCounting::new();
+  c.set_hold(3);
+  let first = c.count(0.0, 0, true, true, None);
+  assert_eq!((first.missed, first.interval), (0, 0), "the first present closes no interval");
+  let next = c.count(3.0 * P60, 1, true, true, None);
+  assert_eq!((next.missed, next.interval), (0, 3));
+  assert_eq!(c.count(6.0 * P60, 2, true, true, None).missed, 0);
+  let late = c.count(10.0 * P60, 3, true, true, None);
+  assert_eq!((late.missed, late.interval), (1, 4));
+  // The hold drops to 1 while the next interval is open: it is judged
+  // against 1.
+  c.set_hold(1);
+  let after = c.count(13.0 * P60, 4, true, true, None);
+  assert_eq!((after.missed, after.interval), (2, 3));
+  // An interval opened by an idle present is neither a miss nor reported.
+  c.count(14.0 * P60, 5, true, false, None);
+  let idle = c.count(20.0 * P60, 6, true, true, None);
+  assert_eq!((idle.missed, idle.interval), (0, 0));
 }

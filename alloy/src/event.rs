@@ -13,6 +13,13 @@ pub enum AlloyCommand {
   // it, lifecycle rebinds still happen but the resume/expose repaint
   // degrades to the raster thread's present-failure fallback.
   SetFrameRequestLatch(std::sync::Arc<std::sync::atomic::AtomicBool>),
+  // Whether the UI thread is in the middle of JS work (the embedder's
+  // engine sets it around each closure it runs). The other half of the
+  // idle-tick gate: a frame being built will present and bring its own
+  // frame signal, so a Tick emitted meanwhile is a second signal for one
+  // present - a JS-bound app under vsync pacing ran two frames per present
+  // because of it (okf/backlog/vsync-locked-js-bound-double-signal.md).
+  SetUiBusyFlag(std::sync::Arc<std::sync::atomic::AtomicBool>),
   SetTitle(String),
   // Window icon from straight-alpha RGBA8 pixels (width * height * 4 bytes).
   // Platforms without window icons (macOS) ignore it.
@@ -23,6 +30,11 @@ pub enum AlloyCommand {
   // the loop applies it immediately, releasing any vsync-deferred presents
   // when leaving VsyncLocked.
   SetFramePacing(crate::vsync::FramePacing),
+  // Cadence-hold policy (see cadence::CadenceHold): whether frame intervals
+  // below the refresh rate are held to a whole number of refreshes. The
+  // embedder derives it from the input-modality facts like the pacing
+  // policy; the loop applies it at the next present.
+  SetCadenceHold(crate::cadence::CadenceHold),
   SetCursor(Cursor),
   SetCursorVisible(bool),
   // Relative mouse mode (pointer lock): SDL hides the cursor, confines it

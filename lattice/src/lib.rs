@@ -494,6 +494,40 @@ fn anchor_app(app_id: &str, current: &mut Option<String>) {
   *current = Some(app_id.to_string());
 }
 
+// The longest frame slot the automatic cadence hold may choose, ms: no hold
+// slower than 20 fps (Android's Frame Pacing library's default too); a
+// workload that needs more is held at this slot and its longer intervals
+// count as misses.
+const CADENCE_HOLD_MAX_MS: u32 = 50;
+
+// The cadence-hold policy (tier 3 of okf/design/frame-timing.md, plan
+// okf/plans/cadence-hold.md) from the input-modality fact: held where
+// fluency beats frame rate - touch clients, which run one frame in flight
+// anyway, and remote-driven clients (no touch, no mouse) - and off where a
+// mouse is present, because a pointer-driven client pipelines under swap
+// pacing and pays more than the boundary rounding for a hold, and cursor
+// motion reads better at a higher uneven rate. `SRT_CADENCE_HOLD`
+// (`off`, `auto` or a whole number of refreshes) overrides it for probes and
+// censuses until the runtime policy registry gives apps the knob
+// (okf/backlog/runtime-policy-registry.md).
+fn cadence_hold_policy(mouse: bool) -> alloy::CadenceHold {
+  if let Ok(v) = std::env::var("SRT_CADENCE_HOLD") {
+    match v.trim() {
+      "off" => return alloy::CadenceHold::Off,
+      "auto" => return alloy::CadenceHold::Auto { max_ms: CADENCE_HOLD_MAX_MS },
+      s => match s.parse::<u32>() {
+        Ok(k) if k >= 1 => return alloy::CadenceHold::Fixed(k),
+        _ => log::warn!("[srt] SRT_CADENCE_HOLD={v}: expected off, auto or a whole number of refreshes; ignored"),
+      },
+    }
+  }
+  if mouse {
+    alloy::CadenceHold::Off
+  } else {
+    alloy::CadenceHold::Auto { max_ms: CADENCE_HOLD_MAX_MS }
+  }
+}
+
 fn ui_thread(
   handle: tokio::runtime::Handle,
   atx: Arc<alloy::Context>,
@@ -544,6 +578,12 @@ fn ui_thread(
   // return to visibility); the rebind+repaint policy lives in alloy's
   // liveness.rs.
   alloy_cmd_tx.send(alloy::AlloyCommand::SetFrameRequestLatch(platform.frame_request_handle())).ok();
+  // The JS thread's busy flag: the flux engine sets it around each closure
+  // it runs (every engine built below gets it), and alloy's idle-tick gate
+  // reads it so no Tick is emitted while a frame is being built (see
+  // AlloyCommand::SetUiBusyFlag).
+  let ui_busy = Arc::new(AtomicBool::new(false));
+  alloy_cmd_tx.send(alloy::AlloyCommand::SetUiBusyFlag(ui_busy.clone())).ok();
   // Playback mode renders every frame unconditionally: the lockstep capture
   // loop blocks waiting for each frame's display list, so a frame skipped by
   // the demand-driven gate would deadlock it.
@@ -764,10 +804,12 @@ fn ui_thread(
             // ~1.4 percent on a 50Hz Android TV).
             AlloyEvent::InputDevices { keyboard, mouse, touch, screen_keyboard } => {
               let pacing = if *touch { alloy::FramePacing::VsyncLocked } else { alloy::FramePacing::SwapPaced };
+              let hold = cadence_hold_policy(*mouse);
               log::info!(
-                "[srt] input devices: keyboard={keyboard} mouse={mouse} touch={touch} screen_keyboard={screen_keyboard} -> pacing {pacing:?}"
+                "[srt] input devices: keyboard={keyboard} mouse={mouse} touch={touch} screen_keyboard={screen_keyboard} -> pacing {pacing:?}, cadence hold {hold:?}"
               );
               alloy_cmd_events.send(alloy::AlloyCommand::SetFramePacing(pacing)).ok();
+              alloy_cmd_events.send(alloy::AlloyCommand::SetCadenceHold(hold)).ok();
             }
             _ => {}
           }
@@ -950,7 +992,8 @@ fn ui_thread(
         .user_agent(format!("SolidRT/{VERSION}"))
         // Isolate modules are manifest assets under isolates/ (see
         // okf/done/isolates-and-ports.md), resolved through the assets mount.
-        .isolate_resolver(flux::resolve_isolate_from_assets);
+        .isolate_resolver(flux::resolve_isolate_from_assets)
+        .busy_flag(ui_busy.clone());
       let builder = match &fetch_cache_dir {
         Some(dir) => builder.cache_dir(dir.clone()),
         None => builder,

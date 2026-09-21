@@ -124,6 +124,7 @@ pub struct FluxEngineBuilder {
   isolate_resolver: Option<IsolateResolver>,
   interrupt: Option<Arc<AtomicBool>>,
   on_uncaught: Option<UncaughtHook>,
+  busy: Option<Arc<AtomicBool>>,
 }
 
 impl FluxEngineBuilder {
@@ -212,6 +213,16 @@ impl FluxEngineBuilder {
     self
   }
 
+  /// A busy indicator: set while the engine runs an exec closure and the
+  /// microtask checkpoint after it, clear while the loop waits for the next.
+  /// An embedder whose other threads must know whether the JS thread is in
+  /// the middle of work (a frame being built) reads it; the flag reports, it
+  /// never controls anything.
+  pub fn busy_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+    self.busy = Some(flag);
+    self
+  }
+
   /// Called with every uncaught error this engine reports (a module-level
   /// throw, an unhandled rejection, a throw out of a fire-and-forget callback),
   /// after it is logged. Isolates use it to forward the error to the parent's
@@ -264,6 +275,7 @@ impl FluxEngineBuilder {
       memory_limit: self.memory_limit,
       interrupt: self.interrupt,
       on_uncaught: self.on_uncaught,
+      busy: self.busy,
     }
   }
 }
@@ -279,6 +291,7 @@ pub struct FluxEngine {
   memory_limit: Option<usize>,
   interrupt: Option<Arc<AtomicBool>>,
   on_uncaught: Option<UncaughtHook>,
+  busy: Option<Arc<AtomicBool>>,
 }
 
 impl FluxEngine {
@@ -295,6 +308,7 @@ impl FluxEngine {
       isolate_resolver: None,
       interrupt: None,
       on_uncaught: None,
+      busy: None,
     }
   }
 
@@ -390,6 +404,12 @@ impl FluxEngine {
     let logger = self.logger.clone();
     let on_uncaught = self.on_uncaught.clone();
     let mut exec_rx = self.exec_rx;
+    let busy = self.busy;
+    let set_busy = |b: bool| {
+      if let Some(flag) = &busy {
+        flag.store(b, std::sync::atomic::Ordering::Release);
+      }
+    };
 
     let (runtime, context, pending, rejections) = plugins::init_context(
       self.setups,
@@ -427,9 +447,11 @@ impl FluxEngine {
       }
       tokio::select! {
           Some(f) = exec_rx.recv() => {
+              set_busy(true);
               context.with(|ctx| f(ctx)).await;
               drain_job_queue(&runtime).await;
               flush_rejections(&rejections, &logger, on_uncaught.as_ref());
+              set_busy(false);
               runtime_drained = false;
           }
           _ = &mut notified => {}

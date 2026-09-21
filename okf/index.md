@@ -37,6 +37,15 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   open) adds Opus audio from WebM, with the sink position correcting the clock
   anchor instead of selecting frames. Decided 2026-09-12, reversing the
   2026-08-12 rejection; the texture pipeline keeps every non-fullscreen use.
+- **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
+  An app that cannot make the refresh rate is shown for an alternating number
+  of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
+  reads as judder even though the timeline is now honest; hold the frame
+  interval at a whole number of refreshes chosen from the measured frame work
+  time with hysteresis, the way Android's Frame Pacing library does, trading
+  frames at the boundary for a metronomic cadence. Tier 3 of
+  okf/design/frame-timing.md; alloy measures and enforces, lattice decides
+  when.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
@@ -246,10 +255,20 @@ Shaped, not started.
   beneath per panel; desktop holds 60 fps with four panels over live content,
   but tiler GPUs pay differently for mid-frame target reads - measure before
   treating the prop as casual on TV/phone.
+- **[backdropFilter shows no blur while an ancestor fades](backlog/backdrop-under-group-opacity.md)** [2026-09-21]
+  A backdropFilter under an opacity-below-1 ancestor stays sharp for the whole
+  fade and snaps to full frost when it ends, because the group-opacity layer
+  becomes the backdrop's root; done means either the blur survives the fade or
+  the containment is documented and warned about in dev.
 - **[One build-output root with per-flow subdirs](backlog/build-output-dirs.md)** [2026-08-21]
   Give dev, render and pack one gitignored output root (dist/) with a subdir
   per flow, fixing render's missing isolate support and clearing the ground
   for pack formats and asset pre-processing.
+- **[An unsized Button fills its row instead of sizing to its content](backlog/button-unsized-fills-row.md)** [2026-09-21]
+  Button falls back to width 100% when size is omitted while its docs promise
+  content sizing, so in a row it squeezes its sibling labels until they wrap;
+  done means code and docs agree, on content sizing unless a consumer shows
+  why not.
 - **[Camera and controls extensions](backlog/camera-and-controls-extensions.md)** [2026-09-17]
   SolidRT has two stock controls (OrbitCamera, FirstPersonCamera) where
   Three.js and Babylon.js ship many with more options; the concrete gap is
@@ -281,6 +300,11 @@ Shaped, not started.
   Hand-copied prop lists are how core.md drifted (fill/background/imageWidth);
   jsx-runtime.d.ts and types.d.ts are clean enough to generate the per-element
   props reference from, killing that drift class. Prose stays hand-written.
+- **[createQuery rows remount the editors of an editable list on each write](backlog/create-query-editable-lists.md)** [2026-09-21]
+  A reactive query returns fresh row objects on every re-run, so a keyed For
+  of editors over it remounts every editor on each write and loses focus and
+  caret; done means an editable list over a query keeps its editors, by keyed
+  reconciliation or at least a documented pattern.
 - **[Deep links](backlog/deep-links-url-open.md)** [2026-07-26]
   "Opening the app at a URL from outside: an OS registration half (scheme
   declaration in srt pack and the Android manifest) and an app half that is
@@ -329,6 +353,12 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
+- **[TextInput logs STRICT_READ_UNTRACKED for a ref and for focus moved from an effect](backlog/editor-field-untracked-prop-reads.md)** [2026-09-21]
+  EditorField reads props.ref in its ref callback and props.onBlur in its blur
+  handler, both of which can run in an untracked owned scope, so a ref'd field
+  warns at every mount and autoFocus warns whenever another field was focused;
+  done means neither warns, in EditorField and every wrapper that forwards
+  ref.
 - **[Wire up the mouse cursor - element cursor prop over SetCursor](backlog/element-cursor-prop.md)** [2026-09-02]
   AlloyCommand::SetCursor and SetCursorVisible exist with a CSS-vocabulary
   Cursor enum but have no sender anywhere; give apps the web's cursor model -
@@ -778,6 +808,15 @@ Shaped, not started.
   solid. Extend it to a CSS-style list with line-through/overline,
   textDecorationColor and dashed/dotted/wavy/double, on the same self-drawn
   per-line mechanism.
+- **[A TextInput cannot fill its space or set its font size](backlog/text-input-fill-and-font-size.md)** [2026-09-21]
+  A multiline TextInput becomes a fixed scrolling box only with an explicit
+  height, so filling a flex parent needs the undocumented flexGrow 1 plus
+  height 0, and its font is always the theme body size; done means flexGrow
+  alone fills and scrolls, and the field takes a font size like Text.
+- **[A TextInput with borderWidth 0 still draws a hairline border](backlog/text-input-zero-border-hairline.md)** [2026-09-21]
+  style borderWidth 0 leaves a faint outline in the theme border colour,
+  visible on coloured cards; done means a zero width draws no border, on
+  TextInput and on any other element whose stroke width can be 0.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -800,6 +839,11 @@ Shaped, not started.
   make one at all - a finger drag deliberately scrolls - and no pointer
   selects a whole word; add long-press-to-select with draggable handles on
   touch, and double-click word selection for the mouse.
+- **[A trailing line break leaves the caret on the previous line](backlog/text-trailing-break-caret-line.md)** [2026-09-21]
+  After Enter at the end of a multiline TextInput the caret stays after the
+  last character until more text is typed, because prepareText does not flag a
+  break that ends the text; done means a text ending in a break has its blank
+  last line and the caret sits on it.
 - **[No way to tile or repeat a texture](backlog/texture-tile-mode.md)** [2026-08-14]
   Textures always blit once into their destination rect, so a repeating
   background has to be faked with one element per tile or a shader bake;
@@ -846,13 +890,6 @@ Shaped, not started.
   frames, and there is no seek/rate/step. Fullscreen on Android goes through
   android-video-punch-through.md instead; this path is not being fixed while
   that round runs.
-- **[A JS-bound app under VsyncLocked gets two frame signals per present](backlog/vsync-locked-js-bound-double-signal.md)** [2026-09-21]
-  When the JS thread builds a frame for longer than the fallback deadline
-  (~1.6 periods), FrameRelease gives the in-flight window up, idle Ticks
-  resume while JS is still busy, and the eventual present adds its own
-  vsync-released signal - so a 25 fps app on the Pixel 7 runs two JS frames
-  per present, with honest but ragged tick deltas (1 and 6 periods alongside
-  the compositor's 3 and 4).
 - **[The armed wake-word detector burns ~40% of a core while idle](backlog/wakeword-detector-cost.md)** [2026-08-14]
   Every 100ms the armed speech worker scores a 2.2s window with the stateless
   livekit-wakeword predict, ~35-40ms a check whether or not anyone is
@@ -2006,6 +2043,13 @@ Finished, kept for the reasoning.
   Element-valued props built a native subtree on every read, so typeof probes
   orphaned unmounted builds forever; fixed by resolving once through
   children(), with orphan stats.
+- **[A JS-bound app under VsyncLocked gets two frame signals per present](done/vsync-locked-js-bound-double-signal.md)** [2026-09-21]
+  When the JS thread builds a frame for longer than the fallback deadline
+  (~1.6 periods), FrameRelease gives the in-flight window up, idle Ticks
+  resume while JS is still busy, and the eventual present adds its own
+  vsync-released signal - so a 25 fps app on the Pixel 7 runs two JS frames
+  per present, with honest but ragged tick deltas (1 and 6 periods alongside
+  the compositor's 3 and 4).
 
 ## Notes
 

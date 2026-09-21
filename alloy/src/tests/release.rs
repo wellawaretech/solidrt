@@ -62,12 +62,12 @@ fn signal_releases_all_pending_and_prearms() {
   deferred_arm(fr.on_present(t0, PERIOD));
   deferred_arm(fr.on_present(t0, PERIOD));
   match fr.on_wake(t0 + PERIOD, PERIOD, Some(t0 + PERIOD)) {
-    Wake::Release { emit, timed_out, arm } => {
+    Wake::Release { emit, timed_out, arm, .. } => {
       assert_eq!(emit, 2);
       assert!(!timed_out);
       assert!(arm.is_some(), "the release pre-arms the next vsync");
     }
-    Wake::Idle | Wake::Banked { .. } => panic!("a taken signal with pending presents must release"),
+    Wake::Idle | Wake::Banked { .. } | Wake::Held { .. } => panic!("a taken signal with pending presents must release"),
   }
   // Nothing is pending, but the frame this emission triggers is in flight
   // until its present returns: not idle (no Tick through the swap), and
@@ -87,12 +87,12 @@ fn fallback_fires_only_at_the_deadline() {
   // At the deadline: release with the timeout marked, and a fresh request
   // armed (superseding the late signal, which try_take will discard).
   match fr.on_wake(deadline, PERIOD, None) {
-    Wake::Release { emit, timed_out, arm } => {
+    Wake::Release { emit, timed_out, arm, .. } => {
       assert_eq!(emit, 1);
       assert!(timed_out);
       assert!(arm.is_some());
     }
-    Wake::Idle | Wake::Banked { .. } => panic!("the fallback must release at the deadline"),
+    Wake::Idle | Wake::Banked { .. } | Wake::Held { .. } => panic!("the fallback must release at the deadline"),
   }
 }
 
@@ -164,7 +164,7 @@ fn signal_ahead_of_the_in_flight_present_is_banked() {
   let t2 = t1 + PERIOD;
   match fr.on_wake(t2, PERIOD, Some(t2)) {
     Wake::Banked { arm } => assert!(arm.is_some(), "the bank keeps the next vsync armed"),
-    Wake::Release { .. } => panic!("nothing is pending to release"),
+    Wake::Release { .. } | Wake::Held { .. } => panic!("nothing is pending to release"),
     Wake::Idle => panic!("a signal ahead of an in-flight present must be banked, not end the chain"),
   }
   assert!(!fr.idle());
@@ -218,4 +218,119 @@ fn leaving_vsync_locked_forgets_the_bank() {
     Release::Emit { arm, .. } => assert!(arm.is_none(), "SwapPaced never arms"),
     Release::Deferred { .. } => panic!("SwapPaced emits directly"),
   }
+}
+
+// The cadence hold (FrameRelease::hold) under present-return pacing: a
+// present inside its slot defers to the slot end as a timer deadline, the
+// grid continues from slot end to slot end, and a frame that outruns its
+// slot releases at once and re-anchors the grid there.
+#[test]
+fn swap_paced_hold_defers_to_the_slot_end() {
+  let t0 = Instant::now();
+  let mut fr = FrameRelease::new(false, t0);
+  fr.set_hold(3, PERIOD);
+  // No slot yet: the first present emits and starts the grid.
+  assert!(emits(fr.on_present(t0, PERIOD)));
+  // The next frame took two periods: held to the slot end at 3.
+  assert!(deferred_arm(fr.on_present(t0 + PERIOD * 2, PERIOD)).is_none());
+  assert!(!fr.idle(), "a held present is not idle: no Tick meanwhile");
+  assert_eq!(fr.wait_deadline(), Some(t0 + PERIOD * 3));
+  assert!(matches!(fr.on_wake(t0 + PERIOD * 3 - Duration::from_millis(1), PERIOD, None), Wake::Idle));
+  match fr.on_wake(t0 + PERIOD * 3 + Duration::from_millis(2), PERIOD, None) {
+    Wake::Release { emit, timed_out, arm, reference } => {
+      assert_eq!(emit, 1);
+      assert!(!timed_out);
+      assert!(arm.is_none(), "SwapPaced never arms");
+      assert_eq!(reference, t0 + PERIOD * 3, "a held release is referenced at the slot end, not the wake");
+    }
+    Wake::Idle | Wake::Banked { .. } | Wake::Held { .. } => panic!("the slot ended: release"),
+  }
+  assert!(fr.idle());
+  // The grid continues from the slot end.
+  assert!(deferred_arm(fr.on_present(t0 + PERIOD * 5, PERIOD)).is_none());
+  assert_eq!(fr.wait_deadline(), Some(t0 + PERIOD * 6));
+  assert!(matches!(fr.on_wake(t0 + PERIOD * 6, PERIOD, None), Wake::Release { emit: 1, .. }));
+  // A frame that outruns its slot (four periods) releases at once and the
+  // next slot starts at its return.
+  let late = t0 + PERIOD * 10;
+  assert!(emits(fr.on_present(late, PERIOD)));
+  assert!(deferred_arm(fr.on_present(late + PERIOD, PERIOD)).is_none());
+  assert_eq!(fr.wait_deadline(), Some(late + PERIOD * 3));
+}
+
+#[test]
+fn lowering_the_hold_retimes_a_held_present() {
+  let t0 = Instant::now();
+  let mut fr = FrameRelease::new(false, t0);
+  fr.set_hold(3, PERIOD);
+  assert!(emits(fr.on_present(t0, PERIOD)));
+  assert!(deferred_arm(fr.on_present(t0 + PERIOD, PERIOD)).is_none());
+  assert_eq!(fr.wait_deadline(), Some(t0 + PERIOD * 3));
+  fr.set_hold(1, PERIOD);
+  assert_eq!(fr.wait_deadline(), Some(t0 + PERIOD));
+  assert!(matches!(fr.on_wake(t0 + PERIOD, PERIOD, None), Wake::Release { emit: 1, .. }));
+  // Without a hold, presents emit directly again.
+  assert!(emits(fr.on_present(t0 + PERIOD * 2, PERIOD)));
+}
+
+// The cadence hold under VsyncLocked: the vsync signals inside the slot are
+// skipped (the chain stays armed) and the present releases on the slot's
+// own vsync, which is the next slot's start.
+#[test]
+fn vsync_locked_hold_skips_the_vsyncs_inside_the_slot() {
+  let t0 = Instant::now();
+  let mut fr = FrameRelease::new(true, t0);
+  fr.set_hold(3, PERIOD);
+  deferred_arm(fr.on_present(t0, PERIOD));
+  // No slot yet: the first signal releases and starts the grid.
+  let t1 = t0 + PERIOD;
+  assert!(matches!(fr.on_wake(t1, PERIOD, Some(t1)), Wake::Release { emit: 1, reference, .. } if reference == t1));
+  // A fast frame presents in the middle of the slot; the vsync at 2 is
+  // inside it, the vsync at 3 ends it.
+  assert!(deferred_arm(fr.on_present(t1 + PERIOD * 3 / 2, PERIOD)).is_none());
+  match fr.on_wake(t1 + PERIOD * 2, PERIOD, Some(t1 + PERIOD * 2)) {
+    Wake::Held { arm } => assert!(arm.is_some(), "a skipped vsync re-arms the next"),
+    Wake::Release { .. } => panic!("a vsync inside the slot must not release"),
+    Wake::Idle | Wake::Banked { .. } => panic!("a pending present with a signal is held or released"),
+  }
+  assert!(!fr.idle());
+  match fr.on_wake(t1 + PERIOD * 3, PERIOD, Some(t1 + PERIOD * 3)) {
+    Wake::Release { emit, reference, arm, .. } => {
+      assert_eq!(emit, 1);
+      assert_eq!(reference, t1 + PERIOD * 3);
+      assert!(arm.is_some());
+    }
+    Wake::Idle | Wake::Banked { .. } | Wake::Held { .. } => panic!("the slot's own vsync releases"),
+  }
+  // The next slot runs from 3 to 6: two skipped vsyncs, then the release.
+  let t4 = t1 + PERIOD * 3;
+  assert!(deferred_arm(fr.on_present(t4 + PERIOD * 6 / 5, PERIOD)).is_none());
+  assert!(matches!(fr.on_wake(t4 + PERIOD, PERIOD, Some(t4 + PERIOD)), Wake::Held { .. }));
+  assert!(matches!(fr.on_wake(t4 + PERIOD * 2, PERIOD, Some(t4 + PERIOD * 2)), Wake::Held { .. }));
+  assert!(matches!(fr.on_wake(t4 + PERIOD * 3, PERIOD, Some(t4 + PERIOD * 3)), Wake::Release { emit: 1, .. }));
+  // Without a hold the very next vsync releases again.
+  fr.set_hold(1, PERIOD);
+  let t7 = t4 + PERIOD * 3;
+  assert!(deferred_arm(fr.on_present(t7 + PERIOD / 2, PERIOD)).is_none());
+  assert!(matches!(fr.on_wake(t7 + PERIOD, PERIOD, Some(t7 + PERIOD)), Wake::Release { emit: 1, .. }));
+}
+
+// A banked signal (arrived while the frame was still in the swap) that fell
+// inside the slot does not release the present on return; the present
+// defers to the slot's vsync like any other.
+#[test]
+fn banked_signal_inside_the_slot_does_not_release() {
+  let t0 = Instant::now();
+  let mut fr = FrameRelease::new(true, t0);
+  fr.set_hold(3, PERIOD);
+  deferred_arm(fr.on_present(t0, PERIOD));
+  let t1 = t0 + PERIOD;
+  assert!(matches!(fr.on_wake(t1, PERIOD, Some(t1)), Wake::Release { .. }));
+  // The frame is in flight; the vsync at 1 arrives before its present.
+  assert!(matches!(fr.on_wake(t1 + PERIOD, PERIOD, Some(t1 + PERIOD)), Wake::Banked { .. }));
+  // The present returns: its banked vsync is inside the slot, so it waits.
+  assert!(deferred_arm(fr.on_present(t1 + PERIOD + Duration::from_millis(2), PERIOD)).is_none());
+  assert!(!fr.idle());
+  assert!(matches!(fr.on_wake(t1 + PERIOD * 2, PERIOD, Some(t1 + PERIOD * 2)), Wake::Held { .. }));
+  assert!(matches!(fr.on_wake(t1 + PERIOD * 3, PERIOD, Some(t1 + PERIOD * 3)), Wake::Release { emit: 1, .. }));
 }

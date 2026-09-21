@@ -112,7 +112,16 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, f: impl FnOnce(Option<Frame<'_
   let Some(pending) = driver.begin(&s.gui.platform, demand) else {
     return f(None);
   };
-  if anim_active || spatial.active {
+  // Standing demand re-requests past the gate, which just consumed this
+  // frame's request: running transitions, an animation-frame callback
+  // registered for the next frame (registered during the flush, before the
+  // gate), and a frame request declared standing by its caller (core's
+  // `onFrame`). The latch then reads true from here to the next gate - in
+  // particular when the raster thread samples it at present time to tell a
+  // missed present from an idle gap (alloy's `demand_at_present`), and so
+  // an animating app's intervals are judged.
+  let standing = s.gui.platform.take_standing_demand();
+  if anim_active || spatial.active || standing || super::raf::has_pending(ctx) {
     s.gui.platform.request_frame();
   }
   f(Some(Frame { pending, tree: &s.tree, platform: &s.gui.platform, atx: &s.gui.alloy }))

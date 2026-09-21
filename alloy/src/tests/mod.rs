@@ -1,5 +1,6 @@
 mod audio;
 mod box_dash;
+mod cadence;
 mod color;
 mod composite;
 mod cull;

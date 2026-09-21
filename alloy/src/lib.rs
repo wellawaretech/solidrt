@@ -6,6 +6,7 @@ mod app;
 pub mod audio;
 mod backend;
 pub mod barcode;
+mod cadence;
 pub mod camera;
 mod context;
 mod egl_headless;
@@ -76,6 +77,7 @@ pub use mode::Mode;
 pub use playback::PlaybackConfig;
 pub use present::{CountTally, Counted, RefreshCounter, RefreshCounting, SignalLedger, SignalRecord};
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
+pub use cadence::CadenceHold;
 pub use vsync::FramePacing;
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 

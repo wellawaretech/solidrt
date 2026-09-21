@@ -21,6 +21,15 @@ re-derive which by reading all of them. Both of theirs turned out to be the
 same shape - a helper called in an effect's APPLY phase reading a signal
 untracked - which a location would have shown in seconds.
 
+A second report ([[quartz-heron]] 5) hit the same wall: the "in an effect
+callback" variant was found only by replaying inputs one at a time until
+it fired, and the culprit was a component's blur handler run synchronously
+by `setFocus` inside the app's effect
+(okf/backlog/editor-field-untracked-prop-reads.md), code the app never
+wrote. The "in <EditorField>" variant, which names the component, was easy
+to act on; a location has to reach through component code into the app
+frame that triggered it.
+
 The same gap applies to the other diagnostic codes
 (`PENDING_ASYNC_UNTRACKED_READ` and friends).
 
