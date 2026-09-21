@@ -99,35 +99,60 @@ export function EditorField(props: EditorFieldProps) {
   let viewport: { id: number } | undefined
   let blinkId: any = null
 
-  // The caret shows solid for a full half-period after any activity (focus,
-  // a move, an edit, a tap) and blinks from there: the timer restarts on each,
-  // as editors do, so the caret never vanishes under a typing hand and a
-  // read right after an input finds it drawn. A wall-clock interval on
-  // purpose: it wakes twice a second, where an onFrame loop would hold a
-  // standing frame request for every focused field. Timers follow the dev
-  // clock control (pause, step), so a frozen frame keeps the caret it had.
+  // The caret shows solid for a full half-period after any activity (the
+  // session starting, a move, an edit, a tap) and blinks from there: the
+  // timer restarts on each, as editors do, so the caret never vanishes under
+  // a typing hand and a read right after an input finds it drawn. A
+  // wall-clock interval on purpose: it wakes twice a second, where an onFrame
+  // loop would hold a standing frame request for every editing field. Timers
+  // follow the dev clock control (pause, step), so a frozen frame keeps the
+  // caret it had.
   let startBlink = () => {
     setCaretOn(true)
     if (blinkId != null) clearInterval(blinkId)
     blinkId = setInterval(() => setCaretOn((v) => !v), CARET_BLINK_MS)
   }
-  // Activity before focus (a tap's own pointerdown precedes the focus
-  // handler) or after blur (a paste that settles late) has no blink to
-  // restart; the focus handler starts it.
+  // Activity before the session (a tap's own pointerdown precedes it, and a
+  // navigation-focused field moves its caret with no session yet) or after
+  // it ended (a paste that settles late) has no blink to restart; the
+  // editing effect below starts it.
   let restartBlink = () => {
     if (blinkId != null) startBlink()
   }
 
   // Derived from core's reactive focus (setFocus is the only writer); the
-  // onFocus/onBlur handlers below keep only their side effects (blink timer,
-  // caller callbacks). focusedNode() is read FIRST, unconditionally: the
-  // memo may first compute before the ref has set `node`, and
-  // short-circuiting past the read would leave it dependency-free, frozen
-  // false forever.
+  // onFocus/onBlur handlers below keep only the caller callbacks.
+  // focusedNode() is read FIRST, unconditionally: the memo may first compute
+  // before the ref has set `node`, and short-circuiting past the read would
+  // leave it dependency-free, frozen false forever.
   let focused = createMemo(() => {
     let id = focusedNode()
     return id != null && id === node?.id
   })
+
+  // Focused and editing are distinct (see activateField): a field focused by
+  // navigation, or by autoFocus/setFocus on a device whose on-screen keyboard
+  // would come up, has no text session until a tap or startTextInput(), and
+  // typing does nothing. The caret means "you can type", so it follows the
+  // session, not focus: a focused-not-editing field shows only its focus
+  // ring. Where the session starts invisibly at focus (desktop, physical
+  // keyboard) the two coincide.
+  let editing = createMemo(() => focused() && textInputActive())
+
+  // The blink runs exactly while editing. An effect rather than the focus
+  // handler: setFocus fires onFocus before it starts the session, so even
+  // on desktop the handler runs with textInputActive() still false.
+  createEffect(
+    () => editing(),
+    (active) => {
+      if (!active) return
+      startBlink()
+      return () => {
+        if (blinkId != null) clearInterval(blinkId)
+        blinkId = null
+      }
+    },
+  )
 
   // Grapheme steps from the editor's caret stops; the editor is created
   // below and only consulted from event handlers, after both exist. The
@@ -217,15 +242,10 @@ export function EditorField(props: EditorFieldProps) {
   // A handler is a one-shot read by nature; nothing here re-runs on a
   // handler swap, and the swapped-in one is read at the next event.
   let handleFocus = () => {
-    startBlink()
     untrack(() => props.onFocus)?.()
   }
 
   let handleBlur = () => {
-    if (blinkId != null) {
-      clearInterval(blinkId)
-      blinkId = null
-    }
     untrack(() => props.onBlur)?.()
   }
 
@@ -346,7 +366,6 @@ export function EditorField(props: EditorFieldProps) {
   let unregisterNav: (() => void) | null = null
 
   onCleanup(() => {
-    if (blinkId != null) clearInterval(blinkId)
     unregisterNav?.()
     // An unmount mid-drag must not leave a resolved arena claim behind.
     if (dragActive != null) arena.release(dragActive, dragOwner)
@@ -363,7 +382,7 @@ export function EditorField(props: EditorFieldProps) {
   let borderRadius = () => props.style?.borderRadius ?? theme.radius.md
 
   let showPlaceholder = () => !focused() && value().length === 0 && (props.placeholder ?? "").length > 0
-  let showCaret = () => focused() && caretOn() && !showPlaceholder()
+  let showCaret = () => editing() && caretOn() && !showPlaceholder()
 
   // Everything inside the viewport is detached: the value is drawn per
   // laid-out line by renderLine (createTextEditorLayout breaks the lines from

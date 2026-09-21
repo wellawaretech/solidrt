@@ -253,45 +253,76 @@ export type TextEditorLayout = {
  * the node's own frame, so an ancestor's scale must not change the wrap
  * width), read in onLayout; the post-layout flush drains the update before
  * paint, so lines and scroll track a caret, text or size change in the same
- * frame. Pure geometry: no caret rendering and no placeholder/visual policy.
+ * frame. A size change that re-breaks nothing (an empty field, lines that
+ * still fit, a height-only change) stops at the line placement: the lines,
+ * the caret and everything the caller derives from them keep their values
+ * and re-run nothing, so a field inside a resizing box costs one placement
+ * per frame, not a flush of its whole graph. Pure geometry: no caret
+ * rendering and no placeholder/visual policy.
  */
 export function createTextEditorLayout(
   viewport: () => { id: number } | undefined,
   input: () => TextEditorLayoutInput,
 ): TextEditorLayout {
-  let [viewportSize, setViewportSize] = createSignal({ width: 0, height: 0 }, { equals: (a, b) => a.width === b.width && a.height === b.height })
+  // Width and height apart: wrapping depends on the width alone, so a
+  // height-only change (a field growing with its content) re-breaks nothing.
+  let [viewportWidth, setViewportWidth] = createSignal(0)
+  let [viewportHeight, setViewportHeight] = createSignal(0)
+
+  // The font as a value: input() builds a fresh options object per read, so
+  // field equality is what lets the metrics below key on the font itself.
+  let font = createMemo(() => input().font, { equals: sameOptions })
+
+  // One space in the font: its height sits the synthesized blank line, its
+  // width is the selection's break sliver. Measured once per font, not once
+  // per placement.
+  let space = createMemo(() => measureText(" ", font()))
 
   let prepared = createMemo(() => {
-    let { text, font, runs } = input()
-    return prepareText(text, { ...font, runs, carets: true })
+    let { text, runs } = input()
+    return prepareText(text, { ...font(), runs, carets: true })
   })
 
   // Lines carry their unit range so the caret math walks only their units.
+  // Equal placements (same units, same breaks and metrics) keep the previous
+  // value, so nothing downstream re-runs for a width change that changed
+  // no line. Within a changed placement, a line equal to its predecessor
+  // keeps the previous object: a row bound to it (a non-keyed <For> item)
+  // sees no change and writes nothing, so a moved break costs the lines it
+  // touched, not every line of the field.
   type PlacedLine = EditorLine & { from: number; to: number }
-  let placed = createMemo((): { units: TextUnit[]; lines: PlacedLine[] } => {
-    let { text, font, wrap, caretWidth = 0 } = input()
-    // Wrapped lines leave room for the caret at the end of a full line, so a
-    // wrapping editor never scrolls horizontally.
-    let width = wrap ? Math.max(0, viewportSize().width - caretWidth) : Infinity
-    let units = wrap ? splitWide(prepared(), width) : prepared()
-    let out: PlacedLine[] = []
-    let y = 0
-    let cursor = 0
-    let line = layoutNextLine(units, cursor, width)
-    let hardBreak = false
-    while (line) {
-      out.push({ start: line.start, end: line.end, y, height: line.height, width: line.width, from: line.from, to: line.to })
-      y += line.height
-      hardBreak = line.hardBreak
-      line = layoutNextLine(units, line.cursor, width)
-    }
-    if (out.length === 0 || hardBreak) {
-      let height = measureText(" ", font).height
-      let n = units.units.length
-      out.push({ start: text.length, end: text.length, y, height, width: 0, from: n, to: n })
-    }
-    return { units: units.units, lines: out }
-  })
+  type Placement = { units: TextUnit[]; lines: PlacedLine[] }
+  let placed = createMemo(
+    (prev): Placement => {
+      let { text, wrap, caretWidth = 0 } = input()
+      // Wrapped lines leave room for the caret at the end of a full line, so a
+      // wrapping editor never scrolls horizontally.
+      let width = wrap ? Math.max(0, viewportWidth() - caretWidth) : Infinity
+      let units = wrap ? splitWide(prepared(), width) : prepared()
+      let out: PlacedLine[] = []
+      let y = 0
+      let cursor = 0
+      let line = layoutNextLine(units, cursor, width)
+      let hardBreak = false
+      while (line) {
+        out.push({ start: line.start, end: line.end, y, height: line.height, width: line.width, from: line.from, to: line.to })
+        y += line.height
+        hardBreak = line.hardBreak
+        line = layoutNextLine(units, line.cursor, width)
+      }
+      if (out.length === 0 || hardBreak) {
+        let n = units.units.length
+        out.push({ start: text.length, end: text.length, y, height: space().height, width: 0, from: n, to: n })
+      }
+      if (prev && prev.units === units.units) {
+        for (let i = 0; i < out.length && i < prev.lines.length; i++) {
+          if (sameLine(prev.lines[i]!, out[i]!)) out[i] = prev.lines[i]!
+        }
+      }
+      return { units: units.units, lines: out }
+    },
+    { equals: samePlacement },
+  )
   let lines = createMemo((): EditorLine[] => placed().lines)
 
   // The caret stops of a line, left to right, with the pen advanced per unit;
@@ -376,7 +407,7 @@ export function createTextEditorLayout(
     let ls = lines()
     let first = lineOf(start)
     let last = lineOf(end)
-    let breakWidth = measureText(" ", input().font).width
+    let breakWidth = space().width
     let out: SelectionRect[] = []
     for (let i = first; i <= last; i++) {
       let line = ls[i]!
@@ -425,20 +456,21 @@ export function createTextEditorLayout(
     if (wrap) return 0
     let contentWidth = lines().reduce((w, l) => Math.max(w, l.width), 0)
     let c = caret()
-    return follow(prev ?? 0, c.x, caretWidth, viewportSize().width, contentWidth + caretWidth)
+    return follow(prev ?? 0, c.x, caretWidth, viewportWidth(), contentWidth + caretWidth)
   })
   let scrollY = createMemo((prev: number | undefined): number => {
     let ls = lines()
     let last = ls[ls.length - 1]!
     let c = caret()
-    return follow(prev ?? 0, c.y, c.height, viewportSize().height, last.y + last.height)
+    return follow(prev ?? 0, c.y, c.height, viewportHeight(), last.y + last.height)
   })
 
   onLayout(() => {
     let node = viewport()
     if (!node) return
     let box = getLayoutBox(node)
-    setViewportSize({ width: box?.width ?? 0, height: box?.height ?? 0 })
+    setViewportWidth(box?.width ?? 0)
+    setViewportHeight(box?.height ?? 0)
   })
 
   return { lines, caret, caretLine, offsetAtX, selectionRects, lineAtY, step, scrollX, scrollY }
@@ -485,6 +517,25 @@ function splitWide(prepared: PreparedText, width: number): PreparedText {
     }
   }
   return { text: prepared.text, units }
+}
+
+// Font options compared field by field: the same keys with the same values.
+function sameOptions(a: MeasureTextOptions, b: MeasureTextOptions): boolean {
+  let ka = Object.keys(a) as (keyof MeasureTextOptions)[]
+  let kb = Object.keys(b) as (keyof MeasureTextOptions)[]
+  return ka.length === kb.length && ka.every((k) => a[k] === b[k])
+}
+
+// The same break (text range) at the same place with the same metrics.
+function sameLine(a: EditorLine, b: EditorLine): boolean {
+  return a.start === b.start && a.end === b.end && a.y === b.y && a.height === b.height && a.width === b.width
+}
+
+// Two placements of the same units with the same lines, break for break and
+// metric for metric.
+function samePlacement(a: { units: TextUnit[]; lines: EditorLine[] }, b: { units: TextUnit[]; lines: EditorLine[] }): boolean {
+  if (a.units !== b.units || a.lines.length !== b.lines.length) return false
+  return a.lines.every((l, i) => sameLine(l, b.lines[i]!))
 }
 
 // The scroll offset along one axis that keeps [pos, pos + size] within a
