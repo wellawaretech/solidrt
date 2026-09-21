@@ -46,6 +46,18 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   if mode.is_playback() {
     sdl3::hint::set("SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY", "1");
   }
+  // On Android SDL's event wait (SDL_WaitEventTimeout) never blocks with
+  // the poll sentinel enabled: every pump pushes a sentinel event, every
+  // pushed event sends the Android lifecycle WAKE, and that WAKE is what
+  // the wait's semaphore blocks on, so the wait spins through its whole
+  // timeout (SDL 3.4.10 through main, measured 100% CPU on an idle app; see
+  // okf/upstream/sdl-android-wait-event-poll-sentinel-spin.md). Without
+  // the sentinel the pump pushes nothing of its own and the wait blocks.
+  // The sentinel only bounds a poll drain against an event flood, and the
+  // loop below drains one queue per iteration.
+  if cfg!(target_os = "android") {
+    sdl3::hint::set("SDL_POLL_SENTINEL", "0");
+  }
 
   let sdl_context = sdl3::init().expect("Failed to initialize SDL3");
   // On Android, hand SDL's JNI env + activity to ndk-context so JNI-using deps

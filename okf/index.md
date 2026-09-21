@@ -202,11 +202,6 @@ Shaped, not started.
   On a touch-only Android device the capability layer gains "keyboard" as soon
   as the virtual keyboard opens, so any keyboard-first behavior gated on it
   would switch on for users who have no keyboard.
-- **[The main loop thread rarely sleeps on Android](backlog/android-main-loop-rarely-sleeps.md)** [2026-09-12]
-  In a 5 s scheduler trace of an animating app on the SM-T500, SDLThread (the
-  alloy main loop) was switched out 259 times and only 15 of those were
-  sleeps; the client's stats read 135% CPU against 7% for the same probe on
-  Linux. The loop is meant to block on the SDL event queue between wakes.
 - **[A display refresh-rate change is not observed by the client](backlog/android-refresh-rate-change-unobserved.md)** [2026-09-12]
   A Pixel 7 forced from 90 to 60 Hz while the client ran kept reporting
   periodMs 11.11, so the jank accounting counted every frame against 90 Hz
@@ -1189,6 +1184,11 @@ Finished, kept for the reasoning.
   hold above 1 was permanent; done means the frame's GPU term comes from the
   compositor stack's per-frame timestamps on Android, and the tablet runs the
   reporting app's slide at hold 1.
+- **[The main loop thread rarely sleeps on Android](done/android-main-loop-rarely-sleeps.md)** [2026-09-21]
+  In a 5 s scheduler trace of an animating app on the SM-T500, SDLThread (the
+  alloy main loop) was switched out 259 times and only 15 of those were
+  sleeps; the client's stats read 135% CPU against 7% for the same probe on
+  Linux. The loop is meant to block on the SDL event queue between wakes.
 - **[Android surface swap blocks four vsyncs](done/android-surface-swap-latency.md)** [2026-07-28]
   SOLVED, it was our 4x MSAA all along, the ~80 ms swap block was the GPU
   draining full off-tile multisample resolve traffic every frame. Fixed via a
@@ -2337,6 +2337,11 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   (ordinary JS for "not given", and what any wrapper forwarding its own
   optional parameter produces) is still converted into T and fails. Proposal
   is an undefined/null-tolerant optional param type, or Opt doing it natively.
+- **[SDL_WaitEventTimeout busy-waits on Android because the poll sentinel wakes the lifecycle semaphore](upstream/sdl-android-wait-event-poll-sentinel-spin.md)** [2026-09-21]
+  On Android every SDL_PumpEvents pushes a poll sentinel, every pushed event
+  sends the lifecycle WAKE, and the event wait blocks on that same semaphore,
+  so SDL_WaitEvent/SDL_WaitEventTimeout spin through their whole timeout at
+  100% CPU; SDL_POLL_SENTINEL=0 is the workaround.
 - **[SDL v4l2 camera enumeration does not terminate on stepwise frame-size ranges](upstream/sdl-v4l2-camera-stepwise-enumeration.md)** [2026-08-26]
   SDL's V4L2 camera backend expands a stepwise frame-size range one step at a
   time, so a device advertising 32x32-16384x16384 step 2 costs ~67 million
