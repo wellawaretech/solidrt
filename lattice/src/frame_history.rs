@@ -13,6 +13,27 @@ const CAPACITY: usize = 600;
 /// answer never silently covers less than it claims (the ring is bounded).
 pub const WINDOW_MAX_MS: f64 = 10_000.0;
 
+/// How far back a stats query looks: a span of wall time, or the last n
+/// frames that changed the picture. Records are stamped with wall time, so a
+/// time window keeps expiring while the app's clock is paused and frames are
+/// stepped by hand; the frame count is the window for that.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Window {
+  Ms(f64),
+  Frames(usize),
+}
+
+impl Window {
+  /// The ask the ring can honor: a span up to WINDOW_MAX_MS, a count of one
+  /// to CAPACITY frames.
+  pub fn clamped(self) -> Window {
+    match self {
+      Window::Ms(ms) => Window::Ms(ms.clamp(0.0, WINDOW_MAX_MS)),
+      Window::Frames(n) => Window::Frames(n.clamp(1, CAPACITY)),
+    }
+  }
+}
+
 /// Milliseconds on the client's monotonic clock (process origin). Stamped on
 /// every record and reported in the stats payload as `timeMs`, so two
 /// samples can be differenced without trusting the caller's wall clock.
@@ -51,13 +72,22 @@ pub struct FrameRecord {
 
 /// Summary of the rebuilt frames inside a query window (see `summarize`).
 pub struct WindowSummary {
+  /// The span the summary reaches back from the query instant (ms): the
+  /// asked span for a time window, the oldest record's age for a count.
   pub window_ms: f64,
+  /// The count asked for, for a frame-count window.
+  pub window_frames: Option<usize>,
   pub frames: usize,
   pub p50_ms: f32,
   pub p95_ms: f32,
   pub max_ms: f32,
   pub slow_frames: usize,
   pub worst: FrameRecord,
+  /// Backdrop panels re-filtered under a fading group, summed over the
+  /// window: nonzero means a glass fade ran, whichever frame was worst.
+  pub backdrops_prepainted: u32,
+  /// The widest paint walk in the window.
+  pub nodes_painted_max: u32,
   /// Rates over the window's span, derived from the raster samples of its
   /// first and last record; per-frame figures divide by the frames presented
   /// between them (the frame index), not by rebuilds. None with fewer than
@@ -100,14 +130,19 @@ impl FrameHistory {
     self.ring.push_back(record);
   }
 
-  /// Summarize the frames recorded in the last `window_ms` (clamped to
-  /// WINDOW_MAX_MS) before `now_ms`. None when no frame falls inside it: an
-  /// idle app changes nothing, and "no frames" must read differently from
-  /// "frames, all fast".
-  pub fn summarize(&self, window_ms: f64, now_ms: f64) -> Option<WindowSummary> {
-    let window_ms = window_ms.clamp(0.0, WINDOW_MAX_MS);
-    let since = now_ms - window_ms;
-    let start = self.ring.partition_point(|r| r.at_ms < since);
+  /// Summarize the frames inside `window` (clamped, see Window::clamped) as
+  /// of `now_ms`. None when no frame falls inside it: an idle app changes
+  /// nothing, and "no frames" must read differently from "frames, all
+  /// fast".
+  pub fn summarize(&self, window: Window, now_ms: f64) -> Option<WindowSummary> {
+    let (start, window_ms, window_frames) = match window.clamped() {
+      Window::Ms(ms) => (self.ring.partition_point(|r| r.at_ms < now_ms - ms), ms, None),
+      Window::Frames(n) => {
+        let start = self.ring.len().saturating_sub(n);
+        let reach = self.ring.get(start).map_or(0.0, |r| now_ms - r.at_ms);
+        (start, reach, Some(n))
+      }
+    };
     let frames: Vec<&FrameRecord> = self.ring.range(start..).collect();
     if frames.is_empty() {
       return None;
@@ -143,12 +178,15 @@ impl FrameHistory {
     };
     Some(WindowSummary {
       window_ms,
+      window_frames,
       frames: frames.len(),
       p50_ms: pct(0.5),
       p95_ms: pct(0.95),
       max_ms: *totals.last().expect("non-empty"),
       slow_frames,
       worst,
+      backdrops_prepainted: frames.iter().map(|r| r.backdrops_prepainted).sum(),
+      nodes_painted_max: frames.iter().map(|r| r.nodes_painted).max().unwrap_or(0),
       raster_rates,
     })
   }

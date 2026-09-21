@@ -90,7 +90,8 @@ export interface EditorFieldProps extends TransitionProps {
 // all; the highlight draws behind the lines while focused, and edits on a
 // range replace it (the buffer's own behavior). Ctrl/Cmd+C/X/V go through
 // navigator.clipboard (copy and cut need a range; single-line paste flattens
-// line breaks). Outside-click-to-blur is the caller's job.
+// line breaks). A tap outside the field blurs it (core's outside-tap blur in
+// window.ts), as does Escape.
 export function EditorField(props: EditorFieldProps) {
   let [caretOn, setCaretOn] = createSignal(true)
 

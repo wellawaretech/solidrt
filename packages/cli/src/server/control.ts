@@ -428,6 +428,8 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let extra: Record<string, unknown> = {}
       let windowMs = parseInt(query.get("window") ?? "", 10)
       if (Number.isFinite(windowMs)) extra.windowMs = windowMs
+      let windowFrames = parseInt(query.get("frames") ?? "", 10)
+      if (Number.isFinite(windowFrames)) extra.windowFrames = windowFrames
       return handleQuery(query, "stats", extra)
     }
     case "/__control__/snapshot": {

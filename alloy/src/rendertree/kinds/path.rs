@@ -562,14 +562,23 @@ impl Hittable for Path {
     };
 
     match style {
-      DrawStyle::Fill => hit_test_path(&test_pt, path.iter(), lyon_fill_rule, 0.1),
+      DrawStyle::Fill => hit_test_path(&test_pt, path.iter(), lyon_fill_rule, FILL_HIT_FLATTEN),
       DrawStyle::Stroke => point_near_path(&test_pt, path, half_stroke),
       DrawStyle::StrokeAndFill => {
-        hit_test_path(&test_pt, path.iter(), lyon_fill_rule, 0.1) || point_near_path(&test_pt, path, half_stroke)
+        hit_test_path(&test_pt, path.iter(), lyon_fill_rule, FILL_HIT_FLATTEN)
+          || point_near_path(&test_pt, path, half_stroke)
       }
     }
   }
 }
+
+/// Flattening tolerance (px) of the fill hit test: how far a curve's
+/// polyline stand-in may stray from it. The fill is hit at its exact edge,
+/// so the flattening is fine.
+const FILL_HIT_FLATTEN: f32 = 0.1;
+/// Flattening tolerance (px) of the stroke hit test: the stroke is hit
+/// within its half width, so a coarser polyline is enough.
+const STROKE_HIT_FLATTEN: f32 = 0.5;
 
 /// Test if a point is within `max_dist` of any segment in the path.
 /// Uses flattening + point-to-segment distance instead of tessellating the stroke
@@ -579,7 +588,7 @@ fn point_near_path(pt: &lyon_path::geom::Point<f32>, path: &lyon_path::Path, max
   let max_dist_sq = max_dist * max_dist;
   let mut last = point(0.0, 0.0);
 
-  for evt in path.iter().flattened(0.5) {
+  for evt in path.iter().flattened(STROKE_HIT_FLATTEN) {
     match evt {
       lyon_path::Event::Begin { at } => {
         last = at;

@@ -814,7 +814,11 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
    * composited layer. An ancestor's `opacity` is not a containment: the
    * glass keeps its blur through the fade (the runtime re-filters the
    * window ahead of the fading group at the group's opacity), so a panel
-   * entering with `from: { opacity: 0 }` frosts in as it appears.
+   * entering with `from: { opacity: 0 }` frosts in as it appears. That
+   * re-filter is an approximation: the group's sharp pixels then draw over
+   * the blurred ones at its opacity, so mid-fade the glass reads partly
+   * sharp, most at a low opacity; exact group blending would need the
+   * capture inside the group's layer, which the renderer cannot do.
    */
   backdropFilter?: FilterProps
 }

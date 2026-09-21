@@ -49,7 +49,6 @@ symptom shows. A heading that outgrows this file splits into its own.
 `packages/components`.
 
 - `TransitionEntries` (types.ts) has no `layout` key, so `<Pressable transition={{ layout }}>` is a type error and a control that should glide on reflow needs a wrapping core `<view>`; add `layout` to the component transition vocabulary and check it reaches the root node ([[quartz-heron]] 4b).
-- editor-field.tsx says "Outside-click-to-blur is the caller's job", but core's window.ts blurs on an outside tap since 93b14b3b; confirm a click in a container's padding blurs, then drop the comment and state the behavior in docs/text-input.md ([[quartz-heron]] 12).
 
 ## DX
 

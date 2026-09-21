@@ -436,9 +436,14 @@ fn fading_opacity(element: &Element) -> Option<f32> {
 // the same record walk, under the same matrices, clips, scrolls and fits,
 // emitting nothing but the glass panels' backdrop layers at `alpha` (the
 // node's opacity, times any fading view's on the way down). The node's own
-// panel is left to the regular path that follows. Isolated like
-// service_captures_under_cache: the walk mutates the frame the caller reads
-// after it, and its stats are not the frame's.
+// panel is left to the regular path that follows. An approximation by
+// construction: the group then draws its sharp pixels over blurred ones at
+// its opacity (as emit_backdrop does for a panel's own opacity), so at a
+// low opacity the glass reads partly sharp; exact group blending would need
+// the capture inside the group's layer, which the renderer cannot do. Not
+// an isolated_walk: the walk keeps the cull (an offscreen panel is not
+// prepainted) and its prepaint count is the frame's; size, content and
+// the regions are restored because the regular path follows.
 fn emit_backdrops_below<'a>(
   scene: &'a RenderTree,
   node_id: u64,
@@ -457,15 +462,40 @@ fn emit_backdrops_below<'a>(
   ctx.backdrop_regions.truncate(saved_regions);
 }
 
+// A record walk of `node_id` into `sub` that leaves no trace on the frame
+// being built: the shared ctx is saved around it - size and content (the
+// caller reads them after), the cull (a capture holds the whole subtree,
+// not the on-screen part), the backdrop regions the walk pushes (they
+// duplicate the frame's own, or push a None under a non-2D transform that
+// would degrade the whole resolve to full damage) and the walk counters
+// (the frame's stats must not count a discarded or offscreen walk). The
+// one place this is done, so a counter added to the ctx cannot be isolated
+// in one caller and leak through another.
+fn isolated_walk<'a>(
+  scene: &'a RenderTree,
+  node_id: u64,
+  ctx: &mut BuildContext<'a>,
+  sub: &mut DisplayListBuilder,
+  hoist: Hoist,
+) {
+  let saved_size = ctx.size;
+  let saved_content = ctx.content;
+  let saved_cull = ctx.cull.take();
+  let saved_regions = ctx.backdrop_regions.len();
+  let saved_stats = ctx.walk_stats();
+  record_node(scene, node_id, ctx, sub, hoist);
+  ctx.size = saved_size;
+  ctx.content = saved_content;
+  ctx.cull = saved_cull;
+  ctx.backdrop_regions.truncate(saved_regions);
+  ctx.restore_walk_stats(saved_stats);
+}
+
 // Reach (and thereby service) the captures inside a boundary whose cache is
 // being reused: record the subtree into a discarded builder, purely so the
 // walk descends to the capture nodes. The cache itself is untouched - the
 // caller still composites it - so a capture never re-rasterizes a snapshot
 // or rotates a shader history. No-op unless a pending capture is inside.
-// The shared ctx is isolated like service_captures does it: the caller
-// reads ctx.size after this (draw_cached_recording's inherited frame), the
-// boundary stats must not count the discarded walk, and the descent's
-// backdrop-region pushes describe no pixels this frame draws.
 pub(super) fn service_captures_under_cache<'a>(
   scene: &'a RenderTree,
   node_id: u64,
@@ -475,20 +505,8 @@ pub(super) fn service_captures_under_cache<'a>(
   if !capture_pending_within(scene, node_id, ctx.alloy) {
     return;
   }
-  let saved_size = ctx.size;
-  let saved_content = ctx.content;
-  // Captures hold whole subtrees, like the boundary record the cache came
-  // from: suspend the cull for the descent.
-  let saved_cull = ctx.cull.take();
-  let saved_regions = ctx.backdrop_regions.len();
-  let saved_stats = ctx.walk_stats();
   let mut sub = DisplayListBuilder::new(None);
-  record_node(scene, node_id, ctx, &mut sub, hoist);
-  ctx.size = saved_size;
-  ctx.content = saved_content;
-  ctx.cull = saved_cull;
-  ctx.backdrop_regions.truncate(saved_regions);
-  ctx.restore_walk_stats(saved_stats);
+  isolated_walk(scene, node_id, ctx, &mut sub, hoist);
 }
 
 // Repaint-boundary gate: a boundary subtree's paint result is retained (as a
@@ -616,9 +634,9 @@ fn build_recursive<'a>(
 // Services captureSnapshot requests for `node_id`: records its subtree into a
 // throwaway display list at display scale (the same path snapshot_node uses to
 // rasterize) and registers one exact-size texture per request. It never draws
-// into the frame's builder - the node still paints normally afterwards - and it
-// isolates the shared ctx (size and boundary stats) so the recording it does
-// here does not perturb the frame being built.
+// into the frame's builder - the node still paints normally afterwards - and
+// the recording is an isolated_walk, so it does not perturb the frame being
+// built.
 fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildContext<'a>, requests: Vec<CaptureDone>) {
   let element = scene.node(node_id);
   let scale = ctx.platform.display_scale();
@@ -643,27 +661,12 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   let own = own_matrix(element, ctx.size);
   let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
 
-  let saved_size = ctx.size;
-  let saved_content = ctx.content;
-  // A capture holds the whole subtree, not the on-screen part of it.
-  let saved_cull = ctx.cull.take();
-  // The capture walk's backdrop-region pushes duplicate what the frame's
-  // own walk tracks (or, under a non-2D transform, push a None that would
-  // degrade the whole resolve to full damage): drop them with the rest of
-  // the isolation.
-  let saved_regions = ctx.backdrop_regions.len();
-  let saved_stats = ctx.walk_stats();
   let mut sub = DisplayListBuilder::new(None);
   sub.scale(scale, scale);
   if offset != (0.0, 0.0) {
     sub.translate(-offset.0, -offset.1);
   }
-  record_node(scene, node_id, ctx, &mut sub, hoist);
-  ctx.size = saved_size;
-  ctx.content = saved_content;
-  ctx.cull = saved_cull;
-  ctx.backdrop_regions.truncate(saved_regions);
-  ctx.restore_walk_stats(saved_stats);
+  isolated_walk(scene, node_id, ctx, &mut sub, hoist);
 
   let Some(dl) = sub.build() else {
     for done in requests {

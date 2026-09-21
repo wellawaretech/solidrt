@@ -701,13 +701,15 @@ async fn try_serve(
                 let snap = *queries.stats.lock().expect("stats snapshot lock poisoned");
                 // The window summary reads the frame history at query time
                 // (not on the JS thread: a wedged app must still answer).
-                let window_ms = json
-                  .get("windowMs")
-                  .and_then(|w| w.as_f64())
-                  .unwrap_or(STATS_WINDOW_DEFAULT_MS)
-                  .clamp(0.0, crate::frame_history::WINDOW_MAX_MS);
+                let ask = match json.get("windowFrames").and_then(|w| w.as_u64()) {
+                  Some(n) => crate::frame_history::Window::Frames(n as usize),
+                  None => crate::frame_history::Window::Ms(
+                    json.get("windowMs").and_then(|w| w.as_f64()).unwrap_or(STATS_WINDOW_DEFAULT_MS),
+                  ),
+                }
+                .clamped();
                 let now_ms = crate::frame_history::now_ms();
-                let window = queries.history.lock().expect("frame history lock poisoned").summarize(window_ms, now_ms);
+                let window = queries.history.lock().expect("frame history lock poisoned").summarize(ask, now_ms);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
@@ -718,13 +720,13 @@ async fn try_serve(
                       // backlogged raster thread produces no frames, so the
                       // latch goes stale exactly when these matter.
                       let raster = flux::gui::alloy_context(&ctx).map(|atx| atx.raster_counters());
-                      let reply = StatsReply { snap, time_ms: now_ms, window_ms, window: window.as_ref(), counts, raster };
+                      let reply = StatsReply { snap, time_ms: now_ms, ask, window: window.as_ref(), counts, raster };
                       let _ = reply_tx.send(stats_reply(id, reply));
                     });
                   }
                   None => {
                     let reply =
-                      StatsReply { snap, time_ms: now_ms, window_ms, window: window.as_ref(), counts: None, raster: None };
+                      StatsReply { snap, time_ms: now_ms, ask, window: window.as_ref(), counts: None, raster: None };
                     let _ = client.send(tokio_websockets::Message::text(stats_reply(id, reply))).await;
                   }
                 }
@@ -1059,7 +1061,7 @@ const STATS_WINDOW_DEFAULT_MS: f64 = 5000.0;
 /// Everything a stats reply is built from. `snap` is the draw loop's latched
 /// figures; `clock` the client's own clock at query time (`timeMs` on its
 /// monotonic origin, the latest present index) so two samples can be
-/// differenced; `window_ms` the (clamped) span the query asked for and
+/// differenced; `ask` the (clamped) window the query asked for and
 /// `window` the frame-history summary over it (None when no frame changed
 /// the picture inside it; the reply then says so with `frames: 0`);
 /// `counts` (mounted, total) from the live tree when the query could run on
@@ -1070,7 +1072,7 @@ const STATS_WINDOW_DEFAULT_MS: f64 = 5000.0;
 struct StatsReply<'a> {
   snap: crate::stats::StatsSnapshot,
   time_ms: f64,
-  window_ms: f64,
+  ask: crate::frame_history::Window,
   window: Option<&'a crate::frame_history::WindowSummary>,
   counts: Option<(usize, usize)>,
   raster: Option<alloy::RasterCounters>,
@@ -1111,7 +1113,7 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
   put("nodesPainted", s.paint.nodes_painted.into());
   put("backdropsPrepainted", s.paint.backdrops_prepainted.into());
   put("damagePx", (s.paint.damage_px.round() as i64).into());
-  put("window", window_json(r.window, r.time_ms, r.window_ms));
+  put("window", window_json(r.window, r.time_ms, r.ask));
   if let Some((mounted, total)) = r.counts {
     put("mountedNodes", mounted.into());
     put("orphanNodes", total.saturating_sub(mounted).into());
@@ -1146,24 +1148,36 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
 /// worst frame with its phase breakdown and layout activity - the frame the
 /// smoothed figures average away. Raster rates ride along when the window
 /// spans two or more frames. `now_ms` is the query instant the worst frame's
-/// age is measured from; `window_ms` the span asked for, echoed even when no
+/// age is measured from; `ask` the window asked for, echoed even when no
 /// frame fell inside it (the summary then has no window of its own).
-fn window_json(window: Option<&crate::frame_history::WindowSummary>, now_ms: f64, window_ms: f64) -> serde_json::Value {
+fn window_json(
+  window: Option<&crate::frame_history::WindowSummary>,
+  now_ms: f64,
+  ask: crate::frame_history::Window,
+) -> serde_json::Value {
   let Some(w) = window else {
-    return serde_json::json!({ "windowMs": window_ms, "frames": 0 });
+    return match ask {
+      crate::frame_history::Window::Ms(ms) => serde_json::json!({ "windowMs": ms, "frames": 0 }),
+      crate::frame_history::Window::Frames(n) => serde_json::json!({ "windowFrames": n, "frames": 0 }),
+    };
   };
   let worst = &w.worst;
   let mut data = serde_json::Map::new();
   let mut put = |k: &str, v: serde_json::Value| {
     data.insert(k.into(), v);
   };
-  put("windowMs", w.window_ms.into());
+  put("windowMs", round2_64(w.window_ms).into());
+  if let Some(n) = w.window_frames {
+    put("windowFrames", n.into());
+  }
   put("frames", w.frames.into());
   put("p50Ms", round2(w.p50_ms).into());
   put("p95Ms", round2(w.p95_ms).into());
   put("maxMs", round2(w.max_ms).into());
   put("slowFrames", w.slow_frames.into());
   put("periodMs", round2(worst.period_ms).into());
+  put("backdropsPrepainted", w.backdrops_prepainted.into());
+  put("nodesPaintedMax", w.nodes_painted_max.into());
   put(
     "worst",
     serde_json::json!({

@@ -27,6 +27,7 @@ export type SvgDraw = {
   color: string | Gradient
   drawStyle: "fill" | "stroke"
   fillRule?: "nonzero" | "evenodd"
+  /** Absent when the source omits it: the d-path default of 1 applies, SVG's own. */
   strokeWidth?: number
   strokeCap?: StrokeCap
   strokeJoin?: StrokeJoin

@@ -192,7 +192,9 @@ when exactly one client is connected.
   per target, so pair it with `label`) reported in full.
 - `/buffer?id=<bufferId>&offset=<n>&length=<n>&as=<f32|u16|u8>` - vertex
   buffer contents (default f32; reads cap at 64 KiB).
-- `/stats?window=<ms>` - the performance statistics. POST
+- `/stats?window=<ms>` (or `?frames=<n>`, the last n frames that changed
+  the picture: the window for a paused clock, where a time window expires
+  while you step) - the performance statistics. POST
   `/stats?active=true|false` switches the on-screen stats overlay instead
   (the `set_stats_overlay` tool): one client with `&client=<id>`, every
   client (and the setting new clients join with) without; `/clients`
@@ -220,7 +222,10 @@ when exactly one client is connected.
   context has no timer queries or when the startup attribution self-test
   caught the driver booking deferred pass execution to the wrong query,
   as some tiled GPUs do; where they are absent, measure the GPU by
-  subtraction (change one variable, take the frame-time delta). When
+  subtraction (change one variable, take the frame-time delta). On
+  Android `gpuFrameExecMs` is the window frame's rendering-complete span
+  from the compositor's frame timestamps, not a timer query (the pass
+  figures stay timer queries). When
   comparing two configurations, divide a `frames` delta by a `timeMs`
   delta rather than reading `frameMs`: it is a smoothed EMA and disagrees
   with the counters under bimodal frame times.
