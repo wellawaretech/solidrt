@@ -1,8 +1,8 @@
 use crate::frame_history::{FrameHistory, FrameRecord};
 use crate::overlay;
 use crate::stats;
-use alloy::InputState;
 use alloy::rendertree::{self, PlatformContext};
+use alloy::InputState;
 use flux::{
   emit_event,
   gui::frame::Commit,
@@ -330,6 +330,7 @@ impl RenderInner {
           total_ms: js_ms + ms(phases.layout + phases.post + phases.paint + phases.hover),
           counters,
           nodes_painted: paint_stats.nodes_painted,
+          backdrops_prepainted: paint_stats.backdrops_prepainted,
           raster: atx.raster_counters(),
         };
         // A frame over its refresh period is jank a human feels; say so through

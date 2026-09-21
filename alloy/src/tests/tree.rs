@@ -619,6 +619,57 @@ fn bounding_box_translate_and_scroll_fast_path() {
   assert_box(b, 25.0, 10.0, 10.0, 10.0);
 }
 
+// The fractional placements a layout slide moves an ancestor through, frame
+// by frame. The child's reported size must stay exactly its solved size at
+// every one of them: a size read that drifts by an ulp per frame defeats
+// every consumer that compares sizes (a text editor's wrap width re-laid
+// out every line on every frame of a slide). Corner arithmetic only drifts
+// once the corner sum crosses into a higher binade than the size (an f32
+// rounds (a + w) - a back to w while both share one), so the placements
+// reach past that edge for the 275.75 x 298 child below.
+const SLIDE_PLACEMENTS: [(f32, f32); 5] = [(12.3456, 7.1), (250.1, 7.1), (384.75, 408.9), (1012.2537, 364.3), (705.5123, 408.9)];
+
+#[test]
+fn bounding_box_size_exact_under_fractional_placement() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  place(&mut tree, 1, 0.0, 0.0, 2000.0, 2000.0);
+  place(&mut tree, 3, 6.0, 2.0, 275.75, 298.0);
+
+  for (x, y) in SLIDE_PLACEMENTS {
+    place(&mut tree, 2, x, y, 313.75, 357.0);
+    let b = tree.bounding_box_viewport(3).expect("laid out");
+    assert_eq!((b.size.width, b.size.height), (275.75, 298.0), "at ({x}, {y})");
+  }
+}
+
+#[test]
+fn bounding_box_size_exact_under_moving_identity_scale_ancestor() {
+  // scale={1} (a settled scale transition) puts the ancestor on the matrix
+  // path; its placement still stays out of the corners.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_scale_x(Some(1.0));
+  v.set_scale_y(Some(1.0));
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  place(&mut tree, 1, 0.0, 0.0, 2000.0, 2000.0);
+  place(&mut tree, 3, 6.0, 2.0, 275.75, 298.0);
+
+  for (x, y) in SLIDE_PLACEMENTS {
+    place(&mut tree, 2, x, y, 313.75, 357.0);
+    let b = tree.bounding_box_viewport(3).expect("laid out");
+    assert_eq!((b.size.width, b.size.height), (275.75, 298.0), "at ({x}, {y})");
+  }
+}
+
 // --- texture_content_changed: GPU content writes as snapshot damage ---------
 
 use std::collections::HashSet;

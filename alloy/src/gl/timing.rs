@@ -78,6 +78,10 @@ pub struct PassTimer {
   /// `TIME_ELAPSED` queries cannot nest; the pass inside an active one goes
   /// untimed rather than erroring.
   active: bool,
+  /// A frame span held without a query (the frame's GPU time comes from
+  /// elsewhere): passes inside it stay untimed exactly as under an active
+  /// frame query, so the pass counters see the same work either way.
+  held: bool,
 }
 
 impl PassTimer {
@@ -103,18 +107,26 @@ impl PassTimer {
         Err(e) => log::warn!("[alloy] GPU timer attribution self-test could not run ({e}); timings are unverified"),
       }
     }
-    PassTimer { supported, disjoint_ext, free: Vec::new(), pending: VecDeque::new(), active: false }
+    PassTimer { supported, disjoint_ext, free: Vec::new(), pending: VecDeque::new(), active: false, held: false }
   }
 
   pub fn supported(&self) -> bool {
     self.supported
   }
 
+  /// Hold a frame span without timing it: until the matching `end`, `begin`
+  /// declines (the passes inside go untimed) and `end` issues no GL call.
+  pub fn hold(&mut self) {
+    if !self.active {
+      self.held = true;
+    }
+  }
+
   /// Start timing a pass. Returns false when the pass will not be timed
   /// (unsupported, nested, or the pending queue is full); `end` is then a
   /// no-op, so callers pair them unconditionally.
   pub fn begin(&mut self, gl: &glow::Context) -> bool {
-    if !self.supported || self.active || self.pending.len() >= MAX_PENDING {
+    if !self.supported || self.active || self.held || self.pending.len() >= MAX_PENDING {
       return false;
     }
     let query = match self.free.pop() {
@@ -136,6 +148,10 @@ impl PassTimer {
 
   /// End the span started by `begin`, attributing it to `what`.
   pub fn end(&mut self, gl: &glow::Context, what: Timed) {
+    if self.held {
+      self.held = false;
+      return;
+    }
     if !self.active {
       return;
     }

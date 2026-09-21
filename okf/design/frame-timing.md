@@ -336,7 +336,11 @@ refreshes, and the app sees a constant delta.
 The controller (`alloy/src/cadence.rs`) reads two facts per demanded
 present: the interval the display showed the previous frame for (the
 honest count) and the frame's work time (emission to swap call, plus the
-GPU time of the last retired window draw). Up and down use different
+GPU time of the last retired window draw: on Android the compositor's
+rendering-complete timestamp for the frame, `alloy/src/frame_timestamps.rs`,
+because the timer query around the window draw reads the frame interval
+on Adreno, [android-frame-gpu-time-from-egl-timestamps]; elsewhere that
+query). Up and down use different
 evidence on purpose. A hold that is too short shows itself as an interval
 longer than the hold, so it rises on two consecutive measured intervals,
 to the worst of them, with no prediction and no margin; the first three
@@ -425,7 +429,8 @@ miss counts had come out right only because the stray Ticks re-set it).
 Done: [frame-pacing], [frame-pacing-fluency], [timer-deadlines-lag-frame-timeline],
 [onframe-tick-reset-on-reload], [idle-tick-gpu-backlog-runaway],
 [frame-production-capped-at-50hz], [choreographer-vsync-phase-offset],
-[android-surface-swap-latency], [frame-batched-pointer-input].
+[android-surface-swap-latency], [frame-batched-pointer-input],
+[android-frame-gpu-time-from-egl-timestamps].
 Notes: [android-vsync-release-chain], [tv-gpu-measurement-postmortem].
 Open: listed above.
 
@@ -448,6 +453,7 @@ Open: listed above.
 [pacing-budget-samples-swap-throttle]: ../backlog/pacing-budget-samples-swap-throttle.md
 [transition-clock-startup-anchor]: ../backlog/transition-clock-startup-anchor.md
 [android-main-loop-rarely-sleeps]: ../backlog/android-main-loop-rarely-sleeps.md
+[android-frame-gpu-time-from-egl-timestamps]: ../done/android-frame-gpu-time-from-egl-timestamps.md
 [adaptive-present-fence-depth]: ../backlog/adaptive-present-fence-depth.md
 [angle-present-fence-pacing]: ../backlog/angle-present-fence-pacing.md
 [runtime-policy-registry]: ../backlog/runtime-policy-registry.md

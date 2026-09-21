@@ -1182,6 +1182,13 @@ Finished, kept for the reasoning.
   the reflector itself; the mesh filter exists internally for shadow views and
   is not public. Expose it on ViewOptions, and widen depth "texture" to the
   scene's own target so a depth-reading post effect has an input.
+- **[Measure the frame's GPU time on Android from EGL frame timestamps](done/android-frame-gpu-time-from-egl-timestamps.md)** [2026-09-21]
+  On the SM-T500 the TIME_ELAPSED query around the window draw read the frame
+  interval (32 ms at a two-refresh cadence, 46-52 at three) for a frame whose
+  GPU work is 15 ms, so the cadence hold's step-down could never pass and any
+  hold above 1 was permanent; done means the frame's GPU term comes from the
+  compositor stack's per-frame timestamps on Android, and the tablet runs the
+  reporting app's slide at hold 1.
 - **[Android surface swap blocks four vsyncs](done/android-surface-swap-latency.md)** [2026-07-28]
   SOLVED, it was our 4x MSAA all along, the ~80 ms swap block was the GPU
   draining full off-tile multisample resolve traffic every frame. Fixed via a
@@ -1221,6 +1228,12 @@ Finished, kept for the reasoning.
   An omitted option object arrives at the binding as an explicit undefined,
   which Opt<Object> refuses - so createTexture without opts throws and every
   <Image> load fails.
+- **[A bounding box read under a sliding ancestor drifts in size](done/bounding-box-size-drift-under-slide.md)** [2026-09-21]
+  getBoundingBox computed a node's size from corners that already carried the
+  ancestor chain's translation, so under a layout slide the width came back an
+  ulp different every frame and every consumer comparing sizes re-ran its work
+  per frame; done means the size depends only on the transforms, and the text
+  editor sizes its wrap from the layout box.
 - **[An unsized Button fills its row instead of sizing to its content](done/button-unsized-fills-row.md)** [2026-09-21]
   Button falls back to width 100% when size is omitted while its docs promise
   content sizing, so in a row it squeezes its sibling labels until they wrap;

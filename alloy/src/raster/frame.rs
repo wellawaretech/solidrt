@@ -21,6 +21,9 @@ impl RasterState {
   /// FrameRendered) and playback encoding. Err means the main loop is gone
   /// and this thread should exit.
   pub(super) fn frame(&mut self, dl: DisplayList) -> Result<(), ()> {
+    // The frame's GPU span starts here, ahead of the pass flush: on a tiler
+    // the passes execute in the same submission as the window draw.
+    self.frame_timestamps.frame_begin();
     // The frame samples shader targets (directly via <texture src>, or through
     // the window-shader layer); resolve every pending target write first.
     self.flush_dirty();
@@ -48,7 +51,15 @@ impl RasterState {
     self.await_present_fence();
     let wait_ms = wait_start.elapsed().as_secs_f32() * 1000.0;
     let draw_start = std::time::Instant::now();
-    self.pass_timer.begin(&self.gl);
+    // The frame's GPU time comes from the frame timestamps where they are
+    // armed; the timer query around the window draw is then not issued, but
+    // the span is still held so the offscreen rasters inside the frame stay
+    // untimed as they are under the query (`end` releases either).
+    if self.frame_timestamps.armed() {
+      self.pass_timer.hold();
+    } else {
+      self.pass_timer.begin(&self.gl);
+    }
     // A backgrounded window has no surface to draw to (see WINDOW_BACKGROUNDED
     // in lib.rs): the frame is dropped like an undrawn one, its damage kept
     // for the frame that follows the return-to-visible rebind.
@@ -114,6 +125,13 @@ impl RasterState {
       let (now_w, now_h) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
       if (now_w as i64, now_h as i64) != (width as i64, height as i64) {
         log::warn!("[alloy] surface size changed during frame: drew {width}x{height}, now {now_w}x{now_h}");
+      }
+      // Frame timestamps: the latest queued frame the GPU has finished (this
+      // one rarely, usually the one before) becomes the GPU term this
+      // notification carries, and the cumulative frame exec the stats read.
+      if let Some(micros) = self.frame_timestamps.harvest() {
+        self.stats.frame_exec_micros.fetch_add(micros, Ordering::Relaxed);
+        self.last_frame_gpu_micros = Some(micros);
       }
       self
         .tx
@@ -237,8 +255,11 @@ impl RasterState {
     if crate::video_plane_active() {
       self.finish_gpu_work();
     }
+    // The id this swap's buffer is queued under, asked before the swap.
+    self.frame_timestamps.before_present();
     if self.binding.swap() {
       self.present_failures = 0;
+      self.frame_timestamps.presented();
       // At most one fence joins per frame (a retried present only follows a
       // failed one, which queued nothing), and `await_present_fence` trimmed
       // to depth-1 before the draw, so the queue never exceeds
@@ -308,8 +329,10 @@ impl RasterState {
       return false;
     }
     // FBO 0 is a different surface now; its sample count (the fast-path
-    // decision) must be asked again, not trusted from before the bind.
+    // decision) must be asked again, not trusted from before the bind, and
+    // the frame timestamps must be enabled on it afresh.
     gl::forget_window_samples();
+    self.frame_timestamps.forget();
     if !self.capture_frames && !self.binding.set_swap_interval() {
       log::warn!("[alloy] set swap interval failed: {}", self.binding.error());
     }

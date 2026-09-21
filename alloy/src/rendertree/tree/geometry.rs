@@ -4,7 +4,7 @@
 
 use crate::impellers::Matrix;
 use super::RenderTree;
-use crate::rendertree::{ElementKind, Point, Rect, Size};
+use crate::rendertree::{ElementKind, Point, Rect, Size, Vector};
 
 impl RenderTree {
   /// Bounding box of a node relative to its nearest positioning context: the
@@ -54,9 +54,17 @@ impl RenderTree {
   /// z = 0 plane with the homogeneous divide, the same approximation hit
   /// testing uses under perspective. Views without matrix props keep the cheap
   /// translation-only path.
+  ///
+  /// The box's size depends only on the corners as the last matrix left
+  /// them: the translation the chain adds after that is applied to the
+  /// finished box, not to the corners. Translated corners would put the size
+  /// at (x + w + t) - (x + t), which in f32 lands an ulp off w as soon as the
+  /// sum crosses a binade and changes with t, so a node under an ancestor a
+  /// layout slide moves read a different size every frame and every consumer
+  /// comparing sizes (a text editor's wrap width) re-laid out per frame.
   fn compute_bounding_box(&self, id: u64, stop_at_context: bool) -> Option<Rect> {
-    // The axis-aligned bounds of the transformed quad.
-    self.compute_corners(id, stop_at_context).map(Rect::from_points)
+    let Quad { corners, shift } = self.compute_corners(id, stop_at_context)?;
+    Some(Rect::from_points(corners).translate(shift))
   }
 
   /// The four corners of the node's painted box in window coordinates, after
@@ -66,10 +74,11 @@ impl RenderTree {
   /// or 3D transform the AABB alone says a transform happened but not where
   /// the edges landed; the quad is the readable form.
   pub fn painted_quad(&self, id: u64) -> Option<[Point; 4]> {
-    self.compute_corners(id, false)
+    let Quad { corners, shift } = self.compute_corners(id, false)?;
+    Some(corners.map(|p| p + shift))
   }
 
-  fn compute_corners(&self, id: u64, stop_at_context: bool) -> Option<[Point; 4]> {
+  fn compute_corners(&self, id: u64, stop_at_context: bool) -> Option<Quad> {
     let node = self.try_node(id)?;
     let fallback = self.content_fallback(id)?;
     let local = match &node.kind {
@@ -96,20 +105,17 @@ impl RenderTree {
     // Detached nodes have no layout placement; they inherit position from the
     // ancestor walk below. A laid-out node's placement is where it is
     // painted (a layout slide in flight included, Element::placement).
-    if node.has_layout() {
-      let loc = node.placement().to_vector();
-      for p in corners.iter_mut() {
-        *p += loc;
-      }
-    }
+    let mut shift = if node.has_layout() { node.placement().to_vector() } else { Vector::zero() };
 
     // Ascend. Per ancestor, in application order: remove any scroll it applies
     // to its children, apply its paint matrix (or just its translate when no
     // matrix props are set), then add its layout position to enter the next
-    // frame up. For the container-relative box, stop before folding in the
-    // first positioning context: the result is then expressed in that
-    // ancestor's frame. Absolute ancestors are deliberately transparent here -
-    // their offset is still accumulated, they just never act as the stop.
+    // frame up. Translations accumulate in `shift` and reach the corners only
+    // when a matrix has to see them (Quad). For the container-relative box,
+    // stop before folding in the first positioning context: the result is
+    // then expressed in that ancestor's frame. Absolute ancestors are
+    // deliberately transparent here - their offset is still accumulated, they
+    // just never act as the stop.
     let mut cur_id = id;
     loop {
       let Some(parent_id) = self.try_node(cur_id).and_then(|n| n.parent) else {
@@ -128,34 +134,27 @@ impl RenderTree {
           // Scroll means box pixels; these corners are in the parent's child
           // frame (design space under a design-size fit), so the offset divides
           // by the fit scale, matching the hit descent and the paint order.
-          let s = v.content_scroll(size);
-          for p in corners.iter_mut() {
-            *p -= s;
-          }
+          shift -= v.content_scroll(size);
         }
         if v.needs_matrix() {
           let size =
             parent.layout.as_ref().map(|l| l.size()).or_else(|| self.content_fallback(parent_id)).unwrap_or_default();
           let m = v.paint_matrix(size);
           for p in corners.iter_mut() {
-            *p = transform_point(&m, *p);
+            *p = transform_point(&m, *p + shift);
           }
+          shift = Vector::zero();
         } else if let Some(t) = v.translate {
-          for p in corners.iter_mut() {
-            *p += t;
-          }
+          shift += t;
         }
       }
       if parent.has_layout() {
-        let loc = parent.placement().to_vector();
-        for p in corners.iter_mut() {
-          *p += loc;
-        }
+        shift += parent.placement().to_vector();
       }
       cur_id = parent_id;
     }
 
-    Some(corners)
+    Some(Quad { corners, shift })
   }
 
   /// Fallback size for shapes without explicit w/h: the nearest laid-out node's
@@ -186,6 +185,16 @@ impl RenderTree {
     }
   }
 
+}
+
+// A node's painted quad part-way up the ancestor chain: the corners as the
+// last matrix left them, and the translation (layout placements, translates,
+// scroll) accumulated since. The two stay apart so that a box taken from the
+// corners keeps a size the chain's position cannot disturb (see
+// compute_bounding_box); the painted position is the corners plus the shift.
+struct Quad {
+  corners: [Point; 4],
+  shift: Vector,
 }
 
 // The four corners of a rectangle, clockwise from top-left.

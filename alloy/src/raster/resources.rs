@@ -161,9 +161,17 @@ impl RasterState {
           // Passes retire in issue order ahead of the window draw they
           // precede (one GL queue), so what has accumulated when a frame's
           // query retires is that frame's pass work: a 3d scene renders as
-          // a pass and is most of such a frame's GPU time.
-          self.pending_pass_micros += exec.micros;
+          // a pass and is most of such a frame's GPU time. With the frame
+          // timestamps armed the frame's span already covers its passes, and
+          // no frame query will come to drain the accumulator.
+          if !self.frame_timestamps.armed() {
+            self.pending_pass_micros += exec.micros;
+          }
         }
+        // A frame query issued before the timestamps armed (the first frame
+        // after a bind) retires into nothing: its reading is the one the
+        // timestamps replace.
+        Timed::Frame if self.frame_timestamps.armed() => {}
         Timed::Frame => {
           self.stats.frame_exec_micros.fetch_add(exec.micros, Ordering::Relaxed);
           self.last_frame_gpu_micros = Some(self.pending_pass_micros + exec.micros);

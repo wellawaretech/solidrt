@@ -98,6 +98,25 @@ export function EditorField(props: EditorFieldProps) {
   let viewport: { id: number } | undefined
   let blinkId: any = null
 
+  // The caret shows solid for a full half-period after any activity (focus,
+  // a move, an edit, a tap) and blinks from there: the timer restarts on each,
+  // as editors do, so the caret never vanishes under a typing hand and a
+  // read right after an input finds it drawn. A wall-clock interval on
+  // purpose: it wakes twice a second, where an onFrame loop would hold a
+  // standing frame request for every focused field. Timers follow the dev
+  // clock control (pause, step), so a frozen frame keeps the caret it had.
+  let startBlink = () => {
+    setCaretOn(true)
+    if (blinkId != null) clearInterval(blinkId)
+    blinkId = setInterval(() => setCaretOn((v) => !v), CARET_BLINK_MS)
+  }
+  // Activity before focus (a tap's own pointerdown precedes the focus
+  // handler) or after blur (a paste that settles late) has no blink to
+  // restart; the focus handler starts it.
+  let restartBlink = () => {
+    if (blinkId != null) startBlink()
+  }
+
   // Derived from core's reactive focus (setFocus is the only writer); the
   // onFocus/onBlur handlers below keep only their side effects (blink timer,
   // caller callbacks). focusedNode() is read FIRST, unconditionally: the
@@ -167,7 +186,7 @@ export function EditorField(props: EditorFieldProps) {
     let offset = offsetAt(e)
     buffer.setSelection(e.shiftKey ? buffer.selection().anchor : offset, offset)
     if (e.pointerType !== "touch" && (e.button == null || e.button === 0)) dragArmed = e.pointerId
-    setCaretOn(true)
+    restartBlink()
   }
 
   let handleViewportPointerMove = (e: PointerEvent) => {
@@ -178,7 +197,7 @@ export function EditorField(props: EditorFieldProps) {
     }
     if (dragActive === e.pointerId) {
       buffer.setSelection(buffer.selection().anchor, offsetAt(e))
-      setCaretOn(true)
+      restartBlink()
     }
   }
 
@@ -197,10 +216,7 @@ export function EditorField(props: EditorFieldProps) {
   // A handler is a one-shot read by nature; nothing here re-runs on a
   // handler swap, and the swapped-in one is read at the next event.
   let handleFocus = () => {
-    setCaretOn(true)
-    if (blinkId == null) {
-      blinkId = setInterval(() => setCaretOn((v) => !v), CARET_BLINK_MS)
-    }
+    startBlink()
     untrack(() => props.onFocus)?.()
   }
 
@@ -220,16 +236,16 @@ export function EditorField(props: EditorFieldProps) {
     let consumed = true
     if (e.key === "Backspace") {
       buffer.deleteBackward()
-      setCaretOn(true)
+      restartBlink()
     } else if (e.key === "Delete") {
       buffer.deleteForward()
-      setCaretOn(true)
+      restartBlink()
     } else if (e.key === "ArrowLeft") {
       buffer.move("left", { extend: e.shiftKey })
-      setCaretOn(true)
+      restartBlink()
     } else if (e.key === "ArrowRight") {
       buffer.move("right", { extend: e.shiftKey })
-      setCaretOn(true)
+      restartBlink()
     } else if (e.key === "Home" || e.key === "End") {
       // Multiline: the current line's ends (offsetAtX at 0 / far right, so a
       // wrap boundary resolves to the position that shows on this line).
@@ -239,13 +255,13 @@ export function EditorField(props: EditorFieldProps) {
       } else {
         buffer.move(e.key === "Home" ? "start" : "end", { extend: e.shiftKey })
       }
-      setCaretOn(true)
+      restartBlink()
     } else if (props.multiline && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       moveLine(e.key === "ArrowUp" ? -1 : 1, e.shiftKey)
-      setCaretOn(true)
+      restartBlink()
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
       buffer.setSelection(0, value().length)
-      setCaretOn(true)
+      restartBlink()
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
       // Copy acts only on a range; an empty selection leaves the key (and the
       // clipboard) alone and lets it bubble to app shortcuts.
@@ -260,7 +276,7 @@ export function EditorField(props: EditorFieldProps) {
         // clipboard write is reported, not undone.
         navigator.clipboard.writeText(text).catch((err) => console.warn("Clipboard cut failed: " + err))
         buffer.insertText("")
-        setCaretOn(true)
+        restartBlink()
       }
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
       navigator.clipboard.readText().then(
@@ -268,13 +284,13 @@ export function EditorField(props: EditorFieldProps) {
           if (text.length === 0) return
           if (!props.multiline) text = text.replace(/\r?\n/g, " ")
           buffer.insertText(text)
-          setCaretOn(true)
+          restartBlink()
         },
         (err) => console.warn("Clipboard paste failed: " + err),
       )
     } else if (props.multiline && e.key === "Enter" && textInputActive()) {
       buffer.insertText("\n")
-      setCaretOn(true)
+      restartBlink()
     } else if (e.key === "Enter" || e.code === "Select") {
       // The remote center key's `key` is "Unidentified"; match its code.
       activateField()
@@ -293,7 +309,7 @@ export function EditorField(props: EditorFieldProps) {
   let handleTextInput = (e: any) => {
     if (props.disabled) return
     buffer.insertText(e.text ?? "")
-    setCaretOn(true)
+    restartBlink()
   }
 
   // Up/Down: the offset on the neighbouring line nearest the caret's x; on
@@ -355,9 +371,9 @@ export function EditorField(props: EditorFieldProps) {
   // movement, blink and scroll never touch layout. The single-line viewport
   // carries an explicit height (detached content takes no layout slot) equal
   // to the one-line height; a multiline viewport stretches to the field's
-  // height. The editor layout keeps the caret in view and flushes the offsets
-  // before paint; scrollX/scrollY are paint-time translates that also apply
-  // to detached children.
+  // height. The editor layout keeps the caret in view (its offsets land in the
+  // post-layout flush, before paint); scrollX/scrollY are paint-time
+  // translates that also apply to detached children.
   // The font is the layout's font fields over the theme's body role,
   // resolved like Text resolves its own (family, scaled size, line height,
   // style, compensated weight); every metric - the rows, the caret, the

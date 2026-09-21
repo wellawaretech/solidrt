@@ -1182,6 +1182,7 @@ fn window_json(window: Option<&crate::frame_history::WindowSummary>, now_ms: f64
       "cacheGets": worst.counters.cache_gets,
       "cacheHits": worst.counters.cache_hits,
       "nodesPainted": worst.nodes_painted,
+      "backdropsPrepainted": worst.backdrops_prepainted,
     }),
   );
   if let Some(r) = &w.raster_rates {

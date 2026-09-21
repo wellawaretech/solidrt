@@ -319,6 +319,11 @@ pub(crate) struct RasterState {
   // passes since the last retired window draw.
   last_frame_gpu_micros: Option<u64>,
   pending_pass_micros: u64,
+  // The frame's GPU time from the window surface's frame timestamps where
+  // the platform records them (Android); armed, it replaces the frame's
+  // timer query as the source of `last_frame_gpu_micros` and
+  // `frame_exec_micros` (see frame_timestamps.rs for why).
+  frame_timestamps: crate::frame_timestamps::FrameTimestamps,
   // Instant of the last fence-timeout/-failure warning, same rate limit.
   fence_wait_log: Option<std::time::Instant>,
   // Shared live counters (see RasterStats): this thread decrements the queue
@@ -548,6 +553,7 @@ impl RasterState {
       slow_frame_log: None,
       last_frame_gpu_micros: None,
       pending_pass_micros: 0,
+      frame_timestamps: crate::frame_timestamps::FrameTimestamps::new(),
       fence_wait_log: None,
       stats,
       timing: FrameTiming::new(),

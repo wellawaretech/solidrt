@@ -40,6 +40,10 @@ pub struct FrameRecord {
   pub total_ms: f32,
   pub counters: LayoutCounters,
   pub nodes_painted: u32,
+  /// Backdrop panels re-filtered ahead of a fading ancestor's opacity group
+  /// (see rendertree composite PaintStats); with nodes_painted, the paint
+  /// activity of the frame, which the latest-frame stats lose on a reuse.
+  pub backdrops_prepainted: u32,
   /// The raster counters as they stood when the frame was recorded; two
   /// records give a rate over the frames between them.
   pub raster: RasterCounters,

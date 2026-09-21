@@ -5,7 +5,7 @@
 // are policy and belong to the component (the "skin") that composes these.
 
 import { createMemo, createSignal, flush, untrack } from "@solidjs/signals"
-import { getBoundingBox, layoutNextLine, measureText, prepareText, unitInk } from "./core"
+import { getLayoutBox, layoutNextLine, measureText, prepareText, unitInk } from "./core"
 import type { MeasureTextOptions, PreparedText, TextRunRange, TextUnit } from "flux:rendertree"
 import { onLayout } from "./window"
 
@@ -247,18 +247,19 @@ export type TextEditorLayout = {
  *
  * The scroll offsets are retained between frames and only adjusted when the
  * caret would fall outside the visible range, so stationary text does not
- * jump. The viewport size is read in onLayout and the synchronous flush
- * drains the update before paint, so lines and scroll track a caret, text or
- * size change in the same frame. Pure geometry: no caret rendering and no
- * placeholder/visual policy.
+ * jump. They derive from the caret, the lines and the viewport size, so a
+ * frame that changes none of them does no scroll work. The viewport size is
+ * the node's layout box (the untransformed solved box: the lines are drawn in
+ * the node's own frame, so an ancestor's scale must not change the wrap
+ * width), read in onLayout; the post-layout flush drains the update before
+ * paint, so lines and scroll track a caret, text or size change in the same
+ * frame. Pure geometry: no caret rendering and no placeholder/visual policy.
  */
 export function createTextEditorLayout(
   viewport: () => { id: number } | undefined,
   input: () => TextEditorLayoutInput,
 ): TextEditorLayout {
   let [viewportSize, setViewportSize] = createSignal({ width: 0, height: 0 }, { equals: (a, b) => a.width === b.width && a.height === b.height })
-  let [scrollX, setScrollX] = createSignal(0)
-  let [scrollY, setScrollY] = createSignal(0)
 
   let prepared = createMemo(() => {
     let { text, font, runs } = input()
@@ -416,22 +417,28 @@ export function createTextEditorLayout(
     return 0
   }
 
+  // Each offset follows from its own previous value: `follow` moves it only
+  // when the caret has left the visible range, so the memo carries the
+  // retained position across recomputes.
+  let scrollX = createMemo((prev: number | undefined): number => {
+    let { caretWidth = 0, wrap } = input()
+    if (wrap) return 0
+    let contentWidth = lines().reduce((w, l) => Math.max(w, l.width), 0)
+    let c = caret()
+    return follow(prev ?? 0, c.x, caretWidth, viewportSize().width, contentWidth + caretWidth)
+  })
+  let scrollY = createMemo((prev: number | undefined): number => {
+    let ls = lines()
+    let last = ls[ls.length - 1]!
+    let c = caret()
+    return follow(prev ?? 0, c.y, c.height, viewportSize().height, last.y + last.height)
+  })
+
   onLayout(() => {
     let node = viewport()
     if (!node) return
-    let box = getBoundingBox(node)
+    let box = getLayoutBox(node)
     setViewportSize({ width: box?.width ?? 0, height: box?.height ?? 0 })
-    flush()
-    let { width: vw, height: vh } = viewportSize()
-    let { caretWidth = 0, wrap } = input()
-    let ls = lines()
-    let contentWidth = ls.reduce((w, l) => Math.max(w, l.width), 0)
-    let last = ls[ls.length - 1]!
-    let contentHeight = last.y + last.height
-    let c = caret()
-
-    setScrollX(wrap ? 0 : follow(scrollX(), c.x, caretWidth, vw, contentWidth + caretWidth))
-    setScrollY(follow(scrollY(), c.y, c.height, vh, contentHeight))
   })
 
   return { lines, caret, caretLine, offsetAtX, selectionRects, lineAtY, step, scrollX, scrollY }

@@ -252,6 +252,16 @@ that reads exactly like Solid fallout.
   call `flush()` after the write so it lands in this frame's display list.
   See examples/on-layout-connect.tsx.
 
+- A flex item never shrinks below its content on its own (CSS `min-height:
+  auto`, the same here): in a column, a content-sized child - a paragraph, a
+  list, a multiline field - keeps its content height and overflows a parent
+  that is too short, whatever `flexGrow`/`flexShrink` say, because the
+  automatic minimum size pins it. Give the child that should fit
+  `minHeight={0}` (`minWidth={0}` in a row), or make it a scroll container
+  (`overflow="hidden"` or `"scroll"`, whose automatic minimum is 0). A
+  `flexGrow: 1` child that ends up TALLER than its parent is this trap, not
+  a broken grow.
+
 - Text `lineHeight` is a MULTIPLIER of fontSize (1.3-1.6 is typical), not
   pixels. A CSS-reflex value like 22 makes each line box 22x the font size:
   the text becomes blank space and the parent balloons.

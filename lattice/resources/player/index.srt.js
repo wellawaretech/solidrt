@@ -6784,6 +6784,9 @@ function getBoundingBox2(node) {
 function getBoundingBoxViewport2(node) {
   return tree.getBoundingBoxViewport(node.id);
 }
+function getLayoutBox2(node) {
+  return tree.getLayoutBox(node.id);
+}
 function measureText2(text, options) {
   return tree.measureText(text, options);
 }
@@ -9686,8 +9689,6 @@ function createTextEditorLayout(viewport, input) {
   }, {
     equals: (a, b) => a.width === b.width && a.height === b.height
   });
-  let [scrollX, setScrollX] = createSignal(0);
-  let [scrollY, setScrollY] = createSignal(0);
   let prepared = createMemo(() => {
     let {
       text,
@@ -9879,31 +9880,32 @@ function createTextEditorLayout(viewport, input) {
     }
     return 0;
   };
-  onLayout(() => {
-    let node = viewport();
-    if (!node)
-      return;
-    let box = getBoundingBox2(node);
-    setViewportSize({
-      width: box?.width ?? 0,
-      height: box?.height ?? 0
-    });
-    flush();
-    let {
-      width: vw,
-      height: vh
-    } = viewportSize();
+  let scrollX = createMemo((prev) => {
     let {
       caretWidth = 0,
       wrap
     } = input();
-    let ls = lines();
-    let contentWidth = ls.reduce((w, l) => Math.max(w, l.width), 0);
-    let last = ls[ls.length - 1];
-    let contentHeight = last.y + last.height;
+    if (wrap)
+      return 0;
+    let contentWidth = lines().reduce((w, l) => Math.max(w, l.width), 0);
     let c = caret();
-    setScrollX(wrap ? 0 : follow(scrollX(), c.x, caretWidth, vw, contentWidth + caretWidth));
-    setScrollY(follow(scrollY(), c.y, c.height, vh, contentHeight));
+    return follow(prev ?? 0, c.x, caretWidth, viewportSize().width, contentWidth + caretWidth);
+  });
+  let scrollY = createMemo((prev) => {
+    let ls = lines();
+    let last = ls[ls.length - 1];
+    let c = caret();
+    return follow(prev ?? 0, c.y, c.height, viewportSize().height, last.y + last.height);
+  });
+  onLayout(() => {
+    let node = viewport();
+    if (!node)
+      return;
+    let box = getLayoutBox2(node);
+    setViewportSize({
+      width: box?.width ?? 0,
+      height: box?.height ?? 0
+    });
   });
   return {
     lines,
@@ -10253,6 +10255,16 @@ function EditorField(props) {
   let node;
   let viewport;
   let blinkId = null;
+  let startBlink = () => {
+    setCaretOn(true);
+    if (blinkId != null)
+      clearInterval(blinkId);
+    blinkId = setInterval(() => setCaretOn((v) => !v), CARET_BLINK_MS);
+  };
+  let restartBlink = () => {
+    if (blinkId != null)
+      startBlink();
+  };
   let focused = createMemo(() => {
     let id2 = focusedNode();
     return id2 != null && id2 === node?.id;
@@ -10294,7 +10306,7 @@ function EditorField(props) {
     buffer.setSelection(e.shiftKey ? buffer.selection().anchor : offset, offset);
     if (e.pointerType !== "touch" && (e.button == null || e.button === 0))
       dragArmed = e.pointerId;
-    setCaretOn(true);
+    restartBlink();
   };
   let handleViewportPointerMove = (e) => {
     if (props.disabled)
@@ -10306,7 +10318,7 @@ function EditorField(props) {
     }
     if (dragActive === e.pointerId) {
       buffer.setSelection(buffer.selection().anchor, offsetAt(e));
-      setCaretOn(true);
+      restartBlink();
     }
   };
   let handleViewportPointerUp = (e) => {
@@ -10318,10 +10330,7 @@ function EditorField(props) {
     }
   };
   let handleFocus = () => {
-    setCaretOn(true);
-    if (blinkId == null) {
-      blinkId = setInterval(() => setCaretOn((v) => !v), CARET_BLINK_MS);
-    }
+    startBlink();
     untrack(() => props.onFocus)?.();
   };
   let handleBlur = () => {
@@ -10337,20 +10346,20 @@ function EditorField(props) {
     let consumed = true;
     if (e.key === "Backspace") {
       buffer.deleteBackward();
-      setCaretOn(true);
+      restartBlink();
     } else if (e.key === "Delete") {
       buffer.deleteForward();
-      setCaretOn(true);
+      restartBlink();
     } else if (e.key === "ArrowLeft") {
       buffer.move("left", {
         extend: e.shiftKey
       });
-      setCaretOn(true);
+      restartBlink();
     } else if (e.key === "ArrowRight") {
       buffer.move("right", {
         extend: e.shiftKey
       });
-      setCaretOn(true);
+      restartBlink();
     } else if (e.key === "Home" || e.key === "End") {
       if (props.multiline) {
         let offset = editor.offsetAtX(editor.caretLine(), e.key === "Home" ? 0 : 1e9);
@@ -10360,13 +10369,13 @@ function EditorField(props) {
           extend: e.shiftKey
         });
       }
-      setCaretOn(true);
+      restartBlink();
     } else if (props.multiline && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       moveLine(e.key === "ArrowUp" ? -1 : 1, e.shiftKey);
-      setCaretOn(true);
+      restartBlink();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
       buffer.setSelection(0, value().length);
-      setCaretOn(true);
+      restartBlink();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
       let text = selectedText();
       if (text.length === 0)
@@ -10380,7 +10389,7 @@ function EditorField(props) {
       else {
         navigator.clipboard.writeText(text).catch((err) => console.warn("Clipboard cut failed: " + err));
         buffer.insertText("");
-        setCaretOn(true);
+        restartBlink();
       }
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
       navigator.clipboard.readText().then((text) => {
@@ -10389,12 +10398,12 @@ function EditorField(props) {
         if (!props.multiline)
           text = text.replace(/\r?\n/g, " ");
         buffer.insertText(text);
-        setCaretOn(true);
+        restartBlink();
       }, (err) => console.warn("Clipboard paste failed: " + err));
     } else if (props.multiline && e.key === "Enter" && textInputActive()) {
       buffer.insertText(`
 `);
-      setCaretOn(true);
+      restartBlink();
     } else if (e.key === "Enter" || e.code === "Select") {
       activateField();
     } else if (e.key === "Escape") {
@@ -10410,7 +10419,7 @@ function EditorField(props) {
     if (props.disabled)
       return;
     buffer.insertText(e.text ?? "");
-    setCaretOn(true);
+    restartBlink();
   };
   let moveLine = (delta, extend) => {
     let target = editor.caretLine() + delta;

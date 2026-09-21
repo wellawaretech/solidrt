@@ -11,6 +11,7 @@ pub mod camera;
 mod context;
 mod egl_headless;
 mod event;
+mod frame_timestamps;
 mod gamepad;
 mod gpu;
 mod input;
