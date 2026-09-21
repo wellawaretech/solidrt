@@ -840,6 +840,12 @@ Shaped, not started.
   the owned layout reduced the engine's job to shape-one-run and draw-one-run,
   so a second implementation with its own glyph atlas can replace it where
   quality matters.
+- **[A paragraph is painted as one Impeller paragraph per word, an order of magnitude over what its glyphs need](backlog/text-paint-per-word-paragraphs.md)** [2026-09-22]
+  Five 230-character paragraphs in reflowing panes cost the Tab A7 ~10 ms of
+  layout, ~12 ms of paint recording and ~12 ms of GPU per frame for ~1100
+  glyphs: the word cache keeps every wrap unit as its own Impeller Paragraph
+  and paint emits draw_paragraph per word (~180 ops a frame), so a per-line
+  draw or glyph runs would cut it ~8x.
 - **[Touch and word text selection](backlog/text-selection-touch-word.md)** [2026-09-02]
   Text selection exists (keys, mouse drag, highlight) but a touch user cannot
   make one at all - a finger drag deliberately scrolls - and no pointer
