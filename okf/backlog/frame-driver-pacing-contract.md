@@ -66,6 +66,16 @@ that genuinely need hardware.
 
 ## Stage 2: deadline-scheduled frames
 
+This is tier 3 of [frame-timing](../design/frame-timing.md), and it reads
+its input from the present ledger and the refresh count that
+[frame-signal-refresh-count](../plans/frame-signal-refresh-count.md) builds
+(tier 2): a cadence decision needs an honest measurement of the cadence the
+app is actually achieving, which did not exist while the timeline pinned
+every present to one period. Its verdicts wait for tier 2's numbers. The
+reference implementation of the policy is Android's Frame Pacing library
+(Swappy): hold a swap interval that is a whole number of refreshes and only
+move it when the measured frame time has clearly crossed a boundary.
+
 Give each frame a target present time derived from the timeline, and let
 the driver measure its own per-stage latency. Then a frame that cannot make
 its slot becomes a decision rather than an accident: drop cleanly to a
@@ -83,6 +93,15 @@ Every degradation decision is recorded, so a census can say why the cadence
 changed instead of leaving it to be inferred.
 
 ## Stage 3: the stretched timeline is invisible to the app (2026-08-17)
+
+Superseded in substance by
+[frame-signal-refresh-count](../plans/frame-signal-refresh-count.md)
+(2026-09-21): the timeline no longer stretches. It advances by the display
+refreshes each frame covered, so under a sustained stall the app's `tick`
+deltas grow with the real frame time and an app can read its own frame
+rate from them, as it can in a browser. Item 1 below (the `onFrame` doc)
+is done there; items 2 and 3 (expose the lag) have nothing left to expose.
+Kept for the record of what the lag looked like from the app side.
 
 A third property of the same contract, from the app side. Under a sustained
 present stall - something else on the machine holding the GPU, the case a

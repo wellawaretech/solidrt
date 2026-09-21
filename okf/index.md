@@ -9,6 +9,18 @@ Generated from frontmatter by `scripts/build-okf-index.ts`. The conventions
 are in [README.md](README.md); loose ideas are in [ideas.md](ideas.md) and
 small chores in [tiny.md](tiny.md).
 
+## Design
+
+The architecture of an area and the decisions behind it, kept current. Read before working there.
+
+- **[Frame timing](design/frame-timing.md)** [2026-09-21]
+  The clocks and cadences of a SolidRT client in one place - how a frame
+  signal is produced per platform and pacing mode, how display refreshes are
+  counted, which timeline each consumer runs on (onFrame, timers, transitions,
+  video, the dev clock, playback), the decisions behind each with the
+  alternatives that were rejected, and the known limits with their open items.
+  Read before touching anything that says clock, tick, vsync or pacing.
+
 ## Plans
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
@@ -29,6 +41,13 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
   assets in the manifest, then signed OTA."
+- **[Frame signals carry a refresh count; the app timeline advances by it](plans/frame-signal-refresh-count.md)** [2026-09-21]
+  Replace the one-period-per-present model with slow correction (which lags
+  and then hops below about 24 fps) by counting the display refreshes each
+  frame signal covers in alloy and advancing the animation timeline by exactly
+  that in lattice; a cumulative drift estimator with hysteresis makes the
+  count exact at full rate under swap jitter and honest below it. Tier 2 of
+  okf/design/frame-timing.md.
 - **[Inspector - a visual devtool app over the dev-server control API](plans/inspector.md)** [2026-08-14]
   A packed SolidRT app presenting live runtime introspection (stats, logs,
   tree over snapshot, clock transport) as a peer front-end to the MCP bridge,
@@ -231,6 +250,12 @@ Shaped, not started.
   Give dev, render and pack one gitignored output root (dist/) with a subdir
   per flow, fixing render's missing isolate support and clearing the ground
   for pack formats and asset pre-processing.
+- **[Camera and controls extensions](backlog/camera-and-controls-extensions.md)** [2026-09-17]
+  SolidRT has two stock controls (OrbitCamera, FirstPersonCamera) where
+  Three.js and Babylon.js ship many with more options; the concrete gap is
+  moving through a model (dolly / fly-through, which a zoom can never do),
+  then zoom-to-cursor and a dynamic pivot as built-ins - the survey below is
+  from memory and needs research before it is shaped further.
 - **[captureSnapshot fails inside a clean repaint boundary](backlog/capture-inside-clean-boundary.md)** [2026-08-27]
   A capture (captureSnapshot, /snapshot) of a node under a repaintBoundary
   view whose recording is being reused fails with "capture node is not in the
@@ -544,6 +569,11 @@ Shaped, not started.
   - which forces any app state a command touches up to module scope; an
   owner-scoped variant auto-cleaned like onFrame lets both live in the
   component they belong to.
+- **[Trim p2p tickets to the addresses a peer needs](backlog/p2p-ticket-addresses.md)** [2026-09-14]
+  A p2p ticket lists every interface address (VPN, container bridge, LAN,
+  global IPv6), which exposes the network layout to anyone who sees it and
+  doubles the QR code; relay tickets should carry no addresses and local
+  tickets only the default-route IPv4.
 - **[The pacing budget measures the swap's throttle wait as pipeline cost](backlog/pacing-budget-samples-swap-throttle.md)** [2026-09-12]
   On Android the vsync signal delay sits at its 8 ms floor for a 0.1 ms frame,
   because the emission-to-present sample the budget takes includes
@@ -606,6 +636,12 @@ Shaped, not started.
   Supporting positioning-context-relative bounding boxes forced position out
   of the style adapter into a special case at the top of apply_jsx, splitting
   it from its sibling insets.
+- **[Presentation feedback - measure the refresh a frame was shown on](backlog/presentation-feedback.md)** [2026-09-21]
+  The refresh count behind the app timeline is estimated from swap-return and
+  vsync-release instants with a 0.75-period tolerance; every platform has an
+  API that reports the actual presentation time or vblank count per frame,
+  which would make the count a measurement and the estimator a fallback. Tier
+  1 of okf/design/frame-timing.md, one platform at a time, Android first.
 - **[Production diagnostics surface](backlog/production-diagnostics-surface.md)** [2026-07-17]
   Layout counters are latched into Stats but only dev-client queries read
   them; wanted a production consumer so field bug reports carry the numbers.
