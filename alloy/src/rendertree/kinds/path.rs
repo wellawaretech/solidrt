@@ -344,14 +344,6 @@ impl Path {
     Damage::Paint
   }
 
-  fn fills(&self) -> bool {
-    matches!(self.paint.draw_style, DrawStyle::Fill | DrawStyle::StrokeAndFill)
-  }
-
-  fn strokes(&self) -> bool {
-    matches!(self.paint.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill)
-  }
-
   // The pattern in local units; a declared `pathLength` (SVG) maps the
   // author's units onto the walked length.
   pub(crate) fn dash(&self) -> Option<Dash> {
@@ -444,6 +436,9 @@ impl Buildable for Path {
     self.ensure_built();
     let path = self.path.borrow();
     let Some(path) = path.as_ref() else { return };
+    // A zero-width stroke paints nothing (PaintState::painted_style), and
+    // its shadow with it: the silhouette the shadow mirrors is empty.
+    let Some(style) = self.paint.painted_style() else { return };
     let (dx, dy) = (self.x.unwrap_or(0.0), self.y.unwrap_or(0.0));
     let translated = dx != 0.0 || dy != 0.0;
     if translated {
@@ -467,24 +462,24 @@ impl Buildable for Path {
       };
       builder.save();
       builder.translate(shadow.dx, shadow.dy);
-      match self.dash().filter(|_| self.strokes()) {
+      match self.dash().filter(|_| self.paint.strokes()) {
         Some(dash) => {
-          if self.fills() {
+          if self.paint.fills() {
             builder.draw_path(path, &styled(DrawStyle::Fill));
           }
           builder.draw_path(&self.dashed_path(dash), &styled(DrawStyle::Stroke));
         }
         None => {
-          builder.draw_path(path, &styled(self.paint.draw_style));
+          builder.draw_path(path, &styled(style));
         }
       }
       builder.restore();
     }
-    match self.dash().filter(|_| self.strokes()) {
+    match self.dash().filter(|_| self.paint.strokes()) {
       // Dashing is a stroke property: the fill keeps the whole path, the
       // stroke gets its dashed pieces.
       Some(dash) => {
-        if self.fills() {
+        if self.paint.fills() {
           let mut fill = self.paint_in_bounds();
           fill.set_draw_style(DrawStyle::Fill);
           builder.draw_path(path, &fill);
@@ -494,7 +489,9 @@ impl Buildable for Path {
         builder.draw_path(&self.dashed_path(dash), &stroke);
       }
       None => {
-        builder.draw_path(path, &self.paint_in_bounds());
+        let mut paint = self.paint_in_bounds();
+        paint.set_draw_style(style);
+        builder.draw_path(path, &paint);
       }
     }
     if translated {
@@ -545,7 +542,10 @@ impl Hittable for Path {
     };
     let (x, y, w, h) = (rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
 
-    let half_stroke = self.paint.stroke_width / 2.0;
+    // The hit region follows what paints (painted_style): a stroke without
+    // width is not there to hit.
+    let Some(style) = self.paint.painted_style() else { return false };
+    let half_stroke = if self.paint.strokes() { self.paint.stroke_width / 2.0 } else { 0.0 };
     if pt.x < x - half_stroke || pt.x > x + w + half_stroke || pt.y < y - half_stroke || pt.y > y + h + half_stroke {
       return false;
     }
@@ -561,7 +561,7 @@ impl Hittable for Path {
       _ => lyon_path::FillRule::NonZero,
     };
 
-    match self.paint.draw_style {
+    match style {
       DrawStyle::Fill => hit_test_path(&test_pt, path.iter(), lyon_fill_rule, 0.1),
       DrawStyle::Stroke => point_near_path(&test_pt, path, half_stroke),
       DrawStyle::StrokeAndFill => {

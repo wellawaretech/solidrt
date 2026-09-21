@@ -1,6 +1,6 @@
 # RichTextEditor
 
-Edits a rich text `Document` (styled runs, paragraph attributes) in the same field as `TextInput`: always multiline, same caret, keys, wrapping, and scrolling. Controlled via `value`/`onInput`, or uncontrolled via `defaultValue` (start from `plainDocument("")`). Formatting is driven through `editorRef`, which hands you the document buffer - the component ships no toolbar; the app renders its own controls.
+Edits a rich text `Document` (styled runs, paragraph attributes) in the same field as `TextInput`: always multiline, same caret, keys, wrapping, scrolling and sizing, and the same font fields on `layout` (the base font the document's runs style from). Controlled via `value`/`onInput`, or uncontrolled via `defaultValue` (start from `plainDocument("")`). Formatting is driven through `editorRef`, which hands you the document buffer - the component ships no toolbar; the app renders its own controls.
 
 ```jsx
 import { RichTextEditor, plainDocument } from "@solidrt/components"

@@ -3,6 +3,7 @@
 // shared walker over the flattened subpaths.
 
 use crate::impellers::{DrawStyle, Point, Rect, Size, StrokeCap, StrokeJoin};
+use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::kinds::dash::Pen;
 use crate::rendertree::{Bounded, Path};
 use std::f32::consts::SQRT_2;
@@ -224,4 +225,18 @@ fn path_length_measures_the_walked_curve() {
 fn a_solid_path_needs_no_walk() {
   let path = stroked("M0 0 L10 0", 1.0);
   assert!(path.dash().is_none());
+}
+
+// A stroke without width paints nothing: the bounds hold no outset and the
+// outline is not there to hit; with a fill the interior still is.
+#[test]
+fn zero_stroke_width_has_no_outset_and_no_hit() {
+  let ctx = HitContext { size: Size::new(100.0, 100.0), content: rect(0.0, 0.0, 100.0, 100.0) };
+  let mut path = stroked("M10 10 L90 10 L90 90 L10 90 Z", 0.0);
+  assert_bounds(&path, rect(10.0, 10.0, 80.0, 80.0));
+  assert!(!path.is_in_bounds(Point::new(50.0, 10.0), &ctx));
+  assert!(!path.is_in_bounds(Point::new(50.0, 50.0), &ctx));
+  path.paint.draw_style = DrawStyle::StrokeAndFill;
+  assert!(path.is_in_bounds(Point::new(50.0, 50.0), &ctx));
+  assert!(!path.is_in_bounds(Point::new(50.0, 8.0), &ctx));
 }

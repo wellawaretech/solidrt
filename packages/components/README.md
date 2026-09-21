@@ -129,7 +129,7 @@ Controls with a moving part of their own name it as an extra entry: `Switch` `kn
 
 The components also ship built-in motion with no props at all: state and theme colors fade, a press shrinks the free-standing controls on a quick spring and fades the overlay tints, marks (checkmark, radio dot) pop in and out, moving parts travel on springs, and the overlays (`Modal`, `Tooltip`, the `Select`/`ContextMenu` popups) fade in and out. Timing comes from `theme.motion` (`fast`/`base`/`slow`), and `policy.motion` gates it: `reduced` keeps the fades but snaps everything that moves, `none` snaps it all. A caller's `transition` entry overrides the built-in for that property, and `transition={null}` suppresses a component's built-ins outright.
 
-API: `StyleProps`, `TextLayoutProps`, `Option`, `TransitionProps`, `ComponentTransition`, `TransitionViewProp`, `TransitionStyleProp`, `TransitionScrollProp` - typed and commented in [src/types.ts](./src/types.ts).
+API: `StyleProps`, `FontProps`, `TextLayoutProps`, `EditorLayoutProps`, `Option`, `TransitionProps`, `ComponentTransition`, `TransitionViewProp`, `TransitionStyleProp`, `TransitionScrollProp` - typed and commented in [src/types.ts](./src/types.ts).
 
 ## Typography helpers
 
@@ -245,7 +245,7 @@ API: `SafeArea` - typed and commented in [src/safe-area.tsx](./src/safe-area.tsx
 
 ### TextInput
 
-Text input, single-line by default; `multiline` wraps at the field's width and edits across lines (Enter inserts a newline, Up/Down move by line; grows with content up to `maxRows` unless `layout.height` fixes the box, and scrolls to the caret). Controlled via `value`/`onInput`, or uncontrolled via `defaultValue`; `onSubmit` fires on Enter (single-line only). Also `placeholder`, `maxLength`, `autoFocus`, `disabled`, `onFocus`/`onBlur`, and `hints` for IME behavior (keyboard type, capitalization, autocorrect - identifier-like fields want `{ capitalize: "none", autocorrect: false }`).
+Text input, single-line by default; `multiline` wraps at the field's width and edits across lines (Enter inserts a newline, Up/Down move by line; grows with content up to `maxRows` unless its layout sizes the box, and scrolls to the caret). Controlled via `value`/`onInput`, or uncontrolled via `defaultValue`; `onSubmit` fires on Enter (single-line only). Also `placeholder`, `maxLength`, `autoFocus`, `disabled`, `onFocus`/`onBlur`, and `hints` for IME behavior (keyboard type, capitalization, autocorrect - identifier-like fields want `{ capitalize: "none", autocorrect: false }`). The font fields of `layout` (`fontSize`, `fontFamily`, `lineHeight`, `fontStyle`, `fontWeight`) shape the text as on `Text`, with the rows, caret and scrolling following.
 
 ```jsx
 import { TextInput } from "@solidrt/components"
@@ -265,13 +265,22 @@ function NameField() {
 }
 ```
 
-`style` overrides the themed colors, border, and radius. `autoFocus` focuses on mount (the on-screen keyboard still waits for a tap).
+`style` overrides the themed colors, border, and radius (`borderWidth: 0` draws no border at all, and no focus ring). `autoFocus` focuses on mount (the on-screen keyboard still waits for a tap).
+
+A multiline field sizes like a flex item. Unconstrained, it grows with its content, up to `maxRows` rows and then scrolls. Sized by its layout it is a fixed box that scrolls to the caret: an explicit `height`, or `flexGrow: 1` in a parent with a height (the field fills what is left and scrolls once the text outgrows it), or a parent too small for the content (the field shrinks to fit rather than overflowing).
+
+```jsx
+<View layout={{ flexDirection: "column", height: 400 }}>
+  <Text>Notes</Text>
+  <TextInput multiline layout={{ flexGrow: 1, fontSize: 18 }} />
+</View>
+```
 
 API: `TextInput`, `TextInputProps` - typed and commented in [src/text-input.tsx](./src/text-input.tsx).
 
 ### RichTextEditor
 
-Edits a rich text `Document` (styled runs, paragraph attributes) in the same field as `TextInput`: always multiline, same caret, keys, wrapping, and scrolling. Controlled via `value`/`onInput`, or uncontrolled via `defaultValue` (start from `plainDocument("")`). Formatting is driven through `editorRef`, which hands you the document buffer - the component ships no toolbar; the app renders its own controls.
+Edits a rich text `Document` (styled runs, paragraph attributes) in the same field as `TextInput`: always multiline, same caret, keys, wrapping, scrolling and sizing, and the same font fields on `layout` (the base font the document's runs style from). Controlled via `value`/`onInput`, or uncontrolled via `defaultValue` (start from `plainDocument("")`). Formatting is driven through `editorRef`, which hands you the document buffer - the component ships no toolbar; the app renders its own controls.
 
 ```jsx
 import { RichTextEditor, plainDocument } from "@solidrt/components"

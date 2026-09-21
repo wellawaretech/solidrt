@@ -62,7 +62,9 @@ export { typeStyle, typeWeight, lightOnDark } from "./typography"
 export { space } from "./spacing"
 export type {
   StyleProps,
+  FontProps,
   TextLayoutProps,
+  EditorLayoutProps,
   Option,
   TransitionProps,
   ComponentTransition,

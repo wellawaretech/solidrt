@@ -18,7 +18,7 @@ pub use filter::FilterState;
 pub use line::Line;
 pub use oval::Oval;
 pub(crate) use paint::hash_f32;
-pub use paint::{Gradient, GradientStop, GradientUnits, PaintState};
+pub use paint::{Gradient, GradientStop, GradientUnits, PaintState, DEFAULT_STROKE_WIDTH};
 pub use path::Path;
 pub use rect::Rectangle;
 pub use shadow::ShadowState;

@@ -121,9 +121,6 @@ impl std::fmt::Debug for OwnedCache {
   }
 }
 
-// The characters a wrap unit ends on at a hard break; never shaped.
-const BREAK_CHARS: [char; 4] = ['\n', '\r', '\u{2028}', '\u{2029}'];
-
 // One piece of a wrap unit after splitting it at style-region boundaries.
 struct Piece<R> {
   start: usize,
@@ -215,7 +212,7 @@ pub fn prepare_units(
     });
     for piece in pieces {
       let hard_break = segment.hard_break && piece.last;
-      let word_text = text[piece.start..piece.end].trim_end_matches(BREAK_CHARS);
+      let word_text = text[piece.start..piece.end].trim_end_matches(layout::is_break_char);
       // Only break characters left over after a run boundary: they belong to
       // the piece before them, nothing to shape.
       if word_text.is_empty() && !piece.first {
@@ -281,7 +278,7 @@ impl Text {
           None => {
             // The break characters themselves are not shaped; left alone
             // after a run boundary they belong to the piece before them.
-            let text = self.computed_text[piece.start..piece.end].trim_end_matches(BREAK_CHARS);
+            let text = self.computed_text[piece.start..piece.end].trim_end_matches(layout::is_break_char);
             if text.is_empty() && !piece.first {
               if let Some(prev) = owned.runs.last_mut() {
                 prev.run.hard_break = hard_break;

@@ -89,6 +89,9 @@ impl Buildable for Rectangle {
       draw(builder, &cast, radii, &shadow.to_paint());
       builder.restore();
     }
+    // A zero-width stroke paints nothing (PaintState::painted_style): a
+    // stroke-only shape then draws nothing at all, never a hairline.
+    let Some(style) = self.paint.painted_style() else { return };
     let (path, radii) = self.stroke_path(ctx.size);
     match self.dashed_outline(ctx.size) {
       // Dashing is a stroke property: the fill keeps the whole inset shape,
@@ -96,7 +99,7 @@ impl Buildable for Rectangle {
       // authored box, so a box-relative gradient stays anchored to the
       // element rather than to the inset stroke path.
       Some((outline, dash)) => {
-        if self.fills() {
+        if self.paint.fills() {
           let mut fill = self.paint.to_paint_in(&rect);
           fill.set_draw_style(DrawStyle::Fill);
           draw(builder, &path, radii, &fill);
@@ -105,20 +108,16 @@ impl Buildable for Rectangle {
         stroke.set_draw_style(DrawStyle::Stroke);
         builder.draw_path(&dashed_path(outline.into_iter(), dash), &stroke);
       }
-      None => draw(builder, &path, radii, &self.paint.to_paint_in(&rect)),
+      None => {
+        let mut paint = self.paint.to_paint_in(&rect);
+        paint.set_draw_style(style);
+        draw(builder, &path, radii, &paint);
+      }
     }
   }
 }
 
 impl Rectangle {
-  fn fills(&self) -> bool {
-    matches!(self.paint.draw_style, DrawStyle::Fill | DrawStyle::StrokeAndFill)
-  }
-
-  fn strokes(&self) -> bool {
-    matches!(self.paint.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill)
-  }
-
   // The authored box, its x/y/w/h resolved against the layout size.
   fn geometry(&self, size: Size) -> Rect {
     Rect::new(
@@ -145,7 +144,7 @@ impl Rectangle {
   // A dash's cap reaches along the outline by half the stroke width, which
   // is exactly the inset, so nothing paints past the box.
   pub(crate) fn dashed_outline(&self, size: Size) -> Option<(Vec<Piece>, Dash)> {
-    if !self.strokes() {
+    if !self.paint.strokes() {
       return None;
     }
     let dash = Dash::new(self.on_length, self.off_length, self.dash_offset)?;
@@ -245,10 +244,13 @@ impl Hittable for Rectangle {
 
     // Strokes paint inside the box (see `build`), so the box is the outer edge
     // for every draw style; only a plain stroke has a hole, one stroke width in.
-    match self.paint.draw_style {
-      DrawStyle::Fill | DrawStyle::StrokeAndFill => in_rounded_rect(point, rx, ry, rw, rh, [tl, tr, br, bl]),
-      DrawStyle::Stroke => {
-        let sw = self.paint.stroke_width.max(0.0);
+    // The hit region follows what paints (painted_style): a stroke-only
+    // shape whose stroke has no width hits nothing.
+    match self.paint.painted_style() {
+      None => false,
+      Some(DrawStyle::Fill | DrawStyle::StrokeAndFill) => in_rounded_rect(point, rx, ry, rw, rh, [tl, tr, br, bl]),
+      Some(DrawStyle::Stroke) => {
+        let sw = self.paint.stroke_width;
         let inner = [(tl - sw).max(0.0), (tr - sw).max(0.0), (br - sw).max(0.0), (bl - sw).max(0.0)];
         let in_outer = in_rounded_rect(point, rx, ry, rw, rh, [tl, tr, br, bl]);
         let in_inner =

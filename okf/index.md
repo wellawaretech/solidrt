@@ -255,20 +255,10 @@ Shaped, not started.
   beneath per panel; desktop holds 60 fps with four panels over live content,
   but tiler GPUs pay differently for mid-frame target reads - measure before
   treating the prop as casual on TV/phone.
-- **[backdropFilter shows no blur while an ancestor fades](backlog/backdrop-under-group-opacity.md)** [2026-09-21]
-  A backdropFilter under an opacity-below-1 ancestor stays sharp for the whole
-  fade and snaps to full frost when it ends, because the group-opacity layer
-  becomes the backdrop's root; done means either the blur survives the fade or
-  the containment is documented and warned about in dev.
 - **[One build-output root with per-flow subdirs](backlog/build-output-dirs.md)** [2026-08-21]
   Give dev, render and pack one gitignored output root (dist/) with a subdir
   per flow, fixing render's missing isolate support and clearing the ground
   for pack formats and asset pre-processing.
-- **[An unsized Button fills its row instead of sizing to its content](backlog/button-unsized-fills-row.md)** [2026-09-21]
-  Button falls back to width 100% when size is omitted while its docs promise
-  content sizing, so in a row it squeezes its sibling labels until they wrap;
-  done means code and docs agree, on content sizing unless a consumer shows
-  why not.
 - **[Camera and controls extensions](backlog/camera-and-controls-extensions.md)** [2026-09-17]
   SolidRT has two stock controls (OrbitCamera, FirstPersonCamera) where
   Three.js and Babylon.js ship many with more options; the concrete gap is
@@ -353,12 +343,6 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
-- **[TextInput logs STRICT_READ_UNTRACKED for a ref and for focus moved from an effect](backlog/editor-field-untracked-prop-reads.md)** [2026-09-21]
-  EditorField reads props.ref in its ref callback and props.onBlur in its blur
-  handler, both of which can run in an untracked owned scope, so a ref'd field
-  warns at every mount and autoFocus warns whenever another field was focused;
-  done means neither warns, in EditorField and every wrapper that forwards
-  ref.
 - **[Wire up the mouse cursor - element cursor prop over SetCursor](backlog/element-cursor-prop.md)** [2026-09-02]
   AlloyCommand::SetCursor and SetCursorVisible exist with a CSS-vocabulary
   Cursor enum but have no sender anywhere; give apps the web's cursor model -
@@ -808,15 +792,6 @@ Shaped, not started.
   solid. Extend it to a CSS-style list with line-through/overline,
   textDecorationColor and dashed/dotted/wavy/double, on the same self-drawn
   per-line mechanism.
-- **[A TextInput cannot fill its space or set its font size](backlog/text-input-fill-and-font-size.md)** [2026-09-21]
-  A multiline TextInput becomes a fixed scrolling box only with an explicit
-  height, so filling a flex parent needs the undocumented flexGrow 1 plus
-  height 0, and its font is always the theme body size; done means flexGrow
-  alone fills and scrolls, and the field takes a font size like Text.
-- **[A TextInput with borderWidth 0 still draws a hairline border](backlog/text-input-zero-border-hairline.md)** [2026-09-21]
-  style borderWidth 0 leaves a faint outline in the theme border colour,
-  visible on coloured cards; done means a zero width draws no border, on
-  TextInput and on any other element whose stroke width can be 0.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -839,11 +814,6 @@ Shaped, not started.
   make one at all - a finger drag deliberately scrolls - and no pointer
   selects a whole word; add long-press-to-select with draggable handles on
   touch, and double-click word selection for the mouse.
-- **[A trailing line break leaves the caret on the previous line](backlog/text-trailing-break-caret-line.md)** [2026-09-21]
-  After Enter at the end of a multiline TextInput the caret stays after the
-  last character until more text is typed, because prepareText does not flag a
-  break that ends the text; done means a text ending in a break has its blank
-  last line and the caret sits on it.
 - **[No way to tile or repeat a texture](backlog/texture-tile-mode.md)** [2026-08-14]
   Textures always blit once into their destination rect, so a repeating
   background has to be faked with one element per tile or a shader bake;
@@ -1242,10 +1212,20 @@ Finished, kept for the reasoning.
   runtime waits for, plus a launch fact saying whether the system killed the
   previous session. Includes making Android exit() finish the activity instead
   of backgrounding it."
+- **[backdropFilter shows no blur while an ancestor fades](done/backdrop-under-group-opacity.md)** [2026-09-21]
+  A backdropFilter under an opacity-below-1 ancestor stays sharp for the whole
+  fade and snaps to full frost when it ends, because the group-opacity layer
+  becomes the backdrop's root; done means either the blur survives the fade or
+  the containment is documented and warned about in dev.
 - **[Bindings reject an explicitly passed undefined for an optional argument](done/binding-optional-arg-undefined.md)** [2026-08-13]
   An omitted option object arrives at the binding as an explicit undefined,
   which Opt<Object> refuses - so createTexture without opts throws and every
   <Image> load fails.
+- **[An unsized Button fills its row instead of sizing to its content](done/button-unsized-fills-row.md)** [2026-09-21]
+  Button falls back to width 100% when size is omitted while its docs promise
+  content sizing, so in a row it squeezes its sibling labels until they wrap;
+  done means code and docs agree, on content sizing unless a consumer shows
+  why not.
 - **[A bare string argument to call_debug arrives JSON-quoted](done/call-debug-string-arg-encoding.md)** [2026-09-03]
   Calling a debug command with a bare string argument delivers it to the
   handler with literal quote characters, so a membership guard rejects it and
@@ -1329,6 +1309,12 @@ Finished, kept for the reasoning.
   pass, so descendants kept their last boxes and kept painting; now the pass
   runs, and paint, hit and envelope walks skip hidden subtrees through one
   Element::is_hidden gate.
+- **[TextInput logs STRICT_READ_UNTRACKED for a ref and for focus moved from an effect](done/editor-field-untracked-prop-reads.md)** [2026-09-21]
+  EditorField reads props.ref in its ref callback and props.onBlur in its blur
+  handler, both of which can run in an untracked owned scope, so a ref'd field
+  warns at every mount and autoFocus warns whenever another field was focused;
+  done means neither warns, in EditorField and every wrapper that forwards
+  ref.
 - **[Engine-side HTTP disk cache](done/engine-http-cache.md)** [2026-07-27]
   Explicit opt-in disk cache in the forge fetch layer, needed by a production
   app doing many image fetches; designed and shipped as
@@ -1970,12 +1956,21 @@ Finished, kept for the reasoning.
   a word at a time in a wrapping row; Impeller shapes styled runs natively, so
   expose them as <span> children of <text> plus the paragraph props the API
   leaves unused.
+- **[A TextInput cannot fill its space or set its font size](done/text-input-fill-and-font-size.md)** [2026-09-21]
+  A multiline TextInput becomes a fixed scrolling box only with an explicit
+  height, so filling a flex parent needs the undocumented flexGrow 1 plus
+  height 0, and its font is always the theme body size; done means flexGrow
+  alone fills and scrolls, and the field takes a font size like Text.
 - **[TextInput range selection](done/text-input-selection.md)** [2026-09-02]
   The text buffer already models an anchor/focus selection, but TextInput
   never grows one - no shift+movement, no drag, no highlight, no select-all,
   no delete-selection path from the UI - so copying or replacing a stretch of
   text is impossible; wire the gestures and keys onto the buffer's selection
   and draw it from the editor layout's line stops.
+- **[A TextInput with borderWidth 0 still draws a hairline border](done/text-input-zero-border-hairline.md)** [2026-09-21]
+  style borderWidth 0 leaves a faint outline in the theme border colour,
+  visible on coloured cards; done means a zero width draws no border, on
+  TextInput and on any other element whose stroke width can be 0.
 - **[Own the text layout, demote drawParagraph to a shaper](done/text-layout-owned.md)** [2026-08-16]
   Impeller's paragraph is a black box for line breaking, so inline elements,
   exclusions, custom breaking and cheap re-layout are unreachable; experiment
@@ -1986,6 +1981,11 @@ Finished, kept for the reasoning.
   width from a cursor, draw a laid-out line) to app code, so editorial layouts
   (column handoff, obstacles, fitted headlines) are app work on a stable
   foundation instead of ever more <text> props.
+- **[A trailing line break leaves the caret on the previous line](done/text-trailing-break-caret-line.md)** [2026-09-21]
+  After Enter at the end of a multiline TextInput the caret stays after the
+  last character until more text is typed, because prepareText does not flag a
+  break that ends the text; done means a text ending in a break has its blank
+  last line and the caret sits on it.
 - **[Underline for <text> and <span>](done/text-underline.md)** [2026-08-18]
   The owned text engine shapes one paragraph per wrap unit and Impeller's
   decoration skips trailing whitespace, so a delegated underline is gapped at

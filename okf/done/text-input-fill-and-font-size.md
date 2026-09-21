@@ -2,6 +2,7 @@
 title: A TextInput cannot fill its space or set its font size
 description: A multiline TextInput becomes a fixed scrolling box only with an explicit height, so filling a flex parent needs the undocumented flexGrow 1 plus height 0, and its font is always the theme body size; done means flexGrow alone fills and scrolls, and the field takes a font size like Text.
 created: 2026-09-21
+completed: 2026-09-21
 ---
 
 # A TextInput cannot fill its space or set its font size

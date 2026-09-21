@@ -2,6 +2,7 @@
 title: An unsized Button fills its row instead of sizing to its content
 description: Button falls back to width 100% when size is omitted while its docs promise content sizing, so in a row it squeezes its sibling labels until they wrap; done means code and docs agree, on content sizing unless a consumer shows why not.
 created: 2026-09-21
+completed: 2026-09-21
 ---
 
 # An unsized Button fills its row instead of sizing to its content

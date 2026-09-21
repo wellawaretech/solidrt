@@ -15,15 +15,17 @@
 use std::cell::Cell;
 
 use crate::impellers::{Matrix, Point, Rect, Size};
-use crate::rendertree::{Bounded, Element, ElementKind, PlatformContext, RenderTree, ShadowState, Vector};
+use crate::rendertree::{
+  BoundaryMode, Bounded, Element, ElementKind, PlatformContext, RenderTree, ShadowState, Vector,
+};
 use taffy::style::Overflow;
 
 // Half-extent standing in for "no bound on this axis": large enough to cover
 // any window, small enough to stay exact in f32 arithmetic.
 const HALF_INF: f32 = 1.0e7;
 
-// Antialiasing and hairline strokes bleed a fraction of a pixel past a shape's
-// geometry; every own extent grows by this much.
+// Antialiasing bleeds a fraction of a pixel past a shape's geometry; every
+// own extent grows by this much.
 const AA_OUTSET: f32 = 1.0;
 
 /// Conservative painted extent of a subtree, in the node's slot frame.
@@ -114,16 +116,57 @@ impl Extent {
   }
 }
 
-/// Per-element cache of the envelope. Interior-mutable because painting
-/// traverses a shared tree; keyed on the frame size the node inherited, since a
-/// detached node's own extent resolves against it.
+/// Per-element cache of the envelope, and beside it of `backdrop_below`,
+/// which the same invalidation walks keep current. Interior-mutable because
+/// painting traverses a shared tree; the envelope is keyed on the frame size
+/// the node inherited, since a detached node's own extent resolves against
+/// it.
 #[derive(Default)]
-pub struct EnvelopeCache(Cell<Option<(Size, Extent)>>);
+pub struct EnvelopeCache {
+  envelope: Cell<Option<(Size, Extent)>>,
+  backdrop_below: Cell<Option<bool>>,
+}
 
 impl EnvelopeCache {
   pub fn clear(&self) {
-    self.0.set(None);
+    self.envelope.set(None);
+    self.backdrop_below.set(None);
   }
+}
+
+/// Whether a glass panel (a view with a backdrop filter) paints somewhere
+/// below `node_id`, the node itself excluded: the gate for
+/// composite::emit_backdrops_below, so a fading subtree without glass costs
+/// nothing extra. Hidden subtrees are not looked into, nor are backdrop
+/// roots (a snapshot boundary, a filtered view): their panels never read the
+/// window, so there is nothing to emit for them. Cached on the element and
+/// cleared by every paint invalidation that reaches it - an insert, a
+/// removal, a backdrop or filter write anywhere below all walk up through
+/// invalidate_paint - so a change recomputes only the ancestor chain.
+pub fn backdrop_below(scene: &RenderTree, node_id: u64) -> bool {
+  let element = scene.node(node_id);
+  if let Some(below) = element.envelope.backdrop_below.get() {
+    return below;
+  }
+  let below = element.children.iter().any(|&child_id| {
+    let child = scene.node(child_id);
+    if child.is_hidden() {
+      return false;
+    }
+    let panel = matches!(&child.kind, ElementKind::View(v) if v.active_backdrop_filter().is_some());
+    panel || (!is_backdrop_root(child) && backdrop_below(scene, child_id))
+  });
+  element.envelope.backdrop_below.set(Some(below));
+  below
+}
+
+/// A node whose subtree's backdrop panels read an offscreen of its own
+/// rather than the window: a snapshot boundary (its raster) or a filtered
+/// view (its effect layer). Its own backdrop is still live - emitted before
+/// the raster or the layer - so a root is looked at, never into.
+pub(crate) fn is_backdrop_root(element: &Element) -> bool {
+  let filtered = matches!(&element.kind, ElementKind::View(v) if v.active_filter().is_some());
+  filtered || matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa)
 }
 
 // The frame a node's detached children inherit: its own layout box (design
@@ -167,8 +210,10 @@ fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) ->
       Some(_) => Extent::Bounded(Rect::new(Point::zero(), frame)),
       None => Extent::Empty,
     },
-    ElementKind::Rectangle(r) => with_shadow(r.local_bounds(frame), AA_OUTSET + r.paint.stroke_width, &r.shadow),
-    ElementKind::Oval(o) => with_shadow(o.local_bounds(frame), AA_OUTSET + o.paint.stroke_width, &o.shadow),
+    // A box kind's stroke paints inside its box (Rectangle::build), so the
+    // box plus AA is the whole painted area at any stroke width.
+    ElementKind::Rectangle(r) => with_shadow(r.local_bounds(frame), AA_OUTSET, &r.shadow),
+    ElementKind::Oval(o) => with_shadow(o.local_bounds(frame), AA_OUTSET, &o.shadow),
     ElementKind::Texture(t) => inflate(t.local_bounds(frame), AA_OUTSET),
     ElementKind::Text(t) => match t.painted_extent(platform, content) {
       Some(r) => inflate(r, AA_OUTSET),
@@ -193,13 +238,13 @@ fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) ->
 /// boundary recordings, so the two can never disagree about staleness).
 pub fn envelope(scene: &RenderTree, node_id: u64, platform: &PlatformContext, inherited: Size) -> Extent {
   let element = scene.node(node_id);
-  if let Some((size, extent)) = element.envelope.0.get() {
+  if let Some((size, extent)) = element.envelope.envelope.get() {
     if size == inherited {
       return extent;
     }
   }
   let extent = compute_envelope(scene, element, platform, inherited);
-  element.envelope.0.set(Some((inherited, extent)));
+  element.envelope.envelope.set(Some((inherited, extent)));
   extent
 }
 

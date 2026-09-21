@@ -172,6 +172,11 @@ export interface PaintProps {
   strokeCap?: StrokeCap
   strokeJoin?: StrokeJoin
   strokeMiter?: number
+  /**
+   * Stroke thickness in logical px; default 1 (SVG's). 0 draws no stroke at
+   * all, like CSS `border-width: 0` - never a hairline - so a stroke-only
+   * shape (or a line) at 0 draws nothing.
+   */
   strokeWidth?: number
 }
 
@@ -804,7 +809,12 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
    * pixels beneath at that point in the frame, so treat it as a deliberate
    * panel, not a casual style. Inside a `repaintBoundary="snapshot"`
    * subtree it sees only that boundary's own offscreen content, never what
-   * is behind the boundary (the same containment `blendMode` has there).
+   * is behind the boundary (the same containment `blendMode` has there),
+   * and under an ancestor with a `filter` it sees that ancestor's
+   * composited layer. An ancestor's `opacity` is not a containment: the
+   * glass keeps its blur through the fade (the runtime re-filters the
+   * window ahead of the fading group at the group's opacity), so a panel
+   * entering with `from: { opacity: 0 }` frosts in as it appears.
    */
   backdropFilter?: FilterProps
 }

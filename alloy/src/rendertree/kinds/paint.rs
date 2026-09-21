@@ -153,8 +153,10 @@ pub struct PaintState {
 }
 
 // Stroke metric defaults, shared by Default and the null-reset paths in the
-// setters below.
-pub const DEFAULT_STROKE_WIDTH: f32 = 0.0;
+// setters below. The width is SVG's default (1 user unit): an unsized stroke
+// is one logical pixel, never a renderer-defined hairline, and a width of 0
+// draws no stroke at all (`painted_style`).
+pub const DEFAULT_STROKE_WIDTH: f32 = 1.0;
 pub const DEFAULT_STROKE_MITER: f32 = 4.0;
 
 impl Default for PaintState {
@@ -294,13 +296,39 @@ impl PaintState {
     self.build_paint(Some((bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height)))
   }
 
+  // Whether the style fills the interior.
+  pub fn fills(&self) -> bool {
+    matches!(self.draw_style, DrawStyle::Fill | DrawStyle::StrokeAndFill)
+  }
+
+  // Whether the paint strokes: a stroking style with a positive width. A
+  // zero (or negative) width strokes nothing, as CSS `border-width: 0` and
+  // SVG `stroke-width: 0` draw nothing - it is not a hairline, which is what
+  // Impeller (like Skia) makes of a zero-width stroke handed to it.
+  pub fn strokes(&self) -> bool {
+    matches!(self.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill) && self.stroke_width > 0.0
+  }
+
+  // The style to hand the renderer: the declared one with a zero-width
+  // stroke dropped from it, or None when nothing would paint. Every kind's
+  // build draws through this so a zero stroke width means "no stroke" in
+  // one place.
+  pub fn painted_style(&self) -> Option<DrawStyle> {
+    match (self.fills(), self.strokes()) {
+      (true, true) => Some(DrawStyle::StrokeAndFill),
+      (true, false) => Some(DrawStyle::Fill),
+      (false, true) => Some(DrawStyle::Stroke),
+      (false, false) => None,
+    }
+  }
+
   // How far a stroke centered on its geometry (line, path) reaches past it:
   // half the width, and more where a square cap (* sqrt 2, its corner on a
   // diagonal) or a miter join (* stroke_miter, the tip's limit) pokes out.
   // `capped`: the geometry has open ends; `joined`: it has a vertex between
   // two segments. Zero for a plain fill.
   pub fn stroke_outset(&self, capped: bool, joined: bool) -> f32 {
-    if !matches!(self.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill) {
+    if !self.strokes() {
       return 0.0;
     }
     let cap = match self.stroke_cap {
@@ -314,19 +342,18 @@ impl PaintState {
     self.stroke_width / 2.0 * cap.max(join)
   }
 
-  // Half the stroke width for the stroked draw styles, 0 for a plain fill.
+  // Half the stroke width when the paint strokes, 0 for a plain fill or a
+  // zero-width stroke.
   // Rect and oval inset their geometry by this so a stroke paints inside its
   // bounds (CSS border semantics) instead of straddling them; see
   // `Rectangle::build`. Clamped to half the shorter side so a stroke wider
   // than the shape collapses onto the shape's center rather than inverting it.
   pub fn stroke_inset(&self, w: f32, h: f32) -> f32 {
-    match self.draw_style {
-      DrawStyle::Fill => 0.0,
-      DrawStyle::Stroke | DrawStyle::StrokeAndFill => {
-        let limit = (w / 2.0).min(h / 2.0).max(0.0);
-        (self.stroke_width / 2.0).clamp(0.0, limit)
-      }
+    if !self.strokes() {
+      return 0.0;
     }
+    let limit = (w / 2.0).min(h / 2.0).max(0.0);
+    (self.stroke_width / 2.0).clamp(0.0, limit)
   }
 
   fn build_paint(&self, bounds: Option<(f32, f32, f32, f32)>) -> Paint {

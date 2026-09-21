@@ -14,6 +14,7 @@ use alloy::impellers::{
 };
 use alloy::rendertree::{
   BoundaryMode, Element, ElementKind, Gradient, Line, OriginCoord, PaintState, TextAnchor, TextureFit, View,
+  DEFAULT_STROKE_WIDTH,
 };
 
 /// A read-back property value, kept engine- and serializer-free: the caller
@@ -309,7 +310,7 @@ fn read_paint(paint: &PaintState, default_style: DrawStyle, out: &mut Vec<(&'sta
   if paint.blend_mode != BlendMode::SourceOver {
     out.push(("blendMode", ReadValue::Str(blend_mode_name(paint.blend_mode).into())));
   }
-  if paint.stroke_width != 0.0 {
+  if paint.stroke_width != DEFAULT_STROKE_WIDTH {
     out.push(("strokeWidth", ReadValue::Num(paint.stroke_width as f64)));
   }
   if paint.stroke_cap != StrokeCap::Butt {

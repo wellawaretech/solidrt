@@ -235,14 +235,49 @@ export interface Option {
 }
 
 // Text shaping affects measurement, so font props belong with layout rather
-// than style. These end up on the inner <text> node, while the box layout
-// fields go on the wrapping <view>.
-export interface TextLayoutProps extends LayoutProps {
+// than style. The font fields shape the glyphs (and so measure them); a
+// component draws its text with them and gives the box fields to its
+// wrapping <view>. Text adds the paragraph-level fields; an editable field
+// takes the font fields alone, since it lays its own lines out.
+export interface FontProps {
   fontFamily?: FontFamily
   fontSize?: number
   lineHeight?: number
   fontStyle?: FontStyle
   fontWeight?: FontWeight
+}
+
+export interface TextLayoutProps extends LayoutProps, FontProps {
   textAlign?: TextAlign
   maxLines?: number
+}
+
+/** The layout of an editable text field: the box, plus the font its text is shaped in. */
+export interface EditorLayoutProps extends LayoutProps, FontProps {}
+
+// The keys of FontProps, and with them the paragraph-level fields of
+// TextLayoutProps, for splitting a layout object into what the text node
+// takes and what the box takes.
+const FONT_KEYS: readonly string[] = ["fontFamily", "fontSize", "lineHeight", "fontStyle", "fontWeight"]
+const TEXT_KEYS: readonly string[] = [...FONT_KEYS, "textAlign", "maxLines"]
+
+/**
+ * Splits a layout object into the fields the text node takes (the font, plus
+ * `textAlign`/`maxLines` when `paragraph`) and the fields that stay on the
+ * box <view>. Reactive like any props read when called in a tracked scope.
+ */
+export function splitTextLayout(
+  layout: LayoutProps | undefined,
+  paragraph = false,
+): { text: Record<string, unknown>; box: LayoutProps } {
+  let text: Record<string, unknown> = {}
+  let box: Record<string, unknown> = {}
+  if (!layout) return { text, box }
+  let keys = paragraph ? TEXT_KEYS : FONT_KEYS
+  for (let key in layout) {
+    let value = (layout as Record<string, unknown>)[key]
+    if (keys.includes(key)) text[key] = value
+    else box[key] = value
+  }
+  return { text, box: box as LayoutProps }
 }

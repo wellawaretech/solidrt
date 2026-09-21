@@ -1,4 +1,5 @@
-use crate::rendertree::hit::{locals_along_path, DefaultHitTester, HitTester};
+use crate::impellers::DrawStyle;
+use crate::rendertree::hit::{self, locals_along_path, DefaultHitTester, HitTester, Hittable};
 use crate::rendertree::*;
 
 fn attached() -> Element {
@@ -396,4 +397,32 @@ fn hidden_subtree_is_not_hit() {
   let path = DefaultHitTester.hit_test(&tree, Point::new(100.0, 100.0));
   let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
   assert_eq!(ids, vec![1, 4]);
+}
+
+// A box kind's hit region follows what paints: a stroke-only rect or oval
+// whose stroke has no width draws nothing and hits nothing, and keeps only
+// its interior once it fills too.
+#[test]
+fn zero_stroke_width_box_kinds_hit_nothing() {
+  let ctx =
+    hit::HitContext { size: Size::new(100.0, 100.0), content: Rect::new(Point::zero(), Size::new(100.0, 100.0)) };
+  let mut rect = Rectangle::default();
+  rect.paint.draw_style = DrawStyle::Stroke;
+  rect.paint.stroke_width = 4.0;
+  assert!(rect.is_in_bounds(Point::new(1.0, 50.0), &ctx));
+  rect.paint.stroke_width = 0.0;
+  assert!(!rect.is_in_bounds(Point::new(1.0, 50.0), &ctx));
+  assert!(!rect.is_in_bounds(Point::new(50.0, 50.0), &ctx));
+  rect.paint.draw_style = DrawStyle::StrokeAndFill;
+  assert!(rect.is_in_bounds(Point::new(50.0, 50.0), &ctx));
+
+  let mut oval = Oval::default();
+  oval.paint.draw_style = DrawStyle::Stroke;
+  oval.paint.stroke_width = 4.0;
+  assert!(oval.is_in_bounds(Point::new(2.0, 50.0), &ctx));
+  oval.paint.stroke_width = 0.0;
+  assert!(!oval.is_in_bounds(Point::new(2.0, 50.0), &ctx));
+  assert!(!oval.is_in_bounds(Point::new(50.0, 50.0), &ctx));
+  oval.paint.draw_style = DrawStyle::StrokeAndFill;
+  assert!(oval.is_in_bounds(Point::new(50.0, 50.0), &ctx));
 }

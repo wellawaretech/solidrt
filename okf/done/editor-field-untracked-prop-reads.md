@@ -2,6 +2,7 @@
 title: TextInput logs STRICT_READ_UNTRACKED for a ref and for focus moved from an effect
 description: EditorField reads props.ref in its ref callback and props.onBlur in its blur handler, both of which can run in an untracked owned scope, so a ref'd field warns at every mount and autoFocus warns whenever another field was focused; done means neither warns, in EditorField and every wrapper that forwards ref.
 created: 2026-09-21
+completed: 2026-09-21
 ---
 
 # TextInput logs STRICT_READ_UNTRACKED for a ref and for focus moved from an effect

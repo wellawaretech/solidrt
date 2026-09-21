@@ -1,4 +1,4 @@
-import { Show, children } from "@solidrt/core"
+import { Show, children, untrack } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
@@ -65,7 +65,10 @@ export function Item(props: ItemProps) {
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         press.ref(n)
-        props.ref?.(n)
+        // A ref callback runs in the element's owned scope, where a prop
+        // read warns in dev (STRICT_READ_UNTRACKED); the caller's ref is a
+        // one-shot, read untracked.
+        untrack(() => props.ref)?.(n)
       }}
       repaintBoundary
       flexDirection="row"

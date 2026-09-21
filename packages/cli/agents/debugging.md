@@ -206,7 +206,15 @@ when exactly one client is connected.
   cadence, not the engine's. `frames: 0` means the picture did not change
   at all in the window. Probes quote the window's `missedPresents` as the
   primary jank figure (presents the display missed while a next frame was
-  demanded - the repeated frame every average hides); `slowFrames`,
+  demanded - the repeated frame every average hides); `cadenceHold` is
+  the whole number of refreshes each frame interval is currently held to
+  below the refresh rate (1 = no hold; a held interval is not a miss),
+  which the client chooses from the app's frame work time where the
+  policy is on (touch and remote-driven clients) and `SRT_CADENCE_HOLD`
+  (`off`, `auto`, or a number of refreshes) pins for a measurement;
+  `frameWorkMeanMs` / `frameWorkMaxMs` are that work time over the last
+  second (frame signal to swap call plus GPU time), what the hold's
+  step-down prediction reads; `slowFrames`,
   `gpuFrameExecMsPerFrame`, `fenceTimeoutsPerSec` and `rasterCmdMsPerSec`
   say why. The `gpu*ExecMs` figures are absent (not 0) when the client's
   context has no timer queries or when the startup attribution self-test

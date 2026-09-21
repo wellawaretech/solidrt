@@ -18,7 +18,7 @@ pub use frame::{Commit, FrameBuilder, FrameDriver, PendingFrame};
 pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use kinds::{
   fit_rects, FilterState, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle,
-  ShadowState, Texture, TextureFit, View, Window,
+  ShadowState, Texture, TextureFit, View, Window, DEFAULT_STROKE_WIDTH,
 };
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
@@ -80,6 +80,24 @@ pub struct BuildContext<'a> {
   pub snapshots_reused: u32,
   pub snapshots_rerendered: u32,
   pub snapshots_rasterized: u32,
+  /// Glass panels whose backdrop layer was emitted ahead of a fading
+  /// ancestor's opacity group this frame (composite::emit_backdrops_below).
+  pub backdrops_prepainted: u32,
+  /// Set while a backdrops-only pass runs (composite::emit_backdrops_below):
+  /// the walk emits only the glass panels' backdrop layers, faded by the
+  /// pass's accumulated opacity, and draws nothing else.
+  pub backdrop_pass: Option<BackdropPass>,
+}
+
+/// The state of a backdrops-only pass (composite::emit_backdrops_below).
+#[derive(Clone, Copy)]
+pub struct BackdropPass {
+  /// The product of the fading ancestors' opacities between the pass root
+  /// and the walk's current node, applied to every panel emitted.
+  pub alpha: f32,
+  /// The fading node the pass was started for; its own backdrop is the
+  /// regular composite path's to emit, so the pass skips it.
+  pub root: u64,
 }
 
 impl<'a> BuildContext<'a> {
@@ -98,8 +116,43 @@ impl<'a> BuildContext<'a> {
       snapshots_reused: 0,
       snapshots_rerendered: 0,
       snapshots_rasterized: 0,
+      backdrops_prepainted: 0,
+      backdrop_pass: None,
     }
   }
+
+  /// The per-walk counters an isolated descent (a capture, a reach under a
+  /// cache) must not add to the frame's: taken before, put back after.
+  pub(crate) fn walk_stats(&self) -> WalkStats {
+    WalkStats {
+      boundaries_reused: self.boundaries_reused,
+      boundaries_recorded: self.boundaries_recorded,
+      snapshots_reused: self.snapshots_reused,
+      snapshots_rerendered: self.snapshots_rerendered,
+      snapshots_rasterized: self.snapshots_rasterized,
+      backdrops_prepainted: self.backdrops_prepainted,
+    }
+  }
+
+  pub(crate) fn restore_walk_stats(&mut self, stats: WalkStats) {
+    self.boundaries_reused = stats.boundaries_reused;
+    self.boundaries_recorded = stats.boundaries_recorded;
+    self.snapshots_reused = stats.snapshots_reused;
+    self.snapshots_rerendered = stats.snapshots_rerendered;
+    self.snapshots_rasterized = stats.snapshots_rasterized;
+    self.backdrops_prepainted = stats.backdrops_prepainted;
+  }
+}
+
+/// A snapshot of BuildContext's walk counters (see `walk_stats`).
+#[derive(Clone, Copy)]
+pub(crate) struct WalkStats {
+  boundaries_reused: u32,
+  boundaries_recorded: u32,
+  snapshots_reused: u32,
+  snapshots_rerendered: u32,
+  snapshots_rasterized: u32,
+  backdrops_prepainted: u32,
 }
 
 /// Measure context passed during layout. Engine state (platform, alloy) comes

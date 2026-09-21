@@ -169,15 +169,22 @@ let refreshRate = 60
 
 /**
  * Calls `fn` before every frame is painted: `tick` is the time in ms, `frame` is
- * the present count, and `rate` is the current refresh rate in Hz. `tick` is paced
- * by the runtime (one refresh period per present, slow-corrected toward the wall
- * clock) so animations driven off it stay smooth even when swap-return times
- * jitter, and it is continuous across hot reloads: every tick an instance
- * sees is on one timebase, so dt is well-defined from the second call on.
- * Timers freeze together with frame callbacks under the dev tools' clock
- * control, but measure their delays against the wall clock, not this paced
- * timeline. performance.now() is not on it either: it is real elapsed time
- * for measuring work; Date.now() is calendar time.
+ * the present count, and `rate` is the current refresh rate in Hz. `tick`
+ * advances by the display refreshes since the previous frame, as the runtime
+ * counts them: exactly one refresh period per frame while the app keeps the
+ * refresh rate, and whole multiples of it when a frame takes longer (the
+ * requestAnimationFrame contract; a 21 fps app on a 90 Hz display sees
+ * 44 and 56 ms deltas, because that is how long each frame was on screen).
+ * Deltas are therefore honest and never lag the wall clock; an app that
+ * wants motion smoother than its own frame rate steps its simulation at a
+ * fixed rate or averages the deltas itself. A gap over half a second (the
+ * app was backgrounded) advances one period, not the gap. The timebase is
+ * continuous across hot reloads: every tick an instance sees is on one
+ * timebase, so dt is well-defined from the second call on. Timers freeze
+ * together with frame callbacks under the dev tools' clock control, but
+ * measure their delays against the wall clock, not this frame timeline.
+ * performance.now() is not on it either: it is real elapsed time for
+ * measuring work; Date.now() is calendar time.
  * Returns a cleanup function; also auto-cleans within an owned scope. Outside
  * one - an effect's apply phase, an event handler - the returned cleanup is
  * the only handle, so return it from the apply (`return onFrame(...)`) to run

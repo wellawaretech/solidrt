@@ -40,6 +40,8 @@ impl Buildable for Oval {
       builder.draw_oval(&cast, &shadow.to_paint());
       builder.restore();
     }
+    // A zero-width stroke paints nothing (PaintState::painted_style).
+    let Some(style) = self.paint.painted_style() else { return };
     let path = self.stroke_path(ctx.size);
     match self.dashed_outline(ctx.size) {
       // Dashing is a stroke property: the fill keeps the whole inset oval,
@@ -47,7 +49,7 @@ impl Buildable for Oval {
       // authored box, so a box-relative gradient stays anchored to the
       // element rather than to the inset stroke path.
       Some((outline, dash)) => {
-        if self.fills() {
+        if self.paint.fills() {
           let mut fill = self.paint.to_paint_in(&rect);
           fill.set_draw_style(DrawStyle::Fill);
           builder.draw_oval(&path, &fill);
@@ -57,21 +59,15 @@ impl Buildable for Oval {
         builder.draw_path(&dashed_path(outline.into_iter(), dash), &stroke);
       }
       None => {
-        builder.draw_oval(&path, &self.paint.to_paint_in(&rect));
+        let mut paint = self.paint.to_paint_in(&rect);
+        paint.set_draw_style(style);
+        builder.draw_oval(&path, &paint);
       }
     }
   }
 }
 
 impl Oval {
-  fn fills(&self) -> bool {
-    matches!(self.paint.draw_style, DrawStyle::Fill | DrawStyle::StrokeAndFill)
-  }
-
-  fn strokes(&self) -> bool {
-    matches!(self.paint.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill)
-  }
-
   // The authored box, its x/y/w/h resolved against the layout size.
   fn geometry(&self, size: Size) -> Rect {
     Rect::new(
@@ -95,7 +91,7 @@ impl Oval {
   // a declared `pathLength` (SVG) mapping the author's units onto the
   // outline's length. As on `Rectangle`, a dash's cap never leaves the box.
   pub(crate) fn dashed_outline(&self, size: Size) -> Option<(Vec<Piece>, Dash)> {
-    if !self.strokes() {
+    if !self.paint.strokes() {
       return None;
     }
     let dash = Dash::new(self.on_length, self.off_length, self.dash_offset)?;
@@ -195,14 +191,17 @@ impl Hittable for Oval {
     let inside = (dx / rx) * (dx / rx) + (dy / ry) * (dy / ry) <= 1.0;
 
     // Strokes paint inside the box (see `build`), so the box is the outer edge
-    // for every draw style; only a plain stroke has a hole, one stroke width in.
-    match self.paint.draw_style {
-      DrawStyle::Fill | DrawStyle::StrokeAndFill => inside,
-      DrawStyle::Stroke => {
+    // for every draw style; only a plain stroke has a hole, one stroke width
+    // in. The region follows what paints (painted_style): a stroke-only oval
+    // whose stroke has no width hits nothing.
+    match self.paint.painted_style() {
+      None => false,
+      Some(DrawStyle::Fill | DrawStyle::StrokeAndFill) => inside,
+      Some(DrawStyle::Stroke) => {
         if !inside {
           return false;
         }
-        let sw = self.paint.stroke_width.max(0.0);
+        let sw = self.paint.stroke_width;
         let rx_inner = rx - sw;
         let ry_inner = ry - sw;
         if rx_inner <= 0.0 || ry_inner <= 0.0 {

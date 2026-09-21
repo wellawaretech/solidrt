@@ -8,7 +8,9 @@ use std::sync::mpsc::channel;
 use crate::alloy_plugins::properties::apply_jsx;
 use crate::alloy_plugins::properties::transition::{anim_prop, decode_node_entry, decode_stagger, LaneRule};
 use crate::alloy_plugins::value::PropValue;
-use alloy::rendertree::{AnimProp, AnimValue, Curve, Damage, Element, ElementKind, TransitionEntry, TransitionSpec};
+use alloy::rendertree::{
+  AnimProp, AnimValue, Curve, Damage, Element, ElementKind, TransitionEntry, TransitionSpec, DEFAULT_STROKE_WIDTH,
+};
 
 fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
   let mut el = Element::from_kind(kind).expect("known kind");
@@ -667,12 +669,13 @@ fn null_resets_props_to_defaults() {
   let ElementKind::Rectangle(r) = &el.kind else { panic!("rect kind") };
   assert_eq!((r.w, r.radius), (None, None));
 
-  // Paint metrics reset to the PaintState defaults.
+  // Paint metrics reset to the PaintState defaults (the stroke width to
+  // SVG's 1, not to 0, which would draw no stroke).
   let mut el = Element::from_kind("rect").expect("known kind");
   apply_el(&mut el, "strokeWidth", num(8.0)).expect("strokeWidth applies");
   apply_el(&mut el, "strokeWidth", PropValue::Null).expect("null resets strokeWidth");
   let ElementKind::Rectangle(r) = &el.kind else { panic!("rect kind") };
-  assert_eq!(r.paint.stroke_width, 0.0);
+  assert_eq!(r.paint.stroke_width, DEFAULT_STROKE_WIDTH);
 
   // A span's numeric override clears back to inheriting the paragraph value.
   let mut el = Element::from_kind("span").expect("known kind");

@@ -67,6 +67,26 @@ fn points_take_precedence_over_endpoints() {
 fn line_paint_defaults_to_stroke() {
   assert_eq!(Line::default().paint.draw_style, DrawStyle::Stroke);
   assert_eq!(Line::DEFAULT_DRAW_STYLE, DrawStyle::Stroke);
+  // An unsized line is one pixel wide (SVG's default), not a hairline.
+  assert_eq!(Line::default().paint.stroke_width, 1.0);
+}
+
+// A segment is nothing but its stroke: without width it draws nothing, so
+// it is not there to hit either (the bounds say the same); a polyline keeps
+// its fill.
+#[test]
+fn zero_stroke_width_hits_nothing() {
+  let mut line = polyline(&[20.0, 100.0, 70.0, 20.0, 120.0, 100.0], false);
+  line.paint.stroke_width = 0.0;
+  assert!(!hits(&line, 21.0, 100.0));
+  assert_eq!(line.local_bounds(Size::new(100.0, 100.0)), Rect::new(Point::new(20.0, 20.0), Size::new(100.0, 80.0)));
+  line.paint.draw_style = DrawStyle::StrokeAndFill;
+  assert!(hits(&line, 70.0, 70.0));
+  assert!(!hits(&line, 21.0, 100.0));
+
+  let mut segment = Line::default();
+  segment.paint.stroke_width = 0.0;
+  assert!(!hits(&segment, 50.0, 50.0));
 }
 
 #[test]

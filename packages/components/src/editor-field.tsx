@@ -19,20 +19,24 @@ import {
 } from "@solidrt/core"
 import { createTextEditorLayout } from "@solidrt/core/text-input"
 import type { EditorLine, TextBuffer } from "@solidrt/core/text-input"
-import type { Color, Gradient, KeyEvent, LayoutProps, PointerEvent, TextInputHints } from "@solidrt/core"
+import type { Color, Gradient, KeyEvent, PointerEvent, TextInputHints } from "@solidrt/core"
 import type { Element } from "solid-js"
 import type { MeasureTextOptions, TextRunRange } from "flux:rendertree"
 import { registerNavAction } from "./focus-nav"
-import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import type { EditorLayoutProps, StyleProps, TransitionProps } from "./types"
+import { splitTextLayout, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade } from "./motion"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
+import { typeWeight } from "./typography"
 
 // Caret thickness. Shared so the drawn caret and the scroll offset's reserved
 // edge column cannot drift apart.
 const CARET_WIDTH = 1
+
+// Caret blink half-period: how long the caret shows, then hides.
+const CARET_BLINK_MS = 500
 
 // Shaping width of the placeholder: effectively unbounded, so it never wraps;
 // the viewport clips it.
@@ -41,7 +45,7 @@ const PLACEHOLDER_SHAPE_WIDTH = 1e9
 /** What the shell hands renderLine for one laid-out line. */
 export type LineRender = {
   line: () => EditorLine
-  /** The field's font options (size, line height), the base for the line's text. */
+  /** The field's resolved font (family, size, line height, style, weight), the base for the line's text. */
   font: () => MeasureTextOptions
   /** The field's text color. */
   color: () => Color | Gradient
@@ -68,7 +72,8 @@ export interface EditorFieldProps extends TransitionProps {
   maxRows?: number
   hints?: TextInputHints
   ref?: (node: { id: number }) => void
-  layout?: LayoutProps
+  /** The box, plus the font the text is shaped in (theme body font by default; fontSize is scaled by policy.textScale). */
+  layout?: EditorLayoutProps
   style?: StyleProps
 }
 
@@ -185,12 +190,18 @@ export function EditorField(props: EditorFieldProps) {
     }
   }
 
+  // The caller's handlers are read untracked: setFocus runs the focus and
+  // blur handlers synchronously, and a caller focusing from an effect (this
+  // field's own autoFocus, an app's setFocus) would otherwise land these
+  // prop reads inside its owned scope, where dev warns STRICT_READ_UNTRACKED.
+  // A handler is a one-shot read by nature; nothing here re-runs on a
+  // handler swap, and the swapped-in one is read at the next event.
   let handleFocus = () => {
     setCaretOn(true)
     if (blinkId == null) {
-      blinkId = setInterval(() => setCaretOn((v) => !v), 500)
+      blinkId = setInterval(() => setCaretOn((v) => !v), CARET_BLINK_MS)
     }
-    props.onFocus?.()
+    untrack(() => props.onFocus)?.()
   }
 
   let handleBlur = () => {
@@ -198,7 +209,7 @@ export function EditorField(props: EditorFieldProps) {
       clearInterval(blinkId)
       blinkId = null
     }
-    props.onBlur?.()
+    untrack(() => props.onBlur)?.()
   }
 
   // Keys the input consumes stop propagating: an ancestor (or an app-global
@@ -347,11 +358,23 @@ export function EditorField(props: EditorFieldProps) {
   // height. The editor layout keeps the caret in view and flushes the offsets
   // before paint; scrollX/scrollY are paint-time translates that also apply
   // to detached children.
-  // All metrics derive from the scaled body size, so the field, the caret,
-  // and the scroll math grow together under policy.textScale.
-  let fontSize = () => theme.text.body.size * policy.textScale
-  let font = () => ({ fontSize: fontSize(), lineHeight: theme.text.body.lineHeight })
-  let rowHeight = () => Math.round(fontSize() * theme.text.body.lineHeight)
+  // The font is the layout's font fields over the theme's body role,
+  // resolved like Text resolves its own (family, scaled size, line height,
+  // style, compensated weight); every metric - the rows, the caret, the
+  // scroll math, the placeholder - derives from it, so a field at a larger
+  // size grows as one. The box half of the layout is what the view takes.
+  let layout = createMemo(() => splitTextLayout(props.layout))
+  let layoutFont = () => layout().text as EditorLayoutProps
+  let fontSize = () => (layoutFont().fontSize ?? theme.text.body.size) * policy.textScale
+  let lineHeight = () => layoutFont().lineHeight ?? theme.text.body.lineHeight
+  let font = (): MeasureTextOptions => ({
+    fontFamily: layoutFont().fontFamily ?? theme.text.fontFamily,
+    fontSize: fontSize(),
+    lineHeight: lineHeight(),
+    fontStyle: layoutFont().fontStyle,
+    fontWeight: typeWeight(layoutFont().fontWeight ?? theme.text.body.weight, fontSize()),
+  })
+  let rowHeight = () => Math.round(fontSize() * lineHeight())
   let editor = createTextEditorLayout(
     () => viewport,
     () => ({
@@ -368,12 +391,20 @@ export function EditorField(props: EditorFieldProps) {
   )
   let caret = editor.caret
 
-  // Multiline viewport height: a caller-given field height stretches the
-  // viewport (fixed box, scrolls); otherwise the content height, at least one
-  // row and at most maxRows rows. Single-line is always one row.
-  let viewportHeight = (): number | undefined => {
+  // The viewport's natural height: one row single-line; multiline, the
+  // content's height, at least one row and at most maxRows rows. It is the
+  // viewport's flex basis in the field's column, not a fixed size: a
+  // multiline viewport grows and shrinks with the field's box (flexGrow and
+  // flexShrink below), so a field the caller sizes - `layout.height`,
+  // `flexGrow: 1` in a sized parent, a parent too small for the content -
+  // is a fixed box that scrolls to the caret, and an unconstrained one
+  // grows with its content. Both the field and the viewport take minHeight
+  // 0 for that: a flex item's automatic minimum is its content height,
+  // which would pin the content-sized basis and overflow the parent
+  // instead of shrinking (CSS needs the same `min-height: 0`). Single-line
+  // never flexes: it is one row, centered in a taller box.
+  let viewportHeight = (): number => {
     if (!props.multiline) return rowHeight()
-    if (props.layout?.height != null) return undefined
     let lines = editor.lines()
     let last = lines[lines.length - 1]!
     let content = Math.ceil(last.y + last.height)
@@ -391,17 +422,20 @@ export function EditorField(props: EditorFieldProps) {
         node = n
         unregisterNav?.()
         unregisterNav = registerNavAction(n.id, activateField)
-        props.ref?.(n)
+        // A ref callback runs in the element's owned scope, so the caller's
+        // ref is read untracked (see handleFocus).
+        untrack(() => props.ref)?.(n)
       }}
       textInputHints={props.multiline ? { multiline: true, ...props.hints } : props.hints}
       focusable
-      flexDirection="row"
-      alignItems="center"
+      flexDirection="column"
+      justifyContent="center"
+      minHeight={props.multiline ? 0 : undefined}
       paddingLeft={space("md")}
       paddingRight={space("md")}
       paddingTop={space("md")}
       paddingBottom={space("md")}
-      {...props.layout}
+      {...layout().box}
       x={props.style?.x}
       y={props.style?.y}
       scale={props.style?.scale}
@@ -424,9 +458,11 @@ export function EditorField(props: EditorFieldProps) {
       />
       <view
         ref={(n: { id: number }) => (viewport = n)}
-        flex={1}
         height={viewportHeight()}
-        alignSelf={props.multiline ? "stretch" : undefined}
+        minHeight={props.multiline ? 0 : undefined}
+        flexGrow={props.multiline ? 1 : 0}
+        flexShrink={props.multiline ? 1 : 0}
+        alignSelf="stretch"
         overflow="hidden"
         scrollX={editor.scrollX()}
         scrollY={editor.scrollY()}

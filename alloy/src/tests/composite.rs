@@ -206,3 +206,69 @@ fn baked_backdrop_widens_reuse_frame_damage() {
   assert_eq!(far.boundaries_reused, 1);
   assert!(far.damage_px <= 40.0 * 40.0, "far damage must stay tight: {} px^2", far.damage_px);
 }
+
+// Glass under a fading group (okf/done/backdrop-under-group-opacity.md):
+// the panels' backdrop layers are emitted ahead of the group's opacity
+// layer - on the inline path and on a Recording boundary's replay alike -
+// and only then: an opaque group, a fade without glass, and a filtered
+// group (a backdrop root by design) pre-emit nothing.
+#[test]
+fn glass_under_a_fading_group_is_prepainted() {
+  let mut tree = split();
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+  platform.set_window_size(400.0, 300.0);
+  let paint = |tree: &mut RenderTree| paint_phase(&mut DisplayListBuilder::new(None), tree, &platform, &alloy);
+  let set_opacity = |tree: &mut RenderTree, id: u64, v: Option<f32>| {
+    tree.edit(id, |el| match &mut el.kind {
+      ElementKind::View(v2) => v2.set_opacity(v),
+      _ => unreachable!(),
+    })
+  };
+
+  let baseline = paint(&mut tree);
+  assert_eq!(baseline.backdrops_prepainted, 0);
+
+  // A fade with no glass under it: nothing to pre-emit.
+  set_opacity(&mut tree, 2, Some(0.5));
+  assert_eq!(paint(&mut tree).backdrops_prepainted, 0);
+
+  // The pane's header becomes a glass panel: pre-emitted once per frame
+  // while the pane fades, and the regular walk still counts its nodes once.
+  tree.edit(3, |el| match &mut el.kind {
+    ElementKind::View(v) => v.set_backdrop_filter(Some(FilterState { blur: Some(4.0), ..Default::default() })),
+    _ => unreachable!(),
+  });
+  let fading = paint(&mut tree);
+  assert_eq!(fading.backdrops_prepainted, 1);
+  assert_eq!(fading.nodes_painted, baseline.nodes_painted);
+
+  // Opaque again: the panel reads the window on its own.
+  set_opacity(&mut tree, 2, None);
+  assert_eq!(paint(&mut tree).backdrops_prepainted, 0);
+
+  // A filtered group is a backdrop root: its panels see its effect layer.
+  set_opacity(&mut tree, 2, Some(0.5));
+  tree.edit(2, |el| match &mut el.kind {
+    ElementKind::View(v) => v.set_filter(Some(FilterState { blur: Some(2.0), ..Default::default() })),
+    _ => unreachable!(),
+  });
+  assert_eq!(paint(&mut tree).backdrops_prepainted, 0);
+  tree.edit(2, |el| match &mut el.kind {
+    ElementKind::View(v) => v.set_filter(None),
+    _ => unreachable!(),
+  });
+
+  // A fading Recording boundary: the replay applies the opacity as a group
+  // too, so the pass runs on the recording frame and on every reuse frame.
+  tree.edit(2, |el| {
+    el.repaint_boundary = BoundaryMode::Recording;
+    Damage::None
+  });
+  let recorded = paint(&mut tree);
+  assert_eq!(recorded.boundaries_recorded, 1);
+  assert_eq!(recorded.backdrops_prepainted, 1);
+  let reused = paint(&mut tree);
+  assert_eq!(reused.boundaries_reused, 1);
+  assert_eq!(reused.backdrops_prepainted, 1);
+}

@@ -1,8 +1,8 @@
 import { untrack } from "@solidrt/core"
 import { createTextBuffer } from "@solidrt/core/text-input"
-import type { LayoutProps, TextInputHints } from "@solidrt/core"
+import type { TextInputHints } from "@solidrt/core"
 import { EditorField } from "./editor-field"
-import type { StyleProps, TransitionProps } from "./types"
+import type { EditorLayoutProps, StyleProps, TransitionProps } from "./types"
 import { theme } from "./theme"
 
 export interface TextInputProps extends TransitionProps {
@@ -19,12 +19,14 @@ export interface TextInputProps extends TransitionProps {
   autoFocus?: boolean
   /**
    * Multi-line editing: lines wrap at the field's width, Enter inserts a
-   * newline (onSubmit never fires), Up/Down move by line. Without a
-   * `layout.height` the field grows with its content (up to `maxRows` rows,
-   * then scrolls); with one it is a fixed box that scrolls to the caret.
+   * newline (onSubmit never fires), Up/Down move by line. Unconstrained,
+   * the field grows with its content (up to `maxRows` rows, then scrolls);
+   * sized by its layout - a `height`, `flexGrow: 1` in a sized parent, a
+   * parent too small for the content - it is a fixed box that scrolls to
+   * the caret.
    */
   multiline?: boolean
-  /** Multiline without an explicit height: rows to grow to before scrolling. Default unbounded. */
+  /** Multiline, unconstrained: rows to grow to before scrolling. Default unbounded. */
   maxRows?: number
   /**
    * IME behavior for the field's text sessions (keyboard type,
@@ -34,7 +36,13 @@ export interface TextInputProps extends TransitionProps {
   hints?: TextInputHints
 
   ref?: (node: { id: number }) => void
-  layout?: LayoutProps
+  /**
+   * The box, plus the font fields (`fontSize`, `fontFamily`, `lineHeight`,
+   * `fontStyle`, `fontWeight`) the text is shaped in, as on Text: the theme
+   * body font by default, `fontSize` scaled by `policy.textScale`. The rows,
+   * caret and scrolling follow the font.
+   */
+  layout?: EditorLayoutProps
   style?: StyleProps
 }
 

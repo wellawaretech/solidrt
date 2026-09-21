@@ -56,6 +56,10 @@ impl Default for Line {
   }
 }
 
+// Half-width floor for hit testing a stroke, in logical px: a thin line
+// stays tappable at the width of a comfortable target rather than its ink.
+const HIT_SLOP: f32 = 2.0;
+
 fn vertex(points: &[f32], i: usize) -> Point {
   Point::new(points[2 * i], points[2 * i + 1])
 }
@@ -148,14 +152,6 @@ fn dist_sq_to_segment(p: Point, a: Point, b: Point) -> f32 {
 impl Line {
   pub const DEFAULT_DRAW_STYLE: DrawStyle = DrawStyle::Stroke;
 
-  fn fills(&self) -> bool {
-    matches!(self.paint.draw_style, DrawStyle::Fill | DrawStyle::StrokeAndFill)
-  }
-
-  fn strokes(&self) -> bool {
-    matches!(self.paint.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill)
-  }
-
   fn endpoints(&self, box_w: f32, box_h: f32) -> (Point, Point) {
     (
       Point::new(self.x1.unwrap_or(0.0), self.y1.unwrap_or(0.0)),
@@ -203,12 +199,12 @@ impl Line {
   // path's does against its bounds.
   fn build_polyline(&self, points: &[f32], builder: &mut DisplayListBuilder) {
     let Some(bounds) = extent(points).filter(|_| points.len() >= 4) else { return };
-    if self.fills() {
+    if self.paint.fills() {
       let mut paint = self.paint.to_paint_in(&bounds);
       paint.set_draw_style(DrawStyle::Fill);
       builder.draw_path(&polyline_path(points, true), &paint);
     }
-    if self.strokes() {
+    if self.paint.strokes() {
       let mut paint = self.paint.to_paint_in(&bounds);
       paint.set_draw_style(DrawStyle::Stroke);
       let path = match self.dash(points, self.closed) {
@@ -243,6 +239,11 @@ impl Line {
       return;
     }
     let (from, to) = self.endpoints(size.width, size.height);
+    // A segment is its stroke (draw_line strokes whatever the style): with
+    // no stroke width there is nothing to draw (PaintState::strokes).
+    if !self.paint.strokes() {
+      return;
+    }
     let mut paint = self.paint.to_paint();
     let points = [from.x, from.y, to.x, to.y];
     match self.dash(&points, false) {
@@ -359,17 +360,19 @@ impl Hittable for Line {
   fn is_in_bounds(&self, pt: Point, ctx: &HitContext) -> bool {
     // The geometry is offset-independent; undo the draw-time translate.
     let pt = Point::new(pt.x - self.x.unwrap_or(0.0), pt.y - self.y.unwrap_or(0.0));
-    let half_sw = (self.paint.stroke_width / 2.0).max(2.0);
+    let half_sw = (self.paint.stroke_width / 2.0).max(HIT_SLOP);
     let max_sq = half_sw * half_sw;
+    // The hit region follows what paints: a stroke without width is not
+    // there to hit, and a segment is nothing but its stroke.
     match &self.points {
       Some(points) => {
         let on_stroke =
-          self.strokes() && segments(points, self.closed).any(|(a, b)| dist_sq_to_segment(pt, a, b) <= max_sq);
-        on_stroke || (self.fills() && winding(points, pt) != 0)
+          self.paint.strokes() && segments(points, self.closed).any(|(a, b)| dist_sq_to_segment(pt, a, b) <= max_sq);
+        on_stroke || (self.paint.fills() && winding(points, pt) != 0)
       }
       None => {
         let (from, to) = self.endpoints(ctx.size.width, ctx.size.height);
-        dist_sq_to_segment(pt, from, to) <= max_sq
+        self.paint.strokes() && dist_sq_to_segment(pt, from, to) <= max_sq
       }
     }
   }

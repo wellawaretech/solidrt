@@ -2,6 +2,7 @@
 title: backdropFilter shows no blur while an ancestor fades
 description: A backdropFilter under an opacity-below-1 ancestor stays sharp for the whole fade and snaps to full frost when it ends, because the group-opacity layer becomes the backdrop's root; done means either the blur survives the fade or the containment is documented and warned about in dev.
 created: 2026-09-21
+completed: 2026-09-21
 ---
 
 # backdropFilter shows no blur while an ancestor fades

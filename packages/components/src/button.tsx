@@ -1,4 +1,4 @@
-import { Show, children, withAlpha } from "@solidrt/core"
+import { Show, children, untrack, withAlpha } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
@@ -20,10 +20,10 @@ export interface ButtonProps extends TransitionProps {
   // Visual role: primary (accent fill), secondary (darker-blue fill), ghost
   // (no fill until hover), danger (destructive accent fill). None draw a border.
   variant?: ButtonVariant
-  // Fixed-width preset: pins the button to a set width (a longer label still
-  // expands past it), so a row of buttons lines up. Omitted, the button
-  // stretches to the container's width (the default). Padding is the same at
-  // every size.
+  // Width preset: pins a minimum width (a longer label still expands past
+  // it), so a row of buttons lines up. Omitted, the button sizes to its
+  // content; a full-width button is the caller's `layout={{ width: "100%" }}`
+  // (or a stretching column parent). Padding is the same at every size.
   size?: ButtonSize
   // A returned promise makes this an async action: the button shows a
   // centered spinner in place of the label (geometry unchanged) and ignores
@@ -109,7 +109,10 @@ export function Button(props: ButtonProps) {
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         press.ref(n)
-        props.ref?.(n)
+        // A ref callback runs in the element's owned scope, where a prop
+        // read warns in dev (STRICT_READ_UNTRACKED); the caller's ref is a
+        // one-shot, read untracked.
+        untrack(() => props.ref)?.(n)
       }}
       repaintBoundary
       flexDirection="row"
@@ -120,7 +123,7 @@ export function Button(props: ButtonProps) {
       paddingBottom={space("md")}
       paddingLeft={space("lg")}
       paddingRight={space("lg")}
-      {...(props.size ? { minWidth: SIZE_WIDTH[props.size] } : { width: "100%" })}
+      minWidth={props.size ? SIZE_WIDTH[props.size] : undefined}
       {...props.layout}
       x={style().x}
       y={style().y}

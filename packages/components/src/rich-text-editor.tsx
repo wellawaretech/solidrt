@@ -1,9 +1,9 @@
 import { untrack } from "@solidrt/core"
-import type { LayoutProps, TextInputHints } from "@solidrt/core"
+import type { TextInputHints } from "@solidrt/core"
 import type { TextRunRange } from "flux:rendertree"
 import { EditorField } from "./editor-field"
 import { createDocumentBuffer, type Attributes, type Document, type DocumentBuffer } from "./rich-text-document"
-import type { StyleProps, TransitionProps } from "./types"
+import type { EditorLayoutProps, StyleProps, TransitionProps } from "./types"
 import { theme } from "./theme"
 import { policy } from "./policy"
 
@@ -24,12 +24,13 @@ export interface RichTextEditorProps extends TransitionProps {
   placeholder?: string
   disabled?: boolean
   autoFocus?: boolean
-  /** Without a `layout.height`: rows to grow to before scrolling. Default unbounded. */
+  /** Unconstrained (no `layout.height`, no flex sizing): rows to grow to before scrolling. Default unbounded. */
   maxRows?: number
   hints?: TextInputHints
 
   ref?: (node: { id: number }) => void
-  layout?: LayoutProps
+  /** The box, plus the base font (`fontSize` etc., as on TextInput) the document's runs style from. */
+  layout?: EditorLayoutProps
   style?: StyleProps
 }
 
@@ -84,7 +85,10 @@ function intervals(doc: Document): Interval[] {
  */
 export function RichTextEditor(props: RichTextEditorProps) {
   let editor!: DocumentBuffer
-  let base = () => theme.text.body.size * policy.textScale
+  // The base size the run fonts derive from: the layout's fontSize when
+  // given (the same field EditorField shapes the base text in), else the
+  // theme body size, scaled either way.
+  let base = () => (props.layout?.fontSize ?? theme.text.body.size) * policy.textScale
   let doc = () => editor.document()
 
   // Geometry runs: every interval whose font differs from the base.

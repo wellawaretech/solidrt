@@ -9,7 +9,7 @@
 // levels become an input to `layout` later, not a redesign (see the backlog
 // item's Bidi section).
 
-use unicode_linebreak::{linebreaks, BreakOpportunity};
+use unicode_linebreak::{break_property, linebreaks, BreakClass, BreakOpportunity};
 
 /// One wrap unit: a byte range of the source text ending at a UAX #14 break
 /// opportunity. Trailing whitespace belongs to the segment before it, so a
@@ -23,6 +23,17 @@ pub struct Segment {
   pub hard_break: bool,
 }
 
+/// Whether `c` forces a line break after itself: the UAX #14 mandatory
+/// break classes (LF, CR, NEL, and BK: VT, FF, U+2028, U+2029). The one
+/// definition of a break character, shared by the segmenter and the shaper
+/// (which never shapes them).
+pub fn is_break_char(c: char) -> bool {
+  matches!(
+    break_property(c as u32),
+    BreakClass::Mandatory | BreakClass::CarriageReturn | BreakClass::LineFeed | BreakClass::NextLine
+  )
+}
+
 /// Split `text` at every UAX #14 break opportunity. Never below word level:
 /// CJK yields per-ideograph segments because the standard allows breaks
 /// there, Latin yields whole words. Empty text yields no segments.
@@ -33,9 +44,11 @@ pub fn segments(text: &str) -> Vec<Segment> {
     if end == start {
       continue;
     }
-    // UAX #14 also reports end-of-text as mandatory; here hard_break means a
-    // break character follows, so the final segment is exempt.
-    let hard_break = opportunity == BreakOpportunity::Mandatory && end < text.len();
+    // UAX #14 reports end-of-text as mandatory too; hard_break means the
+    // segment ends ON a break character, so a text ending in one ("abc\n")
+    // has a hard-broken last segment (the blank line after it is real: an
+    // editor sits its caret there) and a text ending in a word does not.
+    let hard_break = opportunity == BreakOpportunity::Mandatory && text[start..end].ends_with(is_break_char);
     out.push(Segment { start, end, hard_break });
     start = end;
   }

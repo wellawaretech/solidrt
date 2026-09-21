@@ -206,7 +206,7 @@ impl<'e> BoundaryComposite<'e> {
       builder.save();
       builder.transform(m);
     }
-    emit_backdrop(builder, self.element, self.frame);
+    emit_backdrop(builder, self.element, self.frame, 1.0);
     content(builder);
     if self.own.is_some() {
       builder.restore();
@@ -297,7 +297,7 @@ pub(super) fn draw_cached_recording(
     apply_clip(builder, element);
     // Box-space bounds: before the scroll translate, like record_node's
     // emission order.
-    emit_backdrop(builder, element, inherited);
+    emit_backdrop(builder, element, inherited, 1.0);
     apply_scroll(builder, element);
     draw_dl_with_effects(builder, dl, opacity, filter);
     builder.restore();

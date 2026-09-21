@@ -9208,6 +9208,29 @@ function transitionEndFor(node, handler) {
     });
   };
 }
+var FONT_KEYS = ["fontFamily", "fontSize", "lineHeight", "fontStyle", "fontWeight"];
+var TEXT_KEYS = [...FONT_KEYS, "textAlign", "maxLines"];
+function splitTextLayout(layout, paragraph = false) {
+  let text = {};
+  let box = {};
+  if (!layout)
+    return {
+      text,
+      box
+    };
+  let keys = paragraph ? TEXT_KEYS : FONT_KEYS;
+  for (let key2 in layout) {
+    let value = layout[key2];
+    if (keys.includes(key2))
+      text[key2] = value;
+    else
+      box[key2] = value;
+  }
+  return {
+    text,
+    box
+  };
+}
 
 // ../../packages/components/src/view.tsx
 function View(props) {
@@ -9383,22 +9406,11 @@ function typeStyle(variant, onDark) {
 }
 
 // ../../packages/components/src/text.tsx
-var FONT_KEYS = ["fontFamily", "fontSize", "lineHeight", "fontStyle", "fontWeight", "textAlign", "maxLines"];
 function Text(props) {
   let role = () => theme.text[props.variant ?? "body"];
   let size = () => (props.layout?.fontSize ?? role().size) * policy.textScale;
   let color = () => props.style?.color ?? theme.color[props.color ?? (props.muted ? "textMuted" : "text")];
-  let box = createMemo(() => {
-    let l = props.layout;
-    if (!l)
-      return {};
-    let out = {};
-    for (let key2 in l) {
-      if (!FONT_KEYS.includes(key2))
-        out[key2] = l[key2];
-    }
-    return out;
-  });
+  let box = createMemo(() => splitTextLayout(props.layout, true).box);
   let split = () => {
     let t = splitTransition(props.transition);
     if (t.root == null || typeof t.root === "string")
@@ -10235,6 +10247,7 @@ function space(token) {
 
 // ../../packages/components/src/editor-field.tsx
 var CARET_WIDTH = 1;
+var CARET_BLINK_MS = 500;
 function EditorField(props) {
   let [caretOn, setCaretOn] = createSignal(true);
   let node;
@@ -10307,16 +10320,16 @@ function EditorField(props) {
   let handleFocus = () => {
     setCaretOn(true);
     if (blinkId == null) {
-      blinkId = setInterval(() => setCaretOn((v) => !v), 500);
+      blinkId = setInterval(() => setCaretOn((v) => !v), CARET_BLINK_MS);
     }
-    props.onFocus?.();
+    untrack(() => props.onFocus)?.();
   };
   let handleBlur = () => {
     if (blinkId != null) {
       clearInterval(blinkId);
       blinkId = null;
     }
-    props.onBlur?.();
+    untrack(() => props.onBlur)?.();
   };
   let handleKeyDown = (e) => {
     if (props.disabled)
@@ -10431,12 +10444,18 @@ function EditorField(props) {
   let borderRadius = () => props.style?.borderRadius ?? theme.radius.md;
   let showPlaceholder = () => !focused() && value().length === 0 && (props.placeholder ?? "").length > 0;
   let showCaret = () => focused() && caretOn() && !showPlaceholder();
-  let fontSize = () => theme.text.body.size * policy.textScale;
+  let layout = createMemo(() => splitTextLayout(props.layout));
+  let layoutFont = () => layout().text;
+  let fontSize = () => (layoutFont().fontSize ?? theme.text.body.size) * policy.textScale;
+  let lineHeight = () => layoutFont().lineHeight ?? theme.text.body.lineHeight;
   let font = () => ({
+    fontFamily: layoutFont().fontFamily ?? theme.text.fontFamily,
     fontSize: fontSize(),
-    lineHeight: theme.text.body.lineHeight
+    lineHeight: lineHeight(),
+    fontStyle: layoutFont().fontStyle,
+    fontWeight: typeWeight(layoutFont().fontWeight ?? theme.text.body.weight, fontSize())
   });
-  let rowHeight = () => Math.round(fontSize() * theme.text.body.lineHeight);
+  let rowHeight = () => Math.round(fontSize() * lineHeight());
   let editor = createTextEditorLayout(() => viewport, () => ({
     text: value(),
     font: font(),
@@ -10449,8 +10468,6 @@ function EditorField(props) {
   let viewportHeight = () => {
     if (!props.multiline)
       return rowHeight();
-    if (props.layout?.height != null)
-      return;
     let lines = editor.lines();
     let last = lines[lines.length - 1];
     let content = Math.ceil(last.y + last.height);
@@ -10461,7 +10478,7 @@ function EditorField(props) {
   var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("d-rect", {
     drawStyle: "stroke"
   }), _el$4 = createElement("view", {
-    flex: 1,
+    alignSelf: "stretch",
     overflow: "hidden",
     onPointerDown: handleViewportPointerDown,
     onPointerMove: handleViewportPointerMove,
@@ -10474,11 +10491,11 @@ function EditorField(props) {
     node = n;
     unregisterNav?.();
     unregisterNav = registerNavAction(n.id, activateField);
-    props.ref?.(n);
+    untrack(() => props.ref)?.(n);
   }, _el$);
   setProp(_el$, "focusable", true);
-  setProp(_el$, "flexDirection", "row");
-  setProp(_el$, "alignItems", "center");
+  setProp(_el$, "flexDirection", "column");
+  setProp(_el$, "justifyContent", "center");
   spread(_el$, [{
     get transition() {
       return split().root;
@@ -10492,6 +10509,9 @@ function EditorField(props) {
         ...props.hints
       } : props.hints;
     },
+    get minHeight() {
+      return props.multiline ? 0 : undefined;
+    },
     get paddingLeft() {
       return space("md");
     },
@@ -10504,7 +10524,7 @@ function EditorField(props) {
     get paddingBottom() {
       return space("md");
     }
-  }, () => props.layout, {
+  }, () => layout().box, {
     get x() {
       return props.style?.x;
     },
@@ -10612,9 +10632,11 @@ function EditorField(props) {
     h: borderWidth(),
     r: borderRadius(),
     d: viewportHeight(),
-    l: props.multiline ? "stretch" : undefined,
-    u: editor.scrollX(),
-    c: editor.scrollY()
+    l: props.multiline ? 0 : undefined,
+    u: props.multiline ? 1 : 0,
+    c: props.multiline ? 1 : 0,
+    w: editor.scrollX(),
+    m: editor.scrollY()
   }), ({
     e,
     t,
@@ -10628,7 +10650,9 @@ function EditorField(props) {
     d,
     l,
     u,
-    c
+    c,
+    w,
+    m
   }, _p$) => {
     e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
     t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
@@ -10640,9 +10664,11 @@ function EditorField(props) {
     h !== _p$?.h && setProp(_el$3, "strokeWidth", h, _p$?.h);
     r !== _p$?.r && setProp(_el$3, "radius", r, _p$?.r);
     d !== _p$?.d && setProp(_el$4, "height", d, _p$?.d);
-    l !== _p$?.l && setProp(_el$4, "alignSelf", l, _p$?.l);
-    u !== _p$?.u && setProp(_el$4, "scrollX", u, _p$?.u);
-    c !== _p$?.c && setProp(_el$4, "scrollY", c, _p$?.c);
+    l !== _p$?.l && setProp(_el$4, "minHeight", l, _p$?.l);
+    u !== _p$?.u && setProp(_el$4, "flexGrow", u, _p$?.u);
+    c !== _p$?.c && setProp(_el$4, "flexShrink", c, _p$?.c);
+    w !== _p$?.w && setProp(_el$4, "scrollX", w, _p$?.w);
+    m !== _p$?.m && setProp(_el$4, "scrollY", m, _p$?.m);
   });
   return _el$;
 }
@@ -11095,7 +11121,7 @@ function Pressable(props) {
   var _el$ = createElement("view");
   ref(() => (n) => {
     press.ref(n);
-    props.ref?.(n);
+    untrack(() => props.ref)?.(n);
   }, _el$);
   setProp(_el$, "repaintBoundary", true);
   spread(_el$, [{
@@ -11356,7 +11382,7 @@ function Button(props) {
   insertNode2(_el$, _el$2);
   ref(() => (n) => {
     press.ref(n);
-    props.ref?.(n);
+    untrack(() => props.ref)?.(n);
   }, _el$);
   setProp(_el$, "repaintBoundary", true);
   setProp(_el$, "flexDirection", "row");
@@ -11381,11 +11407,10 @@ function Button(props) {
     },
     get paddingRight() {
       return space("lg");
+    },
+    get minWidth() {
+      return memo2(() => !!props.size)() ? SIZE_WIDTH[props.size] : undefined;
     }
-  }, () => props.size ? {
-    minWidth: SIZE_WIDTH[props.size]
-  } : {
-    width: "100%"
   }, () => props.layout, {
     get x() {
       return style().x;
@@ -14123,6 +14148,9 @@ function ConnectPanel(props) {
                 },
                 get children() {
                   return createComponent2(Button, {
+                    layout: {
+                      flexGrow: 1
+                    },
                     onPress: submit,
                     children: "Connect"
                   });
@@ -14383,9 +14411,15 @@ function AppDetail(props) {
                 },
                 get children() {
                   return [createComponent2(Button, {
+                    layout: {
+                      flexGrow: 1
+                    },
                     onPress: () => props.onLaunch(),
                     children: "Launch"
                   }), createComponent2(Button, {
+                    layout: {
+                      flexGrow: 1
+                    },
                     variant: "secondary",
                     onPress: () => setConfirming(true),
                     children: "Remove"
@@ -14443,10 +14477,16 @@ function AppDetail(props) {
                                 },
                                 get children() {
                                   return [createComponent2(Button, {
+                                    layout: {
+                                      flexGrow: 1
+                                    },
                                     variant: "ghost",
                                     onPress: () => setConfirming(false),
                                     children: "Cancel"
                                   }), createComponent2(Button, {
+                                    layout: {
+                                      flexGrow: 1
+                                    },
                                     variant: "danger",
                                     onPress: () => props.onRemove(),
                                     children: "Remove"
@@ -14752,6 +14792,9 @@ function DevCard(props) {
             },
             get children() {
               return createComponent2(Button, {
+                layout: {
+                  flexGrow: 1
+                },
                 variant: "secondary",
                 get onPress() {
                   return props.onConnect;
@@ -14765,6 +14808,9 @@ function DevCard(props) {
             },
             get children() {
               return createComponent2(Button, {
+                layout: {
+                  flexGrow: 1
+                },
                 variant: "secondary",
                 onPress: () => stop(),
                 children: "Cancel"
@@ -14776,6 +14822,9 @@ function DevCard(props) {
             },
             get children() {
               return createComponent2(Button, {
+                layout: {
+                  flexGrow: 1
+                },
                 variant: "secondary",
                 onPress: () => stop(),
                 children: "Disconnect"

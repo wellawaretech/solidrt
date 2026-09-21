@@ -2,6 +2,7 @@
 title: A trailing line break leaves the caret on the previous line
 description: After Enter at the end of a multiline TextInput the caret stays after the last character until more text is typed, because prepareText does not flag a break that ends the text; done means a text ending in a break has its blank last line and the caret sits on it.
 created: 2026-09-21
+completed: 2026-09-21
 ---
 
 # A trailing line break leaves the caret on the previous line

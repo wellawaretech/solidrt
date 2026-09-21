@@ -104,7 +104,11 @@ Rules, in order of leverage:
    `opacity` on a view is NOT cheap: it wraps the subtree in a compositing
    layer (save_layer) for as long as it is below 1. To fade a single
    primitive, put the alpha in its `color` (`rgba(...)`) - paint alpha is
-   free; reserve view `opacity` for fading a genuine group as a whole.
+   free; reserve view `opacity` for fading a genuine group as a whole. A
+   `backdropFilter` panel inside a fading group is re-filtered against the
+   window ahead of the group each frame of the fade (the glass keeps its
+   blur; get_stats' backdropsPrepainted counts them), one extra backdrop
+   capture per panel while the opacity is below 1.
    Placement rule for animation-heavy screens: a boundary around a node
    that animates its own paint (a moving d-*, a changing color) is useless
    - its interior is damaged every frame, so the cache never survives. The

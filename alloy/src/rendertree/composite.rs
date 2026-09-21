@@ -5,7 +5,7 @@ use taffy::{AvailableSpace, NodeId};
 use crate::rendertree::boundary::{self, Hoist};
 use crate::rendertree::cull::{self, CullRect};
 use crate::rendertree::{
-  BoundaryMode, BuildContext, Element, ElementKind, FilterState, FrameDamage, LayoutContext, PaintCache,
+  BackdropPass, BoundaryMode, BuildContext, Element, ElementKind, FilterState, FrameDamage, LayoutContext, PaintCache,
   PlatformContext, RenderTree,
 };
 use crate::{CaptureDone, CaptureInfo};
@@ -48,6 +48,9 @@ pub struct PaintStats {
   pub snapshots_reused: u32,
   pub snapshots_rerendered: u32,
   pub snapshots_rasterized: u32,
+  /// Glass panels re-filtered ahead of a fading ancestor's opacity group
+  /// (emit_backdrops_below); nonzero only while such a fade runs.
+  pub backdrops_prepainted: u32,
   /// The frame's resolved damage area in logical px^2 (window area on a
   /// fully damaged frame); see RenderTree::frame_damage.
   pub damage_px: f32,
@@ -110,6 +113,7 @@ pub fn paint_phase(
       snapshots_reused: ctx.snapshots_reused,
       snapshots_rerendered: ctx.snapshots_rerendered,
       snapshots_rasterized: ctx.snapshots_rasterized,
+      backdrops_prepainted: ctx.backdrops_prepainted,
       damage_px: 0.0,
     };
     let regions = std::mem::take(&mut ctx.backdrop_regions);
@@ -354,14 +358,17 @@ pub(super) fn effect_paint(rgb: f32, opacity: f32, filter: Option<&FilterState>)
 // capture inside a fresh save_layer would read that layer, not the
 // window), so the fade is applied here instead - the filtered pixels
 // restore at the element's alpha over the unfiltered ones already in the
-// target, and glass fades with its panel like CSS composites it. The
-// bounds are the layout box in box space, so this must be emitted after
-// the view's matrix and before any scroll translate. No-op for non-Views,
-// empty declarations, and fully transparent elements.
-pub(super) fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element, inherited: Size) {
+// target, and glass fades with its panel like CSS composites it. `alpha`
+// is the same trick one level up: the opacity of the fading ancestors a
+// backdrops-only pass (emit_backdrops_below) is emitting the panel ahead
+// of, 1 on the regular paths. The bounds are the layout box in box space,
+// so this must be emitted after the view's matrix and before any scroll
+// translate. No-op for non-Views, empty declarations, and fully transparent
+// elements.
+pub(super) fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element, inherited: Size, alpha: f32) {
   let ElementKind::View(v) = &element.kind else { return };
   let Some(f) = v.active_backdrop_filter() else { return };
-  let opacity = v.opacity.unwrap_or(1.0);
+  let opacity = v.opacity.unwrap_or(1.0) * alpha;
   if opacity <= 0.0 {
     return;
   }
@@ -416,6 +423,40 @@ pub(super) fn capture_pending_within(scene: &RenderTree, node_id: u64, alloy: &c
   })
 }
 
+// The opacity a view fades its subtree by as a group, when it does: below 1
+// (a fully transparent group has nothing to show) and not a backdrop root -
+// a filtered view's panels see its effect layer by design, and a snapshot's
+// see its raster (types.d.ts documents both), so neither is pre-emitted.
+fn fading_opacity(element: &Element) -> Option<f32> {
+  let opacity = view_opacity(element);
+  (opacity > 0.0 && opacity < 1.0 && !cull::is_backdrop_root(element)).then_some(opacity)
+}
+
+// The backdrops-only pass over `node_id`'s subtree (see build_recursive):
+// the same record walk, under the same matrices, clips, scrolls and fits,
+// emitting nothing but the glass panels' backdrop layers at `alpha` (the
+// node's opacity, times any fading view's on the way down). The node's own
+// panel is left to the regular path that follows. Isolated like
+// service_captures_under_cache: the walk mutates the frame the caller reads
+// after it, and its stats are not the frame's.
+fn emit_backdrops_below<'a>(
+  scene: &'a RenderTree,
+  node_id: u64,
+  ctx: &mut BuildContext<'a>,
+  builder: &mut DisplayListBuilder,
+  alpha: f32,
+) {
+  let saved_size = ctx.size;
+  let saved_content = ctx.content;
+  let saved_regions = ctx.backdrop_regions.len();
+  ctx.backdrop_pass = Some(BackdropPass { alpha, root: node_id });
+  record_node(scene, node_id, ctx, builder, Hoist::None);
+  ctx.backdrop_pass = None;
+  ctx.size = saved_size;
+  ctx.content = saved_content;
+  ctx.backdrop_regions.truncate(saved_regions);
+}
+
 // Reach (and thereby service) the captures inside a boundary whose cache is
 // being reused: record the subtree into a discarded builder, purely so the
 // walk descends to the capture nodes. The cache itself is untouched - the
@@ -440,24 +481,14 @@ pub(super) fn service_captures_under_cache<'a>(
   // from: suspend the cull for the descent.
   let saved_cull = ctx.cull.take();
   let saved_regions = ctx.backdrop_regions.len();
-  let saved_stats = (
-    ctx.boundaries_reused,
-    ctx.boundaries_recorded,
-    ctx.snapshots_reused,
-    ctx.snapshots_rerendered,
-    ctx.snapshots_rasterized,
-  );
+  let saved_stats = ctx.walk_stats();
   let mut sub = DisplayListBuilder::new(None);
   record_node(scene, node_id, ctx, &mut sub, hoist);
   ctx.size = saved_size;
   ctx.content = saved_content;
   ctx.cull = saved_cull;
   ctx.backdrop_regions.truncate(saved_regions);
-  ctx.boundaries_reused = saved_stats.0;
-  ctx.boundaries_recorded = saved_stats.1;
-  ctx.snapshots_reused = saved_stats.2;
-  ctx.snapshots_rerendered = saved_stats.3;
-  ctx.snapshots_rasterized = saved_stats.4;
+  ctx.restore_walk_stats(saved_stats);
 }
 
 // Repaint-boundary gate: a boundary subtree's paint result is retained (as a
@@ -471,6 +502,15 @@ fn build_recursive<'a>(
   ctx: &mut BuildContext<'a>,
   builder: &mut DisplayListBuilder,
 ) {
+  // A backdrops-only pass records straight through: no captures, no cache
+  // reuse (a cached boundary's panels are baked in its recording, and the
+  // pass is here precisely because the replay will read the wrong target),
+  // no region pushes (the regular walk behind it makes them).
+  if ctx.backdrop_pass.is_some() {
+    record_node(scene, node_id, ctx, builder, Hoist::None);
+    return;
+  }
+
   // On-demand captures (captureSnapshot) are serviced as the walk reaches the
   // node, before its own paint. This does not draw into `builder`; the node
   // still paints normally below. Guarded by a cheap emptiness check so the
@@ -507,6 +547,20 @@ fn build_recursive<'a>(
       if v.shader.is_some() && v.take_shader_dirty() {
         log::warn!("node {node_id} declares a shader without repaintBoundary=\"snapshot\"; not applied");
       }
+    }
+  }
+  // Glass under a fading group: every composite path below applies this
+  // view's opacity as a group - a save_layer, or the opacity argument of a
+  // cached replay - and a backdrop capture inside that group reads the
+  // group's layer, not the window, so the panel would stay sharp for the
+  // whole fade. Emit the panels' backdrop layers ahead of the group, faded
+  // by the same opacity, and the group's content then draws over its own
+  // blurred backdrop like the element's own opacity is handled in
+  // emit_backdrop. Gated on the cached backdrop_below bit, so a fade
+  // without glass under it costs nothing.
+  if let Some(alpha) = fading_opacity(element) {
+    if cull::backdrop_below(scene, node_id) {
+      emit_backdrops_below(scene, node_id, ctx, builder, alpha);
     }
   }
   match element.repaint_boundary {
@@ -598,13 +652,7 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   // degrade the whole resolve to full damage): drop them with the rest of
   // the isolation.
   let saved_regions = ctx.backdrop_regions.len();
-  let saved_stats = (
-    ctx.boundaries_reused,
-    ctx.boundaries_recorded,
-    ctx.snapshots_reused,
-    ctx.snapshots_rerendered,
-    ctx.snapshots_rasterized,
-  );
+  let saved_stats = ctx.walk_stats();
   let mut sub = DisplayListBuilder::new(None);
   sub.scale(scale, scale);
   if offset != (0.0, 0.0) {
@@ -615,11 +663,7 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   ctx.content = saved_content;
   ctx.cull = saved_cull;
   ctx.backdrop_regions.truncate(saved_regions);
-  ctx.boundaries_reused = saved_stats.0;
-  ctx.boundaries_recorded = saved_stats.1;
-  ctx.snapshots_reused = saved_stats.2;
-  ctx.snapshots_rerendered = saved_stats.3;
-  ctx.snapshots_rasterized = saved_stats.4;
+  ctx.restore_walk_stats(saved_stats);
 
   let Some(dl) = sub.build() else {
     for done in requests {
@@ -650,8 +694,11 @@ pub(super) fn record_node<'a>(
   hoist: Hoist,
 ) {
   let element = scene.node(node_id);
-  ctx.nodes_painted += 1;
-  element.lifecycle.painted.set(true);
+  let pass = ctx.backdrop_pass;
+  if pass.is_none() {
+    ctx.nodes_painted += 1;
+    element.lifecycle.painted.set(true);
+  }
 
   let (clip_x, clip_y) = overflow_clips(element);
   let record_clip = (clip_x || clip_y) && hoist != Hoist::Full;
@@ -681,7 +728,7 @@ pub(super) fn record_node<'a>(
   if hoist == Hoist::None {
     if let Some(own) = own_matrix(element, ctx.size) {
       builder.transform(&own);
-    } else {
+    } else if pass.is_none() {
       element.build(ctx, builder);
     }
   }
@@ -691,9 +738,23 @@ pub(super) fn record_node<'a>(
   // The backdrop layer reads the current target, so only the inline path
   // emits it here; boundary callers emit it at composite time instead
   // (boundary.rs: draw_cached_recording, BoundaryComposite) - baked into a cache
-  // or a snapshot raster it would read the offscreen, not the window.
-  if hoist == Hoist::None {
-    emit_backdrop(builder, element, ctx.size);
+  // or a snapshot raster it would read the offscreen, not the window. A
+  // backdrops-only pass emits every panel below its root at the pass alpha
+  // (the root's own panel is the regular path's, emitted right after the
+  // pass) and counts them.
+  match ctx.backdrop_pass {
+    None => {
+      if hoist == Hoist::None {
+        emit_backdrop(builder, element, ctx.size, 1.0);
+      }
+    }
+    Some(pass) if pass.root != node_id => {
+      if matches!(&element.kind, ElementKind::View(v) if v.active_backdrop_filter().is_some()) {
+        ctx.backdrops_prepainted += 1;
+      }
+      emit_backdrop(builder, element, ctx.size, pass.alpha);
+    }
+    Some(_) => {}
   }
   if hoist != Hoist::Full {
     apply_scroll(builder, element);
@@ -762,12 +823,24 @@ pub(super) fn record_node<'a>(
   // current clip coverage.
   let opacity = view_opacity(element);
   let filter = view_filter(element);
-  let effect_layer = hoist == Hoist::None && (opacity < 1.0 || filter.is_some());
+  let effect_layer = pass.is_none() && hoist == Hoist::None && (opacity < 1.0 || filter.is_some());
   if effect_layer {
     let paint = effect_paint(0.0, opacity, filter);
     let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
     builder.save_layer(&bounds, Some(&paint), None);
   }
+  // A backdrops-only pass opens no layer: a fading view below the root
+  // folds its opacity into the pass alpha for its subtree instead (the
+  // root's own opacity is already the pass alpha), and a backdrop root
+  // (cull::is_backdrop_root) ends the descent - the panels under it read
+  // its own offscreen, and its own panel was emitted above.
+  let (descend, child_pass) = match pass {
+    None => (true, None),
+    Some(p) if node_id == p.root => (true, Some(p)),
+    Some(_) if cull::is_backdrop_root(element) => (false, None),
+    Some(p) => (true, Some(BackdropPass { alpha: p.alpha * opacity, root: p.root })),
+  };
+  ctx.backdrop_pass = child_pass;
 
   // A text's children are spans (runs of its paragraph, drawn by the text
   // itself) and inline atoms (laid-out elements the text placed on its lines,
@@ -779,6 +852,9 @@ pub(super) fn record_node<'a>(
   let child_frame = cull::child_frame(element, ctx.size);
 
   for &child_id in &element.children {
+    if !descend {
+      break;
+    }
     let child = scene.node(child_id);
     if child.is_hidden() {
       continue;
@@ -793,8 +869,11 @@ pub(super) fn record_node<'a>(
     // resolves (see paint_phase). Written for culled children too - their
     // envelope is still their true extent - and skipped only for hidden
     // ones above, whose stale cell is exactly their to-be-erased pixels.
+    // A backdrops-only pass leaves the cells to the regular walk behind it.
     let child_env = cull::envelope(scene, child_id, ctx.platform, child_frame);
-    child.last_extent.set(child_env.to_window(pos, &ctx.to_window));
+    if pass.is_none() {
+      child.last_extent.set(child_env.to_window(pos, &ctx.to_window));
+    }
 
     // Viewport culling: a child whose envelope cannot reach the cull rect is
     // skipped whole. The envelope resolves against the frame the child would
@@ -837,6 +916,7 @@ pub(super) fn record_node<'a>(
   }
   ctx.cull = saved_cull;
   ctx.to_window = saved_map;
+  ctx.backdrop_pass = pass;
 
   if effect_layer {
     builder.restore();

@@ -2,6 +2,7 @@
 title: A TextInput with borderWidth 0 still draws a hairline border
 description: style borderWidth 0 leaves a faint outline in the theme border colour, visible on coloured cards; done means a zero width draws no border, on TextInput and on any other element whose stroke width can be 0.
 created: 2026-09-21
+completed: 2026-09-21
 ---
 
 # A TextInput with borderWidth 0 still draws a hairline border

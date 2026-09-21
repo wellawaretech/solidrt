@@ -1006,7 +1006,8 @@ pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<V
         let up = || AlloyEvent::PointerUp { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, button, x, y, modifiers };
         // No hardware delta for synthetic moves: movement derives from the
         // position diff, the honest synthetic delta.
-        let mv = || AlloyEvent::PointerMove { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, x, y, rel: None, modifiers };
+        let mv =
+          || AlloyEvent::PointerMove { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, x, y, rel: None, modifiers };
         match action {
           Some("move") => out.push((delay, mv())),
           Some("down") => out.push((delay, down())),
@@ -1108,6 +1109,7 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
   put("cacheGets", s.cache_gets.into());
   put("cacheHits", s.cache_hits.into());
   put("nodesPainted", s.paint.nodes_painted.into());
+  put("backdropsPrepainted", s.paint.backdrops_prepainted.into());
   put("damagePx", (s.paint.damage_px.round() as i64).into());
   put("window", window_json(r.window, r.time_ms, r.window_ms));
   if let Some((mounted, total)) = r.counts {
@@ -1146,11 +1148,7 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
 /// spans two or more frames. `now_ms` is the query instant the worst frame's
 /// age is measured from; `window_ms` the span asked for, echoed even when no
 /// frame fell inside it (the summary then has no window of its own).
-fn window_json(
-  window: Option<&crate::frame_history::WindowSummary>,
-  now_ms: f64,
-  window_ms: f64,
-) -> serde_json::Value {
+fn window_json(window: Option<&crate::frame_history::WindowSummary>, now_ms: f64, window_ms: f64) -> serde_json::Value {
   let Some(w) = window else {
     return serde_json::json!({ "windowMs": window_ms, "frames": 0 });
   };
@@ -1857,7 +1855,10 @@ fn debug_call_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, name: &str, args: Op
 /// control API without MCP", the `/tree` entry); a field added here is
 /// added there. `props`, when set, is the live tree, and the fields that
 /// need it (`props`, `quad`, `exiting`/`exit`, `slide`) come from it.
-fn node_json(node: &alloy::rendertree::NodeSnapshot, props: Option<&alloy::rendertree::RenderTree>) -> serde_json::Value {
+fn node_json(
+  node: &alloy::rendertree::NodeSnapshot,
+  props: Option<&alloy::rendertree::RenderTree>,
+) -> serde_json::Value {
   let mut obj = serde_json::json!({
     "id": node.id,
     "kind": node.kind,
@@ -1913,8 +1914,7 @@ fn node_json(node: &alloy::rendertree::NodeSnapshot, props: Option<&alloy::rende
     }
     if let Some(quad) = tree.painted_quad(node.id) {
       if !quad_is_aabb(&quad) {
-        let flat: Vec<serde_json::Value> =
-          quad.iter().flat_map(|p| [round2(p.x).into(), round2(p.y).into()]).collect();
+        let flat: Vec<serde_json::Value> = quad.iter().flat_map(|p| [round2(p.x).into(), round2(p.y).into()]).collect();
         map.insert("quad".into(), flat.into());
       }
     }
@@ -1936,8 +1936,10 @@ fn node_json(node: &alloy::rendertree::NodeSnapshot, props: Option<&alloy::rende
 fn quad_is_aabb(quad: &[alloy::rendertree::Point; 4]) -> bool {
   const EPS: f32 = 0.01;
   let eq = |a: f32, b: f32| (a - b).abs() < EPS;
-  let (min_x, max_x) = (quad.iter().map(|p| p.x).fold(f32::MAX, f32::min), quad.iter().map(|p| p.x).fold(f32::MIN, f32::max));
-  let (min_y, max_y) = (quad.iter().map(|p| p.y).fold(f32::MAX, f32::min), quad.iter().map(|p| p.y).fold(f32::MIN, f32::max));
+  let (min_x, max_x) =
+    (quad.iter().map(|p| p.x).fold(f32::MAX, f32::min), quad.iter().map(|p| p.x).fold(f32::MIN, f32::max));
+  let (min_y, max_y) =
+    (quad.iter().map(|p| p.y).fold(f32::MAX, f32::min), quad.iter().map(|p| p.y).fold(f32::MIN, f32::max));
   eq(quad[0].x, min_x)
     && eq(quad[0].y, min_y)
     && eq(quad[1].x, max_x)

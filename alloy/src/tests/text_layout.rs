@@ -33,6 +33,21 @@ fn segments_keep_trailing_whitespace_and_flag_hard_breaks() {
   assert_eq!(parts, vec![("Hello ", false), ("world\n", true), ("foo", false)]);
 }
 
+// A text ending in a break character has a hard-broken last segment - the
+// blank line after it is real, and an editor sits its caret there - whatever
+// the break character; a text ending in a word does not.
+#[test]
+fn segments_flag_a_trailing_break() {
+  let flags = |text: &str| segments(text).iter().map(|s| (s.end, s.hard_break)).collect::<Vec<_>>();
+  assert_eq!(flags("abc"), vec![(3, false)]);
+  assert_eq!(flags("abc\n"), vec![(4, true)]);
+  assert_eq!(flags("abc\n\n"), vec![(4, true), (5, true)]);
+  assert_eq!(flags("abc\r\n"), vec![(5, true)]);
+  assert_eq!(flags("abc\u{2029}"), vec![(6, true)]);
+  assert_eq!(flags("abc\u{85}"), vec![(5, true)]);
+  assert_eq!(flags("\n"), vec![(1, true)]);
+}
+
 #[test]
 fn segments_split_between_ideographs() {
   let text = "\u{4f60}\u{597d}";
@@ -63,6 +78,22 @@ fn hard_break_ends_line_and_max_lines_caps() {
   let capped = layout(&runs, &full(100.0), Align::Left, 1, None);
   assert_eq!(capped.lines.len(), 1);
   assert_eq!(capped.runs.len(), 1);
+}
+
+// The trailing hard break of "abc\n" closes the line it ends and nothing
+// more: a plain text stays one line tall (the editor adds the blank caret
+// line itself), and a capped layout is not truncated by it.
+#[test]
+fn trailing_hard_break_adds_no_line() {
+  let runs = [hard(12.0, 10.0)];
+  let l = layout(&runs, &full(100.0), Align::Left, 0, None);
+  assert_eq!(l.lines.len(), 1);
+  assert_eq!(l.height, 10.0);
+  assert!(!l.truncated);
+  let capped = layout(&runs, &full(100.0), Align::Left, 1, None);
+  assert_eq!(capped.lines.len(), 1);
+  assert!(!capped.truncated);
+  assert_eq!(max_intrinsic_width(&runs), 10.0);
 }
 
 #[test]

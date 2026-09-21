@@ -1,7 +1,7 @@
 import { createMemo } from "@solidrt/core"
 import type { PointerProps } from "@solidrt/core"
 import type { StyleProps, TextLayoutProps, TransitionProps, TransitionViewProp } from "./types"
-import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { splitTextLayout, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { theme, type TextVariant } from "./theme"
 import { policy } from "./policy"
 import { typeWeight } from "./typography"
@@ -28,33 +28,15 @@ export interface TextProps extends PointerProps, TransitionProps<TransitionViewP
   style?: StyleProps
 }
 
-// Font keys live in layout (they affect measurement) but belong on the inner
-// <text> node, not the box <view>. Strip them out before spreading layout.
-const FONT_KEYS = [
-  "fontFamily",
-  "fontSize",
-  "lineHeight",
-  "fontStyle",
-  "fontWeight",
-  "textAlign",
-  "maxLines",
-]
-
 export function Text(props: TextProps) {
   let role = () => theme.text[props.variant ?? "body"]
   let size = () => (props.layout?.fontSize ?? role().size) * policy.textScale
   let color = () =>
     props.style?.color ?? theme.color[props.color ?? (props.muted ? "textMuted" : "text")]
 
-  let box = createMemo(() => {
-    let l = props.layout
-    if (!l) return {}
-    let out: Record<string, unknown> = {}
-    for (let key in l) {
-      if (!FONT_KEYS.includes(key)) out[key] = (l as Record<string, unknown>)[key]
-    }
-    return out
-  })
+  // Font keys live in layout (they affect measurement) but belong on the
+  // inner <text> node, not the box <view>: only the box half is spread.
+  let box = createMemo(() => splitTextLayout(props.layout, true).box)
 
   // The text node owns `color`; everything else a Text animates is on the
   // wrapper view. A shorthand or `all` reaches both.

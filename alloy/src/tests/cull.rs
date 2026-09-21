@@ -1,5 +1,5 @@
 use crate::impellers::{DrawStyle, Matrix, Point, Rect, Size};
-use crate::rendertree::cull::{envelope, CullRect, Extent};
+use crate::rendertree::cull::{backdrop_below, envelope, CullRect, Extent};
 use crate::rendertree::*;
 use taffy::style::Overflow;
 
@@ -288,4 +288,77 @@ fn detached_line_and_path_extents_are_their_painted_boxes() {
   let far_path = envelope(&tree, 4, &platform, frame);
   assert!(close(bounded(far_path), rect(497.0, 497.0, 106.0, 156.0)), "{far_path:?}");
   assert!(!far_path.may_intersect(&cull));
+}
+
+fn glass(tree: &mut RenderTree, id: u64, on: bool) {
+  tree.edit(id, |el| match &mut el.kind {
+    ElementKind::View(v) => v.set_backdrop_filter(on.then(|| FilterState { blur: Some(4.0), ..Default::default() })),
+    _ => unreachable!(),
+  });
+}
+
+// backdrop_below answers for the subtree below a node, never the node
+// itself, follows every write through the paint invalidation walk, and does
+// not look into hidden subtrees or backdrop roots (a filtered view, a
+// snapshot boundary), whose panels never read the window.
+#[test]
+fn backdrop_below_tracks_glass_in_the_subtree() {
+  // 1 > 2 > 3 > 4
+  let mut tree = RenderTree::new();
+  for id in 1..=4 {
+    tree.create_node(id, attached());
+  }
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.insert_node(3, 4, None).expect("insert");
+  tree.root = Some(1);
+
+  assert!(!backdrop_below(&tree, 1));
+  glass(&mut tree, 4, true);
+  assert!(backdrop_below(&tree, 1));
+  assert!(backdrop_below(&tree, 3));
+  assert!(!backdrop_below(&tree, 4), "the node itself does not count");
+
+  // A filtered view between them is a backdrop root: 1 no longer sees the
+  // panel through it, 2 (above the root's subtree) sees nothing either,
+  // while the root's own descendant answer is unchanged.
+  tree.edit(3, |el| match &mut el.kind {
+    ElementKind::View(v) => v.set_filter(Some(FilterState { blur: Some(2.0), ..Default::default() })),
+    _ => unreachable!(),
+  });
+  assert!(!backdrop_below(&tree, 1));
+  assert!(!backdrop_below(&tree, 2));
+  assert!(backdrop_below(&tree, 3));
+  tree.edit(3, |el| match &mut el.kind {
+    ElementKind::View(v) => v.set_filter(None),
+    _ => unreachable!(),
+  });
+  assert!(backdrop_below(&tree, 1));
+
+  // A snapshot boundary the same; a hidden subtree paints nothing.
+  tree.edit(3, |el| {
+    el.repaint_boundary = BoundaryMode::Snapshot;
+    Damage::Compose
+  });
+  assert!(!backdrop_below(&tree, 1));
+  tree.edit(3, |el| {
+    el.repaint_boundary = BoundaryMode::None;
+    Damage::Compose
+  });
+  assert!(backdrop_below(&tree, 1));
+  tree.node_mut(3).style_mut().expect("laid out").display = taffy::style::Display::None;
+  tree.edit(3, |_| Damage::Paint);
+  assert!(!backdrop_below(&tree, 1));
+  tree.node_mut(3).style_mut().expect("laid out").display = taffy::style::Display::Flex;
+  tree.edit(3, |_| Damage::Paint);
+  assert!(backdrop_below(&tree, 1));
+
+  // Removing the panel's subtree clears the answer up the chain; putting it
+  // back restores it (a re-insert invalidates the same way).
+  tree.detach_node(2, 3);
+  assert!(!backdrop_below(&tree, 1));
+  tree.insert_node(2, 3, None).expect("re-insert");
+  assert!(backdrop_below(&tree, 1));
+  glass(&mut tree, 4, false);
+  assert!(!backdrop_below(&tree, 1));
 }

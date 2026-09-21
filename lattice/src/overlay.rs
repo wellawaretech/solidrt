@@ -162,6 +162,11 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot) {
       paint_stats.snapshots_reused, paint_stats.snapshots_rerendered, paint_stats.snapshots_rasterized
     ));
   }
+  // Glass panels re-filtered ahead of a fading group this frame; hidden
+  // while no such fade runs.
+  if paint_stats.backdrops_prepainted > 0 {
+    text.push_str(&format!("\n{} GLASS", paint_stats.backdrops_prepainted));
+  }
   // Textures currently held in the registry (GL/Impeller texture pairs in use).
   if s.textures > 0 {
     text.push_str(&format!("\n{} TEX", s.textures));

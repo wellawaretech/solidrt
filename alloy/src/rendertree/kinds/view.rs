@@ -86,7 +86,10 @@ pub struct View {
   // beneath the view's box, filtered in place before the view's content
   // draws (composite::emit_backdrop). Reads the CURRENT target, so inside
   // a snapshot boundary it sees only that boundary's offscreen content -
-  // the same containment blend modes have.
+  // the same containment blend modes have - and under a filtered ancestor
+  // its effect layer. A fading ancestor (opacity below 1) is no
+  // containment: the walk emits the panel's layer ahead of the fading
+  // group, at the group's opacity (composite::emit_backdrops_below).
   pub backdrop_filter: Option<FilterState>,
   // Design-space size for the children: everything under the view - layout,
   // paint, hit testing - happens in this w x h coordinate space, which is
