@@ -9,7 +9,6 @@
 import { Endpoint } from "flux:p2p"
 import { file } from "flux:fs"
 import { join } from "flux:path"
-import { printQr } from "./qr"
 
 // The tunnel's ALPN. A protocol change bumps the suffix so old clients fail
 // the handshake instead of desyncing.
@@ -21,7 +20,7 @@ export const TUNNEL_PROTOCOL = "solidrt-dev/0"
 const KEY_FILE = "tunnel.key"
 
 /**
- * Bind the tunnel endpoint and print its ticket (text + QR). The endpoint is
+ * Bind the tunnel endpoint (its ticket is printed by identity.ts). The endpoint is
  * kept stable across restarts so a paired client can re-dial the old ticket
  * without re-scanning: the UDP port follows the dev server's remembered port
  * (ephemeral on a first run), and the secret key is persisted in
@@ -44,11 +43,5 @@ export async function createTunnelEndpoint(port: number | null, keyDir: string):
   // First run (no saved key): persist the freshly generated one so the next run
   // reuses it and the ticket stays the same.
   if (!secretKey) await keyFile.write(endpoint.secretKey)
-
-  let ticket = await endpoint.ticket()
-  console.log("")
-  printQr(ticket)
-  console.log("")
-  console.log(`[cli] Tunnel ticket: ${ticket}`)
   return endpoint
 }

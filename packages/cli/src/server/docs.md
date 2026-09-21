@@ -46,6 +46,7 @@ storage is per app inside a tree, so two projects share client 0).
 With a terminal on stdin, `run` and `server` take commands at the `srt>`
 prompt: `reload` and `stop` (every client, or the ids `list` prints),
 `load <file>` (switch the entry, same rules as the MCP `load` tool),
+`whoami` (reprint the address and its QR, or the tunnel ticket),
 `stats`, `watch on|off` (reload on save), `mute on|off` (the user's own
 input on the clients), `quit`. Tab completes commands and `load` paths,
 Up/Down recall earlier lines, Ctrl-C (or Ctrl-D on an empty line) quits.

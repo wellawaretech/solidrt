@@ -25,7 +25,7 @@ import { requireBinary, srtCommand } from "./binaries"
 import * as cache from "./cache"
 import { handleProxy } from "./proxy"
 import { appendLog, handleControl, onShutdownRequest, resolveQuery } from "./control"
-import { printQr } from "./qr"
+import { printIdentity } from "./identity"
 import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
 import { rebuildAndBroadcast, showBuildFailure } from "./rebuild"
 import { stopWatcher } from "./watcher"
@@ -355,6 +355,7 @@ let remembered = config.port ?? (await rememberedPort(config.serverDir))
 // connections directly alongside the TCP listener. Its UDP port follows the
 // remembered port so a ticket stays stable across restarts.
 let tunnel = config.tunnel ? await createTunnelEndpoint(remembered, config.serverDir) : null
+if (tunnel) state.tunnelTicket = await tunnel.ticket()
 
 function bind(port: number): Server {
   return serve({
@@ -396,16 +397,7 @@ let address = config.lan ? config.address : "127.0.0.1"
 state.serverUrl = `${address}:${server.port}`
 await writeRecord(config, server.port, address)
 
-// One QR on screen: with the tunnel on, the ticket QR (printed by
-// createTunnelEndpoint) is the pairing story and the address stays text-only;
-// on the LAN without it, the address QR is the scan target. Loopback-only has
-// nothing to scan.
-if (config.lan && !config.tunnel) {
-  console.log("")
-  printQr(state.serverUrl)
-  console.log("")
-}
-console.log(`[cli] Dev server on http://${state.serverUrl} serving ${config.mode} ${config.key}`)
+printIdentity()
 
 // Keepalive
 let keepalive = setInterval(() => {

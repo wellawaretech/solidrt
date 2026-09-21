@@ -31,6 +31,8 @@ export let state = {
   currentMaps: null as Record<string, string> | null,
   /** The address clients reach this server on (host:port), set once bound. */
   serverUrl: "",
+  /** The p2p tunnel's ticket, when the tunnel is on (--tunnel); else null. */
+  tunnelTicket: null as string | null,
   stats: false,
   /**
    * Whether the user's own input is muted on every client, for an agent

@@ -6,6 +6,7 @@ import { rebuildAndBroadcast, showBuildFailure } from "./rebuild"
 import { clientList, loadEntry, setStats, setUserInputMuted, setWatchActive } from "./control"
 import { ENTRY_EXTENSIONS, absolute } from "./mode"
 import { startLineEditor } from "./line-editor"
+import { printIdentity } from "./identity"
 import type { Completion } from "./line-editor"
 
 // The repl on the server's own terminal: the same actions the control API
@@ -17,8 +18,8 @@ import type { Completion } from "./line-editor"
 // prompt, and stops on a signal.
 
 const PROMPT = "srt> "
-const HELP = "Commands: load <file>, reload [id...], stop [id...], list, stats [on|off], watch on|off, mute on|off, quit, help"
-const COMMANDS = ["load ", "reload", "stop", "list", "stats", "watch ", "mute ", "quit", "exit", "help"]
+const HELP = "Commands: load <file>, reload [id...], stop [id...], list, whoami, stats [on|off], watch on|off, mute on|off, quit, help"
+const COMMANDS = ["load ", "reload", "stop", "list", "whoami", "stats", "watch ", "mute ", "quit", "exit", "help"]
 
 // The clients named by a list of ids ("0 2", as `list` prints them), or
 // every client for no ids. Unknown ids are reported and skipped.
@@ -141,6 +142,8 @@ async function dispatch(line: string, quit: () => void): Promise<void> {
       return cmdLoad(args)
     case "list":
       return cmdList()
+    case "whoami":
+      return printIdentity()
     case "stats":
       return cmdStats(args)
     case "watch":
