@@ -70,6 +70,7 @@ export function Switch(props: SwitchProps) {
       rotate={style().rotate}
       opacity={style().opacity}
       {...press.handlers}
+      cursor="pointer"
       focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >

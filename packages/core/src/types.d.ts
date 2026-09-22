@@ -2,6 +2,7 @@
 /// <reference path="./runtime-modules.d.ts" />
 
 import type { Gradient } from "./color"
+import type { CursorId, CursorName } from "./cursor"
 import type { ProgramId, TextureBindings, TextureId } from "flux:gpu"
 import type { TextInputHints } from "flux:rendertree"
 import type { Element } from "solid-js"
@@ -385,6 +386,13 @@ export interface PointerProps {
    */
   focusable?: boolean
   pointerEvents?: "auto" | "none" | "all"
+  /**
+   * The mouse cursor while this element is hovered: a platform shape by its
+   * CSS name, `"none"` to hide it, or a createCursor handle for an image.
+   * The innermost hovered element that sets one wins; none on the path
+   * means the default arrow. Mouse and pen; touch shows no cursor.
+   */
+  cursor?: CursorName | CursorId
 }
 
 /**

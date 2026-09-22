@@ -65,6 +65,7 @@ export function Select(props: SelectProps) {
         paddingLeft={space("md")}
         paddingRight={space("md")}
         {...press.handlers}
+        cursor="pointer"
         focusable
       >
         <PressFeedback
@@ -208,6 +209,7 @@ export function Select(props: SelectProps) {
       rotate={style().rotate}
       opacity={style().opacity}
       {...press.handlers}
+      cursor="pointer"
       focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >

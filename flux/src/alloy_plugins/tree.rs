@@ -1,12 +1,13 @@
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Ctx, Function, IntoJs, JsLifetime, Object, Value};
-use std::cell::RefCell;
+use rquickjs::{Array, Ctx, Function, IntoJs, JsLifetime, Object, TypedArray, Value};
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
 use taffy::prelude::*;
 
 use crate::alloy_plugins::value::PropValue;
-use crate::plugins::marshal::{elements, OptArg};
+use crate::plugins::marshal::{bytes_of, elements, OptArg};
+use alloy::{AlloyCommand, CursorFrame, CursorImage};
 use alloy::rendertree::text::{prepare_units, PreparedRun};
 use alloy::rendertree::{
   AnimValue, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, Rect, RenderTree, Text, Window,
@@ -256,10 +257,23 @@ struct RenderTreeState(#[qjs(skip_trace)] Rc<RenderTreeInner>);
 pub(crate) struct RenderTreeInner {
   pub(crate) tree: Rc<RefCell<RenderTree>>,
   pub(crate) gui: Rc<super::Gui>,
-  alloy_cmd_tx: Sender<alloy::AlloyCommand>,
+  pub(crate) alloy_cmd_tx: Sender<alloy::AlloyCommand>,
   // The one frame driver over this tree (`frame::draw`): every draw path
   // shares its retained display list.
   pub(crate) render_driver: RefCell<FrameDriver>,
+  // Image cursors this engine registered (createCursor): the next handle
+  // and the live ones, dropped with the engine so a reload leaves nothing
+  // behind in the loop's cursor cache.
+  next_cursor_id: Cell<u64>,
+  live_cursors: RefCell<Vec<u64>>,
+}
+
+impl Drop for RenderTreeInner {
+  fn drop(&mut self) {
+    for id in self.live_cursors.get_mut().drain(..) {
+      self.alloy_cmd_tx.send(AlloyCommand::DropCursor(id)).ok();
+    }
+  }
 }
 
 /// Create the shared render tree and stash the state the `flux:rendertree`
@@ -272,6 +286,8 @@ pub(crate) fn store_state(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<
     gui: super::gui(ctx),
     alloy_cmd_tx,
     render_driver: RefCell::new(FrameDriver::new()),
+    next_cursor_id: Cell::new(1),
+    live_cursors: RefCell::new(Vec::new()),
   };
   ctx.store_userdata(RenderTreeState(Rc::new(inner))).expect("store rendertree state");
 }
@@ -306,6 +322,8 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("render")?;
     decl.declare("setTextInputActive")?;
     decl.declare("setPointerLock")?;
+    decl.declare("createCursor")?;
+    decl.declare("dropCursor")?;
     decl.declare("measureText")?;
     decl.declare("prepareText")?;
     decl.declare("getBoundingBox")?;
@@ -331,6 +349,8 @@ impl ModuleDef for RenderTreeModule {
     exports.export("render", Function::new(ctx.clone(), render)?)?;
     exports.export("setTextInputActive", Function::new(ctx.clone(), set_text_input_active)?)?;
     exports.export("setPointerLock", Function::new(ctx.clone(), set_pointer_lock)?)?;
+    exports.export("createCursor", Function::new(ctx.clone(), create_cursor)?)?;
+    exports.export("dropCursor", Function::new(ctx.clone(), drop_cursor)?)?;
     exports.export("measureText", Function::new(ctx.clone(), measure_text)?)?;
     exports.export("prepareText", Function::new(ctx.clone(), prepare_text)?)?;
     exports.export("getBoundingBox", Function::new(ctx.clone(), get_bounding_box)?)?;
@@ -522,6 +542,64 @@ fn set_text_input_active(ctx: Ctx<'_>, active: bool, hints: OptArg<Object<'_>>) 
 
 fn set_pointer_lock(ctx: Ctx<'_>, locked: bool) {
   state(&ctx).alloy_cmd_tx.send(alloy::AlloyCommand::SetPointerLock(locked)).ok();
+}
+
+// createCursor(frames, hotX, hotY) -> handle. `frames` is
+// [{ images: [{ data, width, height }], duration }] with straight-alpha
+// RGBA8 data (see flux-types). The payload is checked here, per the
+// throw-in-dev policy; registration is a loop command, and a platform that
+// cannot build the cursor logs and shows the default shape for the handle.
+fn create_cursor<'js>(ctx: Ctx<'js>, frames: Array<'js>, hot_x: u32, hot_y: u32) -> rquickjs::Result<u64> {
+  let throw = |msg: String| rquickjs::Exception::throw_message(&ctx, &msg);
+  let mut decoded: Vec<CursorFrame> = Vec::with_capacity(frames.len());
+  for frame in frames.iter::<Object>() {
+    let frame = frame?;
+    let images: Array = frame.get("images")?;
+    let duration_ms: u32 = frame.get("duration")?;
+    let mut frame_images = Vec::with_capacity(images.len());
+    for image in images.iter::<Object>() {
+      let image = image?;
+      let width: u32 = image.get("width")?;
+      let height: u32 = image.get("height")?;
+      let data: TypedArray<u8> = image.get("data")?;
+      let rgba = bytes_of(&ctx, &data, "createCursor")?.to_vec();
+      if rgba.len() != (width as usize) * (height as usize) * 4 {
+        return Err(throw(format!("createCursor: image data is {} bytes, expected {width}x{height}x4", rgba.len())));
+      }
+      frame_images.push(CursorImage { width, height, rgba });
+    }
+    if frame_images.is_empty() {
+      return Err(throw("createCursor: a frame needs at least one image".to_string()));
+    }
+    decoded.push(CursorFrame { images: frame_images, duration_ms });
+  }
+  let Some(base) = decoded.first().map(|f| &f.images[0]) else {
+    return Err(throw("createCursor: at least one frame is required".to_string()));
+  };
+  if let Some(other) = decoded.iter().map(|f| &f.images[0]).find(|i| (i.width, i.height) != (base.width, base.height)) {
+    return Err(throw(format!(
+      "createCursor: every frame must have the first frame's size {}x{}, got {}x{}",
+      base.width, base.height, other.width, other.height
+    )));
+  }
+  if hot_x >= base.width || hot_y >= base.height {
+    return Err(throw(format!(
+      "createCursor: hotspot ({hot_x}, {hot_y}) lies outside the {}x{} image",
+      base.width, base.height
+    )));
+  }
+  let s = state(&ctx);
+  let id = s.next_cursor_id.get();
+  s.next_cursor_id.set(id + 1);
+  s.live_cursors.borrow_mut().push(id);
+  s.alloy_cmd_tx.send(AlloyCommand::CreateCursor { id, frames: decoded, hot_x, hot_y }).ok();
+  Ok(id)
+}
+
+fn drop_cursor(ctx: Ctx<'_>, id: u64) {
+  let s = state(&ctx);
+  s.live_cursors.borrow_mut().retain(|&live| live != id);
+  s.alloy_cmd_tx.send(AlloyCommand::DropCursor(id)).ok();
 }
 
 fn measure_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) -> rquickjs::Result<TextSize> {

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::hit::{locals_along_path, path_diff, DefaultHitTester, EventInterest, HitEntry, HitTester};
 use super::{Point, RenderTree};
-use crate::{Modifiers, PointerType};
+use crate::{Cursor, Modifiers, PointerType};
 
 pub type PointerKey = (PointerType, u64);
 
@@ -94,6 +94,16 @@ fn wants(tree: &RenderTree, ids: &[u64], bit: u32) -> bool {
   ids.iter().any(|&id| tree.try_node(id).is_some_and(|el| el.interaction.as_ref().is_some_and(|i| i.listens.has(bit))))
 }
 
+// The innermost cursor along `ids` (see HitConfig::cursor); the default
+// when no node sets one.
+fn resolve_cursor(tree: &RenderTree, ids: &[u64]) -> Cursor {
+  ids
+    .iter()
+    .rev()
+    .find_map(|&id| tree.try_node(id).and_then(|el| el.interaction.as_ref().and_then(|i| i.cursor)))
+    .unwrap_or_default()
+}
+
 // Locals and parent-frame points for `subset` of `chain` (a path_diff result
 // or a reversed leave list), by projecting along the full chain and picking
 // entries out. An id the projection could not reach (its node was removed)
@@ -128,6 +138,15 @@ fn pick_locals(tree: &RenderTree, chain: &[u64], subset: &[u64], point: Point) -
 pub struct PointerRouter {
   hovered: HashMap<PointerKey, Vec<u64>>,
   down: HashMap<PointerKey, Vec<u64>>,
+  // The cursor the mouse's hovered path resolves to (the innermost node
+  // setting one, default otherwise; see HitConfig::cursor), re-resolved on
+  // every hover update whether or not the path changed, since a hovered
+  // node can change its cursor in place. Mouse and pen (a hovering pen has
+  // an OS cursor); touch has none.
+  cursor: Cursor,
+  // The value the consumer last took (take_cursor_change), so a change is
+  // reported exactly once and nothing is sent per move.
+  applied_cursor: Option<Cursor>,
 }
 
 impl PointerRouter {
@@ -231,6 +250,18 @@ impl PointerRouter {
     events
   }
 
+  /// The cursor to show, when it differs from the last one taken: the
+  /// consumer applies it as window state (a platform command). The first
+  /// take always reports, so a router built over a live pointer (a reload)
+  /// restores the cursor from whatever the previous one left showing.
+  pub fn take_cursor_change(&mut self) -> Option<Cursor> {
+    if self.applied_cursor == Some(self.cursor) {
+      return None;
+    }
+    self.applied_cursor = Some(self.cursor);
+    Some(self.cursor)
+  }
+
   // Leave (deepest-first) and Enter (outermost-in) deliveries for the
   // hovered-path delta, storing the new path.
   fn update_hover(
@@ -241,6 +272,9 @@ impl PointerRouter {
     modifiers: Modifiers,
     new_ids: Vec<u64>,
   ) -> Vec<RoutedPointer> {
+    if key.0 != PointerType::Touch {
+      self.cursor = resolve_cursor(tree, &new_ids);
+    }
     let old_ids = self.hovered.get(&key).cloned().unwrap_or_default();
     let mut events = Vec::new();
     if new_ids != old_ids {

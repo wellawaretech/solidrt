@@ -35,8 +35,17 @@ pub enum AlloyCommand {
   // embedder derives it from the input-modality facts like the pacing
   // policy; the loop applies it at the next present.
   SetCadenceHold(crate::cadence::CadenceHold),
+  // The mouse cursor to show (see Cursor). The loop keeps every cursor it
+  // has created alive for as long as SDL may show it (cursor.rs).
   SetCursor(Cursor),
-  SetCursorVisible(bool),
+  // Register an image cursor under the embedder's id for Cursor::Custom(id):
+  // one frame for a static cursor, several for an animated one (SDL plays
+  // them; a platform without animated cursors shows the first frame). The
+  // hotspot is in the 1x image's pixels.
+  CreateCursor { id: u64, frames: Vec<CursorFrame>, hot_x: u32, hot_y: u32 },
+  // Destroy a registered image cursor; if it is showing, SDL reverts to the
+  // default cursor.
+  DropCursor(u64),
   // A synthetic gamepad (the dev tools' `input` query): connect, hold a
   // state, disconnect. Applied by the pad owner on the loop's thread, which
   // is where SDL's pads live, so a synthetic pad takes a slot and reaches
@@ -64,12 +73,29 @@ pub enum AlloyCommand {
   Background,
 }
 
-// Standard cursor shape (SetCursor), in the CSS `cursor` vocabulary - the
-// subset the platform provides everywhere. Translated to the platform cursor
-// at the loop; SDL's cursor type never leaves this crate (the same boundary
-// rule as keys, see `crate::keymap`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// The mouse cursor, in the CSS `cursor` vocabulary through the SolidRT lens:
+// a platform shape (the CSS keywords SDL has a system cursor for), an image
+// the embedder registered (CreateCursor), or hidden (CSS `none`). The
+// rendertree stores one per element, the router resolves the hovered path's
+// innermost (rendertree/router.rs), and the loop applies it via SDL. SDL's
+// cursor type never leaves this crate (the same boundary rule as keys, see
+// `crate::keymap`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Cursor {
+  System(CursorShape),
+  Custom(u64),
+  Hidden,
+}
+
+impl Default for Cursor {
+  fn default() -> Self {
+    Cursor::System(CursorShape::Default)
+  }
+}
+
+// The platform-provided cursor shapes, named as CSS names them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CursorShape {
   Default,
   Text,
   Wait,
@@ -82,26 +108,62 @@ pub enum Cursor {
   Move,
   NotAllowed,
   Pointer,
+  NwResize,
+  NResize,
+  NeResize,
+  EResize,
+  SeResize,
+  SResize,
+  SwResize,
+  WResize,
 }
 
-impl Cursor {
-  pub(crate) fn to_sdl(self) -> sdl3::mouse::SystemCursor {
-    use sdl3::mouse::SystemCursor;
+impl CursorShape {
+  pub(crate) fn to_sdl(self) -> sdl3::sys::mouse::SDL_SystemCursor {
+    use sdl3::sys::mouse::SDL_SystemCursor as Sdl;
     match self {
-      Cursor::Default => SystemCursor::Arrow,
-      Cursor::Text => SystemCursor::IBeam,
-      Cursor::Wait => SystemCursor::Wait,
-      Cursor::Crosshair => SystemCursor::Crosshair,
-      Cursor::Progress => SystemCursor::WaitArrow,
-      Cursor::NwseResize => SystemCursor::SizeNWSE,
-      Cursor::NeswResize => SystemCursor::SizeNESW,
-      Cursor::EwResize => SystemCursor::SizeWE,
-      Cursor::NsResize => SystemCursor::SizeNS,
-      Cursor::Move => SystemCursor::SizeAll,
-      Cursor::NotAllowed => SystemCursor::No,
-      Cursor::Pointer => SystemCursor::Hand,
+      CursorShape::Default => Sdl::DEFAULT,
+      CursorShape::Text => Sdl::TEXT,
+      CursorShape::Wait => Sdl::WAIT,
+      CursorShape::Crosshair => Sdl::CROSSHAIR,
+      CursorShape::Progress => Sdl::PROGRESS,
+      CursorShape::NwseResize => Sdl::NWSE_RESIZE,
+      CursorShape::NeswResize => Sdl::NESW_RESIZE,
+      CursorShape::EwResize => Sdl::EW_RESIZE,
+      CursorShape::NsResize => Sdl::NS_RESIZE,
+      CursorShape::Move => Sdl::MOVE,
+      CursorShape::NotAllowed => Sdl::NOT_ALLOWED,
+      CursorShape::Pointer => Sdl::POINTER,
+      CursorShape::NwResize => Sdl::NW_RESIZE,
+      CursorShape::NResize => Sdl::N_RESIZE,
+      CursorShape::NeResize => Sdl::NE_RESIZE,
+      CursorShape::EResize => Sdl::E_RESIZE,
+      CursorShape::SeResize => Sdl::SE_RESIZE,
+      CursorShape::SResize => Sdl::S_RESIZE,
+      CursorShape::SwResize => Sdl::SW_RESIZE,
+      CursorShape::WResize => Sdl::W_RESIZE,
     }
   }
+}
+
+// One image of a cursor frame: straight-alpha RGBA8, tightly packed. The
+// first image of a frame is the 1x representation; any others are HiDPI
+// alternates the platform picks per display scale by their size ratio to the
+// first (a 64x64 alternate of a 32x32 base serves 2x).
+#[derive(Clone, Debug)]
+pub struct CursorImage {
+  pub width: u32,
+  pub height: u32,
+  pub rgba: Vec<u8>,
+}
+
+// One frame of a cursor: its images and how long it shows, in milliseconds
+// (0 holds the frame, which ends a one-shot animation on it; a static cursor
+// is one frame). Every frame of a cursor has the same 1x size.
+#[derive(Clone, Debug)]
+pub struct CursorFrame {
+  pub images: Vec<CursorImage>,
+  pub duration_ms: u32,
 }
 
 // Orientation of the display the window is on (DisplayOrientation).

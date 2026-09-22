@@ -144,6 +144,7 @@ export function SegmentedControl(props: SegmentedControlProps) {
               paddingLeft={space("md")}
               paddingRight={space("md")}
               {...press.handlers}
+              cursor="pointer"
               focusable={!props.disabled}
               pointerEvents={props.disabled ? "none" : undefined}
             >

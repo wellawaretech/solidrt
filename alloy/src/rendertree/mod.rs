@@ -30,6 +30,7 @@ pub use transitions::{
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree, SlideRemaining};
 
 use crate::impellers::DisplayListBuilder;
+use crate::Cursor;
 use std::cell::{Cell, RefCell};
 use taffy::{AvailableSpace, Position, Style};
 
@@ -630,6 +631,13 @@ impl Element {
   /// affects layout, paint, or hit testing.
   pub fn set_event_interest(&mut self, listens: EventInterest) {
     self.interaction.get_or_insert_with(HitConfig::default).listens = listens;
+  }
+
+  /// Sets the cursor shown while this element is on the hovered path (see
+  /// HitConfig::cursor); `None` clears it. Interaction metadata only: never
+  /// affects layout, paint, or hit testing.
+  pub fn set_cursor(&mut self, cursor: Option<Cursor>) {
+    self.interaction.get_or_insert_with(HitConfig::default).cursor = cursor;
   }
 
   pub fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {

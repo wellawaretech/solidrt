@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use alloy::rendertree::{PointerRouter, RoutedKind, RoutedPointer};
-use alloy::Modifiers;
+use alloy::{AlloyCommand, Cursor, Modifiers};
 use rquickjs::{Array, Ctx, JsLifetime, Object};
 
 use crate::emit_event;
@@ -95,8 +95,23 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent) {
   let state = ctx.userdata::<EngineState>().expect("input state userdata");
   // Routing resolves fully (tree and router borrows released) before any
   // handler runs: handlers mutate the tree through their own ffi calls.
-  let events = state.0.borrow_mut().dispatch(&tree.0.borrow(), event);
+  let (events, cursor) = {
+    let mut router = state.0.borrow_mut();
+    let events = router.dispatch(&tree.0.borrow(), event);
+    (events, router.take_cursor_change())
+  };
+  apply_cursor(ctx, cursor);
   emit_routed(ctx, events);
+}
+
+// The hovered path's cursor when it changed (PointerRouter::take_cursor_change):
+// window state, so it goes to the loop as a platform command, never as a JS
+// event. Before the GUI is installed there is no loop to tell.
+fn apply_cursor(ctx: &Ctx<'_>, cursor: Option<Cursor>) {
+  let Some(cursor) = cursor else { return };
+  if let Some(s) = super::tree::try_state(ctx) {
+    s.alloy_cmd_tx.send(AlloyCommand::SetCursor(cursor)).ok();
+  }
 }
 
 /// The frame's move-batch terminator: emitted after all of a frame's
@@ -117,6 +132,11 @@ pub fn frame_end(ctx: &Ctx<'_>) {
 pub fn refresh_hover(ctx: &Ctx<'_>, pointers: Vec<(PointerKey, (f32, f32))>, modifiers: Modifiers) {
   let tree = ctx.userdata::<super::tree::SharedRenderTree>().expect("render tree userdata");
   let state = ctx.userdata::<EngineState>().expect("input state userdata");
-  let events = state.0.borrow_mut().refresh_hover(&tree.0.borrow(), pointers, modifiers);
+  let (events, cursor) = {
+    let mut router = state.0.borrow_mut();
+    let events = router.refresh_hover(&tree.0.borrow(), pointers, modifiers);
+    (events, router.take_cursor_change())
+  };
+  apply_cursor(ctx, cursor);
   emit_routed(ctx, events);
 }

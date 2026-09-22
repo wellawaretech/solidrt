@@ -40,6 +40,9 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // as PointerType::Mouse with a sentinel pointer_id.
   sdl3::hint::set("SDL_TOUCH_MOUSE_EVENTS", "0");
   sdl3::hint::set("SDL_MOUSE_TOUCH_EVENTS", "0");
+  // Image cursors follow the display scale where SDL does that itself
+  // (Windows; macOS and Wayland always do). Must precede any cursor creation.
+  sdl3::hint::set("SDL_MOUSE_DPI_SCALE_CURSORS", "1");
   // For the playback fallback below, force 1:1 pixel mapping so the hidden
   // window is exactly the requested size in physical pixels regardless of
   // display scale.
@@ -524,6 +527,9 @@ impl App {
     // so hit testing would follow an invisible point. While locked, mouse
     // events report the lock point instead; motion continues via rel.
     let mut pointer_lock_frozen: Option<(f32, f32)> = None;
+    // The cursors this loop has created (system shapes on first use, image
+    // cursors on CreateCursor), owned here for as long as SDL may show them.
+    let mut cursors = crate::cursor::Cursors::default();
     let mut last_mouse: (f32, f32) = (0.0, 0.0);
 
     // Instant of the last frame signal (FrameRendered or Tick). When the UI
@@ -908,13 +914,9 @@ impl App {
               log::warn!("set_fullscreen failed: {e}");
             }
           }
-          AlloyCommand::SetCursor(cursor) => match sdl3::mouse::Cursor::from_system(cursor.to_sdl()) {
-            Ok(c) => c.set(),
-            Err(e) => log::warn!("set_cursor failed: {e}"),
-          },
-          AlloyCommand::SetCursorVisible(visible) => {
-            sdl_context.mouse().show_cursor(visible);
-          }
+          AlloyCommand::SetCursor(cursor) => cursors.apply(cursor),
+          AlloyCommand::CreateCursor { id, frames, hot_x, hot_y } => cursors.register(id, &frames, hot_x, hot_y),
+          AlloyCommand::DropCursor(id) => cursors.unregister(id),
           // Applied and reported in this iteration: the snapshot above has
           // already run, and a driven session should not wait a tick.
           AlloyCommand::Gamepad(cmd) => match gamepads.as_mut() {

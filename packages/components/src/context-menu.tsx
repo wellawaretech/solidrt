@@ -69,6 +69,7 @@ export function ContextMenu(props: ContextMenuProps) {
         paddingLeft={space("md")}
         paddingRight={space("md")}
         {...press.handlers}
+        cursor="pointer"
         pointerEvents={p.item.disabled ? "none" : undefined}
       >
         <PressFeedback

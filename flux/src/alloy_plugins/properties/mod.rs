@@ -40,7 +40,7 @@ pub fn apply_font_options(node: &mut alloy::rendertree::Text, name: &str, value:
 
 use std::sync::mpsc::Sender;
 
-use alloy::AlloyCommand;
+use alloy::{AlloyCommand, Cursor, CursorShape};
 use taffy::style::Position;
 
 use crate::alloy_plugins::value::PropValue;
@@ -197,6 +197,16 @@ pub fn apply_jsx(
     return Ok(Damage::None);
   }
 
+  if name == "cursor" {
+    let cursor = match value {
+      PropValue::Null => None,
+      PropValue::Number(n) => Some(Cursor::Custom(cursor_handle(*n)?)),
+      _ => Some(cursor_by_name(str_of(value, "cursor")?)?),
+    };
+    el.set_cursor(cursor);
+    return Ok(Damage::None);
+  }
+
   // Box-geometry vocabulary is detached-only: a layout element's geometry IS
   // its layout box (sized via the width/height layout props), so on a layout
   // element these names are rejected like unknown properties (the renderer
@@ -238,6 +248,13 @@ pub fn apply_jsx(
     } else if let Some(damage) = layout::apply(style, name, value)? {
       return Ok(damage);
     }
+  }
+
+  // A view has no paint of its own (ViewOwnProps): its fill is a child draw
+  // primitive. The same "Unknown property" prefix, so core warns and
+  // continues; the hint saves the trip to the types.
+  if matches!(el.kind, ElementKind::View(_)) && paint::is_paint_prop(name) {
+    return Err(format!("Unknown property '{name}': a view has no paint; put the fill on a child <rect> (or <d-rect>)"));
   }
 
   Err(format!("Unknown property '{name}'"))
@@ -324,6 +341,49 @@ pub(super) fn as_pct_fraction(value: &PropValue) -> Result<Option<f32>, String> 
   } else {
     Ok(None)
   }
+}
+
+// The CSS `cursor` keywords, each to the platform shape of the same name;
+// `none` hides the cursor. Keywords SDL has no shape for (grab, zoom-in, ...)
+// are rejected: an app supplies those as image cursors (createCursor).
+fn cursor_by_name(name: &str) -> Result<Cursor, String> {
+  let shape = match name {
+    "none" => return Ok(Cursor::Hidden),
+    "default" => CursorShape::Default,
+    "text" => CursorShape::Text,
+    "wait" => CursorShape::Wait,
+    "crosshair" => CursorShape::Crosshair,
+    "progress" => CursorShape::Progress,
+    "nwse-resize" => CursorShape::NwseResize,
+    "nesw-resize" => CursorShape::NeswResize,
+    "ew-resize" => CursorShape::EwResize,
+    "ns-resize" => CursorShape::NsResize,
+    "move" => CursorShape::Move,
+    "not-allowed" => CursorShape::NotAllowed,
+    "pointer" => CursorShape::Pointer,
+    "nw-resize" => CursorShape::NwResize,
+    "n-resize" => CursorShape::NResize,
+    "ne-resize" => CursorShape::NeResize,
+    "e-resize" => CursorShape::EResize,
+    "se-resize" => CursorShape::SeResize,
+    "s-resize" => CursorShape::SResize,
+    "sw-resize" => CursorShape::SwResize,
+    "w-resize" => CursorShape::WResize,
+    v => {
+      return Err(format!(
+        "Unknown cursor value \"{v}\"; expected a cursor name (default, pointer, text, ..., none) or a createCursor handle"
+      ))
+    }
+  };
+  Ok(Cursor::System(shape))
+}
+
+// A createCursor handle: a non-negative integer.
+fn cursor_handle(n: f64) -> Result<u64, String> {
+  if n < 0.0 || n.fract() != 0.0 {
+    return Err(format!("cursor handle must be a non-negative integer, got {n}"));
+  }
+  Ok(n as u64)
 }
 
 pub(super) fn str_of<'a>(value: &'a PropValue, what: &str) -> Result<&'a str, String> {

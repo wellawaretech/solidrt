@@ -7290,6 +7290,7 @@ function removeNode(parent, node) {
 var SENTINEL_INTERVAL_MS = 5000;
 var sentinelDue = 0;
 var warnedLeakTypes = new Set;
+var warnedMagnitude = -1;
 function scanForOrphans(now) {
   if (true)
     return;
@@ -7307,12 +7308,14 @@ function scanForOrphans(now) {
   if (total === 0)
     return;
   let fresh = [...counts].filter(([type]) => !warnedLeakTypes.has(type));
-  if (fresh.length === 0)
+  let magnitude = Math.floor(Math.log10(total));
+  if (fresh.length === 0 && magnitude <= warnedMagnitude)
     return;
   for (let [type] of fresh)
     warnedLeakTypes.add(type);
+  warnedMagnitude = magnitude;
   let list = [...counts].map(([type, n]) => `<${type}> x${n}`).join(", ");
-  console.warn(`Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` + `The usual cause is reading an element-valued prop more than once (every read ` + `builds a new subtree); read it once where it mounts, or resolve it with ` + `children(). If these nodes are intentionally kept for later mounting, ignore ` + `this. The next warning comes when a new element type joins the list.`);
+  console.warn(`Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` + `The usual cause is reading an element-valued prop more than once (every read ` + `builds a new subtree); read it once where it mounts, or resolve it with ` + `children(). If these nodes are intentionally kept for later mounting, ignore ` + `this. The next warning comes when a new element type joins the list or the ` + `total passes ${10 ** (magnitude + 1)}.`);
 }
 var warnedRejectedProps = new Set;
 function setTreeProperty(node, name, value) {
@@ -7847,6 +7850,9 @@ var glsl = String.raw;
 import { decodeImage } from "flux:image";
 import { decodeImage as decodeImage2, encodeImage } from "flux:image";
 var imageCache = new Map;
+// ../../packages/core/src/cursor.ts
+import { decodeImage as decodeImage3 } from "flux:image";
+import { createCursor as registerCursor, dropCursor } from "flux:rendertree";
 // ../../packages/core/src/svg.ts
 import { parseSvg as fluxParseSvg } from "flux:svg";
 var svg = String.raw;
@@ -8069,6 +8075,7 @@ ${origin2}`);
 }
 // ../../packages/core/src/arena.ts
 var claims = new Map;
+var pending = new Map;
 var arena = {
   claim(pointerId, owner) {
     if (claims.has(pointerId))
@@ -8095,14 +8102,144 @@ var arena = {
   release(pointerId, owner) {
     if (claims.get(pointerId)?.owner === owner)
       claims.delete(pointerId);
+  },
+  pend(pointerId, owner) {
+    let p = pending.get(pointerId);
+    if (!p) {
+      p = {
+        owners: new Set,
+        fires: []
+      };
+      pending.set(pointerId, p);
+    }
+    p.owners.add(owner);
+  },
+  decide(pointerId, owner, won) {
+    let p = pending.get(pointerId);
+    if (!p || !p.owners.has(owner))
+      return;
+    if (won) {
+      pending.delete(pointerId);
+      return;
+    }
+    p.owners.delete(owner);
+    if (p.owners.size > 0)
+      return;
+    pending.delete(pointerId);
+    for (let fire of p.fires)
+      fire();
+  },
+  defer(pointerId, fire) {
+    let p = pending.get(pointerId);
+    if (!p)
+      return false;
+    p.fires.push(fire);
+    return true;
   }
 };
+// ../../packages/core/src/velocity.ts
+var VELOCITY_WINDOW_MS = 100;
+var VELOCITY_MAX = 8000;
+var VELOCITY_REST_MS = 50;
+var VELOCITY_SAMPLES = 20;
+var FLING_MIN_VELOCITY = 50;
+var ZERO = {
+  vx: 0,
+  vy: 0
+};
+var flingVelocity = (v) => Math.hypot(v.vx, v.vy) < FLING_MIN_VELOCITY ? ZERO : v;
+function createVelocityTracker() {
+  let xs = new Float64Array(VELOCITY_SAMPLES);
+  let ys = new Float64Array(VELOCITY_SAMPLES);
+  let ts = new Float64Array(VELOCITY_SAMPLES);
+  let head = 0;
+  let count = 0;
+  let movedAt = -Infinity;
+  return {
+    push(x, y, at = performance.now()) {
+      if (count === 0)
+        movedAt = at;
+      else {
+        let last = (head - 1 + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
+        if (xs[last] !== x || ys[last] !== y)
+          movedAt = at;
+      }
+      xs[head] = x;
+      ys[head] = y;
+      ts[head] = at;
+      head = (head + 1) % VELOCITY_SAMPLES;
+      if (count < VELOCITY_SAMPLES)
+        count++;
+    },
+    shift(dx, dy) {
+      for (let i = 0;i < count; i++) {
+        let k = (head - 1 - i + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
+        xs[k] = xs[k] + dx;
+        ys[k] = ys[k] + dy;
+      }
+    },
+    reset() {
+      head = 0;
+      count = 0;
+    },
+    velocity(at = performance.now()) {
+      if (count < 2)
+        return ZERO;
+      if (at - movedAt > VELOCITY_REST_MS)
+        return ZERO;
+      let n = 0;
+      let tm = 0;
+      let xm = 0;
+      let ym = 0;
+      for (let i = 0;i < count; i++) {
+        let k = (head - 1 - i + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
+        if (at - ts[k] > VELOCITY_WINDOW_MS)
+          break;
+        n++;
+        tm += ts[k];
+        xm += xs[k];
+        ym += ys[k];
+      }
+      if (n < 2)
+        return ZERO;
+      tm /= n;
+      xm /= n;
+      ym /= n;
+      let tt = 0;
+      let tx = 0;
+      let ty = 0;
+      for (let i = 0;i < n; i++) {
+        let k = (head - 1 - i + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
+        let dt = ts[k] - tm;
+        tt += dt * dt;
+        tx += dt * (xs[k] - xm);
+        ty += dt * (ys[k] - ym);
+      }
+      if (tt === 0)
+        return ZERO;
+      let vx = tx / tt * 1000;
+      let vy = ty / tt * 1000;
+      let speed = Math.hypot(vx, vy);
+      if (speed > VELOCITY_MAX) {
+        let f = VELOCITY_MAX / speed;
+        vx *= f;
+        vy *= f;
+      }
+      return {
+        vx,
+        vy
+      };
+    }
+  };
+}
+
 // ../../packages/core/src/pan.ts
 var PAN_SLOP = 8;
 function createPan(options) {
   let origin2 = null;
   let active = null;
   let armed = null;
+  let tracker = createVelocityTracker();
   let past = (e) => {
     if (!origin2)
       return false;
@@ -8149,6 +8286,8 @@ function createPan(options) {
             x: e.parentX,
             y: e.parentY
           };
+          tracker.reset();
+          tracker.push(e.parentX, e.parentY);
           options.onPanStart?.();
         } else {
           reset();
@@ -8156,6 +8295,7 @@ function createPan(options) {
         return;
       }
       if (active === e.pointerId && origin2) {
+        tracker.push(e.parentX, e.parentY);
         options.onPanMove?.(e.parentX - origin2.x, e.parentY - origin2.y);
         origin2 = {
           x: e.parentX,
@@ -8165,8 +8305,9 @@ function createPan(options) {
     },
     onPointerUp: (e) => {
       if (active === e.pointerId) {
+        let velocity = flingVelocity(tracker.velocity());
         reset();
-        options.onPanEnd?.();
+        options.onPanEnd?.(velocity);
       } else if (armed === e.pointerId) {
         reset();
       }
@@ -8179,6 +8320,9 @@ function createPan(options) {
 }
 // ../../packages/core/src/transform.ts
 import { on as on5 } from "srt:events";
+// ../../packages/core/src/swipe.ts
+var SWIPE_ANGLE_TOLERANCE = 30;
+var OFF_AXIS_RATIO = Math.tan(SWIPE_ANGLE_TOLERANCE * Math.PI / 180);
 // ../../packages/core/src/input-axes.ts
 var clampNum = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 function combineRates(kind, values) {
@@ -8234,7 +8378,7 @@ function invert(source) {
     rate: source.rate ? () => neg(source.rate()) : undefined,
     deltas: source.deltas ? (sink) => source.deltas({
       begin: sink.begin,
-      end: sink.end,
+      end: (velocity) => sink.end(velocity === undefined ? undefined : neg(velocity)),
       delta: (value, focal) => sink.delta(neg(value), focal)
     }) : undefined,
     key: source.key,
@@ -8254,7 +8398,7 @@ function scale(source, factor) {
     rate: source.rate ? () => mul(source.rate()) : undefined,
     deltas: source.deltas ? (sink) => source.deltas({
       begin: sink.begin,
-      end: sink.end,
+      end: (velocity) => sink.end(velocity === undefined ? undefined : mul(velocity)),
       delta: (value, focal) => sink.delta(mul(value), focal)
     }) : undefined,
     key: source.key,
@@ -8716,9 +8860,9 @@ function createInputMap(actions) {
     if (source?.device && untrack(device) !== source.device)
       setDevice(source.device);
   };
-  let closeGesture = (s) => {
+  let closeGesture = (s, velocity) => {
     s.depth--;
-    s.gesture.forEach((g) => g.end?.());
+    s.gesture.forEach((g) => g.end?.(velocity));
   };
   let sink = (s, source) => ({
     begin: () => {
@@ -8733,9 +8877,9 @@ function createInputMap(actions) {
         return;
       s.gesture.forEach((g) => g.delta?.(value, focal));
     },
-    end: () => {
+    end: (velocity) => {
       if (s.depth > 0)
-        closeGesture(s);
+        closeGesture(s, velocity);
     }
   });
   let watchDevice = (source) => createRoot((dispose2) => {
@@ -8800,10 +8944,12 @@ function createInputMap(actions) {
     let s = buttonState(name, want ? "onPress" : "onRelease");
     if (typeof callback !== "function")
       throw new Error(`createInputMap: ${want ? "onPress" : "onRelease"}("${name}") expects a function`);
+    let last = untrack(() => s.value());
     return createRoot((dispose2) => {
-      createEffect(() => s.value(), (pressed, prev) => {
-        if (pressed === want && prev !== want)
+      createEffect(() => s.value(), (pressed) => {
+        if (pressed === want && last !== want)
           untrack(callback);
+        last = pressed;
       }, {
         defer: true
       });
@@ -8886,8 +9032,11 @@ function createInputMap(actions) {
     begin(action2) {
       sink(axisState(action2, "begin")).begin();
     },
-    end(action2) {
-      sink(axisState(action2, "end")).end();
+    end(action2, velocity) {
+      let s = axisState(action2, "end");
+      if (velocity !== undefined)
+        checkValue(`end("${action2}") velocity`, s.kind, velocity);
+      sink(s).end(velocity);
     },
     enable: (...actions2) => switchActions(actions2, true, "enable"),
     disable: (...actions2) => switchActions(actions2, false, "disable"),
@@ -9058,7 +9207,7 @@ function createInputMap(actions) {
         stops.push(map.onGesture(mapped, {
           begin: () => axes.begin(axis2),
           delta: (value, focal) => axes.nudge(axis2, value, focal),
-          end: () => axes.end(axis2)
+          end: (velocity) => axes.end(axis2, velocity)
         }));
       }
       return () => {
@@ -11363,10 +11512,15 @@ function TextInput(props) {
 var SCROLL_SPRING = {
   duration: 250
 };
+var MOMENTUM_DECAY = 2;
+var MOMENTUM_CURVE = [0.19, 1, 0.22, 1];
+var MOMENTUM_MS = Math.round(10 * Math.LN2 / MOMENTUM_DECAY * 1000);
+var LIVE_EPSILON = 0.5;
 function ScrollView(props) {
   let viewport;
   let content;
   let [dragging, setDragging] = createSignal(false);
+  let [fling, setFling] = createSignal(false);
   let scroll = createScroll(() => viewport, () => content, {
     axis: props.horizontal ? "horizontal" : "vertical"
   });
@@ -11380,9 +11534,57 @@ function ScrollView(props) {
       x: -dx,
       y: -dy
     }),
-    onPanEnd: () => setDragging(false)
+    onPanEnd: (v) => {
+      setDragging(false);
+      let speed = props.horizontal ? v.vx : v.vy;
+      if (speed === 0)
+        return;
+      let cur = scroll.offset();
+      let range = scroll.range();
+      let now = props.horizontal ? cur.x : cur.y;
+      let dest = Math.max(0, Math.min(now - speed / MOMENTUM_DECAY, props.horizontal ? range.x : range.y));
+      if (dest === now)
+        return;
+      setFling(true);
+      scroll.scrollTo(props.horizontal ? {
+        x: dest
+      } : {
+        y: dest
+      });
+    }
   });
+  let hold2 = (e) => {
+    setFling(false);
+    if (viewport && content) {
+      let vb = getBoundingBoxViewport2(viewport);
+      let cb = getBoundingBoxViewport2(content);
+      let lb = getLayoutBox2(viewport);
+      if (vb && cb && lb) {
+        let scale2 = props.horizontal ? lb.width > 0 ? vb.width / lb.width : 0 : lb.height > 0 ? vb.height / lb.height : 0;
+        if (scale2 > 0) {
+          let live = (props.horizontal ? vb.x - cb.x : vb.y - cb.y) / scale2;
+          let cur = scroll.offset();
+          if (Math.abs(live - (props.horizontal ? cur.x : cur.y)) > LIVE_EPSILON) {
+            scroll.scrollTo(props.horizontal ? {
+              x: live,
+              behavior: "instant"
+            } : {
+              y: live,
+              behavior: "instant"
+            });
+          }
+        }
+      }
+    }
+    pan.handlers.onPointerDown(e);
+  };
+  let settled = (e) => {
+    if (e.property === "scrollX" || e.property === "scrollY")
+      setFling(false);
+    transitionEndFor("root", props.onTransitionEnd)?.(e);
+  };
   let onWheel = (e) => {
+    setFling(false);
     if (props.horizontal)
       scroll.scrollBy({
         x: e.deltaX || e.deltaY
@@ -11436,6 +11638,17 @@ function ScrollView(props) {
         rest.clipRadius = all;
       return Object.keys(rest).length ? rest : null;
     }
+    if (fling()) {
+      let momentum = {
+        duration: MOMENTUM_MS,
+        curve: MOMENTUM_CURVE
+      };
+      return {
+        ...entries,
+        scrollX: momentum,
+        scrollY: momentum
+      };
+    }
     return {
       scrollX: SCROLL_SPRING,
       scrollY: SCROLL_SPRING,
@@ -11445,7 +11658,13 @@ function ScrollView(props) {
   let direction = () => props.horizontal ? "row" : "column";
   let hasBackground = () => props.style?.backgroundColor != null || props.style?.borderRadius != null;
   let hasBorder = () => (props.style?.borderWidth ?? 0) > 0;
-  var _el$ = createElement("view"), _el$2 = createElement("view"), _el$3 = createElement("view", {
+  var _el$ = createElement("view"), _el$2 = createElement("view", {
+    flex: 1,
+    overflow: "hidden",
+    onTransitionEnd: settled,
+    onPointerDown: hold2,
+    onWheel
+  }), _el$3 = createElement("view", {
     flexShrink: 0
   });
   insertNode2(_el$, _el$2);
@@ -11521,30 +11740,6 @@ function ScrollView(props) {
   })(), _el$2);
   insertNode2(_el$2, _el$3);
   ref(() => (n) => viewport = n, _el$2);
-  setProp(_el$2, "flex", 1);
-  setProp(_el$2, "overflow", "hidden");
-  spread(_el$2, [{
-    get clipRadius() {
-      return props.style?.borderRadius;
-    },
-    get flexDirection() {
-      return direction();
-    },
-    get transition() {
-      return viewportTransition();
-    },
-    get onTransitionEnd() {
-      return transitionEndFor("root", props.onTransitionEnd);
-    },
-    get scrollX() {
-      return scroll.offset().x;
-    },
-    get scrollY() {
-      return scroll.offset().y;
-    }
-  }, () => pan.handlers, {
-    onWheel
-  }], true);
   ref(() => (n) => content = n, _el$3);
   insert(_el$3, () => props.children);
   insert(_el$, (() => {
@@ -11575,8 +11770,33 @@ function ScrollView(props) {
       return _el$5;
     })() : null;
   })(), null);
-  effect3(() => direction(), (_v$, _$p) => {
-    setProp(_el$3, "flexDirection", _v$, _$p);
+  effect3(() => ({
+    e: props.style?.borderRadius,
+    t: direction(),
+    a: viewportTransition(),
+    o: scroll.offset().x,
+    i: scroll.offset().y,
+    n: pan.handlers.onPointerMove,
+    s: pan.handlers.onPointerUp,
+    h: direction()
+  }), ({
+    e,
+    t,
+    a,
+    o,
+    i,
+    n,
+    s,
+    h
+  }, _p$) => {
+    e !== _p$?.e && setProp(_el$2, "clipRadius", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "flexDirection", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$2, "transition", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$2, "scrollX", o, _p$?.o);
+    i !== _p$?.i && setProp(_el$2, "scrollY", i, _p$?.i);
+    n !== _p$?.n && setProp(_el$2, "onPointerMove", n, _p$?.n);
+    s !== _p$?.s && setProp(_el$2, "onPointerUp", s, _p$?.s);
+    h !== _p$?.h && setProp(_el$3, "flexDirection", h, _p$?.h);
   });
   return _el$;
 }
@@ -11586,7 +11806,7 @@ function createPress(options) {
   let [hovered, setHovered] = createSignal(false);
   let node = null;
   let unregisterNav = null;
-  let [pending, setPending] = createSignal(false);
+  let [pending2, setPending] = createSignal(false);
   let inflight = false;
   let activate = () => {
     if (options.disabled || inflight)
@@ -11618,7 +11838,7 @@ function createPress(options) {
       return focused();
     },
     get pending() {
-      return pending();
+      return pending2();
     }
   };
   let state = () => live;
@@ -11646,10 +11866,16 @@ function createPress(options) {
   let owner = {
     cancel
   };
+  let disposed = false;
   onSettled(() => () => {
+    disposed = true;
     disengage();
     unregisterNav?.();
   });
+  let fireDeferred = () => {
+    if (!disposed)
+      activate();
+  };
   let handlers2 = {
     onPointerDown: (e) => {
       if (e.button != null && e.button !== 0)
@@ -11672,7 +11898,7 @@ function createPress(options) {
       if (active === e.pointerId) {
         let fire = inside;
         cancel();
-        if (fire)
+        if (fire && !arena.defer(e.pointerId, fireDeferred))
           activate();
       }
       options.onPointerUp?.(e);
@@ -11699,7 +11925,7 @@ function createPress(options) {
     pressed,
     hovered,
     focused,
-    pending,
+    pending: pending2,
     state,
     ref: ref2,
     handlers: handlers2,

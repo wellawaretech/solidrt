@@ -20,7 +20,7 @@ function NameField() {
 }
 ```
 
-`style` overrides the themed colors, border, and radius (`borderWidth: 0` draws no border at all, and no focus ring). `autoFocus` focuses on mount (the on-screen keyboard still waits for a tap). A tap anywhere outside the field blurs it, as does Escape.
+`style` overrides the themed colors, border, and radius (`borderWidth: 0` draws no border at all, and no focus ring). The mouse cursor is the I-beam over the field. `autoFocus` focuses on mount (the on-screen keyboard still waits for a tap). A tap anywhere outside the field blurs it, as does Escape.
 
 A multiline field sizes like a flex item. Unconstrained, it grows with its content, up to `maxRows` rows and then scrolls. Sized by its layout it is a fixed box that scrolls to the caret: an explicit `height`, or `flexGrow: 1` in a parent with a height (the field fills what is left and scrolls once the text outgrows it), or a parent too small for the content (the field shrinks to fit rather than overflowing).
 

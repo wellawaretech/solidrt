@@ -9,6 +9,7 @@ pub mod barcode;
 mod cadence;
 pub mod camera;
 mod context;
+mod cursor;
 mod egl_headless;
 mod event;
 mod frame_timestamps;
@@ -58,7 +59,7 @@ pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use context::{CaptureDone, CaptureInfo, Context, Overlay};
 pub use event::{
-  AlloyCommand, AlloyEvent, Cursor, GamepadState, Modifiers, Orientation, PointerType, SuspendHold,
+  AlloyCommand, AlloyEvent, Cursor, CursorFrame, CursorImage, CursorShape, GamepadState, Modifiers, Orientation, PointerType, SuspendHold,
   TextCapitalization, TextInputOptions, TextInputType,
 };
 pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand};

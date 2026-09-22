@@ -4690,6 +4690,7 @@ function removeNode(parent, node) {
 var SENTINEL_INTERVAL_MS = 5000;
 var sentinelDue = 0;
 var warnedLeakTypes = new Set;
+var warnedMagnitude = -1;
 function scanForOrphans(now) {
   if (true)
     return;
@@ -4707,12 +4708,14 @@ function scanForOrphans(now) {
   if (total === 0)
     return;
   let fresh = [...counts].filter(([type]) => !warnedLeakTypes.has(type));
-  if (fresh.length === 0)
+  let magnitude = Math.floor(Math.log10(total));
+  if (fresh.length === 0 && magnitude <= warnedMagnitude)
     return;
   for (let [type] of fresh)
     warnedLeakTypes.add(type);
+  warnedMagnitude = magnitude;
   let list = [...counts].map(([type, n]) => `<${type}> x${n}`).join(", ");
-  console.warn(`Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` + `The usual cause is reading an element-valued prop more than once (every read ` + `builds a new subtree); read it once where it mounts, or resolve it with ` + `children(). If these nodes are intentionally kept for later mounting, ignore ` + `this. The next warning comes when a new element type joins the list.`);
+  console.warn(`Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` + `The usual cause is reading an element-valued prop more than once (every read ` + `builds a new subtree); read it once where it mounts, or resolve it with ` + `children(). If these nodes are intentionally kept for later mounting, ignore ` + `this. The next warning comes when a new element type joins the list or the ` + `total passes ${10 ** (magnitude + 1)}.`);
 }
 var warnedRejectedProps = new Set;
 function setTreeProperty(node, name, value) {
@@ -4983,6 +4986,9 @@ var glsl = String.raw;
 import { decodeImage } from "flux:image";
 import { decodeImage as decodeImage2, encodeImage } from "flux:image";
 var imageCache = new Map;
+// ../../packages/core/src/cursor.ts
+import { decodeImage as decodeImage3 } from "flux:image";
+import { createCursor as registerCursor, dropCursor } from "flux:rendertree";
 // ../../packages/core/src/svg.ts
 import { parseSvg as fluxParseSvg } from "flux:svg";
 var svg = String.raw;
@@ -5029,8 +5035,12 @@ var IN_DONE = LAST + FADE;
 var CYCLE = IN_DONE + LAST + FADE;
 // ../../packages/core/src/arena.ts
 var claims = new Map;
+var pending = new Map;
 // ../../packages/core/src/transform.ts
 import { on as on5 } from "srt:events";
+// ../../packages/core/src/swipe.ts
+var SWIPE_ANGLE_TOLERANCE = 30;
+var OFF_AXIS_RATIO = Math.tan(SWIPE_ANGLE_TOLERANCE * Math.PI / 180);
 // ../../packages/core/src/input-chord.ts
 var MODIFIERS = {
   Shift: "shiftKey",

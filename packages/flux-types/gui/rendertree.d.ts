@@ -152,6 +152,34 @@ declare module "flux:rendertree" {
    * comes back on the sticky "pointerLock" bus event.
    */
   export function setPointerLock(locked: boolean): void
+  /** One image of a cursor frame: straight-alpha RGBA8, `width * height * 4` bytes. */
+  export interface CursorImage {
+    data: Uint8Array
+    width: number
+    height: number
+  }
+  /**
+   * One frame of a cursor. `images[0]` is the 1x representation; the rest
+   * are HiDPI alternates the platform picks by their size ratio to it (a
+   * 64x64 alternate of a 32x32 base serves 2x displays). `duration` is the
+   * frame's show time in milliseconds for an animated cursor (0 holds the
+   * frame, ending a one-shot animation on it); a static cursor is one frame.
+   */
+  export interface CursorFrame {
+    images: CursorImage[]
+    duration: number
+  }
+  /**
+   * Register an image cursor and return the handle an element's `cursor`
+   * property takes. `hotX`/`hotY` is the click point in the 1x image's
+   * pixels. Every frame must have the first frame's 1x size. Throws on an
+   * empty, mismatched or out-of-bounds payload; a platform that cannot
+   * create the cursor logs and shows the default shape for the handle.
+   * Handles die with the engine; drop one earlier with `dropCursor`.
+   */
+  export function createCursor(frames: CursorFrame[], hotX: number, hotY: number): number
+  /** Destroy a registered cursor; if it is showing, the default cursor returns. */
+  export function dropCursor(id: number): void
   /** Request that a frame be rendered soon (coalesced by the demand-driven loop). */
   export function requestFrame(): void
   /**

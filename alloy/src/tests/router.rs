@@ -1,5 +1,5 @@
 use crate::rendertree::*;
-use crate::{Modifiers, PointerType};
+use crate::{Cursor, CursorShape, Modifiers, PointerType};
 
 // Scene for every test: root 1 (200x200) with child 2 at (10,20) 100x100 and
 // child 3 at (120,20) 60x60. (50,50) hits [1,2]; (150,50) hits [1,3].
@@ -267,4 +267,68 @@ fn wheel_and_up_gating() {
   );
   assert_eq!(events.len(), 1);
   assert!(matches!(events[0].kind, RoutedKind::Up { .. }));
+}
+
+fn set_cursor(tree: &mut RenderTree, id: u64, cursor: Option<Cursor>) {
+  tree.edit(id, |el| {
+    el.set_cursor(cursor);
+    Damage::None
+  });
+}
+
+#[test]
+fn cursor_resolves_innermost_and_reports_each_change_once() {
+  let mut tree = scene();
+  set_cursor(&mut tree, 1, Some(Cursor::System(CursorShape::Crosshair)));
+  set_cursor(&mut tree, 2, Some(Cursor::System(CursorShape::Pointer)));
+  let mut router = PointerRouter::default();
+
+  // Over 2: its own cursor wins over the root's.
+  router.dispatch(&tree, mouse_move(50.0, 50.0));
+  assert_eq!(router.take_cursor_change(), Some(Cursor::System(CursorShape::Pointer)));
+  // Still over 2: nothing to report.
+  router.dispatch(&tree, mouse_move(60.0, 60.0));
+  assert_eq!(router.take_cursor_change(), None);
+  // Over 3, which sets none: the root's.
+  router.dispatch(&tree, mouse_move(150.0, 50.0));
+  assert_eq!(router.take_cursor_change(), Some(Cursor::System(CursorShape::Crosshair)));
+  // Off every node: the default, sent explicitly so the window recovers.
+  router.dispatch(&tree, mouse_move(300.0, 300.0));
+  assert_eq!(router.take_cursor_change(), Some(Cursor::default()));
+}
+
+#[test]
+fn cursor_changed_in_place_is_seen_by_the_frame_refresh() {
+  let mut tree = scene();
+  let mut router = PointerRouter::default();
+  router.dispatch(&tree, mouse_move(50.0, 50.0));
+  assert_eq!(router.take_cursor_change(), Some(Cursor::default()));
+
+  // The hovered node hides the cursor without the path changing.
+  set_cursor(&mut tree, 2, Some(Cursor::Hidden));
+  let key = (PointerType::Mouse, 0);
+  router.refresh_hover(&tree, vec![(key, (50.0, 50.0))], Modifiers::default());
+  assert_eq!(router.take_cursor_change(), Some(Cursor::Hidden));
+  router.refresh_hover(&tree, vec![(key, (50.0, 50.0))], Modifiers::default());
+  assert_eq!(router.take_cursor_change(), None);
+}
+
+#[test]
+fn touch_never_resolves_a_cursor() {
+  let mut tree = scene();
+  set_cursor(&mut tree, 2, Some(Cursor::System(CursorShape::Pointer)));
+  let mut router = PointerRouter::default();
+  router.dispatch(
+    &tree,
+    InputEvent::PointerMove {
+      pointer_id: 7,
+      pointer_type: PointerType::Touch,
+      x: 50.0,
+      y: 50.0,
+      dx: 0.0,
+      dy: 0.0,
+      modifiers: Modifiers::default(),
+    },
+  );
+  assert_eq!(router.take_cursor_change(), Some(Cursor::default()));
 }

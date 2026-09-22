@@ -87,6 +87,7 @@ export function Pressable(props: PressableProps) {
       onTextInput={props.onTextInput}
       focusable={props.focusable === true && props.disabled !== true}
       pointerEvents={props.disabled ? "none" : props.pointerEvents}
+      cursor={props.cursor ?? "pointer"}
     >
       {hasBackground() ? (
         <d-rect

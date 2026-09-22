@@ -131,6 +131,7 @@ export function Button(props: ButtonProps) {
       rotate={style().rotate}
       opacity={style().opacity}
       {...press.handlers}
+      cursor="pointer"
       focusable={(props.focusable ?? true) && props.disabled !== true}
       pointerEvents={props.disabled ? "none" : undefined}
     >

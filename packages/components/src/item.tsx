@@ -88,6 +88,7 @@ export function Item(props: ItemProps) {
       // pointers from its children (a Switch in a settings row) or from an
       // enclosing pressable. Interactivity is decided at mount.
       {...(props.onPress != null ? press.handlers : {})}
+      cursor={props.onPress != null ? "pointer" : undefined}
       focusable={(props.focusable ?? true) && interactive()}
       pointerEvents={props.disabled ? "none" : undefined}
     >

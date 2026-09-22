@@ -7,6 +7,12 @@ use alloy::rendertree::{Gradient, GradientStop, GradientUnits, PaintState};
 
 // Null resets any of these to the PaintState default (see the Option setters
 // in alloy); the decoded vocabulary is unchanged otherwise.
+// Whether `name` is one of the paint props `apply` decodes: the hint for a
+// paint write on a kind without paint (a view) keys off this.
+pub(super) fn is_paint_prop(name: &str) -> bool {
+  matches!(name, "color" | "strokeWidth" | "strokeMiter" | "drawStyle" | "strokeCap" | "strokeJoin" | "blendMode")
+}
+
 pub fn apply(paint: &mut PaintState, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
   Ok(Some(match name {
     // `color` carries either a solid (a packed-u32 number) or a gradient created

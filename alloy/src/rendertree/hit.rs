@@ -1,6 +1,7 @@
 use taffy::style::Overflow;
 
 use super::{ElementKind, Point, Rect, RenderTree, Size, Vector};
+use crate::Cursor;
 
 /// Controls whether an element participates in hit testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,11 +47,17 @@ pub struct HitConfig {
   // the same value on every leaf under a "click-through" overlay.
   pub pointer_events: Option<PointerEvents>,
   pub listens: EventInterest,
+  // The mouse cursor to show while this element is on the hovered path: the
+  // innermost node along the path that sets one wins (router.rs), so a
+  // container's cursor covers its children until one overrides it, as CSS
+  // `cursor` inheritance does. Interaction metadata only: never affects
+  // layout, paint, or hit testing.
+  pub cursor: Option<Cursor>,
 }
 
 impl Default for HitConfig {
   fn default() -> Self {
-    Self { pointer_events: None, listens: EventInterest::default() }
+    Self { pointer_events: None, listens: EventInterest::default(), cursor: None }
   }
 }
 

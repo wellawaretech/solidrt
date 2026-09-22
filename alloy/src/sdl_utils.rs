@@ -1,9 +1,12 @@
 use sdl3::sys::keyboard::{SDL_GetModState, SDL_HasKeyboard};
-use sdl3::sys::mouse::SDL_HasMouse;
+use sdl3::sys::mouse::{
+  SDL_CreateAnimatedCursor, SDL_CreateColorCursor, SDL_CreateSystemCursor, SDL_Cursor, SDL_CursorFrameInfo,
+  SDL_DestroyCursor, SDL_HasMouse, SDL_HideCursor, SDL_SetCursor, SDL_ShowCursor, SDL_SystemCursor,
+};
 use sdl3::sys::pixels::SDL_PixelFormat;
 use sdl3::sys::power::{SDL_GetPowerInfo, SDL_PowerState};
 use sdl3::sys::rect::SDL_Rect;
-use sdl3::sys::surface::{SDL_CreateSurfaceFrom, SDL_DestroySurface};
+use sdl3::sys::surface::{SDL_AddSurfaceAlternateImage, SDL_CreateSurfaceFrom, SDL_DestroySurface, SDL_Surface};
 use sdl3::sys::video::{
   SDL_GetSystemTheme, SDL_GetWindowDisplayScale, SDL_GetWindowSafeArea, SDL_SetWindowIcon, SDL_SystemTheme,
 };
@@ -132,8 +135,21 @@ pub fn start_text_input_with_options(window: &sdl3::video::Window, opts: &crate:
 // the surface only borrows `rgba`, so it is created, applied and destroyed
 // within the call. Platforms without window icons (macOS) return Err.
 pub fn set_window_icon(window: &sdl3::video::Window, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
-  if rgba.len() != (width * height * 4) as usize {
-    return Err(format!("icon pixel buffer is {} bytes, expected {}x{}x4", rgba.len(), width, height));
+  let surface = rgba_surface(width, height, rgba)?;
+  let ok = unsafe { SDL_SetWindowIcon(window.raw(), surface) };
+  unsafe { SDL_DestroySurface(surface) };
+  if ok {
+    Ok(())
+  } else {
+    Err(sdl_error())
+  }
+}
+
+// A surface over straight-alpha RGBA8 pixels. No copy: `rgba` must outlive
+// the surface, which the caller destroys.
+fn rgba_surface(width: u32, height: u32, rgba: &[u8]) -> Result<*mut SDL_Surface, String> {
+  if rgba.len() != (width as usize) * (height as usize) * 4 {
+    return Err(format!("pixel buffer is {} bytes, expected {}x{}x4", rgba.len(), width, height));
   }
   let surface = unsafe {
     SDL_CreateSurfaceFrom(
@@ -145,14 +161,109 @@ pub fn set_window_icon(window: &sdl3::video::Window, width: u32, height: u32, rg
     )
   };
   if surface.is_null() {
-    return Err(sdl_error());
-  }
-  let ok = unsafe { SDL_SetWindowIcon(window.raw(), surface) };
-  unsafe { SDL_DestroySurface(surface) };
-  if ok {
-    Ok(())
-  } else {
     Err(sdl_error())
+  } else {
+    Ok(surface)
+  }
+}
+
+/// An SDL cursor this process created, destroyed with it. SDL keeps showing
+/// a set cursor until another is set, and destroying the current one reverts
+/// to the default, so the owner outlives every use (the loop's cursor cache,
+/// see crate::cursor).
+pub struct OwnedCursor(*mut SDL_Cursor);
+
+impl Drop for OwnedCursor {
+  fn drop(&mut self) {
+    unsafe { SDL_DestroyCursor(self.0) };
+  }
+}
+
+fn owned_cursor(raw: *mut SDL_Cursor) -> Result<OwnedCursor, String> {
+  if raw.is_null() {
+    Err(sdl_error())
+  } else {
+    Ok(OwnedCursor(raw))
+  }
+}
+
+pub fn create_system_cursor(shape: SDL_SystemCursor) -> Result<OwnedCursor, String> {
+  owned_cursor(unsafe { SDL_CreateSystemCursor(shape) })
+}
+
+/// A cursor from straight-alpha RGBA8 frames (crate::CursorFrame): one frame
+/// is a color cursor, more an animated one. SDL copies every image during
+/// the call; the platform picks a frame's HiDPI alternate by size ratio.
+pub fn create_image_cursor(frames: &[crate::CursorFrame], hot_x: u32, hot_y: u32) -> Result<OwnedCursor, String> {
+  if frames.is_empty() {
+    return Err("cursor has no frames".to_string());
+  }
+  let mut surfaces: Vec<*mut SDL_Surface> = Vec::with_capacity(frames.len());
+  let mut built = Ok(());
+  for frame in frames {
+    match frame_surface(frame) {
+      Ok(surface) => surfaces.push(surface),
+      Err(e) => {
+        built = Err(e);
+        break;
+      }
+    }
+  }
+  let cursor = built.and_then(|()| {
+    let raw = if surfaces.len() == 1 {
+      unsafe { SDL_CreateColorCursor(surfaces[0], hot_x as i32, hot_y as i32) }
+    } else {
+      let mut infos: Vec<SDL_CursorFrameInfo> = surfaces
+        .iter()
+        .zip(frames)
+        .map(|(&surface, frame)| SDL_CursorFrameInfo { surface, duration: frame.duration_ms })
+        .collect();
+      unsafe { SDL_CreateAnimatedCursor(infos.as_mut_ptr(), infos.len() as i32, hot_x as i32, hot_y as i32) }
+    };
+    owned_cursor(raw)
+  });
+  for surface in surfaces {
+    unsafe { SDL_DestroySurface(surface) };
+  }
+  cursor
+}
+
+// The frame's 1x surface with its alternates attached. An attachment holds
+// its own reference, so each alternate is released here; the pixels behind
+// every surface stay borrowed from the frame until the base is destroyed.
+fn frame_surface(frame: &crate::CursorFrame) -> Result<*mut SDL_Surface, String> {
+  let (first, alternates) = frame.images.split_first().ok_or_else(|| "cursor frame has no image".to_string())?;
+  let base = rgba_surface(first.width, first.height, &first.rgba)?;
+  for image in alternates {
+    let attached = rgba_surface(image.width, image.height, &image.rgba).and_then(|alternate| {
+      let ok = unsafe { SDL_AddSurfaceAlternateImage(base, alternate) };
+      unsafe { SDL_DestroySurface(alternate) };
+      if ok {
+        Ok(())
+      } else {
+        Err(sdl_error())
+      }
+    });
+    if let Err(e) = attached {
+      unsafe { SDL_DestroySurface(base) };
+      return Err(e);
+    }
+  }
+  Ok(base)
+}
+
+/// Show `cursor` from now on (SDL keeps the pointer until another is set).
+pub fn set_cursor(cursor: &OwnedCursor) -> bool {
+  unsafe { SDL_SetCursor(cursor.0) }
+}
+
+pub fn show_cursor(visible: bool) {
+  unsafe {
+    if visible {
+      SDL_ShowCursor();
+    } else {
+      SDL_HideCursor();
+    }
   }
 }
 
@@ -202,7 +313,7 @@ use sdl3::sys::camera::{
 use sdl3::sys::init::{SDL_InitSubSystem, SDL_INIT_CAMERA};
 use sdl3::sys::pixels::SDL_PIXELFORMAT_RGBA32;
 use sdl3::sys::stdinc::SDL_free;
-use sdl3::sys::surface::{SDL_ConvertPixels, SDL_Surface};
+use sdl3::sys::surface::SDL_ConvertPixels;
 
 pub fn camera_subsystem_init() -> bool {
   // No driver hint by default: SDL's own Linux order is v4l2 first, pipewire

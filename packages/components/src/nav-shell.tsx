@@ -66,6 +66,7 @@ export function NavShell(props: NavShellProps) {
         paddingBottom={p.padY}
         {...p.layout}
         {...press.handlers}
+        cursor="pointer"
       >
         <d-rect transition={colorFade()} color={itemBg(p.item)} radius={theme.radius.sm} />
         <PressFeedback
@@ -122,6 +123,7 @@ export function NavShell(props: NavShellProps) {
                 marginLeft={theme.spacing.sm}
                 marginRight={theme.spacing.sm}
                 {...press.handlers}
+                cursor="pointer"
               >
                 <d-rect transition={colorFade()} color={itemBg(item)} radius={theme.radius.sm} />
                 <PressFeedback

@@ -111,6 +111,7 @@ export function Radio(props: RadioProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
       {...press.handlers}
+      cursor="pointer"
       focusable={!disabled()}
       pointerEvents={disabled() ? "none" : undefined}
     >

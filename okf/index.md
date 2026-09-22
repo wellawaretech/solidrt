@@ -314,6 +314,10 @@ Shaped, not started.
   of editors over it remounts every editor on each write and loses focus and
   caret; done means an editable list over a query keeps its editors, by keyed
   reconciliation or at least a documented pattern.
+- **[Pin the cursor prop decode in flux's property tests](backlog/cursor-prop-decode-test.md)** [2026-09-22]
+  The router side of the cursor prop is covered in alloy, but the flux decode
+  (21 accepted names, the handle form, the two rejection messages) has no test
+  in the existing apply_jsx harness.
 - **[Deep links](backlog/deep-links-url-open.md)** [2026-07-26]
   "Opening the app at a URL from outside: an OS registration half (scheme
   declaration in srt pack and the Android manifest) and an app half that is
@@ -362,11 +366,6 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
-- **[Wire up the mouse cursor - element cursor prop over SetCursor](backlog/element-cursor-prop.md)** [2026-09-02]
-  AlloyCommand::SetCursor and SetCursorVisible exist with a CSS-vocabulary
-  Cursor enum but have no sender anywhere; give apps the web's cursor model -
-  a per-element cursor prop resolved against the hover path, innermost wins,
-  "none" hides.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
@@ -493,6 +492,11 @@ Shaped, not started.
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
   theme presets hardcode precomputed mix results as a workaround.
+- **[HiDPI image cursors from one SVG source](backlog/hidpi-cursors-from-svg.md)** [2026-09-22]
+  createCursor takes encoded bitmaps per scale; a vector source rasterized at
+  1x, 2x and 3x in JS (parseSvg, draw to a texture, readTexture) would give
+  sharp cursors on every display from one asset, without a rasterizer in the
+  production runtime.
 - **[Rasterize icon SVGs with the runtime's own renderer](backlog/icon-svg-rasterization.md)** [2026-09-01]
   The Android launcher icon needs a PNG the TypeScript CLI cannot produce from
   icon.svg, so a derived icon.png is checked in and every app must maintain
@@ -1379,6 +1383,11 @@ Finished, kept for the reasoning.
   warns at every mount and autoFocus warns whenever another field was focused;
   done means neither warns, in EditorField and every wrapper that forwards
   ref.
+- **[Mouse cursor - element cursor prop, hidden cursor, image cursors](done/element-cursor-prop.md)** [2026-09-02]
+  The web's cursor model through the SolidRT lens - a per-element cursor prop
+  resolved against the hovered path in the router (innermost wins, "none"
+  hides), the platform's 20 shapes by CSS name, and image cursors registered
+  once via createCursor with HiDPI alternates and animation through SDL 3.4.
 - **[Engine-side HTTP disk cache](done/engine-http-cache.md)** [2026-07-27]
   Explicit opt-in disk cache in the forge fetch layer, needed by a production
   app doing many image fetches; designed and shipped as
@@ -2454,6 +2463,11 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   probes per format; on a Raspberry Pi 4 SDL_InitSubSystem(SDL_INIT_CAMERA)
   never returns, and because SDL_UDEV_Scan shares its callback list the main
   thread's gamepad init is dragged into the same loop.
+- **[sdl3 crate's Cursor destroys on drop while SDL keeps showing it, and its SystemCursor stops at 12 of 20 shapes](upstream/sdl3-cursor-wrapper-destroys-on-drop.md)** [2026-09-22]
+  sdl3::mouse::Cursor::set hands the pointer to SDL for as long as it is
+  shown, but the wrapper's Drop calls SDL_DestroyCursor, and SDL reverts to
+  the default cursor when the current one is destroyed; the enum also lacks
+  the eight directional resize shapes SDL 3.2 added.
 - **[flattenArray drops needsUnwrap when a fragment follows an accessor](upstream/signals-flatten-array-clobbers-needs-unwrap.md)** [2026-08-30]
   In @solidjs/signals flattenArray assigns the nested call's result to
   needsUnwrap instead of OR-ing it, so an accessor followed by a function-free

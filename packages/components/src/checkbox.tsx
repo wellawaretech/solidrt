@@ -72,6 +72,7 @@ export function Checkbox(props: CheckboxProps) {
       rotate={style().rotate}
       opacity={style().opacity}
       {...press.handlers}
+      cursor="pointer"
       focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >

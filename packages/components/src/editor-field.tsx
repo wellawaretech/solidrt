@@ -464,6 +464,7 @@ export function EditorField(props: EditorFieldProps) {
       }}
       textInputHints={props.multiline ? { multiline: true, ...props.hints } : props.hints}
       focusable
+      cursor="text"
       flexDirection="column"
       justifyContent="center"
       minHeight={props.multiline ? 0 : undefined}
