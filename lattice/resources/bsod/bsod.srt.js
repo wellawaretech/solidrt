@@ -5057,6 +5057,7 @@ function mostSpecific(items, mods, event) {
 }
 
 // ../../packages/core/src/input-keyboard.ts
+var DEVICE = "keyboard";
 function parse(what, text) {
   if (typeof text !== "string" || text.length === 0)
     throw new Error(`keyboard.${what}: expected a key code or key name, got ${String(text)}`);
@@ -5111,6 +5112,8 @@ function key(spec) {
   return {
     kind: "button",
     label: `keyboard ${spec}`,
+    id: `${DEVICE}:key:${spec}`,
+    device: DEVICE,
     rate: () => state.count() > 0,
     key: state.key,
     blur: state.blur
@@ -5121,6 +5124,8 @@ function axis(neg, pos) {
   return {
     kind: "axis",
     label: `keyboard ${neg}/${pos}`,
+    id: `${DEVICE}:axis:${neg}/${pos}`,
+    device: DEVICE,
     rate: () => {
       state.count();
       return (state.has(pos) ? 1 : 0) - (state.has(neg) ? 1 : 0);
@@ -5134,6 +5139,8 @@ function vec2(keys) {
   return {
     kind: "vec2",
     label: `keyboard ${keys.up}/${keys.left}/${keys.down}/${keys.right}`,
+    id: `${DEVICE}:vec2:${keys.up}/${keys.down}/${keys.left}/${keys.right}`,
+    device: DEVICE,
     rate: () => {
       state.count();
       return [(state.has(keys.right) ? 1 : 0) - (state.has(keys.left) ? 1 : 0), (state.has(keys.down) ? 1 : 0) - (state.has(keys.up) ? 1 : 0)];
@@ -5142,10 +5149,38 @@ function vec2(keys) {
     blur: state.blur
   };
 }
+var MODIFIER_NAMES = new Set(["Shift", "Control", "Alt", "Meta"]);
+function resolve2(spec) {
+  let colon = spec.indexOf(":");
+  let kind = colon < 0 ? spec : spec.slice(0, colon);
+  let rest = colon < 0 ? "" : spec.slice(colon + 1);
+  let parts = rest.split("/");
+  switch (kind) {
+    case "key":
+      return key(rest);
+    case "axis":
+      if (parts.length !== 2)
+        throw new Error(`keyboard.resolve: "${spec}" needs two keys, neg/pos`);
+      return axis(parts[0], parts[1]);
+    case "vec2":
+      if (parts.length !== 4)
+        throw new Error(`keyboard.resolve: "${spec}" needs four keys, up/down/left/right`);
+      return vec2({
+        up: parts[0],
+        down: parts[1],
+        left: parts[2],
+        right: parts[3]
+      });
+    default:
+      throw new Error(`keyboard.resolve: unknown source "${spec}" (key:<spec>, axis:<neg>/<pos>, vec2:<up>/<down>/<left>/<right>)`);
+  }
+}
 var keyboard = {
+  name: DEVICE,
   key,
   axis,
   vec2,
+  resolve: resolve2,
   wasd: vec2({
     up: "KeyW",
     down: "KeyS",
@@ -5161,7 +5196,11 @@ var keyboard = {
 };
 // ../../packages/core/src/input-gamepad-device.ts
 var STICK_DEADZONE = 0.15;
+var LISTEN_THRESHOLD = 0.5;
+var DEVICE2 = "gamepad";
 var deadzone = (x, y) => Math.hypot(x, y) < STICK_DEADZONE ? [0, 0] : [x, y];
+var STICKS = [["leftStick", "leftX", "leftY"], ["rightStick", "rightX", "rightY"]];
+var DPAD_BUTTONS = ["dpadUp", "dpadDown", "dpadLeft", "dpadRight"];
 function createGamepadDevice(pads, slot, who) {
   let sumAxis = (read2) => () => {
     let sum = 0;
@@ -5184,9 +5223,14 @@ function createGamepadDevice(pads, slot, who) {
   let stick = (side) => ({
     kind: "vec2",
     label: `${who} ${side} stick`,
+    id: `${DEVICE2}:${side}Stick`,
+    device: DEVICE2,
     rate: sumVec2((pad) => deadzone(pad.axes[`${side}X`] ?? 0, pad.axes[`${side}Y`] ?? 0))
   });
-  return {
+  let axes = new Map;
+  let buttons = new Map;
+  let device = {
+    name: DEVICE2,
     get slot() {
       return slot();
     },
@@ -5195,37 +5239,139 @@ function createGamepadDevice(pads, slot, who) {
     dpad: {
       kind: "vec2",
       label: `${who} dpad`,
+      id: `${DEVICE2}:dpad`,
+      device: DEVICE2,
       rate: sumVec2((pad) => [pressed(pad, "dpadRight") - pressed(pad, "dpadLeft"), pressed(pad, "dpadDown") - pressed(pad, "dpadUp")])
     },
     triggers: {
       kind: "axis",
       label: `${who} triggers`,
+      id: `${DEVICE2}:triggers`,
+      device: DEVICE2,
       rate: sumAxis((pad) => (pad.axes.rightTrigger ?? 0) - (pad.axes.leftTrigger ?? 0))
     },
     shoulders: {
       kind: "axis",
       label: `${who} shoulders`,
+      id: `${DEVICE2}:shoulders`,
+      device: DEVICE2,
       rate: sumAxis((pad) => pressed(pad, "rightShoulder") - pressed(pad, "leftShoulder"))
     },
     axis(name) {
       if (typeof name !== "string" || name.length === 0)
         throw new Error(`gamepad.axis: expected an axis name, got ${String(name)}`);
-      return {
-        kind: "axis",
-        label: `${who} ${name}`,
-        rate: sumAxis((pad) => pad.axes[name] ?? 0)
-      };
+      let source = axes.get(name);
+      if (!source) {
+        source = {
+          kind: "axis",
+          label: `${who} ${name}`,
+          id: `${DEVICE2}:axis:${name}`,
+          device: DEVICE2,
+          rate: sumAxis((pad) => pad.axes[name] ?? 0)
+        };
+        axes.set(name, source);
+      }
+      return source;
     },
     button(name) {
       if (typeof name !== "string" || name.length === 0)
         throw new Error(`gamepad.button: expected a button name, got ${String(name)}`);
-      return {
-        kind: "button",
-        label: `${who} ${name}`,
-        rate: anyButton(name)
+      let source = buttons.get(name);
+      if (!source) {
+        source = {
+          kind: "button",
+          label: `${who} ${name}`,
+          id: `${DEVICE2}:button:${name}`,
+          device: DEVICE2,
+          rate: anyButton(name)
+        };
+        buttons.set(name, source);
+      }
+      return source;
+    },
+    resolve(spec) {
+      let colon = spec.indexOf(":");
+      let head = colon < 0 ? spec : spec.slice(0, colon);
+      let rest = colon < 0 ? "" : spec.slice(colon + 1);
+      switch (head) {
+        case "leftStick":
+        case "rightStick":
+        case "dpad":
+        case "triggers":
+        case "shoulders":
+          if (rest)
+            break;
+          return device[head];
+        case "axis":
+          return device.axis(rest);
+        case "button":
+          return device.button(rest);
+      }
+      throw new Error(`gamepad.resolve: unknown source "${spec}" (leftStick, rightStick, dpad, triggers, shoulders, axis:<name>, button:<name>)`);
+    },
+    listen(kind, found) {
+      if (kind !== "button" && kind !== "axis" && kind !== "vec2")
+        throw new Error(`gamepad.listen: expected a kind, got ${String(kind)}`);
+      if (typeof found !== "function")
+        throw new Error("gamepad.listen: expects a function");
+      let held2 = new Set;
+      let arm = (pads2) => {
+        let now = new Set;
+        for (let pad of pads2) {
+          for (let b of pad.buttons)
+            now.add(b);
+          for (let [name, v] of Object.entries(pad.axes))
+            if (Math.abs(v) >= LISTEN_THRESHOLD)
+              now.add(name);
+          for (let [name, x, y] of STICKS)
+            if (Math.hypot(pad.axes[x] ?? 0, pad.axes[y] ?? 0) >= LISTEN_THRESHOLD)
+              now.add(name);
+        }
+        for (let name of held2)
+          if (!now.has(name))
+            held2.delete(name);
+        return now;
       };
+      for (let name of arm(untrack(pads)))
+        held2.add(name);
+      let fresh = (now, name) => now.has(name) && !held2.has(name);
+      return createRoot((dispose2) => {
+        createEffect(() => pads(), (ps) => {
+          let now = arm(ps);
+          let pick = () => {
+            if (kind === "button") {
+              for (let pad of ps)
+                for (let b of pad.buttons)
+                  if (fresh(now, b))
+                    return device.button(b);
+              return;
+            }
+            if (kind === "axis") {
+              for (let pad of ps)
+                for (let name of Object.keys(pad.axes))
+                  if (fresh(now, name))
+                    return device.axis(name);
+              return;
+            }
+            for (let [name] of STICKS)
+              if (fresh(now, name))
+                return device[name];
+            for (let pad of ps)
+              for (let b of pad.buttons)
+                if (DPAD_BUTTONS.includes(b) && fresh(now, b))
+                  return device.dpad;
+          };
+          let source = pick();
+          if (source)
+            found(source);
+        }, {
+          defer: true
+        });
+        return dispose2;
+      });
     }
   };
+  return device;
 }
 function createGamepadSlot(read2, slot) {
   if (slot !== undefined && !(Number.isInteger(slot) && slot >= 0))

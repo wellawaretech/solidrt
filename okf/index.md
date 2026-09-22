@@ -511,12 +511,6 @@ Shaped, not started.
   change (or a control-API call) produced a frame, so a frame loop that
   integrates from tick deltas (a gravity fall that does not move the camera
   yet) stalls.
-- **[Input map stage 2 - rebinding and interactions](backlog/input-map-stage-2.md)** [2026-09-07]
-  The map (core input-map.ts) covers actions, sources, presets, drive(),
-  by-name injection, enable/disable contexts and gamepad.next() joining, and
-  components' focus navigation consumes it; what a settings screen and a game
-  want next is a rebinding flow over bindings() with a serializable form, and
-  hold/tap/chord interactions on buttons - both waiting for a consumer.
 - **[iOS port readiness](backlog/ios-port-readiness.md)** [2026-09-10]
   The app-facing contracts are designed so an iOS port changes no app code;
   this lists what the port itself still has to supply behind them (the suspend
@@ -825,14 +819,6 @@ Shaped, not started.
   partly-built subtree without freeing it, so every retry leaks the elements
   built before the suspend point - and the leak sentinel that catches it names
   the wrong cause.
-- **[Synthetic gamepads through the control API](backlog/synthetic-gamepad-input.md)** [2026-09-07]
-  An agent cannot verify anything a pad drives (the input map's gamepad
-  device, gamepad.next() joining, the camera presets' stick and trigger
-  bindings, focus navigation on the dpad) because /input and send_input know
-  pointer, key, wheel and text events only; the client should accept synthetic
-  pads (connect, buttons, axes, disconnect) that enter where SDL's do, so a
-  pad session is scriptable and headless-verifiable like a drag or a
-  keystroke.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
@@ -1730,6 +1716,13 @@ Finished, kept for the reasoning.
   Impeller's built-in filters - the "where is box-shadow" layer beneath the
   GLSL tiers; all three shipped and pixel-verified; found two upstream
   Impeller bugs on the way.
+- **[Input map stage 2 - rebinding, interactions, active device](done/input-map-stage-2.md)** [2026-09-22]
+  The map covered actions, sources, presets, drive(), by-name injection,
+  contexts and gamepad.next() joining; a settings screen and a game still
+  hand-wrote rebinding, saved bindings, hold/tap/chord recognition and button
+  prompts per device. Stable source ids, save()/load(), rebind() over the
+  devices, hold/tap/doubleTap/chord as button sources and a reactive device()
+  close that.
 - **[Isolate follow-ups](done/isolate-follow-ups.md)** [2026-08-21]
   The open ends left when isolates (okf/done/isolates-and-ports.md) closed,
   kept in one place so none vanished with the done record. All of them are now
@@ -2035,6 +2028,14 @@ Finished, kept for the reasoning.
   prop runs one pass over that texture and composites the result. Plan decided
   2026-08-03; all three stages done and verified 2026-08-04. Android sanity
   run for exact-size storage pending.
+- **[Synthetic gamepads through the control API](done/synthetic-gamepad-input.md)** [2026-09-22]
+  An agent cannot verify anything a pad drives (the input map's gamepad
+  device, gamepad.next() joining, the camera presets' stick and trigger
+  bindings, focus navigation on the dpad) because /input and send_input know
+  pointer, key, wheel and text events only; the client should accept synthetic
+  pads (connect, buttons, axes, disconnect) that enter where SDL's do, so a
+  pad session is scriptable and headless-verifiable like a drag or a
+  keystroke.
 - **[One view write per target per camera move](done/target-view-single-write.md)** [2026-09-22]
   The 3d scene wrote each target's frustum and LOD view as two crossings
   derived in JS from one camera; now one setView(target, view, proj) per

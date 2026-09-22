@@ -251,8 +251,10 @@ function AppDetail(props: {
             </View>
           </View>
           <View layout={{ flexDirection: "row", gap: space("md") }}>
-            <Button onPress={() => props.onLaunch()}>Launch</Button>
-            <Button variant="secondary" onPress={() => setConfirming(true)}>
+            <Button layout={{ flexGrow: 1 }} onPress={() => props.onLaunch()}>
+              Launch
+            </Button>
+            <Button layout={{ flexGrow: 1 }} variant="secondary" onPress={() => setConfirming(true)}>
               Remove
             </Button>
           </View>
@@ -267,10 +269,10 @@ function AppDetail(props: {
                     </Text>
                   </View>
                   <View layout={{ flexDirection: "row", gap: space("md") }}>
-                    <Button variant="ghost" onPress={() => setConfirming(false)}>
+                    <Button layout={{ flexGrow: 1 }} variant="ghost" onPress={() => setConfirming(false)}>
                       Cancel
                     </Button>
-                    <Button variant="danger" onPress={() => props.onRemove()}>
+                    <Button layout={{ flexGrow: 1 }} variant="danger" onPress={() => props.onRemove()}>
                       Remove
                     </Button>
                   </View>
@@ -439,17 +441,17 @@ function DevCard(props: {
       </View>
       <View layout={{ flexDirection: "row", gap: space("sm") }}>
         <Show when={props.idle}>
-          <Button variant="secondary" onPress={props.onConnect}>
+          <Button layout={{ flexGrow: 1 }} variant="secondary" onPress={props.onConnect}>
             Connect
           </Button>
         </Show>
         <Show when={props.busy}>
-          <Button variant="secondary" onPress={() => stop()}>
+          <Button layout={{ flexGrow: 1 }} variant="secondary" onPress={() => stop()}>
             Cancel
           </Button>
         </Show>
         <Show when={props.connected}>
-          <Button variant="secondary" onPress={() => stop()}>
+          <Button layout={{ flexGrow: 1 }} variant="secondary" onPress={() => stop()}>
             Disconnect
           </Button>
         </Show>

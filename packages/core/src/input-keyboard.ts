@@ -28,8 +28,13 @@ import { createSignal } from "@solidjs/signals"
 import type { KeyEvent } from "./types"
 import type { InputSource } from "./input-map"
 import type { Vec2 } from "./input-axes"
-import { mostSpecific, parseModifiers } from "./input-chord"
+import { chordName, eventModifiers, mostSpecific, parseModifiers } from "./input-chord"
 import type { Modifier } from "./input-chord"
+
+// Source ids (input-id.ts): `keyboard:key:<spec>`, `keyboard:axis:<neg>/<pos>`,
+// `keyboard:vec2:<up>/<down>/<left>/<right>`; specs as given, so a saved
+// id restores the very spec the app or the player wrote.
+const DEVICE = "keyboard"
 
 // A parsed spec: the text as given (the held-state key and the label),
 // the key it names, and the modifiers the down must carry.
@@ -87,6 +92,8 @@ function key(spec: string): InputSource<"button"> {
   return {
     kind: "button",
     label: `keyboard ${spec}`,
+    id: `${DEVICE}:key:${spec}`,
+    device: DEVICE,
     rate: () => state.count() > 0,
     key: state.key,
     blur: state.blur,
@@ -99,6 +106,8 @@ function axis(neg: string, pos: string): InputSource<"axis"> {
   return {
     kind: "axis",
     label: `keyboard ${neg}/${pos}`,
+    id: `${DEVICE}:axis:${neg}/${pos}`,
+    device: DEVICE,
     rate: () => {
       state.count()
       return (state.has(pos) ? 1 : 0) - (state.has(neg) ? 1 : 0)
@@ -117,6 +126,8 @@ function vec2(keys: KeyboardVec2Keys): InputSource<"vec2"> {
   return {
     kind: "vec2",
     label: `keyboard ${keys.up}/${keys.left}/${keys.down}/${keys.right}`,
+    id: `${DEVICE}:vec2:${keys.up}/${keys.down}/${keys.left}/${keys.right}`,
+    device: DEVICE,
     rate: (): Vec2 => {
       state.count()
       return [(state.has(keys.right) ? 1 : 0) - (state.has(keys.left) ? 1 : 0), (state.has(keys.down) ? 1 : 0) - (state.has(keys.up) ? 1 : 0)]
@@ -126,18 +137,54 @@ function vec2(keys: KeyboardVec2Keys): InputSource<"vec2"> {
   }
 }
 
+/** A key event as a spec a rebind binds: the modifiers it carries ahead
+ * of its code (or its key, for a synthetic event without one); null for a
+ * bare modifier key, which names nothing on its own. */
+export function keySpec(event: KeyEvent): string | null {
+  if (MODIFIER_NAMES.has(event.key)) return null
+  let key = event.code || event.key
+  if (!key) return null
+  let mods = chordName(eventModifiers(event))
+  return mods ? `${mods}+${key}` : key
+}
+
+// The logical key names of the modifiers, as key events report them.
+const MODIFIER_NAMES = new Set(["Shift", "Control", "Alt", "Meta"])
+
+// A device spec (the id past "keyboard:") back to a source.
+function resolve(spec: string): InputSource {
+  let colon = spec.indexOf(":")
+  let kind = colon < 0 ? spec : spec.slice(0, colon)
+  let rest = colon < 0 ? "" : spec.slice(colon + 1)
+  let parts = rest.split("/")
+  switch (kind) {
+    case "key":
+      return key(rest)
+    case "axis":
+      if (parts.length !== 2) throw new Error(`keyboard.resolve: "${spec}" needs two keys, neg/pos`)
+      return axis(parts[0]!, parts[1]!)
+    case "vec2":
+      if (parts.length !== 4) throw new Error(`keyboard.resolve: "${spec}" needs four keys, up/down/left/right`)
+      return vec2({ up: parts[0]!, down: parts[1]!, left: parts[2]!, right: parts[3]! })
+    default:
+      throw new Error(`keyboard.resolve: unknown source "${spec}" (key:<spec>, axis:<neg>/<pos>, vec2:<up>/<down>/<left>/<right>)`)
+  }
+}
+
 /**
  * The keyboard device: `keyboard.key("Space")`, `keyboard.axis("KeyQ",
  * "KeyE")`, `keyboard.vec2({ up, down, left, right })`, and the two
  * composites every game binds, `keyboard.wasd` and `keyboard.arrows`.
  * A spec may carry modifiers ("Shift+Tab", "Ctrl+KeyS"). Each call makes
  * an independent source with its own held state; the composites are
- * shared singletons.
+ * shared singletons. `resolve` rebuilds a source from its id's spec.
  */
 export let keyboard = {
+  name: DEVICE as "keyboard",
   key,
   axis,
   vec2,
+  resolve,
   wasd: vec2({ up: "KeyW", down: "KeyS", left: "KeyA", right: "KeyD" }),
   arrows: vec2({ up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight" }),
 }

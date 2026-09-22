@@ -2,6 +2,7 @@
 title: Synthetic gamepads through the control API
 description: An agent cannot verify anything a pad drives (the input map's gamepad device, gamepad.next() joining, the camera presets' stick and trigger bindings, focus navigation on the dpad) because /input and send_input know pointer, key, wheel and text events only; the client should accept synthetic pads (connect, buttons, axes, disconnect) that enter where SDL's do, so a pad session is scriptable and headless-verifiable like a drag or a keystroke.
 created: 2026-09-07
+completed: 2026-09-22
 ---
 
 # Synthetic gamepads through the control API
@@ -52,6 +53,30 @@ reaches JS as the sticky `gamepads` event
   player 1 is the second pad's slot and player 2 the first's; push a
   stick and read the marker moving from a snapshot; disconnect one and
   read the slot going empty.
+
+## What was done
+
+`alloy/src/gamepad.rs` gained `Pad::Synthetic` in the same slot vector
+as the physical pads (ids from a reserved range, `mapped: true`, names
+from the mapped vocabulary checked by `synthetic_button_name`/
+`synthetic_axis_name`), `Gamepads::apply(GamepadCommand)` for connect
+(lowest free slot or a named one), set (level state) and disconnect,
+and the mute leaves synthetic pads alone (a synthetic "back" fires the
+Back edge even muted). `AlloyCommand::Gamepad` carries it to the loop's
+thread, where the arm applies it and emits the snapshot at once rather
+than waiting a tick. lattice's `parse_input_events` returns a plan of
+`Injected::Event | Injected::Gamepad`, `DevFlags` carries the alloy
+command sender, a `set` with `holdMs` expands to the state plus rest;
+tests in `lattice/src/tests/input.rs`. The `send_input` schema and
+description and `packages/cli/agents/debugging.md` document it.
+
+Driven on `packages/core/examples/gamepad.tsx` through `/input`
+(2026-09-22, release client): two pads connected, south on slot 1 then
+slot 0 seated player 1 on pad 1 and player 2 on pad 0 with one jump
+each; a 300 ms stick push moved a marker 90 px at 300 px/s (a diagonal
+64 px, the unit clamp), read from the tree's d-rect boxes; a set during
+the mute reached the snapshot; a disconnect read back as `slot 1:
+empty`, and a reconnect into slot 1 drove player 1 again.
 
 ## Not in this item
 

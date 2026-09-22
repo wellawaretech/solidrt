@@ -907,6 +907,7 @@ fn ui_thread(
       dev_connected.clone(),
       clock_control.clone(),
       input_inject_tx,
+      alloy_cmd_tx.clone(),
       resampler.clone(),
       user_input_muted.clone(),
       outbound_rx,

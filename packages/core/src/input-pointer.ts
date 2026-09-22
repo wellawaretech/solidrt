@@ -71,10 +71,15 @@ import { createTransform } from "./transform"
 import { getLayoutBox } from "./core"
 import { pointerLocked } from "./window"
 import type { PointerEvent, WheelEvent } from "./types"
-import type { DeltaSink, InputSource } from "./input-map"
+import type { ActionKind, DeltaSink, InputDevice, InputSource } from "./input-map"
 import type { Vec2 } from "./input-axes"
-import { chordName, mostSpecific, parseModifiers } from "./input-chord"
+import { chordName, eventModifiers, mostSpecific, parseModifiers } from "./input-chord"
 import type { Modified, Modifier } from "./input-chord"
+
+// Source ids (input-id.ts): `pointer:<gesture>` for the bare source and
+// `pointer:<gesture>:<spec>` for a chord or button variant, the spec in
+// its canonical spelling ("Shift+Ctrl+Right").
+const DEVICE = "pointer"
 
 // Octaves per wheel-delta unit: the zoom exponent both cameras used
 // (0.0015 per unit) taken in log2, so a 100-unit notch zooms about a
@@ -96,7 +101,8 @@ const MOUSE_PX_PER_UNIT = 1500
  */
 export type PointerSource<K extends "axis" | "vec2"> = InputSource<K> & ((chord: string) => InputSource<K>)
 
-export interface PointerFeed {
+export interface PointerFeed extends InputDevice {
+  readonly name: "pointer"
   /** Spread on the element whose pointer events feed the sources. */
   handlers: {
     onPointerDown(event: PointerEvent): void
@@ -120,6 +126,13 @@ export interface PointerFeed {
   /** Raw mouse motion while the pointer is locked, in view-height
    * equivalents (see MOUSE_PX_PER_UNIT); unbracketed. */
   mouseDelta: PointerSource<"vec2">
+  /** The source of an id's spec ("drag", "drag:Ctrl+Right", "wheel"). */
+  resolve(spec: string): InputSource
+  /** For a rebind: `found` gets the next gesture of `kind` the pointer
+   * opens on the element (a drag, pan or locked mouse motion for a vec2;
+   * a pinch, twist or wheel notch for an axis), as the variant of the
+   * chord and button that opened it. Returns the stop. */
+  listen(kind: ActionKind, found: (source: InputSource) => void): () => void
 }
 
 export interface PointerFeedOptions {
@@ -142,9 +155,11 @@ const PRIMARY = 0
 // bound mid-gesture joins it.
 type Bucket = { mods: Modifier[]; button: number; sinks: Set<DeltaSink>; source: InputSource }
 
-function gesture<K extends "axis" | "vec2">(kind: K, label: string, buttons: boolean) {
+function gesture<K extends "axis" | "vec2">(kind: K, id: string, label: string, buttons: boolean) {
   let buckets = new Map<string, Bucket>()
   let open: Set<DeltaSink>[] = []
+  // Rebind listeners: told the variant each bracket or send opens.
+  let probes = new Set<(source: InputSource) => void>()
   let variant = (mods: Modifier[], button: number): InputSource<K> => {
     let name = [chordName(mods), button === PRIMARY ? "" : Object.keys(BUTTONS)[button]!].filter(Boolean).join("+")
     let bucket = buckets.get(name)
@@ -153,6 +168,8 @@ function gesture<K extends "axis" | "vec2">(kind: K, label: string, buttons: boo
       let source: InputSource<K> = {
         kind,
         label: name ? `${label} (${name})` : label,
+        id: name ? `${DEVICE}:${id}:${name}` : `${DEVICE}:${id}`,
+        device: DEVICE,
         deltas(sink) {
           sinks.add(sink)
           return () => {
@@ -176,16 +193,29 @@ function gesture<K extends "axis" | "vec2">(kind: K, label: string, buttons: boo
     }
     return variant(parseModifiers(label, text, parts), button)
   }
-  let source: PointerSource<K> = Object.assign(spec, { kind, label: bare.label, deltas: bare.deltas! })
+  let source: PointerSource<K> = Object.assign(spec, { kind, label: bare.label, id: bare.id, device: bare.device, deltas: bare.deltas! })
   let resolve = (event: Modified, button: number): Set<DeltaSink>[] =>
     mostSpecific(
       [...buckets.values()].filter(b => b.sinks.size > 0 && b.button === button),
       b => b.mods,
       event,
     ).map(b => b.sinks)
+  let probe = (event: Modified, button: number) => {
+    if (probes.size === 0) return
+    let found = variant(eventModifiers(event), button)
+    probes.forEach(p => p(found))
+  }
   return {
     source,
+    spec,
+    listen(found: (source: InputSource) => void) {
+      probes.add(found)
+      return () => {
+        probes.delete(found)
+      }
+    },
     begin(event: Modified, button: number) {
+      probe(event, button)
       open = resolve(event, button)
       for (let sinks of open) sinks.forEach(k => k.begin())
     },
@@ -197,18 +227,20 @@ function gesture<K extends "axis" | "vec2">(kind: K, label: string, buttons: boo
       open = []
     },
     send(event: Modified, value: number | Vec2, focal?: Vec2) {
+      probe(event, PRIMARY)
       for (let sinks of resolve(event, PRIMARY)) sinks.forEach(k => k.delta(value, focal))
     },
   }
 }
 
 export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed {
-  let drag = gesture("vec2", "pointer drag", true)
-  let pan = gesture("vec2", "pointer two-finger pan", true)
-  let pinch = gesture("axis", "pointer pinch", true)
-  let twist = gesture("axis", "pointer twist", true)
-  let wheel = gesture("axis", "pointer wheel", false)
-  let mouseDelta = gesture("vec2", "mouse motion (pointer locked)", false)
+  let drag = gesture("vec2", "drag", "pointer drag", true)
+  let pan = gesture("vec2", "pan", "pointer two-finger pan", true)
+  let pinch = gesture("axis", "pinch", "pointer pinch", true)
+  let twist = gesture("axis", "twist", "pointer twist", true)
+  let wheel = gesture("axis", "wheel", "pointer wheel", false)
+  let mouseDelta = gesture("vec2", "mouseDelta", "mouse motion (pointer locked)", false)
+  let gestures = { drag, pan, pinch, twist, wheel, mouseDelta }
 
   // The element's box, read at each press (see the header). A detached
   // leaf has no layout box and must bring `layout`: normalizing by
@@ -296,11 +328,29 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
         wheel.send(e, -e.deltaY * WHEEL_OCTAVES, focalOf(e.localX, e.localY))
       },
     },
+    name: DEVICE,
     drag: drag.source,
     pan: pan.source,
     pinch: pinch.source,
     twist: twist.source,
     wheel: wheel.source,
     mouseDelta: mouseDelta.source,
+    resolve(spec) {
+      let colon = spec.indexOf(":")
+      let name = (colon < 0 ? spec : spec.slice(0, colon)) as keyof typeof gestures
+      let g = gestures[name]
+      if (!g) throw new Error(`pointer.resolve: unknown gesture "${spec}" (${Object.keys(gestures).join(", ")}, each with an optional :<chord>)`)
+      return colon < 0 ? g.source : g.spec(spec.slice(colon + 1))
+    },
+    listen(kind, found) {
+      if (kind !== "button" && kind !== "axis" && kind !== "vec2") throw new Error(`pointer.listen: expected a kind, got ${String(kind)}`)
+      if (typeof found !== "function") throw new Error("pointer.listen: expects a function")
+      let stops = Object.values(gestures)
+        .filter(g => g.source.kind === kind)
+        .map(g => g.listen(found))
+      return () => {
+        for (let stop of stops) stop()
+      }
+    },
   }
 }

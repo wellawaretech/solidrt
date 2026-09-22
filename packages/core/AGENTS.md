@@ -392,9 +392,14 @@ that reads exactly like Solid fallout.
   stays for fingers. A
   detached d-* leaf has no layout box: give the feed `{ layout }` or it
   throws at the first press. `invert(source)` and `scale(source, k)` are
-  the two processors: keys and sticks move the CAMERA where a drag moves
+  the value processors: keys and sticks move the CAMERA where a drag moves
   the content, so a preset binds arrows or a stick to `pan`/`rotate`
-  through invert() and the action keeps one meaning.
+  through invert() and the action keeps one meaning. `hold(source, ms)`,
+  `tap(source, ms)`, `doubleTap(source, gapMs, tapMs)` and
+  `chord(...sources)` are the interactions (Unity's Hold/Tap/MultiTap):
+  button sources made from button sources, so a charged attack is
+  `hold(pad.button("west"))` on one action next to the plain press on
+  another; a tap reads pressed for one task, enough for onPress.
   Consumers with the axes contract (`createAxes({ rotate: "vec2", zoom:
   "axis" }, { onNudge, onBegin, onEnd })`, what every camera control
   exposes as `.axes`) are connected by name with `input.drive(control.axes,
@@ -404,7 +409,23 @@ that reads exactly like Solid fallout.
   name is the wire for scripts, debug commands, peers and replays:
   `input.set("move", [0, -1])` holds a rate, `press`/`release` a button,
   `nudge`/`begin`/`end` feed the delta channel. `bindings()` lists what is
-  bound (source labels are display strings), `unbind` removes one, and a
+  bound, `unbind` removes one. Every source has a `label` (display) and
+  an `id` (serializable, no device instance: `keyboard:key:Space`,
+  `gamepad:button:south`, `pointer:drag:Ctrl+Right`,
+  `invert(gamepad:leftStick)`, `hold(400,keyboard:key:Space)`) plus its
+  `device`. A settings screen is `input.save()` (ids per action, JSON it)
+  and `input.load(saved, { keyboard, gamepad, pointer })` (resolves
+  through the devices given, all-or-nothing, throws on an unknown id),
+  `input.rebind(action, devices, { signal?, replace?, part? })` (a
+  promise of the next fitting input bound: a key down captured through
+  the map's handlers, a pad button/trigger/stick, a pointer gesture's
+  first movement; `replace` (default) swaps that device's bindings on
+  the action; `part: "up"` etc. swaps one key of the bound keyboard
+  composite on a vec2/axis action; `signal` is an AbortSignal), and
+  `input.device()` (reactive: the device that last moved anything bound,
+  the button-prompt switch - show `bindings(action)` where
+  `source.device === input.device()`; glyph images are the app's, keyed
+  by id). A
   preset (`orbitBindings`, `firstPersonBindings` in @solidrt/3d,
   `camera2dBindings` in @solidrt/2d) is a plain bindings list the app
   applies and edits - nothing binds unless the app says so (the one

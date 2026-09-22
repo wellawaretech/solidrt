@@ -37,6 +37,11 @@ pub enum AlloyCommand {
   SetCadenceHold(crate::cadence::CadenceHold),
   SetCursor(Cursor),
   SetCursorVisible(bool),
+  // A synthetic gamepad (the dev tools' `input` query): connect, hold a
+  // state, disconnect. Applied by the pad owner on the loop's thread, which
+  // is where SDL's pads live, so a synthetic pad takes a slot and reaches
+  // the snapshot exactly as a physical one does (see gamepad::Gamepads).
+  Gamepad(crate::gamepad::GamepadCommand),
   // Relative mouse mode (pointer lock): SDL hides the cursor, confines it
   // to the window, and mouse motion reports hardware deltas while absolute
   // positions freeze. The loop answers with AlloyEvent::PointerLock carrying

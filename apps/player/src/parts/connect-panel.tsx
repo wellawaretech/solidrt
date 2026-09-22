@@ -103,7 +103,9 @@ export function ConnectPanel(props: {
             />
           </View>
           <View layout={{ flexDirection: "row", gap: space("md") }}>
-            <Button onPress={submit}>Connect</Button>
+            <Button layout={{ flexGrow: 1 }} onPress={submit}>
+              Connect
+            </Button>
           </View>
         </Card>
         <Show when={recentAddresses().length > 0}>

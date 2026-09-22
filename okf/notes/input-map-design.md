@@ -31,6 +31,10 @@ the app applies and edits, never a default.
 | Processors | n/a | deadzone per action | invert, scale, deadzone, normalize | invert, scale; dead zone in the pad device |
 | Presets | n/a | `ui_*` actions built in | Default Input Actions asset | code the app applies (`orbitBindings`, ...); the UI set built into the focus nav |
 | Contexts | n/a | none | action maps enabled per scheme | enable/disable by action name on one map |
+| Rebinding | n/a | `action_add_event` from `_input` by hand | `PerformInteractiveRebinding` | `rebind(action, devices)` over each device's `listen` |
+| Persistence | n/a | project settings | binding-override JSON | `save()`/`load()` over source ids |
+| Interactions | n/a | none | Hold, Tap, MultiTap, Press (Unreal: Triggers) | `hold`, `tap`, `doubleTap`, `chord` as button sources |
+| Schemes | n/a | none | control schemes, `PlayerInput.currentControlScheme` | `device()` plus `bindings()` by `source.device` |
 
 ## Decisions
 
@@ -122,6 +126,32 @@ the app applies and edits, never a default.
   gesture. Three's middle-drag dolly is still not a preset binding: zoom
   is an axis and a drag is a vec2, and no processor projects one onto
   the other yet.
+- **Ids name the source, not the device instance.** `gamepad:button:south`
+  has no slot, so player 2's saved file restores onto player 2's device;
+  the id grammar is `<device>:<spec>` with processors around it
+  (`invert(...)`, `hold(400,...)`), the spec being the device's own
+  vocabulary, and `load()` resolves through the devices the app hands in
+  and throws on anything else, so a file from another version fails
+  loudly rather than half-binding. Labels stay the display half.
+- **Rebind listens where the input arrives.** The map owns the key
+  handlers, so it captures the next key itself (and swallows it: the
+  player is naming a key, not playing); a pad and a pointer feed each
+  carry `listen(kind, found)`, the pad over its snapshot with what is
+  held at the start excluded until released, the feed on the bracket that
+  opens (as the chord and button variant that opened it). `replace`
+  swaps the action's bindings of the found device, not the others, since
+  a settings row reads "Jump: Space" per device; a key on an axis/vec2
+  action means one `part` of the bound composite, the way Unity rebinds a
+  composite part by part. Found sources apply on a microtask: they arrive
+  from inside a device's effect.
+- **Interactions are sources, not action options.** `hold(pad.button("west"))`
+  binds next to the plain press on another action and the consumer reads
+  a bool; timing is `setTimeout` (headless, no frame loop), and a tap is
+  a one-task pulse so the map's onPress edge sees it.
+- **The active device is the last one that moved.** One effect per
+  binding on the source's rate, plus the delta path; a custom source
+  without `device` never counts. Glyphs are the app's assets keyed by id;
+  core gives the id, the label and the device.
 
 ## Traps
 

@@ -17,6 +17,7 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 `packages/core` - the renderer and the reactivity surface.
 
+- packages/core/checks/input-map-check.ts contexts section: "a source still held presses on enable, got presses 2" and "enabling an enabled action is a no-op" fail at HEAD with the flux binary of 2026-09-11 (the map counts a second press edge on enable); find whether the check or the map drifted after a signals bump and fix the one that did.
 - renderer.ts leak sentinel (scanForOrphans): it warns only when a NEW element type joins the orphans, so a leak that keeps growing at a stable set of types goes silent after the first warning (one was caught only by reading `orphanNodes` in get_stats); warn again when the total crosses an order of magnitude.
 - Enter animations: warn (properties/mod.rs, the `transition` branch) when a config declaring `from` lands on a node already entered whose previous config declared none - a `from` that arrives after the mount frame's advance never plays and nothing says so. Not on a from-to-from swap: `closing() ? OUT : IN` toggles are legitimate.
 - Layout slide per-axis motion (Reanimated's curved and sequenced presets): `x`/`y` sub-motions on the `layout` entry, additive on okf/done/transition-layout-animations.md.

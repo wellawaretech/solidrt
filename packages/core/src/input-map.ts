@@ -37,11 +37,22 @@
 // list of names, which a preset's action object already is
 // (`input.disable(...Object.keys(gameActions))`): Unity's per-map enable
 // and Unreal's stacked contexts, on one map, with no extra concept.
+//
+// A settings screen has three things on the map: save()/load() carry the
+// bindings as source ids (input-id.ts) to and from storage, rebind()
+// listens for the next input on the devices given and binds it, and
+// device() is the device that last moved anything bound, so button
+// prompts follow the player from the keyboard to the pad (Unity's control
+// schemes, without a second concept: a scheme is the bindings of one
+// device, which bindings() lists by source.device).
 
 import { createEffect, createRoot, createSignal, untrack } from "@solidjs/signals"
 import type { KeyEvent } from "./types"
 import { combineRates } from "./input-axes"
 import type { Axes, AxesDecl, AxisValue, Vec2 } from "./input-axes"
+import { checkSource } from "./input-processors"
+import { resolveSource } from "./input-id"
+import { keySpec } from "./input-keyboard"
 
 export type ActionKind = "button" | "axis" | "vec2"
 export type ActionValue<K extends ActionKind> = K extends "button" ? boolean : K extends "axis" ? number : Vec2
@@ -54,6 +65,10 @@ export interface DeltaSink {
   end(): void
 }
 
+/** The devices a map knows by name: the id prefix of their sources, and
+ * what rebind() listens on and load() resolves through. */
+export type DeviceName = "keyboard" | "gamepad" | "pointer"
+
 /**
  * One device control as an input source. `rate` reads its current value
  * (reactive); `deltas` subscribes a sink to the amounts a gesture
@@ -64,60 +79,52 @@ export interface InputSource<K extends ActionKind = ActionKind> {
   readonly kind: K
   /** For bindings listings and settings screens: "keyboard W/A/S/D". */
   readonly label: string
+  /** The serializable name (input-id.ts: "keyboard:key:Space",
+   * "invert(gamepad:leftStick)"): what save() stores and load() resolves.
+   * A custom source names itself under a prefix of its own. */
+  readonly id: string
+  /** The device the source reads, for InputMap.device(); a custom source
+   * may leave it out and never counts as the active device. */
+  readonly device?: DeviceName
   rate?: () => ActionValue<K>
   deltas?: (sink: DeltaSink) => () => void
   key?: (event: KeyEvent, down: boolean) => void
   blur?: () => void
 }
 
+/** What a map asks of a device: sources by spec (the id's device half),
+ * and, for rebind(), a listener for the next control of a kind the player
+ * actuates. The keyboard has no listener of its own: the map captures
+ * the next key through its handlers. */
+export interface InputDevice {
+  readonly name: DeviceName
+  resolve(spec: string): InputSource
+  listen?(kind: ActionKind, found: (source: InputSource) => void): () => void
+}
+
+export type InputDeviceSet = Partial<Record<DeviceName, InputDevice>>
+
 export type Binding = { action: string; source: InputSource }
-
-/**
- * A source with its values negated - Unity's Invert processor. The one
- * convention split every engine has: a drag moves the CONTENT under the
- * finger, while keys and sticks move the CAMERA, so a preset binds the
- * arrows or a stick to `pan` or `rotate` through invert() and the axis
- * keeps one meaning.
- */
-export function invert<K extends "axis" | "vec2">(source: InputSource<K>): InputSource<K> {
-  checkSource(source)
-  if ((source.kind as ActionKind) === "button") throw new Error(`invert: "${source.label}" is a button`)
-  let neg = (v: number | Vec2): number | Vec2 => (typeof v === "number" ? -v : [-v[0], -v[1]])
-  return {
-    kind: source.kind,
-    label: `${source.label} (inverted)`,
-    rate: source.rate ? () => neg(source.rate!() as number | Vec2) as never : undefined,
-    deltas: source.deltas
-      ? sink => source.deltas!({ begin: sink.begin, end: sink.end, delta: (value, focal) => sink.delta(neg(value), focal) })
-      : undefined,
-    key: source.key,
-    blur: source.blur,
-  }
-}
-
-/** A source scaled by `factor` (rates and deltas alike) - Unity's Scale
- * processor: a slower stick, a finer wheel. */
-export function scale<K extends "axis" | "vec2">(source: InputSource<K>, factor: number): InputSource<K> {
-  checkSource(source)
-  if ((source.kind as ActionKind) === "button") throw new Error(`scale: "${source.label}" is a button`)
-  if (!Number.isFinite(factor)) throw new Error(`scale: factor must be a finite number, got ${factor}`)
-  let mul = (v: number | Vec2): number | Vec2 => (typeof v === "number" ? v * factor : [v[0] * factor, v[1] * factor])
-  return {
-    kind: source.kind,
-    label: `${source.label} (x${factor})`,
-    rate: source.rate ? () => mul(source.rate!() as number | Vec2) as never : undefined,
-    deltas: source.deltas
-      ? sink => source.deltas!({ begin: sink.begin, end: sink.end, delta: (value, focal) => sink.delta(mul(value), focal) })
-      : undefined,
-    key: source.key,
-    blur: source.blur,
-  }
-}
 
 export interface GestureListener<K extends "axis" | "vec2" = "axis" | "vec2"> {
   begin?: () => void
   delta?: (value: AxisValue<K>, focal: Vec2 | undefined) => void
   end?: () => void
+}
+
+/** The half of a keyboard composite a key rebinds: `neg`/`pos` of an
+ * axis, `up`/`down`/`left`/`right` of a vec2. */
+export type RebindPart = "neg" | "pos" | "up" | "down" | "left" | "right"
+
+export interface RebindOptions {
+  /** Cancels the listen; the promise rejects with the signal's reason. */
+  signal?: AbortSignal
+  /** Unbind the action's sources of the same device first (default true),
+   * so a row on a settings screen replaces rather than adds. */
+  replace?: boolean
+  /** On an axis or vec2 action, which part of the bound keyboard
+   * composite a key press replaces; without it keys are ignored there. */
+  part?: RebindPart
 }
 
 type AxisActions<A extends ActionsDecl> = { [N in keyof A]: A[N] extends "button" ? never : N }[keyof A] & string
@@ -162,6 +169,25 @@ export interface InputMap<A extends ActionsDecl> {
   disable(...actions: (keyof A & string)[]): void
   /** Reactive: whether the action is enabled. */
   enabled(action: keyof A & string): boolean
+  /** Reactive: the device that last moved anything bound (a key down, a
+   * stick leaving rest, a gesture delta), undefined until one has. The
+   * button-prompt switch: show the bindings of this device. */
+  device(): DeviceName | undefined
+  /** The bindings as source ids per action, in binding order - JSON for
+   * storage. Every action is present, an unbound one as []. */
+  save(): Record<keyof A & string, string[]>
+  /** Replace the bindings of each action in `saved` with the ids resolved
+   * through `devices` (actions absent from `saved` keep theirs). Throws
+   * on an unknown action, a device not given or an id a device rejects,
+   * before changing anything. */
+  load(saved: Partial<Record<keyof A & string, string[]>>, devices: InputDeviceSet): void
+  /**
+   * Listen for the next input on `devices` that fits the action and bind
+   * it: a key down (the keyboard, through this map's handlers), a pad
+   * button, trigger or stick, a pointer gesture's first movement.
+   * Resolves with the source bound. One rebind at a time per map.
+   */
+  rebind(action: keyof A & string, devices: InputDeviceSet, options?: RebindOptions): Promise<InputSource>
   /** Key events for the bound keyboard sources: spread on the window
    * (app-global) or on the leaf that should hold focus for them. */
   handlers: {
@@ -195,11 +221,15 @@ type ActionState = {
   gesture: Set<GestureListener>
   /** Live delta subscriptions per bound source. */
   live: Map<InputSource, () => void>
+  /** The device watchers per bound source (see watchDevice). */
+  watch: Map<InputSource, () => void>
 }
 
 let compatible = (source: ActionKind, action: ActionKind): boolean => source === action || (source === "button" && action === "axis")
 
 let neutral = (kind: ActionKind): boolean | number | Vec2 => (kind === "button" ? false : kind === "axis" ? 0 : [0, 0])
+
+let isNeutral = (v: boolean | number | Vec2): boolean => (typeof v === "boolean" ? !v : typeof v === "number" ? v === 0 : v[0] === 0 && v[1] === 0)
 
 function checkValue(what: string, kind: ActionKind, v: unknown): void {
   if (kind === "button") {
@@ -211,18 +241,16 @@ function checkValue(what: string, kind: ActionKind, v: unknown): void {
   }
 }
 
-function checkSource(source: unknown): InputSource {
-  let s = source as InputSource
-  // A pointer gesture is a callable source (`pointer.drag("Ctrl")` is its chord variant).
-  if (!s || (typeof s !== "object" && typeof s !== "function") || (s.kind !== "button" && s.kind !== "axis" && s.kind !== "vec2") || typeof s.label !== "string") {
-    throw new Error(`createInputMap: not an input source: ${String(source)}`)
-  }
-  return s
-}
+// The parts of a keyboard composite spec, by kind, in id order.
+const AXIS_PARTS: RebindPart[] = ["neg", "pos"]
+const VEC2_PARTS: RebindPart[] = ["up", "down", "left", "right"]
 
 export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
   if (!actions || typeof actions !== "object") throw new Error("createInputMap: expected an object of action kinds")
   let states = new Map<string, ActionState>()
+  // ownedWrite: the device changes inside the watchers' effects and from
+  // gesture deltas delivered by event handlers.
+  let [device, setDevice] = createSignal<DeviceName | undefined>(undefined, { ownedWrite: true })
   for (let [name, kind] of Object.entries(actions)) {
     if (kind !== "button" && kind !== "axis" && kind !== "vec2") throw new Error(`createInputMap: action "${name}" has kind "${String(kind)}", expected "button", "axis" or "vec2"`)
     // ownedWrite: bind() and set() run from component bodies.
@@ -255,6 +283,7 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
       },
       gesture: new Set(),
       live: new Map(),
+      watch: new Map(),
     }
     states.set(name, state)
   }
@@ -273,20 +302,25 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
     if (s.kind !== "button") throw new Error(`createInputMap: ${what} needs a button action, "${name}" is a ${s.kind}`)
     return s
   }
+  let touched = (source: InputSource | undefined): void => {
+    if (source?.device && untrack(device) !== source.device) setDevice(source.device)
+  }
   // The delta channel fan-out for one action. Brackets are counted as
   // delivered, so a disable can close what is open and an end whose begin
-  // was dropped (or never delivered) reaches no listener.
+  // was dropped (or never delivered) reaches no listener. A delta from a
+  // device source also names it the active device.
   let closeGesture = (s: ActionState): void => {
     s.depth--
     s.gesture.forEach(g => g.end?.())
   }
-  let sink = (s: ActionState): DeltaSink => ({
+  let sink = (s: ActionState, source?: InputSource): DeltaSink => ({
     begin: () => {
       if (!s.enabled) return
       s.depth++
       s.gesture.forEach(g => g.begin?.())
     },
     delta: (value, focal) => {
+      touched(source)
       if (!s.enabled) return
       s.gesture.forEach(g => g.delta?.(value as never, focal))
     },
@@ -294,6 +328,19 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
       if (s.depth > 0) closeGesture(s)
     },
   })
+  // A rate source leaving rest names its device the active one: one
+  // effect per binding, under a root disposed at unbind.
+  let watchDevice = (source: InputSource): (() => void) =>
+    createRoot(dispose => {
+      createEffect(
+        () => source.rate!(),
+        v => {
+          if (!isNeutral(v)) touched(source)
+        },
+        { defer: true },
+      )
+      return dispose
+    })
   let switchActions = (names: string[], on: boolean, what: string): void => {
     if (names.length === 0) throw new Error(`createInputMap: ${what}() needs at least one action`)
     for (let name of names) {
@@ -305,14 +352,19 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
     }
   }
 
-  let bindOne = (name: string, source: InputSource): void => {
+  let checkBind = (name: string, source: InputSource): ActionState => {
     let s = state(name)
     checkSource(source)
     if (!compatible(source.kind, s.kind)) throw new Error(`createInputMap: cannot bind ${source.kind} source "${source.label}" to ${s.kind} action "${name}"`)
+    return s
+  }
+  let bindOne = (name: string, source: InputSource): void => {
+    let s = checkBind(name, source)
     if (s.sources.includes(source)) return
     s.sources.push(source)
     s.bump()
-    if (source.deltas && s.kind !== "button") s.live.set(source, source.deltas(sink(s)))
+    if (source.deltas && s.kind !== "button") s.live.set(source, source.deltas(sink(s, source)))
+    if (source.rate && source.device) s.watch.set(source, watchDevice(source))
   }
   let unbindOne = (name: string, source: InputSource): void => {
     let s = state(name)
@@ -324,6 +376,11 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
     if (stop) {
       s.live.delete(source)
       stop()
+    }
+    let unwatch = s.watch.get(source)
+    if (unwatch) {
+      s.watch.delete(source)
+      unwatch()
     }
   }
   let edge = (name: string, want: boolean, callback: () => void): (() => void) => {
@@ -342,6 +399,10 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
       return dispose
     })
   }
+
+  // The pending rebind's key capture: the next key down that is not a
+  // bare modifier is its source, and never reaches the bound sources.
+  let capture: ((event: KeyEvent) => void) | null = null
 
   let map: InputMap<A> = {
     actions,
@@ -414,6 +475,122 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
       s.version()
       return s.enabled
     },
+    device,
+    save() {
+      let out = {} as Record<keyof A & string, string[]>
+      for (let [name, s] of states) out[name as keyof A & string] = s.sources.map(source => source.id)
+      return out
+    },
+    load(saved, devices) {
+      if (!saved || typeof saved !== "object") throw new Error("createInputMap: load() expects an object of id lists per action")
+      if (!devices || typeof devices !== "object") throw new Error("createInputMap: load() expects the devices to resolve through")
+      // Resolve everything first: a bad id leaves the map as it was.
+      let plan: [string, InputSource[]][] = []
+      for (let [name, ids] of Object.entries(saved)) {
+        if (!Array.isArray(ids)) throw new Error(`createInputMap: load() action "${name}": expected an array of ids`)
+        let sources = ids.map(id => resolveSource(id, devices))
+        for (let source of sources) checkBind(name, source)
+        plan.push([name, sources])
+      }
+      for (let [name, sources] of plan) {
+        for (let source of [...state(name).sources]) unbindOne(name, source)
+        for (let source of sources) bindOne(name, source)
+      }
+    },
+    rebind(action, devices, options = {}) {
+      let s = state(action)
+      if (!devices || typeof devices !== "object") throw new Error("createInputMap: rebind() expects the devices to listen on")
+      if (capture) throw new Error("createInputMap: a rebind is already pending on this map")
+      let { signal, replace = true, part } = options
+      let parts = s.kind === "axis" ? AXIS_PARTS : s.kind === "vec2" ? VEC2_PARTS : []
+      if (part !== undefined) {
+        if (s.kind === "button") throw new Error(`createInputMap: rebind("${action}") part: "${action}" is a button, a key rebinds it whole`)
+        if (!parts.includes(part)) throw new Error(`createInputMap: rebind("${action}") part "${part}": a ${s.kind} action has ${parts.join("/")}`)
+      }
+      if (!devices.keyboard && !devices.gamepad?.listen && !devices.pointer?.listen) throw new Error(`createInputMap: rebind("${action}") has no device to listen on`)
+      if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("rebind aborted"))
+      return new Promise<InputSource>((resolve, reject) => {
+        let stops: (() => void)[] = []
+        let settled = false
+        // The signal's onabort is a single handler property (the runtime's
+        // AbortSignal subset): chain onto whatever the app set and restore it.
+        let prevAbort = signal?.onabort ?? null
+        let cleanup = () => {
+          settled = true
+          capture = null
+          if (signal) signal.onabort = prevAbort
+          for (let stop of stops) stop()
+        }
+        let abort = () => {
+          if (settled) return
+          cleanup()
+          reject(signal!.reason ?? new Error("rebind aborted"))
+        }
+        // A found source arrives from inside a device's effect or an event
+        // handler: apply on the microtask, outside the notifier.
+        let found = (source: InputSource, replacing: boolean) => {
+          if (settled) return
+          settled = true
+          queueMicrotask(() => {
+            try {
+              cleanup()
+              if (replacing) for (let bound of [...s.sources]) if (bound.device === source.device) unbindOne(action, bound)
+              bindOne(action, source)
+              resolve(source)
+            } catch (err) {
+              reject(err)
+            }
+          })
+        }
+        // The keyboard: a key rebinds a button action whole; on an axis or
+        // vec2 action it replaces one part of the bound composite, whose
+        // other parts stay.
+        let keyboard = devices.keyboard
+        if (keyboard) {
+          capture = event => {
+            let spec = keySpec(event)
+            if (spec === null) return
+            if (s.kind === "button") {
+              found(keyboard.resolve(`key:${spec}`), replace)
+              return
+            }
+            if (part === undefined) return
+            let prefix = `${s.kind}:`
+            let composite = s.sources.find(b => b.device === "keyboard" && b.id.startsWith(`keyboard:${prefix}`))
+            if (!composite) {
+              settled = true
+              cleanup()
+              reject(new Error(`createInputMap: rebind("${action}") part "${part}": no keyboard ${s.kind} composite is bound to "${action}"`))
+              return
+            }
+            let specs = composite.id.slice(`keyboard:${prefix}`.length).split("/")
+            specs[parts.indexOf(part)] = spec
+            let next = keyboard.resolve(`${prefix}${specs.join("/")}`)
+            // Only that composite is replaced, whatever `replace` says: a
+            // second keyboard composite on the action (arrows next to
+            // WASD) is a binding of its own, and two copies would add up.
+            unbindOne(action, composite)
+            found(next, false)
+          }
+        }
+        for (let name of ["gamepad", "pointer"] as const) {
+          let d = devices[name]
+          if (d?.listen) {
+            stops.push(
+              d.listen(s.kind, source => {
+                if (compatible(source.kind, s.kind)) found(source, replace)
+              }),
+            )
+          }
+        }
+        if (signal) {
+          signal.onabort = event => {
+            prevAbort?.(event)
+            abort()
+          }
+        }
+      })
+    },
     handlers: {
       onKeyDown: event => forwardKey(event, true),
       onKeyUp: event => forwardKey(event, false),
@@ -453,8 +630,13 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
     },
   }
   // A key event reaches each bound keyboard source once, however many
-  // actions it is bound to.
+  // actions it is bound to. While a rebind listens, a key down is
+  // captured instead: the player is naming a key, not playing.
   let forwardKey = (event: KeyEvent, down: boolean): void => {
+    if (capture && down && !event.repeat) {
+      capture(event)
+      return
+    }
     let seen = new Set<InputSource>()
     for (let s of states.values()) {
       for (let source of s.sources) {

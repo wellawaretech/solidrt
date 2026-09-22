@@ -8198,9 +8198,438 @@ function combineRates(kind, values) {
   return len > 1 ? [x / len, y / len] : [x, y];
 }
 
+// ../../packages/core/src/input-processors.ts
+var HOLD_MS = 400;
+var TAP_MS = 200;
+var DOUBLE_TAP_GAP_MS = 300;
+function checkSource(source) {
+  let s = source;
+  if (!s || typeof s !== "object" && typeof s !== "function" || s.kind !== "button" && s.kind !== "axis" && s.kind !== "vec2" || typeof s.label !== "string" || typeof s.id !== "string") {
+    throw new Error(`createInputMap: not an input source: ${String(source)}`);
+  }
+  return s;
+}
+var checkAxisSource = (what, source) => {
+  checkSource(source);
+  if (source.kind === "button")
+    throw new Error(`${what}: "${source.label}" is a button`);
+};
+var checkButtonSource = (what, source) => {
+  checkSource(source);
+  if (source.kind !== "button")
+    throw new Error(`${what}: "${source.label}" is a ${source.kind}, not a button`);
+};
+var checkMs = (what, ms) => {
+  if (!Number.isFinite(ms) || ms < 0)
+    throw new Error(`${what}: ms must be a non-negative number, got ${String(ms)}`);
+};
+function invert(source) {
+  checkAxisSource("invert", source);
+  let neg = (v) => typeof v === "number" ? -v : [-v[0], -v[1]];
+  return {
+    kind: source.kind,
+    label: `${source.label} (inverted)`,
+    id: `invert(${source.id})`,
+    device: source.device,
+    rate: source.rate ? () => neg(source.rate()) : undefined,
+    deltas: source.deltas ? (sink) => source.deltas({
+      begin: sink.begin,
+      end: sink.end,
+      delta: (value, focal) => sink.delta(neg(value), focal)
+    }) : undefined,
+    key: source.key,
+    blur: source.blur
+  };
+}
+function scale(source, factor) {
+  checkAxisSource("scale", source);
+  if (!Number.isFinite(factor))
+    throw new Error(`scale: factor must be a finite number, got ${factor}`);
+  let mul = (v) => typeof v === "number" ? v * factor : [v[0] * factor, v[1] * factor];
+  return {
+    kind: source.kind,
+    label: `${source.label} (x${factor})`,
+    id: `scale(${factor},${source.id})`,
+    device: source.device,
+    rate: source.rate ? () => mul(source.rate()) : undefined,
+    deltas: source.deltas ? (sink) => source.deltas({
+      begin: sink.begin,
+      end: sink.end,
+      delta: (value, focal) => sink.delta(mul(value), focal)
+    }) : undefined,
+    key: source.key,
+    blur: source.blur
+  };
+}
+function derived(source, label, id2, edge) {
+  let [pressed, setPressed] = createSignal(false, {
+    ownedWrite: true
+  });
+  let timer = null;
+  let hooks = {
+    set: setPressed,
+    later(ms, run) {
+      hooks.clearLater();
+      timer = setTimeout(() => {
+        timer = null;
+        run();
+      }, ms);
+    },
+    clearLater() {
+      if (timer !== null)
+        clearTimeout(timer);
+      timer = null;
+    }
+  };
+  let dispose2 = createRoot((dispose3) => {
+    createEffect(() => source.rate(), (down, prev) => {
+      if (down !== prev)
+        edge(down, performance.now(), hooks);
+    }, {
+      defer: true
+    });
+    return dispose3;
+  });
+  if (getOwner()) {
+    onCleanup(() => {
+      hooks.clearLater();
+      dispose2();
+    });
+  }
+  return {
+    kind: "button",
+    label,
+    id: id2,
+    device: source.device,
+    rate: pressed,
+    key: source.key,
+    blur: source.blur
+  };
+}
+var pulse = (hooks) => {
+  hooks.set(true);
+  hooks.later(0, () => hooks.set(false));
+};
+function hold(source, ms = HOLD_MS) {
+  checkButtonSource("hold", source);
+  checkMs("hold", ms);
+  return derived(source, `${source.label} (hold ${ms} ms)`, `hold(${ms},${source.id})`, (down, _now, hooks) => {
+    if (down)
+      hooks.later(ms, () => hooks.set(true));
+    else {
+      hooks.clearLater();
+      hooks.set(false);
+    }
+  });
+}
+function tap(source, ms = TAP_MS) {
+  checkButtonSource("tap", source);
+  checkMs("tap", ms);
+  let downAt = 0;
+  return derived(source, `${source.label} (tap)`, `tap(${ms},${source.id})`, (down, now, hooks) => {
+    if (down)
+      downAt = now;
+    else if (now - downAt <= ms)
+      pulse(hooks);
+  });
+}
+function doubleTap(source, gapMs = DOUBLE_TAP_GAP_MS, tapMs = TAP_MS) {
+  checkButtonSource("doubleTap", source);
+  checkMs("doubleTap", gapMs);
+  checkMs("doubleTap", tapMs);
+  let downAt = 0;
+  let lastTap = -Infinity;
+  return derived(source, `${source.label} (double tap)`, `doubleTap(${gapMs},${tapMs},${source.id})`, (down, now, hooks) => {
+    if (down) {
+      downAt = now;
+      return;
+    }
+    if (now - downAt > tapMs)
+      return;
+    if (now - lastTap <= gapMs) {
+      lastTap = -Infinity;
+      pulse(hooks);
+    } else
+      lastTap = now;
+  });
+}
+function chord(...sources) {
+  if (sources.length < 2)
+    throw new Error("chord: needs at least two button sources");
+  for (let s of sources)
+    checkButtonSource("chord", s);
+  return {
+    kind: "button",
+    label: sources.map((s) => s.label).join(" + "),
+    id: `chord(${sources.map((s) => s.id).join(",")})`,
+    device: sources[0].device,
+    rate: () => sources.every((s) => s.rate?.() === true),
+    key: (event, down) => {
+      for (let s of sources)
+        s.key?.(event, down);
+    },
+    blur: () => {
+      for (let s of sources)
+        s.blur?.();
+    }
+  };
+}
+
+// ../../packages/core/src/input-id.ts
+var splitArgs = (text) => {
+  let out = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0;i < text.length; i++) {
+    let c = text[i];
+    if (c === "(")
+      depth++;
+    else if (c === ")")
+      depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out;
+};
+var number = (id2, text) => {
+  let n = Number(text);
+  if (text.trim() === "" || !Number.isFinite(n))
+    throw new Error(`resolveSource: "${id2}" has a non-numeric argument "${text}"`);
+  return n;
+};
+function resolveSource(id2, devices) {
+  if (typeof id2 !== "string" || id2.length === 0)
+    throw new Error(`resolveSource: expected an id, got ${String(id2)}`);
+  let processed = /^([A-Za-z]+)\((.*)\)$/.exec(id2);
+  if (processed) {
+    let [, name2, inner] = processed;
+    let args = splitArgs(inner);
+    let axis = (i) => resolveSource(args[i], devices);
+    let button = (i) => resolveSource(args[i], devices);
+    let arity = (n) => {
+      if (args.length !== n)
+        throw new Error(`resolveSource: ${name2}() takes ${n} argument(s), "${id2}" gives ${args.length}`);
+    };
+    switch (name2) {
+      case "invert":
+        arity(1);
+        return invert(axis(0));
+      case "scale":
+        arity(2);
+        return scale(axis(1), number(id2, args[0]));
+      case "hold":
+        arity(2);
+        return hold(button(1), number(id2, args[0]));
+      case "tap":
+        arity(2);
+        return tap(button(1), number(id2, args[0]));
+      case "doubleTap":
+        arity(3);
+        return doubleTap(button(2), number(id2, args[0]), number(id2, args[1]));
+      case "chord":
+        return chord(...args.map((_, i) => button(i)));
+      default:
+        throw new Error(`resolveSource: unknown processor "${name2}" in "${id2}"`);
+    }
+  }
+  let colon = id2.indexOf(":");
+  if (colon <= 0)
+    throw new Error(`resolveSource: "${id2}" names no device (expected "<device>:<spec>")`);
+  let name = id2.slice(0, colon);
+  let device = devices[name];
+  if (!device)
+    throw new Error(`resolveSource: no "${name}" device given for "${id2}" (given: ${Object.keys(devices).join(", ") || "none"})`);
+  return device.resolve(id2.slice(colon + 1));
+}
+
+// ../../packages/core/src/input-chord.ts
+var MODIFIERS = {
+  Shift: "shiftKey",
+  Ctrl: "ctrlKey",
+  Control: "ctrlKey",
+  Alt: "altKey",
+  Meta: "metaKey"
+};
+var ORDER = ["shiftKey", "ctrlKey", "altKey", "metaKey"];
+var NAMES = {
+  shiftKey: "Shift",
+  ctrlKey: "Ctrl",
+  altKey: "Alt",
+  metaKey: "Meta"
+};
+function parseModifiers(what, text, parts) {
+  let mods = new Set;
+  for (let part of parts) {
+    let mod = MODIFIERS[part];
+    if (!mod)
+      throw new Error(`${what}: unknown modifier "${part}" in "${text}" (Shift, Ctrl, Alt or Meta)`);
+    mods.add(mod);
+  }
+  return ORDER.filter((m) => mods.has(m));
+}
+var chordName = (mods) => mods.map((m) => NAMES[m]).join("+");
+var eventModifiers = (event) => ORDER.filter((m) => event[m]);
+function mostSpecific(items, mods, event) {
+  let hits = items.filter((item) => mods(item).every((m) => event[m]));
+  let most = hits.reduce((n, item) => Math.max(n, mods(item).length), 0);
+  return hits.filter((item) => mods(item).length === most);
+}
+
+// ../../packages/core/src/input-keyboard.ts
+var DEVICE = "keyboard";
+function parse(what, text) {
+  if (typeof text !== "string" || text.length === 0)
+    throw new Error(`keyboard.${what}: expected a key code or key name, got ${String(text)}`);
+  let parts = text.split("+");
+  let key = parts.pop();
+  if (key.length === 0)
+    throw new Error(`keyboard.${what}: "${text}" names no key`);
+  return {
+    text,
+    key,
+    mods: parseModifiers(`keyboard.${what}`, text, parts)
+  };
+}
+var matches = (event, key) => {
+  if (event.code === key || event.key === key)
+    return true;
+  if (key === "Space" && event.key === " ")
+    return true;
+  if (event.key.length !== 1)
+    return false;
+  if (key.length === 1)
+    return event.key.toLowerCase() === key.toLowerCase();
+  return key.length === 4 && key.startsWith("Key") && event.key.toLowerCase() === key[3].toLowerCase();
+};
+function held(specs) {
+  let down = new Set;
+  let [count, setCount] = createSignal(0, {
+    ownedWrite: true
+  });
+  return {
+    count,
+    key(event, isDown) {
+      let onKey = specs.filter((s) => matches(event, s.key));
+      for (let s of onKey)
+        down.delete(s.text);
+      if (isDown)
+        for (let s of mostSpecific(onKey, (s2) => s2.mods, event))
+          down.add(s.text);
+      setCount(down.size);
+    },
+    blur() {
+      down.clear();
+      setCount(0);
+    },
+    has(text) {
+      return down.has(text);
+    }
+  };
+}
+function key(spec) {
+  let state = held([parse("key", spec)]);
+  return {
+    kind: "button",
+    label: `keyboard ${spec}`,
+    id: `${DEVICE}:key:${spec}`,
+    device: DEVICE,
+    rate: () => state.count() > 0,
+    key: state.key,
+    blur: state.blur
+  };
+}
+function axis(neg, pos) {
+  let state = held([parse("axis", neg), parse("axis", pos)]);
+  return {
+    kind: "axis",
+    label: `keyboard ${neg}/${pos}`,
+    id: `${DEVICE}:axis:${neg}/${pos}`,
+    device: DEVICE,
+    rate: () => {
+      state.count();
+      return (state.has(pos) ? 1 : 0) - (state.has(neg) ? 1 : 0);
+    },
+    key: state.key,
+    blur: state.blur
+  };
+}
+function vec2(keys) {
+  let state = held(["up", "down", "left", "right"].map((side) => parse(`vec2 ${side}`, keys[side])));
+  return {
+    kind: "vec2",
+    label: `keyboard ${keys.up}/${keys.left}/${keys.down}/${keys.right}`,
+    id: `${DEVICE}:vec2:${keys.up}/${keys.down}/${keys.left}/${keys.right}`,
+    device: DEVICE,
+    rate: () => {
+      state.count();
+      return [(state.has(keys.right) ? 1 : 0) - (state.has(keys.left) ? 1 : 0), (state.has(keys.down) ? 1 : 0) - (state.has(keys.up) ? 1 : 0)];
+    },
+    key: state.key,
+    blur: state.blur
+  };
+}
+function keySpec(event) {
+  if (MODIFIER_NAMES.has(event.key))
+    return null;
+  let key2 = event.code || event.key;
+  if (!key2)
+    return null;
+  let mods = chordName(eventModifiers(event));
+  return mods ? `${mods}+${key2}` : key2;
+}
+var MODIFIER_NAMES = new Set(["Shift", "Control", "Alt", "Meta"]);
+function resolve2(spec) {
+  let colon = spec.indexOf(":");
+  let kind = colon < 0 ? spec : spec.slice(0, colon);
+  let rest = colon < 0 ? "" : spec.slice(colon + 1);
+  let parts = rest.split("/");
+  switch (kind) {
+    case "key":
+      return key(rest);
+    case "axis":
+      if (parts.length !== 2)
+        throw new Error(`keyboard.resolve: "${spec}" needs two keys, neg/pos`);
+      return axis(parts[0], parts[1]);
+    case "vec2":
+      if (parts.length !== 4)
+        throw new Error(`keyboard.resolve: "${spec}" needs four keys, up/down/left/right`);
+      return vec2({
+        up: parts[0],
+        down: parts[1],
+        left: parts[2],
+        right: parts[3]
+      });
+    default:
+      throw new Error(`keyboard.resolve: unknown source "${spec}" (key:<spec>, axis:<neg>/<pos>, vec2:<up>/<down>/<left>/<right>)`);
+  }
+}
+var keyboard = {
+  name: DEVICE,
+  key,
+  axis,
+  vec2,
+  resolve: resolve2,
+  wasd: vec2({
+    up: "KeyW",
+    down: "KeyS",
+    left: "KeyA",
+    right: "KeyD"
+  }),
+  arrows: vec2({
+    up: "ArrowUp",
+    down: "ArrowDown",
+    left: "ArrowLeft",
+    right: "ArrowRight"
+  })
+};
+
 // ../../packages/core/src/input-map.ts
 var compatible = (source, action2) => source === action2 || source === "button" && action2 === "axis";
 var neutral = (kind) => kind === "button" ? false : kind === "axis" ? 0 : [0, 0];
+var isNeutral = (v) => typeof v === "boolean" ? !v : typeof v === "number" ? v === 0 : v[0] === 0 && v[1] === 0;
 function checkValue(what, kind, v) {
   if (kind === "button") {
     if (typeof v !== "boolean")
@@ -8212,17 +8641,15 @@ function checkValue(what, kind, v) {
     throw new Error(`${what}: expected [x, y] finite numbers, got ${JSON.stringify(v)}`);
   }
 }
-function checkSource(source) {
-  let s = source;
-  if (!s || typeof s !== "object" && typeof s !== "function" || s.kind !== "button" && s.kind !== "axis" && s.kind !== "vec2" || typeof s.label !== "string") {
-    throw new Error(`createInputMap: not an input source: ${String(source)}`);
-  }
-  return s;
-}
+var AXIS_PARTS = ["neg", "pos"];
+var VEC2_PARTS = ["up", "down", "left", "right"];
 function createInputMap(actions) {
   if (!actions || typeof actions !== "object")
     throw new Error("createInputMap: expected an object of action kinds");
   let states = new Map;
+  let [device, setDevice] = createSignal(undefined, {
+    ownedWrite: true
+  });
   for (let [name, kind] of Object.entries(actions)) {
     if (kind !== "button" && kind !== "axis" && kind !== "vec2")
       throw new Error(`createInputMap: action "${name}" has kind "${String(kind)}", expected "button", "axis" or "vec2"`);
@@ -8262,7 +8689,8 @@ function createInputMap(actions) {
         return combineRates(kind, values);
       },
       gesture: new Set,
-      live: new Map
+      live: new Map,
+      watch: new Map
     };
     states.set(name, state2);
   }
@@ -8284,11 +8712,15 @@ function createInputMap(actions) {
       throw new Error(`createInputMap: ${what} needs a button action, "${name}" is a ${s.kind}`);
     return s;
   };
+  let touched = (source) => {
+    if (source?.device && untrack(device) !== source.device)
+      setDevice(source.device);
+  };
   let closeGesture = (s) => {
     s.depth--;
     s.gesture.forEach((g) => g.end?.());
   };
-  let sink = (s) => ({
+  let sink = (s, source) => ({
     begin: () => {
       if (!s.enabled)
         return;
@@ -8296,6 +8728,7 @@ function createInputMap(actions) {
       s.gesture.forEach((g) => g.begin?.());
     },
     delta: (value, focal) => {
+      touched(source);
       if (!s.enabled)
         return;
       s.gesture.forEach((g) => g.delta?.(value, focal));
@@ -8304,6 +8737,15 @@ function createInputMap(actions) {
       if (s.depth > 0)
         closeGesture(s);
     }
+  });
+  let watchDevice = (source) => createRoot((dispose2) => {
+    createEffect(() => source.rate(), (v) => {
+      if (!isNeutral(v))
+        touched(source);
+    }, {
+      defer: true
+    });
+    return dispose2;
   });
   let switchActions = (names, on6, what) => {
     if (names.length === 0)
@@ -8318,17 +8760,23 @@ function createInputMap(actions) {
       s.bump();
     }
   };
-  let bindOne = (name, source) => {
+  let checkBind = (name, source) => {
     let s = state(name);
     checkSource(source);
     if (!compatible(source.kind, s.kind))
       throw new Error(`createInputMap: cannot bind ${source.kind} source "${source.label}" to ${s.kind} action "${name}"`);
+    return s;
+  };
+  let bindOne = (name, source) => {
+    let s = checkBind(name, source);
     if (s.sources.includes(source))
       return;
     s.sources.push(source);
     s.bump();
     if (source.deltas && s.kind !== "button")
-      s.live.set(source, source.deltas(sink(s)));
+      s.live.set(source, source.deltas(sink(s, source)));
+    if (source.rate && source.device)
+      s.watch.set(source, watchDevice(source));
   };
   let unbindOne = (name, source) => {
     let s = state(name);
@@ -8341,6 +8789,11 @@ function createInputMap(actions) {
     if (stop) {
       s.live.delete(source);
       stop();
+    }
+    let unwatch = s.watch.get(source);
+    if (unwatch) {
+      s.watch.delete(source);
+      unwatch();
     }
   };
   let edge = (name, want, callback) => {
@@ -8357,6 +8810,7 @@ function createInputMap(actions) {
       return dispose2;
     });
   };
+  let capture = null;
   let map = {
     actions,
     bind(actionOrList, ...sources) {
@@ -8442,6 +8896,137 @@ function createInputMap(actions) {
       s.version();
       return s.enabled;
     },
+    device,
+    save() {
+      let out = {};
+      for (let [name, s] of states)
+        out[name] = s.sources.map((source) => source.id);
+      return out;
+    },
+    load(saved, devices) {
+      if (!saved || typeof saved !== "object")
+        throw new Error("createInputMap: load() expects an object of id lists per action");
+      if (!devices || typeof devices !== "object")
+        throw new Error("createInputMap: load() expects the devices to resolve through");
+      let plan = [];
+      for (let [name, ids] of Object.entries(saved)) {
+        if (!Array.isArray(ids))
+          throw new Error(`createInputMap: load() action "${name}": expected an array of ids`);
+        let sources = ids.map((id2) => resolveSource(id2, devices));
+        for (let source of sources)
+          checkBind(name, source);
+        plan.push([name, sources]);
+      }
+      for (let [name, sources] of plan) {
+        for (let source of [...state(name).sources])
+          unbindOne(name, source);
+        for (let source of sources)
+          bindOne(name, source);
+      }
+    },
+    rebind(action2, devices, options = {}) {
+      let s = state(action2);
+      if (!devices || typeof devices !== "object")
+        throw new Error("createInputMap: rebind() expects the devices to listen on");
+      if (capture)
+        throw new Error("createInputMap: a rebind is already pending on this map");
+      let {
+        signal: signal2,
+        replace = true,
+        part
+      } = options;
+      let parts = s.kind === "axis" ? AXIS_PARTS : s.kind === "vec2" ? VEC2_PARTS : [];
+      if (part !== undefined) {
+        if (s.kind === "button")
+          throw new Error(`createInputMap: rebind("${action2}") part: "${action2}" is a button, a key rebinds it whole`);
+        if (!parts.includes(part))
+          throw new Error(`createInputMap: rebind("${action2}") part "${part}": a ${s.kind} action has ${parts.join("/")}`);
+      }
+      if (!devices.keyboard && !devices.gamepad?.listen && !devices.pointer?.listen)
+        throw new Error(`createInputMap: rebind("${action2}") has no device to listen on`);
+      if (signal2?.aborted)
+        return Promise.reject(signal2.reason ?? new Error("rebind aborted"));
+      return new Promise((resolve3, reject) => {
+        let stops = [];
+        let settled = false;
+        let prevAbort = signal2?.onabort ?? null;
+        let cleanup2 = () => {
+          settled = true;
+          capture = null;
+          if (signal2)
+            signal2.onabort = prevAbort;
+          for (let stop of stops)
+            stop();
+        };
+        let abort = () => {
+          if (settled)
+            return;
+          cleanup2();
+          reject(signal2.reason ?? new Error("rebind aborted"));
+        };
+        let found = (source, replacing) => {
+          if (settled)
+            return;
+          settled = true;
+          queueMicrotask(() => {
+            try {
+              cleanup2();
+              if (replacing) {
+                for (let bound of [...s.sources])
+                  if (bound.device === source.device)
+                    unbindOne(action2, bound);
+              }
+              bindOne(action2, source);
+              resolve3(source);
+            } catch (err) {
+              reject(err);
+            }
+          });
+        };
+        let keyboard2 = devices.keyboard;
+        if (keyboard2) {
+          capture = (event) => {
+            let spec = keySpec(event);
+            if (spec === null)
+              return;
+            if (s.kind === "button") {
+              found(keyboard2.resolve(`key:${spec}`), replace);
+              return;
+            }
+            if (part === undefined)
+              return;
+            let prefix = `${s.kind}:`;
+            let composite = s.sources.find((b) => b.device === "keyboard" && b.id.startsWith(`keyboard:${prefix}`));
+            if (!composite) {
+              settled = true;
+              cleanup2();
+              reject(new Error(`createInputMap: rebind("${action2}") part "${part}": no keyboard ${s.kind} composite is bound to "${action2}"`));
+              return;
+            }
+            let specs = composite.id.slice(`keyboard:${prefix}`.length).split("/");
+            specs[parts.indexOf(part)] = spec;
+            let next = keyboard2.resolve(`${prefix}${specs.join("/")}`);
+            unbindOne(action2, composite);
+            found(next, false);
+          };
+        }
+        for (let name of ["gamepad", "pointer"]) {
+          let d = devices[name];
+          if (d?.listen) {
+            stops.push(d.listen(s.kind, (source) => {
+              if (compatible(source.kind, s.kind))
+                found(source, replace);
+            }));
+          }
+        }
+        if (signal2) {
+          signal2.onabort = (event) => {
+            prevAbort?.(event);
+            abort();
+          };
+        }
+      });
+    },
     handlers: {
       onKeyDown: (event) => forwardKey(event, true),
       onKeyUp: (event) => forwardKey(event, false),
@@ -8459,21 +9044,21 @@ function createInputMap(actions) {
     },
     drive(axes, names) {
       let stops = [];
-      for (let [axis, kind] of Object.entries(axes.kinds)) {
-        let mapped = names && axis in names ? names[axis] : axis;
+      for (let [axis2, kind] of Object.entries(axes.kinds)) {
+        let mapped = names && axis2 in names ? names[axis2] : axis2;
         if (mapped === null)
           continue;
         if (mapped === undefined || !states.has(mapped)) {
-          throw new Error(`createInputMap: drive() has no action for axis "${axis}" (declared: ${[...states.keys()].join(", ")}); declare it, map it with names, or skip it with null`);
+          throw new Error(`createInputMap: drive() has no action for axis "${axis2}" (declared: ${[...states.keys()].join(", ")}); declare it, map it with names, or skip it with null`);
         }
         let s = state(mapped);
         if (s.kind !== kind)
-          throw new Error(`createInputMap: drive() maps ${kind} axis "${axis}" to ${s.kind} action "${mapped}"`);
-        stops.push(axes.add(axis, () => s.value()));
+          throw new Error(`createInputMap: drive() maps ${kind} axis "${axis2}" to ${s.kind} action "${mapped}"`);
+        stops.push(axes.add(axis2, () => s.value()));
         stops.push(map.onGesture(mapped, {
-          begin: () => axes.begin(axis),
-          delta: (value, focal) => axes.nudge(axis, value, focal),
-          end: () => axes.end(axis)
+          begin: () => axes.begin(axis2),
+          delta: (value, focal) => axes.nudge(axis2, value, focal),
+          end: () => axes.end(axis2)
         }));
       }
       return () => {
@@ -8483,6 +9068,10 @@ function createInputMap(actions) {
     }
   };
   let forwardKey = (event, down) => {
+    if (capture && down && !event.repeat) {
+      capture(event);
+      return;
+    }
     let seen = new Set;
     for (let s of states.values()) {
       for (let source of s.sources) {
@@ -8495,137 +9084,13 @@ function createInputMap(actions) {
   };
   return map;
 }
-// ../../packages/core/src/input-chord.ts
-var MODIFIERS = {
-  Shift: "shiftKey",
-  Ctrl: "ctrlKey",
-  Control: "ctrlKey",
-  Alt: "altKey",
-  Meta: "metaKey"
-};
-var ORDER = ["shiftKey", "ctrlKey", "altKey", "metaKey"];
-function parseModifiers(what, text, parts) {
-  let mods = new Set;
-  for (let part of parts) {
-    let mod = MODIFIERS[part];
-    if (!mod)
-      throw new Error(`${what}: unknown modifier "${part}" in "${text}" (Shift, Ctrl, Alt or Meta)`);
-    mods.add(mod);
-  }
-  return ORDER.filter((m) => mods.has(m));
-}
-function mostSpecific(items, mods, event) {
-  let hits = items.filter((item) => mods(item).every((m) => event[m]));
-  let most = hits.reduce((n, item) => Math.max(n, mods(item).length), 0);
-  return hits.filter((item) => mods(item).length === most);
-}
-
-// ../../packages/core/src/input-keyboard.ts
-function parse(what, text) {
-  if (typeof text !== "string" || text.length === 0)
-    throw new Error(`keyboard.${what}: expected a key code or key name, got ${String(text)}`);
-  let parts = text.split("+");
-  let key = parts.pop();
-  if (key.length === 0)
-    throw new Error(`keyboard.${what}: "${text}" names no key`);
-  return {
-    text,
-    key,
-    mods: parseModifiers(`keyboard.${what}`, text, parts)
-  };
-}
-var matches = (event, key) => {
-  if (event.code === key || event.key === key)
-    return true;
-  if (key === "Space" && event.key === " ")
-    return true;
-  if (event.key.length !== 1)
-    return false;
-  if (key.length === 1)
-    return event.key.toLowerCase() === key.toLowerCase();
-  return key.length === 4 && key.startsWith("Key") && event.key.toLowerCase() === key[3].toLowerCase();
-};
-function held(specs) {
-  let down = new Set;
-  let [count, setCount] = createSignal(0, {
-    ownedWrite: true
-  });
-  return {
-    count,
-    key(event, isDown) {
-      let onKey = specs.filter((s) => matches(event, s.key));
-      for (let s of onKey)
-        down.delete(s.text);
-      if (isDown)
-        for (let s of mostSpecific(onKey, (s2) => s2.mods, event))
-          down.add(s.text);
-      setCount(down.size);
-    },
-    blur() {
-      down.clear();
-      setCount(0);
-    },
-    has(text) {
-      return down.has(text);
-    }
-  };
-}
-function key(spec) {
-  let state = held([parse("key", spec)]);
-  return {
-    kind: "button",
-    label: `keyboard ${spec}`,
-    rate: () => state.count() > 0,
-    key: state.key,
-    blur: state.blur
-  };
-}
-function axis(neg, pos) {
-  let state = held([parse("axis", neg), parse("axis", pos)]);
-  return {
-    kind: "axis",
-    label: `keyboard ${neg}/${pos}`,
-    rate: () => {
-      state.count();
-      return (state.has(pos) ? 1 : 0) - (state.has(neg) ? 1 : 0);
-    },
-    key: state.key,
-    blur: state.blur
-  };
-}
-function vec2(keys) {
-  let state = held(["up", "down", "left", "right"].map((side) => parse(`vec2 ${side}`, keys[side])));
-  return {
-    kind: "vec2",
-    label: `keyboard ${keys.up}/${keys.left}/${keys.down}/${keys.right}`,
-    rate: () => {
-      state.count();
-      return [(state.has(keys.right) ? 1 : 0) - (state.has(keys.left) ? 1 : 0), (state.has(keys.down) ? 1 : 0) - (state.has(keys.up) ? 1 : 0)];
-    },
-    key: state.key,
-    blur: state.blur
-  };
-}
-var keyboard = {
-  key,
-  axis,
-  vec2,
-  wasd: vec2({
-    up: "KeyW",
-    down: "KeyS",
-    left: "KeyA",
-    right: "KeyD"
-  }),
-  arrows: vec2({
-    up: "ArrowUp",
-    down: "ArrowDown",
-    left: "ArrowLeft",
-    right: "ArrowRight"
-  })
-};
 // ../../packages/core/src/input-gamepad-device.ts
 var STICK_DEADZONE = 0.15;
+var LISTEN_THRESHOLD = 0.5;
+var DEVICE2 = "gamepad";
 var deadzone = (x, y) => Math.hypot(x, y) < STICK_DEADZONE ? [0, 0] : [x, y];
+var STICKS = [["leftStick", "leftX", "leftY"], ["rightStick", "rightX", "rightY"]];
+var DPAD_BUTTONS = ["dpadUp", "dpadDown", "dpadLeft", "dpadRight"];
 function createGamepadDevice(pads, slot, who) {
   let sumAxis = (read2) => () => {
     let sum = 0;
@@ -8648,9 +9113,14 @@ function createGamepadDevice(pads, slot, who) {
   let stick = (side) => ({
     kind: "vec2",
     label: `${who} ${side} stick`,
+    id: `${DEVICE2}:${side}Stick`,
+    device: DEVICE2,
     rate: sumVec2((pad) => deadzone(pad.axes[`${side}X`] ?? 0, pad.axes[`${side}Y`] ?? 0))
   });
-  return {
+  let axes = new Map;
+  let buttons = new Map;
+  let device = {
+    name: DEVICE2,
     get slot() {
       return slot();
     },
@@ -8659,37 +9129,139 @@ function createGamepadDevice(pads, slot, who) {
     dpad: {
       kind: "vec2",
       label: `${who} dpad`,
+      id: `${DEVICE2}:dpad`,
+      device: DEVICE2,
       rate: sumVec2((pad) => [pressed(pad, "dpadRight") - pressed(pad, "dpadLeft"), pressed(pad, "dpadDown") - pressed(pad, "dpadUp")])
     },
     triggers: {
       kind: "axis",
       label: `${who} triggers`,
+      id: `${DEVICE2}:triggers`,
+      device: DEVICE2,
       rate: sumAxis((pad) => (pad.axes.rightTrigger ?? 0) - (pad.axes.leftTrigger ?? 0))
     },
     shoulders: {
       kind: "axis",
       label: `${who} shoulders`,
+      id: `${DEVICE2}:shoulders`,
+      device: DEVICE2,
       rate: sumAxis((pad) => pressed(pad, "rightShoulder") - pressed(pad, "leftShoulder"))
     },
     axis(name) {
       if (typeof name !== "string" || name.length === 0)
         throw new Error(`gamepad.axis: expected an axis name, got ${String(name)}`);
-      return {
-        kind: "axis",
-        label: `${who} ${name}`,
-        rate: sumAxis((pad) => pad.axes[name] ?? 0)
-      };
+      let source = axes.get(name);
+      if (!source) {
+        source = {
+          kind: "axis",
+          label: `${who} ${name}`,
+          id: `${DEVICE2}:axis:${name}`,
+          device: DEVICE2,
+          rate: sumAxis((pad) => pad.axes[name] ?? 0)
+        };
+        axes.set(name, source);
+      }
+      return source;
     },
     button(name) {
       if (typeof name !== "string" || name.length === 0)
         throw new Error(`gamepad.button: expected a button name, got ${String(name)}`);
-      return {
-        kind: "button",
-        label: `${who} ${name}`,
-        rate: anyButton(name)
+      let source = buttons.get(name);
+      if (!source) {
+        source = {
+          kind: "button",
+          label: `${who} ${name}`,
+          id: `${DEVICE2}:button:${name}`,
+          device: DEVICE2,
+          rate: anyButton(name)
+        };
+        buttons.set(name, source);
+      }
+      return source;
+    },
+    resolve(spec) {
+      let colon = spec.indexOf(":");
+      let head = colon < 0 ? spec : spec.slice(0, colon);
+      let rest = colon < 0 ? "" : spec.slice(colon + 1);
+      switch (head) {
+        case "leftStick":
+        case "rightStick":
+        case "dpad":
+        case "triggers":
+        case "shoulders":
+          if (rest)
+            break;
+          return device[head];
+        case "axis":
+          return device.axis(rest);
+        case "button":
+          return device.button(rest);
+      }
+      throw new Error(`gamepad.resolve: unknown source "${spec}" (leftStick, rightStick, dpad, triggers, shoulders, axis:<name>, button:<name>)`);
+    },
+    listen(kind, found) {
+      if (kind !== "button" && kind !== "axis" && kind !== "vec2")
+        throw new Error(`gamepad.listen: expected a kind, got ${String(kind)}`);
+      if (typeof found !== "function")
+        throw new Error("gamepad.listen: expects a function");
+      let held2 = new Set;
+      let arm = (pads2) => {
+        let now = new Set;
+        for (let pad of pads2) {
+          for (let b of pad.buttons)
+            now.add(b);
+          for (let [name, v] of Object.entries(pad.axes))
+            if (Math.abs(v) >= LISTEN_THRESHOLD)
+              now.add(name);
+          for (let [name, x, y] of STICKS)
+            if (Math.hypot(pad.axes[x] ?? 0, pad.axes[y] ?? 0) >= LISTEN_THRESHOLD)
+              now.add(name);
+        }
+        for (let name of held2)
+          if (!now.has(name))
+            held2.delete(name);
+        return now;
       };
+      for (let name of arm(untrack(pads)))
+        held2.add(name);
+      let fresh = (now, name) => now.has(name) && !held2.has(name);
+      return createRoot((dispose2) => {
+        createEffect(() => pads(), (ps) => {
+          let now = arm(ps);
+          let pick = () => {
+            if (kind === "button") {
+              for (let pad of ps)
+                for (let b of pad.buttons)
+                  if (fresh(now, b))
+                    return device.button(b);
+              return;
+            }
+            if (kind === "axis") {
+              for (let pad of ps)
+                for (let name of Object.keys(pad.axes))
+                  if (fresh(now, name))
+                    return device.axis(name);
+              return;
+            }
+            for (let [name] of STICKS)
+              if (fresh(now, name))
+                return device[name];
+            for (let pad of ps)
+              for (let b of pad.buttons)
+                if (DPAD_BUTTONS.includes(b) && fresh(now, b))
+                  return device.dpad;
+          };
+          let source = pick();
+          if (source)
+            found(source);
+        }, {
+          defer: true
+        });
+        return dispose2;
+      });
     }
   };
+  return device;
 }
 function createGamepadSlot(read2, slot) {
   if (slot !== undefined && !(Number.isInteger(slot) && slot >= 0))

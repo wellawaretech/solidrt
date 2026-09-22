@@ -123,5 +123,67 @@ let pad = (id: number, buttons: string[] = [], axes: Record<string, number> = {}
   d.dispose()
 }
 
+// ---- Ids, resolve() and listen() ----
+{
+  let [pads, setPads] = createSignal<(GamepadState | null)[]>([pad(1, ["start"], { leftX: 0.9, leftY: 0 })])
+  let dev = createGamepadSlot(pads, 0)
+  if (dev.name !== "gamepad" || dev.leftStick.id !== "gamepad:leftStick" || dev.button("south").id !== "gamepad:button:south" || dev.axis("leftX").id !== "gamepad:axis:leftX") fail("gamepad ids")
+  if (dev.button("south").device !== "gamepad") fail("gamepad sources carry their device")
+  if (dev.resolve("leftStick") !== dev.leftStick || dev.resolve("dpad") !== dev.dpad) fail("resolve hands back the device's own stick sources")
+  if (dev.resolve("button:south") !== dev.button("south")) fail("resolve: same name, same button source")
+  if (dev.resolve("axis:rightTrigger") !== dev.axis("rightTrigger")) fail("resolve: same name, same axis source")
+  let bad = (spec: string) => {
+    try {
+      dev.resolve(spec)
+      fail(`resolve("${spec}") must throw`)
+    } catch (err) {
+      if (!(err instanceof Error)) fail(`resolve("${spec}"): unexpected ${err}`)
+    }
+  }
+  bad("leftStick:x")
+  bad("stick")
+  bad("button:")
+  // Listening: what is held or pushed at the start (start, the left
+  // stick) must be released first; the next fresh control of the kind
+  // is found, as the device's source.
+  let found: string[] = []
+  let stop = dev.listen("button", s => found.push(s.id))
+  setPads([pad(1, ["start", "south"], { leftX: 0.9, leftY: 0 })])
+  flush()
+  if (found.join() !== "gamepad:button:south") fail(`listen finds the fresh button, got ${found}`)
+  stop()
+  setPads([pad(1, [], { leftX: 0.9, leftY: 0 })])
+  flush()
+  found = []
+  stop = dev.listen("vec2", s => found.push(s.id))
+  setPads([pad(1, [], { leftX: 0.95, leftY: 0.1 })])
+  flush()
+  if (found.length !== 0) fail("a stick pushed at the start does not count until released")
+  setPads([pad(1, [], { leftX: 0, leftY: 0 })])
+  flush()
+  setPads([pad(1, [], { leftX: 0, leftY: -0.8 })])
+  flush()
+  if (found.join() !== "gamepad:leftStick") fail(`listen finds the stick pushed after release, got ${found}`)
+  stop()
+  found = []
+  stop = dev.listen("vec2", s => found.push(s.id))
+  setPads([pad(1, ["dpadLeft"], { leftX: 0, leftY: -0.8 })])
+  flush()
+  if (found.join() !== "gamepad:dpad") fail(`the dpad is a vec2 for a listen, got ${found}`)
+  stop()
+  found = []
+  stop = dev.listen("axis", s => found.push(s.id))
+  setPads([pad(1, ["dpadLeft"], { leftX: 0, leftY: -0.8, rightTrigger: 0.3 })])
+  flush()
+  if (found.length !== 0) fail("a trigger short of the threshold is not found")
+  setPads([pad(1, ["dpadLeft"], { leftX: 0, leftY: -0.8, rightTrigger: 0.7 })])
+  flush()
+  if (found.join() !== "gamepad:axis:rightTrigger") fail(`listen finds the pulled trigger as a raw axis, got ${found}`)
+  stop()
+  setPads([pad(1, [], { rightTrigger: 1 })])
+  flush()
+  if (found.length !== 1) fail("a stopped listen hears nothing")
+}
+
 console.log(failures === 0 ? "INPUT-GAMEPAD-OK" : `INPUT-GAMEPAD-FAIL ${failures}`)
 if (failures > 0) throw new Error(`${failures} gamepad check(s) failed`)

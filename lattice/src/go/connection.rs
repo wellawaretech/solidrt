@@ -40,6 +40,10 @@ pub struct DevFlags {
   /// (hit testing, input-state bookkeeping, focus). Moves follow the
   /// producer-side resampler rule instead (see `resampler`).
   pub input_tx: UnboundedSender<alloy::AlloyEvent>,
+  /// The alloy loop's command channel, for the `input` query's synthetic
+  /// gamepads (AlloyCommand::Gamepad): pads live with SDL's on that
+  /// thread, not in the UI thread's event channel.
+  pub alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
   /// Resampler feed for injected pointer events, mirroring the alloy pump:
   /// moves are consumed into it (never sent as events), downs seed and ups
   /// drop the history before their events travel (see alloy's resample.rs).
@@ -665,22 +669,32 @@ async fn try_serve(
                   Ok(seq) => {
                     let delivered = seq.len();
                     let input_tx = flags.input_tx.clone();
+                    let alloy_cmd_tx = flags.alloy_cmd_tx.clone();
                     let resampler = flags.resampler.clone();
                     let reply_tx = queries.outbound_tx.clone();
                     tokio::spawn(async move {
-                      for (delay_ms, event) in seq {
+                      for (delay_ms, step) in seq {
                         if delay_ms > 0 {
                           tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                         }
-                        // Producer-side resampler feed, mirroring the alloy
-                        // pump (see DevFlags::resampler): moves are consumed
-                        // here and dispatch from the frame verb's samples.
-                        if resampler.feed(&event) {
-                          continue;
-                        }
-                        if input_tx.send(event).is_err() {
-                          // The runtime is shutting down; nobody left to reply to.
-                          return;
+                        match step {
+                          Injected::Event(event) => {
+                            // Producer-side resampler feed, mirroring the alloy
+                            // pump (see DevFlags::resampler): moves are consumed
+                            // here and dispatch from the frame verb's samples.
+                            if resampler.feed(&event) {
+                              continue;
+                            }
+                            if input_tx.send(event).is_err() {
+                              // The runtime is shutting down; nobody left to reply to.
+                              return;
+                            }
+                          }
+                          Injected::Gamepad(cmd) => {
+                            if alloy_cmd_tx.send(alloy::AlloyCommand::Gamepad(cmd)).is_err() {
+                              return;
+                            }
+                          }
                         }
                       }
                       let reply =
@@ -926,13 +940,26 @@ const SYNTHETIC_POINTER_ID: u64 = 1 << 60;
 /// sizes its query timeout from the same request, so these two never race.
 const INPUT_DELAY_MAX_MS: u64 = 5000;
 const INPUT_TOTAL_MAX_MS: u64 = 30_000;
+/// Highest slot a synthetic gamepad may name: a cap on the slot vector a
+/// driven session can grow, well past any couch.
+const GAMEPAD_SLOT_MAX: u64 = 16;
+
+/// One step of an `input` query's plan: an event for the UI thread's input
+/// channel, or a synthetic-gamepad command for the alloy loop, where the
+/// pads live.
+pub(crate) enum Injected {
+  Event(alloy::AlloyEvent),
+  Gamepad(alloy::GamepadCommand),
+}
 
 /// Parse an `input` query's `events` array into a flat send plan of
-/// (delay-before-send ms, event). A `tap` expands to down + up with its
-/// `holdMs` as the up's delay. Everything is validated upfront: any invalid
-/// event rejects the whole sequence before a single event is sent.
-pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<Vec<(u64, alloy::AlloyEvent)>, String> {
-  use alloy::{AlloyEvent, Modifiers, PointerType};
+/// (delay-before-send ms, step). A `tap` expands to down + up with its
+/// `holdMs` as the up's delay, and a gamepad `set` with `holdMs` to the
+/// state + the neutral state after it. Everything is validated upfront:
+/// any invalid event rejects the whole sequence before a single event is
+/// sent.
+pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<Vec<(u64, Injected)>, String> {
+  use alloy::{AlloyEvent, GamepadCommand, Modifiers, PointerType};
   let arr = events.and_then(|e| e.as_array()).ok_or("events must be an array")?;
   if arr.is_empty() {
     return Err("events must not be empty".into());
@@ -963,9 +990,11 @@ pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<V
     let hold = field_ms("holdMs")?;
     let ty = str_field("type").ok_or_else(|| format!("events[{i}]: missing type"))?;
     let action = str_field("action");
-    if ev.get("holdMs").is_some() && action != Some("tap") {
-      return Err(format!("events[{i}]: holdMs only applies to action \"tap\""));
+    let holds = action == Some("tap") || (ty == "gamepad" && action == Some("set"));
+    if ev.get("holdMs").is_some() && !holds {
+      return Err(format!("events[{i}]: holdMs only applies to action \"tap\" and a gamepad \"set\""));
     }
+    let mut push = |delay: u64, event: AlloyEvent| out.push((delay, Injected::Event(event)));
     match ty {
       "key" => {
         let key = str_field("key")
@@ -979,11 +1008,11 @@ pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<V
           repeat: false,
         };
         match action {
-          Some("down") => out.push((delay, make(true))),
-          Some("up") => out.push((delay, make(false))),
+          Some("down") => push(delay, make(true)),
+          Some("up") => push(delay, make(false)),
           Some("tap") => {
-            out.push((delay, make(true)));
-            out.push((hold, make(false)));
+            push(delay, make(true));
+            push(hold, make(false));
           }
           _ => return Err(format!("events[{i}]: key action must be down, up or tap")),
         }
@@ -1011,12 +1040,12 @@ pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<V
         let mv =
           || AlloyEvent::PointerMove { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, x, y, rel: None, modifiers };
         match action {
-          Some("move") => out.push((delay, mv())),
-          Some("down") => out.push((delay, down())),
-          Some("up") => out.push((delay, up())),
+          Some("move") => push(delay, mv()),
+          Some("down") => push(delay, down()),
+          Some("up") => push(delay, up()),
           Some("tap") => {
-            out.push((delay, down()));
-            out.push((hold, up()));
+            push(delay, down());
+            push(hold, up());
           }
           _ => return Err(format!("events[{i}]: pointer action must be down, up, move or tap")),
         }
@@ -1026,7 +1055,7 @@ pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<V
         let y = num_field("y")?;
         let delta_x = num_field("deltaX")?;
         let delta_y = num_field("deltaY")?;
-        out.push((
+        push(
           delay,
           AlloyEvent::Wheel {
             pointer_id: SYNTHETIC_POINTER_ID,
@@ -1037,15 +1066,73 @@ pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<V
             delta_y,
             modifiers,
           },
-        ));
+        );
       }
       "text" => {
         let text = str_field("text")
           .filter(|t| !t.is_empty())
           .ok_or_else(|| format!("events[{i}]: text events need a non-empty text"))?;
-        out.push((delay, AlloyEvent::TextInput { text: text.to_string() }));
+        push(delay, AlloyEvent::TextInput { text: text.to_string() });
       }
-      _ => return Err(format!("events[{i}]: type must be key, pointer, wheel or text")),
+      "gamepad" => {
+        // A synthetic pad: level state held until the next set, names
+        // from the mapped vocabulary (see alloy::gamepad).
+        let slot_field = || -> Result<usize, String> {
+          ev.get("slot")
+            .and_then(|v| v.as_u64())
+            .filter(|s| *s < GAMEPAD_SLOT_MAX)
+            .map(|s| s as usize)
+            .ok_or_else(|| format!("events[{i}]: slot must be an integer 0..{GAMEPAD_SLOT_MAX}"))
+        };
+        let cmd = match action {
+          Some("connect") => {
+            let slot = if ev.get("slot").is_some() { Some(slot_field()?) } else { None };
+            let name = str_field("name").filter(|n| !n.is_empty()).unwrap_or("Synthetic gamepad").to_string();
+            GamepadCommand::Connect { slot, name }
+          }
+          Some("set") => {
+            let slot = slot_field()?;
+            let mut buttons = Vec::new();
+            if let Some(list) = ev.get("buttons") {
+              let list = list.as_array().ok_or_else(|| format!("events[{i}]: buttons must be an array of names"))?;
+              for b in list {
+                let name = b
+                  .as_str()
+                  .and_then(alloy::synthetic_button_name)
+                  .ok_or_else(|| format!("events[{i}]: unknown gamepad button {b} (south, east, west, north, back, guide, start, leftStick, rightStick, leftShoulder, rightShoulder, dpadUp, dpadDown, dpadLeft, dpadRight)"))?;
+                if !buttons.contains(&name) {
+                  buttons.push(name);
+                }
+              }
+            }
+            let mut axes = Vec::new();
+            if let Some(map) = ev.get("axes") {
+              let map = map.as_object().ok_or_else(|| format!("events[{i}]: axes must be an object of name to value"))?;
+              for (name, value) in map {
+                let name = alloy::synthetic_axis_name(name).ok_or_else(|| {
+                  format!("events[{i}]: unknown gamepad axis {name} (leftX, leftY, rightX, rightY, leftTrigger, rightTrigger)")
+                })?;
+                let value = value
+                  .as_f64()
+                  .filter(|v| v.is_finite() && (-1.0..=1.0).contains(v))
+                  .ok_or_else(|| format!("events[{i}]: axis {name} must be a number in -1..1"))?;
+                axes.push((name, value as f32));
+              }
+            }
+            if ev.get("holdMs").is_some() {
+              out.push((delay, Injected::Gamepad(GamepadCommand::Set { slot, buttons, axes })));
+              GamepadCommand::Set { slot, buttons: Vec::new(), axes: Vec::new() }
+            } else {
+              GamepadCommand::Set { slot, buttons, axes }
+            }
+          }
+          Some("disconnect") => GamepadCommand::Disconnect { slot: slot_field()? },
+          _ => return Err(format!("events[{i}]: gamepad action must be connect, set or disconnect")),
+        };
+        let at = if ev.get("holdMs").is_some() { hold } else { delay };
+        out.push((at, Injected::Gamepad(cmd)));
+      }
+      _ => return Err(format!("events[{i}]: type must be key, pointer, wheel, text or gamepad")),
     }
     total += delay + hold;
     if total > INPUT_TOTAL_MAX_MS {

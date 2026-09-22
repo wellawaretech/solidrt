@@ -79,6 +79,7 @@ impl DevSession {
     connected: Arc<AtomicBool>,
     clock: crate::runtime::ClockControl,
     input_tx: UnboundedSender<alloy::AlloyEvent>,
+    alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
     resampler: alloy::resample::SharedResampler,
     user_input_muted: Arc<AtomicBool>,
     outbound_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
@@ -98,6 +99,7 @@ impl DevSession {
       connected,
       clock,
       input_tx,
+      alloy_cmd_tx,
       resampler,
       user_input_muted,
     };

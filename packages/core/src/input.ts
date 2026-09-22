@@ -4,8 +4,10 @@
 // event bus). The map, the control-side axes contract and the keyboard
 // device are pure; the gamepad device and the pointer feed need the
 // runtime and live on the main entry.
-export { createInputMap, invert, scale } from "./input-map"
-export type { ActionKind, ActionValue, ActionsDecl, Binding, DeltaSink, GestureListener, InputMap, InputSource } from "./input-map"
+export { createInputMap } from "./input-map"
+export type { ActionKind, ActionValue, ActionsDecl, Binding, DeltaSink, DeviceName, GestureListener, InputDevice, InputDeviceSet, InputMap, InputSource, RebindOptions, RebindPart } from "./input-map"
+export { chord, doubleTap, hold, invert, scale, tap } from "./input-processors"
+export { resolveSource } from "./input-id"
 export { createAxes, combineRates } from "./input-axes"
 export type { Axes, AxesDecl, AxesHooks, AxisKind, AxisValue, Vec2 } from "./input-axes"
 export { keyboard } from "./input-keyboard"

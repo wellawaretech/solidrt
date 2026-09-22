@@ -34,6 +34,9 @@ export function parseModifiers(what: string, text: string, parts: string[]): Mod
 /** The canonical spelling of a modifier set: "Shift+Ctrl"; "" for none. */
 export let chordName = (mods: Modifier[]): string => mods.map(m => NAMES[m]).join("+")
 
+/** The modifiers an event carries, in canonical order. */
+export let eventModifiers = (event: Modified): Modifier[] => ORDER.filter(m => event[m])
+
 /** Of `items`, those whose modifiers the event carries, narrowed to the
  * most specific (the longest modifier lists, all of them on a tie);
  * empty when none match. */

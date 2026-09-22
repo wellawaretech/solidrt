@@ -901,6 +901,22 @@ impl App {
           AlloyCommand::SetCursorVisible(visible) => {
             sdl_context.mouse().show_cursor(visible);
           }
+          // Applied and reported in this iteration: the snapshot above has
+          // already run, and a driven session should not wait a tick.
+          AlloyCommand::Gamepad(cmd) => match gamepads.as_mut() {
+            Some(g) => match g.apply(cmd) {
+              Ok(()) => {
+                if let Some(e) = g.take_snapshot_if_dirty() {
+                  event_tx.send(e).ok();
+                }
+                if g.take_back_edge() {
+                  event_tx.send(AlloyEvent::Back).ok();
+                }
+              }
+              Err(e) => log::warn!("[alloy] synthetic gamepad: {e}"),
+            },
+            None => log::warn!("[alloy] synthetic gamepad ignored: no gamepad subsystem"),
+          },
           AlloyCommand::SetPointerLock(locked) => {
             let mouse = sdl_context.mouse();
             mouse.set_relative_mouse_mode(&window, locked);

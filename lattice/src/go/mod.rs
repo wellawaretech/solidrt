@@ -10,7 +10,7 @@ pub(crate) mod tunnel;
 pub use connection::QueryHandles;
 pub use session::{DevExitHandle, DevSession};
 #[cfg(test)]
-pub(crate) use connection::parse_input_events;
+pub(crate) use connection::{parse_input_events, Injected};
 
 /// Engine logger for the go client: writes to the local log as before and,
 /// while a dev server is connected, also forwards each line over the outbound

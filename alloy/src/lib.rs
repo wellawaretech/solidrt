@@ -61,6 +61,7 @@ pub use event::{
   AlloyCommand, AlloyEvent, Cursor, GamepadState, Modifiers, Orientation, PointerType, SuspendHold,
   TextCapitalization, TextInputOptions, TextInputType,
 };
+pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand};
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferLayout, BufferUpdate, CullMode, DepthState,
   DepthStorage, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, InstanceOrder, NodeShader,

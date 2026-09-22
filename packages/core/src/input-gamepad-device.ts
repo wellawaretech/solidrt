@@ -15,18 +15,28 @@
 // they pick up a pad. A claim lasts until the owning scope is disposed
 // (an unmounted pane frees its pad); with no owner, for the session.
 
-import { createEffect, createRoot, createSignal, getOwner, onCleanup } from "@solidjs/signals"
+import { createEffect, createRoot, createSignal, getOwner, onCleanup, untrack } from "@solidjs/signals"
 import type { GamepadState } from "./gamepad"
-import type { InputSource } from "./input-map"
+import type { ActionKind, InputDevice, InputSource } from "./input-map"
 import type { Vec2 } from "./input-axes"
 
 // Stick deflection below which a resting stick reads as zero (radial:
 // the whole vector, so a stick nudged diagonally also rests).
 const STICK_DEADZONE = 0.15
+// Deflection (a stick's vector, a trigger or raw axis) that names the
+// control a rebind listens for: past a rest twitch, short of full travel.
+const LISTEN_THRESHOLD = 0.5
+
+// Source ids (input-id.ts): `gamepad:leftStick`, `gamepad:rightStick`,
+// `gamepad:dpad`, `gamepad:triggers`, `gamepad:shoulders`,
+// `gamepad:axis:<name>`, `gamepad:button:<name>`. No slot in the id: a
+// saved binding restores onto the device the app hands in.
+const DEVICE = "gamepad"
 
 export type PadsAccessor = () => (GamepadState | null)[]
 
-export interface GamepadDevice {
+export interface GamepadDevice extends InputDevice {
+  readonly name: "gamepad"
   /** The slot this device reads: a number for one pad, undefined for every
    * connected pad (`gamepad()`) or for a joining device no pad has claimed
    * yet (reactive: it resolves when one joins). */
@@ -43,9 +53,24 @@ export interface GamepadDevice {
   axis(name: string): InputSource<"axis">
   /** A button by SDL positional name ("south", "start", "leftShoulder", ...). */
   button(name: string): InputSource<"button">
+  /** The source of an id's spec ("button:south", "leftStick", "axis:leftX"). */
+  resolve(spec: string): InputSource
+  /** For a rebind: `found` gets the next control of `kind` the pad
+   * actuates past rest (a button pressed, a trigger or raw axis pulled,
+   * a stick pushed or the dpad, as `axis`/`button`/the stick sources);
+   * what is held when the listen starts must be released first. Returns
+   * the stop. */
+  listen(kind: ActionKind, found: (source: InputSource) => void): () => void
 }
 
 let deadzone = (x: number, y: number): Vec2 => (Math.hypot(x, y) < STICK_DEADZONE ? [0, 0] : [x, y])
+
+// The sticks as (name, x axis, y axis) for the listener.
+const STICKS = [
+  ["leftStick", "leftX", "leftY"],
+  ["rightStick", "rightX", "rightY"],
+] as const
+const DPAD_BUTTONS = ["dpadUp", "dpadDown", "dpadLeft", "dpadRight"]
 
 /**
  * The sources over `pads()` (the pads this device reads now, reactive),
@@ -72,9 +97,15 @@ export function createGamepadDevice(pads: () => GamepadState[], slot: () => numb
   let stick = (side: "left" | "right"): InputSource<"vec2"> => ({
     kind: "vec2",
     label: `${who} ${side} stick`,
+    id: `${DEVICE}:${side}Stick`,
+    device: DEVICE,
     rate: sumVec2(pad => deadzone(pad.axes[`${side}X`] ?? 0, pad.axes[`${side}Y`] ?? 0)),
   })
-  return {
+  // Same name, same source: unbind by identity works for a resolved id too.
+  let axes = new Map<string, InputSource<"axis">>()
+  let buttons = new Map<string, InputSource<"button">>()
+  let device: GamepadDevice = {
+    name: DEVICE,
     get slot() {
       return slot()
     },
@@ -83,27 +114,105 @@ export function createGamepadDevice(pads: () => GamepadState[], slot: () => numb
     dpad: {
       kind: "vec2",
       label: `${who} dpad`,
+      id: `${DEVICE}:dpad`,
+      device: DEVICE,
       rate: sumVec2(pad => [pressed(pad, "dpadRight") - pressed(pad, "dpadLeft"), pressed(pad, "dpadDown") - pressed(pad, "dpadUp")]),
     },
     triggers: {
       kind: "axis",
       label: `${who} triggers`,
+      id: `${DEVICE}:triggers`,
+      device: DEVICE,
       rate: sumAxis(pad => (pad.axes.rightTrigger ?? 0) - (pad.axes.leftTrigger ?? 0)),
     },
     shoulders: {
       kind: "axis",
       label: `${who} shoulders`,
+      id: `${DEVICE}:shoulders`,
+      device: DEVICE,
       rate: sumAxis(pad => pressed(pad, "rightShoulder") - pressed(pad, "leftShoulder")),
     },
     axis(name) {
       if (typeof name !== "string" || name.length === 0) throw new Error(`gamepad.axis: expected an axis name, got ${String(name)}`)
-      return { kind: "axis", label: `${who} ${name}`, rate: sumAxis(pad => pad.axes[name] ?? 0) }
+      let source = axes.get(name)
+      if (!source) {
+        source = { kind: "axis", label: `${who} ${name}`, id: `${DEVICE}:axis:${name}`, device: DEVICE, rate: sumAxis(pad => pad.axes[name] ?? 0) }
+        axes.set(name, source)
+      }
+      return source
     },
     button(name) {
       if (typeof name !== "string" || name.length === 0) throw new Error(`gamepad.button: expected a button name, got ${String(name)}`)
-      return { kind: "button", label: `${who} ${name}`, rate: anyButton(name) }
+      let source = buttons.get(name)
+      if (!source) {
+        source = { kind: "button", label: `${who} ${name}`, id: `${DEVICE}:button:${name}`, device: DEVICE, rate: anyButton(name) }
+        buttons.set(name, source)
+      }
+      return source
+    },
+    resolve(spec) {
+      let colon = spec.indexOf(":")
+      let head = colon < 0 ? spec : spec.slice(0, colon)
+      let rest = colon < 0 ? "" : spec.slice(colon + 1)
+      switch (head) {
+        case "leftStick":
+        case "rightStick":
+        case "dpad":
+        case "triggers":
+        case "shoulders":
+          if (rest) break
+          return device[head]
+        case "axis":
+          return device.axis(rest)
+        case "button":
+          return device.button(rest)
+      }
+      throw new Error(`gamepad.resolve: unknown source "${spec}" (leftStick, rightStick, dpad, triggers, shoulders, axis:<name>, button:<name>)`)
+    },
+    listen(kind, found) {
+      if (kind !== "button" && kind !== "axis" && kind !== "vec2") throw new Error(`gamepad.listen: expected a kind, got ${String(kind)}`)
+      if (typeof found !== "function") throw new Error("gamepad.listen: expects a function")
+      // What is actuated as the listen starts, released before it counts.
+      let held = new Set<string>()
+      let arm = (pads: GamepadState[]) => {
+        let now = new Set<string>()
+        for (let pad of pads) {
+          for (let b of pad.buttons) now.add(b)
+          for (let [name, v] of Object.entries(pad.axes)) if (Math.abs(v) >= LISTEN_THRESHOLD) now.add(name)
+          for (let [name, x, y] of STICKS) if (Math.hypot(pad.axes[x] ?? 0, pad.axes[y] ?? 0) >= LISTEN_THRESHOLD) now.add(name)
+        }
+        for (let name of held) if (!now.has(name)) held.delete(name)
+        return now
+      }
+      for (let name of arm(untrack(pads))) held.add(name)
+      let fresh = (now: Set<string>, name: string) => now.has(name) && !held.has(name)
+      return createRoot(dispose => {
+        createEffect(
+          () => pads(),
+          ps => {
+            let now = arm(ps)
+            let pick = (): InputSource | undefined => {
+              if (kind === "button") {
+                for (let pad of ps) for (let b of pad.buttons) if (fresh(now, b)) return device.button(b)
+                return
+              }
+              if (kind === "axis") {
+                for (let pad of ps) for (let name of Object.keys(pad.axes)) if (fresh(now, name)) return device.axis(name)
+                return
+              }
+              for (let [name] of STICKS) if (fresh(now, name)) return device[name]
+              for (let pad of ps) for (let b of pad.buttons) if (DPAD_BUTTONS.includes(b) && fresh(now, b)) return device.dpad
+            }
+            let source = pick()
+            if (source) found(source)
+          },
+          { defer: true },
+        )
+        return dispose
+      })
     },
   }
+  return device
 }
 
 /** One slot, or every connected pad when `slot` is undefined. */

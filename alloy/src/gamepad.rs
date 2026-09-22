@@ -125,6 +125,51 @@ fn axis_value(raw: i16) -> f32 {
   (raw as f32 / 32767.0).clamp(-1.0, 1.0)
 }
 
+/// The static button name a synthetic pad may hold (the mapped
+/// vocabulary, `button_name`), or None for a name no pad reports.
+pub fn synthetic_button_name(name: &str) -> Option<&'static str> {
+  BUTTONS.iter().map(|&b| button_name(b)).find(|&n| n == name)
+}
+
+/// The static axis name a synthetic pad may hold (the mapped vocabulary,
+/// `AXES`), or None.
+pub fn synthetic_axis_name(name: &str) -> Option<&'static str> {
+  AXES.iter().map(|&(_, n)| n).find(|&n| n == name)
+}
+
+/// What the dev tools ask of the pad owner (AlloyCommand::Gamepad).
+/// Names are the static vocabulary above, checked by the sender through
+/// `synthetic_button_name`/`synthetic_axis_name`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GamepadCommand {
+  /// Seat a synthetic pad: in `slot`, or the lowest free one as SDL's do.
+  Connect {
+    slot: Option<usize>,
+    name: String,
+  },
+  /// Hold this state until the next Set: level, as a physical pad's is.
+  Set {
+    slot: usize,
+    buttons: Vec<&'static str>,
+    axes: Vec<(&'static str, f32)>,
+  },
+  Disconnect {
+    slot: usize,
+  },
+}
+
+// Instance ids for synthetic pads: far above anything SDL hands out, so a
+// synthetic pad never aliases a physical one in slot_of.
+const SYNTHETIC_ID_BASE: u32 = 1 << 30;
+
+// A synthetic pad's held state (see GamepadCommand).
+struct SyntheticPad {
+  id: u32,
+  name: String,
+  buttons: Vec<&'static str>,
+  axes: Vec<(&'static str, f32)>,
+}
+
 // A connected pad: opened through SDL's gamepad API when the device has a
 // controller-database mapping (semantic button positions are then reliable),
 // or through the raw joystick API otherwise - SDL refuses to guess a layout
@@ -136,9 +181,15 @@ fn axis_value(raw: i16) -> f32 {
 // the back entry even though the press arrives as raw button 4 - the Android
 // driver sends gamepad-button enum values as joystick button indices. The
 // raw handle lets take_back_edge read past that gap.
+//
+// A synthetic pad (the dev tools' input injection) sits in the same slots
+// with a held state, so the snapshot, the coalescing, the sticky replay
+// and the back edge see no difference; it reports as mapped, its names
+// being the mapped vocabulary.
 enum Pad {
   Mapped { pad: Gamepad, joystick: Option<Joystick> },
   Raw(Joystick),
+  Synthetic(SyntheticPad),
 }
 
 // SDL_GAMEPAD_BUTTON_BACK: on the Android joystick driver, raw button
@@ -151,11 +202,23 @@ impl Pad {
     match self {
       Pad::Mapped { pad, .. } => pad.id().ok().map_or(0, u32::from),
       Pad::Raw(joystick) => joystick.id(),
+      Pad::Synthetic(pad) => pad.id,
     }
+  }
+
+  fn is_synthetic(&self) -> bool {
+    matches!(self, Pad::Synthetic(_))
   }
 
   fn state(&self) -> GamepadState {
     match self {
+      Pad::Synthetic(pad) => GamepadState {
+        id: pad.id,
+        name: pad.name.clone(),
+        buttons: pad.buttons.clone(),
+        axes: pad.axes.clone(),
+        mapped: true,
+      },
       Pad::Mapped { pad, .. } => GamepadState {
         id: self.id(),
         name: pad.name().unwrap_or_default(),
@@ -221,8 +284,12 @@ pub(crate) struct Gamepads {
   // way the key/pointer path does: instead, entering it emits one neutral
   // state (every pad still listed, nothing pressed, sticks at rest) - the
   // pad version of "releases still pass" - and nothing more until it lifts,
-  // when the real state goes out again. No back edge while muted.
+  // when the real state goes out again. No back edge while muted. Synthetic
+  // pads are the dev tools' own input and pass through the mute, as the
+  // injected key and pointer events do.
   muted: bool,
+  // Instance ids handed to synthetic pads, from SYNTHETIC_ID_BASE up.
+  next_synthetic_id: u32,
 }
 
 impl Gamepads {
@@ -241,7 +308,61 @@ impl Gamepads {
         return None;
       }
     };
-    Some(Gamepads { gamepad, joystick, slots: Vec::new(), dirty: false, back_down: false, muted: false })
+    Some(Gamepads {
+      gamepad,
+      joystick,
+      slots: Vec::new(),
+      dirty: false,
+      back_down: false,
+      muted: false,
+      next_synthetic_id: SYNTHETIC_ID_BASE,
+    })
+  }
+
+  /// Apply a synthetic-pad command (AlloyCommand::Gamepad). A slot that
+  /// holds a physical pad, or none, is an error for Set and Disconnect;
+  /// Connect into a taken slot is too. Any change marks the state dirty,
+  /// so the next snapshot carries it.
+  pub fn apply(&mut self, cmd: GamepadCommand) -> Result<(), String> {
+    match cmd {
+      GamepadCommand::Connect { slot, name } => {
+        let slot = match slot {
+          Some(i) => {
+            if self.slots.get(i).is_some_and(Option::is_some) {
+              return Err(format!("slot {i} is taken"));
+            }
+            i
+          }
+          None => self.slots.iter().position(Option::is_none).unwrap_or(self.slots.len()),
+        };
+        if slot >= self.slots.len() {
+          self.slots.resize_with(slot + 1, || None);
+        }
+        let id = self.next_synthetic_id;
+        self.next_synthetic_id += 1;
+        log::info!("[alloy] pad connected (synthetic): {name} in slot {slot}");
+        self.slots[slot] = Some(Pad::Synthetic(SyntheticPad { id, name, buttons: Vec::new(), axes: Vec::new() }));
+      }
+      GamepadCommand::Set { slot, buttons, axes } => {
+        let pad = self.synthetic_mut(slot)?;
+        pad.buttons = buttons;
+        pad.axes = axes;
+      }
+      GamepadCommand::Disconnect { slot } => {
+        self.synthetic_mut(slot)?;
+        self.slots[slot] = None;
+      }
+    }
+    self.dirty = true;
+    Ok(())
+  }
+
+  fn synthetic_mut(&mut self, slot: usize) -> Result<&mut SyntheticPad, String> {
+    match self.slots.get_mut(slot) {
+      Some(Some(Pad::Synthetic(pad))) => Ok(pad),
+      Some(Some(_)) => Err(format!("slot {slot} holds a physical pad")),
+      _ => Err(format!("slot {slot} holds no synthetic pad")),
+    }
   }
 
   // Track connection changes and mark state dirty on any pad activity. The
@@ -268,6 +389,7 @@ impl Gamepads {
             let kind = match &pad {
               Pad::Mapped { .. } => "mapped",
               Pad::Raw(_) => "raw",
+              Pad::Synthetic(_) => "synthetic",
             };
             log::info!("[alloy] pad connected ({kind}): {}", pad.state().name);
             let free = self.slots.iter().position(|s| s.is_none());
@@ -310,7 +432,11 @@ impl Gamepads {
     let mut event = self.snapshot_event();
     if self.muted {
       if let AlloyEvent::Gamepads { pads } = &mut event {
-        for pad in pads.iter_mut().flatten() {
+        for (state, slot) in pads.iter_mut().zip(&self.slots) {
+          let Some(pad) = state else { continue };
+          if slot.as_ref().is_some_and(Pad::is_synthetic) {
+            continue;
+          }
           pad.buttons.clear();
           for axis in &mut pad.axes {
             axis.1 = 0.0;
@@ -344,7 +470,7 @@ impl Gamepads {
   // is level-read per iteration, so a press outlasting one loop drain (any
   // human press does) is never missed and holding is one request.
   pub fn take_back_edge(&mut self) -> bool {
-    let down = self.slots.iter().flatten().any(|p| match p {
+    let physical = self.slots.iter().flatten().any(|p| match p {
       Pad::Mapped { pad, joystick } => {
         if pad.button(Button::Back) {
           return true;
@@ -362,13 +488,19 @@ impl Gamepads {
           false
         }
       }
-      Pad::Raw(_) => false,
+      Pad::Raw(_) | Pad::Synthetic(_) => false,
     });
+    // A synthetic back is the dev tools' own request and passes the mute.
+    let synthetic = self.slots.iter().flatten().any(|p| match p {
+      Pad::Synthetic(pad) => pad.buttons.contains(&"back"),
+      _ => false,
+    });
+    let down = physical || synthetic;
     let edge = down && !self.back_down;
     // Level tracking continues while muted, so a press held across the mute
     // is still one request, never an edge on the way out.
     self.back_down = down;
-    edge && !self.muted
+    edge && (!self.muted || synthetic)
   }
 
   fn slot_of(&self, id: u32) -> Option<usize> {

@@ -239,6 +239,14 @@ when exactly one client is connected.
   real pipeline, same event shape as the `send_input` tool (tap real
   coordinates read from `/tree` just before: the window's logical size
   follows the display it sits on, so a size read earlier can be stale).
+  A gamepad is driven like a key: `{ "type": "gamepad", "action":
+  "connect" }` seats a synthetic pad in the lowest free slot (or `slot`),
+  `{ "action": "set", "slot": 0, "buttons": ["south"], "axes": { "leftY":
+  -1 } }` holds that state until the next set (level, as a physical pad's
+  state is; `holdMs` returns it to rest in the same call), `{ "action":
+  "disconnect", "slot": 0 }` frees the slot. Synthetic pads take slots
+  next to physical ones and reach `gamepads()` and everything on it; the
+  mute leaves them alone.
 - POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused;
   `{ scale, pendingSteps }` back. Steps apply at the client's frame rate,
   so GET `/clock` (the same record, nothing changed) and wait for
