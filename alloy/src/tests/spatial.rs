@@ -1,5 +1,6 @@
 use crate::spatial::{
-  compose, multiply, DrawSink, Mat4, QueryFilter, SinkWriter, Spatial, TextureSlotSink, Volume, WeightsSlotSink, IDENTITY,
+  compose, multiply, DrawOrder, DrawSink, LodView, Mat4, QueryFilter, SinkWriter, Spatial, TextureSlotSink, Volume,
+  WeightsSlotSink, IDENTITY,
 };
 
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -12,6 +13,7 @@ pub(super) enum Write {
   Params { target: u64, draw: u64, model: Mat4, normal: Option<Mat4> },
   Count { target: u64, draw: u64, count: u32 },
   Fade { target: u64, draw: u64, fade: [f32; 2] },
+  Order { target: u64, order: Vec<u64> },
   Shared { target: u64, name: String, values: Vec<f32> },
   Instances { buffer: u64, first: u32, values: Vec<f32> },
   Texture { texture: u64, values: Vec<f32> },
@@ -45,6 +47,10 @@ impl SinkWriter for Recorder {
     self.writes.push(Write::Fade { target, draw, fade });
     self.landed(target)
   }
+  fn write_order(&mut self, target: u64, order: &[u64]) -> bool {
+    self.writes.push(Write::Order { target, order: order.to_vec() });
+    self.landed(target)
+  }
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool {
     self.writes.push(Write::Shared { target, name: name.to_string(), values: values.to_vec() });
     self.landed(target)
@@ -61,7 +67,7 @@ impl SinkWriter for Recorder {
 }
 
 fn sink(draw: u64) -> DrawSink {
-  DrawSink { target: 1, draw, normal: false, count: 1, fade: false }
+  DrawSink { target: 1, draw, normal: false, count: 1, fade: false, order: DrawOrder::default() }
 }
 
 pub(super) fn flush(s: &mut Spatial) -> Vec<Write> {
@@ -134,7 +140,7 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
   let root = s.create([0.0; 3], Q, ONE, true);
   let m = s.create([0.0; 3], Q, ONE, true);
   s.set_parent(m, Some(root)).expect("parent");
-  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 4, fade: false }).expect("sink");
+  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 4, fade: false, order: DrawOrder::default() }).expect("sink");
   flush(&mut s);
   s.set_visible(root, false).expect("hide");
   assert_eq!(flush(&mut s), vec![Write::Count { target: 1, draw: 9, count: 0 }]);
@@ -152,15 +158,15 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
 fn sinks_are_per_target_and_one_move_feeds_them_all() {
   let mut s = Spatial::new();
   let m = s.create([0.0; 3], Q, ONE, true);
-  s.bind_sink(m, DrawSink { target: 1, draw: 7, normal: false, count: 1, fade: false }).expect("sink");
-  s.bind_sink(m, DrawSink { target: 2, draw: 8, normal: true, count: 1, fade: false }).expect("sink");
+  s.bind_sink(m, DrawSink { target: 1, draw: 7, normal: false, count: 1, fade: false, order: DrawOrder::default() }).expect("sink");
+  s.bind_sink(m, DrawSink { target: 2, draw: 8, normal: true, count: 1, fade: false, order: DrawOrder::default() }).expect("sink");
   let writes = flush(&mut s);
   assert_eq!(writes.len(), 4, "count + params per sink: {writes:?}");
   assert_eq!(writes[0], Write::Count { target: 1, draw: 7, count: 1 });
   assert_eq!(writes[2], Write::Count { target: 2, draw: 8, count: 1 });
   // Rebinding on a target replaces that sink; the other stays (and, the
   // node being re-queued, gets a params rewrite - the reparent rule).
-  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 1, fade: false }).expect("rebind");
+  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 1, fade: false, order: DrawOrder::default() }).expect("rebind");
   let writes = flush(&mut s);
   assert!(writes.contains(&Write::Count { target: 1, draw: 9, count: 1 }));
   assert!(writes.contains(&Write::Params { target: 1, draw: 9, model: IDENTITY, normal: None }));
@@ -1078,8 +1084,8 @@ fn culling_is_per_target_and_respects_the_opt_out_and_margin() {
   let mut s = Spatial::new();
   let n = s.create([0.0; 3], Q, ONE, true);
   s.set_bounds(n, Some(UNIT)).expect("bounds");
-  s.bind_sink(n, DrawSink { target: 1, draw: 1, normal: false, count: 1, fade: false }).expect("sink");
-  s.bind_sink(n, DrawSink { target: 2, draw: 2, normal: false, count: 1, fade: false }).expect("sink");
+  s.bind_sink(n, DrawSink { target: 1, draw: 1, normal: false, count: 1, fade: false, order: DrawOrder::default() }).expect("sink");
+  s.bind_sink(n, DrawSink { target: 2, draw: 2, normal: false, count: 1, fade: false, order: DrawOrder::default() }).expect("sink");
   s.set_frustum(1, Some(cube_at(0.0)));
   s.set_frustum(2, Some(cube_at(2.0)));
   let writes = flush(&mut s);
@@ -1219,12 +1225,12 @@ fn box_only_shape_picks_by_its_box() {
 
 // --- Level of detail ---
 
-use crate::spatial::{LodLevel, LodView};
+use crate::spatial::LodLevel;
 
 /// A perspective view at `d` along +z looking at the origin, focal 1: a
 /// unit box there (radius sqrt(3)/2) measures 0.866 / d.
 fn lod_view(d: f32) -> Option<LodView> {
-  Some(LodView { eye: [0.0, 0.0, d], focal: 1.0, ortho: false, bias: 1.0 })
+  Some(LodView { eye: [0.0, 0.0, d], forward: [0.0, 0.0, -1.0], focal: 1.0, ortho: false, bias: 1.0 })
 }
 
 fn level(node: u64, size: f32) -> LodLevel {
@@ -1240,7 +1246,7 @@ fn lod_group(s: &mut Spatial, target: u64, fade: bool) -> (u64, [u64; 3]) {
     let n = s.create([0.0; 3], Q, ONE, true);
     s.set_parent(n, Some(g)).expect("parent");
     s.set_bounds(n, Some(UNIT)).expect("bounds");
-    s.bind_sink(n, DrawSink { target, draw: k as u64 + 1, normal: false, count: 1, fade }).expect("sink");
+    s.bind_sink(n, DrawSink { target, draw: k as u64 + 1, normal: false, count: 1, fade, order: DrawOrder::default() }).expect("sink");
     *id = n;
   }
   (g, ids)
@@ -1350,7 +1356,7 @@ fn levels_are_picked_per_target_and_shadow_targets_follow_the_view_they_are_give
   let mut s = Spatial::new();
   let (g, l) = lod_group(&mut s, 1, false);
   for (k, &n) in l.iter().enumerate() {
-    s.bind_sink(n, DrawSink { target: 2, draw: 10 + k as u64, normal: false, count: 1, fade: false }).expect("sink");
+    s.bind_sink(n, DrawSink { target: 2, draw: 10 + k as u64, normal: false, count: 1, fade: false, order: DrawOrder::default() }).expect("sink");
   }
   s.set_lod(g, &[level(l[0], 0.5), level(l[1], 0.0)], 0.0, None).expect("lod");
   s.set_lod_view(1, lod_view(1.0));
@@ -1360,7 +1366,7 @@ fn levels_are_picked_per_target_and_shadow_targets_follow_the_view_they_are_give
   assert!(!c.contains(&(1, 2, 1)) && !c.contains(&(2, 10, 1)));
   // A target without a view draws the first level.
   for (k, &n) in l.iter().enumerate() {
-    s.bind_sink(n, DrawSink { target: 3, draw: 20 + k as u64, normal: false, count: 1, fade: false }).expect("sink");
+    s.bind_sink(n, DrawSink { target: 3, draw: 20 + k as u64, normal: false, count: 1, fade: false, order: DrawOrder::default() }).expect("sink");
   }
   let c = counts(&flush(&mut s));
   assert!(c.contains(&(3, 20, 1)) && !c.contains(&(3, 21, 1)), "{c:?}");
@@ -1392,7 +1398,7 @@ fn nested_groups_chain_and_clearing_a_group_draws_everything_again() {
   for (k, &n) in [a, b].iter().enumerate() {
     s.set_parent(n, Some(inner)).expect("parent");
     s.set_bounds(n, Some(UNIT)).expect("bounds");
-    s.bind_sink(n, DrawSink { target: 1, draw: 30 + k as u64, normal: false, count: 1, fade: false }).expect("sink");
+    s.bind_sink(n, DrawSink { target: 1, draw: 30 + k as u64, normal: false, count: 1, fade: false, order: DrawOrder::default() }).expect("sink");
   }
   s.set_lod(outer, &[level(ol[0], 0.5), level(inner, 0.1), level(ol[2], 0.0)], 0.0, None).expect("outer");
   s.set_lod(inner, &[level(a, 0.3), level(b, 0.0)], 0.0, None).expect("inner");
@@ -1497,4 +1503,233 @@ fn weights_rows_publish_the_register_padded_and_only_on_change() {
   s.destroy(b).expect("destroy b");
   flush(&mut s);
   assert!(s.bind_texture_slot(a, TextureSlotSink { texture: 7, row: 0, post: IDENTITY }, None).is_err(), "a is dead");
+}
+
+// --- Draw sort ---
+
+/// A perspective view at `eye` looking along `forward` (unit), focal 1.
+fn sort_view(eye: [f32; 3], forward: [f32; 3]) -> Option<LodView> {
+  Some(LodView { eye, forward, focal: 1.0, ortho: false, bias: 1.0 })
+}
+
+fn keyed(draw: u64, transparent: bool, render_order: i32) -> DrawSink {
+  DrawSink { target: 1, draw, normal: false, count: 1, fade: false, order: DrawOrder { transparent, render_order } }
+}
+
+/// A unit box at `position` bound to draw `draw` on target 1.
+fn boxed(s: &mut Spatial, position: [f32; 3], sink: DrawSink) -> u64 {
+  let n = s.create(position, Q, ONE, true);
+  s.set_bounds(n, Some(UNIT)).expect("bounds");
+  s.bind_sink(n, sink).expect("sink");
+  n
+}
+
+fn orders(writes: &[Write]) -> Vec<Vec<u64>> {
+  writes
+    .iter()
+    .filter_map(|w| match w {
+      Write::Order { target: 1, order } => Some(order.clone()),
+      _ => None,
+    })
+    .collect()
+}
+
+/// The eye at +10 z looking down -z: a node's distance is 10 - z.
+fn sorted_scene() -> Spatial {
+  let mut s = Spatial::new();
+  s.set_draw_sort(1, true);
+  s.set_lod_view(1, sort_view([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]));
+  s
+}
+
+#[test]
+fn draw_sort_orders_opaques_front_to_back() {
+  let mut s = sorted_scene();
+  // Bound far first: the generation order of a procedural hull.
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(1, false, 0));
+  boxed(&mut s, [0.0, 0.0, 0.0], keyed(2, false, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(3, false, 0));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![3, 2, 1]]);
+  assert!(orders(&flush(&mut s)).is_empty(), "a clean tree re-sorts nothing");
+}
+
+#[test]
+fn draw_sort_render_order_beats_depth() {
+  let mut s = sorted_scene();
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, false, 1));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(2, false, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(3, true, 1));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(4, true, 0));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1, 4, 3]]);
+}
+
+#[test]
+fn draw_sort_ties_keep_bind_order() {
+  let mut s = sorted_scene();
+  // Distances 4.1 and 4.0 share a bucket (four per doubling), so the
+  // farther-bound-first pair keeps its bind order; 5.0 does not.
+  boxed(&mut s, [0.0, 0.0, 5.9], keyed(1, false, 0));
+  boxed(&mut s, [0.0, 0.0, 6.0], keyed(2, false, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(3, false, 0));
+  boxed(&mut s, [0.0, 0.0, 6.0], keyed(4, false, 0));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2, 4, 3]]);
+}
+
+#[test]
+fn draw_sort_transparents_last_back_to_front() {
+  let mut s = sorted_scene();
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, true, 0));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(2, false, 0));
+  boxed(&mut s, [0.0, 0.0, 0.0], keyed(3, true, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(4, false, 0));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![4, 2, 3, 1]]);
+}
+
+#[test]
+fn draw_sort_skips_short_moves_and_look_around() {
+  let mut s = sorted_scene();
+  let a = boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, false, 0));
+  boxed(&mut s, [8.0, 0.0, 10.0], keyed(2, false, 0));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
+  // Nearest opaque center is 5 away: a step under 16% of it and a pure
+  // look-around key nothing and write nothing.
+  s.set_lod_view(1, sort_view([0.5, 0.0, 10.0], [0.0, 0.0, -1.0]));
+  assert!(flush(&mut s).is_empty());
+  s.set_lod_view(1, sort_view([0.5, 0.0, 10.0], [0.0, 1.0, 0.0]));
+  assert!(flush(&mut s).is_empty());
+  // A long move re-keys: the eye at the second box makes it nearest.
+  s.set_lod_view(1, sort_view([8.0, 0.0, 10.0], [0.0, 0.0, -1.0]));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
+  // A re-key that lands on the same permutation writes nothing.
+  s.set_sink_order(a, DrawOrder { transparent: true, render_order: 0 }).expect("order");
+  assert!(orders(&flush(&mut s)).is_empty());
+}
+
+#[test]
+fn draw_sort_transparents_rekey_on_a_look_around() {
+  let mut s = sorted_scene();
+  // Equal depths tie by bind order; a turn of the view alone separates
+  // them (exact depth, no bucket, no eye move needed).
+  boxed(&mut s, [2.0, 0.0, 0.0], keyed(1, true, 0));
+  boxed(&mut s, [-2.0, 0.0, 0.0], keyed(2, true, 0));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
+  let len = (0.1f32 * 0.1 + 1.0).sqrt();
+  s.set_lod_view(1, sort_view([0.0, 0.0, 10.0], [-0.1 / len, 0.0, -1.0 / len]));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
+}
+
+#[test]
+fn draw_sort_ortho_rekeys_on_a_turn() {
+  // Under an orthographic view the opaque key is the forward depth, so a
+  // turn of the view alone moves centers across buckets: equal depths
+  // tie by bind order until the view turns toward the second box.
+  let mut s = Spatial::new();
+  s.set_draw_sort(1, true);
+  let ortho = |forward: [f32; 3]| Some(LodView { eye: [0.0, 0.0, 10.0], forward, focal: 1.0, ortho: true, bias: 1.0 });
+  s.set_lod_view(1, ortho([0.0, 0.0, -1.0]));
+  boxed(&mut s, [-4.0, 0.0, 5.0], keyed(1, false, 0));
+  boxed(&mut s, [4.0, 0.0, 5.0], keyed(2, false, 0));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
+  let len = (0.3f32 * 0.3 + 1.0).sqrt();
+  s.set_lod_view(1, ortho([-0.3 / len, 0.0, -1.0 / len]));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
+}
+
+#[test]
+fn draw_sort_rekeys_a_moved_subtree() {
+  let mut s = sorted_scene();
+  let group = s.create([0.0; 3], Q, ONE, true);
+  let a = boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, false, 0));
+  let b = boxed(&mut s, [0.0, 0.0, -5.0], keyed(2, false, 0));
+  s.set_parent(a, Some(group)).expect("parent");
+  s.set_parent(b, Some(group)).expect("parent");
+  assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
+  // A half turn about y swaps the children's depths.
+  s.set_transform(group, [0.0; 3], [0.0, 1.0, 0.0, 0.0], ONE).expect("turn");
+  assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
+}
+
+#[test]
+fn draw_sort_off_target_never_writes() {
+  let mut s = Spatial::new();
+  s.set_lod_view(1, sort_view([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(1, false, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(2, false, 0));
+  assert!(orders(&flush(&mut s)).is_empty());
+  s.set_draw_sort(1, true);
+  assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
+  s.set_draw_sort(1, false);
+  s.set_lod_view(1, sort_view([0.0, 0.0, -10.0], [0.0, 0.0, 1.0]));
+  assert!(orders(&flush(&mut s)).is_empty());
+}
+
+#[test]
+fn draw_sort_waits_for_a_view_and_follows_rekeys() {
+  let mut s = Spatial::new();
+  s.set_draw_sort(1, true);
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(1, false, 0));
+  let b = boxed(&mut s, [0.0, 0.0, 5.0], keyed(2, false, 0));
+  assert!(orders(&flush(&mut s)).is_empty(), "no view, nothing to measure from");
+  s.set_lod_view(1, sort_view([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
+  s.set_sink_order(b, DrawOrder { transparent: false, render_order: 1 }).expect("order");
+  assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
+  s.unbind_sink(b, Some(1)).expect("unbind");
+  assert_eq!(orders(&flush(&mut s)), vec![vec![1]]);
+}
+
+#[test]
+fn draw_sort_matches_a_linear_oracle() {
+  // mulberry32, so a failure reproduces.
+  let mut state: u32 = 0x9e37_79b9;
+  let mut rand = || {
+    state = state.wrapping_add(0x6d2b_79f5);
+    let mut t = state;
+    t = (t ^ (t >> 15)).wrapping_mul(1 | t);
+    t = (t.wrapping_add((t ^ (t >> 7)).wrapping_mul(61 | t))) ^ t;
+    (t ^ (t >> 14)) as f32 / 4_294_967_296.0
+  };
+  let mut range = |lo: f32, hi: f32| lo + rand() * (hi - lo);
+  let bucket = |d: f32| (d.max(1e-3).log2() * 4.0).floor() as i32;
+  for _ in 0..200 {
+    let mut s = Spatial::new();
+    s.set_draw_sort(1, true);
+    let eye = [range(-10.0, 10.0), range(-10.0, 10.0), range(-10.0, 10.0)];
+    let f = [range(-1.0, 1.0), range(-1.0, 1.0), range(-1.0, 1.0)];
+    let len = (f[0] * f[0] + f[1] * f[1] + f[2] * f[2]).sqrt().max(1e-3);
+    let forward = [f[0] / len, f[1] / len, f[2] / len];
+    s.set_lod_view(1, sort_view(eye, forward));
+    let n = 1 + (range(0.0, 12.0) as usize);
+    let mut items: Vec<(u64, bool, i32, [f32; 3])> = Vec::new();
+    for k in 0..n {
+      let item = (k as u64 + 1, range(0.0, 1.0) < 0.5, range(0.0, 3.0) as i32, [range(-5.0, 5.0), range(-5.0, 5.0), range(-5.0, 5.0)]);
+      boxed(&mut s, item.3, keyed(item.0, item.1, item.2));
+      items.push(item);
+    }
+    let order = orders(&flush(&mut s)).pop().expect("one order write");
+    let mut seen: Vec<u64> = order.clone();
+    seen.sort_unstable();
+    assert_eq!(seen, (1..=n as u64).collect::<Vec<u64>>(), "a permutation of every entry");
+    let dist = |c: [f32; 3]| ((c[0] - eye[0]).powi(2) + (c[1] - eye[1]).powi(2) + (c[2] - eye[2]).powi(2)).sqrt();
+    let depth = |c: [f32; 3]| (c[0] - eye[0]) * forward[0] + (c[1] - eye[1]) * forward[1] + (c[2] - eye[2]) * forward[2];
+    for pair in order.windows(2) {
+      let p = items[pair[0] as usize - 1];
+      let m = items[pair[1] as usize - 1];
+      assert!(!(p.1 && !m.1), "opaque after transparent");
+      if p.1 != m.1 {
+        continue;
+      }
+      assert!(p.2 <= m.2, "render_order not ascending");
+      if p.2 < m.2 {
+        continue;
+      }
+      if m.1 {
+        assert!(depth(p.3) >= depth(m.3) - 1e-5, "transparent not back-to-front");
+      } else {
+        let (pb, mb) = (bucket(dist(p.3)), bucket(dist(m.3)));
+        assert!(pb <= mb, "opaque not front-to-back");
+        assert!(!(pb == mb && p.0 > m.0), "bind order not kept in a bucket");
+      }
+    }
+  }
 }

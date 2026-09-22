@@ -55,6 +55,9 @@ pub(super) struct DrawListMirror {
   pub(super) depth_texture: Option<u64>,
   pub(super) next_draw: u64,
   pub(super) entries: HashMap<u64, EntryMirror>,
+  /// The entry ids in draw order, as the raster list stands: what a
+  /// partial order from the spatial core is composed into.
+  pub(super) order: Vec<u64>,
 }
 
 // UI-side mirror of one draw entry: what per-entry update validation reads

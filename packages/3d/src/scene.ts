@@ -36,7 +36,7 @@
 // and pointer subsystems are scene-shadows.ts / scene-pointer.ts,
 // built here with the scene's seams as their deps.
 
-import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
+import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, setDrawBuffers, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { Impact as CoreImpact, NodeId, QueryFilter } from "flux:spatial"
 import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureBindings, TextureId, WrapMode } from "@solidrt/core/gpu"
@@ -59,8 +59,7 @@ import type { BloomOptions, ResolveInput, ResolveOptions, ResolveRecord } from "
 import { createEnvironmentPlaceholder, createPrefilter, bufferFormat } from "./environment.ts"
 import type { Prefilter } from "./environment.ts"
 import type { Material } from "./material.ts"
-import { orderEntries } from "./order.ts"
-import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTransition, worldInto } from "./node.ts"
+import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTransition } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
 import { checkInstancePairing, checkMask, instanceBinding, localBounds, publishRecords } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
@@ -117,9 +116,6 @@ function packVolume(volume: Volume, site: string): "capsule" | "box" {
 
 // pick()'s camera-ray scratch.
 let pickDir: Vec3 = [0, 0, 0]
-// worldInto's out for the light/center readbacks below; nothing here
-// outlives a single call.
-let worldScratch = mat4()
 
 /** One picking intersection, Three's intersect result: the mesh, the
  * camera-ray distance in world units, the world-space point, and for a
@@ -1116,6 +1112,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     label,
     autoFree: false,
   })
+  spatial.setDrawSort(texture, true)
   let resolve = makeResolve(texture, width, height, opts?.resolve, { filter: opts?.filter, wrap: opts?.wrap }, label)
   let disposed = false
   let scheduled = false
@@ -1185,12 +1182,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   }
 
   // Live meshes (those holding a draw entry) in add order; the background
-  // entry never joins this list. Draw order is derived from it by
-  // orderEntries (order.ts) whenever orderDirty. Camera moves and
-  // transparent-mesh moves only dirty the order when two or more transparent
-  // meshes exist - fewer cannot change relative order.
+  // entry never joins this list. Draw order is the core's (setDrawSort on
+  // every sorted target): each mesh's node carries its sort key
+  // (setDrawKey after a bind), and a flush that moved a node, changed a
+  // binding or moved a target's LOD view re-keys that target's entries.
   let meshes: Mesh[] = []
-  let transparentCount = 0
+  let keyDraw = (mesh: Mesh) => spatial.setDrawKey(mesh._node!, mesh.material.transparent === true, mesh.renderOrder)
   // Attached lights in attach order (= light index); any change to the
   // set, a light's fields, or a light's world matrix rewrites the shared
   // light params at the end of the sync - one write, however many meshes.
@@ -1319,10 +1316,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // matrix too: rewrite the whole array once.
     shadowSys.markMatricesDirty()
   }
-  let orderDirty = false
-  // The order last handed to the engine: a resort that lands on the same
-  // permutation (the common case under a moving camera) issues nothing.
-  let lastOrder: DrawId[] = []
   // `skybox`: the entry runs the library's cube-map fragment (its params
   // and textures are rewritable in place); false = app GLSL.
   // `sky` is the skybox source (its cube and knobs) for the bake, null
@@ -1345,34 +1338,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // the scene's own 1x1 black cube.
   let environment: TextureId | null = null
   let envPlaceholder = createEnvironmentPlaceholder(label + "-env-none")
-  let sortEntries = () => {
-    orderDirty = false
-    let order = orderEntries(meshes, camera.view, background?.entries.get(texture))
-    if (order.length === lastOrder.length && order.every((id, i) => id === lastOrder[i])) return
-    lastOrder = order
-    setDrawOrder(texture, order)
-  }
-
-  // The transparent sort keys: each transparent mesh's local-bounds
-  // center carried through its world matrix (read from the core), at
-  // sort time only - opaque meshes never need one.
-  let refreshCenters = () => {
-    if (transparentCount < 2) return
-    for (let mesh of meshes) {
-      if (!mesh._transparent || mesh._node === null) continue
-      let b = localBounds(mesh)
-      let m = worldInto(worldScratch, mesh)
-      let cx = 0, cy = 0, cz = 0
-      if (b !== null) {
-        cx = (b[0]! + b[3]!) / 2
-        cy = (b[1]! + b[4]!) / 2
-        cz = (b[2]! + b[5]!) / 2
-      }
-      mesh._center[0] = m[0] * cx + m[4] * cy + m[8] * cz + m[12]
-      mesh._center[1] = m[1] * cx + m[5] * cy + m[9] * cz + m[13]
-      mesh._center[2] = m[2] * cx + m[6] * cy + m[10] * cz + m[14]
-    }
-  }
   let camera = makeCamera()
   let clip: Vec4 = [0, 0, 0, 0]
   let pickOrigin: Vec3 = [0, 0, 0]
@@ -1457,8 +1422,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     ownNames: Set<string>
     camera: Camera
     entries: Map<Mesh, DrawId>
-    orderDirty: boolean
-    lastOrder: DrawId[]
     /** A shadow tile measures LOD by the SCENE camera: set once at
      * creation, then on every scene camera move. */
     lodViewSet: boolean
@@ -1519,14 +1482,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // The core turns the entry on (with the world matrix) at the next
     // flush, and off again whenever the node or an ancestor hides.
     spatial.bindDraw(mesh._node!, texture, mesh._entry, mesh.material.normalMatrix === true, inst !== null ? inst.count : 1, mesh.material.lodFade === true)
-    orderDirty = true
+    keyDraw(mesh)
   }
   let detachScene = (mesh: Mesh) => {
     if (mesh._entry === null) return
     if (mesh._node !== null) spatial.unbindDraw(mesh._node, texture)
     if (!disposed) removeDraw(texture, mesh._entry)
     mesh._entry = null
-    orderDirty = true
   }
   // The material a view draws a mesh with: a shadow view lets a caster's
   // material pick its own depth variant (its cull side, cutout, skinning
@@ -1570,8 +1532,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       instanceCount: 0,
     })
     spatial.bindDraw(mesh._node!, v.texture, entry, material.normalMatrix === true, inst !== null ? inst.count : 1, material.lodFade === true)
+    keyDraw(mesh)
     v.entries.set(mesh, entry)
-    v.orderDirty = true
   }
   let detachView = (v: ViewRecord, mesh: Mesh) => {
     v.skipped.delete(mesh)
@@ -1580,15 +1542,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     v.entries.delete(mesh)
     if (mesh._node !== null) spatial.unbindDraw(mesh._node, v.texture)
     if (!v.disposed) removeDraw(v.texture, entry)
-    v.orderDirty = true
-  }
-  let sortView = (v: ViewRecord) => {
-    v.orderDirty = false
-    if (v.override !== null) return
-    let order = orderEntries(meshes, v.camera.view, background?.entries.get(v.texture), m => v.entries.get(m as Mesh) ?? null)
-    if (order.length === v.lastOrder.length && order.every((id, i) => id === v.lastOrder[i])) return
-    v.lastOrder = order
-    setDrawOrder(v.texture, order)
   }
   let disposeView = (v: ViewRecord) => {
     if (v.disposed) return
@@ -1670,6 +1623,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
             x: vopts.x,
             y: vopts.y,
           })
+    // An override view (a shadow tile, a depth or id pass) draws in add
+    // order; every other view sorts like the scene.
+    if (override === null) spatial.setDrawSort(buffer, true)
     let v: ViewRecord = {
       texture: buffer,
       // A shadow view is depth only, a probe's faces are read as a cube,
@@ -1690,8 +1646,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       ownNames: new Set(),
       camera: makeCamera(),
       entries: new Map(),
-      orderDirty: true,
-      lastOrder: [],
       lodViewSet: false,
       cube,
       probeCube: null,
@@ -1741,30 +1695,37 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // the scene's own, every view's, every shadow tile's - set before the
   // flush below, which switches the entries outside it off. Cube face
   // renders (probes) set no frustum: six cameras share one target and the
-  // core would only ever see the last.
+  // core would only ever see the last; each face sets the LOD view and
+  // flushes before it renders, so the core sorts (and measures) per face.
   let frustumScratch = new Float32Array(16)
   let setFrustum = (target: TextureId, cam: Camera) => {
     frustumScratch.set(cam.viewProj)
     spatial.setFrustum(target, frustumScratch)
   }
-  // A camera write is also the target's LOD view - eye, vertical focal
-  // factor (the magnitude of proj[5] under either projection: the
+  // A camera write is also the target's LOD view - eye, forward (the
+  // view matrix's z row negated: the camera looks down -z), vertical
+  // focal factor (the magnitude of proj[5] under either projection: the
   // projections bake in a y-down clip flip, so the element is negative),
   // the ortho flag and the scene's bias - what the core measures
-  // projected size with. The scene and each view measure by their own
-  // camera; a shadow tile by the SCENE camera, so a caster draws the
-  // level the camera sees and its shadow matches.
+  // projected size with, and what the draw sort measures depth against.
+  // The scene and each view measure by their own camera; a shadow tile by
+  // the SCENE camera, so a caster draws the level the camera sees and its
+  // shadow matches.
   let lodBias = opts?.lodBias ?? 1
   if (!(lodBias > 0 && Number.isFinite(lodBias))) throw new Error("createScene: lodBias must be a positive number, got " + lodBias)
   let lodBiasDirty = false
-  let lodScratch = new Float32Array(6)
+  let lodScratch = new Float32Array(9)
   let setLodView = (target: TextureId, cam: Camera) => {
+    let v = cam.view
     lodScratch[0] = cam.eye[0]
     lodScratch[1] = cam.eye[1]
     lodScratch[2] = cam.eye[2]
-    lodScratch[3] = Math.abs(cam.proj[5]!)
-    lodScratch[4] = cam.ortho !== null ? 1 : 0
-    lodScratch[5] = lodBias
+    lodScratch[3] = -v[2]
+    lodScratch[4] = -v[6]
+    lodScratch[5] = -v[10]
+    lodScratch[6] = Math.abs(cam.proj[5]!)
+    lodScratch[7] = cam.ortho !== null ? 1 : 0
+    lodScratch[8] = lodBias
     spatial.setLodView(target, lodScratch)
   }
   let sync = () => {
@@ -1808,7 +1769,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       camera.pending = false
       setTargetParams(texture, cameraParams(camera))
       setFrustum(texture, camera)
-      if (transparentCount > 1) orderDirty = true
     }
     if (cameraMoved || biasChanged) setLodView(texture, camera)
     shadowSys.placeCameras(cameraMoved)
@@ -1819,11 +1779,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         v.camera.pending = false
         setTargetParams(v.texture, cameraParams(v.camera))
         setFrustum(v.texture, v.camera)
-        if (transparentCount > 1) v.orderDirty = true
         if (v.shadowFilter !== null) shadowSys.markMatricesDirty()
       }
-      // Probe faces measure nothing (six cameras, one target), like their
-      // frustum.
+      // Probe faces set their view per face at the bake (six cameras, one
+      // target), like their frustum.
       if (v.cube !== null) continue
       if (v.shadowFilter !== null) {
         if (cameraMoved || biasChanged || !v.lodViewSet) {
@@ -1857,21 +1816,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // uModel/uNormal, visibility switch and direction slots.
     spatial.flush()
     if (moved.length > 0) {
-      // Which meshes moved is the core's knowledge now, so any move with
-      // two or more transparent meshes re-sorts (sortEntries issues nothing
-      // when the permutation is unchanged).
-      if (transparentCount > 1) {
-        orderDirty = true
-        for (let v of views) v.orderDirty = true
-      }
       for (let n of moved) n._moved = false
       moved.length = 0
     }
-    // The sort keys are world-space and camera-independent: refreshed once
-    // for every sort this sync.
-    if (orderDirty || views.some(v => v.orderDirty)) refreshCenters()
-    if (orderDirty) sortEntries()
-    for (let v of views) if (v.orderDirty) sortView(v)
     if (budgetError !== null) {
       if (opts?.onError !== undefined) opts.onError(budgetError)
       else throw budgetError
@@ -1997,9 +1944,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (inst !== null && inst.nodes !== null && inst.bounds === null) groupDirty.add(mesh as InstancedMesh)
       byNode.set(mesh._node!, mesh)
       meshes.push(mesh)
-      mesh._transparent = mesh.material.transparent === true
-      if (mesh._transparent) transparentCount++
-      orderDirty = true
       this._schedule()
     },
     _detach(mesh) {
@@ -2017,8 +1961,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         mesh._buffers = null
         let i = meshes.indexOf(mesh)
         if (i >= 0) meshes.splice(i, 1)
-        if (mesh._transparent) transparentCount--
-        orderDirty = true
       }
       mesh._entry = null
     },
@@ -2124,9 +2066,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       recordsDirty.add(mesh)
       this._schedule()
     },
-    _reorder() {
-      orderDirty = true
-      for (let v of views) v.orderDirty = true
+    _reorder(mesh) {
+      if (disposed || mesh._buffers === null || mesh._node === null) return
+      keyDraw(mesh)
       this._schedule()
     },
     _moved(node) {
@@ -2281,11 +2223,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (source === null) return
       let built = sky === null ? backgroundPipeline(source as string, label + "-background") : backgroundPipeline(SKYBOX_FRAGMENT, label + "-skybox")
       background = { pipeline: built.pipeline, program: built.program, sky, entries: new Map() }
-      // First in list order on every target that draws it: inserted before
-      // the first mesh ENTRY (a layers-masked mesh has none), and every
-      // later sort keeps it there.
-      attachBackground(texture, meshes.find(m => m._entry !== null)?._entry ?? undefined)
-      for (let v of views) if (v.sky && !v.disposed) attachBackground(v.texture, v.lastOrder[0] ?? v.entries.values().next().value)
+      // First in list order on every target that draws it: the core's
+      // sort draws the entries it does not bind first, re-issued now.
+      attachBackground(texture, undefined)
+      spatial.setDrawSort(texture, true)
+      for (let v of views) {
+        if (!v.sky || v.disposed) continue
+        attachBackground(v.texture, undefined)
+        spatial.setDrawSort(v.texture, true)
+      }
     },
     setEnvironment(env) {
       if (disposed) return
@@ -2601,10 +2547,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           // The scene's pending state (lights, params, the fan-out to this
           // target) lands before the faces read it.
           sync()
-          renderCubeFaces(v.texture, v.camera, size, position, chain !== null, face => {
-            // Opaque order is a hint (front to back); only transparency
-            // needs the per-face sort.
-            if (face === 0 || transparentCount > 1) sortView(v)
+          renderCubeFaces(v.texture, v.camera, size, position, chain !== null, () => {
+            // Each face looks a different way: its own LOD view, flushed
+            // so the core sorts (and measures) the face before it renders.
+            setLodView(v.texture, v.camera)
+            spatial.flush()
           })
           chain?.run()
         },

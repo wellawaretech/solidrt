@@ -62,6 +62,22 @@ impl SinkWriter for Writer<'_> {
     }))
   }
 
+  // A sorted target's draw order, composed into the target's full
+  // permutation. Dropping one releases nothing: a stale order is
+  // harmless, and the next change writes again.
+  fn write_order(&mut self, target: u64, order: &[u64]) -> bool {
+    match self.ctx.compose_draw_order(target, order).and_then(|full| self.ctx.set_draw_order(target, &full)) {
+      Ok(()) => {
+        self.wrote = true;
+        true
+      }
+      Err(e) => {
+        log::warn!("[spatial] draw order dropped: {e}");
+        false
+      }
+    }
+  }
+
   // A shared-slot group's array, whole, through the ordinary shared
   // channel (draw targets store unknown names until a declaring
   // material arrives, so this validates like any setTargetParams).

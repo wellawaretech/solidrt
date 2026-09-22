@@ -163,7 +163,7 @@ export type SceneHooks = {
   _setLayers(mesh: Mesh): void
   /** A light's castShadow/shadow options changed. */
   _shadowChanged(light: CastingLight): void
-  _reorder(): void
+  _reorder(mesh: Mesh): void
   /** The node's transform changed (for the sort and light bookkeeping). */
   _moved(node: SceneNode): void
   /** Push the node's LOD declaration (`_lod`) to the core: at scene enter

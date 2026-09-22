@@ -157,7 +157,9 @@ that reads exactly like Solid fallout.
 - Paint color is the `color` prop (a CSS color string). There is NO `fill`,
   `stroke`, or `background` prop (some older doc examples are wrong about this).
   Outlines: `drawStyle="stroke"` (or "stroke-and-fill") plus `strokeWidth`.
-  Corner radius on draw primitives: `radius` (number or [tl, tr, br, bl]).
+  Corner radius on draw primitives: `radius` (number or [tl, tr, br, bl]);
+  on `texture` too, drawn as a rounded image in one draw - use it instead of
+  a rounded `clipRadius` around an image, which tiled GPUs pay dearly for.
 
 - Registered JSX intrinsics: `window`, `view`, `text`, `span`, `rect`, `oval`,
   `line`, `path`, `texture`, `audio`, plus the `d-` variants `d-view`, `d-rect`,

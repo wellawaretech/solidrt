@@ -61,7 +61,11 @@ What it takes beyond passing `instanceOrder` through to the entry:
 buffer, so an ordered mesh's publishes (the load upload included) switch
 to the lease (`beginBufferWrite`/`endBufferWrite`); and the camera feeds
 `orderDirection` on settle - with retain, a direction update alone
-re-orders core-side, no republish. Done looks like: a few hundred
+re-orders core-side, no republish. The spatial core already holds each
+sorted target's view (eye and forward, what the entry-level draw sort
+keys from since 2026-09-22), so the direction feed can come from there
+instead of the app: one camera per target drives cull, LOD, entry order
+and record order. Done looks like: a few hundred
 thousand splats orbiting smoothly on desktop, order updates with zero
 per-frame JS, parked camera renders nothing new.
 

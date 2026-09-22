@@ -255,11 +255,12 @@ Shaped, not started.
   per flow, fixing render's missing isolate support and clearing the ground
   for pack formats and asset pre-processing.
 - **[The cadence hold never steps down on Android and reads the held interval as GPU time](backlog/cadence-hold-sticky-android.md)** [2026-09-22]
-  get_stats' gpuFrameExecMsPerFrame tracked the held interval (43-51 ms at a
-  hold of 3) while SurfaceFlinger's queue-to-ready spans were 25-32 ms, so the
-  step-down prediction never fits, the hold stays at 3 through idle, and every
-  later animation starts at 20 fps even when its frames would fit; reload
-  resets it.
+  On the SM-T500 get_stats' gpuFrameExecMsPerFrame tracked the held interval
+  (43-51 ms at a hold of 3) while SurfaceFlinger's frameReady-minus-queue
+  spans were 25-32 ms, so the step-down prediction (offset + cpu + gpu +
+  margin must fit the shorter slot) never passes, the hold stays at 3 through
+  idle, and every later animation starts at 20 fps even when its frames would
+  fit one refresh. Reload resets it.
 - **[Camera and controls extensions](backlog/camera-and-controls-extensions.md)** [2026-09-17]
   SolidRT has two stock controls (OrbitCamera, FirstPersonCamera) where
   Three.js and Babylon.js ship many with more options; the concrete gap is
@@ -602,11 +603,13 @@ Shaped, not started.
   the executable image (Mach-O segment, PE resource) and re-sign after
   packing.
 - **[Gradient fills, non-source-over blends and many small draws each cost a frame's worth on Android](backlog/paint-costs-android-gradients-blends.md)** [2026-09-22]
-  On the Tab A7 a linear-gradient d-rect over each of ten panes costs ~15 ms a
-  frame, four tiny destination-out/over draws per pane ~16 ms, seventy small
-  texture draws ~10 ms - measured by subtraction from compositor timestamps;
-  performance.md needs the numbers and get_stats per-frame draw/blend/layer
-  counters.
+  On the Galaxy Tab A7 (Adreno 610, Impeller GLES) a linear-gradient d-rect
+  over each of ten panes costs ~15 ms a frame, four tiny
+  destination-out/destination-over draws per pane ~16 ms, and seventy small
+  source-over texture draws ~10 ms - all measured by subtraction from
+  SurfaceFlinger present timestamps. performance.md's "GPU work is nearly
+  free" needs these numbers, and get_stats needs per-frame draw/blend/layer
+  counters so they can be found without a reload per hypothesis.
 - **[Paint viewport culling](backlog/paint-viewport-culling.md)** [2026-08-18]
   The paint walk visits and builds every mounted node whether or not it can be
   seen, so paint cost is O(mounted content) - ~7 us/node, ~155 ms/frame at 17k
@@ -711,10 +714,12 @@ Shaped, not started.
   starting with prepareText over styled runs so caret geometry knows about run
   boundaries.
 - **[A rounded clip on a box whose size is in flight costs a third of the frame on Android](backlog/rounded-clip-cost-android.md)** [2026-09-22]
-  Ten panes with overflow hidden + clipRadius sliding and resizing on a layout
-  transition take the Tab A7 from 60 to 20 fps; a static rounded clip is
-  nearly free, one resizing pane ~8 ms, ten ~13 ms, an image under the clip
-  pays most; cause not yet located below the display list.
+  Ten panes with overflow hidden + clipRadius, sliding and resizing on a
+  layout transition, take the Galaxy Tab A7 (Adreno 610, Impeller GLES) from
+  60 fps to 20 fps - measured from SurfaceFlinger present timestamps, not from
+  get_stats; a static rounded clip is nearly free, one resizing rounded pane
+  costs ~8 ms, ten ~13 ms, and an image under the clip pays most. Cause not
+  yet located below the display list; needs an Impeller-level look.
 - **[Runtime policies - tracked, app-readable, app-overridable](backlog/runtime-policy-registry.md)** [2026-08-13]
   The runtime is accumulating behavior policies it selects on the app's behalf
   from device facts (frame pacing being the first with real consequences).
@@ -747,9 +752,11 @@ Shaped, not started.
   the same node, so "does it still render the same" is one call with a number
   instead of two images an agent has to eyeball.
 - **[Snapshot boundary textures leak across dev reloads](backlog/snapshot-texture-leak-reload.md)** [2026-09-22]
-  get_gpu_resources on the Tab A7 listed 51 window-sized rgba8 snapshot
-  textures (~440 MB) after a session of reloads, one more per reload; the old
-  instance's boundary is never freed when the next bundle is pushed.
+  get_gpu_resources on the SM-T500 listed 51 window-sized rgba8 "snapshot"
+  textures (2000x1092, ~8.7 MB each, ~440 MB) after a session of reloads;
+  get_stats' `textures` grows by one per reload. The old app instance's
+  snapshot boundary (the demo's backdrop) is never freed when the next bundle
+  is pushed.
 - **[Reactivity diagnostics carry no source location](backlog/solid-diagnostics-source-location.md)** [2026-09-08]
   A STRICT_READ_UNTRACKED warning names the shape of the mistake but not the
   file or line, so finding it in an app with a dozen effects is a manual hunt;
@@ -790,9 +797,11 @@ Shaped, not started.
   and per-platform validation of the present timestamps (ANGLE/D3D11, macOS,
   Android).
 - **[get_stats' time window reports frames 0 for an animation that just ran](backlog/stats-window-frames-zero.md)** [2026-09-22]
-  Called right after a 2 s animation with window_ms 3500-8000, get_stats
-  answered frames 0 in most calls while the compositor held ~120 presents;
-  only the frozen-clock window_frames path was reliable.
+  On the SM-T500, get_stats with window_ms 3500-8000 called right after a 2 s
+  add/remove animation answered `window: { frames: 0 }` in most calls (a few
+  answered 8-25 frames, never the ~120 presented), while SurfaceFlinger's
+  latency history held all of them; only the frozen-clock window_frames path
+  was reliable.
 - **[Elements built before a suspending read are orphaned on every retry](backlog/suspend-retry-orphan-elements.md)** [2026-09-03]
   A component that creates an element and then reads a pending async value
   throws NotReadyError to the nearest <Loading>, which discards the
@@ -819,9 +828,11 @@ Shaped, not started.
   textDecorationColor and dashed/dotted/wavy/double, on the same self-drawn
   per-line mechanism.
 - **[A TextInput whose box changes each frame still costs ~2.4 ms per empty field in the post-layout flush](backlog/text-input-resize-post-layout.md)** [2026-09-22]
-  Nine empty multiline fields inside resizing panes cost the Tab A7 22 ms of
-  postLayout per frame after the same-breaks fix; a field sized to its settled
-  tile drops it to 1 ms - the field should skip its geometry work when a box
+  With nine empty multiline fields inside panes sliding and resizing on a
+  layout transition, the SM-T500 spends 22 ms per frame in postLayout
+  (handlers 0.7 ms, the flush after them the rest) after the same-breaks fix;
+  sizing each field to its settled tile so its box never changes mid-slide
+  drops it to 1 ms. The field should skip its geometry work when the box
   change re-breaks nothing.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
@@ -841,11 +852,12 @@ Shaped, not started.
   so a second implementation with its own glyph atlas can replace it where
   quality matters.
 - **[A paragraph is painted as one Impeller paragraph per word, an order of magnitude over what its glyphs need](backlog/text-paint-per-word-paragraphs.md)** [2026-09-22]
-  Five 230-character paragraphs in reflowing panes cost the Tab A7 ~10 ms of
-  layout, ~12 ms of paint recording and ~12 ms of GPU per frame for ~1100
-  glyphs: the word cache keeps every wrap unit as its own Impeller Paragraph
-  and paint emits draw_paragraph per word (~180 ops a frame), so a per-line
-  draw or glyph runs would cut it ~8x.
+  Five 230-character paragraphs in reflowing panes cost the Galaxy Tab A7 ~10
+  ms of layout, ~12 ms of paint recording and ~12 ms of GPU per frame, for
+  ~1100 glyphs. The word cache keeps every wrap unit as its own Impeller
+  Paragraph and paint emits draw_paragraph per word (~180 ops a frame for that
+  text), so recording, display-list processing and the GPU's text draws all
+  scale with word count; a per-line draw, or glyph runs, would cut them ~8x.
 - **[Touch and word text selection](backlog/text-selection-touch-word.md)** [2026-09-02]
   Text selection exists (keys, mouse drag, highlight) but a touch user cannot
   make one at all - a finger drag deliberately scrolls - and no pointer

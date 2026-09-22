@@ -10,7 +10,7 @@ import type { AttributeAccess, Geometry } from "./geometry.ts"
 import { INSTANCE_MATRIX_ATTRIBUTES } from "./glsl.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Material } from "./material.ts"
-import type { TransformUpdate, Vec3 } from "./math.ts"
+import type { TransformUpdate } from "./math.ts"
 import * as spatial from "flux:spatial"
 import { activateMorph, afterFree, createWeightsTexture, enterScene, makeNode, rebindMorph, remove, resetMorph, setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
@@ -50,16 +50,9 @@ export type Mesh = SceneNode & {
    * Set with setDrawRange; reset by setGeometry. */
   _range: { first: number; count: number } | null
   /** The geometry-buffer reference the entry was built from, acquired at
-   * attach and what _detach releases - like _transparent, a snapshot,
-   * because setGeometry swaps mesh.geometry before the rebuild. */
+   * attach and what _detach releases - a snapshot, because setGeometry
+   * swaps mesh.geometry before the rebuild. */
   _buffers: GeometryBuffers | null
-  /** material.transparent as of the last attach - the entry's actual
-   * pipeline state, and what _detach counts against (setMaterial swaps
-   * mesh.material before the rebuild). */
-  _transparent: boolean
-  /** World-space center of the local bounds, refreshed at sort time: the
-   * transparent sort key. */
-  _center: Vec3
   _params: ShaderParams | null
   /** Per-mesh sampler bindings merged over the material's at attach (a
    * skin's uBones palette texture): create-time state, set before the
@@ -221,8 +214,6 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh._entry = null
   mesh._range = null
   mesh._buffers = null
-  mesh._transparent = false
-  mesh._center = [0, 0, 0]
   mesh._params = null
   mesh._textures = null
   mesh._morphOwner = geometry.morphs === undefined ? null : mesh
@@ -842,7 +833,7 @@ export function disposeInstances(mesh: InstancedMesh | RecordMesh): void {
 export function setRenderOrder(mesh: Mesh, order: number): void {
   if (mesh.renderOrder === order) return
   mesh.renderOrder = order
-  mesh._scene?._reorder()
+  mesh._scene?._reorder(mesh)
 }
 
 /**

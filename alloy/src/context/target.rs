@@ -319,6 +319,7 @@ impl Context {
           depth_texture: depth_id,
           next_draw: 1,
           entries: HashMap::new(),
+          order: Vec::new(),
         }),
       },
     );
@@ -386,6 +387,7 @@ impl Context {
           depth_texture: None,
           next_draw: 1,
           entries: HashMap::new(),
+          order: Vec::new(),
         }),
       },
     );
@@ -439,7 +441,7 @@ impl Context {
         draw: None,
         bounds: DrawBounds::default(),
         buffers: BufferIds::default(),
-        entries: Some(DrawListMirror { depth, depth_texture: None, next_draw: 1, entries: HashMap::new() }),
+        entries: Some(DrawListMirror { depth, depth_texture: None, next_draw: 1, entries: HashMap::new(), order: Vec::new() }),
       },
     );
     self.shader_sources.borrow_mut().insert(id, HashMap::new());
@@ -566,6 +568,10 @@ impl Context {
     };
     list.next_draw += 1;
     list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds, buffers: entry.buffer_ids() });
+    match before.and_then(|b| list.order.iter().position(|&d| d == b)) {
+      Some(at) => list.order.insert(at, draw_id),
+      None => list.order.push(draw_id),
+    }
     drop(targets);
     if let Some(order) = order {
       self.insert_instance_order(target, draw_id, order, key, strides, entry.buffer_ids());
@@ -589,16 +595,33 @@ impl Context {
   /// must request a frame.
   pub fn set_draw_order(&self, target: u64, order: &[u64]) -> Result<(), String> {
     {
-      let targets = self.targets.borrow();
-      let mirror = targets.get(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
-      let Some(list) = mirror.entries.as_ref() else {
+      let mut targets = self.targets.borrow_mut();
+      let mirror = targets.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+      let Some(list) = mirror.entries.as_mut() else {
         return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
       };
       validate_order(order, list.entries.keys().copied())?;
+      list.order = order.to_vec();
     }
     self.send(RasterCmd::SetDrawOrder { target, order: order.to_vec() });
     self.note_target_content(target);
     Ok(())
+  }
+
+  /// The full permutation `set_draw_order` takes, from the ids of bound
+  /// entries in the order the spatial core sorted them: every entry the
+  /// core did not name draws first, in its current order (a background),
+  /// then the named ones in the given order. A named id no longer on the
+  /// target is skipped (its binding is on its way out).
+  pub fn compose_draw_order(&self, target: u64, sorted: &[u64]) -> Result<Vec<u64>, String> {
+    let targets = self.targets.borrow();
+    let mirror = targets.get(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+    let Some(list) = mirror.entries.as_ref() else {
+      return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+    };
+    let mut full: Vec<u64> = list.order.iter().copied().filter(|d| !sorted.contains(d)).collect();
+    full.extend(sorted.iter().copied().filter(|d| list.entries.contains_key(d)));
+    Ok(full)
   }
 
   /// Remove a draw entry from a draw target; the remaining entries keep
@@ -613,6 +636,7 @@ impl Context {
     if list.entries.remove(&draw).is_none() {
       return Err(format!("draw {draw} not found on target {target}"));
     }
+    list.order.retain(|&d| d != draw);
     drop(targets);
     self.unregister_instance_order(target, draw);
     if let Some(record) = self.shader_sources.borrow_mut().get_mut(&target) {

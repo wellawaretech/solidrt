@@ -13,7 +13,7 @@ use crate::alloy_plugins::properties::transition::{
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::{elements_mut_of, elements_of, OptArg};
 use alloy::spatial::{
-  vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink,
+  vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawOrder, DrawSink,
   InstanceProjection, InstanceRecordSink, LodLevel, LodView, MoveOptions, NodeEndpoint, NodeMotion,
   NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RootMotion, Shape, SharedSlotSink,
   TextureSlotSink, Volume,
@@ -54,6 +54,8 @@ impl ModuleDef for SpatialModule {
     decl.declare("bindDraw")?;
     decl.declare("unbindDraw")?;
     decl.declare("setDrawCount")?;
+    decl.declare("setDrawKey")?;
+    decl.declare("setDrawSort")?;
     decl.declare("worldMatrix")?;
     decl.declare("shown")?;
     decl.declare("flush")?;
@@ -111,6 +113,8 @@ impl ModuleDef for SpatialModule {
     exports.export("bindDraw", Function::new(ctx.clone(), bind_draw)?)?;
     exports.export("unbindDraw", Function::new(ctx.clone(), unbind_draw)?)?;
     exports.export("setDrawCount", Function::new(ctx.clone(), set_draw_count)?)?;
+    exports.export("setDrawKey", Function::new(ctx.clone(), set_draw_key)?)?;
+    exports.export("setDrawSort", Function::new(ctx.clone(), set_draw_sort)?)?;
     exports.export("worldMatrix", Function::new(ctx.clone(), world_matrix)?)?;
     exports.export("shown", Function::new(ctx.clone(), shown)?)?;
     exports.export("flush", Function::new(ctx.clone(), flush)?)?;
@@ -321,8 +325,23 @@ fn bind_draw(
 ) -> rquickjs::Result<()> {
   super::gui(&ctx)
     .alloy
-    .spatial_bind(id, DrawSink { target, draw, normal, count, fade })
+    .spatial_bind(id, DrawSink { target, draw, normal, count, fade, order: DrawOrder::default() })
     .map_err(|e| throw_str(&ctx, &format!("bindDraw: {e}")))
+}
+
+/// Re-key every draw sink of the node for the draw sort.
+fn set_draw_key(ctx: Ctx<'_>, id: u64, transparent: bool, render_order: i32) -> rquickjs::Result<()> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_sink_order(id, DrawOrder { transparent, render_order })
+    .map_err(|e| throw_str(&ctx, &format!("setDrawKey: {e}")))
+}
+
+/// Whether the core orders the target's bound draw entries.
+fn set_draw_sort(ctx: Ctx<'_>, target: u64, enabled: bool) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_draw_sort(target, enabled);
+  Ok(())
 }
 
 /// Remove the node's draw sink on `target`, or every draw sink without one.
@@ -468,10 +487,10 @@ fn set_lod_view(ctx: Ctx<'_>, target: u64, view: OptArg<TypedArray<'_, f32>>) ->
   let v = match &view.0 {
     Some(data) => {
       let f = elements_of(&ctx, data, "setLodView")?;
-      if f.len() != 6 {
-        return Err(throw_str(&ctx, "setLodView: view must be a Float32Array of 6 (eye xyz, focal, ortho, bias)"));
+      if f.len() != 9 {
+        return Err(throw_str(&ctx, "setLodView: view must be a Float32Array of 9 (eye xyz, forward xyz, focal, ortho, bias)"));
       }
-      Some(LodView { eye: [f[0], f[1], f[2]], focal: f[3], ortho: f[4] != 0.0, bias: f[5] })
+      Some(LodView { eye: [f[0], f[1], f[2]], forward: [f[3], f[4], f[5]], focal: f[6], ortho: f[7] != 0.0, bias: f[8] })
     }
     None => None,
   };

@@ -521,13 +521,13 @@ faces); an instance is just per-entry uniforms (`uColor`) and bindings
 
 ### Pure pieces and checks
 
-The pure pieces (`math.ts`, `order.ts`, `geometry.ts`,
+The pure pieces (`math.ts`, `geometry.ts`,
 `profile.ts`, `sweep.ts`, `gltf.ts`, `model-file.ts`) are Solid-free and
 GPU-free BY DESIGN so they can be checked headless (and, for the two
 model modules, run under bun in `tools/model.ts`); keep them that way.
 The rigs under `checks/`
 (`geometry-check`, `sweep-check`, `pick-check`, `dispatch-check`,
-`order-check`, `gltf-check`) run on
+`gltf-check`) run on
 flux from the repo root: `bunx srt bundle -f --stdout
 packages/3d/checks/<name>.ts | target/release/flux -`. Run the ones
 touching what you changed. `raycast-check.tsx` and
@@ -2106,12 +2106,9 @@ write) - read poses with `getTransform(node)`, which reads the core;
 writes to such a node always go through (setTransform skips its
 usual equal-value short-circuit there, so a teleport back to the last
 JS-written spot is not lost); (3) a channel nothing plays leaves the node's pose
-alone; (4) known gap: native pose writes bypass the scene's moved list,
-so a mesh parented under a player-animated joint does not re-trigger
-the depth re-sort while it animates (harmless for an opaque mesh, whose
-order is a hint; visible on a TRANSPARENT one; palettes and picking are
-unaffected) - nudge the scene with any setTransform if it shows, until
-the core-side transparent sort lands.
+alone; the draw sort follows native pose writes like any move (the core
+re-keys what it recomputed), so an animated transparent sorts as it
+animates.
 
 ### Root motion
 
@@ -2654,10 +2651,8 @@ with `srt tool 3d/model`.
   lies flat with the hole on y, discs and cylinder caps get a PLANAR disc
   map inscribed in the unit square) but the doc comment is the source.
 - Entry rebuild order: `setGeometry`/`setMaterial` re-add the entry at the
-  list END and dirty the order, so the next sync() re-sorts and the mesh
-  keeps its place. `_transparent` on the mesh is the flag AS ATTACHED
-  (setMaterial swaps `mesh.material` before the rebuild, so _detach must
-  not read the new material's flag).
+  list END and rebind it with the new material's key, so the core's next
+  flush re-sorts and the mesh keeps its place.
 - `lathe` takes a CLOSED profile (a cross-section with thickness, or run
   to the axis at x = 0) - it is a solid of revolution, NOT Three's open
   polyline shell. An "open" outline must be closed by the author;

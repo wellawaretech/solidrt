@@ -93,12 +93,28 @@ pub struct DrawSink {
   /// cross-fade band position there (see `write_fade`). Without it the
   /// entry switches hard at the band's midpoint.
   pub fade: bool,
+  /// Where the entry sorts on a target ordering its entries
+  /// (`set_draw_sort`); ignored elsewhere.
+  pub order: DrawOrder,
+}
+
+/// A draw entry's place in a sorted target (`Spatial::set_draw_sort`):
+/// opaque entries draw front-to-back, transparent ones after them
+/// back-to-front, `render_order` above both (ascending), and equal keys
+/// keep bind order. Depth is measured at the center of the node's world
+/// box, or its origin without one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DrawOrder {
+  pub transparent: bool,
+  pub render_order: i32,
 }
 
 /// A bound draw sink and its per-entry flush state.
 #[derive(Clone, Copy)]
 struct BoundSink {
   sink: DrawSink,
+  /// Bind order across the tree: the sort's final tiebreak.
+  seq: u64,
   /// The entry is switched on (instance count = `sink.count`).
   entry_on: bool,
   /// The entry owes a params write at the next shown flush: newly bound,
@@ -133,6 +149,11 @@ pub trait SinkWriter {
   /// the threshold (side 1) and the farther level the rest (side -1);
   /// `[1, 1]` is solid. Written only for sinks bound with `fade`.
   fn write_fade(&mut self, target: u64, draw: u64, fade: [f32; 2]) -> bool;
+  /// A sorted target's bound entries in draw order (`set_draw_sort`).
+  /// Entries the core does not bind keep their places, so the writer
+  /// composes the target's full permutation around these. False means
+  /// the order did not land; nothing is released over it.
+  fn write_order(&mut self, target: u64, order: &[u64]) -> bool;
   /// A shared-slot group's array param, rewritten whole (slot sinks share
   /// one array value; see `SharedSlotSink`).
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool;
@@ -211,6 +232,9 @@ pub struct LodLevel {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LodView {
   pub eye: [f32; 3],
+  /// The unit view direction: what the draw sort measures transparent
+  /// depth along (`set_draw_sort`).
+  pub forward: [f32; 3],
   pub focal: f32,
   pub ortho: bool,
   pub bias: f32,
@@ -225,6 +249,78 @@ pub const LOD_HYSTERESIS: f32 = 0.1;
 /// Below this eye distance the measured size is capped (a group at the
 /// eye would otherwise divide by zero).
 const LOD_MIN_DISTANCE: f32 = 1e-6;
+
+/// Opaque entries sort by a logarithmic bucket of their center's distance
+/// to the eye, this many buckets per doubling: early-z only needs near
+/// layers drawn before far ones, and a coarse key keeps the order (and the
+/// bind-order grouping within a bucket) stable while the camera moves.
+const ORDER_BUCKETS_PER_DOUBLING: f32 = 4.0;
+/// Distances at or below this share the nearest bucket (a center at the
+/// eye); also keeps the log finite.
+const ORDER_DISTANCE_FLOOR: f32 = 1e-3;
+/// The bucket of ORDER_DISTANCE_FLOOR, so bucket terms start at 0.
+const ORDER_BUCKET_BASE: i32 = -40;
+/// The fraction of the nearest opaque distance a camera may move without
+/// any opaque center leaving its bucket (1 - 2^(-1 / buckets per
+/// doubling)): the bucket edge below a center is at most this close, so a
+/// shorter move skips the keying.
+const ORDER_BUCKET_MARGIN: f32 = 0.1591;
+/// The render_order magnitude the packed key holds; beyond it values
+/// clamp and tie.
+const ORDER_RENDER_LIMIT: i32 = 1 << 20;
+
+/// A sorted target's state between flushes (`Spatial::set_draw_sort`).
+#[derive(Default)]
+struct DrawSort {
+  /// The bound entries in the order last written; empty before the first.
+  last: Vec<u64>,
+  /// The eye and forward the last keying measured from, and the nearest
+  /// opaque center's distance to the eye then.
+  eye: [f32; 3],
+  forward: [f32; 3],
+  nearest: f32,
+  /// A transparent entry was among the keyed: exact depth, so every view
+  /// move re-keys.
+  transparent: bool,
+  /// A bound entry changed (bound, unbound, re-keyed, or its node
+  /// touched): re-key whatever the view did.
+  dirty: bool,
+  /// The target's LOD view changed since the last keying.
+  view_moved: bool,
+}
+
+/// The total order of an f32 as unsigned bits (negative values below
+/// positive, ascending both ways).
+fn ordered_bits(f: f32) -> u32 {
+  let b = f.to_bits();
+  if b & 0x8000_0000 != 0 {
+    !b
+  } else {
+    b | 0x8000_0000
+  }
+}
+
+/// An entry's packed sort key and its distance to the eye: transparent
+/// above all, then render_order, then the depth term - the opaque
+/// distance bucket ascending (front-to-back; the forward depth under an
+/// orthographic view, where distance to the eye means nothing), or the
+/// transparent forward depth descending (back-to-front). Bind order
+/// breaks the ties.
+fn draw_key(order: DrawOrder, center: [f32; 3], view: &LodView) -> (u64, f32) {
+  let dx = center[0] - view.eye[0];
+  let dy = center[1] - view.eye[1];
+  let dz = center[2] - view.eye[2];
+  let depth = dx * view.forward[0] + dy * view.forward[1] + dz * view.forward[2];
+  let distance = if view.ortho { depth.abs() } else { (dx * dx + dy * dy + dz * dz).sqrt() };
+  let term = if order.transparent {
+    !ordered_bits(depth)
+  } else {
+    let bucket = (distance.max(ORDER_DISTANCE_FLOOR).log2() * ORDER_BUCKETS_PER_DOUBLING).floor() as i32;
+    (bucket - ORDER_BUCKET_BASE).max(0) as u32
+  };
+  let ro = (order.render_order.clamp(-ORDER_RENDER_LIMIT, ORDER_RENDER_LIMIT) + ORDER_RENDER_LIMIT) as u64;
+  (((order.transparent as u64) << 53) | (ro << 32) | term as u64, distance)
+}
 
 /// A fade band's position is quantized to this many steps: the dither
 /// hash is continuous, so 64 levels read as a smooth dissolve, and an
@@ -672,6 +768,11 @@ pub struct Spatial {
   lod_records: Vec<u32>,
   /// Groups and population members the walk moved this flush.
   lod_moved: Vec<u32>,
+  /// Per target ordering its bound entries (`set_draw_sort`): the sort's
+  /// state between flushes.
+  draw_sorts: HashMap<u64, DrawSort>,
+  /// Bind order counter: every draw sink bound takes the next value.
+  bind_seq: u64,
 }
 
 /// The layer mask a node starts with: layer 0 alone, Three's default.
@@ -829,7 +930,11 @@ impl Spatial {
     n.alive = false;
     n.leaving = false;
     n.parent = None;
-    n.sinks.clear();
+    for b in n.sinks.drain(..) {
+      if let Some(sort) = self.draw_sorts.get_mut(&b.sink.target) {
+        sort.dirty = true;
+      }
+    }
     n.bounds = None;
     n.cull_bounds = None;
     n.world_box = None;
@@ -1200,6 +1305,13 @@ impl Spatial {
       let world = n.world;
       let every = n.queued_touch;
       let mut sinks = std::mem::take(&mut self.nodes[i as usize].sinks);
+      if every {
+        for b in &sinks {
+          if let Some(sort) = self.draw_sorts.get_mut(&b.sink.target) {
+            sort.dirty = true;
+          }
+        }
+      }
       let mut normal: Option<Mat4> = None;
       sinks.retain_mut(|b| {
         let sink = b.sink;
@@ -1236,6 +1348,95 @@ impl Spatial {
       let n = &mut self.nodes[i as usize];
       n.sinks = sinks;
       n.queued_touch = false;
+    }
+  }
+
+  /// The draw order of every sorted target (`set_draw_sort`) whose bound
+  /// set or view changed: keys every bound entry from its world box
+  /// center against the target's LOD view (see `draw_key`), sorts, and
+  /// writes the permutation when it differs from the last written. A
+  /// target without a LOD view waits for one. A view move shorter than
+  /// the bucket margin of the nearest opaque center changes no opaque
+  /// key, so with no transparent entry and no other change it is skipped
+  /// - unless the view is orthographic and turned, since its opaque key
+  /// is the forward depth.
+  fn order_pass(&mut self, out: &mut dyn SinkWriter) {
+    let mut sorts = std::mem::take(&mut self.draw_sorts);
+    let mut keyed: Vec<(u64, u64, u64)> = Vec::new();
+    for (&target, state) in sorts.iter_mut() {
+      if !state.dirty && !state.view_moved {
+        continue;
+      }
+      let Some(view) = self.lod_views.get(&target) else {
+        continue;
+      };
+      if !state.dirty && !state.transparent && !(view.ortho && view.forward != state.forward) {
+        let dx = view.eye[0] - state.eye[0];
+        let dy = view.eye[1] - state.eye[1];
+        let dz = view.eye[2] - state.eye[2];
+        let limit = ORDER_BUCKET_MARGIN * state.nearest.max(ORDER_DISTANCE_FLOOR);
+        if dx * dx + dy * dy + dz * dz < limit * limit {
+          state.view_moved = false;
+          continue;
+        }
+      }
+      keyed.clear();
+      let mut nearest = f32::INFINITY;
+      let mut transparent = false;
+      for (i, n) in self.nodes.iter().enumerate() {
+        if !n.alive || n.sinks.is_empty() {
+          continue;
+        }
+        for b in &n.sinks {
+          if b.sink.target != target {
+            continue;
+          }
+          let center = match self.cull_box(i as u32) {
+            Some(bx) => [(bx[0] + bx[3]) / 2.0, (bx[1] + bx[4]) / 2.0, (bx[2] + bx[5]) / 2.0],
+            None => [n.world[12], n.world[13], n.world[14]],
+          };
+          let (key, distance) = draw_key(b.sink.order, center, view);
+          if b.sink.order.transparent {
+            transparent = true;
+          } else if distance < nearest {
+            nearest = distance;
+          }
+          keyed.push((key, b.seq, b.sink.draw));
+        }
+      }
+      keyed.sort_unstable();
+      state.eye = view.eye;
+      state.forward = view.forward;
+      state.nearest = nearest;
+      state.transparent = transparent;
+      state.dirty = false;
+      state.view_moved = false;
+      if keyed.iter().map(|k| k.2).eq(state.last.iter().copied()) {
+        continue;
+      }
+      let order: Vec<u64> = keyed.iter().map(|k| k.2).collect();
+      if out.write_order(target, &order) {
+        state.last = order;
+      }
+    }
+    self.draw_sorts = sorts;
+  }
+
+  /// Whether the core orders `target`'s bound draw entries (see
+  /// `DrawOrder`): on, every flush that changed a bound entry or moved the
+  /// target's LOD view re-keys them and writes the permutation through
+  /// `write_order` when it changed. Off (the default) writes no order: a
+  /// shadow tile, an override-material view, a 2d target. Enabling a
+  /// target already on re-issues its order at the next flush, changed or
+  /// not: the call for an entry the core does not bind joining the
+  /// target (a background, which draws first).
+  pub fn set_draw_sort(&mut self, target: u64, enabled: bool) {
+    if enabled {
+      let sort = self.draw_sorts.entry(target).or_default();
+      sort.dirty = true;
+      sort.last.clear();
+    } else {
+      self.draw_sorts.remove(&target);
     }
   }
 
@@ -1324,6 +1525,11 @@ impl Spatial {
     };
     if changed && !self.lod_dirty.contains(&target) {
       self.lod_dirty.push(target);
+    }
+    if changed {
+      if let Some(sort) = self.draw_sorts.get_mut(&target) {
+        sort.view_moved = true;
+      }
     }
   }
 
@@ -2756,12 +2962,22 @@ impl Spatial {
   /// count 0, how the 3d package adds entries); the next flush turns it on
   /// with a params write if the node is shown. The node re-queues, so its
   /// other sinks get a params rewrite in that flush too (a queued node
-  /// recomputes unconditionally, the reparent rule).
-  pub fn bind_sink(&mut self, id: NodeId, sink: DrawSink) -> Result<(), String> {
+  /// recomputes unconditionally, the reparent rule). A node's draw sinks
+  /// share one sort key: a sink bound while the node has others takes
+  /// theirs, and `set_sink_order` changes them all.
+  pub fn bind_sink(&mut self, id: NodeId, mut sink: DrawSink) -> Result<(), String> {
     let i = self.resolve(id)?;
+    self.bind_seq += 1;
+    let seq = self.bind_seq;
     let sinks = &mut self.nodes[i as usize].sinks;
     sinks.retain(|b| b.sink.target != sink.target);
-    sinks.push(BoundSink { sink, entry_on: false, fresh: true, fade: [1.0, 1.0] });
+    if let Some(other) = sinks.first() {
+      sink.order = other.sink.order;
+    }
+    sinks.push(BoundSink { sink, seq, entry_on: false, fresh: true, fade: [1.0, 1.0] });
+    if let Some(sort) = self.draw_sorts.get_mut(&sink.target) {
+      sort.dirty = true;
+    }
     self.enqueue(i);
     Ok(())
   }
@@ -2770,8 +2986,32 @@ impl Spatial {
   /// None). Issues no write: the entries are the consumer's to remove.
   pub fn unbind_sink(&mut self, id: NodeId, target: Option<u64>) -> Result<(), String> {
     let i = self.resolve(id)?;
-    self.nodes[i as usize].sinks.retain(|b| target.is_some_and(|t| t != b.sink.target));
+    let sorts = &mut self.draw_sorts;
+    self.nodes[i as usize].sinks.retain(|b| {
+      let keep = target.is_some_and(|t| t != b.sink.target);
+      if !keep {
+        if let Some(sort) = sorts.get_mut(&b.sink.target) {
+          sort.dirty = true;
+        }
+      }
+      keep
+    });
     self.enqueue(i);
+    Ok(())
+  }
+
+  /// Re-key every draw sink of the node (a material swap, a render_order
+  /// change): its sorted targets re-sort at the next flush.
+  pub fn set_sink_order(&mut self, id: NodeId, order: DrawOrder) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    for b in &mut self.nodes[i as usize].sinks {
+      if b.sink.order != order {
+        b.sink.order = order;
+        if let Some(sort) = self.draw_sorts.get_mut(&b.sink.target) {
+          sort.dirty = true;
+        }
+      }
+    }
     Ok(())
   }
 
@@ -2865,6 +3105,9 @@ impl Spatial {
     }
     if !self.touched.is_empty() || !self.frustum_dirty.is_empty() {
       self.cull_pass(out);
+    }
+    if self.draw_sorts.values().any(|s| s.dirty || s.view_moved) {
+      self.order_pass(out);
     }
     // Shared params changed by the walk, an unbind or a destroy go out
     // once per flush, whole; a group nothing references any more goes

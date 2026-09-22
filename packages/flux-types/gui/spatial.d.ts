@@ -171,8 +171,33 @@ declare module "flux:spatial" {
    * One draw sink PER TARGET: binding on a target the node already draws
    * into replaces that sink, binding on another target adds one - a mesh
    * drawn by a scene and by each of its views is one node with one flush.
+   * A node's draw sinks share one sort key (setDrawKey): a sink bound
+   * while the node has others takes theirs, a node's first sink keys
+   * opaque, renderOrder 0 until setDrawKey says otherwise.
    */
   export function bindDraw(node: NodeId, target: TextureId, draw: DrawId, normal: boolean, count: number, fade: boolean): void
+  /** The node's place in the draw sort of every target it draws into that
+   * has one (setDrawSort): opaque or transparent, and the renderOrder
+   * above depth. Set after the node's first bindDraw and on a material
+   * swap or renderOrder change; sorted targets re-sort at the next flush. */
+  export function setDrawKey(node: NodeId, transparent: boolean, renderOrder: number): void
+  /**
+   * Whether the core orders the target's bound draw entries: opaque
+   * entries front-to-back by a logarithmic distance bucket of their world
+   * box center (four buckets per doubling, so a small camera move changes
+   * nothing), transparent entries after them back-to-front by exact depth
+   * along the view, `renderOrder` above both, bind order breaking ties.
+   * Measured against the target's LOD view (setLodView), so a target
+   * without one waits for it. Every flush that bound, unbound, re-keyed or
+   * moved an entry's node, or moved the view past the nearest opaque
+   * center's bucket margin, re-keys and issues one setDrawOrder when the
+   * permutation changed; entries the core does not bind (a background)
+   * draw first. Off (the default) writes no order: a shadow tile, an
+   * override-material view, a 2d target. Enabling a target already on
+   * re-issues its order at the next flush: call it after adding an
+   * unbound entry.
+   */
+  export function setDrawSort(target: TextureId, enabled: boolean): void
   /** Remove the node's draw sink on `target`, or every draw sink without
    * one. Issues no write: the entries are the caller's to remove. */
   export function unbindDraw(node: NodeId, target?: TextureId): void
@@ -258,8 +283,9 @@ declare module "flux:spatial" {
    */
   export function setLod(node: NodeId, levels: LodLevel[], fade: number, reference?: TextureId): void
   /**
-   * What `target` measures projected size with: a Float32Array of 6 - the
-   * eye position xyz, the projection's vertical focal factor (the
+   * What `target` measures projected size with: a Float32Array of 9 - the
+   * eye position xyz, the unit view direction xyz (what the draw sort
+   * measures transparent depth along), the projection's vertical focal factor (the
    * magnitude of `proj[5]`: `1 / tan(fov / 2)` for a perspective
    * projection, `2 / (top - bottom)` for an orthographic one - positive,
    * whatever clip flip the projection bakes in), 1 for orthographic else
