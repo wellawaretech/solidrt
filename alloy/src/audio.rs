@@ -304,40 +304,26 @@ struct LoadedSound {
 /// pilot for replacing the mixer outright (okf/backlog/video-playback.md,
 /// staging item 6). First consumer is video audio, whose consumed-samples
 /// position doubles as the playback master clock.
-struct PcmSink {
+///
+/// The stream is shared between the registry entry and every
+/// `PcmSinkHandle` a player's worker holds: whoever drops the last
+/// reference destroys it, on whatever thread that is (SDL's stream calls
+/// are thread-safe, its destroy included), so closing a player never waits
+/// for its worker to let go.
+struct PcmStream {
   stream: *mut sdl3::sys::audio::SDL_AudioStream,
   sample_rate: u32,
   channels: u16,
-  /// Frames pushed since creation, shared with the sink's handles;
-  /// position = pushed - queued.
-  pushed_frames: Arc<AtomicU64>,
+  /// Frames pushed since creation; position = pushed - queued.
+  pushed_frames: AtomicU64,
 }
 
-impl Drop for PcmSink {
-  fn drop(&mut self) {
-    // Destroying the stream also closes the device it opened.
-    sdl_utils::audio_stream_destroy(self.stream);
-  }
-}
+// Every call on the stream is thread-safe on SDL's side, the counter is
+// atomic, and the last holder destroys the stream wherever it drops.
+unsafe impl Send for PcmStream {}
+unsafe impl Sync for PcmStream {}
 
-/// A PCM sink driven from another thread (a video player's worker): the
-/// same stream, pushed, read and paused through SDL's audio stream calls,
-/// which SDL documents as safe from any thread. The registry keeps the
-/// stream's ownership: a handle must be dropped before `destroy_pcm_sink`
-/// runs (the player that holds it is closed first), since the stream is
-/// gone after that.
-pub struct PcmSinkHandle {
-  stream: *mut sdl3::sys::audio::SDL_AudioStream,
-  sample_rate: u32,
-  channels: u16,
-  pushed_frames: Arc<AtomicU64>,
-}
-
-// See the type's contract: every call is thread-safe on SDL's side and the
-// registry outlives the handle.
-unsafe impl Send for PcmSinkHandle {}
-
-impl PcmSinkHandle {
+impl PcmStream {
   fn queued_frames(&self) -> u64 {
     sdl_utils::audio_stream_queued_bytes(self.stream).max(0) as u64 / (4 * self.channels as u64)
   }
@@ -346,8 +332,7 @@ impl PcmSinkHandle {
     (frames as i128 * 1_000_000 / self.sample_rate as i128) as i64
   }
 
-  /// Queue interleaved f32 samples (a whole number of frames).
-  pub fn push(&mut self, samples: &[f32]) -> Result<(), String> {
+  fn push(&self, samples: &[f32]) -> Result<(), String> {
     if samples.len() % self.channels as usize != 0 {
       return Err(format!("{} samples is not whole {}-channel frames", samples.len(), self.channels));
     }
@@ -358,33 +343,79 @@ impl PcmSinkHandle {
     Ok(())
   }
 
+  fn queued_us(&self) -> i64 {
+    self.frames_to_us(self.queued_frames())
+  }
+
+  fn position_us(&self) -> i64 {
+    let consumed = self.pushed_frames.load(Ordering::Relaxed).saturating_sub(self.queued_frames());
+    self.frames_to_us(consumed)
+  }
+
+  fn set_paused(&self, paused: bool) -> bool {
+    if paused {
+      sdl_utils::audio_stream_pause(self.stream)
+    } else {
+      sdl_utils::audio_stream_resume(self.stream)
+    }
+  }
+
+  fn clear(&self) -> bool {
+    sdl_utils::audio_stream_clear(self.stream)
+  }
+}
+
+impl Drop for PcmStream {
+  fn drop(&mut self) {
+    // Destroying the stream also closes the device it opened.
+    sdl_utils::audio_stream_destroy(self.stream);
+  }
+}
+
+/// A PCM sink driven from another thread (a video player's worker): the
+/// same stream, pushed, read and paused through SDL's audio stream calls,
+/// which SDL documents as safe from any thread. Holds the stream alive: a
+/// registry entry destroyed while a handle is out leaves the handle a
+/// paused, cleared stream that goes when the handle does.
+pub struct PcmSinkHandle(Arc<PcmStream>);
+
+impl PcmSinkHandle {
+  /// Queue interleaved f32 samples (a whole number of frames).
+  pub fn push(&mut self, samples: &[f32]) -> Result<(), String> {
+    self.0.push(samples)
+  }
+
   /// Microseconds queued and not yet consumed by the device.
   pub fn queued_us(&self) -> i64 {
-    self.frames_to_us(self.queued_frames())
+    self.0.queued_us()
   }
 
   /// Microseconds consumed since creation (pushed minus queued, so a clear
   /// counts what it dropped as consumed).
   pub fn position_us(&self) -> i64 {
-    let consumed = self.pushed_frames.load(Ordering::Relaxed).saturating_sub(self.queued_frames());
-    self.frames_to_us(consumed)
+    self.0.position_us()
   }
 
   /// Pause or resume consumption; paused, the queue holds.
   pub fn set_paused(&mut self, paused: bool) {
-    let ok =
-      if paused { sdl_utils::audio_stream_pause(self.stream) } else { sdl_utils::audio_stream_resume(self.stream) };
-    if !ok {
+    if !self.0.set_paused(paused) {
       log::warn!("[alloy::audio] pcm sink pause failed: {}", sdl_utils::sdl_error());
     }
   }
 
   /// Drop everything queued.
   pub fn clear(&mut self) {
-    if !sdl_utils::audio_stream_clear(self.stream) {
+    if !self.0.clear() {
       log::warn!("[alloy::audio] pcm sink clear failed: {}", sdl_utils::sdl_error());
     }
   }
+}
+
+// A sink being destroyed while a worker may still hold a handle on it:
+// nothing queued plays on, and nothing pushed later does either.
+fn silence(sink: &PcmStream) {
+  sink.clear();
+  sink.set_paused(true);
 }
 
 #[derive(Default)]
@@ -403,8 +434,8 @@ pub struct AudioRegistry {
   // clip can be unloaded while its voices keep playing.
   sounds: RefCell<HashMap<u64, LoadedSound>>,
   next_sound_id: RefCell<u64>,
-  // Streaming PCM sinks, their own id space (see PcmSink).
-  sinks: RefCell<HashMap<u64, PcmSink>>,
+  // Streaming PCM sinks, their own id space (see PcmStream).
+  sinks: RefCell<HashMap<u64, Arc<PcmStream>>>,
   next_sink_id: RefCell<u64>,
 }
 
@@ -744,7 +775,9 @@ impl crate::context::Context {
     self.audio.ramps.purge_everything();
     self.audio.tracks.borrow_mut().clear();
     self.audio.sounds.borrow_mut().clear();
-    self.audio.sinks.borrow_mut().clear();
+    for sink in self.audio.sinks.borrow_mut().drain().map(|(_, sink)| sink) {
+      silence(&sink);
+    }
     // The device (and its master gain) outlives runs; reset so a reloaded app
     // does not inherit a mute from the previous one.
     if let Some(mixer) = *self.audio.mixer.borrow() {
@@ -777,66 +810,42 @@ impl crate::context::Context {
       .audio
       .sinks
       .borrow_mut()
-      .insert(id, PcmSink { stream, sample_rate, channels, pushed_frames: Arc::new(AtomicU64::new(0)) });
+      .insert(id, Arc::new(PcmStream { stream, sample_rate, channels, pushed_frames: AtomicU64::new(0) }));
     Ok(id)
   }
 
-  /// A handle on a sink for another thread to drive (see `PcmSinkHandle`
-  /// for the lifetime contract).
+  fn pcm_sink(&self, id: u64) -> Result<Arc<PcmStream>, String> {
+    self.audio.sinks.borrow().get(&id).cloned().ok_or_else(|| format!("pcm sink {id} not found"))
+  }
+
+  /// A handle on a sink for another thread to drive (see `PcmSinkHandle`).
   pub fn pcm_sink_handle(&self, id: u64) -> Result<PcmSinkHandle, String> {
-    let sinks = self.audio.sinks.borrow();
-    let sink = sinks.get(&id).ok_or_else(|| format!("pcm sink {id} not found"))?;
-    Ok(PcmSinkHandle {
-      stream: sink.stream,
-      sample_rate: sink.sample_rate,
-      channels: sink.channels,
-      pushed_frames: sink.pushed_frames.clone(),
-    })
+    self.pcm_sink(id).map(PcmSinkHandle)
   }
 
   /// Queue interleaved f32 samples on a sink (non-blocking, SDL buffers).
   /// The sample count must be a whole number of frames.
   pub fn pcm_sink_push(&self, id: u64, samples: &[f32]) -> Result<(), String> {
-    let mut sinks = self.audio.sinks.borrow_mut();
-    let sink = sinks.get_mut(&id).ok_or_else(|| format!("pcm sink {id} not found"))?;
-    if samples.len() % sink.channels as usize != 0 {
-      return Err(format!("{} samples is not whole {}-channel frames", samples.len(), sink.channels));
-    }
-    if !sdl_utils::audio_stream_put_f32(sink.stream, samples) {
-      return Err(format!("pcm push failed: {}", sdl_utils::sdl_error()));
-    }
-    sink.pushed_frames.fetch_add((samples.len() / sink.channels as usize) as u64, Ordering::Relaxed);
-    Ok(())
+    self.pcm_sink(id)?.push(samples)
   }
 
   /// The sink's playback position in microseconds: frames consumed off its
   /// queue (pushed minus still-queued) at the sink's rate. This is the
   /// master clock for A/V sync - video frames are presented against it.
   pub fn pcm_sink_position_us(&self, id: u64) -> Result<i64, String> {
-    let sinks = self.audio.sinks.borrow();
-    let sink = sinks.get(&id).ok_or_else(|| format!("pcm sink {id} not found"))?;
-    let queued_frames = sdl_utils::audio_stream_queued_bytes(sink.stream).max(0) as u64 / (4 * sink.channels as u64);
-    let consumed = sink.pushed_frames.load(Ordering::Relaxed).saturating_sub(queued_frames);
-    Ok((consumed as i128 * 1_000_000 / sink.sample_rate as i128) as i64)
+    Ok(self.pcm_sink(id)?.position_us())
   }
 
   /// Microseconds of audio queued and not yet consumed - the pusher's
   /// backpressure signal (stop pushing above a lookahead threshold).
   pub fn pcm_sink_queued_us(&self, id: u64) -> Result<i64, String> {
-    let sinks = self.audio.sinks.borrow();
-    let sink = sinks.get(&id).ok_or_else(|| format!("pcm sink {id} not found"))?;
-    let queued_frames = sdl_utils::audio_stream_queued_bytes(sink.stream).max(0) as u64 / (4 * sink.channels as u64);
-    Ok((queued_frames as i128 * 1_000_000 / sink.sample_rate as i128) as i64)
+    Ok(self.pcm_sink(id)?.queued_us())
   }
 
   /// Pause or resume consumption. Paused, the queue holds and the position
   /// freezes - which is exactly what pauses video against the audio clock.
   pub fn set_pcm_sink_paused(&self, id: u64, paused: bool) -> Result<(), String> {
-    let sinks = self.audio.sinks.borrow();
-    let sink = sinks.get(&id).ok_or_else(|| format!("pcm sink {id} not found"))?;
-    let ok =
-      if paused { sdl_utils::audio_stream_pause(sink.stream) } else { sdl_utils::audio_stream_resume(sink.stream) };
-    if ok {
+    if self.pcm_sink(id)?.set_paused(paused) {
       Ok(())
     } else {
       Err(format!("pcm sink pause failed: {}", sdl_utils::sdl_error()))
@@ -845,8 +854,7 @@ impl crate::context::Context {
 
   /// Scale the sink's volume (1.0 = unchanged), applied by SDL at mix time.
   pub fn set_pcm_sink_gain(&self, id: u64, gain: f32) -> Result<(), String> {
-    let sinks = self.audio.sinks.borrow();
-    let sink = sinks.get(&id).ok_or_else(|| format!("pcm sink {id} not found"))?;
+    let sink = self.pcm_sink(id)?;
     if sdl_utils::audio_stream_set_gain(sink.stream, gain.max(0.0)) {
       Ok(())
     } else {
@@ -854,9 +862,12 @@ impl crate::context::Context {
     }
   }
 
-  /// Close a sink and its stream (which closes the device binding). Queued
-  /// audio is dropped, not drained - closing is a stop, not a fade-out.
+  /// Close a sink: queued audio is dropped, not drained (closing is a stop,
+  /// not a fade-out), and the stream goes with the last handle on it (at
+  /// once when none is out).
   pub fn destroy_pcm_sink(&self, id: u64) {
-    self.audio.sinks.borrow_mut().remove(&id);
+    if let Some(sink) = self.audio.sinks.borrow_mut().remove(&id) {
+      silence(&sink);
+    }
   }
 }

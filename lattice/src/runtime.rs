@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use alloy::rendertree::PlatformContext;
 use alloy::resample::SharedResampler;
@@ -76,8 +77,9 @@ pub trait UiRuntime {
   fn event(&mut self, event: &AlloyEvent);
   /// A frame signal (present or idle tick): run the engine's per-frame work
   /// computing frame `next_frame`. `refreshes` is the display refreshes the
-  /// signal covered, as alloy counted them.
-  fn frame(&mut self, next_frame: u64, refreshes: u32);
+  /// signal covered, as alloy counted them; `present_at` is when the frame
+  /// is expected to reach the screen.
+  fn frame(&mut self, next_frame: u64, refreshes: u32, present_at: Instant);
 }
 
 /// Collapse two frame signals into the newer one carrying both refresh
@@ -93,8 +95,12 @@ pub(crate) fn coalesce_frame_signals(older: AlloyEvent, newer: AlloyEvent) -> Al
     _ => 0,
   };
   match newer {
-    AlloyEvent::FrameRendered { frame, fps, refreshes } => AlloyEvent::FrameRendered { frame, fps, refreshes: refreshes + carried },
-    AlloyEvent::Tick { frame, fps, refreshes } => AlloyEvent::Tick { frame, fps, refreshes: refreshes + carried },
+    AlloyEvent::FrameRendered { frame, fps, refreshes, present_at } => {
+      AlloyEvent::FrameRendered { frame, fps, refreshes: refreshes + carried, present_at }
+    }
+    AlloyEvent::Tick { frame, fps, refreshes, present_at } => {
+      AlloyEvent::Tick { frame, fps, refreshes: refreshes + carried, present_at }
+    }
     other => other,
   }
 }
@@ -310,7 +316,7 @@ impl UiRuntime for FluxRuntime {
   /// paced clock, then drive flux's frame protocol (`frame::advance`, the
   /// speech pump, and `frame::deliver` unless the clock is paused).
   /// `next_frame` is the present index the frame being computed would get.
-  fn frame(&mut self, next_frame: u64, refreshes: u32) {
+  fn frame(&mut self, next_frame: u64, refreshes: u32, present_at: Instant) {
     let exec = self.exec.borrow();
     let Some(eh) = exec.as_ref() else {
       return;
@@ -375,6 +381,12 @@ impl UiRuntime for FluxRuntime {
       // Publish the present being computed before reading the clock, so in
       // playback mode the clock reports this frame's virtual time.
       playback_frame.store(next_frame, Ordering::Relaxed);
+      // Stamp the frame for draw() on every path, the paused one included
+      // (its demand gate latches video against the same deadline); the JS
+      // start instant is added below, on delivery.
+      crate::frame::RENDER_FRAME.with(|c| {
+        c.set(crate::frame::RenderFrame { start: None, frame: next_frame, period_ms: judge_period_ms, present_at })
+      });
       // Dev-tool clock control: at scale 0 frame delivery to JS is gated (a
       // true pause: onFrame, rAF and the reactive flush all hang off the
       // render event), except that each queued step lets exactly one frame
@@ -417,7 +429,7 @@ impl UiRuntime for FluxRuntime {
       // same stamp, and pause/scale/step semantics ride in with it), the clip
       // players advanced ahead of the frame's JS, the devices ticked. It
       // latches the frame request for what changed content.
-      flux::gui::frame::advance(&ctx, ts, paced_period_ms);
+      flux::gui::frame::advance(&ctx, ts);
       #[cfg(feature = "speech")]
       crate::plugins::speech::tick(&ctx);
       if !deliver {
@@ -433,11 +445,12 @@ impl UiRuntime for FluxRuntime {
         // so the step is visible to a following snapshot.
         platform.request_frame();
       }
-      // Stamp the frame for draw(): the start instant measures the frame's
-      // JS (timers, rAF, onFrame + flush) without any timing call crossing
-      // into JS (see frame::RenderFrame).
+      // The start instant measures the frame's JS (timers, rAF, onFrame +
+      // flush) without any timing call crossing into JS (see
+      // frame::RenderFrame).
       crate::frame::RENDER_FRAME.with(|c| {
-        c.set(crate::frame::RenderFrame { start: Some(std::time::Instant::now()), frame: next_frame, period_ms: judge_period_ms })
+        let stamped = c.get();
+        c.set(crate::frame::RenderFrame { start: Some(std::time::Instant::now()), ..stamped })
       });
       // The delivery half: timers on the timer reading (one task-queue turn
       // per frame, see flux virtual time), then rAF and the render event on

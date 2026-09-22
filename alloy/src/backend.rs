@@ -104,7 +104,7 @@ impl DisplayContext {
     &self,
     closure: impl FnOnce(Arc<Context>) + Send + 'static,
     tx: mpsc::Sender<FrameOutput>,
-    wake: Option<Box<dyn Fn() + Send + Sync>>,
+    wake: Option<Arc<dyn Fn() + Send + Sync>>,
     capture_frames: bool,
     stats: Arc<crate::raster::RasterStats>,
   ) -> crate::raster::RasterSender {

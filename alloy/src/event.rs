@@ -379,10 +379,15 @@ pub enum AlloyEvent {
   // the main loop (see present.rs): one at full rate, more when the frame
   // took longer than a period. It is the fact the app timeline advances by;
   // what a count worth a suspension means is the embedder's policy.
+  // `present_at` is when the frame this signal asks for is expected to
+  // reach the screen: the signal's reference instant plus the cadence
+  // hold's periods (the virtual frame time in playback), the deadline a
+  // frame's video content is latched against.
   FrameRendered {
     frame: u64,
     fps: u32,
     refreshes: u32,
+    present_at: std::time::Instant,
   },
   // Idle tick: emitted at the refresh cadence when no display list has arrived
   // for a full refresh period, so the UI thread keeps running its per-frame
@@ -393,6 +398,7 @@ pub enum AlloyEvent {
     frame: u64,
     fps: u32,
     refreshes: u32,
+    present_at: std::time::Instant,
   },
   // Display refresh rate in Hz. Its own event (independent of frames): emitted
   // at startup and whenever the rate changes (e.g. Android 90 <-> 60Hz).

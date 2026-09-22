@@ -57,7 +57,7 @@ fn serving(data: Arc<Vec<u8>>) -> impl Fn(&Req) -> Script + Send + Sync {
 
 /// A Range-honouring server for `data` that stops sending at byte
 /// `stall_at` until `resume` is notified (once per connection).
-fn stalling(data: Arc<Vec<u8>>, stall_at: usize, resume: Arc<Notify>) -> impl Fn(&Req) -> Script + Send + Sync {
+pub(super) fn stalling(data: Arc<Vec<u8>>, stall_at: usize, resume: Arc<Notify>) -> impl Fn(&Req) -> Script + Send + Sync {
   move |req| {
     let start = req.range_start();
     let body = &data[start..];

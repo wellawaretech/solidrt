@@ -3,6 +3,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc};
+use std::time::Instant;
 
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
@@ -22,6 +23,7 @@ mod target;
 mod texture;
 
 pub use capture::{CaptureDone, CaptureInfo};
+pub use texture::YuvFrameSink;
 
 use mirror::{PipelineMirror, SubTargetMirror, TargetMirror};
 use order::InstanceOrders;
@@ -150,10 +152,15 @@ pub struct Context {
   // them: `destroy_texture` on one is a caller error, and the owner releases
   // the id when it goes away.
   borrowed: RefCell<HashSet<u64>>,
-  // Planar YUV textures (see yuv.rs): app-visible output id -> its plane
-  // sets, for update_yuv, and for destroy_texture to take the planes down
-  // with the output.
+  // Planar YUV textures (see yuv.rs): app-visible output id -> its latch
+  // (the draw gate peeks it, sinks push into it) and its plane ids, for
+  // destroy_texture to take the planes down with the output.
   yuv_groups: RefCell<HashMap<u64, YuvGroup>>,
+  // Wakes the main loop's event wait so a pushed video frame gets its frame
+  // built now rather than at the wait's timeout (the raster thread's own
+  // post-present wake); None in playback, whose loop blocks on the frame
+  // channel.
+  frame_wake: Option<Arc<dyn Fn() + Send + Sync>>,
   /// The spatial core (transform hierarchy + sinks); see `crate::spatial`.
   /// Its draw sinks resolve to this context's draw entries.
   spatial: RefCell<Spatial>,
@@ -179,7 +186,11 @@ unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
 
 impl Context {
-  pub(crate) fn new(raster_tx: RasterSender, stats: Arc<RasterStats>) -> Self {
+  pub(crate) fn new(
+    raster_tx: RasterSender,
+    stats: Arc<RasterStats>,
+    frame_wake: Option<Arc<dyn Fn() + Send + Sync>>,
+  ) -> Self {
     let (recycle_tx, recycle_rx) = mpsc::channel();
     Context {
       raster_tx,
@@ -213,6 +224,7 @@ impl Context {
       pending_destroys: RefCell::new(Vec::new()),
       borrowed: RefCell::new(HashSet::new()),
       yuv_groups: RefCell::new(HashMap::new()),
+      frame_wake,
       spatial: RefCell::new(Spatial::new()),
     }
   }
@@ -267,10 +279,14 @@ impl Context {
   /// frame while this one is on the GPU. `damage` is what this frame's
   /// content changed relative to the previous submit, in physical pixels
   /// (see PresentDamage); a caller without damage tracking passes
-  /// `PresentDamage::Full`, which is always correct. Err means the raster
-  /// thread is gone and the engine should shut down.
-  pub fn submit(&self, dl: DisplayList, damage: crate::PresentDamage) -> Result<(), ()> {
-    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: false, damage }).map_err(|_| ())
+  /// `PresentDamage::Full`, which is always correct. `present_at` is the
+  /// instant the frame is expected to reach the screen (the frame signal's
+  /// reference plus the cadence hold; the virtual frame time in playback):
+  /// the deadline the raster thread latches video frames against (see
+  /// yuv.rs). Err means the raster thread is gone and the engine should
+  /// shut down.
+  pub fn submit(&self, dl: DisplayList, damage: crate::PresentDamage, present_at: Instant) -> Result<(), ()> {
+    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: false, damage, present_at }).map_err(|_| ())
   }
 
   /// Submit a frame whose display list is the same list as the previous
@@ -281,9 +297,9 @@ impl Context {
   /// resolve; it tracks that itself. Never send this for a rebuilt list:
   /// a wrong clean claim presents a stale frame. `damage` covers the GPU
   /// content that changed behind the unchanged list (texture nodes showing
-  /// fresh uploads).
-  pub fn submit_clean(&self, dl: DisplayList, damage: crate::PresentDamage) -> Result<(), ()> {
-    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: true, damage }).map_err(|_| ())
+  /// fresh uploads). `present_at` as for `submit`.
+  pub fn submit_clean(&self, dl: DisplayList, damage: crate::PresentDamage, present_at: Instant) -> Result<(), ()> {
+    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: true, damage, present_at }).map_err(|_| ())
   }
 
   /// Rebind the raster thread's context to the window's current EGL surface.

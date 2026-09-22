@@ -1,27 +1,99 @@
 use impellers::{ISize, Texture};
 use std::collections::HashSet;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
 
 use crate::gpu::{check_cube_faces, SamplerState, TextureBinding, TextureEntry, TextureFormat, TextureShape};
 use crate::raster::RasterCmd;
-use crate::yuv::{self, YuvLayout, YuvMatrix, YuvRange};
+use crate::yuv::{self, LatchedFrame, YuvLatchShared, YuvLayout, YuvMatrix, YuvRange};
 
 use super::content::bound_sources;
 use super::Context;
 
-// The composition behind one YUV texture id: TWO full plane sets, each plane
-// as (uniform name, texture id, byte offset in a packed frame), plus the
-// packed frame size for validation. The conversion shader samples the
-// `front` set; update_yuv uploads into the other set and swaps. The double
-// buffering exists for the raster thread: on a pipelined (tile-based) GPU
-// the previous frame's conversion pass may still be sampling its planes when
-// the next upload lands, and writing a texture with reads in flight makes
-// the driver stall or ghost it. Alternating sets keeps every upload
-// hazard-free.
+// The UI side of one YUV texture id: the latch its frames wait in (shared
+// with the producer's sink and the raster thread, which owns the plane sets
+// and the flip) and the plane ids, so destroy takes them down with the
+// output. The raster thread keeps TWO full plane sets and alternates them
+// per latched frame: on a pipelined (tile-based) GPU the previous frame's
+// conversion pass may still be sampling its planes when the next upload
+// lands, and writing a texture with reads in flight makes the driver stall
+// or ghost it. The conversion target's real sampler binding therefore
+// changes on the raster side; the UI-side sampler-graph mirror keeps set 0
+// bound, which is harmless: both sets have identical edges into the output,
+// and the mirror exists for the content closure and the cycle check.
 pub(super) struct YuvGroup {
-  sets: [Vec<(&'static str, u64, usize)>; 2],
-  front: usize,
+  planes: Vec<u64>,
+  latch: Arc<YuvLatchShared>,
   frame_size: usize,
+}
+
+/// Where a producer's packed YUV frames go: the latch of one YUV texture,
+/// usable from any thread (a video player's worker). Each push carries the
+/// time the frame is due on `crate::clock`; the raster thread shows the
+/// newest due frame at each frame's presentation deadline. A push latches
+/// the platform's frame request and wakes the main loop, so the frame gets
+/// built; while `set_playing(true)`, the texture holds standing frame demand
+/// (`Context::streaming_textures`). Against a stepped clock (playback) a
+/// push against a full latch blocks until the capture takes.
+pub struct YuvFrameSink {
+  latch: Arc<YuvLatchShared>,
+  frame_size: usize,
+  frame_request: Arc<AtomicBool>,
+  wake: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl YuvFrameSink {
+  /// Queue one tightly packed frame (every plane, laid out per
+  /// `yuv::planes`) due at `due_ns`; zero for a producer with no clock of
+  /// its own, which latches at the next frame. `pts_us` is what
+  /// `shown_pts_us` reports once the frame is on screen. Errs on a frame of
+  /// the wrong size.
+  pub fn push(&self, data: Vec<u8>, pts_us: i64, due_ns: i64) -> Result<(), String> {
+    if data.len() < self.frame_size {
+      return Err(format!("need {} bytes for a packed frame, buffer has {}", self.frame_size, data.len()));
+    }
+    self.latch.push(LatchedFrame { due_ns, pts_us, data }, crate::clock::stepped());
+    self.frame_request.store(true, Ordering::Relaxed);
+    if let Some(wake) = &self.wake {
+      wake();
+    }
+    Ok(())
+  }
+
+  /// The pts of the frame the raster thread last showed.
+  pub fn shown_pts_us(&self) -> Option<i64> {
+    self.latch.shown_pts_us()
+  }
+
+  /// Playback started or stopped: the texture holds standing frame demand
+  /// while playing.
+  pub fn set_playing(&self, playing: bool) {
+    self.latch.set_playing(playing);
+    if playing {
+      self.frame_request.store(true, Ordering::Relaxed);
+      if let Some(wake) = &self.wake {
+        wake();
+      }
+    }
+  }
+
+  /// The display's refresh period on the clock, None under a stepped clock.
+  pub fn period_ns(&self) -> Option<i64> {
+    yuv::period_ns()
+  }
+
+  /// Nothing more will be pushed until a seek: a stepped consumer stops
+  /// waiting for more.
+  pub fn end(&self) {
+    self.latch.end();
+  }
+
+  /// Forget every queued frame (a seek).
+  pub fn flush(&self) {
+    self.latch.flush();
+  }
 }
 
 impl Context {
@@ -252,11 +324,13 @@ impl Context {
   /// Create a planar YUV texture (see yuv.rs): plane textures for `layout`
   /// (two double-buffered sets, see YuvGroup) plus a conversion shader
   /// target sampling them, whose RGBA output id is returned - usable
-  /// anywhere a texture id is. Feed packed frames with `update_yuv`; the
-  /// output re-renders at the next dirty flush like any shader target. Color constants are baked at creation (fixed per
-  /// stream; a standard change means a new texture), `sampler` is the
-  /// OUTPUT's sampling (planes always sample linear/clamp for chroma
-  /// upscaling), and the content starts black until the first frame.
+  /// anywhere a texture id is. Feed packed frames through the sink
+  /// `yuv_frame_sink` hands out; the output re-renders at the frame that
+  /// latches one like any shader target. Color constants are baked at
+  /// creation (fixed per stream; a standard change means a new texture),
+  /// `sampler` is the OUTPUT's sampling (planes always sample linear/clamp
+  /// for chroma upscaling), and the content starts black until the first
+  /// frame.
   /// Destroying the returned id takes the planes down with it. There is no
   /// id-stable resize: a size change is a new texture (stream dimension
   /// changes replace the player's texture anyway).
@@ -321,7 +395,13 @@ impl Context {
     };
     match result {
       Ok(out) => {
-        self.yuv_groups.borrow_mut().insert(out, YuvGroup { sets, front: 0, frame_size });
+        // The raster side owns the sets and the flip from here; the ordered
+        // channel puts the attach after the planes' and the target's
+        // creation.
+        let latch = Arc::new(YuvLatchShared::new());
+        let planes: Vec<u64> = sets.iter().flatten().map(|&(_, id, _)| id).collect();
+        self.send(RasterCmd::AttachYuvLatch { id: out, latch: latch.clone(), sets, frame_size });
+        self.yuv_groups.borrow_mut().insert(out, YuvGroup { planes, latch, frame_size });
         Ok(out)
       }
       Err(e) => {
@@ -333,37 +413,46 @@ impl Context {
     }
   }
 
-  /// Upload one tightly packed frame (every plane, laid out per
-  /// `yuv::planes`) into a YUV texture. Takes the frame BY VALUE: the buffer
-  /// crosses to the raster thread as-is - no per-plane copies - and the
-  /// planes slice it there at their fixed offsets. The upload lands in the
-  /// back plane set and the conversion target rebinds to it (double
-  /// buffering, see YuvGroup), so planes a still-in-flight conversion pass
-  /// samples are never written under it. The conversion target re-renders
-  /// and content damage propagates exactly as for `update_texture`.
-  pub fn update_yuv(&self, id: u64, frame: Vec<u8>) -> Result<(), String> {
-    let (planes, bindings) = {
-      let mut groups = self.yuv_groups.borrow_mut();
-      let group = groups.get_mut(&id).ok_or_else(|| format!("yuv texture {id} not found"))?;
-      if frame.len() < group.frame_size {
-        return Err(format!("need {} bytes for a packed frame, buffer has {}", group.frame_size, frame.len()));
-      }
-      let back = 1 - group.front;
-      group.front = back;
-      let set = &group.sets[back];
-      let planes: Vec<(u64, usize)> = set.iter().map(|&(_, plane, offset)| (plane, offset)).collect();
-      let bindings: Vec<TextureBinding> =
-        set.iter().map(|&(name, plane, _)| TextureBinding::new(name, plane)).collect();
-      (planes, bindings)
-    };
-    for &(plane, _) in &planes {
-      self.note_content(plane);
+  /// A sink for pushing frames into the YUV texture `id` from any thread
+  /// (see `YuvFrameSink`). `frame_request` is the platform's frame-request
+  /// latch (`PlatformContext::frame_request_handle`), which a push sets so
+  /// the frame gets built.
+  pub fn yuv_frame_sink(&self, id: u64, frame_request: Arc<AtomicBool>) -> Result<YuvFrameSink, String> {
+    let groups = self.yuv_groups.borrow();
+    let group = groups.get(&id).ok_or_else(|| format!("yuv texture {id} not found"))?;
+    Ok(YuvFrameSink {
+      latch: group.latch.clone(),
+      frame_size: group.frame_size,
+      frame_request,
+      wake: self.frame_wake.clone(),
+    })
+  }
+
+  /// The draw gate's peek, before the frame builds: for every YUV texture,
+  /// whether the raster thread will latch a frame for the frame presenting
+  /// at `present_at` (the same deadline and lookahead the take uses), noted
+  /// as content on the output id so a texture node showing it is damaged
+  /// and a cached boundary over it re-rasters. Returns whether any will.
+  pub fn note_due_video(&self, present_at: Instant) -> bool {
+    let deadline_ns = crate::clock::ns(present_at);
+    let lookahead_ns = yuv::lookahead_ns();
+    let due: Vec<u64> = self
+      .yuv_groups
+      .borrow()
+      .iter()
+      .filter(|(_, group)| group.latch.peek(deadline_ns, lookahead_ns))
+      .map(|(id, _)| *id)
+      .collect();
+    for id in &due {
+      self.note_content(*id);
     }
-    self.send(RasterCmd::UpdateYuv { planes, frame });
-    // Rebinding through the ordinary path keeps the sampler-graph mirror
-    // honest and re-renders the conversion output at the next dirty flush;
-    // channel order puts the rebind after the upload.
-    self.set_target_textures(id, &bindings)
+    !due.is_empty()
+  }
+
+  /// Whether any YUV texture's producer is playing: standing frame demand,
+  /// so the loop ticks on the refresh grid while video streams.
+  pub fn streaming_textures(&self) -> bool {
+    self.yuv_groups.borrow().values().any(|group| group.latch.playing())
   }
 
   /// Recreate a render target of any kind at a new size under the same id:
@@ -523,10 +612,11 @@ impl Context {
     }
     // A YUV output takes its planes with it. They are never referenced by
     // the render tree, so they reclaim at the next sweep; the group is
-    // removed now, so a late update_yuv errs instead of dirtying a target
-    // whose planes are going away.
+    // removed now and its latch closed, so a producer still pushing hits a
+    // no-op instead of dirtying a target whose planes are going away.
     if let Some(group) = self.yuv_groups.borrow_mut().remove(&id) {
-      for (_, plane, _) in group.sets.into_iter().flatten() {
+      group.latch.close();
+      for plane in group.planes {
         if !pending.contains(&plane) {
           pending.push(plane);
         }

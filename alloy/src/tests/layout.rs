@@ -14,7 +14,7 @@ fn attached() -> Element {
 fn headless() -> crate::Context {
   let stats = Arc::new(crate::raster::RasterStats::new());
   let (tx, _rx) = std::sync::mpsc::channel();
-  crate::Context::new(crate::raster::RasterSender::new(tx, stats.clone()), stats)
+  crate::Context::new(crate::raster::RasterSender::new(tx, stats.clone()), stats, None)
 }
 
 fn size(tree: &mut RenderTree, id: u64, w: f32, h: f32) {

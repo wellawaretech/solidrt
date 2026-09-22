@@ -16,9 +16,10 @@ fn refreshes(e: &AlloyEvent) -> u32 {
 
 #[test]
 fn survivor_carries_the_superseded_counts() {
-  let a = AlloyEvent::Tick { frame: 10, fps: 60, refreshes: 1 };
-  let b = AlloyEvent::FrameRendered { frame: 10, fps: 60, refreshes: 0 };
-  let c = AlloyEvent::Tick { frame: 11, fps: 60, refreshes: 2 };
+  let now = std::time::Instant::now();
+  let a = AlloyEvent::Tick { frame: 10, fps: 60, refreshes: 1, present_at: now };
+  let b = AlloyEvent::FrameRendered { frame: 10, fps: 60, refreshes: 0, present_at: now };
+  let c = AlloyEvent::Tick { frame: 11, fps: 60, refreshes: 2, present_at: now };
   let folded = coalesce_frame_signals(coalesce_frame_signals(a, b), c);
   assert_eq!(refreshes(&folded), 3);
   assert!(matches!(folded, AlloyEvent::Tick { frame: 11, .. }), "the newest signal's identity survives");
@@ -26,10 +27,11 @@ fn survivor_carries_the_superseded_counts() {
 
 #[test]
 fn a_present_after_ticks_stays_a_present() {
+  let now = std::time::Instant::now();
   let ticks = coalesce_frame_signals(
-    AlloyEvent::Tick { frame: 5, fps: 60, refreshes: 1 },
-    AlloyEvent::Tick { frame: 5, fps: 60, refreshes: 1 },
+    AlloyEvent::Tick { frame: 5, fps: 60, refreshes: 1, present_at: now },
+    AlloyEvent::Tick { frame: 5, fps: 60, refreshes: 1, present_at: now },
   );
-  let folded = coalesce_frame_signals(ticks, AlloyEvent::FrameRendered { frame: 5, fps: 60, refreshes: 1 });
+  let folded = coalesce_frame_signals(ticks, AlloyEvent::FrameRendered { frame: 5, fps: 60, refreshes: 1, present_at: now });
   assert!(matches!(folded, AlloyEvent::FrameRendered { frame: 5, refreshes: 3, .. }));
 }

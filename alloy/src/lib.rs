@@ -8,6 +8,7 @@ mod backend;
 pub mod barcode;
 mod cadence;
 pub mod camera;
+pub mod clock;
 mod context;
 mod cursor;
 mod egl_headless;
@@ -57,7 +58,7 @@ pub use sdl3;
 
 pub use app::{setup, App};
 pub use backend::DisplayContext;
-pub use context::{CaptureDone, CaptureInfo, Context, Overlay};
+pub use context::{CaptureDone, CaptureInfo, Context, Overlay, YuvFrameSink};
 pub use event::{
   AlloyCommand, AlloyEvent, Cursor, CursorFrame, CursorImage, CursorShape, GamepadState, Modifiers, Orientation, PointerType, SuspendHold,
   TextCapitalization, TextInputOptions, TextInputType,

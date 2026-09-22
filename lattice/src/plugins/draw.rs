@@ -209,7 +209,7 @@ impl RenderInner {
     // or rebuild - is flux's `frame::draw`; this bridge supplies its own
     // demand and runs its policy between the phases. The overlay is that
     // demand (see above); playback mode never gates.
-    flux::gui::frame::draw(qtx, overlay_refresh || overlay_clear, |frame| {
+    flux::gui::frame::draw(qtx, overlay_refresh || overlay_clear, render_frame.present_at, |frame| {
       // Demand-driven gate: when nothing requested a frame, skip it entirely
       // (layout, paint, submit, hover refresh - elements only move when a
       // frame is produced, so hover cannot have changed either).

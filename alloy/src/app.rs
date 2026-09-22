@@ -48,6 +48,10 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // display scale.
   if mode.is_playback() {
     sdl3::hint::set("SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY", "1");
+    // The process clock is the capture's virtual frame time from before any
+    // app code runs (see clock.rs), so a producer opened at mount already
+    // schedules on it.
+    crate::clock::set_virtual_ns(0);
   }
   // On Android SDL's event wait (SDL_WaitEventTimeout) never blocks with
   // the poll sentinel enabled: every pump pushes a sentinel event, every
@@ -335,13 +339,13 @@ impl App {
     // Frame wakeup for the interactive loop below: it sleeps on the SDL event
     // queue, so a presented frame must push an event to be noticed before the
     // wait's timeout. Playback mode blocks on the frame channel directly.
-    let wake: Option<Box<dyn Fn() + Send + Sync>> = if mode.is_playback() {
+    let wake: Option<Arc<dyn Fn() + Send + Sync>> = if mode.is_playback() {
       None
     } else {
       let events = sdl_context.event().expect("Failed to get SDL event subsystem");
       events.register_custom_event::<FrameReady>().expect("Failed to register frame event");
       let sender = events.event_sender();
-      Some(Box::new(move || {
+      Some(Arc::new(move || {
         sender.push_custom_event(FrameReady).ok();
       }))
     };
@@ -598,9 +602,13 @@ impl App {
               // swap's return is the reference the refreshes are counted
               // from.
               crate::vsync::Release::Emit { arm, vsync: banked } => {
-                let counted = count_signal(&mut refreshes, banked.unwrap_or(at), frame, true, demanded, Some(work_ms));
+                let reference = banked.unwrap_or(at);
+                let counted = count_signal(&mut refreshes, reference, frame, true, demanded, Some(work_ms));
                 learn(&mut cadence, &mut release, &mut refreshes, counted, work, at, tick_period);
-                event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes }).ok();
+                // The next frame presents at the end of the slot the hold
+                // opens from this reference (one period without a hold).
+                let present_at = reference + tick_period * cadence.hold();
+                event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at }).ok();
                 frame += 1;
                 last_frame_signal = Instant::now();
                 last_emission = last_frame_signal;
@@ -688,8 +696,10 @@ impl App {
         if stats.queue_depth.load(Ordering::Acquire) == 0 && ui_free {
           // The Tick is the loop's heartbeat, so an idle app with a finished
           // producer winds down within one tick period (see 'run).
-          let count = count_signal(&mut refreshes, Instant::now(), frame, false, false, None).refreshes;
-          if event_tx.send(AlloyEvent::Tick { frame, fps, refreshes: count }).is_err() {
+          let now = Instant::now();
+          let count = count_signal(&mut refreshes, now, frame, false, false, None).refreshes;
+          let present_at = now + tick_period;
+          if event_tx.send(AlloyEvent::Tick { frame, fps, refreshes: count, present_at }).is_err() {
             break 'run;
           }
           stats.idle_ticks.fetch_add(1, Ordering::Relaxed);
@@ -813,7 +823,8 @@ impl App {
               if let Some(work) = work {
                 learn(&mut cadence, &mut release, &mut refreshes, counted, work, reference, tick_period);
               }
-              event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes }).ok();
+              let present_at = reference + tick_period * cadence.hold();
+              event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at }).ok();
               frame += 1;
             }
             last_frame_signal = Instant::now();
@@ -877,7 +888,8 @@ impl App {
                   if let Some(work) = work {
                     learn(&mut cadence, &mut release, &mut refreshes, counted, work, reference, tick_period);
                   }
-                  event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes }).ok();
+                  let present_at = reference + tick_period * cadence.hold();
+                  event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at }).ok();
                   frame += 1;
                 }
                 last_frame_signal = Instant::now();

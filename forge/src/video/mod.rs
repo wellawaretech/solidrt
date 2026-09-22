@@ -4,21 +4,28 @@
 // VP9 frames and Opus packets come out of it as they are stored, and two
 // players consume them:
 //
-// - the TEXTURE player (player.rs): a decoder produces timestamped planar
-//   YUV frames as plain CPU bytes and the consumer (alloy, via the flux
-//   binding) uploads the planes as textures and converts YUV to RGB on the
-//   GPU. Decoders are swappable producers of the same frames: MediaCodec
-//   buffer mode on Android, libvpx everywhere else (Google's reference
-//   decoder, vendored; VP9 is royalty-free, so a bundled software decoder
-//   carries no codec licensing).
+// - the TEXTURE player (texture.rs): a decoder produces timestamped planar
+//   YUV frames as plain CPU bytes, pushed with the time each is due to the
+//   consumer's frame sink (alloy's YUV texture latch, via the flux binding),
+//   which uploads the planes as textures and converts YUV to RGB on the
+//   GPU when the frame is due. Decoders are swappable producers of the same
+//   frames: MediaCodec buffer mode on Android (mediacodec.rs), libvpx
+//   everywhere else (Google's reference decoder, vendored; VP9 is
+//   royalty-free, so a bundled software decoder carries no codec
+//   licensing).
 // - the PLANE player (plane.rs, Android): MediaCodec decodes straight into
-//   a platform surface and the compositor presents it, off our frame loop
-//   entirely. No frames ever cross into Rust.
+//   a platform surface and the compositor presents it. No frames ever
+//   cross into Rust.
+//
+// Neither runs anything on the caller's thread: both are the one worker
+// (worker.rs) over their presenter, off the frame loop entirely.
 //
 // Audio is Opus through the vendored libopus (opus/) on every platform.
-// Both players share the demuxer contract (`Demuxer`), the transport
-// (transport.rs: clock anchor, play/pause/seek, published state, the audio
-// sink contract) and the audio track feeder (audio.rs).
+// Both players share the demuxer contract (`Demuxer`), the reader thread
+// (reader.rs), the transport (transport.rs: clock anchor, play/pause/seek,
+// published state, the audio and frame sink contracts), the audio track
+// feeder (audio.rs) and the playback worker (worker.rs: one thread over a
+// `Presenter`, the piece that differs per player).
 //
 // No GL, SDL, or scripting-engine types anywhere in this module.
 
@@ -28,25 +35,25 @@ mod mediacodec;
 mod opus;
 #[cfg(target_os = "android")]
 mod plane;
-mod player;
 pub mod reader;
+mod texture;
 pub mod transport;
 #[cfg(not(target_os = "android"))]
 mod vpx;
 mod webm;
+pub mod worker;
 
 use std::fmt;
 
-#[cfg(target_os = "android")]
-pub use mediacodec::MediaCodecDecoder;
 pub use opus::{OpusDecoder, PcmChunk};
 #[cfg(target_os = "android")]
-pub use plane::PlanePlayer;
-pub use player::VideoPlayer;
-pub use transport::AudioSink;
+pub use plane::open as open_plane;
+pub use texture::open as open_texture;
+pub use transport::{AudioSink, Clock, FrameSink};
 #[cfg(not(target_os = "android"))]
 pub use vpx::Vp9Decoder;
 pub use webm::WebmDemuxer;
+pub use worker::Player;
 
 /// What went wrong with a stream, for the app to key on: the same kinds
 /// reach JS as `VideoError.kind`.
@@ -257,10 +264,12 @@ pub struct YuvFrame {
   pub data: Vec<u8>,
 }
 
-/// A video decoder: feed one coded frame at a time, collect zero or more
-/// decoded frames (a decoder may hold pictures back), then `flush` at end
-/// of stream for the remainder. Errors are per-frame and recoverable - the
-/// caller may skip the frame and continue (fail-soft playback policy).
+/// A synchronous video decoder (the texture presenter's, see texture.rs):
+/// feed one coded frame at a time, collect zero or more decoded frames (a
+/// decoder may hold pictures back), then `flush` at end of stream for the
+/// remainder. Errors are per-frame and recoverable - the caller may skip
+/// the frame and continue (fail-soft playback policy). An asynchronous
+/// codec (MediaCodec) is a presenter of its own instead.
 pub trait VideoDecoder {
   fn decode(&mut self, au: &VideoAu) -> Result<Vec<YuvFrame>, String>;
   fn flush(&mut self) -> Result<Vec<YuvFrame>, String>;

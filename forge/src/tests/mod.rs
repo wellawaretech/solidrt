@@ -18,4 +18,8 @@ mod video;
 mod reader;
 #[cfg(feature = "video")]
 mod webm;
+#[cfg(feature = "video")]
+mod texture;
+#[cfg(feature = "video")]
+mod worker;
 mod wasm;

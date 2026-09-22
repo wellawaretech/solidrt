@@ -8824,6 +8824,8 @@ function createInputMap(actions) {
         for (let src of state2.sources) {
           if (!src.rate)
             continue;
+          if (src.kind === "button" && src.deltas)
+            continue;
           let v = src.rate();
           if (src.kind === "button")
             values.push(v ? 1 : 0);
@@ -11244,6 +11246,7 @@ function EditorField(props) {
     untrack(() => props.ref)?.(n);
   }, _el$);
   setProp(_el$, "focusable", true);
+  setProp(_el$, "cursor", "text");
   setProp(_el$, "flexDirection", "column");
   setProp(_el$, "justifyContent", "center");
   spread(_el$, [{
@@ -12012,6 +12015,9 @@ function Pressable(props) {
     },
     get pointerEvents() {
       return memo2(() => !!props.disabled)() ? "none" : props.pointerEvents;
+    },
+    get cursor() {
+      return props.cursor ?? "pointer";
     }
   }], true);
   insert(_el$, (() => {
@@ -12255,6 +12261,7 @@ function Button(props) {
       return style().opacity;
     }
   }, () => press.handlers, {
+    cursor: "pointer",
     get focusable() {
       return memo2(() => !!(props.focusable ?? true))() ? props.disabled !== true : props.focusable ?? true;
     },
@@ -12706,6 +12713,7 @@ function SegmentedControl(props) {
           return space("md");
         }
       }, () => press.handlers, {
+        cursor: "pointer",
         get focusable() {
           return !props.disabled;
         },

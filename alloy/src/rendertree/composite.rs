@@ -221,7 +221,8 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
   let stats = paint_phase(&mut builder, tree, platform, alloy);
   if let Some(dl) = builder.build() {
     let damage = crate::PresentDamage::from_frame(tree.frame_damage(), platform.display_scale());
-    if alloy.submit(dl, damage).is_err() {
+    // No frame signal behind this path: the frame presents as soon as it can.
+    if alloy.submit(dl, damage, crate::clock::now()).is_err() {
       log::warn!("rendertree::render: render thread unavailable, dropping frame");
     }
   }

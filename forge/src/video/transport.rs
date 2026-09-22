@@ -2,11 +2,13 @@
 //! system time, the audio clock's correction of it, the command channel a
 //! player is driven through, the state it publishes back, the policy for
 //! releasing a frame against that clock, and the contract of the audio sink
-//! a caller provides. Engine-free and sink-agnostic: the plane player feeds
-//! the due time to `releaseOutputBufferAtTime`, and the texture player
-//! adopts the same anchor when its frame selection moves off the frame loop
-//! (okf/plans/android-video-punch-through.md). Building the anchor inside one
-//! player would have the other duplicate it, which is why it lives here.
+//! a caller provides, and the contract of the frame sink a texture player's
+//! decoded pictures go to. Engine-free and sink-agnostic: the plane player
+//! feeds the due time to `releaseOutputBufferAtTime`, and the texture player
+//! pushes the frame with it to the compositor's latch, both from the one
+//! worker in worker.rs (okf/plans/video-texture-off-frame-loop.md). Building
+//! the anchor inside one player would have the other duplicate it, which is
+//! why it lives here.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -87,6 +89,32 @@ pub fn monotonic_ns() -> i64 {
   }
 }
 
+/// The clock frames are scheduled on, injected at open: the plane's is
+/// `monotonic_ns` (what Android's `releaseOutputBufferAtTime` takes), the
+/// texture player's is the compositor's own reading, so the due times the
+/// worker pushes and the deadlines the compositor's latch compares them
+/// against are one clock by construction. `stepped` marks a clock that
+/// advances only when its consumer steps it (headless playback): the worker
+/// never sleeps against it, never lets audio correct it, and pushes every
+/// frame as soon as it is decoded.
+pub struct Clock {
+  /// The reading frames are scheduled on, in nanoseconds.
+  pub now_ns: Box<dyn Fn() -> i64 + Send>,
+  /// The clock advances only when its consumer steps it (headless playback).
+  pub stepped: bool,
+}
+
+impl Clock {
+  /// The system clock (`monotonic_ns`), free-running.
+  pub fn monotonic() -> Clock {
+    Clock { now_ns: Box::new(monotonic_ns), stepped: false }
+  }
+
+  pub fn now(&self) -> i64 {
+    (self.now_ns)()
+  }
+}
+
 /// What a caller asks of a player. The worker owning the decoder drains
 /// these between frames; `Close` (also sent by dropping the controls) ends
 /// the worker.
@@ -108,9 +136,13 @@ pub struct Shared {
   finished: AtomicBool,
   buffering: AtomicBool,
   closed: AtomicBool,
+  // The worker has released everything it owned (the codec, the surface,
+  // the sink handle) and returned: what a successor that needs the
+  // platform's one plane waits for.
+  exited: AtomicBool,
   error: Mutex<Option<StreamError>>,
-  // Fires once when the error is set or the player closes, for the one
-  // async waiter (`failed`).
+  // Wakes the async watchers (`failed`, `exited`) when the error is set, the
+  // player closes or the worker exits.
   changed: tokio::sync::Notify,
 }
 
@@ -149,23 +181,45 @@ impl Shared {
   }
   pub fn set_error(&self, error: StreamError) {
     *self.error.lock().unwrap_or_else(PoisonError::into_inner) = Some(error);
-    self.changed.notify_one();
+    self.changed.notify_waiters();
   }
   pub fn set_closed(&self) {
     self.closed.store(true, Ordering::Relaxed);
-    self.changed.notify_one();
+    self.changed.notify_waiters();
+  }
+  /// Whether the worker has returned, everything it owned released.
+  pub fn has_exited(&self) -> bool {
+    self.exited.load(Ordering::Acquire)
+  }
+  /// The worker's last act, whatever the exit.
+  pub fn set_exited(&self) {
+    self.exited.store(true, Ordering::Release);
+    self.changed.notify_waiters();
   }
   /// Resolves with the failure once one is set, or with None once the
   /// player closes without one. For the caller's one async watcher.
   pub async fn failed(&self) -> Option<StreamError> {
     loop {
+      // Registered before the check, so a change between the check and the
+      // await still wakes it (tokio's `notify_waiters` contract).
+      let changed = self.changed.notified();
       if let Some(error) = self.error() {
         return Some(error);
       }
       if self.closed.load(Ordering::Relaxed) {
         return None;
       }
-      self.changed.notified().await;
+      changed.await;
+    }
+  }
+  /// Resolves once the worker has exited (see `set_exited`).
+  pub async fn exited(&self) {
+    loop {
+      let changed = self.changed.notified();
+      if self.has_exited() {
+        return;
+      }
+      changed.await;
     }
   }
 }
@@ -421,6 +475,32 @@ pub trait AudioSink: Send {
   fn set_paused(&mut self, paused: bool);
   /// Drop everything queued.
   fn clear(&mut self);
+}
+
+/// Where a texture presenter's decoded frames go: the compositor that will
+/// show them. Implemented by the platform (alloy's YUV latch, through the
+/// flux adapter) and driven from the worker thread. `push` never blocks
+/// against a live compositor: the sink keeps a bounded queue ordered by
+/// due time and evicts what can no longer be shown. Against a stepped clock
+/// it blocks instead, since evicting would drop frames the capture has not
+/// taken yet (the `Clock` doc).
+pub trait FrameSink: Send {
+  /// Queue `frame` to be shown at `due_ns` on the worker's clock.
+  fn push(&mut self, frame: super::YuvFrame, due_ns: i64);
+  /// The pts of the frame the compositor last showed: what `currentTime()`
+  /// reports for a texture player (the frame on screen, not the frame last
+  /// handed over).
+  fn shown_pts_us(&self) -> Option<i64>;
+  /// Playback stopped or started: the sink holds or releases the
+  /// compositor's standing frame demand.
+  fn set_playing(&mut self, playing: bool);
+  /// The compositor's refresh period, None when it has none (playback).
+  fn period_ns(&self) -> Option<i64>;
+  /// The stream ended: nothing more will be pushed until a seek.
+  fn end(&mut self);
+  /// Forget everything queued (a seek): the frames in flight belong to the
+  /// old position, and a re-anchored one would otherwise show behind them.
+  fn flush(&mut self);
 }
 
 /// The display's vsync grid, for snapping release times onto it: the

@@ -82,7 +82,13 @@ pub(crate) fn run_playback_loop(
     }
 
     // Playback derives time from frame / fps; every frame is one refresh.
-    event_tx.send(AlloyEvent::FrameRendered { frame: draw, fps: playback.fps, refreshes: 1 }).ok();
+    // The frame the signal asks for (draw + 1) is at that virtual time,
+    // which is the clock's reading from here (see clock.rs) and the
+    // deadline its video content is latched against.
+    let virtual_ns = (draw + 1) as i64 * 1_000_000_000 / playback.fps as i64;
+    crate::clock::set_virtual_ns(virtual_ns);
+    let present_at = crate::clock::at(virtual_ns);
+    event_tx.send(AlloyEvent::FrameRendered { frame: draw, fps: playback.fps, refreshes: 1, present_at }).ok();
   }
   raster.drain();
 

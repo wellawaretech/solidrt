@@ -20,10 +20,13 @@ impl RasterState {
   /// notify the main loop, which only does frame bookkeeping (fps,
   /// FrameRendered) and playback encoding. Err means the main loop is gone
   /// and this thread should exit.
-  pub(super) fn frame(&mut self, dl: DisplayList) -> Result<(), ()> {
+  pub(super) fn frame(&mut self, dl: DisplayList, present_at: std::time::Instant) -> Result<(), ()> {
     // The frame's GPU span starts here, ahead of the pass flush: on a tiler
     // the passes execute in the same submission as the window draw.
     self.frame_timestamps.frame_begin();
+    // The video frames due for this present go into their textures first,
+    // so the flush below converts them and the frame samples the result.
+    self.latch_video(present_at);
     // The frame samples shader targets (directly via <texture src>, or through
     // the window-shader layer); resolve every pending target write first.
     self.flush_dirty();
@@ -337,5 +340,66 @@ impl RasterState {
       log::warn!("[alloy] set swap interval failed: {}", self.binding.error());
     }
     true
+  }
+}
+
+impl RasterState {
+  /// For every YUV output with a latch, take the frame due for the present
+  /// at `present_at` (the newest due at or before the deadline plus the
+  /// lookahead, see yuv.rs), upload it into the back plane set, flip the set
+  /// and rebind the conversion target to it, so the dirty flush re-renders
+  /// the output and everything sampling it. In playback the take waits for
+  /// the frame that is due, never showing the one that happened to arrive.
+  fn latch_video(&mut self, present_at: std::time::Instant) {
+    if self.yuv_latches.is_empty() {
+      return;
+    }
+    let deadline_ns = crate::clock::ns(present_at);
+    let lookahead_ns = crate::yuv::lookahead_ns();
+    let mut taken = Vec::new();
+    for (id, entry) in self.yuv_latches.iter_mut() {
+      if let Some(frame) = entry.latch.take(deadline_ns, lookahead_ns, self.capture_frames) {
+        let back = 1 - entry.front;
+        entry.front = back;
+        taken.push((*id, back, frame));
+      }
+    }
+    for (id, set, frame) in taken {
+      self.stats.video_latched.fetch_add(1, Ordering::Relaxed);
+      self.stats.video_skipped.fetch_add(frame.skipped as u64, Ordering::Relaxed);
+      if frame.late {
+        self.stats.video_late.fetch_add(1, Ordering::Relaxed);
+      }
+      let Some(entry) = self.yuv_latches.get(&id) else { continue };
+      let data = frame.frame.data;
+      if data.len() < entry.frame_size {
+        log::warn!("[alloy] yuv frame for {id} is {} bytes, needs {}", data.len(), entry.frame_size);
+        continue;
+      }
+      let planes = entry.sets[set].clone();
+      for &(_, plane, offset) in &planes {
+        let len = match self.textures.get(&plane) {
+          Some(gpu) => gpu.format.byte_len(gpu.width, gpu.height),
+          None => {
+            log::warn!("[alloy] yuv plane {plane} not found");
+            continue;
+          }
+        };
+        match data.get(offset..offset.saturating_add(len)) {
+          Some(bytes) => {
+            if let Err(e) = self.update_texture(plane, bytes) {
+              log::warn!("[alloy] yuv plane update failed: {e}");
+            }
+          }
+          None => {
+            log::warn!("[alloy] yuv plane {plane} needs {len} bytes at offset {offset}, frame has {}", data.len())
+          }
+        }
+      }
+      let bindings: Vec<crate::gpu::TextureBinding> =
+        planes.iter().map(|&(name, plane, _)| crate::gpu::TextureBinding::new(name, plane)).collect();
+      self.entry_write(id, "yuv latch rebind", |_, shader| shader.set_sampler_bindings(&bindings));
+      self.content_dirty = true;
+    }
   }
 }

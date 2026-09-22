@@ -8,9 +8,11 @@
 // A plane player (`present: "plane"`, Android) has no texture: the platform
 // composites the picture fullscreen beneath the UI on the video's own clock,
 // and the UI simply draws over it. It exists from open until the owner is
-// disposed, and it streams: the source may be a URL, read as it plays. On a
-// platform without a plane the open fails (error() with kind "no-plane"),
-// and an app that runs everywhere falls back to a texture player itself.
+// disposed. On a platform without a plane the open fails (error() with kind
+// "no-plane"), and an app that runs everywhere falls back to a texture
+// player itself. Both players stream (the source may be a URL, read as it
+// plays) and both run off the frame loop: a texture player's frames are
+// decoded on their own thread and shown at the UI's cadence.
 //
 // The imperative primitive lives in the `flux:video` module; import { open }
 // from "flux:video" for non-reactive use.
@@ -56,9 +58,8 @@ export type VideoStream = {
   /** Pause playback; the current frame stays displayed. */
   pause(): void
   /**
-   * Seek to a time in seconds. A no-op while opening, on a texture player,
-   * and on a source that cannot seek (see `seekable`). While paused the
-   * target frame is shown.
+   * Seek to a time in seconds. A no-op while opening and on a source that
+   * cannot seek (see `seekable`). While paused the target frame is shown.
    */
   seek(seconds: number): void
   /** Whether `seek` does anything (plain read, not a signal). */

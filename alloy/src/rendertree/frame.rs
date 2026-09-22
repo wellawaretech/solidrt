@@ -82,6 +82,7 @@ impl<'d> PendingFrame<'d> {
     tree: &mut RenderTree,
     platform: &PlatformContext,
     alloy: &crate::Context,
+    present_at: std::time::Instant,
   ) -> Result<Commit<'d>, ()> {
     let content_changed = composite::apply_content_changes(tree, alloy);
 
@@ -106,7 +107,7 @@ impl<'d> PendingFrame<'d> {
           // this path, and their nodes' extents are current.
           let (w, h) = platform.window_size();
           let damage = composite::resolve_reuse_damage(tree, crate::impellers::Size::new(w, h));
-          alloy.submit_clean(c.dl.clone(), crate::PresentDamage::from_frame(damage, platform.display_scale()))?;
+          alloy.submit_clean(c.dl.clone(), crate::PresentDamage::from_frame(damage, platform.display_scale()), present_at)?;
           // The reuse path skips paint_phase, which runs this sweep itself -
           // run it here too so a destroy with no other tree change (its
           // requested frame lands in this path) is not stranded until the
@@ -157,7 +158,13 @@ impl FrameBuilder<'_> {
   /// reuse. The cache key is sampled here, after the build: hooks run since
   /// `layout` may have mutated the tree, and a first build can itself create
   /// textures. `Err` means the render thread is gone.
-  pub fn finish(self, tree: &RenderTree, platform: &PlatformContext, alloy: &crate::Context) -> Result<(), ()> {
+  pub fn finish(
+    self,
+    tree: &RenderTree,
+    platform: &PlatformContext,
+    alloy: &crate::Context,
+    present_at: std::time::Instant,
+  ) -> Result<(), ()> {
     let FrameBuilder { driver, mut builder } = self;
     if let Some(dl) = builder.build() {
       driver.cache = Some(DlCache {
@@ -167,7 +174,7 @@ impl FrameBuilder<'_> {
         window: platform.window_size(),
         scale: platform.display_scale(),
       });
-      alloy.submit(dl, crate::PresentDamage::from_frame(tree.frame_damage(), platform.display_scale()))?;
+      alloy.submit(dl, crate::PresentDamage::from_frame(tree.frame_damage(), platform.display_scale()), present_at)?;
     }
     Ok(())
   }

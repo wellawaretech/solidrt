@@ -79,7 +79,10 @@ const FIT_COVER: i32 = 1;
 
 /// A live video plane. Dropping it removes the view from the activity;
 /// drop the decoder rendering into it first, so the codec has released
-/// the surface by then.
+/// the surface by then. Usable from any thread, creation and drop included
+/// (both go through `SDL_GetAndroidJNIEnv`, which attaches the calling
+/// thread, and Java's `destroyVideoPlane` posts to its UI thread), so a
+/// decoder's worker may own it and drop it after its codec.
 pub struct VideoPlane {
   window: NativeWindow,
   refresh_period_ns: i64,

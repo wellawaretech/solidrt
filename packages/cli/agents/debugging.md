@@ -220,7 +220,15 @@ when exactly one client is connected.
   (`off`, `auto`, or a number of refreshes) pins for a measurement;
   `frameWorkMeanMs` / `frameWorkMaxMs` are that work time over the last
   second (frame signal to swap call plus GPU time), what the hold's
-  step-down prediction reads; `slowFrames`,
+  step-down prediction reads; `videoLatched`, `videoSkipped` and
+  `videoLateLatches` are the texture video path's counters (frames the
+  raster thread latched into a video texture, due frames it skipped
+  because a newer one was due for the same present or the producer ran
+  past the latch's queue, and frames latched for a present whose draw
+  gate saw nothing due, so a cached boundary over the texture lagged one
+  frame): a fluency verdict on a `<texture>` showing video is these three
+  over a run (skipped and late both 0) plus the app's `currentTime()`
+  stepping at the content interval, never a present census; `slowFrames`,
   `gpuFrameExecMsPerFrame`, `fenceTimeoutsPerSec` and `rasterCmdMsPerSec`
   say why. A snapshot capture stalls the frame it lands in (a blocking
   readback inside the paint): those frames are `captureFrames`, left out

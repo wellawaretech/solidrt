@@ -1,8 +1,6 @@
 use crate::video::reader::Next;
 use crate::video::transport::AudioSink;
-use crate::video::{
-  AudioPacket, Demuxer, OpusDecoder, PixelLayout, VideoAu, VideoDecoder, VideoPlayer, WebmDemuxer, YuvFrame,
-};
+use crate::video::{AudioPacket, Demuxer, OpusDecoder, PixelLayout, VideoDecoder, WebmDemuxer};
 
 // 2 s of ffmpeg testsrc2 160x120 at 25 fps as VP9 (libvpx-vp9, profile 0)
 // with a 440 Hz sine as mono Opus (20 ms packets), in WebM.
@@ -17,10 +15,6 @@ fn audio_from(demux: &mut WebmDemuxer) -> Next<AudioPacket> {
     Ok(None) => Next::End,
     Err(e) => panic!("read audio: {e}"),
   }
-}
-
-fn open_fixture() -> WebmDemuxer {
-  WebmDemuxer::open_path(&fixture()).expect("open fixture")
 }
 
 // Opus packets in the fixture: 20 ms each, so 960 samples at 48 kHz.
@@ -99,14 +93,14 @@ fn opus_decodes_every_packet_to_pcm() {
 // back exactly. The state is shared so the test keeps a hand on it after
 // the track has taken the sink.
 #[derive(Default)]
-struct FakeSinkState {
-  pushed_frames: usize,
-  consumed_frames: usize,
-  paused: bool,
+pub(super) struct FakeSinkState {
+  pub(super) pushed_frames: usize,
+  pub(super) consumed_frames: usize,
+  pub(super) paused: bool,
 }
 
 impl FakeSinkState {
-  fn consume(&mut self, frames: usize) {
+  pub(super) fn consume(&mut self, frames: usize) {
     self.consumed_frames = self.consumed_frames.saturating_add(frames).min(self.pushed_frames);
   }
   fn queued_us(&self) -> i64 {
@@ -114,7 +108,7 @@ impl FakeSinkState {
   }
 }
 
-struct FakeSink(std::sync::Arc<std::sync::Mutex<FakeSinkState>>);
+pub(super) struct FakeSink(pub(super) std::sync::Arc<std::sync::Mutex<FakeSinkState>>);
 
 impl AudioSink for FakeSink {
   fn push(&mut self, samples: &[f32]) -> Result<(), String> {
@@ -191,28 +185,6 @@ fn audio_track_trims_pre_skip_and_maps_the_sink_position_to_content_time() {
   assert!((total as i64 - expected as i64).abs() <= OPUS_PACKET_SAMPLES as i64, "pushed {total}, expected ~{expected}");
 }
 
-// Stands in for the decoder in the player tests, so they exercise frame
-// selection alone: one frame out per coded frame, at its own pts, mid-gray
-// so plane sizes and ordering are still checked.
-struct StubDecoder;
-
-impl VideoDecoder for StubDecoder {
-  fn decode(&mut self, au: &VideoAu) -> Result<Vec<YuvFrame>, String> {
-    let layout = crate::video::decoded_layout();
-    Ok(vec![YuvFrame {
-      pts_us: au.pts_us,
-      width: 160,
-      height: 120,
-      layout,
-      data: vec![128; layout.frame_size(160, 120)],
-    }])
-  }
-
-  fn flush(&mut self) -> Result<Vec<YuvFrame>, String> {
-    Ok(Vec::new())
-  }
-}
-
 #[cfg(not(target_os = "android"))]
 #[test]
 fn libvpx_decodes_every_frame() {
@@ -235,129 +207,6 @@ fn libvpx_decodes_every_frame() {
   let luma = &frames[0].data[..160 * 120];
   let (lo, hi) = luma.iter().fold((u8::MAX, u8::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
   assert!(hi - lo > 100, "luma range {lo}..{hi} is not a test pattern");
-}
-
-#[cfg(not(target_os = "android"))]
-#[test]
-fn open_plays_the_stream_through_libvpx() {
-  // The real factory end to end: the worker builds the libvpx decoder and
-  // every frame reaches the consumer against a running clock.
-  let mut player = VideoPlayer::open(open_fixture()).expect("open player");
-  player.play();
-  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-  let mut handed = 0;
-  for n in 0..50i64 {
-    let clock_us = n * 40_000;
-    loop {
-      while player.next_pcm().is_some() {}
-      if let Some(frame) = player.advance(clock_us) {
-        assert_eq!(frame.pts_us, clock_us);
-        assert_eq!(frame.data.len(), PixelLayout::I420.frame_size(160, 120));
-        handed += 1;
-        break;
-      }
-      assert!(std::time::Instant::now() < deadline, "timed out waiting for frame {n}");
-      std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-  }
-  assert_eq!(handed, 50);
-  assert_eq!(player.position_us(), 49 * 40_000);
-}
-
-#[test]
-fn player_advances_against_a_caller_clock() {
-  let mut player = VideoPlayer::open_with(open_fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
-  assert_eq!((player.info().width, player.info().height), (160, 120));
-  assert_eq!(player.layout(), crate::video::decoded_layout());
-
-  // Paused: nothing comes out no matter the clock.
-  assert!(player.advance(1_000_000).is_none());
-  player.play();
-
-  // Raise the clock one frame pts at a time and wait for that exact frame:
-  // only one frame is ever due, so none can be skipped, whatever the
-  // scheduling. The real consumer drains audio to its sink every tick; not
-  // draining would backpressure the worker and stall video too (bounded
-  // queues).
-  let mut pcm = 0usize;
-  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-  for n in 0..50i64 {
-    let clock_us = n * 40_000;
-    let frame = loop {
-      while let Some(chunk) = player.next_pcm() {
-        pcm += chunk.samples.len();
-      }
-      if let Some(frame) = player.advance(clock_us) {
-        break frame;
-      }
-      assert!(std::time::Instant::now() < deadline, "timed out waiting for frame {n}");
-      std::thread::sleep(std::time::Duration::from_millis(1));
-    };
-    assert_eq!(frame.pts_us, clock_us, "exactly the due frame comes out");
-  }
-  assert_eq!(player.position_us(), 49 * 40_000);
-
-  // Past the end: the stream closes and the remaining audio drains.
-  while !player.finished() && std::time::Instant::now() < deadline {
-    while let Some(chunk) = player.next_pcm() {
-      pcm += chunk.samples.len();
-    }
-    assert!(player.advance(2_000_000).is_none(), "nothing after the last frame");
-    std::thread::sleep(std::time::Duration::from_millis(1));
-  }
-  while let Some(chunk) = player.next_pcm() {
-    pcm += chunk.samples.len();
-  }
-  assert!(player.finished());
-  let pre_skip = player.info().audio.as_ref().expect("audio").pre_skip as usize;
-  assert_eq!(pcm, FIXTURE_AUDIO_PACKETS * OPUS_PACKET_SAMPLES - pre_skip, "all audio reached the consumer");
-}
-
-#[test]
-fn player_skips_stale_frames_when_the_clock_runs_ahead() {
-  let mut player = VideoPlayer::open_with(open_fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
-  player.play();
-  // A clock permanently ahead of the whole clip: each advance drains the
-  // queue and hands out only the newest frame, dropping the ones between.
-  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-  let mut handed = Vec::new();
-  while !player.finished() && std::time::Instant::now() < deadline {
-    // Drain audio so the worker never blocks on the pcm queue.
-    while player.next_pcm().is_some() {}
-    if let Some(frame) = player.advance(10_000_000) {
-      handed.push(frame.pts_us);
-    }
-    // Long enough for the worker (microseconds per 160x120 frame) to refill
-    // the whole 4-deep queue, so every drain provably has frames to skip.
-    std::thread::sleep(std::time::Duration::from_millis(5));
-  }
-  assert_eq!(*handed.last().expect("some frames"), 49 * 40_000, "the final frame is reached");
-  assert!(handed.windows(2).all(|w| w[0] < w[1]), "monotonic order");
-  // Each full-queue drain hands 1 of ~5 queued frames, so ~10-13 of 50 in
-  // practice; anywhere under 50 proves stale frames drop instead of replay,
-  // 25 leaves slack for scheduling noise.
-  assert!(handed.len() < 25, "most frames skipped, handed {}", handed.len());
-}
-
-#[test]
-fn a_stalled_master_clock_plays_out_the_tail() {
-  // An audio-clocked stream's clock stops at the end of the audio track,
-  // which routinely falls a frame or more short of the last video frame. The tail must still come out, and the stream must end.
-  let mut player = VideoPlayer::open_with(open_fixture(), |_| Ok(Box::new(StubDecoder))).expect("open player");
-  player.play();
-  let stall_us = 44 * 40_000;
-  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-  let mut last = -1;
-  while !player.finished() {
-    while player.next_pcm().is_some() {}
-    if let Some(frame) = player.advance(stall_us) {
-      last = frame.pts_us;
-    }
-    assert!(std::time::Instant::now() < deadline, "stalled clock never finished, reached {last}us");
-    std::thread::sleep(std::time::Duration::from_millis(1));
-  }
-  assert_eq!(last, 49 * 40_000, "the real final frame is the one left on screen");
-  assert_eq!(player.position_us(), 49 * 40_000);
 }
 
 #[test]

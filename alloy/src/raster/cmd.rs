@@ -110,8 +110,10 @@ pub(crate) enum RasterCmd {
   /// that draws); in capture mode every frame draws, because playback's
   /// contract is exactly one Captured per submit. `tree_clean` marks a
   /// present-only resubmit of the previous frame's unchanged display list
-  /// (see `Context::submit_clean`).
-  Frame { dl: DisplayList, tree_clean: bool, damage: PresentDamage },
+  /// (see `Context::submit_clean`). `present_at` is when the frame is
+  /// expected to reach the screen: the deadline video frames are latched
+  /// against (see yuv.rs).
+  Frame { dl: DisplayList, tree_clean: bool, damage: PresentDamage, present_at: std::time::Instant },
   /// Register the UI-side frame-request latch for missed-present (jank)
   /// accounting: the raster thread samples it (never consumes) at present
   /// time to tell a demanded gap from an idle one. Forwarded by the platform
@@ -156,11 +158,16 @@ pub(crate) enum RasterCmd {
   /// Re-upload pixels into an existing texture; `pixels` is exactly one frame
   /// (the UI side slices multi-frame buffers before sending).
   UpdateTexture { id: u64, pixels: Vec<u8> },
-  /// Upload one packed YUV frame into its plane textures: each (id, byte
-  /// offset) plane slices its bytes out of the shared `frame`, which is MOVED
-  /// from the caller - one multi-plane frame crosses the channel with no copy
-  /// (see `Context::update_yuv`).
-  UpdateYuv { planes: Vec<(u64, usize)>, frame: Vec<u8> },
+  /// Give a YUV output `id` its latch (see yuv.rs) and its two plane sets,
+  /// each plane as (uniform name, texture id, byte offset in a packed frame
+  /// of `frame_size` bytes). From here the raster thread takes the due frame
+  /// at each `Frame`, uploads it into the back set and rebinds `id` to it.
+  AttachYuvLatch {
+    id: u64,
+    latch: std::sync::Arc<crate::yuv::YuvLatchShared>,
+    sets: [Vec<(&'static str, u64, usize)>; 2],
+    frame_size: usize,
+  },
   /// Compile a fragment shader into a new target texture and adopt it; the
   /// first render happens at the next dirty flush. Compile and validation
   /// errors must reach JS, hence the reply, which also carries the program's

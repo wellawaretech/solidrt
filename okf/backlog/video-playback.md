@@ -98,27 +98,29 @@ was the reliable one.
 No new crate edges: alloy does not depend on forge and still will not.
 
 - `forge::video` - the capability core, engine-free (YUV planes as plain
-  bytes, no GL/SDL types). Demux via the `mp4` crate and AAC decode via
-  symphonia today, both replaced by the WebM demuxer and Opus decode shared
-  with [[android-video-punch-through]] (decided 2026-09-12). Video decoder
-  trait with two impls:
-  libvpx (vendored, hand-bound) off Android, and AMediaCodec buffer mode
-  via the ndk crate under cfg(android) (platform-specific code in forge
-  has precedent: subprocess, p2p). Player logic lives here: play/pause
-  state, decode worker thread, frame queue, and clock-agnostic sync -
-  `advance(clock_pos) -> Option<YuvFrame>`; the caller feeds the master
-  clock in. No seek yet (2026-09-12): the demuxer seek lands with the
-  plane path and the texture player picks it up in that item's transport
-  follow-up.
+  bytes, no GL/SDL types). The WebM demuxer and Opus decode are shared
+  with [[android-video-punch-through]] (decided 2026-09-12). One playback
+  worker (`worker.rs`) over a `Presenter`: libvpx (vendored, hand-bound)
+  off Android, AMediaCodec buffer mode via the ndk crate under
+  cfg(android) for textures (platform-specific code in forge has
+  precedent: subprocess, p2p), the surface-mode codec for the plane. The
+  worker owns the clock anchor, the release policy, seek, buffering and
+  the audio track; a texture presenter pushes each decoded frame with its
+  due time to a `FrameSink` the caller provides
+  ([[video-texture-off-frame-loop]], 2026-09-22). Nothing runs on the
+  caller's thread.
 - alloy - a video-agnostic texture-system feature: planar YUV textures in
   the TextureRegistry plus a YUV-to-RGB conversion pass in the raster
   path, with color metadata (BT.601/709 matrix, limited/full range) as
-  uniforms. Camera could later use the same path and drop its CPU
-  conversion. Rendertree untouched.
-- flux `alloy_plugins/video.rs` - thin marshal + a per-tick hook (camera
-  tick precedent): read the audio clock, call the forge player's
-  advance(), hand the due frame's planes to alloy's upload. Sync decisions
-  stay in forge, upload mechanics in alloy.
+  uniforms, and the LATCH: a producer pushes frames with due times on
+  alloy's clock through a `YuvFrameSink`, and the raster thread shows the
+  newest due frame at each frame's presentation deadline. Camera could
+  later use the same path and drop its CPU conversion. Rendertree
+  untouched.
+- flux `alloy_plugins/video.rs` - thin marshal: opens the reader, the
+  texture (or the plane), the sinks and the worker, and binds the player
+  object. No per-frame hook; the draw gate reads alloy's standing demand
+  and peeks the latch for content damage.
 - `@solidrt/core/video` - createVideo() -> reactive stream over the
   `flux:video` player (texture id, dims, duration, currentTime,
   play/pause, close; auto-closed with the owner). NO video primitive
@@ -299,16 +301,17 @@ is untouched, the stream's pre-skip samples are dropped in the worker. The
 clips under examples/video/assets and the forge fixtures moved to WebM: the
 VP9 streams remuxed as they were, AAC tracks re-encoded to Opus.
 
-## Open on this path (2026-09-12)
+## Open on this path (2026-09-12, revised 2026-09-22)
 
-None of these is being worked while the plane round runs; they are what
-"this path is not fixed" means, so that they are not rediscovered:
+The audio-clocked frame drop, the missing seek and the missing transport
+(buffering, URLs, a real `error()`) were closed by
+[[video-texture-off-frame-loop]]: the texture player shares the plane's
+worker, audio corrects the anchor instead of selecting frames, and the
+frames are latched by the raster thread against the frame's deadline. What
+stays open on this path:
 
-- Audio-clocked streams drop ~10% of frames at every resolution, on both
-  Android devices identically (sink-position quantisation, stage 3 of the
-  frame-scheduling list). The biggest quality item on this path.
-- No seek, rate or step. The demuxer seek arrives with the plane path;
-  the player-side flush-and-refill is the texture path's own work.
+- Rate and step, on either player: designed once for both
+  ([[android-video-punch-through]], follow-ups).
 - Fullscreen 1080p on the TV is outside the UI clock's budget by
   construction ([[android-video-punch-through]] explains why no rung here
   lifts it); 720p is the ceiling on that device through this path.

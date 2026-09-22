@@ -18,7 +18,7 @@ const LINEAR_100: TransitionSpec = TransitionSpec::Tween { duration_ms: 100.0, c
 fn headless() -> crate::Context {
   let stats = Arc::new(crate::raster::RasterStats::new());
   let (tx, _rx) = std::sync::mpsc::channel();
-  crate::Context::new(crate::raster::RasterSender::new(tx, stats.clone()), stats)
+  crate::Context::new(crate::raster::RasterSender::new(tx, stats.clone()), stats, None)
 }
 
 fn attached() -> Element {

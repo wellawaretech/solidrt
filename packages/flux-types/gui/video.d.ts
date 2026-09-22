@@ -3,8 +3,11 @@
 // a texture player's `texture` id is displayed with <texture>/<d-texture>,
 // and a richer Video component composes in a higher layer. A plane player
 // (Android) has no texture at all: the platform composites the decoded
-// picture fullscreen beneath the UI, off the frame loop entirely, and it
-// streams: its source may be a URL, read as it plays.
+// picture fullscreen beneath the UI. Both players run off the frame loop
+// (demux, decode, the clock, frame selection and audio on their own
+// threads; a texture player's frames are shown at the UI's cadence, the
+// way a browser's compositor shows a video's) and both stream: the source
+// may be a URL, read as it plays.
 
 declare module "flux:video" {
   import type { FluxFile } from "flux:fs"
@@ -41,9 +44,9 @@ declare module "flux:video" {
     /** Whether the file has a playable audio track. */
     hasAudio: boolean
     /**
-     * Whether `seek` does anything. False for a texture player, and for a
-     * source that cannot be read at an offset (an HTTP response without
-     * Range support); `seek` is then a no-op.
+     * Whether `seek` does anything. False for a source that cannot be read
+     * at an offset (an HTTP response without Range support); `seek` is
+     * then a no-op.
      */
     seekable: boolean
     /** Start or resume playback. */
@@ -58,7 +61,11 @@ declare module "flux:video" {
     seek(seconds: number): void
     /** Whether playback is running. */
     playing(): boolean
-    /** Presentation time of the displayed frame, in seconds. */
+    /**
+     * Presentation time of the displayed frame, in seconds: for a texture
+     * player the frame on screen (the one the compositor last latched),
+     * for a plane the frame last released to the surface.
+     */
     currentTime(): number
     /**
      * Whether the last frame has been displayed. A failure does not set
@@ -67,8 +74,7 @@ declare module "flux:video" {
     finished(): boolean
     /**
      * Whether playback is held for the source to catch up: playing, with
-     * the picture and the sound paused until enough is read ahead. Never
-     * true for a texture player.
+     * the picture and the sound paused until enough is read ahead.
      */
     buffering(): boolean
     /**
@@ -88,11 +94,15 @@ declare module "flux:video" {
     close(): void
   }
 
-  /** A texture player: frames land in a GPU texture on the UI's clock. */
+  /**
+   * A texture player: frames are decoded off the frame loop and shown in
+   * a GPU texture at the UI's cadence, each at the frame closest to its
+   * time.
+   */
   export type VideoPlayer = VideoTransport & {
     /**
-     * GPU texture id decoded frames are uploaded into (use as a texture
-     * source). Holds the current frame; black until playback starts.
+     * GPU texture id decoded frames land in (use as a texture source).
+     * Holds the current frame; black until playback starts.
      */
     texture: TextureId
   }
@@ -110,9 +120,8 @@ declare module "flux:video" {
    * A video source: a path resolved like file() paths (through the app's
    * assets in a packed app), an http: or https: URL, or a file() from
    * flux:fs (a packed asset is read out of the exe). Any other scheme
-   * throws. A URL plays on a plane only, and is read by the runtime
-   * directly: no disk cache, no dev-server proxying, so the device must
-   * reach the host itself.
+   * throws. A URL is read by the runtime directly: no disk cache, no
+   * dev-server proxying, so the device must reach the host itself.
    */
   export type VideoSource = string | FluxFile
 
@@ -121,8 +130,7 @@ declare module "flux:video" {
     present?: "texture"
     /**
      * Aborting it abandons the open: the promise rejects with the signal's
-     * reason and the source is closed. (A texture player opens at once;
-     * the signal matters for a plane's streamed open.)
+     * reason and the source is closed.
      */
     signal?: AbortSignal
   }
@@ -140,11 +148,11 @@ declare module "flux:video" {
    * audio plays, other audio tracks are ignored). Playback starts paused;
    * call `play()`. Rejects with a VideoError: "network" when the source
    * cannot be opened (or does not answer within the open timeout),
-   * "unsupported" when its codec is not played or a URL is given to a
-   * texture player, "no-plane" for `present: "plane"` on a platform without
-   * a video plane (Android only) or while another plane is open or opening.
-   * A plane open reads the header off the JS thread and resolves once the
-   * plane exists; a texture player opens at once.
+   * "unsupported" when its codec is not played, "no-plane" for
+   * `present: "plane"` on a platform without a video plane (Android only)
+   * or while another plane is open or opening. The header is read off the
+   * JS thread; the promise resolves once the player (and, for a plane, the
+   * plane) exists.
    *
    * Encode with `ffmpeg -c:v libvpx-vp9 -c:a libopus out.webm`; VP9 and
    * Opus are royalty-free, so both decoders ship on every platform.

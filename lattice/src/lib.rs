@@ -819,10 +819,12 @@ fn ui_thread(
             // shift the field by +1. The JS-side bootstrap owns frame 0;
             // without the shift, playback mode re-runs frame 0 at tick 0 and
             // duplicates a PNG.
-            AlloyEvent::FrameRendered { frame, refreshes, .. } => ui_runtime.frame(frame + 1, refreshes),
+            AlloyEvent::FrameRendered { frame, refreshes, present_at, .. } => {
+              ui_runtime.frame(frame + 1, refreshes, present_at)
+            }
             // Tick's frame is already the next present index (one past the
             // last FrameRendered), so no +1 here.
-            AlloyEvent::Tick { frame, refreshes, .. } => ui_runtime.frame(frame, refreshes),
+            AlloyEvent::Tick { frame, refreshes, present_at, .. } => ui_runtime.frame(frame, refreshes, present_at),
             // The back intent dispatches to JS like any window event, backed
             // by a liveness watchdog: the emit just queued runs synchronously
             // on the JS executor, so a probe queued behind it proves the

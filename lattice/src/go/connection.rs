@@ -1209,6 +1209,9 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
     put("rasterQueue", rc.queue.into());
     put("idleTicks", rc.idle_ticks.into());
     put("partialPresents", rc.partial_presents.into());
+    put("videoLatched", rc.video_latched.into());
+    put("videoSkipped", rc.video_skipped.into());
+    put("videoLateLatches", rc.video_late.into());
     put("fenceTimeouts", rc.fence_timeouts.into());
     put("missedPresents", rc.missed_presents.into());
     put("cadenceHold", rc.cadence_hold.into());

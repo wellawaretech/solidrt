@@ -29,7 +29,22 @@ in close.
 
 ## Status
 
-Planned 2026-09-22, nothing built.
+Planned 2026-09-22. Built the same day, steps 1 to 5, on the host:
+forge's worker over the `Presenter` (the plane's surface presenter, the
+libvpx presenter, the MediaCodec buffer presenter), the injected clock,
+the frame sink, close without a join on both players, alloy's clock and
+YUV latch with the raster-side take against `present_at`, the three
+counters, `present_at` through lattice and flux, the flux player over the
+worker for both presents, the JS tick deleted, the docs. Host tests: forge
+(the worker over a stub presenter, the texture player over libvpx and a
+stub sink), alloy (the latch's take, evict, peek, playback waits). Android
+arm64 cross-checked. Verified on the tablet the same day (Findings): the
+plane's census against a baseline of the previous commit, seek, stall,
+close during a stall, ten clip switches; the texture path's 60 s audio
+clip with 0 skipped, the 50 and 25 fps cadences, standing demand alone.
+NOT done: the TV (its census, lip sync by ear on avsync.webm through a
+texture), and per-push demand, which was not built, so the A/B of section
+4 is standing demand against the pump only.
 
 ## What this does not change
 
@@ -664,7 +679,113 @@ read over a run, not a census.
 
 ## Findings
 
-(appended during the work)
+- **The presenter cannot own the codec it holds a buffer of.** ndk's
+  `OutputBuffer` borrows its `MediaCodec` and keeps its index private, so a
+  presenter that holds a dequeued picture across worker calls cannot own
+  the codec (a self-borrow), and the safe API offers no index to hold
+  instead. The split is `PresenterHost` (owns the codec, the surface, the
+  sink; built by the factory and dropped on the worker after the
+  presenter) and `Presenter` (borrowed from it for the run). The texture
+  presenters own everything and are their own host through a blanket
+  `impl Presenter for &mut P`.
+- **The frame sink needs `flush`.** A seek re-anchors, so its frames are
+  due before the frames still queued in the latch; without a flush the
+  latch would show the target frame and then the stale ones after it (the
+  take rule reads due order). `FrameSink::flush` and `YuvFrameSink::flush`
+  are the presenter's flush reaching the latch, next to the codec flush.
+- **`snap` belongs before the wait.** The plane snaps the release time
+  onto the vsync grid; the worker must wait against the SNAPPED time (up
+  to 0.8 period earlier than the due time), or a due time just past a
+  vsync hands the buffer over after the compositor's deadline for it and
+  slips a period. `Presenter::snap` gives the worker the time it releases
+  for; `release_at` takes that time.
+- **`set_playing` comes from the worker, and from the caller too.** The
+  worker tells the sink when releases start and stop (playing, not
+  buffering, not failed, not ended), before it parks. The flux plugin also
+  sets it at `play()` synchronously: a stepped capture's take waits only
+  while the latch is playing, and the worker's first pass is a thread hop
+  away, so without the synchronous set the first captured frame after play
+  would race the worker.
+- **The stepped take pops as it waits.** A full latch whose frames are all
+  due at or before the deadline would deadlock the blocking push; the take
+  pops every due frame first (keeping the newest as its candidate), which
+  makes room, and only then waits for a frame due after the deadline or
+  the end.
+- **An instant decoder trips the buffering rule.** A stub presenter that
+  decodes in zero time outruns the reader thread over a local file and
+  drives the lead under the low water mid-clip, so the worker re-anchors
+  once; the stub charges a millisecond per picture, as a real decoder
+  would.
+- **The 90 ms clock jump is absorbed.** With a 50 ms lead and 40 ms
+  frames, a clock jump under lead plus one interval plus the drop
+  threshold drops nothing: the frame in hand goes out at its time and the
+  next is within the drop window. The policy test jumps 200 ms.
+- **The texture lead is two periods, not one.** The plane's compositor
+  takes a hand-over up to the vsync, so one period suffices there. The
+  texture's "compositor" is the UI thread's frame build, which starts one
+  period before the present and whose content check (the gate's peek)
+  needs the frame at its start, for due times up to half a period after
+  the present. With a one-period lead half of 50 fps content on the 60 Hz
+  desktop was latched behind the peek (`videoLateLatches` 523 of 1119);
+  with two periods, 1 (the first frame after play, which has no lead by
+  nature). `TEXTURE_LEAD_PERIODS` in texture.rs.
+- **The stepped take must pop before it waits.** The first headless render
+  hung after one frame: a full latch of due frames, the take waiting for
+  a frame due after the deadline, the producer's push waiting for room.
+  The take pops every due frame (keeping the newest) before each wait.
+- **Frames without a signal take the clock's instant.** The mount frame
+  and the direct render path have no frame signal and used a real
+  `Instant::now()`, which in playback compared a real elapsed time against
+  virtual due times. `alloy::clock::now()` is virtual in playback.
+- **Desktop measurements 2026-09-22** (60 Hz laptop, the pacing probe,
+  pump on unless said, `/stats` counters over the run):
+  - clip C (50 fps): `vidStepsMs` {20: 600, 0: 120} over 720 vsyncs, no 40s;
+    videoSkipped 0, videoLateLatches 1, missedPresents 0.
+  - pump off, 10 s: 501 frames latched on the player's own standing
+    demand, no late latch added.
+  - clip D (25 fps): {40: 300, 0: 421}, no 80s; skipped 0, late +1.
+  - clip720 (25 fps WITH audio, the case the tick dropped ~10% of): {40:
+    372, 0: 527}, no 80s; skipped 0. Audio now corrects the anchor
+    instead of selecting frames.
+  - `srt render` of `probe/render.tsx` (5 fps, 2 s): two runs identical
+    frame for frame; frame 9 (virtual 2.0 s) shows the clip's burned-in
+    00:00:02.000 / frame 50.
+  - A 200 ms JS stall (the probe's `stall` command) while clip C plays:
+    `currentTime()` advanced 13.92 -> 15.18 s over the 1.26 s the read
+    took, `playing` stayed true, videoSkipped +10 for missedPresents +10
+    (the ten 50 fps frames due during the stall's ten missed presents).
+  - `close` (the probe's `openSecond` + `closeCost`): 0.045 ms for the 720p
+    clip with audio at 1.88 s in, 0.042 ms for clip C.
+  - The demand A/B of section 4 could not be read on the desktop beyond
+    the counts above (the cadence histogram is recorded by the pump
+    itself); see the tablet below.
+- **Tablet measurements 2026-09-22** (SM-T500, Android 12, 60 Hz, dev
+  client with its badge, the pacing probe over the LAN dev server):
+  - clip720 (25 fps WITH audio, the case the tick dropped 44 of 420 on),
+    pump on, 60 s: `vidStepsMs` {40: 1544, 0: 2225} over 3771 vsyncs, no
+    80s; videoSkipped +0, videoLateLatches 0. The drop is gone.
+  - Pump off, 20 s: 502 frames latched (every one), and the UI layer's
+    SurfaceFlinger census reads 126 presents at one-period intervals: the
+    player's standing demand presents every vsync, exactly as the pump
+    does. Per-push demand was not built, so the A/B of section 4 is
+    standing demand against the pump only; the two are the same picture.
+  - clip C (50 fps): {20: 902, 0: 191} over 1093 vsyncs, no 40s. clip D
+    (25 fps): {40: 452, 0: 643}, no 80s. Skipped 0, late 0 on both.
+  - The plane (the streaming project over the paced fault server, the
+    avsync clip): a seek lands and plays after the paced source catches up
+    (buffering meanwhile, as it must on a source that serves at playback
+    pace); a 6 s stall buffers and resumes; close during a stall leaves no
+    slow frame beyond the page switch's own 19 ms (it held the JS thread
+    0.36 s before); ten clip switches (close then open) all played, none
+    rejected with no-plane.
+  - The plane's census with only the dev badge on the UI layer read
+    below the ladder in [[android-video-punch-through]] (94% for that
+    row), so the previous commit's client was built in a worktree and
+    censused back to back with the new one, same server, same clip,
+    overlay off, three 5 s windows each: previous 75%, 86%, 90% on the
+    25-on-60 pattern; new 82%, 85%, 81%. The same distribution: the plane
+    is unchanged, and this tablet's day reads lower than the ladder's for
+    both (the launch's own UI presents are inside the first window).
 
 ## Related
 

@@ -116,6 +116,16 @@ pub struct RasterStats {
   /// (partial repaint, okf/done/partial-repaint.md); the verification
   /// signal that stage 2 is engaging.
   pub(crate) partial_presents: AtomicU64,
+  /// Video frames latched into a YUV texture at a frame (see yuv.rs).
+  pub(crate) video_latched: AtomicU64,
+  /// Video frames a latch skipped: due, but superseded by a newer due frame
+  /// before a frame took them, or evicted by a producer pushing against a
+  /// full latch (the compositor fell behind the producer).
+  pub(crate) video_skipped: AtomicU64,
+  /// Video frames latched for a deadline the draw gate's peek had found
+  /// nothing due for: the producer missed its lead, and a cached boundary
+  /// over the texture lags one frame.
+  pub(crate) video_late: AtomicU64,
   /// Wall time spent executing non-Frame raster commands, in microseconds:
   /// texture uploads, readbacks, offscreen rasterizations, compiles, param
   /// writes, and the pass flushes those commands trigger. This is the work
@@ -164,6 +174,10 @@ pub struct RasterCounters {
   /// Presents that drew only a damage patch over an aged back buffer
   /// (partial repaint); stays 0 where buffer age is unavailable.
   pub partial_presents: u64,
+  /// Video frames latched, skipped and latched late (see `RasterStats`).
+  pub video_latched: u64,
+  pub video_skipped: u64,
+  pub video_late: u64,
 }
 
 impl RasterStats {
@@ -188,6 +202,9 @@ impl RasterStats {
         .then(|| self.frame_exec_micros.load(Ordering::Relaxed)),
       cmd_micros: self.cmd_micros.load(Ordering::Relaxed),
       partial_presents: self.partial_presents.load(Ordering::Relaxed),
+      video_latched: self.video_latched.load(Ordering::Relaxed),
+      video_skipped: self.video_skipped.load(Ordering::Relaxed),
+      video_late: self.video_late.load(Ordering::Relaxed),
     }
   }
 
@@ -207,6 +224,9 @@ impl RasterStats {
       timer_queries: AtomicBool::new(false),
       cmd_micros: AtomicU64::new(0),
       partial_presents: AtomicU64::new(0),
+      video_latched: AtomicU64::new(0),
+      video_skipped: AtomicU64::new(0),
+      video_late: AtomicU64::new(0),
     }
   }
 }
@@ -277,6 +297,16 @@ const PRESENT_FENCE_TIMEOUT_NS: i32 = 100_000_000;
 // okf/backlog/adaptive-present-fence-depth.md.
 const PRESENT_FENCE_DEPTH: usize = 2;
 
+
+/// The raster side of one YUV output (see yuv.rs): its latch, its two
+/// plane sets (uniform name, plane id, byte offset in a packed frame) and
+/// which set the conversion target samples now.
+pub(crate) struct YuvLatchEntry {
+  pub(crate) latch: Arc<crate::yuv::YuvLatchShared>,
+  pub(crate) sets: [Vec<(&'static str, u64, usize)>; 2],
+  pub(crate) front: usize,
+  pub(crate) frame_size: usize,
+}
 
 pub(crate) struct RasterState {
   gl: glow::Context,
@@ -351,6 +381,9 @@ pub(crate) struct RasterState {
   // resolution, re-uploads, and readbacks. Mirrors the UI side's registry
   // through the command stream.
   textures: HashMap<u64, GpuTexture>,
+  // YUV outputs with a latch (see yuv.rs): the frame due at each Frame is
+  // taken here, uploaded into the back plane set and the target rebound.
+  yuv_latches: HashMap<u64, YuvLatchEntry>,
   /// 2D names Impeller never adopted (draw targets of a format other than
   /// rgba8: sampler-only, never displayed): this thread's to delete, like
   /// every cube map's (see `release_texture`).
@@ -422,7 +455,7 @@ pub(crate) struct RasterState {
   tx: mpsc::Sender<FrameOutput>,
   // Wakes the main thread's event wait after a present; None in playback
   // mode, whose capture loop blocks on the channel directly.
-  wake: Option<Box<dyn Fn() + Send + Sync>>,
+  wake: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// The active window shader: the declared spec, the program it resolved to
@@ -527,7 +560,7 @@ impl RasterState {
     capture_frames: bool,
     stats: Arc<RasterStats>,
     tx: mpsc::Sender<FrameOutput>,
-    wake: Option<Box<dyn Fn() + Send + Sync>>,
+    wake: Option<Arc<dyn Fn() + Send + Sync>>,
   ) -> Self {
     let limits = crate::gl::query_limits(&gl);
     let samplers = SamplerCache::new(&gl, limits.max_anisotropy);
@@ -561,6 +594,7 @@ impl RasterState {
       present_fences: std::collections::VecDeque::new(),
       staging: gl::UploadStaging::new(),
       textures: HashMap::new(),
+      yuv_latches: HashMap::new(),
       unadopted: HashSet::new(),
       shaders: HashMap::new(),
       target_depths: HashMap::new(),
@@ -607,7 +641,7 @@ impl RasterState {
         let cmd_start = std::time::Instant::now();
         self.harvest_pass_timings();
         match cmd {
-          RasterCmd::Frame { dl, tree_clean, damage } => {
+          RasterCmd::Frame { dl, tree_clean, damage, present_at } => {
             // A load-shed frame that was not clean still changed the tree:
             // the frame that draws in its place must not skip the resolve.
             if !tree_clean {
@@ -616,7 +650,7 @@ impl RasterState {
             // A shed frame's damage folds into the frame that draws in its
             // place, so its changes still reach the screen.
             self.damage.fold(damage);
-            if (self.capture_frames || Some(i) == last_frame) && self.frame(dl).is_err() {
+            if (self.capture_frames || Some(i) == last_frame) && self.frame(dl, present_at).is_err() {
               break 'outer; // main loop is gone
             }
           }
@@ -646,26 +680,8 @@ impl RasterState {
               log::warn!("[alloy] texture update failed: {e}");
             }
           }
-          RasterCmd::UpdateYuv { planes, frame } => {
-            for (id, offset) in planes {
-              let len = match self.textures.get(&id) {
-                Some(gpu) => gpu.format.byte_len(gpu.width, gpu.height),
-                None => {
-                  log::warn!("[alloy] yuv plane {id} not found");
-                  continue;
-                }
-              };
-              match frame.get(offset..offset.saturating_add(len)) {
-                Some(plane) => {
-                  if let Err(e) = self.update_texture(id, plane) {
-                    log::warn!("[alloy] yuv plane update failed: {e}");
-                  }
-                }
-                None => {
-                  log::warn!("[alloy] yuv plane {id} needs {len} bytes at offset {offset}, frame has {}", frame.len());
-                }
-              }
-            }
+          RasterCmd::AttachYuvLatch { id, latch, sets, frame_size } => {
+            self.yuv_latches.insert(id, YuvLatchEntry { latch, sets, front: 0, frame_size });
           }
           RasterCmd::CreateShaderTexture {
             id,

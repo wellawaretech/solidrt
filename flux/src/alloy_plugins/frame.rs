@@ -7,6 +7,7 @@
 // and its policy around the draw phases.
 
 use std::cell::RefCell;
+use std::time::Instant;
 
 use rquickjs::{Ctx, Object};
 
@@ -19,14 +20,13 @@ use super::{camera, gpu, raf, spatial, tree};
 /// frame's JS: stamp both animation clocks with the frame's app time
 /// (`now_ms`, the timeline rAF and the render event report), advance the
 /// clip players (so onFrame handlers read and can overwrite the fresh
-/// poses), then tick the capture and playback devices (camera, video, gpu
-/// capture settles). Content a device or player changed, or a player still
-/// running, latches a frame request. `period_ms` is the display refresh
-/// period video frame selection looks ahead by; None when the runner has
-/// no presentation model (playback). Runs whether or not the frame is
-/// delivered: a paused clock stops app time, not the devices. No-op before
-/// the GUI is installed.
-pub fn advance(ctx: &Ctx<'_>, now_ms: f64, period_ms: Option<f64>) {
+/// poses), then tick the capture devices (camera, gpu capture settles).
+/// Content a device or player changed, or a player still running, latches
+/// a frame request. Video is not here: its frames reach their textures
+/// through the raster thread's latch, off the frame loop. Runs whether or
+/// not the frame is delivered: a paused clock stops app time, not the
+/// devices. No-op before the GUI is installed.
+pub fn advance(ctx: &Ctx<'_>, now_ms: f64) {
   let Some(s) = tree::try_state(ctx) else {
     return;
   };
@@ -37,27 +37,6 @@ pub fn advance(ctx: &Ctx<'_>, now_ms: f64, period_ms: Option<f64>) {
   // A camera frame landed in its texture: the screen content changed even
   // though the tree did not.
   demand |= camera::tick(ctx);
-  #[cfg(feature = "video")]
-  {
-    // Same for a video frame uploaded into its player's texture; a
-    // mid-playback player is standing demand for the next tick, so video
-    // rides the frame grid instead of free-running on its own uploads.
-    //
-    // Demanding a frame per tick does present the same pixels twice for
-    // 25 fps content on a 50 Hz panel. Measured on the TV, demanding only
-    // on upload halves the presents exactly as expected - and looks worse:
-    // the presents then land wherever the tick phase has walked to (27 at
-    // one period, 76 at two, 21 at three), where standing demand holds
-    // 124 of 125 on the grid with the content stepping an even 40 ms. A
-    // duplicate present is invisible; an early or late one is judder. The
-    // efficiency is worth having, but only once frames are scheduled
-    // against a deadline (okf/backlog/frame-driver-pacing-contract.md).
-    let period_us = period_ms.map(|p| (p * 1000.0) as i64).unwrap_or(0);
-    let video = super::video::tick(ctx, period_us);
-    demand |= video.uploaded || video.playing;
-  }
-  #[cfg(not(feature = "video"))]
-  let _ = period_ms;
   // Settle any captureSnapshot promises whose captures alloy rendered on the
   // previous paint pass.
   gpu::tick(ctx);
@@ -93,14 +72,20 @@ pub fn deliver(ctx: &Ctx<'_>, frame: u64, now_ms: f64, timer_now_ms: f64) {
 /// and re-request the next frame here, so the loop ticks until they settle.
 /// One driver per tree, so consecutive frames on either path reuse the
 /// retained display list. Tree borrows are scoped to each phase call, so
-/// JS run between the phases may write properties.
-pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, f: impl FnOnce(Option<Frame<'_>>) -> R) -> R {
+/// JS run between the phases may write properties. `present_at` is when
+/// the frame is expected to reach the screen: the deadline the raster
+/// thread latches video frames against, and the one the gate peeks with.
+pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl FnOnce(Option<Frame<'_>>) -> R) -> R {
   let Some(s) = tree::try_state(ctx) else {
     return f(None);
   };
   // Before the gate: the ticks' damage is this frame's reason to rebuild.
   let anim_active = tree::tick(ctx);
   let spatial = spatial::tick(ctx);
+  // A video frame the raster thread will latch for this present changes a
+  // texture's pixels: noted now, by the same rule the raster applies, so a
+  // node showing it is damaged and a cached boundary over it re-rasters.
+  let video_due = s.gui.alloy.note_due_video(present_at);
   // A JS hook run between the phases (a transitionEnd handler above, a
   // post-layout handler below) can call the direct `render` export; that
   // nested draw finds the driver taken and skips rather than panics.
@@ -108,7 +93,7 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, f: impl FnOnce(Option<Frame<'_
     log::warn!("[render] nested draw ignored: a frame is already being built");
     return f(None);
   };
-  let demand = extra_demand || anim_active || spatial.active || spatial.wrote;
+  let demand = extra_demand || anim_active || spatial.active || spatial.wrote || video_due;
   let Some(pending) = driver.begin(&s.gui.platform, demand) else {
     return f(None);
   };
@@ -120,11 +105,13 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, f: impl FnOnce(Option<Frame<'_
   // particular when the raster thread samples it at present time to tell a
   // missed present from an idle gap (alloy's `demand_at_present`), and so
   // an animating app's intervals are judged.
-  let standing = s.gui.platform.take_standing_demand();
+  // A streaming texture (a playing video) is standing demand alloy holds:
+  // the loop ticks on the refresh grid while it plays.
+  let standing = s.gui.platform.take_standing_demand() || s.gui.alloy.streaming_textures();
   if anim_active || spatial.active || standing || super::raf::has_pending(ctx) {
     s.gui.platform.request_frame();
   }
-  f(Some(Frame { pending, tree: &s.tree, platform: &s.gui.platform, atx: &s.gui.alloy }))
+  f(Some(Frame { pending, tree: &s.tree, platform: &s.gui.platform, atx: &s.gui.alloy, present_at }))
 }
 
 /// A frame past the demand gate (see `draw`), bound to the tree it draws.
@@ -133,6 +120,7 @@ pub struct Frame<'a> {
   tree: &'a RefCell<RenderTree>,
   platform: &'a PlatformContext,
   atx: &'a alloy::Context,
+  present_at: Instant,
 }
 
 impl<'a> Frame<'a> {
@@ -140,11 +128,11 @@ impl<'a> Frame<'a> {
   /// display list resubmitted (`Reused`) or the build handle. `Err` means the
   /// render thread is gone.
   pub fn commit(self) -> Result<Commit<'a>, ()> {
-    let Frame { pending, tree, platform, atx } = self;
-    let commit = pending.commit(&mut tree.borrow_mut(), platform, atx)?;
+    let Frame { pending, tree, platform, atx, present_at } = self;
+    let commit = pending.commit(&mut tree.borrow_mut(), platform, atx, present_at)?;
     Ok(match commit {
       rendertree::Commit::Reused { content_changed } => Commit::Reused { content_changed },
-      rendertree::Commit::Build(builder) => Commit::Build(Build { builder, tree, platform, atx }),
+      rendertree::Commit::Build(builder) => Commit::Build(Build { builder, tree, platform, atx, present_at }),
     })
   }
 }
@@ -167,6 +155,7 @@ pub struct Build<'a> {
   tree: &'a RefCell<RenderTree>,
   platform: &'a PlatformContext,
   atx: &'a alloy::Context,
+  present_at: Instant,
 }
 
 impl Build<'_> {
@@ -180,8 +169,8 @@ impl Build<'_> {
 
   /// `Err` means the render thread is gone.
   pub fn finish(self) -> Result<(), ()> {
-    let Build { builder, tree, platform, atx } = self;
-    let result = builder.finish(&tree.borrow(), platform, atx);
+    let Build { builder, tree, platform, atx, present_at } = self;
+    let result = builder.finish(&tree.borrow(), platform, atx, present_at);
     result
   }
 }

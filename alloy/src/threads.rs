@@ -30,7 +30,7 @@ pub(crate) fn run_context(
   surface_size: Arc<AtomicU64>,
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
   tx: mpsc::Sender<FrameOutput>,
-  wake: Option<Box<dyn Fn() + Send + Sync>>,
+  wake: Option<Arc<dyn Fn() + Send + Sync>>,
   capture_frames: bool,
   stats: Arc<crate::raster::RasterStats>,
 ) -> crate::raster::RasterSender {
@@ -40,6 +40,8 @@ pub(crate) fn run_context(
   // same ordered channel and queue-depth bookkeeping as the Context's half.
   let main_tx = raster_tx.clone();
   let raster_stats = stats.clone();
+  // The Context's clone: a pushed video frame wakes the loop like a present.
+  let context_wake = wake.clone();
 
   // The raster thread: sole owner of the process's single GL context and
   // Impeller context for the engine's lifetime. Impeller's GLES contract
@@ -84,7 +86,7 @@ pub(crate) fn run_context(
     // Same display-priority rationale as the raster thread, one tier lower
     // (the raster thread owns the present deadline).
     crate::sdl_utils::frame_thread_priority(false);
-    closure(Arc::new(Context::new(raster_tx, stats)));
+    closure(Arc::new(Context::new(raster_tx, stats, context_wake)));
   });
   spawn_ui.expect("failed to spawn UI thread");
   main_tx
