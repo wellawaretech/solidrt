@@ -654,6 +654,34 @@ let resolved = parseGltf(externalBytes, (uri) => {
 sameModel(model, resolved, ".gltf + external files")
 throws("external without resolver", () => parseGltf(externalBytes), "no resolver")
 
+// The prefetch list is the parser's demand set: a document naming every
+// sampled channel plus an image nothing samples lists exactly the four the
+// materials reach (in image order), and the parse opens nothing else.
+{
+  let allChannels = {
+    ...external,
+    materials: [
+      {
+        name: "full",
+        pbrMetallicRoughness: { baseColorTexture: { index: 0 }, metallicRoughnessTexture: { index: 3 } },
+        normalTexture: { index: 1 },
+        emissiveTexture: { index: 2 },
+      },
+    ],
+    textures: [{ source: 0 }, { source: 1 }, { source: 2 }, { source: 3 }, { source: 4 }],
+    images: [{ uri: "textures/base.png" }, { uri: "textures/normal.png" }, { uri: "textures/emissive.png" }, { uri: "textures/mr.png" }, { uri: "textures/unused.png" }],
+  }
+  let allBytes = new TextEncoder().encode(JSON.stringify(allChannels))
+  let expected = "scene%20data.bin,textures/base.png,textures/normal.png,textures/emissive.png,textures/mr.png"
+  if (gltfExternalUris(allBytes).join() !== expected) fail(`gltfExternalUris lists the sampled images only: ${gltfExternalUris(allBytes).join()}`)
+  let listed = new Set(gltfExternalUris(allBytes))
+  let parsed = parseGltf(allBytes, (uri) => {
+    if (!listed.has(uri)) throw new Error("parseGltf opened " + uri + ", which gltfExternalUris did not list")
+    return uri.endsWith(".bin") ? bin : fakePng
+  })
+  if (parsed.images.length !== 4) fail(`the all-channels parse opens the four sampled images, got ${parsed.images.length}`)
+}
+
 let dataUri = { ...external, buffers: [{ byteLength: binLength, uri: "data:application/octet-stream;base64," + btoa(String.fromCharCode(...bin)) }], images: [{ bufferView: pngView, mimeType: "image/png" }] }
 sameModel(model, parseGltf(new TextEncoder().encode(JSON.stringify(dataUri))), ".gltf + data: uri")
 

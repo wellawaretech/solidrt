@@ -376,6 +376,19 @@ export type LitOptions = UnlitOptions & {
    * scene's shadow set (see SHADOW's doc) and composing `shadow` per light.
    */
   receiveShadow?: boolean
+  /** GLSL at file scope for `surface`: uniforms (each an ordinary
+   * per-entry param, `params` on the mesh or setMeshParams) and helper
+   * functions. See the tier-2 look in AGENTS.md "Custom looks". */
+  prelude?: string
+  /** GLSL declaring `void surface(inout Surface s)`, called once the
+   * program has filled the Surface from the options (base from `color`,
+   * the map and the vertex color; the normal, bent by the normal map;
+   * emissive, the light model's fields) and before it shades: rewrite any
+   * field or `discard`. Runs in the shadow twin too, so what it discards
+   * casts no shadow (the twin sees a `prelude` uniform at its zero value:
+   * mesh params reach the main entry only). One program per distinct
+   * source, like every other option. */
+  surface?: string
 }
 
 /** `phong`'s options: the lit set plus the Blinn-Phong highlight and the
@@ -447,6 +460,9 @@ type LitClass = {
   instanced: boolean
   instanceColors: boolean
   morph: boolean
+  // The tier-2 sources, "" for none: a source string is a fine key part.
+  prelude: string
+  surface: string
 }
 
 function litClassKey(c: LitClass): string {
@@ -507,6 +523,8 @@ export function phong(opts: PhongOptions = {}): Material {
     instanced: opts.instanced === true || opts.instanceColors === true,
     instanceColors: opts.instanceColors === true,
     morph: opts.morph === true,
+    prelude: opts.prelude ?? "",
+    surface: opts.surface ?? "",
   }
   let key = litClassKey(flags)
   let cls = phongClasses.get(key)
@@ -550,15 +568,16 @@ export function phong(opts: PhongOptions = {}): Material {
     if (lightMap) textures.uLightMap = opts.lightMap!
   }
   // A mapped cutout casts its cutout, triplanar included (the shadow
-  // source resolves the base exactly as the main one does). A color-only
-  // alphaTest is a constant over the mesh - all or nothing, and nothing
-  // needs no program - so it keeps the plain cull-only variant.
+  // source resolves the base exactly as the main one does), and a
+  // surface function casts its discards. A color-only alphaTest is a
+  // constant over the mesh - all or nothing, and nothing needs no
+  // program - so it keeps the plain cull-only variant.
   let material = cls.instance({
     params,
     textures,
     shadow:
-      alphaTest && map
-        ? litShadowMaterial(flags, uColor, opts.alphaTest!, opts.triplanar, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
+      (alphaTest && map) || flags.surface !== ""
+        ? litShadowMaterial(flags, uColor, opts.alphaTest, opts.triplanar, opts.map, mapTransform ? params.uMapTransform as number[] : undefined)
         : undefined,
   })
   return material
@@ -617,6 +636,8 @@ function standardShadowFlags(c: StandardClass): LitClass {
     instanced: c.instanced,
     instanceColors: c.instanceColors,
     morph: c.morph,
+    prelude: c.prelude,
+    surface: c.surface,
   }
 }
 
@@ -681,6 +702,8 @@ export function standard(opts: StandardOptions = {}): Material {
     instanced: opts.instanced === true || opts.instanceColors === true,
     instanceColors: opts.instanceColors === true,
     morph: opts.morph === true,
+    prelude: opts.prelude ?? "",
+    surface: opts.surface ?? "",
     metalnessMap,
     roughnessMap,
   }
@@ -725,8 +748,8 @@ export function standard(opts: StandardOptions = {}): Material {
     params,
     textures,
     shadow:
-      alphaTest && map
-        ? litShadowMaterial(standardShadowFlags(flags), uColor, opts.alphaTest!, opts.triplanar, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
+      (alphaTest && map) || flags.surface !== ""
+        ? litShadowMaterial(standardShadowFlags(flags), uColor, opts.alphaTest, opts.triplanar, opts.map, mapTransform ? params.uMapTransform as number[] : undefined)
         : undefined,
   })
 }
@@ -742,9 +765,9 @@ let litShadowClasses = new Map<string, ShaderMaterialClass>()
 function litShadowMaterial(
   flags: LitClass,
   uColor: number[],
-  uAlphaTest: number,
+  uAlphaTest: number | undefined,
   triplanar: number | undefined,
-  uMap: TextureId,
+  uMap: TextureId | undefined,
   uMapTransform?: number[],
 ): Material {
   // A skinned cutout keeps its skinning (flags.skinned rides into the
@@ -764,14 +787,16 @@ function litShadowMaterial(
     })
     litShadowClasses.set(key, cls)
   }
-  let params: ShaderParams = { uColor, uAlphaTest }
+  let params: ShaderParams = { uColor }
+  if (flags.alphaTest) params.uAlphaTest = uAlphaTest!
   if (flags.triplanar) params.uTriplanar = triplanar!
   if (uMapTransform !== undefined) params.uMapTransform = uMapTransform
-  let material = cls.instance({ params, textures: { uMap } })
-  // Only triplanar sampling reads the normal here: everywhere else the
-  // linker drops vNormal and uNormal reflects inactive, so writing it per
-  // move would warn every time. The value cannot matter, skip the write.
-  if (!flags.triplanar) material.normalMatrix = false
+  let material = cls.instance({ params, textures: flags.map ? { uMap: uMap! } : undefined })
+  // Only triplanar sampling and a surface function read the normal here:
+  // everywhere else the linker drops vNormal and uNormal reflects
+  // inactive, so writing it per move would warn every time. The value
+  // cannot matter, skip the write.
+  if (!flags.triplanar && flags.surface === "") material.normalMatrix = false
   return material
 }
 
@@ -895,7 +920,30 @@ export type SpriteOptions = Omit<UnlitOptions, "instanced" | "instanceColors" | 
    * follows the camera, the quad stays upright on world y - trees and
    * standing characters, the classic sprite. */
   billboard?: "full" | "fixed-y"
+  /** A procedural falloff over the quad, so a glow, flare or puff needs
+   * no texture: `"radial"` multiplies the base (color and alpha, the
+   * premultiplied rule) by `(1 - 2 * |uv - 0.5|)^falloff` clamped over
+   * the inscribed disc, composing with a `map` (the map's alpha times the
+   * disc). Absent, a mapless sprite is a hard square. */
+  shape?: "radial"
+  /** The radial falloff's exponent (default 1: linear to the rim; 2 a
+   * soft puff, 0.5 a hard-edged disc), the per-entry `uFalloff`. Needs
+   * `shape`. */
+  falloff?: number
 }
+
+// The radial shape as a tier-2 surface on the unlit fragment: the
+// vertex stages always write vUv, which the fragment declares only with
+// a map, so the mapless prelude declares it itself.
+const RADIAL_PRELUDE = glsl`
+  uniform float uFalloff;
+`
+const RADIAL_SURFACE = glsl`
+  void surface(inout Surface s) {
+    float disc = clamp(1.0 - 2.0 * length(vUv - 0.5), 0.0, 1.0);
+    s.base *= pow(disc, uFalloff);
+  }
+`
 
 // The billboard vertex stages: the unit quad's corners placed along the
 // camera axes at the mesh's world position, with the quad's size read
@@ -972,12 +1020,22 @@ export function sprite(opts: SpriteOptions = {}): Material {
   let transparent = opts.transparent !== false
   let fixedY = opts.billboard === "fixed-y"
   let fog = fogForm(opts.fog, blend)
-  let key = [map, transparent, blend, fixedY, fog].join("|")
+  let radial = opts.shape === "radial"
+  if (opts.shape !== undefined && !radial) throw new Error('sprite: shape must be "radial", got ' + opts.shape)
+  if (opts.falloff !== undefined && !radial) throw new Error("sprite: falloff needs shape")
+  if (opts.falloff !== undefined && !(Number.isFinite(opts.falloff) && opts.falloff > 0)) throw new Error("sprite: falloff must be a positive number, got " + opts.falloff)
+  let key = [map, transparent, blend, fixedY, fog, radial].join("|")
   let cls = spriteClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
       vertex: fixedY ? SPRITE_FIXED_Y_VERTEX_SRC : SPRITE_VERTEX_SRC,
-      fragment: unlitFragment({ map, transparent, fog }),
+      fragment: unlitFragment({
+        map,
+        transparent,
+        fog,
+        prelude: radial ? (map ? "" : "in vec2 vUv;\n") + RADIAL_PRELUDE : undefined,
+        surface: radial ? RADIAL_SURFACE : undefined,
+      }),
       transparent,
       blend,
       cull: "none",
@@ -985,7 +1043,9 @@ export function sprite(opts: SpriteOptions = {}): Material {
     })
     spriteClasses.set(key, cls)
   }
-  return cls.instance({ params: { uColor }, textures: map ? { uMap: opts.map! } : undefined })
+  let params: ShaderParams = { uColor }
+  if (radial) params.uFalloff = opts.falloff ?? 1
+  return cls.instance({ params, textures: map ? { uMap: opts.map! } : undefined })
 }
 
 /** The attributes `material` reads that `layout` does not carry (name and

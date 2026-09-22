@@ -43,9 +43,19 @@ export type WornPiece = {
   boxes: { joint: SceneNode; box: Float32Array }[]
 }
 
+export type BindSkeletonOptions = {
+  /** Map a piece node's name to the body name to look up (still
+   * case-insensitive), for a pipeline whose joint names differ by a
+   * prefix or suffix: Mixamo's `mixamorig:`, a one-sided `_JNT`. Unity
+   * matches exact names and leaves the rest to the app; this is that
+   * hook. Default the identity. */
+  match?: (pieceName: string) => string
+}
+
 /**
  * Drive `piece`'s skins from `body`'s skeleton: a wardrobe piece exported
- * over the body's joints (matched by name, case-insensitive) with no
+ * over the body's joints (matched by name, case-insensitive, through
+ * `match` when the names differ by a fixed prefix or suffix) with no
  * clips of its own. After this the piece hangs under the body at the
  * body's placement, its skinned parts follow every pose the body takes -
  * mixer-driven or hand-posed - and its joints with no body counterpart
@@ -56,8 +66,9 @@ export type WornPiece = {
  * rest pose). A piece is taken off by disposing it; disposing the body
  * disposes what it wears.
  */
-export function bindSkeleton(body: Model, piece: Model): void {
+export function bindSkeleton(body: Model, piece: Model, opts: BindSkeletonOptions = {}): void {
   if (piece === body) throw new Error("bindSkeleton: a model cannot wear itself")
+  if (opts.match !== undefined && typeof opts.match !== "function") throw new Error("bindSkeleton: match must be a function from a piece name to a body name")
   if (piece._body !== null) throw new Error("bindSkeleton: the piece is already bound to a body")
   if (body._body !== null) throw new Error("bindSkeleton: the body is itself a worn piece")
   if (piece._skins.length === 0) throw new Error("bindSkeleton: the piece has no skin")
@@ -83,12 +94,13 @@ export function bindSkeleton(body: Model, piece: Model): void {
   for (let s of body._skins) s.joints.forEach((j, k) => bodyBind.set(j, s.inverseBind.subarray(k * 16, k * 16 + 16)))
   let match = new Map<SceneNode, SceneNode>()
   let names = new Map<SceneNode, string>()
+  let bodyName = opts.match ?? ((name: string) => name)
   for (let n of piece.nodes) {
     names.set(n.node, n.name)
-    let b = bodyByName.get(n.name.toLowerCase())
+    let b = bodyByName.get(bodyName(n.name).toLowerCase())
     if (b !== undefined) match.set(n.node, b)
   }
-  if (match.size === 0) throw new Error("bindSkeleton: no node of the piece is named like a node of the body")
+  if (match.size === 0) throw new Error("bindSkeleton: no node of the piece is named like a node of the body" + (opts.match ? " (through match)" : ""))
 
   // Matched rows move onto the body's joints. Identical skins share one
   // texture, so its rows move with the first skin naming it; the check

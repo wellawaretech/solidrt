@@ -44,6 +44,14 @@ export type ShadowOptions = {
    * every cascade; it also bounds the maps' depth range, which is what
    * `bias` is measured against. A box light ignores it. */
   distance?: number | null
+  /** Where the cascades split: `cascades - 1` fractions of the
+   * near..distance range, strictly ascending in 0..1, each the far bound
+   * of one slice (Godot's shadow_split_1..3, Unity's cascade splits).
+   * Absent or null (the default) the practical split places them,
+   * halfway between uniform and logarithmic; give them to push
+   * resolution outward (a high viewpoint over distant detail) or pull it
+   * in (close quarters). A box light ignores it. */
+  splits?: number[] | null
 }
 
 /** A directional light node: parallel rays travelling along `direction`
@@ -66,7 +74,7 @@ export type DirectionalLight = SceneNode & {
    * `receiveShadow: false`). */
   castShadow: boolean
   /** The resolved shadow options (read; write through setLight). */
-  shadow: { mapSize: number; bias: number; normalBias: number; radius: number; camera: ShadowCamera; cascades: number; distance: number | null }
+  shadow: { mapSize: number; bias: number; normalBias: number; radius: number; camera: ShadowCamera; cascades: number; distance: number | null; splits: number[] | null }
 }
 
 /** A spot light node: a cone of light from the node's WORLD position
@@ -251,6 +259,21 @@ function mergeShadow(into: DirectionalLight["shadow"], update: ShadowOptions): v
     if (d !== null && !(d > 0)) throw new Error("shadow.distance must be a positive number or null")
     into.distance = d
   }
+  if (update.splits !== undefined) {
+    let s = update.splits
+    if (s !== null) {
+      if (!Array.isArray(s)) throw new Error("shadow.splits must be an array of fractions or null")
+      s.forEach((t, i) => {
+        if (!(t > 0 && t < 1)) throw new Error("shadow.splits[" + i + "] must be a fraction strictly between 0 and 1")
+        if (i > 0 && !(t > s[i - 1]!)) throw new Error("shadow.splits must be strictly ascending")
+      })
+    }
+    into.splits = s === null ? null : [...s]
+  }
+  // Checked after both merge: cascades and splits may arrive in one update.
+  if (into.splits !== null && into.splits.length !== into.cascades - 1) {
+    throw new Error("shadow.splits must hold cascades - 1 fractions (" + (into.cascades - 1) + " for " + into.cascades + " cascades), got " + into.splits.length)
+  }
 }
 
 export function createDirectionalLight(opts: DirectionalLightOptions = {}): DirectionalLight {
@@ -260,7 +283,7 @@ export function createDirectionalLight(opts: DirectionalLightOptions = {}): Dire
   light.color = [...(opts.color ?? [1, 1, 1])] as Vec3
   light.intensity = opts.intensity ?? 1
   light.castShadow = opts.castShadow === true
-  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: 1, camera: { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500 }, cascades: 1, distance: null }
+  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: 1, camera: { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500 }, cascades: 1, distance: null, splits: null }
   if (opts.shadow !== undefined) mergeShadow(light.shadow, opts.shadow)
   return light
 }

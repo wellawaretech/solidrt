@@ -384,10 +384,13 @@ function markRecords(mesh: Mesh, stream: InstanceStream, lo: number, hi: number)
 type PopulationOptions = {
   /** LOCAL bounds covering the population ([minX, minY, minZ, maxX, maxY,
    * maxZ] - geometryBounds' shape), copied in: the mesh node's own box,
-   * what the frustum test and the transparent sort use. Absent, an
-   * instanced mesh culls by the union of its live instances' boxes (the
-   * core follows them) and sorts by its node position; a record mesh is
-   * never culled. */
+   * what the frustum test and the transparent sort use. On an instanced
+   * mesh it is a cull box ONLY - the instances are what picks, never the
+   * mesh's box; on a record mesh (records opaque to picking) it is also
+   * the box the queries test, twelve triangles. Absent, an instanced
+   * mesh culls by the union of its live instances' boxes (the core
+   * follows them) and sorts by its node position; a record mesh is never
+   * culled and never picked. */
   bounds?: ArrayLike<number>
   /** Debug label for the record buffer. */
   label?: string

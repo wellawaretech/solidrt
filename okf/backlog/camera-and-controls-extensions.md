@@ -15,7 +15,7 @@ created: 2026-09-17
 
 The first-person asks (a boost action, a reference frame) are shaped
 without research in
-[3d-first-person-boost-and-frame](3d-first-person-boost-and-frame.md).
+[3d-first-person-reference-frame](3d-first-person-reference-frame.md).
 
 ## Symptom
 

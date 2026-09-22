@@ -1,7 +1,8 @@
 ---
 title: loadGltf reads every image a .gltf names, not the ones the parser opens
-description: parseGltf's resolver is synchronous so loadGltf prefetches everything gltfExternalUris lists, which is all of gltf.images, while the parser only ever opens an image through the baseColorTexture branch - so on a fully textured model the normal, metallic-roughness, occlusion and emissive maps are read off disk, held for the length of the parse and discarded.
+description: parseGltf's resolver is synchronous so loadGltf prefetched everything gltfExternalUris listed, which was all of gltf.images, while the parser opens only the images a material samples - so an unsampled image was read off disk, held for the length of the parse and discarded. Fixed 2026-09-22 by narrowing gltfExternalUris to the sampled set, both sides derived from one channel table and pinned by a gltf-check fixture.
 created: 2026-08-27
+completed: 2026-09-22
 ---
 
 # loadGltf reads every image a .gltf names, not the ones the parser opens
@@ -51,3 +52,18 @@ a wasted read but a "references the external file X and no resolver was
 given" throw at parse time, from a file that is perfectly valid. Either derive
 both from one function, or have `gltf-check.ts` assert the two agree on a
 fixture carrying a non-base-color texture.
+
+## Outcome (2026-09-22)
+
+Narrowed `gltfExternalUris` in place (prefetching for `parseGltf` is the
+only reason it exists, and the doc comment now says "the uris parseGltf
+will open"): every buffer, plus the images reached from the material
+channels the parser samples - by then base color, normal, emissive and
+metallic-roughness, so the "only baseColorTexture" premise above had
+already widened once, exactly the drift the trap predicted. Both sides
+now come off one table, `SAMPLED_TEXTURES` in `gltf.ts`, with the
+parser's `textureSlot` commented to add a channel there first, and
+`checks/gltf-check.ts` carries the fixture: a material naming all four
+channels plus a fifth image nothing samples, asserting the list is
+exactly the four and that the parse, given a resolver that throws on any
+unlisted uri, opens nothing else.

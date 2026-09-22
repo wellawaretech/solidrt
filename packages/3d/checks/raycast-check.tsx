@@ -16,6 +16,10 @@
 //   6. updateVertices moves the pick with the mesh: a geometry deformed
 //      out of its rest box is found where it went (box and triangles)
 //      on the next frame, and no longer where it was.
+//   7. An instanced mesh with explicit bounds picks per instance and
+//      never by its own box: a ray into an instance hits that instance
+//      once (triangle-accurate), a ray through the population box
+//      between instances misses.
 // The scene is GPU state, so like core's gpu-lease-check this runs on the
 // playback client, from the repo root:
 //
@@ -27,6 +31,8 @@ import { exit, onFrame, pct, render } from "@solidrt/core"
 import { glsl } from "@solidrt/core/gpu"
 import {
   add,
+  addInstance,
+  createInstancedMesh,
   box,
   createRecordMesh,
   createMesh,
@@ -92,6 +98,15 @@ function App() {
   setTransform(instanced, { position: [0, 3, 0] })
   add(scene.root, instanced)
 
+  // Per-instance tier: an instanced mesh with explicit bounds. The
+  // instances are the leaves that pick; the mesh's own box (the bounds,
+  // in the index for culling) is not a hit target.
+  let population = createInstancedMesh(box(), unlit({ color: [0.5, 0.5, 0.5], instanced: true }), { bounds: [-3, -0.5, -0.5, 3, 0.5, 0.5] })
+  setTransform(population, { position: [0, 6, 0] })
+  add(scene.root, population)
+  let leftInstance = addInstance(population, { position: [-2, 0, 0] })
+  addInstance(population, { position: [2, 0, 0] })
+
   // The undrawn collision stand-in: layer 2, outside the scene mask (1).
   let collision = createMesh(box(), grey)
   setTransform(collision, { position: [0, -3, 0] })
@@ -116,7 +131,7 @@ function App() {
       else if (moved[0]!.face === undefined) fail("the moved pick should be triangle-accurate")
       else if (Math.abs(moved[0]!.distance - 9.5) > 1e-3) fail(`the moved pick should land at 9.5, got ${moved[0]!.distance}`)
 
-      if (failures === 0) console.log("PASS: triangle accuracy, box tier, pick/raycast parity, layer masks, mesh filter, update follow")
+      if (failures === 0) console.log("PASS: triangle accuracy, box tier, pick/raycast parity, layer masks, mesh filter, update follow, per-instance picking")
       else console.log(`${failures} FAILURES`)
       exit()
     }
@@ -140,6 +155,13 @@ function App() {
     if (inst.length !== 1 || inst[0]!.mesh !== instanced) fail("ray into the instanced box should hit it once")
     else if (inst[0]!.face !== undefined || inst[0]!.uv !== undefined) fail("an instanced hit must carry no face or uv")
     else if (Math.abs(inst[0]!.normal[2] - 1) > 1e-4) fail(`an instanced hit carries the struck face's normal, got [${inst[0]!.normal}]`)
+
+    // 7. An instanced mesh picks per instance, never by its own box.
+    let pop = scene.raycast([-2, 6, 10], down)
+    if (pop.length !== 1 || pop[0]!.mesh !== population || pop[0]!.instance !== leftInstance) {
+      fail(`a ray into an instance should hit that instance once, got ${pop.length}: ${pop.map(h => (h.instance ? "instance" : "mesh box")).join(", ")}`)
+    } else if (pop[0]!.face === undefined) fail("an instance hit is triangle-accurate")
+    if (scene.raycast([0, 6, 10], down).length !== 0) fail("a ray through the population box between instances must miss (the mesh's own box is not a hit target)")
 
     // 3. pick() casts the same ray as raycast(screenRay).
     let px = scene.project([-2, 0, 0])

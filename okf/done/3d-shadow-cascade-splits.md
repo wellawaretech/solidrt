@@ -1,7 +1,8 @@
 ---
 title: Cascade split ratios are fixed
-description: A cascaded sun slices its range with one fixed practical split (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera (a high viewpoint, a driving game) cannot push resolution outward and a close-quarters one cannot pull it in; Godot's shadow_split_1..3 and Unity's cascade splits are per-light ratios, Three's CSM addon a mode switch.
+description: A cascaded sun sliced its range with one fixed practical split (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera could not push resolution outward and a close-quarters one could not pull it in; landed 2026-09-22 as shadow.splits on the directional light, cascades - 1 ascending fractions of the near..distance range (Godot's shadow_split_1..3), the practical split staying the default.
 created: 2026-09-06
+completed: 2026-09-22
 ---
 
 # Cascade split ratios are fixed
@@ -36,3 +37,16 @@ throws on the wrong length or a non-ascending list. `cascadeSplit` in
 `examples/cascades.tsx` gains a splits setting beside its cascade count,
 and pulling the first boundary in sharpens the pillars at the camera's
 feet at the visible cost of the horizon.
+
+## Outcome (2026-09-22)
+
+Landed as shaped. `shadow.splits?: number[] | null` on `ShadowOptions`
+and the resolved `shadow`: `cascades - 1` fractions strictly ascending in
+0..1, validated in `mergeShadow` after both `cascades` and `splits` merge
+(the two may arrive in one `setLight`), null or absent keeping the
+practical split. The boundary math is `cascadeBoundary` in `math.ts`,
+dispatching to `cascadeSplit` or the fraction of the near..far range
+(Godot's fractions are of the max distance from 0; the difference is
+`near`, decided deliberately so every fraction is a valid boundary), with
+two rows in `tests/cascade.test.ts`. `placeShadowCamera` reads it; the
+`cascades` debug command in `examples/cascades.tsx` takes `splits`.

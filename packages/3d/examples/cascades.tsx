@@ -11,9 +11,12 @@
 // tile of the scene's one atlas, so the pass count is unchanged.
 //
 // A click cycles 1..4 cascades (1 = the box, widened over the field).
-// The `cascades` debug command sets the count and the shadow distance
-// (`{ count, distance }`; the range the cascades split, the camera's far
-// by default - pulling it in sharpens every cascade) and `fly` parks the
+// The `cascades` debug command sets the count, the shadow distance and
+// the splits (`{ count, distance, splits }`; the range the cascades
+// split, the camera's far by default - pulling it in sharpens every
+// cascade; `splits` the count - 1 fractions of it, null for the
+// practical split - pulling the first in sharpens the pillars at the
+// camera's feet at the horizon's cost) and `fly` parks the
 // flight (`{ t: seconds }`), so a capture repeats. The field is fogged
 // toward the sky color from FOG_NEAR to FOG_FAR, inside the camera's far
 // plane, so the far pillars sink into the horizon instead of clipping
@@ -38,6 +41,7 @@ const FOG_FAR = 150
 
 let [cascades, setCascades] = createSignal(3)
 let [distance, setDistance] = createSignal<number | null>(null)
+let [splits, setSplits] = createSignal<number[] | null>(null)
 // The flight clock, in seconds; `parked` holds it.
 let [time, setTime] = createSignal(0)
 let parked: number | null = null
@@ -45,8 +49,9 @@ let parked: number | null = null
 registerDebug("cascades", (args?: Record<string, unknown>) => {
   if (typeof args?.count === "number") setCascades(args.count)
   if (typeof args?.distance === "number" || args?.distance === null) setDistance(args.distance)
+  if (Array.isArray(args?.splits) || args?.splits === null) setSplits(args.splits as number[] | null)
   flush()
-  return { cascades: cascades(), distance: distance() }
+  return { cascades: cascades(), distance: distance(), splits: splits() }
 })
 registerDebug("fly", (args?: Record<string, unknown>) => {
   if (typeof args?.t === "number") {
@@ -116,6 +121,7 @@ function App() {
               normalBias: 0.08,
               cascades: cascades(),
               distance: distance(),
+              splits: splits(),
               // The box tier's frustum, when cascades is 1: the whole field.
               camera: { left: -FIELD / 2, right: FIELD / 2, top: FIELD / 2, bottom: -FIELD / 2, near: 1, far: 400 },
             }}

@@ -3,7 +3,8 @@
 // billboard modes side by side: "full" glows that stay flat to the screen
 // whatever the camera does, and "fixed-y" trees that only yaw to follow
 // the camera and stay upright as it climbs - the classic upright sprite.
-// The spinning cube is the reference solid; the sprites' `scale` is their
+// Two mapless puffs over the cube use the radial shape instead of a
+// texture. The spinning cube is the reference solid; the sprites' `scale` is their
 // world size, and their (ignored) rotation is never set.
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { createTexture } from "@solidrt/core/gpu"
@@ -59,6 +60,9 @@ function App() {
 
   let glows = sprite({ map: glow(), color: [1, 0.85, 0.5] })
   let trees = sprite({ map: tree(), billboard: "fixed-y" })
+  // The same soft disc with no texture at all: the radial shape, a soft
+  // puff at falloff 2, glowing additively.
+  let puffs = sprite({ shape: "radial", falloff: 2, color: [0.45, 0.7, 1], blend: "add" })
   let ringPositions = Array.from({ length: 8 }, (_, i) => {
     let a = (i / 8) * Math.PI * 2
     return [Math.cos(a) * 1.4, 0.9 + Math.sin(a * 2) * 0.3, Math.sin(a) * 1.4] as [number, number, number]
@@ -84,6 +88,8 @@ function App() {
           <Sprite material={trees} position={[2.4, 0.9, 0.5]} scale={[1.4, 1.8, 1]} />
           <Sprite material={trees} position={[0.8, 0.7, -2.6]} scale={[1, 1.4, 1]} />
           <Sprite material={trees} position={[-1.5, 0.6, 2.2]} scale={[0.9, 1.2, 1]} />
+          <Sprite material={puffs} position={[0, 1.6, 0]} scale={0.9} />
+          <Sprite material={puffs} position={[-0.6, 2.1, 0.4]} scale={0.6} />
         </Scene>
       </view>
     </window>

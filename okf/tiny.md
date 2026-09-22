@@ -25,13 +25,6 @@ symptom shows. A heading that outgrows this file splits into its own.
 `flux/` - the JavaScript runtime and its plugins.
 
 
-## Extensions
-
-`@solidrt/2d` and `@solidrt/3d`.
-
-- `@solidrt/3d` bindSkeleton matches joints by case-insensitive name only; a pipeline that differs by prefix or suffix (Mixamo's `mixamorig:`, a one-sided `_JNT`) needs a `match` option mapping a piece name to a body name - Unity matches exact names and leaves the rest to the app, so add it when a consumer shows up.
-- `@solidrt/3d` `<InstancedMesh>` and `<InstancedLod>` still take the full `PointerEventProps` through `PopulatedMeshProps` while `<Group>` and `<Lod>` were narrowed to `BubblingPointerEventProps`; settle whether an instanced mesh's own node is ever a hover target (its instances are the leaves that pick, but the mesh node does get `setBounds(localBounds(mesh))` in scene.ts, and the core raycast falls back to the box for a shapeless node, so a populated mesh with explicit `bounds` may be struck by its box before its instances - check that first, against 3d AGENTS.md's "picks per instance regardless") and narrow it too if not.
-
 ## Components
 
 `packages/components`.

@@ -85,11 +85,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
-- **[Two names drifted apart between @solidrt/2d and @solidrt/3d after the symmetry passes](backlog/2d-3d-vocabulary-drift.md)** [2026-09-11]
-  Reading a camera control is camera() in 2d against pose() in 3d with a
-  Camera2dPose type nothing returns, and "is it playing" is a boolean field
-  against a method returning names; both landed separately after the 08-31 and
-  09-06 unison reviews.
 - **[Extrude atlas cells into gutters so a mipmapped sheet does not bleed](backlog/2d-atlas-extrude.md)** [2026-09-07]
   The layer shaders clamp samples into their frame, which stops edge bleed at
   mip level 0, but a mip chain averages blocks that straddle cell edges before
@@ -148,11 +143,11 @@ Shaped, not started.
   the chain's rough level, ambient occlusion maps, a smaller environment file,
   EXR input, Three-style face sets, a per-probe format, half-float readback,
   and the probe cost on the low-end devices.
-- **[First-person camera: boost action and a reference frame](backlog/3d-first-person-boost-and-frame.md)** [2026-09-22]
-  FirstPersonCamera has no sprint, so a boost is a keyboard-only moveSpeed
-  swap the pad never gets, and it cannot ride a moving node, so inside a
-  rotating model the walls drift past a camera that stays still in the world;
-  a boost action in the bindings and a frame option on the control.
+- **[First-person camera: a reference frame](backlog/3d-first-person-reference-frame.md)** [2026-09-22]
+  FirstPersonCamera's pose is in world space, so inside a model that rotates
+  as a whole the walls drift past a camera that stays still, and rotating the
+  pose by hand every frame fights the control's own glide and clamps; a frame
+  option on the control that keeps the pose in a node's local space.
 - **[Instanced meshes - the additive follow-ups](backlog/3d-instance-additive.md)** [2026-09-06]
   What the instance-citizenship item left as strictly additive work -
   per-instance frustum gating, the transparent sort center from the instances'
@@ -171,12 +166,12 @@ Shaped, not started.
   composite. The levers are per-pixel (shadow taps, render scale) plus one
   structural fix (shadow atlas); the compositing path, geometry, shadow map
   resolution and the stats overlay are all measured non-factors.
-- **[Material hooks: surface on the stock materials, local varyings, sprite falloff](backlog/3d-material-hooks.md)** [2026-09-22]
-  Adding one procedural term to phong or standard means rebuilding the
-  material as a shaderMaterialClass and seeding its uniforms by hand,
-  world-keyed detail swims on a moving mesh because the lit vertex stage
-  carries no local position or normal, and a sprite without a map is a hard
-  square; three small additions to material.ts and glsl.ts.
+- **[Mesh-local position and normal varyings in the lit vertex stage](backlog/3d-material-local-varyings.md)** [2026-09-22]
+  litVertex writes vWorldPos and vNormal only, so world-keyed procedural
+  detail swims across a moving mesh and an app that wants object-space detail
+  copies the whole lit vertex stage to add vLocalPos/vLocalNormal, which
+  drifts from every later litVertex change; a localVaryings option on the lit
+  sources and the stock materials.
 - **[Model loader follow-ups](backlog/3d-model-loader.md)** [2026-08-26]
   The glTF subset loader (roadmap item 7, shipped 2026-08-26 as
   parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3
@@ -200,12 +195,6 @@ Shaped, not started.
   and there is no output={false}, so an app that renders only through
   <View3d>s carries a full unused scene target; @solidrt/2d took the opposite
   structure on 09-07 and layers render only through views.
-- **[Cascade split ratios are fixed](backlog/3d-shadow-cascade-splits.md)** [2026-09-06]
-  A cascaded sun slices its range with one fixed practical split
-  (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera
-  (a high viewpoint, a driving game) cannot push resolution outward and a
-  close-quarters one cannot pull it in; Godot's shadow_split_1..3 and Unity's
-  cascade splits are per-light ratios, Three's CSM addon a mode switch.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -413,12 +402,6 @@ Shaped, not started.
   strict back-to-front instance order per camera move, which is the one real
   gap and lands as the projected-key mode of gpu-instance-order. Staged so a
   demo-tier viewer is library-only work today.
-- **[loadGltf reads every image a .gltf names, not the ones the parser opens](backlog/gltf-image-prefetch-overreads.md)** [2026-08-27]
-  parseGltf's resolver is synchronous so loadGltf prefetches everything
-  gltfExternalUris lists, which is all of gltf.images, while the parser only
-  ever opens an image through the baseColorTexture branch - so on a fully
-  textured model the normal, metallic-roughness, occlusion and emissive maps
-  are read off disk, held for the length of the parse and discarded.
 - **[Go client crashes at launch on the x86_64 emulator](backlog/go-client-emulator-launch-crash.md)** [2026-09-01]
   The currently staged solidrt-go.apk aborts within a second of launch on the
   srt_pixel6 emulator (FORTIFY, destroyed mutex inside libhwui's CommonPool);
@@ -1196,6 +1179,13 @@ Finished, kept for the reasoning.
   whose incoming branch attaches before the outgoing one detaches sums both
   branches against the 8-slot budget and throws; a casting point light (6
   slots) is unusable in any app that swaps scene content.
+- **[Cascade split ratios are fixed](done/3d-shadow-cascade-splits.md)** [2026-09-22]
+  A cascaded sun sliced its range with one fixed practical split
+  (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera
+  could not push resolution outward and a close-quarters one could not pull it
+  in; landed 2026-09-22 as shadow.splits on the directional light, cascades -
+  1 ascending fractions of the near..distance range (Godot's
+  shadow_split_1..3), the practical split staying the default.
 - **[Cascaded shadow maps](done/3d-shadow-cascades.md)** [2026-08-27]
   One shadow.camera box per casting light: a large outdoor scene either blurs
   (the box covers everything at one map's resolution) or clips (the box covers
@@ -1499,6 +1489,13 @@ Finished, kept for the reasoning.
   hand-count; a bundler pass that injects a #line directive into glsl-tagged
   template literals would make the driver report the .tsx line itself, closing
   the last unmapped diagnostic in the dev loop.
+- **[loadGltf reads every image a .gltf names, not the ones the parser opens](done/gltf-image-prefetch-overreads.md)** [2026-09-22]
+  parseGltf's resolver is synchronous so loadGltf prefetched everything
+  gltfExternalUris listed, which was all of gltf.images, while the parser
+  opens only the images a material samples - so an unsampled image was read
+  off disk, held for the length of the parse and discarded. Fixed 2026-09-22
+  by narrowing gltfExternalUris to the sampled set, both sides derived from
+  one channel table and pinned by a gltf-check fixture.
 - **[A glTF with no scenes array emits every child mesh twice](done/gltf-sceneless-duplicate-parts.md)** [2026-09-22]
   parseGltf falls back to treating every node index as a root when the
   document declares no scenes, but the walk still recurses children, so any

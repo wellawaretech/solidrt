@@ -59,7 +59,9 @@ export let Lod: ParentComponent<LodProps> = props => {
   return <LodContext value={registry}>{provide(ctx, node, props)}</LodContext>
 }
 
-export type InstancedLodProps = PopulatedMeshProps & {
+// Bubbling pointer props only, as InstancedMesh: the group's node is not
+// a hit target.
+export type InstancedLodProps = Omit<PopulatedMeshProps, "onPointerEnter" | "onPointerLeave"> & {
   /** The levels nearest first, each what the population draws at it and
    * the per-instance projected size below which it hands over (see
    * createInstancedLod); fixed at creation. */

@@ -95,7 +95,7 @@ on-grid within a step; `placeShadowCamera` is policy only, and one
 `forEachShadowSlot` deals the map slots for rects and matrices alike.
 
 Still open, as its own item: the split ratios
-([3d-shadow-cascade-splits](../backlog/3d-shadow-cascade-splits.md)).
+([3d-shadow-cascade-splits](3d-shadow-cascade-splits.md), landed 2026-09-22 as `shadow.splits`).
 
 ## Done looks like
 

@@ -9,7 +9,7 @@
 
 import { createDrawTarget, depthTexture, destroyTexture, limits, setTargetRect, setTargetSize } from "@solidrt/core/gpu"
 import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
-import { cascadeSplit, copy, frustumSliceSphere, lookAt as lookAtMatrix, mat4, snapToGrid, transformVector } from "./math.ts"
+import { cascadeBoundary, copy, frustumSliceSphere, lookAt as lookAtMatrix, mat4, snapToGrid, transformVector } from "./math.ts"
 import type { Mat4, Vec3 } from "./math.ts"
 import { MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
 import { shadowDepthMaterial } from "./material.ts"
@@ -389,7 +389,8 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
       return
     }
     // Cascades: the scene camera's range near..far (far capped by
-    // shadow.distance) sliced by cascadeSplit, each slice's bounding
+    // shadow.distance) sliced by cascadeBoundary (the light's explicit
+    // splits, or the practical split), each slice's bounding
     // sphere (frustumSliceSphere) as an orthographic box looking along
     // the light, its centre snapped to the map's texel grid in light
     // space (snapToGrid) so the shadow edges do not swim as the camera
@@ -406,7 +407,7 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
     let aspect = size.width / size.height
     let zn = near
     for (let c = 0; c < n; c++) {
-      let zf = cascadeSplit(near, far, c, n, CASCADE_SPLIT_LAMBDA)
+      let zf = cascadeBoundary(near, far, c, n, CASCADE_SPLIT_LAMBDA, light.shadow.splits)
       let radius = frustumSliceSphere(cascadeCenter, camera, aspect, zn, zf)
       zn = zf
       let view = shadow.views[c]!

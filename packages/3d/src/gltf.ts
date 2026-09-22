@@ -359,15 +359,45 @@ export function isGlb(bytes: Uint8Array): boolean {
   return bytes.length >= 12 && new DataView(bytes.buffer, bytes.byteOffset, 12).getUint32(0, true) === GLB_MAGIC
 }
 
-/** The external uris a document references (buffers and images), so an
- * async caller can fetch them before parseGltf. Usually empty for .glb -
- * but a .glb MAY reference external files (some exporters write image
- * uris), so this reads its JSON chunk rather than assuming. data: uris
- * are never listed. */
+// The texture references the material map (parseGltf's `materials`)
+// samples, and so the only images the parser ever opens: the prefetch
+// list (gltfExternalUris) and the parser's demand set are both derived
+// from this one table, so a channel added to the map is added here too or
+// checks/gltf-check.ts fails on its all-channels fixture.
+const SAMPLED_TEXTURES: ((material: any) => any)[] = [
+  (m) => m.pbrMetallicRoughness?.baseColorTexture,
+  (m) => m.normalTexture,
+  (m) => m.emissiveTexture,
+  (m) => m.pbrMetallicRoughness?.metallicRoughnessTexture,
+]
+
+// The image indices a document's materials sample (SAMPLED_TEXTURES
+// through textures[].source), the demand set imageSlot will meet.
+function sampledImages(gltf: any): Set<number> {
+  let images = new Set<number>()
+  for (let m of gltf.materials ?? []) {
+    for (let channel of SAMPLED_TEXTURES) {
+      let ref = channel(m)
+      let source = ref === undefined ? undefined : gltf.textures?.[ref.index]?.source
+      if (source !== undefined) images.add(source)
+    }
+  }
+  return images
+}
+
+/** The external uris parseGltf will open on a document: every buffer,
+ * and the images a material samples (an image nothing samples is never
+ * read, so it is not listed), so an async caller can fetch exactly that
+ * set before the synchronous parse. Usually empty for .glb - but a .glb
+ * MAY reference external files (some exporters write image uris), so
+ * this reads its JSON chunk rather than assuming. data: uris are never
+ * listed. */
 export function gltfExternalUris(bytes: Uint8Array): string[] {
   let gltf = isGlb(bytes) ? readGlb(bytes).json : JSON.parse(new TextDecoder().decode(bytes))
+  let sampled = sampledImages(gltf)
+  let items: any[] = [...(gltf.buffers ?? []), ...(gltf.images ?? []).filter((_: any, i: number) => sampled.has(i))]
   let uris: string[] = []
-  for (let item of [...(gltf.buffers ?? []), ...(gltf.images ?? [])]) {
+  for (let item of items) {
     if (typeof item.uri === "string" && !item.uri.startsWith("data:")) uris.push(item.uri)
   }
   return uris
@@ -450,6 +480,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   // A texture reference's image slot, or null (the reference absent, or
   // its texture imageless). Further UV sets are outside the subset, so a
   // non-zero texCoord is ignored and the map samples the one UV set.
+  // Every reference the map below passes here is one of SAMPLED_TEXTURES
+  // (the prefetch list): a new channel goes in the table first.
   let textureSlot = (ref: any): number | null => {
     if (ref === undefined) return null
     let texture = gltf.textures?.[ref.index]

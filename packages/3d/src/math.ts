@@ -775,6 +775,17 @@ export function cascadeSplit(near: number, far: number, index: number, count: nu
   return uniform + (log - uniform) * lambda
 }
 
+/**
+ * The far bound of cascade `index` of `count`: `splits` given (the
+ * light's explicit fractions of near..far, `count - 1` of them) places
+ * it at that fraction of the range, else cascadeSplit's `lambda` does.
+ * The last slice ends at `far` either way.
+ */
+export function cascadeBoundary(near: number, far: number, index: number, count: number, lambda: number, splits: number[] | null): number {
+  if (splits === null || index >= count - 1) return cascadeSplit(near, far, index, count, lambda)
+  return near + (far - near) * splits[index]!
+}
+
 /** The camera facts a frustum slice depends on: its view matrix (rows are
  * its right, up and back axes), eye, vertical fov in degrees and, for an
  * orthographic camera, the extents (fov ignored then). */

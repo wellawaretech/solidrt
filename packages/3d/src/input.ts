@@ -59,21 +59,30 @@ export function orbitBindings(devices: CameraDevices): Binding[] {
   return out
 }
 
-/** The first-person control's actions: `look`, `move`, `rise`. */
-export let firstPersonActions = { look: "vec2", move: "vec2", rise: "axis" } as const
+/** The first-person control's actions: `look`, `move`, `rise`, `boost`
+ * (an axis, so a button binding reads 1 while held - the control has
+ * no button kind). */
+export let firstPersonActions = { look: "vec2", move: "vec2", rise: "axis", boost: "axis" } as const
 
 /**
  * The first-person camera's standard bindings: a drag looks around and so
  * does mouse motion while the pointer is locked (the app locks it: see
  * examples/first-person.tsx); the right stick looks, the left stick
- * walks, the shoulders rise and sink in fly mode; WASD and the arrows
- * walk, Q/E rise and sink.
+ * walks, the shoulders rise and sink in fly mode, the left stick's press
+ * boosts (the usual pad sprint); WASD and the arrows walk, Q/E rise and
+ * sink, Shift boosts.
  */
 export function firstPersonBindings(devices: CameraDevices): Binding[] {
   let out: Binding[] = []
   let { pointer, gamepad, keyboard } = devices
   if (pointer) out.push({ action: "look", source: pointer.drag }, { action: "look", source: pointer.mouseDelta })
-  if (gamepad) out.push({ action: "look", source: gamepad.rightStick }, { action: "move", source: gamepad.leftStick }, { action: "rise", source: gamepad.shoulders })
-  if (keyboard) out.push({ action: "move", source: keyboard.wasd }, { action: "move", source: keyboard.arrows }, { action: "rise", source: keyboard.axis("KeyQ", "KeyE") })
+  if (gamepad) {
+    out.push({ action: "look", source: gamepad.rightStick }, { action: "move", source: gamepad.leftStick }, { action: "rise", source: gamepad.shoulders })
+    out.push({ action: "boost", source: gamepad.button("leftStick") })
+  }
+  if (keyboard) {
+    out.push({ action: "move", source: keyboard.wasd }, { action: "move", source: keyboard.arrows }, { action: "rise", source: keyboard.axis("KeyQ", "KeyE") })
+    out.push({ action: "boost", source: keyboard.key("ShiftLeft") }, { action: "boost", source: keyboard.key("ShiftRight") })
+  }
   return out
 }

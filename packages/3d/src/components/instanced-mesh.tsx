@@ -12,7 +12,10 @@ import type { InstancedMesh as InstancedMeshNode, InstanceNode } from "../mesh.t
 import type { Geometry } from "../geometry.ts"
 import type { Material } from "../material.ts"
 
-export type InstancedMeshProps = PopulatedMeshProps & {
+// The mesh's own node is never a hit target (its instances are the
+// leaves that pick, its bounds cull only), so like a Group it bubbles
+// and omits the hover pair.
+export type InstancedMeshProps = Omit<PopulatedMeshProps, "onPointerEnter" | "onPointerLeave"> & {
   geometry: Geometry
   /** An instanced material: a stock one with `instanced` (or
    * `instanceColors`, for a per-instance tint), or a class declaring

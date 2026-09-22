@@ -41,6 +41,7 @@ import {
   OrbitCamera,
   orbitActions,
   orbitBindings,
+  phong,
   plane,
   Scene,
   setTransform,
@@ -53,14 +54,14 @@ import {
   BASE_FLOATS,
 } from "@solidrt/3d"
 import type { CameraUpdate, OrbitCameraHandle, OrbitPoseState, SceneNode, SpotShadowOptions, Vec3 } from "@solidrt/3d"
-import { FRESNEL, LIT_VERTEX, phongFragment, SCENE } from "@solidrt/3d/glsl"
+import { FRESNEL, LIT_VERTEX, SCENE } from "@solidrt/3d/glsl"
 import { registerDebug } from "srt:dev"
 
 const KNOT_P = 2
 const KNOT_Q = 3
 /** Where the knot stands, and the orbit camera's pivot. */
 const KNOT_CENTER: Vec3 = [0, 1.4, 0]
-const FLOOR_SIZE = 36 // world units across; GROUND_FRAGMENT interpolates it
+const FLOOR_SIZE = 36 // world units across; GROUND_SURFACE interpolates it
 const FOV = 0.85 // vertical field of view, radians (the scene camera speaks degrees)
 // What every panel projects with; near and far bracket the floor's visible disc.
 const CAMERA: CameraUpdate = { fov: (FOV * 180) / Math.PI, near: 0.1, far: 80 }
@@ -152,10 +153,11 @@ const MIN_RENDER_SCALE = 1.5
 // GLSL ES 3.00. None declares `#version`: the runtime injects its own
 // preamble - `fragColor` and `iResolution` for the fragment stages, plus
 // `vUV` for the fragment-only backdrop. Every other uniform is part of
-// @solidrt/3d's standard set, opt-in by declare-and-use. The knot and the
-// ground share one vertex stage (LIT_VERTEX) and take their lighting from
-// the scene's real light nodes through SCENE, so no light direction is
-// baked into the GLSL and moving a light node re-shades everything.
+// @solidrt/3d's standard set, opt-in by declare-and-use. The knot runs on
+// the stock lit vertex stage (LIT_VERTEX, the one `phong` compiles for
+// the ground) and takes its lighting from the scene's real light nodes
+// through SCENE, so no light direction is baked into the GLSL and moving
+// a light node re-shades everything.
 
 // The knot's own material terms, and its rim: a view-dependent term of
 // the shading model added after the scene's shade, not a stand-in light.
@@ -217,10 +219,11 @@ let KNOT_FRAGMENT = glsl`
 `
 
 /**
- * Ground: the stock lit fragment with a `surface` function - the material
- * describes the surface and the package shades it with the same lights,
- * shadows and fog as the knot. Output is premultiplied alpha, the ground
- * fading to fully transparent at the rim, which is why it is `transparent`.
+ * Ground: the stock phong material with a `surface` function - the
+ * material describes the surface and the package shades it with the same
+ * lights, shadows and fog as the knot. Output is premultiplied alpha, the
+ * ground fading to fully transparent at the rim, which is why it is
+ * `transparent`.
  */
 let GROUND_PRELUDE = glsl`
   // World units per square.
@@ -257,7 +260,6 @@ let GROUND_SURFACE = glsl`
   }
 `
 
-let GROUND_FRAGMENT = phongFragment({ transparent: true, prelude: GROUND_PRELUDE, surface: GROUND_SURFACE })
 
 /**
  * Backdrop: a static radial gradient with a touch of hash grain so the ramp
@@ -423,17 +425,10 @@ function App() {
   let initial = untrack(targetSize)
 
   // Transparent, so the scene draws the ground after the opaque knot with
-  // depth writes off. Made once, here, not in a JSX prop: a shaderMaterial
-  // is a pipeline, and a prop expression is re-read.
-  let groundMaterial = shaderMaterial({
-    vertex: LIT_VERTEX,
-    fragment: GROUND_FRAGMENT,
-    transparent: true,
-    // lit's per-entry uniforms: the surface function replaces the base,
-    // so the color is moot; no highlight on the floor.
-    params: { uColor: [1, 1, 1, 1], uSpecular: 0, uShininess: 30 },
-    label: "ground",
-  })
+  // depth writes off. Made once, here, not in a JSX prop: a material is
+  // a pipeline, and a prop expression is re-read. The surface function
+  // replaces the base, so the color is moot; no highlight on the floor.
+  let groundMaterial = phong({ transparent: true, prelude: GROUND_PRELUDE, surface: GROUND_SURFACE, specular: 0 })
   let knotMaterial = shaderMaterial({ vertex: LIT_VERTEX, fragment: KNOT_FRAGMENT, label: "knot" })
 
   // Both side views render `into` this one target as tiles: one pass for the

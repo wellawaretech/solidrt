@@ -331,7 +331,9 @@ PCF taps clamp at face-tile edges, so a face seam hardens slightly
 instead of bleeding into the neighbour.
 `shadow: { cascades: N }` (1..MAX_CASCADES = 4) replaces the box with
 N maps fitted to slices of the SCENE camera's frustum (near ..
-`shadow.distance`, default the camera far; the practical split; each
+`shadow.distance`, default the camera far; the practical split, or
+`shadow.splits` - `N - 1` ascending fractions of that range, Godot's
+shadow_split_1..3 - to push resolution outward or pull it in; each
 slice's bounding sphere as an ortho box along the light, its centre
 snapped to the map's texel grid so edges do not swim; re-fitted
 whenever the scene camera or the light moves) - a receiver samples the
@@ -571,7 +573,7 @@ collision claims - two copies of this contract have drifted before.
 | `InstancedLod` | as InstancedMesh minus `material`, plus `levels` (`[{ geometry, material, size }]` nearest first, fixed at creation; instanced materials as InstancedMesh's), `castShadow?` (every level); `<Instance>` children populate it as under `InstancedMesh`, each drawing the level its own projected size picks |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), `frustumCulled?` (default true; false for geometry a vertex stage moves beyond the node's box - a billboard, a fullscreen quad; see Culling), `cullMargin?` (world units of slack around the box for bounded displacement), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
-| `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (optional: instances pick by themselves and the mesh culls by their union), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount, and `anchor?` (a SceneNode, fixed at creation: the ancestor the records are relative to, so `<Instance mesh>` children may sit anywhere under it - see createInstancedMesh) |
+| `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (an optional cull box, never a hit: instances pick by themselves, and without it the mesh culls by their union), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount, and `anchor?` (a SceneNode, fixed at creation: the ancestor the records are relative to, so `<Instance mesh>` children may sit anywhere under it - see createInstancedMesh) |
 | `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's style record, one value per component - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it), and `mesh?` (the population, fixed at creation, when the instance is placed outside its `<InstancedMesh>` - inside that mesh's `anchor` subtree) |
 | `RecordMesh` | as Mesh, plus `records` (the per-instance records in the material's first instance layout, an ArrayBufferView; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffers are component-owned and freed on unmount |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
@@ -744,7 +746,8 @@ layout, so fit after the first frame (or hand a fixed-size scene).
 ### First-person camera
 
 First-person control: `createFirstPersonCamera(scene, { position?, yaw?,
-pitch?, min/maxPitch?, moveSpeed?, lookSpeed?, fly?, clampPosition? })` -
+pitch?, min/maxPitch?, moveSpeed?, boostSpeed?, lookSpeed?, fly?,
+clampPosition? })` -
 a position plus yaw/pitch (yaw 0 faces -z, positive turns left; pitch
 positive looks up), Unity's FirstPersonController shape (look AND move in
 one control) where Three splits PointerLockControls from a hand-written
@@ -754,8 +757,12 @@ pointer feed's `mouseDelta` delivers mouse motion under pointer lock in
 the same unit; a rate turns at 0.4 turn/s), `move` ([right, forward],
 forward = -y: a stick pushed up or W reads [0, -1]; a rate walks at
 `moveSpeed`, a delta is a step in world units, diagonals clamped to unit
-length so they walk no faster) and `rise` (world up at `moveSpeed`, fly
-mode only). Walking (the default) flattens the heading onto the ground
+length so they walk no faster), `rise` (world up at `moveSpeed`, fly
+mode only) and `boost` (an axis, since the control has no button kind:
+a bound button reads 1 while held, and any non-zero read multiplies the
+move and rise RATES by `boostSpeed`, default 2 - the sprint; a delta
+stays a one-unit step; `firstPersonBindings` puts it on Shift and the
+left stick's press). Walking (the default) flattens the heading onto the ground
 plane at fixed height; `fly` moves along the view. The verbs:
 `lookBy(yaw, pitch)` radians, `moveBy(right, forward, up?)` in the
 walker's frame, `set(pose)`, and `glideTo({ position?, yaw?, pitch? })`,
@@ -837,7 +844,9 @@ so hits carry `face`, `uv` and a world-space `normal` facing the ray, and
 a ray through a knot's hole misses. A large geometry's triangles are
 BVH-indexed too - built by the first ray that reaches the shape, log-cost
 after - so raycasting a merged static scene stays cheap (see the batching
-advice). An instanced mesh is box-only (its
+advice). An instanced mesh picks per instance (each a leaf with the
+geometry's shape; its own node is never a hit, its `bounds` cull
+only). A record mesh is box-only (its
 explicit population bounds; records are opaque), and so is a mesh whose
 geometry is not a triangle list (lines, points, strips have no triangle
 narrowphase): it is tested by the
@@ -1167,7 +1176,8 @@ opts out of the scene's fog (all four library materials take it).
 
 #### sprite
 
-`sprite({ color?, map?, transparent?, blend?, billboard? })` - unlit on a quad
+`sprite({ color?, map?, transparent?, blend?, billboard?, shape?,
+falloff? })` - unlit on a quad
 that turns to face the camera IN THE VERTEX STAGE (off the shared
 uCamRight/uCamUp, or uCamPos for `billboard: "fixed-y"`, which yaws
 only and stays upright on world y - Godot's BILLBOARD_FIXED_Y, the
@@ -1177,7 +1187,11 @@ defaults to TRUE here (cutouts; Three's SpriteMaterial default), cull is
 off. Draw with `createSprite(material)` / `<Sprite>`: a Mesh over a
 shared unit plane, no geometry argument, `scale` = world size, rotation
 ignored. Picks by a unit box around its center (its reach at any
-facing), so hits carry no normal/face/uv. `examples/sprites.tsx`.
+facing), so hits carry no normal/face/uv. `shape: "radial"` is a
+procedural falloff over the quad's inscribed disc, `(1 - 2|uv -
+0.5|)^falloff` (default 1; 2 a soft puff) multiplying color and alpha,
+so a glow, flare or puff needs no texture; it composes with a `map`
+and with `blend: "add"`. `examples/sprites.tsx`.
 
 #### shaderMaterial
 
@@ -1740,25 +1754,32 @@ resolve - at one of three tiers, top first:
    params: { uColor: [1, 1, 1, 1], uSpecular: 0.12, uShininess: 24 } })`
    is the white starting point (the stock materials seed exactly this
    from their `color` option).
-2. A SURFACE FUNCTION inside the stock fragment. `phongFragment({ surface,
-   prelude })`: `prelude` is file scope (uniforms and helpers; a uniform
-   it declares is an ordinary `instance()` param), `surface` declares
-   `void surface(inout Surface s)`, called once the program has filled
-   the Surface struct from its options (base from uColor, the map and
-   the vertex color; the normal, bent by the normal map; emissive,
-   ambient, the light model's fields) and before it shades. Rewrite any
-   field or `discard`; it reads the varyings, the declared uniforms and
-   prelude's names, and runs in the shadow twin too, so what it discards
-   casts no shadow. The struct is the contract, no local of the
-   generated program is; colors are linear light, premultiplied
-   throughout, `Surface.base` included. The material describes the
-   surface, the package shades it (Godot's fragment(), Filament's
-   material()). This is the tier for anything whose geometry is not a
-   surface: a point splat discarding outside `gl_PointCoord`'s inscribed
-   circle and flipping a fitted normal towards the viewer keeps the
-   scene's whole light model in about fifteen lines, where hand-rolling
-   the light loop (tier 3) would have to match every light's falloff,
-   cone and shadow by hand.
+2. A SURFACE FUNCTION inside the stock material. `phong({ ..., prelude,
+   surface })` / `standard({ ..., prelude, surface })`: every other
+   option seeds as usual (`color`, the maps, metalness and roughness),
+   `prelude` is file scope (uniforms and helpers; a uniform it declares
+   is an ordinary per-entry param, `params` on the mesh or
+   `setMeshParams`), `surface` declares `void surface(inout Surface s)`,
+   called once the program has filled the Surface struct from the
+   options (base from the color, the map and the vertex color; the
+   normal, bent by the normal map; emissive, ambient, the light model's
+   fields) and before it shades. Rewrite any field or `discard`; it
+   reads the varyings, the declared uniforms and prelude's names, and
+   runs in the shadow twin too (attached whenever a surface is given),
+   so what it discards casts no shadow - with the twin seeing a prelude
+   uniform at its zero value, since mesh params reach the main entry
+   only. One program per distinct source, keyed like every option. The
+   struct is the contract, no local of the generated program is; colors
+   are linear light, premultiplied throughout, `Surface.base` included.
+   The material describes the surface, the package shades it (Godot's
+   fragment(), Filament's material()). This is the tier for anything
+   whose geometry is not a surface: a point splat discarding outside
+   `gl_PointCoord`'s inscribed circle and flipping a fitted normal
+   towards the viewer keeps the scene's whole light model in about
+   fifteen lines, where hand-rolling the light loop (tier 3) would have
+   to match every light's falloff, cone and shadow by hand. The same
+   two slots on `phongFragment` / `standardFragment` are the class form
+   for a custom vertex stage (tier 1 and 2 together).
 3. A FRAGMENT OF YOUR OWN over the scene set. Compose `SCENE` (or
    `sceneSource({ lights, receiveShadow, env, fog })`, each flag leaving a
    declaration out): it declares uCamPos, uHemiSky/uHemiGround, the
@@ -1857,7 +1878,9 @@ is discarded; Three's alphaTest, glTF MASK): opaque, depth-written, no
 sorting, usually with `cull: "none"` for cards, and `instanced: true` /
 `instanceColors: true` for an instanced mesh's population (see
 Instancing: the placement, the depth pass and a per-instance tint with
-no GLSL; the material then draws populated meshes only). Triplanar
+no GLSL; the material then draws populated meshes only), and `prelude`
+/ `surface` for one procedural term inside the stock shading (tier 2
+of Custom looks below; also on `standard`). Triplanar
 is an OPTION, not the default: generators emit 0..1 UVs per face, so a
 map on a plane is a decal (UV) while a map on generated scenery wants one
 density across parts of any size (triplanar); the map must be created
@@ -2148,7 +2171,10 @@ WITH a skin over the body's joints and WITHOUT clips, so beside an
 animated body they hold their bind pose. `bindSkeleton(body, piece)`
 drives them from the body's skeleton - Three's SkinnedMesh.bind, Unity's
 `bones =`, Godot's shared Skeleton3D. The piece's palette rows re-bind
-onto the body's joint nodes (matched by name, case-insensitive) with
+onto the body's joint nodes (matched by name, case-insensitive; a
+pipeline whose names differ by a prefix or suffix - Mixamo's
+`mixamorig:`, a one-sided `_JNT` - passes `{ match: pieceName =>
+bodyName }`, Unity's leave-it-to-the-app in one option) with
 the piece's own inverse binds, so the flush writes the body's pose into
 the piece's skin and no per-frame code exists; joints with no body
 counterpart (a hat's internal bones) and rigid parts hanging off a
@@ -2751,11 +2777,13 @@ with `srt tool 3d/model`.
 
 ### Picking, pointer and collision
 
-- Picking is triangle-accurate for ordinary meshes (`point` is a surface
-  point, hits carry `face`/`uv`/`normal`) but box-only for instanced
-  meshes and for lines/points geometry: there `point` is where the ray
-  meets the population `bounds` box (the geometry's box for lines),
-  `normal` that face's, and `face`/`uv` are absent. Never present an
+- Picking is triangle-accurate for ordinary meshes and for instances
+  (`point` is a surface point, hits carry `face`/`uv`/`normal`; an
+  instanced mesh's own node is never struck, its `bounds` only cull)
+  but box-only for record meshes and for lines/points geometry: there
+  `point` is where the ray meets the population `bounds` box (the
+  geometry's box for lines), `normal` that face's, and `face`/`uv` are
+  absent. Never present an
   instanced hit as a surface hit. Both tiers run in the spatial core (Rust); never
   add a per-triangle path in JS - rays at mesh scale are
   interpreter-hostile, and the core already does it.

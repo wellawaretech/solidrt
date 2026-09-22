@@ -61,6 +61,8 @@ const DRAG_TURNS = 0.5
 const LOOK_RATE = 0.4
 // Default walking speed, world units per second.
 const MOVE_SPEED = 3
+// Default `boostSpeed`: the multiplier on moveSpeed while `boost` is held.
+const BOOST_SPEED = 2
 // Pitch clamps stop short of the poles so the look direction never
 // degenerates against world up.
 const PITCH_LIMIT = Math.PI / 2 - 0.01
@@ -84,6 +86,11 @@ export type FirstPersonCameraOptions = FirstPersonPose & {
   maxPitch?: number
   /** Movement speed in world units per second (default 3). */
   moveSpeed?: number
+  /** Multiplier on `moveSpeed` while the `boost` axis reads non-zero (a
+   * held Shift, a pressed stick; default 2): the sprint, walking and
+   * flying alike. Scales rates only; a `move` delta is a step in world
+   * units regardless. */
+  boostSpeed?: number
   /** Multiplier over the built-in look sensitivities (drags, mouse motion
    * and rates alike). */
   lookSpeed?: number
@@ -100,7 +107,7 @@ export type FirstPersonCameraOptions = FirstPersonPose & {
   clampPosition?: (next: Vec3, current: Vec3) => Vec3
 }
 
-export type FirstPersonAxes = { look: "vec2"; move: "vec2"; rise: "axis" }
+export type FirstPersonAxes = { look: "vec2"; move: "vec2"; rise: "axis"; boost: "axis" }
 
 export type FirstPersonCamera = {
   /** Eye position (a fresh array per call). */
@@ -127,7 +134,9 @@ export type FirstPersonCamera = {
   update(dt: number): boolean
   /** The input abstraction: `look` (vec2, element heights of drag / turns
    * per second), `move` (vec2 [right, forward], forward = -y; world units
-   * per delta, `moveSpeed` per second) and `rise` (axis, fly only). */
+   * per delta, `moveSpeed` per second), `rise` (axis, fly only) and
+   * `boost` (axis: non-zero multiplies the move and rise rates by
+   * `boostSpeed`; a button binding reads 1 while held). */
   axes: Axes<FirstPersonAxes>
   /** Turn by radians (yaw positive left, pitch positive up; clamps
    * apply) and push. */
@@ -174,6 +183,7 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
   // Everything below the pose is read from `options` where it applies.
   let lookSpeed = () => options.lookSpeed ?? 1
   let moveSpeed = () => options.moveSpeed ?? MOVE_SPEED
+  let boostSpeed = () => options.boostSpeed ?? BOOST_SPEED
   let clampedPitch = (v: number) => clampNum(v, options.minPitch ?? -PITCH_LIMIT, options.maxPitch ?? PITCH_LIMIT)
   let clampPitch = () => {
     pitch = clampedPitch(pitch)
@@ -241,7 +251,7 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
   }
 
   let axes = createAxes<FirstPersonAxes>(
-    { look: "vec2", move: "vec2", rise: "axis" },
+    { look: "vec2", move: "vec2", rise: "axis", boost: "axis" },
     {
       onBegin: () => {
         interrupt()
@@ -309,7 +319,9 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
       let [mx, my] = untrack(() => axes.rate("move"))
       let rise = untrack(() => axes.rate("rise"))
       if (mx !== 0 || my !== 0 || rise !== 0) {
-        let speed = moveSpeed() * dt
+        // A held boost (any non-zero read) scales the rates, not a nudge.
+        let boost = untrack(() => axes.rate("boost")) !== 0 ? boostSpeed() : 1
+        let speed = moveSpeed() * boost * dt
         interrupt()
         step(mx * speed, -my * speed, rise * speed)
         moved = true

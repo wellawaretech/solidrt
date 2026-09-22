@@ -10,7 +10,7 @@ const MAX_WALK_DT = 0.1
 
 export type FirstPersonCameraProps = FirstPersonCameraOptions & {
   /** The input map driving the control (InputMap.drive): its `look`,
-   * `move` and `rise` actions, or the ones `actions` names. Live: a new
+   * `move`, `rise` and `boost` actions, or the ones `actions` names. Live: a new
    * map reconnects. Without one the control moves only through `ref`. */
   input?: InputMap<any>
   /** Action names per axis when the map's differ (null skips an axis). */

@@ -42,6 +42,7 @@ computes every one of these reasons; the item is recording them instead of
 returning early), the MCP surface in `packages/cli/src/mcp/`, and the
 debugging doc.
 
-The narrower half of this - a one-line dev warning at the moment
-`overrideMaterial` skips an instanced mesh, naming the view - is in
-tiny.md and does not wait for the general read.
+The narrower half of this - a one-line dev warning when a view's
+`overrideMaterial` skips instanced meshes, naming the view and the
+count - landed in scene.ts (reported once per settle of the set) and
+does not wait for the general read.

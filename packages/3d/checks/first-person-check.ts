@@ -95,6 +95,17 @@ function make(options: FirstPersonCameraOptions = {}) {
   cam.update(0.5)
   if (!near(cam.eye()[1], 2.6)) fail(`rise climbs at moveSpeed in fly mode, got ${cam.eye()[1]}`)
   rise()
+  // A held boost doubles the rate (the default boostSpeed), a nudge is
+  // still one world unit.
+  let boost = cam.axes.add("boost", () => 1)
+  let sprint = cam.axes.add("move", () => [0, -1])
+  cam.set({ position: [0, 1.6, 0], pitch: 0 })
+  cam.update(1)
+  if (!near(cam.eye()[2], -4)) fail(`a held boost walks at boostSpeed x moveSpeed, got ${cam.eye()}`)
+  sprint()
+  cam.axes.nudge("move", [0, -1])
+  if (!near(cam.eye()[2], -5)) fail(`a boost leaves a move delta a one-unit step, got ${cam.eye()}`)
+  boost()
   opts.fly = false
   opts.clampPosition = (next, current) => (Math.abs(next[2]) > 3 ? current : next)
   cam.set({ position: [0, 1.6, 0], pitch: 0 })

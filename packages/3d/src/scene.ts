@@ -1927,13 +1927,16 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (inst !== null && inst.streams.some(s => s.dirty !== null)) recordsDirty.add(mesh)
       // Picking: an ordinary mesh's node carries its geometry's shape,
       // which is its box in the core index (following every
-      // updateVertices) and its triangle narrowphase. A populated mesh is
-      // box-only by its explicit population bounds (its instances are the
-      // leaves that pick, each with the shape; a record mesh's records are
-      // opaque, so without explicit bounds it is not picked at all), as is
-      // a sprite by the unit box (its triangles lie wherever the camera
-      // is, not where the geometry says).
+      // updateVertices) and its triangle narrowphase. An instanced mesh's
+      // instances are the leaves that pick, each with the shape, so its
+      // own node stays OUT of the index: explicit population bounds are
+      // its cull box only (else the cull group of its instances). A
+      // record mesh's records are opaque, so its explicit bounds are its
+      // box in the index (without them it is not picked at all), as is a
+      // sprite's unit box (its triangles lie wherever the camera is, not
+      // where the geometry says).
       if (inst === null && !mesh._sprite) spatial.setShape(mesh._node!, bufs.shape)
+      else if (inst !== null && inst.nodes !== null) spatial.setCullBounds(mesh._node!, inst.bounds)
       else spatial.setBounds(mesh._node!, localBounds(mesh))
       // A rebuilt entry (setGeometry) re-shapes the live instances to the
       // new geometry; their record bindings are untouched. On a first
@@ -1972,7 +1975,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         detachScene(mesh)
         if (mesh._node !== null) {
           spatial.setShape(mesh._node, null)
-          spatial.setBounds(mesh._node, null)
+          if (mesh._instances !== null && mesh._instances.nodes !== null) spatial.setCullBounds(mesh._node, null)
+          else spatial.setBounds(mesh._node, null)
           byNode.delete(mesh._node)
         }
         releaseGeometryBuffers(mesh._buffers)

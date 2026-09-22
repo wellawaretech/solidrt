@@ -1,7 +1,7 @@
 // The cascade fit's pure pieces (math.ts), checked against the geometry
 // they claim: `bun test packages/3d/tests`.
 import { describe, expect, test } from "bun:test"
-import { cascadeSplit, frustumSliceSphere, lookAt, mat4 } from "../src/math.ts"
+import { cascadeBoundary, cascadeSplit, frustumSliceSphere, lookAt, mat4 } from "../src/math.ts"
 import { snapToGrid } from "../src/math.ts"
 import type { FrustumSpec, Mat4, Vec3 } from "../src/math.ts"
 
@@ -36,6 +36,17 @@ describe("cascadeSplit", () => {
   })
   test("a near of 0 slices uniformly", () => {
     expect(cascadeSplit(0, 90, 0, 3, 0.5)).toBeCloseTo(30)
+  })
+})
+
+describe("cascadeBoundary", () => {
+  test("explicit splits are fractions of the range, the last slice still ends at far", () => {
+    expect(cascadeBoundary(1, 101, 0, 3, 0.5, [0.1, 0.4])).toBeCloseTo(11)
+    expect(cascadeBoundary(1, 101, 1, 3, 0.5, [0.1, 0.4])).toBeCloseTo(41)
+    expect(cascadeBoundary(1, 101, 2, 3, 0.5, [0.1, 0.4])).toBe(101)
+  })
+  test("no splits is the practical split", () => {
+    expect(cascadeBoundary(1, 100, 0, 2, 0.5, null)).toBeCloseTo(30.25)
   })
 })
 
