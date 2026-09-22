@@ -6,7 +6,7 @@ import type { TransformProps, PointerEventProps } from "./node-props.ts"
 import { syncMesh } from "./mesh.tsx"
 import type { PopulatedMeshProps } from "./mesh.tsx"
 import { add, destroy, setMorphWeights } from "../node.ts"
-import type { MorphWeights } from "../node.ts"
+import type { MorphWeights, SceneNode } from "../node.ts"
 import { addInstance, createInstancedMesh, disposeInstances, setCastShadow, setGeometry, setInstanceStyle } from "../mesh.ts"
 import type { InstancedMesh as InstancedMeshNode, InstanceNode } from "../mesh.ts"
 import type { Geometry } from "../geometry.ts"
@@ -29,6 +29,14 @@ export type InstancedMeshProps = PopulatedMeshProps & {
   bounds?: ArrayLike<number>
   /** Debug label for the record buffers. */
   label?: string
+  /** The node the instance records are relative to (default the mesh;
+   * fixed at creation): an ANCESTOR the mesh sits under at identity, so
+   * `<Instance mesh={...}>` children may live under any node of that
+   * ancestor's subtree instead of inside this element - a population
+   * whose copies ride a hierarchy the mesh is not the root of. Take the
+   * ancestor from its `ref`; the chain between it and the mesh must stay
+   * identity (see createInstancedMesh's `anchor`). */
+  anchor?: SceneNode
   /** Draw into the scene's shadow map (setCastShadow as a prop); default
    * false. The stock instanced materials cast; a custom class needs a
    * `shadowVertex`. */
@@ -52,7 +60,7 @@ export let InstancedMeshContext = createContext<InstancedMeshNode | null>(null)
 export let InstancedMesh: ParentComponent<InstancedMeshProps> = props => {
   let ctx = useContext(SceneContext)
   let mesh = untrack(() =>
-    createInstancedMesh(props.geometry, props.material, { capacity: props.capacity, bounds: props.bounds, label: props.label }),
+    createInstancedMesh(props.geometry, props.material, { capacity: props.capacity, bounds: props.bounds, anchor: props.anchor, label: props.label }),
   )
   add(ctx.parent, mesh)
   createEffect(
@@ -89,6 +97,12 @@ export type InstanceProps = TransformProps & PointerEventProps & {
    * material: by name (keys merge) or every weight in target order; a
    * `weights` entry in `transition` animates each change. */
   morphWeights?: MorphWeights
+  /** The population this instance belongs to when it is NOT nested inside
+   * its `<InstancedMesh>` (fixed at creation): a mesh created with an
+   * `anchor`, whose instances may sit under any node of the anchor's
+   * subtree - take it from the mesh's `ref`. Absent, the enclosing
+   * `<InstancedMesh>` is the population. */
+  mesh?: InstancedMeshNode
   ref?: (instance: InstanceNode) => void
 }
 
@@ -97,12 +111,14 @@ export type InstanceProps = TransformProps & PointerEventProps & {
  * component): a node placed under the nearest `<Group>` or `<Instance>`
  * inside the mesh, with the transform, transition and pointer props of
  * a `<Group>` plus `style`. Children (a `<Mesh>` headlight under a car
- * instance) mount under it. Throws outside an `<InstancedMesh>`.
+ * instance) mount under it. Throws outside an `<InstancedMesh>` unless
+ * `mesh` names one (an anchored population's instance placed elsewhere
+ * in the anchor's subtree).
  */
 export let Instance: ParentComponent<InstanceProps> = props => {
   let ctx = useContext(SceneContext)
-  let mesh = useContext(InstancedMeshContext)
-  if (mesh === null) throw new Error("<Instance> must be inside an <InstancedMesh>")
+  let mesh = untrack(() => props.mesh) ?? useContext(InstancedMeshContext)
+  if (mesh === null) throw new Error("<Instance> must be inside an <InstancedMesh>, or name its population with `mesh`")
   let instance = addInstance(mesh, undefined, ctx.parent)
   syncNode(instance, props)
   createEffect(

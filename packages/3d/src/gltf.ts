@@ -549,12 +549,14 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     return p.index
   }
 
-  /** One node placing a mesh: its table slot, name, rest-pose world and
-   * the file's skin index it draws with (null for a rigid placement). */
-  type Placement = { slot: number; name: string; world: Mat4; skin: number | null }
+  /** One node placing a mesh: its table slot, name, rest-pose world, the
+   * file's skin index it draws with (null for a rigid placement) and its
+   * position in the walk, which orders the parts. */
+  type Placement = { slot: number; name: string; world: Mat4; skin: number | null; seq: number }
   // A mesh's placements collected over the walk, keyed by the file's
   // mesh index in first-use order, folded into parts after it.
   let meshUses = new Map<number, { mesh: any; uses: Placement[] }>()
+  let sequence = 0
   let place = (meshIndex: number, mesh: any, pending: PendingNode, skin: number | null, nodeWeights: unknown): void => {
     let slot = materialize(pending)
     let prims: any[] = mesh.primitives ?? []
@@ -570,7 +572,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       }
       nodes[slot]!.weights = weights.map(Number)
     }
-    let use: Placement = { slot, name: pending.name, world: pending.world, skin }
+    let use: Placement = { slot, name: pending.name, world: pending.world, skin, seq: sequence++ }
     let uses = meshUses.get(meshIndex)
     if (uses === undefined) meshUses.set(meshIndex, { mesh, uses: [use] })
     else uses.uses.push(use)
@@ -597,11 +599,22 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     }
   }
 
+  /** A primitive's built geometry per variant ("rigid"/"skinned", with or
+   * without the winding flip), shared by every part emitted from it: a
+   * skinned mesh two nodes place, a morphed one, a mirrored copy - each
+   * its own part, one set of bytes. `box` is the local rest box (morph
+   * extent included) for the bounds, null for a skinned build (its box
+   * comes from the joints); `indexed` says the vertices are the authored
+   * ones (not the flat-shading un-index), so a twin under the other
+   * winding sign can share them and differ in index order alone. */
+  type Built = { geometry: Geometry; box: number[] | null; indexed: boolean }
+  type PrimitiveCache = Map<string, Built>
+
   // One part from one primitive under its placements: the first names and
   // owns it (`node`), the rest are `placements`. Every placement shares
   // the skin (null, for more than one) and the winding sign, which the
   // fold below guarantees.
-  let emit = (prim: any, name: string, placed: Placement[], targetNames: string[] | null, extras: ModelExtras | undefined): void => {
+  let emit = (prim: any, name: string, placed: Placement[], targetNames: string[] | null, extras: ModelExtras | undefined, shared: PrimitiveCache): void => {
     if (prim.attributes?.POSITION === undefined) return
     let first = placed[0]!
     let node = first.slot
@@ -700,6 +713,49 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     // points have no winding.
     let flip = triangles && !skinned && det3(world) < 0
 
+    // The part from a built geometry: the bounds through every placement
+    // (a skinned build parks its joint boxes instead), the material, the
+    // record. Shared by the first build and every later part over it.
+    let finish = (built: Built): void => {
+      if (built.box !== null) {
+        for (let p of placed) growBounds(bounds, built.box, p.world)
+      } else {
+        // Joint boxes need the skin's inverse binds, and skins are built
+        // after the walk (their joints are ordinary nodes the walk
+        // registers), so the arrays are parked under the FILE's skin index
+        // and grown then - each box padded by the largest morph delta, as
+        // a morph moves a vertex in whichever joint's space.
+        let m = built.geometry.morphs
+        let slack = m === undefined ? 0 : Math.max(...Array.from(m.extent, Math.abs))
+        pendingJointBounds.push({ skin: skin!, positions: pos.data, count: pos.count, joints: joints!.data, weights: weights!.data, slack })
+      }
+      let material = prim.material
+      if (material === undefined) {
+        if (defaultMaterial < 0) {
+          defaultMaterial = materials.length
+          materials.push({ ...DEFAULT_MATERIAL })
+        }
+        material = defaultMaterial
+      }
+      let part: ModelPart = { name, node, skin, geometry: built.geometry, material }
+      if (placed.length > 1) part.placements = placed.slice(1).map((p) => p.slot)
+      if (extras !== undefined) part.extras = extras
+      parts.push(part)
+    }
+    // The same primitive built before for this variant: one geometry for
+    // every part over it.
+    let variant = skinned ? "skinned" : "rigid"
+    let key = variant + (flip ? "|flipped" : "")
+    let built = shared.get(key)
+    if (built !== undefined) {
+      finish(built)
+      return
+    }
+    // The other winding sign's build, when it exists: an indexed one holds
+    // the very vertices this variant needs.
+    let twin = shared.get(variant + (flip ? "" : "|flipped"))
+    if (twin !== undefined && !twin.indexed) twin = undefined
+
     // The channels of the part's buffer, written through the accessors:
     // whatever a channel's format, the writer takes floats.
     let source: VertexSource = { pos: pos.data, nrm, uv: uv?.data ?? null, color: color === null ? null : { data: color.data, elements: color.elements }, joints: joints?.data ?? null, weights: weights?.data ?? null }
@@ -710,12 +766,20 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     // interleave (the morph targets): null while the slots are the
     // source order, the un-index's corner table otherwise.
     let remap: number[] | null = null
-    if (nrm !== null || !triangles) {
+    let indexed = nrm !== null || !triangles
+    if (indexed) {
       // Indexed as authored. Lines and points without normals get zero
-      // ones (there is no face to take one from; nothing lights them).
-      vertices = vertexView(layout, new ArrayBuffer(count * layoutStride(layout)))
-      writer = vertexWriter(vertices, layout)
-      for (let i = 0; i < count; i++) writeVertex(writer, i, source, i)
+      // ones (there is no face to take one from; nothing lights them). A
+      // twin under the other winding sign already holds these vertices:
+      // share its buffer, only the index order differs.
+      if (twin !== undefined) {
+        vertices = twin.geometry.vertices
+        writer = vertexWriter(vertices, layout)
+      } else {
+        vertices = vertexView(layout, new ArrayBuffer(count * layoutStride(layout)))
+        writer = vertexWriter(vertices, layout)
+        for (let i = 0; i < count; i++) writeVertex(writer, i, source, i)
+      }
       packedIndices = Array.from(indices)
       if (flip) {
         for (let i = 0; i < packedIndices.length; i += 3) {
@@ -768,7 +832,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     // sparse by vertex onto the geometry. Names come from the mesh's
     // extras.targetNames (what Blender writes), else "target<t>".
     let targets: any[] = prim.targets ?? []
-    let morphs = targets.length === 0 ? undefined : packMorphTargets(count, targets.map((target: any, t: number): MorphTarget => {
+    // A twin's packed targets are these exactly (both indexed, no remap).
+    let morphs = twin !== undefined ? twin.geometry.morphs : targets.length === 0 ? undefined : packMorphTargets(count, targets.map((target: any, t: number): MorphTarget => {
       let what = name + " target " + t
       let deltas = (attribute: string): Float32Array | null => {
         if (target?.[attribute] === undefined) return null
@@ -787,12 +852,13 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       return { name: targetNames?.[t] ?? "target" + t, position: deltas("POSITION") ?? new Float32Array(count * 3), normal: remap === null ? deltas("NORMAL") : null }
     }))
 
-    // Model bounds: the part's local box through the node's rest-pose
-    // world transform (8 corners - conservative under rotation, exact
-    // under translation and axis-aligned scale), grown by the morph
-    // extent first so a morphed shape stays inside. A skinned part's
-    // vertices are placed by its joints, not its node, so its box is
-    // folded in after the skins exist (growBounds over the joint boxes).
+    // The local rest box (8 corners through each placement's world in
+    // finish - conservative under rotation, exact under translation and
+    // axis-aligned scale), grown by the morph extent first so a morphed
+    // shape stays inside. A skinned build's vertices are placed by its
+    // joints, not its node, so it has none here: its box is folded in
+    // after the skins exist (growBounds over the joint boxes).
+    let box: number[] | null = null
     if (!skinned) {
       let lo: Vec3 = [Infinity, Infinity, Infinity]
       let hi: Vec3 = [-Infinity, -Infinity, -Infinity]
@@ -809,34 +875,16 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
           hi[k] = hi[k]! + morphs.extent[3 + k]!
         }
       }
-      // The same local box through every placement's rest-pose world.
-      for (let p of placed) growBounds(bounds, [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], p.world)
-    } else {
-      // Joint boxes need the skin's inverse binds, and skins are built
-      // after the walk (their joints are ordinary nodes the walk
-      // registers), so the arrays are parked under the FILE's skin index
-      // and grown then - each box padded by the largest morph delta, as
-      // a morph moves a vertex in whichever joint's space.
-      let slack = morphs === undefined ? 0 : Math.max(...Array.from(morphs.extent, Math.abs))
-      pendingJointBounds.push({ skin: skin!, positions: pos.data, count: pos.count, joints: joints!.data, weights: weights!.data, slack })
+      box = [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]]
     }
 
-    let material = prim.material
-    if (material === undefined) {
-      if (defaultMaterial < 0) {
-        defaultMaterial = materials.length
-        materials.push({ ...DEFAULT_MATERIAL })
-      }
-      material = defaultMaterial
-    }
     let geometry: Geometry = { vertices, indices: packIndices(packedIndices, count), label: name }
     if (layout !== undefined) geometry.layout = layout
     if (morphs !== undefined) geometry.morphs = morphs
     if (!triangles) geometry.topology = topology
-    let part: ModelPart = { name, node, skin, geometry, material }
-    if (placed.length > 1) part.placements = placed.slice(1).map((p) => p.slot)
-    if (extras !== undefined) part.extras = extras
-    parts.push(part)
+    built = { geometry, box, indexed }
+    shared.set(key, built)
+    finish(built)
   }
 
   let local = mat4()
@@ -844,6 +892,10 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   let walk = (index: number, parent: PendingNode | null, parentWorld: Mat4): void => {
     let node = gltf.nodes[index]
     if (node === undefined) throw new Error("parseGltf: scene names a missing node " + index)
+    // glTF's hierarchy is a strict tree: a node reached twice has two
+    // parents, or the children form a cycle - which would otherwise
+    // recurse until the stack goes.
+    if (pendingByIndex.has(index)) throw new Error("parseGltf: node " + index + " appears twice in the hierarchy (two parents, or a cycle in children)")
     let position: Vec3 = [0, 0, 0]
     let rotation: Quat = [0, 0, 0, 1]
     let scale: Vec3 = [1, 1, 1]
@@ -908,19 +960,31 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   }
 
   let scene = gltf.scenes?.[gltf.scene ?? 0]
-  let roots: number[] = scene?.nodes ?? (gltf.nodes ?? []).map((_: unknown, i: number) => i)
+  let allNodes: any[] = gltf.nodes ?? []
+  // No scene (both `scene` and `scenes` are optional): draw everything,
+  // from the true roots - the nodes no other node lists as a child - so a
+  // nested node is visited once under its parent, never a second time as
+  // a root against the identity.
+  let listedAsChild = new Set<number>()
+  if (scene === undefined) for (let n of allNodes) for (let c of n?.children ?? []) listedAsChild.add(c)
+  let roots: number[] = scene?.nodes ?? allNodes.map((_: unknown, i: number) => i).filter((i) => !listedAsChild.has(i))
   let root = mat4()
   for (let index of roots) walk(index, null, root)
 
   // Parts, after the walk: one primitive under its placements. A mesh
   // several nodes use folds into one part per primitive with the further
   // nodes as placements (the runtime draws it instanced) - except what
-  // cannot share one geometry, which stays a part of its own per use: a
+  // cannot share one draw, which stays a part of its own per use: a
   // skinned use (bind-pose model space, placed by its skin; a second
   // reference draws the same thing per spec), a morphed one (its weights
   // are the node's), and a use whose rest-pose winding sign differs from
-  // the bucket's (the flip is baked into the indices). Buckets keep
-  // first-use order, so parts stay in file order per mesh.
+  // the bucket's (the flip is baked into the indices). Those parts still
+  // share the primitive's built geometry (one cache per primitive, see
+  // emit), so the bytes exist once. Parts are emitted in WALK order -
+  // each bucket where its first placement was visited, a node's
+  // primitives in order - so a file's part order does not depend on how
+  // its meshes interleave.
+  let queue: { seq: number; k: number; run: () => void }[] = []
   for (let { mesh, uses } of meshUses.values()) {
     let prims: any[] = mesh.primitives ?? []
     let targetNames: string[] | null = Array.isArray(mesh.extras?.targetNames) ? mesh.extras.targetNames.map(String) : null
@@ -939,12 +1003,15 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
         }
         bucket.placed.push(use)
       }
+      let shared: PrimitiveCache = new Map()
       for (let b of buckets) {
         let name = b.placed[0]!.name
-        emit(prim, prims.length > 1 ? name + "#" + k : name, b.placed, targetNames, extras)
+        queue.push({ seq: b.placed[0]!.seq, k, run: () => emit(prim, prims.length > 1 ? name + "#" + k : name, b.placed, targetNames, extras, shared) })
       }
     }
   }
+  queue.sort((a, b) => a.seq - b.seq || a.k - b.k)
+  for (let item of queue) item.run()
 
   // Skins, after the walk: joints are ordinary nodes (usually meshless),
   // materialized here so the retained table carries them; part.skin

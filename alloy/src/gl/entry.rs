@@ -69,6 +69,8 @@ pub(super) struct DrawEntry {
   /// so an input whose contents or registry entry changed is picked up
   /// automatically.
   pub(super) bindings: Vec<TextureBinding>,
+  /// The entry's debug name (see `DrawSpec::label`), for the inventory only.
+  pub(super) label: Option<String>,
 }
 
 /// The mesh half of a target: the ordered draw list sharing this target's

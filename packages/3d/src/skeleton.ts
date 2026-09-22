@@ -24,8 +24,10 @@
 
 import * as spatial from "flux:spatial"
 import type { TextureId } from "@solidrt/core/gpu"
-import { add, remove, setTransform } from "./node.ts"
+import { add, destroy, remove, setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
+import { reparentInstance } from "./mesh.ts"
+import type { InstancedMesh, InstanceNode } from "./mesh.ts"
 import type { Model } from "./model.ts"
 
 /** Inverse-bind entries of a piece and its body differ by exporter
@@ -64,6 +66,13 @@ export function bindSkeleton(body: Model, piece: Model): void {
   // re-bind under a different anchor (one anchor per palette texture),
   // and the add() under the body re-enters everything below.
   remove(piece)
+  // The piece's shared parts re-anchor on the BODY root: the piece sits at
+  // identity under it (below), so the mesh's world still equals the
+  // anchor's, and a copy grafted under a body joint stays inside the
+  // anchor's subtree. The records rebind at the re-enter.
+  for (let part of piece.parts) {
+    if (part.instances !== undefined) (part.mesh as InstancedMesh)._instances.anchor = body
+  }
 
   let bodyByName = new Map<string, SceneNode>()
   for (let n of body.nodes) {
@@ -126,11 +135,12 @@ export function bindSkeleton(body: Model, piece: Model): void {
   for (let [node, bodyNode] of match) {
     for (let child of node.children.slice()) {
       if (match.has(child)) continue
-      // A shared part's instance is slot-bound to its population (add
-      // rejects it) and its record is anchored on the piece root; it
-      // stays with its placement node, which is what a graft moves.
-      if (child.kind === "instance") continue
-      add(bodyNode, child)
+      // A shared part's copy under a matched node (its placement node IS
+      // a joint) rides the body's joint like any rigid part: slot-bound,
+      // so it moves by reparentInstance rather than add, against the
+      // body-root anchor set above.
+      if (child.kind === "instance") reparentInstance(child as InstanceNode, bodyNode)
+      else add(bodyNode, child)
       piece._grafts.push(child)
     }
   }
@@ -162,7 +172,13 @@ export function unbindSkeleton(piece: Model): void {
     }
     n.node._palettes = keep.length > 0 ? keep : null
   }
-  for (let g of piece._grafts) remove(g)
+  // A grafted group detaches; a grafted instance is slot-bound and goes
+  // by destroy (the piece's populations are disposed right after, by the
+  // one caller, dispose).
+  for (let g of piece._grafts) {
+    if (g.kind === "instance") destroy(g)
+    else remove(g)
+  }
   piece._grafts = []
   body._worn.splice(body._worn.findIndex((w) => w.piece === piece), 1)
   piece._body = null

@@ -420,12 +420,6 @@ Shaped, not started.
   ever opens an image through the baseColorTexture branch - so on a fully
   textured model the normal, metallic-roughness, occlusion and emissive maps
   are read off disk, held for the length of the parse and discarded.
-- **[A glTF with no scenes array emits every child mesh twice](backlog/gltf-sceneless-duplicate-parts.md)** [2026-08-27]
-  parseGltf falls back to treating every node index as a root when the
-  document declares no scenes, but the walk still recurses children, so any
-  non-root mesh is emitted once with its composed world matrix and once
-  against the identity - duplicate parts, one at the wrong transform, and
-  bounds covering both.
 - **[Go client crashes at launch on the x86_64 emulator](backlog/go-client-emulator-launch-crash.md)** [2026-09-01]
   The currently staged solidrt-go.apk aborts within a second of launch on the
   srt_pixel6 emulator (FORTIFY, destroyed mutex inside libhwui's CommonPool);
@@ -663,6 +657,15 @@ Shaped, not started.
   exists to run without a display requires an interactive window station
   there; the ANGLE that ships already advertises the extensions a real
   headless path needs.
+- **[Discrete pointer gestures - swipe, fling velocity, long-press, double-tap](backlog/pointer-discrete-gestures.md)** [2026-09-22]
+  The recognizer family stops at press, pan and transform; a swipe (direction
+  decided at the lift), a fling (velocity handed to whoever animates on), a
+  long-press and a double-tap are each rebuilt by hand or missing (ScrollView
+  has no momentum, ContextMenu has no touch path, nothing dismisses on a
+  swipe), and none is bindable through the input map. One velocity tracker
+  under every recognizer, three recognizers in the arena with the
+  wait-for-failure relation double-tap needs, and the same gestures as pulsing
+  button sources on the pointer feed.
 - **[Per-node event-interest mask for pointer dispatch](backlog/pointer-event-interest-mask.md)** [2026-08-01]
   Rust marshals the full root-to-leaf hit path into JS for every pointer event
   because only the JS handler registry knows which nodes listen; a per-element
@@ -1496,6 +1499,12 @@ Finished, kept for the reasoning.
   hand-count; a bundler pass that injects a #line directive into glsl-tagged
   template literals would make the driver report the .tsx line itself, closing
   the last unmapped diagnostic in the dev loop.
+- **[A glTF with no scenes array emits every child mesh twice](done/gltf-sceneless-duplicate-parts.md)** [2026-09-22]
+  parseGltf falls back to treating every node index as a root when the
+  document declares no scenes, but the walk still recurses children, so any
+  non-root mesh is emitted once with its composed world matrix and once
+  against the identity - duplicate parts, one at the wrong transform, and
+  bounds covering both.
 - **[Go-client launcher](done/go-client-launcher.md)** [2026-07-21]
   "The default app becomes the client's compiled-in launcher: version-store
   apps with tap-to-launch and delete, manual address entry, and a boot rule

@@ -147,3 +147,30 @@ and live through `srt tool 3d/model` on a generated glb
 the record buffer holding the composed placements, a placement move and
 a hide landing in the records, and taps naming the part and the
 placement node per copy.
+
+## Follow-ups closed the same day
+
+- Parts are emitted in walk order (each bucket where its first placing
+  node was visited), so a file's part order no longer depends on how its
+  meshes interleave.
+- The parts a primitive cannot fold share its built geometry: skinned or
+  morphed duplicates are parts over one `Geometry` object, a mirrored
+  copy shares the vertex buffer with its own index order, and the
+  container's geometry table writes every object and buffer once
+  (`decodeModel` restores the identities; the runtime's vertex upload
+  cache then uploads shared bytes once).
+- `<InstancedMesh anchor>` and `<Instance mesh>` give the component face
+  the anchored population.
+- `bindSkeleton` re-anchors a piece's shared parts on the body root and
+  grafts an instance under a matched joint through `reparentInstance`
+  (the one instance reparent; add/remove still refuse instances), so a
+  copy whose placement node is a joint rides the body's pose.
+- Draw entries carry a `label` (alloy `DrawSpec`, the `/gpu` inventory,
+  the `addDraw` typing); a 3d mesh's entry reports its geometry's label,
+  so a model part's entry is found by name.
+- The tools typecheck under the root program through a minimal ambient
+  shim (`tools/node-env.d.ts`), bun's types kept out (they collide with
+  the flux standards the chain is typed against, the split packages/cli
+  documents).
+- [gltf-sceneless-duplicate-parts](gltf-sceneless-duplicate-parts.md)
+  closed alongside.

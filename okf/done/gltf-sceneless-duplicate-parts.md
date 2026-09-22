@@ -2,6 +2,7 @@
 title: A glTF with no scenes array emits every child mesh twice
 description: parseGltf falls back to treating every node index as a root when the document declares no scenes, but the walk still recurses children, so any non-root mesh is emitted once with its composed world matrix and once against the identity - duplicate parts, one at the wrong transform, and bounds covering both.
 created: 2026-08-27
+completed: 2026-09-22
 ---
 
 # A glTF with no scenes array emits every child mesh twice
@@ -45,3 +46,13 @@ reason to prefer it.
 A fixture in `gltf-check.ts` covering a scene-less document with a nested
 node, asserting the part count and the child's world position. The rig builds
 its documents in memory, so this is a few lines beside the existing ones.
+
+## Done (2026-09-22)
+
+Both halves of the shape: the sceneless fallback walks only the nodes no
+other node lists as a child, and `walk` throws on a node it reaches
+twice (two parents, or a cycle in `children`), so a malformed file
+terminates with a message instead of overflowing the stack. Fixtures in
+`gltf-check.ts`: a sceneless document with a nested node (one part, the
+child's world through its parent, once) and a two-node cycle under a
+scene (throws "twice").

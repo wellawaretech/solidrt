@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+/// <reference path="./node-env.d.ts" />
 
 // srt tool 3d/environment: bake a Radiance .hdr panorama into a .srte
 // environment file - the six cube faces and their GGX-prefiltered mip

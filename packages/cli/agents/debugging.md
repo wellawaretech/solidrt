@@ -190,7 +190,10 @@ when exactly one client is connected.
   (`filter`/`wrap`/`mipmap`/`anisotropy`), the creation-time state a soft
   or aliased map is usually missing. A draw target's entries report uniforms wider than a vec4
   (matrices) as their length, `"[16]"`; `draw` names the one entry (ids are
-  per target, so pair it with `label`) reported in full.
+  per target, so pair it with `label`) reported in full. An entry carries
+  its own `label` when the add gave one (a 3d mesh reports its geometry's
+  label, so a model part's entry is found by the part's name), beside its
+  `indexCount`/`instanceCount`.
 - `/buffer?id=<bufferId>&offset=<n>&length=<n>&as=<f32|u16|u8>` - vertex
   buffer contents (default f32; reads cap at 64 KiB).
 - `/stats?window=<ms>` (or `?frames=<n>`, the last n frames that changed

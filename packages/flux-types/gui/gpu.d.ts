@@ -1104,6 +1104,11 @@ declare module "flux:gpu" {
       /** Draw the instance records in key order (see {@link InstanceOrder}). */
       instanceOrder?: InstanceOrder
       before?: DrawId
+      /** Debug name reported beside the entry in the resource inventory
+       * (`/gpu`, `get_gpu_resources`), so a draw is found by what it draws
+       * (a mesh's geometry label, a model part's name) rather than by
+       * matching counts. Free-form; the GPU never sees it. */
+      label?: string
     } & (DrawRange | (IndexBinding & IndexRange)),
   ): DrawId
   /**

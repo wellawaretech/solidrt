@@ -220,8 +220,17 @@ impl ShaderTexture {
       };
       let MeshStorage { target, fbo, depth, msaa } = storage;
 
-      let entry =
-        DrawEntry { id: 0, pipeline, pipeline_id, vao, buffers, draw, params: Vec::new(), bindings: sampler_bindings };
+      let entry = DrawEntry {
+        id: 0,
+        pipeline,
+        pipeline_id,
+        vao,
+        buffers,
+        draw,
+        params: Vec::new(),
+        bindings: sampler_bindings,
+        label: None,
+      };
       Ok(ShaderTexture {
         kind: TargetKind::Mesh(MeshState {
           entries: vec![entry],
@@ -643,6 +652,7 @@ impl ShaderTexture {
     draw: DrawRange,
     params: Vec<(String, ParamValue)>,
     bindings: Vec<TextureBinding>,
+    label: Option<String>,
     before: Option<u64>,
   ) -> Result<(), String> {
     let TargetKind::Mesh(mesh) = &mut self.kind else {
@@ -668,7 +678,7 @@ impl ShaderTexture {
       None => None,
     };
     let vao = build_vao(gl, &pipeline.program, &pipeline.desc, &buffers)?;
-    let entry = DrawEntry { id, pipeline, pipeline_id, vao, buffers, draw, params, bindings };
+    let entry = DrawEntry { id, pipeline, pipeline_id, vao, buffers, draw, params, bindings, label };
     match position {
       Some(pos) => mesh.entries.insert(pos, entry),
       None => mesh.entries.push(entry),
@@ -984,6 +994,7 @@ impl ShaderTexture {
             instance_count: e.draw.instance_count,
             params: e.params.clone(),
             textures: e.bindings.clone(),
+            label: e.label.clone(),
           })
           .collect()
       })

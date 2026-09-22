@@ -1030,6 +1030,14 @@ function checkLayout(material: Material, geometry: Geometry, what: string): void
   }
 }
 
+// The debug name a mesh's draw entries report in the resource inventory
+// (`/gpu`): its geometry's label (a model part's name, a generator's) -
+// the same name whether the part is a plain mesh or a population - else a
+// population's own label, else none.
+function drawLabel(mesh: Mesh): string | undefined {
+  return mesh.geometry.label ?? mesh._instances?.label
+}
+
 // The index range a mesh's entries draw: its own (setDrawRange) or the
 // whole index list.
 function meshRange(mesh: Mesh): { firstIndex: number; indexCount: number } {
@@ -1508,6 +1516,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       ...meshRange(mesh),
       textures: entryTextures(mesh.material, mesh, morph),
       instanceCount: 0,
+      label: drawLabel(mesh),
     })
     // The core turns the entry on (with the world matrix) at the next
     // flush, and off again whenever the node or an ancestor hides.
@@ -1559,6 +1568,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       ...meshRange(mesh),
       textures: entryTextures(material, mesh, morph),
       instanceCount: 0,
+      label: drawLabel(mesh),
     })
     spatial.bindDraw(mesh._node!, v.texture, entry, drawBinding(material, mesh, inst))
     v.entries.set(mesh, entry)

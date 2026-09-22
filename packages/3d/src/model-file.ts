@@ -9,11 +9,17 @@
 // block starts 4-aligned so Float32Array/Uint32Array views sit on it
 // directly. Images travel as their encoded files (PNG/JPEG bytes), app
 // data as the header's `extras` (JSON) and named `blobs` (aligned blocks).
+// Geometry is a table the parts index, and a buffer view is written once
+// however many geometries read it: parts sharing a Geometry object (a
+// skinned or morphed mesh several nodes place) share one entry, and two
+// geometries over one vertex buffer (a mirrored copy: same vertices, the
+// flipped index order) share the vertex block - decodeModel restores the
+// same identities, so the runtime uploads shared bytes once.
 
 import type { ModelChannel, ModelData, ModelExtras, ModelMaterial, ModelNode, ModelSkin } from "./gltf.ts"
 import { layoutStride, vertexView, VERTEX_FORMATS } from "./geometry.ts"
 import type { VertexAttribute } from "@solidrt/core/gpu"
-import type { VertexLayout } from "./geometry.ts"
+import type { Geometry, VertexLayout } from "./geometry.ts"
 
 /** "SRTM" read as a little-endian u32. */
 const MAGIC = 0x4d545253
@@ -42,8 +48,9 @@ const MAGIC = 0x4d545253
 // "standard"; a version-8 file's layout word does not parse.
 // Version 10 carries app data and reuse: `extras` (JSON) on the root, the
 // nodes, the parts and the materials, named binary `blobs` as payload
-// blocks, and a part's `placements` (the further nodes drawing the same
-// geometry). A version-9 file has none of these and is rejected like
+// blocks, a part's `placements` (the further nodes drawing the same
+// geometry), and geometry as a table the parts index (shared entries and
+// shared blocks, see the header). A version-9 file has none of these and is rejected like
 // every earlier version rather than read as a file without them, so a
 // stale bake never silently drops the data an app relies on. Re-bake
 // with `srt tool 3d/model`.
@@ -69,17 +76,26 @@ function decodeLayout(layout: string | VertexAttribute[], name: string): VertexL
 
 type Block = { offset: number; bytes: number }
 
-type PartHeader = Block & {
-  name: string
-  node: number
-  skin: number | null
-  material: number
+/** One geometry of the table: its interleaved vertex block, index block
+ * and packed morph targets. Blocks may be shared between entries. */
+type GeometryHeader = {
+  vertices: Block
   layout: string | VertexAttribute[]
   vertexCount: number
   indexBits: 16 | 32
   index: Block
-  /** The part's packed morph targets, when it has any. */
+  /** The packed morph targets, when it has any. */
   morphs?: { names: string[]; texels: Block; extent: number[] }
+  label?: string
+}
+
+type PartHeader = {
+  name: string
+  node: number
+  skin: number | null
+  material: number
+  /** Index into the header's geometry table. */
+  geometry: number
   /** The further nodes placing the part's geometry (ModelPart.placements). */
   placements?: number[]
   extras?: ModelExtras
@@ -101,6 +117,7 @@ type Header = {
   nodes: ModelNode[]
   materials: ModelMaterial[]
   images: Block[]
+  geometries: GeometryHeader[]
   parts: PartHeader[]
   skins: SkinHeader[]
   clips: ClipHeader[]
@@ -128,28 +145,46 @@ export function encodeModel(data: ModelData): Uint8Array {
     return block
   }
 
-  let parts: PartHeader[] = data.parts.map((part) => {
-    let g = part.geometry
+  // A buffer view is written once however many geometries read it, and a
+  // Geometry object gets one table entry however many parts draw it.
+  let views = new Map<ArrayBufferView, Block>()
+  let pushOnce = (view: ArrayBufferView): Block => {
+    let have = views.get(view)
+    if (have !== undefined) return have
+    let block = push(new Uint8Array(view.buffer, view.byteOffset, view.byteLength))
+    views.set(view, block)
+    return block
+  }
+  let geometries: GeometryHeader[] = []
+  let geometryIds = new Map<Geometry, number>()
+  let geometryId = (g: Geometry, name: string): number => {
+    let id = geometryIds.get(g)
+    if (id !== undefined) return id
     if (g.streams !== undefined && g.streams.length > 0) {
-      throw new Error("encodeModel: part '" + part.name + "' carries extra vertex streams; the container writes one interleaved buffer per part")
+      throw new Error("encodeModel: part '" + name + "' carries extra vertex streams; the container writes one interleaved buffer per geometry")
     }
     let layout = g.layout === undefined ? "base" : g.layout
-    let vertices = push(new Uint8Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength))
-    let index = push(new Uint8Array(g.indices.buffer, g.indices.byteOffset, g.indices.byteLength))
+    let header: GeometryHeader = {
+      vertices: pushOnce(g.vertices),
+      layout,
+      vertexCount: g.vertices.byteLength / layoutStride(layout),
+      indexBits: g.indices instanceof Uint32Array ? 32 : 16,
+      index: pushOnce(g.indices),
+    }
+    if (g.morphs !== undefined) header.morphs = { names: g.morphs.names, texels: pushOnce(g.morphs.texels), extent: Array.from(g.morphs.extent) }
+    if (g.label !== undefined) header.label = g.label
+    id = geometries.length
+    geometries.push(header)
+    geometryIds.set(g, id)
+    return id
+  }
+  let parts: PartHeader[] = data.parts.map((part) => {
     let header: PartHeader = {
-      ...vertices,
       name: part.name,
       node: part.node,
       skin: part.skin,
       material: part.material,
-      layout,
-      vertexCount: g.vertices.byteLength / layoutStride(layout),
-      indexBits: g.indices instanceof Uint32Array ? 32 : 16,
-      index,
-    }
-    if (g.morphs !== undefined) {
-      let texels = push(new Uint8Array(g.morphs.texels.buffer, g.morphs.texels.byteOffset, g.morphs.texels.byteLength))
-      header.morphs = { names: g.morphs.names, texels, extent: Array.from(g.morphs.extent) }
+      geometry: geometryId(part.geometry, part.name),
     }
     if (part.placements !== undefined && part.placements.length > 0) header.placements = part.placements
     if (part.extras !== undefined) header.extras = part.extras
@@ -169,7 +204,7 @@ export function encodeModel(data: ModelData): Uint8Array {
       values: floats(c.values),
     })),
   }))
-  let header: Header = { nodes: data.nodes, materials: data.materials, images, parts, skins, clips, bounds: Array.from(data.bounds) }
+  let header: Header = { nodes: data.nodes, materials: data.materials, images, geometries, parts, skins, clips, bounds: Array.from(data.bounds) }
   if (data.extras !== undefined) header.extras = data.extras
   if (data.blobs !== undefined) {
     header.blobs = {}
@@ -210,19 +245,27 @@ export function decodeModel(bytes: Uint8Array): ModelData {
   let header: Header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, base + 12, jsonLength)))
   let payload = base + 12 + jsonLength + ((4 - (jsonLength % 4)) % 4)
 
-  let parts = header.parts.map((part) => {
-    let layout = decodeLayout(part.layout, part.name)
-    let indexCount = part.index.bytes / (part.indexBits / 8)
-    let geometry: ModelData["parts"][0]["geometry"] = {
-      vertices: vertexView(layout, buffer, payload + part.offset, part.vertexCount * layoutStride(layout)),
-      indices: part.indexBits === 32 ? new Uint32Array(buffer, payload + part.index.offset, indexCount) : new Uint16Array(buffer, payload + part.index.offset, indexCount),
-      label: part.name,
+  // The geometry table first: one Geometry object per entry, so parts
+  // naming the same entry share it (and the runtime shares its buffers).
+  let geometries: Geometry[] = header.geometries.map((g, i) => {
+    let name = g.label ?? "geometry " + i
+    let layout = decodeLayout(g.layout, name)
+    let indexCount = g.index.bytes / (g.indexBits / 8)
+    let geometry: Geometry = {
+      vertices: vertexView(layout, buffer, payload + g.vertices.offset, g.vertexCount * layoutStride(layout)),
+      indices: g.indexBits === 32 ? new Uint32Array(buffer, payload + g.index.offset, indexCount) : new Uint16Array(buffer, payload + g.index.offset, indexCount),
     }
-    if (part.layout !== "base") geometry.layout = layout
-    if (part.morphs !== undefined) {
-      let m = part.morphs
+    if (g.label !== undefined) geometry.label = g.label
+    if (g.layout !== "base") geometry.layout = layout
+    if (g.morphs !== undefined) {
+      let m = g.morphs
       geometry.morphs = { names: m.names, texels: new Float32Array(buffer, payload + m.texels.offset, m.texels.bytes / 4), extent: Float32Array.from(m.extent) }
     }
+    return geometry
+  })
+  let parts = header.parts.map((part) => {
+    let geometry = geometries[part.geometry]
+    if (geometry === undefined) throw new Error("decodeModel: part '" + part.name + "' names a missing geometry " + part.geometry)
     let out: ModelData["parts"][0] = {
       name: part.name,
       node: part.node,

@@ -12,7 +12,7 @@ import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Material } from "./material.ts"
 import type { TransformUpdate } from "./math.ts"
 import * as spatial from "flux:spatial"
-import { activateMorph, afterFree, createWeightsTexture, enterScene, makeNode, rebindMorph, remove, resetMorph, setTransform } from "./node.ts"
+import { activateMorph, afterFree, createWeightsTexture, enterScene, leaveScene, makeNode, rebindMorph, remove, resetMorph, setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
 
 export type Mesh = SceneNode & {
@@ -699,6 +699,33 @@ export function addInstance(mesh: InstancedMesh, update?: TransformUpdate, paren
   }
   if (parent._scene) enterScene(instance, parent._scene)
   return instance
+}
+
+/**
+ * @internal Move a live instance under another node of its population's
+ * frame (the mesh, or the anchor's subtree): its slot and record are
+ * kept, its local pose is now read against the new parent, and in a
+ * scene it re-enters there so the core rebinds the record against the
+ * current anchor. The generic add/remove refuse instances (slot-bound);
+ * this is the one reparent, for bindSkeleton's grafts.
+ */
+export function reparentInstance(instance: InstanceNode, parent: SceneNode): void {
+  let mesh = instance.mesh
+  if (mesh === null || instance._destroyed) throw new Error("reparentInstance: the instance is gone")
+  if (parent._destroyed) throw new Error("reparentInstance: the parent was destroyed")
+  let root: SceneNode = mesh._instances?.anchor ?? mesh
+  for (let p: SceneNode | null = parent; p !== root; p = p.parent) {
+    if (p === null) throw new Error("reparentInstance: parent must be inside the population's anchor subtree")
+  }
+  if (instance._scene) leaveScene(instance)
+  let old = instance.parent
+  if (old !== null) {
+    let at = old.children.indexOf(instance)
+    if (at >= 0) old.children.splice(at, 1)
+  }
+  instance.parent = parent
+  parent.children.push(instance)
+  if (parent._scene) enterScene(instance, parent._scene)
 }
 
 // Grow the population's buffers to `next` records: replacements (never a

@@ -571,8 +571,8 @@ collision claims - two copies of this contract have drifted before.
 | `InstancedLod` | as InstancedMesh minus `material`, plus `levels` (`[{ geometry, material, size }]` nearest first, fixed at creation; instanced materials as InstancedMesh's), `castShadow?` (every level); `<Instance>` children populate it as under `InstancedMesh`, each drawing the level its own projected size picks |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), `frustumCulled?` (default true; false for geometry a vertex stage moves beyond the node's box - a billboard, a fullscreen quad; see Culling), `cullMargin?` (world units of slack around the box for bounded displacement), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
-| `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (optional: instances pick by themselves and the mesh culls by their union), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount |
-| `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's style record, one value per component - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it) |
+| `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (optional: instances pick by themselves and the mesh culls by their union), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount, and `anchor?` (a SceneNode, fixed at creation: the ancestor the records are relative to, so `<Instance mesh>` children may sit anywhere under it - see createInstancedMesh) |
+| `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's style record, one value per component - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it), and `mesh?` (the population, fixed at creation, when the instance is placed outside its `<InstancedMesh>` - inside that mesh's `anchor` subtree) |
 | `RecordMesh` | as Mesh, plus `records` (the per-instance records in the material's first instance layout, an ArrayBufferView; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffers are component-owned and freed on unmount |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
 | `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `castShadow?`, `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
@@ -2007,7 +2007,15 @@ file's `extras` ride through where glTF puts them, the way Three fills
 `userData` and Godot node metadata: `data.extras` (root), `node.extras`,
 `part.extras` (the glTF MESH's) and `material.extras`, each present
 only when non-empty - so a collider box authored as a Blender custom
-property arrives with the model.
+property arrives with the model. Parts come out in WALK order (each
+where its first placing node was visited, a node's primitives in
+order), and the parts a primitive cannot fold still share its built
+geometry: two skinned placements are two parts over ONE `Geometry`
+object, a mirrored copy shares the vertex buffer with its own index
+order - and the container writes each object and each buffer once
+(`decodeModel` restores the identities, so the runtime uploads them
+once too). A document with no `scene`/`scenes` draws everything from
+its true roots; a hierarchy reaching a node twice (a cycle) throws.
 
 #### createModel
 
@@ -2033,8 +2041,9 @@ transform; the palette places them - see the mixer below). A part with
 model root (its `anchor`, see Instancing), `instanced: true` material
 variant, with an instance node at identity under every placement node
 - `part.instances`, in placement order, the part's own node first - so
-the copies are one draw entry (`/gpu` shows one entry with
-`instanceCount` = placements + 1) and still ride the hierarchy: move,
+the copies are one draw entry (`/gpu` shows one entry labelled with the
+part's name, `instanceCount` = placements + 1; every mesh's entry
+carries its geometry's label there) and still ride the hierarchy: move,
 hide or animate the placement node in `model.nodes` and its copy
 follows; a pick lands on the copy (`hit.mesh` the part's mesh,
 `hit.instance` the instance, whose `parent` is the placement node);

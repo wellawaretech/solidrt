@@ -1713,6 +1713,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
             if let Some(index_format) = d.index_format {
               map.insert("indexFormat".into(), index_format.into());
             }
+            if let Some(label) = &d.label {
+              map.insert("label".into(), label.clone().into());
+            }
             map.insert("topology".into(), d.topology.into());
             map.insert(if indexed { "indexCount".into() } else { "vertexCount".into() }, d.vertex_count.into());
             if d.first_vertex != 0 {

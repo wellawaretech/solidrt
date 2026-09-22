@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+/// <reference path="./node-env.d.ts" />
 
 // srt tool 3d/model: bake a glTF into a .srtm model file - the parse
 // (src/gltf.ts) run once here under bun, the result written in the exact

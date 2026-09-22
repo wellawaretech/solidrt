@@ -103,6 +103,11 @@ pub struct DrawSpec {
   /// the channel; the raster thread receives already-gathered blocks and
   /// never sees this field.
   pub order: Option<InstanceOrder>,
+  /// Debug name of the entry, reported beside it in the resource
+  /// inventory (`GpuDrawInfo::label`) so a draw is found by what it draws
+  /// (a model part's name) rather than by matching counts. Free-form; the
+  /// GPU never sees it.
+  pub label: Option<String>,
 }
 
 impl DrawSpec {

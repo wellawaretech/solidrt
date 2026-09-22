@@ -127,6 +127,8 @@ pub struct GpuDrawInfo {
   pub params: Vec<(String, ParamValue)>,
   /// sampler2D uniform name -> source texture id.
   pub textures: Vec<TextureBinding>,
+  /// The entry's debug label, when the add gave one (`DrawSpec::label`).
+  pub label: Option<String>,
 }
 
 pub struct GpuPipelineInfo {

@@ -534,6 +534,7 @@ impl RasterState {
       entry.draw,
       entry.params,
       entry.textures,
+      entry.label,
       before,
     )?;
     if !shader.manual() {

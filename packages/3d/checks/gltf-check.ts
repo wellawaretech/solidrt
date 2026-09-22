@@ -877,6 +877,79 @@ throws("unknown required extension", () => parseGltf(glb(unknownExt, binBlocks, 
   )
 }
 
+// --- part order and shared geometry ------------------------------------------
+// Parts come out in WALK order however the meshes interleave (crate,
+// slab, mirrored crate - not grouped by mesh), the mirrored twin shares
+// the crate's vertex buffer with its own index order (one block in the
+// container), and a skinned mesh two nodes place gives two parts over ONE
+// geometry object, which the container keeps as one table entry.
+{
+  let interleaved = {
+    ...document,
+    scenes: [{ nodes: [0, 1, 2] }],
+    nodes: [
+      { name: "crate1", mesh: 0 },
+      { name: "slab", mesh: 1, translation: [0, -1, 0] },
+      { name: "crateM", mesh: 0, scale: [-1, 1, 1], translation: [3, 0, 0] },
+    ],
+    skins: [],
+    animations: [],
+  }
+  let ordered = parseGltf(glb(interleaved, binBlocks, binLength))
+  if (ordered.parts.map((p) => p.name).join() !== "crate1,slab,crateM") fail(`walk-order parts: ${ordered.parts.map((p) => p.name).join()}`)
+  let crate1 = ordered.parts[0]!.geometry
+  let crateM = ordered.parts[2]!.geometry
+  if (crateM.vertices !== crate1.vertices) fail("mirrored twin: the vertex buffer is not shared")
+  if (crateM === crate1 || crateM.indices === crate1.indices) fail("mirrored twin: needs its own geometry and index order")
+  if (windingAgrees(crateM)) fail("mirrored twin: index order not flipped")
+  let orderedBack = decodeModel(encodeModel(ordered))
+  sameModel(ordered, orderedBack, "shared vertices round trip")
+  if (orderedBack.parts[2]!.geometry.vertices.byteOffset !== orderedBack.parts[0]!.geometry.vertices.byteOffset) fail("container: the shared vertex block was written twice")
+  if (orderedBack.parts[2]!.geometry.indices.byteOffset === orderedBack.parts[0]!.geometry.indices.byteOffset) fail("container: the twin's index block must be its own")
+
+  let twoSkinned = {
+    ...document,
+    scenes: [{ nodes: [0, 1, 2, 3] }],
+    nodes: [{ name: "skinA", mesh: 2, skin: 0 }, { name: "skinB", mesh: 2, skin: 0 }, { name: "j0" }, { name: "j1" }],
+    skins: [{ joints: [2, 3], inverseBindMatrices: 12 }],
+    animations: [],
+  }
+  let rigged = parseGltf(glb(twoSkinned, binBlocks, binLength))
+  if (rigged.parts.length !== 2 || rigged.parts[0]!.placements !== undefined) fail("skinned duplicates: two parts, no placements")
+  if (rigged.parts[0]!.geometry !== rigged.parts[1]!.geometry) fail("skinned duplicates: one geometry object expected")
+  let riggedBack = decodeModel(encodeModel(rigged))
+  sameModel(rigged, riggedBack, "shared geometry round trip")
+  if (riggedBack.parts[0]!.geometry !== riggedBack.parts[1]!.geometry) fail("container: shared geometry identity lost")
+}
+
+// --- no scene -----------------------------------------------------------------
+// A document with neither `scene` nor `scenes` draws everything from its
+// TRUE roots (a nested node is not a second root against the identity),
+// and a hierarchy that reaches a node twice (a cycle) throws instead of
+// recursing until the stack goes.
+{
+  let sceneless = {
+    ...document,
+    scene: undefined,
+    scenes: undefined,
+    nodes: [
+      { name: "parent", translation: [1, 0, 0], children: [1] },
+      { name: "child", mesh: 0, translation: [0, 2, 0] },
+    ],
+    skins: [],
+    animations: [],
+  }
+  let parsed = parseGltf(glb(sceneless, binBlocks, binLength))
+  if (parsed.parts.length !== 1) fail(`sceneless parts: ${parsed.parts.length}, expected 1`)
+  if (parsed.nodes.map((n) => n.name).join() !== "parent,child") fail(`sceneless nodes: ${parsed.nodes.map((n) => n.name).join()}`)
+  if (!nearAll(parsed.bounds, [0.5, 1.5, -0.5, 1.5, 2.5, 0.5])) fail(`sceneless bounds (child under parent, once): ${parsed.bounds.join()}`)
+  throws(
+    "cyclic hierarchy",
+    () => parseGltf(glb({ ...document, scenes: [{ nodes: [0] }], nodes: [{ name: "a", mesh: 0, children: [1] }, { name: "b", children: [0] }], skins: [], animations: [] }, binBlocks, binLength)),
+    "twice",
+  )
+}
+
 let noMaterial = { ...document, meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, indices: 3 }] }], nodes: [{ mesh: 0 }], scenes: [{ nodes: [0] }], materials: [] }
 let plain = parseGltf(glb(noMaterial, binBlocks, binLength))
 if (plain.materials.length !== 1 || plain.materials[0]!.name !== "default" || plain.parts[0]!.name !== "node0") fail(`default material: ${JSON.stringify(plain.materials)} / ${plain.parts[0]?.name}`)

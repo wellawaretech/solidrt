@@ -424,7 +424,8 @@ fn collect_entry_half(
     instance_count: instances.unwrap_or(-1),
   };
   let order = collect_instance_order(ctx, opts, api)?;
-  Ok(alloy::DrawSpec { pipeline, buffers, index, draw, params, textures, order })
+  let label = collect_label(opts)?;
+  Ok(alloy::DrawSpec { pipeline, buffers, index, draw, params, textures, order, label })
 }
 
 // The instanceOrder option: a field key ({ field }) or a projected key
