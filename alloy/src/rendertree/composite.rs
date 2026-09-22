@@ -56,6 +56,10 @@ pub struct PaintStats {
   /// The frame's resolved damage area in logical px^2 (window area on a
   /// fully damaged frame); see RenderTree::frame_damage.
   pub damage_px: f32,
+  /// Snapshot captures serviced by this walk: each one a rasterize-and-read-
+  /// back that blocks the thread inside the paint, so a frame with any is
+  /// tooling time, not the app's.
+  pub captures: u32,
 }
 
 // Picks up any cache invalidations queued by onLayout handlers, then paints.
@@ -116,6 +120,7 @@ pub fn paint_phase(
       snapshots_rasterized: ctx.snapshots_rasterized,
       backdrops_prepainted: ctx.backdrops_prepainted,
       damage_px: 0.0,
+      captures: 0,
     };
     let regions = std::mem::take(&mut ctx.backdrop_regions);
     (stats, damage, regions)
@@ -127,7 +132,7 @@ pub fn paint_phase(
   alloy.fail_unserviced_captures();
   // Deliver every capture outcome now the walk is done, so callbacks (which may
   // read back or free textures) run out of the tree borrow.
-  alloy.deliver_captures();
+  stats.captures = alloy.deliver_captures() as u32;
   release_retired_textures(tree, alloy);
   stats
 }

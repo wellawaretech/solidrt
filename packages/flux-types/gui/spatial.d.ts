@@ -312,6 +312,12 @@ declare module "flux:spatial" {
    * across setView writes; a target measuring by a reference takes the
    * reference's. */
   export function setLodBias(target: TextureId, bias: number): void
+  /** The level a LOD group (setLod) draws on `target`: the index into its
+   * levels, the level count when culled past the last threshold, null
+   * before the target measured it. Throws for a node without levels. A
+   * population group's members pick per instance; this is the group's
+   * own pick. */
+  export function lodLevel(node: NodeId, target: TextureId): number | null
   /** Make `target` measure projected size by `source`'s view instead of
    * its own (null: its own again): a shadow tile culls by its light but
    * draws the level the scene camera sees, so its shadow matches. Only the

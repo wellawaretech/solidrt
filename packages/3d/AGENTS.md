@@ -167,6 +167,13 @@ pick()/raycast()/overlap()/sweep() skip scene-masked-out meshes like
 invisible ones - unless the query passes its own `{ layers }`, which is
 how a low-poly collision mesh lives undrawn in the scene yet answers
 ground and collision queries (the physics-collider pattern).
+SEALED INTERIORS are the other manual use: from outside, a closed shell
+hides its whole interior, but frustum culling cannot know that and
+there is no occlusion or portal culling. Put the interior, the shell
+and an opening "plug" on their own layers and switch the scene mask by
+the camera's zone (inside, outside, in the doorway) - the reactive
+`<Scene layers>` makes it one signal, and a light's reach is masked
+the same way once lights carry layers.
 Per-view fog: `fog: FogOptions | null` on createView overrides the
 scene's fog for that view (null = unfogged - the clear minimap over a
 fogged scene); absent follows the scene. `overrideMaterial` (Three's
@@ -265,8 +272,14 @@ device. Picking and collision see the level the queried target draws
 (`scene.pick`/overlap/sweep/moveAndSlide the scene's, `view.pick` the
 view's); a collider that must not follow the camera is its own undrawn
 mesh on a collision layer. Nested groups chain. Mesh simplification is
-a bake job, not a runtime one. `examples/lod.tsx` is the shape;
-`probes/3d-lod-bench.tsx` the cost.
+a bake job, not a runtime one, and a far level for EMISSIVE DETAIL is a
+design job: geometry simplifies, point lights do not. Fine lights
+aggregated into bigger dots read as a uniform point cloud from afar;
+what works is folding them into a dim emissive floor under the coarse
+blocks, brightness proportional to the local light density squared,
+visible only through the gaps - and tiny lights kept in the MIDDLE
+level bring the speckle back one level closer. `examples/lod.tsx` is
+the shape; `probes/3d-lod-bench.tsx` the cost.
 
 ### Shadows
 
@@ -548,12 +561,12 @@ collision claims - two copies of this contract have drifted before.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (FogOptions: linear `{ color, near, far }` or exp2 `{ color, density }`, either plus `height`/`heightFalloff` - see Fog), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
 | `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width`, `height` (target pixels, live; fixed-size only for now), `x?`, `y?` (the tile's top-left in `into`, live), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture)` (else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `resolve?` (as Scene's; not with `into`), `bloom?` (BloomOptions overrides the scene's, null turns it off in this view, absent follows the scene; not with `into`), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, the bubbling pointer events (below: down/move/up/wheel/tap from a hit descendant; a group is never the struck node, so it takes no `onPointerEnter`/`onPointerLeave` - `Lod` likewise), `ref?(node)` |
 | `Lod` | a Group whose direct children carrying `lodSize` (a prop every node component takes: the projected size below which that child hands over, see Level of detail) are its levels, sorted by size, never by JSX position; plus `fade?` (the cross-fade band fraction, default 0); a child without `lodSize` is drawn always |
 | `InstancedLod` | as InstancedMesh minus `material`, plus `levels` (`[{ geometry, material, size }]` nearest first, fixed at creation; instanced materials as InstancedMesh's), `castShadow?` (every level); `<Instance>` children populate it as under `InstancedMesh`, each drawing the level its own projected size picks |
-| `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
+| `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), `frustumCulled?` (default true; false for geometry a vertex stage moves beyond the node's box - a billboard, a fullscreen quad; see Culling), `cullMargin?` (world units of slack around the box for bounded displacement), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
 | `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (optional: instances pick by themselves and the mesh culls by their union), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount |
 | `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's style record, one value per component - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it) |
@@ -1206,6 +1219,12 @@ Scene-wide values (a clock, a sun direction, fog) go through
 class/instance split for your own GLSL: compiles once, and
 `cls.instance({ params?, textures? })` returns a Material sharing that
 pipeline with its own values. `dispose()` lives on the class alone.
+Seed only the names the material owns: a per-entry param is applied
+AFTER the target's shared params, so a scene-wide name seeded in
+`instance({ params })` (uTime, a sun direction) pins that mesh to the
+seeded value and `scene.setParams` never reaches it again. Declare the
+uniform in the source, leave it out of the instance, and the scene's
+write lands.
 `shaderMaterial(opts)` is exactly a class with one instance (its
 `dispose` forwards to the class).
 
@@ -1379,7 +1398,12 @@ no separate resize plumbing. Two forms:
   later, so a procedural sky written here lights the scene then. A sky
   writes LINEAR light to fragColor (the skybox form does) and the
   scene's resolve exposes, tone maps and encodes it with everything
-  else.
+  else. Derivatives in uniform control flow only: `fwidth()`/`dFdx()`
+  after an early `return` or inside a data-dependent branch are
+  undefined in the 2x2 quads that straddle it, and on Mesa Intel a
+  hash-grid sky with an "empty cell" early out drew stray 1-px lines
+  and L-shapes along every cell edge. Take the derivatives at the top
+  of main, before any branch.
 - A skybox `{ cube, intensity?, rotation? }` (SkyboxOptions): a cube
   map from createCubeTexture sampled along the same ray - Three's
   `scene.background = cubeTexture` with `backgroundIntensity` and
@@ -1893,7 +1917,11 @@ lights at all lights a scene (`examples/environment.tsx`). Light intensities rea
 (1 lights a white matte surface to 1; Godot's and Unity's convention -
 a Three scene's intensities divide by pi). Without an environment a
 metal shows only its highlights: no diffuse, nothing to reflect (Three
-and Godot do the same), so give the scene one. `examples/standard.tsx`
+and Godot do the same), so give the scene one. The same inside a closed
+volume: a dark, mostly-metal surface there gets little diffuse light
+and has little to reflect, so a hemisphere fill barely registers on it
+(a 5x fill and an interior reflection probe both did nothing visible);
+keep directional key and fill lights on inside. `examples/standard.tsx`
 is the sphere grid. Internally one
 `shaderMaterialClass` per option combination (map x vertexColors x
 triplanar x transparent x cull x alphaTest x fog x the surface maps),

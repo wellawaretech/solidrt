@@ -587,6 +587,9 @@ export type ViewHandle = {
   /** Replace the view's layer mask (bitmask): entries for newly admitted
    * meshes attach, masked-out ones detach. */
   setLayers(mask: number): void
+  /** The level a LOD group draws in this view (scene.lodLevel through
+   * the view's camera). */
+  lodLevel(group: SceneNode): number | null
   /** The camera ray through one of the VIEW's pixels, hits nearest first:
    * scene.pick through this view's camera and size, so a mesh under a
    * minimap is picked where the minimap shows it (the scene's query
@@ -819,6 +822,13 @@ export type Scene = {
    * measured projected size, for the scene, its views and its shadow
    * tiles. Below 1 switches to far levels sooner. */
   setLodBias(bias: number): void
+  /** The level a LOD group draws in the scene's own render (the thing to
+   * read while tuning thresholds): the index into its levels, nearest
+   * first, `levels.length` when culled past the last one, null before
+   * the scene measured it. Views read their own through view.lodLevel;
+   * an InstancedLod picks per instance, so this is its group's own
+   * pick, not any instance's. Throws for a node with no levels. */
+  lodLevel(group: SceneNode): number | null
   /**
    * Project a world point to scene pixels: origin top-left, y down - the
    * output texture's own coordinate space, ready for overlay layout (HUD
@@ -2166,6 +2176,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       for (let v of views) if (v.shadowFilter === null && !v.disposed) spatial.setLodBias(v.texture, bias)
       hooks._schedule()
     },
+    lodLevel(group) {
+      if (disposed || group._node === null) return null
+      return spatial.lodLevel(group._node, texture)
+    },
     setLayers(mask) {
       checkMask(mask, "scene.setLayers")
       if (disposed || sceneMask === mask) return
@@ -2407,6 +2421,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
             else detachView(v, mesh)
           }
           hooks._schedule()
+        },
+        lodLevel(group) {
+          if (v.disposed || group._node === null) return null
+          return spatial.lodLevel(group._node, v.texture)
         },
         pick(x, y) {
           if (v.disposed) return []

@@ -62,6 +62,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("setBounds")?;
     decl.declare("setView")?;
     decl.declare("setLodBias")?;
+    decl.declare("lodLevel")?;
     decl.declare("setLodReference")?;
     decl.declare("setCull")?;
     decl.declare("setCullBounds")?;
@@ -122,6 +123,7 @@ impl ModuleDef for SpatialModule {
     exports.export("setBounds", Function::new(ctx.clone(), set_bounds)?)?;
     exports.export("setView", Function::new(ctx.clone(), set_view)?)?;
     exports.export("setLodBias", Function::new(ctx.clone(), set_lod_bias)?)?;
+    exports.export("lodLevel", Function::new(ctx.clone(), lod_level)?)?;
     exports.export("setLodReference", Function::new(ctx.clone(), set_lod_reference)?)?;
     exports.export("setCull", Function::new(ctx.clone(), set_cull)?)?;
     exports.export("setCullBounds", Function::new(ctx.clone(), set_cull_bounds)?)?;
@@ -487,6 +489,16 @@ fn set_view(
   };
   super::gui(&ctx).alloy.spatial().set_view(target, matrices);
   Ok(())
+}
+
+/// The level a LOD group draws on a target, or null before it measured.
+fn lod_level(ctx: Ctx<'_>, id: u64, target: u64) -> rquickjs::Result<Option<u32>> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .lod_level(id, target)
+    .map(|l| l.map(|l| l as u32))
+    .map_err(|e| throw_str(&ctx, &format!("lodLevel: {e}")))
 }
 
 /// The bias every projected size measured on a target is multiplied by.

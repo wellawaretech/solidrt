@@ -332,18 +332,27 @@ impl RenderInner {
           nodes_painted: paint_stats.nodes_painted,
           backdrops_prepainted: paint_stats.backdrops_prepainted,
           raster: atx.raster_counters(),
+          captures: paint_stats.captures,
         };
         // A frame over its refresh period is jank a human feels; say so through
         // the engine logger (the one the dev server forwards, so get_logs sees
-        // it) with the breakdown that names the phase.
+        // it) with the breakdown that names the phase. A frame a snapshot
+        // capture stalled says so up front: the readback is the tool's time,
+        // not a hitch the app made.
         if record.total_ms > record.period_ms && record.period_ms > 0.0 {
           let due = self.last_slow_warn.get().is_none_or(|t| t.elapsed() >= SLOW_WARN_INTERVAL);
           if due {
             self.last_slow_warn.set(Some(Instant::now()));
+            let cause = if record.captures > 0 {
+              format!(" - {} snapshot capture(s) in the paint, tooling time, not the app's", record.captures)
+            } else {
+              String::new()
+            };
             qtx.logger().warn(&format!(
-              "Slow frame: {:.1} ms (budget {:.1}): js {:.1}, layout {:.1}, postLayout {:.1}, paint {:.1}, hover {:.1}; paraShapes {}, measureCalls {}, dirtiedNodes {}, nodesAdded {}, cacheHits {}/{}, nodesPainted {}",
+              "Slow frame: {:.1} ms (budget {:.1}){}: js {:.1}, layout {:.1}, postLayout {:.1}, paint {:.1}, hover {:.1}; paraShapes {}, measureCalls {}, dirtiedNodes {}, nodesAdded {}, cacheHits {}/{}, nodesPainted {}",
               record.total_ms,
               record.period_ms,
+              cause,
               record.js_ms,
               record.layout_ms,
               record.post_ms,

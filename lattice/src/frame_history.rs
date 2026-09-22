@@ -68,6 +68,10 @@ pub struct FrameRecord {
   /// The raster counters as they stood when the frame was recorded; two
   /// records give a rate over the frames between them.
   pub raster: RasterCounters,
+  /// Snapshot captures serviced in the frame's paint (a blocking readback
+  /// each): a frame with any is tooling time, kept out of the window's
+  /// timing figures and counted in `capture_frames` instead.
+  pub captures: u32,
 }
 
 /// Summary of the rebuilt frames inside a query window (see `summarize`).
@@ -82,6 +86,10 @@ pub struct WindowSummary {
   pub p95_ms: f32,
   pub max_ms: f32,
   pub slow_frames: usize,
+  /// Frames a snapshot capture stalled, left out of the percentiles,
+  /// `slow_frames` and `worst` (all of them count when nothing else is
+  /// in the window).
+  pub capture_frames: usize,
   pub worst: FrameRecord,
   /// Backdrop panels re-filtered under a fading group, summed over the
   /// window: nonzero means a glass fade ran, whichever frame was worst.
@@ -147,14 +155,22 @@ impl FrameHistory {
     if frames.is_empty() {
       return None;
     }
-    let mut totals: Vec<f32> = frames.iter().map(|r| r.total_ms).collect();
+    // The timing figures skip the frames a capture stalled, unless that is
+    // every frame in the window.
+    let capture_frames = frames.iter().filter(|r| r.captures > 0).count();
+    let timed: Vec<&FrameRecord> = if capture_frames == frames.len() {
+      frames.clone()
+    } else {
+      frames.iter().copied().filter(|r| r.captures == 0).collect()
+    };
+    let mut totals: Vec<f32> = timed.iter().map(|r| r.total_ms).collect();
     totals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let pct = |p: f32| totals[((totals.len() - 1) as f32 * p).round() as usize];
-    let worst = **frames
+    let worst = **timed
       .iter()
       .max_by(|a, b| a.total_ms.partial_cmp(&b.total_ms).unwrap_or(std::cmp::Ordering::Equal))
       .expect("non-empty window");
-    let slow_frames = frames.iter().filter(|r| r.total_ms > r.period_ms).count();
+    let slow_frames = timed.iter().filter(|r| r.total_ms > r.period_ms).count();
     let raster_rates = match (frames.first(), frames.last()) {
       (Some(first), Some(last)) if frames.len() >= 2 && last.at_ms > first.at_ms => {
         let span_s = ((last.at_ms - first.at_ms) / 1000.0) as f32;
@@ -184,6 +200,7 @@ impl FrameHistory {
       p95_ms: pct(0.95),
       max_ms: *totals.last().expect("non-empty"),
       slow_frames,
+      capture_frames,
       worst,
       backdrops_prepainted: frames.iter().map(|r| r.backdrops_prepainted).sum(),
       nodes_painted_max: frames.iter().map(|r| r.nodes_painted).max().unwrap_or(0),

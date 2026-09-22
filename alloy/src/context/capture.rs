@@ -68,14 +68,17 @@ impl Context {
     }
   }
 
-  /// Invoke every serviced capture's completion callback with its outcome.
-  /// Called once at the end of the paint pass, out of the tree walk, so a
-  /// callback (which may read back or free textures) never re-enters the walk.
-  pub fn deliver_captures(&self) {
+  /// Invoke every serviced capture's completion callback with its outcome,
+  /// returning how many there were. Called once at the end of the paint
+  /// pass, out of the tree walk, so a callback (which may read back or free
+  /// textures) never re-enters the walk.
+  pub fn deliver_captures(&self) -> usize {
     let ready = std::mem::take(&mut *self.capture_ready.borrow_mut());
+    let count = ready.len();
     for (done, result) in ready {
       done(result);
     }
+    count
   }
 
   /// Rasterize a display list into a new GPU texture of the given pixel size,

@@ -1262,6 +1262,16 @@ impl Spatial {
   /// The bias every projected size measured on `target` is multiplied by
   /// (1 = none; below 1 switches levels sooner). Kept across view writes;
   /// a target measuring by a reference takes the reference's.
+  /// The level a LOD group draws on `target`: the index into its levels,
+  /// `levels.len()` when culled past the last threshold, None before the
+  /// target measured it (no view yet). Err for a node with no levels.
+  pub fn lod_level(&self, id: NodeId, target: u64) -> Result<Option<usize>, String> {
+    let i = self.resolve(id)?;
+    let group = self.nodes[i as usize].lod.as_ref().ok_or_else(|| format!("node {id} is not a LOD group"))?;
+    let level = group.states.iter().find(|st| st.target == target).map(|st| st.level);
+    Ok(level.filter(|&l| l != u32::MAX).map(|l| l as usize))
+  }
+
   pub fn set_lod_bias(&mut self, target: u64, bias: f32) {
     self.lod_bias.insert(target, bias);
     if let Some(v) = self.lod_views.get_mut(&target) {

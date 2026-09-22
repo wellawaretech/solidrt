@@ -1175,6 +1175,7 @@ fn window_json(
   put("p95Ms", round2(w.p95_ms).into());
   put("maxMs", round2(w.max_ms).into());
   put("slowFrames", w.slow_frames.into());
+  put("captureFrames", w.capture_frames.into());
   put("periodMs", round2(worst.period_ms).into());
   put("backdropsPrepainted", w.backdrops_prepainted.into());
   put("nodesPaintedMax", w.nodes_painted_max.into());

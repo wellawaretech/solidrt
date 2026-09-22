@@ -13,6 +13,23 @@ fn history(records: &[FrameRecord]) -> FrameHistory {
 }
 
 #[test]
+fn capture_frames_stay_out_of_the_timing_figures() {
+  let stalled = FrameRecord { captures: 1, ..record(300.0, 120.0, 30, 0) };
+  let h = history(&[record(100.0, 1.0, 10, 0), record(200.0, 2.0, 20, 0), stalled]);
+  let w = h.summarize(Window::Frames(3), 1000.0).expect("three frames");
+  assert_eq!(w.frames, 3);
+  assert_eq!(w.capture_frames, 1);
+  assert_eq!(w.max_ms, 2.0);
+  assert_eq!(w.slow_frames, 0);
+  assert_eq!(w.worst.at_ms, 200.0);
+  // A window of nothing but capture frames still answers with them.
+  let w = h.summarize(Window::Frames(1), 1000.0).expect("last frame");
+  assert_eq!(w.capture_frames, 1);
+  assert_eq!(w.max_ms, 120.0);
+  assert_eq!(w.slow_frames, 1);
+}
+
+#[test]
 fn empty_window_is_none() {
   let h = history(&[record(100.0, 1.0, 10, 0)]);
   assert!(h.summarize(Window::Ms(50.0), 1000.0).is_none());

@@ -219,7 +219,10 @@ when exactly one client is connected.
   second (frame signal to swap call plus GPU time), what the hold's
   step-down prediction reads; `slowFrames`,
   `gpuFrameExecMsPerFrame`, `fenceTimeoutsPerSec` and `rasterCmdMsPerSec`
-  say why. The `gpu*ExecMs` figures are absent (not 0) when the client's
+  say why. A snapshot capture stalls the frame it lands in (a blocking
+  readback inside the paint): those frames are `captureFrames`, left out
+  of the percentiles, `slowFrames` and `worst`, and their slow-frame log
+  line says "snapshot capture(s) in the paint" - not a hitch to chase. The `gpu*ExecMs` figures are absent (not 0) when the client's
   context has no timer queries or when the startup attribution self-test
   caught the driver booking deferred pass execution to the wrong query,
   as some tiled GPUs do; where they are absent, measure the GPU by

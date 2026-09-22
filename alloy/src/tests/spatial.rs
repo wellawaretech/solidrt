@@ -1329,6 +1329,26 @@ fn fades(writes: &[Write]) -> Vec<(u64, [f32; 2])> {
 }
 
 #[test]
+fn lod_level_reads_the_pick_per_target() {
+  let mut s = Spatial::new();
+  let (g, l) = lod_group(&mut s, 1, false);
+  assert!(s.lod_level(l[0], 1).is_err(), "a level is not a group");
+  s.set_lod(g, &[level(l[0], 0.5), level(l[1], 0.1), level(l[2], 0.02)], 0.0, None).expect("lod");
+  assert_eq!(s.lod_level(g, 1).expect("group"), None, "unmeasured before a view");
+  s.set_view(1, lod_view(1.0));
+  flush(&mut s);
+  assert_eq!(s.lod_level(g, 1).expect("group"), Some(0));
+  s.set_view(1, lod_view(5.0));
+  flush(&mut s);
+  assert_eq!(s.lod_level(g, 1).expect("group"), Some(1));
+  // Past the last threshold the group is culled: the level count.
+  s.set_view(1, lod_view(100.0));
+  flush(&mut s);
+  assert_eq!(s.lod_level(g, 1).expect("group"), Some(3));
+  assert_eq!(s.lod_level(g, 2).expect("group"), None, "a target without a view never measured");
+}
+
+#[test]
 fn a_group_draws_the_level_its_projected_size_picks_with_hysteresis() {
   let mut s = Spatial::new();
   let (g, l) = lod_group(&mut s, 1, false);
