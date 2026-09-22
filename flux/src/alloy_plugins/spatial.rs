@@ -13,7 +13,7 @@ use crate::alloy_plugins::properties::transition::{
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::{elements_mut_of, elements_of, OptArg};
 use alloy::spatial::{
-  vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawOrder, DrawSink,
+  vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawOrder, DrawQueue, DrawSink,
   InstanceProjection, InstanceRecordSink, LodLevel, LodView, MoveOptions, NodeEndpoint, NodeMotion,
   NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RootMotion, Shape, SharedSlotSink,
   TextureSlotSink, Volume,
@@ -330,11 +330,17 @@ fn bind_draw(
 }
 
 /// Re-key every draw sink of the node for the draw sort.
-fn set_draw_key(ctx: Ctx<'_>, id: u64, transparent: bool, render_order: i32) -> rquickjs::Result<()> {
+fn set_draw_key(ctx: Ctx<'_>, id: u64, queue: u32, render_order: i32) -> rquickjs::Result<()> {
+  let queue = match queue {
+    0 => DrawQueue::Opaque,
+    1 => DrawQueue::Cutout,
+    2 => DrawQueue::Transparent,
+    _ => return Err(throw_str(&ctx, &format!("setDrawKey: unknown queue {queue}"))),
+  };
   super::gui(&ctx)
     .alloy
     .spatial()
-    .set_sink_order(id, DrawOrder { transparent, render_order })
+    .set_sink_order(id, DrawOrder { queue, render_order })
     .map_err(|e| throw_str(&ctx, &format!("setDrawKey: {e}")))
 }
 

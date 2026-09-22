@@ -2280,26 +2280,31 @@ with `srt tool 3d/model`.
   behind opaques without occluding other translucents). The one inference:
   a stock material or `shaderMaterial` with any `blend` but "none" is transparent
   unless told `transparent: false` - every blended draw belongs after the opaques, and
-  back-to-front is harmless for add/multiply. The scene owns the
-  order: background, opaque meshes by `renderOrder` then front-to-back by
-  their distance to the camera, transparent meshes by `renderOrder` then
-  back-to-front by their view-space depth, both measured at the CENTER of
-  the mesh's world bounds (not the origin: off-origin geometry sorts by
-  where it is; not the nearest bounds point: a big translucent ground
-  plane would cover the small translucents on it), add order breaking
-  ties. The opaque key is coarse on purpose - a logarithmic distance
-  bucket, four per doubling - because early-z only needs near layers
-  before far ones, and a coarse key keeps the order (and the meshes'
-  add-order material grouping within a bucket) stable while the camera
-  moves: a look-around changes no distance, and a step shorter than 16%
-  of the nearest opaque center's distance can cross no bucket edge, so
-  neither re-sorts. Dense geometry added base-first therefore no longer
-  needs the app to sort it (Godot and Unity sort opaques the same way,
-  Three exactly). One `setDrawOrder` from sync() whenever the list changed, a
-  renderOrder changed, a node moved (two or more meshes), or the camera
-  moved (two or more transparents, or past that opaque step), and skipped
-  when the resort lands on the permutation already issued. Per-mesh sort
-  only: one non-convex translucent
+  back-to-front is harmless for add/multiply. The spatial core owns the
+  order of every scene and view target (`setDrawSort`, each mesh's node
+  keyed by `setDrawKey` after its bind): background, then three queues -
+  opaque meshes front-to-back by their distance to the camera, cutout
+  meshes (any `alphaTest`, a `shaderMaterialClass({ cutout: true })`)
+  after them the same way because their discard defeats early-z, and
+  transparent meshes back-to-front by their view-space depth -
+  `renderOrder` above depth inside each queue, never across queues,
+  all measured at the CENTER of the mesh's world bounds (not the origin:
+  off-origin geometry sorts by where it is; not the nearest bounds point:
+  a big translucent ground plane would cover the small translucents on
+  it), add order breaking ties. The opaque and cutout key is coarse on
+  purpose - a logarithmic distance bucket, four per doubling - because
+  early-z only needs near layers before far ones, and a coarse key keeps
+  the order (and the meshes' add-order material grouping within a bucket)
+  stable while the camera moves: a look-around changes no distance, and a
+  step shorter than 16% of the nearest bucketed center's distance can
+  cross no bucket edge, so neither re-sorts. Dense geometry added
+  base-first therefore no longer needs the app to sort it (Godot and
+  Unity sort opaques the same way, Three exactly). The core issues one
+  `setDrawOrder` per target from the flush whenever a mesh was added,
+  removed or re-keyed, a node moved, or the camera moved (with a
+  transparent bound, or past that bucketed step), and skips it when the
+  resort lands on the permutation already issued. Per-mesh sort only:
+  one non-convex translucent
   mesh still overlaps itself in vertex order, and two large interpenetrating
   translucents can sort wrong (center distance, not per-pixel) - that is the
   engine contract, no OIT. A `shaderMaterial({ transparent: true })`

@@ -173,20 +173,23 @@ declare module "flux:spatial" {
    * drawn by a scene and by each of its views is one node with one flush.
    * A node's draw sinks share one sort key (setDrawKey): a sink bound
    * while the node has others takes theirs, a node's first sink keys
-   * opaque, renderOrder 0 until setDrawKey says otherwise.
+   * queue 0 (opaque), renderOrder 0 until setDrawKey says otherwise.
    */
   export function bindDraw(node: NodeId, target: TextureId, draw: DrawId, normal: boolean, count: number, fade: boolean): void
   /** The node's place in the draw sort of every target it draws into that
-   * has one (setDrawSort): opaque or transparent, and the renderOrder
-   * above depth. Set after the node's first bindDraw and on a material
-   * swap or renderOrder change; sorted targets re-sort at the next flush. */
-  export function setDrawKey(node: NodeId, transparent: boolean, renderOrder: number): void
+   * has one (setDrawSort): its queue (0 opaque, 1 cutout, 2 transparent),
+   * and the renderOrder above depth inside it. Set after the node's first
+   * bindDraw and on a material swap or renderOrder change; sorted targets
+   * re-sort at the next flush. */
+  export function setDrawKey(node: NodeId, queue: number, renderOrder: number): void
   /**
    * Whether the core orders the target's bound draw entries: opaque
    * entries front-to-back by a logarithmic distance bucket of their world
    * box center (four buckets per doubling, so a small camera move changes
-   * nothing), transparent entries after them back-to-front by exact depth
-   * along the view, `renderOrder` above both, bind order breaking ties.
+   * nothing), cutout entries (an alpha-tested fragment, no early-z) after
+   * them the same way, transparent entries last back-to-front by exact
+   * depth along the view, `renderOrder` above depth inside each queue,
+   * bind order breaking ties.
    * Measured against the target's LOD view (setLodView), so a target
    * without one waits for it. Every flush that bound, unbound, re-keyed or
    * moved an entry's node, or moved the view past the nearest opaque

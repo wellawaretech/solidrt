@@ -1,6 +1,7 @@
+use crate::spatial::DrawQueue::{Cutout, Opaque, Transparent};
 use crate::spatial::{
-  compose, multiply, DrawOrder, DrawSink, LodView, Mat4, QueryFilter, SinkWriter, Spatial, TextureSlotSink, Volume,
-  WeightsSlotSink, IDENTITY,
+  compose, multiply, DrawOrder, DrawQueue, DrawSink, LodView, Mat4, QueryFilter, SinkWriter, Spatial, TextureSlotSink,
+  Volume, WeightsSlotSink, IDENTITY,
 };
 
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -1512,8 +1513,8 @@ fn sort_view(eye: [f32; 3], forward: [f32; 3]) -> Option<LodView> {
   Some(LodView { eye, forward, focal: 1.0, ortho: false, bias: 1.0 })
 }
 
-fn keyed(draw: u64, transparent: bool, render_order: i32) -> DrawSink {
-  DrawSink { target: 1, draw, normal: false, count: 1, fade: false, order: DrawOrder { transparent, render_order } }
+fn keyed(draw: u64, queue: DrawQueue, render_order: i32) -> DrawSink {
+  DrawSink { target: 1, draw, normal: false, count: 1, fade: false, order: DrawOrder { queue, render_order } }
 }
 
 /// A unit box at `position` bound to draw `draw` on target 1.
@@ -1546,9 +1547,9 @@ fn sorted_scene() -> Spatial {
 fn draw_sort_orders_opaques_front_to_back() {
   let mut s = sorted_scene();
   // Bound far first: the generation order of a procedural hull.
-  boxed(&mut s, [0.0, 0.0, -5.0], keyed(1, false, 0));
-  boxed(&mut s, [0.0, 0.0, 0.0], keyed(2, false, 0));
-  boxed(&mut s, [0.0, 0.0, 5.0], keyed(3, false, 0));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(1, Opaque, 0));
+  boxed(&mut s, [0.0, 0.0, 0.0], keyed(2, Opaque, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(3, Opaque, 0));
   assert_eq!(orders(&flush(&mut s)), vec![vec![3, 2, 1]]);
   assert!(orders(&flush(&mut s)).is_empty(), "a clean tree re-sorts nothing");
 }
@@ -1556,10 +1557,10 @@ fn draw_sort_orders_opaques_front_to_back() {
 #[test]
 fn draw_sort_render_order_beats_depth() {
   let mut s = sorted_scene();
-  boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, false, 1));
-  boxed(&mut s, [0.0, 0.0, -5.0], keyed(2, false, 0));
-  boxed(&mut s, [0.0, 0.0, 5.0], keyed(3, true, 1));
-  boxed(&mut s, [0.0, 0.0, -5.0], keyed(4, true, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, Opaque, 1));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(2, Opaque, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(3, Transparent, 1));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(4, Transparent, 0));
   assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1, 4, 3]]);
 }
 
@@ -1568,28 +1569,41 @@ fn draw_sort_ties_keep_bind_order() {
   let mut s = sorted_scene();
   // Distances 4.1 and 4.0 share a bucket (four per doubling), so the
   // farther-bound-first pair keeps its bind order; 5.0 does not.
-  boxed(&mut s, [0.0, 0.0, 5.9], keyed(1, false, 0));
-  boxed(&mut s, [0.0, 0.0, 6.0], keyed(2, false, 0));
-  boxed(&mut s, [0.0, 0.0, 5.0], keyed(3, false, 0));
-  boxed(&mut s, [0.0, 0.0, 6.0], keyed(4, false, 0));
+  boxed(&mut s, [0.0, 0.0, 5.9], keyed(1, Opaque, 0));
+  boxed(&mut s, [0.0, 0.0, 6.0], keyed(2, Opaque, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(3, Opaque, 0));
+  boxed(&mut s, [0.0, 0.0, 6.0], keyed(4, Opaque, 0));
   assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2, 4, 3]]);
 }
 
 #[test]
 fn draw_sort_transparents_last_back_to_front() {
   let mut s = sorted_scene();
-  boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, true, 0));
-  boxed(&mut s, [0.0, 0.0, -5.0], keyed(2, false, 0));
-  boxed(&mut s, [0.0, 0.0, 0.0], keyed(3, true, 0));
-  boxed(&mut s, [0.0, 0.0, 5.0], keyed(4, false, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, Transparent, 0));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(2, Opaque, 0));
+  boxed(&mut s, [0.0, 0.0, 0.0], keyed(3, Transparent, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(4, Opaque, 0));
   assert_eq!(orders(&flush(&mut s)), vec![vec![4, 2, 3, 1]]);
+}
+
+#[test]
+fn draw_sort_cutouts_between_opaques_and_transparents() {
+  let mut s = sorted_scene();
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, Cutout, 0));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(2, Opaque, 0));
+  boxed(&mut s, [0.0, 0.0, 0.0], keyed(3, Transparent, 0));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(4, Cutout, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(5, Opaque, 0));
+  // A render_order below the opaques' still sorts inside the cutout queue.
+  boxed(&mut s, [0.0, 0.0, 0.0], keyed(6, Cutout, -1));
+  assert_eq!(orders(&flush(&mut s)), vec![vec![5, 2, 6, 1, 4, 3]]);
 }
 
 #[test]
 fn draw_sort_skips_short_moves_and_look_around() {
   let mut s = sorted_scene();
-  let a = boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, false, 0));
-  boxed(&mut s, [8.0, 0.0, 10.0], keyed(2, false, 0));
+  let a = boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, Opaque, 0));
+  boxed(&mut s, [8.0, 0.0, 10.0], keyed(2, Opaque, 0));
   assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
   // Nearest opaque center is 5 away: a step under 16% of it and a pure
   // look-around key nothing and write nothing.
@@ -1601,7 +1615,7 @@ fn draw_sort_skips_short_moves_and_look_around() {
   s.set_lod_view(1, sort_view([8.0, 0.0, 10.0], [0.0, 0.0, -1.0]));
   assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
   // A re-key that lands on the same permutation writes nothing.
-  s.set_sink_order(a, DrawOrder { transparent: true, render_order: 0 }).expect("order");
+  s.set_sink_order(a, DrawOrder { queue: Transparent, render_order: 0 }).expect("order");
   assert!(orders(&flush(&mut s)).is_empty());
 }
 
@@ -1610,8 +1624,8 @@ fn draw_sort_transparents_rekey_on_a_look_around() {
   let mut s = sorted_scene();
   // Equal depths tie by bind order; a turn of the view alone separates
   // them (exact depth, no bucket, no eye move needed).
-  boxed(&mut s, [2.0, 0.0, 0.0], keyed(1, true, 0));
-  boxed(&mut s, [-2.0, 0.0, 0.0], keyed(2, true, 0));
+  boxed(&mut s, [2.0, 0.0, 0.0], keyed(1, Transparent, 0));
+  boxed(&mut s, [-2.0, 0.0, 0.0], keyed(2, Transparent, 0));
   assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
   let len = (0.1f32 * 0.1 + 1.0).sqrt();
   s.set_lod_view(1, sort_view([0.0, 0.0, 10.0], [-0.1 / len, 0.0, -1.0 / len]));
@@ -1627,8 +1641,8 @@ fn draw_sort_ortho_rekeys_on_a_turn() {
   s.set_draw_sort(1, true);
   let ortho = |forward: [f32; 3]| Some(LodView { eye: [0.0, 0.0, 10.0], forward, focal: 1.0, ortho: true, bias: 1.0 });
   s.set_lod_view(1, ortho([0.0, 0.0, -1.0]));
-  boxed(&mut s, [-4.0, 0.0, 5.0], keyed(1, false, 0));
-  boxed(&mut s, [4.0, 0.0, 5.0], keyed(2, false, 0));
+  boxed(&mut s, [-4.0, 0.0, 5.0], keyed(1, Opaque, 0));
+  boxed(&mut s, [4.0, 0.0, 5.0], keyed(2, Opaque, 0));
   assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
   let len = (0.3f32 * 0.3 + 1.0).sqrt();
   s.set_lod_view(1, ortho([-0.3 / len, 0.0, -1.0 / len]));
@@ -1639,8 +1653,8 @@ fn draw_sort_ortho_rekeys_on_a_turn() {
 fn draw_sort_rekeys_a_moved_subtree() {
   let mut s = sorted_scene();
   let group = s.create([0.0; 3], Q, ONE, true);
-  let a = boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, false, 0));
-  let b = boxed(&mut s, [0.0, 0.0, -5.0], keyed(2, false, 0));
+  let a = boxed(&mut s, [0.0, 0.0, 5.0], keyed(1, Opaque, 0));
+  let b = boxed(&mut s, [0.0, 0.0, -5.0], keyed(2, Opaque, 0));
   s.set_parent(a, Some(group)).expect("parent");
   s.set_parent(b, Some(group)).expect("parent");
   assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
@@ -1653,8 +1667,8 @@ fn draw_sort_rekeys_a_moved_subtree() {
 fn draw_sort_off_target_never_writes() {
   let mut s = Spatial::new();
   s.set_lod_view(1, sort_view([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]));
-  boxed(&mut s, [0.0, 0.0, -5.0], keyed(1, false, 0));
-  boxed(&mut s, [0.0, 0.0, 5.0], keyed(2, false, 0));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(1, Opaque, 0));
+  boxed(&mut s, [0.0, 0.0, 5.0], keyed(2, Opaque, 0));
   assert!(orders(&flush(&mut s)).is_empty());
   s.set_draw_sort(1, true);
   assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
@@ -1667,12 +1681,12 @@ fn draw_sort_off_target_never_writes() {
 fn draw_sort_waits_for_a_view_and_follows_rekeys() {
   let mut s = Spatial::new();
   s.set_draw_sort(1, true);
-  boxed(&mut s, [0.0, 0.0, -5.0], keyed(1, false, 0));
-  let b = boxed(&mut s, [0.0, 0.0, 5.0], keyed(2, false, 0));
+  boxed(&mut s, [0.0, 0.0, -5.0], keyed(1, Opaque, 0));
+  let b = boxed(&mut s, [0.0, 0.0, 5.0], keyed(2, Opaque, 0));
   assert!(orders(&flush(&mut s)).is_empty(), "no view, nothing to measure from");
   s.set_lod_view(1, sort_view([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]));
   assert_eq!(orders(&flush(&mut s)), vec![vec![2, 1]]);
-  s.set_sink_order(b, DrawOrder { transparent: false, render_order: 1 }).expect("order");
+  s.set_sink_order(b, DrawOrder { queue: Opaque, render_order: 1 }).expect("order");
   assert_eq!(orders(&flush(&mut s)), vec![vec![1, 2]]);
   s.unbind_sink(b, Some(1)).expect("unbind");
   assert_eq!(orders(&flush(&mut s)), vec![vec![1]]);
@@ -1700,9 +1714,10 @@ fn draw_sort_matches_a_linear_oracle() {
     let forward = [f[0] / len, f[1] / len, f[2] / len];
     s.set_lod_view(1, sort_view(eye, forward));
     let n = 1 + (range(0.0, 12.0) as usize);
-    let mut items: Vec<(u64, bool, i32, [f32; 3])> = Vec::new();
+    let mut items: Vec<(u64, DrawQueue, i32, [f32; 3])> = Vec::new();
     for k in 0..n {
-      let item = (k as u64 + 1, range(0.0, 1.0) < 0.5, range(0.0, 3.0) as i32, [range(-5.0, 5.0), range(-5.0, 5.0), range(-5.0, 5.0)]);
+      let queue = [Opaque, Cutout, Transparent][range(0.0, 3.0) as usize];
+      let item = (k as u64 + 1, queue, range(0.0, 3.0) as i32, [range(-5.0, 5.0), range(-5.0, 5.0), range(-5.0, 5.0)]);
       boxed(&mut s, item.3, keyed(item.0, item.1, item.2));
       items.push(item);
     }
@@ -1715,7 +1730,7 @@ fn draw_sort_matches_a_linear_oracle() {
     for pair in order.windows(2) {
       let p = items[pair[0] as usize - 1];
       let m = items[pair[1] as usize - 1];
-      assert!(!(p.1 && !m.1), "opaque after transparent");
+      assert!(p.1 <= m.1, "queue not ascending");
       if p.1 != m.1 {
         continue;
       }
@@ -1723,11 +1738,11 @@ fn draw_sort_matches_a_linear_oracle() {
       if p.2 < m.2 {
         continue;
       }
-      if m.1 {
+      if m.1 == Transparent {
         assert!(depth(p.3) >= depth(m.3) - 1e-5, "transparent not back-to-front");
       } else {
         let (pb, mb) = (bucket(dist(p.3)), bucket(dist(m.3)));
-        assert!(pb <= mb, "opaque not front-to-back");
+        assert!(pb <= mb, "bucketed queue not front-to-back");
         assert!(!(pb == mb && p.0 > m.0), "bind order not kept in a bucket");
       }
     }

@@ -406,6 +406,12 @@ export type ToneMapping = "none" | "aces" | "agx" | "neutral"
 
 // The uToneMapping value per mode; the RESOLVE set branches on it.
 const TONE_MAPPING_CODE: Record<ToneMapping, number> = { none: 0, aces: 1, agx: 2, neutral: 3 }
+// The core's draw queues (flux:spatial setDrawKey), drawn in this order.
+const QUEUE_OPAQUE = 0
+const QUEUE_CUTOUT = 1
+const QUEUE_TRANSPARENT = 2
+let drawQueue = (m: Material): number =>
+  m.transparent === true ? QUEUE_TRANSPARENT : m.cutout === true ? QUEUE_CUTOUT : QUEUE_OPAQUE
 
 /** The RESOLVE set's params for a resolve pass of your own (an app-owned
  * atlas tiled views render into, resolved through `resolveFragment` from
@@ -1187,7 +1193,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // (setDrawKey after a bind), and a flush that moved a node, changed a
   // binding or moved a target's LOD view re-keys that target's entries.
   let meshes: Mesh[] = []
-  let keyDraw = (mesh: Mesh) => spatial.setDrawKey(mesh._node!, mesh.material.transparent === true, mesh.renderOrder)
+  let keyDraw = (mesh: Mesh) => spatial.setDrawKey(mesh._node!, drawQueue(mesh.material), mesh.renderOrder)
   // Attached lights in attach order (= light index); any change to the
   // set, a light's fields, or a light's world matrix rewrites the shared
   // light params at the end of the sync - one write, however many meshes.

@@ -86,10 +86,16 @@ export type Material = {
    * stride). */
   attributes(): VertexAttribute[]
   /** True when the pipeline blends over (its `blend`, "alpha" by default,
-   * with depthWrite off):
-   * the scene draws this material's meshes after every opaque one, sorted
-   * back-to-front by mesh origin, and re-sorts them when the camera moves. */
+   * with depthWrite off): the scene draws this material's meshes after
+   * every opaque and cutout one, sorted back-to-front by the center of
+   * their world bounds and re-sorted as the camera moves. */
   transparent?: boolean
+  /** True when the fragment discards (a stock material's `alphaTest`, a
+   * shaderMaterialClass told `cutout`): the scene draws this material's
+   * meshes in the cutout queue, after the solid opaques and front-to-back
+   * like them, so the solids fill the depth before the fragments that
+   * cannot early-z. */
+  cutout?: boolean
   /** The instance buffers, when the material's pipeline declares them
    * (shaderMaterialClass's `instanceBuffers`; the stock materials'
    * `instanced`), one layout per buffer after the geometry's. Such a
@@ -177,10 +183,10 @@ export type UnlitOptions = {
   cull?: CullMode
   /** Cutout: drop a fragment whose final alpha (color x map, and the
    * vertex color under vertexColors) is below this, 0..1 (Three's alphaTest, glTF
-   * alphaMode MASK with its alphaCutoff). Opaque otherwise:
-   * depth-written, not sorted, unlike `transparent`. Foliage cards and
-   * fences want it with `cull: "none"`; a mapped cutout casts its cutout
-   * (Material.shadow). */
+   * alphaMode MASK with its alphaCutoff). Opaque otherwise: depth-written
+   * and drawn after the solid opaques (Material.cutout), never blended
+   * like `transparent`. Foliage cards and fences want it with `cull:
+   * "none"`; a mapped cutout casts its cutout (Material.shadow). */
   alphaTest?: number
   /** Take the scene's fog (default true, Three's `material.fog`): the
    * fragment fades toward the fog color with its distance from the
@@ -290,6 +296,7 @@ export function unlit(opts: UnlitOptions = {}): Material {
       instanceBuffers: stockInstanceBuffers(instanced, instanceColors),
       instanceStyle: instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent,
+      cutout: alphaTest,
       blend,
       cull,
       label: "scene-unlit-" + key,
@@ -511,6 +518,7 @@ export function phong(opts: PhongOptions = {}): Material {
       instanceBuffers: stockInstanceBuffers(flags.instanced, flags.instanceColors),
       instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
+      cutout: flags.alphaTest,
       blend: flags.blend,
       cull,
       label: "scene-phong-" + key,
@@ -686,6 +694,7 @@ export function standard(opts: StandardOptions = {}): Material {
       instanceBuffers: stockInstanceBuffers(flags.instanced, flags.instanceColors),
       instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
+      cutout: flags.alphaTest,
       blend: flags.blend,
       cull,
       label: "scene-standard-" + key,
@@ -1173,6 +1182,11 @@ export type ShaderMaterialClassOptions = {
    * draw belongs after the opaques so it depth-tests against them, and
    * back-to-front is harmless for the order-independent modes. */
   transparent?: boolean
+  /** The fragment discards (an alpha test of its own): the scene draws
+   * this material's meshes in the cutout queue, after the solid opaques
+   * (see Material.cutout). Ignored on a transparent material, which sorts
+   * as one. */
+  cutout?: boolean
   /** Pipeline state; defaults match unlit: depth: true, cull: "back",
    * and for transparent materials blend "alpha", depthWrite: false. */
   depth?: boolean
@@ -1251,6 +1265,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // The LOD cross-fade is a fragment-stage discard (Material.lodFade).
   let lodFade = /\buLodFade\b/.test(opts.fragment)
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
+  let cutout = opts.cutout === true
   let depth = opts.depth ?? true
   let cull = opts.cull ?? "back"
   // An unknown format has no record stride: it would leave here intact,
@@ -1351,6 +1366,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         lodFade,
         attributes,
         transparent,
+        cutout,
         instanceBuffers,
         instanceStyle: opts.instanceStyle,
         pipeline: pipelineFor,

@@ -98,14 +98,25 @@ pub struct DrawSink {
   pub order: DrawOrder,
 }
 
+/// The queue a draw entry sorts in on a sorted target, drawn in this
+/// order: opaques front-to-back, then cutouts (an alpha-tested fragment
+/// discards, which defeats early-z, so the solids fill the depth first)
+/// front-to-back the same way, then transparents back-to-front.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DrawQueue {
+  #[default]
+  Opaque,
+  Cutout,
+  Transparent,
+}
+
 /// A draw entry's place in a sorted target (`Spatial::set_draw_sort`):
-/// opaque entries draw front-to-back, transparent ones after them
-/// back-to-front, `render_order` above both (ascending), and equal keys
-/// keep bind order. Depth is measured at the center of the node's world
-/// box, or its origin without one.
+/// its queue above all, `render_order` (ascending) above the depth term
+/// inside the queue, and equal keys keep bind order. Depth is measured
+/// at the center of the node's world box, or its origin without one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DrawOrder {
-  pub transparent: bool,
+  pub queue: DrawQueue,
   pub render_order: i32,
 }
 
@@ -260,8 +271,8 @@ const ORDER_BUCKETS_PER_DOUBLING: f32 = 4.0;
 const ORDER_DISTANCE_FLOOR: f32 = 1e-3;
 /// The bucket of ORDER_DISTANCE_FLOOR, so bucket terms start at 0.
 const ORDER_BUCKET_BASE: i32 = -40;
-/// The fraction of the nearest opaque distance a camera may move without
-/// any opaque center leaving its bucket (1 - 2^(-1 / buckets per
+/// The fraction of the nearest bucketed distance a camera may move without
+/// any bucketed center leaving its bucket (1 - 2^(-1 / buckets per
 /// doubling)): the bucket edge below a center is at most this close, so a
 /// shorter move skips the keying.
 const ORDER_BUCKET_MARGIN: f32 = 0.1591;
@@ -275,7 +286,7 @@ struct DrawSort {
   /// The bound entries in the order last written; empty before the first.
   last: Vec<u64>,
   /// The eye and forward the last keying measured from, and the nearest
-  /// opaque center's distance to the eye then.
+  /// bucketed (opaque or cutout) center's distance to the eye then.
   eye: [f32; 3],
   forward: [f32; 3],
   nearest: f32,
@@ -300,26 +311,26 @@ fn ordered_bits(f: f32) -> u32 {
   }
 }
 
-/// An entry's packed sort key and its distance to the eye: transparent
-/// above all, then render_order, then the depth term - the opaque
-/// distance bucket ascending (front-to-back; the forward depth under an
-/// orthographic view, where distance to the eye means nothing), or the
-/// transparent forward depth descending (back-to-front). Bind order
-/// breaks the ties.
+/// An entry's packed sort key and its distance to the eye: the queue
+/// above all, then render_order, then the depth term - the opaque and
+/// cutout distance bucket ascending (front-to-back; the forward depth
+/// under an orthographic view, where distance to the eye means nothing),
+/// or the transparent forward depth descending (back-to-front). Bind
+/// order breaks the ties.
 fn draw_key(order: DrawOrder, center: [f32; 3], view: &LodView) -> (u64, f32) {
   let dx = center[0] - view.eye[0];
   let dy = center[1] - view.eye[1];
   let dz = center[2] - view.eye[2];
   let depth = dx * view.forward[0] + dy * view.forward[1] + dz * view.forward[2];
   let distance = if view.ortho { depth.abs() } else { (dx * dx + dy * dy + dz * dz).sqrt() };
-  let term = if order.transparent {
+  let term = if order.queue == DrawQueue::Transparent {
     !ordered_bits(depth)
   } else {
     let bucket = (distance.max(ORDER_DISTANCE_FLOOR).log2() * ORDER_BUCKETS_PER_DOUBLING).floor() as i32;
     (bucket - ORDER_BUCKET_BASE).max(0) as u32
   };
   let ro = (order.render_order.clamp(-ORDER_RENDER_LIMIT, ORDER_RENDER_LIMIT) + ORDER_RENDER_LIMIT) as u64;
-  (((order.transparent as u64) << 53) | (ro << 32) | term as u64, distance)
+  (((order.queue as u64) << 53) | (ro << 32) | term as u64, distance)
 }
 
 /// A fade band's position is quantized to this many steps: the dither
@@ -1356,9 +1367,9 @@ impl Spatial {
   /// center against the target's LOD view (see `draw_key`), sorts, and
   /// writes the permutation when it differs from the last written. A
   /// target without a LOD view waits for one. A view move shorter than
-  /// the bucket margin of the nearest opaque center changes no opaque
+  /// the bucket margin of the nearest bucketed center changes no bucketed
   /// key, so with no transparent entry and no other change it is skipped
-  /// - unless the view is orthographic and turned, since its opaque key
+  /// - unless the view is orthographic and turned, since its bucketed key
   /// is the forward depth.
   fn order_pass(&mut self, out: &mut dyn SinkWriter) {
     let mut sorts = std::mem::take(&mut self.draw_sorts);
@@ -1396,7 +1407,7 @@ impl Spatial {
             None => [n.world[12], n.world[13], n.world[14]],
           };
           let (key, distance) = draw_key(b.sink.order, center, view);
-          if b.sink.order.transparent {
+          if b.sink.order.queue == DrawQueue::Transparent {
             transparent = true;
           } else if distance < nearest {
             nearest = distance;

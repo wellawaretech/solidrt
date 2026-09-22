@@ -345,6 +345,13 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
+- **[Draw sort follow-ups](backlog/draw-sort-follow-ups.md)** [2026-09-22]
+  The core-side draw sort (2026-09-22) sorts opaques and cutouts front-to-back
+  and transparents back-to-front per target with no JS per mesh, but it has no
+  state-change grouping inside a bucket, a two-call key contract on bindDraw,
+  an implicit background-first rule, and the scene still writes the camera to
+  each target three times; each is a bounded change, listed here with the
+  reasoning so a fresh session can pick any one up.
 - **[Wire up the mouse cursor - element cursor prop over SetCursor](backlog/element-cursor-prop.md)** [2026-09-02]
   AlloyCommand::SetCursor and SetCursorVisible exist with a CSS-vocabulary
   Cursor enum but have no sender anywhere; give apps the web's cursor model -
