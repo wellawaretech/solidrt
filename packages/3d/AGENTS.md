@@ -225,12 +225,13 @@ a zoomed camera or a scaled-up tree). `createLod([{ node, size }, ...],
 levels nearest first, `size` the projected size BELOW which a level
 hands over to the next, the last one's the cull threshold (0 = never
 culled); a level is a direct child (a parentless node is adopted by
-`setLod`, one parented elsewhere is refused, never moved). Every camera write also sets its target's LOD view (eye,
-focal, ortho flag, `lodBias`): the scene and each view pick by their
-own camera (a minimap sees the far level of the same tree), shadow
-tiles by the SCENE camera (a caster draws the level the camera sees, so
-its shadow matches - Unity's and Godot's rule), probe faces pick
-nothing. The gate composes with the frustum and `visible` into the same
+`setLod`, one parented elsewhere is refused, never moved). Every camera
+write is also its target's view for the core, which derives the eye,
+focal and ortho flag it measures with (under `lodBias`): the scene and
+each view pick by their own camera (a minimap sees the far level of the
+same tree), shadow tiles by the SCENE camera (a caster draws the level
+the camera sees, so its shadow matches - Unity's and Godot's rule),
+probe faces by each face's camera. The gate composes with the frustum and `visible` into the same
 instance-count switch, so a still camera re-tests nothing and a thousand
 groups cost no JS per frame; a child of the group that carries no
 `lodSize` is drawn always. Without a `fade` the switch is hard with a
@@ -2281,8 +2282,9 @@ with `srt tool 3d/model`.
   a stock material or `shaderMaterial` with any `blend` but "none" is transparent
   unless told `transparent: false` - every blended draw belongs after the opaques, and
   back-to-front is harmless for add/multiply. The spatial core owns the
-  order of every scene and view target (`setDrawSort`, each mesh's node
-  keyed by `setDrawKey` after its bind): background, then three queues -
+  order of every scene and view target (`setDrawSort`; each mesh's bind
+  carries its queue and renderOrder): four queues - the background,
+  bound to the scene root and pinned first whatever the camera does,
   opaque meshes front-to-back by their distance to the camera, cutout
   meshes (any `alphaTest`, a `shaderMaterialClass({ cutout: true })`)
   after them the same way because their discard defeats early-z, and

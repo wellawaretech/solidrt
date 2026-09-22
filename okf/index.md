@@ -345,13 +345,6 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
-- **[Draw sort follow-ups](backlog/draw-sort-follow-ups.md)** [2026-09-22]
-  The core-side draw sort (2026-09-22) sorts opaques and cutouts front-to-back
-  and transparents back-to-front per target with no JS per mesh, but it has no
-  state-change grouping inside a bucket, a two-call key contract on bindDraw,
-  an implicit background-first rule, and the scene still writes the camera to
-  each target three times; each is a bounded change, listed here with the
-  reasoning so a fresh session can pick any one up.
 - **[Wire up the mouse cursor - element cursor prop over SetCursor](backlog/element-cursor-prop.md)** [2026-09-02]
   AlloyCommand::SetCursor and SetCursorVisible exist with a CSS-vocabulary
   Cursor enum but have no sender anywhere; give apps the web's cursor model -
@@ -2019,6 +2012,12 @@ Finished, kept for the reasoning.
   prop runs one pass over that texture and composites the result. Plan decided
   2026-08-03; all three stages done and verified 2026-08-04. Android sanity
   run for exact-size storage pending.
+- **[One view write per target per camera move](done/target-view-single-write.md)** [2026-09-22]
+  The 3d scene wrote each target's frustum and LOD view as two crossings
+  derived in JS from one camera; now one setView(target, view, proj) per
+  target per move, the core deriving frustum, LOD view and sort view, with a
+  per-target LOD bias and an LOD reference that makes shadow tiles measure by
+  the scene camera.
 - **[Inline styled runs in <text> via <span>](done/text-inline-spans.md)** [2026-08-16]
   A paragraph cannot mix styles, so a bold lead-in or inline code is laid out
   a word at a time in a wrapping row; Impeller shapes styled runs natively, so
@@ -2219,6 +2218,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   What browser devtools have that the control API lacks, and candidate
   extensions (pick mode, highlight, live prop edit, node-to-source, composer
   REPL, streaming) shaped as control endpoints plus console blocks.
+- **[State-change grouping inside a draw sort bucket does not pay on desktop](notes/draw-state-change-grouping.md)** [2026-09-22]
+  Unity and Godot sort by shader and material inside each depth bucket;
+  measured here on 300 draws with the program changing on every entry, the
+  cost is under 0.1 ms of issue time per frame and inside the noise of GPU
+  time, so the core's bind-order tiebreak stays and a state cache in the GL
+  pass is the fix if a mobile driver ever shows it.
 - **[FFI crossing costs, measured](notes/ffi-crossing-costs.md)** [2026-08-18]
   What one JS-to-Rust property write costs on the release runtime (about 0.25
   us including decode, string dispatch and apply), what share of a 3000-node

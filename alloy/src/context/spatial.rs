@@ -147,7 +147,10 @@ impl Context {
       let targets = self.targets.borrow();
       let entry = entry_mirror(&targets, sink.target, sink.draw)?;
       let identity = ParamValue::Array(crate::spatial::IDENTITY.to_vec());
-      let mut probe = vec![("uModel".to_string(), identity.clone())];
+      let mut probe = Vec::new();
+      if sink.params {
+        probe.push(("uModel".to_string(), identity.clone()));
+      }
       if sink.normal {
         probe.push(("uNormal".to_string(), identity));
       }

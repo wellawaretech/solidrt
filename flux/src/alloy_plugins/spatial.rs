@@ -14,7 +14,7 @@ use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::{elements_mut_of, elements_of, OptArg};
 use alloy::spatial::{
   vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawOrder, DrawQueue, DrawSink,
-  InstanceProjection, InstanceRecordSink, LodLevel, LodView, MoveOptions, NodeEndpoint, NodeMotion,
+  InstanceProjection, InstanceRecordSink, LodLevel, MoveOptions, NodeEndpoint, NodeMotion,
   NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RootMotion, Shape, SharedSlotSink,
   TextureSlotSink, Volume,
 };
@@ -60,12 +60,13 @@ impl ModuleDef for SpatialModule {
     decl.declare("shown")?;
     decl.declare("flush")?;
     decl.declare("setBounds")?;
-    decl.declare("setFrustum")?;
+    decl.declare("setView")?;
+    decl.declare("setLodBias")?;
+    decl.declare("setLodReference")?;
     decl.declare("setCull")?;
     decl.declare("setCullBounds")?;
     decl.declare("setCullGroup")?;
     decl.declare("setLod")?;
-    decl.declare("setLodView")?;
     decl.declare("createShape")?;
     decl.declare("updateShape")?;
     decl.declare("computeNormals")?;
@@ -119,12 +120,13 @@ impl ModuleDef for SpatialModule {
     exports.export("shown", Function::new(ctx.clone(), shown)?)?;
     exports.export("flush", Function::new(ctx.clone(), flush)?)?;
     exports.export("setBounds", Function::new(ctx.clone(), set_bounds)?)?;
-    exports.export("setFrustum", Function::new(ctx.clone(), set_frustum)?)?;
+    exports.export("setView", Function::new(ctx.clone(), set_view)?)?;
+    exports.export("setLodBias", Function::new(ctx.clone(), set_lod_bias)?)?;
+    exports.export("setLodReference", Function::new(ctx.clone(), set_lod_reference)?)?;
     exports.export("setCull", Function::new(ctx.clone(), set_cull)?)?;
     exports.export("setCullBounds", Function::new(ctx.clone(), set_cull_bounds)?)?;
     exports.export("setCullGroup", Function::new(ctx.clone(), set_cull_group)?)?;
     exports.export("setLod", Function::new(ctx.clone(), set_lod)?)?;
-    exports.export("setLodView", Function::new(ctx.clone(), set_lod_view)?)?;
     exports.export("createShape", Function::new(ctx.clone(), create_shape)?)?;
     exports.export("updateShape", Function::new(ctx.clone(), update_shape)?)?;
     exports.export("computeNormals", Function::new(ctx.clone(), compute_normals)?)?;
@@ -314,29 +316,60 @@ fn set_visible(ctx: Ctx<'_>, id: u64, visible: bool) -> rquickjs::Result<()> {
   super::gui(&ctx).alloy.spatial().set_visible(id, visible).map_err(|e| throw_str(&ctx, &format!("setVisible: {e}")))
 }
 
-fn bind_draw(
-  ctx: Ctx<'_>,
-  id: u64,
-  target: u64,
-  draw: u64,
-  normal: bool,
-  count: u32,
-  fade: bool,
-) -> rquickjs::Result<()> {
+/// Route the node's world matrix to one draw entry; the options object
+/// carries the entry's uniforms (normal, fade, params), its shown count
+/// and its sort key (queue, renderOrder).
+fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, opts: OptArg<Object<'_>>) -> rquickjs::Result<()> {
+  let opts = opts.0;
+  let field = |name: &str| -> rquickjs::Result<Option<Value<'_>>> {
+    match &opts {
+      Some(o) => o.get::<_, Option<Value<'_>>>(name),
+      None => Ok(None),
+    }
+  };
+  let flag = |name: &str, default: bool| -> rquickjs::Result<bool> {
+    match field(name)? {
+      Some(v) if !v.is_undefined() => Ok(v.as_bool().ok_or_else(|| throw_str(&ctx, &format!("bindDraw: {name} must be a boolean")))?),
+      _ => Ok(default),
+    }
+  };
+  let number = |name: &str, default: f64| -> rquickjs::Result<f64> {
+    match field(name)? {
+      Some(v) if !v.is_undefined() => Ok(v.as_number().ok_or_else(|| throw_str(&ctx, &format!("bindDraw: {name} must be a number")))?),
+      _ => Ok(default),
+    }
+  };
+  let normal = flag("normal", false)?;
+  let fade = flag("fade", false)?;
+  let params = flag("params", true)?;
+  let count = number("count", 1.0)? as u32;
+  let queue = draw_queue(&ctx, number("queue", QUEUE_OPAQUE as f64)? as u32, "bindDraw")?;
+  let render_order = number("renderOrder", 0.0)? as i32;
   super::gui(&ctx)
     .alloy
-    .spatial_bind(id, DrawSink { target, draw, normal, count, fade, order: DrawOrder::default() })
+    .spatial_bind(id, DrawSink { target, draw, normal, count, fade, params, order: DrawOrder { queue, render_order } })
     .map_err(|e| throw_str(&ctx, &format!("bindDraw: {e}")))
+}
+
+/// The JS queue codes of `DrawQueue`, in draw order.
+const QUEUE_BACKGROUND: u32 = 0;
+const QUEUE_OPAQUE: u32 = 1;
+const QUEUE_CUTOUT: u32 = 2;
+const QUEUE_TRANSPARENT: u32 = 3;
+
+fn draw_queue(ctx: &Ctx<'_>, code: u32, api: &str) -> rquickjs::Result<DrawQueue> {
+  match code {
+    QUEUE_BACKGROUND => Ok(DrawQueue::Background),
+    QUEUE_OPAQUE => Ok(DrawQueue::Opaque),
+    QUEUE_CUTOUT => Ok(DrawQueue::Cutout),
+    QUEUE_TRANSPARENT => Ok(DrawQueue::Transparent),
+    _ => Err(throw_str(ctx, &format!("{api}: unknown queue {code}"))),
+  }
 }
 
 /// Re-key every draw sink of the node for the draw sort.
 fn set_draw_key(ctx: Ctx<'_>, id: u64, queue: u32, render_order: i32) -> rquickjs::Result<()> {
-  let queue = match queue {
-    0 => DrawQueue::Opaque,
-    1 => DrawQueue::Cutout,
-    2 => DrawQueue::Transparent,
-    _ => return Err(throw_str(&ctx, &format!("setDrawKey: unknown queue {queue}"))),
-  };
+  let queue = draw_queue(&ctx, queue, "setDrawKey")?;
   super::gui(&ctx)
     .alloy
     .spatial()
@@ -428,22 +461,44 @@ fn box_arg(ctx: &Ctx<'_>, bounds: &OptArg<TypedArray<'_, f32>>, api: &str) -> rq
   }
 }
 
-/// The clip volume gating a target's draw sinks: its view-projection as a
-/// Float32Array of 16 (column-major), or null to lift it.
-fn set_frustum(ctx: Ctx<'_>, target: u64, view_proj: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
-  let m = match &view_proj.0 {
-    Some(data) => {
-      let f = elements_of(&ctx, data, "setFrustum")?;
-      if f.len() != 16 {
-        return Err(throw_str(&ctx, "setFrustum: viewProj must be a Float32Array of 16"));
+/// What a target sees: its view and projection as two Float32Arrays of
+/// 16 (column-major), or null to forget the target.
+fn set_view(
+  ctx: Ctx<'_>,
+  target: u64,
+  view: OptArg<TypedArray<'_, f32>>,
+  proj: OptArg<TypedArray<'_, f32>>,
+) -> rquickjs::Result<()> {
+  let matrices = match (&view.0, &proj.0) {
+    (Some(v), Some(p)) => {
+      let v = elements_of(&ctx, v, "setView")?;
+      let p = elements_of(&ctx, p, "setView")?;
+      if v.len() != 16 || p.len() != 16 {
+        return Err(throw_str(&ctx, "setView: view and proj must be Float32Arrays of 16"));
       }
-      let mut m = [0.0f32; 16];
-      m.copy_from_slice(f);
-      Some(m)
+      let mut vm = [0.0f32; 16];
+      let mut pm = [0.0f32; 16];
+      vm.copy_from_slice(v);
+      pm.copy_from_slice(p);
+      Some((vm, pm))
     }
-    None => None,
+    (None, None) => None,
+    _ => return Err(throw_str(&ctx, "setView: view and proj come together, or null to forget the target")),
   };
-  super::gui(&ctx).alloy.spatial().set_frustum(target, m);
+  super::gui(&ctx).alloy.spatial().set_view(target, matrices);
+  Ok(())
+}
+
+/// The bias every projected size measured on a target is multiplied by.
+fn set_lod_bias(ctx: Ctx<'_>, target: u64, bias: f64) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_lod_bias(target, bias as f32);
+  Ok(())
+}
+
+/// The target whose view a target measures projected size by, or null
+/// for its own.
+fn set_lod_reference(ctx: Ctx<'_>, target: u64, source: OptArg<u64>) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_lod_reference(target, source.0);
   Ok(())
 }
 
@@ -485,23 +540,6 @@ fn set_lod<'js>(ctx: Ctx<'js>, id: u64, levels: Array<'js>, fade: f64, reference
     .spatial()
     .set_lod(id, &out, fade as f32, reference.0)
     .map_err(|e| throw_str(&ctx, &format!("setLod: {e}")))
-}
-
-/// What a target measures projected size with: a Float32Array of 6 (eye
-/// xyz, focal, ortho as 0/1, bias), or null to lift it.
-fn set_lod_view(ctx: Ctx<'_>, target: u64, view: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
-  let v = match &view.0 {
-    Some(data) => {
-      let f = elements_of(&ctx, data, "setLodView")?;
-      if f.len() != 9 {
-        return Err(throw_str(&ctx, "setLodView: view must be a Float32Array of 9 (eye xyz, forward xyz, focal, ortho, bias)"));
-      }
-      Some(LodView { eye: [f[0], f[1], f[2]], forward: [f[3], f[4], f[5]], focal: f[6], ortho: f[7] != 0.0, bias: f[8] })
-    }
-    None => None,
-  };
-  super::gui(&ctx).alloy.spatial().set_lod_view(target, v);
-  Ok(())
 }
 
 /// Positions (and uvs, when `uv_offset` is not -1) gathered out of an

@@ -161,41 +161,57 @@ declare module "flux:spatial" {
    */
   export function writeTransform(node: NodeId, transform: Float32Array): void
   export function setVisible(node: NodeId, visible: boolean): void
+  /** What a draw sink writes and where it sorts (bindDraw). */
+  export type BindDrawOptions = {
+    /** The entry declares `uModel`: the flush writes the node's world
+     * matrix there. Default true; false binds the entry for its visibility
+     * switch and its sort key alone (a background pinned to a root). */
+    params?: boolean
+    /** Write `uNormal`, the world matrix's inverse-transpose, too. */
+    normal?: boolean
+    /** Write the LOD cross-fade band into `uLodFade` (see setLod). */
+    fade?: boolean
+    /** The instanceCount the entry is switched on with; default 1. */
+    count?: number
+    /** The sort queue on a sorted target (setDrawSort): 0 background,
+     * 1 opaque (the default), 2 cutout, 3 transparent. */
+    queue?: number
+    /** Ascending above depth inside the queue; default 0. */
+    renderOrder?: number
+  }
   /**
    * Route the node's world matrix to one draw entry's `uModel` (and
-   * `uNormal`, the inverse-transpose, when `normal`; and with `fade` the
-   * LOD cross-fade band into `uLodFade`, see setLod). Validated like
+   * `uNormal` and `uLodFade` when the options ask). Validated like
    * setDrawParams: the entry must exist and declare those uniforms. The
    * entry is assumed switched off (instanceCount 0); the next flush turns it
    * on with `count` when the node is shown, and off again when hidden.
    * One draw sink PER TARGET: binding on a target the node already draws
    * into replaces that sink, binding on another target adds one - a mesh
    * drawn by a scene and by each of its views is one node with one flush.
-   * A node's draw sinks share one sort key (setDrawKey): a sink bound
-   * while the node has others takes theirs, a node's first sink keys
-   * queue 0 (opaque), renderOrder 0 until setDrawKey says otherwise.
+   * A node's draw sinks share one sort key: a bind keys every sink of
+   * the node with its `queue` and `renderOrder`.
    */
-  export function bindDraw(node: NodeId, target: TextureId, draw: DrawId, normal: boolean, count: number, fade: boolean): void
-  /** The node's place in the draw sort of every target it draws into that
-   * has one (setDrawSort): its queue (0 opaque, 1 cutout, 2 transparent),
-   * and the renderOrder above depth inside it. Set after the node's first
-   * bindDraw and on a material swap or renderOrder change; sorted targets
-   * re-sort at the next flush. */
+  export function bindDraw(node: NodeId, target: TextureId, draw: DrawId, opts?: BindDrawOptions): void
+  /** Re-key the node's draw sinks without a rebind (a renderOrder
+   * change): the queue codes of BindDrawOptions, and the renderOrder
+   * above depth inside the queue. Sorted targets re-sort at the next
+   * flush. */
   export function setDrawKey(node: NodeId, queue: number, renderOrder: number): void
   /**
-   * Whether the core orders the target's bound draw entries: opaque
-   * entries front-to-back by a logarithmic distance bucket of their world
-   * box center (four buckets per doubling, so a small camera move changes
+   * Whether the core orders the target's bound draw entries by queue:
+   * background entries first whatever their depth, opaque entries
+   * front-to-back by a logarithmic distance bucket of their world box
+   * center (four buckets per doubling, so a small camera move changes
    * nothing), cutout entries (an alpha-tested fragment, no early-z) after
    * them the same way, transparent entries last back-to-front by exact
    * depth along the view, `renderOrder` above depth inside each queue,
    * bind order breaking ties.
-   * Measured against the target's LOD view (setLodView), so a target
+   * Measured against the target's view (setView), so a target
    * without one waits for it. Every flush that bound, unbound, re-keyed or
    * moved an entry's node, or moved the view past the nearest opaque
    * center's bucket margin, re-keys and issues one setDrawOrder when the
-   * permutation changed; entries the core does not bind (a background)
-   * draw first. Off (the default) writes no order: a shadow tile, an
+   * permutation changed; entries the core does not bind draw first, before
+   * the background queue. Off (the default) writes no order: a shadow tile, an
    * override-material view, a 2d target. Enabling a target already on
    * re-issues its order at the next flush: call it after adding an
    * unbound entry.
@@ -240,14 +256,20 @@ declare module "flux:spatial" {
    * follows the flush; hidden nodes stay in and are skipped at query time. */
   export function setBounds(node: NodeId, bounds: Float32Array | null): void
   /**
-   * The clip volume gating every draw sink on `target`: its view-projection
-   * (Float32Array of 16, column-major), or null to lift it. An entry whose
-   * node box (grown by its cull margin) falls wholly outside reads
-   * instanceCount 0 like a hidden node, and comes back with a fresh params
-   * write. Nodes without a box, or with culling off, are never gated. Read
-   * at flush: set it before the flush that should see it.
+   * What `target` sees: its view (world to camera) and projection
+   * (camera to clip), two Float32Arrays of 16, column-major - or null to
+   * forget the target (its view, LOD bias and LOD reference). The core
+   * derives everything a target measures with from them: the clip volume
+   * gating every draw sink on it (an entry whose node box, grown by its
+   * cull margin, falls wholly outside reads instanceCount 0 like a hidden
+   * node, and comes back with a fresh params write; nodes without a box,
+   * or with culling off, are never gated), the LOD view (eye, forward,
+   * vertical focal factor, orthographic or not - setLod) and the view the
+   * draw sort measures depth against (setDrawSort). Read at flush: set it
+   * before the flush that should see it, on every camera move.
    */
-  export function setFrustum(target: TextureId, viewProj: Float32Array | null): void
+  export function setView(target: TextureId, view: Float32Array, proj: Float32Array): void
+  export function setView(target: TextureId, view: null): void
   /** Whether frustums gate the node's draw sinks (default true), and the
    * world-unit margin the test grows its box by (default 0). */
   export function setCull(node: NodeId, enabled: boolean, margin: number): void
@@ -271,7 +293,7 @@ declare module "flux:spatial" {
    * `levels` nearest first with strictly descending sizes, all naming a
    * child or none at all (never mixed); the last level's size is the cull
    * threshold, 0 for never culled. After the walk each flush measures the
-   * group on every target with a LOD view (setLodView) - the sphere
+   * group on every target with a view (setView) - the sphere
    * around its own box, else around its levels' world boxes - and gates
    * the draw sinks under each level to the level that target picked, so
    * a thousand groups cost no JS per frame. `fade` widens each threshold
@@ -285,19 +307,17 @@ declare module "flux:spatial" {
    * picked its level. A target with no LOD view draws the first level.
    */
   export function setLod(node: NodeId, levels: LodLevel[], fade: number, reference?: TextureId): void
-  /**
-   * What `target` measures projected size with: a Float32Array of 9 - the
-   * eye position xyz, the unit view direction xyz (what the draw sort
-   * measures transparent depth along), the projection's vertical focal factor (the
-   * magnitude of `proj[5]`: `1 / tan(fov / 2)` for a perspective
-   * projection, `2 / (top - bottom)` for an orthographic one - positive,
-   * whatever clip flip the projection bakes in), 1 for orthographic else
-   * 0, and a bias every
-   * measured size is multiplied by (below 1 switches sooner) - or null to
-   * lift it. Read at flush, like setFrustum; set it beside the frustum on
-   * every camera move.
-   */
-  export function setLodView(target: TextureId, view: Float32Array | null): void
+  /** The bias every projected size measured on `target` is multiplied by
+   * (default 1; below 1 switches levels sooner, a quality knob). Kept
+   * across setView writes; a target measuring by a reference takes the
+   * reference's. */
+  export function setLodBias(target: TextureId, bias: number): void
+  /** Make `target` measure projected size by `source`'s view instead of
+   * its own (null: its own again): a shadow tile culls by its light but
+   * draws the level the scene camera sees, so its shadow matches. Only the
+   * LOD measurement follows; culling and the draw sort stay the target's
+   * own. Set once; a source view move re-measures the target. */
+  export function setLodReference(target: TextureId, source: TextureId | null): void
   /**
    * A geometry's positions as the core keeps them, one copy shared by
    * every node that references it: the source of those nodes' local

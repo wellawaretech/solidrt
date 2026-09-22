@@ -93,17 +93,25 @@ pub struct DrawSink {
   /// cross-fade band position there (see `write_fade`). Without it the
   /// entry switches hard at the band's midpoint.
   pub fade: bool,
+  /// The entry's program takes `uModel`: the flush writes the node's
+  /// world matrix there (and `uNormal` under `normal`). False binds an
+  /// entry for its visibility switch and its place in the draw sort
+  /// alone - a background pinned to the scene root.
+  pub params: bool,
   /// Where the entry sorts on a target ordering its entries
   /// (`set_draw_sort`); ignored elsewhere.
   pub order: DrawOrder,
 }
 
 /// The queue a draw entry sorts in on a sorted target, drawn in this
-/// order: opaques front-to-back, then cutouts (an alpha-tested fragment
-/// discards, which defeats early-z, so the solids fill the depth first)
-/// front-to-back the same way, then transparents back-to-front.
+/// order: the background (a sky, a full-screen backdrop: pinned before
+/// everything, whatever its distance), then opaques front-to-back, then
+/// cutouts (an alpha-tested fragment discards, which defeats early-z, so
+/// the solids fill the depth first) front-to-back the same way, then
+/// transparents back-to-front.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DrawQueue {
+  Background,
   #[default]
   Opaque,
   Cutout,
@@ -235,11 +243,12 @@ pub struct LodLevel {
   pub size: f32,
 }
 
-/// What a target measures projected size with (`set_lod_view`): the eye
-/// position, the projection's vertical focal factor (`1 / tan(fov / 2)`
-/// for a perspective projection, `2 / (top - bottom)` for an orthographic
-/// one, `ortho` telling which), and a bias every measured size is
-/// multiplied by (a quality knob: below 1 switches sooner).
+/// What a target measures projected size with, derived from its view and
+/// projection (`set_view`): the eye position, the projection's vertical
+/// focal factor (`1 / tan(fov / 2)` for a perspective projection, `2 /
+/// (top - bottom)` for an orthographic one, `ortho` telling which), and a
+/// bias every measured size is multiplied by (`set_lod_bias`, a quality
+/// knob: below 1 switches sooner).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LodView {
   pub eye: [f32; 3],
@@ -410,6 +419,27 @@ fn projected_size(view: &LodView, center: [f32; 3], radius: f32) -> f32 {
     (dx * dx + dy * dy + dz * dz).sqrt().max(LOD_MIN_DISTANCE)
   };
   view.bias * radius * view.focal / d
+}
+
+/// The LOD view of a target seeing through `view` (world to camera, a
+/// rigid transform) and `proj` (camera to clip), both column-major: the
+/// eye is the view's inverse translation, the forward its negated z row
+/// (the camera looks down -z), the focal factor the magnitude of
+/// `proj[5]` (positive whatever clip flip the projection bakes in), and
+/// an orthographic projection is told by its constant w (`proj[15]`).
+pub(crate) fn derive_lod_view(view: &Mat4, proj: &Mat4, bias: f32) -> LodView {
+  let v = view;
+  LodView {
+    eye: [
+      -(v[0] * v[12] + v[1] * v[13] + v[2] * v[14]),
+      -(v[4] * v[12] + v[5] * v[13] + v[6] * v[14]),
+      -(v[8] * v[12] + v[9] * v[13] + v[10] * v[14]),
+    ],
+    forward: [-v[2], -v[6], -v[10]],
+    focal: proj[5].abs(),
+    ortho: proj[15] != 0.0,
+    bias,
+  }
 }
 
 /// The level a target draws for a sink without fade support: the band's
@@ -754,8 +784,8 @@ pub struct Spatial {
   weights_scratch: Vec<f32>,
   transitions: NodeTransitions,
   players: players::PlayerSet,
-  /// Per target, the clip volume its draw sinks are gated by (a target
-  /// without one never culls).
+  /// Per target, the clip volume its draw sinks are gated by, derived
+  /// from its view (`set_view`; a target without one never culls).
   frustums: HashMap<u64, Frustum>,
   /// Targets whose frustum changed since the last flush: every sink on
   /// them is re-tested by the cull pass.
@@ -766,9 +796,16 @@ pub struct Spatial {
   /// Counts flushes: what per-flush caches (an instance group's anchor
   /// inverse) are stamped with.
   flush_id: u64,
-  /// Per target, what projected size is measured with (a target without
-  /// one draws every group's first level).
+  /// Per target, what projected size is measured with, derived from its
+  /// view (`set_view`; a target without one draws every group's first
+  /// level).
   lod_views: HashMap<u64, LodView>,
+  /// Per target, the bias its LOD view carries (`set_lod_bias`; absent =
+  /// 1), kept apart so it survives the next view write.
+  lod_bias: HashMap<u64, f32>,
+  /// Per target, the target whose view its LOD measurement follows
+  /// instead of its own (`set_lod_reference`).
+  lod_references: HashMap<u64, u64>,
   /// Targets whose view changed since the last flush: every group is
   /// re-measured on them by the LOD pass.
   lod_dirty: Vec<u64>,
@@ -1185,22 +1222,95 @@ impl Spatial {
     self.enqueue(i);
   }
 
-  /// The clip volume gating every draw sink on `target` (None lifts it):
-  /// the target's view-projection, column-major. Entries whose node box
-  /// (grown by its margin) falls wholly outside it read instance count 0,
-  /// exactly like a hidden node, and come back with a fresh params write.
-  /// Nodes without a box, or with culling off, are never gated.
-  pub fn set_frustum(&mut self, target: u64, view_proj: Option<Mat4>) {
-    let changed = match view_proj {
-      Some(m) => {
-        let f = Frustum::from_view_proj(&m);
-        self.frustums.insert(target, f) != Some(f)
+  /// What `target` sees: its view (world to camera) and projection
+  /// (camera to clip), column-major. The core derives the target's clip
+  /// volume (gating every draw sink on it: an entry whose node box, grown
+  /// by its margin, falls wholly outside reads instance count 0 exactly
+  /// like a hidden node, and comes back with a fresh params write; nodes
+  /// without a box, or with culling off, are never gated), its LOD view
+  /// (see `LodView`) and the view its draw sort measures depth against.
+  /// Read at flush: set it before the flush that should see it. None
+  /// forgets the target: its view, its LOD bias and its LOD reference.
+  pub fn set_view(&mut self, target: u64, view: Option<(Mat4, Mat4)>) {
+    let (frustum, lod) = match view {
+      Some((v, p)) => {
+        let bias = self.lod_bias.get(&target).copied().unwrap_or(1.0);
+        (Some(Frustum::from_view_proj(&multiply(p, v))), Some(derive_lod_view(&v, &p, bias)))
       }
+      None => {
+        self.lod_bias.remove(&target);
+        self.lod_references.remove(&target);
+        (None, None)
+      }
+    };
+    let frustum_changed = match frustum {
+      Some(f) => self.frustums.insert(target, f) != Some(f),
       None => self.frustums.remove(&target).is_some(),
     };
-    if changed && !self.frustum_dirty.contains(&target) {
+    if frustum_changed && !self.frustum_dirty.contains(&target) {
       self.frustum_dirty.push(target);
     }
+    let lod_changed = match lod {
+      Some(v) => self.lod_views.insert(target, v) != Some(v),
+      None => self.lod_views.remove(&target).is_some(),
+    };
+    if lod_changed {
+      self.view_moved(target);
+    }
+  }
+
+  /// The bias every projected size measured on `target` is multiplied by
+  /// (1 = none; below 1 switches levels sooner). Kept across view writes;
+  /// a target measuring by a reference takes the reference's.
+  pub fn set_lod_bias(&mut self, target: u64, bias: f32) {
+    self.lod_bias.insert(target, bias);
+    if let Some(v) = self.lod_views.get_mut(&target) {
+      if v.bias != bias {
+        v.bias = bias;
+        self.view_moved(target);
+      }
+    }
+  }
+
+  /// Make `target` measure projected size by `source`'s view instead of
+  /// its own (None: its own again): a shadow tile culls by its light but
+  /// draws the level the scene camera sees, so its shadow matches. Only
+  /// the LOD measurement follows; culling and the draw sort stay the
+  /// target's own.
+  pub fn set_lod_reference(&mut self, target: u64, source: Option<u64>) {
+    let changed = match source {
+      Some(s) => self.lod_references.insert(target, s) != Some(s),
+      None => self.lod_references.remove(&target).is_some(),
+    };
+    if changed {
+      self.mark_lod_dirty(target);
+    }
+  }
+
+  /// `target`'s LOD view changed: it and every target measuring by it
+  /// re-measure, and its draw sort re-keys.
+  fn view_moved(&mut self, target: u64) {
+    self.mark_lod_dirty(target);
+    let referrers: Vec<u64> = self.lod_references.iter().filter(|(_, &s)| s == target).map(|(&t, _)| t).collect();
+    for t in referrers {
+      self.mark_lod_dirty(t);
+    }
+    if let Some(sort) = self.draw_sorts.get_mut(&target) {
+      sort.view_moved = true;
+    }
+  }
+
+  fn mark_lod_dirty(&mut self, target: u64) {
+    if !self.lod_dirty.contains(&target) {
+      self.lod_dirty.push(target);
+    }
+  }
+
+  /// The view `target` measures projected size with: its reference's
+  /// when it has one, else its own.
+  fn lod_view_of(&self, target: u64) -> Option<LodView> {
+    let source = self.lod_references.get(&target).copied().unwrap_or(target);
+    self.lod_views.get(&source).copied()
   }
 
   /// Whether frustums gate the node's draw sinks, and the world-unit
@@ -1296,17 +1406,19 @@ impl Spatial {
   /// node, and every sink on a target whose frustum moved, is set to
   /// "shown and inside the frustum". A flip writes the count; a sink
   /// turning on with a stale entry (bound, or moved while off) gets its
-  /// params too. A write that does not land releases the sink.
+  /// params too. A write that does not land releases the sink. Touched
+  /// nodes go first, in touch order (a LOD switch hands over its
+  /// outgoing level before the incoming one), then the rest of the sinks
+  /// on the targets whose frustum moved.
   fn cull_pass(&mut self, out: &mut dyn SinkWriter) {
     let dirty = std::mem::take(&mut self.frustum_dirty);
-    let touched = std::mem::take(&mut self.touched);
-    let candidates: Vec<u32> = if dirty.is_empty() {
-      touched
-    } else {
-      (0..self.nodes.len() as u32)
-        .filter(|&i| self.nodes[i as usize].alive && !self.nodes[i as usize].sinks.is_empty())
-        .collect()
-    };
+    let mut candidates = std::mem::take(&mut self.touched);
+    if !dirty.is_empty() {
+      candidates.extend((0..self.nodes.len() as u32).filter(|&i| {
+        let n = &self.nodes[i as usize];
+        n.alive && !n.sinks.is_empty() && !n.queued_touch
+      }));
+    }
     for i in candidates {
       let n = &self.nodes[i as usize];
       if !n.alive || n.sinks.is_empty() {
@@ -1335,7 +1447,7 @@ impl Spatial {
           if !out.write_count(sink.target, sink.draw, if want { sink.count } else { 0 }) {
             return false;
           }
-          if want && b.fresh {
+          if want && b.fresh && sink.params {
             if sink.normal && normal.is_none() {
               normal = Some(normal_matrix(&world));
             }
@@ -1440,7 +1552,7 @@ impl Spatial {
   /// shadow tile, an override-material view, a 2d target. Enabling a
   /// target already on re-issues its order at the next flush, changed or
   /// not: the call for an entry the core does not bind joining the
-  /// target (a background, which draws first).
+  /// target (such entries draw first, before the background queue).
   pub fn set_draw_sort(&mut self, target: u64, enabled: bool) {
     if enabled {
       let sort = self.draw_sorts.entry(target).or_default();
@@ -1526,24 +1638,6 @@ impl Spatial {
     self.lod_groups.retain(|&g| g != i);
   }
 
-  /// What `target` measures projected size with (None lifts it: the
-  /// target draws every group's first level again). Read at flush, like
-  /// the frustum.
-  pub fn set_lod_view(&mut self, target: u64, view: Option<LodView>) {
-    let changed = match view {
-      Some(v) => self.lod_views.insert(target, v) != Some(v),
-      None => self.lod_views.remove(&target).is_some(),
-    };
-    if changed && !self.lod_dirty.contains(&target) {
-      self.lod_dirty.push(target);
-    }
-    if changed {
-      if let Some(sort) = self.draw_sorts.get_mut(&target) {
-        sort.view_moved = true;
-      }
-    }
-  }
-
   /// Hand every sink-carrying node under `i` (itself included) to the
   /// next cull pass.
   fn touch_subtree(&mut self, i: u32) {
@@ -1598,7 +1692,16 @@ impl Spatial {
     let moved = std::mem::take(&mut self.lod_moved);
     let mut groups = std::mem::take(&mut self.lod_groups);
     groups.retain(|&g| self.nodes[g as usize].alive && self.nodes[g as usize].lod.is_some());
-    let views: Vec<(u64, LodView)> = self.lod_views.iter().map(|(&t, &v)| (t, v)).collect();
+    // Every target measuring: by its own view, or by its reference's.
+    let mut views: Vec<(u64, LodView)> = Vec::with_capacity(self.lod_views.len() + self.lod_references.len());
+    for &t in self.lod_views.keys().chain(self.lod_references.keys()) {
+      if views.iter().any(|(k, _)| *k == t) {
+        continue;
+      }
+      if let Some(v) = self.lod_view_of(t) {
+        views.push((t, v));
+      }
+    }
     for &g in &groups {
       let check = std::mem::replace(&mut self.nodes[g as usize].lod_check, false);
       let (center, radius) = self.lod_sphere(g);
@@ -1642,7 +1745,7 @@ impl Spatial {
     }
     // Lifted views: a target no longer measured draws the first level.
     for &t in &dirty {
-      if self.lod_views.contains_key(&t) {
+      if self.lod_view_of(t).is_some() {
         continue;
       }
       for &g in &groups {
@@ -1675,7 +1778,7 @@ impl Spatial {
       if !(check || moved.contains(&r) || dirty.contains(&target)) {
         continue;
       }
-      let Some(view) = self.lod_views.get(&target).copied() else {
+      let Some(view) = self.lod_view_of(target) else {
         continue;
       };
       let n = &self.nodes[r as usize];
@@ -2974,20 +3077,27 @@ impl Spatial {
   /// with a params write if the node is shown. The node re-queues, so its
   /// other sinks get a params rewrite in that flush too (a queued node
   /// recomputes unconditionally, the reparent rule). A node's draw sinks
-  /// share one sort key: a sink bound while the node has others takes
-  /// theirs, and `set_sink_order` changes them all.
-  pub fn bind_sink(&mut self, id: NodeId, mut sink: DrawSink) -> Result<(), String> {
+  /// share one sort key: a bind keys every sink of the node with its
+  /// order, and `set_sink_order` changes them all.
+  pub fn bind_sink(&mut self, id: NodeId, sink: DrawSink) -> Result<(), String> {
     let i = self.resolve(id)?;
     self.bind_seq += 1;
     let seq = self.bind_seq;
     let sinks = &mut self.nodes[i as usize].sinks;
     sinks.retain(|b| b.sink.target != sink.target);
-    if let Some(other) = sinks.first() {
-      sink.order = other.sink.order;
+    // A node has one sort key: the bind's is it, on every sink.
+    let mut rekeyed: Vec<u64> = vec![sink.target];
+    for b in sinks.iter_mut() {
+      if b.sink.order != sink.order {
+        b.sink.order = sink.order;
+        rekeyed.push(b.sink.target);
+      }
     }
     sinks.push(BoundSink { sink, seq, entry_on: false, fresh: true, fade: [1.0, 1.0] });
-    if let Some(sort) = self.draw_sorts.get_mut(&sink.target) {
-      sort.dirty = true;
+    for target in rekeyed {
+      if let Some(sort) = self.draw_sorts.get_mut(&target) {
+        sort.dirty = true;
+      }
     }
     self.enqueue(i);
     Ok(())
