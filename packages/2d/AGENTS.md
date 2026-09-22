@@ -424,9 +424,10 @@ keeps, so other props stay reactive).
 
 ### Pure pieces
 
-frames.ts, pick.ts, camera.ts, camera-motion.ts and dispatch.ts are pure
-(no GPU imports) BY DESIGN so they can be checked headless; keep them
-that way.
+frames.ts, pick.ts, camera.ts, camera-motion.ts, dispatch.ts,
+oversample-math.ts and tiles-math.ts (the tile grid's chunk and slot
+math, checks/tiles-check.ts) are pure (no GPU imports) BY DESIGN so they
+can be checked headless; keep them that way.
 
 ## The baked tile layer (tiles.ts)
 
@@ -504,7 +505,7 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | atlas (TextureId), capacity?, tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
+| `SpriteLayer` | atlas (TextureId), capacity?, tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
 | `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, deadZone?, panSpeed?, zoomSpeed?, rollSpeed?, followSpeed?, inertia?, x?, y?, zoom?, rotation?), viewport? (`() => { width, height }`, default: the driven viewport's size), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
@@ -596,6 +597,14 @@ hover, wheel and tap rules headless.
   edges before sampling: pass `inset` to `grid`/`namedFrames` (2^k texels
   keeps mip level k clean, losing that border) or pack a gutter as
   `spacing`, until extrusion lands (okf/backlog/2d-atlas-extrude.md).
+- The colour contract: tint multiplies the atlas texel as stored -
+  premultiplied sRGB, no decode - and the layer tint multiplies over
+  that, so a tint of `[0.5, 0.5, 0.5, 1]` halves the ENCODED value (about
+  a fifth of the light, not half). Right for an unlit pipeline (the
+  texel is the author's colour and comes out as it went in), but it is
+  not @solidrt/3d's contract, whose color.ts documents sRGB in, linear
+  shading: the same tint triple is a different brightness in the two
+  packages, so a palette shared across them needs its own conversion.
 - Tint multiplies the sampled texel (`texture * tint`) and the pipeline
   blends with `blend: "alpha"` in record order, the premultiplied composite.
   The atlas is premultiplied because `decodeImage` premultiplies by default;

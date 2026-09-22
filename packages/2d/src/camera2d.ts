@@ -52,7 +52,7 @@ import { createMemo, createSignal, untrack } from "@solidjs/signals"
 import { createAxes } from "@solidrt/core/input"
 import type { Axes, Vec2 } from "@solidrt/core/input"
 import { projectCamera, unprojectCamera } from "./camera.ts"
-import type { CameraUpdate } from "./camera.ts"
+import type { CameraState, CameraUpdate } from "./camera.ts"
 
 // Glide rate toward a pending zoom or pose, e-foldings per second: high
 // enough that a wheel notch reads as one push, low enough to look smooth
@@ -131,9 +131,9 @@ export type Camera2dOptions = Camera2dPose & {
 export type Camera2dAxes = { pan: "vec2"; zoom: "axis"; roll: "axis" }
 
 export type Camera2d = {
-  /** The pose as the layers receive it (a fresh object per call): the
-   * argument for projectCamera/unprojectCamera. */
-  camera(): CameraUpdate
+  /** The pose as the layers receive it (a fresh object per call, every
+   * field set): the argument for projectCamera/unprojectCamera. */
+  camera(): CameraState
   /** Pose snapshot - the control's own four values, the shape set() takes
    * (camera() adds the pivot the layers are told). */
   pose(): Required<Camera2dPose>
@@ -314,7 +314,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
     ;[x, y] = contain(x, y, zoom)
   }
 
-  let camera = (): CameraUpdate => ({ x, y, zoom, rotation, pivotX: px(), pivotY: py() })
+  let camera = (): CameraState => ({ x, y, zoom, rotation, pivotX: px(), pivotY: py() })
   // Pose x/y that put world (wx, wy) under screen (sx, sy) at zoom z:
   // the inverse of projectCamera solved for the camera point.
   let anchorPose = (wx: number, wy: number, sx: number, sy: number, z: number): [number, number] => {

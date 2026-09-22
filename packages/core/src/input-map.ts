@@ -391,13 +391,20 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
   let edge = (name: string, want: boolean, callback: () => void): (() => void) => {
     let s = buttonState(name, want ? "onPress" : "onRelease")
     if (typeof callback !== "function") throw new Error(`createInputMap: ${want ? "onPress" : "onRelease"}("${name}") expects a function`)
+    // The edge is relative to the value at registration, kept here rather
+    // than read from the effect's previous value: a deferred effect created
+    // while a pending write sits on the action (a bind in the same tick)
+    // runs on that flush with no previous value, which would count a source
+    // already held at registration as a press.
+    let last = untrack(() => s.value() as boolean)
     return createRoot(dispose => {
       // The callback is a side effect that may read state of its own (a
       // focus, a pose): a snapshot, not a dependency, so untracked.
       createEffect(
         () => s.value() as boolean,
-        (pressed, prev) => {
-          if (pressed === want && prev !== want) untrack(callback)
+        pressed => {
+          if (pressed === want && last !== want) untrack(callback)
+          last = pressed
         },
         { defer: true },
       )

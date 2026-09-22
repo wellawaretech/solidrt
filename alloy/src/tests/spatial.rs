@@ -965,6 +965,13 @@ fn one_anchor_per_texture_and_rebind_replaces() {
   let root = s.create([0.0; 3], Q, ONE, true);
   let a = s.create([1.0, 0.0, 0.0], Q, ONE, true);
   let b = s.create([2.0, 0.0, 0.0], Q, ONE, true);
+  // The anchor must be an ancestor of the bound node: a root beside it
+  // is refused before any group state changes.
+  let err = s
+    .bind_texture_slot(a, TextureSlotSink { texture: 5, row: 0, post: IDENTITY }, Some(root))
+    .expect_err("a node beside its anchor must error");
+  assert!(err.contains("not under"), "{err}");
+  s.set_parent(a, Some(root)).expect("parent a");
   s.bind_texture_slot(a, TextureSlotSink { texture: 5, row: 0, post: IDENTITY }, Some(root)).expect("bind");
   let err = s
     .bind_texture_slot(b, TextureSlotSink { texture: 5, row: 1, post: IDENTITY }, None)

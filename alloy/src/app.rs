@@ -59,6 +59,20 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
     sdl3::hint::set("SDL_POLL_SENTINEL", "0");
   }
 
+  // A panic in the `run` closure (the srt-ui thread) would otherwise strand
+  // the window: main keeps pumping events over a black surface until it is
+  // killed. Let the default hook print its report, then exit, so a failed
+  // assertion in a probe takes the process down at once. An embedder's own
+  // hook installed before this one is chained (it runs first). Playback
+  // keeps the default: its capture loop reports an incomplete run itself.
+  if !mode.is_playback() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+      default_hook(info);
+      std::process::exit(1);
+    }));
+  }
+
   let sdl_context = sdl3::init().expect("Failed to initialize SDL3");
   // On Android, hand SDL's JNI env + activity to ndk-context so JNI-using deps
   // (iroh's network monitoring via flux:p2p) can reach the Android context.

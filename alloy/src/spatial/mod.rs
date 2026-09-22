@@ -1984,7 +1984,12 @@ impl Spatial {
   pub fn bind_texture_slot(&mut self, id: NodeId, sink: TextureSlotSink, anchor: Option<NodeId>) -> Result<(), String> {
     let i = self.resolve(id)?;
     if let Some(a) = anchor {
-      self.resolve(a)?;
+      // The anchor must be an ancestor (see `anchored`): a row bound across
+      // hierarchies would pose in the wrong frame, so it errors here.
+      let a = self.resolve(a)?;
+      if !self.under(i, a) {
+        return Err(format!("spatial node {id} is not under its palette anchor {}", anchor.unwrap_or_default()));
+      }
     }
     let group = self.palettes.entry(sink.texture).or_insert_with(|| PaletteGroup {
       anchor,

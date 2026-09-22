@@ -46,7 +46,7 @@ use taffy::style::Position;
 use crate::alloy_plugins::value::PropValue;
 use alloy::impellers::Color;
 use alloy::rendertree::text::layout::{Clear, Side};
-use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, FilterState, PointerEvents, ShadowState};
+use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, FilterState, PointerEvents, ShadowState, TransitionConfig};
 
 // Returns Ok(damage) on success; Err(message) for an unknown property or a
 // value that does not decode, which the FFI caller surfaces as a throwable JS
@@ -62,6 +62,27 @@ use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, FilterState,
 // target state, not element state, so the write produces no tree damage and
 // the raster dirty flush paces any number of writes into one render per
 // frame. Content damage covers snapshot consumers.
+// An enter animation plays once, at the first advance after the node's
+// first attach: a `from` that arrives later (a `transition` prop set from
+// an effect that runs after the mount frame) never plays, and nothing
+// would say so. Warn per property that newly declares one on an entered
+// node; a from-to-from swap (a `closing() ? OUT : IN` toggle) is a
+// legitimate retarget and stays quiet.
+fn warn_late_from(prev: Option<&TransitionConfig>, next: &TransitionConfig) {
+  for (prop, entry) in &next.props {
+    if entry.from.is_none() {
+      continue;
+    }
+    let had = prev.is_some_and(|p| p.props.iter().any(|(q, e)| q == prop && e.from.is_some()));
+    if !had {
+      log::warn!(
+        "transition.{}: `from` declared after the element entered never plays (an enter animation runs once, at mount); declare it with the mount",
+        transition::anim_prop_name(*prop)
+      );
+    }
+  }
+}
+
 pub fn apply_jsx(
   el: &mut Element,
   name: &str,
@@ -73,7 +94,13 @@ pub fn apply_jsx(
   // (which properties animate on write, and how; see
   // alloy/src/rendertree/transitions.rs). Config only - no visual change.
   if name == "transition" {
-    el.transitions = transition::decode(value)?;
+    let next = transition::decode(value)?;
+    if el.lifecycle.entered {
+      if let Some(next) = next.as_deref() {
+        warn_late_from(el.transitions.as_deref(), next);
+      }
+    }
+    el.transitions = next;
     return Ok(Damage::None);
   }
 

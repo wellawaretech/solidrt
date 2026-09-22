@@ -118,6 +118,10 @@ function removeNode(parent: ProxyNode, node: ProxyNode): void {
 const SENTINEL_INTERVAL_MS = 5000
 let sentinelDue = 0
 let warnedLeakTypes = new Set<string>()
+// The orphan total's order of magnitude (floor of log10) at the last
+// warning: a leak that keeps growing at a stable set of types warns again
+// each time the total crosses the next power of ten.
+let warnedMagnitude = -1
 
 export function scanForOrphans(now: number): void {
   if (!import.meta.env.DEV) return
@@ -131,18 +135,22 @@ export function scanForOrphans(now: number): void {
     counts.set(node.elementType, (counts.get(node.elementType) ?? 0) + 1)
   }
   if (total === 0) return
-  // Warn only when a new element type joins the orphans, but list every type
-  // with its count so the breakdown always adds up to the total.
+  // Warn when a new element type joins the orphans or the total crosses the
+  // next order of magnitude, but list every type with its count so the
+  // breakdown always adds up to the total.
   let fresh = [...counts].filter(([type]) => !warnedLeakTypes.has(type))
-  if (fresh.length === 0) return
+  let magnitude = Math.floor(Math.log10(total))
+  if (fresh.length === 0 && magnitude <= warnedMagnitude) return
   for (let [type] of fresh) warnedLeakTypes.add(type)
+  warnedMagnitude = magnitude
   let list = [...counts].map(([type, n]) => `<${type}> x${n}`).join(", ")
   console.warn(
     `Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` +
       `The usual cause is reading an element-valued prop more than once (every read ` +
       `builds a new subtree); read it once where it mounts, or resolve it with ` +
       `children(). If these nodes are intentionally kept for later mounting, ignore ` +
-      `this. The next warning comes when a new element type joins the list.`,
+      `this. The next warning comes when a new element type joins the list or the ` +
+      `total passes ${10 ** (magnitude + 1)}.`,
   )
 }
 

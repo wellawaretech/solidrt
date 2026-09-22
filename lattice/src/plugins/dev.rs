@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use flux::rquickjs::function::MutFn;
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
-use flux::rquickjs::{Array, Ctx, Function, JsLifetime, Null, Persistent};
+use flux::rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Null, Object, Persistent};
 
 // The `srt:dev` module: the dev-server control surface (connect / discover /
 // stop) used by the default app's connection UI. The actual command plumbing
@@ -75,6 +75,20 @@ impl DebugRegistry {
 /// `registerDebug(name, fn)`: duplicate names replace. Fetches the registry
 /// from userdata itself so the export needs no captured state.
 fn register_debug_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) -> flux::rquickjs::Result<()> {
+  // A command's return value is JSON-encoded for the caller, so an async
+  // function's Promise would encode as `{}` with nothing said: refuse it
+  // here, where the throw names the registration.
+  let is_async = func
+    .as_object()
+    .and_then(|f| f.get::<_, Object>("constructor").ok())
+    .and_then(|c| c.get::<_, String>("name").ok())
+    .is_some_and(|n| n == "AsyncFunction");
+  if is_async {
+    return Err(Exception::throw_type(
+      &ctx,
+      &format!("registerDebug(\"{name}\"): an async command is not supported (its promise would encode as {{}}); compute the result synchronously"),
+    ));
+  }
   let registry = ctx.userdata::<DebugRegistry>().expect("debug registry installed").clone();
   let persistent = Persistent::save(&ctx, func);
   registry.0.borrow_mut().insert(name, persistent);

@@ -107,12 +107,12 @@ function settle(cam: Camera2d): number {
 {
   let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 2 })
   cam.set({ x: 5000 })
-  if (!near(cam.camera().x!, 800)) fail(`set clamps x to the right edge (800), got ${cam.camera().x}`)
+  if (!near(cam.camera().x, 800)) fail(`set clamps x to the right edge (800), got ${cam.camera().x}`)
   cam.panBy(10000, 10000)
   let c = cam.camera()
   if (!near(c.x!, 200) || !near(c.y!, 150)) fail(`a huge pan lands on the top-left edge (200,150), got ${c.x},${c.y}`)
   cam.set({ y: -100 })
-  if (!near(cam.camera().y!, 150)) fail(`set clamps y to the top edge (150), got ${cam.camera().y}`)
+  if (!near(cam.camera().y, 150)) fail(`set clamps y to the top edge (150), got ${cam.camera().y}`)
 }
 
 // ---- Godot's rule: limits ignore rotation ----
@@ -153,7 +153,7 @@ for (let i = 0; i < SWEEP; i++) {
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, x: 300, y: 200, zoom: 1.5, rotation: 0.4 })
   let sx = 123
   let sy = 456
-  let [wx, wy] = [cam.camera().x! + 80, cam.camera().y! - 40]
+  let [wx, wy] = [cam.camera().x + 80, cam.camera().y - 40]
   let [ax, ay] = projectCamera(cam.camera(), wx, wy)
   notch(cam, ax, ay, -400)
   let target = 1.5 * Math.exp(400 * 0.0015)
@@ -172,16 +172,16 @@ for (let i = 0; i < SWEEP; i++) {
   notch(cam, sx, sy, -100)
   notch(cam, sx, sy, -100)
   settle(cam)
-  if (!near(cam.camera().zoom!, target * Math.exp(200 * 0.0015), 1e-9)) fail(`two notches compound: got ${cam.camera().zoom}`)
+  if (!near(cam.camera().zoom, target * Math.exp(200 * 0.0015), 1e-9)) fail(`two notches compound: got ${cam.camera().zoom}`)
   // A rotation write mid-glide leaves the glide running; an x write cancels it.
   notch(cam, sx, sy, 100)
   cam.set({ rotation: 0.9 })
-  let z = cam.camera().zoom!
+  let z = cam.camera().zoom
   cam.update(DT)
   if (cam.camera().zoom === z) fail("set({ rotation }) must not cancel a glide")
   notch(cam, sx, sy, 100)
   cam.set({ x: 310 })
-  z = cam.camera().zoom!
+  z = cam.camera().zoom
   cam.update(DT)
   cam.update(DT)
   if (cam.camera().zoom !== z) fail("set({ x }) cancels a glide in flight")
@@ -191,7 +191,7 @@ for (let i = 0; i < SWEEP; i++) {
 {
   let snap = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, damping: 0 })
   notch(snap.cam, 400, 300, -400)
-  if (!near(snap.cam.camera().zoom!, Math.exp(400 * 0.0015), 1e-9)) fail(`damping 0 applies a wheel notch at once, got ${snap.cam.camera().zoom}`)
+  if (!near(snap.cam.camera().zoom, Math.exp(400 * 0.0015), 1e-9)) fail(`damping 0 applies a wheel notch at once, got ${snap.cam.camera().zoom}`)
   snap.cam.update(DT)
   if (snap.cam.update(DT)) fail("damping 0 starts no glide")
   let quick = make({ minZoom: 0.01, maxZoom: 100, zoom: 1 })
@@ -227,11 +227,11 @@ for (let i = 0; i < SWEEP; i++) {
 // ---- Live options: bounds, zoom range and pivot read where applied ----
 {
   let { cam, options, last } = make({ world: { width: 1000, height: 500 }, maxZoom: 10, zoom: 5, x: 500, y: 250 })
-  if (!near(cam.camera().zoom!, 5)) fail(`live options: initial zoom 5, got ${cam.camera().zoom}`)
+  if (!near(cam.camera().zoom, 5)) fail(`live options: initial zoom 5, got ${cam.camera().zoom}`)
   // A tighter maxZoom re-clamps on set({}) - the component's re-clamp entry.
   options.maxZoom = 2
   cam.set({})
-  if (!near(cam.camera().zoom!, 2)) fail(`live maxZoom re-clamps the zoom, got ${cam.camera().zoom}`)
+  if (!near(cam.camera().zoom, 2)) fail(`live maxZoom re-clamps the zoom, got ${cam.camera().zoom}`)
   // A smaller world re-contains: the view (400x300 at zoom 2) is wider
   // than a 300x100 world on both axes, so the pose centers on it.
   options.world = { width: 300, height: 100 }
@@ -249,11 +249,11 @@ for (let i = 0; i < SWEEP; i++) {
   let pushed = last()
   if (!pushed || pushed.pivotX !== 0 || pushed.pivotY !== 0) fail(`live pivot is pushed by set({}), got ${pushed?.pivotX},${pushed?.pivotY}`)
   // A live rate applies where it is read: panSpeed scales the pan nudge.
-  let before = cam.camera().x!
+  let before = cam.camera().x
   options.panSpeed = 2
   cam.axes.nudge("pan", [0.1, 0])
-  let travelled = before - cam.camera().x!
-  if (!near(travelled, (0.1 * 600 * 2) / cam.camera().zoom!)) fail(`live panSpeed scales the nudge, travelled ${travelled}`)
+  let travelled = before - cam.camera().x
+  if (!near(travelled, (0.1 * 600 * 2) / cam.camera().zoom)) fail(`live panSpeed scales the nudge, travelled ${travelled}`)
   // A bad live value throws at the re-clamp, as at creation.
   options.maxZoom = -1
   let threw = false
@@ -290,7 +290,7 @@ for (let i = 0; i < SWEEP; i++) {
   view.width = 800
   view.height = 600
   if (!cam.update(DT)) fail("the viewport becoming known is a change")
-  if (!near(cam.camera().zoom!, 0.8)) fail(`the deferred fit runs once the viewport is known, got zoom ${cam.camera().zoom}`)
+  if (!near(cam.camera().zoom, 0.8)) fail(`the deferred fit runs once the viewport is known, got zoom ${cam.camera().zoom}`)
   // A resize keeps the world point under the pivot and re-clamps.
   cam.set({ zoom: 2, x: 700, y: 300 })
   view.width = 400
@@ -321,11 +321,11 @@ for (let i = 0; i < SWEEP; i++) {
   if (!near(c.x!, 600, 1e-3) || !near(c.y!, 250, 1e-3)) fail(`dead-zone follow parks the target on the zone edge (camera 600,250), got ${c.x},${c.y}`)
   cam.follow(650, 250)
   let moved = settle(cam)
-  if (moved !== 0 || !near(cam.camera().x!, 600, 1e-3)) fail(`a target inside the dead zone does not move the camera, moved ${moved} ticks to ${cam.camera().x}`)
+  if (moved !== 0 || !near(cam.camera().x, 600, 1e-3)) fail(`a target inside the dead zone does not move the camera, moved ${moved} ticks to ${cam.camera().x}`)
   cam.unfollow()
   cam.follow(100, 250)
   settle(cam)
-  if (!near(cam.camera().x!, 200, 1e-3)) fail(`follow honors the world clamp (200), got ${cam.camera().x}`)
+  if (!near(cam.camera().x, 200, 1e-3)) fail(`follow honors the world clamp (200), got ${cam.camera().x}`)
 }
 
 // ---- A wheel zoom survives a per-frame follow of a moving target ----
@@ -347,12 +347,12 @@ for (let i = 0; i < SWEEP; i++) {
   if (cam.camera().zoom !== target) fail(`wheel zoom lands on its target ${target} under a moving follow, got ${cam.camera().zoom}`)
   // The target stops: the follow, which trailed it by its ease, settles on it.
   settle(cam)
-  if (!near(cam.camera().x!, last, 1e-3)) fail(`follow tracked the moving target to ${last}, got ${cam.camera().x}`)
+  if (!near(cam.camera().x, last, 1e-3)) fail(`follow tracked the moving target to ${last}, got ${cam.camera().x}`)
   // A pose glide still yields to the follow.
   cam.glideTo(100, 100)
   cam.follow(last, 250)
   settle(cam)
-  if (!near(cam.camera().x!, last, 1e-3)) fail(`follow cancels a pose glide, got ${cam.camera().x}`)
+  if (!near(cam.camera().x, last, 1e-3)) fail(`follow cancels a pose glide, got ${cam.camera().x}`)
 }
 
 // ---- Inertia: a flick keeps gliding and decays to rest; a rested or disabled release does not ----
@@ -370,9 +370,9 @@ for (let i = 0; i < SWEEP; i++) {
   let rests = (cam: Camera2d) => settle(cam) === 0
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, x: 0, y: 0, zoom: 1 })
   drag(cam, 20, [1200, 0])
-  let atRelease = cam.camera().x!
+  let atRelease = cam.camera().x
   let ticks = settle(cam)
-  let travelled = atRelease - cam.camera().x!
+  let travelled = atRelease - cam.camera().x
   // 1200 px/s at 3 e-foldings/s: the fling covers ~400 px.
   if (ticks <= 1 || ticks > SETTLE_TICKS) fail(`a flick flings and then rests, ticks=${ticks}`)
   if (!(travelled > 300 && travelled < 450)) fail(`fling distance ~400 px, got ${travelled}`)
@@ -391,7 +391,7 @@ for (let i = 0; i < SWEEP; i++) {
   settle(cam)
   drag(cam, 20, [1200, 0])
   settle(cam)
-  if (!near(cam.camera().x!, 0, 1e-3)) fail(`a release while following eases back instead of flinging, got x ${cam.camera().x}`)
+  if (!near(cam.camera().x, 0, 1e-3)) fail(`a release while following eases back instead of flinging, got x ${cam.camera().x}`)
 }
 
 // ---- Pivot at the top-left: the scrolling camera ----
@@ -437,12 +437,12 @@ for (let i = 0; i < SWEEP; i++) {
   cam.update(DT)
   if (cam.camera().x !== 400) fail(`a pan begin stops the glide, x=${cam.camera().x}`)
   cam.axes.nudge("pan", [0.1, 0])
-  if (!near(cam.camera().x!, 400 - 0.1 * view.height)) fail(`a pan delta of 0.1 heights slides the camera 60 px, got ${cam.camera().x}`)
+  if (!near(cam.camera().x, 400 - 0.1 * view.height)) fail(`a pan delta of 0.1 heights slides the camera 60 px, got ${cam.camera().x}`)
   for (let i = 0; i < 5; i++) {
     cam.axes.nudge("pan", [0.05, 0])
     cam.update(DT)
   }
-  let beforeRelease = cam.camera().x!
+  let beforeRelease = cam.camera().x
   // An end without a velocity rests; one with a velocity (viewport
   // heights per second of finger travel) flings the content that way.
   cam.axes.end("pan")
@@ -450,7 +450,7 @@ for (let i = 0; i < SWEEP; i++) {
   cam.axes.begin("pan")
   cam.axes.end("pan", [2, 0])
   cam.update(DT)
-  if (settle(cam) === 0 || cam.camera().x! >= beforeRelease) fail("a pan end flings with the release velocity")
+  if (settle(cam) === 0 || cam.camera().x >= beforeRelease) fail("a pan end flings with the release velocity")
   // A bracketed zoom delta (a pinch) applies at once about its focal; an
   // unbracketed one (a wheel notch) eases there.
   cam.set({ x: 400, y: 300, zoom: 1 })
@@ -461,10 +461,10 @@ for (let i = 0; i < SWEEP; i++) {
   cam.axes.nudge("zoom", 1, [0.5, 0.5])
   if (cam.camera().zoom !== 2) fail(`an unbracketed zoom delta glides, not snaps, got ${cam.camera().zoom}`)
   settle(cam)
-  if (!near(cam.camera().zoom!, 4, 1e-9)) fail(`the unbracketed zoom lands at 4, got ${cam.camera().zoom}`)
+  if (!near(cam.camera().zoom, 4, 1e-9)) fail(`the unbracketed zoom lands at 4, got ${cam.camera().zoom}`)
   // A roll delta in turns.
   cam.axes.nudge("roll", 0.25)
-  if (!near(cam.camera().rotation!, Math.PI / 2)) fail(`a roll delta of a quarter turn, got ${cam.camera().rotation}`)
+  if (!near(cam.camera().rotation, Math.PI / 2)) fail(`a roll delta of a quarter turn, got ${cam.camera().rotation}`)
   // Rates: a full deflection slides one viewport height per second and
   // wakes active(); removing the source rests it.
   cam.set({ x: 400, y: 300, zoom: 1, rotation: 0 })
@@ -474,14 +474,14 @@ for (let i = 0; i < SWEEP; i++) {
   flush()
   if (!cam.active()) fail("a rate source wakes active()")
   cam.update(0.5)
-  if (!near(cam.camera().x!, 400 - 0.5 * view.height)) fail(`a pan rate of 1 over half a second slides half a height, got ${cam.camera().x}`)
+  if (!near(cam.camera().x, 400 - 0.5 * view.height)) fail(`a pan rate of 1 over half a second slides half a height, got ${cam.camera().x}`)
   remove()
   flush()
   if (cam.active()) fail("removing the rate source rests active()")
   let stopZoom = cam.axes.add("zoom", () => 1)
   cam.update(1)
   stopZoom()
-  if (!near(cam.camera().zoom!, 2, 1e-9)) fail(`a zoom rate of 1 doubles per second, got ${cam.camera().zoom}`)
+  if (!near(cam.camera().zoom, 2, 1e-9)) fail(`a zoom rate of 1 doubles per second, got ${cam.camera().zoom}`)
 }
 
 console.log(failures === 0 ? "CAMERA2D-OK" : `CAMERA2D-FAIL ${failures}`)

@@ -36,6 +36,15 @@ declare module "flux:fs" {
     append(data: string | Uint8Array): Promise<void>
     /** Remove the file. A missing file is not an error. */
     remove(): Promise<void>
+    /**
+     * Move the file to `to` (the OS rename: an existing target is replaced,
+     * a missing source rejects, a move across filesystems rejects rather
+     * than copying, and `to`'s parent directories are not created). The
+     * atomic-write step: write a temporary file, then rename it over the
+     * real one. This handle keeps its old `path`; open the new one with
+     * `file(to)`.
+     */
+    rename(to: string): Promise<void>
   }
 
   /**

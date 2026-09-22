@@ -121,6 +121,19 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   .expect("create remove function");
   obj.set("remove", remove_fn)?;
 
+  let rename_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let path = path.clone();
+      move |ctx: Ctx<'_>, to: String| -> rquickjs::Result<Promised<_>> {
+        let path = path.clone();
+        Ok(with_pending(&ctx, async move { fs::rename(&path, &to).await }))
+      }
+    }),
+  )
+  .expect("create rename function");
+  obj.set("rename", rename_fn)?;
+
   let append_fn = Function::new(
     ctx.clone(),
     MutFn::from({

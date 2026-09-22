@@ -35,6 +35,7 @@ import type {
   MoveOptions as CoreMoveOptions,
   NodeEndpoint,
   NodeId,
+  NodeMotionSpec,
   NodeTransition,
   NodeTransitionSpec,
   QueryFilter,
@@ -1265,7 +1266,9 @@ export type SpriteTransition = {
   position?: SpriteTransitionSpec<[number, number]>
   rotation?: SpriteTransitionSpec<number>
   scale?: SpriteTransitionSpec<[number, number] | number>
-  all?: NodeTransitionSpec
+  /** The catch-all: a motion alone, no `from`/`exit` (those name a
+   * component's units, so they live on the per-component specs). */
+  all?: NodeMotionSpec
   stagger?: number
 }
 

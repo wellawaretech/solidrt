@@ -1197,6 +1197,12 @@ fn ui_thread(
         }
         current_app = app;
         showing_bsod = false;
+      } else if playback_fps.is_some() {
+        // A capture has nobody to fix the app for: an engine that exited
+        // before render() ran would capture the BSOD as if it were the app
+        // and pass the exit-code gate, so fail the run instead.
+        log::error!("[srt] app exited before rendering; capture failed");
+        std::process::exit(1);
       } else if !showing_bsod {
         // Engine exited on its own (a module/startup error means render() never
         // ran, so nothing kept it alive). Show the BSOD instead of a frozen

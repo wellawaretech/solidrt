@@ -39,6 +39,7 @@ import { checkTint } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import { FLOATS_PER_SPRITE } from "./records.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
+import { checkCell, checkRect, chunkOf, eachChunkSlice, slotOf } from "./tiles-math.ts"
 
 const RESOLVED = Promise.resolve()
 
@@ -324,14 +325,10 @@ export function createTileLayer(
     return chunk
   }
 
-  let checkCell = (col: number, row: number, verb: string): void => {
-    if (!(Number.isInteger(col) && Number.isInteger(row) && col >= 0 && col < cols && row >= 0 && row < rows)) {
-      throw new Error(`${verb}: cell ${col}, ${row} outside the ${cols} x ${rows} grid`)
-    }
-  }
-  // A cell's chunk index, and its record offset inside that chunk.
-  let chunkOf = (col: number, row: number): number => Math.floor(row / chunkTiles) * chunkCols + Math.floor(col / chunkTiles)
-  let slot = (col: number, row: number): number => ((row % chunkTiles) * chunkTiles + (col % chunkTiles)) * FLOATS_PER_SPRITE
+  // A cell's chunk index, and its record offset inside that chunk
+  // (tiles-math.ts, bound to this layer's grid).
+  let chunkAt = (col: number, row: number): number => chunkOf(col, row, chunkTiles, chunkCols)
+  let slot = (col: number, row: number): number => slotOf(col, row, chunkTiles, FLOATS_PER_SPRITE)
   // Write one cell's record: the quad at the cell, the frame's UVs, and
   // the tint - the one given, else the default when the cell comes up from
   // empty (a re-set keeps its tint: absent keys keep their values, like
@@ -393,8 +390,8 @@ export function createTileLayer(
     },
     setTile(col, row, frame, opts) {
       if (disposed) return
-      checkCell(col, row, "setTile")
-      let index = chunkOf(col, row)
+      checkCell("setTile", col, row, cols, rows)
+      let index = chunkAt(col, row)
       let at = slot(col, row)
       let chunk = resident.get(index)
       if (frame === null) {
@@ -411,9 +408,7 @@ export function createTileLayer(
     },
     setTiles(col, row, w, h, cells, opts) {
       if (disposed) return
-      if (!(Number.isInteger(col) && Number.isInteger(row) && Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && col >= 0 && row >= 0 && col + w <= cols && row + h <= rows)) {
-        throw new Error(`setTiles: rect ${col}, ${row} of ${w} x ${h} outside the ${cols} x ${rows} grid`)
-      }
+      checkRect("setTiles", col, row, w, h, cols, rows)
       if (cells.length !== w * h) throw new Error(`setTiles: a ${w} x ${h} rect takes ${w * h} cells, got ${cells.length}`)
       if (opts?.tint !== undefined) checkTint("setTiles", opts.tint)
       let cellTint = opts?.tint
@@ -440,63 +435,52 @@ export function createTileLayer(
       // sub-rect walked row by row with the record offset advancing, one
       // dirty mark at the end. A chunk the slice only clears is never
       // allocated.
-      let cr0 = Math.floor(row / chunkTiles)
-      let cr1 = Math.floor((row + h - 1) / chunkTiles)
-      let cc0 = Math.floor(col / chunkTiles)
-      let cc1 = Math.floor((col + w - 1) / chunkTiles)
-      for (let cr = cr0; cr <= cr1; cr++) {
-        let rowA = Math.max(row, cr * chunkTiles)
-        let rowB = Math.min(row + h, (cr + 1) * chunkTiles)
-        for (let cc = cc0; cc <= cc1; cc++) {
-          let colA = Math.max(col, cc * chunkTiles)
-          let colB = Math.min(col + w, (cc + 1) * chunkTiles)
-          let index = cr * chunkCols + cc
-          let chunk = resident.get(index)
-          let r = chunk ? chunk.records : null
-          for (let y = rowA; y < rowB; y++) {
-            let at = slot(colA, y)
-            let i = (y - row) * w + (colA - col)
-            for (let x = colA; x < colB; x++, at += FLOATS_PER_SPRITE, i++) {
-              let u0: number
-              let v0: number
-              let u1: number
-              let v1: number
-              if (idx !== null) {
-                let k = idx[i]!
-                if (k === -1 || k === CLEAR_INDEX) {
-                  if (r !== null) clearCell(r, at)
-                  continue
-                }
-                let b = k * 4
-                u0 = uv![b]!
-                v0 = uv![b + 1]!
-                u1 = uv![b + 2]!
-                v1 = uv![b + 3]!
-              } else {
-                let f = objs![i]
-                if (f === null || f === undefined) {
-                  if (r !== null) clearCell(r, at)
-                  continue
-                }
-                u0 = f.u0
-                v0 = f.v0
-                u1 = f.u1
-                v1 = f.v1
+      eachChunkSlice(col, row, w, h, chunkTiles, chunkCols, (index, colA, colB, rowA, rowB) => {
+        let chunk = resident.get(index)
+        let r = chunk ? chunk.records : null
+        for (let y = rowA; y < rowB; y++) {
+          let at = slot(colA, y)
+          let i = (y - row) * w + (colA - col)
+          for (let x = colA; x < colB; x++, at += FLOATS_PER_SPRITE, i++) {
+            let u0: number
+            let v0: number
+            let u1: number
+            let v1: number
+            if (idx !== null) {
+              let k = idx[i]!
+              if (k === -1 || k === CLEAR_INDEX) {
+                if (r !== null) clearCell(r, at)
+                continue
               }
-              if (r === null) {
-                chunk = allocate(index)
-                r = chunk.records
+              let b = k * 4
+              u0 = uv![b]!
+              v0 = uv![b + 1]!
+              u1 = uv![b + 2]!
+              v1 = uv![b + 3]!
+            } else {
+              let f = objs![i]
+              if (f === null || f === undefined) {
+                if (r !== null) clearCell(r, at)
+                continue
               }
-              writeCell(r, at, x, y, u0, v0, u1, v1, cellTint)
+              u0 = f.u0
+              v0 = f.v0
+              u1 = f.u1
+              v1 = f.v1
             }
+            if (r === null) {
+              chunk = allocate(index)
+              r = chunk.records
+            }
+            writeCell(r, at, x, y, u0, v0, u1, v1, cellTint)
           }
-          if (chunk) touch(chunk)
         }
-      }
+        if (chunk) touch(chunk)
+      })
     },
     getTile(col, row) {
-      checkCell(col, row, "getTile")
-      let chunk = resident.get(chunkOf(col, row))
+      checkCell("getTile", col, row, cols, rows)
+      let chunk = resident.get(chunkAt(col, row))
       let at = slot(col, row)
       if (!chunk || chunk.records[at + 2] === 0) return null
       let r = chunk.records

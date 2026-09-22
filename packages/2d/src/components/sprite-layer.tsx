@@ -79,6 +79,13 @@ export type SpriteLayerProps = LayerPointerProps & {
    * SpriteLayerOptions.orderBy).
    */
   orderBy?: "y" | "renderOrder"
+  /**
+   * Stagger (ms) on the layer's root: the enters and exits of the sprites
+   * and groups straight under the layer that begin in one frame are spaced
+   * by `index * stagger` (a `<Group>` declaring its own wins for what is
+   * under it). Live: a change applies to the next frame's cascade.
+   */
+  stagger?: number
   label?: string
   /** The layer: sprites, tint, pick, createView. */
   ref?: (layer: LayerHandle) => void
@@ -156,6 +163,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
       capacity: props.capacity,
       tint: props.tint,
       orderBy: props.orderBy,
+      stagger: props.stagger,
       label: props.label,
     }),
   )
@@ -164,6 +172,11 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     tint => {
       if (tint !== undefined) layer.setTint(tint)
     },
+  )
+  createEffect(
+    () => props.stagger,
+    ms => layer.setStagger(ms ?? null),
+    { defer: true },
   )
   untrack(() => props.ref)?.(layer)
   let output = untrack(() => props.output)

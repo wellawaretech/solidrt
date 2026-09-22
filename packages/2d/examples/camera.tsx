@@ -139,7 +139,7 @@ function App() {
     roamerAt.x = rx
     roamerAt.y = ry
     if (following) cam.follow(rx, ry)
-    if (spinning) cam.set({ rotation: cam.camera().rotation! + SPIN_RATE * dt })
+    if (spinning) cam.set({ rotation: cam.camera().rotation + SPIN_RATE * dt })
     cam.update(dt)
   })
 

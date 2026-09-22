@@ -242,6 +242,9 @@ when exactly one client is connected.
   real pipeline, same event shape as the `send_input` tool (tap real
   coordinates read from `/tree` just before: the window's logical size
   follows the display it sits on, so a size read earlier can be stale).
+  A wheel event's `deltaX`/`deltaY` reach the app unscaled, in the units
+  a physical wheel reports: one mouse notch is 100, and a positive
+  `deltaY` scrolls content down.
   A gamepad is driven like a key: `{ "type": "gamepad", "action":
   "connect" }` seats a synthetic pad in the lowest free slot (or `slot`),
   `{ "action": "set", "slot": 0, "buttons": ["south"], "axes": { "leftY":
