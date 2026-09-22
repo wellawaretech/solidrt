@@ -13,6 +13,10 @@ created: 2026-09-17
 > and turn it into a feature-by-feature comparison with `OrbitCamera` and
 > `FirstPersonCamera`. The list is known to be incomplete.
 
+The first-person asks (a boost action, a reference frame) are shaped
+without research in
+[3d-first-person-boost-and-frame](3d-first-person-boost-and-frame.md).
+
 ## Symptom
 
 In the fly connectome demo (a long brain + nerve cord model) a two-finger

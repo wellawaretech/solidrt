@@ -5,14 +5,14 @@
 // layout loadModel views without any per-vertex work at runtime. Same
 // parser, same subset, same result as loadGltf; this only moves the cost
 // to build time. Put the output under assets/ so it ships with the app.
+// Everything here comes from the runtime-free `@solidrt/3d/model` entry
+// (src/model-data.ts), the same surface an app's own bake script uses.
 //
 //   srt tool 3d/model <in.gltf|in.glb> [-o <out.srtm>]
 
 import { readFileSync, writeFileSync } from "node:fs"
 import { basename, dirname, extname, join } from "node:path"
-import { parseGltf } from "../src/gltf.ts"
-import { encodeModel } from "../src/model-file.ts"
-import { layoutStride } from "../src/geometry.ts"
+import { encodeModel, layoutStride, parseGltf } from "../src/model-data.ts"
 
 function usage(error?: string): never {
   if (error) console.error(error)

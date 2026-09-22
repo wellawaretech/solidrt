@@ -51,6 +51,10 @@ declare module "*.glb" {
   const bytes: Uint8Array
   export default bytes
 }
+declare module "*.srtm" {
+  const bytes: Uint8Array
+  export default bytes
+}
 
 // UI event bus (lattice), provided by the runtime as a builtin module.
 // on/once return an unsubscribe function. Notable events: the routed pointer

@@ -535,10 +535,13 @@ faces); an instance is just per-entry uniforms (`uColor`) and bindings
 
 ### Pure pieces and checks
 
-The pure pieces (`math.ts`, `geometry.ts`,
+The pure pieces (`math.ts`, `color.ts`, `geometry.ts`,
 `profile.ts`, `sweep.ts`, `gltf.ts`, `model-file.ts`) are Solid-free and
-GPU-free BY DESIGN so they can be checked headless (and, for the two
-model modules, run under bun in `tools/model.ts`); keep them that way.
+GPU-free BY DESIGN so they can be checked headless and run under bun:
+`src/model-data.ts` re-exports exactly this set as the published
+`@solidrt/3d/model` entry (the bake tool and app bake scripts), and
+`tests/model-data.test.ts` imports it under `bun test`, so a runtime
+import creeping into any of them fails there; keep them that way.
 The rigs under `checks/`
 (`geometry-check`, `sweep-check`, `pick-check`, `dispatch-check`,
 `gltf-check`) run on
@@ -1279,7 +1282,7 @@ tree, a crowd member), not to submit a lot of vertices. The tell in
 
 #### createInstancedMesh
 
-`createInstancedMesh(geometry, material, { capacity?, bounds?, label? })`
+`createInstancedMesh(geometry, material, { capacity?, bounds?, anchor?, label? })`
 draws the geometry once per instance NODE: `addInstance(mesh,
 transform?, parent?)` returns a scene node (kind "instance") placed
 inside the mesh - setTransform/setTransition/setVisible, lookAt,
@@ -1288,6 +1291,15 @@ matrix RELATIVE to the mesh the spatial core writes into the record
 buffer (`bindMatrixRecord` anchored on the mesh node: one coalesced
 buffer write per flush however many instances moved, so native
 transitions and clip players move instances with zero per-frame JS).
+`anchor` moves that frame to an ANCESTOR the mesh sits under at
+identity: the records are then relative to the anchor and instances may
+be placed under any node of the anchor's subtree, not only under the
+mesh - a population whose copies ride a hierarchy the mesh is not the
+root of (createModel's shared parts: the mesh at identity under the
+model root, an instance under every placement node). The anchor must be
+an ancestor when the mesh is added (it throws otherwise); keeping the
+chain between them identity is the caller's contract, the same one an
+instanced LOD's levels live under.
 The material declares `INSTANCE_MATRIX_ATTRIBUTES` as its first instance
 buffer (four vec4 columns, 16 floats; anything else throws at creation)
 and its vertex
@@ -1978,6 +1990,25 @@ naming it, and Draco or meshopt compression throws "re-export without
 mesh compression" - Blender exports Draco by DEFAULT, so that is the
 first error a real file hits.
 
+Reuse is kept, not unrolled. A mesh several nodes reference (Blender's
+linked duplicates export that way) becomes ONE part per primitive with
+`node` = the first node and `placements` = the further ones, and
+`EXT_mesh_gpu_instancing` lands the same way: its per-instance TRS
+become synthesized child nodes of the referencing node, named
+`<node>[i]`, so the hierarchy stays one table and an instance moves
+like any node (Three builds an InstancedMesh, Godot a MultiMesh;
+Unity's importer shares the mesh and lets its batcher instance).
+What cannot share one geometry stays a part per node: a skinned use
+(bind-pose model space, placed by its skin), a morphed one (its
+weights are the node's), and a placement whose rest-pose world
+MIRRORS the first's (opposite determinant sign - the winding flip is
+baked into the indices, so one index order cannot serve both). The
+file's `extras` ride through where glTF puts them, the way Three fills
+`userData` and Godot node metadata: `data.extras` (root), `node.extras`,
+`part.extras` (the glTF MESH's) and `material.extras`, each present
+only when non-empty - so a collider box authored as a Blender custom
+property arrives with the model.
+
 #### createModel
 
 `createModel(data, { material?, label?, autoFree? })` - uploads the images (repeat
@@ -1991,14 +2022,31 @@ Blinn-Phong look, or any other material; it is called once per material and shar
 Groups with the file's local TRS, and one mesh per part under its node,
 all inside the returned `Model` (a Group): `add(scene.root, model)`,
 place it with `setTransform`, find parts by name in `model.parts`
-(`{ name, mesh }`), spin a wheel relative to its axle through
-`model.nodes` (`{ name, node }` in table order, parents first; names
+(`{ name, mesh, extras? }`), spin a wheel relative to its axle through
+`model.nodes` (`{ name, node, extras? }` in table order, parents first; names
 repeat when the file's do - `.find()` yours), `model.bounds` for
-framing a camera. Skinned parts get the `skinned: true` material
+framing a camera, `model.extras` and `model.blobs` for the app data a
+file or a bake carried. Skinned parts get the `skinned: true` material
 variant and hang off the model ROOT (the spec ignores their node's
-transform; the palette places them - see the mixer below). `dispose()`
-detaches it and frees the geometry buffers and textures - the model owns
-them, nothing else frees them.
+transform; the palette places them - see the mixer below). A part with
+`placements` is a POPULATION: one InstancedMesh at identity under the
+model root (its `anchor`, see Instancing), `instanced: true` material
+variant, with an instance node at identity under every placement node
+- `part.instances`, in placement order, the part's own node first - so
+the copies are one draw entry (`/gpu` shows one entry with
+`instanceCount` = placements + 1) and still ride the hierarchy: move,
+hide or animate the placement node in `model.nodes` and its copy
+follows; a pick lands on the copy (`hit.mesh` the part's mesh,
+`hit.instance` the instance, whose `parent` is the placement node);
+culling is per copy through the mesh's instance union. The one thing a
+population cannot do per copy is a material swap - `setMaterial` on the
+part's mesh restyles every copy; per-copy tint is `setInstanceStyle`
+under a material with `instanceColors`. The `material` callback's
+last flag is `instanced` (after `skinned`, `vertexColors`, `morphed`):
+pass it through, or the instanced draw has no matrix to read.
+`dispose()` detaches it and frees the geometry buffers, a population's
+record buffers and the textures - the model owns them, nothing else
+frees them.
 
 #### loadGltf and loadModel
 
@@ -2018,6 +2066,32 @@ on a release client: `parseGltf` 124 ms on flux (22 ms under bun) against
 models and a binary import (`import bytes from "./x.glb" with { type:
 "binary" }` then `createModel(parseGltf(bytes))`, see
 `examples/model.tsx`); bake anything big.
+
+#### Baking your own geometry
+
+Geometry an app GENERATES (a terrain, a city block, a hundred thousand
+vertices of anything) pays the same interpreter cost every start; when
+it does not depend on runtime input, bake it once too. The whole data
+side of the package - the parser, the container and the pure geometry
+kit (generators, `withAttribute`, `mergeGeometries`, `transformGeometry`,
+the sweeps and profiles, the math) - is published without the runtime
+as `@solidrt/3d/model`, so a bake script runs under `bun` with no
+`flux:*` shim:
+
+```ts
+import { box, encodeModel, transformGeometry } from "@solidrt/3d/model"
+import type { ModelData } from "@solidrt/3d/model"
+// nodes in pre-order, one part per drawable (a part several nodes place
+// takes `placements`), materials as glTF-shaped records, app data in
+// `extras` (JSON) and `blobs` (named bytes, each an aligned block).
+let data: ModelData = { nodes, parts, skins: [], clips: [], materials, images: [], bounds, extras: { spawn }, blobs: { grid } }
+await Bun.write("assets/level.srtm", encodeModel(data))
+```
+
+`loadModel("assets/level.srtm")` then builds it like any authored model;
+`model.extras` and `model.blobs` hand the app data back (blobs are views
+onto the loaded bytes). `srt tool 3d/model` is the same entry applied
+to a glTF, so the two bakes share one code path.
 
 ### Async loading
 
@@ -2283,6 +2357,21 @@ with `srt tool 3d/model`.
   half-blend of EXTREME targets can show a ragged self-shadow
   terminator where the lit and shadowed halves disagree; a modeller's
   blend shapes are far too small for it to show.
+- A shared part (`part.instances` set) has ONE mesh for every copy, at
+  identity under the model root: hiding it hides all copies, swapping its
+  material restyles all, moving it is wrong (its records are anchored on
+  the root - see the instancing traps). Per-copy identity lives on the
+  placement nodes in `model.nodes` and on `part.instances` - hide, move,
+  animate and pick those. A file that references one mesh from nodes on
+  both sides of a mirror yields two parts (one per winding sign), so
+  `model.parts.find` by name may find the unmirrored one only; the
+  mirrored copy carries the mirroring node's name.
+- `createModel` refuses a skinned or morphed part with `placements`
+  (thrown, not drawn wrong): parseGltf never folds those, so this only
+  comes from a hand-built ModelData - give each copy its own part.
+- `extras` fields exist only where the file HAD data (an empty object
+  is dropped), so read them with `?.` - `model.extras?.spawn`, not
+  `model.extras.spawn`.
 
 ### Materials and color
 
@@ -2537,6 +2626,13 @@ with `srt tool 3d/model`.
   core before freeing the buffer, so the destroyed instances' hiding
   writes land in a live buffer; keep that order if you ever free a
   record buffer by hand.
+- An anchored population (`createInstancedMesh` with `anchor`) draws
+  `uModel * record`, and the record is relative to the ANCHOR: the
+  copies land right only while the mesh's world equals the anchor's.
+  Moving the mesh itself (or any group between it and the anchor) shifts
+  every copy twice; move the anchor, the instances or their parents
+  instead. A model's shared parts are anchored this way - `setTransform`
+  on `model.parts[i].mesh` of a part with `instances` is the mistake.
 
 ### Shadows
 

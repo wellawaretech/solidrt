@@ -148,18 +148,35 @@ Shaped, not started.
   the chain's rough level, ambient occlusion maps, a smaller environment file,
   EXR input, Three-style face sets, a per-probe format, half-float readback,
   and the probe cost on the low-end devices.
+- **[First-person camera: boost action and a reference frame](backlog/3d-first-person-boost-and-frame.md)** [2026-09-22]
+  FirstPersonCamera has no sprint, so a boost is a keyboard-only moveSpeed
+  swap the pad never gets, and it cannot ride a moving node, so inside a
+  rotating model the walls drift past a camera that stays still in the world;
+  a boost action in the bindings and a frame option on the control.
 - **[Instanced meshes - the additive follow-ups](backlog/3d-instance-additive.md)** [2026-09-06]
   What the instance-citizenship item left as strictly additive work -
   per-instance frustum gating, the transparent sort center from the instances'
   union box, shear-exact normals as a second projection, instanced sprites,
   and a per-instance frame/atlas convention for the stock materials; none
   changes a shipped contract.
+- **[Light layers](backlog/3d-light-layers.md)** [2026-09-22]
+  Meshes and targets have layer masks but lights are scene-wide, so an outside
+  light lights an enclosed interior straight through its shell and an interior
+  light leaks out; a layers mask on every light, matched against mesh layers
+  in the light loop and applied to the light's shadow view, as Unity's
+  cullingMask and Godot's light_cull_mask.
 - **[3D fill and pass count put low-end Android GPUs far off 60 fps](backlog/3d-low-end-gpu-performance.md)** [2026-08-27]
   The third-dimension demo runs at 13 fps on an Adreno 610 tablet. Measured
   budget: ~44 ms fragment work, ~13 ms of flat per-pass overhead, ~2 ms
   composite. The levers are per-pixel (shadow taps, render scale) plus one
   structural fix (shadow atlas); the compositing path, geometry, shadow map
   resolution and the stats overlay are all measured non-factors.
+- **[Material hooks: surface on the stock materials, local varyings, sprite falloff](backlog/3d-material-hooks.md)** [2026-09-22]
+  Adding one procedural term to phong or standard means rebuilding the
+  material as a shaderMaterialClass and seeding its uniforms by hand,
+  world-keyed detail swims on a moving mesh because the lit vertex stage
+  carries no local position or normal, and a sprite without a map is a hard
+  square; three small additions to material.ts and glsl.ts.
 - **[Model loader follow-ups](backlog/3d-model-loader.md)** [2026-08-26]
   The glTF subset loader (roadmap item 7, shipped 2026-08-26 as
   parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3
@@ -1142,6 +1159,12 @@ Finished, kept for the reasoning.
   through scene.texture), the standard set carries no camera basis so
   billboards reconstruct it from uViewProj rows, and shaderMaterial cannot
   express one program with many parameterisations.
+- **[Model file: bake from own geometry, extras, part reuse](done/3d-model-file-bake-and-reuse.md)** [2026-09-22]
+  A procedural model cannot be written to .srtm without importing the runtime
+  (the only export path pulls flux:*), the container has no slot for app data,
+  and a part belongs to exactly one node so a variant placed hundreds of times
+  cannot be expressed; three bounded changes to the model file and
+  createModel, from a demo that baked its own geometry.
 - **[Morph targets - sparse-by-vertex deltas, weights as palette rows, clip and transition driven](done/3d-morph-targets.md)** [2026-09-11]
   The loader drops primitive targets and the "weights" channel and throws on
   sparse accessors, so a face or a blend-shape character cannot even parse;

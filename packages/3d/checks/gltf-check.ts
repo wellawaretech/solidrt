@@ -582,6 +582,8 @@ let sameModel = (a: ModelData, b: ModelData, label: string): void => {
   for (let i = 0; i < a.parts.length; i++) {
     let p = a.parts[i]!, q = b.parts[i]!
     if (p.name !== q.name || p.material !== q.material || p.node !== q.node || p.skin !== q.skin) fail(`${label}: part ${i} header`)
+    if ((p.placements ?? []).join() !== (q.placements ?? []).join()) fail(`${label}: part ${i} placements`)
+    if (JSON.stringify(p.extras) !== JSON.stringify(q.extras)) fail(`${label}: part ${i} extras`)
     if (layoutKey(p.geometry.layout) !== layoutKey(q.geometry.layout)) fail(`${label}: part ${i} layout`)
     if (floats(p.geometry).join() !== floats(q.geometry).join()) fail(`${label}: part ${i} vertices`)
     if (p.geometry.indices.join() !== q.geometry.indices.join()) fail(`${label}: part ${i} indices`)
@@ -612,6 +614,9 @@ let sameModel = (a: ModelData, b: ModelData, label: string): void => {
   }
   if (a.images.length !== b.images.length || a.images.some((img, i) => img.join() !== b.images[i]!.join())) fail(`${label}: images`)
   if (a.bounds.join() !== b.bounds.join()) fail(`${label}: bounds`)
+  if (JSON.stringify(a.extras) !== JSON.stringify(b.extras)) fail(`${label}: extras`)
+  let blobs = (m: ModelData): [string, Uint8Array][] => Object.entries(m.blobs ?? {})
+  if (blobs(a).map(([k]) => k).join() !== blobs(b).map(([k]) => k).join() || blobs(a).some(([k, v]) => v.join() !== b.blobs![k]!.join())) fail(`${label}: blobs`)
 }
 let encoded = encodeModel(model)
 sameModel(model, decodeModel(encoded), "round trip")
@@ -800,6 +805,76 @@ throws("unknown required extension", () => parseGltf(glb(unknownExt, binBlocks, 
     "weights",
   )
   throws("node weights count", () => parseGltf(glb({ ...morphDocument, nodes: [{ name: "face", mesh: 0, weights: [1] }] }, binBlocks, binLength)), "weights")
+}
+
+// --- reuse and app data -------------------------------------------------------
+// One mesh under four nodes: two plain placements, a mirrored one (its own
+// part: the baked winding cannot serve both signs) and a node carrying
+// EXT_mesh_gpu_instancing (three instances, TRANSLATION + ROTATION from the
+// animation accessors, synthesized as children "swarm[i]"); a second mesh
+// once. Extras on the root, a node, the mesh and a material ride through;
+// the container carries placements, extras and named blobs.
+{
+  let reuseDocument = {
+    ...document,
+    extras: { level: "hangar", spawn: [1, 2, 3] },
+    extensionsUsed: ["EXT_mesh_gpu_instancing"],
+    extensionsRequired: ["EXT_mesh_gpu_instancing"],
+    scenes: [{ nodes: [0, 1, 2, 3, 4] }],
+    nodes: [
+      { name: "crateA", mesh: 0, translation: [1, 0, 0], extras: { collider: "box" } },
+      { name: "crateB", mesh: 0, translation: [4, 0, 0], extras: {} },
+      { name: "crateMirror", mesh: 0, scale: [-1, 1, 1] },
+      { name: "swarm", mesh: 0, translation: [0, 5, 0], extensions: { EXT_mesh_gpu_instancing: { attributes: { TRANSLATION: 5, ROTATION: 6 } } } },
+      { name: "solo", mesh: 1 },
+    ],
+    meshes: [{ ...document.meshes[0]!, extras: { kind: "crate" } }, document.meshes[1]!],
+    materials: [{ ...document.materials[0]!, extras: { surface: "metal" } }, ...document.materials.slice(1)],
+    skins: [],
+    animations: [],
+  }
+  let reused = parseGltf(glb(reuseDocument, binBlocks, binLength))
+  for (let part of reused.parts) validateGeometry(part.geometry)
+  if (reused.nodes.map((n) => n.name).join() !== "crateA,crateB,crateMirror,swarm,swarm[0],swarm[1],swarm[2],solo") fail(`reuse node names: ${reused.nodes.map((n) => n.name).join()}`)
+  if (reused.nodes.map((n) => (n.parent === null ? "-" : n.parent)).join() !== "-,-,-,-,3,3,3,-") fail(`reuse node parents: ${reused.nodes.map((n) => n.parent).join()}`)
+  if (reused.parts.map((p) => p.name).join() !== "crateA,crateMirror,solo") fail(`reuse parts: ${reused.parts.map((p) => p.name).join()}`)
+  let crate = reused.parts[0]!
+  if (crate.node !== 0 || crate.placements?.join() !== "1,4,5,6") fail(`crate placements: node ${crate.node}, placements ${crate.placements?.join()}`)
+  if (reused.parts[1]!.placements !== undefined || reused.parts[2]!.placements !== undefined) fail("reuse: the mirrored and the single part must carry no placements")
+  if (!windingAgrees(crate.geometry)) fail("crate: the shared part's winding follows its first (unmirrored) placement")
+  if (windingAgrees(reused.parts[1]!.geometry)) fail("crateMirror: the mirrored copy keeps its own flipped part")
+  // The instances: the node's local TRS composed with each instance's,
+  // the rotation renormalized, and the extension's rotation about z.
+  let swarm1 = reused.nodes[5]!
+  if (swarm1.position.join() !== "1,0,0" || !nearAll(swarm1.rotation, [0, 0, Math.SQRT1_2, Math.SQRT1_2]) || swarm1.scale.join() !== "1,1,1") fail(`swarm[1]: ${JSON.stringify(swarm1)}`)
+  // Extras: the root's, the node's (an empty object is dropped), the
+  // mesh's on the part and the material's.
+  if (JSON.stringify(reused.extras) !== JSON.stringify({ level: "hangar", spawn: [1, 2, 3] })) fail(`root extras: ${JSON.stringify(reused.extras)}`)
+  if (JSON.stringify(reused.nodes[0]!.extras) !== JSON.stringify({ collider: "box" }) || reused.nodes[1]!.extras !== undefined) fail("node extras")
+  if (JSON.stringify(crate.extras) !== JSON.stringify({ kind: "crate" }) || reused.parts[2]!.extras !== undefined) fail("part extras")
+  if (JSON.stringify(reused.materials[0]!.extras) !== JSON.stringify({ surface: "metal" }) || reused.materials[1]!.extras !== undefined) fail("material extras")
+  // Bounds grow through every placement: crateA at x 0.5..1.5, crateB at
+  // 3.5..4.5, the mirror at -0.5..0.5, the swarm at (0..1, 5..6) plus the
+  // half cube, solo at the origin.
+  if (!nearAll(reused.bounds, [-0.5, -0.5, -0.5, 4.5, 6.5, 0.5])) fail(`reuse bounds: ${reused.bounds.join()}`)
+  // The container: placements and extras in the header, blobs as aligned
+  // blocks a typed view sits on directly.
+  let heights = new Float32Array([0.5, 1.5, 2.5])
+  let baked: ModelData = { ...reused, blobs: { grid: new Uint8Array([1, 2, 3, 4, 5]), heights: new Uint8Array(heights.buffer) } }
+  let back = decodeModel(encodeModel(baked))
+  sameModel(baked, back, "reuse round trip")
+  let backHeights = back.blobs?.heights
+  if (backHeights === undefined || backHeights.byteOffset % 4 !== 0) fail("blob alignment")
+  else if (new Float32Array(backHeights.buffer, backHeights.byteOffset, 3).join() !== heights.join()) fail("blob heights")
+  // The refusals: an instancing node with no attribute, and attributes
+  // that disagree on the count.
+  let swarmNode = reuseDocument.nodes[3]!
+  throws("instancing without attributes", () => parseGltf(glb({ ...reuseDocument, nodes: [{ ...swarmNode, extensions: { EXT_mesh_gpu_instancing: {} } }], scenes: [{ nodes: [0] }] }, binBlocks, binLength)), "no TRANSLATION")
+  throws(
+    "instancing count mismatch",
+    () => parseGltf(glb({ ...reuseDocument, nodes: [{ ...swarmNode, extensions: { EXT_mesh_gpu_instancing: { attributes: { TRANSLATION: 5, SCALE: 9 } } } }], scenes: [{ nodes: [0] }] }, binBlocks, binLength)),
+    "disagree",
+  )
 }
 
 let noMaterial = { ...document, meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, indices: 3 }] }], nodes: [{ mesh: 0 }], scenes: [{ nodes: [0] }], materials: [] }

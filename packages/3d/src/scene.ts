@@ -1899,6 +1899,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         )
       }
       if (inst !== null) checkInstancePairing(mesh.material, inst, "Mesh material")
+      // An anchored population's records are relative to the anchor, so
+      // it must be an ancestor (the core's contract: an anchor move then
+      // restages every record); anything else binds records that never
+      // follow it - errors here, at add().
+      if (inst !== null && inst.anchor !== null) {
+        let p: SceneNode | null = mesh.parent
+        while (p !== null && p !== inst.anchor) p = p.parent
+        if (p === null) throw new Error("An instanced mesh's anchor must be one of its ancestors when it is added to a scene")
+      }
       let bufs = acquireGeometryBuffers(mesh.geometry)
       mesh._buffers = bufs
       attachScene(mesh)
@@ -1918,10 +1927,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       else spatial.setBounds(mesh._node!, localBounds(mesh))
       // A rebuilt entry (setGeometry) re-shapes the live instances to the
       // new geometry; their record bindings are untouched. On a first
-      // entry none has a core node yet - they enter after the mesh.
+      // entry none has a core node yet - they enter after the mesh -
+      // except under an anchor, where an instance in an earlier branch
+      // of the anchor's subtree is already in and waiting to be bound.
       if (inst !== null && inst.nodes !== null) {
         for (let n of inst.nodes.slots) {
-          if (n !== null && n._node !== null) spatial.setShape(n._node, bufs.shape)
+          if (n === null || n._node === null) continue
+          if (inst.anchor !== null && !byNode.has(n._node)) this._attachInstance(n)
+          else spatial.setShape(n._node, bufs.shape)
         }
       }
       // Culling: the gate and margin only when off the defaults, and a
@@ -1966,17 +1979,23 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // geometry buffers and core node are live - a mesh masked out of
       // the scene included, whose instances still pick.
       if (mesh === null || mesh._buffers === null || mesh._node === null || instance._node === null) return
+      // A population with an anchor may enter AFTER an instance living
+      // elsewhere in the anchor's subtree (a later sibling branch); the
+      // mesh's own attach then binds the instances it finds waiting.
+      let anchor = (mesh._instances.anchor ?? mesh)._node
+      if (anchor === null || byNode.has(instance._node)) return
       spatial.setShape(instance._node, mesh._buffers.shape)
       spatial.setLayers(instance._node, mesh.layers)
-      // The record is the instance's placement inside the mesh (the mesh
-      // node is the anchor), staged by the core at the next flush.
-      // One buffer per LOD level of an instanced LOD (the population is
-      // the group and the anchor, its levels its children at identity).
+      // The record is the instance's placement relative to the anchor -
+      // the mesh node itself, or the ancestor the mesh sits under at
+      // identity - staged by the core at the next flush. One buffer per
+      // LOD level of an instanced LOD (the population is the group and
+      // the anchor, its levels its children at identity).
       let levels = mesh._instances.levels
       instanceBuffers.length = 0
       if (levels === null) instanceBuffers.push(mesh._instances.matrix)
       else for (let l of levels) instanceBuffers.push(l._instances.matrix)
-      spatial.bindMatrixRecord(instance._node, instanceBuffers, instance._slot, mesh._node)
+      spatial.bindMatrixRecord(instance._node, instanceBuffers, instance._slot, anchor)
       // A morphing population: the instance's register takes its slot's
       // row now (a recycled slot's row is overwritten, not inherited).
       if (mesh._instances.morph !== null) activateMorph(instance)

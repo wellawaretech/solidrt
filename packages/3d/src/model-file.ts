@@ -7,9 +7,10 @@
 //   "SRTM" u32 | version u32 | jsonLength u32 | json (padded to 4) | payload
 // The JSON header describes each block's byte range into the payload; every
 // block starts 4-aligned so Float32Array/Uint32Array views sit on it
-// directly. Images travel as their encoded files (PNG/JPEG bytes).
+// directly. Images travel as their encoded files (PNG/JPEG bytes), app
+// data as the header's `extras` (JSON) and named `blobs` (aligned blocks).
 
-import type { ModelChannel, ModelData, ModelMaterial, ModelNode, ModelSkin } from "./gltf.ts"
+import type { ModelChannel, ModelData, ModelExtras, ModelMaterial, ModelNode, ModelSkin } from "./gltf.ts"
 import { layoutStride, vertexView, VERTEX_FORMATS } from "./geometry.ts"
 import type { VertexAttribute } from "@solidrt/core/gpu"
 import type { VertexLayout } from "./geometry.ts"
@@ -39,7 +40,14 @@ const MAGIC = 0x4d545253
 // Version 9 names the plain layout "base" (position, normal, uv - the
 // prefix "colored" and "skinned" extend) where version 8 wrote
 // "standard"; a version-8 file's layout word does not parse.
-const VERSION = 9
+// Version 10 carries app data and reuse: `extras` (JSON) on the root, the
+// nodes, the parts and the materials, named binary `blobs` as payload
+// blocks, and a part's `placements` (the further nodes drawing the same
+// geometry). A version-9 file has none of these and is rejected like
+// every earlier version rather than read as a file without them, so a
+// stale bake never silently drops the data an app relies on. Re-bake
+// with `srt tool 3d/model`.
+const VERSION = 10
 
 // The named layouts the container writes by name; a custom attribute-list
 // layout (a skinned primitive with COLOR_0, a withAttribute channel) is
@@ -72,6 +80,9 @@ type PartHeader = Block & {
   index: Block
   /** The part's packed morph targets, when it has any. */
   morphs?: { names: string[]; texels: Block; extent: number[] }
+  /** The further nodes placing the part's geometry (ModelPart.placements). */
+  placements?: number[]
+  extras?: ModelExtras
 }
 
 type SkinHeader = { joints: number[]; inverseBind: Block; jointBounds: Block }
@@ -94,6 +105,11 @@ type Header = {
   skins: SkinHeader[]
   clips: ClipHeader[]
   bounds: number[]
+  /** The root extras (ModelData.extras); node and material extras ride
+   * inside their own records. */
+  extras?: ModelExtras
+  /** The named binary sections (ModelData.blobs), each its own block. */
+  blobs?: Record<string, Block>
 }
 
 /** Serialize a model into the .srtm container. */
@@ -135,6 +151,8 @@ export function encodeModel(data: ModelData): Uint8Array {
       let texels = push(new Uint8Array(g.morphs.texels.buffer, g.morphs.texels.byteOffset, g.morphs.texels.byteLength))
       header.morphs = { names: g.morphs.names, texels, extent: Array.from(g.morphs.extent) }
     }
+    if (part.placements !== undefined && part.placements.length > 0) header.placements = part.placements
+    if (part.extras !== undefined) header.extras = part.extras
     return header
   })
   let images = data.images.map((image) => push(image))
@@ -152,6 +170,11 @@ export function encodeModel(data: ModelData): Uint8Array {
     })),
   }))
   let header: Header = { nodes: data.nodes, materials: data.materials, images, parts, skins, clips, bounds: Array.from(data.bounds) }
+  if (data.extras !== undefined) header.extras = data.extras
+  if (data.blobs !== undefined) {
+    header.blobs = {}
+    for (let [name, bytes] of Object.entries(data.blobs)) header.blobs[name] = push(bytes)
+  }
 
   let json = new TextEncoder().encode(JSON.stringify(header))
   let jsonPadded = json.byteLength + ((4 - (json.byteLength % 4)) % 4)
@@ -200,13 +223,16 @@ export function decodeModel(bytes: Uint8Array): ModelData {
       let m = part.morphs
       geometry.morphs = { names: m.names, texels: new Float32Array(buffer, payload + m.texels.offset, m.texels.bytes / 4), extent: Float32Array.from(m.extent) }
     }
-    return {
+    let out: ModelData["parts"][0] = {
       name: part.name,
       node: part.node,
       skin: part.skin,
       material: part.material,
       geometry,
     }
+    if (part.placements !== undefined) out.placements = part.placements
+    if (part.extras !== undefined) out.extras = part.extras
+    return out
   })
   let images = header.images.map((block) => new Uint8Array(buffer, payload + block.offset, block.bytes))
   let floats = (block: Block): Float32Array => new Float32Array(buffer, payload + block.offset, block.bytes / 4)
@@ -222,5 +248,11 @@ export function decodeModel(bytes: Uint8Array): ModelData {
       values: floats(c.values),
     })),
   }))
-  return { nodes: header.nodes, parts, skins, clips, materials: header.materials, images, bounds: Float32Array.from(header.bounds) }
+  let data: ModelData = { nodes: header.nodes, parts, skins, clips, materials: header.materials, images, bounds: Float32Array.from(header.bounds) }
+  if (header.extras !== undefined) data.extras = header.extras
+  if (header.blobs !== undefined) {
+    data.blobs = {}
+    for (let [name, block] of Object.entries(header.blobs)) data.blobs[name] = new Uint8Array(buffer, payload + block.offset, block.bytes)
+  }
+  return data
 }

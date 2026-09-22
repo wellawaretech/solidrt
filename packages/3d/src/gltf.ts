@@ -32,8 +32,19 @@
 // layout for a static primitive, the skinned list plus aColor for a
 // rigged one. Skins ARE parsed: joints, inverse binds, and the "skinned"
 // vertex layout.
+//
+// Reuse is kept, not unrolled: a mesh several nodes reference becomes
+// ONE part per primitive whose `placements` list the further nodes
+// (Three shares the geometry, Unity and Godot the mesh asset; here the
+// runtime draws the part instanced, one entry for the population), and
+// EXT_mesh_gpu_instancing lands the same way, its per-instance TRS as
+// synthesized child nodes of the referencing node (Three's
+// InstancedMesh, Godot's MultiMesh). The file's `extras` ride through
+// where glTF puts them - root, node, mesh (onto the part), material -
+// the way Three fills userData, so app data authored as custom
+// properties arrives with the model.
 
-import { compose, decompose, det3, mat4, multiply } from "./math.ts"
+import { compose, decompose, det3, mat4, multiply, quatNormalize } from "./math.ts"
 import { linearToSrgb } from "./color.ts"
 import type { Mat4, Quat, Vec3 } from "./math.ts"
 import { attributeAccess, layoutKey, layoutStride, packIndices, packMorphTargets, vertexView } from "./geometry.ts"
@@ -79,7 +90,15 @@ export type ModelMaterial = {
    * null; createModel hands it to `material` as both maps.metalnessMap
    * and maps.roughnessMap, standard's two channel-select options. */
   metalnessRoughnessMap: number | null
+  /** The glTF material's `extras`, when it has any. */
+  extras?: ModelExtras
 }
+
+/** Application data carried beside the model: a JSON object, glTF's
+ * `extras` shape (Blender's custom properties export as it), what Three
+ * surfaces as `userData` and Godot as node metadata. Present only when
+ * non-empty. */
+export type ModelExtras = Record<string, unknown>
 
 /** One node of the model's retained hierarchy: a local TRS under `parent`
  * (an earlier index into ModelData.nodes, or null for a root). Parts and
@@ -100,6 +119,8 @@ export type ModelNode = {
    * zeros), what the node's parts draw with until a clip or
    * setMorphWeights writes them. */
   weights?: number[]
+  /** The glTF node's `extras`, when it has any. */
+  extras?: ModelExtras
 }
 
 /** One drawable: a mesh node's primitive. Vertices are LOCAL to its
@@ -111,8 +132,19 @@ export type ModelPart = {
    * numbers them `name#<k>`. */
   name: string
   /** Index into ModelData.nodes - the node whose world transform places
-   * this part (unused for placement when `skin` is set). */
+   * this part (unused for placement when `skin` is set). With
+   * `placements` it is the FIRST placement. */
   node: number
+  /** The further nodes (indices into ModelData.nodes) placing the SAME
+   * geometry - a mesh several glTF nodes reference, or the instances of
+   * EXT_mesh_gpu_instancing as synthesized children of the referencing
+   * node. Present only when there is more than one placement; then the
+   * part is a population (createModel draws it as one InstancedMesh, an
+   * instance under every placement node) rather than a mesh per node.
+   * Never on a skinned or morphed part, and a placement whose world
+   * mirrors the first's (opposite determinant sign) is its own part,
+   * since the baked winding cannot serve both. */
+  placements?: number[]
   /** Index into ModelData.skins, or null. A skinned part's geometry has
    * the "skinned" layout (aJoints/aWeights after the base prefix). */
   skin: number | null
@@ -128,6 +160,9 @@ export type ModelPart = {
   geometry: Geometry
   /** Index into ModelData.materials. */
   material: number
+  /** The glTF MESH's `extras`, when it has any (every primitive of the
+   * mesh carries the same object). */
+  extras?: ModelExtras
 }
 
 /** One skin: the joints (as node-table indices) and each joint's inverse
@@ -203,6 +238,15 @@ export type ModelData = {
    * is conservative (not vertex-tight) for parts under rotated nodes and
    * for skinned parts. */
   bounds: Float32Array
+  /** The document's root `extras`, when it has any: app data authored
+   * beside the model, or written by a bake of the app's own geometry. */
+  extras?: ModelExtras
+  /** Named binary sections for app data that does not belong in JSON (an
+   * occupancy grid, a nav mesh, a collider set): a bake writes them, the
+   * container stores each as its own 4-aligned block, and decodeModel
+   * hands them back as views onto the file's bytes. glTF has no
+   * counterpart; parseGltf never fills it. */
+  blobs?: Record<string, Uint8Array>
 }
 
 /** Resolves a relative uri of a .gltf (its .bin buffers, image files) to
@@ -354,9 +398,10 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       throw new Error("parseGltf: the file's meshes are compressed (" + ext + "), which is not supported: re-export without mesh compression")
     }
     // Quantized attributes read through the normalized-integer path,
-    // emissive strength is the emissive intensity; every other required
-    // extension changes what the file means.
-    if (ext !== "KHR_mesh_quantization" && ext !== "KHR_materials_emissive_strength") {
+    // emissive strength is the emissive intensity, GPU instancing is
+    // read as placements; every other required extension changes what
+    // the file means.
+    if (ext !== "KHR_mesh_quantization" && ext !== "KHR_materials_emissive_strength" && ext !== "EXT_mesh_gpu_instancing") {
       throw new Error("parseGltf: the file requires the " + ext + " extension, which is not supported")
     }
   }
@@ -416,7 +461,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     let emissiveFactor: number[] = m.emissiveFactor ?? [0, 0, 0]
     let strength = m.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1
     // glTF factors are linear; the material options are sRGB.
-    return {
+    let material: ModelMaterial = {
       name: m.name ?? "material" + i,
       color: [linearToSrgb(factor[0]), linearToSrgb(factor[1]), linearToSrgb(factor[2]), factor[3] ?? 1],
       map: textureSlot(pbr.baseColorTexture),
@@ -433,6 +478,9 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       roughness: typeof pbr.roughnessFactor === "number" ? pbr.roughnessFactor : 1,
       metalnessRoughnessMap: textureSlot(pbr.metallicRoughnessTexture),
     }
+    let extras = extrasOf(m)
+    if (extras !== undefined) material.extras = extras
+    return material
   })
   // Primitives without a material draw the spec's default; it is appended
   // only when something uses it.
@@ -489,16 +537,44 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   // part somewhere below it needs the chain (materialize walks ancestors
   // first, so the table stays in pre-order), which is what prunes cameras,
   // lights and unused empties.
-  type PendingNode = { name: string; parent: PendingNode | null; position: Vec3; rotation: Quat; scale: Vec3; world: Mat4; index: number | null }
+  type PendingNode = { name: string; parent: PendingNode | null; position: Vec3; rotation: Quat; scale: Vec3; world: Mat4; index: number | null; extras: ModelExtras | undefined }
   let nodes: ModelNode[] = []
   let materialize = (p: PendingNode): number => {
     if (p.index !== null) return p.index
     let parent = p.parent === null ? null : materialize(p.parent)
     p.index = nodes.length
-    nodes.push({ name: p.name, parent, position: p.position, rotation: p.rotation, scale: p.scale })
+    let node: ModelNode = { name: p.name, parent, position: p.position, rotation: p.rotation, scale: p.scale }
+    if (p.extras !== undefined) node.extras = p.extras
+    nodes.push(node)
     return p.index
   }
 
+  /** One node placing a mesh: its table slot, name, rest-pose world and
+   * the file's skin index it draws with (null for a rigid placement). */
+  type Placement = { slot: number; name: string; world: Mat4; skin: number | null }
+  // A mesh's placements collected over the walk, keyed by the file's
+  // mesh index in first-use order, folded into parts after it.
+  let meshUses = new Map<number, { mesh: any; uses: Placement[] }>()
+  let place = (meshIndex: number, mesh: any, pending: PendingNode, skin: number | null, nodeWeights: unknown): void => {
+    let slot = materialize(pending)
+    let prims: any[] = mesh.primitives ?? []
+    // Morph target names and the initial weights are the MESH's (a node
+    // may override the weights); the weights land on the placing node,
+    // which is what a weights channel and setMorphWeights address.
+    let targetCount = Math.max(0, ...prims.map((p: any): number => p?.targets?.length ?? 0))
+    if (targetCount > 0) {
+      let weights: number[] = Array.isArray(nodeWeights) ? nodeWeights : Array.isArray(mesh.weights) ? mesh.weights : []
+      if (weights.length !== targetCount) {
+        if (weights.length !== 0) throw new Error("parseGltf: node " + pending.name + " has " + weights.length + " weights for " + targetCount + " morph targets")
+        weights = new Array(targetCount).fill(0)
+      }
+      nodes[slot]!.weights = weights.map(Number)
+    }
+    let use: Placement = { slot, name: pending.name, world: pending.world, skin }
+    let uses = meshUses.get(meshIndex)
+    if (uses === undefined) meshUses.set(meshIndex, { mesh, uses: [use] })
+    else uses.uses.push(use)
+  }
   let parts: ModelPart[] = []
   let pendingJointBounds: { skin: number; positions: Float32Array; count: number; joints: Float32Array; weights: Float32Array; slack: number }[] = []
   let bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
@@ -521,8 +597,16 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     }
   }
 
-  let emit = (prim: any, name: string, node: number, world: Mat4, skin: number | null, targetNames: string[] | null): void => {
+  // One part from one primitive under its placements: the first names and
+  // owns it (`node`), the rest are `placements`. Every placement shares
+  // the skin (null, for more than one) and the winding sign, which the
+  // fold below guarantees.
+  let emit = (prim: any, name: string, placed: Placement[], targetNames: string[] | null, extras: ModelExtras | undefined): void => {
     if (prim.attributes?.POSITION === undefined) return
+    let first = placed[0]!
+    let node = first.slot
+    let world = first.world
+    let skin = first.skin
     let mode: number = prim.mode ?? MODE_TRIANGLES
     let pos = accessorFloats(prim.attributes.POSITION, name + " POSITION")
     if (pos.elements !== 3) throw new Error("parseGltf: " + name + " POSITION is not VEC3")
@@ -725,7 +809,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
           hi[k] = hi[k]! + morphs.extent[3 + k]!
         }
       }
-      growBounds(bounds, [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], world)
+      // The same local box through every placement's rest-pose world.
+      for (let p of placed) growBounds(bounds, [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], p.world)
     } else {
       // Joint boxes need the skin's inverse binds, and skins are built
       // after the walk (their joints are ordinary nodes the walk
@@ -748,7 +833,10 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     if (layout !== undefined) geometry.layout = layout
     if (morphs !== undefined) geometry.morphs = morphs
     if (!triangles) geometry.topology = topology
-    parts.push({ name, node, skin, geometry, material })
+    let part: ModelPart = { name, node, skin, geometry, material }
+    if (placed.length > 1) part.placements = placed.slice(1).map((p) => p.slot)
+    if (extras !== undefined) part.extras = extras
+    parts.push(part)
   }
 
   let local = mat4()
@@ -771,29 +859,50 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     // winding and bounds match what the runtime will render.
     let world = mat4()
     multiply(world, parentWorld, compose(local, position, rotation, scale))
-    let pending: PendingNode = { name: node.name ?? "node" + index, parent, position, rotation, scale, world, index: null }
+    let pending: PendingNode = { name: node.name ?? "node" + index, parent, position, rotation, scale, world, index: null, extras: extrasOf(node) }
     pendingByIndex.set(index, pending)
     if (node.mesh !== undefined) {
       let mesh = gltf.meshes[node.mesh]
       if (mesh === undefined) throw new Error("parseGltf: node " + index + " names a missing mesh " + node.mesh)
       if (node.name === undefined && mesh.name !== undefined) pending.name = mesh.name
-      let slot = materialize(pending)
       let skin = typeof node.skin === "number" ? node.skin : null
-      let prims: any[] = mesh.primitives ?? []
-      // Morph target names and the initial weights are the MESH's (a
-      // node may override the weights); the weights land on the node,
-      // which is what a weights channel and setMorphWeights address.
-      let targetCount = Math.max(0, ...prims.map((p: any): number => p?.targets?.length ?? 0))
-      let targetNames: string[] | null = Array.isArray(mesh.extras?.targetNames) ? mesh.extras.targetNames.map(String) : null
-      if (targetCount > 0) {
-        let weights: number[] = Array.isArray(node.weights) ? node.weights : Array.isArray(mesh.weights) ? mesh.weights : []
-        if (weights.length !== targetCount) {
-          if (weights.length !== 0) throw new Error("parseGltf: node " + pending.name + " has " + weights.length + " weights for " + targetCount + " morph targets")
-          weights = new Array(targetCount).fill(0)
+      let instancing = node.extensions?.EXT_mesh_gpu_instancing
+      if (instancing === undefined) place(node.mesh, mesh, pending, skin, node.weights)
+      else {
+        // EXT_mesh_gpu_instancing: the node's mesh is drawn once per
+        // instance, each a TRS in the node's local space, and not at
+        // the node itself. Every instance becomes a synthesized child
+        // node ("<name>[i]"), so the hierarchy stays one table and an
+        // instance moves like any node; the per-instance custom
+        // attributes the extension allows (underscore-prefixed) are
+        // dropped, as Three drops them.
+        let what = "node " + pending.name + " EXT_mesh_gpu_instancing"
+        let attrs = instancing.attributes ?? {}
+        let read = (attribute: string, elements: number): Float32Array | null => {
+          if (attrs[attribute] === undefined) return null
+          let acc = accessorFloats(attrs[attribute], what + " " + attribute)
+          if (acc.elements !== elements) throw new Error("parseGltf: " + what + " " + attribute + " is not VEC" + elements)
+          return acc.data
         }
-        nodes[slot]!.weights = weights.map(Number)
+        let t = read("TRANSLATION", 3)
+        let r = read("ROTATION", 4)
+        let s = read("SCALE", 3)
+        let counts = [t === null ? null : t.length / 3, r === null ? null : r.length / 4, s === null ? null : s.length / 3].filter((c): c is number => c !== null)
+        if (counts.length === 0) throw new Error("parseGltf: " + what + " has no TRANSLATION, ROTATION or SCALE attribute")
+        if (counts.some((c) => c !== counts[0])) throw new Error("parseGltf: " + what + " attributes disagree on the instance count")
+        for (let i = 0; i < counts[0]!; i++) {
+          let p: Vec3 = t === null ? [0, 0, 0] : [t[i * 3]!, t[i * 3 + 1]!, t[i * 3 + 2]!]
+          // A quantized rotation (normalized int16, which the extension
+          // allows) is unit only to its precision; renormalized so the
+          // node stores a unit quaternion like every other.
+          let q: Quat = [0, 0, 0, 1]
+          if (r !== null) quatNormalize(q, [r[i * 4]!, r[i * 4 + 1]!, r[i * 4 + 2]!, r[i * 4 + 3]!])
+          let sc: Vec3 = s === null ? [1, 1, 1] : [s[i * 3]!, s[i * 3 + 1]!, s[i * 3 + 2]!]
+          let instanceWorld = mat4()
+          multiply(instanceWorld, world, compose(local, p, q, sc))
+          place(node.mesh, mesh, { name: pending.name + "[" + i + "]", parent: pending, position: p, rotation: q, scale: sc, world: instanceWorld, index: null, extras: undefined }, skin, node.weights)
+        }
       }
-      for (let k = 0; k < prims.length; k++) emit(prims[k], prims.length > 1 ? pending.name + "#" + k : pending.name, slot, world, skin, targetNames)
     }
     for (let child of node.children ?? []) walk(child, pending, world)
   }
@@ -802,6 +911,40 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   let roots: number[] = scene?.nodes ?? (gltf.nodes ?? []).map((_: unknown, i: number) => i)
   let root = mat4()
   for (let index of roots) walk(index, null, root)
+
+  // Parts, after the walk: one primitive under its placements. A mesh
+  // several nodes use folds into one part per primitive with the further
+  // nodes as placements (the runtime draws it instanced) - except what
+  // cannot share one geometry, which stays a part of its own per use: a
+  // skinned use (bind-pose model space, placed by its skin; a second
+  // reference draws the same thing per spec), a morphed one (its weights
+  // are the node's), and a use whose rest-pose winding sign differs from
+  // the bucket's (the flip is baked into the indices). Buckets keep
+  // first-use order, so parts stay in file order per mesh.
+  for (let { mesh, uses } of meshUses.values()) {
+    let prims: any[] = mesh.primitives ?? []
+    let targetNames: string[] | null = Array.isArray(mesh.extras?.targetNames) ? mesh.extras.targetNames.map(String) : null
+    let extras = extrasOf(mesh)
+    for (let k = 0; k < prims.length; k++) {
+      let prim = prims[k]
+      let morphed = (prim?.targets?.length ?? 0) > 0
+      let buckets: { alone: boolean; mirrored: boolean; placed: Placement[] }[] = []
+      for (let use of uses) {
+        let alone = use.skin !== null || morphed
+        let mirrored = det3(use.world) < 0
+        let bucket = alone ? undefined : buckets.find((b) => !b.alone && b.mirrored === mirrored)
+        if (bucket === undefined) {
+          bucket = { alone, mirrored, placed: [] }
+          buckets.push(bucket)
+        }
+        bucket.placed.push(use)
+      }
+      for (let b of buckets) {
+        let name = b.placed[0]!.name
+        emit(prim, prims.length > 1 ? name + "#" + k : name, b.placed, targetNames, extras)
+      }
+    }
+  }
 
   // Skins, after the walk: joints are ordinary nodes (usually meshless),
   // materialized here so the retained table carries them; part.skin
@@ -940,7 +1083,19 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   // Nothing grew the box (no parts, or skinned parts whose weights reach
   // no joint): an empty model sits at the origin.
   if (!(bounds[0]! <= bounds[3]!)) bounds.fill(0)
-  return { nodes, parts, skins, clips, materials, images, bounds }
+  let data: ModelData = { nodes, parts, skins, clips, materials, images, bounds }
+  let extras = extrasOf(gltf)
+  if (extras !== undefined) data.extras = extras
+  return data
+}
+
+/** An object's glTF `extras` as a JSON object, or undefined when absent,
+ * not an object, or empty - so the field appears only where there is
+ * data. */
+function extrasOf(owner: any): ModelExtras | undefined {
+  let extras = owner?.extras
+  if (typeof extras !== "object" || extras === null || Array.isArray(extras)) return undefined
+  return Object.keys(extras).length > 0 ? (extras as ModelExtras) : undefined
 }
 
 function readGlb(bytes: Uint8Array): { json: any; bin: Uint8Array | null } {

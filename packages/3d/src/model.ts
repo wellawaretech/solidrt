@@ -3,11 +3,17 @@
 // local TRS, each part's mesh under its node - with the images uploaded as
 // textures and a material per glTF material: Three's `gltf.scene`, an
 // object you add to the scene and place with setTransform, whose named
-// nodes (`model.nodes`) can be moved individually. The model owns what it
-// created (geometry buffers, textures): dispose() frees them and detaches
-// the group. loadGltf / loadModel are the read-then-create conveniences
-// over flux:fs; parseGltf / decodeModel + createModel are the primitives
-// under them, for bytes obtained any other way (a binary import, a fetch).
+// nodes (`model.nodes`) can be moved individually. A part several nodes
+// place (ModelPart.placements: a reused mesh, EXT_mesh_gpu_instancing) is
+// ONE InstancedMesh at identity under the model root with an instance
+// under every placement node, so the copies are one draw entry and still
+// ride, animate, pick and cull as nodes of the hierarchy. The file's
+// extras and blobs come along as plain data. The model owns what it
+// created (geometry buffers, record buffers, textures): dispose() frees
+// them and detaches the group. loadGltf / loadModel are the
+// read-then-create conveniences over flux:fs; parseGltf / decodeModel +
+// createModel are the primitives under them, for bytes obtained any other
+// way (a binary import, a fetch).
 
 import { file } from "flux:fs"
 import * as spatial from "flux:spatial"
@@ -16,7 +22,7 @@ import type { Owner } from "@solidrt/core"
 import { createMutableTexture, createTexture, destroyTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
 import { gltfExternalUris, parseGltf } from "./gltf.ts"
-import type { ModelClip, ModelData, ModelMaterial } from "./gltf.ts"
+import type { ModelClip, ModelData, ModelExtras, ModelMaterial } from "./gltf.ts"
 import { decodeModel } from "./model-file.ts"
 import { disposeGeometry } from "./geometry-gpu.ts"
 import { layoutSlot } from "./geometry.ts"
@@ -24,8 +30,8 @@ import { standard } from "./material.ts"
 import type { Material } from "./material.ts"
 import { add, afterFree, createGroup, createMorphState, remove, setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
-import { createMesh } from "./mesh.ts"
-import type { Mesh } from "./mesh.ts"
+import { addInstance, createInstancedMesh, createMesh, disposeInstances } from "./mesh.ts"
+import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
 import { refreshJointBounds, unbindSkeleton } from "./skeleton.ts"
 import type { WornPiece } from "./skeleton.ts"
 
@@ -61,9 +67,13 @@ export type ModelOptions = {
    * `vertexColors` is true when the part carries COLOR_0 in aColor (pass
    * it through, or read aColor yourself); `morphed` is true when the part
    * carries morph targets (pass it through as `morph`, or splice
-   * MORPH_DECLS/MORPH_APPLY yourself). `data.materials` is in file order,
-   * so the calls arrive in file order too. */
-  material?: (material: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean) => Material
+   * MORPH_DECLS/MORPH_APPLY yourself); `instanced` is true when the part
+   * is a population (ModelPart.placements: drawn as one InstancedMesh),
+   * so the material must be instanced (pass it through as `instanced`,
+   * or declare INSTANCE_MATRIX_ATTRIBUTES and splice INSTANCE_MATRIX
+   * yourself). `data.materials` is in file order, so the calls arrive in
+   * file order too. */
+  material?: (material: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean, instanced: boolean) => Material
   /** Debug name for the textures. */
   label?: string
   /** Free the model with the owning reactive scope (default true, like
@@ -77,15 +87,31 @@ export type ModelOptions = {
  * nested Groups, with each part's mesh a child of its node. */
 export type Model = SceneNode & {
   kind: "group"
-  /** The parts by name, in file order; each `mesh` sits under its node. */
-  parts: { name: string; mesh: Mesh }[]
+  /** The parts by name, in file order; each `mesh` sits under its node.
+   * A part with placements (a mesh several nodes place) is instead ONE
+   * InstancedMesh at identity under the model root, with `instances` in
+   * placement order (the part's node first, then its placements), each
+   * an instance node at identity under its placement node in `nodes`:
+   * move the placement node and its copy follows; a pick on a copy
+   * reports `hit.mesh` = this mesh and `hit.instance` one of these
+   * (its `parent` is the placement node). A material swap on the mesh
+   * applies to every copy. `extras` is the glTF mesh's, when it has
+   * any. */
+  parts: { name: string; mesh: Mesh; instances?: InstanceNode[]; extras?: ModelExtras }[]
   /** The file's retained nodes in table order (parents first), each an
    * ordinary Group under the model: `setTransform` on one moves its
    * subtree - a wheel spins relative to the axle it hangs from. Names
-   * repeat when the file's do; find yours with `.find()`/`.filter()`. */
-  nodes: { name: string; node: SceneNode }[]
+   * repeat when the file's do; find yours with `.find()`/`.filter()`.
+   * `extras` is the glTF node's, when it has any. */
+  nodes: { name: string; node: SceneNode; extras?: ModelExtras }[]
   /** One per glTF material, in file order. */
   materials: Material[]
+  /** The file's root extras (glTF `extras`, or what a bake wrote), when
+   * it has any. */
+  extras?: ModelExtras
+  /** The file's named binary sections (a bake's), when it has any: views
+   * onto the loaded bytes. */
+  blobs?: Record<string, Uint8Array>
   /** The file's animation clips (empty when it has none); createMixer
    * plays them. Channel node indices resolve through `nodes`. */
   clips: ModelClip[]
@@ -144,7 +170,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       label: label ? label + "-image" + i : undefined,
     })
   })
-  let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean): Material => {
+  let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean, instanced: boolean): Material => {
     // An emissive factor of zero is emission OFF (the glTF product rule:
     // factor times texture), so the map is skipped too - no sampler for
     // a term that cannot show.
@@ -167,18 +193,20 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       skinned: skinned || undefined,
       vertexColors: vertexColors || undefined,
       morph: morphed || undefined,
+      instanced: instanced || undefined,
     })
   })
   let slot = (index: number | null): TextureId | null => (index === null ? null : textures[index]!)
   // One instance per glTF material as today, plus a skinned variant per
-  // material the skinned parts bring and a vertex-colored one per material
-  // the COLOR_0 parts bring (a material shared by parts that differ in
-  // either needs two programs - different vertex stages).
+  // material the skinned parts bring, a vertex-colored one per material
+  // the COLOR_0 parts bring, a morphed and an instanced one likewise (a
+  // material shared by parts that differ in any needs two programs -
+  // different vertex stages).
   let variants = new Map<string, Material>()
-  let materialFor = (index: number, skinned: boolean, vertexColors: boolean, morphed: boolean): Material => {
+  let materialFor = (index: number, skinned: boolean, vertexColors: boolean, morphed: boolean, instanced: boolean): Material => {
     let m = data.materials[index]
     if (m === undefined) throw new Error("createModel: a part names a missing material " + index)
-    let key = index + (skinned ? "|skinned" : "") + (vertexColors ? "|colored" : "") + (morphed ? "|morphed" : "")
+    let key = index + (skinned ? "|skinned" : "") + (vertexColors ? "|colored" : "") + (morphed ? "|morphed" : "") + (instanced ? "|instanced" : "")
     let made = variants.get(key)
     if (made === undefined) {
       made = make(
@@ -193,12 +221,13 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
         skinned,
         vertexColors,
         morphed,
+        instanced,
       )
       variants.set(key, made)
     }
     return made
   }
-  let materials = data.materials.map((_, i) => materialFor(i, false, false, false))
+  let materials = data.materials.map((_, i) => materialFor(i, false, false, false, false))
 
   let model = createGroup() as Model
   model._skins = []
@@ -213,7 +242,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
     return group
   })
   data.nodes.forEach((n, i) => add(n.parent === null ? model : groups[n.parent]!, groups[i]!))
-  model.nodes = data.nodes.map((n, i) => ({ name: n.name, node: groups[i]! }))
+  model.nodes = data.nodes.map((n, i) => (n.extras === undefined ? { name: n.name, node: groups[i]! } : { name: n.name, node: groups[i]!, extras: n.extras }))
   // A glTF node with morph targets owns its parts' weights (the file's
   // node.weights / mesh.weights seed them): one register, one weights
   // texture, every part of the mesh reads it - so setMorphWeights on
@@ -268,10 +297,37 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   // Each joint's influence box, in joint space: culling-only bounds the
   // flush carries through the pose, united over every skin reaching it.
   refreshJointBounds(model)
+  let groupOf = (part: ModelData["parts"][0], index: number): SceneNode => {
+    let node = groups[index]
+    if (node === undefined) throw new Error("createModel: part '" + part.name + "' names a missing node " + index)
+    return node
+  }
   model.parts = data.parts.map((part) => {
     let skinned = part.skin !== null
     let morphed = part.geometry.morphs !== undefined
-    let material = materialFor(part.material, skinned, layoutSlot(part.geometry.layout, "aColor") !== null, morphed)
+    let colored = layoutSlot(part.geometry.layout, "aColor") !== null
+    let extras = part.extras
+    let placements = part.placements ?? []
+    if (placements.length > 0) {
+      // A population: the geometry once, drawn per placement. The mesh
+      // sits at identity under the model root, which anchors its records,
+      // and each placement node - the first is `part.node` - carries an
+      // instance at identity, so the record the core writes is that
+      // node's model-relative world: moving the node (setTransform, a
+      // clip, a transition) moves the copy, hiding it hides the copy,
+      // and a pick lands on the instance. Skins place by palette and
+      // morph weights are per node, so neither can share one geometry;
+      // parseGltf never folds them, and a hand-built ModelData that does
+      // is refused rather than drawn wrong.
+      if (skinned) throw new Error("createModel: part '" + part.name + "' is skinned and has placements; a skinned part cannot be shared")
+      if (morphed) throw new Error("createModel: part '" + part.name + "' has morph targets and placements; a morphed part cannot be shared")
+      let material = materialFor(part.material, false, colored, false, true)
+      let mesh = createInstancedMesh(part.geometry, material, { capacity: placements.length + 1, anchor: model, label: label ? label + "-" + part.name : part.name })
+      add(model, mesh)
+      let instances = [part.node, ...placements].map((index) => addInstance(mesh, undefined, groupOf(part, index)))
+      return extras === undefined ? { name: part.name, mesh, instances } : { name: part.name, mesh, instances, extras }
+    }
+    let material = materialFor(part.material, skinned, colored, morphed, false)
     let mesh = createMesh(part.geometry, material)
     // The part's weights are its glTF node's (above), not its own.
     if (morphed) mesh._morphOwner = groups[part.node] ?? mesh
@@ -287,15 +343,15 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       mesh._cullJoints = skin.joints.slice()
       add(model, mesh)
     } else {
-      let node = groups[part.node]
-      if (node === undefined) throw new Error("createModel: part '" + part.name + "' names a missing node " + part.node)
-      add(node, mesh)
+      add(groupOf(part, part.node), mesh)
     }
-    return { name: part.name, mesh }
+    return extras === undefined ? { name: part.name, mesh } : { name: part.name, mesh, extras }
   })
   model.materials = materials
   model.clips = data.clips
   model.bounds = data.bounds
+  if (data.extras !== undefined) model.extras = data.extras
+  if (data.blobs !== undefined) model.blobs = data.blobs
   let disposed = false
   model.dispose = () => {
     if (disposed) return
@@ -311,7 +367,12 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
     // destroyed texture.
     if (afterFree(model, () => model.dispose())) return
     disposed = true
-    for (let part of model.parts) disposeGeometry(part.mesh.geometry)
+    for (let part of model.parts) {
+      // A population's record buffers are mesh-owned (the one explicit
+      // free); its geometry buffers are shared like any part's.
+      if (part.instances !== undefined) disposeInstances(part.mesh as InstancedMesh)
+      disposeGeometry(part.mesh.geometry)
+    }
     for (let id of textures) destroyTexture(id)
     textures.length = 0
     // The nodes' weights textures (the parts' entries are off the scene

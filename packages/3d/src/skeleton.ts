@@ -126,6 +126,10 @@ export function bindSkeleton(body: Model, piece: Model): void {
   for (let [node, bodyNode] of match) {
     for (let child of node.children.slice()) {
       if (match.has(child)) continue
+      // A shared part's instance is slot-bound to its population (add
+      // rejects it) and its record is anchored on the piece root; it
+      // stays with its placement node, which is what a graft moves.
+      if (child.kind === "instance") continue
       add(bodyNode, child)
       piece._grafts.push(child)
     }

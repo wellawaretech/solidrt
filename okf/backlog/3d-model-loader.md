@@ -32,6 +32,9 @@ was added: the bake already removes the cost where it matters.
 
 ## Open, each on demand
 
+- **Bake from own geometry, extras, part reuse** shipped 2026-09-22:
+  [3d-model-file-bake-and-reuse](../done/3d-model-file-bake-and-reuse.md).
+
 - **Compressed meshes and textures.** Blender exports Draco by default and
   KTX2/Basis textures are common, so real-world files bounce off the
   parser with a clear error today. The place for the decoders is the bake

@@ -111,6 +111,11 @@ export type MeshInstances = {
   /** The node-backed population (createInstancedMesh): handles by slot
    * (null = free) and the free list; null on a record mesh. */
   nodes: InstanceSlots | null
+  /** The node the instance records are relative to when it is not the
+   * mesh itself (InstancedMeshOptions.anchor): an ancestor the mesh sits
+   * under at identity, whose subtree the instances may live anywhere in.
+   * null on a plain population and on a record mesh. */
+  anchor: SceneNode | null
   /** The level meshes of an instanced LOD (createInstancedLod), nearest
    * first - the first is the population itself, the rest its children -
    * sharing this population's instance slots, each with a matrix buffer
@@ -394,6 +399,20 @@ export type InstancedMeshOptions = PopulationOptions & {
    * in one call and republishes at the next flush - amortized like a
    * dynamic array; reserve realistically to skip the copies. */
   capacity?: number
+  /** The node the instance records are relative to (default: the mesh
+   * itself). Set it to an ANCESTOR the mesh sits under at identity and
+   * instances may be placed under any node of that ancestor's subtree,
+   * not only under the mesh - a population whose copies ride a hierarchy
+   * the mesh is not the root of (createModel's shared parts: the mesh
+   * hangs at identity under the model root, the anchor, and each
+   * placement node in the model's tree carries an instance). The core
+   * writes each record as the instance's world relative to the anchor,
+   * so the draw's `uModel * instanceMatrix()` places it correctly only
+   * while the mesh's world equals the anchor's: keep the chain between
+   * them identity. Checked at scene enter (the anchor must be an
+   * ancestor of the mesh, or add throws); the identity is the caller's
+   * contract, like an instanced LOD's levels. */
+  anchor?: SceneNode
 }
 
 /** A record mesh's bounds are also its ONLY picking leaf: records are
@@ -497,6 +516,7 @@ export function createInstancedMesh(geometry: Geometry, material: Material, opts
     count: 0,
     bounds: copyBounds(opts?.bounds, "createInstancedMesh"),
     nodes: { slots: [], free: [] },
+    anchor: opts?.anchor ?? null,
     levels: null,
     morph: populationMorph(geometry, capacity, opts?.label),
   }
@@ -633,7 +653,9 @@ export function publishRecords(mesh: Mesh): void {
  * (position/rotation/quaternion/scale; absent keys at their identity)
  * under `parent` - the mesh itself by default, or a node inside the
  * mesh's subtree (a squad group within a fleet: the record stays
- * mesh-relative through it). Its record slot is fixed for its life (a
+ * mesh-relative through it) - inside the ANCHOR's subtree when the mesh
+ * was created with one (see InstancedMeshOptions.anchor). Its record
+ * slot is fixed for its life (a
  * removed instance's slot recycles to the next add); past the
  * reservation the buffers double. From here on it is a node like any
  * other: setTransform/setTransition/setVisible, lookAt, worldPosition,
@@ -645,8 +667,11 @@ export function publishRecords(mesh: Mesh): void {
 export function addInstance(mesh: InstancedMesh, update?: TransformUpdate, parent: SceneNode = mesh): InstanceNode {
   let inst: (MeshInstances & { nodes: InstanceSlots }) | null = mesh._instances
   if (inst === null) throw new Error("addInstance: the mesh's instances are disposed")
-  for (let p: SceneNode | null = parent; p !== mesh; p = p.parent) {
-    if (p === null) throw new Error("addInstance: parent must be the mesh or a node inside its subtree")
+  let root: SceneNode = inst.anchor ?? mesh
+  for (let p: SceneNode | null = parent; p !== root; p = p.parent) {
+    if (p === null) {
+      throw new Error(inst.anchor === null ? "addInstance: parent must be the mesh or a node inside its subtree" : "addInstance: parent must be the mesh's anchor or a node inside its subtree")
+    }
   }
   let slot = inst.nodes.free.pop() ?? inst.nodes.slots.length
   // The levels of an instanced LOD grow, count and blank together: one
@@ -740,6 +765,7 @@ export function createRecordMesh(
     count: Math.max(0, Math.min(Math.floor(count ?? capacity), capacity)),
     bounds: copyBounds(opts?.bounds, "createRecordMesh"),
     nodes: null,
+    anchor: null,
     levels: null,
     morph: null,
   }
