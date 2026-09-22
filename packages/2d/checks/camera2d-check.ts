@@ -355,44 +355,41 @@ for (let i = 0; i < SWEEP; i++) {
   if (!near(cam.camera().x!, last, 1e-3)) fail(`follow cancels a pose glide, got ${cam.camera().x}`)
 }
 
-// ---- Inertia: a flick keeps gliding and decays to rest; slow or disabled releases do not ----
+// ---- Inertia: a flick keeps gliding and decays to rest; a rested or disabled release does not ----
 {
-  let drag = (cam: Camera2d, perTick: number, ticks: number) => {
-    for (let i = 0; i < ticks; i++) {
+  // A drag of ten frames at 20 px, then the lift with the velocity the
+  // gesture measured (the recognizer's, not the camera's: it has no
+  // estimator).
+  let drag = (cam: Camera2d, perTick: number, velocity: [number, number]) => {
+    for (let i = 0; i < 10; i++) {
       cam.panBy(perTick, 0)
       cam.update(DT)
     }
-    cam.panBy(perTick, 0)
-    cam.release()
+    cam.release(velocity)
   }
-  // The release's own frame still flushes the last pan; rest means nothing
-  // after that.
-  let rests = (cam: Camera2d) => {
-    cam.update(DT)
-    return settle(cam) === 0
-  }
+  let rests = (cam: Camera2d) => settle(cam) === 0
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, x: 0, y: 0, zoom: 1 })
-  drag(cam, 20, 10)
+  drag(cam, 20, [1200, 0])
   let atRelease = cam.camera().x!
   let ticks = settle(cam)
   let travelled = atRelease - cam.camera().x!
-  // 20 px per 1/60 s = 1200 px/s; at 3 e-foldings/s the fling covers ~400 px.
+  // 1200 px/s at 3 e-foldings/s: the fling covers ~400 px.
   if (ticks <= 1 || ticks > SETTLE_TICKS) fail(`a flick flings and then rests, ticks=${ticks}`)
   if (!(travelled > 300 && travelled < 450)) fail(`fling distance ~400 px, got ${travelled}`)
-  drag(cam, 0.5, 10)
-  if (!rests(cam)) fail("a slow release (30 px/s) does not fling")
+  drag(cam, 0.5, [0, 0])
+  if (!rests(cam)) fail("a release at rest (the recognizer read no fling) does not fling")
   let still = make({ minZoom: 0.01, maxZoom: 100, inertia: false })
-  drag(still.cam, 20, 10)
+  drag(still.cam, 20, [1200, 0])
   if (!rests(still.cam)) fail("inertia: false never flings")
   // A press landing on a fling stops it.
-  drag(cam, 20, 10)
+  drag(cam, 20, [1200, 0])
   cam.update(DT)
   cam.interrupt()
   if (cam.update(DT)) fail("interrupt() stops a fling")
   // Following swallows the release.
   cam.follow(0, 0)
   settle(cam)
-  drag(cam, 20, 10)
+  drag(cam, 20, [1200, 0])
   settle(cam)
   if (!near(cam.camera().x!, 0, 1e-3)) fail(`a release while following eases back instead of flinging, got x ${cam.camera().x}`)
 }
@@ -425,6 +422,7 @@ for (let i = 0; i < SWEEP; i++) {
   throws("zoom 0", () => make({ zoom: 0 }))
   throws("set NaN", () => make().cam.set({ x: NaN }))
   throws("zoomAt factor 0", () => make().cam.zoomAt(0, 0, 0))
+  throws("release without a pair", () => make().cam.release(5 as never))
   throws("fit without world or rect", () => make().cam.fit())
 }
 
@@ -445,9 +443,14 @@ for (let i = 0; i < SWEEP; i++) {
     cam.update(DT)
   }
   let beforeRelease = cam.camera().x!
+  // An end without a velocity rests; one with a velocity (viewport
+  // heights per second of finger travel) flings the content that way.
   cam.axes.end("pan")
+  if (settle(cam) !== 0) fail("a pan end without velocity rests")
+  cam.axes.begin("pan")
+  cam.axes.end("pan", [2, 0])
   cam.update(DT)
-  if (settle(cam) === 0 || cam.camera().x! >= beforeRelease) fail("a pan end flings with the drag's velocity")
+  if (settle(cam) === 0 || cam.camera().x! >= beforeRelease) fail("a pan end flings with the release velocity")
   // A bracketed zoom delta (a pinch) applies at once about its focal; an
   // unbracketed one (a wheel notch) eases there.
   cam.set({ x: 400, y: 300, zoom: 1 })

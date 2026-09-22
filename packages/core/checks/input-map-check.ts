@@ -132,13 +132,13 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
     { rotate: "vec2", zoom: "axis" },
     {
       onBegin: name => log.push(`begin ${name}`),
-      onEnd: name => log.push(`end ${name}`),
+      onEnd: (name, velocity) => log.push(`end ${name} ${velocity === undefined ? "-" : JSON.stringify(velocity)}`),
       onNudge: (name, delta, focal) => log.push(`nudge ${name} ${JSON.stringify(delta)} ${focal ? JSON.stringify(focal) : "-"}`),
     },
   )
   let stop = input.drive(axes)
   // A delta source: emits into whatever the map binds it to.
-  let sink: { begin(): void; delta(v: number | Vec2, f?: Vec2): void; end(): void } | null = null
+  let sink: { begin(): void; delta(v: number | Vec2, f?: Vec2): void; end(v?: number | Vec2): void } | null = null
   let drag: InputSource<"vec2"> = {
     kind: "vec2",
     label: "drag",
@@ -153,9 +153,30 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   sink!.delta([0.25, -0.5], [0.1, 0.9])
   sink!.end()
   input.nudge("zoom", 2, [0.5, 0.5])
-  let want = ["begin rotate", "nudge rotate [-0.25,0.5] [0.1,0.9]", "end rotate", "nudge zoom 2 [0.5,0.5]"]
+  // A release velocity rides the end, through the processor (negated by
+  // invert) and through drive(); an end without one delivers undefined.
+  sink!.begin()
+  sink!.end([2, -4])
+  input.begin("rotate")
+  input.end("rotate", [1, 1])
+  input.begin("zoom")
+  input.end("zoom", 3)
+  let want = ["begin rotate", "nudge rotate [-0.25,0.5] [0.1,0.9]", "end rotate -", "nudge zoom 2 [0.5,0.5]", "begin rotate", "end rotate [-2,4]", "begin rotate", "end rotate [1,1]", "begin zoom", "end zoom 3"]
   if (log.join("|") !== want.join("|")) fail(`delta channel through drive(): ${log.join(" | ")}`)
   if (axes.inGesture("rotate")) fail("no gesture open after end")
+  throws("end with a velocity of the wrong kind", () => input.end("zoom", [1, 1] as never))
+  throws("axes end with a velocity of the wrong kind", () => axes.end("rotate", 1 as never))
+  // Through scale(): the velocity scales with the deltas.
+  let scaledLog: (number | Vec2 | undefined)[] = []
+  let velocityMap = createInputMap({ pan: "vec2" })
+  velocityMap.onGesture("pan", { end: v => scaledLog.push(v) })
+  velocityMap.bind("pan", scale(drag, 0.5))
+  sink!.begin()
+  sink!.end([4, 2])
+  sink!.begin()
+  sink!.end()
+  if (JSON.stringify(scaledLog) !== "[[2,1],null]") fail(`scale() scales the end velocity, got ${JSON.stringify(scaledLog)}`)
+  velocityMap.unbind("pan", velocityMap.bindings("pan")[0]!.source)
   axes.begin("zoom")
   axes.begin("zoom")
   axes.end("zoom")

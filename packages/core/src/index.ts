@@ -28,6 +28,15 @@ export { createPan } from "./pan"
 export type { PanAxis, PanOptions } from "./pan"
 export { createTransform } from "./transform"
 export type { TransformDelta, TransformOptions } from "./transform"
+export { createSwipe, classifySwipe } from "./swipe"
+export type { SwipeDirection, SwipeOptions } from "./swipe"
+export { createLongPress } from "./long-press"
+export type { LongPressOptions } from "./long-press"
+export { createDoubleTap } from "./double-tap"
+export type { DoubleTapOptions } from "./double-tap"
+export type { PointerPoint } from "./gesture"
+export { createVelocityTracker, flingVelocity, FLING_MIN_VELOCITY } from "./velocity"
+export type { Velocity, VelocityTracker } from "./velocity"
 export { createInputMap } from "./input-map"
 export type { ActionKind, ActionValue, ActionsDecl, Binding, DeltaSink, DeviceName, GestureListener, InputDevice, InputDeviceSet, InputMap, InputSource, RebindOptions, RebindPart } from "./input-map"
 export { chord, doubleTap, hold, invert, scale, tap } from "./input-processors"
@@ -47,6 +56,7 @@ export type {
   PointerProps,
   TransitionProps,
   Transition,
+  TransitionCurve,
   TransitionPropName,
   TransitionEndEvent,
   PointerEvent,

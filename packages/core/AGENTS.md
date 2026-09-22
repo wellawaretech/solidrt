@@ -331,10 +331,34 @@ that reads exactly like Solid fallout.
   finger degrades to a plain pan, and `pointers` is how a consumer gives one-
   and two-finger translation different meanings - dx/dy alone cannot tell
   them apart).
+  Both ends carry the lift velocity (`onPanEnd(velocity)`,
+  `onTransformEnd(velocity)`: parent-frame px/s from `createVelocityTracker`,
+  a least-squares fit over the last 100 ms of positions, never the last
+  two samples - the final sample before a lift is often stationary and
+  frame batching makes the last delta a frame old; zero after a 50 ms
+  rest or under `FLING_MIN_VELOCITY`), the fling fact for whoever animates
+  on. The discrete recognizers: `createSwipe({ directions?, onSwipe(direction,
+  velocity), onSwipeMove?, onSwipeEnd? })` (a pan classified at the lift:
+  24 px of travel at 300 px/s within 30 degrees of an axis, direction by
+  the velocity; `directions` sets the pan's axis, so a horizontal swipe
+  inside a vertical ScrollView takes only horizontal drags), `createLongPress({
+  ms?, onLongPress(at), onLongPressMove?, onLongPressEnd? })` (500 ms
+  within 10 px; arms silently, steals at the timer - a press under it
+  retracts, a pan that won first keeps the finger - then streams moves:
+  drag-after-hold), `createDoubleTap({ onDoubleTap(at) })` (second down
+  within 300 ms and 100 px of the first tap, at least 40 ms after it;
+  fires on that down). `at` is a `PointerPoint`, the down's coordinates
+  in every frame, copied - the event object is rewritten as it bubbles.
   Spread the returned `.handlers` onto the receiving element. They
   arbitrate through the exported `arena` (ONE per app): a press claims its
   pointer provisionally, movement evidence steals and resolves it, the loser's
-  `cancel()` retracts its feedback. Custom recognizers should join the arena
+  `cancel()` retracts its feedback. One relation beyond claims: a
+  double-tap `arena.pend`s a decision on its first tap's pointer and
+  `decide`s it later, and a press that resolved at the lift
+  `arena.defer`s its firing on that (run when the decision is lost,
+  dropped when won; false and fire now when nothing is pending) - so a
+  single tap fires late only on a node that also has a double-tap.
+  Custom recognizers should join the arena
   rather than track pointers ad hoc, or they will double-handle against
   scrollers and pressables.
 
@@ -389,7 +413,16 @@ that reads exactly like Solid fallout.
   `drag("Shift+Middle")`; bare means Left), a discriminator rather than
   a modifier: a right drag feeds only Right specs. Touch carries no
   modifiers or buttons: a chord is the desktop path, the bare binding
-  stays for fingers. A
+  stays for fingers. The discrete gestures are button sources that pulse
+  (pressed for one task, so onPress fires once): `pointer.swipe("Left")`
+  (the direction is the trailing word, as a drag's button is;
+  `swipe("Ctrl+Right")`), `pointer.longPress`, `pointer.doubleTap`, each
+  chordable; ids `pointer:swipe:Left`, `pointer:longPress:Ctrl`. They
+  run on the feed's own events, no second arena claimant. A drag's `end`
+  carries the release velocity in element heights per second when the
+  finger lifted at speed (`GestureListener.end(velocity)`,
+  `AxesHooks.onEnd(name, velocity)`, `input.end(action, velocity?)` by
+  name), which is how the cameras fling. A
   detached d-* leaf has no layout box: give the feed `{ layout }` or it
   throws at the first press. `invert(source)` and `scale(source, k)` are
   the value processors: keys and sticks move the CAMERA where a drag moves

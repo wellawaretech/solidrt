@@ -1,5 +1,5 @@
-import { createPan, createScroll, createSignal, onSettled, untrack } from "@solidrt/core"
-import type { LayoutProps, PointerProps, Scroll, WheelEvent } from "@solidrt/core"
+import { createPan, createScroll, createSignal, getBoundingBoxViewport, getLayoutBox, onSettled, untrack } from "@solidrt/core"
+import type { LayoutProps, PointerEvent, PointerProps, Scroll, TransitionCurve, TransitionEndEvent, WheelEvent } from "@solidrt/core"
 import type { StyleProps, TransitionProps, TransitionScrollProp, TransitionStyleProp, TransitionViewProp } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
 
@@ -28,20 +28,43 @@ export interface ScrollViewProps
 // a pan recognizer: it activates on movement slop along the scroll axis,
 // stealing the pointer from a pressable the drag started on (its press
 // feedback retracts), and keeps scrolling when the pointer leaves the box.
-// There is no momentum yet; a fling stops when the finger lifts.
 //
 // Motion: the offset is written as a target and the runtime springs to it,
 // so a wheel tick glides instead of jumping and a burst of ticks retargets
 // one continuous motion. While a finger drags, the spring is withdrawn from
-// the viewport declaration so the content tracks the finger exactly; the
-// first drag write cancels any spring still in flight. A `scrollX`/`scrollY`
-// entry in the `transition` prop replaces the default.
+// the viewport declaration so the content tracks the finger exactly. A lift
+// at speed flings: the pan's release velocity projects ONE destination
+// (the distance an exponential decay covers, clamped to the range) written
+// under a tween whose curve is that decay, so the runtime animates the
+// whole glide and no JS runs per frame (okf/notes/app-structure-performance.md).
+// A finger landing on a moving list holds it where it is: the animated
+// offset is read back from the boxes and written instantly, since the
+// JS-side offset is the destination, not the position. A `scrollX`/`scrollY`
+// entry in the `transition` prop replaces the default spring; the fling
+// tween is the component's own.
 const SCROLL_SPRING = { duration: 250 }
+// Momentum after a fling: velocity decay in e-foldings per second (iOS's
+// normal deceleration rate of 0.998 per ms). A fling travels its release
+// speed over this.
+const MOMENTUM_DECAY = 2
+// The curve a fling glides on: easeOutExpo, 1 - 2^(-10 t), the shape of an
+// exponential decay.
+const MOMENTUM_CURVE: TransitionCurve = [0.19, 1, 0.22, 1]
+// The tween's length, ms: where that curve's decay rate is MOMENTUM_DECAY
+// (10 ln 2 over the rate). Constant on purpose: a faster fling travels
+// farther, not longer, as a decay does; the tail is sub-pixel.
+const MOMENTUM_MS = Math.round(((10 * Math.LN2) / MOMENTUM_DECAY) * 1000)
+// A read-back offset this close to the written one means nothing is in
+// flight: no instant write.
+const LIVE_EPSILON = 0.5
 
 export function ScrollView(props: ScrollViewProps) {
   let viewport: { id: number } | undefined
   let content: { id: number } | undefined
   let [dragging, setDragging] = createSignal(false)
+  // A fling's tween is declared while it runs: cleared by its end, by a
+  // wheel and by the next finger.
+  let [fling, setFling] = createSignal(false)
 
   let scroll = createScroll(
     () => viewport,
@@ -55,15 +78,56 @@ export function ScrollView(props: ScrollViewProps) {
   })
 
   // Content follows the finger: it moves opposite to scroll offsets, which
-  // grow toward the bottom/right.
+  // grow toward the bottom/right. The lift's velocity (parent-frame px/s,
+  // zero for a rested finger) becomes the fling's destination.
   let pan = createPan({
     axis: props.horizontal ? "horizontal" : "vertical",
     onPanStart: () => setDragging(true),
     onPanMove: (dx, dy) => scroll.scrollBy({ x: -dx, y: -dy }),
-    onPanEnd: () => setDragging(false),
+    onPanEnd: v => {
+      setDragging(false)
+      let speed = props.horizontal ? v.vx : v.vy
+      if (speed === 0) return
+      let cur = scroll.offset()
+      let range = scroll.range()
+      let now = props.horizontal ? cur.x : cur.y
+      let dest = Math.max(0, Math.min(now - speed / MOMENTUM_DECAY, props.horizontal ? range.x : range.y))
+      if (dest === now) return
+      setFling(true)
+      scroll.scrollTo(props.horizontal ? { x: dest } : { y: dest })
+    },
   })
+  // A finger landing (any down, a tap included) holds a moving list where
+  // it is: the animated offset, read back from the boxes (window-relative,
+  // scaled back to box pixels through the untransformed layout box), is
+  // written instantly, dropping the fling or spring in flight. Nothing is
+  // written when nothing moves.
+  let hold = (e: PointerEvent) => {
+    setFling(false)
+    if (viewport && content) {
+      let vb = getBoundingBoxViewport(viewport)
+      let cb = getBoundingBoxViewport(content)
+      let lb = getLayoutBox(viewport)
+      if (vb && cb && lb) {
+        let scale = props.horizontal ? (lb.width > 0 ? vb.width / lb.width : 0) : lb.height > 0 ? vb.height / lb.height : 0
+        if (scale > 0) {
+          let live = (props.horizontal ? vb.x - cb.x : vb.y - cb.y) / scale
+          let cur = scroll.offset()
+          if (Math.abs(live - (props.horizontal ? cur.x : cur.y)) > LIVE_EPSILON) {
+            scroll.scrollTo(props.horizontal ? { x: live, behavior: "instant" } : { y: live, behavior: "instant" })
+          }
+        }
+      }
+    }
+    pan.handlers.onPointerDown(e)
+  }
+  let settled = (e: TransitionEndEvent) => {
+    if (e.property === "scrollX" || e.property === "scrollY") setFling(false)
+    transitionEndFor("root", props.onTransitionEnd)?.(e)
+  }
 
   let onWheel = (e: WheelEvent) => {
+    setFling(false)
     // A plain mouse wheel only emits deltaY. On a horizontal scroller, route that
     // vertical delta to the x axis so the wheel still scrolls it (trackpads that
     // emit deltaX take precedence).
@@ -89,11 +153,11 @@ export function ScrollView(props: ScrollViewProps) {
     }
   }
   // The viewport's declaration: the user's scroll entries over the default
-  // spring. During a drag, and while the latest programmatic write asked for
-  // no motion (scrollTo behavior "instant"), the scroll entries go, and a
-  // user `all` narrows to the one other property the viewport writes
-  // (clipRadius) so it cannot put a spring back under the finger or the
-  // instant write.
+  // spring, the fling tween over both while a fling runs. During a drag,
+  // and while the latest programmatic write asked for no motion (scrollTo
+  // behavior "instant"), the scroll entries go, and a user `all` narrows to
+  // the one other property the viewport writes (clipRadius) so it cannot
+  // put a spring back under the finger or the instant write.
   let viewportTransition = () => {
     let user = split().viewport
     let entries: Record<string, unknown> = typeof user === "string" ? { all: user } : { ...(user ?? {}) }
@@ -101,6 +165,10 @@ export function ScrollView(props: ScrollViewProps) {
       let { scrollX, scrollY, all, ...rest } = entries
       if (all !== undefined) rest.clipRadius = all
       return Object.keys(rest).length ? rest : null
+    }
+    if (fling()) {
+      let momentum = { duration: MOMENTUM_MS, curve: MOMENTUM_CURVE }
+      return { ...entries, scrollX: momentum, scrollY: momentum }
     }
     return { scrollX: SCROLL_SPRING, scrollY: SCROLL_SPRING, ...entries }
   }
@@ -146,10 +214,12 @@ export function ScrollView(props: ScrollViewProps) {
         clipRadius={props.style?.borderRadius}
         flexDirection={direction()}
         transition={viewportTransition()}
-        onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
+        onTransitionEnd={settled}
         scrollX={scroll.offset().x}
         scrollY={scroll.offset().y}
-        {...pan.handlers}
+        onPointerDown={hold}
+        onPointerMove={pan.handlers.onPointerMove}
+        onPointerUp={pan.handlers.onPointerUp}
         onWheel={onWheel}
       >
         <view ref={(n: { id: number }) => (content = n)} flexShrink={0} flexDirection={direction()}>

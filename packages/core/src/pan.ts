@@ -1,6 +1,8 @@
 import { onSettled } from "@solidjs/signals"
 import type { PointerEvent } from "./types"
 import { arena } from "./arena"
+import { createVelocityTracker, flingVelocity } from "./velocity"
+import type { Velocity } from "./velocity"
 
 // Movement in logical pixels before a pan activates. Below this a drag still
 // reads as a press (tap wiggle); crossing it is the positive evidence that the
@@ -26,7 +28,13 @@ export interface PanOptions {
    * Positive dx is rightward, positive dy downward.
    */
   onPanMove?: (dx: number, dy: number) => void
-  onPanEnd?: () => void
+  /**
+   * The lift, with the pointer's velocity at it in the same parent-frame
+   * pixels per second (a least-squares fit over the last 100 ms, see
+   * velocity.ts): the fling fact for whoever animates on. Zero when the
+   * finger rested before lifting or moved under FLING_MIN_VELOCITY.
+   */
+  onPanEnd?: (velocity: Velocity) => void
 }
 
 // The pan recognizer: turns a drag into a movement-delta stream. On a down it
@@ -36,8 +44,11 @@ export interface PanOptions {
 // resolving it so no other recognizer can take the drag over. If the arena is
 // already resolved (an inner pan won first) the recognizer disarms and stays
 // out. The slop distance itself is swallowed: deltas stream from the
-// activation point on. Moves and the up arrive on the frozen down path, so an
-// active pan keeps streaming when the pointer leaves the node or the window.
+// activation point on, and the up carries the lift velocity (velocity.ts: a
+// fit over the last 100 ms of positions, zero after a rest or under the
+// fling minimum) for momentum. Moves and the up arrive on the frozen down
+// path, so an active pan keeps streaming when the pointer leaves the node
+// or the window.
 // cancel() is the external-cancel hook; it ends an active pan without
 // onPanEnd. Options are read at event time. Single-pointer by design; for
 // multi-pointer pinch/rotate compose createTransform instead.
@@ -55,6 +66,8 @@ export function createPan(options: PanOptions) {
   let origin: { x: number; y: number } | null = null
   let active: number | null = null
   let armed: number | null = null
+  // Parent-frame positions of the active pointer, for the lift's velocity.
+  let tracker = createVelocityTracker()
 
   let past = (e: PointerEvent) => {
     if (!origin) return false
@@ -94,6 +107,8 @@ export function createPan(options: PanOptions) {
           active = e.pointerId
           armed = null
           origin = { x: e.parentX, y: e.parentY }
+          tracker.reset()
+          tracker.push(e.parentX, e.parentY)
           options.onPanStart?.()
         } else {
           // The arena is resolved against us; the drag belongs elsewhere.
@@ -102,14 +117,18 @@ export function createPan(options: PanOptions) {
         return
       }
       if (active === e.pointerId && origin) {
+        tracker.push(e.parentX, e.parentY)
         options.onPanMove?.(e.parentX - origin.x, e.parentY - origin.y)
         origin = { x: e.parentX, y: e.parentY }
       }
     },
     onPointerUp: (e: PointerEvent) => {
       if (active === e.pointerId) {
+        // The up is not a sample: it sits where the last move left the
+        // pointer, and its age is what tells a rest from a flick.
+        let velocity = flingVelocity(tracker.velocity())
         reset()
-        options.onPanEnd?.()
+        options.onPanEnd?.(velocity)
       } else if (armed === e.pointerId) {
         reset()
       }

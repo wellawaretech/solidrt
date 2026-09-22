@@ -42,9 +42,12 @@ export interface AxesHooks<A extends AxesDecl> {
    * unit (octaves, turns) for an axis; `focal` in 0..1 of the element
    * when the gesture has one (a pinch, a wheel). */
   onNudge?: <N extends keyof A & string>(name: N, delta: AxisValue<A[N]>, focal: Vec2 | undefined) => void
-  /** A gesture on `name` started (a finger landed) / ended (lifted). */
+  /** A gesture on `name` started (a finger landed) / ended (lifted). The
+   * end carries the release velocity in the axis's units per second when
+   * the gesture measured one (a drag's lift: view heights per second, the
+   * fling a control glides on), else undefined. */
   onBegin?: (name: keyof A & string) => void
-  onEnd?: (name: keyof A & string) => void
+  onEnd?: <N extends keyof A & string>(name: N, velocity: AxisValue<A[N]> | undefined) => void
 }
 
 export interface Axes<A extends AxesDecl> {
@@ -60,9 +63,10 @@ export interface Axes<A extends AxesDecl> {
   active(): boolean
   /** Apply an immediate delta (see AxesHooks.onNudge). */
   nudge<N extends keyof A & string>(name: N, delta: AxisValue<A[N]>, focal?: Vec2): void
-  /** Bracket a gesture on `name`; nested begins count. */
+  /** Bracket a gesture on `name`; nested begins count. An end may carry
+   * the release velocity (see AxesHooks.onEnd). */
   begin(name: keyof A & string): void
-  end(name: keyof A & string): void
+  end<N extends keyof A & string>(name: N, velocity?: AxisValue<A[N]>): void
   /** Whether a gesture on `name` is open (between begin and end). */
   inGesture(name: keyof A & string): boolean
 }
@@ -165,12 +169,13 @@ export function createAxes<A extends AxesDecl>(kinds: A, hooks: AxesHooks<A> = {
       open.set(name, depth + 1)
       if (depth === 0) hooks.onBegin?.(name)
     },
-    end(name) {
-      check(name)
+    end(name, velocity) {
+      let kind = check(name)
+      if (velocity !== undefined) checkValue(`end("${name}") velocity`, kind, velocity)
       let depth = open.get(name) ?? 0
       if (depth === 0) return
       open.set(name, depth - 1)
-      if (depth === 1) hooks.onEnd?.(name)
+      if (depth === 1) hooks.onEnd?.(name, velocity as never)
     },
     inGesture(name) {
       check(name)

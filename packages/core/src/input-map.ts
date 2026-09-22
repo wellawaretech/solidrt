@@ -58,11 +58,14 @@ export type ActionKind = "button" | "axis" | "vec2"
 export type ActionValue<K extends ActionKind> = K extends "button" ? boolean : K extends "axis" ? number : Vec2
 export type ActionsDecl = Record<string, ActionKind>
 
-/** Where a delta source delivers: the gesture brackets and the deltas. */
+/** Where a delta source delivers: the gesture brackets and the deltas.
+ * An end may carry the release velocity in the source's units per second
+ * (a drag's in element heights per second), the fling fact a consumer
+ * glides on; absent or zero when the finger rested. */
 export interface DeltaSink {
   begin(): void
   delta(value: number | Vec2, focal?: Vec2): void
-  end(): void
+  end(velocity?: number | Vec2): void
 }
 
 /** The devices a map knows by name: the id prefix of their sources, and
@@ -109,7 +112,9 @@ export type Binding = { action: string; source: InputSource }
 export interface GestureListener<K extends "axis" | "vec2" = "axis" | "vec2"> {
   begin?: () => void
   delta?: (value: AxisValue<K>, focal: Vec2 | undefined) => void
-  end?: () => void
+  /** `velocity` is the release velocity in the action's units per second
+   * when the source measured one (a drag's lift), else undefined. */
+  end?: (velocity: AxisValue<K> | undefined) => void
 }
 
 /** The half of a keyboard composite a key rebinds: `neg`/`pos` of an
@@ -152,13 +157,13 @@ export interface InputMap<A extends ActionsDecl> {
   /** Injection by name, for scripts, debug commands, peers: `set` holds
    * a rate until set again (a value source of the map's own); `press`/
    * `release` do the same for a button; `nudge`, `begin` and `end` feed
-   * the delta channel. */
+   * the delta channel (`end` with the release velocity flings). */
   set<N extends keyof A & string>(action: N, value: ActionValue<A[N]>): void
   press(action: ButtonActions<A>): void
   release(action: ButtonActions<A>): void
   nudge<N extends AxisActions<A>>(action: N, delta: ActionValue<A[N]>, focal?: Vec2): void
   begin(action: AxisActions<A>): void
-  end(action: AxisActions<A>): void
+  end<N extends AxisActions<A>>(action: N, velocity?: ActionValue<A[N]>): void
   /** Switch actions on and off by name - a context. A disabled action
    * reads neutral (false, 0, [0, 0]), drops its deltas and closes the
    * gesture it had open (its listeners see the end); its sources keep
@@ -309,9 +314,9 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
   // delivered, so a disable can close what is open and an end whose begin
   // was dropped (or never delivered) reaches no listener. A delta from a
   // device source also names it the active device.
-  let closeGesture = (s: ActionState): void => {
+  let closeGesture = (s: ActionState, velocity?: number | Vec2): void => {
     s.depth--
-    s.gesture.forEach(g => g.end?.())
+    s.gesture.forEach(g => g.end?.(velocity as never))
   }
   let sink = (s: ActionState, source?: InputSource): DeltaSink => ({
     begin: () => {
@@ -324,8 +329,8 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
       if (!s.enabled) return
       s.gesture.forEach(g => g.delta?.(value as never, focal))
     },
-    end: () => {
-      if (s.depth > 0) closeGesture(s)
+    end: velocity => {
+      if (s.depth > 0) closeGesture(s, velocity)
     },
   })
   // A rate source leaving rest names its device the active one: one
@@ -465,8 +470,10 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
     begin(action) {
       sink(axisState(action, "begin")).begin()
     },
-    end(action) {
-      sink(axisState(action, "end")).end()
+    end(action, velocity) {
+      let s = axisState(action, "end")
+      if (velocity !== undefined) checkValue(`end("${action}") velocity`, s.kind, velocity)
+      sink(s).end(velocity as number | Vec2 | undefined)
     },
     enable: (...actions) => switchActions(actions, true, "enable"),
     disable: (...actions) => switchActions(actions, false, "disable"),
@@ -620,7 +627,7 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
           map.onGesture(mapped as never, {
             begin: () => axes.begin(axis),
             delta: (value, focal) => axes.nudge(axis, value as never, focal),
-            end: () => axes.end(axis),
+            end: velocity => axes.end(axis, velocity as never),
           }),
         )
       }

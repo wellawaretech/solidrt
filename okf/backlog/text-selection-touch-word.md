@@ -29,9 +29,10 @@ editors do it with a double-click.
 ## Roughly
 
 Component-only over the existing selection machinery in `EditorField` plus
-`selectionRects`. Needs a long-press recognizer that coexists with the
-scroll pan in the gesture arena (press slop vs pan slop), a tap-interval
-constant for the double-click, and handle drawing (two small `d-path`
+`selectionRects`. The recognizers exist since 2026-09-22 (core's
+`createLongPress`, which wins the finger at its timer and streams moves
+after it, and `createDoubleTap`; okf/done/pointer-discrete-gestures.md);
+what remains is handle drawing (two small `d-path`
 grips at the first/last selection rect corners) with their own drag
 mapping through `offsetAtX`/`lineAtY`. Clipboard integration (the usual
 reason to select on touch) is the separate clipboard module.

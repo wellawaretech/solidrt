@@ -123,7 +123,7 @@ Most components group their props into two objects, split by one rule: `layout` 
 
 `StyleProps` is that paint set. `TextLayoutProps` extends `LayoutProps` with the font fields (`fontFamily`, `fontSize`, `lineHeight`, `fontStyle`, `fontWeight`, `textAlign`, `maxLines`) because text shaping affects measurement; note `lineHeight` is a multiplier of `fontSize` (the theme uses 1.3-1.6), not a pixel value. `Option` (`{ value, label }`) is the shared shape of the single-choice controls (`Select`, `SegmentedControl`): shared shapes go through this module so components never import a sibling.
 
-`TransitionProps` (`transition`, `onTransitionEnd`) is the third top-level group, in the component's own vocabulary rather than core's: a declaration names the view-level properties (`opacity`, `x`, `y`, `scale*`, `rotate*`, `origin*`, `perspective`, `clipRadius`) and the style ones (`backgroundColor`, `borderColor`, `borderWidth`, `borderRadius`), plus `all`, a shorthand string, and `stagger` - `<Button transition={{ backgroundColor: { duration: 300 }, opacity: "200ms ease-out" }}>`. Core's paint names (`color`, `radius`, `strokeWidth`) are rejected by the types: a component is a root view plus the rects it draws for `style`, and `splitTransition` hands each entry to the node that owns it (the background rect gets `backgroundColor`/`borderRadius`, the stroke rect `borderColor`/`borderWidth`/`borderRadius`, the root view the rest). `onTransitionEnd` reports the component name (`backgroundColor`, not `color`). `Text` adds `color` (its text node), `ScrollView` adds `scrollX`/`scrollY` (its viewport).
+`TransitionProps` (`transition`, `onTransitionEnd`) is the third top-level group, in the component's own vocabulary rather than core's: a declaration names the view-level properties (`opacity`, `x`, `y`, `scale*`, `rotate*`, `origin*`, `perspective`, `clipRadius`) and the style ones (`backgroundColor`, `borderColor`, `borderWidth`, `borderRadius`), plus `all`, a shorthand string, `stagger` and `layout` (the layout slide of the root view, as in core: `true` borrows `all`, and `all` alone never slides) - `<Button transition={{ backgroundColor: { duration: 300 }, opacity: "200ms ease-out", layout: true }}>`. Core's paint names (`color`, `radius`, `strokeWidth`) are rejected by the types: a component is a root view plus the rects it draws for `style`, and `splitTransition` hands each entry to the node that owns it (the background rect gets `backgroundColor`/`borderRadius`, the stroke rect `borderColor`/`borderWidth`/`borderRadius`, the root view the rest). `onTransitionEnd` reports the component name (`backgroundColor`, not `color`). `Text` adds `color` (its text node), `ScrollView` adds `scrollX`/`scrollY` (its viewport).
 
 Controls with a moving part of their own name it as an extra entry: `Switch` `knob` (the thumb's travel), `SegmentedControl` `indicator` (the active-segment slide), `ProgressBar` `fill` (the determinate glide) - `<Switch transition={{ knob: "150ms" }}>` retimes just that part. `Slider` deliberately has no parts: its thumb and fill track the drag 1:1, and a transition would rubber-band it.
 
@@ -315,7 +315,7 @@ API: `createDocumentBuffer`, `plainDocument`, `ATOM`, `Document`, `DocumentRun`,
 
 ### ScrollView
 
-A scrollable region; vertical by default, `horizontal` to flip. Both the wheel and dragging scroll the content: the drag activates after a small movement threshold along the scroll axis, also when it starts on a pressable (the press is cancelled and its feedback retracts), and keeps scrolling when the pointer leaves the box. Scrolling glides: the offset springs to each new target (250 ms, critically damped), so a wheel notch never jumps and a burst of notches reads as one motion; a dragging finger is tracked exactly, without the spring. No momentum/fling yet.
+A scrollable region; vertical by default, `horizontal` to flip. Both the wheel and dragging scroll the content: the drag activates after a small movement threshold along the scroll axis, also when it starts on a pressable (the press is cancelled and its feedback retracts), and keeps scrolling when the pointer leaves the box. Scrolling glides: the offset springs to each new target (250 ms, critically damped), so a wheel notch never jumps and a burst of notches reads as one motion; a dragging finger is tracked exactly, without the spring. A lift at speed flings: the content keeps moving from the finger's release speed and decays (iOS's deceleration), as one runtime-side animation to a projected destination, clamped to the range (it slows into an edge, no bounce). A finger landing on a moving list holds it where it is, a tap included.
 
 ```jsx
 import { ScrollView, Text } from "@solidrt/components"
@@ -350,6 +350,45 @@ A `scrollX`/`scrollY` entry in `transition` replaces the default spring: `transi
 The underlying geometry primitive `createScroll` is available from `@solidrt/core` for building custom scrollers.
 
 API: `ScrollView`, `ScrollViewProps` - typed and commented in [src/scroll-view.tsx](./src/scroll-view.tsx).
+
+### Dismissible
+
+Swipe-to-dismiss. The content follows the finger sideways; a swipe that qualifies (enough travel and speed, within 30 degrees of the axis, core's swipe recognizer) carries it out of the box at its own speed and reports `onDismiss` with the direction, a drag that stops short springs back. `direction` narrows which way dismisses (`"left"`, `"right"`, default both); a drag the other way is not started, and a vertical drag is left to an enclosing ScrollView. The recognizer takes the pointer at its movement slop, so a pressable row still presses on a tap and retracts once the drag is one. Mouse and touch alike.
+
+```jsx
+import { Dismissible, Item } from "@solidrt/components"
+import { For } from "@solidrt/core"
+
+<For each={mails()}>
+  {(mail) => (
+    <Dismissible direction="left" onDismiss={() => archive(mail.id)}>
+      <Item label={mail.subject} description={mail.from} onPress={() => open(mail)} />
+    </Dismissible>
+  )}
+</For>
+```
+
+The box does not remove itself: after `onDismiss` the content sits parked past the edge until the caller drops the row (a `layout` or `exit` transition on the row then plays the collapse).
+
+API: `Dismissible`, `DismissibleProps`, `DismissDirection` - typed and commented in [src/dismissible.tsx](./src/dismissible.tsx).
+
+### Carousel
+
+A pager. The children are the pages, each one box wide, laid side by side and moved with the finger: a horizontal swipe (core's swipe recognizer) turns the page, a drag that stops short snaps to the nearest one, and the page settles under a spring. Only horizontal drags are taken, so a vertical ScrollView around or inside it scrolls as before. `index` controls the page (pair it with `onChange`); without it the carousel keeps its own page and still reports turns.
+
+```jsx
+import { Carousel, Card, Text } from "@solidrt/components"
+
+<Carousel layout={{ height: 200 }} onChange={(i) => setPage(i)}>
+  <Card title="One"><Text>First page</Text></Card>
+  <Card title="Two"><Text>Second page</Text></Card>
+  <Card title="Three"><Text>Third page</Text></Card>
+</Carousel>
+```
+
+Page indicators are the app's: read the index from `onChange` and draw dots beside it.
+
+API: `Carousel`, `CarouselProps` - typed and commented in [src/carousel.tsx](./src/carousel.tsx).
 
 ### Pressable
 
@@ -679,7 +718,7 @@ API: `SegmentedControl`, `SegmentedControlProps` - typed and commented in [src/s
 
 ### ContextMenu
 
-Secondary actions on the wrapped content. The opening gesture follows the physical pointer: right-click for a mouse, long-press (500ms, cancelled by finger travel) for touch. The presentation forks on the interaction policy: `touch` gets a bottom sheet over a scrim, `desktop`/`hybrid` an anchored menu at the pointer that flips up near the bottom edge. Both presentations fade in and out. `items` is a `ContextMenuItem[]` (`{ label, onSelect?, disabled? }`); pressing outside closes without selecting.
+Secondary actions on the wrapped content. The opening gesture follows the physical pointer: right-click for a mouse, long-press (500 ms, cancelled by finger travel; core's long-press recognizer) for touch and pen. The long-press wins the finger at its timer: a pressable inside retracts and does not fire on the lift, and a scroll that started first keeps the finger. The presentation forks on the interaction policy: `touch` gets a bottom sheet over a scrim, `desktop`/`hybrid` an anchored menu at the pointer that flips up near the bottom edge. Both presentations fade in and out. `items` is a `ContextMenuItem[]` (`{ label, onSelect?, disabled? }`); pressing outside closes without selecting.
 
 ```jsx
 import { ContextMenu } from "@solidrt/components"

@@ -35,6 +35,7 @@ the app applies and edits, never a default.
 | Persistence | n/a | project settings | binding-override JSON | `save()`/`load()` over source ids |
 | Interactions | n/a | none | Hold, Tap, MultiTap, Press (Unreal: Triggers) | `hold`, `tap`, `doubleTap`, `chord` as button sources |
 | Schemes | n/a | none | control schemes, `PlayerInput.currentControlScheme` | `device()` plus `bindings()` by `source.device` |
+| Gestures | none (controls bind DOM) | none (addons) | none (samples) | `swipe("Left")`, `longPress`, `doubleTap` as pulsing button sources; velocity on the drag's `end` |
 
 ## Decisions
 
@@ -152,6 +153,22 @@ the app applies and edits, never a default.
   binding on the source's rate, plus the delta path; a custom source
   without `device` never counts. Glyphs are the app's assets keyed by id;
   core gives the id, the label and the device.
+- **Discrete gestures are pulsing buttons on the feed, and the fling is
+  a fact on the end bracket.** A swipe, a long-press and a double-tap
+  are what a game binds next to a pad button, so they are button sources
+  that read pressed for one task (the `tap()` shape), with the swipe's
+  direction as the spec's trailing word (the drag's button grammar) and
+  the chord taken from the down that opened the gesture. They run on the
+  feed's own events rather than as arena recognizers of their own: the
+  feed is one claimant (its transform), and a second owner resolving the
+  arena would refuse the transform's later steal - drag-after-hold on a
+  viewport would die. The release velocity rides `end(velocity)` in the
+  source's units per second (element heights for a drag), through
+  invert/scale (negated, scaled), `drive()` and `input.end(action, v)`;
+  the cameras fling from it and keep no estimator of their own. A
+  button press carries no position, so double-tap-to-zoom is not a
+  preset binding: an app puts `createDoubleTap` on the view and calls
+  `zoomAt` with the tap's point.
 
 ## Traps
 
@@ -164,12 +181,12 @@ the app applies and edits, never a default.
 - A control's `active()` gate must stay a memo over reactive sources; a
   rate source over plain variables never wakes the loop (the caller runs
   update(dt) itself then).
-- The 2d fling: with immediate pushes on every nudge the camera no longer
-  went active during a drag, so the velocity estimate saw the whole drag
-  as one frame at release (a 4500 px/s fling). A pan gesture in flight
-  keeps the camera active. And a finger held still before lifting must
-  not fling: the resampler's last correction lands as a small stray delta
-  in the release frame, so the fling gates on the smoothed velocity too.
+- The 2d fling used to estimate its own release velocity from the drag
+  deltas per frame (an EMA that needed the camera active during the drag
+  and a gate against the resampler's stray last delta). The gesture
+  measures it now (velocity.ts under every recognizer) and the camera
+  takes it from `end(velocity)`; see pointer-coalescing-traps.md for the
+  velocity-at-lift trap.
 - Verifying pans with synthetic input: the 2d camera example starts at
   the fit zoom, where the contain clamp makes every pan a no-op (nothing
   to pan) - zoom in first. A synthetic up right after the last move drops

@@ -38,7 +38,10 @@ export interface PressOptions {
 // Moves and the up arrive on the frozen down path, so the press survives
 // leaving the node: while outside its window-relative bounds the pressed state
 // clears (visual feedback retracts), wandering back in restores it (press
-// retention), and only an up inside fires onPress. Enter/leave drive hover
+// retention), and only an up inside fires onPress - at once, unless a
+// double-tap recognizer is pending on the pointer (core's arena relation),
+// when the firing waits for that recognizer to fail (the double-tap
+// window passing) and is dropped when it wins. Enter/leave drive hover
 // alone. Non-primary buttons (right/middle) do not start a press. cancel() is
 // the external-cancel hook; it ends the press without firing. Options are read
 // at event time, so passing a component's reactive props object keeps handler
@@ -147,11 +150,17 @@ export function createPress(options: PressOptions) {
   let owner = { cancel }
 
   // A press abandoned mid-flight (unmount during a drag) must not leave its
-  // claim behind, or that pointer id could never press anything again.
+  // claim behind, or that pointer id could never press anything again. A
+  // firing the arena deferred (see onPointerUp) past the unmount is dropped.
+  let disposed = false
   onSettled(() => () => {
+    disposed = true
     disengage()
     unregisterNav?.()
   })
+  let fireDeferred = () => {
+    if (!disposed) activate()
+  }
 
   let handlers = {
     onPointerDown: (e: PointerEvent) => {
@@ -174,7 +183,9 @@ export function createPress(options: PressOptions) {
       if (active === e.pointerId) {
         let fire = inside
         cancel()
-        if (fire) activate()
+        // A double-tap pending on this pointer (arena.pend) holds the
+        // firing until it fails; with nothing pending the press fires now.
+        if (fire && !arena.defer(e.pointerId, fireDeferred)) activate()
       }
       options.onPointerUp?.(e)
     },

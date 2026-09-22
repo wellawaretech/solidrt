@@ -57,6 +57,18 @@
 // joins nothing, and only the held button's release closes the gesture.
 // The wheel and mouseDelta have no button; a button word on them throws.
 //
+// Discrete gestures are button sources that pulse (pressed for one task,
+// the shape of the `tap()` interaction): `swipe("Left")` at the lift of
+// a one-finger drag that qualifies (swipe.ts: distance, speed, within 30
+// degrees of an axis; the direction is the spec's trailing word, as a
+// drag's button is, and a swipe never has a button word), `longPress`
+// at the hold timer (long-press.ts) and `doubleTap` on the second tap's
+// down (double-tap.ts). They ride the feed's own events - the feed is
+// ONE arena claimant, its transform, so they never steal - and take the
+// chord of the down that opened them. The drag's end bracket carries
+// the release velocity the transform measured, in element heights per
+// second, so a camera flings from the gesture's speed.
+//
 // The element's laid-out box normalizes the travel: read at the press
 // through getLayoutBox (the untransformed read, so a designSize fit or
 // an ancestor transform never skews it), or from `layout` when given -
@@ -67,6 +79,7 @@
 // Create a feed in an owned scope (a component body): the recognizer
 // registers its cleanup with the owner.
 
+import { createSignal } from "@solidjs/signals"
 import { createTransform } from "./transform"
 import { getLayoutBox } from "./core"
 import { pointerLocked } from "./window"
@@ -75,6 +88,12 @@ import type { ActionKind, DeltaSink, InputDevice, InputSource } from "./input-ma
 import type { Vec2 } from "./input-axes"
 import { chordName, eventModifiers, mostSpecific, parseModifiers } from "./input-chord"
 import type { Modified, Modifier } from "./input-chord"
+import { createVelocityTracker } from "./velocity"
+import type { Velocity } from "./velocity"
+import { classifySwipe, SWIPE_DIRECTIONS } from "./swipe"
+import type { SwipeDirection } from "./swipe"
+import { createHoldTimer } from "./long-press"
+import { createTapSequence } from "./double-tap"
 
 // Source ids (input-id.ts): `pointer:<gesture>` for the bare source and
 // `pointer:<gesture>:<spec>` for a chord or button variant, the spec in
@@ -99,7 +118,7 @@ const MOUSE_PX_PER_UNIT = 1500
  * then instead of the bare one: the most specific bound chord wins. The
  * same spec returns the same source, so unbind by identity works.
  */
-export type PointerSource<K extends "axis" | "vec2"> = InputSource<K> & ((chord: string) => InputSource<K>)
+export type PointerSource<K extends ActionKind> = InputSource<K> & ((chord: string) => InputSource<K>)
 
 export interface PointerFeed extends InputDevice {
   readonly name: "pointer"
@@ -126,12 +145,22 @@ export interface PointerFeed extends InputDevice {
   /** Raw mouse motion while the pointer is locked, in view-height
    * equivalents (see MOUSE_PX_PER_UNIT); unbracketed. */
   mouseDelta: PointerSource<"vec2">
-  /** The source of an id's spec ("drag", "drag:Ctrl+Right", "wheel"). */
+  /** A one-finger swipe in the spec's direction ("Left", "Ctrl+Right"):
+   * a button pulsing once at the lift. */
+  swipe(spec: string): InputSource<"button">
+  /** A pointer held still for the long-press hold: a button pulsing once
+   * at the timer. */
+  longPress: PointerSource<"button">
+  /** Two quick taps: a button pulsing once on the second down. */
+  doubleTap: PointerSource<"button">
+  /** The source of an id's spec ("drag", "drag:Ctrl+Right", "wheel",
+   * "swipe:Left", "longPress:Ctrl"). */
   resolve(spec: string): InputSource
   /** For a rebind: `found` gets the next gesture of `kind` the pointer
    * opens on the element (a drag, pan or locked mouse motion for a vec2;
-   * a pinch, twist or wheel notch for an axis), as the variant of the
-   * chord and button that opened it. Returns the stop. */
+   * a pinch, twist or wheel notch for an axis; a swipe, long-press or
+   * double-tap for a button), as the variant of the chord and button or
+   * direction that opened it. Returns the stop. */
   listen(kind: ActionKind, found: (source: InputSource) => void): () => void
 }
 
@@ -222,13 +251,80 @@ function gesture<K extends "axis" | "vec2">(kind: K, id: string, label: string, 
     delta(value: number | Vec2, focal?: Vec2) {
       for (let sinks of open) sinks.forEach(k => k.delta(value, focal))
     },
-    end() {
-      for (let sinks of open) sinks.forEach(k => k.end())
+    end(velocity?: number | Vec2) {
+      for (let sinks of open) sinks.forEach(k => k.end(velocity))
       open = []
     },
     send(event: Modified, value: number | Vec2, focal?: Vec2) {
       probe(event, PRIMARY)
       for (let sinks of resolve(event, PRIMARY)) sinks.forEach(k => k.delta(value, focal))
+    },
+  }
+}
+
+// A discrete gesture's sources, bucketed by spec like a delta gesture's:
+// the chord plus, when the gesture takes one, a trailing word from
+// `words` (a swipe's direction; then the bare spec has no meaning and
+// `spec` demands the word). A fire resolves the buckets of the word whose
+// chord the event carries, narrowed to the most specific, and pulses each:
+// pressed now, released on the next task, so a map's onPress sees the
+// edge (input-processors.ts `tap`). A created variant counts as bound.
+type PulseBucket = { mods: Modifier[]; word: string | null; source: InputSource<"button">; set: (pressed: boolean) => void }
+
+function pulses(id: string, label: string, words: readonly string[] | null) {
+  let buckets = new Map<string, PulseBucket>()
+  let probes = new Set<(source: InputSource) => void>()
+  let variant = (mods: Modifier[], word: string | null): InputSource<"button"> => {
+    let name = [chordName(mods), word ?? ""].filter(Boolean).join("+")
+    let bucket = buckets.get(name)
+    if (!bucket) {
+      // ownedWrite: a fire lands inside a pointer handler or a timer.
+      let [pressed, set] = createSignal(false, { ownedWrite: true })
+      let source: InputSource<"button"> = {
+        kind: "button",
+        label: name ? `${label} (${name})` : label,
+        id: name ? `${DEVICE}:${id}:${name}` : `${DEVICE}:${id}`,
+        device: DEVICE,
+        rate: pressed,
+      }
+      bucket = { mods, word, source, set }
+      buckets.set(name, bucket)
+    }
+    return bucket.source
+  }
+  let spec = (text: string): InputSource<"button"> => {
+    if (typeof text !== "string" || text.length === 0) throw new Error(`${label}: expected a spec such as "Ctrl"${words ? `, "${words[0]}" or "Shift+${words[0]}"` : ' or "Shift+Alt"'}, got ${String(text)}`)
+    let parts = text.split("+")
+    let word: string | null = null
+    if (words && words.includes(parts[parts.length - 1]!)) word = parts.pop()!
+    if (words && word === null) throw new Error(`${label}: "${text}" must end in a direction (${words.join(", ")})`)
+    return variant(parseModifiers(label, text, parts), word)
+  }
+  let bare = words ? null : variant([], null)
+  return {
+    /** The bare source (null for a gesture that needs its word). */
+    bare,
+    spec,
+    listen(found: (source: InputSource) => void) {
+      probes.add(found)
+      return () => {
+        probes.delete(found)
+      }
+    },
+    fire(event: Modified, word: string | null) {
+      if (probes.size > 0) {
+        let found = variant(eventModifiers(event), word)
+        probes.forEach(p => p(found))
+      }
+      let hit = mostSpecific(
+        [...buckets.values()].filter(b => b.word === word),
+        b => b.mods,
+        event,
+      )
+      for (let b of hit) {
+        b.set(true)
+        setTimeout(() => b.set(false), 0)
+      }
     },
   }
 }
@@ -241,6 +337,11 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
   let wheel = gesture("axis", "wheel", "pointer wheel", false)
   let mouseDelta = gesture("vec2", "mouseDelta", "mouse motion (pointer locked)", false)
   let gestures = { drag, pan, pinch, twist, wheel, mouseDelta }
+  let swipe = pulses("swipe", "pointer swipe", SWIPE_DIRECTIONS)
+  let longPress = pulses("longPress", "pointer long press", null)
+  let doubleTap = pulses("doubleTap", "pointer double tap", null)
+  let discrete = { swipe, longPress, doubleTap }
+  let callable = (p: typeof longPress): PointerSource<"button"> => Object.assign(p.spec, { kind: "button" as const, label: p.bare!.label, id: p.bare!.id, device: p.bare!.device, rate: p.bare!.rate! })
 
   // The element's box, read at each press (see the header). A detached
   // leaf has no layout box and must bring `layout`: normalizing by
@@ -258,8 +359,14 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
   let unit = () => (box.height > 0 ? box.height : 1)
   let focalOf = (x: number, y: number): Vec2 | undefined => (box.width > 0 && box.height > 0 ? [x / box.width, y / box.height] : undefined)
 
+  // The release velocity of the gesture that just ended, for the drag's
+  // end bracket (the transform's up runs before `lifted`).
+  let released: Velocity | null = null
   let transform = createTransform({
     buttons: "any",
+    onTransformEnd: v => {
+      released = v.vx !== 0 || v.vy !== 0 ? v : null
+    },
     onTransformMove: t => {
       let h = unit()
       let travel: Vec2 = [t.dx / h, t.dy / h]
@@ -299,27 +406,62 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
       twist.end()
       drag.begin(e, [...downs.values()][0]!)
     }
-    if (downs.size === 0) drag.end()
+    if (downs.size === 0) {
+      let h = unit()
+      drag.end(released ? [released.vx / h, released.vy / h] : undefined)
+      released = null
+    }
   }
+
+  // The discrete gestures over the primary button's first pointer: the
+  // finger's window-px velocity and the opening down for the swipe (a
+  // second finger disqualifies it), the hold timer, the tap sequence.
+  let finger = createVelocityTracker()
+  let opening: { id: number; x: number; y: number; mods: Modified; alone: boolean } | null = null
+  let hold = createHoldTimer({ onFire: (_id, _at, mods) => longPress.fire(mods, null) })
+  let taps = createTapSequence({ onDouble: (_id, _at, mods) => doubleTap.fire(mods, null) })
+  let mods = (e: PointerEvent): Modified => ({ shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey })
 
   return {
     handlers: {
       onPointerDown(e) {
         if (downs.has(e.pointerId)) return
         if (downs.size === 0) box = size(e)
-        landed(e, e.button ?? PRIMARY)
+        let button = e.button ?? PRIMARY
+        landed(e, button)
         transform.handlers.onPointerDown(e)
+        if (button === PRIMARY) {
+          hold.down(e)
+          taps.down(e)
+          if (downs.size === 1) {
+            opening = { id: e.pointerId, x: e.clientX, y: e.clientY, mods: mods(e), alone: true }
+            finger.reset()
+            finger.push(e.clientX, e.clientY)
+          } else if (opening) opening.alone = false
+        }
       },
       onPointerMove(e) {
         if (pointerLocked() && e.pointerType === "mouse" && (e.movementX !== 0 || e.movementY !== 0)) {
           mouseDelta.send(e, [e.movementX / MOUSE_PX_PER_UNIT, e.movementY / MOUSE_PX_PER_UNIT])
         }
         transform.handlers.onPointerMove(e)
+        hold.move(e)
+        taps.move(e)
+        if (opening && opening.id === e.pointerId) finger.push(e.clientX, e.clientY)
       },
       onPointerUp(e) {
         if (downs.get(e.pointerId) !== (e.button ?? PRIMARY)) return
         transform.handlers.onPointerUp(e)
         lifted(e)
+        hold.up(e)
+        taps.up(e)
+        if (opening && opening.id === e.pointerId) {
+          if (opening.alone && downs.size === 0) {
+            let direction: SwipeDirection | null = classifySwipe(finger.velocity(), { dx: e.clientX - opening.x, dy: e.clientY - opening.y })
+            if (direction) swipe.fire(opening.mods, direction)
+          }
+          opening = null
+        }
       },
       onPointerLeave() {},
       onWheel(e) {
@@ -335,19 +477,33 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
     twist: twist.source,
     wheel: wheel.source,
     mouseDelta: mouseDelta.source,
+    swipe: swipe.spec,
+    longPress: callable(longPress),
+    doubleTap: callable(doubleTap),
     resolve(spec) {
       let colon = spec.indexOf(":")
-      let name = (colon < 0 ? spec : spec.slice(0, colon)) as keyof typeof gestures
-      let g = gestures[name]
-      if (!g) throw new Error(`pointer.resolve: unknown gesture "${spec}" (${Object.keys(gestures).join(", ")}, each with an optional :<chord>)`)
-      return colon < 0 ? g.source : g.spec(spec.slice(colon + 1))
+      let name = colon < 0 ? spec : spec.slice(0, colon)
+      let rest = colon < 0 ? null : spec.slice(colon + 1)
+      let g = gestures[name as keyof typeof gestures]
+      if (g) return rest === null ? g.source : g.spec(rest)
+      let p = discrete[name as keyof typeof discrete]
+      if (p) {
+        if (rest === null) {
+          if (!p.bare) throw new Error(`pointer.resolve: "${spec}" needs a direction (swipe:Left)`)
+          return p.bare
+        }
+        return p.spec(rest)
+      }
+      throw new Error(`pointer.resolve: unknown gesture "${spec}" (${[...Object.keys(gestures), ...Object.keys(discrete)].join(", ")}, each with an optional :<chord>; swipe with its direction)`)
     },
     listen(kind, found) {
       if (kind !== "button" && kind !== "axis" && kind !== "vec2") throw new Error(`pointer.listen: expected a kind, got ${String(kind)}`)
       if (typeof found !== "function") throw new Error("pointer.listen: expects a function")
-      let stops = Object.values(gestures)
-        .filter(g => g.source.kind === kind)
-        .map(g => g.listen(found))
+      let stops = kind === "button"
+        ? Object.values(discrete).map(p => p.listen(found))
+        : Object.values(gestures)
+            .filter(g => g.source.kind === kind)
+            .map(g => g.listen(found))
       return () => {
         for (let stop of stops) stop()
       }

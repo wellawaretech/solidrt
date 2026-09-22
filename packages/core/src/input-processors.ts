@@ -70,7 +70,7 @@ export function invert<K extends "axis" | "vec2">(source: InputSource<K>): Input
     device: source.device,
     rate: source.rate ? () => neg(source.rate!() as number | Vec2) as never : undefined,
     deltas: source.deltas
-      ? sink => source.deltas!({ begin: sink.begin, end: sink.end, delta: (value, focal) => sink.delta(neg(value), focal) })
+      ? sink => source.deltas!({ begin: sink.begin, end: velocity => sink.end(velocity === undefined ? undefined : neg(velocity)), delta: (value, focal) => sink.delta(neg(value), focal) })
       : undefined,
     key: source.key,
     blur: source.blur,
@@ -90,7 +90,7 @@ export function scale<K extends "axis" | "vec2">(source: InputSource<K>, factor:
     device: source.device,
     rate: source.rate ? () => mul(source.rate!() as number | Vec2) as never : undefined,
     deltas: source.deltas
-      ? sink => source.deltas!({ begin: sink.begin, end: sink.end, delta: (value, focal) => sink.delta(mul(value), focal) })
+      ? sink => source.deltas!({ begin: sink.begin, end: velocity => sink.end(velocity === undefined ? undefined : mul(velocity)), delta: (value, focal) => sink.delta(mul(value), focal) })
       : undefined,
     key: source.key,
     blur: source.blur,

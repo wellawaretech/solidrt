@@ -1,6 +1,6 @@
 # ScrollView
 
-A scrollable region; vertical by default, `horizontal` to flip. Both the wheel and dragging scroll the content: the drag activates after a small movement threshold along the scroll axis, also when it starts on a pressable (the press is cancelled and its feedback retracts), and keeps scrolling when the pointer leaves the box. Scrolling glides: the offset springs to each new target (250 ms, critically damped), so a wheel notch never jumps and a burst of notches reads as one motion; a dragging finger is tracked exactly, without the spring. No momentum/fling yet.
+A scrollable region; vertical by default, `horizontal` to flip. Both the wheel and dragging scroll the content: the drag activates after a small movement threshold along the scroll axis, also when it starts on a pressable (the press is cancelled and its feedback retracts), and keeps scrolling when the pointer leaves the box. Scrolling glides: the offset springs to each new target (250 ms, critically damped), so a wheel notch never jumps and a burst of notches reads as one motion; a dragging finger is tracked exactly, without the spring. A lift at speed flings: the content keeps moving from the finger's release speed and decays (iOS's deceleration), as one runtime-side animation to a projected destination, clamped to the range (it slows into an edge, no bounce). A finger landing on a moving list holds it where it is, a tap included.
 
 ```jsx
 import { ScrollView, Text } from "@solidrt/components"

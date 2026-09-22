@@ -49,7 +49,10 @@
 // value so a fast scroll is one long push; a delta bracketed by a
 // gesture (a drag, a pinch, two fingers) applies at once, the content
 // staying under the fingers, which is how the control tells a finger
-// from an impulse (the 2d camera's rule). And a commanded move -
+// from an impulse (the 2d camera's rule); the gesture's end brings the
+// release velocity, and with damping on the view keeps turning or
+// sliding from that speed, decaying (Three's enableDamping glide). And
+// a commanded move -
 // glideTo(pose), fit(bounds, { glide }) - eases there the same way. Any
 // input drops a commanded glide (a finger landing holds the view); a
 // pose write through set() lands at once and drops any motion, so a
@@ -493,6 +496,27 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
         if (name === "zoom") {
           pinchSeen = false
           pinchAnchor = null
+        }
+        notify()
+      },
+      onEnd: (name, velocity) => {
+        // A lift at speed keeps turning or sliding (Three's enableDamping
+        // glide): the damped goal is set the fling's whole travel ahead,
+        // velocity over the ease rate, so the motion starts at exactly
+        // the release speed and decays. Nothing with damping off, and
+        // nothing for a rested finger (no velocity).
+        if (velocity === undefined || damping() <= 0 || name === "zoom") return
+        let v = velocity as Vec2
+        let travel = 1 / (GLIDE_EASE / damping())
+        if (name === "rotate") {
+          let rel = DRAG_TURNS * 2 * Math.PI * rotateSpeed()
+          writeDamped(m => rotate(m, -v[0] * travel * rel, v[1] * travel * rel))
+        } else {
+          let w = worldPerHeight() * panSpeed()
+          writeDamped(m => {
+            slide(m, -v[0] * travel * w, v[1] * travel * w)
+            m.anchor = null
+          })
         }
         notify()
       },

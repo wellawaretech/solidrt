@@ -2,6 +2,8 @@ import { onSettled } from "@solidjs/signals"
 import { on } from "srt:events"
 import type { PointerEvent } from "./types"
 import { arena, type ArenaOwner } from "./arena"
+import { createVelocityTracker, flingVelocity } from "./velocity"
+import type { Velocity } from "./velocity"
 
 // Focal travel or span change in logical pixels before the transform
 // activates; the same threshold createPan uses, so the two race fairly.
@@ -53,7 +55,10 @@ export interface TransformOptions {
   onTransformStart?: () => void
   /** Streams one delta per frame; compose them multiplicatively (scale) / additively (dx, dy, rotation). */
   onTransformMove?: (t: TransformDelta) => void
-  onTransformEnd?: () => void
+  /** The last finger's lift, with the focal point's velocity at it in
+   * parent-frame pixels per second (velocity.ts; zero after a rest or
+   * under the fling minimum). */
+  onTransformEnd?: (velocity: Velocity) => void
 }
 
 // The merged transform recognizer: pan + pinch + rotate as ONE gesture over
@@ -147,6 +152,10 @@ export function createTransform(options: TransformOptions) {
   // immediately would bake a jolt into the next delta. A rebase frame
   // emits nothing.
   let rebase = false
+  // Parent-frame focal positions per delivering flush, for the lift's
+  // velocity; a rebase translates the history by the focal jump so a
+  // finger joining or leaving keeps it continuous.
+  let tracker = createVelocityTracker()
 
   // Centroids in all three frames, the span in window pixels (it feeds the
   // finger-travel gates), the pair angle in the parent frame.
@@ -193,6 +202,7 @@ export function createTransform(options: TransformOptions) {
     pinch = false
     dirty = false
     rebase = false
+    tracker.reset()
   }
   let cancel = reset
   let owner: ArenaOwner = { cancel }
@@ -204,8 +214,12 @@ export function createTransform(options: TransformOptions) {
     if (rebase) {
       // Anchor from same-age positions; emits nothing - an activation or
       // set change must not produce a jump delta. Motion that arrived in
-      // the same batch folds into the anchor.
+      // the same batch folds into the anchor (and into the velocity
+      // history's shift, one frame the fit never sees).
+      let prev = ref
       ref = measure()
+      if (prev) tracker.shift(ref.px - prev.px, ref.py - prev.py)
+      tracker.push(ref.px, ref.py)
       spanBase = ref.span
       smoothSpan = ref.span
       rebase = false
@@ -215,6 +229,7 @@ export function createTransform(options: TransformOptions) {
     if (!dirty || !ref) return
     dirty = false
     let m = measure()
+    tracker.push(m.px, m.py)
     let prevSpan = smoothSpan
     smoothSpan += (m.span - smoothSpan) * SPAN_SMOOTH
     spanRate += (Math.abs(smoothSpan - prevSpan) - spanRate) * QUIET_SMOOTH
@@ -299,6 +314,7 @@ export function createTransform(options: TransformOptions) {
         pinch = Math.abs(m.span - ref.span) >= SLOP
         spanRate = pinch ? 1 : 0
         rebase = true
+        tracker.reset()
         options.onTransformStart?.()
         return
       }
@@ -310,12 +326,16 @@ export function createTransform(options: TransformOptions) {
         arena.release(e.pointerId, owner)
         pointers.delete(e.pointerId)
         if (pointers.size === 0) {
+          // The lift's own position is not measured (no terminator
+          // follows it); the fit over the delivered frames is the speed.
+          let velocity = flingVelocity(tracker.velocity())
           active = false
           ref = null
           pinch = false
           dirty = false
           rebase = false
-          options.onTransformEnd?.()
+          tracker.reset()
+          options.onTransformEnd?.(velocity)
         } else {
           rebase = true
           pinch = pinch && pointers.size >= 2

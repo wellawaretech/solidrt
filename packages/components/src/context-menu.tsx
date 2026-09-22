@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, createPortal, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
+import { createSignal, createLongPress, createPortal, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
@@ -22,51 +22,31 @@ export interface ContextMenuProps extends TransitionProps {
   layout?: LayoutProps
 }
 
-const LONG_PRESS_MS = 500
-// Finger travel (window px) that cancels a pending long-press.
-const MOVE_SLOP = 8
 // Minimum distance kept between the menu and the window edges.
 let margin = () => theme.spacing.sm
 
 /**
  * Secondary actions on the wrapped content. The opening gesture follows the
- * physical pointer: right-click for a mouse, long-press for touch. The
- * presentation forks on the interaction policy: touch gets a bottom sheet over
- * a scrim, desktop/hybrid an anchored menu at the pointer. Pressing outside
- * closes without selecting.
+ * physical pointer: right-click for a mouse, long-press for touch and pen
+ * (core's long-press recognizer: it wins the finger at its timer, so a
+ * pressable inside retracts and never fires, and a scroll that started
+ * first keeps it). The presentation forks on the interaction policy: touch
+ * gets a bottom sheet over a scrim, desktop/hybrid an anchored menu at the
+ * pointer. Pressing outside closes without selecting.
  */
 export function ContextMenu(props: ContextMenuProps) {
   let [open, setOpen] = createSignal(false)
   let [point, setPoint] = createSignal({ x: 0, y: 0 })
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let downAt: { x: number; y: number } | undefined
 
   let openAt = (x: number, y: number) => {
     setPoint({ x, y })
     setOpen(true)
   }
-  let cancelHold = () => {
-    clearTimeout(timer)
-    downAt = undefined
-  }
-  onCleanup(cancelHold)
+  let longPress = createLongPress({ onLongPress: at => openAt(at.clientX, at.clientY) })
 
   let handleDown = (e: PointerEvent) => {
-    if (e.button === 2) {
-      cancelHold()
-      openAt(e.clientX, e.clientY)
-    } else if (e.pointerType === "touch") {
-      downAt = { x: e.clientX, y: e.clientY }
-      clearTimeout(timer)
-      timer = setTimeout(() => {
-        if (downAt) openAt(downAt.x, downAt.y)
-        downAt = undefined
-      }, LONG_PRESS_MS)
-    }
-  }
-  let handleMove = (e: PointerEvent) => {
-    if (!downAt) return
-    if (Math.abs(e.clientX - downAt.x) > MOVE_SLOP || Math.abs(e.clientY - downAt.y) > MOVE_SLOP) cancelHold()
+    if (e.button === 2) openAt(e.clientX, e.clientY)
+    else if (e.pointerType !== "mouse") longPress.handlers.onPointerDown(e)
   }
 
   let choose = (item: ContextMenuItem) => {
@@ -189,9 +169,8 @@ export function ContextMenu(props: ContextMenuProps) {
       transition={splitTransition(props.transition).root}
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       onPointerDown={handleDown}
-      onPointerMove={handleMove}
-      onPointerUp={cancelHold}
-      onPointerLeave={cancelHold}
+      onPointerMove={longPress.handlers.onPointerMove}
+      onPointerUp={longPress.handlers.onPointerUp}
       {...props.layout}
     >
       {props.children}

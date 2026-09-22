@@ -135,6 +135,33 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   pivoted.orbit.axes.end("rotate")
 }
 
+// ---- A release velocity glides on (damping on), or not at all (damping off) ----
+{
+  let { orbit } = make({ distance: 4, azimuth: 0, elevation: 0 })
+  orbit.axes.begin("rotate")
+  orbit.axes.nudge("rotate", [0.1, 0])
+  let atLift = orbit.pose().azimuth
+  // Half a height per second of drag at the lift: the fling's travel is
+  // that over the ease rate, 0.5 / 9 heights, times a full turn.
+  orbit.axes.end("rotate", [0.5, 0])
+  let ticks = settle(orbit)
+  let want = atLift - (0.5 / 9) * 2 * Math.PI
+  if (ticks === 0) fail("a rotate end with velocity keeps turning")
+  if (!near(orbit.pose().azimuth, want, 1e-3)) fail(`the release glide travels velocity over the ease rate, got ${orbit.pose().azimuth} want ${want}`)
+  orbit.axes.begin("rotate")
+  orbit.axes.end("rotate")
+  if (settle(orbit) !== 0) fail("a rotate end without velocity rests")
+  orbit.axes.begin("pan")
+  let target = orbit.pose().target[0]
+  orbit.axes.end("pan", [0.5, 0])
+  settle(orbit)
+  if (!(orbit.pose().target[0] < target)) fail("a pan end with velocity slides on")
+  let stiff = make({ distance: 4, damping: 0 })
+  stiff.orbit.axes.begin("rotate")
+  stiff.orbit.axes.end("rotate", [0.5, 0])
+  if (settle(stiff.orbit) !== 0) fail("damping off: a release glides nothing")
+}
+
 // ---- Rates, active(), auto-orbit pause ----
 {
   let { orbit } = make({ distance: 4, orbitSpeed: 1 })

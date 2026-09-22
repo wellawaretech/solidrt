@@ -2,6 +2,7 @@
 title: Discrete pointer gestures - swipe, fling velocity, long-press, double-tap
 description: The recognizer family stops at press, pan and transform; a swipe (direction decided at the lift), a fling (velocity handed to whoever animates on), a long-press and a double-tap are each rebuilt by hand or missing (ScrollView has no momentum, ContextMenu has no touch path, nothing dismisses on a swipe), and none is bindable through the input map. One velocity tracker under every recognizer, three recognizers in the arena with the wait-for-failure relation double-tap needs, and the same gestures as pulsing button sources on the pointer feed.
 created: 2026-09-22
+completed: 2026-09-22
 ---
 
 # Discrete pointer gestures
@@ -243,3 +244,70 @@ gestures, pen pressure and tilt, force touch, and a `Draggable` with
 drop targets (a pan consumer, once long-press-then-drag exists it is a
 components item of its own). Tap-count beyond two (triple-tap) is a
 parameter on double-tap if a consumer appears, not a recognizer.
+
+## What was done (2026-09-22)
+
+Everything in the design, with these deviations, each taken because the
+text as written could not hold:
+
+- The long-press arms silently and steals at its timer instead of
+  claiming provisionally at the down: a claim there is refused wherever a
+  press already holds the pointer, which is exactly the node a long-press
+  shares with a press. Nested long-presses still resolve innermost-first
+  (the inner timer registers first in the leaf-to-root walk).
+- The feed's swipe, long-press and double-tap never steal: the feed is
+  one claimant (its transform), and a second owner resolving the arena
+  would refuse the transform's own later steal.
+- The fling gate (50 px/s) lives in the recognizers: `onPanEnd` and
+  `onTransformEnd` deliver zero under it, the feed sends `end()` without
+  a velocity then, camera2d's own gate and estimator are gone.
+- Double-tap-to-zoom is not a preset binding: a button press carries no
+  position. An app puts `createDoubleTap` on the view and calls `zoomAt`
+  with the tap's point (packages/core/examples/gestures.tsx shows it).
+- `arena.pend/decide/defer` is the relation's shape (the press does not
+  know which recognizer it waits for; the double-tap registers itself).
+- Momentum's duration is constant (10 ln 2 over the decay, about 3.5 s
+  at iOS's rate; the tail is sub-pixel) and the velocity scales the
+  distance, which is what an exponential decay is; the clamp shortens
+  the distance under the same duration, so a fling slows into an edge.
+  A finger landing reads the animated offset back through the boxes and
+  writes it instantly, which also fixed the jump a drag used to make
+  when it started during a wheel glide.
+- text-selection-touch-word stays its own item; its recognizers exist now.
+
+Landed: core `velocity.ts`, `gesture.ts`, `swipe.ts`, `long-press.ts`,
+`double-tap.ts`, the arena relation, velocity on both recognizer ends and
+on `end()` through sink, listener, axes, `drive`, `invert`/`scale` and
+`input.end`; the feed's three pulsing sources with ids, `resolve` and
+`listen`; camera2d on `release(velocity)`, the orbit's release glide;
+components' press deferring its fire, ScrollView momentum and the
+landing-finger hold, ContextMenu on `createLongPress`, `Dismissible` and
+`Carousel` with docs and gallery rows; `packages/core/examples/gestures.tsx`.
+
+Verified: headless `velocity-check`, `gesture-check` (arena relation,
+pan velocity, swipe classes, long-press timer/slop/steal, double-tap
+window/slop/bounce, a press deferring beside a double-tap),
+`input-map-check` (velocity through invert/scale/drive), `camera2d-check`,
+`orbit-check`; live over `/input` on a release client: the swipe card
+reads 933 px/s and snaps back on a slow drag, the pan reads ~600 px/s at
+a flick and zero after a rest, the long-press fires at the timer and
+drags the tile 60 px after the hold while a plain drag leaves it, the
+tap-tap at 100 ms double-taps with no single, taps 400 ms apart fire two
+singles after the window, the plain target fires at once, the feed's
+dodge/charge/zoomIn pulse and its drag end carries -7.3 heights/s; in
+the gallery the horizontal scroller keeps moving after a lift and holds
+under a landing tap with no jump, a fast swipe removes a row while a
+dense slow drag and a rested drag leave it and a tap still opens it,
+the carousel pages on a swipe and snaps back after a short drag, and a
+touch long-press opens the context menu while a moved hold does not.
+
+Found on the way, recorded in okf/notes/pointer-coalescing-traps.md:
+the resampler's extrapolate-and-correct step lands up to two frames
+after a finger stops, so the rest clock runs from the last position
+change; and a sparse synthetic stream (moves 100 ms apart) reads spiky
+at the lift, so a probe that means "slow" sends small steps every frame.
+Two other traps bit during the build and are documented in the
+components: `onSwipe` and `onSwipeEnd` run in one handler before any
+signal flush (plain state is the truth for "a leave is in flight"), and
+a transition declared in the same flush as the write that starts it must
+come first in JSX source order or the write snaps.

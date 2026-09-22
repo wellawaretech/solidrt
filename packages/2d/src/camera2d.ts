@@ -33,7 +33,9 @@
 // unbracketed (a wheel notch) it retargets an eased glide, which is how
 // the control tells a finger from an impulse. A `roll` delta is turns. A
 // pan gesture's begin stops any glide (a finger landing on a gliding view
-// holds it), its end flings with the drag's velocity.
+// holds it), its end flings with the release velocity the gesture
+// measured (the pointer feed's, in viewport heights per second: one
+// estimator for every recognizer, velocity.ts in core), decaying.
 //
 // Pose is plain mutable state; a nudge or a verb pushes it at once (the
 // next paint carries the new camera, no frame loop needed for a drag),
@@ -67,17 +69,9 @@ const LAND_PX = 0.5
 const FOLLOW_EASE = 5
 // Inertia after a drag release: velocity decay in e-foldings per second. A
 // 1500 px/s flick travels 500 px; iOS scrolling decelerates at ~2, maps
-// are snappier.
+// are snappier. The release speed itself comes from the gesture (a
+// rested finger reads zero there), so nothing gates it here.
 const FLING_DECAY = 3
-// Release speeds under this (px/s) do not fling: a finger that stopped
-// before lifting leaves the view where it is.
-const FLING_MIN_SPEED = 50
-// Per-update EMA weight of the drag velocity estimate: heavy on the newest
-// frame so a direction change registers within a frame or two.
-const VELOCITY_SMOOTH = 0.5
-// Frame time assumed for the drag delta still pending at a release when the
-// release arrives in the same frame as the last move.
-const FALLBACK_DT = 1 / 60
 // Rate axes at full deflection, per second: viewport heights of pan,
 // octaves of zoom (1 = the zoom doubles each second), turns of roll.
 const PAN_RATE = 1
@@ -148,11 +142,11 @@ export type Camera2d = {
    * running. */
   set(pose: Camera2dPose): void
   /** Pan the content by a screen delta (a drag: positive dx slides the
-   * world rightward) and push. Feeds the inertia estimate; release()
-   * flings. */
+   * world rightward) and push. */
   panBy(dx: number, dy: number): void
-  /** End of a drag: keep gliding with the drag's velocity (inertia). */
-  release(): void
+  /** End of a drag: keep gliding from its release velocity, screen pixels
+   * per second of content travel (inertia). Zero rests. */
+  release(velocity: Vec2): void
   /** Zoom by `factor` about a screen point - the world point under it
    * stays under it - and push. `glide` eases there instead (a wheel
    * notch): notches compound on the pending target, so a fast scroll is
@@ -347,12 +341,6 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
   let followAt: { x: number; y: number } | null = null
   // A follow that reached its target stops writing until something moves.
   let followSettled = false
-  // Drag deltas since the last update, and the smoothed velocity (px/s).
-  let dragDx = 0
-  let dragDy = 0
-  let vx = 0
-  let vy = 0
-  let lastDt = FALLBACK_DT
   // A fit that waits for the viewport (the default pose when a world is
   // given, or an explicit fit() before the size is known).
   let pendingFit: { rect: Rect2d | null; glide: boolean } | null = options.zoom === undefined && w0 ? { rect: null, glide: false } : null
@@ -361,12 +349,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
     dirty = true
     followSettled = false
   }
-  // A pan gesture in flight keeps the camera active: update(dt) then folds
-  // the drag's deltas into the velocity estimate every frame, so the fling
-  // at release carries the finger's speed and not the whole drag's travel
-  // over one assumed frame.
-  let dragging = false
-  let busy = () => dirty || dragging || glide !== null || fling !== null || followAt !== null || pendingFit !== null
+  let busy = () => dirty || glide !== null || fling !== null || followAt !== null || pendingFit !== null
   // The motion's half of active(), a signal every public entry refreshes
   // (ownedWrite: entries run from component bodies and handlers alike).
   let [motionActive, setMotionActive] = createSignal(false, { ownedWrite: true })
@@ -432,27 +415,12 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
     interrupt()
     shift(dx, dy)
     clamp()
-    dragDx += dx
-    dragDy += dy
     touch()
   }
-  let release = () => {
-    // Fold the delta still pending from the release's own frame in with
-    // the last frame time, then start from rest either way. The fling
-    // gates on the SMOOTHED velocity too: a finger that stopped before
-    // lifting has let it decay over the still frames, and the stray delta
-    // the release frame may still carry (the resampler's last correction)
-    // must not fling the view on its own.
-    let smoothed = Math.hypot(vx, vy)
-    let rvx = vx + (dragDx / lastDt - vx) * VELOCITY_SMOOTH
-    let rvy = vy + (dragDy / lastDt - vy) * VELOCITY_SMOOTH
-    dragDx = 0
-    dragDy = 0
-    vx = 0
-    vy = 0
+  let release = (velocity: Vec2) => {
     if (!inertia() || followAt !== null) return
-    if (smoothed < FLING_MIN_SPEED || Math.hypot(rvx, rvy) < FLING_MIN_SPEED) return
-    fling = { vx: rvx, vy: rvy }
+    if (velocity[0] === 0 && velocity[1] === 0) return
+    fling = { vx: velocity[0], vy: velocity[1] }
   }
   let zoomAt = (sx: number, sy: number, factor: number, ease: boolean) => {
     positive("zoomAt factor", factor)
@@ -486,13 +454,14 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
     {
       onBegin: name => {
         if (name !== "pan") return
-        dragging = true
         interrupt()
       },
-      onEnd: name => {
+      onEnd: (name, velocity) => {
         if (name !== "pan") return
-        dragging = false
-        release()
+        // Viewport heights per second of finger travel to screen pixels
+        // per second of content travel, the pan delta's own mapping.
+        let v = (velocity as Vec2 | undefined) ?? [0, 0]
+        release([v[0] * vh * panSpeed(), v[1] * vh * panSpeed()])
         notify()
       },
       onNudge: (name, delta, focal) => {
@@ -550,8 +519,11 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
       panBy(dx, dy)
       flush()
     },
-    release() {
-      release()
+    release(velocity) {
+      if (!Array.isArray(velocity) || velocity.length !== 2) throw new Error(`createCamera2d: release() takes [vx, vy], got ${JSON.stringify(velocity)}`)
+      finite("release vx", velocity[0])
+      finite("release vy", velocity[1])
+      release(velocity)
       notify()
     },
     zoomAt(sx, sy, factor, opts) {
@@ -653,11 +625,6 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
           clamp()
           touch()
         }
-        vx += (dragDx / dt - vx) * VELOCITY_SMOOTH
-        vy += (dragDy / dt - vy) * VELOCITY_SMOOTH
-        dragDx = 0
-        dragDy = 0
-        lastDt = dt
       }
       if (fling !== null && dt > 0) {
         shift(fling.vx * dt, fling.vy * dt)

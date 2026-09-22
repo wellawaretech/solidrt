@@ -657,15 +657,6 @@ Shaped, not started.
   exists to run without a display requires an interactive window station
   there; the ANGLE that ships already advertises the extensions a real
   headless path needs.
-- **[Discrete pointer gestures - swipe, fling velocity, long-press, double-tap](backlog/pointer-discrete-gestures.md)** [2026-09-22]
-  The recognizer family stops at press, pan and transform; a swipe (direction
-  decided at the lift), a fling (velocity handed to whoever animates on), a
-  long-press and a double-tap are each rebuilt by hand or missing (ScrollView
-  has no momentum, ContextMenu has no touch path, nothing dismisses on a
-  swipe), and none is bindable through the input map. One velocity tracker
-  under every recognizer, three recognizers in the arena with the
-  wait-for-failure relation double-tap needs, and the same gestures as pulsing
-  button sources on the pointer feed.
 - **[Per-node event-interest mask for pointer dispatch](backlog/pointer-event-interest-mask.md)** [2026-08-01]
   Rust marshals the full root-to-leaf hit path into JS for every pointer event
   because only the JS handler registry knows which nodes listen; a per-element
@@ -1900,6 +1891,15 @@ Finished, kept for the reasoning.
   --fps); the 0x0 windowSize() was the general mount-time first-read trap, not
   a playback drop. Closed by drawing but not writing the mount frame and a
   pinned playback init bundle; --step stays an idea.
+- **[Discrete pointer gestures - swipe, fling velocity, long-press, double-tap](done/pointer-discrete-gestures.md)** [2026-09-22]
+  The recognizer family stops at press, pan and transform; a swipe (direction
+  decided at the lift), a fling (velocity handed to whoever animates on), a
+  long-press and a double-tap are each rebuilt by hand or missing (ScrollView
+  has no momentum, ContextMenu has no touch path, nothing dismisses on a
+  swipe), and none is bindable through the input map. One velocity tracker
+  under every recognizer, three recognizers in the arena with the
+  wait-for-failure relation double-tap needs, and the same gestures as pulsing
+  button sources on the pointer feed.
 - **[Pointer gestures ignore every button but the primary](done/pointer-gesture-buttons.md)** [2026-09-08]
   createPointerFeed returns early on any non-primary button, so Three's
   right-drag pan and middle-drag dolly cannot be bound; a button qualifier

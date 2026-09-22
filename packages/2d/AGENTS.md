@@ -249,10 +249,13 @@ an impulse; notches compound on the pending target, and `damping` scales
 the settle time - 0 applies a notch at once - the 3d controls' knob) and
 `roll` (axis,
 turns); a pan gesture's begin stops any glide (a finger landing on a
-gliding view holds it) and its end flings with the drag's velocity. The
+gliding view holds it) and its end flings with the release velocity the
+gesture measured (viewport heights per second from the pointer feed;
+the control has no estimator of its own). The
 verbs, each pushing the pose at once: `panBy(dx, dy)` screen pixels,
 `zoomAt(sx, sy, factor, { glide? })`, `rollBy(angle)`, `set(pose)`,
-`glideTo`, `fit`, `follow`/`unfollow`, `interrupt`, `release`. An input
+`glideTo`, `fit`, `follow`/`unfollow`, `interrupt`, `release([vx, vy])`
+(screen pixels per second of content travel). An input
 map (core AGENTS.md) drives the axes by name and the APP binds devices
 to it: the view's pointer feed (`createPointerFeed()`, handed to
 `<SpriteLayer pointer>` / `<View2d pointer>`, or bridged with
@@ -277,8 +280,8 @@ input.drive(cam.axes)
 Call `cam.update(dt)` from a frame loop (it advances glides, follow,
 inertia and the axis rates, pushes one setCamera per driven view when
 the pose changed and reports that), gated on the reactive
-`cam.active()` (true while a glide, fling, fit, follow or pan gesture
-needs frames, or a rate drives; false at rest), read `cam.camera()` for
+`cam.active()` (true while a glide, fling, fit or follow needs frames,
+or a rate drives; false at rest), read `cam.camera()` for
 projectCamera and `cam.pose()` for the control's own four values (the
 shape `set()` takes, the 3d controls' `pose()`). The camera has NO tap of its own: taps are the
 dispatch's (`onTap` on the root with `e.sprite` null is "tap on empty
