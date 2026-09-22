@@ -47,12 +47,12 @@
 // control, not two mounts. Only the initial pose is copied at creation;
 // later pose changes go through set() and the verbs.
 
-import { createMemo, createSignal, untrack } from "@solidjs/signals"
+import { untrack } from "@solidjs/signals"
 import { createAxes } from "@solidrt/core/input"
 import type { Axes, Vec2 } from "@solidrt/core/input"
 import type { CameraUpdate } from "./camera.ts"
 import type { Vec3 } from "./math.ts"
-import { easeStep, GLIDE_EASE, GLIDE_EPSILON } from "./motion.ts"
+import { checkShake, createActivity, createLanes, easeStep, GLIDE_EASE, GLIDE_EPSILON } from "@solidrt/core/camera-control"
 
 // One element height of drag sweeps this many turns of look (half a turn:
 // a drag across the screen turns the walker around).
@@ -145,6 +145,13 @@ export type FirstPersonCamera = {
    * projection when walking, the view direction when flying) and up
    * (world up, fly mode only), through `clampPosition`, and push. */
   moveBy(right: number, forward: number, up?: number): void
+  /** A shake on the lane (okf/design/camera-controls.md): a view KICK,
+   * the first-person convention - `strength` is the peak rotation in
+   * TURNS (0.01 is 3.6 degrees) of yaw (x) and pitch (y), the look
+   * axis's unit, `duration` seconds, an optional frequency and direction
+   * ([1, 0] yaws only). Shakes sum and decay; the pose is untouched - a
+   * hit, a recoil, a footstep. */
+  shake(strength: number, duration: number, opts?: { frequency?: number; direction?: Vec2 }): void
 }
 
 // The goal pose a glide eases toward (see the header).
@@ -194,22 +201,25 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
   // that starts or drops it refreshes (ownedWrite: entries run from
   // component bodies and handlers alike).
   let motion: Motion | null = null
-  let [motionActive, setMotionActive] = createSignal(false, { ownedWrite: true })
-  let notify = () => {
-    let now = motion !== null
-    if (now !== untrack(motionActive)) setMotionActive(now)
-  }
+  let lanes = createLanes()
+  // The frame-loop gate (core's createActivity), built once the axes exist.
+  let activity!: ReturnType<typeof createActivity>
+  let notify = () => activity.notify()
   let interrupt = () => {
     motion = null
   }
 
-  let forward = (): Vec3 => {
-    let cp = Math.cos(pitch)
-    return [-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp]
+  let forwardOf = (y: number, p: number): Vec3 => {
+    let cp = Math.cos(p)
+    return [-Math.sin(y) * cp, Math.sin(p), -Math.cos(y) * cp]
   }
+  let forward = (): Vec3 => forwardOf(yaw, pitch)
+  // The shake lane kicks the view: the pushed look direction turns by the
+  // lane's yaw and pitch (turns), the pose and the eye stay.
   let push = () => {
     changed = true
-    let f = forward()
+    let [ky, kp] = lanes.total(undefined)
+    let f = ky === 0 && kp === 0 ? forward() : forwardOf(yaw - ky * 2 * Math.PI, clampedPitch(pitch - kp * 2 * Math.PI))
     camera.setCamera({ position: copy(position), target: [position[0] + f[0], position[1] + f[1], position[2] + f[2]] })
   }
   let look = (dYaw: number, dPitch: number) => {
@@ -274,7 +284,8 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
       },
     },
   )
-  let active = createMemo(() => motionActive() || axes.active())
+  activity = createActivity(() => motion !== null || lanes.active(), () => axes.active())
+  let active = activity.active
 
   clampPitch()
   push()
@@ -330,6 +341,10 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
         glideStep(dt)
         moved = true
       }
+      if (lanes.active() && dt > 0) {
+        lanes.step(dt)
+        moved = true
+      }
       if (moved) push()
       notify()
       let result = changed
@@ -351,6 +366,11 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
       interrupt()
       step(right, ahead, up)
       push()
+      notify()
+    },
+    shake(strength, duration, opts) {
+      checkShake("createFirstPersonCamera", strength, duration, opts)
+      lanes.shake(strength, duration, opts)
       notify()
     },
   }

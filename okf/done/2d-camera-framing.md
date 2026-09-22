@@ -65,3 +65,26 @@ Godot's Camera2D for the minimum) that is missing:
    that never enters `pose()` and never shows the outside of the world;
    `examples/camera.tsx` follows a moving sprite with the zones drawn.
    `packages/2d/AGENTS.md` and the conventions note updated.
+
+## Findings
+
+- Landed 2026-09-22 in full: the `follow` option group over the shared
+  framing block, both lanes, damped bounds (`world.damping`), the
+  rotation glide (`glideTo(x, y, zoom?, rotation?)`), the checks and
+  the examples. `deadZone`/`followSpeed` are gone (no shim).
+- Lanes sit between the pose and the bounds: `anchorPose` places the
+  camera point, so a zoom or glide subtracts the offset's delta to land
+  the pose, and the contain clamp moves the pose by the offset point's
+  overflow. A shake is different: the first cut contained pose plus
+  shake by moving the pose, and live at the fit zoom (the bounds pin
+  the camera) the pose wobbled while the picture stood still. Now the
+  shake is clipped at push and never touches the pose (pinned in the
+  check: at the edge the camera moves inward only, the pose stays).
+- The framing's settle rule: settled means the soft remainder AFTER this
+  frame's correction is under epsilon, not the remainder before it;
+  the first cut judged the latter and a snapping follow (damping 0)
+  never rested.
+- The `notify` signal-read trap: found here by the damped-bound case,
+  which is the first check that never flushes between the release and
+  the settle. Fixed in all three controls; recorded in the design doc.
+

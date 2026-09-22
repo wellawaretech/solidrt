@@ -3,10 +3,12 @@
 // of an orbit drag, so the pop waits for the release), a drag on the
 // crate slides it over the floor and never orbits - its down claims the
 // press, so the orbit control's feed, listening at the root, sees none
-// of it - while a drag anywhere else orbits and a wheel zooms; the ring
-// claims the wheel to spin itself; a tap on empty space un-pops
-// everything (the scene's own onTap with `mesh` null, the deselect
-// idiom). The Group hears the cone's downs through bubbling (the crate's
+// of it - while a drag anywhere else orbits and a wheel zooms toward
+// what is under the cursor (the component's default `anchor="pick"`: the
+// scene under the pointer, else the plane at the target's depth; a
+// double tap glides the pivot to the mesh under it); the ring claims the
+// wheel to spin itself; a tap on empty space un-pops everything (the
+// scene's own onTap with `mesh` null, the deselect idiom). The Group hears the cone's downs through bubbling (the crate's
 // claim stops the walk at the crate). The scene is STATIC - no onFrame - so it renders only when an event changes
 // something, and the orbit runs frames only while it glides; hit testing
 // runs over the scene's BVH, so a pointer move costs O(log meshes).

@@ -67,7 +67,7 @@ function App() {
     input.bind(camera2dBindings({ pointer, gamepad: gamepad.next() }))
     return (
       <View2d width={pane().width} height={pane().height} clearColor={i === 0 ? [0.05, 0.05, 0.09, 1] : [0.09, 0.05, 0.05, 1]} label={`pane-${i}`} pointer={pointer}>
-        <Camera2d input={input} world={WORLD} zoom={PANE_ZOOM} maxZoom={MAX_ZOOM} deadZone={DEAD_ZONE} ref={c => (cams[i] = c)} />
+        <Camera2d input={input} world={WORLD} zoom={PANE_ZOOM} maxZoom={MAX_ZOOM} follow={{ deadZone: DEAD_ZONE }} ref={c => (cams[i] = c)} />
       </View2d>
     )
   }

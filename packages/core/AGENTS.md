@@ -474,14 +474,28 @@ that reads exactly like Solid fallout.
   effects under it and the feed's recognizer registers its cleanup there. The vocabulary the
   controls share, one kind and unit per word: `pan` vec2 (view heights),
   `zoom` axis (octaves, positive in), `rotate` vec2 (orbit turns), `roll`
-  axis (turns about the view axis), `look` vec2 (turns), `move` vec2
-  ([right, forward], forward = -y), `rise` axis (up). The runtime-free
+  axis (turns about the view axis), `focus` axis (a nudge at a focal: a
+  double tap's point), `look` vec2 (turns), `move` vec2 ([right,
+  forward], forward = -y), `rise` axis (up). The runtime-free
   half (`createInputMap`, `createAxes`, `keyboard`, the processors) is
   importable as `@solidrt/core/input` for headless checks;
   checks/input-map-check.ts runs it on the bare flux binary, and
   checks/input-gamepad-check.ts drives the gamepad device and the join
   order over a signal of pad snapshots (input-gamepad-device.ts is
-  runtime-free; input-gamepad.ts hands it gamepads()).
+  runtime-free; input-gamepad.ts hands it gamepads()). The pointer
+  feed's discrete pulses (`doubleTap`, `longPress`) bound to an AXIS
+  action nudge 1 with the gesture's focal (where the tap landed) and
+  contribute NO rate (a one-task press is not a rate to integrate),
+  which is how the orbit camera's `focus` learns its point and the 2d
+  camera's double tap zooms one octave. The camera
+  controls' shared math - the ease, the framing of a followed point
+  (dead zone, hard limits, per-axis damping, lookahead) and the lanes
+  (offset, shakes), the activity gate every control's `active()` runs
+  on, and the shot blender (`createShotBlend`: several cameras, a
+  priority, a timed blend, over the packages' `createShots`) - is
+  `@solidrt/core/camera-control`, pure, pinned by
+  checks/camera-control-check.ts; okf/design/camera-controls.md is the
+  pipeline the 2d and 3d controls run over it.
 
 - Reactivity is SolidJS 2.0 (`@solidjs/signals`), NOT Solid 1.x. `createSignal`
   is as you expect, but `createEffect` takes the 2.0 two-function shape: a

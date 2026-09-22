@@ -54,6 +54,14 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   frames at the boundary for a metronomic cadence. Tier 3 of
   okf/design/frame-timing.md; alloy measures and enforces, lattice decides
   when.
+- **[Camera and controls extensions](plans/camera-and-controls-extensions.md)** [2026-09-17]
+  The orbit control's gap against the reference set, shaped under
+  okf/design/camera-controls.md - a push through a model (the fly demo's ask,
+  which a bounded dolly can never do), zoom-to-cursor and a dynamic pivot
+  built into the component, an orbit point off the view axis, a follow source
+  with Cinemachine's framing, an occlusion constraint, a shake lane, the map
+  preset and double-tap to focus; with the survey of Three, camera-controls,
+  Babylon, Cinemachine and Godot verified against current sources.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
@@ -118,12 +126,6 @@ Shaped, not started.
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
-- **[2d camera framing and lanes](backlog/2d-camera-framing.md)** [2026-09-22]
-  createCamera2d's follow is a dead zone plus one damping rate, so a fast
-  target can leave the screen and a platformer cannot follow lazily on one
-  axis; bring it to the design's pipeline - soft zone, hard limits, lookahead,
-  per-axis damping, the offset and shake lanes, damped bounds, rotation
-  smoothing - with the framing math shared with the 3d orbit control.
 - **[2D layer views, the additive half - tile-layer views, the layers bitmask, into tiling, per-view tint](backlog/2d-layer-views-additive.md)** [2026-09-07]
   A view of a sprite or record layer exists (2d-layer-views), but a tile map
   cannot be shown twice, a minimap cannot admit marker sprites only, several
@@ -294,14 +296,6 @@ Shaped, not started.
   margin must fit the shorter slot) never passes, the hold stays at 3 through
   idle, and every later animation starts at 20 fps even when its frames would
   fit one refresh. Reload resets it.
-- **[Camera and controls extensions](backlog/camera-and-controls-extensions.md)** [2026-09-17]
-  The orbit control's gap against the reference set, shaped under
-  okf/design/camera-controls.md - a push through a model (the fly demo's ask,
-  which a bounded dolly can never do), zoom-to-cursor and a dynamic pivot
-  built into the component, an orbit point off the view axis, a follow source
-  with Cinemachine's framing, an occlusion constraint, a shake lane, the map
-  preset and double-tap to focus; with the survey of Three, camera-controls,
-  Babylon, Cinemachine and Godot verified against current sources.
 - **[captureSnapshot fails inside a clean repaint boundary](backlog/capture-inside-clean-boundary.md)** [2026-08-27]
   A capture (captureSnapshot, /snapshot) of a node under a repaintBoundary
   view whose recording is being reused fails with "capture node is not in the
@@ -960,6 +954,12 @@ Finished, kept for the reasoning.
   (fit-to-world min zoom, pan clamping, wheel zoom anchored under the cursor
   with an eased glide, pinch anchoring); createCamera2d in @solidrt/2d ships
   it once, with follow, inertia and rotation, in the 3d orbit camera's shape.
+- **[2d camera framing and lanes](done/2d-camera-framing.md)** [2026-09-22]
+  createCamera2d's follow is a dead zone plus one damping rate, so a fast
+  target can leave the screen and a platformer cannot follow lazily on one
+  axis; bring it to the design's pipeline - soft zone, hard limits, lookahead,
+  per-axis damping, the offset and shake lanes, damped bounds, rotation
+  smoothing - with the framing math shared with the 3d orbit control.
 - **[The sprite layer is the root of its pointer walk](done/2d-layer-background-events.md)** [2026-09-06]
   SpriteLayer's dispatch delivered only to sprites, so any app combining
   per-sprite interaction with pan/zoom on empty space re-implemented pick,

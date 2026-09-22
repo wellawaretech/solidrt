@@ -23,6 +23,5 @@ is not an idea, it goes in [tiny.md](tiny.md).
 - 3d: a segment narrowphase for picking `lines` geometry (Three's Line.raycast threshold); lines pick by box today.
 - 3d: wide lines as quad-expanded geometry (Three's Line2); GL ES lines are one pixel.
 - Depth pre-pass switch on a 3d target for heavy-fragment scenes (from [[amber-quill]] item 1): a second scene draw with a depth-only override before the color pass, so every layer shades once. Godot's Forward+ has it on by default and off for tile-based mobile GPUs, which already resolve overdraw. Waits for a measured victim the front-to-back opaque sort does not fix.
-- Shots and blends over the camera controls (Cinemachine's virtual cameras: several cameras, a priority, a blend between the active two). Needs a producer mode on every control (a final camera without a push) and a small blender owning the one `setCamera`. Shaped after the pipeline in okf/design/camera-controls.md lands.
 - A trackball/arcball 3d control (no fixed up vector, quaternion pose; Three's TrackballControls/ArcballControls) for CAD-style inspection across the poles. Not orbit-pipeline work; its own control if anything asks.
 - Object manipulation controls (Three's TransformControls gizmo and DragControls) over `scene.pick` and `unproject`; not a camera, its own item.

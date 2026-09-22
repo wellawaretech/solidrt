@@ -49,7 +49,7 @@ needs them.
   (Leaflet, MapLibre, tldraw) for the pan-zoom half of 2d.
 
 The survey of what each ships, verified against current sources, is in
-[camera-and-controls-extensions](../backlog/camera-and-controls-extensions.md).
+[camera-and-controls-extensions](../plans/camera-and-controls-extensions.md).
 
 ## Vocabulary
 
@@ -66,16 +66,19 @@ The survey of what each ships, verified against current sources, is in
   `zoomBy`), or the **follow**, a world point the control chases.
 - **Framing.** How the follow chases its point, in viewport fractions
   around the pivot: the **dead zone** (the point moves freely, the camera
-  does not respond), the **soft zone** around it (the camera eases the
-  point back toward the dead zone, damped per axis), the **hard limits**
-  around that (the point is clamped inside at once, whatever the
-  damping), and **lookahead** (the point is projected ahead along its
-  velocity, smoothed).
+  does not respond), the **hard limits** (the point is clamped inside at
+  once, whatever the damping), the **soft zone** between the two (the
+  camera eases the point back toward the dead edge, damped per axis) and
+  **lookahead** (the point is projected ahead along its velocity,
+  smoothed). Two sizes, `deadZone` and `hardLimits`, Cinemachine 3's
+  names; the soft zone is the band they leave.
 - **Lanes.** Additive offsets applied on top of the pose at push time,
   never written into it: the **offset** lane (a persistent screen-space
   offset: Babylon's `targetScreenOffset`, camera-controls' focal offset,
   Godot's `offset`, Phaser's `followOffset`) and the **shake** lane (a
-  transient decaying noise: Cinemachine Impulse, Phaser `shake`).
+  transient decaying noise: Cinemachine Impulse, Phaser `shake`). Both in
+  view HEIGHTS on both axes, the pointer feed's unit, so a shake is
+  round and an offset means the same on a phone and a wide window.
 - **Constraints.** Applied after the lanes, every write: the range clamps
   and `clampPose` (3d), the contain bounds (2d), and **occlusion** (3d:
   pull the eye in when something stands between it and the target).
@@ -103,34 +106,33 @@ drag never waits for a frame.
    Non-follow sources skip this stage.
 3. **Lanes.** The offset and shake lanes advance (a shake decays) and are
    summed. They read the pose; they do not write it.
-4. **Constraints.** Pose plus lanes are clamped: the range clamps and
-   `clampPose`, the contain bounds, occlusion. A constraint that has to
-   move the camera moves the POSE (so the next frame starts legal), and
-   the lanes stay as they are.
+4. **Constraints.** The range clamps and `clampPose`, the contain
+   bounds, occlusion. A bound contains pose plus the PERSISTENT offset
+   and moves the pose (so the next frame starts legal); a transient
+   shake it clips at push, without touching the pose. Occlusion
+   displaces the FINAL eye and leaves the pose's distance alone (see
+   the decisions).
 5. **Push.** One `setCamera` per driven target, only when something
    changed; `update` reports the change so per-frame dependents can
    follow.
 
-What each control implements today, and what the pipeline adds (the
-open items link the backlog files):
+What each control implements (the shared math is
+`@solidrt/core/camera-control`: the ease, the framing block, the lanes;
+`packages/core/checks/camera-control-check.ts` pins it):
 
 | Stage | 2d (`createCamera2d`) | Orbit | First-person |
 |---|---|---|---|
-| Source: input | pan, zoom (anchored), roll; inertia | rotate, zoom (dolly, anchor hook), pan; damping | look, move, rise, boost |
-| Source: follow | `follow(x, y)`, one damping rate | none | none |
-| Framing | dead zone only | none | n/a (the walker is the source) |
-| Lanes | none | none | none |
-| Constraints | contain bounds, zoom range | ranges, `clampPose` | pitch clamps, `clampPosition` |
-| Push | yes, change-gated | yes, change-gated | yes, change-gated |
+| Source: input | pan, zoom (anchored), roll; inertia | rotate, zoom (dolly; `push` past the floor; anchored), pan (screen or ground plane), focus; damping | look, move, rise, boost |
+| Source: follow | `follow(x, y)` | `follow(point)` | none |
+| Framing | dead zone, hard limits, damping per axis, lookahead | the same, in view space (right, up, forward) | n/a (the walker is the source) |
+| Lanes | `offset`, `shake` | `offset`, `shake`, `setOrbitPoint`'s share | `shake` (a view kick in turns) |
+| Constraints | zoom range, contain bounds (damped for a motion when `world.damping`) | ranges, `clampPose`, `occluder` (the component fills it from a raycast) | pitch clamps, `clampPosition` |
+| Push | `camera()` is the final camera | `camera()` is the final camera | pose plus the shake |
 
-Adds: 2d gets the soft zone, hard limits, lookahead and per-axis damping
-in framing, both lanes, and damped bounds
-([2d-camera-framing](../backlog/2d-camera-framing.md)). Orbit gets a
-follow source with the same framing, both lanes, the occlusion
-constraint, the push, and the built-in anchor and pivot
-([camera-and-controls-extensions](../backlog/camera-and-controls-extensions.md)).
-First-person gets the shake lane and stays otherwise as it is; a
-reference frame is its own item
+Landed 2026-09-22 through
+[camera-and-controls-extensions](../plans/camera-and-controls-extensions.md)
+(orbit) and [2d-camera-framing](../done/2d-camera-framing.md) (2d); the
+first-person reference frame is its own item
 ([3d-first-person-reference-frame](../backlog/3d-first-person-reference-frame.md)).
 
 ## Decisions
@@ -183,9 +185,14 @@ defaults.
 app set or the follow reached; `set()` and `glideTo` are unaffected by a
 running shake; a lane cannot accumulate into the pose through the
 constraints. Cinemachine applies noise after the body and aim stages and
-before the finalize extensions, which is exactly this order: the shake
-still runs into the confiner, so it cannot show the outside of the
-world. The offset lane doubles as the orbit point off the view axis:
+before the finalize extensions, so the shake still runs into the
+confiner and cannot show the outside of the world; ours does the same by
+CLIPPING the shaken camera at push, not by moving the pose (the first
+cut contained pose plus shake by moving the pose, and live at the fit
+zoom, where the bounds pin the camera, that made the pose wobble while
+the picture stood still - the exact inversion). The persistent offset is
+contained by moving the pose, since a follow or a pivot means it to
+hold. The offset lane doubles as the orbit point off the view axis:
 `setOrbitPoint(point)` puts the target at the point and sets the offset
 so the picture does not move (camera-controls' `setOrbitPoint` plus
 focal offset). Rejected: a shake that writes the pose and restores it
@@ -200,18 +207,23 @@ a game-side concept over one primitive; the 2d package or the app can
 add distance falloff when a game asks, and the primitive stays the same.
 
 **Constraints run last, every write, and occlusion is instant in, damped
-out.** An obstacle between target and eye pulls the eye in at once (a
-wall through the camera is the one thing a player always notices) and
-the return when the obstacle clears is damped (Cinemachine's deoccluder
-damping). Rejected: Godot's SpringArm3D rule, instant both ways, whose
-snap back is the second thing a player notices. The pure control still
-knows no level: it takes a hook, `occluder(target, eye) => distance |
-null`, and the `<OrbitCamera>` component fills it from the scene
-(`scene.raycast` from the target toward the eye with a radius), the same
-split as the anchor hooks. This replaces the roadmap's "collision stays
-outside every control": the control's hook is outside, the component's
-wiring is inside, and an app with its own level format supplies the
-hook itself.
+out, as a displacement of the final eye.** An obstacle between target
+and eye pulls the eye in at once (a wall through the camera is the one
+thing a player always notices) and the return when the obstacle clears
+is damped (Cinemachine's deoccluder damping). Rejected: Godot's
+SpringArm3D rule, instant both ways, whose snap back is the second thing
+a player notices. The pose's distance is untouched (Cinemachine keeps
+the deoccluder's displacement as its own state): a zoom out from behind
+a wall still goes where the pose says once the wall is gone, and a
+damped return has a fixed goal to ease to. Rejected: shortening the
+pose's distance, which a zoom would then fight. The pure control still
+knows no level: it takes a hook, `occluder(target, eye) => free distance
+| null`, and the `<OrbitCamera>` component fills it from the scene
+(`raycast` from the target toward the eye, `radius`, `layers` and
+`meshes` to mask the followed character out), the same split as the
+anchor hooks. This replaces the roadmap's "collision stays outside every
+control": the control's hook is outside, the component's wiring is
+inside, and an app with its own level format supplies the hook itself.
 
 **Dolly is bounded, the push is the overflow.** The orbit `zoom` axis
 stays a dolly (multiplicative, in octaves, ending at `minDistance`), and
@@ -225,30 +237,82 @@ that ends at the subject is the right default for a viewer), and the
 fly demo's fixed world step per octave (speed does not scale with the
 subject, so it is either a crawl outside the model or a leap inside).
 
-**Zoom to cursor and the dynamic pivot are built in where the projection
-is.** `<OrbitCamera>` in a `<Scene>` builds the anchor and pivot mapping
-itself (`scene.pick` first, the target-depth plane through
-`scene.unproject` as the fallback), one option, `anchor: "pick" |
-"plane" | false`; `zoomAnchor`/`rotateAnchor` stay as overrides. Three's
+**Zoom to cursor is built in where the projection is; the pivot
+re-seat is explicit.** `<OrbitCamera>` builds the anchor mapping itself
+from its owner, the scene or a view (`pick` first, the target-depth
+plane through `unproject` as the fallback), one option, `anchor: "pick"
+| "plane" | false`, on by default (the touch-first viewer's default;
+Three and Babylon default theirs off, but a viewer that zooms at the
+target under a finger aimed elsewhere is the complaint every model
+viewer gets). The pivot re-seat on every press (`repivot`, Blender's
+auto-depth) is OFF by default: it changes `distance` on each tap, which
+a viewer reading the pose does not expect, and a double tap (`focus`)
+re-seats explicitly, which is what Three's Arcball and Sketchfab do.
+`zoomAnchor`/`rotateAnchor` stay as overrides. Three's
 `zoomToCursor` applies to the wheel and the pinch (verified in source);
-Babylon's `zoomToMouseLocation` is wheel-only. Ours applies to both.
-Known limit: a `ViewHandle` has `pick` but no `unproject`, `project` or
-`screenRay`, so inside a `<View3d>` only the pick mode works until the
-view gains them.
+Babylon's `zoomToMouseLocation` is wheel-only. Ours applies to both,
+and to `focus`. A `ViewHandle` gained `project`, `unproject`,
+`screenRay` and `raycast` for this, so a view is a full owner.
+
+**A discrete gesture carries its focal.** A double tap has to say where
+it landed for a focus to mean anything, and the input map's button
+channel carries no position. Rejected: the component listening to the
+scene's taps itself (device handling in a component, against the
+architecture) and a new recognizer. Instead the pointer feed's pulses
+(`doubleTap`, `longPress`) bound to an AXIS action nudge 1 with the
+gesture's focal, the same channel a wheel notch uses, and contribute no
+RATE (a pulse's one-task press integrated as a rate zoomed the 2d
+camera by 2^(1/60) and interrupted the octave glide, live); the orbit
+control declares `focus: "axis"` and `orbitBindings` binds the double
+tap to it, `camera2dBindings` binds it to `zoom` (one octave in at the
+point, the map convention). A pad button on the same action focuses
+the view centre.
 
 **Easing stays exponential, zoom in log space, glides land exactly.**
 Unchanged from the 2d conventions and `motion.ts`; the shared module
 makes it one copy. A per-axis damping value is an e-folding rate
 multiplier like today's `damping`, never a lerp factor per frame.
 
-**Shots and blends live above the controls.** Cinemachine's headline
-feature (several virtual cameras, a priority, a blend between the active
-two) is the architecture of a game camera and belongs on the roadmap,
-but it needs the controls to produce a final camera without pushing it,
-so a blender can own the one `setCamera`. That is a producer mode on
-each control (`camera()` already exists on 2d; the 3d controls push
-only) and a small blender over `CameraUpdate`. Not designed yet; it is
-in `ideas.md` and is shaped after the pipeline above exists.
+**Shots and blends live above the controls, and need no producer
+mode.** Cinemachine's headline feature (several virtual cameras, a
+priority, a blend between the active two) is the architecture of a game
+camera. A control already drives "anything with setCamera", so a shot
+is a RECORDING target handed to a control, and the blender
+(`createShotBlend` in core; `createShots` in each package with its mix)
+owns the one push to the scene: the live shot's pushes go straight
+through at rest, a blend runs on `update(dt)` and eases in and out over
+a fixed time from the output of the moment it started (a quick
+back-and-forth never jumps), the live shot is the enabled one with the
+highest priority. Rejected: a producer mode on every control (a second
+API on each, for the blender's benefit alone) and Cinemachine's blend
+curves per pair (a fixed smoothstep and a time per switch cover a game;
+curves are additive). The 2d mix blends zoom in log space; the 3d mix
+cuts a perspective-to-ortho switch at the midpoint since no
+in-between projection exists.
+
+**A followed heading recentres the azimuth after the input rests.**
+`follow(point, heading)` takes the followed thing's yaw in the
+first-person convention, so a walker's pose feeds a chase camera with
+no conversion, and the azimuth eases onto it by the shortest turn once
+the rotate input has rested for `wait` (Cinemachine's Recentering: a
+drag looks around, the camera settles back behind the walker).
+Rejected: binding the orbit's frame to the heading outright
+(Cinemachine's LockToTarget modes), which makes a drag fight the
+walker's every turn; the recentre with a wait is the mode every
+third-person game ships.
+
+**Shots have a component form that redirects the context.** `<Shot>`
+provides the enclosing context with the shot's recording target as the
+viewport (2d: the view behind a Proxy with its camera redirected, so
+size and handlers stay live), so the camera components inside it need
+no shot awareness at all. Rejected: a `shot` prop on each camera
+component (every control component would carry it).
+
+**The first-person shake is a view kick in turns.** A positional shake
+on a walker reads as the world jolting; first-person games kick the
+view (recoil, a hit). Yaw and pitch offsets in turns, the look axis's
+unit, so the control needs no fov and every lane stays device-free.
+Rejected: the positional shake in world units of the first cut.
 
 ## Input conventions (unchanged)
 
@@ -263,18 +327,22 @@ conventions note for the units.
 
 ## Known limits and open items
 
-- Orbit: push, built-in anchor and pivot, orbit point off the view axis,
-  follow with framing, occlusion, shake, the map preset and pan plane,
-  double-tap to focus:
-  [camera-and-controls-extensions](../backlog/camera-and-controls-extensions.md).
-- 2d: soft zone, hard limits, lookahead, per-axis damping, both lanes,
-  damped bounds, rotation smoothing:
-  [2d-camera-framing](../backlog/2d-camera-framing.md).
-- `ViewHandle` lacks `unproject`/`project`/`screenRay`, so the built-in
-  anchor inside a `<View3d>` is pick-only (noted in the 3d item).
-- Double-tap to focus wants a tap recognizer in core (`ideas.md`: a
-  `createTap` beside `createPan`); until then the component derives it.
-- Shots and blends: `ideas.md`, shaped after the pipeline lands.
+- The fly demo (`~/solidrt/demoes/fly`) still carries its hand-rolled
+  push and turn; it moves to `push` and `setOrbitPoint` with the user
+  ([camera-and-controls-extensions](../plans/camera-and-controls-extensions.md),
+  item 9).
+- A `<Shot>`'s picks and raycasts (`anchor`, `occlusion`) resolve
+  through the owner's actual camera, which is the shot's own only while
+  it is live and at rest; a non-live shot's anchored zoom aims through
+  the wrong camera. A per-shot projection would need the scene to
+  project through an arbitrary camera. Additive.
+- The heading recentre turns the azimuth only; a followed thing that
+  pitches (a plane) would want the elevation too. Additive.
 - Trackball/arcball (a control without a fixed up vector) and object
   manipulation (Three's TransformControls/DragControls) are not camera
   pipeline work; both are `ideas.md` lines.
+- A signal-read trap every control met: `notify` must compare against a
+  plain flag, not the signal's own read, because between flushes the
+  read reports the value before the queued writes and a `false` is then
+  never written (found by the 2d check's damped-bound case; the orbit
+  checks passed only because they flush mid-sequence).

@@ -9,6 +9,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./camera": "./src/camera.ts",
+    "./camera-control": "./src/camera-control.ts",
     "./color": "./src/color.ts",
     "./data": "./src/data.ts",
     "./gpu": "./src/gpu.ts",

@@ -182,5 +182,33 @@ function make(options: FirstPersonCameraOptions = {}) {
   if (cam.update(DT) || cam.pose().yaw !== yaw) fail("set() of a pose field drops a glide")
 }
 
+// ---- The shake lane: a view kick in turns, the pose and the eye untouched ----
+{
+  let { cam, last } = make({ position: [0, 1.6, 0] })
+  cam.shake(0.02, 0.5, { direction: [1, 0] })
+  flush()
+  if (!cam.active()) fail("a shake wakes active()")
+  let kicked = false
+  let ticks = 0
+  for (; ticks < 100; ticks++) {
+    if (!cam.update(DT)) break
+    let p = cam.pose()
+    if (p.yaw !== 0 || p.pitch !== 0 || !nearV(p.position, [0, 1.6, 0])) fail("a shake never enters the pose")
+    let t = last()!.target as Vec3
+    if (!nearV(last()!.position as Vec3, [0, 1.6, 0])) fail("a shake never moves the eye")
+    // The pushed look direction turns about y only, by at most the
+    // strength (0.02 turns).
+    let dx = t[0] - 0
+    if (Math.abs(dx) > Math.sin(0.02 * 2 * Math.PI) + 1e-9) fail(`the kick stays within its strength, dx ${dx}`)
+    if (Math.abs(t[1] - 1.6) > 1e-9) fail("a yaw-only kick keeps the pitch")
+    if (dx !== 0) kicked = true
+  }
+  if (!kicked) fail("a shake kicks the pushed look direction")
+  if (ticks >= 100) fail("a shake ends")
+  if (!nearV(last()!.target as Vec3, [0, 1.6, -1])) fail("after the shake the look is the pose's again")
+  flush()
+  if (cam.active()) fail("an ended shake rests")
+}
+
 console.log(failures === 0 ? "FIRST-PERSON-OK" : `FIRST-PERSON-FAIL ${failures}`)
 if (failures > 0) throw new Error(`${failures} first-person check(s) failed`)

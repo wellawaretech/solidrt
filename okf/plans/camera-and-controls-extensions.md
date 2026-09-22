@@ -9,7 +9,7 @@ created: 2026-09-17
 The pipeline, the vocabulary and the decisions are in
 [camera-controls](../design/camera-controls.md); this item is the 3d
 orbit half of the work it lists. The 2d half is
-[2d-camera-framing](2d-camera-framing.md); the first-person reference
+[2d-camera-framing](../done/2d-camera-framing.md); the first-person reference
 frame is [3d-first-person-reference-frame](3d-first-person-reference-frame.md).
 
 ## Symptom
@@ -174,3 +174,40 @@ control; the shared framing and lane math is written once in core (the
 Not in this item: a trackball/arcball control and object manipulation
 controls (`ideas.md` lines); the first-person reference frame (its own
 item); shots and blends (`ideas.md`, shaped after the pipeline lands).
+
+## Findings
+
+- Items 1 to 8 landed 2026-09-22 with the shared core module
+  (`packages/core/src/camera-control.ts`), the view's projection
+  methods and `mapBindings`; item 9's fly demo migration is the open
+  step (the demo lives in `~/solidrt/demoes`, done with the user).
+- The push along the anchor's ray keeps the anchor's pixel exactly:
+  moving the eye along the eye-to-anchor line leaves the anchor on the
+  same screen ray, so an anchored pinch through a model never drifts.
+- setOrbitPoint's math: with `out` the unit vector from target to eye
+  and E the final eye, the new distance is `dot(E - P, out)` and the
+  lane shift is the remainder `E - P - distance * out`, which lies in
+  the view plane; expressed in right/up components over the view height
+  at the new depth it is the offset lane, so position and orientation
+  are exactly unchanged (pinned in orbit-check).
+- The `notify` signal-read trap (design doc, known limits): the orbit
+  checks passed by luck of a mid-sequence flush.
+- Widened the same day on the user's "tackle the wider issues": the
+  activity gate moved to core (`createActivity`, the notify trap fixed
+  once), `repivot` off by default with `focus` as the explicit re-seat,
+  `occlusion.minDistance` (the followed mesh no longer blocks), a
+  rotational first-person shake in turns, a 2d double-tap zoom binding,
+  and shots and blends (`createShotBlend` in core, `createShots` in 2d
+  and 3d) without a producer mode: a shot is a recording target.
+- A pulse on an axis action must not read as a rate: bound as a plain
+  button it pressed for one task, `update` integrated a 2^(1/60) zoom
+  and its `interrupt` killed the double tap's octave glide (the 3d
+  `focus` never reads its rate, which hid it). Fixed in the map's rate
+  combination; a 2d `glideTo` also inherits a pending zoom glide's
+  target now, so a tap-to-glide app keeps a double tap's zoom.
+- The two additive items landed the same evening: `<Shots>`/`<Shot>` in
+  both packages (probes/shots-2d-probe.tsx, probes/shots-3d-probe.tsx
+  verified live: 3d distance 3 to 10 and back, 2d zoom 3 to 0.5 through
+  the log midpoint) and `follow(point, heading)` with the recentre
+  (`follow.heading.wait`/`damping`, pinned in orbit-check).
+

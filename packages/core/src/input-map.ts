@@ -280,6 +280,10 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
         if (s !== null) values.push(s as number | Vec2)
         for (let src of state.sources) {
           if (!src.rate) continue
+          // A pulse (a double tap, a long press: a button source with a
+          // delta channel) on an axis action drives it through its delta
+          // alone; its one-task press is not a rate to integrate.
+          if (src.kind === "button" && src.deltas) continue
           let v = src.rate()
           if (src.kind === "button") values.push(v ? 1 : 0)
           else values.push(v as number | Vec2)

@@ -140,7 +140,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     occlusion constraint (a hook on the control, the component wiring
     it from the scene) are shaped on the orbit control in
     [camera-controls](../design/camera-controls.md) and
-    [camera-and-controls-extensions](../backlog/camera-and-controls-extensions.md);
+    [camera-and-controls-extensions](../plans/camera-and-controls-extensions.md);
     the earlier deferral until a third-person game asks is withdrawn.
 14. [x] **Environment tier: skybox, reflection/environment maps.** The
     skybox and `vRay` background, `setEnvironment`, the HDR asset path

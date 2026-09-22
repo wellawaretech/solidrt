@@ -3,10 +3,21 @@ import type { Element, PointerFeed } from "@solidrt/core"
 import type { SceneNode } from "../node.ts"
 import type { Scene as SceneHandle } from "../scene.ts"
 import type { CameraState, CameraUpdate } from "../camera.ts"
+import type { Hit, QueryOptions, ScreenRay } from "../scene.ts"
+import type { Vec3 } from "../math.ts"
 
 /** The camera state a camera control drives: the scene, or a view (both
- * expose setCamera, camera() and size()). */
-export type CameraTarget = { setCamera(update: CameraUpdate): void; camera(): CameraState; size(): { width: number; height: number } }
+ * expose setCamera, camera(), size(), and the projection the control
+ * components build their anchor, focus and occlusion hooks from). */
+export type CameraTarget = {
+  setCamera(update: CameraUpdate): void
+  camera(): CameraState
+  size(): { width: number; height: number }
+  pick(x: number, y: number): Hit[]
+  unproject(x: number, y: number, w: number, out?: Vec3): Vec3
+  screenRay(x: number, y: number): ScreenRay
+  raycast(origin: Vec3, direction: Vec3, opts?: QueryOptions): Hit[]
+}
 
 export type SceneCtx = { scene: SceneHandle; parent: SceneNode; viewport: CameraTarget; pointer: PointerFeed | null }
 export let SceneContext = createContext<SceneCtx>()

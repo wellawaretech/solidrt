@@ -322,10 +322,13 @@ double-step frames. When presentation feedback arrives
 ([[presentation-feedback]]) the estimate becomes a measurement without
 changing the rule.
 
-The old `update_yuv` path stays for producers with no clock (a camera
-frame, a test upload); a YUV texture is in latch mode from
-`yuv_frame_sink` until destroy, and `update_yuv` on a latched texture
-errs. `RasterCmd::UpdateYuv` and `set_target_textures` are untouched.
+The latch is the only way pixels reach a YUV texture: `update_yuv` and
+`RasterCmd::UpdateYuv` go, every YUV texture has a latch from creation
+(`create_yuv_texture` attaches it; `yuv_frame_sink` hands out handles to
+it), and a producer with no clock of its own pushes with a due time of
+zero, which latches at the next frame. One path, no mode on the texture,
+nothing to keep in step with the mirror beyond the note below.
+`set_target_textures` is untouched for every other target.
 
 **The UI-side mirror keeps set 0 bound.** The context's sampler-graph
 mirror exists for the content closure and the cycle check; both plane
@@ -513,7 +516,9 @@ expectation of the frame at a known time.
 ### 10. What is deleted
 
 `forge/src/video/player.rs`; the blocking `feed`/`drain`/`flush` and
-`STALL_MS` in `mediacodec.rs`; `flux/src/alloy_plugins/video.rs`'s `tick`,
+`STALL_MS` in `mediacodec.rs`; alloy's `update_yuv`, `RasterCmd::UpdateYuv`
+and the `front` field of `YuvGroup` (the raster owns the flip);
+`flux/src/alloy_plugins/video.rs`'s `tick`,
 `VideoTick`, `clock_now_us`, `PCM_LOOKAHEAD_US`, the `base_us`/`origin_us`
 clock in `PlayerEntry`, the `timeline_now_ms` read and the module doc's
 three-properties paragraph; the video branch of
@@ -581,7 +586,9 @@ verified on a device after step 1 before anything else touches it.
    source through the reader plays, a stepped clock pushes every frame
    without a wait.
 3. **alloy: the latch.** `alloy::clock`, `YuvLatch`, `yuv_frame_sink`,
-   `AttachYuvLatch`, the raster-side take/upload/flip/rebind at `Frame`,
+   `AttachYuvLatch` sent by `create_yuv_texture`, `update_yuv` and
+   `RasterCmd::UpdateYuv` deleted, the raster-side take/upload/flip/rebind
+   at `Frame`,
    `yuv_frame_due` for the gate, `streaming_textures`, the three counters,
    the playback wait and the blocking push, `PcmStream` ownership,
    `present_at` on `FrameRendered`/`Tick` and on `Context::submit`/
@@ -589,9 +596,10 @@ verified on a device after step 1 before anything else touches it.
    skipped and counted, nothing due, the lookahead at the boundary, closed
    latch drops pushes, the playback wait ending on a later frame and on
    `end`, the blocking push releasing on a take), and
-   `alloy/examples/yuv_texture.rs` extended: a pushed frame with a deadline
-   latches and converts, a frame due later does not, a stream's pcm handle
-   outliving its registry entry.
+   `alloy/examples/yuv_texture.rs` moved onto the sink: its uploads become
+   pushes with a due time of zero, a pushed frame with a deadline latches
+   and converts, a frame due later does not, and a stream's pcm handle
+   outlives its registry entry.
 4. **lattice and flux: the frame's deadline through the loop.**
    `RenderFrame.present_at`, `frame::draw` passing it to submit, the gate's
    peek and note, the standing demand read, the `period_ms` parameter of

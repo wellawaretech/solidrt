@@ -65,9 +65,15 @@
 // at the hold timer (long-press.ts) and `doubleTap` on the second tap's
 // down (double-tap.ts). They ride the feed's own events - the feed is
 // ONE arena claimant, its transform, so they never steal - and take the
-// chord of the down that opened them. The drag's end bracket carries
-// the release velocity the transform measured, in element heights per
-// second, so a camera flings from the gesture's speed.
+// chord of the down that opened them. Bound to an AXIS action they
+// nudge 1 with the gesture's focal point (the tap's or hold's position,
+// a fraction of the element) and contribute no rate (input-map.ts skips
+// a pulse's press when it combines an axis's rates), which is how a
+// control learns WHERE a double tap landed (the orbit camera's `focus`,
+// the 2d camera's octave); a swipe has no focal.
+// The drag's end bracket carries the release velocity the transform
+// measured, in element heights per second, so a camera flings from the
+// gesture's speed.
 //
 // The element's laid-out box normalizes the travel: read at the press
 // through getLayoutBox (the untransformed read, so a designSize fit or
@@ -269,7 +275,7 @@ function gesture<K extends "axis" | "vec2">(kind: K, id: string, label: string, 
 // chord the event carries, narrowed to the most specific, and pulses each:
 // pressed now, released on the next task, so a map's onPress sees the
 // edge (input-processors.ts `tap`). A created variant counts as bound.
-type PulseBucket = { mods: Modifier[]; word: string | null; source: InputSource<"button">; set: (pressed: boolean) => void }
+type PulseBucket = { mods: Modifier[]; word: string | null; source: InputSource<"button">; set: (pressed: boolean) => void; sinks: Set<DeltaSink> }
 
 function pulses(id: string, label: string, words: readonly string[] | null) {
   let buckets = new Map<string, PulseBucket>()
@@ -280,14 +286,21 @@ function pulses(id: string, label: string, words: readonly string[] | null) {
     if (!bucket) {
       // ownedWrite: a fire lands inside a pointer handler or a timer.
       let [pressed, set] = createSignal(false, { ownedWrite: true })
+      let sinks = new Set<DeltaSink>()
       let source: InputSource<"button"> = {
         kind: "button",
         label: name ? `${label} (${name})` : label,
         id: name ? `${DEVICE}:${id}:${name}` : `${DEVICE}:${id}`,
         device: DEVICE,
         rate: pressed,
+        deltas(sink) {
+          sinks.add(sink)
+          return () => {
+            sinks.delete(sink)
+          }
+        },
       }
-      bucket = { mods, word, source, set }
+      bucket = { mods, word, source, set, sinks }
       buckets.set(name, bucket)
     }
     return bucket.source
@@ -311,7 +324,7 @@ function pulses(id: string, label: string, words: readonly string[] | null) {
         probes.delete(found)
       }
     },
-    fire(event: Modified, word: string | null) {
+    fire(event: Modified, word: string | null, focal?: Vec2) {
       if (probes.size > 0) {
         let found = variant(eventModifiers(event), word)
         probes.forEach(p => p(found))
@@ -324,6 +337,7 @@ function pulses(id: string, label: string, words: readonly string[] | null) {
       for (let b of hit) {
         b.set(true)
         setTimeout(() => b.set(false), 0)
+        b.sinks.forEach(k => k.delta(1, focal))
       }
     },
   }
@@ -341,7 +355,7 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
   let longPress = pulses("longPress", "pointer long press", null)
   let doubleTap = pulses("doubleTap", "pointer double tap", null)
   let discrete = { swipe, longPress, doubleTap }
-  let callable = (p: typeof longPress): PointerSource<"button"> => Object.assign(p.spec, { kind: "button" as const, label: p.bare!.label, id: p.bare!.id, device: p.bare!.device, rate: p.bare!.rate! })
+  let callable = (p: typeof longPress): PointerSource<"button"> => Object.assign(p.spec, { kind: "button" as const, label: p.bare!.label, id: p.bare!.id, device: p.bare!.device, rate: p.bare!.rate!, deltas: p.bare!.deltas! })
 
   // The element's box, read at each press (see the header). A detached
   // leaf has no layout box and must bring `layout`: normalizing by
@@ -418,8 +432,11 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
   // second finger disqualifies it), the hold timer, the tap sequence.
   let finger = createVelocityTracker()
   let opening: { id: number; x: number; y: number; mods: Modified; alone: boolean } | null = null
-  let hold = createHoldTimer({ onFire: (_id, _at, mods) => longPress.fire(mods, null) })
-  let taps = createTapSequence({ onDouble: (_id, _at, mods) => doubleTap.fire(mods, null) })
+  // The primary pointer's last down, as a focal: where a double tap or
+  // a long press landed (both fire from that down's own sequence).
+  let downFocal: Vec2 | undefined
+  let hold = createHoldTimer({ onFire: (_id, _at, mods) => longPress.fire(mods, null, downFocal) })
+  let taps = createTapSequence({ onDouble: (_id, _at, mods) => doubleTap.fire(mods, null, downFocal) })
   let mods = (e: PointerEvent): Modified => ({ shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey })
 
   return {
@@ -431,6 +448,7 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
         landed(e, button)
         transform.handlers.onPointerDown(e)
         if (button === PRIMARY) {
+          downFocal = focalOf(e.localX, e.localY)
           hold.down(e)
           taps.down(e)
           if (downs.size === 1) {

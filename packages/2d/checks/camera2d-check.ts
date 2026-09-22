@@ -1,11 +1,14 @@
 // Checks for the 2d camera control (camera2d.ts): the contain clamp and
 // its centering, anchored zoom under any pivot and rotation, the eased
-// glides (a wheel notch, glideTo, fit) landing exactly, follow through a
-// dead zone, drag inertia, Godot's limits-ignore-rotation rule, the
-// deferred fit on an unknown viewport, the axes (a pan gesture's
-// brackets, a bracketed and an unbracketed zoom delta, rates integrated
-// by update) and the validation throws - hand-written cases plus a
-// seeded sweep. Pure-module input only (camera2d.ts imports no GUI or
+// glides (a wheel notch, glideTo, fit, a rotation) landing exactly,
+// follow through the framing (a dead zone, hard limits that keep a fast
+// target in view, damping per axis, lookahead), the lanes (the offset,
+// a shake that never enters the pose and never shows the outside of the
+// world), damped bounds, drag inertia, Godot's limits-ignore-rotation
+// rule, the deferred fit on an unknown viewport, the axes (a pan
+// gesture's brackets, a bracketed and an unbracketed zoom delta, rates
+// integrated by update) and the validation throws - hand-written cases
+// plus a seeded sweep. Pure-module input only (camera2d.ts imports no GUI or
 // runtime module), so it runs headless on flux, bundled from the repo
 // root:
 //
@@ -23,6 +26,7 @@ import { argv } from "flux:process"
 import { createCamera2d } from "../src/camera2d.ts"
 import type { Camera2d, Camera2dOptions } from "../src/camera2d.ts"
 import { projectCamera } from "../src/camera.ts"
+import { createShots, mixCamera2d } from "../src/shots.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 
 let seed = Number(argv[0] ?? Math.floor(Math.random() * 0xffffffff))
@@ -312,7 +316,7 @@ for (let i = 0; i < SWEEP; i++) {
   if (cam.update(DT)) fail("re-following a reached target writes nothing")
 }
 {
-  let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 2, x: 500, y: 250, deadZone: { width: 0.5, height: 0.5 } })
+  let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 2, x: 500, y: 250, follow: { deadZone: { width: 0.5, height: 0.5 } } })
   // Zone half-width 200 px; the target at screen x 800 overshoots by 200 px
   // = 100 world px, so the camera stops at 600 with the target on the edge.
   cam.follow(700, 250)
@@ -353,6 +357,138 @@ for (let i = 0; i < SWEEP; i++) {
   cam.follow(last, 250)
   settle(cam)
   if (!near(cam.camera().x, last, 1e-3)) fail(`follow cancels a pose glide, got ${cam.camera().x}`)
+}
+
+// ---- Framing: hard limits keep a fast target in view, per-axis damping, lookahead ----
+{
+  // A point running at 3000 px/s under a lazy follow: with hard limits
+  // of half the view it never gets more than a quarter of the width from
+  // the pivot; without them the same follow lets it run away.
+  let run = (opts: Partial<Camera2dOptions>) => {
+    let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300, ...opts })
+    let point = 400
+    let worst = 0
+    for (let i = 0; i < 60; i++) {
+      point += 3000 * DT
+      cam.follow(point, 300)
+      cam.update(DT)
+      worst = Math.max(worst, point - cam.camera().x)
+    }
+    return worst
+  }
+  let limited = run({ follow: { damping: 4, hardLimits: { width: 0.5, height: 0.5 } } })
+  if (limited > 200 + 1e-6) fail(`hard limits keep the target within a quarter of the width (200 px), worst ${limited}`)
+  let free = run({ follow: { damping: 4 } })
+  if (!(free > 200)) fail(`without hard limits a lazy follow trails past 200 px, worst ${free}`)
+  // Per-axis damping: a tight x and a lazy y close different fractions
+  // of their gaps over the same ticks.
+  let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300, follow: { damping: { x: 0.25, y: 4 } } })
+  cam.follow(600, 400)
+  for (let i = 0; i < 10; i++) cam.update(DT)
+  let fx = (cam.camera().x - 400) / 200
+  let fy = (cam.camera().y - 300) / 100
+  if (!(fx > fy * 4)) fail(`per-axis damping: x closed ${fx}, y ${fy}`)
+  // Lookahead: following a point moving right at 600 px/s with half a
+  // second of lookahead, the camera runs AHEAD of the point.
+  let ahead = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300, follow: { lookahead: { time: 0.5 } } })
+  let point = 400
+  for (let i = 0; i < 90; i++) {
+    point += 600 * DT
+    ahead.cam.follow(point, 300)
+    ahead.cam.update(DT)
+  }
+  if (!(ahead.cam.camera().x > point)) fail(`lookahead frames ahead of a moving point: camera ${ahead.cam.camera().x}, point ${point}`)
+  // The point stops: the prediction collapses and the follow lands on it.
+  for (let i = 0; i < SETTLE_TICKS; i++) {
+    ahead.cam.follow(point, 300)
+    if (!ahead.cam.update(DT)) break
+  }
+  if (!near(ahead.cam.camera().x, point, 1e-3)) fail(`after the point rests the follow lands on it, got ${ahead.cam.camera().x} want ${point}`)
+}
+
+// ---- Lanes: the offset shows the pose point off the pivot; a shake never enters the pose or shows the outside ----
+{
+  let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300, offset: [0, -0.25] })
+  if (!near(cam.pose().y, 300) || !near(cam.camera().y, 450)) fail(`the offset lane shifts the final camera, not the pose: pose ${cam.pose().y}, camera ${cam.camera().y}`)
+  let [sx, sy] = projectCamera(cam.camera(), 400, 300)
+  if (!near(sx, 400) || !near(sy, 150)) fail(`the pose point shows a quarter of the height above the pivot, got ${sx},${sy}`)
+  // Under a world the view fills, the FINAL camera is what the bounds
+  // contain: the pose sits the lane back from the centered camera.
+  let bounded = make({ world: { width: 800, height: 600 }, zoom: 1, offset: [0, -0.25] })
+  if (!near(bounded.cam.camera().y, 300) || !near(bounded.cam.pose().y, 150)) fail(`bounds contain pose plus lanes: camera ${bounded.cam.camera().y}, pose ${bounded.cam.pose().y}`)
+  // A shake at the world's left edge: the pose never changes, the camera
+  // moves inward only (the bounds clip the outward half), and it never
+  // shows the outside.
+  let edge = make({ world: { width: 1000, height: 500 }, zoom: 2, x: 200, y: 250 })
+  edge.cam.shake(0.1, 0.5, { direction: [1, 0] })
+  flush()
+  if (!edge.cam.active()) fail("a shake wakes active()")
+  let moved = false
+  let ticks = 0
+  for (; ticks < 100; ticks++) {
+    if (!edge.cam.update(DT)) break
+    let c = edge.cam.camera()
+    if (c.x < 200 - 1e-9) fail(`a shake never shows the outside of the world, camera x ${c.x} at tick ${ticks}`)
+    if (edge.cam.pose().x !== 200) fail(`a shake at the edge never enters the pose, pose x ${edge.cam.pose().x} at tick ${ticks}`)
+    if (c.x > 200 + 1e-9) moved = true
+  }
+  if (!moved) fail("a shake displaces the camera from the pose")
+  if (ticks >= 100) fail("a shake ends")
+  flush()
+  if (edge.cam.active()) fail("an ended shake rests")
+  if (!near(edge.cam.camera().x, edge.cam.pose().x)) fail("after the shake the camera is the pose again")
+  // Away from the edge the pose is untouched throughout.
+  let mid = make({ world: { width: 1000, height: 500 }, zoom: 2, x: 500, y: 250 })
+  mid.cam.shake(0.05, 0.3, { direction: [0, 1] })
+  for (let i = 0; i < 40; i++) mid.cam.update(DT)
+  if (mid.cam.pose().x !== 500 || mid.cam.pose().y !== 250) fail(`a shake inside the world leaves the pose alone: ${JSON.stringify(mid.cam.pose())}`)
+}
+
+// ---- Damped bounds: a fling eases into the limit; a direct write clamps at once ----
+{
+  let { cam } = make({ world: { width: 1000, height: 500, damping: 1 }, zoom: 2, x: 300, y: 250 })
+  cam.release([4000, 0])
+  let crossed = false
+  for (let i = 0; i < SETTLE_TICKS; i++) {
+    if (!cam.update(DT)) break
+    if (cam.camera().x < 200 - 1e-9) crossed = true
+  }
+  if (!crossed) fail("a damped bound lets a fling cross the limit briefly")
+  if (!near(cam.camera().x, 200, 1e-3)) fail(`a damped bound settles on the limit, got ${cam.camera().x}`)
+  flush()
+  if (cam.active()) fail("a settled damped bound rests")
+  cam.panBy(400, 0)
+  if (cam.camera().x !== 200) fail(`a direct write clamps at once even with damped bounds, got ${cam.camera().x}`)
+  let hard = make({ world: { width: 1000, height: 500 }, zoom: 2, x: 300, y: 250 })
+  hard.cam.release([4000, 0])
+  for (let i = 0; i < SETTLE_TICKS; i++) {
+    if (!hard.cam.update(DT)) break
+    if (hard.cam.camera().x < 200 - 1e-9) fail("undamped bounds never show the outside")
+  }
+}
+
+// ---- A pose glide inherits a pending anchor glide's zoom (a double tap that also glides) ----
+{
+  let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300 })
+  cam.zoomAt(200, 150, 2, { glide: true })
+  cam.glideTo(100, 100)
+  settle(cam)
+  if (cam.camera().zoom !== 2 || !near(cam.camera().x, 100)) fail(`glideTo keeps a pending zoom's target: ${JSON.stringify(cam.camera())}`)
+  cam.zoomAt(200, 150, 2, { glide: true })
+  cam.glideTo(100, 100, 3)
+  settle(cam)
+  if (cam.camera().zoom !== 3) fail(`an explicit glideTo zoom wins, got ${cam.camera().zoom}`)
+}
+
+// ---- A rotation glide: eased, exact landing ----
+{
+  let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300 })
+  cam.glideTo(400, 300, 1, Math.PI / 2)
+  cam.update(DT)
+  let r = cam.camera().rotation
+  if (!(r > 0 && r < Math.PI / 2)) fail(`a rotation glide eases, got ${r} after one tick`)
+  settle(cam)
+  if (cam.camera().rotation !== Math.PI / 2) fail(`a rotation glide lands exactly, got ${cam.camera().rotation}`)
 }
 
 // ---- Inertia: a flick keeps gliding and decays to rest; a rested or disabled release does not ----
@@ -418,7 +554,11 @@ for (let i = 0; i < SWEEP; i++) {
   }
   throws("world.width 0", () => make({ world: { width: 0, height: 10 } }))
   throws("minZoom > maxZoom", () => make({ minZoom: 3, maxZoom: 2 }))
-  throws("deadZone 2", () => make({ deadZone: { width: 2, height: 0 } }))
+  throws("deadZone 2", () => make({ follow: { deadZone: { width: 2, height: 0 } } }))
+  throws("hardLimits -1", () => make({ follow: { hardLimits: { width: -1, height: 0 } } }))
+  throws("offset NaN", () => make({ offset: [NaN, 0] }))
+  throws("world.damping -1", () => make({ world: { width: 10, height: 10, damping: -1 } }))
+  throws("shake duration 0", () => make().cam.shake(0.1, 0))
   throws("zoom 0", () => make({ zoom: 0 }))
   throws("set NaN", () => make().cam.set({ x: NaN }))
   throws("zoomAt factor 0", () => make().cam.zoomAt(0, 0, 0))
@@ -482,6 +622,30 @@ for (let i = 0; i < SWEEP; i++) {
   cam.update(1)
   stopZoom()
   if (!near(cam.camera().zoom, 2, 1e-9)) fail(`a zoom rate of 1 doubles per second, got ${cam.camera().zoom}`)
+}
+
+// ---- Shots: the zoom blends in log space; a shot's control drives the view through the blender ----
+{
+  let a = { x: 0, y: 0, zoom: 1, rotation: 0, pivotX: 0, pivotY: 0 }
+  let b = { x: 100, y: 50, zoom: 4, rotation: 1, pivotX: 10, pivotY: 20 }
+  let m = mixCamera2d(a, b, 0.5)
+  if (!near(m.zoom, 2) || !near(m.x, 50) || !near(m.rotation, 0.5) || !near(m.pivotX, 5)) fail(`mixCamera2d: zoom in log space, the rest linear, got ${JSON.stringify(m)}`)
+  let last: CameraUpdate | null = null
+  let shots = createShots({ setCamera: u => (last = u) }, { blend: 0.25 })
+  let wide = createCamera2d(shots.shot("wide"), { viewport: () => ({ width: 800, height: 600 }), zoom: 1, x: 400, y: 300 })
+  let close = createCamera2d(shots.shot("close", { priority: 1 }), { viewport: () => ({ width: 800, height: 600 }), zoom: 4, x: 100, y: 100 })
+  if (last !== null) fail("a shot's control pushes into the recorder, not the view, until live")
+  shots.activate("wide")
+  if (last === null || (last as CameraUpdate).zoom !== 1) fail("the live shot's camera reaches the view")
+  wide.panBy(-100, 0)
+  if (!near((last as CameraUpdate).x!, 500)) fail(`a live shot's control drives the view through the blender, got ${(last as CameraUpdate).x}`)
+  shots.activate("close")
+  for (let i = 0; i < 8; i++) shots.update(DT)
+  let z = (last as CameraUpdate).zoom!
+  if (!(z > 1 && z < 4)) fail(`mid-blend zoom between the shots, got ${z}`)
+  for (let i = 0; i < 20; i++) shots.update(DT)
+  if ((last as CameraUpdate).zoom !== 4 || !near((last as CameraUpdate).x!, 100)) fail(`the blend lands on the close shot, got ${JSON.stringify(last)}`)
+  void close
 }
 
 console.log(failures === 0 ? "CAMERA2D-OK" : `CAMERA2D-FAIL ${failures}`)

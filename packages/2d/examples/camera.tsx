@@ -5,19 +5,22 @@
 // walk: a tap on one selects it (tint), a drag on one moves it - the
 // sprite stops its down, which claims the press, so the camera never
 // pans under a sprite drag. Keys switch modes - F follows the roaming
-// sprite through a dead zone with damping, R spins the view about its
-// center, Space fits the whole world. The camera is one setCamera write
-// per changed frame (a shared-params write); no sprite moves for the
-// camera's sake. The layer fills the window through the function face
-// (starlings' shape): the app owns the <texture> leaf and spreads the
-// LAYER's handlers on it; the camera listens at the root through attach.
+// sprite through the framing (a dead zone, hard limits, a lazy vertical
+// damping, lookahead; the zones are drawn while it follows), S shakes
+// the view, R spins it about its center, Space fits the whole world.
+// The camera is one setCamera write per changed frame (a shared-params
+// write); no sprite moves for the camera's sake. The layer fills the
+// window through the function face (starlings' shape): the app owns the
+// <texture> leaf and spreads the LAYER's handlers on it; the camera
+// listens at the root through attach.
 //
 // Debug commands, for driving it from the control API: `camera` returns
-// the pose (and parks it when given x/y/zoom/rotation), `mode` sets
-// { follow, spin } or runs { fit: true }, `selected` returns the selected
+// the final camera (and parks the pose when given x/y/zoom/rotation),
+// `pose` the control's own values, `mode` sets { follow, spin } or runs
+// { fit: true } / { shake: true }, `selected` returns the selected
 // sprite's world position (null when none), `first` the first sprite's -
 // the one to aim synthetic taps and drags at.
-import { createEffect, createInputMap, createPointerFeed, decodeImage, displayScale, gamepad, onFrame, render, windowSize } from "@solidrt/core"
+import { createEffect, createInputMap, createPointerFeed, createSignal, decodeImage, displayScale, gamepad, onFrame, render, Show, windowSize } from "@solidrt/core"
 import { addSprite, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteLayer, feedPointer, fitOversample, grid, setSprite } from "@solidrt/2d"
 import type { Camera2dHandle, SpriteHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
@@ -35,8 +38,19 @@ const ROAM_RATE_Y = 0.31
 const ROAM_SPAN = 0.4
 // Spin rate while R is on, radians per second.
 const SPIN_RATE = 0.4
-// The follow dead zone, fractions of the viewport.
+// The follow's zones, fractions of the viewport: the roamer moves freely
+// inside the dead zone, is eased back within the hard limits, and is
+// never let past them.
 const DEAD_ZONE = { width: 0.3, height: 0.3 }
+const HARD_LIMITS = { width: 0.8, height: 0.7 }
+// A lazy vertical follow (a platformer's), tight horizontal.
+const FOLLOW_DAMPING = { x: 1, y: 2.5 }
+// Lookahead along the roamer's velocity, seconds, and its smoothing.
+const LOOKAHEAD = { time: 0.35, smoothing: 0.15 }
+// A shake: peak displacement in viewport heights, and seconds.
+const SHAKE_STRENGTH = 0.03
+const SHAKE_SECONDS = 0.4
+const ZONE_STROKE = 2
 // Largest frame step, seconds: a stall eases on from here instead of
 // teleporting.
 const MAX_DT = 0.1
@@ -44,7 +58,7 @@ const TINT: [number, number, number, number] = [0.6, 0.7, 0.9, 1]
 const SELECTED_TINT: [number, number, number, number] = [1, 0.95, 0.5, 1]
 
 let cam!: Camera2dHandle
-let following = false
+let [following, setFollowing] = createSignal(false)
 let spinning = false
 // The roamer's world position, for the `mode` debug command.
 let roamerAt = { x: 0, y: 0 }
@@ -97,7 +111,7 @@ function App() {
     viewport: () => win,
     world: WORLD,
     maxZoom: MAX_ZOOM,
-    deadZone: DEAD_ZONE,
+    follow: { deadZone: DEAD_ZONE, hardLimits: HARD_LIMITS, damping: FOLLOW_DAMPING, lookahead: LOOKAHEAD },
   })
   // The camera's input: the view's pointer feed (fed from the view's root,
   // after the sprites' claims) and any pad, bound to the control's actions
@@ -113,7 +127,7 @@ function App() {
     onTap: e => {
       if (e.sprite) return
       select(null)
-      following = false
+      setFollowing(false)
       cam.glideTo(e.x, e.y)
     },
   })
@@ -138,33 +152,54 @@ function App() {
     setSprite(roamer, { x: rx, y: ry, rotation: t })
     roamerAt.x = rx
     roamerAt.y = ry
-    if (following) cam.follow(rx, ry)
-    if (spinning) cam.set({ rotation: cam.camera().rotation + SPIN_RATE * dt })
+    if (following()) cam.follow(rx, ry)
+    if (spinning) cam.set({ rotation: cam.pose().rotation + SPIN_RATE * dt })
     cam.update(dt)
   })
+  // A zone outline centered in the window, sized by its fractions.
+  let zone = (size: { width: number; height: number }, color: string) => (
+    <rect
+      position="absolute"
+      left={(windowSize().width * (1 - size.width)) / 2}
+      top={(windowSize().height * (1 - size.height)) / 2}
+      width={windowSize().width * size.width}
+      height={windowSize().height * size.height}
+      drawStyle="stroke"
+      strokeWidth={ZONE_STROKE}
+      color={color}
+    />
+  )
 
   return (
     <window
       onKeyDown={e => {
         if (e.key === "f") {
-          following = !following
-          if (!following) cam.unfollow()
+          setFollowing(!following())
+          if (!following()) cam.unfollow()
+        } else if (e.key === "s") {
+          cam.shake(SHAKE_STRENGTH, SHAKE_SECONDS)
         } else if (e.key === "r") {
           spinning = !spinning
         } else if (e.key === " ") {
-          following = false
+          setFollowing(false)
           cam.unfollow()
           cam.fit(undefined, { glide: true })
         }
       }}
     >
       <texture src={view.texture} position="absolute" left={0} top={0} width={windowSize().width} height={windowSize().height} {...view.handlers} />
+      <Show when={following()}>
+        <view pointerEvents="none" position="absolute" left={0} top={0} width={windowSize().width} height={windowSize().height}>
+          {zone(DEAD_ZONE, "#7fd18a99")}
+          {zone(HARD_LIMITS, "#e0704e99")}
+        </view>
+      </Show>
       <view pointerEvents="none" gap={6} padding={20}>
         <text color="#eef4ff" fontSize={24} fontWeight={700}>
           Camera
         </text>
         <text color="#a9bcd6" fontSize={15}>
-          drag empty space to pan (flick for inertia) - wheel or pinch to zoom - tap empty space to glide there - tap a sprite to select, drag it to move - F follow - R spin - Space fit
+          drag empty space to pan (flick for inertia) - wheel or pinch to zoom - tap empty space to glide there - tap a sprite to select, drag it to move - F follow (zones drawn) - S shake - R spin - Space fit
         </text>
       </view>
     </window>
@@ -182,14 +217,17 @@ registerDebug("camera", (args?: Record<string, unknown>) => {
   return cam.camera()
 })
 
+registerDebug("pose", () => cam.pose())
+
 registerDebug("mode", (args?: Record<string, unknown>) => {
   if (typeof args?.follow === "boolean") {
-    following = args.follow
-    if (!following) cam.unfollow()
+    setFollowing(args.follow)
+    if (!args.follow) cam.unfollow()
   }
   if (typeof args?.spin === "boolean") spinning = args.spin
   if (args?.fit === true) cam.fit(undefined, { glide: true })
-  return { following, spinning, roamer: { ...roamerAt } }
+  if (args?.shake === true) cam.shake(SHAKE_STRENGTH, SHAKE_SECONDS)
+  return { following: following(), spinning, roamer: { ...roamerAt } }
 })
 
 registerDebug("selected", () => (selected ? { x: selected._x, y: selected._y } : null))

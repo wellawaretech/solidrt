@@ -5,7 +5,13 @@
 // with active() gating, the damped wheel notch (anchor pinned every tick,
 // notches compounding, exact landing, dropped by input and set()),
 // glideTo, fit against the aspect, clampPose on every write path, the
-// clamps and update()'s change report. Pure-module input only (orbit.ts
+// clamps and update()'s change report; and the pipeline stages of
+// okf/design/camera-controls.md: the push past the floor (speed
+// continuous, the anchor's pixel kept), the follow through the framing
+// (zones, depth, lookahead, the orbit's input around it), the lanes (the
+// offset, setOrbitPoint's picture-preserving re-seat, a shake outside
+// the pose), the occlusion constraint (in at once, out eased), the pan
+// plane and the focus axis. Pure-module input only (orbit.ts
 // imports `@solidrt/core/input`, no runtime module), so it runs headless
 // on flux, bundled from the repo root:
 //
@@ -15,6 +21,8 @@
 
 import { flush } from "@solidjs/signals"
 import { createOrbitCamera } from "../src/orbit.ts"
+import { createShots, mixCamera } from "../src/shots.ts"
+import type { CameraState } from "../src/camera.ts"
 import type { OrbitCameraOptions } from "../src/orbit.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 import type { Vec3 } from "../src/math.ts"
@@ -388,6 +396,280 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   } catch (err) {
     if (!(err instanceof Error)) fail(`clampPose NaN: unexpected ${err}`)
   }
+}
+
+// ---- Push: a dolly step past the floor moves through, the anchor keeps its pixel ----
+{
+  let { orbit } = make({ distance: 4, minDistance: 2, maxDistance: 8, target: [0, 0, 0], push: true })
+  // The eye at (0, 0, 4) looks down -z; a zoom to a quarter wants 1,
+  // clamps at 2, and the overflow of 1 carries eye and target forward.
+  orbit.zoomBy(4)
+  if (!near(orbit.pose().distance, 2) || !nearV(orbit.pose().target, [0, 0, -1]) || !nearV(orbit.eye(), [0, 0, 1])) fail(`push carries the overflow through: ${JSON.stringify(orbit.pose())}`)
+  // At the floor the speed is continuous: each halving moves one unit.
+  orbit.zoomBy(2)
+  if (!nearV(orbit.pose().target, [0, 0, -2])) fail(`a step at the floor pushes by its whole wanted travel, got ${orbit.pose().target}`)
+  // And backward past the ceiling.
+  orbit.set({ target: [0, 0, 0], distance: 8 })
+  orbit.zoomBy(0.5)
+  if (!near(orbit.pose().distance, 8) || !nearV(orbit.pose().target, [0, 0, 8])) fail(`push past the ceiling backs out: ${JSON.stringify(orbit.pose())}`)
+  // Without push the dolly stops at the floor.
+  let plain = make({ distance: 4, minDistance: 2, target: [0, 0, 0] })
+  plain.orbit.zoomBy(4)
+  if (!nearV(plain.orbit.pose().target, [0, 0, 0])) fail("without push the target stays")
+  // An anchored push moves along the anchor's ray, so the anchor keeps
+  // its pixel: the unit direction from the eye to it is unchanged.
+  let anchored = make({ distance: 4, minDistance: 2, target: [0, 0, 0], push: true })
+  let anchor: Vec3 = [1, 0, 0]
+  let dirTo = (e: Vec3): Vec3 => {
+    let d: Vec3 = [anchor[0] - e[0], anchor[1] - e[1], anchor[2] - e[2]]
+    let n = Math.hypot(d[0], d[1], d[2])
+    return [d[0] / n, d[1] / n, d[2] / n]
+  }
+  anchored.orbit.zoomBy(2, anchor)
+  let before = dirTo(anchored.orbit.eye())
+  anchored.orbit.zoomBy(4, anchor)
+  if (!nearV(dirTo(anchored.orbit.eye()), before, 1e-9) || anchored.orbit.pose().distance !== 2) fail(`an anchored push keeps the anchor on its ray: ${JSON.stringify(anchored.orbit.pose())}`)
+  // A damped notch pushes too: the goal's target carries the overflow
+  // and the glide lands on it.
+  let notch = make({ distance: 2, minDistance: 2, target: [0, 0, 0], push: true })
+  notch.orbit.axes.nudge("zoom", 1)
+  settle(notch.orbit)
+  if (!nearV(notch.orbit.pose().target, [0, 0, -1], 1e-6) || notch.orbit.pose().distance !== 2) fail(`a damped notch at the floor pushes through: ${JSON.stringify(notch.orbit.pose())}`)
+}
+
+// ---- The follow: framing in view space, depth, the orbit's input around it ----
+{
+  // Looking down -z from (0, 0, 4): right is +x, up is +y, forward -z.
+  let { orbit } = make({ distance: 4, target: [0, 0, 0] })
+  orbit.follow([1, 0.5, 0])
+  flush()
+  if (!orbit.active()) fail("a follow wakes active()")
+  let ticks = settle(orbit)
+  if (ticks === 0 || ticks > SETTLE_TICKS) fail(`a follow runs and rests, ticks=${ticks}`)
+  if (!nearV(orbit.pose().target, [1, 0.5, 0], 1e-3) || orbit.pose().distance !== 4) fail(`the follow lands the target on the point at the same distance: ${JSON.stringify(orbit.pose())}`)
+  flush()
+  if (orbit.active()) fail("a settled follow rests")
+  if (orbit.update(DT)) fail("a settled follow writes nothing")
+  // Depth eases too: the target chases the point's forward distance.
+  orbit.follow([1, 0.5, -2])
+  settle(orbit)
+  if (!nearV(orbit.pose().target, [1, 0.5, -2], 1e-3) || orbit.pose().distance !== 4) fail(`the follow chases depth: ${JSON.stringify(orbit.pose())}`)
+  // A rotate orbits the followed point; a pan is eased back.
+  orbit.rotateBy(0.5, 0)
+  if (!nearV(orbit.pose().target, [1, 0.5, -2], 1e-3)) fail("a rotate keeps the followed target")
+  orbit.set({ azimuth: 0 })
+  orbit.follow([1, 0.5, -2])
+  orbit.panBy(1, 0)
+  if (near(orbit.pose().target[0], 1, 1e-3)) fail("a pan moves the target")
+  settle(orbit)
+  if (!nearV(orbit.pose().target, [1, 0.5, -2], 1e-3)) fail(`the follow eases a pan back: ${orbit.pose().target}`)
+  // unfollow stops it; a set of the target ends it.
+  orbit.unfollow()
+  orbit.follow([5, 5, 5])
+  orbit.set({ target: [0, 0, 0] })
+  orbit.update(DT)
+  if (orbit.update(DT) || !nearV(orbit.pose().target, [0, 0, 0])) fail("set({ target }) ends the follow")
+  // The dead zone in view fractions: the view is 2 tan(30 deg) * 4 high
+  // at the target's depth, times the aspect wide; a point within the
+  // zone's half width of the target does not move it.
+  let height = 2 * Math.tan((FOV * Math.PI) / 360) * 4
+  let width = height * (800 / 600)
+  let zoned = make({ distance: 4, target: [0, 0, 0], follow: { deadZone: { width: 0.5, height: 0.5 } } })
+  zoned.orbit.follow([1, 0, 0])
+  if (settle(zoned.orbit) !== 0 || !nearV(zoned.orbit.pose().target, [0, 0, 0])) fail("a point inside the dead zone moves nothing")
+  zoned.orbit.follow([3, 0, 0])
+  settle(zoned.orbit)
+  if (!near(zoned.orbit.pose().target[0], 3 - 0.25 * width, 1e-3)) fail(`the target parks the point on the zone edge, got ${zoned.orbit.pose().target[0]} want ${3 - 0.25 * width}`)
+  // Hard limits: a point running at 20 units/s under a lazy follow never
+  // gets more than 0.3 of the view's width from the target.
+  let limited = make({ distance: 4, target: [0, 0, 0], follow: { damping: 4, hardLimits: { width: 0.6, height: 0.6 } } })
+  let point = 0
+  let worst = 0
+  for (let i = 0; i < 60; i++) {
+    point += 20 * DT
+    limited.orbit.follow([point, 0, 0])
+    limited.orbit.update(DT)
+    worst = Math.max(worst, point - limited.orbit.pose().target[0])
+  }
+  if (worst > 0.3 * width + 1e-6) fail(`hard limits hold the point within 0.3 of the width, worst ${worst} of ${0.3 * width}`)
+  // Lookahead: the target runs ahead of a moving point.
+  let ahead = make({ distance: 4, target: [0, 0, 0], follow: { lookahead: { time: 0.5 } } })
+  point = 0
+  for (let i = 0; i < 90; i++) {
+    point += 6 * DT
+    ahead.orbit.follow([point, 0, 0])
+    ahead.orbit.update(DT)
+  }
+  if (!(ahead.orbit.pose().target[0] > point)) fail(`lookahead frames ahead: target ${ahead.orbit.pose().target[0]}, point ${point}`)
+}
+
+// ---- The follow's heading: the azimuth recentres behind the walker after the rotate input rests ----
+{
+  let { orbit } = make({ distance: 4, target: [0, 0, 0], azimuth: 0, follow: { heading: { wait: 0.5 } } })
+  // A walker facing -x (yaw pi/2 in the first-person convention): the
+  // camera settles at azimuth pi/2, behind it.
+  orbit.follow([0, 0, 0], Math.PI / 2)
+  let ticks = settle(orbit)
+  if (ticks === 0 || ticks > SETTLE_TICKS) fail(`a heading recentre runs and rests, ticks=${ticks}`)
+  if (!near(orbit.pose().azimuth, Math.PI / 2, 1e-4)) fail(`the azimuth recentres on the heading, got ${orbit.pose().azimuth}`)
+  // The shortest turn: from 3 to -3 goes through pi, not back through 0.
+  orbit.set({ azimuth: 3 })
+  orbit.follow([0, 0, 0], -3)
+  orbit.update(DT)
+  if (!(orbit.pose().azimuth > 3)) fail(`the recentre takes the shortest turn, got ${orbit.pose().azimuth}`)
+  settle(orbit)
+  if (!near(Math.atan2(Math.sin(orbit.pose().azimuth + 3), Math.cos(orbit.pose().azimuth + 3)), 0, 1e-4)) fail(`the recentre lands on -3 (mod 2 pi), got ${orbit.pose().azimuth}`)
+  // A rotate nudge (at once: damping off) holds the recentre for the
+  // wait, then it resumes.
+  let still = make({ distance: 4, target: [0, 0, 0], azimuth: 0, damping: 0, follow: { heading: { wait: 0.5 } } })
+  still.orbit.follow([0, 0, 0], 1)
+  still.orbit.axes.nudge("rotate", [0.1, 0])
+  let looked = still.orbit.pose().azimuth
+  for (let i = 0; i < 20; i++) {
+    still.orbit.follow([0, 0, 0], 1)
+    still.orbit.update(DT)
+  }
+  if (still.orbit.pose().azimuth !== looked) fail(`the recentre waits after a rotate input, moved from ${looked} to ${still.orbit.pose().azimuth} within 0.33 s`)
+  for (let i = 0; i < 20; i++) {
+    still.orbit.follow([0, 0, 0], 1)
+    still.orbit.update(DT)
+  }
+  if (still.orbit.pose().azimuth === looked) fail("the recentre resumes after the wait")
+  settle(still.orbit)
+  if (!near(still.orbit.pose().azimuth, 1, 1e-4)) fail(`the recentre lands after the wait, got ${still.orbit.pose().azimuth}`)
+  // No heading: the azimuth is left alone.
+  orbit.set({ azimuth: 0.3 })
+  orbit.follow([1, 0, 0])
+  settle(orbit)
+  if (orbit.pose().azimuth !== 0.3) fail("a follow without a heading leaves the azimuth")
+}
+
+// ---- The lanes: the offset, setOrbitPoint preserves the picture, a shake stays out of the pose ----
+{
+  let height = 2 * Math.tan((FOV * Math.PI) / 360) * 4
+  let { orbit } = make({ distance: 4, target: [0, 0, 0], offset: [0.25, 0] })
+  let cam = orbit.camera()
+  // The target shows a quarter of the height right of centre: the look
+  // point (and the eye) sit that far LEFT along right (+x).
+  if (!nearV(cam.target, [-0.25 * height, 0, 0], 1e-9) || !nearV(cam.position, [-0.25 * height, 0, 4], 1e-9)) fail(`the offset lane shifts the final camera: ${JSON.stringify(cam)}`)
+  if (!nearV(orbit.pose().target, [0, 0, 0]) || !nearV(orbit.eye(), [0, 0, 4])) fail("the offset lane never enters the pose")
+  // setOrbitPoint: the pose re-seats on the point and the final camera
+  // does not change at all.
+  let seat = make({ distance: 4, target: [0, 0, 0], azimuth: 0.3, elevation: 0.2 })
+  let was = seat.orbit.camera()
+  let point: Vec3 = [1, 0.5, -1]
+  seat.orbit.setOrbitPoint(point)
+  let now = seat.orbit.camera()
+  if (!nearV(seat.orbit.pose().target, point)) fail("setOrbitPoint re-seats the target on the point")
+  if (!nearV(now.position, was.position, 1e-9)) fail(`setOrbitPoint keeps the eye: ${now.position} vs ${was.position}`)
+  let look = (c: { position: Vec3; target: Vec3 }): Vec3 => {
+    let d: Vec3 = [c.target[0] - c.position[0], c.target[1] - c.position[1], c.target[2] - c.position[2]]
+    let n = Math.hypot(d[0], d[1], d[2])
+    return [d[0] / n, d[1] / n, d[2] / n]
+  }
+  if (!nearV(look(now), look(was), 1e-9)) fail("setOrbitPoint keeps the look direction")
+  // A rotate now orbits the point: the eye keeps its distance to it.
+  let dist = (c: Vec3) => Math.hypot(c[0] - point[0], c[1] - point[1], c[2] - point[2])
+  let radius = dist(now.position)
+  seat.orbit.rotateBy(0.7, 0.1)
+  if (!near(dist(seat.orbit.camera().position), radius, 1e-9)) fail("after setOrbitPoint a rotate orbits the point")
+  // A target write clears the re-seat's offset.
+  seat.orbit.set({ target: [0, 0, 0] })
+  if (!nearV(seat.orbit.camera().target, [0, 0, 0], 1e-9)) fail("set({ target }) clears setOrbitPoint's offset")
+  // A point behind the eye is ignored.
+  let behind = make({ distance: 4, target: [0, 0, 0] })
+  behind.orbit.setOrbitPoint([0, 0, 10])
+  if (behind.orbit.pose().distance !== 4) fail("setOrbitPoint ignores a point behind the eye")
+  // A shake: the pose holds, the camera moves within the strength, and
+  // the camera is the pose again when it ends.
+  let shaken = make({ distance: 4, target: [0, 0, 0] })
+  shaken.orbit.shake(0.1, 0.5, { direction: [1, 0] })
+  flush()
+  if (!shaken.orbit.active()) fail("a shake wakes active()")
+  let peak = 0
+  let ticks = 0
+  for (; ticks < 100; ticks++) {
+    if (!shaken.orbit.update(DT)) break
+    let p = shaken.orbit.pose()
+    if (!nearV(p.target, [0, 0, 0]) || p.distance !== 4) fail("a shake never enters the pose")
+    peak = Math.max(peak, Math.abs(shaken.orbit.camera().position[0]))
+  }
+  if (!(peak > 0 && peak <= 0.1 * height + 1e-9)) fail(`a shake displaces up to its strength in view heights, peak ${peak} of ${0.1 * height}`)
+  if (ticks >= 100) fail("a shake ends")
+  if (!nearV(shaken.orbit.camera().position, [0, 0, 4], 1e-9)) fail("after the shake the camera is the pose again")
+  flush()
+  if (shaken.orbit.active()) fail("an ended shake rests")
+}
+
+// ---- Occlusion: pulled in at once, eased back out; the pose untouched ----
+{
+  let free: number | null = null
+  let { orbit } = make({ distance: 4, target: [0, 0, 0], occluder: () => free })
+  if (!nearV(orbit.camera().position, [0, 0, 4])) fail("no occluder: the eye is the pose's")
+  free = 2.5
+  orbit.set({})
+  if (!nearV(orbit.camera().position, [0, 0, 2.5], 1e-9) || orbit.pose().distance !== 4) fail(`an occluder pulls the eye in at once and leaves the pose: ${JSON.stringify(orbit.camera())}`)
+  free = null
+  orbit.set({})
+  flush()
+  if (!orbit.active()) fail("a cleared occluder starts the eased return")
+  orbit.update(DT)
+  let z = orbit.camera().position[2]
+  if (!(z > 2.5 && z < 4)) fail(`the return eases, got z ${z} after one tick`)
+  let ticks = settle(orbit)
+  if (ticks === 0 || ticks > SETTLE_TICKS) fail(`the return lands and rests, ticks=${ticks}`)
+  if (!near(orbit.camera().position[2], 4, 1e-3)) fail(`the return lands on the pose's distance, got ${orbit.camera().position[2]}`)
+  flush()
+  if (orbit.active()) fail("a landed return rests")
+}
+
+// ---- The pan plane and the focus axis ----
+{
+  let ground = make({ distance: 4, target: [0, 0, 0], elevation: 0.5, panPlane: "ground" })
+  ground.orbit.panBy(0, 1)
+  if (!nearV(ground.orbit.pose().target, [0, 0, -1], 1e-9)) fail(`a ground pan slides along the horizontal forward, got ${ground.orbit.pose().target}`)
+  let screen = make({ distance: 4, target: [0, 0, 0], elevation: 0.5 })
+  screen.orbit.panBy(0, 1)
+  if (!nearV(screen.orbit.pose().target, [0, Math.cos(0.5), -Math.sin(0.5)], 1e-9)) fail(`a screen pan slides along the view's up, got ${screen.orbit.pose().target}`)
+  // focus: a nudge with a focal glides the target to the anchor's point;
+  // without one, to the view centre's; a zero delta does nothing.
+  let { orbit } = make({ distance: 4, target: [0, 0, 0], zoomAnchor: focal => [focal[0] * 10, 0, 0] })
+  orbit.axes.nudge("focus", 1, [0.3, 0.5])
+  if (!nearV(orbit.pose().target, [0, 0, 0])) fail("focus glides, not snaps")
+  settle(orbit)
+  if (!nearV(orbit.pose().target, [3, 0, 0])) fail(`focus lands the target on the point under the focal, got ${orbit.pose().target}`)
+  orbit.axes.nudge("focus", 1)
+  settle(orbit)
+  if (!nearV(orbit.pose().target, [5, 0, 0])) fail(`focus without a focal uses the view centre, got ${orbit.pose().target}`)
+  orbit.axes.nudge("focus", 0)
+  if (orbit.update(DT)) fail("a zero focus delta does nothing")
+}
+
+// ---- Shots: the mix, and an orbit control driving a shot through the blender ----
+{
+  let a: CameraState = { position: [0, 0, 4], target: [0, 0, 0], up: [0, 1, 0], fov: 60, near: 0.1, far: 100, ortho: null }
+  let b: CameraState = { position: [4, 0, 0], target: [1, 1, 1], up: [0, 1, 0], fov: 30, near: 0.1, far: 200, ortho: { left: -1, right: 1, top: 1, bottom: -1 } }
+  let m = mixCamera(a, b, 0.25)
+  if (!nearV(m.position, [1, 0, 3]) || !near(m.fov, 52.5) || m.ortho !== null) fail(`mixCamera: linear, perspective until the midpoint, got ${JSON.stringify(m)}`)
+  if (mixCamera(a, b, 0.75).ortho !== b.ortho) fail("mixCamera switches to the ortho projection past the midpoint")
+  let both = mixCamera(b, { ...b, ortho: { left: -3, right: 3, top: 3, bottom: -3 } }, 0.5)
+  if (!near(both.ortho!.right, 2)) fail(`two ortho extents blend, got ${JSON.stringify(both.ortho)}`)
+  // An orbit control drives a shot: its pushes reach the scene only when
+  // the shot is live, through the blender; size() is the scene's.
+  let last: CameraState | null = null
+  let scene = { setCamera: (u: Partial<CameraState>) => (last = { ...a, ...u }), camera: () => a, size: () => ({ width: 800, height: 600 }) }
+  let shots = createShots(scene, { blend: 0.25 })
+  let wide = createOrbitCamera(shots.shot("wide"), { distance: 10, target: [0, 0, 0] })
+  let close = createOrbitCamera(shots.shot("close", { priority: 1 }), { distance: 2, target: [1, 0, 0] })
+  if (last !== null) fail("a shot's control pushes into the recorder until live")
+  shots.activate("wide")
+  if (last === null || !nearV((last as CameraState).position, [0, 0, 10])) fail("the live shot's camera reaches the scene")
+  wide.panBy(1, 0)
+  if (!near((last as CameraState).target[0], 1)) fail("a live shot's control drives the scene through the blender")
+  shots.activate("close")
+  for (let i = 0; i < 30; i++) shots.update(DT)
+  if (!nearV((last as CameraState).position, [1, 0, 2], 1e-9)) fail(`the blend lands on the close shot, got ${(last as CameraState).position}`)
+  void close
 }
 
 console.log(failures === 0 ? "ORBIT-OK" : `ORBIT-FAIL ${failures}`)

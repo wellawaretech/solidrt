@@ -27,19 +27,35 @@ export type CameraDevices = {
   keyboard?: KeyboardDevice
 }
 
-/** The orbit control's actions: `rotate`, `zoom`, `pan`. */
-export let orbitActions = { rotate: "vec2", zoom: "axis", pan: "vec2" } as const
+/** The orbit control's actions: `rotate`, `zoom`, `pan`, `focus` (an
+ * axis: a bound double tap nudges it with the tap's focal). */
+export let orbitActions = { rotate: "vec2", zoom: "axis", pan: "vec2", focus: "axis" } as const
+
+// The device half orbit and map presets share: the right stick rotates,
+// the triggers zoom, the left stick pans; the arrows rotate and
+// minus/equals zoom.
+function orbitDeviceBindings(devices: CameraDevices, out: Binding[]): Binding[] {
+  let { gamepad, keyboard } = devices
+  if (gamepad) {
+    out.push({ action: "rotate", source: invert(gamepad.rightStick) }, { action: "zoom", source: gamepad.triggers }, { action: "pan", source: invert(gamepad.leftStick) })
+  }
+  if (keyboard) {
+    out.push({ action: "rotate", source: invert(keyboard.arrows) }, { action: "zoom", source: keyboard.axis("Minus", "Equal") })
+  }
+  return out
+}
 
 /**
  * The orbit camera's standard bindings: a drag rotates, a Ctrl-drag or a
  * right-drag pans (the desktop pans, Three's and Blender's; a chorded or
  * right-button drag feeds only `pan`, never `rotate`), a pinch and the
- * wheel zoom, two fingers pan; the right stick rotates, the triggers
- * zoom, the left stick pans; the arrow keys rotate and minus/equals zoom.
+ * wheel zoom, two fingers pan, a double tap focuses; the right stick
+ * rotates, the triggers zoom, the left stick pans; the arrow keys rotate
+ * and minus/equals zoom.
  */
 export function orbitBindings(devices: CameraDevices): Binding[] {
   let out: Binding[] = []
-  let { pointer, gamepad, keyboard } = devices
+  let { pointer } = devices
   if (pointer) {
     out.push(
       { action: "rotate", source: pointer.drag },
@@ -48,15 +64,34 @@ export function orbitBindings(devices: CameraDevices): Binding[] {
       { action: "pan", source: pointer.pan },
       { action: "zoom", source: pointer.pinch },
       { action: "zoom", source: pointer.wheel },
+      { action: "focus", source: pointer.doubleTap },
     )
   }
-  if (gamepad) {
-    out.push({ action: "rotate", source: invert(gamepad.rightStick) }, { action: "zoom", source: gamepad.triggers }, { action: "pan", source: invert(gamepad.leftStick) })
+  return orbitDeviceBindings(devices, out)
+}
+
+/**
+ * The map preset over the same orbit control (Three's MapControls): a
+ * drag PANS, a right-drag or a Ctrl-drag rotates, two fingers rotate, a
+ * pinch and the wheel zoom, a double tap focuses; the pad and keys as
+ * orbitBindings. Pair it with `panPlane: "ground"` on the control so a
+ * pan slides over the map, not across the view.
+ */
+export function mapBindings(devices: CameraDevices): Binding[] {
+  let out: Binding[] = []
+  let { pointer } = devices
+  if (pointer) {
+    out.push(
+      { action: "pan", source: pointer.drag },
+      { action: "rotate", source: pointer.drag("Ctrl") },
+      { action: "rotate", source: pointer.drag("Right") },
+      { action: "rotate", source: pointer.pan },
+      { action: "zoom", source: pointer.pinch },
+      { action: "zoom", source: pointer.wheel },
+      { action: "focus", source: pointer.doubleTap },
+    )
   }
-  if (keyboard) {
-    out.push({ action: "rotate", source: invert(keyboard.arrows) }, { action: "zoom", source: keyboard.axis("Minus", "Equal") })
-  }
-  return out
+  return orbitDeviceBindings(devices, out)
 }
 
 /** The first-person control's actions: `look`, `move`, `rise`, `boost`

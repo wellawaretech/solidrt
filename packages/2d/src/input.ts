@@ -26,9 +26,10 @@ export let camera2dActions = { pan: "vec2", zoom: "axis", roll: "axis" } as cons
 
 /**
  * The 2d camera's standard bindings: one finger or a mouse drag pans and
- * so do two fingers, a pinch and the wheel zoom about the pointer, a twist
- * rolls; the left stick scrolls, the triggers zoom, the right stick's x
- * rolls; the arrow keys scroll and minus/equals zoom.
+ * so do two fingers, a pinch and the wheel zoom about the pointer, a
+ * double tap zooms one octave in at its point (the map convention), a
+ * twist rolls; the left stick scrolls, the triggers zoom, the right
+ * stick's x rolls; the arrow keys scroll and minus/equals zoom.
  */
 export function camera2dBindings(devices: CameraDevices): Binding[] {
   let out: Binding[] = []
@@ -39,6 +40,7 @@ export function camera2dBindings(devices: CameraDevices): Binding[] {
       { action: "pan", source: pointer.pan },
       { action: "zoom", source: pointer.pinch },
       { action: "zoom", source: pointer.wheel },
+      { action: "zoom", source: pointer.doubleTap },
       { action: "roll", source: pointer.twist },
     )
   }

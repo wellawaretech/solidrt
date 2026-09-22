@@ -33,8 +33,9 @@ const MAX_CAMERA_DT = 0.1
  * change the pose at runtime through `ref`'s set/glideTo/fit/follow and
  * the verbs. Every other prop is live, forwarded to the control as a
  * getter and read where it applies, so a world, a zoom range, a pivot,
- * a dead zone or a rate follows its prop, and a bounds or pivot change
- * re-clamps and pushes the pose at once - the `<OrbitCamera>` rule.
+ * the follow's zones, the offset lane or a rate follows its prop, and a
+ * bounds, pivot or offset change re-clamps and pushes the pose at once -
+ * the `<OrbitCamera>` rule.
  * `viewport` defaults to the view's own size. Frames run only while the
  * camera moves (`active()`), so a resting camera leaves the app
  * demand-driven idle.
@@ -67,13 +68,14 @@ export let Camera2d: VoidComponent<Camera2dProps> = props => {
       })
     },
   )
-  // A bounds or pivot prop change re-clamps and pushes the pose at once
-  // (set({}) applies the clamps). Deferred: the creation already clamped
-  // and pushed the initial pose. Untracked: the control reads the options
-  // through the getters while it applies them, and the apply wants the
-  // values of that moment (the compute above is what tracks them).
+  // A bounds, pivot or offset prop change re-clamps and pushes the pose
+  // at once (set({}) applies the clamps and the lanes). Deferred: the
+  // creation already clamped and pushed the initial pose. Untracked: the
+  // control reads the options through the getters while it applies
+  // them, and the apply wants the values of that moment (the compute
+  // above is what tracks them).
   createEffect(
-    () => [options.world, options.minZoom, options.maxZoom, options.pivot],
+    () => [options.world, options.minZoom, options.maxZoom, options.pivot, options.offset],
     () => untrack(() => cam.set({})),
     { defer: true },
   )

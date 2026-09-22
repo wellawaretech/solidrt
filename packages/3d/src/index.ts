@@ -49,7 +49,7 @@ export { extrude, lathe, pathFrames, polygon, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
 export { phong, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
 export type { LitOptions, Material, PhongOptions, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
-export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedLod, InstancedMesh, Lod, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SpotLight, Sprite, View3d, useScene } from "./components/index.ts"
+export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedLod, InstancedMesh, Lod, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SpotLight, Sprite, View3d, useScene, Shot, Shots } from "./components/index.ts"
 export type {
   CameraTarget,
   DirectionalLightProps,
@@ -73,6 +73,8 @@ export type {
   SpriteProps,
   TransformProps,
   View3dProps,
+  ShotProps,
+  ShotsProps,
 } from "./components/index.ts"
 export { gltfExternalUris, isGlb, parseGltf } from "./gltf.ts"
 export type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelMaterial, ModelNode, ModelPart, ModelSkin, UriResolver } from "./gltf.ts"
@@ -88,7 +90,9 @@ export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitAxes, OrbitCamera as OrbitCameraHandle, OrbitCameraOptions, OrbitPose, OrbitPoseState, OrbitTarget } from "./orbit.ts"
 export { createFirstPersonCamera } from "./first-person.ts"
 export type { FirstPersonAxes, FirstPersonCamera as FirstPersonCameraHandle, FirstPersonCameraOptions, FirstPersonPose, FirstPersonPoseState, FirstPersonTarget } from "./first-person.ts"
-export { firstPersonActions, firstPersonBindings, orbitActions, orbitBindings } from "./input.ts"
+export { createShots, mixCamera } from "./shots.ts"
+export type { ShotsHandle, ShotsOwner, ShotTarget } from "./shots.ts"
+export { firstPersonActions, firstPersonBindings, mapBindings, orbitActions, orbitBindings } from "./input.ts"
 export type { CameraDevices } from "./input.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the
 // root's lookAt is the scene verb, the same split as `add`.

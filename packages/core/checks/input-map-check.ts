@@ -649,6 +649,34 @@ async function asyncChecks() {
 
 asyncChecks().then(
   () => {
+// ---- A pulse (a button source with a delta channel) on an axis action drives it by delta only ----
+{
+  let map = createInputMap({ zoom: "axis" })
+  let pressed = true
+  let sink: { delta(value: number, focal?: [number, number]): void } | null = null
+  let pulse = {
+    kind: "button" as const,
+    label: "test pulse",
+    id: "test:pulse",
+    rate: () => pressed,
+    deltas(k: { delta(value: number, focal?: [number, number]): void }) {
+      sink = k
+      return () => {
+        sink = null
+      }
+    },
+  }
+  map.bind([{ action: "zoom", source: pulse }])
+  if (map.value("zoom") !== 0) fail(`a pulse's press is no rate on an axis action, got ${map.value("zoom")}`)
+  let got: [number, [number, number] | undefined] | null = null
+  map.onGesture("zoom", { delta: (v, focal) => (got = [v as number, focal]) })
+  sink!.delta(1, [0.25, 0.5])
+  if (!got || got[0] !== 1 || !got[1] || got[1][0] !== 0.25) fail(`a pulse's delta reaches the axis with its focal, got ${JSON.stringify(got)}`)
+  let held = { kind: "button" as const, label: "test key", id: "test:key", rate: () => true }
+  map.bind([{ action: "zoom", source: held }])
+  if (map.value("zoom") !== 1) fail(`a held button without a delta channel still reads 1 on an axis, got ${map.value("zoom")}`)
+}
+
     console.log(failures === 0 ? "INPUT-MAP-OK" : `INPUT-MAP-FAIL ${failures}`)
     if (failures > 0) throw new Error(`${failures} input map check(s) failed`)
   },

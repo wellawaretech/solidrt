@@ -595,6 +595,16 @@ export type ViewHandle = {
    * minimap is picked where the minimap shows it (the scene's query
    * filters apply: visibility, the view's own layer mask is not one). */
   pick(x: number, y: number): Hit[]
+  /** scene.project through this view's camera and size: a world point
+   * to VIEW pixels. */
+  project(point: Vec3): { x: number; y: number; w: number } | null
+  /** scene.unproject through this view's camera and size. */
+  unproject(x: number, y: number, w: number, out?: Vec3): Vec3
+  /** scene.screenRay through this view's camera and size. */
+  screenRay(x: number, y: number): ScreenRay
+  /** Exactly scene.raycast: the query is the scene's, a view has no
+   * camera in it. */
+  raycast(origin: Vec3, direction: Vec3, opts?: QueryOptions): Hit[]
   /** Element pointer handlers for the element showing `texture`: the
    * scene's dispatch with THIS VIEW as the root of the walk - nodes get
    * their ordinary handlers, picked through the view's camera, the
@@ -1423,6 +1433,26 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     pickDir[2] = -v[10]
   }
   let pixelRay = (x: number, y: number): void => pixelRayOf(camera, width, height, x, y)
+  // project() for any camera over a tw x th target (the scene's, a view's).
+  let projectWith = (cam: Camera, tw: number, th: number, point: Vec3): { x: number; y: number; w: number } | null => {
+    ensureCamera(cam, tw, th)
+    transformPoint(clip, cam.viewProj, point)
+    let w = clip[3]
+    if (w < 1e-6) return null
+    // perspective() bakes the y-down clip flip, so NDC maps straight to
+    // top-left-origin pixels with no negation here.
+    let x = ((clip[0] / w) * 0.5 + 0.5) * tw
+    let y = ((clip[1] / w) * 0.5 + 0.5) * th
+    if (cam.ortho !== null) {
+      // An orthographic clip w is 1 everywhere (every point projects, the
+      // divides above are no-ops) and carries no depth, so `w` reports
+      // the camera-forward distance off the view row instead - the same
+      // meaning as the perspective clip w, and unproject's exact input.
+      let v = cam.view
+      w = -(v[2] * point[0] + v[6] * point[1] + v[10] * point[2] + v[14])
+    }
+    return { x, y, w }
+  }
 
   // Views (scene.createView): more targets drawing the same meshes from
   // their own cameras. A view holds one entry per mesh in its target,
@@ -2291,23 +2321,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       hooks._schedule()
     },
     project(point) {
-      ensureCamera(camera, width, height)
-      transformPoint(clip, camera.viewProj, point)
-      let w = clip[3]
-      if (w < 1e-6) return null
-      // perspective() bakes the y-down clip flip, so NDC maps straight to
-      // top-left-origin pixels with no negation here.
-      let x = ((clip[0] / w) * 0.5 + 0.5) * width
-      let y = ((clip[1] / w) * 0.5 + 0.5) * height
-      if (camera.ortho !== null) {
-        // An orthographic clip w is 1 everywhere (every point projects, the
-        // divides above are no-ops) and carries no depth, so `w` reports
-        // the camera-forward distance off the view row instead - the same
-        // meaning as the perspective clip w, and unproject's exact input.
-        let v = camera.view
-        w = -(v[2] * point[0] + v[6] * point[1] + v[10] * point[2] + v[14])
-      }
-      return { x, y, w }
+      return projectWith(camera, width, height, point)
     },
     viewProj(out) {
       ensureCamera(camera, width, height)
@@ -2463,6 +2477,26 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           if (v.disposed) return []
           pixelRayOf(v.camera, v.width, v.height, x, y)
           return raycastAs(v.texture, pickOrigin, pickDir, undefined)
+        },
+        project(point) {
+          return projectWith(v.camera, v.width, v.height, point)
+        },
+        unproject(x, y, w, out = [0, 0, 0]) {
+          pixelRayOf(v.camera, v.width, v.height, x, y)
+          out[0] = pickOrigin[0] + w * pickDir[0]
+          out[1] = pickOrigin[1] + w * pickDir[1]
+          out[2] = pickOrigin[2] + w * pickDir[2]
+          return out
+        },
+        screenRay(x, y) {
+          pixelRayOf(v.camera, v.width, v.height, x, y)
+          return {
+            origin: [pickOrigin[0], pickOrigin[1], pickOrigin[2]],
+            direction: [pickDir[0], pickDir[1], pickDir[2]],
+          }
+        },
+        raycast(origin, direction, rayOpts) {
+          return raycastAs(texture, origin, direction, rayOpts)
         },
         get handlers() {
           return viewPointer.handlers
