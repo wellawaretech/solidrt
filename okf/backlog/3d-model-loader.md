@@ -1,6 +1,6 @@
 ---
 title: Model loader follow-ups
-description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3 container with retained hierarchy, skins and animation clips plus the JS mixer since 2026-08-31) covers rigged models end to end; still open are the compressed real-world files (Draco/meshopt, KTX2), merge-by-material, per-material samplers and runtime-fetched content, each demand-gated (morph targets have their own item).
+description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3 container with retained hierarchy, skins and animation clips plus the JS mixer since 2026-08-31) covers rigged models end to end; still open, each something Three's and Unity's glTF loaders take today, are the compressed real-world files (Draco/meshopt, KTX2), tangents and the second UV set, per-material samplers, merge-by-material and runtime decoding of fetched content (morph targets have their own item).
 created: 2026-08-26
 ---
 
@@ -30,30 +30,39 @@ is ~4 us per vertex - fine for small models, a second for a 280k-vertex
 one (the body demo), which is what the bake is for. No native interleave
 was added: the bake already removes the cost where it matters.
 
-## Open, each on demand
+## Open
+
+Each row names the engines whose glTF path has it; Three (GLTFLoader
+with its decoder plugins) and Unity (glTFast) take every one of them.
 
 - **Bake from own geometry, extras, part reuse** shipped 2026-09-22:
   [3d-model-file-bake-and-reuse](../done/3d-model-file-bake-and-reuse.md).
 
 - **Compressed meshes and textures.** Blender exports Draco by default and
   KTX2/Basis textures are common, so real-world files bounce off the
-  parser with a clear error today. The place for the decoders is the bake
+  parser with a clear error today. Three (DRACOLoader, MeshoptDecoder,
+  KTX2Loader) and Unity (glTFast) decode all three; Godot's importer
+  takes none, which is a known hole there, not a precedent. The place for the decoders is the bake
   tool under bun (wasm decoders, no runtime weight), which is the "mature
   loader" half of the direction in
   [3d-differentiators](../notes/3d-differentiators.md): decode there, emit
   the same `.srtm`.
 - **Merge by material.** One part per node keeps identity (picking,
-  per-part hide/highlight) at one draw entry per part. A `--merge` bake
+  per-part hide/highlight) at one draw entry per part. Three's
+  `mergeGeometries`, Unity's static batching, Godot's mesh merging. A `--merge` bake
   option collapsing parts by material is the roadmap's one-draw-per-material
   leverage for static scenes; `mergeGeometries` covers it at runtime
   meanwhile.
-- **Tangents, second UV set.** Dropped; the open layout (`withAttribute`)
+- **Tangents, second UV set.** Dropped today; all three engines carry
+  both (glTF TANGENT and TEXCOORD_1, the second set being where
+  occlusion and light maps live). The open layout (`withAttribute`)
   has the slots and the parser would emit a wider layout per primitive,
   the way COLOR_0 now lands in aColor (2026-09-10: the "colored" layout,
   or the skinned list plus aColor, and the container writes a custom
   attribute list as its list).
 - **Samplers.** Every texture uploads repeat-wrapped, mipmapped and 4x
-  anisotropic; per-material wrap/filter is ignored.
+  anisotropic; per-material wrap/filter is ignored. All three honor the
+  glTF sampler (clamp for decals and UI atlases, nearest for pixel art).
 - **Morph targets** moved to their own item,
   [3d-morph-targets](../done/3d-morph-targets.md): the loader parses primitive
   targets, sparse accessors and the `weights` channel since 2026-09-11.
@@ -62,8 +71,9 @@ was added: the bake already removes the cost where it matters.
   karts, a mod browser, a level editor's exports) meets the runtime
   parser as-is: Draco/meshopt/KTX2 files bounce with the clear error, and
   large ones pay the 4 us-per-vertex interleave in the interpreter.
-  Either a runtime decode path for the common compressions (native, in the
-  loader's Rust side - the interpreter rules out a JS Draco) or a
-  documented publisher-side rule ("bake with `srt tool 3d/model` before
-  upload", the `.srtm` as the exchange format). Decide when a consumer
-  ships user content; do not build both.
+  Three, Unity (glTFast) and Godot (GLTFDocument) all decode at runtime,
+  so the parity answer is a runtime decode path for the common
+  compressions (native, in the loader's Rust side - the interpreter
+  rules out a JS Draco). The publisher-side rule ("bake with `srt tool
+  3d/model` before upload", the `.srtm` as the exchange format) stays as
+  the fast path a publisher can take, not as the substitute.

@@ -69,9 +69,9 @@ and record order. Done looks like: a few hundred
 thousand splats orbiting smoothly on desktop, order updates with zero
 per-frame JS, parked camera renders nothing new.
 
-Stage 3 - memory and fidelity, each on demand: packed instance attribute
-formats (u8-normalized color/opacity, half-float position and covariance)
-if record memory shows up - an engine attribute-format item; SH degree 1+
+Stage 3 - memory and fidelity: packed instance attribute formats
+(u8-normalized color/opacity, half-float position and covariance), the
+lever once record memory is the limit - an engine attribute-format item; SH degree 1+
 (9-48 extra coefficients per splat) via half-float data textures, riding
 [gpu-float-texture-formats](../done/gpu-float-texture-formats.md), which skinning
 also wants.

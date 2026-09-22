@@ -17,7 +17,7 @@ a generator or a loader, so three cases have no path at all:
 - Flat shading, which needs per-face normals on split vertices - blocked
   twice over, since `toNonIndexed` is missing as well (same survey entry).
 
-The most glaring gap in [three-feature-survey](../notes/three-feature-survey.md)
+The most glaring gap in [3d-feature-parity](../notes/3d-feature-parity.md)
 now that the debug helpers have landed.
 
 Three/Godot/Unity all ship it and all three MUTATE in place:

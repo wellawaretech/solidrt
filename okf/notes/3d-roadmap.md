@@ -55,7 +55,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    (landed 2026-08-23: `snapshotTexture(ref)`). Routing pointer events back
    through a mesh into the mapped subtree stays with item 4.
 4. [x] **Picking.** Delivered 2026-08-23 with stage 2 of
-   [spatial-core](../backlog/spatial-core.md): index and triangle
+   [spatial-core](../done/spatial-core.md): index and triangle
    narrowphase in core, hits carry `face`/`uv`/`normal`. Routing events
    into a UI subtree mapped onto a mesh stays with item 3.
 5. [x] **Lights and lit materials (lambert/phong).** Engine:
@@ -136,10 +136,12 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
 13. [x] **Camera and control breadth.** Orthographic camera, orbit and
     first-person controls - see `packages/3d/AGENTS.md`. First-person
     rides engine [relative-mouse-input](../done/relative-mouse-input.md).
-    Left for later, additive: a chase/follow camera rig (Godot's
-    SpringArm3D, Cinemachine's shape) is app code over `setTransition`
-    until a third-person game asks for it; collision stays outside every
-    control (`clampPosition` is the hook), pending a collision tier.
+    The follow source (Cinemachine's Orbital Follow shape) and the
+    occlusion constraint (a hook on the control, the component wiring
+    it from the scene) are shaped on the orbit control in
+    [camera-controls](../design/camera-controls.md) and
+    [camera-and-controls-extensions](../backlog/camera-and-controls-extensions.md);
+    the earlier deferral until a third-person game asks is withdrawn.
 14. [x] **Environment tier: skybox, reflection/environment maps.** The
     skybox and `vRay` background, `setEnvironment`, the HDR asset path
     (`srt tool 3d/environment`, `loadEnvironment`), reflection probes,
@@ -218,7 +220,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     and the docs say so; a skybox `{ cube, intensity?, rotation? }` is
     the object form of the same slot. The 2D image form stays reserved.
 19. [x] **Scene scale.** The walk in core
-    ([spatial-core](../backlog/spatial-core.md), stage 1) and frustum
+    ([spatial-core](../done/spatial-core.md), stage 1) and frustum
     culling as the draw sink's per-target gate, with pose-following
     bounds for skinned parts - see `packages/3d/AGENTS.md`. What stays
     forward-looking: the cull sweep is linear over the nodes with sinks

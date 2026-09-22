@@ -32,7 +32,7 @@ opposite scales, and a third is foreseeable:
   with a field key.
 
 Same primitive, two key sources. This is the third ordering granularity in
-the notes: [spatial-core](../backlog/spatial-core.md)'s escalation 3 orders draw
+the notes: [spatial-core](spatial-core.md)'s escalation 3 orders draw
 ENTRIES within a target; this orders RECORDS within one entry; the sprite
 note was the JS-side draft of it.
 

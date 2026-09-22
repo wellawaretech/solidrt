@@ -8,10 +8,10 @@ created: 2026-08-30
 
 ## Symptom
 
-[physics-core](physics-core.md) lists vehicles under "Not in this item ...
-returns as its own item when a consumer exists". A kart or car game IS the
-consumer, and it is the one game genre that cannot be approximated with
-the primitives stage 1 delivers: a kart as a dynamic box on a track
+[physics-core](physics-core.md) lists vehicles under "Not in this item".
+Unity (WheelCollider) and Godot (VehicleBody3D / VehicleWheel3D) both
+ship one in the box, and a kart or car game is the one genre that cannot
+be approximated with the primitives stage 1 delivers: a kart as a dynamic box on a track
 tumbles at the first bump, and a kinematic body driven by app code has no
 suspension, no weight transfer and no drift.
 

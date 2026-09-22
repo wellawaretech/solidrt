@@ -182,7 +182,7 @@ What lands: a geometry may carry more than one vertex buffer (a stream),
 each with its own interleaved layout; a stream is rewritten in place
 without touching the others; and a mesh draws a slice of its indices
 (Three's `setDrawRange`). Point size and a stock points material stay a
-separate item (okf/notes/three-feature-survey.md).
+separate item (okf/notes/3d-feature-parity.md).
 
 ### Engine: WebGPU's buffers list
 

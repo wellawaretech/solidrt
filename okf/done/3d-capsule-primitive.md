@@ -12,7 +12,7 @@ completed: 2026-09-11
 `Capsule` was a collision volume for `overlap`/`sweep`/`moveAndSlide`
 and nothing could draw one: no generator for the character-controller
 shape every engine ships, and no outline of the volume to see what a
-query actually tested. [three-feature-survey](../notes/three-feature-survey.md)
+query actually tested. [3d-feature-parity](../notes/3d-feature-parity.md)
 listed `CapsuleGeometry` as the missing primitive and roadmap item 10
 carried it as a tube special case.
 

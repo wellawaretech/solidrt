@@ -18,7 +18,7 @@ therefore does, every frame, for every live voice: read the emitter's and
 the camera's world position, project the offset onto the camera's right
 axis for pan, apply an attenuation curve for gain, take the closing speed
 for a doppler rate, and write the three setters. That is O(voices) of
-interpreted work per frame - the same shape [spatial-core](spatial-core.md)
+interpreted work per frame - the same shape [spatial-core](../done/spatial-core.md)
 removed from the scene walk, and its own note already names "emitter
 world positions for spatial audio" as a consumer of the index that nobody
 built.

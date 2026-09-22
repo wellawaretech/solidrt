@@ -48,7 +48,7 @@ candidate: `fillAttribute`, `fillColors` and `fillet` already hold that
 prefix.
 
 The forward-looking argument is the strongest one. `Shape.holes` is an open
-gap ([three-feature-survey](../notes/three-feature-survey.md), Curves and
+gap ([3d-feature-parity](../notes/3d-feature-parity.md), Curves and
 shapes): an outline plus holes is exactly what Three calls `Shape`, so
 leaving the name on the output squats the one we would want for the input.
 

@@ -7,7 +7,9 @@ created: 2026-09-06
 # 2d camera conventions
 
 Distilled from [2d-camera-controller](../done/2d-camera-controller.md).
-True regardless of that item.
+True regardless of that item. The pipeline these decisions sit in (source,
+framing, lanes, constraints, push) and the follow-camera model the control
+is being brought to are in [camera-controls](../design/camera-controls.md).
 
 ## Two camera species, one control
 

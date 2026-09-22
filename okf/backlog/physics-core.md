@@ -65,8 +65,8 @@ Stage 0 - shape discovery at rung 2/3. Run Rapier via `flux:wasm` (or
 `flux:ffi` on desktop) inside a real game project and let the game's needs
 write the API surface. This is how instancing got its shape right (the
 racing demo's shim); the sync-into-scene-graph code written here IS the
-draft of the core binding contract, and the exercise doubles as demand
-evidence. Cheap, disposable, no platform commitment.
+draft of the core binding contract. Cheap, disposable, no platform
+commitment.
 
 Stage 1 - the core module. World create/step, rigid bodies (dynamic,
 kinematic, fixed), primitive colliders (box, sphere, capsule), node
@@ -75,16 +75,18 @@ the stage-0 game runs on it with its wasm/ffi shim deleted, poses arrive
 with zero per-frame JS, and a determinism check replays a recorded run
 bit-identically.
 
-Stage 2 - on demand: joints, trimesh/convex colliders (the spatial pick
-shapes already hold per-geometry position copies - reuse is an open
-question, not a promise), scene queries beyond spatial's own
-(shape-casts), character controller.
+Stage 2 - the rest of what Unity and Godot ship in the box (Three has
+no physics of its own): joints, trimesh/convex colliders (the spatial
+pick shapes already hold per-geometry position copies - reuse is an
+open question, not a promise), scene queries beyond spatial's own
+(shape-casts), character controller (Unity's CharacterController,
+Godot's CharacterBody3D).
 
 ## Not in this item
 
 Writing a solver, soft bodies, cloth, fluids, vehicles, navmesh/AI (a
-different item entirely), 2D physics (Rapier has a 2D twin; wait for a
-consumer). The lightweight tier - overlap and sphere-cast queries on the
+different item entirely), 2D physics (Rapier has a 2D twin; Unity and
+Godot both ship 2D physics, so it is its own item beside `@solidrt/2d`). The lightweight tier - overlap and sphere-cast queries on the
 spatial index, "collision without a physics engine" - is already named in
-[spatial-core](spatial-core.md) as a spatial query item and stays there;
+[spatial-core](../done/spatial-core.md) as a spatial query item and stays there;
 many games need only that, and it must not be gated on this item.

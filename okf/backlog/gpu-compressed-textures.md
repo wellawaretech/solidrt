@@ -16,7 +16,7 @@ hardware format and must transcode or decline. `createTexture`/
 `uploadTexture` are RGBA8-only today, so a game-scale texture set pays the
 full multiple everywhere.
 
-Shape when demanded: `"etc2-rgba8"` as a value of the existing `format`
+Shape: `"etc2-rgba8"` as a value of the existing `format`
 option on createTexture - the vocabulary
 [gpu-float-texture-formats](../done/gpu-float-texture-formats.md)
 established already documents it as reserved, and

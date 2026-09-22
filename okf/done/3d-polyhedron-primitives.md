@@ -14,7 +14,7 @@ collapse into slivers at the poles. Three's low-poly look, the one most
 of its demos and many ports carry, is `IcosahedronGeometry` with flat
 shading, and its smooth sphere for displacement and procedural shading is
 the same geometry with `detail` above 0. Neither had a counterpart, and
-[three-feature-survey](../notes/three-feature-survey.md) listed the family
+[3d-feature-parity](../notes/3d-feature-parity.md) listed the family
 as untracked.
 
 ## Where this sits

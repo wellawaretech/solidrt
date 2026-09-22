@@ -19,7 +19,7 @@ your own index array.
 
 `wireframeGeometry` and `edgesGeometry` landing proved the shape - a
 builder returning a `"lines"` Geometry, no new object kind - and
-[three-feature-survey](../notes/three-feature-survey.md) recorded the
+[3d-feature-parity](../notes/3d-feature-parity.md) recorded the
 family as the largest single untracked cluster in Three's surface. The
 roadmap does not cover it at all.
 

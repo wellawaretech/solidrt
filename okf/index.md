@@ -13,6 +13,14 @@ small chores in [tiny.md](tiny.md).
 
 The architecture of an area and the decisions behind it, kept current. Read before working there.
 
+- **[Camera controls](design/camera-controls.md)** [2026-09-22]
+  The one pipeline every SolidRT camera control runs - source, framing, lanes,
+  constraints, push - and the decisions behind it, measured against
+  Cinemachine (the reference for follow cameras in 2d and 3d), Godot's
+  Camera2D and SpringArm3D, Three's controls, camera-controls and Babylon's
+  ArcRotateCamera; which stage each control implements today, what is missing,
+  and the open items. Read before touching createCamera2d, createOrbitCamera
+  or createFirstPersonCamera.
 - **[Frame timing](design/frame-timing.md)** [2026-09-21]
   The clocks and cadences of a SolidRT client in one place - how a frame
   signal is produced per platform and pacing mode, how display refreshes are
@@ -76,6 +84,16 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   on a generic forge byte source and a reader thread that the texture player's
   browser-style rework reuses; live streams are deferred as an explicit
   latency option.
+- **[Move the texture video player off the frame loop](plans/video-texture-off-frame-loop.md)** [2026-09-22]
+  The texture player selects and uploads its frames inside the JS tick on the
+  UI's clock, and predates the transport the plane player got - no reader, no
+  anchor, no buffering, no seek, and a ~10% frame drop on audio-clocked
+  streams. Browser style is one shared worker for both players over a
+  presenter trait, decoded frames pushed to alloy with a due time on a clock
+  both sides share, a raster-side latch against the frame's presentation
+  deadline, standing demand held by alloy, close that never joins on either
+  player, and the JS tick deleted. Presentation stays at the UI's cadence; a
+  shared surface is a shared clock.
 - **[Documentation website](plans/website.md)** [2026-07-16]
   "A monorepo website/ generated statically by a flux script: section nav, a
   Core-first Start page, and generate-what-we-can content (API reference from
@@ -100,6 +118,12 @@ Shaped, not started.
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
+- **[2d camera framing and lanes](backlog/2d-camera-framing.md)** [2026-09-22]
+  createCamera2d's follow is a dead zone plus one damping rate, so a fast
+  target can leave the screen and a platformer cannot follow lazily on one
+  axis; bring it to the design's pipeline - soft zone, hard limits, lookahead,
+  per-axis damping, the offset and shake lanes, damped bounds, rotation
+  smoothing - with the framing math shared with the 3d orbit control.
 - **[2D layer views, the additive half - tile-layer views, the layers bitmask, into tiling, per-view tint](backlog/2d-layer-views-additive.md)** [2026-09-07]
   A view of a sprite or record layer exists (2d-layer-views), but a tile map
   cannot be shown twice, a minimap cannot admit marker sprites only, several
@@ -138,22 +162,24 @@ Shaped, not started.
   draw the seam at all.
 - **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
-  HDR probes and sky bakes) and each of these is a deliberate non-goal of that
-  work that a consumer would ask for next - an image-lit diffuse cheaper than
-  the chain's rough level, ambient occlusion maps, a smaller environment file,
-  EXR input, Three-style face sets, a per-probe format, half-float readback,
-  and the probe cost on the low-end devices.
+  HDR probes and sky bakes); what Three, Unity and Godot ship on top of the
+  same tier and we do not yet - SH9 irradiance, ambient occlusion maps, EXR
+  input, six-face cube image sets - plus the tier's own leftovers, a smaller
+  environment file, a per-probe format, half-float readback and the probe cost
+  on the low-end devices.
 - **[First-person camera: a reference frame](backlog/3d-first-person-reference-frame.md)** [2026-09-22]
   FirstPersonCamera's pose is in world space, so inside a model that rotates
   as a whole the walls drift past a camera that stays still, and rotating the
   pose by hand every frame fights the control's own glide and clamps; a frame
   option on the control that keeps the pose in a node's local space.
 - **[Instanced meshes - the additive follow-ups](backlog/3d-instance-additive.md)** [2026-09-06]
-  What the instance-citizenship item left as strictly additive work -
-  per-instance frustum gating, the transparent sort center from the instances'
-  union box, shear-exact normals as a second projection, instanced sprites,
-  and a per-instance frame/atlas convention for the stock materials; none
-  changes a shipped contract.
+  What the instance-citizenship item left as strictly additive work, and what
+  Three, Unity and Godot have on instanced meshes that we do not - the
+  transparent sort center from the instances' union box (Three), shear-exact
+  normals as a second projection (Unity), instanced sprites (all three), a
+  per-instance frame/atlas value for the stock materials (Godot's custom data,
+  Unity's property block) - plus per-instance frustum gating; none changes a
+  shipped contract.
 - **[Light layers](backlog/3d-light-layers.md)** [2026-09-22]
   Meshes and targets have layer masks but lights are scene-wide, so an outside
   light lights an enclosed interior straight through its shell and an interior
@@ -176,10 +202,11 @@ Shaped, not started.
   The glTF subset loader (roadmap item 7, shipped 2026-08-26 as
   parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3
   container with retained hierarchy, skins and animation clips plus the JS
-  mixer since 2026-08-31) covers rigged models end to end; still open are the
-  compressed real-world files (Draco/meshopt, KTX2), merge-by-material,
-  per-material samplers and runtime-fetched content, each demand-gated (morph
-  targets have their own item).
+  mixer since 2026-08-31) covers rigged models end to end; still open, each
+  something Three's and Unity's glTF loaders take today, are the compressed
+  real-world files (Draco/meshopt, KTX2), tangents and the second UV set,
+  per-material samplers, merge-by-material and runtime decoding of fetched
+  content (morph targets have their own item).
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
@@ -268,11 +295,13 @@ Shaped, not started.
   idle, and every later animation starts at 20 fps even when its frames would
   fit one refresh. Reload resets it.
 - **[Camera and controls extensions](backlog/camera-and-controls-extensions.md)** [2026-09-17]
-  SolidRT has two stock controls (OrbitCamera, FirstPersonCamera) where
-  Three.js and Babylon.js ship many with more options; the concrete gap is
-  moving through a model (dolly / fly-through, which a zoom can never do),
-  then zoom-to-cursor and a dynamic pivot as built-ins - the survey below is
-  from memory and needs research before it is shaped further.
+  The orbit control's gap against the reference set, shaped under
+  okf/design/camera-controls.md - a push through a model (the fly demo's ask,
+  which a bounded dolly can never do), zoom-to-cursor and a dynamic pivot
+  built into the component, an orbit point off the view axis, a follow source
+  with Cinemachine's framing, an occlusion constraint, a shake lane, the map
+  preset and double-tap to focus; with the survey of Three, camera-controls,
+  Babylon, Cinemachine and Godot verified against current sources.
 - **[captureSnapshot fails inside a clean repaint boundary](backlog/capture-inside-clean-boundary.md)** [2026-08-27]
   A capture (captureSnapshot, /snapshot) of a node under a repaintBoundary
   view whose recording is being reused fails with "capture node is not in the
@@ -426,10 +455,11 @@ Shaped, not started.
   after a genuine loss still open.
 - **[Depth func option](backlog/gpu-depth-func.md)** [2026-08-11]
   The depth comparison is fixed at LESS with no override, which blocks
-  equal-depth multi-pass tricks (LEQUAL) and reversed-z; a depthCompare option
-  on createRenderPipeline is additive when a demand signal arrives. Wanted
-  together with sampleable depth for shadow maps. Split from
-  gpu-pipeline-extensions 2026-08-11.
+  equal-depth multi-pass tricks (LEQUAL) and reversed-z; Three's
+  Material.depthFunc (default LessEqualDepth) and Unity's ZTest are the same
+  knob, so a depthCompare option on createRenderPipeline is a parity gap,
+  additive with the default staying less. Split from gpu-pipeline-extensions
+  2026-08-11.
 - **[GPU example gaps](backlog/gpu-example-gaps.md)** [2026-07-29]
   A multi-pass shader chain example, formerly blocked on target dependency
   propagation - which landed 2026-07-29, so the example is now unblocked and
@@ -761,14 +791,6 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
-- **[Spatial core - transform hierarchy, spatial index and queries in alloy](backlog/spatial-core.md)** [2026-08-23]
-  The @solidrt/3d sync walk recurses the whole node tree in QuickJS on every
-  change (one moved node = O(scene)), picking is a JS box-only test, and both
-  are the interpreter-hostile parts of every large scene. Move the transform
-  hierarchy, its flush and the spatial index into a generic alloy module (no
-  camera, no mesh, no lights) that the 3d package is the first consumer of;
-  triangle-accurate picking (3d roadmap item 4) and the scene-walk descent
-  (item 19) land together on it.
 - **[Standalone APK for a packed app](backlog/standalone-android-apk.md)** [2026-09-01]
   An app can be packed into a native executable for every desktop platform but
   not into an installable Android app; the runtime has no Android boot path
@@ -1986,6 +2008,14 @@ Finished, kept for the reasoning.
   dying app's GPU resources are destroyed on engine drop. Leaving an animated
   3d app leaves its clip players running against destroyed textures: a warning
   per frame and a launcher stuck at full frame rate forever.
+- **[Spatial core - transform hierarchy, spatial index and queries in alloy](done/spatial-core.md)** [2026-09-22]
+  The @solidrt/3d sync walk recursed the whole node tree in QuickJS on every
+  change (one moved node = O(scene)) and picking was a JS box-only test, the
+  interpreter-hostile parts of every large scene. The transform hierarchy, its
+  flush and the spatial index moved into a generic alloy module (no camera, no
+  mesh, no lights) with the 3d package as its first consumer: the walk and
+  triangle-accurate picking landed 2026-08-23, and every sink and query the
+  item deferred has since landed in its own item.
 - **[A spatial node cannot animate out, and its enter cannot own its motion](done/spatial-node-exit-transitions.md)** [2026-09-10]
   The 2d and 3d node transitions carried `from` but no `exit`, no `delay` and
   no endpoint object form, so a dying enemy or a collected coin was kept
@@ -2180,6 +2210,13 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   the driver surface is ours. The interpreter losses are a routing decision,
   not a ceiling: JS, wasm, FFI and into-core are four rungs, and the browser
   ladder stops at rung two.
+- **[3D feature parity - Three, Unity and Godot against @solidrt/3d](notes/3d-feature-parity.md)** [2026-09-08]
+  One row per feature, four columns (Three, Unity, Godot, us), grouped by
+  area, with a count per area of the rows at least two engines ship and how
+  many of those we ship; every gap links its backlog item or says untracked,
+  and each Unity/Godot cell says whether it was verified against the engine's
+  docs or written from memory. Grew out of the Three-only feature survey
+  (2026-09-08, revised 09-11) on 2026-09-22.
 - **[3D LOD measurements and traps](notes/3d-lod-measurements.md)** [2026-09-11]
   What building level of detail in the spatial core established - the
   projection's negative proj[5], the half-diagonal measure, and the per-frame
@@ -2392,12 +2429,6 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   width, and what the shared word cache changes; the numbers under the owned
   text engine's claims (pixel parity, cold shaping a wash, re-layout 14x
   cheaper, edits re-shape only their words).
-- **[Three.js feature survey - the inventory behind the roadmap](notes/three-feature-survey.md)** [2026-09-08]
-  A fine-grained inventory of what Three.js has and @solidrt/3d does not,
-  first taken 2026-09-08 and revised 2026-09-11 once the last roadmap
-  capabilities landed, across geometry, materials, renderer features, objects,
-  animation, loaders, textures, controls and math, plus the items our model
-  makes unnecessary.
 - **[Postmortem - a bad GPU counter steered a day of TV perf work](notes/tv-gpu-measurement-postmortem.md)** [2026-09-02]
   gpuFrameExecMs on the MediaTek TV produced a plausible-looking "40 ms GPU
   fill" number that spawned a mis-attributed backlog item, a probe

@@ -1,7 +1,8 @@
 ---
 title: Spatial core - transform hierarchy, spatial index and queries in alloy
-description: The @solidrt/3d sync walk recurses the whole node tree in QuickJS on every change (one moved node = O(scene)), picking is a JS box-only test, and both are the interpreter-hostile parts of every large scene. Move the transform hierarchy, its flush and the spatial index into a generic alloy module (no camera, no mesh, no lights) that the 3d package is the first consumer of; triangle-accurate picking (3d roadmap item 4) and the scene-walk descent (item 19) land together on it.
+description: The @solidrt/3d sync walk recursed the whole node tree in QuickJS on every change (one moved node = O(scene)) and picking was a JS box-only test, the interpreter-hostile parts of every large scene. The transform hierarchy, its flush and the spatial index moved into a generic alloy module (no camera, no mesh, no lights) with the 3d package as its first consumer: the walk and triangle-accurate picking landed 2026-08-23, and every sink and query the item deferred has since landed in its own item.
 created: 2026-08-23
+completed: 2026-09-22
 ---
 
 # Spatial core
@@ -34,7 +35,7 @@ shares:
   recomputes only dirty subtrees;
 - **producers** that write node TRS on the frame clock, upstream of the
   flush: declared node transitions (writes as targets, springs/curves)
-  and clip players ([animation-core](../done/animation-core.md) - baked
+  and clip players ([animation-core](animation-core.md) - baked
   keyframe tracks, weighted blending). Deliberately two kinds, not one:
   stateful convergence toward moving targets vs stateless sampling of
   authored data (the CSS transitions/animations split); they share the
@@ -76,7 +77,7 @@ reason the binding is a small enum and not a hardwired mesh field:
 |---|---|---|
 | `DrawParams { target, draw, normal }` | the draw entry's `uModel` (+ `uNormal`) params | `@solidrt/3d`; any draw-list user (2D sprite scenes with an orthographic matrix are the same thing) |
 | `InstanceRecord { buffer, index }` | one slot of an instance buffer | instanced fleets whose instances are nodes: the thousands-of-dynamic-objects tier |
-| `TextureSlot { texture, row, post }` (BUILT 2026-09-02: `bind_texture_slot`, group-level optional anchor, one whole-palette upload per texture per flush) | one row of a float texture (`world * post`, anchor-relative when the group has one) | skeleton bones for skinning: `createModel` binds joints with `post` = inverse bind, anchor = model root; anticipated second consumer [2d-skeletal-sprites](2d-skeletal-sprites.md) |
+| `TextureSlot { texture, row, post }` (BUILT 2026-09-02: `bind_texture_slot`, group-level optional anchor, one whole-palette upload per texture per flush) | one row of a float texture (`world * post`, anchor-relative when the group has one) | skeleton bones for skinning: `createModel` binds joints with `post` = inverse bind, anchor = model root; anticipated second consumer [2d-skeletal-sprites](../backlog/2d-skeletal-sprites.md) |
 | `EntryVisible { target, draw }` | the entry's instance count (0 / N) | frustum culling (item 19's other half) |
 | `SharedSlot { target, name, len, index, projection }` | one vec3 slot of a target shared array param (Direction projection today; Position is the anticipated sibling) | `@solidrt/3d` light directions (`uLightDir`); any tracked axis a shader reads |
 
@@ -305,3 +306,37 @@ currently self-contained. The JS-side `geometry.vertices` is app-owned
 plain data the engine cannot free. If shape memory ever shows up, the
 lever is LAZY shapes - create them on first pointer handler / raycast
 per scene instead of at every buffer acquire - not buffer references.
+
+## Outcome (2026-09-22)
+
+Closed as complete; the item outlived its own stages by a month because
+each "not in this item" piece landed under its own name. Where they went:
+
+- Stage 1 (the walk) and stage 2 (index, shapes, raycast): 2026-08-23,
+  the Findings above; the per-shape triangle BVH 2026-08-31.
+- Frustum culling (the `EntryVisible` row): the draw sink's per-target
+  gate with `set_cull`/`set_cull_bounds`/`set_cull_group`, roadmap item
+  19; level of detail beside it in [3d-lod](3d-lod.md).
+- `InstanceRecord` sink: [3d-instance-citizenship](3d-instance-citizenship.md)
+  (instances are arena nodes, `set_instance_record(s)`), with
+  [gpu-instance-order](gpu-instance-order.md) for order within an entry.
+- `TextureSlot` sink: built 2026-09-02 for skinning,
+  [3d-skeleton-sharing](3d-skeleton-sharing.md).
+- `SharedSlot` sink: Direction (2026-08-23, above) and Position
+  (`bindPositionSlot`, `uLightPos`) - a light's direction and position
+  are core-driven; colors, count and hemisphere stay in JS by the
+  "until node counts make them matter" rule, which nothing has tripped.
+- Overlap and sweep queries: [spatial-collision-queries](spatial-collision-queries.md).
+- Producers: [spatial-node-transitions](spatial-node-transitions.md) and
+  the clip players of [animation-core](animation-core.md).
+- The transparent sort: of the three escalating fixes listed above, the
+  third shipped - a core view-depth sort writing the draw-order channel
+  (`setDrawSort`; "draw order is the core's" in scene.ts), so the JS
+  center readbacks went with it.
+- The 2d package became the second consumer as anticipated:
+  [2d-spatial-citizenship](2d-spatial-citizenship.md), with zero core
+  changes for the arena itself.
+
+Still forward-looking, recorded under roadmap item 19 and not here: a
+BVH-walked cull sweep in place of the linear one, when a profile shows
+the linear sweep.

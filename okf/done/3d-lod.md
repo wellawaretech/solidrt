@@ -21,7 +21,7 @@ targets the fill and vertex budget is the binding one.
 The app-side answer is a per-frame loop: for each LOD group, distance to
 the camera, pick the level, `setVisible` the winner. That is a test per
 group per frame in the interpreter - the same O(scene) walk
-[spatial-core](../backlog/spatial-core.md) moved into Rust, and the
+[spatial-core](spatial-core.md) moved into Rust, and the
 reason roadmap item 19 says frustum culling "in JS is ruled out, not
 deferred". LOD is the same query over the same index and belongs beside
 it.

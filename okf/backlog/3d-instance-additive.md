@@ -1,6 +1,6 @@
 ---
 title: Instanced meshes - the additive follow-ups
-description: What the instance-citizenship item left as strictly additive work - per-instance frustum gating, the transparent sort center from the instances' union box, shear-exact normals as a second projection, instanced sprites, and a per-instance frame/atlas convention for the stock materials; none changes a shipped contract.
+description: What the instance-citizenship item left as strictly additive work, and what Three, Unity and Godot have on instanced meshes that we do not - the transparent sort center from the instances' union box (Three), shear-exact normals as a second projection (Unity), instanced sprites (all three), a per-instance frame/atlas value for the stock materials (Godot's custom data, Unity's property block) - plus per-instance frustum gating; none changes a shipped contract.
 created: 2026-09-06
 ---
 
@@ -13,13 +13,17 @@ materials' `instanced`/`instanceColors`, `<InstancedMesh>`/`<Instance>`.
 ## Symptom
 
 - A transparent instanced mesh without `bounds` sorts by its node
-  position. Its frustum box follows the instances (the scene sets the
+  position, where Three sorts an InstancedMesh by the bounding sphere
+  it computes over the instances. Its frustum box follows the instances (the scene sets the
   core's cull group over the live instance nodes), but the sort center
   is computed in JS from the local bounds, so the union's center needs
   a core read of the group box (six floats through the plugin) before
   the sort can use it.
 - Records are drawn whether or not the instance is in view: an instance
-  far outside the frustum still costs its vertices. Per-instance gating
+  far outside the frustum still costs its vertices (Three's
+  InstancedMesh and Godot's MultiMesh share this; Unity's per-renderer
+  instancing culls per object, so this is the one row without full
+  precedent). Per-instance gating
   (a hidden record for an instance whose box fails the target's
   frustum, restored when it re-enters) is a core-side flush concern:
   the record projection already writes the hidden record for
@@ -38,7 +42,8 @@ materials' `instanced`/`instanceColors`, `<InstancedMesh>`/`<Instance>`.
   particle cloud, a crowd of cutout trees) is a custom class today.
   `sprite({ instanced: true })` would place the billboard at the
   instance's position with the instance's scale as its size, Three's
-  Points/Godot's particle billboards.
+  Points, Unity's particle billboards, Godot's particle and MultiMesh
+  billboards: all three.
 - The stock materials carry one per-instance value, the color. A
   per-instance atlas frame or uv offset (`instanceFrames`: a vec4 in
   slot 1 beside the color) is the next most common per-copy value
@@ -46,6 +51,7 @@ materials' `instanced`/`instanceColors`, `<InstancedMesh>`/`<Instance>`.
 
 ## Done looks like
 
-Each is its own small item; the order is by demand. None renames or
+Each is its own small item, in the order above (the sort center and the
+instanced sprite first, both the cheapest and the most visible). None renames or
 reshapes a shipped call: `bounds` stays, the style slot layout stays the
 material's, `instanceNormalMatrix()` stays.

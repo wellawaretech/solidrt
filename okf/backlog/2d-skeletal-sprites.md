@@ -28,7 +28,7 @@ shared layer, deliberately bone-free:
   rows into an rgba32f palette texture at the flush - `post` = a 2d
   inverse bind as a mat4, anchor = the skeleton root. Zero core changes;
   this item is the sink's anticipated second consumer (the admissibility
-  test in [spatial-core](spatial-core.md)).
+  test in [spatial-core](../done/spatial-core.md)).
 - Clip playback: the [animation-core](../done/animation-core.md)
   evaluator (DONE 2026-09-03) targets spatial nodes generically -
   `flux:spatial` createClip/createPlayer drive baked 2d bone clips
