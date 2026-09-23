@@ -630,7 +630,7 @@ for (let i = 0; i < SWEEP; i++) {
   let b = { x: 100, y: 50, zoom: 4, rotation: 1, pivotX: 10, pivotY: 20 }
   let m = mixCamera2d(a, b, 0.5)
   if (!near(m.zoom, 2) || !near(m.x, 50) || !near(m.rotation, 0.5) || !near(m.pivotX, 5)) fail(`mixCamera2d: zoom in log space, the rest linear, got ${JSON.stringify(m)}`)
-  let last: CameraUpdate | null = null
+  let last = null as CameraUpdate | null
   let shots = createShots({ setCamera: u => (last = u) }, { blend: 0.25 })
   let wide = createCamera2d(shots.shot("wide"), { viewport: () => ({ width: 800, height: 600 }), zoom: 1, x: 400, y: 300 })
   let close = createCamera2d(shots.shot("close", { priority: 1 }), { viewport: () => ({ width: 800, height: 600 }), zoom: 4, x: 100, y: 100 })
