@@ -28,6 +28,8 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
+      - uses: ./.github/actions/windows-msys2-tools
+
       # The Makefile recipes are unix-flavored (make, unzip, sed, bash). Git Bash
       # on the runner already provides sed/curl/bash; make and unzip do not ship
       # by default, so pull them from chocolatey (its shim dir is already on PATH).

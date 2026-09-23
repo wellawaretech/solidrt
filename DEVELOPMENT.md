@@ -22,17 +22,21 @@ of Bun and Rust (MSVC toolchain) you need:
   with the "Desktop development with C++" workload. This also ships CMake; put
   `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`
   on your `PATH` (SDL3 is built from source through CMake).
-- GNU Make 4.x: `winget install ezwinports.make`. GnuWin32's Make 3.81 does not
-  understand `C:/` paths and fails on `platform.mk`.
 - LLVM (for `libclang`, used by bindgen to build QuickJS):
   `winget install LLVM.LLVM --location "$env:LOCALAPPDATA\LLVM"` installs
   without admin rights. Then set the user environment variable
   `LIBCLANG_PATH` to `%LOCALAPPDATA%\LLVM\bin`.
-- [NASM](https://www.nasm.us) on your `PATH`. libvpx's
-  configure runs under the POSIX shell and generates a Visual Studio solution
-  that the build compiles with the Build Tools' `msbuild`; its asm step calls
-  `nasm` too. From an MSYS2 shell instead of Git Bash, also
-  `pacman -S diffutils mingw-w64-x86_64-nasm`.
+- [MSYS2](https://www.msys2.org) with `pacman -S make diffutils
+  mingw-w64-x86_64-nasm`, and its `usr\bin` and `mingw64\bin` on `PATH`
+  ahead of Git's. Its make (4.x) drives the makefiles; GnuWin32's Make 3.81
+  does not understand `C:/` paths and fails on `platform.mk`. The vendored
+  libvpx has a POSIX build: its configure runs
+  under `sh` and generates a Visual Studio solution that the build compiles
+  with the Build Tools' `msbuild`, but the makefiles that get there run
+  `#!/bin/bash` scripts, so `make` must be MSYS2's (forge's build.rs takes
+  it from beside the `sh` it finds); a native make would launch `bash`
+  through Windows' own search order and hit the WSL launcher in System32.
+  The asm step calls `nasm`.
 
 Open a fresh terminal after changing `PATH` or `LIBCLANG_PATH`, then run
 `make client` from Git Bash at the repo root. The first build also downloads

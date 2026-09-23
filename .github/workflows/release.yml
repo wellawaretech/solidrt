@@ -253,8 +253,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
-      - name: Add MSYS2 tools to PATH
-        run: echo "C:/msys64/usr/bin" >> $GITHUB_PATH
+      - uses: ./.github/actions/windows-msys2-tools
 
       - uses: ./.github/actions/js-install
 

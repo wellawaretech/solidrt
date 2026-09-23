@@ -31,11 +31,13 @@
 //
 // On MSVC, libvpx's make only generates a Visual Studio solution (configure
 // --target=x86_64-win64-vs<N>, N matching the installed Visual Studio) and
-// msbuild compiles it. configure and make still need MSYS2 (sh, make,
-// diffutils) and nasm on PATH, which the vcxproj's asm step calls too, and
-// MSYS2's bin must precede System32: make runs the #!/bin/bash generator
-// scripts through the first bash on PATH, and System32 holds the WSL
-// launcher under that name. The
+// msbuild compiles it. configure and make still need a POSIX environment
+// (MSYS2: sh, make, diffutils) and nasm on PATH, which the vcxproj's asm
+// step calls too. The make is taken from beside the sh, not from PATH: the
+// makefiles run #!/bin/bash generator scripts, and a native Windows make
+// launches such a script's interpreter by bare name through CreateProcess,
+// which searches System32 before PATH and finds the WSL launcher there
+// under that name (every GitHub Windows image has it). The
 // CRT follows the Rust target: crt-static builds libvpx /MT (vpxmt.lib),
 // else /MD (vpxmd.lib). A mix is not a link error: the UCRT import libs
 // let /MD objects into a /MT binary with a warning cargo does not show, so
@@ -139,11 +141,12 @@ fn build_libvpx(target_os: &str) {
   let build_dir = out_dir.join("libvpx");
   std::fs::create_dir_all(&build_dir).expect("create the libvpx build directory");
 
+  let sh = find_on_path(&["sh"]).unwrap_or_else(|| panic!("libvpx: no sh on PATH; its configure needs a POSIX shell"));
   if !build_dir.join("config.mk").exists() {
     // configure finds its source dir by cutting $0 at the last '/', which a
     // Windows path spelled with backslashes does not have.
     let script = src.join("configure").to_string_lossy().replace('\\', "/");
-    let mut configure = Command::new("sh");
+    let mut configure = Command::new(&sh);
     configure
       .arg(script)
       .arg(format!("--target={target}"))
@@ -179,7 +182,7 @@ fn build_libvpx(target_os: &str) {
 
   let jobs = std::env::var("NUM_JOBS").unwrap_or_else(|_| "1".to_string());
   if msvc {
-    build_libvpx_msbuild(&build_dir, &target_arch, crt_static, &jobs);
+    build_libvpx_msbuild(&build_dir, &sh, &target_arch, crt_static, &jobs);
     return;
   }
   run("make libvpx", Command::new("make").arg(format!("-j{jobs}")).current_dir(&build_dir));
@@ -192,10 +195,24 @@ fn build_libvpx(target_os: &str) {
 /// rtcd/config headers, msbuild compiles the `vpx` project (not the rate
 /// control library next to it) in its Release config (see the header on
 /// the CRT) into <platform>/Release/vpx{mt,md}.lib.
-fn build_libvpx_msbuild(build_dir: &std::path::Path, target_arch: &str, crt_static: bool, jobs: &str) {
+fn build_libvpx_msbuild(
+  build_dir: &std::path::Path,
+  sh: &std::path::Path,
+  target_arch: &str,
+  crt_static: bool,
+  jobs: &str,
+) {
+  // The POSIX make next to the sh (see the header on why not PATH's make).
+  let make = sh.with_file_name(format!("make{}", std::env::consts::EXE_SUFFIX));
+  if !make.is_file() {
+    panic!(
+      "libvpx: no make next to {}; install it into that environment (MSYS2: pacman -S make diffutils)",
+      sh.display()
+    );
+  }
   run(
     "generate the libvpx solution",
-    Command::new("make").arg("NO_LAUNCH_DEVENV=1").arg(format!("-j{jobs}")).current_dir(build_dir),
+    Command::new(&make).arg("NO_LAUNCH_DEVENV=1").arg(format!("-j{jobs}")).current_dir(build_dir),
   );
 
   let target = std::env::var("TARGET").expect("TARGET not set");

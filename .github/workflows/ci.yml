@@ -97,17 +97,14 @@ jobs:
         if: matrix.platform == 'linux'
         run: sudo apt-get update && sudo apt-get install -y nasm
 
-      # libvpx's configure and make need sh, make and diff; GNU make also
-      # runs a #!/bin/bash script through the first bash on PATH, which on
-      # the image is the WSL launcher in System32 unless MSYS2's bin comes
-      # first. Same step as the release and quick-check jobs.
-      - name: Add MSYS2 tools to PATH
-        if: matrix.platform == 'windows'
-        run: echo "C:/msys64/usr/bin" >> $GITHUB_PATH
-        shell: bash
+      - if: matrix.platform == 'windows'
+        uses: ./.github/actions/windows-msys2-tools
 
+      # One test at a time: the worker tests measure real sleeps against the
+      # clock, and on a shared 3-core macOS runner 132 parallel tests made
+      # the worker wake 58 ms late. The whole suite takes ~9 s serially.
       - name: Test forge
-        run: cargo test -p forge --features video
+        run: cargo test -p forge --features video -- --test-threads=1
 
   # The headless flux runtime (QuickJS + the forge marshalling: value, time,
   # marshal, intrinsics) on the same four platforms, same principle as
