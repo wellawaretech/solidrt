@@ -44,6 +44,10 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # The vendored codecs (forge/vendor/libvpx, opus) that every build
+        # carries since video became the default.
+        with:
+          submodules: true
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -80,6 +84,10 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # The vendored codecs (forge/vendor/libvpx, opus) that every build
+        # carries since video became the default.
+        with:
+          submodules: true
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -112,6 +120,10 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # The vendored codecs (forge/vendor/libvpx, opus) that every build
+        # carries since video became the default.
+        with:
+          submodules: true
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -150,6 +162,10 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # The vendored codecs (forge/vendor/libvpx, opus) that every build
+        # carries since video became the default.
+        with:
+          submodules: true
 
       # Toolchain channel and the Android targets to install come from
       # rust-toolchain.toml (the single source of truth rustup actually obeys
@@ -224,6 +240,10 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # The vendored codecs (forge/vendor/libvpx, opus) that every build
+        # carries since video became the default.
+        with:
+          submodules: true
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 

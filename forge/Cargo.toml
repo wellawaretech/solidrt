@@ -12,7 +12,8 @@ path = "src/lib.rs"
 # forge::video: WebM demux (own reader), Opus decode (the vendored libopus,
 # forge/vendor/opus, built by build.rs), plus the video decoder: AMediaCodec
 # on Android, the vendored libvpx (forge/vendor/libvpx, built by build.rs)
-# everywhere else. Opt-in while the playback stack is incomplete. See
+# everywhere else. Not a cargo default (a plain build needs neither the
+# vendor submodules nor nasm); every lattice Makefile goal enables it. See
 # okf/backlog/video-playback.md.
 video = ["dep:ndk", "dep:ndk-sys"]
 

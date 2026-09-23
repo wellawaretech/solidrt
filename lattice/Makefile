@@ -44,16 +44,14 @@ GO_FEATURES      = --features go,speech
 RUNTIME_FEATURES = --features speech
 endif
 
-# Video playback (forge::video + flux:video + @solidrt/core/video) is opt-in
-# the same way, and for the same reason: the stack is incomplete, so a plain
-# build carries no decoder, no flux:video module and no `video` capability.
-# Dist builds force it off until the stack is finished. The codec is VP9
-# (royalty-free): MediaCodec on Android, the vendored libvpx elsewhere, so
-# nothing here carries a codec license. See okf/backlog/video-playback.md.
+# Video playback (forge::video + flux:video + @solidrt/core/video) is on for
+# every goal, dist included; VIDEO=0 leaves the decoder, the flux:video module
+# and the `video` capability out. It stays a non-default cargo feature so a
+# plain `cargo build` needs neither the forge/vendor submodules nor nasm. The
+# codec is VP9 (royalty-free): MediaCodec on Android, the vendored libvpx
+# elsewhere, so nothing here carries a codec license. See
+# okf/backlog/video-playback.md.
 VIDEO ?= 1
-ifeq ($(DIST),1)
-override VIDEO = 0
-endif
 ifeq ($(VIDEO),0)
 VIDEO_FEATURES =
 else
@@ -134,7 +132,7 @@ help:
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
-	@echo "Pass VIDEO=1 to build with video playback (default: off)."
+	@echo "Pass VIDEO=0 to build without video playback (default: on)."
 	@echo "dist targets always build speech-free; solidrt and fluxrt use release-opt,"
 	@echo "as does the Android runner (ANDROID_RUNTIME_PROFILE=$(ANDROID_RUNTIME_PROFILE))."
 	@echo ""

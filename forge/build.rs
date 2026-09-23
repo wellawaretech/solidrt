@@ -28,6 +28,18 @@
 // before. VP8 is not built, nor are the examples, tools and docs. Android
 // needs none of this: its VP9 decoder is MediaCodec
 // (forge/src/video/mediacodec.rs).
+//
+// On MSVC, libvpx's make only generates a Visual Studio solution (configure
+// --target=x86_64-win64-vs<N>, N matching the installed Visual Studio) and
+// msbuild compiles it. configure and make still need MSYS2 (sh, make,
+// diffutils) and nasm on PATH, which the vcxproj's asm step calls too. The
+// CRT follows the Rust target: crt-static builds libvpx /MT (vpxmt.lib),
+// else /MD (vpxmd.lib). A mix is not a link error: the UCRT import libs
+// let /MD objects into a /MT binary with a warning cargo does not show, so
+// check an archive with `dumpbin -directives` (LIBCMT only) rather than by
+// linking. Both libraries build Release whatever the cargo profile: Rust
+// links the release CRT only, and the Debug configs would pick the debug
+// CRT.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -57,14 +69,22 @@ fn build_libopus() {
   }
   // The library only: no programs, tests, docs or install modules, and a
   // fixed lib dir so the link search path is the same on every distro.
-  let dst = cmake::Config::new(&src)
+  let mut config = cmake::Config::new(&src);
+  config
     .define("OPUS_BUILD_SHARED_LIBRARY", "OFF")
     .define("OPUS_BUILD_PROGRAMS", "OFF")
     .define("OPUS_BUILD_TESTING", "OFF")
     .define("OPUS_INSTALL_PKG_CONFIG_MODULE", "OFF")
     .define("OPUS_INSTALL_CMAKE_CONFIG_MODULE", "OFF")
-    .define("CMAKE_INSTALL_LIBDIR", "lib")
-    .build();
+    .define("CMAKE_INSTALL_LIBDIR", "lib");
+  // opus sets CMAKE_MSVC_RUNTIME_LIBRARY itself (overriding the toolchain
+  // file): the DLL CRT unless OPUS_STATIC_RUNTIME, and the debug CRT in the
+  // Debug config. Rust links the release CRT only, so on MSVC follow
+  // crt-static and always build Release.
+  if msvc() {
+    config.define("OPUS_STATIC_RUNTIME", if crt_static() { "ON" } else { "OFF" }).profile("Release");
+  }
+  let dst = config.build();
   println!("cargo:rustc-link-search=native={}", dst.join("lib").display());
   println!("cargo:rustc-link-lib=static=opus");
 }
@@ -105,7 +125,9 @@ fn build_libvpx(target_os: &str) {
   }
 
   let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").expect("CARGO_CFG_TARGET_ARCH not set");
-  let target = libvpx_target(&target_arch, target_os);
+  let msvc = msvc();
+  let crt_static = crt_static();
+  let target = if msvc { libvpx_msvc_target(&target_arch) } else { libvpx_target(&target_arch, target_os) };
   if matches!(target_arch.as_str(), "x86" | "x86_64") && find_on_path(&["nasm", "yasm"]).is_none() {
     panic!("libvpx needs an assembler for its x86 SIMD code and neither nasm nor yasm is on PATH; install nasm");
   }
@@ -115,10 +137,12 @@ fn build_libvpx(target_os: &str) {
   std::fs::create_dir_all(&build_dir).expect("create the libvpx build directory");
 
   if !build_dir.join("config.mk").exists() {
-    let compiler = cc::Build::new().get_compiler();
+    // configure finds its source dir by cutting $0 at the last '/', which a
+    // Windows path spelled with backslashes does not have.
+    let script = src.join("configure").to_string_lossy().replace('\\', "/");
     let mut configure = Command::new("sh");
     configure
-      .arg(src.join("configure"))
+      .arg(script)
       .arg(format!("--target={target}"))
       .args([
         "--enable-vp9",
@@ -138,16 +162,83 @@ fn build_libvpx(target_os: &str) {
         "--disable-libyuv",
         "--disable-vp9-encoder",
       ])
-      .env("CC", compiler.path())
       .current_dir(&build_dir);
+    if msvc {
+      // configure bypasses the compiler for vs targets; msbuild finds cl.
+      if crt_static {
+        configure.arg("--enable-static-msvcrt");
+      }
+    } else {
+      configure.env("CC", cc::Build::new().get_compiler().path());
+    }
     run("configure libvpx", &mut configure);
   }
 
   let jobs = std::env::var("NUM_JOBS").unwrap_or_else(|_| "1".to_string());
+  if msvc {
+    build_libvpx_msbuild(&build_dir, &target_arch, crt_static, &jobs);
+    return;
+  }
   run("make libvpx", Command::new("make").arg(format!("-j{jobs}")).current_dir(&build_dir));
 
   println!("cargo:rustc-link-search=native={}", build_dir.display());
   println!("cargo:rustc-link-lib=static=vpx");
+}
+
+/// The MSVC half of the libvpx build: make generates the solution and the
+/// rtcd/config headers, msbuild compiles the `vpx` project (not the rate
+/// control library next to it) in its Release config (see the header on
+/// the CRT) into <platform>/Release/vpx{mt,md}.lib.
+fn build_libvpx_msbuild(build_dir: &std::path::Path, target_arch: &str, crt_static: bool, jobs: &str) {
+  run(
+    "generate the libvpx solution",
+    Command::new("make").arg("NO_LAUNCH_DEVENV=1").arg(format!("-j{jobs}")).current_dir(build_dir),
+  );
+
+  let target = std::env::var("TARGET").expect("TARGET not set");
+  let mut msbuild = cc::windows_registry::find(&target, "msbuild.exe")
+    .unwrap_or_else(|| panic!("libvpx: msbuild.exe not found; install Visual Studio Build Tools"));
+  let platform = match target_arch {
+    "x86_64" => "x64",
+    "aarch64" => "ARM64",
+    _ => panic!("libvpx: no msbuild platform for {target_arch}"),
+  };
+  // The Release projects compile /GL, whose objects are LTCG IL with no COFF
+  // symbols: rustc bundles the archive into the rlib and every vpx_* symbol
+  // comes out unresolved. A global property overrides the project's.
+  msbuild
+    .args(["vpx.sln", "-t:vpx", "-nologo", "-v:minimal", "-p:Configuration=Release"])
+    .arg("-p:WholeProgramOptimization=false")
+    .arg(format!("-p:Platform={platform}"))
+    .arg(format!("-m:{jobs}"))
+    .current_dir(build_dir);
+  run("msbuild libvpx", &mut msbuild);
+
+  let lib = if crt_static { "vpxmt" } else { "vpxmd" };
+  println!("cargo:rustc-link-search=native={}", build_dir.join(platform).join("Release").display());
+  println!("cargo:rustc-link-lib=static={lib}");
+}
+
+/// The libvpx configure target for an MSVC Rust target: the vs<N> variant
+/// of the installed Visual Studio, whose toolset the generated projects
+/// name. libvpx v1.17 has vs14 through vs18.
+fn libvpx_msvc_target(arch: &str) -> String {
+  use cc::windows_registry::VsVers;
+  let vs = match cc::windows_registry::find_vs_version() {
+    Ok(VsVers::Vs14) => 14,
+    Ok(VsVers::Vs15) => 15,
+    Ok(VsVers::Vs16) => 16,
+    Ok(VsVers::Vs17) => 17,
+    Ok(VsVers::Vs18) => 18,
+    Ok(other) => panic!("libvpx: Visual Studio {other:?} is newer than the vs targets this script knows; add it"),
+    Err(error) => panic!("libvpx: no Visual Studio found: {error}"),
+  };
+  let arch = match arch {
+    "x86_64" => "x86_64-win64",
+    "aarch64" => "arm64-win64",
+    _ => panic!("libvpx: no Windows target for {arch}"),
+  };
+  format!("{arch}-vs{vs}")
 }
 
 /// The libvpx configure target for the Rust target. The darwin suffix is the
@@ -161,17 +252,29 @@ fn libvpx_target(arch: &str, os: &str) -> String {
     ("arm", "linux") => "armv7-linux-gcc",
     ("x86_64", "macos") => "x86_64-darwin20-gcc",
     ("aarch64", "macos") => "arm64-darwin20-gcc",
-    (_, "windows") => panic!(
-      "the libvpx build is not wired for Windows yet (configure --target=x86_64-win64-vs17 + msbuild); build without the video feature"
-    ),
+    (_, "windows") => panic!("libvpx: only the MSVC Windows targets are wired; build without the video feature"),
     _ => "generic-gnu",
   };
   target.to_string()
 }
 
+/// Whether the Rust target is a Windows MSVC one.
+fn msvc() -> bool {
+  std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|env| env == "msvc")
+}
+
+/// Whether the Rust target links the C runtime statically (/MT on MSVC).
+fn crt_static() -> bool {
+  std::env::var("CARGO_CFG_TARGET_FEATURE")
+    .map(|features| features.split(',').any(|feature| feature == "crt-static"))
+    .unwrap_or(false)
+}
+
 fn find_on_path(names: &[&str]) -> Option<PathBuf> {
   let path = std::env::var_os("PATH")?;
-  std::env::split_paths(&path).find_map(|dir| names.iter().map(|n| dir.join(n)).find(|p| p.is_file()))
+  let suffix = std::env::consts::EXE_SUFFIX;
+  std::env::split_paths(&path)
+    .find_map(|dir| names.iter().map(|n| dir.join(format!("{n}{suffix}"))).find(|p| p.is_file()))
 }
 
 fn run(what: &str, command: &mut Command) {

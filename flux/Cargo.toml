@@ -30,7 +30,7 @@ compile = []
 # default so the headless flux runtime and its bins stay GUI-free; lattice turns
 # it on.
 gui = ["dep:alloy", "dep:taffy"]
-# flux:video (behind forge/video): opt-in, incomplete; see forge/Cargo.toml.
+# flux:video (behind forge/video): not a cargo default; see forge/Cargo.toml.
 video = ["forge/video"]
 
 [dependencies]

@@ -7,9 +7,10 @@ This document covers working on SolidRT itself. For building applications with S
 - [Bun](https://bun.sh) - for development only
 - [Rust](https://rustup.rs) - for building `solidrt-go` and the runtime
 
-Video playback (`VIDEO=1`, opt-in) builds the vendored libvpx from the
-`forge/vendor/libvpx` submodule, so it needs `git submodule update --init`
-once, plus `nasm` (or `yasm`) for libvpx's x86 SIMD code.
+Every build carries video playback (`VIDEO=0` leaves it out), which builds
+the vendored libvpx and libopus from the `forge/vendor` submodules: run
+`git submodule update --init` once, and have `nasm` (or `yasm`) installed for
+libvpx's x86 SIMD code.
 
 ### Windows
 
@@ -27,6 +28,11 @@ of Bun and Rust (MSVC toolchain) you need:
   `winget install LLVM.LLVM --location "$env:LOCALAPPDATA\LLVM"` installs
   without admin rights. Then set the user environment variable
   `LIBCLANG_PATH` to `%LOCALAPPDATA%\LLVM\bin`.
+- [NASM](https://www.nasm.us) on your `PATH`. libvpx's
+  configure runs under the POSIX shell and generates a Visual Studio solution
+  that the build compiles with the Build Tools' `msbuild`; its asm step calls
+  `nasm` too. From an MSYS2 shell instead of Git Bash, also
+  `pacman -S diffutils mingw-w64-x86_64-nasm`.
 
 Open a fresh terminal after changing `PATH` or `LIBCLANG_PATH`, then run
 `make client` from Git Bash at the repo root. The first build also downloads

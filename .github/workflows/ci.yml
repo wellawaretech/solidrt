@@ -19,6 +19,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # The vendored codecs behind the video feature (forge/vendor/libvpx,
+        # opus); nasm for libvpx comes with linux-system-deps.
+        with:
+          submodules: true
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -27,9 +31,12 @@ jobs:
       - uses: ./.github/actions/linux-system-deps
 
       # --all-targets so tests, examples and bins compile too: without it a
-      # broken test or probe example passes CI untouched.
+      # broken test or probe example passes CI untouched. Video is not a
+      # cargo default (see lattice/Makefile) but every shipped build carries
+      # it, so the feature rides along here and in the two test steps: flux's
+      # gui video plugin and lattice's passthrough compile nowhere else.
       - name: Check
-        run: cargo check --workspace --all-targets
+        run: cargo check --workspace --all-targets --features flux/video,lattice/video
 
       # The Linux-only suites: alloy (hit testing, routing, layout cache, GPU
       # graph propagation), flux with the gui feature (unified in through
@@ -38,13 +45,14 @@ jobs:
       # included; flux stays because its headless half is what test-flux runs
       # elsewhere and the gui half has no other home.
       - name: Test
-        run: cargo test --workspace --exclude forge
+        run: cargo test --workspace --exclude forge --features flux/video,lattice/video
 
       # `go` is not a default feature, so the step above compiles none of the
       # client-only code - including lattice's app-store and dev-server-tunnel
-      # tests. That is the code that actually ships, so test it explicitly.
+      # tests. That is the code that actually ships (as go + video), so test
+      # it explicitly.
       - name: Test go client
-        run: cargo test -p lattice --features go
+        run: cargo test -p lattice --features go,video
 
   # The engine-free cores, one job, the same command on every platform we
   # ship to (Linux x64 included, so forge is tested exactly once per
@@ -54,8 +62,10 @@ jobs:
   # on Linux but reads a refused connect as "filtered" there (Windows retries
   # the SYN for ~2 s first, okf/notes/port-probe-platform-facts.md), a
   # realpath test expecting the verbatim prefix, and the cache's LRU touch
-  # failing on a read-only handle. forge needs no system packages, so the
-  # job is toolchain + cache + test.
+  # failing on a read-only handle. With the video feature, so the vendored
+  # libvpx and opus build and decode on every platform (the x64 runners
+  # need nasm for libvpx's SIMD code; the arm ones do not); that is the
+  # only system package forge needs.
   test-forge:
     name: test-forge (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
@@ -74,6 +84,8 @@ jobs:
             runner: windows-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: true
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -81,8 +93,12 @@ jobs:
         with:
           key: test-forge-${{ matrix.platform }}
 
+      - name: Install nasm
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
       - name: Test forge
-        run: cargo test -p forge
+        run: cargo test -p forge --features video
 
   # The headless flux runtime (QuickJS + the forge marshalling: value, time,
   # marshal, intrinsics) on the same four platforms, same principle as
