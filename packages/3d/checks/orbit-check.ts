@@ -656,7 +656,7 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   if (!near(both.ortho!.right, 2)) fail(`two ortho extents blend, got ${JSON.stringify(both.ortho)}`)
   // An orbit control drives a shot: its pushes reach the scene only when
   // the shot is live, through the blender; size() is the scene's.
-  let last: CameraState | null = null
+  let last = null as CameraState | null
   let scene = { setCamera: (u: Partial<CameraState>) => (last = { ...a, ...u }), camera: () => a, size: () => ({ width: 800, height: 600 }) }
   let shots = createShots(scene, { blend: 0.25 })
   let wide = createOrbitCamera(shots.shot("wide"), { distance: 10, target: [0, 0, 0] })

@@ -27,8 +27,16 @@ use crate::video::StreamError;
 const PATIENCE: Duration = Duration::from_secs(10);
 /// How long a close may take to return, and the worker to exit after it.
 const PROMPT: Duration = Duration::from_millis(500);
-/// Scheduling noise allowed on a timed release, in nanoseconds.
+/// Scheduling noise allowed on a timed release, in nanoseconds: how far
+/// ahead of the lead a frame may be handed over (further is the schedule
+/// running ahead, the bug these tests exist to catch).
 const SLACK_NS: i64 = 15_000_000;
+/// How late the sleeping worker may wake on a loaded host, in nanoseconds:
+/// a frame handed over that much less than the lead before its time is the
+/// host's scheduler, not the policy (a macOS CI runner missed by 16 ms).
+/// Kept under RELEASE_LEAD_NS, which is what absorbs a late wake-up in
+/// production.
+const WAKE_JITTER_NS: i64 = 40_000_000;
 /// Pictures the stub holds decoded ahead of the worker, like a small codec.
 const STUB_QUEUE: usize = 2;
 /// What the stub charges per picture, so a reader over a file stays ahead
@@ -227,6 +235,13 @@ fn released(rig: &Rig) -> Vec<(i64, i64, i64)> {
   lock(&rig.log).released.clone()
 }
 
+/// Whether a frame handed over `early` ns before its release time was handed
+/// over on the given lead: never further ahead than the slack, and late
+/// only by what a wake-up may miss.
+fn on_lead(early: i64, lead: i64) -> bool {
+  early - lead <= SLACK_NS && lead - early <= WAKE_JITTER_NS
+}
+
 fn exits_promptly(rig: &Rig) {
   let shared = rig.player.shared();
   let deadline = Instant::now() + PROMPT;
@@ -279,7 +294,7 @@ fn the_release_policy_waits_drops_and_reanchors_against_the_clock() {
   let released_now = released(&rig);
   for &(pts, release_ns, now_ns) in &released_now[3..10] {
     let early = release_ns - now_ns;
-    assert!((early - lead).abs() <= SLACK_NS, "frame {pts}us handed over {early}ns early, lead {lead}ns");
+    assert!(on_lead(early, lead), "frame {pts}us handed over {early}ns early, lead {lead}ns");
   }
   assert_eq!(dropped(), 0);
 
@@ -298,7 +313,7 @@ fn the_release_policy_waits_drops_and_reanchors_against_the_clock() {
   assert!(count <= (jump / frame_ns) as usize + 1, "{count} frames dropped for a {jump}ns jump");
   let resumed = released(&rig);
   let (_, release_ns, now_ns) = resumed[resumed.len() - 1];
-  assert!((release_ns - now_ns - lead).abs() <= SLACK_NS, "the schedule continues on the anchor after the drops");
+  assert!(on_lead(release_ns - now_ns, lead), "the schedule continues on the anchor after the drops");
 
   // A jump past the stall threshold re-anchors instead: the next frame is
   // released for now, not dropped, and the frames after it wait again.
@@ -311,13 +326,13 @@ fn the_release_policy_waits_drops_and_reanchors_against_the_clock() {
   // it is the re-anchored one.
   let reanchored = after[before..]
     .iter()
-    .position(|&(_, release_ns, now_ns)| (release_ns - now_ns).abs() <= SLACK_NS)
+    .position(|&(_, release_ns, now_ns)| on_lead(release_ns - now_ns, 0))
     .map(|k| before + k)
     .unwrap_or_else(|| panic!("no frame was released for now after the stall: {:?}", &after[before..]));
   assert!(reanchored <= before + 1, "the re-anchor came {} frames after the jump", reanchored - before);
   assert_eq!(dropped(), dropped_before, "a stall drops nothing");
   let (_, release_ns, now_ns) = after[reanchored + 2];
-  assert!((release_ns - now_ns - lead).abs() <= SLACK_NS, "after the re-anchor the lead holds again");
+  assert!(on_lead(release_ns - now_ns, lead), "after the re-anchor the lead holds again");
 }
 
 #[test]

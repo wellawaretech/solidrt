@@ -9,11 +9,13 @@ created: 2026-08-12
 Designed 2026-08-12 in discussion; decisions below are settled, the module
 internals wait on one on-device probe.
 
-Build gate (2026-08-16): the whole stack is opt-in behind the `video` cargo
-feature (forge owns it, flux and lattice pass through). A default build
-carries no decoder, no `flux:video` module and no `video` capability. Enable
-with `--features video` while the work is incomplete, or `VIDEO=1` on any
-lattice make goal (2026-09-12); dist builds force it off.
+Build gate: the whole stack sits behind the `video` cargo feature (forge
+owns it, flux and lattice pass through), which is not a cargo default so a
+plain `cargo build` needs neither the vendor submodules nor nasm. Every
+lattice make goal enables it, dist and release builds included (default on
+since 2026-09-23; `VIDEO=0` leaves the decoder, the `flux:video` module and
+the `video` capability out). Before that, 2026-08-16 to 2026-09-23, it was
+opt-in and dist builds forced it off while the stack was incomplete.
 
 Codec: VP9 (2026-09-12, user decision, replacing H.264; see the dated
 section below). The `video` feature builds the vendored libvpx submodule
@@ -275,10 +277,21 @@ more, not less. `decoded_layout()` is now per platform: NV12 on Android
 (MediaCodec's native buffer), I420 elsewhere (libvpx's native planes);
 alloy already had both shaders, so neither path repacks.
 
-Windows is NOT wired: libvpx builds there through `configure
---target=x86_64-win64-vs17` + msbuild, which `build.rs` does not drive
-yet (it panics with that message; build without the `video` feature).
-Follow-up.
+Windows (MSVC) since 2026-09-23: libvpx's make only generates a Visual
+Studio solution there (`configure --target=x86_64-win64-vs<N>`, N from the
+installed Visual Studio), so `build.rs` runs configure + make under MSYS2
+and then msbuild on the `vpx` project. Three traps, each handled in
+`build.rs`: configure needs its path with forward slashes; the Release
+projects compile /GL, whose LTCG objects carry no COFF symbols once rustc
+bundles the archive, so msbuild gets `-p:WholeProgramOptimization=false`;
+and the CRT must follow the Rust target (`--enable-static-msvcrt` ->
+vpxmt.lib under crt-static). libopus had the same CRT trap: its
+CMakeLists sets `CMAKE_MSVC_RUNTIME_LIBRARY` itself (DLL CRT, debug CRT in
+Debug), so on MSVC it gets `OPUS_STATIC_RUNTIME` from crt-static and
+always the Release config. Verified on the Windows box: the release client
+links with both archives /MT only (LIBCMT), the forge video tests pass
+(libvpx decode, opus, seek), and examples/video plays the clip in real
+time with correct colours.
 
 Assets: every clip under examples/video/assets and the forge fixture are
 re-encoded to VP9 (`ffmpeg -c:v libvpx-vp9 -c:a aac`); the `-bf 0`
@@ -315,7 +328,6 @@ stays open on this path:
 - Fullscreen 1080p on the TV is outside the UI clock's budget by
   construction ([[android-video-punch-through]] explains why no rung here
   lifts it); 720p is the ceiling on that device through this path.
-- Windows: the libvpx build (vs17 + msbuild) is not driven by `build.rs`.
 - The upload question is answered: staged uploads landed
   ([[texture-upload-leases]]) and the window draw, not the upload, is the
   remaining per-frame cost ([[live-texture-content-damage]]).
@@ -555,8 +567,8 @@ Two bugs fixed the same session, both in the player:
    the `forge/vendor/libvpx` submodule; tests + fixture re-encoded, with
    real-decoder tests on the host. flux video.rs passes the vpcC range;
    docs (video.d.ts, core video.ts, lattice Makefile, examples/video,
-   DEVELOPMENT.md prerequisites: submodule + nasm). Windows build of
-   libvpx is the open follow-up.
+   DEVELOPMENT.md prerequisites: submodule + nasm). Windows (MSVC)
+   build of libvpx and libopus landed 2026-09-23.
 
 1. Bare minimum, desktop: forge::video (mp4 demux + openh264 + player),
    alloy YUV plane textures + conversion pass, flux gui/video.rs binding,

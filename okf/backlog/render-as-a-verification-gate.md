@@ -27,6 +27,18 @@ exits 0.
 Together: a headless check passes on an app that showed a loading
 screen and logged an error.
 
+A third way, found 2026-09-22 while making the texture video player's
+headless capture deterministic ([[video-texture-off-frame-loop]]): every
+`open` is now asynchronous (the header is read on a reader thread), and
+playback's frame clock does not wait for pending operations, so the frame
+at which `autoplay` starts the clip depends on how fast the file's header
+came back against the capture's own pace. Two runs matched frame for
+frame on the desktop only because a local file's header arrives well
+inside the first frame; a slow disk or a URL source would move the start
+by a frame, and the same holds for any asynchronously opened resource.
+The settle flag below is the fix here too: hold the first frame signal (or
+each one) until the engine's pending operations are idle.
+
 ## Cause
 
 `packages/cli/src/render/main.ts` ends in `process.exit(await

@@ -32,7 +32,10 @@
 // On MSVC, libvpx's make only generates a Visual Studio solution (configure
 // --target=x86_64-win64-vs<N>, N matching the installed Visual Studio) and
 // msbuild compiles it. configure and make still need MSYS2 (sh, make,
-// diffutils) and nasm on PATH, which the vcxproj's asm step calls too. The
+// diffutils) and nasm on PATH, which the vcxproj's asm step calls too, and
+// MSYS2's bin must precede System32: make runs the #!/bin/bash generator
+// scripts through the first bash on PATH, and System32 holds the WSL
+// launcher under that name. The
 // CRT follows the Rust target: crt-static builds libvpx /MT (vpxmt.lib),
 // else /MD (vpxmd.lib). A mix is not a link error: the UCRT import libs
 // let /MD objects into a /MT binary with a warning cargo does not show, so

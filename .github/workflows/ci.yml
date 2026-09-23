@@ -97,6 +97,15 @@ jobs:
         if: matrix.platform == 'linux'
         run: sudo apt-get update && sudo apt-get install -y nasm
 
+      # libvpx's configure and make need sh, make and diff; GNU make also
+      # runs a #!/bin/bash script through the first bash on PATH, which on
+      # the image is the WSL launcher in System32 unless MSYS2's bin comes
+      # first. Same step as the release and quick-check jobs.
+      - name: Add MSYS2 tools to PATH
+        if: matrix.platform == 'windows'
+        run: echo "C:/msys64/usr/bin" >> $GITHUB_PATH
+        shell: bash
+
       - name: Test forge
         run: cargo test -p forge --features video
 
