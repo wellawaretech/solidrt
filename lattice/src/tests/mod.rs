@@ -2,6 +2,7 @@
 mod input;
 mod frame_history;
 mod frame_signal;
+mod links;
 mod paced_clock;
 mod storage;
 #[cfg(feature = "go")]

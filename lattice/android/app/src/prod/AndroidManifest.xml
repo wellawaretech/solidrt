@@ -1,10 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Prod overlay: the runner APK carries the patchable adaptive icon
      instead of the SolidRT client icon (the label is already flavor-scoped
-     via res/values/strings.xml). -->
+     via res/values/strings.xml), and answers links of the app's own scheme.
+     The scheme is the application id (RFC 8252 section 7.1, reverse-DNS
+     private-use schemes): spelled identically to the package name so the
+     compiled manifest's string pool holds it once, and the APK pack's
+     rewrite of the package string renames the scheme with it
+     (packages/cli/src/pack/android/apk.ts, patchManifest). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <application
         android:icon="@mipmap/ic_launcher_prod"
-        tools:replace="android:icon" />
+        tools:replace="android:icon">
+        <activity android:name=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.solidrt.app" />
+            </intent-filter>
+        </activity>
+    </application>
 </manifest>

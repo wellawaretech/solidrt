@@ -23,12 +23,26 @@ fn main() {
     // libraries must be loaded by then.
     lattice::gl_libs::provision(&payload.app_id, &payload.gl_libs);
     forge::fs::set_assets_base(Some(payload.base));
-    let app_args: Vec<String> = std::env::args().skip(1).collect();
+    let mut app_args: Vec<String> = std::env::args().skip(1).collect();
+    // A link of the app's own scheme as the first argument is how the OS
+    // hands a registered scheme to its handler (`"<exe>" "%1"`, `%u`): the
+    // launch link, not an app argument. An instance already running takes
+    // it instead, and this process ends without a window (links.rs).
+    let link = match app_args.first() {
+      Some(arg) if lattice::links::own_link(&payload.app_id, arg) => Some(app_args.remove(0)),
+      _ => None,
+    };
+    if let Some(link) = &link {
+      if lattice::links::hand_off(&payload.app_id, link) {
+        return;
+      }
+    }
+    let launch = lattice::Launch { restored: false, link };
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
     let storage = lattice::storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
     // Mode::Run never returns Err (only playback does); ignore rather than
     // invent an exit path the interactive loop does not have.
-    let _ = lattice::start(&rt, Some(payload.app), lattice::Launch::Fresh, alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, app_args);
+    let _ = lattice::start(&rt, Some(payload.app), launch, payload.display_name, alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, app_args);
     return;
   }
 
@@ -44,6 +58,10 @@ fn main() {
   let mut data_root: Option<String> = None;
   let mut client: Option<u32> = None;
   let mut assets: Option<String> = None;
+  // `--link <link>`: the link the app is started with (env.launchLink), the
+  // way an OS-routed link reaches a packaged app; `srt render --link` renders
+  // a screen a link names.
+  let mut link: Option<String> = None;
   let mut source_path: Option<String> = None;
   let mut app_args: Vec<String> = Vec::new();
   while let Some(arg) = args.next() {
@@ -63,6 +81,8 @@ fn main() {
       assets = Some(args.next().unwrap_or_else(|| usage("--assets requires a directory path")));
     } else if arg == "--script" {
       script_path = Some(args.next().unwrap_or_else(|| usage("--script requires a file path")));
+    } else if arg == "--link" {
+      link = Some(args.next().unwrap_or_else(|| usage("--link requires a link")));
     } else if arg == "--stats" {
       stats = true;
     } else if arg == "--out" {
@@ -160,7 +180,8 @@ fn main() {
   };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
-  let result = lattice::start(&rt, app, lattice::Launch::Fresh, mode, size, stats, dev_server, fonts, storage, app_args);
+  let launch = lattice::Launch { restored: false, link };
+  let result = lattice::start(&rt, app, launch, None, mode, size, stats, dev_server, fonts, storage, app_args);
   // Playback exits hard, here in the binary: headless callers gate on the
   // exit code (srt render verification), so an incomplete capture must read
   // nonzero - and a plain return would run the runtime's drop, which can

@@ -12,8 +12,10 @@ srt run --capture session.json
 srt render --script session.json --fps 60 --duration 5
 ```
 
-`--capture` records key events from connected clients to a script (pointer
-input is not captured yet). `--size` is physical output pixels: layout runs
+`--link <link>` starts the app at a link (`env.launchLink`), so an app with
+a router renders the screen the link names: one deterministic screenshot
+per screen, for docs or a visual regression. `--capture` records key events
+from connected clients to a script (pointer input is not captured yet). `--size` is physical output pixels: layout runs
 at exactly that size, so frames are identical on every machine. Every frame
 follows a frame callback: frame k is the app's state after its (k+1)th
 `onFrame` call, at time (k+1)/fps; the mount state before any callback is

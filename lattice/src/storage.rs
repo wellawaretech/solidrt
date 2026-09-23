@@ -126,15 +126,22 @@ fn checked_component(name: Option<&str>, what: &str) -> String {
 
 /// Resolve the tree for a spec and create its directories. Pure with respect
 /// to globals; `init` stores the result for process-wide consumers.
-pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
-  let client = || format!("client{}", spec.client.unwrap_or(0));
-  let pref = |app: &str| match alloy::sdl3::filesystem::get_pref_path("SolidRT", app) {
+/// The OS-designated per-user directory for one install: `<pref root>/SolidRT/<app>`,
+/// created by SDL if missing. The packed app's client root (app = its id),
+/// the player's (app = "go"). None without a writable location.
+pub(crate) fn pref_dir(app: &str) -> Option<PathBuf> {
+  match alloy::sdl3::filesystem::get_pref_path("SolidRT", app) {
     Ok(dir) => Some(dir),
     Err(e) => {
       log::warn!("[srt] no writable pref path: {e}");
       None
     }
-  };
+  }
+}
+
+pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
+  let client = || format!("client{}", spec.client.unwrap_or(0));
+  let pref = pref_dir;
   let (client_dir, flat) = match &spec.data_root {
     // Absolutize against the launch cwd: the runtime chdirs into the app
     // sandbox right after resolution, which must not move the root.

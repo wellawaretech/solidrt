@@ -113,6 +113,7 @@ pack options:
 
 render options:
       --script <file>    Script file to replay (default: no scripted input)
+      --link <link>      Start the app at a link (env.launchLink; a router renders that screen)
       --fps <N>          Frames per second (default: 60)
       --duration <N>     Duration in seconds, fractions allowed (default: 1)
       --size <WxH>       Frame size in physical pixels (default: 1280x720)

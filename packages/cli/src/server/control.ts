@@ -366,6 +366,7 @@ const CONTROL_ENDPOINTS = [
   "/__control__/snapshot",
   "/__control__/gpu",
   "/__control__/debug",
+  "/__control__/link",
   "/__control__/texture",
   "/__control__/clock",
   "/__control__/input",
@@ -469,6 +470,16 @@ export async function handleControl(req: Request, path: string, query: Map<strin
         args = await req.json()
       } catch {}
       return handleQuery(query, "debug_call", { name, args })
+    }
+    case "/__control__/link": {
+      // GET reads the location the app reported (reportLocation from
+      // srt:dev; null without one); POST ?link=<link> delivers a link to
+      // the app exactly as an OS-routed one arrives (the raw string on
+      // onLink), and answers whether anything listened.
+      if (req.method !== "POST") return handleQuery(query, "location")
+      let link = query.get("link")
+      if (!link) return Response.json({ error: "Link delivery requires ?link=<link>" }, { status: 400 })
+      return handleQuery(query, "link", { link })
     }
     case "/__control__/texture": {
       let textureId = parseInt(query.get("id") ?? "", 10)

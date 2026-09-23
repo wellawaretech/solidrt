@@ -31,3 +31,10 @@ and launches, but boots the player instead of the payload.
 Set a stable `appId` in the `solidrt` key of package.json before
 distributing (it keys the app's storage folder); `pack` warns while it is
 defaulted from the package name.
+
+The appId is also the scheme the packed app answers to: a link like
+`com.example.app://settings` opens it (`env.launchLink` on a cold start,
+`onLink` while it runs). The APK declares the scheme in its manifest; a
+desktop executable registers itself when the app calls
+`registerProtocolHandler()`, and a second instance the OS starts with a link
+hands the link to the running one and exits.

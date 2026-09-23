@@ -18,6 +18,17 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
   match event {
     AlloyEvent::WindowFocus => emit_named(exec, "windowFocus"),
     AlloyEvent::WindowBlur => emit_named(exec, "windowBlur"),
+    // A link handed to the running app from outside, raw. Not sticky: a
+    // late subscriber must not receive a link that was meant for whoever
+    // was listening when it arrived (the launch link is the sticky fact).
+    AlloyEvent::Link { link } => {
+      let link = link.clone();
+      exec.exec(move |ctx| {
+        let obj = Object::new(ctx.clone()).expect("create object");
+        obj.set("link", link).expect("set link");
+        emit_event(&ctx, "link", obj);
+      });
+    }
     AlloyEvent::Resize { size, safe_area, display_scale } => {
       let (size, safe_area, display_scale) = (*size, *safe_area, *display_scale);
       exec.exec(move |ctx| {
@@ -216,6 +227,21 @@ pub fn emit_launch(exec: &ExecHandle, restored: bool) {
     let obj = Object::new(ctx.clone()).expect("create object");
     obj.set("state", state).expect("set state");
     emit_sticky(&ctx, "launch", obj);
+  });
+}
+
+/// The launch link, sticky: the link the process was started with, raw, or
+/// null when it was started without one (the usual case). Emitted once per
+/// engine by the runner next to the launch fact; core exposes it as
+/// `env.launchLink`. Untrusted input: what it means is the app's to decide.
+pub fn emit_launch_link(exec: &ExecHandle, link: Option<String>) {
+  exec.exec(move |ctx| {
+    let obj = Object::new(ctx.clone()).expect("create object");
+    match link {
+      Some(link) => obj.set("link", link).expect("set link"),
+      None => obj.set("link", Null).expect("set link"),
+    }
+    emit_sticky(&ctx, "launchLink", obj);
   });
 }
 

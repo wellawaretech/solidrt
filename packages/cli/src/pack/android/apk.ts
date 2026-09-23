@@ -1,6 +1,9 @@
 // Patch a runner APK into an app's APK, with no Android SDK involved: rewrite
 // the application id, versionCode and versionName in the compiled manifest
-// and the launcher label in the resource table (strings.ts), swap the
+// (the id's pool string is also the VIEW intent filter's scheme, so the
+// rewrite renames the scheme the app answers to with it; see the runner's
+// prod AndroidManifest.xml) and the launcher label in the resource table
+// (strings.ts), swap the
 // adaptive-icon slot PNGs (icon.ts), add the .srtapp payload as a stored
 // asset, then re-align and re-sign the zip (zip.ts, sign.ts). The dex, the
 // native libs and every other resource are carried byte-for-byte; the

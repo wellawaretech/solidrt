@@ -89,13 +89,15 @@ impl Drop for SessionGuard<'_> {
 /// Send-safe handles the connection answers dev-server queries from, without a
 /// round trip through the UI thread: the stats snapshot the draw loop
 /// publishes, the live engine's exec handle (refreshed on each engine build),
-/// and a sender on the outbound channel for replies produced on the JS thread.
+/// a sender on the outbound channel for replies produced on the JS thread,
+/// and the location the app reports (plugins::dev::LocationSlot).
 #[derive(Clone)]
 pub struct QueryHandles {
   pub stats: Arc<Mutex<crate::stats::StatsSnapshot>>,
   pub history: Arc<Mutex<crate::frame_history::FrameHistory>>,
   pub exec: Arc<Mutex<Option<flux::ExecHandle>>>,
   pub outbound_tx: UnboundedSender<String>,
+  pub location: crate::plugins::dev::LocationSlot,
 }
 
 /// Query kinds this runtime answers, advertised in the connect-time `info`
@@ -103,7 +105,7 @@ pub struct QueryHandles {
 /// calling (mixed-version fleets are normal). Keep in sync with the query
 /// match in `try_serve`.
 const QUERY_KINDS: &[&str] =
-  &["clock", "input", "stats", "tree", "snapshot", "gpu", "texture", "buffer", "debug_list", "debug_call"];
+  &["clock", "input", "stats", "tree", "snapshot", "gpu", "texture", "buffer", "debug_list", "debug_call", "link", "location"];
 
 #[cfg(not(target_os = "android"))]
 const SERVICE_TYPE: &str = "_solidrt._tcp.local.";
@@ -846,6 +848,33 @@ async fn try_serve(
                     let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
                   }
                 }
+              }
+              Some("link") => {
+                // Deliver a link to the app exactly as the OS path does: the
+                // raw string on the `link` bus event, nothing interpreted.
+                // The reply says whether anything listened, so a caller
+                // learns that an app without a handler dropped it.
+                let link = json.get("link").and_then(|l| l.as_str()).unwrap_or("").to_string();
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(link_reply(&ctx, id, link));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
+              Some("location") => {
+                // The location the app reported through reportLocation
+                // (srt:dev), a plain value shared with the engine loop, so no
+                // JS-thread round trip; null when the app reported none.
+                let reply = serde_json::json!({"type": "result", "id": id, "data": {"location": queries.location.get()}})
+                  .to_string();
+                let _ = client.send(tokio_websockets::Message::text(reply)).await;
               }
               Some("debug_list") => {
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
@@ -1892,6 +1921,16 @@ fn buffer_reply(
       .to_string()
     }
   }
+}
+
+/// Emit a link on the app's event bus, as the runner does for an OS-routed
+/// one. Runs on the JS thread.
+fn link_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, link: String) -> String {
+  let delivered = flux::has_listeners(ctx, "link");
+  let obj = flux::rquickjs::Object::new(ctx.clone()).expect("create object");
+  obj.set("link", link).expect("set link");
+  flux::emit_event(ctx, "link", obj);
+  serde_json::json!({"type": "result", "id": id, "data": {"delivered": delivered}}).to_string()
 }
 
 /// List the app's registered debug commands. Runs on the JS thread.

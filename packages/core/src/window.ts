@@ -2,7 +2,7 @@ import { createSignal, getOwner, onCleanup, onSettled, runWithOwner, flush } fro
 import { requestFrame, setPointerLock } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
-import { exit as nativeExit, background as nativeBackground } from "srt:app"
+import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "srt:app"
 import { platform } from "flux:process"
 import { getEventHandler, focusedNode, setFocus, activateTextInput, setInterestRoot } from "./core"
 import { scanForOrphans, getNodePath } from "./renderer"
@@ -139,6 +139,20 @@ export function exit() {
  */
 export function background() {
   nativeBackground()
+}
+
+/**
+ * Makes this install the handler for the app's own scheme, so links like
+ * `com.example.app://settings` (the scheme is the appId) open the app from a
+ * browser, another app or the shell: `env.launchLink` when it starts the
+ * app, `onLink` when the app already runs. The web's name, simplified: no
+ * arguments, the scheme is fixed. A packed desktop app has to call it,
+ * since nothing installs a single executable (call it again after moving
+ * the executable); Android and macOS packages declare the scheme, so the
+ * call does nothing there. Throws when the registration cannot be written.
+ */
+export function registerProtocolHandler() {
+  nativeRegisterProtocolHandler()
 }
 
 // The default action of an unprevented back event: what the platform itself
@@ -413,6 +427,23 @@ export function onLayout(fn: () => void) {
 
 export function onWindowFocus(fn: () => void) {
   let unsubscribe = on("windowFocus", fn)
+  if (getOwner()) onCleanup(unsubscribe)
+  return unsubscribe
+}
+
+/**
+ * Calls `fn` with a link handed to the running app from outside: a custom
+ * scheme link the OS routed here (another app, a QR code, a notification),
+ * or one a dev tool sent (`open_link` over MCP, `POST /__control__/link`).
+ * The raw string, exactly as it arrived; the app decides what it means, and
+ * it is untrusted input: validate before acting on any part of it. The link
+ * the app was *started* with is not an event (nothing was listening yet) but
+ * a fact: `env.launchLink`.
+ *
+ * Returns a cleanup function; also auto-cleans within an owned scope.
+ */
+export function onLink(fn: (link: string) => void) {
+  let unsubscribe = on("link", (e: { link: string }) => fn(e.link))
   if (getOwner()) onCleanup(unsubscribe)
   return unsubscribe
 }

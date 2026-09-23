@@ -4,6 +4,7 @@ mod frame_history;
 pub mod gl_libs;
 #[cfg(feature = "go")]
 mod go;
+pub mod links;
 pub mod manifest;
 mod overlay;
 #[cfg(not(feature = "go"))]
@@ -213,7 +214,7 @@ pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   // No app argument channel either: the activity is launched by intent, not
   // from a command line.
   let storage = storage::StorageSpec { data_root: None, client: None, app_id: None };
-  start(&rt, None, launch, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts(), storage, Vec::new());
+  start(&rt, None, launch, None, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts(), storage, Vec::new());
   0
 }
 
@@ -245,7 +246,7 @@ pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   // root, keyed by the packed identity like every packed distribution. No
   // argument channel: the activity is launched by intent.
   let storage = storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
-  start(&rt, Some(payload.app), launch, alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, Vec::new());
+  start(&rt, Some(payload.app), launch, payload.display_name, alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, Vec::new());
   0
 }
 
@@ -269,14 +270,20 @@ fn android_args(argc: i32, argv: *mut *mut i8) -> Vec<String> {
     .collect()
 }
 
-// `--restored`: the activity was recreated from saved state (see Launch).
+// The launch facts SolidRTActivity.getArguments() passes: `--restored` (the
+// activity was recreated from saved state) and `--link <link>` (the intent's
+// data); see Launch.
 #[cfg(target_os = "android")]
 fn launch_arg(args: &[String]) -> Launch {
-  if args.iter().any(|arg| arg == "--restored") {
-    Launch::Restored
-  } else {
-    Launch::Fresh
+  let restored = args.iter().any(|arg| arg == "--restored");
+  let mut link = None;
+  let mut it = args.iter();
+  while let Some(arg) = it.next() {
+    if arg == "--link" {
+      link = it.next().cloned();
+    }
   }
+  Launch { restored, link }
 }
 
 // `--dev-server <addr>`: the dev server the go client should auto-dial; None
@@ -399,21 +406,27 @@ pub enum AppSource {
 
 /// What to run, threaded from `start` into the UI thread (kept distinct from the
 /// runtime plumbing it travels with: the tokio handle, alloy context, channels).
-/// How this process came to run: launched anew, or recreated by the system
-/// from a session it ended on its own (a suspended app reclaimed in the
-/// background). Reported to the app as the sticky `launch` event behind
-/// `env.launch`, never interpreted by the runtime. Only Android reports
-/// Restored today (SolidRTActivity's savedInstanceState); desktop launches
-/// are always fresh.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Launch {
-  Fresh,
-  Restored,
+/// The launch facts, reported to the app and never interpreted by the
+/// runtime. `restored`: the system recreated the app from a session it ended
+/// on its own (a suspended app reclaimed in the background) rather than
+/// launching it anew; only Android reports it today (SolidRTActivity's
+/// savedInstanceState), desktop launches are always fresh. Behind
+/// `env.launch`. `link`: the link the process was started with (an Android
+/// VIEW intent's data, the runner's `--link`), raw; behind `env.launchLink`.
+/// A link arriving while the app runs is an event instead (AlloyEvent::Link).
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Launch {
+  pub restored: bool,
+  pub link: Option<String>,
 }
 
 struct RunOptions {
   app: Option<AppSource>,
   launch: Launch,
+  // The packed app's display name (its manifest's), what the OS shows for
+  // the app where the runtime registers it (links.rs); None for a dev run
+  // and for the player, which register nothing.
+  display_name: Option<String>,
   playback_fps: Option<u32>,
   stats: bool,
   // Dev-server address to auto-connect on launch (go client only; see plugins::dev).
@@ -494,6 +507,38 @@ fn anchor_app(app_id: &str, current: &mut Option<String>) {
   *current = Some(app_id.to_string());
 }
 
+// srt:app registerProtocolHandler, by host: a packed desktop app registers
+// this executable for its scheme (links.rs); on Android the package declares
+// the scheme, so there is nothing to do and the call succeeds; the dev client
+// is not a scheme handler and says so without failing, so app code that
+// registers at startup runs unchanged under the player; a dev run of the
+// runner has no app identity to register.
+fn register_protocol_handler(app_id: Option<&str>, display_name: Option<&str>) -> Result<(), String> {
+  #[cfg(feature = "go")]
+  {
+    let _ = (app_id, display_name);
+    log::warn!("[srt] registerProtocolHandler: nothing registered in the dev client; a packed app registers its own scheme");
+    Ok(())
+  }
+  #[cfg(all(not(feature = "go"), target_os = "android"))]
+  {
+    let _ = (app_id, display_name);
+    Ok(())
+  }
+  #[cfg(all(not(feature = "go"), not(target_os = "android")))]
+  {
+    let app_id = app_id.ok_or("this run has no app identity (not a packed app); nothing to register")?;
+    links::register(app_id, display_name)
+  }
+}
+
+// The launch link for the next run identified by `run_id`: the location its
+// previous run reported, when the last reported location was that app's
+// (see the reload re-entry state in the engine loop).
+fn reentry_link(last_location: &Option<(Option<String>, String)>, run_id: &Option<String>) -> Option<String> {
+  last_location.as_ref().filter(|(id, _)| id == run_id).map(|(_, location)| location.clone())
+}
+
 // The longest frame slot the automatic cadence hold may choose, ms: no hold
 // slower than 20 fps (Android's Frame Pacing library's default too); a
 // workload that needs more is held at this slot and its longer intervals
@@ -537,7 +582,7 @@ fn ui_thread(
   user_input_muted: Arc<AtomicBool>,
   opts: RunOptions,
 ) {
-  let RunOptions { app, launch, playback_fps, stats, dev_server, fonts, storage: storage_spec, args } = opts;
+  let RunOptions { app, launch, display_name, playback_fps, stats, dev_server, fonts, storage: storage_spec, args } = opts;
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
@@ -614,6 +659,13 @@ fn ui_thread(
   // the producer-side rule (see alloy's resample.rs).
   #[cfg(feature = "go")]
   let input_inject_tx = ev_tx.clone();
+  // A packed desktop app answers links for the second instance the OS starts
+  // with one (links.rs). Not the dev client, which is no scheme handler, and
+  // not Android, where the activity is singleInstance.
+  #[cfg(all(not(feature = "go"), not(target_os = "android")))]
+  if let (Some(app_id), Some(store)) = (&storage_spec.app_id, storage::get()) {
+    links::listen(app_id, store.client_dir.clone(), &handle, ev_tx.clone(), alloy_cmd_tx.clone());
+  }
   std::thread::spawn(move || {
     while let Ok(event) = event_rx.recv() {
       if ev_tx.send(event).is_err() {
@@ -689,6 +741,21 @@ fn ui_thread(
     // build; the dev connection uses it to snapshot the render tree on the JS
     // thread for tree queries.
     let query_exec: Arc<std::sync::Mutex<Option<ExecHandle>>> = Arc::new(std::sync::Mutex::new(None));
+    // Where the app says it is (reportLocation in srt:dev); process-level so
+    // it outlives the engine that reported it, see the reload re-entry below.
+    let location_slot = plugins::dev::LocationSlot::default();
+    // Reload re-entry. A run is identified by the app it belongs to: a
+    // push's app_id (None for a push without a manifest), the default id for
+    // the player. When a run ends having reported a location, the location
+    // is kept with that identity, and the next run of the same identity
+    // starts with it as its launch link, so a dev rebuild comes back to the
+    // screen it left; a build failure's BSOD in between reports nothing and
+    // so keeps what the app said. A different app (a player launch, the
+    // player after a stop) starts from its own beginning. The process launch
+    // link goes to the first run only.
+    let mut run_id: Option<String> = Some(default_app_id.clone());
+    let mut last_location: Option<(Option<String>, String)> = None;
+    let mut next_link: Option<String> = launch.link.clone();
     #[cfg(not(feature = "go"))]
     let _ = (capture_enabled, outbound_rx, &dev_connected, &outbound_tx, &clock_control);
 
@@ -918,6 +985,7 @@ fn ui_thread(
         history: frame_history.clone(),
         exec: query_exec.clone(),
         outbound_tx: outbound_tx.clone(),
+        location: location_slot.clone(),
       },
       dev_server,
     );
@@ -1047,6 +1115,7 @@ fn ui_thread(
         .module_override("srt:apps", plugins::apps::SrtAppsModule)
         .module_override("srt:app", plugins::app::SrtAppModule)
         .userdata(timeline.clone())
+        .userdata(location_slot.clone())
         .userdata(flux::ProcessArgs(current_args.clone()));
       // Timers join a frame-stepped timeline (see flux virtual time): the
       // frame verb advances them once per frame signal, so a dev-clock pause
@@ -1085,12 +1154,19 @@ fn ui_thread(
       let builder = {
         let exit_policy_exit = exit_policy.clone();
         let exit_policy_background = exit_policy.clone();
+        let register_app_id = storage_spec.app_id.clone();
+        let register_display_name = display_name.clone();
         builder.plugin(move |ctx| {
+          let register_app_id = register_app_id.clone();
+          let register_display_name = register_display_name.clone();
           plugins::app::install(
             &ctx,
             plugins::app::AppControl::new(plugins::app::AppControlInner {
               exit: Box::new(move || exit_policy_exit.exit()),
               background: Box::new(move || exit_policy_background.background()),
+              register_protocol_handler: Box::new(move || {
+                register_protocol_handler(register_app_id.as_deref(), register_display_name.as_deref())
+              }),
             }),
           )
         })
@@ -1112,9 +1188,13 @@ fn ui_thread(
       };
       let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
-      // A process-level fact, replayed into every engine (a dev reload runs
-      // in the same process and the answer has not changed).
-      flux::gui::events::emit_launch(&engine.exec_handle(), launch == Launch::Restored);
+      // The launch fact is process-level, replayed into every engine (a dev
+      // reload runs in the same process and the answer has not changed); the
+      // launch link is per run (see next_link). A new run starts with no
+      // reported location.
+      flux::gui::events::emit_launch(&engine.exec_handle(), launch.restored);
+      flux::gui::events::emit_launch_link(&engine.exec_handle(), next_link.clone());
+      location_slot.set(None);
       engine_generation.fetch_add(1, Ordering::Relaxed);
       #[cfg(feature = "go")]
       player_active.store(
@@ -1150,6 +1230,7 @@ fn ui_thread(
       log::info!("[srt] flux engine start");
       let mut next_app: Option<AppSource> = None;
       let mut next_app_id: Option<String> = None;
+      let mut next_run_id: Option<String> = None;
       let mut quit = false;
       local
         .run_until(async {
@@ -1164,12 +1245,14 @@ fn ui_thread(
               match cmd {
                 EngineCmd::Reload { code, app_id, args } => {
                   next_app = Some(AppSource::Text(code));
+                  next_run_id = app_id.clone();
                   next_app_id = app_id;
                   current_args = args;
                 }
                 #[cfg(feature = "go")]
                 EngineCmd::Stop => {
                   next_app = Some(AppSource::Text(PLAYER_SOURCE.to_string()));
+                  next_run_id = Some(default_app_id.clone());
                   current_args = Vec::new();
                   // Back to the player: release the stopped app's sandbox
                   // by re-anchoring to the startup default, so the player
@@ -1185,6 +1268,9 @@ fn ui_thread(
           }
         })
         .await;
+      if let Some(location) = location_slot.get() {
+        last_location = Some((run_id.clone(), location));
+      }
       if quit {
         log::info!("[srt] engine loop quit");
         break;
@@ -1198,6 +1284,8 @@ fn ui_thread(
           apply_app_fonts(app_id, &platform, &base_fonts);
         }
         current_app = app;
+        run_id = next_run_id;
+        next_link = reentry_link(&last_location, &run_id);
         showing_bsod = false;
       } else if playback_fps.is_some() {
         // A capture has nobody to fix the app for: an engine that exited
@@ -1210,6 +1298,7 @@ fn ui_thread(
         // ran, so nothing kept it alive). Show the BSOD instead of a frozen
         // frame; it stays live until a fixed app reloads.
         current_app = AppSource::Text(BSOD_SOURCE.to_string());
+        next_link = None;
         showing_bsod = true;
       } else {
         // The BSOD itself exited; wait for a command rather than respinning.
@@ -1224,12 +1313,16 @@ fn ui_thread(
             }
             current_app = AppSource::Text(code);
             current_args = args;
+            run_id = app_id;
+            next_link = reentry_link(&last_location, &run_id);
             showing_bsod = false;
           }
           #[cfg(feature = "go")]
           Some(EngineCmd::Stop) => {
             current_app = AppSource::Text(PLAYER_SOURCE.to_string());
             current_args = Vec::new();
+            run_id = Some(default_app_id.clone());
+            next_link = None;
             showing_bsod = false;
             // Same sandbox and font release as the in-loop Stop arm above.
             current_app_id = Some(default_app_id.clone());
@@ -1266,6 +1359,7 @@ pub fn start(
   rt: &tokio::runtime::Runtime,
   app_source: Option<AppSource>,
   launch: Launch,
+  display_name: Option<String>,
   mode: alloy::Mode,
   size: (u32, u32),
   stats: bool,
@@ -1285,7 +1379,7 @@ pub fn start(
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
-  let opts = RunOptions { app: app_source, launch, playback_fps, stats, dev_server, fonts, storage, args };
+  let opts = RunOptions { app: app_source, launch, display_name, playback_fps, stats, dev_server, fonts, storage, args };
   let resampler = app.resampler();
   let user_input_muted = app.user_input_mute();
   app.run(move |atx, alloy_cmd_tx, event_rx| {

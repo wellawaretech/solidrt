@@ -164,6 +164,19 @@ launch the user started. Whether to load what `onSuspend` saved is the app's
 call. `env.visibility` is only whether anything is on screen, for pausing
 animation and audio, not the persistence moment.
 
+A link from outside (a custom scheme link the OS routed to the app, or one
+a dev tool sent) arrives raw: `env.launchLink` is the one this run of the
+app was started with (null without; a hot reload starts at the location
+the app last reported, see `reportLocation` in `srt:dev`), `onLink` fires
+for one arriving while the app runs. What a link names is the app's to decide, and it is untrusted input:
+validate before acting on any part of it. A router turns links into screens
+for you; without one, parse it yourself. The scheme a packed app answers to
+is its appId (`com.example.app://settings`); `registerProtocolHandler()`
+makes the install the handler for it on Linux and Windows, where nothing
+installs a single executable, and does nothing on Android, whose package
+declares the scheme. A second desktop instance started with a link hands
+it to the running one and exits.
+
 ```tsx
 onSuspend(() => file("session.json").write(JSON.stringify(state)))
 if (env.launch === "restored") state = JSON.parse(await file("session.json").text())

@@ -246,6 +246,14 @@ when exactly one client is connected.
   with the counters under bimodal frame times.
 - `/debug` - the app's registered debug commands; POST
   `/debug?name=<cmd>` with a JSON body as its args to call one.
+- `/link` - GET reads the location the app reports (`{ location }`, a
+  router's current path, null when the app reports none; a reload of the
+  same app starts at the last reported location, so a rebuild comes back
+  to the screen it left); POST
+  `/link?link=<link>` delivers a link to the app the way an OS-routed one
+  arrives (raw, on `onLink`) and answers `{ delivered }`, false when
+  nothing listened. The way to open a screen directly, and to test link
+  handling with no scheme registered anywhere.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the
   real pipeline, same event shape as the `send_input` tool (tap real
   coordinates read from `/tree` just before: the window's logical size

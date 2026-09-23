@@ -2,7 +2,9 @@
 // the installed-app list, the selected app's detail view, and the dev-server
 // control surface. Wide windows show a WhatsApp-style split (list left,
 // details right); narrow ones navigate between the list and a detail screen.
-// All connection/selection state is owned by App and threaded in as props.
+// The home route's layout (routes.ts): its child routes (settings, connect, an
+// app's detail) each take one pane through <Outlet>. Shared state is module
+// state in ./app-state and ./dev-connection.
 import { createSignal, createEffect, onBack, Logo } from "@solidrt/core"
 import { For, Show, createMemo } from "solid-js"
 import {
@@ -21,10 +23,9 @@ import {
   space,
   policy,
 } from "@solidrt/components"
+import { useRouter, useLocation, useParams, Outlet } from "@solidrt/router"
 import { stop } from "srt:dev"
 import {
-  available as appsAvailable,
-  list,
   launch,
   remove,
   info,
@@ -32,12 +33,12 @@ import {
   type AppCacheEntry,
   type InstalledApp,
 } from "srt:apps"
+import * as routes from "../routes"
+import { installedApps, refreshApps, notice, setNotice } from "./app-state"
 import { AppIcon } from "./app-icon"
 import { DetailCard, DetailRow } from "./detail-card"
 import { BackButton } from "./back-button"
 import { ScanButton } from "./scan-button"
-import { SettingsPanel } from "./settings-panel"
-import { ConnectPanel } from "./connect-panel"
 import {
   COLUMN_MAX_WIDTH,
   DETAIL_MAX_WIDTH,
@@ -45,8 +46,6 @@ import {
   STATUS_TEXT,
   TAP_TARGET,
   focusRing,
-  type HomePanel,
-  type ThemeMode,
 } from "./types"
 import {
   available,
@@ -57,6 +56,10 @@ import {
   isBusy,
   isIdle,
 } from "./dev-connection"
+
+// Where a home child route sits in the match chain: root, home, then the
+// child (see routes.ts).
+const HOME_CHILD_DEPTH = 2
 
 // Lucide settings (gear) glyph for the header button that opens the settings
 // screen, stroked with currentColor so the Icon component recolors it.
@@ -364,6 +367,76 @@ function AppDetail(props: {
   )
 }
 
+function doLaunch(id: string) {
+  try {
+    launch(id)
+  } catch (e) {
+    setNotice(e instanceof Error ? e.message : String(e))
+  }
+}
+
+function doRemove(id: string) {
+  try {
+    remove(id)
+  } catch (e) {
+    setNotice(e instanceof Error ? e.message : String(e))
+  }
+  refreshApps()
+}
+
+// What the detail pane shows for an id the store does not have: removed,
+// replaced by a dev push, or a link naming an app that was never installed.
+function MissingApp(props: { id: string; onBack: () => void }) {
+  return (
+    <View
+      layout={{ flexGrow: 1, alignItems: policy.layout === "twoPane" ? "flex-start" : "center" }}
+    >
+      <View
+        layout={{
+          flexDirection: "column",
+          gap: space("lg"),
+          padding: space("xl"),
+          width: "100%",
+          maxWidth: DETAIL_MAX_WIDTH,
+        }}
+      >
+        <View layout={{ flexDirection: "row", alignItems: "center", gap: space("lg") }}>
+          <BackButton onPress={props.onBack} />
+          <Text variant="heading">Not installed</Text>
+        </View>
+        <Text variant="body" muted>
+          {props.id}
+        </Text>
+      </View>
+    </View>
+  )
+}
+
+// The /app/$id route: the app's detail in the home split view's detail pane.
+// The id is the route's param (validated in routes.ts); whether the store has
+// it is checked here. Back pops to whatever opened it: the list, or a link's
+// empty stack, where the platform default takes over.
+export function AppDetailRoute() {
+  let router = useRouter()
+  let params = useParams(routes.app)
+  let app = createMemo(() => installedApps().find((a) => a.id === params().id) ?? null)
+  return (
+    <Show when={app()} fallback={<MissingApp id={params().id} onBack={() => router.back()} />}>
+      {(a) => (
+        <AppDetail
+          app={a()}
+          onLaunch={() => doLaunch(a().id)}
+          onRemove={() => {
+            doRemove(a().id)
+            void router.back()
+          }}
+          onBack={() => router.back()}
+        />
+      )}
+    </Show>
+  )
+}
+
 // The installed-app list: one AppCard per app, scrolling. Selection state is
 // owned by App and threaded in, so crossing the layout breakpoint keeps it.
 function AppList(props: {
@@ -460,94 +533,48 @@ function DevCard(props: {
   )
 }
 
-// List-detail home: SplitView shows the app list beside the selected app's
-// details when the layout policy is two-pane, and navigates between the list
-// and a detail screen when single-pane. The list chrome (mark size, centering)
-// forks on the layout, per the SplitView contract. Also hosts the two home
-// panels, each replacing one pane so the other keeps its content: settings
-// takes the detail (over any app selection), connect takes the list. Single-pane
-// has one pane to give, so a panel reads as a screen there - which is why the
-// connect panel forces the list pane forward while it is up. Owns the app list
-// and the launch/remove notice; the selection and notice are lifted to App
-// (passed as values) so they survive a scan. The dev-server connection is
-// app-wide module state, read directly from ./dev-connection, and drives the
-// status line.
-export function HomeScreen(props: {
-  selectedId: string | null
-  setSelectedId: (id: string | null) => void
-  notice: string | null
-  setNotice: (message: string | null) => void
-  panel: HomePanel | null
-  themeMode: ThemeMode
-  onThemeMode: (mode: ThemeMode) => void
-  fullscreen: boolean
-  onFullscreen: (on: boolean) => void
-  onScan: () => void
-  onConnect: () => void
-  onSettings: () => void
-  onPanelClose: () => void
-  onDial: (addr: string) => void
-}) {
-  let [apps, setApps] = createSignal(appsAvailable ? list() : [])
+// List-detail home, the / route's layout: SplitView shows the app list beside
+// the selected app's details when the layout policy is two-pane, and
+// navigates between the list and a detail screen when single-pane. The list
+// chrome (mark size, centering) forks on the layout, per the SplitView
+// contract. The child route on top (settings, connect, an app's detail; see
+// routes.ts) takes one pane through <Outlet> so the other keeps its content:
+// settings and an app's detail take the detail pane over the placeholder,
+// connect takes the list pane. Single-pane has one pane to give, so a child
+// reads as a screen there - which is why connect forces the list pane
+// forward. Owns the launch/remove notice through ./app-state; the dev-server
+// connection is app-wide module state, read directly from ./dev-connection,
+// and drives the status line.
+export function HomeScreen() {
+  let router = useRouter()
+  let location = useLocation()
 
   let twoPane = () => policy.layout === "twoPane"
-  // A stale selection (removed app, replaced store) resolves to null, which
-  // reads as "nothing selected" in both layouts.
-  let selectedApp = () => apps().find((a) => a.id === props.selectedId) ?? null
+  // The child route on top, or null at home itself.
+  let pane = () => location()?.matches[HOME_CHILD_DEPTH]?.route ?? null
+  let detailUp = () => pane() === routes.settings || pane() === routes.app
+  // The app whose detail is up, for the list's highlight; a stale id (removed
+  // app, replaced store) still highlights nothing, since the list lacks it.
+  let selectedId = createMemo(() => {
+    let m = location()?.matches[HOME_CHILD_DEPTH]
+    return m && m.route === routes.app ? (m.params as { id: string }).id : null
+  })
 
   let status = () =>
     isConnected()
       ? `Connected to ${serverAddress()}${isTunneled() ? " (tunneled)" : ""}`
-      : (props.notice ?? STATUS_TEXT[connectionState()])
-
-  let doLaunch = (id: string) => {
-    try {
-      launch(id)
-    } catch (e) {
-      props.setNotice(e instanceof Error ? e.message : String(e))
-    }
-  }
-  let doRemove = (id: string) => {
-    try {
-      remove(id)
-    } catch (e) {
-      props.setNotice(e instanceof Error ? e.message : String(e))
-    }
-    props.setSelectedId(null)
-    setApps(appsAvailable ? list() : [])
-  }
-
-  // The home screen's own step of the back stack: in a narrow layout the
-  // selected app is a screen of its own, so back returns to the list. Registered
-  // while this screen is mounted, above App's root handler, which takes over
-  // when there is no selection to clear. Not while a panel is up: that back
-  // press is App's (it closes the panel), and the selection must survive it.
-  onBack((e) => {
-    if (!twoPane() && props.panel == null && selectedApp() != null) {
-      e.preventDefault()
-      props.setSelectedId(null)
-    }
-  })
+      : (notice() ?? STATUS_TEXT[connectionState()])
 
   return (
     <SplitView
       layout={{ flexGrow: 1 }}
       listWidth={380}
-      // Single-pane shows whichever pane this picks, and a panel the user just
-      // opened has to be the one on screen: settings pulls the detail forward,
-      // the connect panel pulls the list forward over any selection.
-      showDetail={props.panel === "settings" || (props.panel == null && selectedApp() != null)}
+      // Single-pane shows whichever pane this picks, and a child the user
+      // just opened has to be the one on screen: settings and an app's
+      // detail pull the detail forward, connect pulls the list forward.
+      showDetail={detailUp()}
       list={
-        <Show
-          when={props.panel !== "connect"}
-          fallback={
-            <ConnectPanel
-              onDial={props.onDial}
-              onScan={props.onScan}
-              onClose={props.onPanelClose}
-            />
-          }
-        >
+        <Show when={pane() !== routes.connect} fallback={<Outlet />}>
           <View layout={{ flexGrow: 1, flexDirection: "column", alignItems: "center" }}>
             <View
               layout={{
@@ -573,7 +600,7 @@ export function HomeScreen(props: {
                 <View layout={{ flexDirection: "row", alignItems: "center" }}>
                   <Pressable
                     focusable
-                    onPress={props.onSettings}
+                    onPress={() => router.navigate(routes.settings)}
                     layout={{
                       width: TAP_TARGET,
                       height: TAP_TARGET,
@@ -598,21 +625,21 @@ export function HomeScreen(props: {
                       and a machine without one gets the scan screen's error
                       notice. */}
                   <Show when={available && !isConnected()}>
-                    <ScanButton onPress={props.onScan} />
+                    <ScanButton onPress={() => router.navigate(routes.scan)} />
                   </Show>
                 </View>
               </View>
-              <Show when={apps().length > 0} fallback={<NoApps />}>
+              <Show when={installedApps().length > 0} fallback={<NoApps />}>
                 <AppList
-                  apps={apps()}
-                  selectedId={props.selectedId}
+                  apps={installedApps()}
+                  selectedId={selectedId()}
                   twoPane={twoPane()}
                   onSelect={(id) => {
-                    // Two-pane keeps the list interactive while settings holds
-                    // the detail pane; picking an app dismisses settings so the
-                    // selection is not made invisibly behind it.
-                    if (props.panel === "settings") props.onPanelClose()
-                    props.setSelectedId(id)
+                    // Two-pane keeps the list interactive while settings or
+                    // another app's detail holds the detail pane; picking an
+                    // app replaces that entry rather than stacking on it, so
+                    // back still returns to the plain list.
+                    void router.navigate({ route: routes.app, params: { id } }, { replace: pane() != null })
                   }}
                   onLaunch={(id) => doLaunch(id)}
                 />
@@ -623,7 +650,7 @@ export function HomeScreen(props: {
                   idle={isIdle()}
                   busy={isBusy()}
                   connected={isConnected()}
-                  onConnect={props.onConnect}
+                  onConnect={() => router.navigate(routes.connect)}
                 />
               </Show>
             </View>
@@ -632,41 +659,21 @@ export function HomeScreen(props: {
       }
       detail={
         <Show
-          when={props.panel !== "settings"}
+          when={detailUp()}
           fallback={
-            <SettingsPanel
-              mode={props.themeMode}
-              onMode={props.onThemeMode}
-              fullscreen={props.fullscreen}
-              onFullscreen={props.onFullscreen}
-              onBack={props.onPanelClose}
-            />
+            <View
+              layout={{
+                flexGrow: 1,
+                justifyContent: "center",
+                alignItems: "center",
+                gap: space("lg"),
+              }}
+            >
+              <Logo size={360} />
+            </View>
           }
         >
-          <Show
-            when={selectedApp()}
-            fallback={
-              <View
-                layout={{
-                  flexGrow: 1,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  gap: space("lg"),
-                }}
-              >
-                <Logo size={360} />
-              </View>
-            }
-          >
-            {(app) => (
-              <AppDetail
-                app={app()}
-                onLaunch={() => doLaunch(app().id)}
-                onRemove={() => doRemove(app().id)}
-                onBack={() => props.setSelectedId(null)}
-              />
-            )}
-          </Show>
+          <Outlet />
         </Show>
       }
     />

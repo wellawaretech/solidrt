@@ -23,14 +23,6 @@ export function focusRing(focused: boolean, radius?: number): StyleProps {
 // free from their content padding; only the app list runs edge to edge.
 export const LIST_GUTTER = 2
 
-// The home screen's sub-panels: each takes over one pane rather than the whole
-// screen, so the other pane keeps its content. Settings replaces the detail
-// (the app list stays), connect replaces the list (a selected app's details
-// stay). Both are branches of the screen state, so at most one is up.
-export type HomePanel = "settings" | "connect"
-// Whole screens. "home" covers the list-detail screen and its panels; "scan"
-// is the only one that takes the window for itself (a full-bleed camera view).
-export type Screen = "home" | "scan" | HomePanel
 export type ThemeMode = "system" | "light" | "dark"
 
 // Reading width of a content column, in logical pixels. Single-pane runs up to

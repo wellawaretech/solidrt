@@ -99,7 +99,7 @@ lattice: client runtime
 # version bump rewrites it, so both bundles pick up the new runtime.
 BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_HOME)/packages/components/src/*.ts*) $(wildcard $(SRT_HOME)/bun.lock)
 
-$(PLAYER_JS): $(wildcard $(PLAYER_DIR)/src/*.tsx) $(wildcard $(PLAYER_DIR)/src/parts/*.tsx) $(BUNDLE_DEPS)
+$(PLAYER_JS): $(wildcard $(PLAYER_DIR)/src/*.ts*) $(wildcard $(PLAYER_DIR)/src/parts/*.ts*) $(BUNDLE_DEPS)
 	@echo "Bundling player (index.tsx -> resources/player/)..."
 	cd $(PLAYER_DIR) && bunx srt bundle $(PLAYER_SRC) --project -o $(dir $(PLAYER_JS))
 

@@ -53,6 +53,7 @@ const OPTIONS = {
     duration: { type: "string" },
     size: { type: "string" },
     script: { type: "string" },
+    link: { type: "string" },
     capture: { type: "string" },
     tunnel: { type: "boolean", default: false },
     stats: { type: "boolean", default: false },

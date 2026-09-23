@@ -83,6 +83,18 @@ declare module "srt:app" {
    * `back` on Android; exposed there as `background`.
    */
   export function background(): void
+  /**
+   * Make this install the handler for the app's own scheme (its appId, as
+   * in `com.example.app://settings`), so links of it open the app: on Linux
+   * a desktop entry plus the mimeapps.list default, on Windows the
+   * HKCU\Software\Classes protocol key, both for the current user. Throws
+   * when the registration cannot be written. Android and macOS packages
+   * declare the scheme themselves, so the call has nothing to do there; a
+   * dev client registers nothing and logs a warning. Prefer the
+   * @solidrt/core `registerProtocolHandler`, the same call documented with
+   * the rest of the link surface.
+   */
+  export function registerProtocolHandler(): void
 }
 
 // Dev-server control surface (lattice). Present only in dev/go builds; in other
@@ -110,6 +122,17 @@ declare module "srt:dev" {
    * clients ever invoke commands.
    */
   export function registerDebug(name: string, fn: (args?: any) => unknown): void
+  /**
+   * Report where the app is, for tooling: a string naming the current
+   * location (a router's path; an app routing by hand may report its own),
+   * called again on every change. The runtime stores the value and never
+   * interprets it. The dev server reads it (`GET /__control__/link`, the
+   * get_location MCP tool), and a hot reload of the same app starts with the
+   * last reported location as its `env.launchLink`, so a rebuild comes back
+   * to the screen it left. null withdraws it. Callable in every build, but
+   * only dev clients ever read it.
+   */
+  export function reportLocation(location: string | null): void
 }
 
 // Installed-app management (lattice), the player's surface over the client's

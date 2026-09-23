@@ -22,6 +22,9 @@ pub struct AppControl(#[qjs(skip_trace)] Rc<AppControlInner>);
 pub struct AppControlInner {
   pub exit: Box<dyn Fn()>,
   pub background: Box<dyn Fn()>,
+  // registerProtocolHandler(): make this install the handler for the app's
+  // own scheme; the host decides what that means (lib.rs).
+  pub register_protocol_handler: Box<dyn Fn() -> Result<(), String>>,
 }
 
 impl AppControl {
@@ -52,18 +55,27 @@ fn background_impl(ctx: Ctx<'_>) -> flux::rquickjs::Result<()> {
   Ok(())
 }
 
+fn register_protocol_handler_impl(ctx: Ctx<'_>) -> flux::rquickjs::Result<()> {
+  let Some(control) = ctx.userdata::<AppControl>().map(|c| c.clone()) else {
+    return Err(Exception::throw_message(&ctx, "srt:app is not available in this build"));
+  };
+  (control.0.register_protocol_handler)().map_err(|e| Exception::throw_message(&ctx, &format!("registerProtocolHandler: {e}")))
+}
+
 pub struct SrtAppModule;
 
 impl ModuleDef for SrtAppModule {
   fn declare<'js>(decl: &Declarations<'js>) -> flux::rquickjs::Result<()> {
     decl.declare("exit")?;
     decl.declare("background")?;
+    decl.declare("registerProtocolHandler")?;
     Ok(())
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> flux::rquickjs::Result<()> {
     exports.export("exit", Function::new(ctx.clone(), exit_impl)?)?;
     exports.export("background", Function::new(ctx.clone(), background_impl)?)?;
+    exports.export("registerProtocolHandler", Function::new(ctx.clone(), register_protocol_handler_impl)?)?;
     Ok(())
   }
 }

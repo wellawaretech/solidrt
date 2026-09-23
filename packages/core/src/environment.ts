@@ -83,6 +83,21 @@ function ensureLaunchState() {
   launchValue ??= "fresh"
 }
 
+// Fixed for the process like the launch fact (sticky `launchLink`, emitted
+// before any app code runs), so a plain value rather than a signal.
+let launchLinkValue: string | null | undefined
+
+function ensureLaunchLinkState() {
+  if (launchLinkValue !== undefined) return
+  runWithOwner(null, () => {
+    on("launchLink", (e: { link?: string | null }) => {
+      launchLinkValue = typeof e.link === "string" ? e.link : null
+    })
+  })
+  // A runtime that reports no launch link launched without one.
+  launchLinkValue ??= null
+}
+
 let visibilityAccessor: (() => Visibility) | undefined
 
 function ensureVisibilityState() {
@@ -256,6 +271,18 @@ export let env = {
   get launch(): Launch {
     ensureLaunchState()
     return launchValue!
+  },
+  /**
+   * The link this process was started with, or null: a custom scheme link
+   * the OS routed to the app (Android intent data; `srt render --link`),
+   * raw, exactly as it arrived. What it names is the app's to decide, and
+   * it is untrusted input: validate before acting on any part of it. A link
+   * arriving while the app runs is an event instead: `onLink`. Fixed for the
+   * process, so it needs no tracked scope.
+   */
+  get launchLink(): string | null {
+    ensureLaunchLinkState()
+    return launchLinkValue!
   },
   /** Orientation of the display the window is on. */
   get orientation(): Orientation {

@@ -914,6 +914,11 @@ impl App {
               log::warn!("set_title failed: {e}");
             }
           }
+          AlloyCommand::RaiseWindow => {
+            if !window.raise() {
+              log::warn!("raise_window failed: {}", sdl3::get_error());
+            }
+          }
           AlloyCommand::SetIcon { width, height, rgba } => {
             // Debug, not warn: macOS reports failure on every app switch
             // because the platform has no window icons at all.

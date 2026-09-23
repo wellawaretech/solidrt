@@ -1,21 +1,23 @@
 // The connect panel: every way to reach a dev server in one place - type an
 // address, discover one on the network, scan its QR (the icon in the heading
-// row, mirroring the home header's) - plus the recents. Reached from the dev
-// card's Connect button and takes the home SplitView's list pane,
-// so a selected app's details stay up beside it in two-pane. Its column gets
-// the list's treatment (same max width, centered) so opening it does not shift
-// the content sideways.
+// row, mirroring the home header's) - plus the recents. The /connect route,
+// reached from the dev card's Connect button; takes the home SplitView's list
+// pane. Its column gets the list's treatment (same max width, centered) so
+// opening it does not shift the content sideways.
 //
-// Starting an attempt closes the panel, because what reports on it - the dev
-// card's status line - lives in the pane this one covers. That holds for
-// dialing and for discovery; the QR route leaves for the camera screen instead
-// and comes back here if the user cancels it.
+// Starting an attempt lands home (dial in parts/app-state), because what
+// reports on it - the dev card's status line - lives in the pane this one
+// covers. The QR route leaves for the camera screen instead and comes back
+// here if the user cancels it.
 import { Show, For } from "solid-js"
 import { View, Card, Text, TextInput, Button, space } from "@solidrt/components"
+import { useRouter } from "@solidrt/router"
 import { canDiscover, discover } from "srt:dev"
 import { BackButton } from "./back-button"
 import { ScanButton } from "./scan-button"
 import { recentAddresses } from "./dev-connection"
+import { dial } from "./app-state"
+import { scan } from "../routes"
 import { COLUMN_MAX_WIDTH } from "./types"
 
 // The dev server's default port (the CLI's DEV_PORT, 0x8844), pre-filled so the
@@ -30,11 +32,8 @@ function recentLabel(entry: string): string {
   return "ticket " + entry.split("|")[0]!.slice(0, 8)
 }
 
-export function ConnectPanel(props: {
-  onDial: (addr: string) => void
-  onScan: () => void
-  onClose: () => void
-}) {
+export function ConnectPanel() {
+  let router = useRouter()
   let hostDraft = ""
   let portDraft = DEFAULT_PORT
 
@@ -44,7 +43,7 @@ export function ConnectPanel(props: {
     let host = hostDraft.trim()
     if (!host) return
     let port = portDraft.trim()
-    props.onDial(port ? `${host}:${port}` : host)
+    dial(port ? `${host}:${port}` : host)
   }
 
   return (
@@ -59,13 +58,13 @@ export function ConnectPanel(props: {
         }}
       >
         <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
-          <BackButton onPress={props.onClose} />
+          <BackButton onPress={() => router.back()} />
           <Text variant="heading" layout={{ flexGrow: 1 }}>
             Connect
           </Text>
           {/* Shown unconditionally: see home-screen.tsx on why the player
               does not enumerate cameras to decide. */}
-          <ScanButton onPress={props.onScan} />
+          <ScanButton onPress={() => router.navigate(scan)} />
         </View>
         {/* Parked: the client-side mDNS browse works, but the CLI no longer
         advertises _solidrt._tcp (dropped for the p2p ticket flow, see
@@ -76,7 +75,7 @@ export function ConnectPanel(props: {
               variant="secondary"
               onPress={() => {
                 discover()
-                props.onClose()
+                router.back()
               }}
             >
               Discover
@@ -113,7 +112,7 @@ export function ConnectPanel(props: {
             <View layout={{ flexDirection: "column", gap: space("sm") }}>
               <For each={recentAddresses()}>
                 {(entry) => (
-                  <Button variant="secondary" onPress={() => props.onDial(entry)}>
+                  <Button variant="secondary" onPress={() => dial(entry)}>
                     {recentLabel(entry)}
                   </Button>
                 )}

@@ -12,6 +12,7 @@
         "@solidrt/components": "workspace:*",
         "@solidrt/core": "workspace:*",
         "@solidrt/flux-types": "workspace:*",
+        "@solidrt/router": "workspace:*",
         "solid-js": "2.0.0-rc.9",
         "typescript": "^7",
       },
@@ -33,6 +34,7 @@
       "dependencies": {
         "@solidrt/components": "workspace:*",
         "@solidrt/core": "workspace:*",
+        "@solidrt/router": "workspace:*",
       },
       "devDependencies": {
         "@solidrt/cli": "workspace:*",
@@ -147,6 +149,14 @@
     "packages/linux-x64-gnu": {
       "name": "@solidrt/linux-x64-gnu",
       "version": "0.0.0",
+    },
+    "packages/router": {
+      "name": "@solidrt/router",
+      "version": "0.0.0",
+      "peerDependencies": {
+        "@solidjs/signals": "2.0.0-rc.9",
+        "@solidrt/core": "workspace:*",
+      },
     },
     "packages/win32-x64-msvc": {
       "name": "@solidrt/win32-x64-msvc",
@@ -273,6 +283,8 @@
     "@solidrt/linux-arm64-gnu": ["@solidrt/linux-arm64-gnu@workspace:packages/linux-arm64-gnu"],
 
     "@solidrt/linux-x64-gnu": ["@solidrt/linux-x64-gnu@workspace:packages/linux-x64-gnu"],
+
+    "@solidrt/router": ["@solidrt/router@workspace:packages/router"],
 
     "@solidrt/website": ["@solidrt/website@workspace:website"],
 

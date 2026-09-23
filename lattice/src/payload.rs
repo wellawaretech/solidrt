@@ -26,6 +26,9 @@ pub struct FactoryPayload {
   pub app: crate::AppSource,
   pub fonts: Vec<alloy::rendertree::FontPayload>,
   pub app_id: String,
+  // The manifest's displayName: what the OS shows for the app where the
+  // runtime names it (a registered scheme handler, links.rs).
+  pub display_name: Option<String>,
   pub base: forge::fs::AssetsBase,
   // (filename, bytes) in section order; only the single-file trailer carries
   // these (a folder pack ships the libraries next to the runner instead, and
@@ -91,7 +94,14 @@ pub fn load(trailer: forge::trailer::Trailer) -> Option<FactoryPayload> {
     .filter_map(|s| Some((s.name.clone(), trailer.section_bytes(s).ok()?)))
     .collect();
   let exe = trailer.exe;
-  Some(FactoryPayload { app, fonts, app_id: manifest.app_id, base: forge::fs::AssetsBase::Packed { exe, index }, gl_libs })
+  Some(FactoryPayload {
+    app,
+    fonts,
+    app_id: manifest.app_id,
+    display_name: manifest.display_name,
+    base: forge::fs::AssetsBase::Packed { exe, index },
+    gl_libs,
+  })
 }
 
 /// The trailer at the end of `path` (a packed executable's own image, or a
@@ -113,5 +123,12 @@ pub fn load_adjacent_folder() -> Option<FactoryPayload> {
     .into_iter()
     .map(|(alias, bytes)| alloy::rendertree::FontPayload { alias: Some(alias), bytes: std::borrow::Cow::Owned(bytes) })
     .collect();
-  Some(FactoryPayload { app, fonts, app_id: manifest.app_id, base: forge::fs::AssetsBase::Dir(dir), gl_libs: Vec::new() })
+  Some(FactoryPayload {
+    app,
+    fonts,
+    app_id: manifest.app_id,
+    display_name: manifest.display_name,
+    base: forge::fs::AssetsBase::Dir(dir),
+    gl_libs: Vec::new(),
+  })
 }

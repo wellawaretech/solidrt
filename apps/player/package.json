@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@solidrt/core": "workspace:*",
-    "@solidrt/components": "workspace:*"
+    "@solidrt/components": "workspace:*",
+    "@solidrt/router": "workspace:*"
   },
   "devDependencies": {
     "@solidrt/cli": "workspace:*",

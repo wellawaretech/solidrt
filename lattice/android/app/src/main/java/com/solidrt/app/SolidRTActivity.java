@@ -1,6 +1,7 @@
 package com.solidrt.app;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.PixelFormat;
 import android.hardware.input.InputManager;
 import android.os.Build;
@@ -11,6 +12,7 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.widget.RelativeLayout;
 
+import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -32,6 +34,12 @@ public class SolidRTActivity extends SDLActivity {
     // start, or after exit()/close finished the activity). Captured in
     // onCreate; getArguments runs later, on the SDL thread.
     private boolean restored;
+
+    // The link this launch carries (a VIEW intent's data, as the OS routed a
+    // registered scheme here), raw; null for a plain launch. Read in onCreate
+    // and cleared from the intent before SDL sees it: SDLActivity would
+    // forward only its path as a drop file, losing scheme and host.
+    private String launchLink;
 
     @Override
     protected String[] getLibraries() {
@@ -199,12 +207,34 @@ public class SolidRTActivity extends SDLActivity {
         }, null);
     }
 
-    // The launch fact for native (SDL hands getArguments() to SDL_main as
-    // argv); the runtime reports it to the app as env.launch. Flavors that
-    // add arguments of their own extend this list.
+    // The launch facts for native (SDL hands getArguments() to SDL_main as
+    // argv): the runtime reports them to the app as env.launch and
+    // env.launchLink. Flavors that add arguments of their own extend this
+    // list.
     @Override
     protected String[] getArguments() {
-        return restored ? new String[] { "--restored" } : new String[0];
+        ArrayList<String> args = new ArrayList<>();
+        if (restored) {
+            args.add("--restored");
+        }
+        if (launchLink != null) {
+            args.add("--link");
+            args.add(launchLink);
+        }
+        return args.toArray(new String[0]);
+    }
+
+    // A link arriving while the app runs (the activity is singleInstance, so
+    // a second VIEW intent lands here instead of starting another). Handed to
+    // native through SDL's own drop path, the same delivery macOS and iOS
+    // use for URLs; alloy tells a link from a file drop by its scheme.
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String link = intent != null ? intent.getDataString() : null;
+        if (link != null) {
+            SDLActivity.onNativeDropFile(link);
+        }
     }
 
     // Flavor hook, run before SDL comes up: the go client extracts its
@@ -219,6 +249,11 @@ public class SolidRTActivity extends SDLActivity {
         // A rare lifecycle fact; logged so device traces show which launch
         // the runtime reported (the app's restore decision depends on it).
         Log.v(TAG, "launch " + (restored ? "restored" : "fresh"));
+        Intent intent = getIntent();
+        if (intent != null && intent.getData() != null) {
+            launchLink = intent.getDataString();
+            intent.setData(null);
+        }
         prepareAssets();
         super.onCreate(savedInstanceState);
         nativeHardwareKeyboard(hasHardwareKeyboard());

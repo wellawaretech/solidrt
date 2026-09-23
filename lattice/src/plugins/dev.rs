@@ -1,10 +1,11 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use flux::rquickjs::function::MutFn;
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
-use flux::rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Null, Object, Persistent};
+use flux::rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Null, Object, Persistent, Value};
 
 // The `srt:dev` module: the dev-server control surface (connect / discover /
 // stop) used by the default app's connection UI. The actual command plumbing
@@ -72,6 +73,45 @@ impl DebugRegistry {
   }
 }
 
+/// Where the app says it is: the string it last reported through
+/// `reportLocation` (a router does it on every navigation; an app routing by
+/// hand may too). The runtime never interprets it. Owned by the engine loop
+/// and shared, not context userdata that dies with an engine: the dev
+/// connection answers `GET /__control__/link` (the get_location MCP tool)
+/// from it without a JS-thread round trip, and the loop reads it after an
+/// engine ends to hand it to a reload of the same app as its launch link, so
+/// a rebuild comes back to the screen it left. Installed into every engine's
+/// context, cleared for each new one. Reporting works in every build; only
+/// go builds read it.
+#[derive(Clone, Default, JsLifetime)]
+pub struct LocationSlot(#[qjs(skip_trace)] Arc<Mutex<Option<String>>>);
+
+impl LocationSlot {
+  /// The last reported location, if any.
+  pub fn get(&self) -> Option<String> {
+    self.0.lock().expect("location slot lock poisoned").clone()
+  }
+
+  pub fn set(&self, location: Option<String>) {
+    *self.0.lock().expect("location slot lock poisoned") = location;
+  }
+}
+
+/// `reportLocation(string | null)`: a later call replaces the value, null
+/// withdraws it (a router unmounting).
+fn report_location_impl<'js>(ctx: Ctx<'js>, location: Value<'js>) -> flux::rquickjs::Result<()> {
+  let slot = ctx.userdata::<LocationSlot>().expect("location slot installed").clone();
+  if location.is_null() || location.is_undefined() {
+    slot.set(None);
+    return Ok(());
+  }
+  let Some(text) = location.as_string() else {
+    return Err(Exception::throw_type(&ctx, "reportLocation(location): expected a string or null"));
+  };
+  slot.set(Some(text.to_string()?));
+  Ok(())
+}
+
 /// `registerDebug(name, fn)`: duplicate names replace. Fetches the registry
 /// from userdata itself so the export needs no captured state.
 fn register_debug_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) -> flux::rquickjs::Result<()> {
@@ -107,6 +147,7 @@ impl ModuleDef for SrtDevModule {
     decl.declare("recents")?;
     decl.declare("launchAddress")?;
     decl.declare("registerDebug")?;
+    decl.declare("reportLocation")?;
     Ok(())
   }
 
@@ -117,6 +158,8 @@ impl ModuleDef for SrtDevModule {
       ctx.store_userdata(DebugRegistry::default()).expect("store debug registry");
     }
     exports.export("registerDebug", Function::new(ctx.clone(), register_debug_impl)?)?;
+    // The location slot is the engine loop's, installed at engine build.
+    exports.export("reportLocation", Function::new(ctx.clone(), report_location_impl)?)?;
 
     match ctx.userdata::<DevControl>() {
       Some(control) => {

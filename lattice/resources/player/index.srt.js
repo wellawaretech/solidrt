@@ -6099,55 +6099,6 @@ function Show(props) {
     sync: true
   });
 }
-function Switch(props) {
-  const chs = children(() => props.children);
-  const switchFunc = createMemo(() => {
-    const mps = chs.toArray();
-    let func = () => {
-      return;
-    };
-    for (let i = 0;i < mps.length; i++) {
-      const index = i;
-      const mp = mps[i];
-      if (mp == null)
-        continue;
-      const prevFunc = func;
-      const conditionValue = createMemo(() => prevFunc() ? undefined : mp.when, undefined);
-      const condition = mp.keyed ? conditionValue : createMemo(conditionValue, {
-        equals: (a, b) => !a === !b,
-        sync: true
-      });
-      func = () => {
-        const prev = prevFunc();
-        if (prev)
-          return prev;
-        const c = condition();
-        return c ? [index, c, conditionValue, mp] : undefined;
-      };
-    }
-    return func;
-  }, {
-    sync: true
-  });
-  return createMemo(() => {
-    const sel = switchFunc()();
-    if (!sel)
-      return props.fallback;
-    const [index, value, conditionValue, mp] = sel;
-    const child = mp.children;
-    const fn = typeof child === "function" && child.length > 0;
-    return fn ? mp.keyed ? untrack(() => child(value), IS_DEV) : untrack(() => child(() => {
-      if (untrack(switchFunc)()?.[0] !== index)
-        throw narrowedError("Match");
-      return conditionValue();
-    }), IS_DEV) : child;
-  }, {
-    sync: true
-  });
-}
-function Match(props) {
-  return props;
-}
 // ../../node_modules/.bun/@solidjs+universal@2.0.0-rc.9+24e9e1e07e3a1217/node_modules/@solidjs/universal/dist/universal.js
 var transparentOptions = {
   transparent: true,
@@ -6597,7 +6548,7 @@ import * as tree2 from "flux:rendertree";
 import { requestFrame, setPointerLock } from "flux:rendertree";
 import { renderFrame } from "srt:render";
 import { on as on2, once } from "srt:events";
-import { exit as nativeExit, background as nativeBackground } from "srt:app";
+import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "srt:app";
 import { platform } from "flux:process";
 
 // ../../packages/core/src/core.ts
@@ -7012,6 +6963,12 @@ function onLayout(fn) {
     if (i >= 0)
       layoutHandlers.splice(i, 1);
   };
+  if (getOwner())
+    onCleanup(unsubscribe);
+  return unsubscribe;
+}
+function onLink(fn) {
+  let unsubscribe = on2("link", (e) => fn(e.link));
   if (getOwner())
     onCleanup(unsubscribe);
   return unsubscribe;
@@ -7672,6 +7629,17 @@ function ensureLaunchState() {
   });
   launchValue ??= "fresh";
 }
+var launchLinkValue;
+function ensureLaunchLinkState() {
+  if (launchLinkValue !== undefined)
+    return;
+  runWithOwner(null, () => {
+    on3("launchLink", (e) => {
+      launchLinkValue = typeof e.link === "string" ? e.link : null;
+    });
+  });
+  launchLinkValue ??= null;
+}
 var visibilityAccessor;
 function ensureVisibilityState() {
   if (visibilityAccessor)
@@ -7785,6 +7753,10 @@ var env = {
   get launch() {
     ensureLaunchState();
     return launchValue;
+  },
+  get launchLink() {
+    ensureLaunchLinkState();
+    return launchLinkValue;
   },
   get orientation() {
     ensureOrientationState();
@@ -9472,6 +9444,368 @@ function gamepad(slot) {
 gamepad.next = () => createGamepadJoin(gamepads);
 // ../../packages/core/src/input-pointer.ts
 var WHEEL_OCTAVES = 0.0015 / Math.LN2;
+// ../../packages/router/src/route.ts
+var REST_PARAM = "rest";
+function parseSegments(path) {
+  let out = [];
+  for (let piece of path.split("/")) {
+    if (piece === "")
+      continue;
+    if (piece === "$") {
+      out.push({
+        kind: "rest"
+      });
+    } else if (piece.startsWith("$")) {
+      let optional = piece.endsWith("?");
+      let name = piece.slice(1, optional ? -1 : undefined);
+      if (name === "")
+        throw new Error(`Route path "${path}": a param needs a name`);
+      out.push({
+        kind: "param",
+        name,
+        optional
+      });
+    } else {
+      out.push({
+        kind: "literal",
+        value: piece
+      });
+    }
+  }
+  for (let i = 0;i < out.length - 1; i++) {
+    let s = out[i];
+    if (s.kind === "rest" || s.kind === "param" && s.optional) {
+      throw new Error(`Route path "${path}": "${s.kind === "rest" ? "$" : "$" + s.name + "?"}" must be the last segment`);
+    }
+  }
+  return out;
+}
+function createRootRoute(options = {}) {
+  let root = {
+    path: "/",
+    parent: null,
+    children: [],
+    component: options.component ?? null,
+    parse: null,
+    segments: [],
+    _params: () => {}
+  };
+  place(root, options.children ?? []);
+  return root;
+}
+function createRoute(options) {
+  let route = {
+    path: options.path,
+    parent: null,
+    children: [],
+    component: options.component ?? null,
+    parse: options.params?.parse ?? null,
+    segments: parseSegments(options.path),
+    _params: () => {}
+  };
+  place(route, options.children ?? []);
+  return route;
+}
+function place(parent, children2) {
+  for (let child of children2) {
+    if (child.parent) {
+      throw new Error(`Route "${formatPattern(child)}" is already placed; a route has one place in the tree`);
+    }
+    child.parent = parent;
+    parent.children.push(child);
+  }
+}
+function splitPath(path) {
+  return path.split("/").filter((s) => s !== "").map((s) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  });
+}
+function consume(route, segments) {
+  let raw = {};
+  let i = 0;
+  for (let s of route.segments) {
+    if (s.kind === "rest") {
+      raw[REST_PARAM] = segments.slice(i).join("/");
+      return {
+        raw,
+        rest: []
+      };
+    }
+    let piece = segments[i];
+    if (piece === undefined) {
+      if (s.kind === "param" && s.optional)
+        return {
+          raw,
+          rest: []
+        };
+      return null;
+    }
+    if (s.kind === "literal") {
+      if (piece !== s.value)
+        return null;
+    } else {
+      raw[s.name] = piece;
+    }
+    i++;
+  }
+  return {
+    raw,
+    rest: segments.slice(i)
+  };
+}
+function matchFrom(route, segments, inherited) {
+  let own = consume(route, segments);
+  if (!own)
+    return null;
+  let params;
+  try {
+    params = {
+      ...inherited,
+      ...route.parse ? route.parse(own.raw) : own.raw
+    };
+  } catch {
+    return null;
+  }
+  let here = {
+    route,
+    params
+  };
+  if (own.rest.length === 0) {
+    for (let child of route.children) {
+      if (child.segments.length === 0) {
+        let below = matchFrom(child, [], params);
+        if (below)
+          return [here, ...below];
+      }
+    }
+    return [here];
+  }
+  for (let child of route.children) {
+    let below = matchFrom(child, own.rest, params);
+    if (below)
+      return [here, ...below];
+  }
+  return null;
+}
+function matchPath(root, path) {
+  return matchFrom(root, splitPath(path), {});
+}
+function formatPath(route, params = {}) {
+  let chain = [];
+  for (let r = route;r; r = r.parent)
+    chain.unshift(r);
+  let out = [];
+  for (let r of chain) {
+    for (let s of r.segments) {
+      if (s.kind === "literal") {
+        out.push(s.value);
+      } else if (s.kind === "rest") {
+        let rest = params[REST_PARAM];
+        if (rest !== undefined && rest !== null && rest !== "")
+          out.push(String(rest));
+      } else {
+        let value = params[s.name];
+        if (value === undefined || value === null) {
+          if (s.optional)
+            continue;
+          throw new Error(`Route "${formatPattern(route)}": missing param "${s.name}"`);
+        }
+        out.push(encodeURIComponent(String(value)));
+      }
+    }
+  }
+  return "/" + out.join("/");
+}
+function formatPattern(route) {
+  let parts = [];
+  for (let r = route;r; r = r.parent) {
+    let own = r.path.replace(/^\/+|\/+$/g, "");
+    if (own)
+      parts.unshift(own);
+  }
+  return "/" + parts.join("/");
+}
+function linkToPath(link2) {
+  let m = /^([A-Za-z][A-Za-z0-9+.-]+):(.*)$/s.exec(link2);
+  let rest = link2;
+  if (m) {
+    let scheme = m[1].toLowerCase();
+    rest = m[2];
+    if (scheme === "http" || scheme === "https") {
+      rest = rest.replace(/^\/\/[^/]*/, "");
+    } else {
+      rest = rest.replace(/^\/\//, "");
+    }
+  }
+  rest = rest.replace(/[?#].*$/s, "");
+  return rest.startsWith("/") ? rest : "/" + rest;
+}
+// ../../packages/router/src/router.tsx
+import { reportLocation } from "srt:dev";
+function createRouter(options) {
+  let tree4 = options.tree;
+  let launch = env.launchLink;
+  let start = launch != null ? [linkToPath(launch)] : normalizeInitial(options.initial);
+  let valid = start.filter((path) => {
+    if (matchPath(tree4, path))
+      return true;
+    console.warn(`Router: no route matches "${path}"; dropped from the initial stack`);
+    return false;
+  });
+  let [entries, setEntries] = createSignal(valid.length > 0 ? valid : ["/"]);
+  let location = createMemo(() => {
+    let list = entries();
+    let path = list[list.length - 1];
+    if (path === undefined)
+      return null;
+    let matches2 = matchPath(tree4, path);
+    return matches2 ? {
+      path,
+      matches: matches2
+    } : null;
+  });
+  let blockers = new Set;
+  let href = (target) => {
+    if (typeof target === "string")
+      return linkToPath(target);
+    if ("route" in target)
+      return formatPath(target.route, target.params);
+    return formatPath(target);
+  };
+  let allowed = async () => {
+    let pending2 = [];
+    for (let block of blockers) {
+      let verdict = block();
+      if (verdict === false)
+        return false;
+      if (verdict !== true)
+        pending2.push(verdict);
+    }
+    if (pending2.length === 0)
+      return true;
+    return (await Promise.all(pending2)).every(Boolean);
+  };
+  let router = {
+    entries,
+    location,
+    href,
+    blockers,
+    tree: tree4,
+    async navigate(target, options2 = {}) {
+      let path = href(target);
+      if (!matchPath(tree4, path)) {
+        console.warn(`Router: no route matches "${path}"`);
+        return false;
+      }
+      if (!await allowed())
+        return false;
+      setEntries((list) => {
+        if (options2.reset)
+          return [path];
+        if (options2.replace)
+          return [...list.slice(0, -1), path];
+        return [...list, path];
+      });
+      return true;
+    },
+    async back() {
+      if (untrack(entries).length <= 1)
+        return false;
+      if (!await allowed())
+        return false;
+      setEntries((list) => list.slice(0, -1));
+      return true;
+    }
+  };
+  return router;
+}
+function normalizeInitial(initial) {
+  if (initial === undefined)
+    return ["/"];
+  if (typeof initial === "string")
+    return [linkToPath(initial)];
+  return initial.map(linkToPath);
+}
+var RouterContext = createContext2();
+var DepthContext = createContext2(0);
+function Router(props) {
+  let router = untrack(() => props.router ?? createRouter({
+    tree: createRootRoute({
+      children: routesOf(props.children)
+    }),
+    initial: props.initial
+  }));
+  onBack((e) => {
+    if (untrack(router.entries).length <= 1)
+      return;
+    e.preventDefault();
+    router.back();
+  });
+  onLink((link2) => {
+    router.navigate(linkToPath(link2));
+  });
+  createEffect(() => router.location()?.path ?? null, (path) => reportLocation(path));
+  onCleanup(() => reportLocation(null));
+  return createComponent2(RouterContext, {
+    value: router,
+    get children() {
+      return createComponent2(RouteView, {
+        depth: 0
+      });
+    }
+  });
+}
+function routesOf(slot) {
+  let list = children(() => slot).toArray();
+  for (let item of list) {
+    if (typeof item !== "object" || item === null || !("segments" in item)) {
+      throw new Error("<Router> and <Route> take only <Route> elements as children");
+    }
+  }
+  return list;
+}
+function RouteView(props) {
+  let router = useContext(RouterContext);
+  let route = createMemo(() => router.location()?.matches[props.depth]?.route ?? null);
+  return createComponent2(DepthContext, {
+    get value() {
+      return props.depth;
+    },
+    get children() {
+      return createComponent2(Show, {
+        get when() {
+          return route();
+        },
+        keyed: true,
+        children: (r) => r.component ? createComponent2(r.component, {}) : createComponent2(Outlet, {})
+      });
+    }
+  });
+}
+function Outlet() {
+  let depth = useContext(DepthContext);
+  return createComponent2(RouteView, {
+    depth: depth + 1
+  });
+}
+function useRouter() {
+  return useContext(RouterContext);
+}
+function useLocation() {
+  return useContext(RouterContext).location;
+}
+function useParams(route) {
+  let router = useContext(RouterContext);
+  return createMemo(() => {
+    let matches2 = router.location()?.matches ?? [];
+    let match = (route && matches2.find((m) => m.route === route)) ?? matches2[matches2.length - 1];
+    return match?.params ?? {};
+  });
+}
 // ../../packages/components/src/theme.ts
 var SPACING_BASE = 4;
 function deriveSpacing(base) {
@@ -14444,7 +14778,83 @@ var createDataURL = function(width, height, getPixel) {
 var stringToBytes = qrcode.stringToBytes;
 // src/parts/home-screen.tsx
 import { stop } from "srt:dev";
-import { available as appsAvailable, list, launch, remove, info, clearCache } from "srt:apps";
+import { launch, remove, info, clearCache } from "srt:apps";
+
+// src/parts/app-state.ts
+import { available as appsAvailable, list } from "srt:apps";
+
+// src/parts/dev-connection.ts
+import { on as on6 } from "srt:events";
+import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
+
+// src/parts/types.ts
+function focusRing(focused, radius) {
+  if (!focused || !policy.focusRing)
+    return {};
+  return {
+    borderWidth: 2,
+    borderColor: theme.color.text,
+    borderRadius: radius ?? theme.radius.md
+  };
+}
+var LIST_GUTTER = 2;
+var COLUMN_MAX_WIDTH = 440;
+var DETAIL_MAX_WIDTH = 640;
+var TAP_TARGET = 44;
+var STATUS_TEXT = {
+  idle: "Not connected",
+  searching: "Searching...",
+  connecting: "Connecting...",
+  connected: "Connected"
+};
+function normalizeAddress(raw) {
+  return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "");
+}
+
+// src/parts/dev-connection.ts
+var available = devAvailable;
+var [state, setState] = createSignal("idle");
+var [address, setAddress] = createSignal(null);
+var [tunneled, setTunneled] = createSignal(false);
+var [recents, setRecents] = createSignal([]);
+if (available) {
+  on6("dev", (e) => {
+    setState(e.state);
+    setAddress(e.address);
+    setTunneled(e.tunneled);
+    if (e.recents)
+      setRecents(e.recents);
+  });
+  if (launchAddress)
+    devConnect(launchAddress);
+}
+var connectionState = state;
+var serverAddress = address;
+var isTunneled = tunneled;
+var recentAddresses = recents;
+var isConnected = () => state() === "connected";
+var isBusy = () => state() === "searching" || state() === "connecting";
+var isIdle = () => state() === "idle";
+function connect(addr) {
+  devConnect(normalizeAddress(addr));
+}
+
+// src/parts/app-state.ts
+var [themeMode, setThemeMode] = createSignal("system");
+var [fullscreen, setFullscreen] = createSignal(false);
+var [notice, setNotice] = createSignal(null);
+var [apps, setApps] = createSignal(appsAvailable ? list() : []);
+var installedApps = apps;
+function refreshApps() {
+  setApps(appsAvailable ? list() : []);
+}
+function dial(addr) {
+  setNotice(null);
+  router.navigate(home, {
+    reset: true
+  });
+  connect(addr);
+}
 
 // src/parts/app-icon.tsx
 function AppIcon(props) {
@@ -14585,30 +14995,6 @@ function DetailCard(props) {
   });
 }
 
-// src/parts/types.ts
-function focusRing(focused, radius) {
-  if (!focused || !policy.focusRing)
-    return {};
-  return {
-    borderWidth: 2,
-    borderColor: theme.color.text,
-    borderRadius: radius ?? theme.radius.md
-  };
-}
-var LIST_GUTTER = 2;
-var COLUMN_MAX_WIDTH = 440;
-var DETAIL_MAX_WIDTH = 640;
-var TAP_TARGET = 44;
-var STATUS_TEXT = {
-  idle: "Not connected",
-  searching: "Searching...",
-  connecting: "Connecting...",
-  connected: "Connected"
-};
-function normalizeAddress(raw) {
-  return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "");
-}
-
 // src/parts/back-button.tsx
 var ARROW_LEFT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12h-14"/></svg>`;
 function BackButton(props) {
@@ -14665,374 +15051,8 @@ function ScanButton(props) {
   });
 }
 
-// src/parts/settings-panel.tsx
-import { version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
-var MAXIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`;
-var MINIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>`;
-function CapabilityChip(props) {
-  return createComponent2(View, {
-    get layout() {
-      return {
-        paddingLeft: space("md"),
-        paddingRight: space("md"),
-        paddingTop: space("sm"),
-        paddingBottom: space("sm")
-      };
-    },
-    get style() {
-      return {
-        backgroundColor: theme.color.surfaceAlt,
-        borderRadius: theme.radius.sm
-      };
-    },
-    get children() {
-      return createComponent2(Text, {
-        variant: "body",
-        muted: true,
-        get children() {
-          return props.name;
-        }
-      });
-    }
-  });
-}
-var THEME_MODES = ["system", "light", "dark"];
-function SettingsPanel(props) {
-  let cycleMode = () => props.onMode(THEME_MODES[(THEME_MODES.indexOf(props.mode) + 1) % THEME_MODES.length]);
-  return createComponent2(ScrollView, {
-    layout: {
-      flexGrow: 1
-    },
-    get children() {
-      return createComponent2(View, {
-        get layout() {
-          return {
-            flexGrow: 1,
-            alignItems: policy.layout === "twoPane" ? "flex-start" : "center"
-          };
-        },
-        get children() {
-          return createComponent2(View, {
-            get layout() {
-              return {
-                flexDirection: "column",
-                gap: space("lg"),
-                width: "100%",
-                maxWidth: DETAIL_MAX_WIDTH,
-                padding: space("xl")
-              };
-            },
-            get children() {
-              return [createComponent2(View, {
-                layout: {
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between"
-                },
-                get children() {
-                  return [createComponent2(View, {
-                    get layout() {
-                      return {
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: space("md")
-                      };
-                    },
-                    get children() {
-                      return [createComponent2(BackButton, {
-                        get onPress() {
-                          return props.onBack;
-                        }
-                      }), createComponent2(Text, {
-                        variant: "heading",
-                        children: "Settings"
-                      })];
-                    }
-                  }), createComponent2(Pressable, {
-                    focusable: true,
-                    onPress: () => props.onFullscreen(!props.fullscreen),
-                    layout: {
-                      width: TAP_TARGET,
-                      height: TAP_TARGET,
-                      alignItems: "center",
-                      justifyContent: "center"
-                    },
-                    style: (s) => ({
-                      backgroundColor: s.hovered ? theme.color.overlayHover : "transparent",
-                      borderRadius: theme.radius.md,
-                      ...focusRing(s.focused)
-                    }),
-                    get children() {
-                      return createComponent2(Icon, {
-                        get src() {
-                          return props.fullscreen ? MINIMIZE_SVG : MAXIMIZE_SVG;
-                        },
-                        size: 22
-                      });
-                    }
-                  })];
-                }
-              }), createComponent2(DetailCard, {
-                title: "Appearance",
-                get children() {
-                  return createComponent2(Pressable, {
-                    focusable: true,
-                    onPress: cycleMode,
-                    style: (s) => focusRing(s.focused),
-                    get children() {
-                      return createComponent2(SegmentedControl, {
-                        options: [{
-                          value: "system",
-                          label: "System"
-                        }, {
-                          value: "light",
-                          label: "Light"
-                        }, {
-                          value: "dark",
-                          label: "Dark"
-                        }],
-                        get value() {
-                          return props.mode;
-                        },
-                        onChange: (v) => props.onMode(v)
-                      });
-                    }
-                  });
-                }
-              }), createComponent2(DetailCard, {
-                title: "About",
-                get children() {
-                  return [createComponent2(DetailRow, {
-                    label: "Build version",
-                    value: buildVersion
-                  }), createComponent2(DetailRow, {
-                    label: "Profile",
-                    value: buildProfile
-                  }), createComponent2(DetailRow, {
-                    label: "Flux version",
-                    get value() {
-                      return Flux.version;
-                    }
-                  }), createComponent2(DetailRow, {
-                    label: "Platform",
-                    value: buildPlatform
-                  })];
-                }
-              }), createComponent2(DetailCard, {
-                title: "Capabilities",
-                get children() {
-                  return createComponent2(View, {
-                    get layout() {
-                      return {
-                        flexDirection: "row",
-                        flexWrap: "wrap",
-                        gap: space("sm")
-                      };
-                    },
-                    get children() {
-                      return createComponent2(For, {
-                        get each() {
-                          return Flux.capabilities;
-                        },
-                        children: (name) => createComponent2(CapabilityChip, {
-                          name
-                        })
-                      });
-                    }
-                  });
-                }
-              })];
-            }
-          });
-        }
-      });
-    }
-  });
-}
-
-// src/parts/dev-connection.ts
-import { on as on6 } from "srt:events";
-import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
-var available = devAvailable;
-var [state, setState] = createSignal("idle");
-var [address, setAddress] = createSignal(null);
-var [tunneled, setTunneled] = createSignal(false);
-var [recents, setRecents] = createSignal([]);
-if (available) {
-  on6("dev", (e) => {
-    setState(e.state);
-    setAddress(e.address);
-    setTunneled(e.tunneled);
-    if (e.recents)
-      setRecents(e.recents);
-  });
-  if (launchAddress)
-    devConnect(launchAddress);
-}
-var connectionState = state;
-var serverAddress = address;
-var isTunneled = tunneled;
-var recentAddresses = recents;
-var isConnected = () => state() === "connected";
-var isBusy = () => state() === "searching" || state() === "connecting";
-var isIdle = () => state() === "idle";
-function connect(addr) {
-  devConnect(normalizeAddress(addr));
-}
-
-// src/parts/connect-panel.tsx
-var DEFAULT_PORT = "34884";
-function recentLabel(entry) {
-  if (!entry.includes("|"))
-    return entry;
-  return "ticket " + entry.split("|")[0].slice(0, 8);
-}
-function ConnectPanel(props) {
-  let hostDraft = "";
-  let portDraft = DEFAULT_PORT;
-  let submit = () => {
-    let host = hostDraft.trim();
-    if (!host)
-      return;
-    let port = portDraft.trim();
-    props.onDial(port ? `${host}:${port}` : host);
-  };
-  return createComponent2(View, {
-    layout: {
-      flexGrow: 1,
-      alignItems: "center"
-    },
-    get children() {
-      return createComponent2(View, {
-        get layout() {
-          return {
-            flexDirection: "column",
-            gap: space("lg"),
-            width: "100%",
-            maxWidth: COLUMN_MAX_WIDTH,
-            padding: space("xl")
-          };
-        },
-        get children() {
-          return [createComponent2(View, {
-            get layout() {
-              return {
-                flexDirection: "row",
-                alignItems: "center",
-                gap: space("md")
-              };
-            },
-            get children() {
-              return [createComponent2(BackButton, {
-                get onPress() {
-                  return props.onClose;
-                }
-              }), createComponent2(Text, {
-                variant: "heading",
-                layout: {
-                  flexGrow: 1
-                },
-                children: "Connect"
-              }), createComponent2(ScanButton, {
-                get onPress() {
-                  return props.onScan;
-                }
-              })];
-            }
-          }), createComponent2(Card, {
-            title: "Manual",
-            get children() {
-              return [createComponent2(View, {
-                get layout() {
-                  return {
-                    flexDirection: "row",
-                    gap: space("md")
-                  };
-                },
-                get children() {
-                  return [createComponent2(TextInput, {
-                    layout: {
-                      flexGrow: 1
-                    },
-                    placeholder: "IP address",
-                    hints: {
-                      capitalize: "none",
-                      autocorrect: false
-                    },
-                    onInput: (v) => hostDraft = v,
-                    onSubmit: submit
-                  }), createComponent2(TextInput, {
-                    layout: {
-                      width: 96
-                    },
-                    placeholder: "port",
-                    defaultValue: DEFAULT_PORT,
-                    hints: {
-                      type: "number"
-                    },
-                    onInput: (v) => portDraft = v,
-                    onSubmit: submit
-                  })];
-                }
-              }), createComponent2(View, {
-                get layout() {
-                  return {
-                    flexDirection: "row",
-                    gap: space("md")
-                  };
-                },
-                get children() {
-                  return createComponent2(Button, {
-                    layout: {
-                      flexGrow: 1
-                    },
-                    onPress: submit,
-                    children: "Connect"
-                  });
-                }
-              })];
-            }
-          }), createComponent2(Show, {
-            get when() {
-              return recentAddresses().length > 0;
-            },
-            get children() {
-              return createComponent2(Card, {
-                title: "Recent connections",
-                get children() {
-                  return createComponent2(View, {
-                    get layout() {
-                      return {
-                        flexDirection: "column",
-                        gap: space("sm")
-                      };
-                    },
-                    get children() {
-                      return createComponent2(For, {
-                        get each() {
-                          return recentAddresses();
-                        },
-                        children: (entry) => createComponent2(Button, {
-                          variant: "secondary",
-                          onPress: () => props.onDial(entry),
-                          get children() {
-                            return recentLabel(entry);
-                          }
-                        })
-                      });
-                    }
-                  });
-                }
-              });
-            }
-          })];
-        }
-      });
-    }
-  });
-}
-
 // src/parts/home-screen.tsx
+var HOME_CHILD_DEPTH = 2;
 var GEAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>`;
 var PLAY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>`;
 function formatStamp(ms) {
@@ -15504,6 +15524,100 @@ function AppDetail(props) {
     }
   });
 }
+function doLaunch(id2) {
+  try {
+    launch(id2);
+  } catch (e) {
+    setNotice(e instanceof Error ? e.message : String(e));
+  }
+}
+function doRemove(id2) {
+  try {
+    remove(id2);
+  } catch (e) {
+    setNotice(e instanceof Error ? e.message : String(e));
+  }
+  refreshApps();
+}
+function MissingApp(props) {
+  return createComponent2(View, {
+    get layout() {
+      return {
+        flexGrow: 1,
+        alignItems: policy.layout === "twoPane" ? "flex-start" : "center"
+      };
+    },
+    get children() {
+      return createComponent2(View, {
+        get layout() {
+          return {
+            flexDirection: "column",
+            gap: space("lg"),
+            padding: space("xl"),
+            width: "100%",
+            maxWidth: DETAIL_MAX_WIDTH
+          };
+        },
+        get children() {
+          return [createComponent2(View, {
+            get layout() {
+              return {
+                flexDirection: "row",
+                alignItems: "center",
+                gap: space("lg")
+              };
+            },
+            get children() {
+              return [createComponent2(BackButton, {
+                get onPress() {
+                  return props.onBack;
+                }
+              }), createComponent2(Text, {
+                variant: "heading",
+                children: "Not installed"
+              })];
+            }
+          }), createComponent2(Text, {
+            variant: "body",
+            muted: true,
+            get children() {
+              return props.id;
+            }
+          })];
+        }
+      });
+    }
+  });
+}
+function AppDetailRoute() {
+  let router2 = useRouter();
+  let params = useParams(app);
+  let app2 = createMemo2(() => installedApps().find((a) => a.id === params().id) ?? null);
+  return createComponent2(Show, {
+    get when() {
+      return app2();
+    },
+    get fallback() {
+      return createComponent2(MissingApp, {
+        get id() {
+          return params().id;
+        },
+        onBack: () => router2.back()
+      });
+    },
+    children: (a) => createComponent2(AppDetail, {
+      get app() {
+        return a();
+      },
+      onLaunch: () => doLaunch(a().id),
+      onRemove: () => {
+        doRemove(a().id);
+        router2.back();
+      },
+      onBack: () => router2.back()
+    })
+  });
+}
 function AppList(props) {
   return createComponent2(ScrollView, {
     layout: {
@@ -15523,13 +15637,13 @@ function AppList(props) {
             get each() {
               return props.apps;
             },
-            children: (app) => createComponent2(AppCard, {
-              app,
+            children: (app2) => createComponent2(AppCard, {
+              app: app2,
               get active() {
-                return memo2(() => !!props.twoPane)() ? props.selectedId === app.id : props.twoPane;
+                return memo2(() => !!props.twoPane)() ? props.selectedId === app2.id : props.twoPane;
               },
-              onPress: () => props.onSelect(app.id),
-              onLaunch: () => props.onLaunch(app.id)
+              onPress: () => props.onSelect(app2.id),
+              onLaunch: () => props.onLaunch(app2.id)
             })
           });
         }
@@ -15671,58 +15785,32 @@ function DevCard(props) {
     }
   });
 }
-function HomeScreen(props) {
-  let [apps, setApps] = createSignal(appsAvailable ? list() : []);
+function HomeScreen() {
+  let router2 = useRouter();
+  let location = useLocation();
   let twoPane = () => policy.layout === "twoPane";
-  let selectedApp = () => apps().find((a) => a.id === props.selectedId) ?? null;
-  let status = () => isConnected() ? `Connected to ${serverAddress()}${isTunneled() ? " (tunneled)" : ""}` : props.notice ?? STATUS_TEXT[connectionState()];
-  let doLaunch = (id2) => {
-    try {
-      launch(id2);
-    } catch (e) {
-      props.setNotice(e instanceof Error ? e.message : String(e));
-    }
-  };
-  let doRemove = (id2) => {
-    try {
-      remove(id2);
-    } catch (e) {
-      props.setNotice(e instanceof Error ? e.message : String(e));
-    }
-    props.setSelectedId(null);
-    setApps(appsAvailable ? list() : []);
-  };
-  onBack((e) => {
-    if (!twoPane() && props.panel == null && selectedApp() != null) {
-      e.preventDefault();
-      props.setSelectedId(null);
-    }
+  let pane = () => location()?.matches[HOME_CHILD_DEPTH]?.route ?? null;
+  let detailUp = () => pane() === settings || pane() === app;
+  let selectedId = createMemo2(() => {
+    let m = location()?.matches[HOME_CHILD_DEPTH];
+    return m && m.route === app ? m.params.id : null;
   });
+  let status = () => isConnected() ? `Connected to ${serverAddress()}${isTunneled() ? " (tunneled)" : ""}` : notice() ?? STATUS_TEXT[connectionState()];
   return createComponent2(SplitView, {
     layout: {
       flexGrow: 1
     },
     listWidth: 380,
     get showDetail() {
-      return props.panel === "settings" || props.panel == null && selectedApp() != null;
+      return detailUp();
     },
     get list() {
       return createComponent2(Show, {
         get when() {
-          return props.panel !== "connect";
+          return pane() !== connect2;
         },
         get fallback() {
-          return createComponent2(ConnectPanel, {
-            get onDial() {
-              return props.onDial;
-            },
-            get onScan() {
-              return props.onScan;
-            },
-            get onClose() {
-              return props.onPanelClose;
-            }
-          });
+          return createComponent2(Outlet, {});
         },
         get children() {
           return createComponent2(View, {
@@ -15775,9 +15863,7 @@ function HomeScreen(props) {
                         get children() {
                           return [createComponent2(Pressable, {
                             focusable: true,
-                            get onPress() {
-                              return props.onSettings;
-                            },
+                            onPress: () => router2.navigate(settings),
                             layout: {
                               width: TAP_TARGET,
                               height: TAP_TARGET,
@@ -15801,9 +15887,7 @@ function HomeScreen(props) {
                             },
                             get children() {
                               return createComponent2(ScanButton, {
-                                get onPress() {
-                                  return props.onScan;
-                                }
+                                onPress: () => router2.navigate(scan)
                               });
                             }
                           })];
@@ -15812,7 +15896,7 @@ function HomeScreen(props) {
                     }
                   }), createComponent2(Show, {
                     get when() {
-                      return apps().length > 0;
+                      return installedApps().length > 0;
                     },
                     get fallback() {
                       return createComponent2(NoApps, {});
@@ -15820,18 +15904,23 @@ function HomeScreen(props) {
                     get children() {
                       return createComponent2(AppList, {
                         get apps() {
-                          return apps();
+                          return installedApps();
                         },
                         get selectedId() {
-                          return props.selectedId;
+                          return selectedId();
                         },
                         get twoPane() {
                           return twoPane();
                         },
                         onSelect: (id2) => {
-                          if (props.panel === "settings")
-                            props.onPanelClose();
-                          props.setSelectedId(id2);
+                          router2.navigate({
+                            route: app,
+                            params: {
+                              id: id2
+                            }
+                          }, {
+                            replace: pane() != null
+                          });
                         },
                         onLaunch: (id2) => doLaunch(id2)
                       });
@@ -15852,9 +15941,7 @@ function HomeScreen(props) {
                         get connected() {
                           return isConnected();
                         },
-                        get onConnect() {
-                          return props.onConnect;
-                        }
+                        onConnect: () => router2.navigate(connect2)
                       });
                     }
                   })];
@@ -15868,58 +15955,360 @@ function HomeScreen(props) {
     get detail() {
       return createComponent2(Show, {
         get when() {
-          return props.panel !== "settings";
+          return detailUp();
         },
         get fallback() {
-          return createComponent2(SettingsPanel, {
-            get mode() {
-              return props.themeMode;
+          return createComponent2(View, {
+            get layout() {
+              return {
+                flexGrow: 1,
+                justifyContent: "center",
+                alignItems: "center",
+                gap: space("lg")
+              };
             },
-            get onMode() {
-              return props.onThemeMode;
-            },
-            get fullscreen() {
-              return props.fullscreen;
-            },
-            get onFullscreen() {
-              return props.onFullscreen;
-            },
-            get onBack() {
-              return props.onPanelClose;
+            get children() {
+              return createComponent2(Logo, {
+                size: 360
+              });
             }
           });
         },
         get children() {
-          return createComponent2(Show, {
-            get when() {
-              return selectedApp();
+          return createComponent2(Outlet, {});
+        }
+      });
+    }
+  });
+}
+
+// src/parts/settings-panel.tsx
+import { version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
+var MAXIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`;
+var MINIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>`;
+function CapabilityChip(props) {
+  return createComponent2(View, {
+    get layout() {
+      return {
+        paddingLeft: space("md"),
+        paddingRight: space("md"),
+        paddingTop: space("sm"),
+        paddingBottom: space("sm")
+      };
+    },
+    get style() {
+      return {
+        backgroundColor: theme.color.surfaceAlt,
+        borderRadius: theme.radius.sm
+      };
+    },
+    get children() {
+      return createComponent2(Text, {
+        variant: "body",
+        muted: true,
+        get children() {
+          return props.name;
+        }
+      });
+    }
+  });
+}
+var THEME_MODES = ["system", "light", "dark"];
+function SettingsPanel() {
+  let router2 = useRouter();
+  let cycleMode = () => setThemeMode(THEME_MODES[(THEME_MODES.indexOf(themeMode()) + 1) % THEME_MODES.length]);
+  return createComponent2(ScrollView, {
+    layout: {
+      flexGrow: 1
+    },
+    get children() {
+      return createComponent2(View, {
+        get layout() {
+          return {
+            flexGrow: 1,
+            alignItems: policy.layout === "twoPane" ? "flex-start" : "center"
+          };
+        },
+        get children() {
+          return createComponent2(View, {
+            get layout() {
+              return {
+                flexDirection: "column",
+                gap: space("lg"),
+                width: "100%",
+                maxWidth: DETAIL_MAX_WIDTH,
+                padding: space("xl")
+              };
             },
-            get fallback() {
-              return createComponent2(View, {
+            get children() {
+              return [createComponent2(View, {
+                layout: {
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between"
+                },
+                get children() {
+                  return [createComponent2(View, {
+                    get layout() {
+                      return {
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: space("md")
+                      };
+                    },
+                    get children() {
+                      return [createComponent2(BackButton, {
+                        onPress: () => router2.back()
+                      }), createComponent2(Text, {
+                        variant: "heading",
+                        children: "Settings"
+                      })];
+                    }
+                  }), createComponent2(Pressable, {
+                    focusable: true,
+                    onPress: () => setFullscreen(!fullscreen()),
+                    layout: {
+                      width: TAP_TARGET,
+                      height: TAP_TARGET,
+                      alignItems: "center",
+                      justifyContent: "center"
+                    },
+                    style: (s) => ({
+                      backgroundColor: s.hovered ? theme.color.overlayHover : "transparent",
+                      borderRadius: theme.radius.md,
+                      ...focusRing(s.focused)
+                    }),
+                    get children() {
+                      return createComponent2(Icon, {
+                        get src() {
+                          return fullscreen() ? MINIMIZE_SVG : MAXIMIZE_SVG;
+                        },
+                        size: 22
+                      });
+                    }
+                  })];
+                }
+              }), createComponent2(DetailCard, {
+                title: "Appearance",
+                get children() {
+                  return createComponent2(Pressable, {
+                    focusable: true,
+                    onPress: cycleMode,
+                    style: (s) => focusRing(s.focused),
+                    get children() {
+                      return createComponent2(SegmentedControl, {
+                        options: [{
+                          value: "system",
+                          label: "System"
+                        }, {
+                          value: "light",
+                          label: "Light"
+                        }, {
+                          value: "dark",
+                          label: "Dark"
+                        }],
+                        get value() {
+                          return themeMode();
+                        },
+                        onChange: (v) => setThemeMode(v)
+                      });
+                    }
+                  });
+                }
+              }), createComponent2(DetailCard, {
+                title: "About",
+                get children() {
+                  return [createComponent2(DetailRow, {
+                    label: "Build version",
+                    value: buildVersion
+                  }), createComponent2(DetailRow, {
+                    label: "Profile",
+                    value: buildProfile
+                  }), createComponent2(DetailRow, {
+                    label: "Flux version",
+                    get value() {
+                      return Flux.version;
+                    }
+                  }), createComponent2(DetailRow, {
+                    label: "Platform",
+                    value: buildPlatform
+                  })];
+                }
+              }), createComponent2(DetailCard, {
+                title: "Capabilities",
+                get children() {
+                  return createComponent2(View, {
+                    get layout() {
+                      return {
+                        flexDirection: "row",
+                        flexWrap: "wrap",
+                        gap: space("sm")
+                      };
+                    },
+                    get children() {
+                      return createComponent2(For, {
+                        get each() {
+                          return Flux.capabilities;
+                        },
+                        children: (name) => createComponent2(CapabilityChip, {
+                          name
+                        })
+                      });
+                    }
+                  });
+                }
+              })];
+            }
+          });
+        }
+      });
+    }
+  });
+}
+
+// src/parts/connect-panel.tsx
+var DEFAULT_PORT = "34884";
+function recentLabel(entry) {
+  if (!entry.includes("|"))
+    return entry;
+  return "ticket " + entry.split("|")[0].slice(0, 8);
+}
+function ConnectPanel() {
+  let router2 = useRouter();
+  let hostDraft = "";
+  let portDraft = DEFAULT_PORT;
+  let submit = () => {
+    let host = hostDraft.trim();
+    if (!host)
+      return;
+    let port = portDraft.trim();
+    dial(port ? `${host}:${port}` : host);
+  };
+  return createComponent2(View, {
+    layout: {
+      flexGrow: 1,
+      alignItems: "center"
+    },
+    get children() {
+      return createComponent2(View, {
+        get layout() {
+          return {
+            flexDirection: "column",
+            gap: space("lg"),
+            width: "100%",
+            maxWidth: COLUMN_MAX_WIDTH,
+            padding: space("xl")
+          };
+        },
+        get children() {
+          return [createComponent2(View, {
+            get layout() {
+              return {
+                flexDirection: "row",
+                alignItems: "center",
+                gap: space("md")
+              };
+            },
+            get children() {
+              return [createComponent2(BackButton, {
+                onPress: () => router2.back()
+              }), createComponent2(Text, {
+                variant: "heading",
+                layout: {
+                  flexGrow: 1
+                },
+                children: "Connect"
+              }), createComponent2(ScanButton, {
+                onPress: () => router2.navigate(scan)
+              })];
+            }
+          }), createComponent2(Card, {
+            title: "Manual",
+            get children() {
+              return [createComponent2(View, {
                 get layout() {
                   return {
-                    flexGrow: 1,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    gap: space("lg")
+                    flexDirection: "row",
+                    gap: space("md")
                   };
                 },
                 get children() {
-                  return createComponent2(Logo, {
-                    size: 360
+                  return [createComponent2(TextInput, {
+                    layout: {
+                      flexGrow: 1
+                    },
+                    placeholder: "IP address",
+                    hints: {
+                      capitalize: "none",
+                      autocorrect: false
+                    },
+                    onInput: (v) => hostDraft = v,
+                    onSubmit: submit
+                  }), createComponent2(TextInput, {
+                    layout: {
+                      width: 96
+                    },
+                    placeholder: "port",
+                    defaultValue: DEFAULT_PORT,
+                    hints: {
+                      type: "number"
+                    },
+                    onInput: (v) => portDraft = v,
+                    onSubmit: submit
+                  })];
+                }
+              }), createComponent2(View, {
+                get layout() {
+                  return {
+                    flexDirection: "row",
+                    gap: space("md")
+                  };
+                },
+                get children() {
+                  return createComponent2(Button, {
+                    layout: {
+                      flexGrow: 1
+                    },
+                    onPress: submit,
+                    children: "Connect"
+                  });
+                }
+              })];
+            }
+          }), createComponent2(Show, {
+            get when() {
+              return recentAddresses().length > 0;
+            },
+            get children() {
+              return createComponent2(Card, {
+                title: "Recent connections",
+                get children() {
+                  return createComponent2(View, {
+                    get layout() {
+                      return {
+                        flexDirection: "column",
+                        gap: space("sm")
+                      };
+                    },
+                    get children() {
+                      return createComponent2(For, {
+                        get each() {
+                          return recentAddresses();
+                        },
+                        children: (entry) => createComponent2(Button, {
+                          variant: "secondary",
+                          onPress: () => dial(entry),
+                          get children() {
+                            return recentLabel(entry);
+                          }
+                        })
+                      });
+                    }
                   });
                 }
               });
-            },
-            children: (app) => createComponent2(AppDetail, {
-              get app() {
-                return app();
-              },
-              onLaunch: () => doLaunch(app().id),
-              onRemove: () => doRemove(app().id),
-              onBack: () => props.setSelectedId(null)
-            })
-          });
+            }
+          })];
         }
       });
     }
@@ -15971,17 +16360,22 @@ var RETICLE_RADIUS = 20;
 var CLOSE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
 var SCRIM = "rgba(0, 0, 0, 0.45)";
 var SCRIM_HOVER = "rgba(0, 0, 0, 0.65)";
-function ScanScreen(props) {
+function ScanScreen() {
+  let router2 = useRouter();
   let cam = createCamera(untrack(() => ({
     scan: ["qr"]
   })));
   createEffect(() => cam.barcode(), (b) => {
     if (b)
-      props.onScanned(b.data);
+      dial(b.data);
   });
   createEffect(() => cam.error(), (e) => {
-    if (e)
-      props.onError(e.message);
+    if (e) {
+      setNotice(`Camera: ${e.message}`);
+      router2.navigate(home, {
+        reset: true
+      });
+    }
   });
   let crop = () => {
     let cw = cam.width();
@@ -16117,9 +16511,9 @@ function ScanScreen(props) {
                     get children() {
                       return createComponent2(Pressable, {
                         focusable: true,
-                        get onPress() {
-                          return props.onCancel;
-                        },
+                        onPress: () => router2.navigate(connect2, {
+                          replace: true
+                        }),
                         layout: {
                           width: TAP_TARGET,
                           height: TAP_TARGET,
@@ -16151,9 +16545,48 @@ function ScanScreen(props) {
   });
 }
 
+// src/routes.ts
+var APP_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+var settings = createRoute({
+  path: "/settings",
+  component: SettingsPanel
+});
+var connect2 = createRoute({
+  path: "/connect",
+  component: ConnectPanel
+});
+var app = createRoute({
+  path: "/app/$id",
+  params: {
+    parse: (raw) => {
+      let id2 = raw.id ?? "";
+      if (!APP_ID.test(id2))
+        throw new Error("not an app id");
+      return {
+        id: id2
+      };
+    }
+  },
+  component: AppDetailRoute
+});
+var home = createRoute({
+  path: "/",
+  component: HomeScreen,
+  children: [settings, connect2, app]
+});
+var scan = createRoute({
+  path: "/scan",
+  component: ScanScreen
+});
+var root = createRootRoute({
+  children: [home, scan]
+});
+var router = createRouter({
+  tree: root
+});
+
 // src/index.tsx
 function App() {
-  let [themeMode, setThemeMode] = createSignal("system");
   let dark = () => {
     let mode = themeMode();
     if (mode === "system")
@@ -16161,25 +16594,6 @@ function App() {
     return mode === "dark";
   };
   createEffect(() => dark(), (d) => setTheme(d ? darkTheme : lightTheme));
-  let [fullscreen, setFullscreen] = createSignal(false);
-  let [screen, setScreen] = createSignal("home");
-  let panel = () => {
-    let s = screen();
-    return s === "settings" || s === "connect" ? s : null;
-  };
-  let [selectedId, setSelectedId] = createSignal(null);
-  let [notice, setNotice] = createSignal(null);
-  let dial = (addr) => {
-    setNotice(null);
-    setScreen("home");
-    connect(addr);
-  };
-  onBack((e) => {
-    if (screen() !== "home") {
-      e.preventDefault();
-      setScreen("home");
-    }
-  });
   let nav = createFocusNav();
   return createComponent2(Window, mergeProps({
     title: "SolidRT",
@@ -16198,59 +16612,8 @@ function App() {
     get children() {
       return createComponent2(SafeArea, {
         get children() {
-          return createComponent2(Switch, {
-            get children() {
-              return [createComponent2(Match, {
-                get when() {
-                  return screen() === "scan";
-                },
-                get children() {
-                  return createComponent2(ScanScreen, {
-                    onScanned: (data) => dial(data),
-                    onCancel: () => setScreen("connect"),
-                    onError: (m) => {
-                      setNotice(`Camera: ${m}`);
-                      setScreen("home");
-                    }
-                  });
-                }
-              }), createComponent2(Match, {
-                get when() {
-                  return screen() === "home" || panel() != null;
-                },
-                get children() {
-                  return createComponent2(HomeScreen, {
-                    get selectedId() {
-                      return selectedId();
-                    },
-                    setSelectedId,
-                    get notice() {
-                      return notice();
-                    },
-                    setNotice,
-                    get panel() {
-                      return panel();
-                    },
-                    get themeMode() {
-                      return themeMode();
-                    },
-                    onThemeMode: setThemeMode,
-                    get fullscreen() {
-                      return fullscreen();
-                    },
-                    onFullscreen: setFullscreen,
-                    onScan: () => {
-                      setNotice(null);
-                      setScreen("scan");
-                    },
-                    onConnect: () => setScreen("connect"),
-                    onSettings: () => setScreen("settings"),
-                    onPanelClose: () => setScreen("home"),
-                    onDial: (addr) => dial(addr)
-                  });
-                }
-              })];
-            }
+          return createComponent2(Router, {
+            router
           });
         }
       });

@@ -424,6 +424,15 @@ impl FluxEngine {
     )
     .await;
 
+    // What the embedder queued between build and eval (the launch facts, a
+    // replayed connection state) lands before the entry module runs, so a
+    // read at module scope sees it: those closures describe the world the
+    // app starts in, and are not events the app could have subscribed to
+    // in time.
+    while let Ok(f) = exec_rx.try_recv() {
+      context.with(|ctx| f(ctx)).await;
+    }
+    drain_job_queue(&runtime).await;
     context.with(|ctx| task(ctx)).await;
     // Checkpoint after the entry evaluation too: exec closures queued during
     // startup must not race the module's own microtasks.

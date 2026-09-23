@@ -81,3 +81,9 @@ libloading = "=0.9.0"
 # receiving mDNS there would need a WifiManager.MulticastLock, so it is excluded.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 mdns-sd = "=0.20.2"
+
+# The per-user protocol registration a packed app writes on
+# registerProtocolHandler (src/links.rs), through Microsoft's safe registry
+# binding; already in the graph (ipconfig, the resolver's Windows DNS config).
+[target.'cfg(windows)'.dependencies]
+windows-registry = "=0.6.1"

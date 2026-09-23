@@ -1,0 +1,26 @@
+{
+  // Flux-targeted, like core and components (see packages/components/
+  // tsconfig.json): the router is a layer on core and runs on the flux
+  // runtime only.
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "jsx": "preserve",
+    "jsxImportSource": "@solidrt/core",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "types": ["@solidrt/flux-types"]
+  },
+  // tests/ runs under bun test, not flux: not part of this program.
+  "include": ["."],
+  "exclude": ["tests"]
+}

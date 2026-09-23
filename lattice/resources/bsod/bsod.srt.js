@@ -4237,7 +4237,7 @@ import * as tree2 from "flux:rendertree";
 import { requestFrame, setPointerLock } from "flux:rendertree";
 import { renderFrame } from "srt:render";
 import { on as on2, once } from "srt:events";
-import { exit as nativeExit, background as nativeBackground } from "srt:app";
+import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "srt:app";
 import { platform } from "flux:process";
 
 // ../../packages/core/src/core.ts

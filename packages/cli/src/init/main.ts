@@ -64,6 +64,7 @@ const EXTENSIONS: Extension[] = [
   },
   { pkg: "@solidrt/2d", key: "2d", description: "general purpose 2D library" },
   { pkg: "@solidrt/3d", key: "3d", description: "general purpose 3D library" },
+  { pkg: "@solidrt/router", key: "router", description: "screens as routes: a typed tree, a stack, links" },
 ]
 
 // Resolve which extensions the app takes: an interactive picker on a TTY,

@@ -21,6 +21,10 @@ pub enum AlloyCommand {
   // because of it (okf/backlog/vsync-locked-js-bound-double-signal.md).
   SetUiBusyFlag(std::sync::Arc<std::sync::atomic::AtomicBool>),
   SetTitle(String),
+  // Bring the window to the front: a link handed over by a second instance
+  // (lattice links.rs) should show the screen it opened, not stay behind
+  // whatever started that instance.
+  RaiseWindow,
   // Window icon from straight-alpha RGBA8 pixels (width * height * 4 bytes).
   // Platforms without window icons (macOS) ignore it.
   SetIcon { width: u32, height: u32, rgba: Vec<u8> },
@@ -338,6 +342,15 @@ pub enum AlloyEvent {
   // navigation handles it there), and only an unprevented dispatch (or an
   // unresponsive engine) falls through to the default action: exit.
   Back,
+  // A link handed to the running app from outside: a custom-scheme URL the
+  // OS routed here (macOS and iOS deliver it through SDL's drop path, an
+  // Android intent through the activity's onNewIntent, see `link_from_drop`),
+  // or one a dev tool injected. The raw string, untouched: what it means is
+  // the app's to decide, and it is untrusted input. The link a process was
+  // started with is not an event but a launch fact (see the embedder).
+  Link {
+    link: String,
+  },
   WindowFocus,
   WindowBlur,
   // App/window visibility state: false when backgrounded (Android
@@ -803,7 +816,29 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
     SdlEvent::Unknown { type_, .. } if type_ == sdl3::sys::events::SDL_EVENT_CAMERA_DEVICE_REMOVED.0 => {
       Some(AlloyEvent::CameraDeviceChange { added: false })
     }
+    // SDL's drop path doubles as its URL delivery (Cocoa's kAEGetURL handler
+    // and UIKit's openURL send the URL string as a drop file; the Android
+    // activity forwards a warm intent's data the same way). A payload with a
+    // scheme is a link; a real file drop is a path and stays unhandled.
+    SdlEvent::DropFile { filename, .. } => link_from_drop(&filename).map(|link| AlloyEvent::Link { link }),
     _ => None,
+  }
+}
+
+// The link in a drop payload, if it is one: a URI scheme per RFC 3986
+// (a letter, then letters, digits, `+`, `-` or `.`, then `:`) at least two
+// characters long, so a Windows drive path (`C:\...`) is not mistaken for a
+// scheme. Paths (`/...`) and bare names have no scheme and return None.
+pub(crate) fn link_from_drop(payload: &str) -> Option<String> {
+  let colon = payload.find(':')?;
+  let scheme = &payload[..colon];
+  let mut chars = scheme.chars();
+  let first_is_letter = chars.next().is_some_and(|c| c.is_ascii_alphabetic());
+  let rest_valid = chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+  if scheme.len() >= 2 && first_is_letter && rest_valid {
+    Some(payload.to_string())
+  } else {
+    None
   }
 }
 

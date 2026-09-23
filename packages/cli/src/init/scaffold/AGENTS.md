@@ -18,7 +18,8 @@ should open whenever the work matches its trigger.
   only under laid-out parents (a `<view>` inside a `<d-view>` throws), so a
   component's doc comment says which kind it renders.
 - Extensions build on core. The first-party ones are @solidrt/components
-  (UI components), @solidrt/2d (2D graphics) and @solidrt/3d (3D graphics).
+  (UI components), @solidrt/2d (2D graphics), @solidrt/3d (3D graphics) and
+  @solidrt/router (screens as routes).
   None is privileged - an extension is just functions returning core JSX,
   and an app can use a third-party one or grow its own.
 
@@ -77,6 +78,9 @@ that matches the work; do not work from memory of what a web framework does.
 <!-- 3d:begin -->
 @./node_modules/@solidrt/3d/AGENTS.md
 <!-- 3d:end -->
+<!-- router:begin -->
+@./node_modules/@solidrt/router/AGENTS.md
+<!-- router:end -->
 @./node_modules/@solidrt/cli/AGENTS.md
 
 ## The three traps that cost the most (this is not React/DOM)

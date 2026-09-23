@@ -45,6 +45,13 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   open) adds Opus audio from WebM, with the sink position correcting the clock
   anchor instead of selecting frames. Decided 2026-09-12, reversing the
   2026-08-12 rejection; the texture pipeline keeps every non-fullscreen use.
+- **[Application routing](plans/app-routing.md)** [2026-09-23]
+  "@solidrt/router: a typed route tree with validated params, a memory stack
+  run as Solid transitions, one back step, blocking, links in and location
+  out; the mapping that makes screens addressable by OS links, MCP, srt
+  render, reload and restore alike. Own package on core only, headless core
+  plus a thin Solid binding, no data layer. A consumer of the link primitive
+  in deep-links.md, never inside core."
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -261,12 +268,6 @@ Shaped, not started.
   + SDL_SetWindowIcon); stage 3 packed executables remains and owns packed-app
   icons on all platforms, including the Android TV banner a packed APK
   inherits from the runner.
-- **[Application routing](backlog/app-routing.md)** [2026-09-23]
-  "A router for SolidRT apps: a declared, two-way mapping between a link
-  string and the app's screen state, with the back stack, per-entry retention
-  and layout routes built on it; the one feature that makes screens
-  addressable by OS links, MCP, srt render, reload and restore alike. A layer
-  above core's link primitive (deep-links.md), never inside it."
 - **[App-level runtime configuration](backlog/app-runtime-config.md)** [2026-08-17]
   A start-only `solidrt.runtime` block in package.json for tunables that today
   are compile-time constants (JS stack size, word cache size, paragraph
@@ -314,12 +315,12 @@ Shaped, not started.
   (21 accepted names, the handle form, the two rejection messages) has no test
   in the existing apply_jsx harness.
 - **[Deep links](backlog/deep-links.md)** [2026-07-26]
-  "Opening the app at a link from outside: an OS registration half (scheme
-  declaration in srt pack, the Android manifest, desktop self-registration)
-  and an app half that is one event, onLink, plus the launch link;
-  per-platform delivery facts, the running-instance problem on desktop, and
-  the dev-side link injection that makes it testable without any
-  registration."
+  "Opening the app at a link from outside: the app half (onLink, the launch
+  link, the dev-side link injection) and the OS registration half (the scheme
+  is the appId; the Android manifest, desktop self-registration through
+  registerProtocolHandler, the desktop single-instance hand-off), both built
+  2026-09-23 for Android, Linux and Windows; what remains is macOS's .app
+  bundle and the player's own scheme."
 - **[A demo shows up in the player under its project's name, not its own](backlog/demo-identity-per-demo.md)** [2026-08-26]
   srt demo serves demos/ as one project, so the player entry, appId and
   storage are the project's; the gallery appeared as "SolidRT components
@@ -605,6 +606,11 @@ Shaped, not started.
   desktop session. Open: the same run from a non-interactive session (service,
   Session 0, Windows OpenSSH), which decides whether the default display
   suffices or EGL_ANGLE_device_creation is needed; macOS untested.
+- **[srt render of the player exits without frames](backlog/player-headless-render-exits.md)** [2026-09-23]
+  "`srt render apps/player/src/index.tsx --file` exits 0 after `flux engine
+  start` with no frame written and nothing logged, even at SRT_LOG=debug;
+  playback ends before the first frame, and exit 0 with no message is the
+  exit()-during-playback signature."
 - **[Per-node event-interest mask for pointer dispatch](backlog/pointer-event-interest-mask.md)** [2026-08-01]
   Rust marshals the full root-to-leaf hit path into JS for every pointer event
   because only the JS handler registry knows which nodes listen; a per-element
@@ -691,6 +697,11 @@ Shaped, not started.
   per-element writes with no cascade, so an app dropping to a raw <text>
   repeats the color and a component from elsewhere cannot pick up the app's
   text style.
+- **[SegmentedControl warns STRICT_READ_UNTRACKED per option](backlog/segmented-control-strict-read.md)** [2026-09-23]
+  "Mounting a SegmentedControl logs Solid's STRICT_READ_UNTRACKED warning once
+  per option (the player's settings screen shows three); the option row's For
+  callback reads the controlled value untracked at its top, so the warning may
+  be naming a real stale read."
 - **[Home for cross-crate constants](backlog/shared-config-constants.md)** [2026-07-27]
   One defined home for cross-crate constants that today live as per-site
   literals (.srt-data, http-cache.db, the SolidRT/go identity, size caps);

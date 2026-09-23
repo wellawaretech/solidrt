@@ -1,12 +1,19 @@
-// The QR scan screen: a full-window camera with center cover-crop and a
-// corner-bracket reticle, feeding scanned data back out to dial. Dismissal is a
-// close (X) on a scrim disc, not the heading-row back arrow the other screens
-// use: there is no heading to hang it off, and leaving a live camera reads as
-// closing a viewfinder rather than stepping back up a hierarchy.
+// The QR scan screen (the /scan route): a full-window camera with center
+// cover-crop and a corner-bracket reticle, dialing what it scans. Dismissal
+// is a close (X) on a scrim disc, not the heading-row back arrow the other
+// screens use: there is no heading to hang it off, and leaving a live camera
+// reads as closing a viewfinder rather than stepping back up a hierarchy.
+// Cancelling lands on the connect panel whether the scan was started there or
+// from the home header: it holds the other ways to connect, and back from it
+// goes home. A camera failure goes home instead: its notice shows in the dev
+// card's status line, which the connect panel covers.
 import { env, createEffect, untrack } from "@solidrt/core"
 import { createCamera, type BarcodeResult } from "@solidrt/core/camera"
 import { Show } from "solid-js"
 import { View, Pressable, Icon, SafeArea, space, type PressState } from "@solidrt/components"
+import { useRouter } from "@solidrt/router"
+import { dial, setNotice } from "./app-state"
+import { connect, home } from "../routes"
 import { TAP_TARGET, focusRing } from "./types"
 
 // The scan reticle's stroke thickness and corner radius (logical px). The
@@ -25,26 +32,26 @@ const SCRIM = "rgba(0, 0, 0, 0.45)"
 const SCRIM_HOVER = "rgba(0, 0, 0, 0.65)"
 
 // Full-window camera with center cover-crop and a corner-bracket scan reticle.
-// Mounted only while scanning (under <Match>), so the camera opens with the
-// screen and closes when it leaves. The camera, reticle, and controls are
-// absolutely positioned layers: in flow they would stack in the column and
-// push each other off-center.
-export function ScanScreen(props: {
-  onScanned: (data: string) => void
-  onCancel: () => void
-  onError: (message: string) => void
-}) {
+// Mounted only while the route is on top, so the camera opens with the screen
+// and closes when it leaves. The camera, reticle, and controls are absolutely
+// positioned layers: in flow they would stack in the column and push each
+// other off-center.
+export function ScanScreen() {
+  let router = useRouter()
   let cam = createCamera(untrack(() => ({ scan: ["qr"] as "qr"[] })))
   createEffect(
     () => cam.barcode(),
     (b?: BarcodeResult) => {
-      if (b) props.onScanned(b.data)
+      if (b) dial(b.data)
     },
   )
   createEffect(
     () => cam.error(),
     (e?: Error) => {
-      if (e) props.onError(e.message)
+      if (e) {
+        setNotice(`Camera: ${e.message}`)
+        void router.navigate(home, { reset: true })
+      }
     },
   )
 
@@ -118,7 +125,7 @@ export function ScanScreen(props: {
             <View layout={{ flexDirection: "row" }}>
               <Pressable
                 focusable
-                onPress={props.onCancel}
+                onPress={() => router.navigate(connect, { replace: true })}
                 layout={{
                   width: TAP_TARGET,
                   height: TAP_TARGET,

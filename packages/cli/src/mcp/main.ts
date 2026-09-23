@@ -418,6 +418,23 @@ let TOOLS: {
     },
   },
   {
+    name: "open_link",
+    annotations: DRIVES_APP,
+    description:
+      "Deliver a link to the running app, the way a custom-scheme link routed by the OS arrives: the raw string reaches the app's onLink handlers (a router opens the screen it names; an app without a router handles it itself). Use it to open a screen directly instead of tapping through the tree - `/settings/theme` or `myapp://settings/theme`, whichever the app documents. Returns delivered: false when nothing in the app listens, in which case the link was dropped. Follow with get_location or get_snapshot to see where the app landed.",
+    inputSchema: {
+      link: z.string().describe("The link, raw: a path like /settings/theme, or a full scheme link like myapp://settings/theme"),
+      client: CLIENT_ARG,
+    },
+  },
+  {
+    name: "get_location",
+    annotations: READ_ONLY,
+    description:
+      "Read where the app is: the location it reports through reportLocation from srt:dev (a router's current path). null when the app reports none. The cheap way to confirm a navigation or an open_link landed before taking a snapshot. A reload starts the app at this location again.",
+    inputSchema: { client: CLIENT_ARG },
+  },
+  {
     name: "reload",
     description:
       "Rebuild the app from source and push it to every connected client. Call this after editing the app's .tsx/.jsx source to apply the changes: it bundles once and reloads all clients, so a burst of edits becomes a single explicit reload. Returns the number of clients reloaded, or a build error if the source failed to compile. The server also reloads on save (every file the running bundle was built from, and the assets/ tree, so writing assets counts as editing); pause_watch before an edit burst or a data-generating script so half-finished saves are not pushed to the user's screens, then reload, then resume_watch. Follow with get_logs to see runtime output from the reloaded app.",
@@ -611,6 +628,14 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     }
     case "list_debug":
       return control(`/debug${clientParam(args)}`)
+    case "open_link": {
+      if (typeof args?.link !== "string" || !args.link) return { ok: false, message: "open_link requires a link" }
+      let params = new URLSearchParams({ link: args.link })
+      if (typeof args?.client === "number") params.set("client", String(args.client))
+      return control(`/link?${params.toString()}`, "POST")
+    }
+    case "get_location":
+      return control(`/link${clientParam(args)}`)
     case "call_debug": {
       if (typeof args?.name !== "string") return { ok: false, message: "call_debug requires a command name" }
       let params = new URLSearchParams({ name: args.name })

@@ -18,6 +18,7 @@ mod keymap;
 mod layout;
 mod layout_slides;
 mod line;
+mod link;
 mod liveness;
 mod paint;
 mod path;

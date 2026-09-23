@@ -20,6 +20,7 @@ const COMPONENTS = "../packages/components";
 const README_EXTENSIONS = [
   { pkg: "2d", dir: "../packages/2d" },
   { pkg: "3d", dir: "../packages/3d" },
+  { pkg: "router", dir: "../packages/router" },
 ];
 
 export type ReferencePage = {

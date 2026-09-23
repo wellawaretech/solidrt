@@ -2380,6 +2380,7 @@ dependencies = [
  "tokio",
  "tokio-websockets",
  "whisper-rs",
+ "windows-registry",
 ]
 
 [[package]]

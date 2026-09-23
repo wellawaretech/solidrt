@@ -1,9 +1,9 @@
 // The settings panel: theme mode, fullscreen, and the runtime's build
-// identity. Reached
-// from the home header gear. Lives in the home SplitView's detail pane: beside
-// the list in two-pane, the whole screen in single-pane. The heading row's
-// back arrow closes it in both layouts (unlike the app detail, the list offers
-// no other affordance to dismiss it). Single-pane centers the column, two-pane
+// identity. The /settings route, reached from the home header gear. Lives in
+// the home SplitView's detail pane: beside the list in two-pane, the whole
+// screen in single-pane. The heading row's back arrow pops it in both layouts
+// (unlike the app detail, the list offers no other affordance to dismiss
+// it). The mode and fullscreen it edits are app state (parts/app-state). Single-pane centers the column, two-pane
 // leaves it against the split's hairline, per the SplitView contract. Its
 // column is the detail pane's width, not the list's, so switching between an
 // app's details and settings does not resize the pane's content.
@@ -25,8 +25,10 @@ import {
   profile as buildProfile,
   platform as buildPlatform,
 } from "srt:apps"
+import { useRouter } from "@solidrt/router"
 import { DetailCard, DetailRow } from "./detail-card"
 import { BackButton } from "./back-button"
+import { themeMode, setThemeMode, fullscreen, setFullscreen } from "./app-state"
 import { DETAIL_MAX_WIDTH, TAP_TARGET, focusRing, type ThemeMode } from "./types"
 
 // Lucide maximize/minimize, stroked with currentColor so Icon recolors them.
@@ -54,19 +56,14 @@ function CapabilityChip(props: { name: string }) {
 
 const THEME_MODES: ThemeMode[] = ["system", "light", "dark"]
 
-export function SettingsPanel(props: {
-  mode: ThemeMode
-  onMode: (mode: ThemeMode) => void
-  fullscreen: boolean
-  onFullscreen: (on: boolean) => void
-  onBack: () => void
-}) {
+export function SettingsPanel() {
+  let router = useRouter()
   // The whole segmented control is one focus target; activating it steps to
   // the next mode (a remote has no way to aim at a single segment). Pointer
   // taps on the segments hit their inner pressables first (innermost wins),
   // so only a press on the row's padding cycles.
   let cycleMode = () =>
-    props.onMode(THEME_MODES[(THEME_MODES.indexOf(props.mode) + 1) % THEME_MODES.length]!)
+    setThemeMode(THEME_MODES[(THEME_MODES.indexOf(themeMode()) + 1) % THEME_MODES.length]!)
   return (
     <ScrollView layout={{ flexGrow: 1 }}>
       <View
@@ -89,12 +86,12 @@ export function SettingsPanel(props: {
             }}
           >
             <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
-              <BackButton onPress={props.onBack} />
+              <BackButton onPress={() => router.back()} />
               <Text variant="heading">Settings</Text>
             </View>
             <Pressable
               focusable
-              onPress={() => props.onFullscreen(!props.fullscreen)}
+              onPress={() => setFullscreen(!fullscreen())}
               layout={{
                 width: TAP_TARGET,
                 height: TAP_TARGET,
@@ -107,7 +104,7 @@ export function SettingsPanel(props: {
                 ...focusRing(s.focused),
               })}
             >
-              <Icon src={props.fullscreen ? MINIMIZE_SVG : MAXIMIZE_SVG} size={22} />
+              <Icon src={fullscreen() ? MINIMIZE_SVG : MAXIMIZE_SVG} size={22} />
             </Pressable>
           </View>
           <DetailCard title="Appearance">
@@ -118,8 +115,8 @@ export function SettingsPanel(props: {
                   { value: "light", label: "Light" },
                   { value: "dark", label: "Dark" },
                 ]}
-                value={props.mode}
-                onChange={(v) => props.onMode(v as ThemeMode)}
+                value={themeMode()}
+                onChange={(v) => setThemeMode(v as ThemeMode)}
               />
             </Pressable>
           </DetailCard>
