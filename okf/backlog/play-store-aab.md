@@ -6,7 +6,7 @@ created: 2026-09-21
 
 # Play Store publishing with srt pack --aab
 
-`srt pack --apk` (`done`: `backlog/standalone-android-apk.md`, notes in
+`srt pack --apk` (`done`: `done/standalone-android-apk.md`, notes in
 `notes/standalone-apk-implementation.md`) produces an installable APK for
 handing around. Google Play refuses it twice over: new apps must be uploaded
 as an Android App Bundle, and every APK today is signed with the shared

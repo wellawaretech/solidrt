@@ -1,7 +1,8 @@
 ---
 title: "flux:audio mix control: playback rate, master gain, ramps, voice cap, PCM validation"
-description: A Playback's rate is fixed forever (no pitch sweeps, no doppler), there is no master gain or bus so every app hand-rolls mute, gain/pan writes cannot ramp, a runaway play() loop wedges the JS thread with no error, and non-finite PCM samples load silently; SDL3_mixer already exposes most of the missing controls.
+description: Landed 2026-08-20: playback rate, master gain, ramped gain/pan/rate, fade-in/out, the voice cap, PCM validation, the unloaded-clip error and bus-scoped stop; setBusGain is declared and lands with the mixer replacement (video-playback stage 7).
 created: 2026-08-20
+completed: 2026-08-20
 ---
 
 # flux:audio mix control: playback rate, master gain, ramps, voice cap, PCM validation
@@ -160,7 +161,7 @@ the `.d.ts`.
 - `loop` is fixed at `play()` time; "finish this loop then stop" is not
   expressible. `Track::set_loops(0)` is exactly that - a `setLoop` would be
   plumbing. (`stop({ fadeOutMs })` covers most reported wants.)
-- Output rate: DONE 2026-08-20 (uncommitted) - `outputSampleRate()` in
+- Output rate: DONE 2026-08-20 - `outputSampleRate()` in
   flux:audio (alloy `audio_output_sample_rate` over `Mixer::format()`; opens
   the device on first use). Consumer appeared the same day (a demo app
   synthesizing its entire soundtrack guessed 44100).
@@ -178,11 +179,11 @@ okf/done/flux-audio-voice-control.md), and the ~3 dB step between omitted
 
 ## Stages
 
-1. DONE 2026-08-20 (uncommitted). Everything SDL already provides plus the
+1. DONE 2026-08-20. Everything SDL already provides plus the
    guards: `rate` + `setRate`, `setMasterGain` (reset on reload), the voice
    cap, non-finite PCM rejection, the unloaded-clip error, detection +
    contract docs. flux-types and core `Sound` mirrored.
-2. DONE 2026-08-20 (uncommitted). Ramps via the control-rate driver above:
+2. DONE 2026-08-20. Ramps via the control-rate driver above:
    `{ rampMs }` on `setGain`/`setPan`/`setRate`/`setMasterGain` (options bag,
    per the optionals-in-a-bag rule), `{ fadeOutMs }` on `playback.stop` and
    the module `stop`, `fadeInMs` in `PlayOptions`. SDL semantics verified by
@@ -195,14 +196,14 @@ okf/done/flux-audio-voice-control.md), and the ~3 dB step between omitted
    stable across an app reload) and by driving examples/audio over the
    control API (taps ping at tap-height pitch, counter decays, no errors).
 3. Buses, audio-only (video explicitly out of scope for now):
-   a. DONE 2026-08-20 (uncommitted). Thin grouping: `play({ bus })` tags the
+   a. DONE 2026-08-20. Thin grouping: `play({ bus })` tags the
       voice; `stop({ bus, fadeOutMs? })` stops or fades one bus
       (MIX_StopTag; bus-stopped tracks are not destroyed, the sweep reclaims
       them, so no ramp purge is needed). Solves "stop() cannot clean up one
       subsystem". Verified end-to-end (probes/audio-mix-probe.tsx 15/15:
       scoped stop leaves other buses playing, bus fade plays through,
       empty-name rejected).
-   b. Bus GAINS: contract decided and DECLARED 2026-08-20 (uncommitted) -
+   b. Bus GAINS: contract decided and DECLARED 2026-08-20 -
       `setBusGain(bus, gain, { rampMs? })`, audible level = voice x bus x
       master with each layer independent, applies to live + future voices,
       resets on reload. The surface is mixer-implementation-neutral, so it
@@ -221,6 +222,8 @@ okf/done/flux-audio-voice-control.md), and the ~3 dB step between omitted
       on the ended playbacks kept succeeding as documented no-ops so
       app-side state looked correct throughout. The .d.ts now warns on both
       stops that stopping is not pausing (added 2026-08-20); the
-      non-destructive group control remains this item.
-4. Position/duration/setLoop/pause-resume as consumers appear (output-rate
-   landed 2026-08-20, see section 7; position/duration now has a consumer).
+      non-destructive group control lands with the mixer replacement (stage 4).
+4. Position/duration/setLoop/pause-resume: output rate landed 2026-08-20
+   (section 7); the rest, with the bus gains of 3b, is folded into the
+   mixer replacement, [video-playback](../backlog/video-playback.md)
+   stage 7.

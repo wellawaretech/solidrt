@@ -1,10 +1,13 @@
 ---
 title: srt render is never headless on ANGLE
-description: On Windows the offscreen video driver fails every time (SDL's offscreen path needs EGL_EXT_device_enumeration, which ANGLE does not implement) and playback silently falls back to a hidden window, so the one command that exists to run without a display requires an interactive window station there; the ANGLE that ships already advertises the extensions a real headless path needs.
+description: On Windows SDL's offscreen driver cannot meet ANGLE (no EGL_EXT_device_enumeration), so playback fell back to a hidden window; since 2026-08-17 it takes a headless EGL pbuffer context instead, verified in a desktop session. Open: the same run from a non-interactive session (service, Session 0, Windows OpenSSH), which decides whether the default display suffices or EGL_ANGLE_device_creation is needed; macOS untested.
 created: 2026-08-17
 ---
 
 # srt render is never headless on ANGLE
+
+Status 2026-09-23: stages 1 and 2 shipped; what is open is the
+non-interactive-session run described under stage 2.
 
 Symptom: every `srt render` on Windows prints
 

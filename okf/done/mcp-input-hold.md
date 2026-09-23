@@ -1,7 +1,8 @@
 ---
 title: Hold physical input while the MCP bridge drives the app
-description: A person touching the keyboard or mouse while an agent verifies through send_input corrupts the run (focus moves, text lands in the field under test, snapshots show mixed state); the client should be able to ignore physical input for the duration of a driven session, visibly, and hand it back on request or timeout.
+description: Superseded 2026-08-25 by the user-input mute: POST /__control__/mute and the MCP mute_user_input/unmute_user_input tools make every connected client drop physical input while an agent drives it, with the MUTED badge on screen.
 created: 2026-08-19
+completed: 2026-08-25
 ---
 
 # Hold physical input while the MCP bridge drives the app
@@ -38,3 +39,15 @@ client has no notion of being driven.
   always releases.
 - Policy lives in lattice's dev/control layer; alloy delivers events as
   today (fact source, no test-mode special case).
+
+## Superseded (2026-08-25)
+
+Landed as the user-input mute rather than a hold: `POST /__control__/mute`
+(the repl `mute`, MCP `mute_user_input`/`unmute_user_input`) latches on the
+server, reaches every connected client as a `mute` message, and the client
+drops physical pointer, key, text, wheel, gamepad and back events while
+`/input` still goes through; `MUTED` shows on the overlay line
+([dev-overlays](dev-overlays.md)). Deliberate differences from the sketch
+above: the mute is server-wide rather than per client, and it has no
+timeout or escape chord - it lifts on unmute, when the dev server goes
+away, or when the bridge exits, which covers the crashed-agent case.

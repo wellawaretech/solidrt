@@ -1,10 +1,13 @@
 ---
 title: Jank an agent cannot see or measure
-description: A human immediately felt typing jank that the agent could not reproduce or measure: get_stats frame times are smoothed so a one-frame 84ms hitch averages away, layout counters cover only the last rebuild and are overwritten before the next call, and nothing flags a slow frame anywhere.
+description: Most of this landed 2026-08-18 (the 600-frame history, get_stats' window with p50/p95/max, the worst frame and rates, the throttled slow-frame warning). Open: a single derived verdict (healthy / GPU over budget / raster backlogged) once the rates prove trustworthy, and the unexplained idle rasterQueue reading on a Windows client.
 created: 2026-07-27
 ---
 
 # Jank an agent cannot see or measure
+
+Status 2026-09-23: see Landed at the end; the two open pieces are the
+derived verdict and the Windows `rasterQueue` verification.
 
 What it looks like when you hit it: someone types in the app and feels it
 stutter, tells the agent, and the agent finds nothing wrong. Measured on a
@@ -89,7 +92,7 @@ Wanted, and it composes with the tracing above:
 Split out of a five-part round-2 agent dev-loop feedback item when okf was
 restructured; the siblings are
 [mcp-multi-client-ergonomics](mcp-multi-client-ergonomics.md) and
-[mcp-detached-node-bounds](mcp-detached-node-bounds.md).
+[mcp-detached-node-bounds](../done/mcp-detached-node-bounds.md).
 
 ## Landed (2026-08-18, verified on the linux client and the 50 Hz TV)
 

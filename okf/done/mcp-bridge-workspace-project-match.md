@@ -1,7 +1,8 @@
 ---
 title: MCP bridge - match dev servers in subdirectories of the bridge's project
-description: The bridge resolves a dev server by exact projectDir equality, so a workspace-root bridge reports "No dev server" for an entry served from packages/*/examples/ (its nearest package.json makes THAT directory the projectDir). Accept servers whose projectDir sits under the bridge's project, preferring an exact match, so MCP tools work in a monorepo without new CLI surface.
+description: Superseded 2026-08-25 by the key-based registry: a server registers under its project root (the cwd) or its file, never a directory found by walking up from the entry, and the bridge resolves the project server keyed by its own cwd or the single file server under it; the projectDir mismatch this item describes no longer occurs.
 created: 2026-08-24
+completed: 2026-08-25
 ---
 
 # MCP bridge: workspace project match
@@ -60,3 +61,14 @@ servers under one workspace still resolve (exact beats subdirectory,
 ambiguity error otherwise). The bridge is long-lived: the fix only takes
 effect in a re-spawned bridge, which the verification protocol already
 notes.
+
+## Superseded (2026-08-25)
+
+The premise went away with [cli-flux-migration](cli-flux-migration.md): a
+server registers under a key that is its project root (the cwd) or its
+file, never a directory found by walking up from the entry, and the bridge
+resolves the project server keyed by its own cwd, else the single file
+server whose file lies under it (`resolveFromCwd` in
+`packages/cli/src/lib/registry.ts`). A package example served from the repo
+root is `srt run <file> --project`, which keys the root, so the mismatch
+above cannot arise. Subdirectory matching was not built.

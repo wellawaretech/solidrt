@@ -44,7 +44,7 @@ production build shows nothing, as now.
   message, site }` to the runtime through the existing dev channel that
   carries stats/log state - not a console line per frame, which is
   already there and is the noise this replaces.
-- The client badge line (okf/backlog/dev-overlays.md's overlay) or the
+- The client badge line (okf/done/dev-overlays.md's overlay) or the
   stats HUD gains an error row while a report is live. Nothing on the
   raster side beyond another overlay line.
 - Reset on reload (a fresh engine has no throw history).

@@ -1,8 +1,9 @@
 ---
 title: Move the srt dev flow into flux and make ports an output
-description: Host run/server/client/mcp in one flux process that binds its own port, owns the server registry, and shells out to bun for bundling and typechecking only; a server starts in its project root or on a single file (never by searching up), one server per key, never identified by port.
+description: Landed 2026-08-25/26: one flux process hosts the dev server (port remembered, else the first free from 34884, or --port; loopback by default, --lan), a registry keyed by project root or file with one server per key, --file/--project modes with no upward search, and bun kept only for bundling, typechecking and the MCP bridge. The self-pack (srt as a packed flux app) is an ideas.md line.
 tags: [cli, flux, dev-server, mcp, bundler, repl, ports, registry]
 created: 2026-07-13
+completed: 2026-08-26
 ---
 
 # Move the srt dev flow into flux and make ports an output
@@ -167,7 +168,7 @@ to the file: nothing owns that directory. Project mode keeps
 The repl `load <file>` command was dropped here (it moved the entry
 mid-session, which under one-server-per-key would change the key), then
 came back 2026-08-26 as `/__control__/load` for the MCP `load` tool and the
-repl again ([stdin-tty-support](../done/stdin-tty-support.md)): the entry
+repl again ([stdin-tty-support](stdin-tty-support.md)): the entry
 moves, the key never does. It names what the server was started for, and
 `/clients` reports the entry next to it.
 
@@ -197,17 +198,17 @@ feature: a file on its own bundles none (decided 2026-08-25).
 
 Checked 2026-08-25; each is its own small item and useful on its own:
 
-- **Bound port introspection.** DONE 2026-08-25 (uncommitted): `port` is
+- **Bound port introspection.** DONE 2026-08-25: `port` is
   optional in `serve()` (default 0) and `Server.port`/`url` report the
   address actually bound.
-- **Directory watch.** DONE 2026-08-25 (uncommitted): `dir(path).watch()`
+- **Directory watch.** DONE 2026-08-25: `dir(path).watch()`
   in `flux:fs` (notify-backed, recursive optional, undebounced, rename
   target reported), and reload-on-save on top of it from the bundle's
-  inputs: [done/reload-on-save.md](../done/reload-on-save.md).
-- **stdin/tty**: [stdin-tty-support.md](../done/stdin-tty-support.md). The repl is
+  inputs: [done/reload-on-save.md](reload-on-save.md).
+- **stdin/tty**: [stdin-tty-support.md](stdin-tty-support.md). The repl is
   the only consumer; the rest of the migration does not wait on it (the
   no-tty path already runs without a repl).
-- **sha256.** DONE 2026-08-25 (uncommitted): `crypto.subtle.digest`
+- **sha256.** DONE 2026-08-25: `crypto.subtle.digest`
   (SHA-256/384/512): core in `forge/src/crypto.rs`, marshalling in
   `flux/src/standards_plugins/crypto.rs`,
   replacing `Bun.CryptoHasher` for manifest and asset hashing once the CLI
@@ -217,7 +218,7 @@ Checked 2026-08-25; each is its own small item and useful on its own:
 
 1. Flux gaps: bound port and `crypto.subtle.digest` (both done); fs watch
    deferred, see above.
-2. DONE 2026-08-25 (uncommitted): the dev server (`packages/cli/server/`)
+2. DONE 2026-08-25: the dev server (`packages/cli/server/`)
    owns port (remembered, else first free from 34884, or `--port`), record, local client and
    bundle; bun is a launcher (`commands/server.ts`: mode, binaries, config,
    signal relay) plus the registry readers (`client`, `mcp`, `--android`)
@@ -232,22 +233,22 @@ Checked 2026-08-25; each is its own small item and useful on its own:
    `on()` unsubscribe never stopped the OS signal watcher, so a server that
    unsubscribed at shutdown never went idle (`flux/tests/process.rs`).
    Also added: `flux:process.pid`, `flux:fs` `file().remove()`.
-3. DONE 2026-08-25 (uncommitted): `dist/server.js` prebuilt at release
+3. DONE 2026-08-25: `dist/server.js` prebuilt at release
    (`scripts/build-server.ts`, release.yml step, `files` entry), used when
    present; `typecheck-cli.ts` restores the startup typecheck (spawned by
    the server after the initial bundle, not awaited, prebuilt entries
    skipped); `bundle`/`pack`/`render` under the mode table, build root =
    cwd, `projectDirFor` and the upward walk gone except in `check`; file
    mode bundles no isolates. Scaffold scripts follow (`srt run`, `srt pack
-   -o out`). Open: the self-pack, see Packaging. The shim exec'ing flux is
-   settled by [done/srt-command-folders.md](../done/srt-command-folders.md):
+   -o out`). The self-pack (see Packaging) is an ideas.md line. The shim exec'ing flux is
+   settled by [done/srt-command-folders.md](srt-command-folders.md):
    `bin/srt` stays a bun launcher that spawns the flux server (one process,
    complete on its own, that the console spawns directly), and the layout
    named under Related there has been regrouped into `src/<command>/`.
 
 # Deliberately not in scope
 
-- mDNS: [mdns-discovery.md](mdns-discovery.md). Port-less servers make the
+- mDNS: [mdns-discovery.md](../backlog/mdns-discovery.md). Port-less servers make the
   ticket/QR story more important, not less.
 
 # Related
@@ -256,6 +257,6 @@ Checked 2026-08-25; each is its own small item and useful on its own:
 - `packages/cli/src/commands/{server,client,mcp}.ts`
 - `packages/cli/server/{main,state,control,rebuild,tunnel}.ts`
 - `flux/src/forge_plugins/{serve,fs,process,subprocess}.rs`
-- [done/parallel-dev-servers.md](../done/parallel-dev-servers.md): the
+- [done/parallel-dev-servers.md](parallel-dev-servers.md): the
   port-keyed design this supersedes; its client-tree split (`-c`,
   `~/.solidrt/clients/client<M>/`) stays.

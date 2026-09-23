@@ -1,15 +1,18 @@
 ---
 title: Content-damage perf watchpoints
-description: Perf potholes in the damage-tracking path. Open - the unbatched invalidate_paint in set_unrounded_layout making resize O(n * depth). Fixed - the O(nodes) texture walk (referencer index, 2026-09-02) and the boundary-shader-input full re-bake (shader_dirty + Compose, 2026-08-10).
+description: Perf potholes in the damage-tracking path, closed 2026-09-23: the O(nodes) texture walk (referencer index, 2026-09-02) and the boundary-shader-input full re-bake (2026-08-10) are fixed; the one left, the unbatched invalidate_paint in set_unrounded_layout, is a tiny.md line.
 created: 2026-08-10
+completed: 2026-09-23
 ---
 
 # Content-damage perf watchpoints
 
 Correctness landed in
-[snapshot-gpu-content-invalidation](../done/snapshot-gpu-content-invalidation.md);
+[snapshot-gpu-content-invalidation](snapshot-gpu-content-invalidation.md);
 this holds the damage path's known perf potholes. Not worth fixing
 speculatively - each open one has a crisp symptom and a contained fix.
+Closed 2026-09-23: two of the three are fixed below, and the third is a
+[tiny.md](../tiny.md) line under Runtime.
 
 ## O(nodes) walk in texture_content_changed - FIXED 2026-09-02
 
@@ -31,7 +34,7 @@ deferred-destroy sweep, the same O(nodes) shape) both iterate the set;
 the boundary checks stay at query time, so behavior is unchanged. Test:
 tree.rs `texture_referencer_index_tracks_lifecycle`.
 
-## Unbatched invalidate_paint in set_unrounded_layout
+## Unbatched invalidate_paint in set_unrounded_layout - a tiny.md line
 
 `set_unrounded_layout` (`alloy/src/rendertree/layout/context.rs`) calls
 the plain `invalidate_paint` for every node whose computed layout
@@ -49,7 +52,7 @@ worst frame, not a new cliff.
   (`tree.rs`) shares a `visited` set so common ancestors are cleared
   once per batch. Thread one `visited` set through the layout pass and
   call that instead. No contract change.
-- If [partial-repaint](../done/partial-repaint.md) lands, its per-frame damage
+- If [partial-repaint](partial-repaint.md) lands, its per-frame damage
   rect accumulation wants old + new bounds out of exactly this walk, so
   the batched form becomes the natural accumulation point rather than
   just a saving.

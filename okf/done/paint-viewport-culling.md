@@ -1,7 +1,8 @@
 ---
 title: Paint viewport culling
-description: The paint walk visits and builds every mounted node whether or not it can be seen, so paint cost is O(mounted content) - ~7 us/node, ~155 ms/frame at 17k nodes; add a cull rect to the walk and a conservative per-subtree paint envelope so off-screen subtrees are skipped before build().
+description: Landed 2026-08-18: a cull rect through the paint walk plus a conservative per-subtree paint envelope, so off-screen subtrees are skipped before build(); a 17.8k-node document paints ~50 nodes (paintMs 155 -> 5-7), and the per-node paragraph copies that held ~800 B per character went with it.
 created: 2026-08-18
+completed: 2026-08-18
 ---
 
 # Paint viewport culling

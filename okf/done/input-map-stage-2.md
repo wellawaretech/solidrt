@@ -75,7 +75,7 @@ A `back` UI action: Escape and the pad's east button are deliberately not
 back triggers, the native back event has its own handler stack (onBack),
 and nothing in components consumes one yet. Rumble
 (okf/backlog/gamepad-haptics.md), MCP-side input hold
-(okf/backlog/mcp-input-hold.md), a control-API endpoint that injects
+(okf/done/mcp-input-hold.md), a control-API endpoint that injects
 actions by name (the debug commands do it per app today), on-screen
 touch controls (a virtual stick is a device with `listen`/`resolve` of
 its own, nothing in the repo asks for one yet).

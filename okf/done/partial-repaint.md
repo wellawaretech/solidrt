@@ -240,7 +240,7 @@ the two-probe comparison.
 
 ## Related
 
-- [content-damage-perf](../backlog/content-damage-perf.md) - CPU-side costs of the
+- [content-damage-perf](content-damage-perf.md) - CPU-side costs of the
   damage-tracking path (the O(nodes) texture walk, the unbatched
   invalidate_paint on layout change); orthogonal to the fill cost here,
   but stage 1's damage-rect accumulation rides exactly that

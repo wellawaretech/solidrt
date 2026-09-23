@@ -1,7 +1,8 @@
 ---
 title: A draw cannot name a sub-rectangle, so every render region costs a whole pass
-description: run_pass sets one viewport for the whole pass, so N logical render regions means N targets and N passes. A pass costs 2.15 ms flat on an Adreno 610 regardless of size or content, which makes this a real budget item on mobile. Sub-targets (a draw target rendering into a rect of another's storage) unlock shadow atlases, cascades and multi-view rendering at one pass each.
+description: Landed 2026-08-28, all three stages: sub-targets (createDrawTarget into/x/y, setTargetRect, View3d into tiling), the @solidrt/3d shadow atlas (every casting light a tile of one target, one pass) and cascades on it. A pass costs 2.15 ms flat on an Adreno 610 regardless of size or content, which is why N render regions must not be N passes.
 created: 2026-08-27
+completed: 2026-08-28
 ---
 
 # A draw cannot name a sub-rectangle, so every render region costs a whole pass
@@ -26,10 +27,10 @@ constant, with nothing else in the frame:
 **~2.15 ms per pass, flat** - independent of target size and of what the
 shader does. That is a tile load/store cycle, and it is spent before a pass
 draws anything. Full measurement context in
-[3d-low-end-gpu-performance.md](3d-low-end-gpu-performance.md).
+[3d-low-end-gpu-performance.md](../backlog/3d-low-end-gpu-performance.md).
 
 Two existing backlog items already hit this wall from different directions
-without being able to price it. [2d-atlas-limits.md](2d-atlas-limits.md) puts
+without being able to price it. [2d-atlas-limits.md](../backlog/2d-atlas-limits.md) puts
 it plainly: "a layer is not a draw, it is a full-size offscreen texture, its
 own render pass, and its own composited `<texture>` leaf in the tree. What
 should cost one extra draw call costs a second canvas." That item's own fix
@@ -51,7 +52,7 @@ cannot index a sampler array with a non-constant. An atlas collapses that to
 one sampler plus a `uniform vec4 uShadowRect[N]` of tile offsets and scales -
 no branch, no per-light binding, fewer bound samplers and better occupancy.
 
-**Cascaded shadow maps.** [3d-shadow-cascades.md](../done/3d-shadow-cascades.md)
+**Cascaded shadow maps.** [3d-shadow-cascades.md](3d-shadow-cascades.md)
 splits each light's frustum into N maps. Per-light targets make that N x
 lights passes. Over an atlas it stays one pass and one sampler, so this is
 closer to a prerequisite for cascades than an optimisation of them.
@@ -215,7 +216,7 @@ Always measure with ballast on this device.
    demo's two side panels render into one atlas, sampled through
    `srcX`/`srcY`. Verified by an alloy example asserting pixels through
    readback, and by pass count on the tablet.
-   Landed 2026-08-28 (uncommitted). On the demo (Linux, 3 casting lights)
+   Landed 2026-08-28. On the demo (Linux, 3 casting lights)
    the frame went from 6 passes to 5: scene, 3 shadow maps, 1 atlas for
    both side views; `/gpu` shows the tiles with `into`, `x`, `y` and zero
    passes of their own. Tablet (SM-T500, Adreno 610, same client build,
@@ -229,7 +230,7 @@ Always measure with ballast on this device.
 2. **Shadow atlas** in `@solidrt/3d`: tile allocation from a budget, one
    sampler plus `uShadowRect[N]`, gutter and clamp in `shadowAt`. Preceded
    by the 1024/2048 probe above.
-   Landed 2026-08-28 (uncommitted): every casting light's map is a tile of
+   Landed 2026-08-28: every casting light's map is a tile of
    one `<label>-shadow-atlas` target (grid of cells the largest `mapSize`
    wide, scaled uniformly against `maxTextureSize`); `SHADOW_SLOTS` is
    `uShadowAtlas` + `uShadowRect[N]`, `shadow(map, rect, coord, bias)`
@@ -238,8 +239,8 @@ Always measure with ballast on this device.
    callers. Demo on the tablet: 5 -> 3 passes/frame, 68.6-69.5 -> 66.4-66.9
    ms/frame; the whole item took the demo from 6 passes at 71.2 ms to 3 at
    66.5 ms (~14.0 -> ~15.0 fps), the rest of that frame is fill.
-3. Cascades ([3d-shadow-cascades.md](../done/3d-shadow-cascades.md)) on top.
-   Landed 2026-08-28 (uncommitted, with the blend band and
+3. Cascades ([3d-shadow-cascades.md](3d-shadow-cascades.md)) on top.
+   Landed 2026-08-28 (with the blend band and
    `shadow.distance`; split ratios stay open in that item): `shadow: { cascades: N }` makes a
    light N tiles of the same atlas, `SHADOW_SLOTS` went from light slots
    to MAX_SHADOW_MAPS map slots with `uShadowFirst`/`uShadowCount` per

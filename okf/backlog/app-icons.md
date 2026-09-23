@@ -1,6 +1,6 @@
 ---
 title: App icons
-description: Stages 1+2 done (SVG icon from package.json/convention through the manifest to the player, monogram fallback; dev-client window icon via go-gated resvg + SDL_SetWindowIcon); stage 3 packed executables remains and owns packed-app icons on all platforms.
+description: Stages 1+2 done (SVG icon from package.json/convention through the manifest to the player, monogram fallback; dev-client window icon via go-gated resvg + SDL_SetWindowIcon); stage 3 packed executables remains and owns packed-app icons on all platforms, including the Android TV banner a packed APK inherits from the runner.
 created: 2026-07-27
 ---
 
@@ -49,9 +49,23 @@ the tooling knows.
    resource, a macOS bundle icon. Platform-specific and heavier; the
    payoff is the OS file browser showing the icon before the app runs.
 
-Android is a non-issue for stages 2 and 3: apps run inside the client, so
-the APK's own icon is the client's, and per-app icons there only ever
-affect the player list from stage 1.
+Android, dev client: apps run inside it, so the APK's icon is the client's
+and per-app icons only reach the player list (stage 1). A packed APK
+([standalone-android-apk](../done/standalone-android-apk.md)) retires that:
+its patcher takes a PNG into an adaptive icon (a 22.5% inset foreground
+over a solid background), and stage 3 owns what is left there:
+
+- The Android TV banner. A TV launcher shows `android:banner` (160x90dp)
+  instead of the icon and label, so a banner without text is an anonymous
+  tile. The go client's `res/drawable-xhdpi/tv_banner.png` is mark-only
+  and should carry "Player"; a packed app inherits that same static
+  banner, so on a TV every packed app shows the SolidRT banner, not its
+  own. Wanted: a patchable banner slot (the `app_icon_fg.png` mechanism)
+  plus pack-time composition of the app's `displayName` over its icon,
+  which shares the text-at-pack-time problem with
+  [icon-svg-rasterization](icon-svg-rasterization.md).
+- An inset override for adaptive-aware full-bleed art, and a
+  `<monochrome>` layer for themed icons, both additive on the patcher.
 
 ## Status
 

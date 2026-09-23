@@ -1,10 +1,13 @@
 ---
 title: 3D fill and pass count put low-end Android GPUs far off 60 fps
-description: The third-dimension demo runs at 13 fps on an Adreno 610 tablet. Measured budget: ~44 ms fragment work, ~13 ms of flat per-pass overhead, ~2 ms composite. The levers are per-pixel (shadow taps, render scale) plus one structural fix (shadow atlas); the compositing path, geometry, shadow map resolution and the stats overlay are all measured non-factors.
+description: The third-dimension demo ran at 13 fps on an Adreno 610 tablet: ~44 ms fragment work, ~13 ms flat per-pass overhead, ~2 ms composite. The shadow atlas and hardware depth-compare sampling are spent (17 fps); what remains is the render-scale policy (the 1.5x supersampling floor is the wrong default for this GPU class and nothing distinguishes it from a desktop) and the demo's own ground and backdrop shaders.
 created: 2026-08-27
 ---
 
 # 3D fill and pass count put low-end Android GPUs far off 60 fps
+
+Status 2026-09-23: levers 2 and 3 below are spent (see Findings); open
+are lever 1, the render-scale policy, and lever 4.
 
 [packages/3d/demos/src/the-third-dimension.tsx](../../packages/3d/demos/src/the-third-dimension.tsx)
 runs at 13.1 fps (76.3 ms/frame) on a Samsung SM-T500: Adreno 610, Android
@@ -20,7 +23,7 @@ shadows, three views" is really:
 | top-right view | 680x600 = 0.41 M |
 | bottom-right view | 680x600 = 0.41 M |
 | **3D shaded per frame** | **2.40 M** |
-| shadow maps (3x 1024²) | 3.15 M depth |
+| shadow maps (3x 1024^2) | 3.15 M depth |
 
 2.40 Mpx is more than 1080p (2.07 Mpx). A view is a full re-render of the
 scene, not a cheap camera copy, so the view count and the caster count
@@ -121,7 +124,7 @@ belongs in the library:
    two more. Both collapse to one pass each once a draw can name a
    sub-rectangle of its target, which is runtime work with several
    consumers and is written up separately in
-   [gpu-subrect-draws.md](gpu-subrect-draws.md). The only structural fix
+   [gpu-subrect-draws.md](../done/gpu-subrect-draws.md). The only structural fix
    here, it costs no visual quality, and it composes with
    [3d-shadow-cascades.md](../done/3d-shadow-cascades.md), which would otherwise
    multiply the pass count again.

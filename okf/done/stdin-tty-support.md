@@ -8,7 +8,7 @@ created: 2026-07-13
 # stdin/tty support in flux
 
 The `srt run` / `srt server` repl went away with the
-[CLI/flux migration](../backlog/cli-flux-migration.md): the dev server became
+[CLI/flux migration](cli-flux-migration.md): the dev server became
 a flux script and flux had no stdin (the launcher even spawned it with stdin
 ignored). This brings it back, as a capability of its own: anything that
 wants an interactive terminal under flux (a repl, a TUI, a debugger prompt)
@@ -44,7 +44,7 @@ so the plugin drops every tty listener itself.
 
 # Stages
 
-1. DONE 2026-08-26 (uncommitted): cooked mode, repl back with the old
+1. DONE 2026-08-26: cooked mode, repl back with the old
    commands. No new crates.
    - `forge/src/tty.rs`: `is_terminal` (`std::io::IsTerminal`), `open_lines`
      (a process-wide reader thread feeding a channel; stdin is one stream
@@ -64,7 +64,7 @@ so the plugin drops every tty listener itself.
    - Not carried over: the `!<shell>` escape.
    - Accepted: server log lines interleave with the prompt line (the old
      bun readline did not redraw either).
-2. DONE 2026-08-26 (uncommitted): raw mode and line editing.
+2. DONE 2026-08-26: raw mode and line editing.
    - `crossterm` 0.27 in forge (default-features off, `windows` + `events`;
      no event-stream, so no futures dep): `set_raw_mode`, `restore`, and
      the reader thread reads one key per iteration while raw (blocking

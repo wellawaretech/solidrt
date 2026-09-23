@@ -1,7 +1,8 @@
 ---
 title: Client badge for dev-server control and input mute
-description: A device connected to a dev server is controlled by it, and a muted client ignores the person holding it; neither is visible on the client today. One always-on line in the existing overlay says CONN or MUTED plus FPS; the stats HUD unfolds under it when toggled.
+description: Landed 2026-08-29: one always-on overlay line on a dev-connected client says CONN or MUTED plus FPS, and the stats HUD unfolds under it when toggled; a user exit drops the connection so the player it returns to sits idle.
 created: 2026-08-29
+completed: 2026-08-29
 ---
 
 # Client badge for dev-server control and input mute
@@ -76,4 +77,4 @@ said "Not connected". Fixed with a drop guard created at connect.
   in the draw loop, builders untouched.
 - An "identify" flash (light up every client of one server). `CONN` on
   every connected client answers it while one server is up; a per-client
-  variant can come back with [mcp-multi-client-ergonomics](mcp-multi-client-ergonomics.md).
+  variant can come back with [mcp-multi-client-ergonomics](../backlog/mcp-multi-client-ergonomics.md).

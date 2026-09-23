@@ -86,6 +86,6 @@ The `CLAUDE.md` run recipe lost its `sleep 100000` holder.
 
 ## Related
 
-- `okf/backlog/cli-flux-migration.md` and `okf/backlog/stdin-tty-support.md`
+- `okf/done/cli-flux-migration.md` and `okf/done/stdin-tty-support.md`
   both touch the repl's hosting; a repl that is skipped when absent is
   strictly easier to port than one that is always constructed.

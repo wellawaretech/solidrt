@@ -1,7 +1,8 @@
 ---
 title: Clipboard (navigator.clipboard)
-description: Nothing in the runtime can reach the OS clipboard - a selection in a TextInput cannot be copied out and nothing can be pasted in - so give flux the web-standard navigator.clipboard readText/writeText (text only) over SDL's clipboard, and wire Ctrl/Cmd+C/X/V into the editable fields.
+description: Landed 2026-09-02: navigator.clipboard readText/writeText (text only, gui builds only) over SDL's clipboard, and Ctrl/Cmd+C/X/V in EditorField so TextInput and RichTextEditor copy, cut and paste.
 created: 2026-09-02
+completed: 2026-09-02
 ---
 
 # Clipboard (navigator.clipboard)
@@ -37,3 +38,12 @@ standards module), installed from `gui::install` with a clone of
 `alloy_cmd_tx`, each call bridging responder -> tokio oneshot ->
 `with_pending` promise. flux-types `standards/clipboard.d.ts` documents
 the contract.
+
+## Landed (2026-09-02)
+
+As shaped: `navigator.clipboard` in `flux/src/standards_plugins/clipboard.rs`
+(the one gui-gated standards module, installed from `gui::install`; each
+call is an `AlloyCommand` whose responder feeds the promise), the contract
+in `packages/flux-types/standards/clipboard.d.ts`, and Ctrl/Cmd+C/X/V in
+`EditorField` (copy and cut act on a range only; single-line paste flattens
+line breaks).

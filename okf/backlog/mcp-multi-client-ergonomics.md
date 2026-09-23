@@ -31,4 +31,4 @@ restructured. Two of that item's five parts had already landed (readOnlyHint
 annotations, and the mounted/orphan node counters in `get_stats`); the other
 two open parts are
 [mcp-interaction-perf-visibility](mcp-interaction-perf-visibility.md) and
-[mcp-detached-node-bounds](mcp-detached-node-bounds.md).
+[mcp-detached-node-bounds](../done/mcp-detached-node-bounds.md).

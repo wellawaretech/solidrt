@@ -10,7 +10,7 @@ created: 2026-08-30
 
 `flux:audio` is a stereo mixer: a voice has `pan` (a scalar in -1..1),
 `gain` and `rate`, each settable live and ramped
-([flux-audio-mix-control](flux-audio-mix-control.md)). There is no
+([flux-audio-mix-control](../done/flux-audio-mix-control.md)). There is no
 listener, no emitter position, no distance law and no velocity anywhere in
 `alloy/src/audio.rs` or the `flux:audio` types. A game with sounds that
 live in the world (an engine per kart, a waterfall, a shot passing by)

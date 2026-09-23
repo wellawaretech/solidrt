@@ -7,7 +7,7 @@ created: 2026-08-25
 
 # Give srt one folder per command, split by runtime
 
-Follows okf/backlog/cli-flux-migration.md, which moved the dev server into a
+Follows okf/done/cli-flux-migration.md, which moved the dev server into a
 flux process but left srt itself a bun program that launches it. This note
 records the shape decided on 2026-08-25 and how it was built the same day
 (see Staging for where the built shape departs from the diagram).
@@ -168,7 +168,7 @@ its compile errors print a second time after the rebuild's, accepted). A
 usage error is an uncaught `Error` (flux has no exit): message and exit 1,
 with two stack lines of noise, accepted (a thrown string prints worse).
 
-## What carries over from the interim cleanup (2026-08-25, uncommitted)
+## What carries over from the interim cleanup (2026-08-25,)
 
 Done in `src/` before this shape was decided and still valid: the single
 `solidrt.*` loader (`loadProject`) and its validation, `CLI_VERSION` as the

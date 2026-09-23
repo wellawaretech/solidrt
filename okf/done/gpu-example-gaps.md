@@ -1,7 +1,8 @@
 ---
 title: GPU example gaps
-description: A multi-pass shader chain example, formerly blocked on target dependency propagation - which landed 2026-07-29, so the example is now unblocked and simply unwritten. The points-topology particle field shipped 2026-07-29 once the blend toggle landed.
+description: The points-topology particle field shipped 2026-07-29; the multi-pass shader chain example, unblocked since target dependency propagation landed the same day, is a tiny.md line. Closed 2026-09-23.
 created: 2026-07-29
+completed: 2026-09-23
 ---
 
 # GPU example gaps
@@ -23,7 +24,8 @@ in the consumers-get-marked-dirty direction (pull-based flush, chains render
 in topological order), so the example is now simply a chain - bind the plasma
 target as the cube pipeline's sampler input and drive only the plasma's
 uniforms. Unblocked and unwritten as of 2026-07-30 (no gpu-chain example in
-packages/core/examples). Worth writing as the demonstration that sampler
+packages/core/examples); a [tiny.md](../tiny.md) line under DX since
+2026-09-23. Worth writing as the demonstration that sampler
 bindings are live dependencies, the contract documented in flux-types
 gui/gpu.d.ts and in the core GPU page (packages/core/docs/reference/gpu.md,
 "The model").

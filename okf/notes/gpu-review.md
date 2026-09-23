@@ -141,7 +141,7 @@ So the do-order is spent, and what remains sorts into four groups.
 - **Capability**, in rough order: multi-pass into one target (unblocked twice
   over - the object-model split gave draw state a home, the purity decision
   gave it a legal shape), the multi-pass chain example
-  ([gpu-example-gaps](../backlog/gpu-example-gaps.md), unblocked since 07-29
+  ([gpu-example-gaps](../done/gpu-example-gaps.md), unblocked since 07-29
   and still unwritten), float texture formats and sampleable depth, then MSAA
   ([gpu-target-antialiasing](../done/gpu-target-antialiasing.md)). Lesson
   7's pipeline-side format validation lands with whichever of the last two

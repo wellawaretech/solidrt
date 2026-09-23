@@ -10,7 +10,7 @@ Full review of `packages/cli` (~2.8k lines of TypeScript: 1.9k in the srt/Bun
 process incl. 8 commands, 0.9k in the spawned flux dev server, plus scaffold
 templates and the bin stub) as of 2026-07-15. Every source file read; the
 `--help` crash verified by running the binary. Companion to the forge, alloy,
-and flux crate reviews. Context: okf/backlog/cli-flux-migration.md plans to
+and flux crate reviews. Context: okf/done/cli-flux-migration.md plans to
 fold the Bun side into flux eventually, so findings note which side they land
 on.
 

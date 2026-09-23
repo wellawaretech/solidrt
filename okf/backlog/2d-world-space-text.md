@@ -11,9 +11,9 @@ created: 2026-09-02
 A canvas world needs text at world positions: cluster names on a map,
 labels on a node editor's nodes, damage numbers over a game's sprites.
 The layers draw atlas cells only, so today's answer is laid-out `<text>`
-elements re-projected from JS - Relay bumps a signal in applyCamera and
-16 label memos recompute `projectCamera` positions per camera change
-(packages/2d/demos/src/relay.tsx). That is fine at 16 labels and
+elements re-projected from JS: a canvas app bumps a signal when it applies
+its camera and a memo per label recomputes its `projectCamera` position on
+every camera change. That is fine at a dozen labels and
 collapses at canvas-app scale: a thousand labeled nodes would mean a
 thousand elements re-laid-out per camera move, exactly the per-element
 cost the sprite layer exists to avoid. There is also no clipping tie-in

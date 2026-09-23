@@ -1,6 +1,6 @@
 ---
 title: Make the build goals mean what they say
-description: The publish path ships half its binaries unstripped because dist hardcodes release for some and release-opt for others; make the publish profile one knob. Goal-name cleanup landed 2026-08-28.
+description: Goal-name cleanup landed 2026-08-28; open is the publish profile: dist builds solidrt and fluxrt at release-opt but solidrt-go, flux and fluxc at plain release, so half the published binaries ship unstripped. Make it one DIST_PROFILE knob, after measuring the client's fat-LTO build time.
 created: 2026-08-26
 ---
 

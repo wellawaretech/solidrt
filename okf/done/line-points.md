@@ -186,7 +186,7 @@ the whole subtree uncullable up to the nearest clipping ancestor),
 `captureSnapshot` of a detached node (`composite.rs` sizes the capture from
 `local_bounds`), and `getBoundingBox` / the tree's box (`tree.rs`
 `compute_corners`). The last one is the d-line case of
-[mcp-detached-node-bounds](../backlog/mcp-detached-node-bounds.md) (a 190 px line
+[mcp-detached-node-bounds](mcp-detached-node-bounds.md) (a 190 px line
 reported as 1692x1128).
 
 - `impl Bounded for Line`: the AABB of the geometry - the points, or the two
@@ -230,7 +230,7 @@ item; not part of this one.
 
 ## Findings
 
-Stage 1 landed 2026-08-27 (uncommitted), verified on the rebuilt client
+Stage 1 landed 2026-08-27, verified on the rebuilt client
 through the control API: a 200-point `Float32Array` trace rewritten every
 frame reads back as 200 pairs in `/tree`, one prop write per frame
 (`setPropsPerFrame` 1) at 50 fps with 0.7 ms JS and 3.3 ms paint; the
@@ -247,7 +247,7 @@ dashing.
   explicit typed-array branch ahead of the Map case. `as_bytes()` is the
   safe accessor; `AsRef<[T]>` panics on a detached buffer.
 
-Stage 2 landed 2026-08-27 (uncommitted): `walk_dashes` in `kinds/line.rs`
+Stage 2 landed 2026-08-27: `walk_dashes` in `kinds/line.rs`
 emits the on runs of `segments(points, closed)` into one `PathBuilder`
 through a `Pen` trait (the tests record into a Vec); both forms stroke that
 path, so `draw_dashed_line` is gone from the build. `dashOffset` is line
@@ -268,7 +268,7 @@ frame, 1.0 ms JS, 0.6 ms paint, p95 1.9 ms, no slow frames.
   zero period would loop forever, and a zero gap split into subpaths would
   show caps at every break.
 
-Stage 3 landed 2026-08-27 (uncommitted): `impl Bounded for Line` in
+Stage 3 landed 2026-08-27: `impl Bounded for Line` in
 `kinds/line.rs` (`geometry(fallback)` + `stroke_outset()`), wired into
 `ElementKind::local_bounds` and `cull.rs` (`inflate(local_bounds, AA_OUTSET)`;
 path stays unbounded). Verified on the rebuilt client through `/tree`, whose

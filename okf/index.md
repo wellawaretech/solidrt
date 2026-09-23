@@ -189,11 +189,12 @@ Shaped, not started.
   in the light loop and applied to the light's shadow view, as Unity's
   cullingMask and Godot's light_cull_mask.
 - **[3D fill and pass count put low-end Android GPUs far off 60 fps](backlog/3d-low-end-gpu-performance.md)** [2026-08-27]
-  The third-dimension demo runs at 13 fps on an Adreno 610 tablet. Measured
-  budget: ~44 ms fragment work, ~13 ms of flat per-pass overhead, ~2 ms
-  composite. The levers are per-pixel (shadow taps, render scale) plus one
-  structural fix (shadow atlas); the compositing path, geometry, shadow map
-  resolution and the stats overlay are all measured non-factors.
+  The third-dimension demo ran at 13 fps on an Adreno 610 tablet: ~44 ms
+  fragment work, ~13 ms flat per-pass overhead, ~2 ms composite. The shadow
+  atlas and hardware depth-compare sampling are spent (17 fps); what remains
+  is the render-scale policy (the 1.5x supersampling floor is the wrong
+  default for this GPU class and nothing distinguishes it from a desktop) and
+  the demo's own ground and backdrop shaders.
 - **[Mesh-local position and normal varyings in the lit vertex stage](backlog/3d-material-local-varyings.md)** [2026-09-22]
   litVertex writes vWorldPos and vNormal only, so world-keyed procedural
   detail swims across a moving mesh and an app that wants object-space detail
@@ -258,7 +259,14 @@ Shaped, not started.
   Stages 1+2 done (SVG icon from package.json/convention through the manifest
   to the player, monogram fallback; dev-client window icon via go-gated resvg
   + SDL_SetWindowIcon); stage 3 packed executables remains and owns packed-app
-  icons on all platforms.
+  icons on all platforms, including the Android TV banner a packed APK
+  inherits from the runner.
+- **[Application routing](backlog/app-routing.md)** [2026-09-23]
+  "A router for SolidRT apps: a declared, two-way mapping between a link
+  string and the app's screen state, with the back stack, per-entry retention
+  and layout routes built on it; the one feature that makes screens
+  addressable by OS links, MCP, srt render, reload and restore alike. A layer
+  above core's link primitive (deep-links.md), never inside it."
 - **[App-level runtime configuration](backlog/app-runtime-config.md)** [2026-08-17]
   A start-only `solidrt.runtime` block in package.json for tunables that today
   are compile-time constants (JS stack size, word cache size, paragraph
@@ -285,10 +293,6 @@ Shaped, not started.
   beneath per panel; desktop holds 60 fps with four panels over live content,
   but tiler GPUs pay differently for mid-frame target reads - measure before
   treating the prop as casual on TV/phone.
-- **[One build-output root with per-flow subdirs](backlog/build-output-dirs.md)** [2026-08-21]
-  Give dev, render and pack one gitignored output root (dist/) with a subdir
-  per flow, fixing render's missing isolate support and clearing the ground
-  for pack formats and asset pre-processing.
 - **[The cadence hold never steps down on Android and reads the held interval as GPU time](backlog/cadence-hold-sticky-android.md)** [2026-09-22]
   On the SM-T500 get_stats' gpuFrameExecMsPerFrame tracked the held interval
   (43-51 ms at a hold of 3) while SurfaceFlinger's frameReady-minus-queue
@@ -296,27 +300,6 @@ Shaped, not started.
   margin must fit the shorter slot) never passes, the hold stays at 3 through
   idle, and every later animation starts at 20 fps even when its frames would
   fit one refresh. Reload resets it.
-- **[captureSnapshot fails inside a clean repaint boundary](backlog/capture-inside-clean-boundary.md)** [2026-08-27]
-  A capture (captureSnapshot, /snapshot) of a node under a repaintBoundary
-  view whose recording is being reused fails with "capture node is not in the
-  live render tree", because the Recording branch replays the cached display
-  list without descending, so the paint walk that services captures never
-  reaches the node.
-- **[Move the srt dev flow into flux and make ports an output](backlog/cli-flux-migration.md)** [2026-07-13]
-  Host run/server/client/mcp in one flux process that binds its own port, owns
-  the server registry, and shells out to bun for bundling and typechecking
-  only; a server starts in its project root or on a single file (never by
-  searching up), one server per key, never identified by port.
-- **[Clipboard (navigator.clipboard)](backlog/clipboard.md)** [2026-09-02]
-  Nothing in the runtime can reach the OS clipboard - a selection in a
-  TextInput cannot be copied out and nothing can be pasted in - so give flux
-  the web-standard navigator.clipboard readText/writeText (text only) over
-  SDL's clipboard, and wire Ctrl/Cmd+C/X/V into the editable fields.
-- **[Content-damage perf watchpoints](backlog/content-damage-perf.md)** [2026-08-10]
-  Perf potholes in the damage-tracking path. Open - the unbatched
-  invalidate_paint in set_unrounded_layout making resize O(n * depth). Fixed -
-  the O(nodes) texture walk (referencer index, 2026-09-02) and the
-  boundary-shader-input full re-bake (shader_dirty + Compose, 2026-08-10).
 - **[Generate the docs/core.md props reference from the types](backlog/core-docs-generated-props.md)** [2026-08-06]
   Hand-copied prop lists are how core.md drifted (fill/background/imageWidth);
   jsx-runtime.d.ts and types.d.ts are clean enough to generate the per-element
@@ -330,10 +313,13 @@ Shaped, not started.
   The router side of the cursor prop is covered in alloy, but the flux decode
   (21 accepted names, the handle form, the two rejection messages) has no test
   in the existing apply_jsx harness.
-- **[Deep links](backlog/deep-links-url-open.md)** [2026-07-26]
-  "Opening the app at a URL from outside: an OS registration half (scheme
-  declaration in srt pack and the Android manifest) and an app half that is
-  just onOpenUrl."
+- **[Deep links](backlog/deep-links.md)** [2026-07-26]
+  "Opening the app at a link from outside: an OS registration half (scheme
+  declaration in srt pack, the Android manifest, desktop self-registration)
+  and an app half that is one event, onLink, plus the launch link;
+  per-platform delivery facts, the running-instance problem on desktop, and
+  the dev-side link injection that makes it testable without any
+  registration."
 - **[A demo shows up in the player under its project's name, not its own](backlog/demo-identity-per-demo.md)** [2026-08-26]
   srt demo serves demos/ as one project, so the player entry, appId and
   storage are the project's; the gallery appeared as "SolidRT components
@@ -350,11 +336,6 @@ Shaped, not started.
   TypeScript cannot catch it (every JSX expression is the one Element type, so
   children cannot be constrained per tag); the place to prevent this coding
   error is the bundler's JSX pass, where tags are static.
-- **[Client badge for dev-server control and input mute](backlog/dev-overlays.md)** [2026-08-29]
-  A device connected to a dev server is controlled by it, and a muted client
-  ignores the person holding it; neither is visible on the client today. One
-  always-on line in the existing overlay says CONN or MUTED plus FPS; the
-  stats HUD unfolds under it when toggled.
 - **[Dev/prod signal for validation](backlog/dev-prod-validation-policy.md)** [2026-07-17]
   The missing runtime signal and shared helper behind the agreed convention of
   throwing in dev and warning in prod; today everything is dev, so validation
@@ -392,26 +373,15 @@ Shaped, not started.
   stages reduce it - createNode with a props object, a one-call-per-flush
   drain, interned prop ids with table dispatch, and a command buffer whose
   props land in a shared buffer Rust reads directly.
-- **["flux:audio mix control: playback rate, master gain, ramps, voice cap, PCM validation"](backlog/flux-audio-mix-control.md)** [2026-08-20]
-  A Playback's rate is fixed forever (no pitch sweeps, no doppler), there is
-  no master gain or bus so every app hand-rolls mute, gain/pan writes cannot
-  ramp, a runaway play() loop wedges the JS thread with no error, and
-  non-finite PCM samples load silently; SDL3_mixer already exposes most of the
-  missing controls.
-- **[Focus navigation (spatial/D-pad, tab order) on the focusable registry](backlog/focus-navigation.md)** [2026-08-01]
-  Stage 3 of the focus/key-routing work - move focus across getFocusables()
-  candidates from bubbled arrow keys, activate with select/Enter, and fold the
-  player's parallel spatial nav onto real focus.
 - **[fontStretch / width axis](backlog/font-stretch-axis.md)** [2026-07-27]
   The bundled Noto variables carry a wdth axis the text API cannot reach;
   whether to expose a CSS-style font-stretch, pending an Impeller
   ParagraphStyle capability check.
 - **[Frame driver pacing contract](backlog/frame-driver-pacing-contract.md)** [2026-08-14]
-  Pacing verdicts cost 90s on-device censuses because there is no way to run
-  the frame driver against a synthetic vsync grid, and frames carry no
-  deadline, so an overrunning critical path jitters between 1 and 2 vsyncs
-  instead of degrading to a stable cadence. Harness first, then
-  deadline-scheduled frames.
+  Pacing verdicts cost 90 s on-device censuses because the frame driver cannot
+  run against a synthetic vsync grid; stage 1, the harness in alloy's tests,
+  is what remains. Stage 2 became the cadence hold and stage 3 was superseded
+  by the refresh count (both 2026-09-21).
 - **[Gamepad rumble](backlog/gamepad-haptics.md)** [2026-08-30]
   gamepads() is a read-only snapshot; there is no path from the app back to
   the pad, so a collision, a landing or an engine can be seen and heard but
@@ -454,11 +424,6 @@ Shaped, not started.
   knob, so a depthCompare option on createRenderPipeline is a parity gap,
   additive with the default staying less. Split from gpu-pipeline-extensions
   2026-08-11.
-- **[GPU example gaps](backlog/gpu-example-gaps.md)** [2026-07-29]
-  A multi-pass shader chain example, formerly blocked on target dependency
-  propagation - which landed 2026-07-29, so the example is now unblocked and
-  simply unwritten. The points-topology particle field shipped 2026-07-29 once
-  the blend toggle landed.
 - **[Refactor the fused creates over the raw shading layer](backlog/gpu-fused-create-refactor.md)** [2026-07-27]
   The naming collision and the iTime trap were resolved 2026-07-31
   (createShaderTexture/createPipelineTexture/createShaderTextureMemo, hard
@@ -479,13 +444,6 @@ Shaped, not started.
   A no-publish-call shared-memory buffer - a persistent JS view the raster
   thread samples during Frame handling - as the follow-on to the begin/end
   write lease
-- **[A draw cannot name a sub-rectangle, so every render region costs a whole pass](backlog/gpu-subrect-draws.md)** [2026-08-27]
-  run_pass sets one viewport for the whole pass, so N logical render regions
-  means N targets and N passes. A pass costs 2.15 ms flat on an Adreno 610
-  regardless of size or content, which makes this a real budget item on
-  mobile. Sub-targets (a draw target rendering into a rect of another's
-  storage) unlock shadow atlases, cascades and multi-view rendering at one
-  pass each.
 - **[Whole-system GPU attribution, per platform](backlog/gpu-system-attribution.md)** [2026-08-13]
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an srt doctor helper
@@ -522,10 +480,10 @@ Shaped, not started.
   hold, the launch fact's source, no GPU work in the background), so nothing
   is rediscovered when the port starts.
 - **[Isolate transfer() and AbortSignal](backlog/isolate-transfer-and-abort.md)** [2026-08-20]
-  Design proposal for the two isolate follow-ups that need new call-surface
-  vocabulary - zero-copy buffer hand-over and abortable calls. Decides once
-  how a non-payload argument rides a plain function call, so the module gets
-  one coherent rule instead of two accidents.
+  AbortSignal on plain calls landed 2026-08-20 with the special-argument rule;
+  transfer() was parked on the rquickjs quickjs-ng bump, and the workspace is
+  on rquickjs 0.14.0 since, so check whether the steal is now the safe
+  from_source over a slot-holding source and build stages 1+2 together.
 - **[JS test infrastructure](backlog/js-test-infrastructure.md)** [2026-08-17]
   The workspace has no JS test story at all - zero test files in core,
   components, cli, 3d; the only automated checks are ad-hoc self-reporting
@@ -545,32 +503,16 @@ Shaped, not started.
   to a coarse IP lookup over fetch; add flux:location and
   @solidrt/core/location in the established device-module shape.
 - **[Make the build goals mean what they say](backlog/make-goals-and-dist-profile.md)** [2026-08-26]
-  The publish path ships half its binaries unstripped because dist hardcodes
-  release for some and release-opt for others; make the publish profile one
-  knob. Goal-name cleanup landed 2026-08-28.
-- **[MCP bridge - match dev servers in subdirectories of the bridge's project](backlog/mcp-bridge-workspace-project-match.md)** [2026-08-24]
-  The bridge resolves a dev server by exact projectDir equality, so a
-  workspace-root bridge reports "No dev server" for an entry served from
-  packages/*/examples/ (its nearest package.json makes THAT directory the
-  projectDir). Accept servers whose projectDir sits under the bridge's
-  project, preferring an exact match, so MCP tools work in a monorepo without
-  new CLI surface.
-- **[get_render_tree reports useless boxes for detached nodes](backlog/mcp-detached-node-bounds.md)** [2026-08-02]
-  A d-* node has no layout entry, so the tree reports the box it inherits from
-  its nearest layout ancestor - a d-line spanning (10,120)-(200,120) came back
-  as 1692x1128 - which is correct per the model and useless for locating
-  anything in a d-*-heavy app.
-- **[Hold physical input while the MCP bridge drives the app](backlog/mcp-input-hold.md)** [2026-08-19]
-  A person touching the keyboard or mouse while an agent verifies through
-  send_input corrupts the run (focus moves, text lands in the field under
-  test, snapshots show mixed state); the client should be able to ignore
-  physical input for the duration of a driven session, visibly, and hand it
-  back on request or timeout.
+  Goal-name cleanup landed 2026-08-28; open is the publish profile: dist
+  builds solidrt and fluxrt at release-opt but solidrt-go, flux and fluxc at
+  plain release, so half the published binaries ship unstripped. Make it one
+  DIST_PROFILE knob, after measuring the client's fat-LTO build time.
 - **[Jank an agent cannot see or measure](backlog/mcp-interaction-perf-visibility.md)** [2026-07-27]
-  A human immediately felt typing jank that the agent could not reproduce or
-  measure: get_stats frame times are smoothed so a one-frame 84ms hitch
-  averages away, layout counters cover only the last rebuild and are
-  overwritten before the next call, and nothing flags a slow frame anywhere.
+  Most of this landed 2026-08-18 (the 600-frame history, get_stats' window
+  with p50/p95/max, the worst frame and rates, the throttled slow-frame
+  warning). Open: a single derived verdict (healthy / GPU over budget / raster
+  backlogged) once the rates prove trustworthy, and the unexplained idle
+  rasterQueue reading on a Windows client.
 - **[Driving more than one client at once over MCP](backlog/mcp-multi-client-ergonomics.md)** [2026-07-27]
   With a desktop and a phone attached the whole session ran against one client
   while the phone sat on its initial screen, indistinguishable from a crash to
@@ -626,11 +568,6 @@ Shaped, not started.
   SurfaceFlinger present timestamps. performance.md's "GPU work is nearly
   free" needs these numbers, and get_stats needs per-frame draw/blend/layer
   counters so they can be found without a reload per hypothesis.
-- **[Paint viewport culling](backlog/paint-viewport-culling.md)** [2026-08-18]
-  The paint walk visits and builds every mounted node whether or not it can be
-  seen, so paint cost is O(mounted content) - ~7 us/node, ~155 ms/frame at 17k
-  nodes; add a cull rect to the walk and a conservative per-subtree paint
-  envelope so off-screen subtrees are skipped before build().
 - **[parseSvg tree output](backlog/parse-svg-tree.md)** [2026-08-28]
   parseSvg flattens usvg's group tree into one draw list, losing group ids,
   group opacity and group transforms; add an opt-in tree output (groups with
@@ -662,12 +599,12 @@ Shaped, not started.
   native libs lifted from the per-ABI runner APKs and packaging config grouped
   per target in package.json.
 - **[srt render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
-  On Windows the offscreen video driver fails every time (SDL's offscreen path
-  needs EGL_EXT_device_enumeration, which ANGLE does not implement) and
-  playback silently falls back to a hidden window, so the one command that
-  exists to run without a display requires an interactive window station
-  there; the ANGLE that ships already advertises the extensions a real
-  headless path needs.
+  On Windows SDL's offscreen driver cannot meet ANGLE (no
+  EGL_EXT_device_enumeration), so playback fell back to a hidden window; since
+  2026-08-17 it takes a headless EGL pbuffer context instead, verified in a
+  desktop session. Open: the same run from a non-interactive session (service,
+  Session 0, Windows OpenSSH), which decides whether the default display
+  suffices or EGL_ANGLE_device_creation is needed; macOS untested.
 - **[Per-node event-interest mask for pointer dispatch](backlog/pointer-event-interest-mask.md)** [2026-08-01]
   Rust marshals the full root-to-leaf hit path into JS for every pointer event
   because only the JS handler registry knows which nodes listen; a per-element
@@ -724,11 +661,11 @@ Shaped, not started.
   inside one tick survives but a node re-inserted in a later async tick is
   already gone, where the DOM would have kept it alive.
 - **[Rich text editor](backlog/rich-text-editor.md)** [2026-08-18]
-  There is no way to edit styled text - TextInput edits a string, so
-  bold/italic/links, inline atoms and paragraph attributes cannot be authored
-  in-app; build a separate editor over the same buffer/geometry layers,
-  starting with prepareText over styled runs so caret geometry knows about run
-  boundaries.
+  TextInput edits a string, so styled runs, links, inline atoms and block
+  attributes could not be authored in-app; the editor exists since 2026-08-19
+  (prepareText over styled runs, a document buffer, the shared EditorField
+  shell, RichTextEditor with range selection since 2026-09-02). Open: inline
+  atoms draw as U+FFFC only, and lists have no marker or indent.
 - **[A rounded clip on a box whose size is in flight costs a third of the frame on Android](backlog/rounded-clip-cost-android.md)** [2026-09-22]
   Ten panes with overflow hidden + clipRadius, sliding and resizing on a
   layout transition, take the Galaxy Tab A7 (Adreno 610, Impeller GLES) from
@@ -785,11 +722,6 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
-- **[Standalone APK for a packed app](backlog/standalone-android-apk.md)** [2026-09-01]
-  An app can be packed into a native executable for every desktop platform but
-  not into an installable Android app; the runtime has no Android boot path
-  for a packed payload, and building the APK should not require an Android SDK
-  on the developer's machine.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
@@ -1301,6 +1233,11 @@ Finished, kept for the reasoning.
   ulp different every frame and every consumer comparing sizes re-ran its work
   per frame; done means the size depends only on the transforms, and the text
   editor sizes its wrap from the layout box.
+- **[One build-output root with per-flow subdirs](done/build-output-dirs.md)** [2026-08-21]
+  Landed 2026-08-21: dist/ is the build root with one subdir per flow
+  (render/, pack/, bundle/), render stages isolates and assets so isolate()
+  works headless, and single-file deliverables land in the dist/ root. Asset
+  pre-processing on top of the staged dirs is an ideas.md line.
 - **[An unsized Button fills its row instead of sizing to its content](done/button-unsized-fills-row.md)** [2026-09-21]
   Button falls back to width 100% when size is omitted while its docs promise
   content sizing, so in a row it squeezes its sibling labels until they wrap;
@@ -1316,6 +1253,11 @@ Finished, kept for the reasoning.
   A d-* node is drawn but has no layout entry, so every capture of one
   rejected as zero-sized; captures now size from the node's painted box,
   sourced so it cannot diverge from what the paint path uses.
+- **[captureSnapshot fails inside a clean repaint boundary](done/capture-inside-clean-boundary.md)** [2026-09-02]
+  Fixed 2026-09-02: a capture under a repaint boundary whose recording was
+  being reused failed with "capture node is not in the live render tree"
+  because the walk replayed the cache without descending; the walk now
+  descends into a cached boundary while a capture is pending inside it.
 - **[captureSnapshot fails for nodes inside a valid boundary cache](done/capture-inside-valid-boundary-cache.md)** [2026-09-02]
   A capture of a node nested under a repaint boundary whose cache was valid
   errored with "capture node is not in the live render tree", because the
@@ -1329,10 +1271,21 @@ Finished, kept for the reasoning.
   because a Choreographer frame time is the app's target wake-up time and not
   the vsync it is waking for. Everything that snaps to the grid is off by that
   much.
+- **[Move the srt dev flow into flux and make ports an output](done/cli-flux-migration.md)** [2026-08-26]
+  Landed 2026-08-25/26: one flux process hosts the dev server (port
+  remembered, else the first free from 34884, or --port; loopback by default,
+  --lan), a registry keyed by project root or file with one server per key,
+  --file/--project modes with no upward search, and bun kept only for
+  bundling, typechecking and the MCP bridge. The self-pack (srt as a packed
+  flux app) is an ideas.md line.
 - **[Client build info in list_clients](done/client-build-info.md)** [2026-07-27]
   Git hash, version and profile per connected client in list_clients, so "does
   this binary have my engine fix" is checkable; build timestamp and HEAD
   staleness still deferred.
+- **[Clipboard (navigator.clipboard)](done/clipboard.md)** [2026-09-02]
+  Landed 2026-09-02: navigator.clipboard readText/writeText (text only, gui
+  builds only) over SDL's clipboard, and Ctrl/Cmd+C/X/V in EditorField so
+  TextInput and RichTextEditor copy, cut and paste.
 - **[Component gestures](done/component-gestures.md)** [2026-07-23]
   Press extracted from Pressable into a components-package createPress util
   and grown into a recognizer family with an innermost-wins arena and
@@ -1347,6 +1300,11 @@ Finished, kept for the reasoning.
   Press semantics extracted from Pressable into a components-package util;
   widened to gesture recognizers and promoted to
   okf/plans/component-gestures.md, this file is a pointer.
+- **[Content-damage perf watchpoints](done/content-damage-perf.md)** [2026-09-23]
+  Perf potholes in the damage-tracking path, closed 2026-09-23: the O(nodes)
+  texture walk (referencer index, 2026-09-02) and the boundary-shader-input
+  full re-bake (2026-08-10) are fixed; the one left, the unbatched
+  invalidate_paint in set_unrounded_layout, is a tiny.md line.
 - **[CSS color parsing in Rust; drop colord](done/css-colors-in-rust.md)** [2026-08-19]
   Move CSS color-string parsing from the JS renderer (colord) into alloy
   (csscolorparser), so color strings cross the FFI raw and one side owns color
@@ -1371,6 +1329,10 @@ Finished, kept for the reasoning.
   instead of the inherited box's centre (which made the drawn position depend
   on window size). Explicit origins are unchanged; drawn-bounds-centre was
   considered and rejected.
+- **[Client badge for dev-server control and input mute](done/dev-overlays.md)** [2026-08-29]
+  Landed 2026-08-29: one always-on overlay line on a dev-connected client says
+  CONN or MUTED plus FPS, and the stats HUD unfolds under it when toggled; a
+  user exit drops the connection so the player it returns to sits idle.
 - **[Dev-server launch targets](done/dev-server-launch-targets.md)** [2026-07-21]
   Start clients from the running dev session with repl targets and launch
   commands (desktop spawn or adb install), then control endpoints and MCP
@@ -1442,6 +1404,11 @@ Finished, kept for the reasoning.
   hand-rolled DataView reinterpretation, and every declared symbol must
   resolve so one absent symbol takes down a whole binding; add typed read
   helpers and a per-symbol optional flag.
+- **["flux:audio mix control: playback rate, master gain, ramps, voice cap, PCM validation"](done/flux-audio-mix-control.md)** [2026-08-20]
+  Landed 2026-08-20: playback rate, master gain, ramped gain/pan/rate,
+  fade-in/out, the voice cap, PCM validation, the unloaded-clip error and
+  bus-scoped stop; setBusGain is declared and lands with the mixer replacement
+  (video-playback stage 7).
 - **[flux:audio live voice control (pan, gain, ended, raw PCM)](done/flux-audio-voice-control.md)** [2026-08-03]
   A playing SoundHandle is stop-only - no pan anywhere, gain fixed at play()
   time, no finished signal, encoded input only - so a 2D game port cannot
@@ -1474,6 +1441,11 @@ Finished, kept for the reasoning.
   build of the same app reaches a genuinely copy-free path; a readMemoryInto
   or transient view closes the gap, and "indirect call type mismatch" should
   name the failing index and signatures.
+- **[Focus navigation (spatial/D-pad, tab order) on the focusable registry](done/focus-navigation.md)** [2026-09-07]
+  Landed 2026-08-01 (createFocusNav in components: arrow keys, dpad and Tab
+  over getFocusables(), scopes for modals, the player folded onto it,
+  device-verified) and 2026-09-07 (the nav consumes navigate/cycle/select from
+  the input map). The three small deferrals are tiny.md lines.
 - **[Frame-batched multi-pointer delivery (and frame-paced mouse)](done/frame-batched-pointer-input.md)** [2026-08-10]
   Touch is already resampled per pointer per frame, but each pointer still
   dispatches as its own JS event, so multi-touch consumers measure one fresh +
@@ -1579,6 +1551,10 @@ Finished, kept for the reasoning.
   ordered draw list - createDrawTarget + addDraw/removeDraw with stable
   DrawIds, per-entry setters, and the ordering verbs (before on addDraw,
   setDrawOrder); stages 1+2 implemented 2026-08-04.
+- **[GPU example gaps](done/gpu-example-gaps.md)** [2026-09-23]
+  The points-topology particle field shipped 2026-07-29; the multi-pass shader
+  chain example, unblocked since target dependency propagation landed the same
+  day, is a tiny.md line. Closed 2026-09-23.
 - **[GPU file reorganization](done/gpu-file-reorg.md)** [2026-07-30]
   shader.rs holds six unrelated concerns at 1466 lines and flux's gpu module
   lives in a file named texture.rs; split shader.rs into an alloy gpu/ folder
@@ -1693,6 +1669,12 @@ Finished, kept for the reasoning.
   camera motion into O(scene) FFI crossings. Target-level params generalize
   what createShaderTarget already has for the single-draw case, and the GL
   layer's apply-if-declared semantics already do the hard part.
+- **[A draw cannot name a sub-rectangle, so every render region costs a whole pass](done/gpu-subrect-draws.md)** [2026-08-28]
+  Landed 2026-08-28, all three stages: sub-targets (createDrawTarget into/x/y,
+  setTargetRect, View3d into tiling), the @solidrt/3d shadow atlas (every
+  casting light a tile of one target, one pass) and cascades on it. A pass
+  costs 2.15 ms flat on an Adreno 610 regardless of size or content, which is
+  why N render regions must not be N passes.
 - **[Anti-aliasing for GPU pipeline targets](done/gpu-target-antialiasing.md)** [2026-08-23]
   Mesh targets were single-sample, so any filled geometry had hard jaggies.
   Landed 2026-08-23 as a target-level `samples` option (createShaderTarget,
@@ -1797,14 +1779,28 @@ Finished, kept for the reasoning.
   Reintroduce per-node localX/localY on pointer events (already carried
   through hit testing, dropped in flux marshalling), and cap move hit-tests to
   one per pointer per frame.
+- **[MCP bridge - match dev servers in subdirectories of the bridge's project](done/mcp-bridge-workspace-project-match.md)** [2026-08-25]
+  Superseded 2026-08-25 by the key-based registry: a server registers under
+  its project root (the cwd) or its file, never a directory found by walking
+  up from the entry, and the bridge resolves the project server keyed by its
+  own cwd or the single file server under it; the projectDir mismatch this
+  item describes no longer occurs.
 - **[App-registered debug commands via MCP](done/mcp-debug-commands.md)** [2026-07-27]
   The srt:dev registerDebug plus MCP list_debug/call_debug, replacing the
   debug-keys and get_logs pattern for poking a running app; async commands
   still unsupported.
+- **[get_render_tree reports useless boxes for detached nodes](done/mcp-detached-node-bounds.md)** [2026-08-27]
+  Resolved 2026-08-27: d-line and d-path implement Bounded, so the tree box,
+  getBoundingBox and a detached capture report the geometry plus the stroke's
+  reach instead of the nearest layout ancestor's box.
 - **[GPU resource inspection via MCP](done/mcp-gpu-resource-inspection.md)** [2026-07-27]
   MCP readback of textures as PNG, buffer ranges and pipeline state, because a
   one-pipeline app hides everything from the render tree; depth attachments
   still deferred.
+- **[Hold physical input while the MCP bridge drives the app](done/mcp-input-hold.md)** [2026-08-25]
+  Superseded 2026-08-25 by the user-input mute: POST /__control__/mute and the
+  MCP mute_user_input/unmute_user_input tools make every connected client drop
+  physical input while an agent drives it, with the MUTED badge on screen.
 - **[MCP input injection](done/mcp-input-injection.md)** [2026-08-10]
   Synthetic key and pointer events to clients, plus a snapshot-diff helper, so
   an agent can navigate and verify visuals without a human ferrying the app
@@ -1869,6 +1865,11 @@ Finished, kept for the reasoning.
   geometry (2026-08-21) - shapes default to the border box, text sizes AND
   places against the content box, both derived from one
   LayoutData::content_box on paint and hit alike.
+- **[Paint viewport culling](done/paint-viewport-culling.md)** [2026-08-18]
+  Landed 2026-08-18: a cull rect through the paint walk plus a conservative
+  per-subtree paint envelope, so off-screen subtrees are skipped before
+  build(); a 17.8k-node document paints ~50 nodes (paintMs 155 -> 5-7), and
+  the per-node paragraph copies that held ~800 B per character went with it.
 - **[Several dev servers on one machine, each with its own clients and MCP route](done/parallel-dev-servers.md)** [2026-08-13]
   Design decided 2026-08-13. Two numbers - `--session`/`-s N` picks the
   dev-server port (34884 + N) and `--client`/`-c M` picks the client data tree
@@ -2048,6 +2049,12 @@ Finished, kept for the reasoning.
   launch (background shell, supervisor, CI) tore down the server, the client
   and the registry record within a second; startRepl now returns early when
   stdin is not a tty, and the piped-sleep workaround is gone.
+- **[Standalone APK for a packed app](done/standalone-android-apk.md)** [2026-09-01]
+  Shipped 2026-09-01: srt pack --apk patches a per-ABI production runner APK
+  (no Android SDK at pack time) with the app's payload, id, label, versionCode
+  and adaptive icon, and the runtime boots a packed payload on Android without
+  the player or the dev server; implementation notes in
+  notes/standalone-apk-implementation.md.
 - **[The overlay's GPU% divides per-present cost by the per-tick period](done/stats-overlay-gpu-share-divisor.md)** [2026-09-03]
   gpu_ms is GPU execution per PRESENTED frame while frame_ms is the gap
   between render-handler TICKS, so the HUD's GPU share inflates in exact
@@ -2411,7 +2418,7 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   only.
 - **[Standalone APK implementation notes](notes/standalone-apk-implementation.md)** [2026-09-01]
   Working notes for the srt pack --apk pipeline
-  (backlog/standalone-android-apk.md): what shipped in the first three stages,
+  (done/standalone-android-apk.md): what shipped in the first three stages,
   the traps future edits must know, and how it was verified on a device.
 - **[What "something like stylesheets" already means here](notes/style-reuse-without-stylesheets.md)** [2026-08-13]
   A plain object spread into props is the answer to most of what the

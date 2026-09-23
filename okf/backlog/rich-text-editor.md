@@ -1,10 +1,14 @@
 ---
 title: Rich text editor
-description: There is no way to edit styled text - TextInput edits a string, so bold/italic/links, inline atoms and paragraph attributes cannot be authored in-app; build a separate editor over the same buffer/geometry layers, starting with prepareText over styled runs so caret geometry knows about run boundaries.
+description: TextInput edits a string, so styled runs, links, inline atoms and block attributes could not be authored in-app; the editor exists since 2026-08-19 (prepareText over styled runs, a document buffer, the shared EditorField shell, RichTextEditor with range selection since 2026-09-02). Open: inline atoms draw as U+FFFC only, and lists have no marker or indent.
 created: 2026-08-18
 ---
 
 # Rich text editor
+
+Status 2026-09-23: steps 1-3b below shipped; what remains is inline atoms
+(real atoms need laid-out children in detached text, the open engine
+question) and lists (a left-margin marker and indent in the shell).
 
 ## Symptom
 
@@ -36,7 +40,7 @@ attributes (heading level, list); selection, caret and scrolling as
 
 ## Steps
 
-1. **`prepareText` over styled runs** - DONE 2026-08-19 (uncommitted).
+1. **`prepareText` over styled runs** - DONE 2026-08-19.
    `prepareText(text, { ...font, runs: [{ start, end, fontFamily?,
    fontSize?, fontStyle?, fontWeight?, lineHeight? }] })`, JS offsets,
    sorted and disjoint (throws otherwise), gaps in the base font. A wrap
@@ -49,7 +53,7 @@ attributes (heading level, list); selection, caret and scrolling as
    marshalling in flux `prepared_runs`. Independent of the rest, also
    what a decorated `TextInput` (display-only styling: mentions, syntax
    colors) would use.
-2. **Document buffer** (components) - DONE 2026-08-19 (uncommitted).
+2. **Document buffer** (components) - DONE 2026-08-19.
    `packages/components/src/rich-text-document.ts` (exported from the package index; core only gains the `onReplace` hook, the mechanism): `Document = { text, runs: {start, end,
    attributes}[], blocks: Attributes[] }` (Delta-like, flat; block
    attributes in a parallel per-paragraph array rather than on the `\n`,
@@ -63,7 +67,7 @@ attributes (heading level, list); selection, caret and scrolling as
    splits a paragraph keeping its attributes, deleting one merges. No undo,
    no compose/transform (additive later). Headless checks: probes/doc-test-probe.ts
    via probes/multiline-probe.tsx `doctest`.
-3a. **Shared shell** - DONE 2026-08-19 (uncommitted). `EditorField`
+3a. **Shared shell** - DONE 2026-08-19. `EditorField`
    (packages/components/src/editor-field.tsx, internal): everything of
    `TextInput` that does not know what the value is (focus, blink, nav
    action, keys, text session, tap-to-position, editor layout, viewport
@@ -71,7 +75,7 @@ attributes (heading level, list); selection, caret and scrolling as
    `runs()` and `renderLine`. `TextInput` is the string wrapper. Core:
    `TextEditorLayoutInput.runs` explicit, `unitInk` (glue-aware, used by
    `layoutNextLine` and `splitWide`).
-3b. **Component** - DONE 2026-08-19 (uncommitted). `RichTextEditor`
+3b. **Component** - DONE 2026-08-19. `RichTextEditor`
    (packages/components/src/rich-text-editor.tsx): `Document` value
    (controlled/uncontrolled), `editorRef` hands the app the document buffer
    as the formatting API (no toolbar). Lines from the shell fed with

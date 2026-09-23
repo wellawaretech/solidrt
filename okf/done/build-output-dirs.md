@@ -1,7 +1,8 @@
 ---
 title: One build-output root with per-flow subdirs
-description: Give dev, render and pack one gitignored output root (dist/) with a subdir per flow, fixing render's missing isolate support and clearing the ground for pack formats and asset pre-processing.
+description: Landed 2026-08-21: dist/ is the build root with one subdir per flow (render/, pack/, bundle/), render stages isolates and assets so isolate() works headless, and single-file deliverables land in the dist/ root. Asset pre-processing on top of the staged dirs is an ideas.md line.
 created: 2026-08-21
+completed: 2026-08-21
 ---
 
 # One build-output root with per-flow subdirs
@@ -104,6 +105,6 @@ bytecode, and packed flux exes carry and resolve isolates via the shared
 section trailer. Known gap left: repl `load x.srt.bin` pushes bytecode
 without a manifest, so isolates cannot travel on that path.
 
-Remaining here: the asset pre-processing pipeline above (with its
-incrementality manifest) and folding dev into the same staging - both waiting
-on an actual transform to exist.
+The asset pre-processing pipeline above (with its incrementality manifest)
+and folding dev into the same staging both wait on an actual transform to
+exist; they are an ideas.md line.

@@ -79,7 +79,7 @@ shader-input reference, SnapshotNoAa).
 - `destroy_texture` deliberately does not note content (deferred-destroy
   keeps a mounted texture drawing; nothing changes until reclaim).
 - Open follow-ups were promoted to their own items so this record stays
-  closed: [content-damage-perf](../backlog/content-damage-perf.md) (the O(nodes)
+  closed: [content-damage-perf](content-damage-perf.md) (the O(nodes)
   walk and the boundary-shader-input full re-bake, with symptoms) and
   [texture-params-prop-write-path](texture-params-prop-write-path.md)
   (the params prop's double re-bake and the one-write-path redesign).

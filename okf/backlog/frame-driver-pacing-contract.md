@@ -1,10 +1,13 @@
 ---
 title: Frame driver pacing contract
-description: Pacing verdicts cost 90s on-device censuses because there is no way to run the frame driver against a synthetic vsync grid, and frames carry no deadline, so an overrunning critical path jitters between 1 and 2 vsyncs instead of degrading to a stable cadence. Harness first, then deadline-scheduled frames.
+description: Pacing verdicts cost 90 s on-device censuses because the frame driver cannot run against a synthetic vsync grid; stage 1, the harness in alloy's tests, is what remains. Stage 2 became the cadence hold and stage 3 was superseded by the refresh count (both 2026-09-21).
 created: 2026-08-14
 ---
 
 # Frame driver pacing contract
+
+Status 2026-09-23: only stage 1 (the harness) is open; stages 2 and 3
+are closed by the plans they link.
 
 Two structural gaps that the video pacing trace kept running into, neither
 of them video-specific. Split out of [[video-playback]] because they outlive

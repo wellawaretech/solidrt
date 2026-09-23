@@ -1,7 +1,8 @@
 ---
 title: Focus navigation (spatial/D-pad, tab order) on the focusable registry
-description: Stage 3 of the focus/key-routing work - move focus across getFocusables() candidates from bubbled arrow keys, activate with select/Enter, and fold the player's parallel spatial nav onto real focus.
+description: Landed 2026-08-01 (createFocusNav in components: arrow keys, dpad and Tab over getFocusables(), scopes for modals, the player folded onto it, device-verified) and 2026-09-07 (the nav consumes navigate/cycle/select from the input map). The three small deferrals are tiny.md lines.
 created: 2026-08-01
+completed: 2026-09-07
 ---
 
 # Focus navigation on the focusable registry
@@ -87,9 +88,8 @@ bare; held-direction auto-repeat is the nav's own timing over the rate, so
 dpads and sticks walk like keyboards; createPress reads no key, activation
 is the `select` action alone.
 
-Deliberately deferred from the components stage (inherited from the
-player's own stage-1 gaps): scroll-into-view for a focused off-screen
-candidate, pressed-state visuals on key activation (the ring is the
-feedback), and `focusable` on the other press controls
-(Switch/Checkbox/Radio/...) - their activation already works via the nav
-action registry once declared.
+Three small pieces were deliberately deferred from the components stage
+(inherited from the player's own stage-1 gaps): scroll-into-view for a
+focused off-screen candidate, pressed-state visuals on key activation, and
+`focusable` on the other press controls. They are lines in
+[tiny.md](../tiny.md) under Components.

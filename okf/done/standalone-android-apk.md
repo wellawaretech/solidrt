@@ -1,7 +1,8 @@
 ---
 title: Standalone APK for a packed app
-description: An app can be packed into a native executable for every desktop platform but not into an installable Android app; the runtime has no Android boot path for a packed payload, and building the APK should not require an Android SDK on the developer's machine.
+description: Shipped 2026-09-01: srt pack --apk patches a per-ABI production runner APK (no Android SDK at pack time) with the app's payload, id, label, versionCode and adaptive icon, and the runtime boots a packed payload on Android without the player or the dev server; implementation notes in notes/standalone-apk-implementation.md.
 created: 2026-09-01
+completed: 2026-09-01
 ---
 
 # Standalone APK for a packed app
@@ -11,7 +12,11 @@ Android has no equivalent: the only Android artifact is `solidrt-go.apk`, the
 dev client, which hosts apps behind its player and dev-server connection. An
 app cannot be handed to someone as an installable Android app.
 
-Two independent halves, and only the second one is about zip files.
+Two independent halves, and only the second one is about zip files. Both
+shipped 2026-09-01 as `srt pack --apk`, verified on an arm64 device; what
+shipped and the traps are in
+[standalone-apk-implementation](../notes/standalone-apk-implementation.md).
+The paragraph above describes the state before it.
 
 ## Half 1: the runtime has no Android boot path for a packed app
 
@@ -114,7 +119,7 @@ This half is testable before the runner APK exists: patch today's
 launch it. That exercises alignment, AXML, arsc and signing with no Rust
 involved.
 
-## Open: download size
+## Download size (decided)
 
 Native libs are packaged uncompressed so they can be mmapped from the APK
 (`extractNativeLibs=false`), which puts a floor under the APK equal to the
@@ -166,26 +171,17 @@ the libs lifted from these per-ABI runner APKs.
   go client's foreground uses the same PNG-plus-22.5%-inset shape. Later,
   additively: an inset override for adaptive-aware full-bleed art, and a
   `<monochrome>` layer for themed icons.
-- TV banner: on Android TV the launcher shows `android:banner` (160x90dp)
-  instead of the icon, and it replaces the label entirely - a banner
-  without text is an anonymous tile on the shelf, which is why Android TV
-  guidance wants the app name in it. The go client's banner
-  (`res/drawable-xhdpi/tv_banner.png`, the mark centered on the official
-  near-black ground) is mark-only today, so "Player" should be rendered
-  into it. Packed apps inherit that same static banner, so on a TV every
-  packed app shows the SolidRT banner, not its own: a patchable banner
-  slot (same mechanism as `app_icon_fg.png`) plus pack-time composition of
-  the app's `displayName` over its icon would fix it - but text rendering
-  at pack time has the same problem as SVG rasterization
-  (`icon-svg-rasterization.md`), so the two probably share a solution.
+- TV banner: on Android TV the launcher shows `android:banner` instead of
+  the icon and label, and a packed app inherits the runner's static
+  SolidRT banner; folded into [app-icons](../backlog/app-icons.md)
+  stage 3.
 - `ffi-android-apk-packaging.md` wants an app's ffi libraries copied into the
   APK as `jniLibs` so `dlopen` by path works. That is the same packaging step
   as half 2, one more thing to inject.
-- Permissions: the camera permission is already go-flavor-only
-  (`src/go/AndroidManifest.xml`), so the prod runner inherits only
-  RECORD_AUDIO, VIBRATE and INTERNET from the shared manifest. That Gradle
-  set is only the default the runner ships with, not a ceiling: the patcher
-  can splice `<uses-permission>` element chunks out (or in - the
-  `android:name` attribute is already in the resource map) per app at pack
-  time. Element chunks are self-contained, so it is the same class of
-  surgery as the id edit: chunk splicing plus the pool and size fixups.
+- Permissions: the camera permission is go-flavor-only
+  (`src/go/AndroidManifest.xml`), so the prod runner inherits RECORD_AUDIO,
+  VIBRATE and INTERNET from the shared manifest; that is the default the
+  runner ships with, not a ceiling, since the patcher can splice
+  `<uses-permission>` element chunks the way it edits the id. A per-app
+  permission set is package.json config under `android`, shaped with
+  the other packaging knobs in [play-store-aab](../backlog/play-store-aab.md).

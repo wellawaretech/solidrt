@@ -29,6 +29,10 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 `packages/components`.
 
+- Focus nav: scroll a focused off-screen candidate into view (the nav has the candidate's box; the enclosing ScrollView is the target).
+- Focus nav: pressed-state visuals on `select` activation; the focus ring is the only feedback today.
+- `focusable` on the other press controls (Switch, Checkbox, Radio, ...); their activation already works through the nav action registry once declared.
+
 
 ## DX
 
@@ -39,6 +43,7 @@ The `srt` CLI, the dev server, MCP, debug commands, examples and probes.
 - A SurfaceFlinger present census (the `dumpsys SurfaceFlinger --latency` intervals in refresh periods, per BLAST SurfaceView layer) is retyped as a scratch script every device session (video plane 2026-09-12, 2026-09-22); make it a script under `examples/video/scripts/` or an `srt android census` subcommand and point `packages/cli/agents/debugging.md` at it.
 - `alloy/examples/depth_texture.rs` no longer compiles (`DrawSpec` has no field `buffer`, it is `buffers`), so `cargo check -p alloy --examples` fails on it; fix or drop the example.
 - `lattice/src/lib.rs:216` (the Android `start` call) warns on an unused `Result` in every Android build.
+- Write the multi-pass shader chain example in `packages/core/examples` (a plasma target bound as a cube pipeline's sampler input, only the plasma's uniforms driven): the demonstration that sampler bindings are live dependencies, unblocked since target dependency propagation (okf/done/gpu-example-gaps.md).
 
 
 ## Runtime
@@ -51,3 +56,4 @@ alloy, forge, flux, lattice.
 - video in headless playback: a stepped take that never settles (no frame due after the deadline, the producer not pushing) waits forever with no message; the first render of the latch hung silently for that reason. Log once after a bounded wait (a few seconds of wall time) naming the texture and the deadline, so a wedge is a log line, not a hang to bisect.
 - video in headless playback with audio: the PCM sink plays in real time while the capture steps the clock, so a capture with sound plays its audio out of step with the frames; the sink could be silenced in playback (the track is still fed and clocked) until a capture that records sound exists.
 - video plane start sync: a stream's first start on the TV sometimes logs one audio-sync anchor move just past the 40 ms threshold (-40.1, -40.3 ms), likely because `start_audio` (forge/src/video/worker.rs) anchors on the sink's content time right after its position jumped a whole device buffer; anchor half that first jump earlier and check that TV starts log no move (okf/plans/video-streaming.md, Findings).
+- alloy layout: `set_unrounded_layout` (alloy/src/rendertree/layout/context.rs) calls the plain `invalidate_paint` per changed node, so a resize invalidates O(n * depth); thread one `visited` set through the layout pass and call `invalidate_paint_batched` instead (okf/done/content-damage-perf.md).

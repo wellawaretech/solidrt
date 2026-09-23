@@ -1,12 +1,12 @@
 ---
 title: Standalone APK implementation notes
-description: Working notes for the srt pack --apk pipeline (backlog/standalone-android-apk.md): what shipped in the first three stages, the traps future edits must know, and how it was verified on a device.
+description: Working notes for the srt pack --apk pipeline (done/standalone-android-apk.md): what shipped in the first three stages, the traps future edits must know, and how it was verified on a device.
 created: 2026-09-01
 ---
 
 # Standalone APK implementation notes
 
-Companion to `backlog/standalone-android-apk.md` (design and open work).
+Companion to `done/standalone-android-apk.md` (design and open work).
 Everything below shipped 2026-09-01 and was verified on a real arm64 device
 (SM-T500, Android 12); the emulator is NOT a verification signal until
 `backlog/go-client-emulator-launch-crash.md` is fixed.

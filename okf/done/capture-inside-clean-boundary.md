@@ -1,7 +1,8 @@
 ---
 title: captureSnapshot fails inside a clean repaint boundary
-description: A capture (captureSnapshot, /snapshot) of a node under a repaintBoundary view whose recording is being reused fails with "capture node is not in the live render tree", because the Recording branch replays the cached display list without descending, so the paint walk that services captures never reaches the node.
+description: Fixed 2026-09-02: a capture under a repaint boundary whose recording was being reused failed with "capture node is not in the live render tree" because the walk replayed the cache without descending; the walk now descends into a cached boundary while a capture is pending inside it.
 created: 2026-08-27
+completed: 2026-09-02
 ---
 
 # captureSnapshot fails inside a clean repaint boundary
@@ -26,3 +27,11 @@ captures are pending, walk into the boundary's subtree instead of replaying
 (re-recording is the simplest; a capture is rare, so the extra recording is
 free in practice). The point is that "in the tree" and "visited by the walk"
 agree, whatever the boundary's cache state.
+
+## Fixed (2026-09-02)
+
+As shaped: the paint walk descends into a boundary whose cache is being
+reused whenever a pending capture targets a node inside it
+(`service_captures_under_cache` in `alloy/src/rendertree/composite.rs`),
+servicing the captures on the way; the cache itself is untouched and still
+composited, so a capture never re-rasterizes a snapshot.

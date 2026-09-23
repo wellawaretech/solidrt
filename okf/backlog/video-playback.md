@@ -640,4 +640,8 @@ Two bugs fixed the same session, both in the player:
    SDL_SetAudioStreamGain and panning as a multiply on push. Deletes the
    vendored sdl3-mixer-sys C dependency and unifies clip and video audio
    on one PCM path. Own verification pass: all clip-audio behavior on
-   desktop AND Android targets.
+   desktop AND Android targets. The audio surface's open pieces land
+   here too: `setBusGain` (declared 2026-08-20, throws until implemented;
+   three multipliers in an own mix loop), position/duration, setLoop and
+   pause/resume, from
+   [flux-audio-mix-control](../done/flux-audio-mix-control.md).

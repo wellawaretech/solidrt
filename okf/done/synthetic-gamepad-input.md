@@ -83,4 +83,4 @@ empty`, and a reconnect into slot 1 drove player 1 again.
 Recording physical pad sessions to a script (`srt run --capture` takes
 keys only; pointer and pads are one later step together), rumble
 (okf/backlog/gamepad-haptics.md), and holding physical input while
-driving (okf/backlog/mcp-input-hold.md).
+driving (okf/done/mcp-input-hold.md).

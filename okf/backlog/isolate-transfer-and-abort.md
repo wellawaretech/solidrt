@@ -1,6 +1,6 @@
 ---
 title: Isolate transfer() and AbortSignal
-description: Design proposal for the two isolate follow-ups that need new call-surface vocabulary - zero-copy buffer hand-over and abortable calls. Decides once how a non-payload argument rides a plain function call, so the module gets one coherent rule instead of two accidents.
+description: AbortSignal on plain calls landed 2026-08-20 with the special-argument rule; transfer() was parked on the rquickjs quickjs-ng bump, and the workspace is on rquickjs 0.14.0 since, so check whether the steal is now the safe from_source over a slot-holding source and build stages 1+2 together.
 created: 2026-08-20
 ---
 
@@ -178,7 +178,9 @@ so stage 1's round-trip detach and stage 2's steal share one prerequisite -
 a sound free hook - and should land together.
 
 Decision 2026-08-20: transfer stages 1+2 are PARKED, blocked on the
-rquickjs quickjs-ng bump (DelSkayn/rquickjs#723). Both underlying bugs are
+rquickjs quickjs-ng bump (DelSkayn/rquickjs#723); the workspace is on rquickjs 0.14.0 since, so
+whether that release carries the fix is the first check when this is
+picked up. Both underlying bugs are
 fixed upstream; bridging with our own unsafe hook on rquickjs 0.12.x would
 be throwaway code in the most safety-critical spot, and no consumer is
 waiting on zero-copy. After the bump the steal is safe `from_source` over a
