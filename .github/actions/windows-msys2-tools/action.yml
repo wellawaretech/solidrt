@@ -1,0 +1,26 @@
+name: Windows MSYS2 tools
+description: >
+  Put the image's MSYS2 (C:\msys64, preinstalled but not on PATH) ahead of
+  everything else and install what the vendored libvpx build needs in it:
+  make and diffutils for its configure and makefiles, nasm for its x86 SIMD
+  code. The makefiles run #!/bin/bash generator scripts, and forge's build.rs
+  takes the make from beside the sh it finds, so the make must be MSYS2's; a
+  native make would launch bash through CreateProcess, which finds the WSL
+  launcher in System32 first. The image's MSYS2 has only its base packages.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        for i in 1 2 3; do
+          C:/msys64/usr/bin/pacman.exe -Sy --noconfirm --needed --noprogressbar make diffutils mingw-w64-x86_64-nasm && break
+          echo "pacman failed (attempt $i), retrying in 15s"; sleep 15
+          [ "$i" = 3 ] && exit 1
+        done
+        echo "C:/msys64/mingw64/bin" >> $GITHUB_PATH
+        echo "C:/msys64/usr/bin" >> $GITHUB_PATH
+    # What the build will find, for the log: the make and sh must be MSYS2's.
+    - shell: pwsh
+      run: |
+        foreach ($t in "sh", "make", "bash", "diff", "nasm", "yasm", "msbuild") { Write-Host "$t -> $((Get-Command $t -ErrorAction SilentlyContinue).Source)" }
