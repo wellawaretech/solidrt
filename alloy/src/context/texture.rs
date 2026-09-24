@@ -567,6 +567,16 @@ impl Context {
     }
   }
 
+  /// Release every borrowed id at once: the app instance whose runtime-owned
+  /// textures these were is gone (an engine reload), so nothing will release
+  /// them one by one. The same deferred path as `release_borrowed`.
+  pub fn release_all_borrowed(&self) {
+    let ids: Vec<u64> = self.borrowed.borrow().iter().copied().collect();
+    for id in ids {
+      self.release_borrowed(id);
+    }
+  }
+
   /// Point a borrowed id at `texture` (a snapshot boundary's rasterization,
   /// Impeller-owned, `width` x `height` pixels): registry entry for UI-side
   /// consumers, raster-side mirror for shader passes, and a content change

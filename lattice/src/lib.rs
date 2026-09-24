@@ -195,9 +195,10 @@ use alloy::{AlloyEvent, InputState};
 use flux::{ExecHandle, FluxEngine};
 use runtime::UiRuntime;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 // --- Start Android entry point ------------------------------
 
@@ -214,7 +215,20 @@ pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   // No app argument channel either: the activity is launched by intent, not
   // from a command line.
   let storage = storage::StorageSpec { data_root: None, client: None, app_id: None };
-  start(&rt, None, launch, None, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts(), storage, Vec::new());
+  start(
+    &rt,
+    None,
+    launch,
+    None,
+    alloy::Mode::Run,
+    false,
+    (1280, 720),
+    false,
+    dev_server,
+    embedded_fonts(),
+    storage,
+    Vec::new(),
+  );
   0
 }
 
@@ -246,7 +260,20 @@ pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   // root, keyed by the packed identity like every packed distribution. No
   // argument channel: the activity is launched by intent.
   let storage = storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
-  start(&rt, Some(payload.app), launch, payload.display_name, alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, Vec::new());
+  start(
+    &rt,
+    Some(payload.app),
+    launch,
+    payload.display_name,
+    alloy::Mode::Run,
+    false,
+    (1280, 720),
+    false,
+    None,
+    payload.fonts,
+    storage,
+    Vec::new(),
+  );
   0
 }
 
@@ -440,6 +467,60 @@ struct RunOptions {
   // `--` on the runner command line), exposed as flux:process argv. Process-
   // level: a reload or player-launched app sees the same vector.
   args: Vec<String>,
+  // `--strict`: the capture's error tally (see ErrorTally); None otherwise.
+  errors: Option<Arc<ErrorTally>>,
+}
+
+/// What `--strict` gates a capture on: the error-level lines the engine
+/// logged - console.error (which carries the renderer's contained errors)
+/// and every uncaught error (flux logs them at that level, logger.rs
+/// report_error) - counted, with the first kept for the exit message
+/// (okf/done/render-as-a-verification-gate.md).
+#[derive(Default)]
+pub struct ErrorTally {
+  count: AtomicUsize,
+  first: Mutex<Option<String>>,
+}
+
+impl ErrorTally {
+  fn note(&self, msg: &str) {
+    if self.count.fetch_add(1, Ordering::Relaxed) == 0 {
+      // The first line only: a message may carry its stack trace below it.
+      let line = msg.lines().next().unwrap_or(msg).to_string();
+      *self.first.lock().expect("error tally lock poisoned") = Some(line);
+    }
+  }
+}
+
+/// Wrap an engine logger so error-level lines also reach the tally
+/// (`--strict`); without one the logger passes through untouched.
+fn counting_errors(
+  tally: Option<Arc<ErrorTally>>,
+  inner: impl Fn(flux::LogLevel, &str) + Send + Sync + 'static,
+) -> impl Fn(flux::LogLevel, &str) + Send + Sync + 'static {
+  move |level, msg| {
+    if let (Some(tally), flux::LogLevel::Error) = (&tally, level) {
+      tally.note(msg);
+    }
+    inner(level, msg)
+  }
+}
+
+/// Between engines: what the finished engine still holds in alloy's texture
+/// registry is released, and every destroy its teardown deferred is
+/// reclaimed, so the next engine starts from the registry the finished one
+/// found. The runtime-owned (borrowed) ids left at this point are the
+/// snapshot textures its render tree vended: a reload drops the tree whole,
+/// so no node destroy ever queued them, and each boundary's window-sized
+/// texture outlived its app, one more per reload
+/// (okf/done/snapshot-texture-leak-reload.md); the other borrowers (camera
+/// sessions, video textures) close with the engine. Nothing paints between
+/// engines, so the reclaim runs against no references. Returns the registry
+/// count afterwards, the caller's baseline for the leftover check.
+fn release_engine_textures(atx: &alloy::Context) -> usize {
+  atx.release_all_borrowed();
+  atx.reclaim_destroyed(&HashSet::new());
+  atx.textures.len()
 }
 
 // Point the assets mount (see forge::fs) at the app's current installed
@@ -582,7 +663,18 @@ fn ui_thread(
   user_input_muted: Arc<AtomicBool>,
   opts: RunOptions,
 ) {
-  let RunOptions { app, launch, display_name, playback_fps, stats, dev_server, fonts, storage: storage_spec, args } = opts;
+  let RunOptions {
+    app,
+    launch,
+    display_name,
+    playback_fps,
+    stats,
+    dev_server,
+    fonts,
+    storage: storage_spec,
+    args,
+    errors,
+  } = opts;
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
@@ -1027,6 +1119,11 @@ fn ui_thread(
       log::warn!("No fetch cache dir; fetch caching disabled");
     }
 
+    // The registry count each engine started from: growth across a
+    // handover is textures the previous app left alive, which the dev log
+    // reports (release_engine_textures).
+    let mut texture_baseline: Option<usize> = None;
+
     loop {
       // Re-anchor before anything in this spin touches the sandbox: the data
       // dir may have been deleted since the last spin, and a reload naming
@@ -1052,6 +1149,14 @@ fn ui_thread(
       atx.close_all_microphones();
       atx.close_all_audio();
       atx.reset_spatial();
+      // Its textures go with it too (release_engine_textures).
+      let registered = release_engine_textures(&atx);
+      if let Some(before) = texture_baseline {
+        if registered > before {
+          log::warn!("[srt] reload left {} textures from the previous app alive ({registered} registered)", registered - before);
+        }
+      }
+      texture_baseline = Some(registered);
       let input_state = input_state.clone();
 
       let draw_platform = platform.clone();
@@ -1072,14 +1177,15 @@ fn ui_thread(
       // The go client's logger also forwards lines to a connected dev server;
       // other builds log locally only.
       #[cfg(feature = "go")]
-      let builder = builder.logger(go::dev_logger(outbound_tx.clone(), dev_connected.clone()));
+      let builder =
+        builder.logger(counting_errors(errors.clone(), go::dev_logger(outbound_tx.clone(), dev_connected.clone())));
       #[cfg(not(feature = "go"))]
-      let builder = builder.logger(|level, msg| match level {
+      let builder = builder.logger(counting_errors(errors.clone(), |level, msg| match level {
         flux::LogLevel::Debug => log::debug!("{msg}"),
         flux::LogLevel::Log => log::info!("{msg}"),
         flux::LogLevel::Warn => log::warn!("{msg}"),
         flux::LogLevel::Error => log::error!("{msg}"),
-      });
+      }));
       // flux owns the gui plugin set, its registration order and the frame
       // protocol the draw bridge (`srt:render`) draws through; lattice only
       // supplies the host instances they bind.
@@ -1353,14 +1459,15 @@ fn install_panic_hook() {
   }));
 }
 
-/// Err only comes out of playback mode (an incomplete capture); the binary
-/// turns it into the process exit code.
+/// Err only comes out of playback mode (an incomplete capture, or errors
+/// logged under `strict`); the binary turns it into the process exit code.
 pub fn start(
   rt: &tokio::runtime::Runtime,
   app_source: Option<AppSource>,
   launch: Launch,
   display_name: Option<String>,
   mode: alloy::Mode,
+  strict: bool,
   size: (u32, u32),
   stats: bool,
   dev_server: Option<String>,
@@ -1379,10 +1486,33 @@ pub fn start(
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
-  let opts = RunOptions { app: app_source, launch, display_name, playback_fps, stats, dev_server, fonts, storage, args };
+  let errors = strict.then(|| Arc::new(ErrorTally::default()));
+  let opts = RunOptions {
+    app: app_source,
+    launch,
+    display_name,
+    playback_fps,
+    stats,
+    dev_server,
+    fonts,
+    storage,
+    args,
+    errors: errors.clone(),
+  };
   let resampler = app.resampler();
   let user_input_muted = app.user_input_mute();
-  app.run(move |atx, alloy_cmd_tx, event_rx| {
+  let result = app.run(move |atx, alloy_cmd_tx, event_rx| {
     ui_thread(handle, atx, alloy_cmd_tx, event_rx, resampler, user_input_muted, opts);
-  })
+  });
+  // `--strict`: a capture that completed but logged errors fails too, named
+  // after its first error (the exit itself stays the binary's, see main.rs).
+  if let Some(tally) = errors.filter(|_| result.is_ok()) {
+    let count = tally.count.load(Ordering::Relaxed);
+    if count > 0 {
+      let first = tally.first.lock().expect("error tally lock poisoned").clone().unwrap_or_default();
+      let noun = if count == 1 { "error was" } else { "errors were" };
+      return Err(format!("{count} {noun} logged during the capture; the first: {first}"));
+    }
+  }
+  result
 }

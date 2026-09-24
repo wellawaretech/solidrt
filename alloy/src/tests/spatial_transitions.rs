@@ -1056,3 +1056,22 @@ fn weights_write_takes_a_one_off_motion_and_snaps_without_one() {
   assert_eq!(weights(&s, id), vec![0.5, 0.5], "kept mid-flight");
   assert!(s.take_settled_transitions().is_empty());
 }
+
+#[test]
+fn write_before_the_first_stamp_starts_at_the_first_advanced_frame() {
+  // Scene setup writes its targets before any frame stamped the clock
+  // (okf/done/transition-clock-startup-anchor.md): the track begins at the
+  // first frame that advances it, whatever app time the stamp carries.
+  let mut s = Spatial::new();
+  let id = s.create([0.0; 3], Q, ONE, true);
+  s.set_node_transition(id, all(LINEAR_100)).expect("config");
+  assert!(s.write_transform(id, [10.0, 0.0, 0.0], Q, ONE).expect("write"));
+  s.advance_transitions();
+
+  s.set_transition_now(60_000.0);
+  assert!(s.advance_transitions(), "track runs");
+  assert!(pos_x(&s, id).abs() < 1e-4, "at its start, got {}", pos_x(&s, id));
+  s.set_transition_now(60_050.0);
+  s.advance_transitions();
+  assert!((pos_x(&s, id) - 5.0).abs() < 1e-4, "halfway 50 ms in, got {}", pos_x(&s, id));
+}

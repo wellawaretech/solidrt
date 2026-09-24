@@ -42,7 +42,20 @@ fn main() {
     let storage = lattice::storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
     // Mode::Run never returns Err (only playback does); ignore rather than
     // invent an exit path the interactive loop does not have.
-    let _ = lattice::start(&rt, Some(payload.app), launch, payload.display_name, alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, app_args);
+    let _ = lattice::start(
+      &rt,
+      Some(payload.app),
+      launch,
+      payload.display_name,
+      alloy::Mode::Run,
+      false,
+      (1280, 720),
+      false,
+      None,
+      payload.fonts,
+      storage,
+      app_args,
+    );
     return;
   }
 
@@ -51,6 +64,11 @@ fn main() {
   let mut script_path: Option<String> = None;
   let mut fps: u32 = 60;
   let mut duration: f64 = 1.0;
+  // `--settle <ms>`: wall time the app gets after its mount frame before the
+  // first written frame (alloy PlaybackConfig::settle); `--strict`: errors
+  // logged during the capture fail it (lattice ErrorTally).
+  let mut settle_ms: u64 = 0;
+  let mut strict = false;
   let mut size: (u32, u32) = (1280, 720);
   let mut stats = false;
   let mut out: Option<String> = None;
@@ -85,6 +103,14 @@ fn main() {
       link = Some(args.next().unwrap_or_else(|| usage("--link requires a link")));
     } else if arg == "--stats" {
       stats = true;
+    } else if arg == "--strict" {
+      strict = true;
+    } else if arg == "--settle" {
+      settle_ms = args
+        .next()
+        .unwrap_or_else(|| usage("--settle requires a value"))
+        .parse()
+        .unwrap_or_else(|_| usage("--settle value must be a whole number of milliseconds"));
     } else if arg == "--out" {
       out = Some(args.next().unwrap_or_else(|| usage("--out requires a directory or path prefix")));
     } else if arg == "--dev-server" {
@@ -174,6 +200,7 @@ fn main() {
       frames: (duration * fps as f64).round().max(1.0) as u64,
       output_prefix: out.map(frame_prefix).unwrap_or_else(|| "frame".to_string()),
       script: script_path.map(load_script).unwrap_or_default(),
+      settle: std::time::Duration::from_millis(settle_ms),
     })
   } else {
     alloy::Mode::Run
@@ -181,7 +208,7 @@ fn main() {
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
   let launch = lattice::Launch { restored: false, link };
-  let result = lattice::start(&rt, app, launch, None, mode, size, stats, dev_server, fonts, storage, app_args);
+  let result = lattice::start(&rt, app, launch, None, mode, strict, size, stats, dev_server, fonts, storage, app_args);
   // Playback exits hard, here in the binary: headless callers gate on the
   // exit code (srt render verification), so an incomplete capture must read
   // nonzero - and a plain return would run the runtime's drop, which can

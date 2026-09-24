@@ -1,6 +1,7 @@
 use taffy::style::Overflow;
 
-use super::{ElementKind, Point, Rect, RenderTree, Size, Vector};
+use super::cull::Extent;
+use super::{Element, ElementKind, Point, Rect, RenderTree, Size, Vector};
 use crate::Cursor;
 
 /// Controls whether an element participates in hit testing.
@@ -175,7 +176,7 @@ impl HitTester for DefaultHitTester {
     };
     let size = tree.node(root_id).painted_size().unwrap_or_default();
     let mut path = Vec::new();
-    hit_recursive(tree, root_id, point, size, PointerEvents::Auto, &mut path);
+    hit_recursive(tree, root_id, point, size, size, PointerEvents::Auto, &mut path);
     path
   }
 }
@@ -185,7 +186,8 @@ fn hit_recursive(
   node_id: u64,
   point: Point,
   size: Size,
-  inherited: PointerEvents,
+  inherited: Size,
+  inherited_events: PointerEvents,
   path: &mut Vec<HitEntry>,
 ) -> bool {
   let element = tree.node(node_id);
@@ -199,7 +201,7 @@ fn hit_recursive(
 
   // An explicit local value wins; otherwise the resolved value cascades down
   // from the parent (see the comment on HitConfig::pointer_events).
-  let pointer_events = element.interaction.as_ref().and_then(|i| i.pointer_events).unwrap_or(inherited);
+  let pointer_events = element.interaction.as_ref().and_then(|i| i.pointer_events).unwrap_or(inherited_events);
 
   // The content box paint derives from the same layout, so text geometry
   // resolves identically on both paths
@@ -246,12 +248,29 @@ fn hit_recursive(
     return false;
   }
 
-  // Auto and All both need the point inside: a miss clips the subtree. Only
-  // None descends regardless, so a click-through container's children can opt
-  // back in. (All used to skip this gate and fall through to `true` below, so
-  // an All node anywhere in the tree captured every point outside it.)
-  if pointer_events != PointerEvents::None && !element.kind.is_in_bounds(local, &local_ctx) {
-    return false;
+  // Auto and All both need the point inside for the node's own hit; only
+  // None descends regardless, so a click-through container's children can
+  // opt back in. (All used to skip this gate and fall through to `true`
+  // below, so an All node anywhere in the tree captured every point
+  // outside it.)
+  let inside = element.kind.is_in_bounds(local, &local_ctx);
+  // A miss on an Auto node does not end the walk: paint honors overflow
+  // visible, so a child drawn outside its parent's box (a dropdown hanging
+  // below its trigger, a badge over a corner) shows there and must be
+  // hittable there. The descent is gated on the subtree's paint envelope
+  // from the last paint walk, stated in the slot frame `point` is in: a
+  // node's hit extent never exceeds its paint envelope (every laid-out box
+  // is in it), so a point outside it misses the whole subtree for one rect
+  // test, and the walk stays a box test per sibling in the common case. An
+  // unknown envelope (not painted yet, a 3D transform in the chain)
+  // descends. The node joins the path only for a descendant's hit, so the
+  // path stays a root-to-leaf chain (bubbling, locals_along_path) and the
+  // node's own hover region stays its box. An All node captures nothing
+  // outside its box.
+  if pointer_events != PointerEvents::None && !inside {
+    if pointer_events == PointerEvents::All || !subtree_may_contain(element, inherited, point) {
+      return false;
+    }
   }
 
   let my_index = path.len();
@@ -292,7 +311,7 @@ fn hit_recursive(
     let child_size = child.frame_size(local_size);
     let child_pos = child.placement();
     let child_point = local - child_pos.to_vector() + scroll;
-    if hit_recursive(tree, child_id, child_point, child_size, pointer_events, path) {
+    if hit_recursive(tree, child_id, child_point, child_size, local_size, pointer_events, path) {
       if pointer_events == PointerEvents::None {
         path.remove(my_index);
       }
@@ -300,7 +319,9 @@ fn hit_recursive(
     }
   }
 
-  if pointer_events == PointerEvents::None {
+  if pointer_events == PointerEvents::None || !inside {
+    // On the path for its children only (click-through, or a miss on its
+    // box with a subtree that may overflow it), and none was hit.
     path.pop();
     return false;
   }
@@ -324,4 +345,16 @@ fn hit_recursive(
   }
 
   true
+}
+
+/// Whether `element`'s subtree can paint, and so be hit, at `point` (a
+/// point in its slot frame), by the envelope the last paint walk cached for
+/// it against `inherited` (cull::envelope). Conservative: an envelope not
+/// yet computed or unbounded says yes.
+fn subtree_may_contain(element: &Element, inherited: Size, point: Point) -> bool {
+  match element.envelope.cached(inherited) {
+    Some(Extent::Bounded(r)) => r.contains(point),
+    Some(Extent::Empty) => false,
+    Some(Extent::Unbounded) | None => true,
+  }
 }

@@ -2,6 +2,7 @@
 title: A standing onFrame ticks at 2-3 Hz on an idle desktop client
 description: debugging.md promises a registered onFrame keeps the runtime calling it every frame at the refresh rate; on a SwapPaced desktop client whose picture does not change, the callback ran 2-3 times a second and only a picture change (or a control-API call) produced a frame, so a frame loop that integrates from tick deltas (a gravity fall that does not move the camera yet) stalls.
 created: 2026-09-06
+completed: 2026-09-24
 ---
 
 # A standing onFrame ticks at 2-3 Hz on an idle desktop client
@@ -82,3 +83,21 @@ desktop client at 2-3 Hz.
 
 The probe ticks at the refresh rate, or the docs say what a standing
 request does get and how a loop from rest should prime itself.
+
+## Closed: not reproduced, and the step reply now waits (2026-09-24)
+
+Measured with a standing `onFrame` counter on a release client of
+2026-09-24 (Linux, Wayland, `probes/batch3-probe.tsx`, static picture
+after its enter animation settled): 61 callbacks per second against a 60
+Hz panel, `/stats` fps 60, idleTicks 18 over 40 s. The contract in
+debugging.md holds on the desktop as it does on the TV; the 2-3 Hz reading
+of 2026-09-06 predates the cadence-hold and refresh-count work and no gate
+in the current loop reproduces it (a standing onFrame requests a frame each
+run, every tick presents, and the swap paces the chain).
+
+The one deterministic gap is fixed: `/clock?step=<n>` answers once the
+stepped frames ran (the client waits for its queue to drain, bounded per
+step, and reports what is left as `pendingSteps`; the CLI's query timeout
+stretches with the count), so a read right after the POST sees the stepped
+state. 120 steps answered after 1987 ms at 60 Hz with the frame counter
+advanced by exactly 120. debugging.md says so.

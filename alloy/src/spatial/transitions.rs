@@ -210,6 +210,15 @@ pub(super) struct LinearTrack {
 }
 
 impl LinearTrack {
+  /// Move the track's time base by `delta` ms (the clock's start, see
+  /// NodeTransitions::set_now): the same motion, started that much later.
+  pub(super) fn shift(&mut self, delta: f64) {
+    self.since_ms += delta;
+    if let LinearState::Tween { start_ms, .. } = &mut self.state {
+      *start_ms += delta;
+    }
+  }
+
   /// Advance to `now_ms`. Returns the value to write and whether the track
   /// settled; a settled track reports the target exactly.
   pub(super) fn advance(&mut self, now_ms: f64) -> ([f32; 3], bool) {
@@ -276,6 +285,14 @@ pub(super) struct RotationTrack {
 }
 
 impl RotationTrack {
+  /// Move the track's time base by `delta` ms (see LinearTrack::shift).
+  pub(super) fn shift(&mut self, delta: f64) {
+    self.since_ms += delta;
+    if let RotationState::Tween { start_ms, .. } = &mut self.state {
+      *start_ms += delta;
+    }
+  }
+
   pub(super) fn advance(&mut self, now_ms: f64) -> ([f32; 4], bool) {
     let dt_ms = (now_ms - self.since_ms).max(0.0);
     self.since_ms = now_ms;
@@ -328,6 +345,14 @@ pub(super) struct WeightsTrack {
 }
 
 impl WeightsTrack {
+  /// Move the track's time base by `delta` ms (see LinearTrack::shift).
+  pub(super) fn shift(&mut self, delta: f64) {
+    self.since_ms += delta;
+    if let WeightsState::Tween { start_ms, .. } = &mut self.state {
+      *start_ms += delta;
+    }
+  }
+
   /// Advance to `now_ms`, writing the value into `out` (resized to the
   /// track's lanes). Returns whether the track settled; a settled track
   /// reports the target exactly.
@@ -388,7 +413,11 @@ fn fit_lanes(v: &[f32], len: usize) -> Vec<f32> {
 /// lives in mod.rs, where the nodes are.
 #[derive(Default)]
 pub(super) struct NodeTransitions {
+  /// The animation clock the tracks run on: the latest stamp, zero before
+  /// the first one (see `set_now`).
   pub now_ms: f64,
+  // Whether a stamp has arrived: the first one starts the clock.
+  started: bool,
   pub configs: HashMap<NodeId, NodeTransitionConfig>,
   pub linear: Vec<LinearTrack>,
   pub rotation: Vec<RotationTrack>,
@@ -424,6 +453,45 @@ pub(super) struct NodeTransitions {
 }
 
 impl NodeTransitions {
+  /// Stamp the clock with this frame's app time. The first stamp starts
+  /// the clock: every track, held write and staggered exit started before
+  /// it, all timed at zero, moves as one to the stamp, so a target written
+  /// before the first frame - scene setup, a node's enter values - begins
+  /// its full duration at the first frame that runs instead of integrating
+  /// the startup latency (or, after a reload, the previous app's whole
+  /// runtime) in one step (okf/done/transition-clock-startup-anchor.md).
+  /// Stagger indices are per frame: each stamp opens a fresh count.
+  /// Returns whether this stamp started the clock, so the clip players
+  /// re-base their clock with it.
+  pub fn set_now(&mut self, now_ms: f64) -> bool {
+    let first = !self.started;
+    if first {
+      self.started = true;
+      let delta = now_ms - self.now_ms;
+      for t in &mut self.linear {
+        t.shift(delta);
+      }
+      for t in &mut self.rotation {
+        t.shift(delta);
+      }
+      for t in &mut self.weights {
+        t.shift(delta);
+      }
+      for w in &mut self.pending {
+        w.at_ms += delta;
+      }
+      for w in &mut self.pending_weights {
+        w.at_ms += delta;
+      }
+      for (_, at_ms) in &mut self.staggered_exits {
+        *at_ms += delta;
+      }
+    }
+    self.now_ms = now_ms;
+    self.stagger_counts.clear();
+    first
+  }
+
   /// The next stagger index for a lifecycle event under `group` this
   /// frame (post-incremented). Enters and exits count separately, so a
   /// swap that frees and creates in one tick runs two clean cascades.

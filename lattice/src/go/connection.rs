@@ -647,17 +647,35 @@ async fn try_serve(
                 if let Some(scale) = json.get("scale").and_then(|s| s.as_f64()) {
                   flags.clock.set_scale(scale);
                 }
-                if let Some(step) = json.get("step").and_then(|s| s.as_u64()) {
-                  flags.clock.add_steps(step);
+                let steps = json.get("step").and_then(|s| s.as_u64()).unwrap_or(0);
+                if steps > 0 {
+                  flags.clock.add_steps(steps);
                 }
                 flags.frame_requested.store(true, Ordering::Relaxed);
-                let reply = serde_json::json!({
-                  "type": "result",
-                  "id": id,
-                  "data": { "scale": flags.clock.scale(), "pendingSteps": flags.clock.pending_steps() },
-                })
-                .to_string();
-                let _ = client.send(tokio_websockets::Message::text(reply)).await;
+                // Stepped frames run one per frame signal, so the reply
+                // waits for the queue to drain and a read right after it
+                // sees the stepped state; bounded, so a client that stops
+                // running frames (a wedged app) still answers, with the
+                // steps it never ran as `pendingSteps`. On its own task so
+                // the wait never blocks this loop.
+                let clock = flags.clock.clone();
+                let reply_tx = queries.outbound_tx.clone();
+                tokio::spawn(async move {
+                  if steps > 0 {
+                    let deadline = tokio::time::Instant::now()
+                      + Duration::from_millis(CLOCK_STEP_WAIT_BASE_MS + CLOCK_STEP_WAIT_MS * steps);
+                    while clock.pending_steps() > 0 && tokio::time::Instant::now() < deadline {
+                      tokio::time::sleep(Duration::from_millis(CLOCK_STEP_POLL_MS)).await;
+                    }
+                  }
+                  let reply = serde_json::json!({
+                    "type": "result",
+                    "id": id,
+                    "data": { "scale": clock.scale(), "pendingSteps": clock.pending_steps() },
+                  })
+                  .to_string();
+                  let _ = reply_tx.send(reply);
+                });
               }
               Some("input") => {
                 // Synthetic input: parsed events enter the same channel real
@@ -1189,6 +1207,14 @@ pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<V
 
 /// Default window the stats summary covers when the query names none.
 const STATS_WINDOW_DEFAULT_MS: f64 = 5000.0;
+
+// The clock query's wait for its stepped frames to run: one per frame at
+// the client's frame rate, so this long per step on top of the base, and
+// the reply then reports whatever is still pending. Re-read at the poll
+// interval.
+const CLOCK_STEP_WAIT_MS: u64 = 50;
+const CLOCK_STEP_WAIT_BASE_MS: u64 = 1000;
+const CLOCK_STEP_POLL_MS: u64 = 4;
 
 /// Everything a stats reply is built from. `snap` is the draw loop's latched
 /// figures; `clock` the client's own clock at query time (`timeMs` on its

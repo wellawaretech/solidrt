@@ -326,6 +326,15 @@ impl Track {
     from_lanes(self.to, self.kind)
   }
 
+  /// Move the track's time base by `delta` ms (the clock's start, see
+  /// Transitions::set_now): the same motion, started that much later.
+  fn shift(&mut self, delta: f64) {
+    self.since_ms += delta;
+    if let TrackState::Tween { start_ms, .. } = &mut self.state {
+      *start_ms += delta;
+    }
+  }
+
   /// Advance to `now_ms`. Returns the value to write and whether the track
   /// settled; a settled track reports the target exactly.
   pub fn advance(&mut self, now_ms: f64) -> (AnimValue, bool) {
@@ -378,7 +387,11 @@ impl Track {
 /// JS frame work runs, so writes and the advance agree on time.
 #[derive(Default)]
 pub struct Transitions {
+  /// The animation clock the tracks run on: the latest stamp, zero before
+  /// the first one (see `set_now`).
   pub now_ms: f64,
+  // Whether a stamp has arrived: the first one starts the clock.
+  started: bool,
   tracks: Vec<Track>,
   // Delayed writes waiting for their activation time (tree.rs drains the
   // due ones at the top of each advance).
@@ -419,8 +432,30 @@ impl Transitions {
     index
   }
 
-  pub fn reset_stagger(&mut self) {
+  /// Stamp the clock with this frame's app time. The first stamp starts
+  /// the clock: every track and held write started before it, all timed
+  /// at zero, moves as one to the stamp, so a target written before the
+  /// first frame - module evaluation, a mount, the bootstrap flush - begins
+  /// its full duration at the first frame that runs instead of integrating
+  /// the startup latency (or, after a reload, the previous app's whole
+  /// runtime) in one step (okf/done/transition-clock-startup-anchor.md).
+  /// Stagger indices are per frame: each stamp opens a fresh count.
+  /// Returns whether this stamp started the clock.
+  pub fn set_now(&mut self, now_ms: f64) -> bool {
+    let first = !self.started;
+    if first {
+      self.started = true;
+      let delta = now_ms - self.now_ms;
+      for t in &mut self.tracks {
+        t.shift(delta);
+      }
+      for w in &mut self.pending {
+        w.at_ms += delta;
+      }
+    }
+    self.now_ms = now_ms;
     self.stagger_counts.clear();
+    first
   }
 
   /// Hold a delayed write until its activation time. One hold per

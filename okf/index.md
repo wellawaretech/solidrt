@@ -245,12 +245,6 @@ Shaped, not started.
   On a touch-only Android device the capability layer gains "keyboard" as soon
   as the virtual keyboard opens, so any keyboard-first behavior gated on it
   would switch on for users who have no keyboard.
-- **[A display refresh-rate change is not observed by the client](backlog/android-refresh-rate-change-unobserved.md)** [2026-09-12]
-  A Pixel 7 forced from 90 to 60 Hz while the client ran kept reporting
-  periodMs 11.11, so the jank accounting counted every frame against 90 Hz
-  (149 missed presents in a window that presented on every vsync); the
-  refresh-rate fact is read at init and by a polled safety net that did not
-  pick the change up.
 - **[ANGLE textures and teardown crash](backlog/angle-cross-context-impeller-textures.md)** [2026-07-27]
   "The two Windows client killers (a snapshot boundary's cross-context texture
   blacking the window under ANGLE, and the engine-restart GL teardown race)
@@ -451,13 +445,6 @@ Shaped, not started.
   icon.svg, so a derived icon.png is checked in and every app must maintain
   one by hand; the runtime can rasterize it itself via captureSnapshot +
   encodeImage.
-- **[A standing onFrame ticks at 2-3 Hz on an idle desktop client](backlog/idle-onframe-tick-rate.md)** [2026-09-06]
-  debugging.md promises a registered onFrame keeps the runtime calling it
-  every frame at the refresh rate; on a SwapPaced desktop client whose picture
-  does not change, the callback ran 2-3 times a second and only a picture
-  change (or a control-API call) produced a frame, so a frame loop that
-  integrates from tick deltas (a gravity fall that does not move the camera
-  yet) stalls.
 - **[iOS port readiness](backlog/ios-port-readiness.md)** [2026-09-10]
   The app-facing contracts are designed so an iOS port changes no app code;
   this lists what the port itself still has to supply behind them (the suspend
@@ -518,10 +505,6 @@ Shaped, not started.
   frame while the app keeps presenting partial frames, so on screen it reads
   as a logic bug (entities drawn after the throwing line vanish) and the only
   trace is a log line the reader has to think to look for.
-- **[Children drawn outside their parent's box are not hit-testable](backlog/overflow-visible-hit-testing.md)** [2026-08-14]
-  A parent's bounds check gates descent into its children as well as its own
-  hit, so a child painted outside the parent's layout box under overflow
-  visible receives no pointer events.
 - **[Owner-scoped registerDebug](backlog/owner-scoped-register-debug.md)** [2026-08-02]
   Registrations reset on hot reload, so commands must register at module init
   - which forces any app state a command touches up to module scope; an
@@ -685,12 +668,6 @@ Shaped, not started.
   A numeric pixel-delta mode on get_snapshot against the previous capture of
   the same node, so "does it still render the same" is one call with a number
   instead of two images an agent has to eyeball.
-- **[Snapshot boundary textures leak across dev reloads](backlog/snapshot-texture-leak-reload.md)** [2026-09-22]
-  get_gpu_resources on the SM-T500 listed 51 window-sized rgba8 "snapshot"
-  textures (2000x1092, ~8.7 MB each, ~440 MB) after a session of reloads;
-  get_stats' `textures` grows by one per reload. The old app instance's
-  snapshot boundary (the demo's backdrop) is never freed when the next bundle
-  is pushed.
 - **[Reactivity diagnostics carry no source location](backlog/solid-diagnostics-source-location.md)** [2026-09-08]
   A STRICT_READ_UNTRACKED warning names the shape of the mistake but not the
   file or line, so finding it in an app with a dozen effects is a manual hunt;
@@ -774,14 +751,6 @@ Shaped, not started.
   own; CSS gives per-axis tuples for scale and translate but nothing for
   rotation, so the set should be settled together rather than one prop at a
   time.
-- **[Transition writes before the first frame anchor at clock 0](backlog/transition-clock-startup-anchor.md)** [2026-08-24]
-  The animation clock is stamped once per frame, so a transition target
-  written at module-eval time (before any frame ran) starts its track at clock
-  0 and the first stamped advance fast-forwards the whole startup latency - a
-  300ms spring can be most of the way done when the first frame paints.
-  Element and node transitions share the artifact; spatial is more exposed
-  because writing initial targets during scene setup is a natural pattern. An
-  install-time (or first-JS-entry) clock stamp is the likely few-line fix.
 - **[The dev-server repl has only run on Linux](backlog/tty-repl-platform-runs.md)** [2026-08-26]
   flux:tty raw mode and the srt repl are crossterm-backed and compile for
   Windows and Android, but neither has been run there - the Windows console
@@ -1150,6 +1119,12 @@ Finished, kept for the reasoning.
   alloy main loop) was switched out 259 times and only 15 of those were
   sleeps; the client's stats read 135% CPU against 7% for the same probe on
   Linux. The loop is meant to block on the SDL event queue between wakes.
+- **[A display refresh-rate change is not observed by the client](done/android-refresh-rate-change-unobserved.md)** [2026-09-24]
+  A Pixel 7 forced from 90 to 60 Hz while the client ran kept reporting
+  periodMs 11.11, so the jank accounting counted every frame against 90 Hz
+  (149 missed presents in a window that presented on every vsync); the
+  refresh-rate fact is read at init and by a polled safety net that did not
+  pick the change up.
 - **[Android surface swap blocks four vsyncs](done/android-surface-swap-latency.md)** [2026-07-28]
   SOLVED, it was our 4x MSAA all along, the ~80 ms swap block was the GPU
   draining full off-tile multisample resolve traffic every frame. Fixed via a
@@ -1698,6 +1673,13 @@ Finished, kept for the reasoning.
   "all" node outside the pointer descended into its children and fell through
   to a hit; any list with Icons (which set "all") routed every tap to the last
   icon in the tree. The gate now applies to auto and all.
+- **[A standing onFrame ticks at 2-3 Hz on an idle desktop client](done/idle-onframe-tick-rate.md)** [2026-09-24]
+  debugging.md promises a registered onFrame keeps the runtime calling it
+  every frame at the refresh rate; on a SwapPaced desktop client whose picture
+  does not change, the callback ran 2-3 times a second and only a picture
+  change (or a control-API call) produced a frame, so a frame loop that
+  integrates from tick deltas (a gravity fall that does not move the camera
+  yet) stalls.
 - **[Idle tick runs away when the raster thread falls behind](done/idle-tick-gpu-backlog-runaway.md)** [2026-07-28]
   The idle-tick gate read pending_presents == 0 as "GPU idle", but it was
   equally true when the raster thread was too far behind to have returned a
@@ -1834,6 +1816,10 @@ Finished, kept for the reasoning.
   now. Fixed 2026-08-08 - the clip is emitted in box space, under the user
   chain before the fit, on both the paint and hit paths, pinned at both
   scales.
+- **[Children drawn outside their parent's box are not hit-testable](done/overflow-visible-hit-testing.md)** [2026-09-24]
+  A parent's bounds check gates descent into its children as well as its own
+  hit, so a child painted outside the parent's layout box under overflow
+  visible receives no pointer events.
 - **[Demos a user can run, shipped inside the packages](done/package-demos.md)** [2026-08-25]
   Done 2026-08-25 - a package's demos/ folder is one project (shared
   package.json, tsconfig and assets/, one src/*.tsx per demo); srt demo lists
@@ -1991,6 +1977,12 @@ Finished, kept for the reasoning.
   captureSnapshot and get_snapshot latch a frame request but do not wake the
   render loop, so a truly idle client never services the capture and the query
   times out.
+- **[Snapshot boundary textures leak across dev reloads](done/snapshot-texture-leak-reload.md)** [2026-09-24]
+  get_gpu_resources on the SM-T500 listed 51 window-sized rgba8 "snapshot"
+  textures (2000x1092, ~8.7 MB each, ~440 MB) after a session of reloads;
+  get_stats' `textures` grows by one per reload. The old app instance's
+  snapshot boundary (the demo's backdrop) is never freed when the next bundle
+  is pushed.
 - **[Collision queries on the spatial index - overlap, shape sweep, move-and-slide](done/spatial-collision-queries.md)** [2026-09-06]
   The only collision tool a game has is the raycast against an undrawn
   collider mesh, so a character walking into a wall, picking up an item or
@@ -2181,6 +2173,14 @@ Finished, kept for the reasoning.
   gated or slow frames a 1.5 s timer observably fires ~0.5-1 s late - async UI
   (pending buttons, toasts, polls) feels laggy while the app idles or animates
   lightly.
+- **[Transition writes before the first frame anchor at clock 0](done/transition-clock-startup-anchor.md)** [2026-09-24]
+  The animation clock is stamped once per frame, so a transition target
+  written at module-eval time (before any frame ran) starts its track at clock
+  0 and the first stamped advance fast-forwards the whole startup latency - a
+  300ms spring can be most of the way done when the first frame paints.
+  Element and node transitions share the artifact; spatial is more exposed
+  because writing initial targets during scene setup is a natural pattern. An
+  install-time (or first-JS-entry) clock stamp is the likely few-line fix.
 - **[A delayed transition starts late when the frame that activates it lands late](done/transition-delay-catch-up.md)** [2026-09-10]
   A held write (a `delay`, a stagger slot) applies at the first advance that
   finds it due and its track starts at that frame's clock, so a frame hitch

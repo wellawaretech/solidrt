@@ -1,4 +1,5 @@
 use std::sync::mpsc;
+use std::time::Duration;
 
 use crate::backend::FrameOutput;
 use crate::event::AlloyEvent;
@@ -14,6 +15,13 @@ pub struct PlaybackConfig {
   // Scripted input replayed deterministically against the virtual frame
   // clock; empty when no script was given (a pure time-based capture).
   pub script: ScriptPlayer,
+  // Wall time the app gets after its mount frame, before the frame signal
+  // that builds the first written frame: what loads asynchronously (a
+  // fetch, a file read, an isolate build) is in the picture instead of the
+  // loading state the lockstep clock would otherwise capture. The frame
+  // clock does not run meanwhile - timers hold, I/O completions land. Zero
+  // without `--settle`.
+  pub settle: Duration,
 }
 
 // Lockstep capture loop: block until the raster thread (which owns the
@@ -72,6 +80,11 @@ pub(crate) fn run_playback_loop(
     }
     if draw == playback.frames {
       break;
+    }
+    if draw == 0 && !playback.settle.is_zero() {
+      // The mount frame is drawn; the settle runs before the signal that
+      // builds the first written frame (see PlaybackConfig::settle).
+      std::thread::sleep(playback.settle);
     }
 
     // Scripted input due for the NEXT draw must reach the UI thread before

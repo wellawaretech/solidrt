@@ -426,3 +426,80 @@ fn zero_stroke_width_box_kinds_hit_nothing() {
   oval.paint.draw_style = DrawStyle::StrokeAndFill;
   assert!(oval.is_in_bounds(Point::new(50.0, 50.0), &ctx));
 }
+
+// Fills the paint envelopes the way a paint walk would: the hit test's
+// descent gate reads them (hit_recursive subtree_may_contain).
+fn envelopes(tree: &RenderTree) {
+  let platform = PlatformContext::new(Vec::new());
+  let root = tree.root.expect("root");
+  let size = tree.node(root).painted_size().unwrap_or_default();
+  crate::rendertree::cull::envelope(tree, root, &platform, size);
+}
+
+// A dropdown hanging below its trigger: node 2's box is 100x40 at (20, 20)
+// and its child 3 sits below that box, at (50, 40) in 2's frame, 50x60.
+fn tree_with_overflowing_child() -> RenderTree {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 20.0, 20.0, 100.0, 40.0);
+  place(&mut tree, 3, 50.0, 40.0, 50.0, 60.0);
+  tree
+}
+
+fn ids_at(tree: &RenderTree, x: f32, y: f32) -> Vec<u64> {
+  DefaultHitTester.hit_test(tree, Point::new(x, y)).iter().map(|&(id, _, _)| id).collect()
+}
+
+#[test]
+fn child_outside_parent_box_is_hit_under_overflow_visible() {
+  // Paint honors overflow visible, so the child shows below the parent's
+  // box and must be hittable there (okf/done/overflow-visible-hit-testing.md).
+  let tree = tree_with_overflowing_child();
+  envelopes(&tree);
+
+  // Inside the child, below the parent's box: the whole chain, the parent
+  // on the path for its child (bubbling) though its own box misses.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(90.0, 90.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2, 3]);
+  assert_xy(path[2].2, 20.0, 30.0);
+  // Below the parent's box but beside the child: inside the subtree's
+  // envelope, so the walk descends, finds nothing, and the parent alone
+  // never claims a point outside its box.
+  assert_eq!(ids_at(&tree, 40.0, 90.0), vec![1]);
+  // Outside the envelope altogether: one rect test ends the walk.
+  assert_eq!(ids_at(&tree, 90.0, 150.0), vec![1]);
+  // The parent's own hover region is still its box.
+  assert_eq!(ids_at(&tree, 40.0, 40.0), vec![1, 2]);
+}
+
+#[test]
+fn clipping_parent_keeps_its_overflowing_child_unhittable() {
+  let mut tree = tree_with_overflowing_child();
+  hide_overflow(&mut tree, 2);
+  envelopes(&tree);
+  assert_eq!(ids_at(&tree, 90.0, 90.0), vec![1]);
+}
+
+#[test]
+fn unpainted_subtree_descends_without_an_envelope() {
+  // No paint walk yet, no envelope: the gate is conservative and descends.
+  let tree = tree_with_overflowing_child();
+  assert_eq!(ids_at(&tree, 90.0, 90.0), vec![1, 2, 3]);
+}
+
+#[test]
+fn all_captures_nothing_outside_its_box() {
+  let mut tree = tree_with_overflowing_child();
+  tree.node_mut(2).interaction =
+    Some(hit::HitConfig { pointer_events: Some(hit::PointerEvents::All), ..Default::default() });
+  envelopes(&tree);
+  assert_eq!(ids_at(&tree, 90.0, 90.0), vec![1]);
+  assert_eq!(ids_at(&tree, 40.0, 40.0), vec![1, 2]);
+}

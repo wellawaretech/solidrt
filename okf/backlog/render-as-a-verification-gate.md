@@ -75,3 +75,21 @@ playback loop, or a line the CLI greps for, and the first is cleaner).
 `--settle` is a sleep in `run_playback_loop` before the first written
 draw; `--wait-idle` needs a drain signal out of flux, which is why it is
 the second choice.
+
+## Progress: the runtime half is in (2026-09-24)
+
+The runner (`lattice/src/main.rs`) takes `--strict` and `--settle <ms>`.
+`--strict` counts error-level engine log lines (console.error, which
+carries the renderer's contained errors, and every uncaught error) and
+fails a completed capture that logged any, naming the count and the first
+line: exit 1, `1 error was logged during the capture; the first: ...`.
+`--settle` sleeps that much wall time after the mount draw, before the
+frame signal that builds the first written frame; timers hold (they are on
+the frame clock), I/O completions land. Verified with a throwing build
+(exit 0 plain, 1 strict) and a fetch answered after 300 ms (frame 0 reads
+LOADING plain, the body with `--settle 1000`). `--fps` stays a positive
+integer, decided.
+
+Left: the CLI half - `srt render --strict` / `--settle` passing the flags
+through, and the cli/AGENTS.md paragraph on what exit 0 proves shrinking to
+the flags.

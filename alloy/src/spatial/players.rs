@@ -178,7 +178,9 @@ pub(super) struct PlayerSet {
   players: Vec<Player>,
   next_clip: ClipId,
   next_player: PlayerId,
-  last_ms: f64,
+  // The clock of the last advance; started with the transition clock by
+  // the arena (mod.rs set_transition_now).
+  pub(super) last_ms: f64,
   events: Vec<ClipEvent>,
   /// Root-motion deltas of the last advance, per bound player:
   /// translation and yaw (radians).

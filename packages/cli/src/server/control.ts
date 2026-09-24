@@ -27,6 +27,10 @@ import type {
 // server without bound; readers page through it with the `since` cursor.
 const LOG_CAP = 2000
 const QUERY_TIMEOUT_MS = 5000
+// Wall time a clock query is allowed per stepped frame on top of the base
+// timeout: the client answers once its steps ran, one per frame, and
+// waits at most about this long for each before giving up.
+const CLOCK_STEP_WAIT_MS = 50
 const MAX_WAIT_MS = 30000
 // Delay between acking POST /shutdown and running the shutdown, so the
 // response reaches the caller before the listener closes.
@@ -519,19 +523,23 @@ export async function handleControl(req: Request, path: string, query: Map<strin
         extra.scale = scale
       }
       let stepParam = query.get("step")
+      let steps = 0
       if (stepParam !== undefined) {
         let step = parseInt(stepParam, 10)
         if (!Number.isFinite(step) || step < 1 || step > 1000)
           return Response.json({ error: "Clock step must be an integer between 1 and 1000" }, { status: 400 })
         extra.step = step
+        steps = step
       }
       if (!("scale" in extra) && !("step" in extra))
         return Response.json({ error: "Clock requires ?scale=<x> or ?step=<n>" }, { status: 400 })
-      // The reply is the clock as the client now has it; its scale is kept
-      // on the client's entry so /clients reports it (a push resets it).
+      // The reply is the clock as the client now has it, sent once its
+      // stepped frames ran (so a read right after sees the stepped state);
+      // its scale is kept on the client's entry so /clients reports it (a
+      // push resets it).
       let target = findClient(query.get("client"))
       if ("error" in target) return target.error
-      let result = await queryClient(target.ws, "clock", extra)
+      let result = await queryClient(target.ws, "clock", extra, QUERY_TIMEOUT_MS + steps * CLOCK_STEP_WAIT_MS)
       if ("error" in result) return result.error
       let info = state.clients.get(target.ws)
       if (info && typeof result.data?.scale === "number") info.timeScale = result.data.scale

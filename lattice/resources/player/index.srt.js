@@ -10757,12 +10757,26 @@ function createTextEditorLayout(viewport, input) {
       carets: true
     });
   });
-  let placed = createMemo((prev) => {
+  let breaking = createMemo(() => {
     let {
       text,
       wrap,
       caretWidth = 0
     } = input();
+    return {
+      text,
+      wrap,
+      caretWidth
+    };
+  }, {
+    equals: sameBreakInput
+  });
+  let placed = createMemo((prev) => {
+    let {
+      text,
+      wrap,
+      caretWidth
+    } = breaking();
     let width = wrap ? Math.max(0, viewportWidth() - caretWidth) : Infinity;
     let units = wrap ? splitWide(prepared(), width) : prepared();
     let out = [];
@@ -10778,7 +10792,8 @@ function createTextEditorLayout(viewport, input) {
         height: line.height,
         width: line.width,
         from: line.from,
-        to: line.to
+        to: line.to,
+        hardBreak: line.hardBreak
       });
       y += line.height;
       hardBreak = line.hardBreak;
@@ -10793,7 +10808,8 @@ function createTextEditorLayout(viewport, input) {
         height: space().height,
         width: 0,
         from: n,
-        to: n
+        to: n,
+        hardBreak: false
       });
     }
     if (prev && prev.units === units.units) {
@@ -10802,9 +10818,11 @@ function createTextEditorLayout(viewport, input) {
           out[i] = prev.lines[i];
       }
     }
+    let holds = units.units === prepared().units ? holdRange(units.units, out) : [Infinity, Infinity];
     return {
       units: units.units,
-      lines: out
+      lines: out,
+      holds
     };
   }, {
     equals: samePlacement
@@ -10944,9 +10962,9 @@ function createTextEditorLayout(viewport, input) {
   };
   let scrollX = createMemo((prev) => {
     let {
-      caretWidth = 0,
+      caretWidth,
       wrap
-    } = input();
+    } = breaking();
     if (wrap)
       return 0;
     let contentWidth = lines().reduce((w, l) => Math.max(w, l.width), 0);
@@ -10959,13 +10977,35 @@ function createTextEditorLayout(viewport, input) {
     let c = caret();
     return follow(prev ?? 0, c.y, c.height, viewportHeight(), last.y + last.height);
   });
+  let keepsBreaks = (width) => {
+    let {
+      wrap,
+      caretWidth
+    } = breaking();
+    if (!wrap)
+      return false;
+    let [min, max] = placed().holds;
+    let w = Math.max(0, width - caretWidth);
+    return w >= min && w < max;
+  };
+  let keepsScroll = (height) => {
+    let ls = lines();
+    let last = ls[ls.length - 1];
+    let c = caret();
+    let current = scrollY();
+    return follow(current, c.y, c.height, height, last.y + last.height) === current;
+  };
   onLayout(() => {
     let node = viewport();
     if (!node)
       return;
     let box = getLayoutBox2(node);
-    setViewportWidth(box?.width ?? 0);
-    setViewportHeight(box?.height ?? 0);
+    let width = box?.width ?? 0;
+    let height = box?.height ?? 0;
+    if (!keepsBreaks(width))
+      setViewportWidth(width);
+    if (!keepsScroll(height))
+      setViewportHeight(height);
   });
   return {
     lines,
@@ -11024,6 +11064,28 @@ function splitWide(prepared, width) {
     text: prepared.text,
     units
   };
+}
+function holdRange(units, lines) {
+  let min = 0;
+  let max = Infinity;
+  for (let i = 0;i < lines.length; i++) {
+    let line = lines[i];
+    if (line.width > min)
+      min = line.width;
+    let next = lines[i + 1];
+    if (!next || line.hardBreak || next.from >= units.length)
+      continue;
+    let pen = 0;
+    for (let u = line.from;u < line.to; u++)
+      pen += units[u].advance;
+    let join = pen + unitInk(units, next.from);
+    if (join < max)
+      max = join;
+  }
+  return [min, max];
+}
+function sameBreakInput(a, b) {
+  return a.text === b.text && a.wrap === b.wrap && a.caretWidth === b.caretWidth;
 }
 function sameOptions(a, b) {
   let ka = Object.keys(a);
@@ -11323,6 +11385,11 @@ function space(token) {
 // ../../packages/components/src/editor-field.tsx
 var CARET_WIDTH = 1;
 var CARET_BLINK_MS = 500;
+function sameFont(a, b) {
+  let ka = Object.keys(a);
+  let kb = Object.keys(b);
+  return ka.length === kb.length && ka.every((k) => a[k] === b[k]);
+}
 function EditorField(props) {
   let [caretOn, setCaretOn] = createSignal(true);
   let node;
@@ -11534,12 +11601,14 @@ function EditorField(props) {
   let layoutFont = () => layout().text;
   let fontSize = () => (layoutFont().fontSize ?? theme.text.body.size) * policy.textScale;
   let lineHeight = () => layoutFont().lineHeight ?? theme.text.body.lineHeight;
-  let font = () => ({
+  let font = createMemo(() => ({
     fontFamily: layoutFont().fontFamily ?? theme.text.fontFamily,
     fontSize: fontSize(),
     lineHeight: lineHeight(),
     fontStyle: layoutFont().fontStyle,
     fontWeight: typeWeight(layoutFont().fontWeight ?? theme.text.body.weight, fontSize())
+  }), {
+    equals: sameFont
   });
   let rowHeight = () => Math.round(fontSize() * lineHeight());
   let editor = createTextEditorLayout(() => viewport, () => ({

@@ -132,6 +132,14 @@ impl EnvelopeCache {
     self.envelope.set(None);
     self.backdrop_below.set(None);
   }
+
+  /// The envelope the last paint walk computed for the node, when it was
+  /// computed against `inherited` (the frame its parent hands its
+  /// children); None before the node's first paint and after an
+  /// invalidation. What the hit test's descent gate reads (hit.rs).
+  pub(crate) fn cached(&self, inherited: Size) -> Option<Extent> {
+    self.envelope.get().filter(|(size, _)| *size == inherited).map(|(_, extent)| extent)
+  }
 }
 
 /// Whether a glass panel (a view with a backdrop filter) paints somewhere

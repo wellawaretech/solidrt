@@ -115,18 +115,19 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
         SDLActivity.onNativeSurfaceDestroyed();
     }
 
-    // Called when the surface is resized
-    @Override
-    public void surfaceChanged(SurfaceHolder holder,
-                               int format, int width, int height) {
-        Log.v("SDL", "surfaceChanged()");
-
+    // Pushes the surface size, the device metrics and the display's current
+    // refresh rate to native (SDL's desktop display mode). surfaceChanged is
+    // the usual caller; the activity's display listener re-runs it when the
+    // display changes under an unchanged surface - a refresh-rate switch,
+    // which SDL otherwise never learns of, so the runtime kept judging its
+    // frames against the old period. Native dedups a resize to the same
+    // size, so the re-push costs SDL one display-mode update.
+    public void pushScreenResolution() {
         if (SDLActivity.mSingleton == null) {
             return;
         }
-
-        mWidth = width;
-        mHeight = height;
+        int width = (int) mWidth;
+        int height = (int) mHeight;
         int nDeviceWidth = width;
         int nDeviceHeight = height;
         float density = 1.0f;
@@ -141,15 +142,32 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
         } catch(Exception ignored) {
         }
 
+        float rate = mDisplay.getRefreshRate();
+        Log.v("SDL", "Window size: " + width + "x" + height);
+        Log.v("SDL", "Device size: " + nDeviceWidth + "x" + nDeviceHeight + " at " + rate + " Hz");
+        SDLActivity.nativeSetScreenResolution(width, height, nDeviceWidth, nDeviceHeight, density, rate);
+        SDLActivity.onNativeResize();
+    }
+
+    // Called when the surface is resized
+    @Override
+    public void surfaceChanged(SurfaceHolder holder,
+                               int format, int width, int height) {
+        Log.v("SDL", "surfaceChanged()");
+
+        if (SDLActivity.mSingleton == null) {
+            return;
+        }
+
+        mWidth = width;
+        mHeight = height;
+
         synchronized(SDLActivity.getContext()) {
             // In case we're waiting on a size change after going fullscreen, send a notification.
             SDLActivity.getContext().notifyAll();
         }
 
-        Log.v("SDL", "Window size: " + width + "x" + height);
-        Log.v("SDL", "Device size: " + nDeviceWidth + "x" + nDeviceHeight);
-        SDLActivity.nativeSetScreenResolution(width, height, nDeviceWidth, nDeviceHeight, density, mDisplay.getRefreshRate());
-        SDLActivity.onNativeResize();
+        pushScreenResolution();
 
         // Prevent a screen distortion glitch,
         // for instance when the device is in Landscape and a Portrait App is resumed.

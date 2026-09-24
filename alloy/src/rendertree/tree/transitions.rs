@@ -268,11 +268,10 @@ impl RenderTree {
   /// Stamp the animation clock: the app-timeline time (ms) of the frame
   /// about to run, set by the embedder before the frame's script work so
   /// writes (track starts) and the advance agree on time. The paced clock's
-  /// pause/scale/step semantics ride in through this value.
+  /// pause/scale/step semantics ride in through this value. The first
+  /// stamp starts the clock (Transitions::set_now).
   pub fn set_transition_now(&mut self, now_ms: f64) {
-    self.transitions.now_ms = now_ms;
-    // Stagger indices are per frame: each stamp opens a fresh count.
-    self.transitions.reset_stagger();
+    self.transitions.set_now(now_ms);
   }
 
   /// The extra delay a stagger group imposes on this node's lifecycle event

@@ -3,10 +3,14 @@ package com.solidrt.app;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.PixelFormat;
+import android.hardware.display.DisplayManager;
 import android.hardware.input.InputManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
+import android.view.Display;
 import android.view.InputDevice;
 import android.view.View;
 import android.view.WindowInsets;
@@ -207,6 +211,41 @@ public class SolidRTActivity extends SDLActivity {
         }, null);
     }
 
+    // A display change under an unchanged surface: a refresh-rate switch
+    // (the panel's peak-rate setting, a battery saver mode). SDL learns the
+    // rate from the surface callbacks only, so without this the runtime
+    // kept the old period after a switch; the re-push hands SDL the fresh
+    // rate through the same path, and SDL's mode-changed event carries it
+    // on to the runtime. Rotation and the like fire it too, where the push
+    // repeats what the surface change already sent.
+    private final DisplayManager.DisplayListener displayListener = new DisplayManager.DisplayListener() {
+        @Override
+        public void onDisplayAdded(int displayId) {
+        }
+
+        @Override
+        public void onDisplayRemoved(int displayId) {
+        }
+
+        @Override
+        public void onDisplayChanged(int displayId) {
+            if (displayId != Display.DEFAULT_DISPLAY || mSurface == null) return;
+            mSurface.pushScreenResolution();
+        }
+    };
+
+    private void watchDisplay() {
+        DisplayManager dm = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+        dm.registerDisplayListener(displayListener, new Handler(Looper.getMainLooper()));
+    }
+
+    @Override
+    protected void onDestroy() {
+        DisplayManager dm = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+        dm.unregisterDisplayListener(displayListener);
+        super.onDestroy();
+    }
+
     // The launch facts for native (SDL hands getArguments() to SDL_main as
     // argv): the runtime reports them to the app as env.launch and
     // env.launchLink. Flavors that add arguments of their own extend this
@@ -258,6 +297,7 @@ public class SolidRTActivity extends SDLActivity {
         super.onCreate(savedInstanceState);
         nativeHardwareKeyboard(hasHardwareKeyboard());
         watchInputDevices();
+        watchDisplay();
 
         // Report the IME inset to native whenever insets change (keyboard
         // show/hide). Listens on the content view so it sees the insets before

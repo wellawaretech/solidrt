@@ -1149,3 +1149,24 @@ fn insert_before_an_exiting_anchor_takes_the_next_flow_slot() {
   let flow: Vec<u64> = tree.node(1).layout_data().layout_children.iter().map(|&n| u64::from(n)).collect();
   assert_eq!(flow, vec![6, 5], "the layout slot is before the next sibling in the flow");
 }
+
+#[test]
+fn write_before_the_first_stamp_starts_at_the_first_advanced_frame() {
+  // A target written at module evaluation or mount, before any frame
+  // stamped the clock (okf/done/transition-clock-startup-anchor.md): the
+  // track begins at the first frame that advances it, whatever app time
+  // the stamp carries (after a reload it reads the previous app's whole
+  // run), instead of integrating that gap in one step.
+  let mut tree = tree_with_animated_rect(LINEAR_100);
+  assert!(tree.transition_write(2, AnimProp::X, Some(scalar(80.0))), "write consumed as a transition");
+  // The bootstrap paint advances before any stamp: nothing moves.
+  tree.advance_transitions();
+  assert_eq!(rect_x(&tree, 2), 0.0);
+
+  tree.set_transition_now(60_000.0);
+  assert!(tree.advance_transitions(), "track runs");
+  assert_eq!(rect_x(&tree, 2), 0.0, "at its start, not fast-forwarded");
+  tree.set_transition_now(60_050.0);
+  tree.advance_transitions();
+  assert!((rect_x(&tree, 2) - 40.0).abs() < 0.01, "halfway 50 ms in, got {}", rect_x(&tree, 2));
+}

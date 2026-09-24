@@ -2,6 +2,7 @@
 title: Children drawn outside their parent's box are not hit-testable
 description: A parent's bounds check gates descent into its children as well as its own hit, so a child painted outside the parent's layout box under overflow visible receives no pointer events.
 created: 2026-08-14
+completed: 2026-09-24
 ---
 
 # Children drawn outside their parent's box are not hit-testable
@@ -34,3 +35,25 @@ bound per subtree and where it would be maintained.
 
 Source: root TODO.md, migrated 2026-08-14. Sibling of `done/overflow-viewbox-clip.md`,
 which settled the paint side.
+
+## Done (2026-09-24)
+
+`hit_recursive` splits the two decisions. A node's own hit is still its
+box (its hover region does not change); a miss on an Auto node descends
+into its children when the subtree's paint envelope - the extent the paint
+walk already caches per node for viewport culling (cull.rs, keyed on the
+inherited frame the hit walk passes too) - contains the point. The hit
+extent never exceeds the paint envelope (every laid-out box is in it), so
+a point outside it misses the whole subtree for one rect test and the walk
+stays a box test per sibling in the common case; a subtree not painted
+yet, or behind a 3D transform, descends. A clipping parent still stops at
+its box, and `pointer-events: all` captures nothing outside its box. The
+parent joins the path only for a descendant's hit, so the path stays a
+root-to-leaf chain (bubbling, `locals_along_path`) and the parent receives
+enter/leave through its overflowing child, as the DOM does. No union
+bound had to be maintained: the envelope cache was already there.
+
+Tests in `alloy/src/tests/hit.rs`. Verified live with a trigger view and a
+dropdown child below its box (`probes/batch3-probe.tsx`): a tap on the
+dropdown reached its handler, and a pointer moving onto it entered the
+trigger.

@@ -2803,9 +2803,13 @@ impl Spatial {
   /// once per frame before any frame work runs, so writes and the advance
   /// agree on time; pause/scale/step semantics ride in with the stamp.
   pub fn set_transition_now(&mut self, now_ms: f64) {
-    self.transitions.now_ms = now_ms;
-    // Stagger indices are per frame: each stamp opens a fresh count.
-    self.transitions.stagger_counts.clear();
+    // The first stamp starts the clock (NodeTransitions::set_now); the clip
+    // players' clock starts with it, or their first advance would integrate
+    // the same gap (a one-shot clip started at mount finished on the spot
+    // after a reload).
+    if self.transitions.set_now(now_ms) {
+      self.players.last_ms = now_ms;
+    }
   }
 
   /// The nearest ancestor declaring `stagger_ms` (its arena index and

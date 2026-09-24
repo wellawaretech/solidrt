@@ -297,11 +297,13 @@ when exactly one client is connected.
   next to physical ones and reach `gamepads()` and everything on it; the
   mute leaves them alone.
 - POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused;
-  `{ scale, pendingSteps }` back. Steps apply at the client's frame rate,
-  so GET `/clock` (the same record, nothing changed) and wait for
-  `pendingSteps` to reach 0 before reading state or snapshotting the
-  stepped result. `/clients` reports each client's `timeScale`, reset to
-  1 by every push.
+  `{ scale, pendingSteps }` back. Steps apply one per frame at the client's
+  frame rate, and the reply waits for them: `pendingSteps` is 0 once they
+  all ran, so the next read or snapshot sees the stepped state. A nonzero
+  count means the client stopped running frames (a wedged app) and the
+  reply gave up waiting. GET `/clock` reads the same record without
+  touching it. `/clients` reports each client's `timeScale`, reset to 1 by
+  every push.
 - POST `/reload` - rebuild and push to every client; `{ ok, clients }` or
   the build error.
 - POST `/load` with `{ "entry": "<path>" }` - switch the entry and push it;
