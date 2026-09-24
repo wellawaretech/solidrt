@@ -202,6 +202,7 @@ impl Line {
     if self.paint.fills() {
       let mut paint = self.paint.to_paint_in(&bounds);
       paint.set_draw_style(DrawStyle::Fill);
+      crate::rendertree::counters::note_draw();
       builder.draw_path(&polyline_path(points, true), &paint);
     }
     if self.paint.strokes() {
@@ -211,6 +212,7 @@ impl Line {
         Some(dash) => dashed_path(points, self.closed, dash),
         None => polyline_path(points, self.closed),
       };
+      crate::rendertree::counters::note_draw();
       builder.draw_path(&path, &paint);
     }
   }
@@ -251,9 +253,11 @@ impl Line {
       // regardless of the style, like draw_line.
       Some(dash) => {
         paint.set_draw_style(DrawStyle::Stroke);
+        crate::rendertree::counters::note_draw();
         builder.draw_path(&dashed_path(&points, false, dash), &paint);
       }
       None => {
+        crate::rendertree::counters::note_draw();
         builder.draw_line(from, to, &paint);
       }
     }

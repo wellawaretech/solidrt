@@ -36,9 +36,11 @@ So on this GPU class:
 - performance.md gets a "paint costs on tiled GPUs" list with these
   numbers: gradients, rounded clips on resizing boxes, non-source-over
   blends, draw count.
-- get_stats reports per frame: draws, clips (rect / rounded), save
-  layers, non-source-over blends, and gradient paints, so an app author
-  reads the cause instead of bisecting the scene.
+- Done 2026-09-23: get_stats reports `paintOps` per rebuild (latest, and
+  the window's worst frame): draws (of which paragraphs), clips (of which
+  rounded), save layers, non-source-over blends and gradient paints, on
+  the HUD as DRW/CLP/LYR and BLD/GRD, so an app author reads the cause
+  instead of bisecting the scene.
 - Worth checking in Impeller: whether the gradient is regenerated (a
   gradient texture upload) per draw per frame on GLES, and why
   destination-out/over leave the fast blend path.

@@ -63,6 +63,10 @@ const OPTIONS = {
     port: { type: "string" },
     device: { type: "string" },
     install: { type: "boolean" },
+    census: { type: "boolean", default: false },
+    layer: { type: "string" },
+    clear: { type: "boolean", default: false },
+    seconds: { type: "string" },
 } as const
 
 export let { values, positionals } = parse()
@@ -186,9 +190,19 @@ export function validateArgs() {
   if (values.server && command !== "client") {
     usage("srt client --server <host:port>  (--server is only valid with the client command)")
   }
-  // --json is the dev server's rebuild contract (bundle.ts).
-  if (values.json && command !== "bundle") {
-    usage("srt bundle --json  (--json is only valid with the bundle command)")
+  // --json is the dev server's rebuild contract (bundle.ts), and the census
+  // summary's machine-readable form.
+  let census = command === "android" && values.census
+  if (values.json && command !== "bundle" && !census) {
+    usage("srt <bundle|android --census> --json  (--json is only valid with the bundle command and android --census)")
+  }
+  // --census reads the compositor's record of the client's presents; its
+  // options mean nothing without it.
+  if (values.census && command !== "android") {
+    usage("srt android --census  (--census is only valid with the android command)")
+  }
+  if ((values.clear || values.seconds !== undefined || values.layer !== undefined) && !census) {
+    usage("srt android --census [--clear] [--seconds <N>] [--layer <name>]  (only valid with android --census)")
   }
   // --port binds the dev server (`run`, `server`) or picks one (`client`,
   // `android`, `mcp`).

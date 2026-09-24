@@ -1,7 +1,8 @@
 ---
 title: A pass's execMs does not say whether the cost is vertices or fill
-description: gpuPassExecMs is one number per pass, so "is this point cloud vertex-bound or fill-bound" can only be answered by changing a variable and differencing twice; primitives submitted is already known CPU-side and could be reported, while a real fragment count is not available on the GLES 3.0 baseline.
+description: Landed 2026-09-23 with the per-target attribution: the vertices (indices on an indexed draw) each pass submits are counted from the draw ranges at issue, per target, and reported per presented frame in get_stats' window.targets and cumulatively in /gpu; fragments shaded stay a documented gap on the GLES 3.0 baseline, so fill still needs subtraction.
 created: 2026-09-08
+completed: 2026-09-23
 ---
 
 # A pass's execMs does not say whether the cost is vertices or fill
@@ -53,5 +54,17 @@ The cheap half first, then an honest limit:
 Plumbing counts already present in the draw entry out through the same
 report `execMs` rides (`lattice/src/go/connection.rs`), plus the
 per-target attribution work in
-okf/backlog/gpu-per-target-pass-attribution.md, which is the same
-report and should land together.
+okf/done/gpu-per-target-pass-attribution.md, which is the same
+report and landed together with this.
+
+## Landed (2026-09-23)
+
+The cheap half, as shaped: `run_pass` (alloy/src/gl/pass.rs) sums
+`vertex_count x instance_count` over the entries it draws (and the
+fullscreen triangle's three) into a raster-thread local that the pass
+accounting owner (`timed_pass` in raster/targets.rs, and the node shader
+pass) takes around each pass and credits to the target beside its pass
+count. Reported cumulatively as `vertices` on the `/gpu` inventory and per
+presented frame as `verticesPerFrame` in `window.targets`. The honest
+limit stands: fragments shaded has no portable answer on GLES 3.0, so
+debugging.md keeps saying fill needs subtraction.

@@ -24,3 +24,17 @@ that presented ~120 (per `dumpsys SurfaceFlinger --latency`, and per the
   clock or to frames that "changed the picture" in a way a layout slide
   does not satisfy, say so in the tool description and offer the
   wall-clock one.
+
+## Not reproduced (2026-09-23)
+
+On the same tablet, with a probe sliding ten panes on a layout transition
+for 2 s, `get_stats` with `window_ms` 4000 read right after the slide
+answered 72-78 frames three times out of three, and 75 beside a
+`srt android --census` count of 76 presents over the same span. Two
+things changed since the report: the cadence hold resets after idle
+(done/cadence-hold-sticky-android.md), and the GPU term no longer
+stretches frames. The stats query now logs, at debug level, what the
+ring held whenever a window comes back empty over a non-empty ring
+(`[stats] window ... found no frames; the ring holds N (oldest, newest)`),
+so a recurrence names the gap. Close this if the next Android session on
+the original scene does not reproduce it.

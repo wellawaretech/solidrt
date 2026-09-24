@@ -190,6 +190,7 @@ impl Buildable for Text {
       let mut words = ctx.platform.words();
       let mut draw = |shaped: &ShapedRun, x: f32, y: f32| {
         if let Some(word) = words.get_or_shape(&typography, &shaped.text, &styles[shaped.style]) {
+          crate::rendertree::counters::note_paragraph();
           builder.draw_paragraph(&word.paragraph, Point::new(origin.x + x, origin.y + y));
         }
       };

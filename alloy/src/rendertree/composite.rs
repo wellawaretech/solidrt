@@ -287,6 +287,7 @@ pub(super) fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
       bottom_right: Point::new(br, br),
       bottom_left: Point::new(bl, bl),
     };
+    crate::rendertree::counters::note_clip(true);
     builder.clip_rounded_rect(&rect, &radii, ClipOperation::Intersect);
   } else {
     let x_min = if clip_x { 0.0 } else { -CLIP_INF };
@@ -294,6 +295,7 @@ pub(super) fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
     let x_max = if clip_x { w } else { CLIP_INF };
     let y_max = if clip_y { h } else { CLIP_INF };
     let rect = Rect::new(Point::new(x_min, y_min), Size::new(x_max - x_min, y_max - y_min));
+    crate::rendertree::counters::note_clip(false);
     builder.clip_rect(&rect, ClipOperation::Intersect);
   }
 }
@@ -401,7 +403,9 @@ pub(super) fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element,
   // intersect an identical clip, which is a no-op.
   builder.save();
   apply_clip(builder, element);
+  crate::rendertree::counters::note_clip(false);
   builder.clip_rect(&bounds, ClipOperation::Intersect);
+  crate::rendertree::counters::note_save_layer();
   builder.save_layer(&bounds, paint.as_ref(), Some(&backdrop));
   builder.restore();
   builder.restore();
@@ -836,6 +840,7 @@ pub(super) fn record_node<'a>(
   if effect_layer {
     let paint = effect_paint(0.0, opacity, filter);
     let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
+    crate::rendertree::counters::note_save_layer();
     builder.save_layer(&bounds, Some(&paint), None);
   }
   // A backdrops-only pass opens no layer: a fading view below the root

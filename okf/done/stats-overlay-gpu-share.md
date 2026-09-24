@@ -1,7 +1,8 @@
 ---
 title: The stats overlay reads GPU 0% while the same counters say 16%
-description: The HUD's GPU line sits at 0% whatever is on screen, though get_stats over the same window computes a 16% share from the same two counters; the arithmetic in both paths is identical on inspection, so the fault is in what record_gpu observes and needs instrumenting rather than reading.
+description: Fixed 2026-09-23: the HUD computed its own GPU share from a once-a-second pair of counter marks and read 0% while get_stats, from the frame history, read 16% on the same client; the HUD now takes the frame history's figure over the last second (RasterRates::gpu_share_pct, the one computation, unit-tested), and reads 22% on a sliding-panes probe where the query agrees.
 created: 2026-09-10
+completed: 2026-09-23
 ---
 
 # The stats overlay reads GPU 0% while the same counters say 16%
@@ -71,3 +72,19 @@ check:
   GPU line says the share is deliberately taken against the present
   interval rather than `frame_ms` for that reason. Worth confirming the
   divisor is the one that comment intends.
+
+## Fixed (2026-09-23)
+
+Not by instrumenting the old path but by deleting it: `Stats` kept its own
+`gpu_mark`/`gpu_now` pair, sampled once a second, and divided them itself,
+while the stats query divided the frame history's raster samples over its
+window. Two computations of one figure, and only the second was right.
+`RasterRates` (lattice/src/frame_history.rs) now carries `present_ms` and
+`gpu_share_pct()` - the window draw plus the shader passes per presented
+frame against the present interval - and the draw loop reads it over the
+last second when it builds the HUD; `StatsSnapshot` lost `gpu_ms` and
+`present_ms`. A test pins the share against a synthetic record sequence,
+and the line is hidden while no frame changes the picture (an idle app has
+no GPU share to show). Verified on the linux client: the HUD line moved
+from a stuck 0% to 22% on the batch-1 probe while `get_stats` read the
+same figure from the same window.

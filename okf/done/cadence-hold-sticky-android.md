@@ -1,7 +1,8 @@
 ---
 title: The cadence hold never steps down on Android and reads the held interval as GPU time
-description: On the SM-T500 get_stats' gpuFrameExecMsPerFrame tracked the held interval (43-51 ms at a hold of 3) while SurfaceFlinger's frameReady-minus-queue spans were 25-32 ms, so the step-down prediction (offset + cpu + gpu + margin must fit the shorter slot) never passes, the hold stays at 3 through idle, and every later animation starts at 20 fps even when its frames would fit one refresh. Reload resets it.
+description: Fixed 2026-09-23: the frame's GPU term from the EGL frame timestamps started at the frame's first GPU command, so under a hold the buffer dequeue's wait was charged as GPU time (43-51 ms against 25-32 ms of work) and the step-down prediction never fit; it now starts at the instant the swap queued the buffer, the census's own queue column, and the tablet reads 23.7 ms against a census span of 24.3 ms. The idle reset landed 2026-09-22.
 created: 2026-09-22
+completed: 2026-09-23
 ---
 
 # The cadence hold never steps down on Android and reads the held interval as GPU time
@@ -55,3 +56,26 @@ adopted to fix it; on this device the timestamps path shows it too.
   interaction, stays open.
 - get_stats reports the compositor's queue-to-ready span beside the
   runtime's own figure on Android, so the two can be compared in place.
+
+## Fixed (2026-09-23)
+
+The suspected cause was the cause. `alloy/src/frame_timestamps.rs` asks
+the stack for the frame's queue instant beside its rendering-complete
+time (`EGL_REQUESTED_PRESENT_TIME_ANDROID`, the queue time when no
+presentation time is requested) and charges `complete - max(queued,
+previous complete)`; the first command stays the floor only on a surface
+that does not report the queue instant (the probe logs which floor is in
+use). The third bullet above is met by construction rather than by a
+second field: the runtime's figure now is the compositor's queue-to-ready
+span, measured by `srt android --census` (the census tool landed in the
+same batch).
+
+Measured on the SM-T500 with a sliding-panes probe (ten rounded panes,
+five paragraphs, held at 3 because its work genuinely needs three slots,
+44 ms mean): `gpuFrameExecMsPerFrame` 23.7 ms beside the census's
+frameReady-minus-queue p50 24.3 ms over the same slide, where the old
+floor read 43-51 ms. With an honest GPU term the step-down prediction
+sees the real slot use; a workload that crosses back below a boundary
+mid-interaction was not in the probe, so that step itself was not
+observed on device (the controller's rule is covered by
+alloy/src/tests/cadence.rs).

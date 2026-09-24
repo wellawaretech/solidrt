@@ -294,13 +294,6 @@ Shaped, not started.
   beneath per panel; desktop holds 60 fps with four panels over live content,
   but tiler GPUs pay differently for mid-frame target reads - measure before
   treating the prop as casual on TV/phone.
-- **[The cadence hold never steps down on Android and reads the held interval as GPU time](backlog/cadence-hold-sticky-android.md)** [2026-09-22]
-  On the SM-T500 get_stats' gpuFrameExecMsPerFrame tracked the held interval
-  (43-51 ms at a hold of 3) while SurfaceFlinger's frameReady-minus-queue
-  spans were 25-32 ms, so the step-down prediction (offset + cpu + gpu +
-  margin must fit the shorter slot) never passes, the hold stays at 3 through
-  idle, and every later animation starts at 20 fps even when its frames would
-  fit one refresh. Reload resets it.
 - **[Generate the docs/core.md props reference from the types](backlog/core-docs-generated-props.md)** [2026-08-06]
   Hand-copied prop lists are how core.md drifted (fill/background/imageWidth);
   jsx-runtime.d.ts and types.d.ts are clean enough to generate the per-element
@@ -432,11 +425,6 @@ Shaped, not started.
   what the runtime fills). Still open - the composition questions - whether
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
-- **[Pass counters are whole-frame, so no one target can be blamed](backlog/gpu-per-target-pass-attribution.md)** [2026-09-08]
-  get_stats reports gpuPassesPerFrame and gpuPassExecMsPerFrame for the whole
-  client, but an app drawing a scene, two views, a shadow atlas and a probe
-  has five candidates and no way to tell which one is expensive; every target
-  already carries a label.
 - **[More pipeline blend modes](backlog/gpu-pipeline-blend-modes.md)** [2026-07-29]
   The blend vocabulary on createPipeline is "none", "add", "multiply" and
   "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max)
@@ -449,11 +437,6 @@ Shaped, not started.
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an srt doctor helper
   rather than an engine feature.
-- **[A pass's execMs does not say whether the cost is vertices or fill](backlog/gpu-vertex-fill-attribution.md)** [2026-09-08]
-  gpuPassExecMs is one number per pass, so "is this point cloud vertex-bound
-  or fill-bound" can only be answered by changing a variable and differencing
-  twice; primitives submitted is already known CPU-side and could be reported,
-  while a real fragment count is not available on the GLES 3.0 baseline.
 - **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
@@ -706,11 +689,6 @@ Shaped, not started.
   One defined home for cross-crate constants that today live as per-site
   literals (.srt-data, http-cache.db, the SolidRT/go identity, size caps);
   collects sites until designed.
-- **[The slow-frame warning fires on the first frame after every load](backlog/slow-frame-warning-first-frame-after-load.md)** [2026-09-07]
-  A load or reload's first frame carries texture uploads and the first raster
-  (paint 25-30 ms, js under 1 ms), so the "Slow frame" line fires on every
-  push and teaches the reader to ignore it; that frame is a known, honest cost
-  and should say so or stay quiet.
 - **[Snapshot diff helper](backlog/snapshot-diff-helper.md)** [2026-08-07]
   A numeric pixel-delta mode on get_snapshot against the previous capture of
   the same node, so "does it still render the same" is one call with a number
@@ -737,11 +715,6 @@ Shaped, not started.
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
   pattern; a helper that selects a prop bundle from state would collapse it.
-- **[The stats overlay reads GPU 0% while the same counters say 16%](backlog/stats-overlay-gpu-share.md)** [2026-09-10]
-  The HUD's GPU line sits at 0% whatever is on screen, though get_stats over
-  the same window computes a 16% share from the same two counters; the
-  arithmetic in both paths is identical on inspection, so the fault is in what
-  record_gpu observes and needs instrumenting rather than reading.
 - **[The stats window has no present-interval jank counter, so a repeated frame can pass every figure clean](backlog/stats-present-interval-jank.md)** [2026-08-31]
   missedPresents (raster-side, demand-gated, run-based counting) is
   implemented and is the figure probes quote; remaining are maxPresentGapMs
@@ -1254,6 +1227,13 @@ Finished, kept for the reasoning.
   content sizing, so in a row it squeezes its sibling labels until they wrap;
   done means code and docs agree, on content sizing unless a consumer shows
   why not.
+- **[The cadence hold never steps down on Android and reads the held interval as GPU time](done/cadence-hold-sticky-android.md)** [2026-09-23]
+  Fixed 2026-09-23: the frame's GPU term from the EGL frame timestamps started
+  at the frame's first GPU command, so under a hold the buffer dequeue's wait
+  was charged as GPU time (43-51 ms against 25-32 ms of work) and the
+  step-down prediction never fit; it now starts at the instant the swap queued
+  the buffer, the census's own queue column, and the tablet reads 23.7 ms
+  against a census span of 24.3 ms. The idle reset landed 2026-09-22.
 - **[A bare string argument to call_debug arrives JSON-quoted](done/call-debug-string-arg-encoding.md)** [2026-09-03]
   Calling a debug command with a bare string argument delivers it to the
   handler with literal quote characters, so a membership guard rejects it and
@@ -1626,6 +1606,13 @@ Finished, kept for the reasoning.
   escape hatch. Landed 2026-08-23 - a `textures` binding value may be `{ id,
   filter?, wrap? }`, overriding the texture's declared sampling for that
   binding only; mipmap stays id state. Verified on Linux by readback.
+- **[Pass counters are whole-frame, so no one target can be blamed](done/gpu-per-target-pass-attribution.md)** [2026-09-23]
+  Landed 2026-09-23: the raster thread publishes every target's cumulative
+  pass counters once per presented frame (a shared snapshot the frame records
+  carry), and get_stats' window reports `targets` - per label, passes, issue
+  and exec time and vertices per presented frame, node shaders under id 0 - so
+  which of a scene, its views, a shadow atlas and a probe is the expensive one
+  is one read.
 - **[GPU pipeline extensions](done/gpu-pipeline-extensions.md)** [2026-08-11]
   "Done as a container 2026-08-11: every decided extension landed (typed
   uniforms + additive blend/depthWrite 2026-07-29, draw range + instancing
@@ -1722,6 +1709,12 @@ Finished, kept for the reasoning.
   one typed UniformSlot (kind + count) driving validation and dispatch alike.
   Sampler arrays deliberately unsupported; large data stays with float
   textures."
+- **[A pass's execMs does not say whether the cost is vertices or fill](done/gpu-vertex-fill-attribution.md)** [2026-09-23]
+  Landed 2026-09-23 with the per-target attribution: the vertices (indices on
+  an indexed draw) each pass submits are counted from the draw ranges at
+  issue, per target, and reported per presented frame in get_stats'
+  window.targets and cumulatively in /gpu; fragments shaded stay a documented
+  gap on the GLES 3.0 baseline, so fill still needs subtraction.
 - **[pointerEvents="all" captured every point in the window](done/hit-test-pointer-events-all.md)** [2026-08-22]
   The hit test only applied its in-bounds gate to pointerEvents auto, so an
   "all" node outside the pointer descended into its children and fell through
@@ -1987,6 +1980,11 @@ Finished, kept for the reasoning.
   Navigation follows the pane count instead of its own breakpoint, and
   TextInput/Select share Button's vertical padding so controls in a row are
   one height.
+- **[The slow-frame warning fires on the first frame after every load](done/slow-frame-warning-first-frame-after-load.md)** [2026-09-23]
+  Fixed 2026-09-23: the engine's first rebuild is tagged in its slow-frame
+  line ("first frame after load: uploads, compiles and the first raster, not
+  steady-state jank"), kept rather than exempted so a load whose first frame
+  takes 300 ms is still seen.
 - **[A snapshot boundary's retained texture as a texture id](done/snapshot-boundary-texture-id.md)** [2026-08-23]
   repaintBoundary="snapshot" kept its subtree's rasterization in an adopted
   texture only the boundary shader could sample. Landed 2026-08-23 as
@@ -2071,6 +2069,12 @@ Finished, kept for the reasoning.
   between render-handler TICKS, so the HUD's GPU share inflates in exact
   proportion to how well the demand gate works - a settled app with the GPU at
   1.3% busy reads GPU 50%, and the reader concludes the opposite of the truth.
+- **[The stats overlay reads GPU 0% while the same counters say 16%](done/stats-overlay-gpu-share.md)** [2026-09-23]
+  Fixed 2026-09-23: the HUD computed its own GPU share from a once-a-second
+  pair of counter marks and read 0% while get_stats, from the frame history,
+  read 16% on the same client; the HUD now takes the frame history's figure
+  over the last second (RasterRates::gpu_share_pct, the one computation,
+  unit-tested), and reads 22% on a sliding-panes probe where the query agrees.
 - **[Stats overlay should draw after the window shader pass](done/stats-overlay-post-shader.md)** [2026-08-10]
   The debug overlay was recorded into the app's display list, so a window
   shader warped the HUD and its once-per-second refresh forced full rebuilds.

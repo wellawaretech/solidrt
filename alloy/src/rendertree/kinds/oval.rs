@@ -36,7 +36,9 @@ impl Buildable for Oval {
         Size::new((rect.size.width + spread * 2.0).max(0.0), (rect.size.height + spread * 2.0).max(0.0)),
       );
       builder.save();
+      crate::rendertree::counters::note_clip(true);
       builder.clip_oval(&rect, ClipOperation::Difference);
+      crate::rendertree::counters::note_draw();
       builder.draw_oval(&cast, &shadow.to_paint());
       builder.restore();
     }
@@ -52,15 +54,18 @@ impl Buildable for Oval {
         if self.paint.fills() {
           let mut fill = self.paint.to_paint_in(&rect);
           fill.set_draw_style(DrawStyle::Fill);
+          crate::rendertree::counters::note_draw();
           builder.draw_oval(&path, &fill);
         }
         let mut stroke = self.paint.to_paint_in(&rect);
         stroke.set_draw_style(DrawStyle::Stroke);
+        crate::rendertree::counters::note_draw();
         builder.draw_path(&dashed_path(outline.into_iter(), dash), &stroke);
       }
       None => {
         let mut paint = self.paint.to_paint_in(&rect);
         paint.set_draw_style(style);
+        crate::rendertree::counters::note_draw();
         builder.draw_oval(&path, &paint);
       }
     }

@@ -1,7 +1,8 @@
 ---
 title: Pass counters are whole-frame, so no one target can be blamed
-description: get_stats reports gpuPassesPerFrame and gpuPassExecMsPerFrame for the whole client, but an app drawing a scene, two views, a shadow atlas and a probe has five candidates and no way to tell which one is expensive; every target already carries a label.
+description: Landed 2026-09-23: the raster thread publishes every target's cumulative pass counters once per presented frame (a shared snapshot the frame records carry), and get_stats' window reports `targets` - per label, passes, issue and exec time and vertices per presented frame, node shaders under id 0 - so which of a scene, its views, a shadow atlas and a probe is the expensive one is one read.
 created: 2026-09-08
+completed: 2026-09-23
 ---
 
 # Pass counters are whole-frame, so no one target can be blamed
@@ -43,5 +44,26 @@ surface, and the stats section of `packages/cli/agents/debugging.md`.
 
 Related: [gpu-timer-query-pass-timing](../done/gpu-timer-query-pass-timing.md)
 made the exec figures trustworthy in the first place, and
-[gpu-system-attribution](gpu-system-attribution.md) is the other axis
+[gpu-system-attribution](../backlog/gpu-system-attribution.md) is the other axis
 (which PROCESS, not which target).
+
+## Landed (2026-09-23)
+
+As shaped. The per-target counters already lived on each `ShaderTexture`
+(`pass_stats()`), readable only by the raster thread; `RasterState::
+publish_target_counters` (alloy/src/raster/frame.rs) now snapshots them
+once per presented frame into `RasterStats::targets` as an `Arc<Vec<
+TargetCounters>>` - one row per target that has rendered, labelled like the
+GPU inventory (a sub-target by its region's label), plus the node shader
+passes under id 0, which render through scratch framebuffers and keep
+their own row on the raster state. Each `FrameRecord` clones the Arc;
+`FrameHistory::summarize` differences a window's first and last records
+per target (a target created mid-window counts from zero) into
+`TargetRates`, reported as `window.targets` with `passesPerFrame`,
+`gpuPassIssueMsPerFrame`, `gpuPassExecMsPerFrame` (absent without timer
+queries, the frame figures' rule) and `verticesPerFrame`
+([gpu-vertex-fill-attribution](gpu-vertex-fill-attribution.md) landed
+with it). `FrameRecord` stopped being `Copy` for the Arc. Unit-tested over
+a synthetic scene/atlas/probe/view window; verified on the linux client
+with a shader-target probe (`probe-waves`: 1 pass, 3 vertices, 0.01 ms per
+frame).

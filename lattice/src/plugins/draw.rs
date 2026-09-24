@@ -1,4 +1,4 @@
-use crate::frame_history::{FrameHistory, FrameRecord};
+use crate::frame_history::{FrameHistory, FrameRecord, Window};
 use crate::overlay;
 use crate::stats;
 use alloy::rendertree::{self, PlatformContext};
@@ -20,6 +20,9 @@ use std::time::{Duration, Instant};
 
 // Slow-frame warnings are throttled to one per this interval.
 const SLOW_WARN_INTERVAL: Duration = Duration::from_secs(1);
+// The frame-history window the HUD's GPU share is computed over, ms: the
+// HUD refreshes once a second, so its figure covers the second just shown.
+const HUD_GPU_WINDOW_MS: f64 = 1000.0;
 
 // The host state the `srt:render` module binds, stashed in userdata by
 // `store_state` before any import so the module's `evaluate` can build
@@ -57,6 +60,11 @@ struct RenderInner {
   // reports as nodesAdded, so a mount frame's honest build cost can be told
   // from steady-state jank.
   last_node_count: Cell<usize>,
+  // Whether this engine has rebuilt a frame yet. Its first rebuild uploads
+  // the textures, compiles what needs compiling and rasters everything once,
+  // so a slow-frame line for it says so and a reader can dismiss it in one
+  // glance instead of learning to skip every "Slow frame" after a reload.
+  first_frame_done: Cell<bool>,
   // What the installed overlay was built against: window geometry (size,
   // display scale, safe area - the overlay is positioned in window space
   // raster-side) and what it shows (HUD on, badge). A change refreshes it
@@ -102,6 +110,7 @@ pub fn store_state(
       overlay_installed: Cell::new(false),
       last_slow_warn: Cell::new(None),
       last_node_count: Cell::new(0),
+      first_frame_done: Cell::new(false),
       overlay_key: Cell::new((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, None)),
     })))
     .expect("store render state");
@@ -196,7 +205,6 @@ impl RenderInner {
     // flush produced.
     let js_ms = render_frame.start.map(|t| t.elapsed().as_secs_f32() * 1000.0).unwrap_or(0.0);
     let set_count = flux::gui::tree::SETPROP_COUNT.with(|c| c.replace(0));
-    stats.borrow_mut().record_gpu(render_frame.frame, &atx.raster_counters());
     stats.borrow_mut().record_js(js_ms, set_count);
     // The figures as of this frame: published for out-of-loop readers on every
     // frame event, gated or not, so a query sees current numbers even while
@@ -226,8 +234,18 @@ impl RenderInner {
       // frame. Built from the figures record_js just sampled; the raster
       // thread retains the list, so nothing is sent while the figures stand.
       if overlay_refresh {
+        // The HUD's GPU share: the frame history's own figure over the last
+        // second, read only when the HUD is drawn.
+        let gpu_pct = stats_on
+          .then(|| {
+            let now_ms = crate::frame_history::now_ms();
+            let history = self.history.lock().expect("frame history lock poisoned");
+            history.summarize(Window::Ms(HUD_GPU_WINDOW_MS), now_ms).and_then(|w| w.raster_rates?.gpu_share_pct())
+          })
+          .flatten();
         let overlay = overlay::build(
           &snap,
+          gpu_pct,
           stats_on,
           badge,
           &platform.typography(),
@@ -273,6 +291,7 @@ impl RenderInner {
               js_ms,
               total_ms: js_ms,
               raster: atx.raster_counters(),
+              targets: atx.target_counters(),
               ..FrameRecord::default()
             });
           }
@@ -332,19 +351,24 @@ impl RenderInner {
           nodes_painted: paint_stats.nodes_painted,
           backdrops_prepainted: paint_stats.backdrops_prepainted,
           raster: atx.raster_counters(),
+          targets: atx.target_counters(),
           captures: paint_stats.captures,
         };
         // A frame over its refresh period is jank a human feels; say so through
         // the engine logger (the one the dev server forwards, so get_logs sees
         // it) with the breakdown that names the phase. A frame a snapshot
         // capture stalled says so up front: the readback is the tool's time,
-        // not a hitch the app made.
+        // not a hitch the app made; so does the engine's first rebuild, whose
+        // cost is the load (see first_frame_done), still worth seeing.
+        let first_frame = !self.first_frame_done.replace(true);
         if record.total_ms > record.period_ms && record.period_ms > 0.0 {
           let due = self.last_slow_warn.get().is_none_or(|t| t.elapsed() >= SLOW_WARN_INTERVAL);
           if due {
             self.last_slow_warn.set(Some(Instant::now()));
             let cause = if record.captures > 0 {
               format!(" - {} snapshot capture(s) in the paint, tooling time, not the app's", record.captures)
+            } else if first_frame {
+              " - first frame after load: uploads, compiles and the first raster, not steady-state jank".to_string()
             } else {
               String::new()
             };

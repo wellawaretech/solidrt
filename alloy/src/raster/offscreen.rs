@@ -163,11 +163,17 @@ impl RasterState {
     }
 
     let start = std::time::Instant::now();
+    crate::gl::take_vertices();
     self.pass_timer.begin(&self.gl);
     crate::gl::render_program_to_fbo(&self.gl, &program, Some(fbo), width, height, &shader.params, &textures, None);
     self.pass_timer.end(&self.gl, crate::gl::Timed::Pass { target: 0 });
+    let micros = start.elapsed().as_micros() as u64;
     self.stats.passes.fetch_add(1, Ordering::Relaxed);
-    self.stats.pass_issue_micros.fetch_add(start.elapsed().as_micros() as u64, Ordering::Relaxed);
+    self.stats.pass_issue_micros.fetch_add(micros, Ordering::Relaxed);
+    // The node shader passes' own row in the per-target counters (id 0).
+    self.node_shader_passes += 1;
+    self.node_shader_issue_micros += micros;
+    self.node_shader_vertices += crate::gl::take_vertices();
 
     unsafe { self.gl.delete_framebuffer(fbo) };
     match output {

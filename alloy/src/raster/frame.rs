@@ -15,6 +15,47 @@ use crate::gl;
 use crate::gl::Timed;
 
 impl RasterState {
+  /// Publish the per-target pass counters (RasterStats::targets): one row
+  /// per shader target that has rendered, labelled like the GPU inventory
+  /// (a sub-target by its region's label), plus the node shader passes
+  /// under id 0. Once per presented frame, as a fresh snapshot.
+  fn publish_target_counters(&self) {
+    let timed = self.stats.timer_queries.load(Ordering::Relaxed);
+    let exec = |micros: u64| timed.then_some(micros);
+    let mut targets: Vec<super::TargetCounters> = self
+      .shaders
+      .iter()
+      .map(|(id, shader)| {
+        let (passes, pass_issue_micros, pass_exec_micros, vertices) = shader.pass_stats();
+        super::TargetCounters {
+          id: *id,
+          label: self
+            .textures
+            .get(id)
+            .and_then(|t| t.label.clone())
+            .or_else(|| shader.region().and_then(|r| r.label.clone())),
+          passes,
+          pass_issue_micros,
+          pass_exec_micros: exec(pass_exec_micros),
+          vertices,
+        }
+      })
+      .filter(|t| t.passes > 0)
+      .collect();
+    if self.node_shader_passes > 0 {
+      targets.push(super::TargetCounters {
+        id: 0,
+        label: Some("node shaders".to_string()),
+        passes: self.node_shader_passes,
+        pass_issue_micros: self.node_shader_issue_micros,
+        pass_exec_micros: exec(self.node_shader_exec_micros),
+        vertices: self.node_shader_vertices,
+      });
+    }
+    targets.sort_by_key(|t| t.id);
+    *self.stats.targets.lock().expect("target counters lock poisoned") = std::sync::Arc::new(targets);
+  }
+
   /// Draw the frame's display list to the window backbuffer and hand it on:
   /// present in interactive mode, read the pixels back in playback mode. Then
   /// notify the main loop, which only does frame bookkeeping (fps,
@@ -136,6 +177,7 @@ impl RasterState {
         self.stats.frame_exec_micros.fetch_add(micros, Ordering::Relaxed);
         self.last_frame_gpu_micros = Some(micros);
       }
+      self.publish_target_counters();
       self
         .tx
         .send(FrameOutput::Presented {

@@ -116,6 +116,7 @@ pub fn draw_underlines<'a>(
         Point::new(origin.x + start, baseline + underline.offset),
         Size::new(end - start, underline.thickness),
       );
+      crate::rendertree::counters::note_draw();
       builder.draw_rect(&rect, &paint.to_paint());
       i = j;
     }

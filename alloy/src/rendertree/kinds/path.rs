@@ -465,11 +465,14 @@ impl Buildable for Path {
       match self.dash().filter(|_| self.paint.strokes()) {
         Some(dash) => {
           if self.paint.fills() {
+            crate::rendertree::counters::note_draw();
             builder.draw_path(path, &styled(DrawStyle::Fill));
           }
+          crate::rendertree::counters::note_draw();
           builder.draw_path(&self.dashed_path(dash), &styled(DrawStyle::Stroke));
         }
         None => {
+          crate::rendertree::counters::note_draw();
           builder.draw_path(path, &styled(style));
         }
       }
@@ -482,15 +485,18 @@ impl Buildable for Path {
         if self.paint.fills() {
           let mut fill = self.paint_in_bounds();
           fill.set_draw_style(DrawStyle::Fill);
+          crate::rendertree::counters::note_draw();
           builder.draw_path(path, &fill);
         }
         let mut stroke = self.paint_in_bounds();
         stroke.set_draw_style(DrawStyle::Stroke);
+        crate::rendertree::counters::note_draw();
         builder.draw_path(&self.dashed_path(dash), &stroke);
       }
       None => {
         let mut paint = self.paint_in_bounds();
         paint.set_draw_style(style);
+        crate::rendertree::counters::note_draw();
         builder.draw_path(path, &paint);
       }
     }

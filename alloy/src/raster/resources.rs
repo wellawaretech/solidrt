@@ -158,6 +158,9 @@ impl RasterState {
           self.stats.pass_exec_micros.fetch_add(exec.micros, Ordering::Relaxed);
           if let Some(shader) = self.shaders.get(&target) {
             shader.record_exec(exec.micros);
+          } else if target == 0 {
+            // Node shader passes time under the id no target holds.
+            self.node_shader_exec_micros += exec.micros;
           }
           // Passes retire in issue order ahead of the window draw they
           // precede (one GL queue), so what has accumulated when a frame's
@@ -233,7 +236,7 @@ impl RasterState {
       .shaders
       .iter()
       .map(|(texture_id, shader)| {
-        let (passes, pass_issue_micros, pass_exec_micros) = shader.pass_stats();
+        let (passes, pass_issue_micros, pass_exec_micros, vertices) = shader.pass_stats();
         // A draw target reports its entries in the `draws` list; the flat
         // single-pass fields stay for the fixed kinds, where they describe
         // the one pass - read off its first (only) entry's record.
@@ -282,6 +285,7 @@ impl RasterState {
           passes,
           pass_issue_micros,
           pass_exec_micros,
+          vertices,
         }
       })
       .collect();

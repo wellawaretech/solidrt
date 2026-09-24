@@ -1,7 +1,8 @@
 ---
 title: The slow-frame warning fires on the first frame after every load
-description: A load or reload's first frame carries texture uploads and the first raster (paint 25-30 ms, js under 1 ms), so the "Slow frame" line fires on every push and teaches the reader to ignore it; that frame is a known, honest cost and should say so or stay quiet.
+description: Fixed 2026-09-23: the engine's first rebuild is tagged in its slow-frame line ("first frame after load: uploads, compiles and the first raster, not steady-state jank"), kept rather than exempted so a load whose first frame takes 300 ms is still seen.
 created: 2026-09-07
+completed: 2026-09-23
 ---
 
 # The slow-frame warning fires on the first frame after every load
@@ -45,3 +46,12 @@ through the same path and get the same tag.
 
 `draw.rs` only: one cell on `RenderInner`, one branch in the warning
 format. No wire or CLI change; `get_logs` shows the tagged line as is.
+
+## Fixed (2026-09-23)
+
+The tag, as preferred: a `first_frame_done` cell on `RenderInner`
+(lattice/src/plugins/draw.rs) flips on the engine's first rebuild, and a
+slow-frame line for that frame carries the "first frame after load"
+cause the way a capture-stalled frame carries its own. `RenderInner` is
+rebuilt per engine, so every load and reload gets exactly one tagged
+frame; debugging.md says what the tag means.

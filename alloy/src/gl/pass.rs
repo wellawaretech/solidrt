@@ -89,6 +89,22 @@ pub(super) struct DrawGroup<'a> {
 /// far plane into depth. Compiled once per raster thread by the owner.
 pub const TILE_CLEAR_FRAGMENT: &str = "uniform vec4 uColor;\nvoid main() { fragColor = uColor; gl_FragDepth = 1.0; }";
 
+thread_local! {
+  // Vertices (indices on an indexed draw) the passes on this thread have
+  // submitted since the last take, from the draw ranges at issue: the
+  // count that says whether a pass is vertex-bound before any timer is
+  // read (okf/done/gpu-vertex-fill-attribution.md). A thread-local rather
+  // than a return value so every path from a target's render to run_pass
+  // keeps its signature; the pass-accounting owner (raster::timed_pass)
+  // takes it around each pass.
+  static VERTICES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Read and zero the vertices submitted on this thread since the last take.
+pub(crate) fn take_vertices() -> u64 {
+  VERTICES.with(|c| c.replace(0))
+}
+
 /// What a `run_pass` invocation executes.
 pub(super) enum PassDraw<'a> {
   /// Attributeless triangles (vertex fetch via gl_VertexID): the fragment
@@ -382,9 +398,11 @@ pub(super) fn run_pass(
     // at the end (see bind_inputs).
     let max_units = gl.get_parameter_i32(glow::MAX_TEXTURE_IMAGE_UNITS).max(1) as usize;
     let mut saved_units: Vec<SavedUnit> = Vec::new();
+    let mut vertices: u64 = 0;
 
     match draw {
       PassDraw::Fullscreen { program, params, textures, vertex_count, clear, blend: blended } => {
+        vertices += vertex_count.max(0) as u64;
         apply_program(gl, program, width, height, params);
         bind_inputs(gl, program, textures, &mut saved_units, max_units);
         // The covering triangle writes opaque coverage over the whole target,
@@ -566,6 +584,7 @@ pub(super) fn run_pass(
             // indexed draw it reads the index value). An indexed entry's
             // element buffer is VAO state, bound since build_vao; the byte
             // offset positions the range within it.
+            vertices += d.range.vertex_count.max(0) as u64 * d.range.instance_count.max(0) as u64;
             match d.index {
               Some(fmt) => {
                 let offset = d.range.first_vertex * fmt.size();
@@ -667,5 +686,6 @@ pub(super) fn run_pass(
     if err != glow::NO_ERROR {
       log::warn!("[shader] GL error {err:#x} after shader pass");
     }
+    VERTICES.with(|c| c.set(c.get() + vertices));
   }
 }

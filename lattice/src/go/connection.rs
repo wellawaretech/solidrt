@@ -725,7 +725,23 @@ async fn try_serve(
                 }
                 .clamped();
                 let now_ms = crate::frame_history::now_ms();
-                let window = queries.history.lock().expect("frame history lock poisoned").summarize(ask, now_ms);
+                let window = {
+                  let history = queries.history.lock().expect("frame history lock poisoned");
+                  let window = history.summarize(ask, now_ms);
+                  // An empty window over a ring that holds frames is the
+                  // reading a tablet gave right after an animation
+                  // (okf/backlog/stats-window-frames-zero.md): say what the
+                  // ring held against the ask, so the next such reading
+                  // names the gap instead of the symptom.
+                  if window.is_none() {
+                    if let Some((count, oldest_ms, newest_ms)) = history.reach(now_ms) {
+                      log::debug!(
+                        "[stats] window {ask:?} at {now_ms:.0} ms found no frames; the ring holds {count} (oldest {oldest_ms:.0} ms ago, newest {newest_ms:.0} ms ago)"
+                      );
+                    }
+                  }
+                  window
+                };
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
@@ -1229,6 +1245,7 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
   put("nodesPainted", s.paint.nodes_painted.into());
   put("backdropsPrepainted", s.paint.backdrops_prepainted.into());
   put("damagePx", (s.paint.damage_px.round() as i64).into());
+  put("paintOps", paint_ops_json(&s.counters));
   put("window", window_json(r.window, r.time_ms, r.ask));
   if let Some((mounted, total)) = r.counts {
     put("mountedNodes", mounted.into());
@@ -1317,6 +1334,7 @@ fn window_json(
       "cacheHits": worst.counters.cache_hits,
       "nodesPainted": worst.nodes_painted,
       "backdropsPrepainted": worst.backdrops_prepainted,
+      "paintOps": paint_ops_json(&worst.counters),
     }),
   );
   if let Some(r) = &w.raster_rates {
@@ -1332,7 +1350,42 @@ fn window_json(
     }
     put("rasterCmdMsPerSec", round2(r.cmd_ms_per_sec).into());
   }
+  if !w.target_rates.is_empty() {
+    let targets: Vec<serde_json::Value> = w
+      .target_rates
+      .iter()
+      .map(|t| {
+        let mut obj = serde_json::json!({
+          "id": t.id,
+          "passesPerFrame": round2(t.passes_per_frame),
+          "gpuPassIssueMsPerFrame": round2(t.issue_ms_per_frame),
+          "verticesPerFrame": round2(t.vertices_per_frame),
+        });
+        insert_label(&mut obj, &t.label);
+        if let Some(exec) = t.exec_ms_per_frame {
+          obj.as_object_mut().expect("target json is an object").insert("gpuPassExecMsPerFrame".into(), round2(exec).into());
+        }
+        obj
+      })
+      .collect();
+    put("targets", targets.into());
+  }
   data.into()
+}
+
+/// The display-list ops one rebuild's paint walk recorded (see
+/// alloy::rendertree::counters), the per-frame counts that name a paint
+/// cost on a tiled GPU without a reload per hypothesis.
+fn paint_ops_json(c: &alloy::rendertree::counters::LayoutCounters) -> serde_json::Value {
+  serde_json::json!({
+    "draws": c.draws,
+    "paragraphs": c.paragraphs,
+    "clips": c.clips,
+    "roundedClips": c.rounded_clips,
+    "saveLayers": c.save_layers,
+    "blends": c.blends,
+    "gradients": c.gradients,
+  })
 }
 
 // Search results are for locating nodes, not dumping the app: enough for a

@@ -28,9 +28,13 @@ pub enum Badge {
 /// with, so the text lays out in the same logical coordinates `safe_area`
 /// is in). The first line is the badge (if any) and, with `hud` on, the
 /// stats HUD's headline figures, FPS last; the rest of the HUD follows only
-/// with `hud` on. None when a paragraph cannot be built.
+/// with `hud` on. `gpu_pct` is the GPU share over the last second's recorded
+/// frames (frame_history::RasterRates::gpu_share_pct, the same figure the
+/// stats query reports), None when there is no GPU timing source or no
+/// frame changed the picture. None when a paragraph cannot be built.
 pub fn build(
   s: &StatsSnapshot,
+  gpu_pct: Option<f32>,
   hud: bool,
   badge: Option<Badge>,
   typography: &TypographyContext,
@@ -65,7 +69,7 @@ pub fn build(
   }
   text.push_str(&format!("{} FPS", s.fps));
   if hud {
-    push_hud_lines(&mut text, s);
+    push_hud_lines(&mut text, s, gpu_pct);
   }
 
   pb.add_text(&text);
@@ -103,7 +107,7 @@ pub fn build(
 }
 
 /// The stats HUD's remaining lines, appended under the first line.
-fn push_hud_lines(text: &mut String, s: &StatsSnapshot) {
+fn push_hud_lines(text: &mut String, s: &StatsSnapshot, gpu_pct: Option<f32>) {
   let paint_stats = s.paint;
   // Each timing is shown as a share of the measured frame period. Every
   // figure and frame_ms are smoothed the same way on the same cadence (the
@@ -127,18 +131,16 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot) {
     pct(s.post_ms),
     pct(s.hover_ms),
   ));
-  // GPU execution (window draw plus shader passes, timer-queried on the
-  // raster thread) as a share of the PRESENT interval, not of frame_ms like
-  // the four above: gpu_ms is per presented frame while frame_ms is the tick
-  // period, and the demand gate makes those differ by exactly the frames it
-  // skips (a settled app presenting once a second read GPU 50% at 1.3%
-  // busy). Both come from the same sample window, so the share is GPU busy
-  // over the window it was measured on. The one figure here that is not
-  // JS-thread work, so it does not sum with the phases; near 100% the GPU
-  // is the bottleneck whatever the phases say. Hidden when the context has
-  // no timer queries.
-  if let Some(gpu_ms) = s.gpu_ms {
-    let gpu_pct = if s.present_ms > 0.0 { gpu_ms / s.present_ms * 100.0 } else { 0.0 };
+  // GPU execution (window draw plus shader passes) as a share of the PRESENT
+  // interval, not of frame_ms like the four above: the demand gate makes
+  // those differ by exactly the frames it skips (a settled app presenting
+  // once a second read GPU 50% at 1.3% busy). Computed by the frame history
+  // over the last second's recorded frames, the one computation the stats
+  // query also reports (a second one here, over its own sample marks, read
+  // 0% while the query said 16% - okf/done/stats-overlay-gpu-share.md).
+  // Hidden without a GPU timing source, and while no frame changes the
+  // picture.
+  if let Some(gpu_pct) = gpu_pct {
     text.push_str(&format!("\nGPU {:.0}%", gpu_pct));
   }
   // Demand-gate savings/sec: frames served from the cached display list
@@ -166,6 +168,16 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot) {
   // while no such fade runs.
   if paint_stats.backdrops_prepainted > 0 {
     text.push_str(&format!("\n{} GLASS", paint_stats.backdrops_prepainted));
+  }
+  // The last rebuild's display-list ops: draws, clips and save layers
+  // (DRW/CLP/LYR), then the paints that leave a tiled GPU's cheap path,
+  // non-source-over blends and gradients (BLD/GRD), shown only when any.
+  let ops = s.counters;
+  if ops.draws > 0 {
+    text.push_str(&format!("\n{} DRW {} CLP {} LYR", ops.draws, ops.clips, ops.save_layers));
+  }
+  if ops.blends + ops.gradients > 0 {
+    text.push_str(&format!("\n{} BLD {} GRD", ops.blends, ops.gradients));
   }
   // Textures currently held in the registry (GL/Impeller texture pairs in use).
   if s.textures > 0 {

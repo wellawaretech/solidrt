@@ -9,12 +9,20 @@
 //! extension is present the frame's GPU term comes from here and the frame's
 //! timer query is not issued; the per-pass queries are untouched.
 //!
-//! The span charged to a frame is `complete - max(begin, previous complete)`:
-//! a frame queued behind the previous frame's GPU work is charged for its own
-//! execution only (the Frame Pacing library's model), and `begin` is taken
-//! ahead of the offscreen pass flush, since on a tiler the passes execute in
-//! the same submission as the window draw. Results land a frame or two behind
-//! the present they describe, which the controller already windows.
+//! The span charged to a frame is `complete - max(queued, previous complete)`,
+//! with `queued` the instant the swap queued the frame's buffer (the stack's
+//! requested-present time, which is the queue time when no presentation time
+//! is requested - the "queue" column of a SurfaceFlinger latency census): a
+//! frame queued behind the previous frame's GPU work is charged for its own
+//! execution only (the Frame Pacing library's model), and on a tiler the
+//! passes execute in the same submission as the window draw, so nothing runs
+//! before the queue. The frame's first GPU command (`begin`) is the floor
+//! only where the stack does not report the queue instant: under a cadence
+//! hold the buffer dequeue blocks after that command, and a span from there
+//! read the held interval as GPU time (43-51 ms for 25-32 ms of work on an
+//! Adreno 610 tablet at a hold of three), which kept the hold from ever
+//! stepping down. Results land a frame or two behind the present they
+//! describe, which the controller already windows.
 //!
 //! Owned by the raster thread, the one thread with the window binding
 //! current; every EGL call here runs there. The three entry points the safe
@@ -30,6 +38,7 @@ use std::collections::VecDeque;
 // probe.
 #[cfg(target_os = "android")]
 const EGL_TIMESTAMPS_ANDROID: i32 = 0x3430;
+const EGL_REQUESTED_PRESENT_TIME_ANDROID: i32 = 0x3434;
 const EGL_RENDERING_COMPLETE_TIME_ANDROID: i32 = 0x3435;
 const EGL_TIMESTAMP_PENDING_ANDROID: i64 = -2;
 const EGL_TIMESTAMP_INVALID_ANDROID: i64 = -1;
@@ -71,8 +80,9 @@ pub(crate) enum Poll {
   /// No value will come (the stack did not record one, or the frame left
   /// its history).
   Gone,
-  /// Rendering complete at this CLOCK_MONOTONIC ns.
-  Complete(i64),
+  /// Rendering complete at this CLOCK_MONOTONIC ns, and the instant the
+  /// swap queued the frame's buffer where the stack reports it.
+  Complete { complete_ns: i64, queued_ns: Option<i64> },
 }
 
 /// What one sweep settled: the latest completed frame's span, and how many
@@ -91,6 +101,8 @@ struct Armed {
   surface: EglSurface,
   next_frame_id: GetNextFrameId,
   timestamps: GetFrameTimestamps,
+  /// Whether the surface reports the queue instant beside the completion.
+  queued: bool,
 }
 
 enum State {
@@ -198,18 +210,28 @@ impl FrameTimestamps {
     let State::Armed(armed) = &self.state else { return None };
     let mut last_error = None;
     let poll = |frame_id: u64| -> Poll {
-      let names = [EGL_RENDERING_COMPLETE_TIME_ANDROID];
-      let mut value: i64 = 0;
-      let ok = unsafe { (armed.timestamps)(armed.display, armed.surface, frame_id, 1, names.as_ptr(), &mut value) };
+      let names: &[i32] = if armed.queued {
+        &[EGL_RENDERING_COMPLETE_TIME_ANDROID, EGL_REQUESTED_PRESENT_TIME_ANDROID]
+      } else {
+        &[EGL_RENDERING_COMPLETE_TIME_ANDROID]
+      };
+      let mut values = [0i64; 2];
+      let ok = unsafe {
+        (armed.timestamps)(armed.display, armed.surface, frame_id, names.len() as i32, names.as_ptr(), values.as_mut_ptr())
+      };
       if ok != EGL_TRUE {
         last_error = Some(armed.egl.get_error());
-        Poll::Gone
-      } else if value == EGL_TIMESTAMP_INVALID_ANDROID {
-        Poll::Gone
-      } else if value == EGL_TIMESTAMP_PENDING_ANDROID {
-        Poll::Pending
-      } else {
-        Poll::Complete(value)
+        return Poll::Gone;
+      }
+      match values[0] {
+        EGL_TIMESTAMP_INVALID_ANDROID => Poll::Gone,
+        EGL_TIMESTAMP_PENDING_ANDROID => Poll::Pending,
+        complete_ns => {
+          // A completed frame's queue instant is settled; a stack that still
+          // answers invalid or pending for it leaves the floor to `begin`.
+          let queued_ns = (armed.queued && values[1] >= 0).then_some(values[1]);
+          Poll::Complete { complete_ns, queued_ns }
+        }
       }
     };
     let swept = sweep(&mut self.pending, &mut self.last_complete_ns, poll);
@@ -268,9 +290,9 @@ pub(crate) fn sweep(
         pending.pop_front();
         swept.gone += 1;
       }
-      Poll::Complete(complete_ns) => {
+      Poll::Complete { complete_ns, queued_ns } => {
         pending.pop_front();
-        if let Some(micros) = span_micros(complete_ns, entry.begin_ns, *last_complete_ns) {
+        if let Some(micros) = span_micros(complete_ns, entry.begin_ns, queued_ns, *last_complete_ns) {
           swept.latest_micros = Some(micros);
         }
         *last_complete_ns = Some(complete_ns);
@@ -280,11 +302,17 @@ pub(crate) fn sweep(
   swept
 }
 
-/// The GPU time charged to a frame: from the later of its first command and
-/// the previous frame's completion, to its own completion. None when the
-/// stamps disagree (a completion before the frame began is not a reading).
-pub(crate) fn span_micros(complete_ns: i64, begin_ns: i64, last_complete_ns: Option<i64>) -> Option<u64> {
-  let start = last_complete_ns.map_or(begin_ns, |last| last.max(begin_ns));
+/// The GPU time charged to a frame: from the latest of its first command,
+/// the instant its buffer was queued (where reported) and the previous
+/// frame's completion, to its own completion. None when the stamps disagree
+/// (a completion before the frame began is not a reading).
+pub(crate) fn span_micros(
+  complete_ns: i64,
+  begin_ns: i64,
+  queued_ns: Option<i64>,
+  last_complete_ns: Option<i64>,
+) -> Option<u64> {
+  let start = begin_ns.max(queued_ns.unwrap_or(begin_ns)).max(last_complete_ns.unwrap_or(begin_ns));
   let span = complete_ns - start;
   (span >= 0).then_some(span as u64 / 1000)
 }
@@ -329,8 +357,10 @@ fn probe() -> State {
   if unsafe { supported(display, surface, EGL_RENDERING_COMPLETE_TIME_ANDROID) } != EGL_TRUE {
     return unsupported("rendering-complete time not supported on this surface");
   }
-  log::info!("[alloy] frame GPU time from EGL frame timestamps (rendering complete)");
-  State::Armed(Armed { egl: instance, display, surface, next_frame_id, timestamps })
+  let queued = unsafe { supported(display, surface, EGL_REQUESTED_PRESENT_TIME_ANDROID) } == EGL_TRUE;
+  let floor = if queued { "queue to rendering complete" } else { "first command to rendering complete" };
+  log::info!("[alloy] frame GPU time from EGL frame timestamps ({floor})");
+  State::Armed(Armed { egl: instance, display, surface, next_frame_id, timestamps, queued })
 }
 
 #[cfg(not(target_os = "android"))]

@@ -287,13 +287,21 @@ impl PaintState {
   // gradients). A box-relative gradient reaching here has no bounds to resolve
   // against, so it is skipped and the solid fallback color shows.
   pub fn to_paint(&self) -> Paint {
+    self.note();
     self.build_paint(None)
   }
 
   // For elements that fill a known box; resolves a box-relative gradient against
   // `bounds` in the element's own paint space.
   pub fn to_paint_in(&self, bounds: &Rect) -> Paint {
+    self.note();
     self.build_paint(Some((bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height)))
+  }
+
+  // The paint-op counters' classification of this paint (see counters.rs):
+  // every draw builds its Paint through the two entries above.
+  fn note(&self) {
+    crate::rendertree::counters::note_paint(self.gradient.is_some(), self.blend_mode != BlendMode::SourceOver);
   }
 
   // Whether the style fills the interior.

@@ -233,17 +233,39 @@ when exactly one client is connected.
   say why. A snapshot capture stalls the frame it lands in (a blocking
   readback inside the paint): those frames are `captureFrames`, left out
   of the percentiles, `slowFrames` and `worst`, and their slow-frame log
-  line says "snapshot capture(s) in the paint" - not a hitch to chase. The `gpu*ExecMs` figures are absent (not 0) when the client's
+  line says "snapshot capture(s) in the paint" - not a hitch to chase; the
+  first rebuild after a load says "first frame after load" for the same
+  reason (uploads, compiles and the first raster), and is still worth a
+  look when it is hundreds of ms. The `gpu*ExecMs` figures are absent (not 0) when the client's
   context has no timer queries or when the startup attribution self-test
   caught the driver booking deferred pass execution to the wrong query,
   as some tiled GPUs do; where they are absent, measure the GPU by
   subtraction (change one variable, take the frame-time delta). On
-  Android `gpuFrameExecMs` is the window frame's rendering-complete span
-  from the compositor's frame timestamps, not a timer query (the pass
-  figures stay timer queries). When
+  Android `gpuFrameExecMs` comes from the compositor's frame timestamps,
+  not a timer query (the pass figures stay timer queries): the span from
+  the instant the swap queued the frame's buffer to its rendering-complete
+  fence, the same "frameReady minus queue" a SurfaceFlinger census reports,
+  so the two agree by construction. When
   comparing two configurations, divide a `frames` delta by a `timeMs`
   delta rather than reading `frameMs`: it is a smoothed EMA and disagrees
-  with the counters under bimodal frame times.
+  with the counters under bimodal frame times. Two breakdowns name a
+  cost without a reload per hypothesis: `paintOps` (top level for the
+  latest rebuild, and in `window.worst`) counts the display-list ops the
+  paint walk recorded - `draws` (of which `paragraphs` are text's per-word
+  paragraph draws), `clips` (of which `roundedClips`), `saveLayers`, and
+  the paints that leave a tiled GPU's cheap path, `blends` (not
+  source-over) and `gradients`; ops inside a reused repaint-boundary
+  recording are not re-recorded and not counted. `window.targets` splits
+  the pass figures per draw target that rendered in the window (`label` as
+  created, `id` 0 = node shaders): `passesPerFrame`,
+  `gpuPassIssueMsPerFrame`, `gpuPassExecMsPerFrame` (absent without timer
+  queries) and `verticesPerFrame`, the vertices (indices on an indexed
+  draw) submitted, which says a pass is vertex-bound before any timer is
+  read; fill still needs subtraction. On Android the compositor's own
+  record of the presents is `srt android --census` (`--clear --seconds
+  <N>` around an interaction): present intervals in refreshes and the
+  per-frame GPU span, the figures every pacing and paint-cost verdict is
+  checked against.
 - `/debug` - the app's registered debug commands; POST
   `/debug?name=<cmd>` with a JSON body as its args to call one.
 - `/link` - GET reads the location the app reports (`{ location }`, a
@@ -355,7 +377,7 @@ The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
   primitive ran 4x slower than the same points as one indexed geometry).
   Vertex cost versus fill is not reported and still needs subtraction:
   change the splat size or the vertex count, take the execMs delta
-  (okf/backlog/gpu-vertex-fill-attribution.md).
+  (okf/done/gpu-vertex-fill-attribution.md).
 - Generating files counts as editing: pause_watch before a data-prep script
   writes into `assets/`, not just before source edits. The dev server watches
   the assets tree, so a script writing a few hundred MB rebuilds and pushes

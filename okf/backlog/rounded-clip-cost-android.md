@@ -50,7 +50,7 @@ So:
   0.2, paintMs 3).
 - get_stats' `gpuFrameExecMsPerFrame` read 43-51 ms in every slow case,
   tracking the held interval rather than the work (see
-  cadence-hold-sticky-android.md), so it could not be used for any of
+  ../done/cadence-hold-sticky-android.md, fixed since), so it could not be used for any of
   this.
 
 ## Not yet known
@@ -75,6 +75,7 @@ add/remove is the next step; the demo reproduces it in one tap.
   and a plain rect clip on the card: 121 frames at 17 ms p50 / 17 ms p90,
   GPU span 14.9 ms p50, raster thread ~15% - the same frame as with no
   rounding at all. The rounded clip's own cost stays open.
-- get_stats per-frame counters for draws, clips, save layers and
-  non-source-over blends, so this kind of cost can be attributed in one
-  read instead of a reload-and-subtract cycle per hypothesis.
+- Done 2026-09-23: get_stats' `paintOps` counts draws, clips (rounded
+  ones apart), save layers and non-source-over blends per rebuild, so
+  this kind of cost is attributed in one read instead of a
+  reload-and-subtract cycle per hypothesis.

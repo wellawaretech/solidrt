@@ -26,7 +26,7 @@ pub mod motion;
 mod playback;
 mod present;
 mod raster;
-pub use raster::{DamageRect, PresentDamage, RasterCounters};
+pub use raster::{DamageRect, PresentDamage, RasterCounters, TargetCounters};
 pub mod rendertree;
 pub mod resample;
 mod script;

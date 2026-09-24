@@ -201,6 +201,10 @@ pub struct GpuPipelineInfo {
   /// Cumulative GPU-side execution time of those passes, in microseconds
   /// (timer queries; 0 when the context has none).
   pub pass_exec_micros: u64,
+  /// Cumulative vertices (indices on an indexed draw) those passes
+  /// submitted, from the draw ranges at issue: a big instance count beside
+  /// a small index count as one number, before any timer is read.
+  pub vertices: u64,
   /// Some = a sub-target: it renders into a rectangle of another draw
   /// target's storage and has no texture entry of its own (its passes are
   /// counted on the parent).

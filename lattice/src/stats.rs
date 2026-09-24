@@ -50,15 +50,6 @@ pub struct StatsSnapshot {
   pub reused: u32,
   pub skipped: u32,
   pub textures: usize,
-  /// GPU-side execution time per presented frame (ms) over the last sample
-  /// window: window draws plus shader passes, from the raster thread's timer
-  /// queries. None when the client's context has none.
-  pub gpu_ms: Option<f32>,
-  /// The same window's wall time per presented frame (ms), measured with
-  /// gpu_ms and the denominator for its share (see overlay::push_hud_lines).
-  /// Not frame_ms: presents run behind the demand gate, ticks do not. 0 until
-  /// a window with a present has closed.
-  pub present_ms: f32,
   /// Layout-activity counters from the last full rebuild, raw (not smoothed):
   /// these are counts to reason about, not rates to watch. See
   /// alloy::rendertree::counters.
@@ -69,6 +60,9 @@ pub struct StatsSnapshot {
   pub dirtied: u32,
   pub cache_gets: u32,
   pub cache_hits: u32,
+  /// The same rebuild's counters whole, for the paint-op counts (draws,
+  /// clips, save layers, blends, gradients) the six above leave out.
+  pub counters: LayoutCounters,
   /// The latest frame's paint walk counts: nodes entered (the mounted count
   /// minus this is what viewport culling skipped, alloy::rendertree::cull)
   /// and the repaint/snapshot boundary figures. All zero when that frame was
@@ -138,15 +132,6 @@ pub struct Stats {
   // activity: the overlay presents these as what the current frame did, so
   // a stale rebuild's counts would read as live.
   paint_stats: PaintStats,
-  // GPU execution accounting: the latest (frame, cumulative exec micros)
-  // the draw loop recorded, the mark the last sample took, and the
-  // per-frame figure computed between them. None while the raster thread
-  // reports no timer queries. present_ms is the wall time per present over
-  // the same window (see StatsSnapshot).
-  gpu_now: Option<(u64, u64)>,
-  gpu_mark: Option<(u64, u64)>,
-  gpu_ms: Option<f32>,
-  present_ms: f32,
 }
 
 impl Stats {
@@ -174,10 +159,6 @@ impl Stats {
       node_count: 0,
       layout_counters: LayoutCounters::default(),
       paint_stats: PaintStats::default(),
-      gpu_now: None,
-      gpu_mark: None,
-      gpu_ms: None,
-      present_ms: 0.0,
     };
     stats.sample();
     stats
@@ -230,30 +211,6 @@ impl Stats {
     self.skipped = self.skipped_acc;
     self.reused_acc = 0;
     self.skipped_acc = 0;
-
-    // GPU time per presented frame over the window just closed, and the
-    // window's wall time per present: the GPU share's denominator (see
-    // overlay::push_hud_lines), since presents run behind the demand gate
-    // and the tick period frame_ms does not.
-    if let (Some((f0, us0)), Some((f1, us1))) = (self.gpu_mark, self.gpu_now) {
-      if f1 > f0 {
-        let presents = (f1 - f0) as f32;
-        self.gpu_ms = Some(us1.saturating_sub(us0) as f32 / 1000.0 / presents);
-        self.present_ms = wall_delta * 1000.0 / presents;
-      }
-    }
-    self.gpu_mark = self.gpu_now;
-  }
-
-  /// The raster thread's cumulative GPU execution counters as of `frame`
-  /// (window draws plus shader passes). Recorded every frame, before
-  /// `record_js` closes a sample window, so the per-frame figure spans
-  /// exactly the window's frames.
-  pub fn record_gpu(&mut self, frame: u64, raster: &alloy::RasterCounters) {
-    self.gpu_now = match (raster.frame_exec_micros, raster.pass_exec_micros) {
-      (Some(f), Some(p)) => Some((frame, f + p)),
-      _ => None,
-    };
   }
 
   /// The frame's JS time (timers, rAF, onFrame + flush, ms) and setProperty count for the
@@ -323,8 +280,6 @@ impl Stats {
       reused: self.reused,
       skipped: self.skipped,
       textures,
-      gpu_ms: self.gpu_ms,
-      present_ms: self.present_ms,
       node_count: self.node_count,
       measure_calls: self.layout_counters.measure_calls,
       para_shapes: self.layout_counters.para_shapes,
@@ -332,6 +287,7 @@ impl Stats {
       dirtied: self.layout_counters.dirtied,
       cache_gets: self.layout_counters.cache_gets,
       cache_hits: self.layout_counters.cache_hits,
+      counters: self.layout_counters,
       paint: self.paint_stats,
     }
   }

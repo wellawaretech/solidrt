@@ -155,9 +155,11 @@ impl Buildable for Texture {
           bottom_right: corner(br),
           bottom_left: corner(bl),
         };
+        crate::rendertree::counters::note_draw();
         builder.draw_rounded_rect(&dst_rect, &radii, &paint);
       }
       _ => {
+        crate::rendertree::counters::note_draw();
         builder.draw_texture_rect(impeller, &src_rect, &dst_rect, sampling, Some(&paint));
       }
     }

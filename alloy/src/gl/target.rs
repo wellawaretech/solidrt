@@ -77,6 +77,9 @@ pub struct ShaderTexture {
   /// resize, dies with the target. Cell because renders take &self.
   passes: Cell<u64>,
   pass_issue_micros: Cell<u64>,
+  /// Vertices (indices on an indexed draw) those passes submitted, from
+  /// the draw ranges at issue (gl::pass::take_vertices).
+  vertices: Cell<u64>,
   /// GPU-side execution time of those passes, microseconds, credited by the
   /// owner as timer queries retire (see PassTimer).
   pass_exec_micros: Cell<u64>,
@@ -142,6 +145,7 @@ impl ShaderTexture {
         sampler: crate::gpu::SamplerState::default(),
         manual: false,
         passes: Cell::new(0),
+        vertices: Cell::new(0),
         pass_issue_micros: Cell::new(0),
         pass_exec_micros: Cell::new(0),
         cube: false,
@@ -249,6 +253,7 @@ impl ShaderTexture {
         sampler: crate::gpu::SamplerState::default(),
         manual: false,
         passes: Cell::new(0),
+        vertices: Cell::new(0),
         pass_issue_micros: Cell::new(0),
         pass_exec_micros: Cell::new(0),
         cube: false,
@@ -291,6 +296,7 @@ impl ShaderTexture {
       sampler: crate::gpu::SamplerState::default(),
       manual: false,
       passes: Cell::new(0),
+      vertices: Cell::new(0),
       pass_issue_micros: Cell::new(0),
       pass_exec_micros: Cell::new(0),
       cube: false,
@@ -333,6 +339,7 @@ impl ShaderTexture {
       sampler: crate::gpu::SamplerState::default(),
       manual: true,
       passes: Cell::new(0),
+      vertices: Cell::new(0),
       pass_issue_micros: Cell::new(0),
       pass_exec_micros: Cell::new(0),
       cube: true,
@@ -383,6 +390,7 @@ impl ShaderTexture {
       sampler: parent.sampler,
       manual: false,
       passes: Cell::new(0),
+      vertices: Cell::new(0),
       pass_issue_micros: Cell::new(0),
       pass_exec_micros: Cell::new(0),
       cube: false,
@@ -811,9 +819,10 @@ impl ShaderTexture {
   }
 
   /// Record one executed pass into this target (see the `passes` field).
-  pub fn record_pass(&self, micros: u64) {
+  pub fn record_pass(&self, micros: u64, vertices: u64) {
     self.passes.set(self.passes.get() + 1);
     self.pass_issue_micros.set(self.pass_issue_micros.get() + micros);
+    self.vertices.set(self.vertices.get() + vertices);
   }
 
   /// Credit GPU-side execution time for a retired pass into this target.
@@ -821,10 +830,11 @@ impl ShaderTexture {
     self.pass_exec_micros.set(self.pass_exec_micros.get() + micros);
   }
 
-  /// (cumulative passes, issue microseconds, GPU execution microseconds)
-  /// rendered into this target, for resource introspection.
-  pub fn pass_stats(&self) -> (u64, u64, u64) {
-    (self.passes.get(), self.pass_issue_micros.get(), self.pass_exec_micros.get())
+  /// (cumulative passes, issue microseconds, GPU execution microseconds,
+  /// vertices submitted) rendered into this target, for resource
+  /// introspection and the per-target stats.
+  pub fn pass_stats(&self) -> (u64, u64, u64, u64) {
+    (self.passes.get(), self.pass_issue_micros.get(), self.pass_exec_micros.get(), self.vertices.get())
   }
 
   /// Recreate the render target at a new size, keeping the compiled programs,

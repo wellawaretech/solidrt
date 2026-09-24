@@ -273,6 +273,12 @@ impl Context {
     self.stats.sample()
   }
 
+  /// The per-target pass counters as the raster thread last published them
+  /// (see TargetCounters): a shared snapshot, cloned by reference.
+  pub fn target_counters(&self) -> std::sync::Arc<Vec<crate::raster::TargetCounters>> {
+    self.stats.targets()
+  }
+
   /// Hand the frame's display list to the raster thread, which draws and
   /// presents it (or reads it back in playback mode) and then notifies the
   /// main loop. Returns immediately; the UI thread is free to build the next

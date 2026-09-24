@@ -706,11 +706,12 @@ fn timed_pass(
   pass: impl FnOnce(),
 ) {
   let start = std::time::Instant::now();
+  crate::gl::take_vertices();
   timer.begin(gl);
   pass();
   timer.end(gl, Timed::Pass { target });
   let micros = start.elapsed().as_micros() as u64;
-  shader.record_pass(micros);
+  shader.record_pass(micros, crate::gl::take_vertices());
   stats.passes.fetch_add(1, Ordering::Relaxed);
   stats.pass_issue_micros.fetch_add(micros, Ordering::Relaxed);
 }

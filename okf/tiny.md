@@ -40,7 +40,6 @@ The `srt` CLI, the dev server, MCP, debug commands, examples and probes.
 
 - `make client` regenerates `lattice/resources/player/index.srt.js` (a tracked bundle) and dirties it by a few lines on every build; either build it deterministically or stop tracking it, so a client build leaves no change to commit.
 - `examples/video/src/probe/render.tsx`'s header says the assets mount is empty under `srt render`; the render command has copied the project's `assets/` into its staged dir since the build-output-dirs work, so the argv workaround and the comment are stale.
-- A SurfaceFlinger present census (the `dumpsys SurfaceFlinger --latency` intervals in refresh periods, per BLAST SurfaceView layer) is retyped as a scratch script every device session (video plane 2026-09-12, 2026-09-22); make it a script under `examples/video/scripts/` or an `srt android census` subcommand and point `packages/cli/agents/debugging.md` at it.
 - `alloy/examples/depth_texture.rs` no longer compiles (`DrawSpec` has no field `buffer`, it is `buffers`), so `cargo check -p alloy --examples` fails on it; fix or drop the example.
 - `lattice/src/lib.rs:216` (the Android `start` call) warns on an unused `Result` in every Android build.
 - Write the multi-pass shader chain example in `packages/core/examples` (a plasma target bound as a cube pipeline's sampler input, only the plasma's uniforms driven): the demonstration that sampler bindings are live dependencies, unblocked since target dependency propagation (okf/done/gpu-example-gaps.md).

@@ -33,9 +33,11 @@ fn clip_out(builder: &mut DisplayListBuilder, rect: &Rect, radii: Option<[f32; 4
         bottom_right: corner(br),
         bottom_left: corner(bl),
       };
+      crate::rendertree::counters::note_clip(true);
       builder.clip_rounded_rect(rect, &radii, ClipOperation::Difference);
     }
     None => {
+      crate::rendertree::counters::note_clip(false);
       builder.clip_rect(rect, ClipOperation::Difference);
     }
   }
@@ -51,9 +53,11 @@ fn draw(builder: &mut DisplayListBuilder, path: &Rect, radii: Option<[f32; 4]>, 
         bottom_right: corner(br),
         bottom_left: corner(bl),
       };
+      crate::rendertree::counters::note_draw();
       builder.draw_rounded_rect(path, &radii, paint);
     }
     None => {
+      crate::rendertree::counters::note_draw();
       builder.draw_rect(path, paint);
     }
   }
@@ -106,6 +110,7 @@ impl Buildable for Rectangle {
         }
         let mut stroke = self.paint.to_paint_in(&rect);
         stroke.set_draw_style(DrawStyle::Stroke);
+        crate::rendertree::counters::note_draw();
         builder.draw_path(&dashed_path(outline.into_iter(), dash), &stroke);
       }
       None => {

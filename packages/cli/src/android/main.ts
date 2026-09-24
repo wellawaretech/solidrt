@@ -7,6 +7,7 @@ import { devDir } from "../lib/dev-dir"
 import { CLI_VERSION } from "../lib/project"
 import { confirm, multiselect } from "../lib/prompt"
 import { apkApplicationId } from "../pack/android/apk"
+import { census } from "./census"
 import { installPlatformTools, platformToolsAvailable } from "./platform-tools"
 import { resolveByPort, resolveFromCwd } from "../lib/registry"
 import type { LiveRecord } from "../types/registry"
@@ -406,6 +407,11 @@ async function installPackedApk(path: string) {
 // launch that packed app instead.
 export async function main() {
   if (source) return installPackedApk(source)
+  if (values.census) {
+    let adb = await requireAdb()
+    for (let { target } of await resolveTargets(adb)) await census(adb, target, PACKAGE)
+    return
+  }
   let server = await resolveServer()
   let adb = await requireAdb()
 

@@ -21,6 +21,13 @@ thread_local! {
   static DIRTIED: Cell<u32> = const { Cell::new(0) };
   static CACHE_GETS: Cell<u32> = const { Cell::new(0) };
   static CACHE_HITS: Cell<u32> = const { Cell::new(0) };
+  static DRAWS: Cell<u32> = const { Cell::new(0) };
+  static PARAGRAPHS: Cell<u32> = const { Cell::new(0) };
+  static CLIPS: Cell<u32> = const { Cell::new(0) };
+  static ROUNDED_CLIPS: Cell<u32> = const { Cell::new(0) };
+  static SAVE_LAYERS: Cell<u32> = const { Cell::new(0) };
+  static BLENDS: Cell<u32> = const { Cell::new(0) };
+  static GRADIENTS: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Counter values accumulated since the previous `take`.
@@ -41,6 +48,26 @@ pub struct LayoutCounters {
   /// Lookups answered from the cache. A hit on a container skips its whole
   /// subtree, so gets minus hits bounds how much of the tree was re-solved.
   pub cache_hits: u32,
+  /// Display-list ops the paint walk recorded (the frame's cost on the
+  /// raster thread and the GPU scales with these on a slow CPU or a tiled
+  /// GPU, okf/backlog/display-list-op-cost.md): draw ops of every kind
+  /// (rects, paths, textures, paragraphs, replayed recordings), of which
+  /// `paragraphs` are the per-word paragraph draws text emits; clip ops,
+  /// of which `rounded_clips` are the rounded (and oval) ones, the kind
+  /// that costs a third of a tiled GPU's frame on a resizing box; and
+  /// save layers (opacity and filter groups, backdrop filters). Ops inside
+  /// a reused repaint-boundary recording are not re-recorded and so not
+  /// counted; its replay is one draw.
+  pub draws: u32,
+  pub paragraphs: u32,
+  pub clips: u32,
+  pub rounded_clips: u32,
+  pub save_layers: u32,
+  /// Paints built for those draws with a blend mode other than source-over
+  /// (a tiny destination-out draw leaves a tiled GPU's fast blend path) and
+  /// with a gradient color source (shaded per pixel per frame).
+  pub blends: u32,
+  pub gradients: u32,
 }
 
 pub fn note_measure_call() {
@@ -66,6 +93,41 @@ pub fn note_cache_get(hit: bool) {
   }
 }
 
+/// One display-list draw op recorded by the paint walk.
+pub fn note_draw() {
+  DRAWS.with(|c| c.set(c.get() + 1));
+}
+
+/// One per-word paragraph draw (also a draw).
+pub fn note_paragraph() {
+  DRAWS.with(|c| c.set(c.get() + 1));
+  PARAGRAPHS.with(|c| c.set(c.get() + 1));
+}
+
+/// One clip op; `rounded` for a rounded-rect or oval clip.
+pub fn note_clip(rounded: bool) {
+  CLIPS.with(|c| c.set(c.get() + 1));
+  if rounded {
+    ROUNDED_CLIPS.with(|c| c.set(c.get() + 1));
+  }
+}
+
+/// One save layer.
+pub fn note_save_layer() {
+  SAVE_LAYERS.with(|c| c.set(c.get() + 1));
+}
+
+/// A paint built for a draw: whether it carries a gradient color source
+/// and whether its blend mode is other than source-over.
+pub fn note_paint(gradient: bool, blend: bool) {
+  if gradient {
+    GRADIENTS.with(|c| c.set(c.get() + 1));
+  }
+  if blend {
+    BLENDS.with(|c| c.set(c.get() + 1));
+  }
+}
+
 /// Read and zero all counters. Called once per rebuilt frame by the draw
 /// loop, so the values cover exactly one rebuild plus the writes since the
 /// previous one.
@@ -77,5 +139,12 @@ pub fn take() -> LayoutCounters {
     dirtied: DIRTIED.with(|c| c.replace(0)),
     cache_gets: CACHE_GETS.with(|c| c.replace(0)),
     cache_hits: CACHE_HITS.with(|c| c.replace(0)),
+    draws: DRAWS.with(|c| c.replace(0)),
+    paragraphs: PARAGRAPHS.with(|c| c.replace(0)),
+    clips: CLIPS.with(|c| c.replace(0)),
+    rounded_clips: ROUNDED_CLIPS.with(|c| c.replace(0)),
+    save_layers: SAVE_LAYERS.with(|c| c.replace(0)),
+    blends: BLENDS.with(|c| c.replace(0)),
+    gradients: GRADIENTS.with(|c| c.replace(0)),
   }
 }

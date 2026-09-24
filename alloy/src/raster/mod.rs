@@ -135,6 +135,26 @@ pub struct RasterStats {
   /// frameMs), and their present blocks on vsync by design, which would read
   /// as busy on a perfectly healthy app.
   pub(crate) cmd_micros: AtomicU64,
+  /// The per-target pass counters, published once per presented frame by
+  /// the raster thread (RasterState::publish_target_counters) as one
+  /// shared snapshot: a reader clones the Arc, never waits on a pass.
+  pub(crate) targets: std::sync::Mutex<std::sync::Arc<Vec<TargetCounters>>>,
+}
+
+/// One target's cumulative pass counters, as the raster thread last
+/// published them (RasterStats::targets): the figures `GpuPipelineInfo`
+/// carries, readable without the raster thread's cooperation so the UI
+/// thread's frame records can carry them and attribute a window's passes
+/// by label. Id 0 stands for the node shader passes, which no target holds.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TargetCounters {
+  pub id: u64,
+  pub label: Option<String>,
+  pub passes: u64,
+  pub pass_issue_micros: u64,
+  /// None on a context without timer queries.
+  pub pass_exec_micros: Option<u64>,
+  pub vertices: u64,
 }
 
 /// A plain-data reading of `RasterStats`, taken at one instant. What
@@ -227,7 +247,13 @@ impl RasterStats {
       video_latched: AtomicU64::new(0),
       video_skipped: AtomicU64::new(0),
       video_late: AtomicU64::new(0),
+      targets: std::sync::Mutex::new(std::sync::Arc::new(Vec::new())),
     }
+  }
+
+  /// The per-target counters as last published (see `targets`).
+  pub(crate) fn targets(&self) -> std::sync::Arc<Vec<TargetCounters>> {
+    self.targets.lock().expect("target counters lock poisoned").clone()
   }
 }
 
@@ -391,6 +417,13 @@ pub(crate) struct RasterState {
   // Compiled shader targets keyed by the texture id their output is
   // registered under.
   shaders: HashMap<u64, ShaderTexture>,
+  // The node shader passes' cumulative counters (see TargetCounters, id
+  // 0): they render through scratch framebuffers, not a target in
+  // `shaders`, so their row is kept here.
+  node_shader_passes: u64,
+  node_shader_issue_micros: u64,
+  node_shader_exec_micros: u64,
+  node_shader_vertices: u64,
   // Draw target id -> its sub-targets in creation order (the group order of
   // its pass). A sub-target is in `shaders` (every per-target command
   // routes to it unchanged) but never in `textures`: it has no texture of
@@ -597,6 +630,10 @@ impl RasterState {
       yuv_latches: HashMap::new(),
       unadopted: HashSet::new(),
       shaders: HashMap::new(),
+      node_shader_passes: 0,
+      node_shader_issue_micros: 0,
+      node_shader_exec_micros: 0,
+      node_shader_vertices: 0,
       target_depths: HashMap::new(),
       depth_owners: HashMap::new(),
       programs: HashMap::new(),

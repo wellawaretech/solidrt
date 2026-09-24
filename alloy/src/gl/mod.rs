@@ -29,6 +29,7 @@ pub(crate) use context::{
   SdlGlBinding,
 };
 pub(crate) use pass::{
+  take_vertices,
   composite_program_over_window, render_program_to_fbo, render_program_to_window, PassInput, TILE_CLEAR_FRAGMENT,
 };
 pub(crate) use program::{

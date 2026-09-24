@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use alloy::rendertree::counters::LayoutCounters;
-use alloy::RasterCounters;
+use alloy::{RasterCounters, TargetCounters};
 
 /// Frames kept: ~10 s at 60 Hz. A query summarizes a window of at most this
 /// many recent rebuilds; older frames fall off the ring.
@@ -46,7 +46,7 @@ pub fn now_ms() -> f64 {
 /// overlay::Stats give a stable number to watch; these give the frame that
 /// hurt. `total_ms` is the JS-thread critical path (render handler + layout +
 /// post-layout + paint + hover), the figure a slow frame is judged by.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct FrameRecord {
   pub at_ms: f64,
   pub frame: u64,
@@ -68,6 +68,10 @@ pub struct FrameRecord {
   /// The raster counters as they stood when the frame was recorded; two
   /// records give a rate over the frames between them.
   pub raster: RasterCounters,
+  /// The per-target pass counters as the raster thread had last published
+  /// them (a shared snapshot, one Arc clone per record); two records give
+  /// each target's passes, time and vertices over the frames between them.
+  pub targets: Arc<Vec<TargetCounters>>,
   /// Snapshot captures serviced in the frame's paint (a blocking readback
   /// each): a frame with any is tooling time, kept out of the window's
   /// timing figures and counted in `capture_frames` instead.
@@ -101,6 +105,23 @@ pub struct WindowSummary {
   /// between them (the frame index), not by rebuilds. None with fewer than
   /// two records.
   pub raster_rates: Option<RasterRates>,
+  /// Per target that rendered inside the window, its share of the passes
+  /// (see TargetRates); empty with fewer than two records.
+  pub target_rates: Vec<TargetRates>,
+}
+
+/// One target's passes over a window, per presented frame: which of a
+/// scene, its views, a shadow atlas and a probe is the expensive one, in one
+/// read instead of an ablation (okf/done/gpu-per-target-pass-attribution.md).
+pub struct TargetRates {
+  pub id: u64,
+  pub label: Option<String>,
+  pub passes_per_frame: f32,
+  pub issue_ms_per_frame: f32,
+  /// None on a context without timer queries.
+  pub exec_ms_per_frame: Option<f32>,
+  /// Vertices (indices on an indexed draw) submitted per presented frame.
+  pub vertices_per_frame: f32,
 }
 
 pub struct RasterRates {
@@ -115,6 +136,24 @@ pub struct RasterRates {
   pub pass_exec_ms_per_frame: Option<f32>,
   pub frame_exec_ms_per_frame: Option<f32>,
   pub cmd_ms_per_sec: f32,
+  /// The window's wall time per presented frame (ms): the span between its
+  /// first and last record over the presents between them. The denominator
+  /// of the GPU share, not the tick period: presents run behind the demand
+  /// gate, ticks do not.
+  pub present_ms: f32,
+}
+
+impl RasterRates {
+  /// GPU busy over the window, percent: the window draw plus the shader
+  /// passes per presented frame against the present interval (the HUD's GPU
+  /// line, the one figure there that is not JS-thread work; near 100 the
+  /// GPU is the bottleneck whatever the phases say). None without the frame
+  /// timing source (a context with no timer queries, or one whose driver
+  /// failed the attribution self-test).
+  pub fn gpu_share_pct(&self) -> Option<f32> {
+    let exec = self.frame_exec_ms_per_frame? + self.pass_exec_ms_per_frame.unwrap_or(0.0);
+    (self.present_ms > 0.0).then(|| exec / self.present_ms * 100.0)
+  }
 }
 
 /// Bounded ring of the most recent frames that changed the picture (a tree
@@ -136,6 +175,15 @@ impl FrameHistory {
       self.ring.pop_front();
     }
     self.ring.push_back(record);
+  }
+
+  /// What the ring holds, for a query that found nothing in its window:
+  /// the record count and the ages (ms before `now_ms`) of the oldest and
+  /// the newest record. None for an empty ring.
+  pub fn reach(&self, now_ms: f64) -> Option<(usize, f64, f64)> {
+    let oldest = self.ring.front()?;
+    let newest = self.ring.back()?;
+    Some((self.ring.len(), now_ms - oldest.at_ms, now_ms - newest.at_ms))
   }
 
   /// Summarize the frames inside `window` (clamped, see Window::clamped) as
@@ -166,11 +214,13 @@ impl FrameHistory {
     let mut totals: Vec<f32> = timed.iter().map(|r| r.total_ms).collect();
     totals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let pct = |p: f32| totals[((totals.len() - 1) as f32 * p).round() as usize];
-    let worst = **timed
+    let worst = (*timed
       .iter()
       .max_by(|a, b| a.total_ms.partial_cmp(&b.total_ms).unwrap_or(std::cmp::Ordering::Equal))
-      .expect("non-empty window");
+      .expect("non-empty window"))
+    .clone();
     let slow_frames = timed.iter().filter(|r| r.total_ms > r.period_ms).count();
+    let mut target_rates = Vec::new();
     let raster_rates = match (frames.first(), frames.last()) {
       (Some(first), Some(last)) if frames.len() >= 2 && last.at_ms > first.at_ms => {
         let span_s = ((last.at_ms - first.at_ms) / 1000.0) as f32;
@@ -180,6 +230,24 @@ impl FrameHistory {
           (Some(a), Some(b)) => Some(d(a, b) / 1000.0 / n),
           _ => None,
         };
+        // Each target the last record knows, against its counters at the
+        // first record (zero when it did not exist yet: its counters
+        // started there); targets without a pass in the window are left out.
+        for t in last.targets.iter() {
+          let base = first.targets.iter().find(|b| b.id == t.id);
+          let passes = d(base.map_or(0, |b| b.passes), t.passes);
+          if passes == 0.0 {
+            continue;
+          }
+          target_rates.push(TargetRates {
+            id: t.id,
+            label: t.label.clone(),
+            passes_per_frame: passes / n,
+            issue_ms_per_frame: d(base.map_or(0, |b| b.pass_issue_micros), t.pass_issue_micros) / 1000.0 / n,
+            exec_ms_per_frame: exec_per_frame(base.map_or(Some(0), |b| b.pass_exec_micros), t.pass_exec_micros),
+            vertices_per_frame: d(base.map_or(0, |b| b.vertices), t.vertices) / n,
+          });
+        }
         Some(RasterRates {
           missed_presents: last.raster.missed_presents.saturating_sub(first.raster.missed_presents),
           fence_timeouts_per_sec: d(first.raster.fence_timeouts, last.raster.fence_timeouts) / span_s,
@@ -188,6 +256,7 @@ impl FrameHistory {
           pass_exec_ms_per_frame: exec_per_frame(first.raster.pass_exec_micros, last.raster.pass_exec_micros),
           frame_exec_ms_per_frame: exec_per_frame(first.raster.frame_exec_micros, last.raster.frame_exec_micros),
           cmd_ms_per_sec: d(first.raster.cmd_micros, last.raster.cmd_micros) / 1000.0 / span_s,
+          present_ms: span_s * 1000.0 / n,
         })
       }
       _ => None,
@@ -205,6 +274,7 @@ impl FrameHistory {
       backdrops_prepainted: frames.iter().map(|r| r.backdrops_prepainted).sum(),
       nodes_painted_max: frames.iter().map(|r| r.nodes_painted).max().unwrap_or(0),
       raster_rates,
+      target_rates,
     })
   }
 }

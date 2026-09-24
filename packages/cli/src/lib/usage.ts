@@ -82,6 +82,12 @@ android options:
       --install          Install or update the client first, from the project's @solidrt/android-<abi> package
       --port <N>         Point it at the local dev server on this port
       --device <serial>  Target a specific adb device by serial or unique prefix
+      --census           Read the compositor's present census for the client on screen instead of launching:
+                         present intervals in refreshes and the per-frame GPU span (frameReady minus queue)
+      --clear            With --census: clear the compositor's history first
+      --seconds <N>      With --census: wait this long (drive the app meanwhile) before reading
+      --layer <name>     With --census: the SurfaceFlinger layer (substring; default: the client's SurfaceView)
+      --json             With --census: print the summary as JSON
 
 mcp options:
       --port <N>         Attach to the dev server on this port (default: resolve by project)
