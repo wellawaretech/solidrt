@@ -544,14 +544,6 @@ Shaped, not started.
   Windows runner would lose Authenticode the same way; embed the pack inside
   the executable image (Mach-O segment, PE resource) and re-sign after
   packing.
-- **[Gradient fills, non-source-over blends and many small draws each cost a frame's worth on Android](backlog/paint-costs-android-gradients-blends.md)** [2026-09-22]
-  On the Galaxy Tab A7 (Adreno 610, Impeller GLES) a linear-gradient d-rect
-  over each of ten panes costs ~15 ms a frame, four tiny
-  destination-out/destination-over draws per pane ~16 ms, and seventy small
-  source-over texture draws ~10 ms - all measured by subtraction from
-  SurfaceFlinger present timestamps. performance.md's "GPU work is nearly
-  free" needs these numbers, and get_stats needs per-frame draw/blend/layer
-  counters so they can be found without a reload per hypothesis.
 - **[parseSvg tree output](backlog/parse-svg-tree.md)** [2026-08-28]
   parseSvg flattens usvg's group tree into one draw list, losing group ids,
   group opacity and group transforms; add an opt-in tree output (groups with
@@ -743,13 +735,6 @@ Shaped, not started.
   solid. Extend it to a CSS-style list with line-through/overline,
   textDecorationColor and dashed/dotted/wavy/double, on the same self-drawn
   per-line mechanism.
-- **[A TextInput whose box changes each frame still costs ~2.4 ms per empty field in the post-layout flush](backlog/text-input-resize-post-layout.md)** [2026-09-22]
-  With nine empty multiline fields inside panes sliding and resizing on a
-  layout transition, the SM-T500 spends 22 ms per frame in postLayout
-  (handlers 0.7 ms, the flush after them the rest) after the same-breaks fix;
-  sizing each field to its settled tile so its box never changes mid-slide
-  drops it to 1 ms. The field should skip its geometry work when the box
-  change re-breaks nothing.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -767,13 +752,6 @@ Shaped, not started.
   the owned layout reduced the engine's job to shape-one-run and draw-one-run,
   so a second implementation with its own glyph atlas can replace it where
   quality matters.
-- **[A paragraph is painted as one Impeller paragraph per word, an order of magnitude over what its glyphs need](backlog/text-paint-per-word-paragraphs.md)** [2026-09-22]
-  Five 230-character paragraphs in reflowing panes cost the Galaxy Tab A7 ~10
-  ms of layout, ~12 ms of paint recording and ~12 ms of GPU per frame, for
-  ~1100 glyphs. The word cache keeps every wrap unit as its own Impeller
-  Paragraph and paint emits draw_paragraph per word (~180 ops a frame for that
-  text), so recording, display-list processing and the GPU's text draws all
-  scale with word count; a per-line draw, or glyph runs, would cut them ~8x.
 - **[Touch and word text selection](backlog/text-selection-touch-word.md)** [2026-09-02]
   Text selection exists (keys, mouse drag, highlight) but a touch user cannot
   make one at all - a finger drag deliberately scrolls - and no pointer
@@ -1869,6 +1847,13 @@ Finished, kept for the reasoning.
   geometry (2026-08-21) - shapes default to the border box, text sizes AND
   places against the content box, both derived from one
   LayoutData::content_box on paint and hit alike.
+- **[Gradient fills, non-source-over blends and many small draws each cost a frame's worth on Android](done/paint-costs-android-gradients-blends.md)** [2026-09-24]
+  Closed 2026-09-24: performance.md's "Where GPU work stops being free" lists
+  the measured paint costs on a tiled GPU (gradient fills, rounded clips on
+  resizing boxes, non-source-over blends, draw count, per-word text, a field
+  in a resizing box) with the paintOps counters that name them; the
+  Impeller-level questions moved to rounded-clip-cost-android for the one
+  profiler session that answers all of them.
 - **[Paint viewport culling](done/paint-viewport-culling.md)** [2026-08-18]
   Landed 2026-08-18: a cull rect through the paint walk plus a conservative
   per-subtree paint envelope, so off-screen subtrees are skipped before
@@ -1982,9 +1967,10 @@ Finished, kept for the reasoning.
   one height.
 - **[The slow-frame warning fires on the first frame after every load](done/slow-frame-warning-first-frame-after-load.md)** [2026-09-23]
   Fixed 2026-09-23: the engine's first rebuild is tagged in its slow-frame
-  line ("first frame after load: uploads, compiles and the first raster, not
-  steady-state jank"), kept rather than exempted so a load whose first frame
-  takes 300 ms is still seen.
+  line ("first frame after load: the first rebuild shapes, decodes and records
+  everything, not steady-state jank"), kept rather than exempted so a load
+  whose first frame takes 300 ms is still seen; the line covers the JS
+  thread's phases, so a load whose cost is on the raster thread gets none.
 - **[A snapshot boundary's retained texture as a texture id](done/snapshot-boundary-texture-id.md)** [2026-08-23]
   repaintBoundary="snapshot" kept its subtree's rasterization in an adopted
   texture only the boundary shader could sample. Landed 2026-08-23 as
@@ -2119,6 +2105,15 @@ Finished, kept for the reasoning.
   height, so filling a flex parent needs the undocumented flexGrow 1 plus
   height 0, and its font is always the theme body size; done means flexGrow
   alone fills and scrolls, and the field takes a font size like Text.
+- **[A TextInput whose box changes each frame still costs ~2.4 ms per empty field in the post-layout flush](done/text-input-resize-post-layout.md)** [2026-09-24]
+  Fixed 2026-09-24: the placement re-read the caller's input() object (some
+  twenty reactive reads) on every viewport width change, and each width and
+  height write marked the field's whole graph for a re-check that found
+  nothing; the break inputs now come through a memo of their own, and the
+  layout handler writes a width only outside the range the current lines hold
+  for and a height only when the retained scroll would move. Nine empty
+  multiline fields in resizing panes on the Galaxy Tab A7: postLayout 24 ms to
+  1.6 ms, 20 fps to 60.
 - **[TextInput range selection](done/text-input-selection.md)** [2026-09-02]
   The text buffer already models an anchor/focus selection, but TextInput
   never grows one - no shift+movement, no drag, no highlight, no select-all,
@@ -2139,6 +2134,12 @@ Finished, kept for the reasoning.
   width from a cursor, draw a laid-out line) to app code, so editorial layouts
   (column handoff, obstacles, fitted headlines) are app work on a stable
   foundation instead of ever more <text> props.
+- **[A paragraph is painted as one Impeller paragraph per word, an order of magnitude over what its glyphs need](done/text-paint-per-word-paragraphs.md)** [2026-09-24]
+  Fixed 2026-09-24: paint draws a line's run of same-styled words as one
+  paragraph of their joined text through the same word cache, so five
+  230-character paragraphs cost 30 paragraph draws instead of 180; on the
+  Galaxy Tab A7 the reflowing panes went from 20 fps to 60 with paint at 2.6
+  ms instead of 8.3, the desktop rendering pixel-identical.
 - **[A trailing line break leaves the caret on the previous line](done/text-trailing-break-caret-line.md)** [2026-09-21]
   After Enter at the end of a multiline TextInput the caret stays after the
   last character until more text is typed, because prepareText does not flag a

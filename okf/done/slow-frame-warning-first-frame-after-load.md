@@ -1,6 +1,6 @@
 ---
 title: The slow-frame warning fires on the first frame after every load
-description: Fixed 2026-09-23: the engine's first rebuild is tagged in its slow-frame line ("first frame after load: uploads, compiles and the first raster, not steady-state jank"), kept rather than exempted so a load whose first frame takes 300 ms is still seen.
+description: Fixed 2026-09-23: the engine's first rebuild is tagged in its slow-frame line ("first frame after load: the first rebuild shapes, decodes and records everything, not steady-state jank"), kept rather than exempted so a load whose first frame takes 300 ms is still seen; the line covers the JS thread's phases, so a load whose cost is on the raster thread gets none.
 created: 2026-09-07
 completed: 2026-09-23
 ---
@@ -55,3 +55,14 @@ slow-frame line for that frame carries the "first frame after load"
 cause the way a capture-stalled frame carries its own. `RenderInner` is
 rebuilt per engine, so every load and reload gets exactly one tagged
 frame; debugging.md says what the tag means.
+
+## Seen end to end (2026-09-24)
+
+The engine logger's lines do reach `get_logs`: a tablet frame stalled by
+a window snapshot arrived as its tagged slow-frame line. The first-frame
+tag itself was not seen on either client because their first rebuilds
+were under budget on the JS thread, where the line measures: the load's
+uploads and compiles are raster-thread work outside its phases. The
+wording now names what that rebuild does on the JS thread (shaping,
+decoding, recording) instead of the raster side, and debugging.md says a
+first frame with no line is normal.

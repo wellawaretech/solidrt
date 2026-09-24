@@ -172,8 +172,13 @@ Rules, in order of leverage:
    every frame with prepareText + layoutNextLine (a shape that breathes, an
    obstacle that moves, an editor on every keystroke) is cheap - the lines'
    d-texts hit the same cache - while changing a text's font, size or
-   weight re-shapes it. Animate text with transforms and paint (rule 5), or
-   by re-breaking; not by resizing it per frame.
+   weight re-shapes it. Painting costs one paragraph draw per line run of
+   same-styled words (the joined line goes through the same cache, so a
+   line composition seen before is a lookup): a paragraph draws as its
+   lines, not its words, and a re-breaking one shapes only the lines whose
+   breaks moved. A justified line or a per-word style change draws per
+   word. Animate text with transforms and paint (rule 5), or by
+   re-breaking; not by resizing it per frame.
 
 ## Isolates: heavy work off the JS thread
 
@@ -235,6 +240,34 @@ not infer it from the desktop number.
   content-independent floor: if a trivial scene and a heavy one present at
   nearly the same rate, you are compositor-bound and tuning the scene is
   wasted effort.
+- **Some paints cost a frame each on a tiled mobile GPU.** Measured on a
+  mid-range 2020 tablet (Adreno 610, Impeller GLES) with ten panes sliding
+  and resizing on a layout transition, each row by subtraction from the
+  compositor's own present record (`srt android --census`), against a
+  frame that ran at 60 fps with a 13 ms GPU span:
+  - a 3-stop linear-gradient fill per pane: +15 ms, 20 fps. A gradient is
+    shaded per pixel per frame; the same tint as a flat `d-rect` costs
+    nothing, and even a once-rendered 32x32 texture stretched over the pane
+    costs +5 ms over the flat fill.
+  - a rounded clip (`overflow="hidden"` with `clipRadius`) on a box whose
+    size is in flight: ~8 ms for one pane, ~13 ms for ten, most of it when
+    an image is under the clip. A static rounded clip is nearly free. Round
+    the paint instead (`radius` on `d-rect`, `d-texture` and `<texture>`)
+    and keep the clip rectangular.
+  - four 16 px draws per pane with `destination-out` and `destination-over`
+    blends: +16 ms. Any blend but source-over leaves the fast path,
+    whatever the size.
+  - seventy small source-over texture draws in place of ten pane-sized
+    ones: +10 ms. Draw count costs on its own.
+  - five 230-character paragraphs painted per word, 180 paragraph draws:
+    20 fps; painted per line run, 30 draws (rule 10, what the runtime does
+    now): 60 fps.
+  - a laid-out `TextInput` inside a resizing box re-checks its breaks and
+    scroll against the box per frame, ~0.2 ms per field on that tablet;
+    a fixed box, or a paragraph while not editing, costs nothing per frame.
+  `get_stats`' `paintOps` (draws, paragraphs, clips, roundedClips,
+  saveLayers, blends, gradients) says which of these a frame carries, per
+  rebuild and for the window's worst frame.
 - **Per-frame writes are gated on the raster thread, not on vsync**, so a pass
   that costs more than a refresh period does not silently pile up. If
   `rasterQueue` climbs across queries while fps drops the raster thread is

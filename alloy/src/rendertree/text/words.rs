@@ -1,6 +1,8 @@
-// The shared word cache: shaped single-line paragraphs keyed on (unit text,
-// resolved run style), one per platform context, so a word seen once (in any
-// text, at any width) is never shaped again while it stays hot. Bounded LRU;
+// The shared word cache: shaped single-line paragraphs keyed on (text,
+// resolved run style), one per platform context, so a piece of text seen
+// once (in any text, at any width) is never shaped again while it stays hot.
+// The text is a wrap unit (what layout measures) or a line's run of joined
+// units (what paint draws, see Text::build); both are plain entries. Bounded LRU;
 // the ordering and eviction are the `lru` crate's, this only chooses the key,
 // the value and the counters. Cleared when the registered fonts change.
 //

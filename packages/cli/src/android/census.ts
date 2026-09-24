@@ -156,7 +156,8 @@ export async function census(adb: string, target: string, packageName: string) {
     process.exit(1)
   }
   if (seconds > 0) {
-    console.log(`[cli] Collecting ${seconds} s of presents on ${layer}`)
+    // Progress goes to stderr: with --json, stdout is the summary alone.
+    console.error(`[cli] Collecting ${seconds} s of presents on ${layer}`)
     await sleep(seconds * 1000)
   }
   let text = sh(adb, target, ["dumpsys", "SurfaceFlinger", "--latency", `'${layer}'`])

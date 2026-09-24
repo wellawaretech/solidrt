@@ -1,7 +1,8 @@
 ---
 title: A paragraph is painted as one Impeller paragraph per word, an order of magnitude over what its glyphs need
-description: Five 230-character paragraphs in reflowing panes cost the Galaxy Tab A7 ~10 ms of layout, ~12 ms of paint recording and ~12 ms of GPU per frame, for ~1100 glyphs. The word cache keeps every wrap unit as its own Impeller Paragraph and paint emits draw_paragraph per word (~180 ops a frame for that text), so recording, display-list processing and the GPU's text draws all scale with word count; a per-line draw, or glyph runs, would cut them ~8x.
+description: Fixed 2026-09-24: paint draws a line's run of same-styled words as one paragraph of their joined text through the same word cache, so five 230-character paragraphs cost 30 paragraph draws instead of 180; on the Galaxy Tab A7 the reflowing panes went from 20 fps to 60 with paint at 2.6 ms instead of 8.3, the desktop rendering pixel-identical.
 created: 2026-09-22
+completed: 2026-09-24
 ---
 
 # A paragraph is painted as one Impeller paragraph per word, an order of magnitude over what its glyphs need
@@ -59,3 +60,36 @@ exiting pane scales its paragraph's bitmap.
   changed.
 - Measured on the same demo: five live paragraphs in reflowing panes at
   60 fps with no boundary, and the boundary no longer needed for text.
+
+## Fixed (2026-09-24)
+
+The first option, in `Text::build` (alloy/src/rendertree/text/mod.rs): the
+placed runs of a line are walked in order, and adjacent pieces in one style
+whose x is the previous piece's x plus its advance (within
+`LINE_JOIN_EPSILON`) are joined into one string and drawn as one paragraph
+from the shared word cache, which keys on (text, style) and so holds a line
+run as readily as a word. Where placement is not the sum of advances the
+pieces stay apart: a justified line, a style change, an atom, and a layout
+re-split at graphemes (overflowWrap: anywhere). Hit testing, carets,
+decorations and bounds keep reading the per-piece metrics; a desktop
+snapshot of a paragraph before and after differs in no pixel. The join is
+as LTR-only as the breaker, and bidi becomes an input to both.
+
+Measured on the SM-T500 with `probes`-style panes (ten rounded panes
+sliding between two sizes over 2 s, five holding the 230-character
+paragraph), by `srt android --census` and `get_stats`:
+
+| | before | after |
+|---|---|---|
+| fixed box: presents at one refresh | 27 of 60 (p50 33 ms) | 118 of 121 (p50 16.7 ms) |
+| fixed box: paint / paragraph draws | 8.3 ms / 180 | 2.6 ms / 30 |
+| fixed box: GPU span p50 | 13.5 ms | 10.7 ms |
+| box sized by the pane (re-breaking): presents at one refresh | 0 of 42 (p50 50 ms) | 88 of 104 (p50 16.8 ms) |
+
+A re-breaking paragraph shapes only the lines whose breaks moved (4
+paraShapes on such a frame), the rest are lookups. The second "done"
+bullet was not reproduced: with a fixed box the probe's layout read 0.5-1
+ms per frame and measureCalls 0 (the known-size measure short-circuits),
+so the demo's 10 ms of layout was not the text's own line cache and stays
+unexplained here. The boundary is no longer needed for text: the fixed-box
+panes reach 60 fps with the paragraphs drawn live.

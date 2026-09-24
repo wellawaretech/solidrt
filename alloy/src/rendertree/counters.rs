@@ -52,7 +52,8 @@ pub struct LayoutCounters {
   /// raster thread and the GPU scales with these on a slow CPU or a tiled
   /// GPU, okf/backlog/display-list-op-cost.md): draw ops of every kind
   /// (rects, paths, textures, paragraphs, replayed recordings), of which
-  /// `paragraphs` are the per-word paragraph draws text emits; clip ops,
+  /// `paragraphs` are the paragraph draws text emits (one per line run of
+  /// joined words, see Text::build); clip ops,
   /// of which `rounded_clips` are the rounded (and oval) ones, the kind
   /// that costs a third of a tiled GPU's frame on a resizing box; and
   /// save layers (opacity and filter groups, backdrop filters). Ops inside
@@ -98,7 +99,8 @@ pub fn note_draw() {
   DRAWS.with(|c| c.set(c.get() + 1));
 }
 
-/// One per-word paragraph draw (also a draw).
+/// One paragraph draw (also a draw): a line's run of joined words, or a lone
+/// piece where the line's placement kept them apart (Text::build).
 pub fn note_paragraph() {
   DRAWS.with(|c| c.set(c.get() + 1));
   PARAGRAPHS.with(|c| c.set(c.get() + 1));

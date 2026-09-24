@@ -15,7 +15,7 @@ use crate::rendertree::{
   Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext, PaintState,
   PlatformContext,
 };
-use shape::{OwnedCache, ShapedRun};
+use shape::OwnedCache;
 use std::cell::RefCell;
 use taffy::{AvailableSpace, Display, Style};
 
@@ -23,6 +23,11 @@ use taffy::{AvailableSpace, Display, Style};
 // probes the intrinsic width (f32::MAX) plus the resolved width, and paint
 // asks for the content width, so a handful covers a frame; oldest is evicted.
 const MAX_CACHED_WIDTHS: usize = 4;
+
+// How far (px) a piece may sit from the end of the piece before it and
+// still draw with it as one paragraph: the breaker's pen is a running f32
+// sum of advances, so adjacent pieces differ from it by rounding only.
+const LINE_JOIN_EPSILON: f32 = 0.01;
 
 /// What happens to text cut off by `max_lines`.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -183,25 +188,56 @@ impl Buildable for Text {
     let runs = owned.runs_for(index);
     let layout = &owned.layouts[index].layout;
     let styles = self.run_styles();
-    // Paragraphs come from the shared word cache per visible run (a miss
-    // shapes on the spot); nothing shaped is retained on the text itself.
+    // Paragraphs come from the shared word cache per drawn piece of text (a
+    // miss shapes on the spot); nothing shaped is retained on the text
+    // itself. A line's adjacent pieces in one style whose positions are the
+    // sum of their advances draw as ONE paragraph of their joined text: the
+    // breaker placed them exactly where the shaper puts them in one string,
+    // so the joined draw lands the glyphs where the per-piece draws would,
+    // and the line costs one cache lookup and one display-list op instead
+    // of one per word. Where placement is not the sum of advances the pieces
+    // stay apart: a justified line (its gaps are spread), a style change, an
+    // atom, and a layout re-split at graphemes (overflowWrap), whose pieces
+    // are letters the shaper would kern and ligate back together. Hit
+    // testing and carets keep reading the per-piece metrics, and this is as
+    // LTR-only as the breaker: bidi becomes an input to both.
     {
       let typography = ctx.platform.typography();
       let mut words = ctx.platform.words();
-      let mut draw = |shaped: &ShapedRun, x: f32, y: f32| {
-        if let Some(word) = words.get_or_shape(&typography, &shaped.text, &styles[shaped.style]) {
+      let mut draw = |text: &str, style: usize, x: f32, y: f32| {
+        if let Some(word) = words.get_or_shape(&typography, text, &styles[style]) {
           crate::rendertree::counters::note_paragraph();
           builder.draw_paragraph(&word.paragraph, Point::new(origin.x + x, origin.y + y));
         }
       };
-      for placed in &layout.runs {
-        let shaped = &runs[placed.run];
-        if !shaped.atom {
-          draw(shaped, placed.x, placed.y);
+      let joinable = owned.layouts[index].runs.is_none();
+      for line in &layout.lines {
+        // The run being joined: its text, style, origin and where its ink
+        // ends (where the next piece must start to join it).
+        let mut pending: Option<(String, usize, f32, f32, f32)> = None;
+        for placed in &layout.runs[line.first..line.end] {
+          let shaped = &runs[placed.run];
+          if let Some((text, style, x, y, end)) = &mut pending {
+            let adjacent = (*end - placed.x).abs() <= LINE_JOIN_EPSILON && (*y - placed.y).abs() <= LINE_JOIN_EPSILON;
+            if joinable && !shaped.atom && *style == shaped.style && adjacent {
+              text.push_str(&shaped.text);
+              *end = placed.x + shaped.run.metrics.advance;
+              continue;
+            }
+            draw(text, *style, *x, *y);
+            pending = None;
+          }
+          if !shaped.atom {
+            let end = placed.x + shaped.run.metrics.advance;
+            pending = Some((shaped.text.clone(), shaped.style, placed.x, placed.y, end));
+          }
+        }
+        if let Some((text, style, x, y, _)) = &pending {
+          draw(text, *style, *x, *y);
         }
       }
       if let (Some((x, y)), Some(ellipsis)) = (layout.ellipsis, owned.ellipsis.as_ref()) {
-        draw(ellipsis, x, y);
+        draw(&ellipsis.text, ellipsis.style, x, y);
       }
     }
     // CSS decorating boxes: the text's underline is one line in its own

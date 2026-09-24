@@ -193,7 +193,9 @@ function deviceAbi(adb: string, target: string): string {
 // One line per connected device with the ABI its APK build would target;
 // the picker shows the same lines, so this is for the cases without one.
 function printDeviceStatus(devices: string[], abiByDevice: Map<string, string>) {
-  for (let d of devices) console.log(`${d} - ${abiByDevice.get(d)}`)
+  // Under --json the census summary owns stdout, so the status goes beside it.
+  let print = values.json ? console.error : console.log
+  for (let d of devices) print(`${d} - ${abiByDevice.get(d)}`)
 }
 
 // A published CLI version (x.y.z): the release action publishes the CLI and

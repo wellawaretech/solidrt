@@ -92,6 +92,13 @@ export interface EditorFieldProps extends TransitionProps {
 // navigator.clipboard (copy and cut need a range; single-line paste flattens
 // line breaks). A tap outside the field blurs it (core's outside-tap blur in
 // window.ts), as does Escape.
+// Font options compared field by field: the same keys with the same values.
+function sameFont(a: MeasureTextOptions, b: MeasureTextOptions): boolean {
+  let ka = Object.keys(a) as (keyof MeasureTextOptions)[]
+  let kb = Object.keys(b) as (keyof MeasureTextOptions)[]
+  return ka.length === kb.length && ka.every((k) => a[k] === b[k])
+}
+
 export function EditorField(props: EditorFieldProps) {
   let [caretOn, setCaretOn] = createSignal(true)
 
@@ -403,13 +410,19 @@ export function EditorField(props: EditorFieldProps) {
   let layoutFont = () => layout().text as EditorLayoutProps
   let fontSize = () => (layoutFont().fontSize ?? theme.text.body.size) * policy.textScale
   let lineHeight = () => layoutFont().lineHeight ?? theme.text.body.lineHeight
-  let font = (): MeasureTextOptions => ({
-    fontFamily: layoutFont().fontFamily ?? theme.text.fontFamily,
-    fontSize: fontSize(),
-    lineHeight: lineHeight(),
-    fontStyle: layoutFont().fontStyle,
-    fontWeight: typeWeight(layoutFont().fontWeight ?? theme.text.body.weight, fontSize()),
-  })
+  // A memo, equal by field: the editor layout reads the font on every
+  // caret, text or size change, and rebuilding it (theme, policy and the
+  // weight compensation) per read cost more than the geometry it fed.
+  let font = createMemo(
+    (): MeasureTextOptions => ({
+      fontFamily: layoutFont().fontFamily ?? theme.text.fontFamily,
+      fontSize: fontSize(),
+      lineHeight: lineHeight(),
+      fontStyle: layoutFont().fontStyle,
+      fontWeight: typeWeight(layoutFont().fontWeight ?? theme.text.body.weight, fontSize()),
+    }),
+    { equals: sameFont },
+  )
   let rowHeight = () => Math.round(fontSize() * lineHeight())
   let editor = createTextEditorLayout(
     () => viewport,

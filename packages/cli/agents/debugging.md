@@ -235,8 +235,11 @@ when exactly one client is connected.
   of the percentiles, `slowFrames` and `worst`, and their slow-frame log
   line says "snapshot capture(s) in the paint" - not a hitch to chase; the
   first rebuild after a load says "first frame after load" for the same
-  reason (uploads, compiles and the first raster), and is still worth a
-  look when it is hundreds of ms. The `gpu*ExecMs` figures are absent (not 0) when the client's
+  reason (that rebuild shapes, decodes and records everything at once),
+  and is still worth a look when it is hundreds of ms. The line measures
+  the JS thread's phases only, so a load whose cost is uploads and
+  compiles on the raster thread gets no line at all: a first frame under
+  budget there is normal, not a missing warning. The `gpu*ExecMs` figures are absent (not 0) when the client's
   context has no timer queries or when the startup attribution self-test
   caught the driver booking deferred pass execution to the wrong query,
   as some tiled GPUs do; where they are absent, measure the GPU by
@@ -251,8 +254,10 @@ when exactly one client is connected.
   with the counters under bimodal frame times. Two breakdowns name a
   cost without a reload per hypothesis: `paintOps` (top level for the
   latest rebuild, and in `window.worst`) counts the display-list ops the
-  paint walk recorded - `draws` (of which `paragraphs` are text's per-word
-  paragraph draws), `clips` (of which `roundedClips`), `saveLayers`, and
+  paint walk recorded - `draws` (of which `paragraphs` are text's paragraph
+  draws, one per line run of same-styled words; a justified line or a
+  style change costs one per word), `clips` (of which `roundedClips`),
+  `saveLayers`, and
   the paints that leave a tiled GPU's cheap path, `blends` (not
   source-over) and `gradients`; ops inside a reused repaint-boundary
   recording are not re-recorded and not counted. `window.targets` splits

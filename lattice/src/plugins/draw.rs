@@ -368,7 +368,7 @@ impl RenderInner {
             let cause = if record.captures > 0 {
               format!(" - {} snapshot capture(s) in the paint, tooling time, not the app's", record.captures)
             } else if first_frame {
-              " - first frame after load: uploads, compiles and the first raster, not steady-state jank".to_string()
+              " - first frame after load: the first rebuild shapes, decodes and records everything, not steady-state jank".to_string()
             } else {
               String::new()
             };

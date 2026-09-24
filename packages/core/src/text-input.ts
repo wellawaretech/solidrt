@@ -256,9 +256,11 @@ export type TextEditorLayout = {
  * frame. A size change that re-breaks nothing (an empty field, lines that
  * still fit, a height-only change) stops at the line placement: the lines,
  * the caret and everything the caller derives from them keep their values
- * and re-run nothing, so a field inside a resizing box costs one placement
- * per frame, not a flush of its whole graph. Pure geometry: no caret
- * rendering and no placeholder/visual policy.
+ * and re-run nothing, and the placement reads the break inputs through a
+ * memo of its own rather than `input()` (which a caller builds per read),
+ * so a field inside a resizing box costs one placement of its units per
+ * frame, not a flush of its whole graph. Pure geometry: no caret rendering
+ * and no placeholder/visual policy.
  */
 export function createTextEditorLayout(
   viewport: () => { id: number } | undefined,
@@ -283,6 +285,19 @@ export function createTextEditorLayout(
     return prepareText(text, { ...font(), runs, carets: true })
   })
 
+  // What the breaks depend on, apart from the rest of the input: the caller
+  // builds input() per read (a field's value, font, caret and runs - some
+  // twenty reactive reads), and a placement re-run for a viewport width
+  // change must not pay for that. Equal by field, so only a real change
+  // reaches the placement.
+  let breaking = createMemo(
+    (): BreakInput => {
+      let { text, wrap, caretWidth = 0 } = input()
+      return { text, wrap, caretWidth }
+    },
+    { equals: sameBreakInput },
+  )
+
   // Lines carry their unit range so the caret math walks only their units.
   // Equal placements (same units, same breaks and metrics) keep the previous
   // value, so nothing downstream re-runs for a width change that changed
@@ -290,11 +305,13 @@ export function createTextEditorLayout(
   // keeps the previous object: a row bound to it (a non-keyed <For> item)
   // sees no change and writes nothing, so a moved break costs the lines it
   // touched, not every line of the field.
-  type PlacedLine = EditorLine & { from: number; to: number }
-  type Placement = { units: TextUnit[]; lines: PlacedLine[] }
+  type PlacedLine = EditorLine & { from: number; to: number; hardBreak: boolean }
+  // `holds` is the range of wrap widths [min, max) the breaker yields these
+  // same lines at (see holdRange); the layout handler skips a width inside it.
+  type Placement = { units: TextUnit[]; lines: PlacedLine[]; holds: [number, number] }
   let placed = createMemo(
     (prev): Placement => {
-      let { text, wrap, caretWidth = 0 } = input()
+      let { text, wrap, caretWidth } = breaking()
       // Wrapped lines leave room for the caret at the end of a full line, so a
       // wrapping editor never scrolls horizontally.
       let width = wrap ? Math.max(0, viewportWidth() - caretWidth) : Infinity
@@ -305,21 +322,33 @@ export function createTextEditorLayout(
       let line = layoutNextLine(units, cursor, width)
       let hardBreak = false
       while (line) {
-        out.push({ start: line.start, end: line.end, y, height: line.height, width: line.width, from: line.from, to: line.to })
+        out.push({
+          start: line.start,
+          end: line.end,
+          y,
+          height: line.height,
+          width: line.width,
+          from: line.from,
+          to: line.to,
+          hardBreak: line.hardBreak,
+        })
         y += line.height
         hardBreak = line.hardBreak
         line = layoutNextLine(units, line.cursor, width)
       }
       if (out.length === 0 || hardBreak) {
         let n = units.units.length
-        out.push({ start: text.length, end: text.length, y, height: space().height, width: 0, from: n, to: n })
+        out.push({ start: text.length, end: text.length, y, height: space().height, width: 0, from: n, to: n, hardBreak: false })
       }
       if (prev && prev.units === units.units) {
         for (let i = 0; i < out.length && i < prev.lines.length; i++) {
           if (sameLine(prev.lines[i]!, out[i]!)) out[i] = prev.lines[i]!
         }
       }
-      return { units: units.units, lines: out }
+      // Split units are the width's own (a unit wider than it), so those
+      // lines hold for no other width.
+      let holds: [number, number] = units.units === prepared().units ? holdRange(units.units, out) : [Infinity, Infinity]
+      return { units: units.units, lines: out, holds }
     },
     { equals: samePlacement },
   )
@@ -452,7 +481,7 @@ export function createTextEditorLayout(
   // when the caret has left the visible range, so the memo carries the
   // retained position across recomputes.
   let scrollX = createMemo((prev: number | undefined): number => {
-    let { caretWidth = 0, wrap } = input()
+    let { caretWidth, wrap } = breaking()
     if (wrap) return 0
     let contentWidth = lines().reduce((w, l) => Math.max(w, l.width), 0)
     let c = caret()
@@ -465,12 +494,43 @@ export function createTextEditorLayout(
     return follow(prev ?? 0, c.y, c.height, viewportHeight(), last.y + last.height)
   })
 
+  // Whether the lines placed at the last written width are what the breaker
+  // yields at `width` too. Such a width is not written: the write would mark
+  // the whole graph below the placement for a re-check that finds nothing,
+  // which is what a field inside a resizing box paid per frame. So
+  // viewportWidth lags the box by less than a break while wrapping, and a
+  // placement re-run for a text change at the lagging width is checked here
+  // again on that frame and corrected before paint (writes from onLayout
+  // land in the same frame's re-layout; the same holds for the height
+  // below). Unwrapped, the width is the horizontal scroll's extent and is
+  // always written.
+  let keepsBreaks = (width: number): boolean => {
+    let { wrap, caretWidth } = breaking()
+    if (!wrap) return false
+    let [min, max] = placed().holds
+    let w = Math.max(0, width - caretWidth)
+    return w >= min && w < max
+  }
+
+  // The same for the height: a height at which the retained scroll offset
+  // still keeps the caret in view is not written, so the scroll graph stays
+  // untouched while a short field's box grows and shrinks.
+  let keepsScroll = (height: number): boolean => {
+    let ls = lines()
+    let last = ls[ls.length - 1]!
+    let c = caret()
+    let current = scrollY()
+    return follow(current, c.y, c.height, height, last.y + last.height) === current
+  }
+
   onLayout(() => {
     let node = viewport()
     if (!node) return
     let box = getLayoutBox(node)
-    setViewportWidth(box?.width ?? 0)
-    setViewportHeight(box?.height ?? 0)
+    let width = box?.width ?? 0
+    let height = box?.height ?? 0
+    if (!keepsBreaks(width)) setViewportWidth(width)
+    if (!keepsScroll(height)) setViewportHeight(height)
   })
 
   return { lines, caret, caretLine, offsetAtX, selectionRects, lineAtY, step, scrollX, scrollY }
@@ -517,6 +577,33 @@ function splitWide(prepared: PreparedText, width: number): PreparedText {
     }
   }
   return { text: prepared.text, units }
+}
+
+// The wrap widths [min, max) at which the greedy breaker yields exactly
+// `lines` over `units`: every line's ink fits (min), and no line's first
+// unit fits at the end of the line before it (max), except across a hard
+// break, where it never joins. Greedy breaking is decided line by line on
+// just those two tests, so inside the range the placement is unchanged.
+function holdRange(units: TextUnit[], lines: { from: number; to: number; width: number; hardBreak: boolean }[]): [number, number] {
+  let min = 0
+  let max = Infinity
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i]!
+    if (line.width > min) min = line.width
+    let next = lines[i + 1]
+    if (!next || line.hardBreak || next.from >= units.length) continue
+    let pen = 0
+    for (let u = line.from; u < line.to; u++) pen += units[u]!.advance
+    let join = pen + unitInk(units, next.from)
+    if (join < max) max = join
+  }
+  return [min, max]
+}
+
+type BreakInput = { text: string; wrap: boolean; caretWidth: number }
+
+function sameBreakInput(a: BreakInput, b: BreakInput): boolean {
+  return a.text === b.text && a.wrap === b.wrap && a.caretWidth === b.caretWidth
 }
 
 // Font options compared field by field: the same keys with the same values.

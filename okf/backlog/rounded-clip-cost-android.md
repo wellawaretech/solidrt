@@ -62,7 +62,11 @@ entity under it (the image draw above all) off the fast blend path; or
 alloy re-recording the clipped subtree (`clip_radius` is baked into
 recorded content, kinds/view.rs). A GPU profiler on the device
 (Snapdragon Profiler, or perfetto's gpu counters) against the demo's
-add/remove is the next step; the demo reproduces it in one tap.
+add/remove is the next step; the demo reproduces it in one tap. The same
+session should answer the two questions left over from
+../done/paint-costs-android-gradients-blends.md: whether Impeller
+regenerates a gradient (a gradient texture upload) per draw per frame on
+GLES, and why destination-out/over leave the fast blend path.
 
 ## What done looks like
 

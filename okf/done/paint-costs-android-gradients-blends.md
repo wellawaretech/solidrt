@@ -1,7 +1,8 @@
 ---
 title: Gradient fills, non-source-over blends and many small draws each cost a frame's worth on Android
-description: On the Galaxy Tab A7 (Adreno 610, Impeller GLES) a linear-gradient d-rect over each of ten panes costs ~15 ms a frame, four tiny destination-out/destination-over draws per pane ~16 ms, and seventy small source-over texture draws ~10 ms - all measured by subtraction from SurfaceFlinger present timestamps. performance.md's "GPU work is nearly free" needs these numbers, and get_stats needs per-frame draw/blend/layer counters so they can be found without a reload per hypothesis.
+description: Closed 2026-09-24: performance.md's "Where GPU work stops being free" lists the measured paint costs on a tiled GPU (gradient fills, rounded clips on resizing boxes, non-source-over blends, draw count, per-word text, a field in a resizing box) with the paintOps counters that name them; the Impeller-level questions moved to rounded-clip-cost-android for the one profiler session that answers all of them.
 created: 2026-09-22
+completed: 2026-09-24
 ---
 
 # Gradient fills, non-source-over blends and many small draws each cost a frame's worth on Android
@@ -41,6 +42,16 @@ So on this GPU class:
   rounded), save layers, non-source-over blends and gradient paints, on
   the HUD as DRW/CLP/LYR and BLD/GRD, so an app author reads the cause
   instead of bisecting the scene.
-- Worth checking in Impeller: whether the gradient is regenerated (a
+- Moved 2026-09-24 to ../backlog/rounded-clip-cost-android.md, whose next
+  step is the same profiler session: whether the gradient is regenerated (a
   gradient texture upload) per draw per frame on GLES, and why
   destination-out/over leave the fast blend path.
+
+## Closed (2026-09-24)
+
+performance.md, under "Where GPU work stops being free", carries the list
+with these numbers plus the two paint costs measured since (per-word text,
+fixed in done/text-paint-per-word-paragraphs.md, and a laid-out field in a
+resizing box, done/text-input-resize-post-layout.md), and points at
+`paintOps` for attribution. What remains is below the display list and is
+filed with the rounded clip.
