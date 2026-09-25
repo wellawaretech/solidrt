@@ -11,5 +11,7 @@ export {
   useNavigate,
   createLink,
   useBlocker,
+  useTabs,
 } from "./router.tsx"
-export type { Router as RouterInstance, RouterProps, RouteProps, Location, NavTarget, NavigateOptions, Blocker, RouterOptions } from "./router.tsx"
+export type { Router as RouterInstance, RouterProps, RouteProps, Location, NavTarget, NavigateOptions, Blocker, RouterOptions, Tabs } from "./router.tsx"
+export type { Entries, TabsState } from "./stack.ts"

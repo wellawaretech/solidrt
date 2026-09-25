@@ -2,6 +2,7 @@
 title: Application routing
 description: "@solidrt/router: a typed route tree with validated params, a memory stack run as Solid transitions, one back step, blocking, links in and location out; the mapping that makes screens addressable by OS links, MCP, srt render, reload and restore alike. Own package on core only, headless core plus a thin Solid binding, no data layer. A consumer of the link primitive in deep-links.md, never inside core."
 created: 2026-09-23
+completed: 2026-09-23
 ---
 
 # Application routing
@@ -233,19 +234,12 @@ not-found screen, no separate option.
 ### Later, not in the first version
 
 Cut 2026-09-23 as conveniences on top of a router that is complete
-without them; each is additive.
-
-- **Per-entry retention.** Each stack entry owns a keyed store,
-  `useRouteState(key, initial)`, that lives while the entry is on the
-  stack. Scroll offsets and the focused node's id go there; on pop the
-  binding restores focus through core's `setFocus`. `ScrollView` in
-  components opts in with one call; nothing in components is required by
-  the router. Whether it is on by default waits for a measurement of a
-  list-screen remount on the low-end baseline, once the player runs on
-  the router.
-- **Synthesized parent stack.** A route option `parents: true` so a link
-  into a nested route lands with its parents below it (back goes to the
-  list, not out of the app). A few lines when the first app wants it.
+without them; each is additive and has its own backlog item:
+[router-per-entry-retention](../backlog/router-per-entry-retention.md)
+(scroll and focus lost when back remounts a screen) and
+[router-link-parent-stack](../backlog/router-link-parent-stack.md) (a
+link into a nested screen outside tabs has nothing beneath it; done for
+tab screens by [router-tabs](router-tabs.md)).
 
 ### Data
 
@@ -308,44 +302,15 @@ loaders, no loader cache, nothing to invalidate.
 
 ## Findings
 
-- The flux engine evaluated the entry module before draining the exec
-  closures queued between build and eval, so the sticky launch facts
-  (`launch`, `launchLink`, a replayed connection state) were invisible at
-  module scope: `env.launchLink` read null and `env.launch` would read
-  "fresh" on a restored launch. Fixed in `flux/src/engine.rs` (drain the
-  queue, then the job queue, then evaluate); `env.launch` at module scope
-  is correct only since then.
-- SDL's drop path is its URL delivery on macOS (kAEGetURL handler) and iOS
-  (openURL): the URL string arrives as `SDL_EVENT_DROP_FILE`. Alloy maps a
-  drop payload with a scheme to `AlloyEvent::Link` (`link_from_drop`,
-  tested); a file path stays unhandled. Android reuses the same path for a
-  warm intent: `SolidRTActivity.onNewIntent` calls SDL's own
-  `onNativeDropFile(link)`, so no new JNI and the vendored SDL Java stays
-  untouched; the cold link rides argv (`--link`) next to `--restored`,
-  with the intent's data cleared before SDL's lossy `getPath()` sees it.
-  Device-verified 2026-09-23 on the tablet with explicit VIEW intents
-  (`am start -n ... -a android.intent.action.VIEW -d solidrt://settings`,
-  no intent filter needed for an explicit component): a cold link opens
-  Settings, a warm `solidrt://app/notes` into the running activity opens
-  the app detail, and the hardware back key pops to Settings.
-- A prop chain that ends in a plain function over a memo, read inside a
-  `For` item (the app list's `active` from the home screen's
-  `selectedId`), raised `STRICT_READ_UNTRACKED` once per row at mount;
-  the same chain as a `createMemo` does not. Kept as a memo.
-- Three `STRICT_READ_UNTRACKED` warnings on the settings screen come from
-  components' `SegmentedControl` (one per option) and predate routing;
-  filed as [segmented-control-strict-read](../backlog/segmented-control-strict-read.md).
-- `srt render` of the player exits 0 with no frames and no message, before
-  and after the migration; filed as
-  [player-headless-render-exits](../backlog/player-headless-render-exits.md).
-  Renders of the router probe at a link work.
-- The list-detail question is answered by the player: the home layout
-  route reads the child route from the location and gives `<Outlet>` to
-  the pane that child belongs in (settings and an app's detail to the
-  detail pane, connect to the list pane); `SplitView` keeps its
-  `showDetail` contract and knows nothing of routes. Two-pane no longer
-  keeps an app's detail beside the connect panel (connect is its own
-  route); back returns to it.
+Cut into
+[routing-and-link-delivery-traps](../notes/routing-and-link-delivery-traps.md):
+the engine's exec drain before module evaluation, SDL's drop event as the
+URL delivery path, the per-row `STRICT_READ_UNTRACKED` pattern, and the
+list-detail answer over a layout route. Two bugs met on the way predate
+routing and are filed on their own:
+[segmented-control-strict-read](../backlog/segmented-control-strict-read.md)
+and
+[player-headless-render-exits](../backlog/player-headless-render-exits.md).
 
 ## Rejected
 

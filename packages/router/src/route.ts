@@ -22,6 +22,8 @@ export interface Route<P = {}> {
   readonly component: (() => any) | null
   readonly parse: ((raw: RawParams) => unknown) | null
   readonly segments: Segment[]
+  /** Each child is a tab with a stack of its own (see stack.ts). */
+  readonly tabs: boolean
   // A phantom carrying the params type. Contravariant on purpose: a route
   // with required params is not a `Route<{}>`, so navigate(route) without
   // params is a type error for it while a param-less route passes bare.
@@ -58,6 +60,14 @@ export interface RouteOptions<P> {
    * last). More can be placed later under a JSX `<Route route={...}>`.
    */
   children?: AnyRoute[]
+  /**
+   * Makes each child a tab: a screen with a stack of its own that stays
+   * mounted while another tab shows. A tab's path is literal (the tab bar
+   * has no params to give it), the route and its ancestors take no params,
+   * and a tree holds one tabs route, not inside another. The component
+   * renders the tabs through `<Outlet>` and reaches them with `useTabs()`.
+   */
+  tabs?: boolean
 }
 
 // One piece of a route's path pattern.
@@ -103,6 +113,7 @@ export function createRootRoute(options: { component?: () => any; children?: Any
     component: options.component ?? null,
     parse: null,
     segments: [],
+    tabs: false,
     _params: () => {},
   }
   place(root, options.children ?? [])
@@ -118,6 +129,7 @@ export function createRoute<P = RawParams>(options: RouteOptions<P>): Route<P> {
     component: options.component ?? null,
     parse: options.params?.parse ?? null,
     segments: parseSegments(options.path),
+    tabs: options.tabs ?? false,
     _params: () => {},
   }
   place(route, options.children ?? [])
@@ -126,7 +138,9 @@ export function createRoute<P = RawParams>(options: RouteOptions<P>): Route<P> {
 
 /**
  * Puts `children` under `parent`, after any it already has. A route has one
- * place in one tree: placing it again throws.
+ * place in one tree: placing it again throws. The tabs rules are checked
+ * here too, over the whole subtree placed, since a value tree is built
+ * bottom-up and an ancestor only appears with the placement above.
  */
 export function place(parent: AnyRoute, children: AnyRoute[]): void {
   for (let child of children) {
@@ -135,7 +149,43 @@ export function place(parent: AnyRoute, children: AnyRoute[]): void {
     }
     ;(child as { parent: AnyRoute | null }).parent = parent
     parent.children.push(child)
+    checkTabs(child)
   }
+}
+
+// The tabs rules for `route` and everything below it (see RouteOptions.tabs).
+function checkTabs(route: AnyRoute): void {
+  if (route.parent?.tabs) {
+    if (route.segments.some((s) => s.kind !== "literal")) {
+      throw new Error(`Tab "${formatPattern(route)}": a tab's path is literal`)
+    }
+    let own = formatPattern(route)
+    for (let sibling of route.parent.children) {
+      if (sibling !== route && formatPattern(sibling) === own) {
+        throw new Error(`Tab "${own}" is declared twice`)
+      }
+    }
+  }
+  if (route.tabs) {
+    for (let anc = route.parent; anc; anc = anc.parent) {
+      if (anc.tabs) throw new Error(`Route "${formatPattern(route)}": tabs inside a tab are not supported`)
+      if (anc.segments.some((s) => s.kind !== "literal")) {
+        throw new Error(`Route "${formatPattern(route)}": a tabs route takes no params above it`)
+      }
+    }
+  }
+  for (let child of route.children) checkTabs(child)
+}
+
+/** The tabs routes in the tree; a router takes one. */
+export function tabsRoutes(root: AnyRoute): AnyRoute[] {
+  let out: AnyRoute[] = []
+  let walk = (route: AnyRoute) => {
+    if (route.tabs) out.push(route)
+    for (let child of route.children) walk(child)
+  }
+  walk(root)
+  return out
 }
 
 /** One route of a matched path, with the params it parsed. */

@@ -1,13 +1,15 @@
-// The Solid binding over route.ts: the stack, navigation, the back step,
-// blocking, links in and the location out, the JSX tree (`<Route>`) and the
-// components that render the matched routes. Everything here is built on
-// what core offers every app (onBack, onLink, env.launchLink,
-// reportLocation from srt:dev); core knows nothing of routes.
-import { createSignal, createMemo, createContext, createEffect, useContext, untrack, onCleanup, children, Show } from "@solidrt/core"
+// The Solid binding over route.ts and stack.ts: the state in a signal, the
+// navigation, the back step, blocking, links in and the location out, the
+// JSX tree (`<Route>`) and the components that render the matched routes.
+// Everything here is built on what core offers every app (onBack, onLink,
+// env.launchLink, reportLocation from srt:dev); core knows nothing of routes.
+import { createSignal, createMemo, createContext, createEffect, useContext, untrack, onCleanup, children, Show, For } from "@solidrt/core"
 import { env, onBack, onLink } from "@solidrt/core"
 import { reportLocation } from "srt:dev"
 import { createRootRoute, createRoute, formatPath, linkToPath, matchPath, place } from "./route"
 import type { AnyRoute, Match, ParamsOf, RawParams, Route as RouteValue } from "./route"
+import { back as stepBack, changed, currentPath, findTabs, initialState, push, replace, reset, resolve } from "./stack"
+import type { Entries, NavState, TabsInfo } from "./stack"
 
 /** The route value (see route.ts); `Route` the component is the JSX form. */
 export type Route<P = {}> = RouteValue<P>
@@ -33,7 +35,7 @@ export interface NavigateOptions {
   /**
    * Start the stack over at this entry: the app's home after a flow is
    * finished (a scan dialed, a login done), where back should leave the app
-   * rather than revisit the flow.
+   * rather than revisit the flow. With tabs, every tab returns to its root.
    */
   reset?: boolean
 }
@@ -49,16 +51,32 @@ export interface RouterOptions {
   /** The root of the route tree (createRootRoute). */
   tree: AnyRoute
   /**
-   * Where the app starts: a path, or a saved stack (`entries()`) to resume
-   * with. A launch link (env.launchLink) wins over it: the user just asked
-   * for that screen. Defaults to "/".
+   * Where the app starts: a path, or a saved `entries()` to resume with. A
+   * launch link (env.launchLink) wins over it: the user just asked for that
+   * screen. Defaults to "/".
    */
-  initial?: string | string[]
+  initial?: string | Entries
+}
+
+/** The tabs of a tabs route, from `useTabs()`. */
+export interface Tabs {
+  /** The tabs' root paths, in declaration order; the first is home. */
+  paths: string[]
+  /** The tab that shows, as its root path. Reactive. */
+  active(): string
+  /**
+   * Show a tab: another tab as it was left, the active one back at its
+   * root. Resolves false when a blocker held it.
+   */
+  select(path: string): Promise<boolean>
 }
 
 export interface Router {
-  /** The stack as plain data, bottom first; save it in onSuspend. Reactive. */
-  entries(): string[]
+  /**
+   * The stack as plain data, bottom first: an array of paths, or with
+   * tabs the parent stack and the tabs. Save it in onSuspend. Reactive.
+   */
+  entries(): Entries
   /** The matched top of the stack, or null when nothing matches. Reactive. */
   location(): Location | null
   /**
@@ -71,8 +89,16 @@ export interface Router {
   back(): Promise<boolean>
   /** The path a target names; what a link to it would carry. */
   href(target: NavTarget): string
-  /** @internal the blockers registered by useBlocker */
-  blockers: Set<Blocker>
+  /** @internal the state as stack.ts sees it */
+  state(): NavState
+  /** @internal the tree's tabs route, or null */
+  tabs: TabsInfo | null
+  /** @internal the tab that shows, or null without tabs */
+  activeTab(): string | null
+  /** @internal a tab's own location: the top of its stack, matched */
+  tabLocation(tab: string): () => Location | null
+  /** @internal the blockers registered by useBlocker, per scope (null: the parent stack) */
+  blockers: Map<string | null, Set<Blocker>>
   /** @internal the tree */
   tree: AnyRoute
 }
@@ -82,26 +108,32 @@ export interface Router {
  * component) and rendered by `<Router router={...}>`. Navigation is a
  * signal write, so Solid's transition semantics apply: a screen whose async
  * reads are pending keeps the previous one on screen, `isPending(() =>
- * router.location())` says so.
+ * router.location()` says so.
  */
 export function createRouter(options: RouterOptions): Router {
   let tree = options.tree
+  let tabs = findTabs(tree)
   let launch = env.launchLink
-  let start = launch != null ? [linkToPath(launch)] : normalizeInitial(options.initial)
-  let valid = start.filter((path) => {
-    if (matchPath(tree, path)) return true
-    console.warn(`Router: no route matches "${path}"; dropped from the initial stack`)
-    return false
-  })
-  let [entries, setEntries] = createSignal<string[]>(valid.length > 0 ? valid : ["/"])
-  let location = createMemo<Location | null>(() => {
-    let list = entries()
-    let path = list[list.length - 1]
+  let [state, setState] = createSignal<NavState>(
+    initialState(tree, tabs, launch != null ? launch : options.initial, linkToPath),
+  )
+  let located = (path: string | undefined): Location | null => {
     if (path === undefined) return null
     let matches = matchPath(tree, path)
     return matches ? { path, matches } : null
-  })
-  let blockers = new Set<Blocker>()
+  }
+  let location = createMemo<Location | null>(() => located(currentPath(state(), tabs)))
+  let tabLocations = new Map<string, () => Location | null>()
+  for (let root of tabs?.roots ?? []) {
+    tabLocations.set(
+      root,
+      createMemo<Location | null>(() => {
+        let stack = state().tabs?.stacks[root]
+        return located(stack?.[stack.length - 1])
+      }),
+    )
+  }
+  let blockers = new Map<string | null, Set<Blocker>>()
 
   let href = (target: NavTarget): string => {
     if (typeof target === "string") return linkToPath(target)
@@ -109,59 +141,73 @@ export function createRouter(options: RouterOptions): Router {
     return formatPath(target)
   }
 
-  // Runs the blockers; a sync false cancels at once, promises are awaited
-  // together and any false cancels.
-  let allowed = async (): Promise<boolean> => {
+  // Runs the blockers of the given scopes; a sync false cancels at once,
+  // promises are awaited together and any false cancels.
+  let allowed = async (scopes: Array<string | null>): Promise<boolean> => {
     let pending: Promise<boolean>[] = []
-    for (let block of blockers) {
-      let verdict = block()
-      if (verdict === false) return false
-      if (verdict !== true) pending.push(verdict)
+    for (let scope of scopes) {
+      for (let block of blockers.get(scope) ?? []) {
+        let verdict = block()
+        if (verdict === false) return false
+        if (verdict !== true) pending.push(verdict)
+      }
     }
     if (pending.length === 0) return true
     return (await Promise.all(pending)).every(Boolean)
   }
 
   let router: Router = {
-    entries,
+    entries: () => {
+      let s = state()
+      return s.tabs ? { stack: s.stack, tabs: s.tabs } : s.stack
+    },
     location,
     href,
+    state,
+    tabs,
+    activeTab: () => state().tabs?.active ?? null,
+    tabLocation: (tab) => tabLocations.get(tab) ?? (() => null),
     blockers,
     tree,
     async navigate(target, options = {}) {
       let path = href(target)
-      if (!matchPath(tree, path)) {
+      let to = resolve(tree, tabs, path)
+      if (!to) {
         console.warn(`Router: no route matches "${path}"`)
         return false
       }
-      if (!(await allowed())) return false
-      setEntries((list) => {
-        if (options.reset) return [path]
-        if (options.replace) return [...list.slice(0, -1), path]
-        return [...list, path]
-      })
+      let apply = (s: NavState) => (options.reset ? reset(tabs, to) : options.replace ? replace(s, tabs, to) : push(s, tabs, to))
+      // The blockers asked are those of the stacks the move changes; the
+      // state is read again after they answer, in case it moved meanwhile.
+      let before = untrack(state)
+      if (!(await allowed(changed(before, apply(before))))) return false
+      setState((s) => apply(s))
       return true
     },
     async back() {
-      if (untrack(entries).length <= 1) return false
-      if (!(await allowed())) return false
-      setEntries((list) => list.slice(0, -1))
+      let before = untrack(state)
+      let next = stepBack(before, tabs)
+      if (!next) return false
+      if (!(await allowed(changed(before, next)))) return false
+      setState((s) => stepBack(s, tabs) ?? s)
       return true
     },
   }
   return router
 }
 
-function normalizeInitial(initial: string | string[] | undefined): string[] {
-  if (initial === undefined) return ["/"]
-  if (typeof initial === "string") return [linkToPath(initial)]
-  return initial.map(linkToPath)
-}
-
 const RouterContext = createContext<Router>()
 // How deep in the matched chain the surrounding route is; an Outlet renders
 // the next one.
 const DepthContext = createContext<number>(0)
+// The location a subtree renders from: the app's, or inside a tab that
+// tab's own, so a hidden tab keeps its params and screen while another
+// shows. `tab` is the blocker scope.
+interface Scope {
+  location: () => Location | null
+  tab: string | null
+}
+const ScopeContext = createContext<Scope>()
 
 export type RouterProps =
   /** A router made with createRouter, over a tree of route values. */
@@ -170,7 +216,7 @@ export type RouterProps =
    * A tree of `<Route>` elements, in matching order, under a root with no
    * component; the router is made here and reached through the hooks.
    */
-  | { router?: never; initial?: string | string[]; children: any }
+  | { router?: never; initial?: string | Entries; children: any }
 
 /**
  * Renders the matched routes and owns the app's step of the back stack, the
@@ -188,7 +234,7 @@ export function Router(props: RouterProps) {
   onBack((e) => {
     // Nothing to pop at the root: the platform's default (background on
     // Android, exit elsewhere) runs unless something above prevented it.
-    if (untrack(router.entries).length <= 1) return
+    if (stepBack(untrack(router.state), router.tabs) === null) return
     e.preventDefault()
     void router.back()
   })
@@ -204,7 +250,9 @@ export function Router(props: RouterProps) {
 
   return (
     <RouterContext value={router}>
-      <RouteView depth={0} />
+      <ScopeContext value={{ location: router.location, tab: null }}>
+        <RouteView depth={0} />
+      </ScopeContext>
     </RouterContext>
   )
 }
@@ -214,10 +262,12 @@ export interface RouteProps {
   path?: string
   /** What renders here; without one, an outlet alone. */
   component?: () => any
+  /** Each child is a tab with a stack of its own (see createRoute). */
+  tabs?: boolean
   /**
    * A route value to place here instead: typed or validated params live on
    * the value (createRoute), the JSX gives it its place in the tree. Not
-   * with `path` or `component`.
+   * with `path`, `component` or `tabs`.
    */
   route?: AnyRoute
   /** Nested `<Route>` elements, in matching order. */
@@ -232,13 +282,13 @@ export function Route(props: RouteProps): any {
   return untrack(() => {
     let below = routesOf(props.children)
     if (props.route) {
-      if (props.path !== undefined || props.component !== undefined) {
-        throw new Error("<Route route={...}> takes no path or component: they are the route's own")
+      if (props.path !== undefined || props.component !== undefined || props.tabs !== undefined) {
+        throw new Error("<Route route={...}> takes no path, component or tabs: they are the route's own")
       }
       place(props.route, below)
       return props.route
     }
-    return createRoute({ path: props.path ?? "/", component: props.component, children: below })
+    return createRoute({ path: props.path ?? "/", component: props.component, tabs: props.tabs, children: below })
   })
 }
 
@@ -255,25 +305,70 @@ function routesOf(slot: any): AnyRoute[] {
   return list as unknown as AnyRoute[]
 }
 
-// The route at `depth` of the current match chain. Keyed on the route, not
+// The route at `depth` of the scope's match chain. Keyed on the route, not
 // the match: params changing under the same route update reactively through
-// useParams, without a remount.
+// useParams, without a remount. The tabs route is the exception: once
+// mounted at its depth it stays, hidden while another route shows there (a
+// full-window screen over the tab bar), so the tabs keep their state.
 function RouteView(props: { depth: number }) {
   let router = useContext(RouterContext)
-  let route = createMemo(() => router.location()?.matches[props.depth]?.route ?? null)
+  let scope = useContext(ScopeContext)
+  let route = createMemo(() => scope.location()?.matches[props.depth]?.route ?? null)
+  let tabsRoute = router.tabs?.route ?? null
+  let tabsSeen = createMemo(() => tabsRoute !== null && route() === tabsRoute)
+  let seen = false
+  let tabsMounted = createMemo(() => (seen ||= tabsSeen()))
+  let render = (r: AnyRoute) => (r.component ? <r.component /> : <Outlet />)
   return (
     <DepthContext value={props.depth}>
-      <Show when={route()} keyed>
-        {(r: AnyRoute) => (r.component ? <r.component /> : <Outlet />)}
+      <Show when={tabsMounted()}>
+        <view flex={1} flexDirection="column" display={tabsSeen() ? "flex" : "none"}>
+          {render(tabsRoute!)}
+        </view>
+      </Show>
+      <Show when={tabsSeen() ? null : route()} keyed>
+        {render}
       </Show>
     </DepthContext>
   )
 }
 
-/** Where a layout route's matched child renders. */
+/**
+ * Where a layout route's matched child renders. Under the tabs route it
+ * holds every tab visited so far, each in its own full-size view, the
+ * inactive ones hidden.
+ */
 export function Outlet() {
+  let router = useContext(RouterContext)
   let depth = useContext(DepthContext)
+  let scope = useContext(ScopeContext)
+  let here = untrack(() => scope.location()?.matches[depth]?.route ?? null)
+  if (here !== null && here === router.tabs?.route) return <TabsOutlet depth={depth} />
   return <RouteView depth={depth + 1} />
+}
+
+// The tabs under the tabs route at `depth`: mounted on first visit, kept
+// after, hidden while inactive. A hidden tab is laid out to nothing, so it
+// is never painted, hit or focused; its reactive code keeps running.
+function TabsOutlet(props: { depth: number }) {
+  let router = useContext(RouterContext)
+  let seen: string[] = []
+  let visited = createMemo(() => {
+    let active = router.activeTab()
+    if (active !== null && !seen.includes(active)) seen = [...seen, active]
+    return seen
+  })
+  return (
+    <For each={visited()}>
+      {(tab: string) => (
+        <view flex={1} flexDirection="column" display={router.activeTab() === tab ? "flex" : "none"}>
+          <ScopeContext value={{ location: router.tabLocation(tab), tab }}>
+            <RouteView depth={props.depth + 1} />
+          </ScopeContext>
+        </view>
+      )}
+    </For>
+  )
 }
 
 /** The router this component renders under. */
@@ -281,9 +376,12 @@ export function useRouter(): Router {
   return useContext(RouterContext)
 }
 
-/** The current location, reactive; null when nothing matches. */
+/**
+ * The current location, reactive; null when nothing matches. Inside a tab
+ * it is that tab's own, whether or not the tab shows.
+ */
 export function useLocation(): () => Location | null {
-  return useContext(RouterContext).location
+  return useContext(ScopeContext).location
 }
 
 /**
@@ -295,9 +393,9 @@ export function useLocation(): () => Location | null {
 export function useParams(): () => RawParams
 export function useParams<R extends AnyRoute>(route: R): () => ParamsOf<R>
 export function useParams(route?: AnyRoute): () => any {
-  let router = useContext(RouterContext)
+  let scope = useContext(ScopeContext)
   return createMemo(() => {
-    let matches = router.location()?.matches ?? []
+    let matches = scope.location()?.matches ?? []
     let match = (route && matches.find((m) => m.route === route)) ?? matches[matches.length - 1]
     return match?.params ?? {}
   })
@@ -307,6 +405,22 @@ export function useParams(route?: AnyRoute): () => any {
 export function useNavigate(): (target: NavTarget, options?: NavigateOptions) => Promise<boolean> {
   let router = useContext(RouterContext)
   return (target, options) => router.navigate(target, options)
+}
+
+/**
+ * The tabs of the tree's tabs route, for the component that draws the tab
+ * bar (and for a screen to learn whether its tab shows). Throws without a
+ * tabs route.
+ */
+export function useTabs(): Tabs {
+  let router = useContext(RouterContext)
+  let tabs = router.tabs
+  if (!tabs) throw new Error("useTabs: the route tree has no tabs route")
+  return {
+    paths: tabs.roots,
+    active: () => router.activeTab() ?? tabs.roots[0]!,
+    select: (path) => router.navigate(path),
+  }
 }
 
 /**
@@ -320,12 +434,17 @@ export function createLink(target: NavTarget, options?: NavigateOptions): { href
 
 /**
  * Guards leaving the current entry while this component is mounted: back,
- * navigate and replace all ask `block` first. Return false to stay, true to
- * go, or a promise (a confirm dialog) that decides later. A blocked back is
- * prevented, so it never falls through to the platform default.
+ * navigate and replace ask `block` first when they change the stack this
+ * component is in (a tab's own, or the parent stack). Return false to stay,
+ * true to go, or a promise (a confirm dialog) that decides later. A
+ * blocked back is prevented, so it never falls through to the platform
+ * default. Showing another tab changes no stack, so it asks no blocker.
  */
 export function useBlocker(block: Blocker): void {
   let router = useContext(RouterContext)
-  router.blockers.add(block)
-  onCleanup(() => router.blockers.delete(block))
+  let scope = useContext(ScopeContext).tab
+  let set = router.blockers.get(scope)
+  if (!set) router.blockers.set(scope, (set = new Set()))
+  set.add(block)
+  onCleanup(() => set.delete(block))
 }

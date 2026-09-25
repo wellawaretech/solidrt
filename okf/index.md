@@ -45,13 +45,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   open) adds Opus audio from WebM, with the sink position correcting the clock
   anchor instead of selecting frames. Decided 2026-09-12, reversing the
   2026-08-12 rejection; the texture pipeline keeps every non-fullscreen use.
-- **[Application routing](plans/app-routing.md)** [2026-09-23]
-  "@solidrt/router: a typed route tree with validated params, a memory stack
-  run as Solid transitions, one back step, blocking, links in and location
-  out; the mapping that makes screens addressable by OS links, MCP, srt
-  render, reload and restore alike. Own package on core only, headless core
-  plus a thin Solid binding, no data layer. A consumer of the link primitive
-  in deep-links.md, never inside core."
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -637,6 +630,14 @@ Shaped, not started.
   get_stats; a static rounded clip is nearly free, one resizing rounded pane
   costs ~8 ms, ten ~13 ms, and an image under the clip pays most. Cause not
   yet located below the display list; needs an Impeller-level look.
+- **[Router link into a nested screen has nothing beneath it](backlog/router-link-parent-stack.md)** [2026-09-25]
+  "A launch link into a screen outside the tabs lands as a stack of one, so
+  back leaves the app instead of going to the list; a route option to
+  synthesize the parents beneath a linked entry."
+- **[Router per-entry retention](backlog/router-per-entry-retention.md)** [2026-09-25]
+  "Back to a list screen remounts it, so its scroll offset and focused row are
+  lost; each stack entry should own a keyed store that lives while the entry
+  is on the stack, with ScrollView opting in and focus restored on pop."
 - **[Runtime policies - tracked, app-readable, app-overridable](backlog/runtime-policy-registry.md)** [2026-08-13]
   The runtime is accumulating behavior policies it selects on the app's behalf
   from device facts (frame pacing being the first with real consequences).
@@ -1149,6 +1150,13 @@ Finished, kept for the reasoning.
   lattice installs ProcessArgs from the source-path tail, packed payloads own
   their whole command line, dev pushes carry the session's args, and exit()
   ends a playback run early.
+- **[Application routing](done/app-routing.md)** [2026-09-23]
+  "@solidrt/router: a typed route tree with validated params, a memory stack
+  run as Solid transitions, one back step, blocking, links in and location
+  out; the mapping that makes screens addressable by OS links, MCP, srt
+  render, reload and restore alike. Own package on core only, headless core
+  plus a thin Solid binding, no data layer. A consumer of the link primitive
+  in deep-links.md, never inside core."
 - **[App suspend and quit hooks](done/app-suspend-quit-hooks.md)** [2026-09-10]
   "The env.visibility persist contract is racy today and structurally broken
   on iOS; replace it with a suspend hook and a quit hook whose async work the
@@ -1942,6 +1950,13 @@ Finished, kept for the reasoning.
   Invert the frame so the app draws into the offscreen MSAA rig and resolves
   into a sampleable layer texture composited to a single-sample window, giving
   whole-app effects (warp, glass, transitions) for about the cost of one quad.
+- **[Router tabs](done/router-tabs.md)** [2026-09-25]
+  "A `tabs` route in @solidrt/router: each child is a tab with its own stack,
+  kept mounted and hidden while inactive, under a parent stack that holds the
+  full-window screens above the tab bar; re-tap goes to the tab's root, back
+  on a non-first tab's root goes to the first tab, links land in their tab.
+  The model every native router shares (React Navigation, Expo Router,
+  go_router, UIKit/SwiftUI, Jetpack); web routers have nothing here."
 - **[A zoom debug command in the scaffold](done/scaffold-zoom-debug-command.md)** [2026-08-06]
   Snapshots reach an agent downscaled, so small hand-authored geometry needs
   magnified inspection; a ~15-line viewBox-shrinking registerDebug("zoom")
@@ -2409,6 +2424,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   (call-surface inventory, crate map, sizing, the parity tail), and what it
   would buy; iOS is the event that turns Impeller from nearly free into a
   Flutter-engine build we maintain.
+- **[Routing and link delivery traps](notes/routing-and-link-delivery-traps.md)** [2026-09-25]
+  "What building the router and link delivery turned up that stays true
+  without them: the flux engine's exec-queue drain before module evaluation
+  (launch facts at module scope), SDL's drop event as the URL delivery path on
+  macOS/iOS/Android, a STRICT_READ_UNTRACKED pattern in For items, and the
+  list-detail layout-route answer."
 - **[A 3D scene graph above the pipeline](notes/scene-graph-3d.md)** [2026-08-03]
   How a Three.js-in-spirit retained scene graph (meshes, materials, cameras,
   lights) would be built over flux:gpu as a sibling library with a Solid

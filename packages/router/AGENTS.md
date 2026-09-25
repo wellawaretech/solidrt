@@ -44,6 +44,14 @@ let item = createRoute({                                    // a value: typed pa
   by the value. Both reactive. `useLocation()`, `useNavigate()`,
   `useRouter()`, `createLink(target)`, `useBlocker(fn)`.
 - `router.entries()` is the stack as paths; pass a saved one as `initial`.
+- Tabs: `<Route path="/" tabs component={Main}>` makes each child a tab
+  with a stack of its own, kept mounted and hidden while another shows;
+  full-window screens are siblings of the tabs route, above the bar. `Main`
+  renders `<Outlet />` and draws the bar from `useTabs()` (`{ paths,
+  active(), select(path) }`, e.g. wired to components' `NavShell`). A tab
+  is named by its literal root path. Select = show as left, re-select =
+  back to root; back pops above the bar, then the tab, then goes to the
+  first tab, then the platform. With tabs `entries()` is `{ stack, tabs }`.
 - Path syntax: literal, `$name`, `$name?` (last), `$` for the rest (a `$`
   route last under the root is the not-found screen). `/` is an index
   route, or with children a pathless layout. Children match in
@@ -72,6 +80,14 @@ let item = createRoute({                                    // a value: typed pa
   (unsaved changes), not for closing overlays.
 - `navigate(..., { reset: true })` for "flow finished, this is home"; a
   plain push there leaves the flow's screens under home for back to revisit.
+- A hidden tab is laid out to nothing: its reactive code keeps running,
+  but `getBoundingBox` and friends return null there and nothing in it is
+  painted, hit or focusable. A screen that measures itself checks
+  `useTabs().active()` against its tab's path, or tolerates null.
+- The tabs route and each tab render in a full-size `<view>` (flex 1,
+  column): put the tabs route under laid-out parents only.
+- Nothing above a tabs route takes a param, a tab's path is literal, one
+  tabs route per tree and never inside a tab: all thrown at tree build.
 - Links are untrusted: put validation in `params.parse`, never in the
   screen. `linkToPath` strips a custom scheme whole (`myapp://a/b` is
   `/a/b`) and an http(s) host.
