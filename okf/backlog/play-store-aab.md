@@ -115,10 +115,13 @@ other does not, it gets a sub-object (`android.aab`) then, additively.
 `loadProject` validates a group the way it validates the top level; an
 unknown key inside a group fails.
 
-This moves the existing `versionCode` and `iconBackground` into `android`.
-Breaking, no compatibility shim: `lib/project.ts`, the scaffold's null
-placeholders, `pack/docs.md` and the scaffold docs all move together, as the
-first step before any bundle work.
+The group landed with
+[packed-apk-data-on-device](../done/packed-apk-data-on-device.md)
+(2026-09-25) with a sharper line than sketched above: `versionCode` and
+`permissions` (fully qualified extras) are the group; `iconBackground`,
+the `capabilities` map and `backup` are top-level intentions every packer
+reads.
+`patchBundle` applies the same mapping to the proto manifest.
 
 ## Signing
 
@@ -186,9 +189,12 @@ first step before any bundle work.
 
 ## Out of scope
 
-- Permission splicing per app (RECORD_AUDIO needs a justification in Play
-  review; the runner ships it unconditionally). Covers APK and AAB, needs
-  its own config design; the proto side is the easy half.
+- Implied features: a CAMERA permission makes Play treat
+  `android.hardware.camera` as required and hide the app from devices
+  without one. A `<uses-feature required="false">` per permission that
+  implies one is the same splice as the permission itself (a second
+  attribute, boolean typed) once an app needs it; the go overlay shows the
+  pair.
 - Play Asset Delivery: the base module is capped at 200 MB of download. A
   payload above that would arrive as a separate split, and
   `packed_asset_location` reads only the base `sourceDir`. Wait for an app

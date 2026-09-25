@@ -7,7 +7,17 @@
     "displayName": null,
     "icon": null,
     "iconBackground": null,
-    "versionCode": null,
+    "capabilities": {
+      "camera": true,
+      "microphone": true,
+      "vibration": true,
+      "internet": true
+    },
+    "backup": false,
+    "android": {
+      "versionCode": null,
+      "permissions": []
+    },
     "fonts": {
       "sans": true,
       "serif": true,

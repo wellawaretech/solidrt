@@ -14,11 +14,33 @@ import { fail } from "./util"
 //                                   // an undeclared assets/icon.svg is picked
 //                                   // up by convention. A .png also feeds the
 //                                   // Android launcher icon (pack --apk)
-//     "iconBackground": "#ffffff",  // Android adaptive-icon background color
-//     "versionCode": 1              // Android update ordering (pack --apk);
-//                                   // versionName comes from the package
-//                                   // "version" field
+//     "iconBackground": "#ffffff",  // the ground behind the icon's transparent
+//                                   // foreground (Android adaptive icon; other
+//                                   // packers as they compose icons)
+//     "capabilities": {             // what the app may ask the user for; all
+//       "camera": true,             // on by default (a packed app then works
+//       "microphone": true,         // like it did in the player), false drops
+//       "vibration": true,          // one; each packer maps the names
+//       "internet": true
+//     },
+//     "backup": false,              // true lets the OS back up the app's data/
+//                                   // folder; off keeps it on the device
+//     "android": {                  // pack --apk (and, later, --aab)
+//       "versionCode": 1,           // update ordering; versionName comes from
+//                                   // the package "version" field
+//       "permissions": ["com.android.vending.BILLING"]
+//                                   // <uses-permission> names beyond what
+//                                   // the capabilities imply, fully qualified
+//     }
 //   }
+//
+// The top level holds what the app is and intends, in platform-neutral
+// terms; whether a platform implements an intention (backup) is that
+// packer's business. Platform-specific knobs are grouped per target
+// (android, later windows, macos, flatpak, steam, ...), never nested by
+// platform (okf/backlog/play-store-aab.md). An unknown key fails, at the
+// top level and inside a group alike, since a misspelled knob would
+// otherwise silently ship a default.
 //
 // Everything defaults from the package name (or the entry filename when there
 // is no project) so a dev project needs zero config; `srt pack` warns
@@ -50,13 +72,78 @@ export type ProjectConfig = {
    */
   fonts?: Record<string, string | boolean>
   icon?: string
-  /** Android adaptive-icon background color, "#rrggbb" (apk.ts). */
+  /** The ground behind the icon's transparent foreground, "#rrggbb". */
   iconBackground?: string
+  /** Per-capability switches (CAPABILITIES); absent means on. */
+  capabilities?: Partial<Record<Capability, boolean>>
+  /** Let the OS back up the app's data/ folder; off keeps it on the device. */
+  backup?: boolean
+  android?: AndroidConfig
+}
+
+/** The `android` packaging group, every field optional and shape-checked. */
+export type AndroidConfig = {
   /** Android versionCode: a positive integer that must only ever grow. */
   versionCode?: number
+  /**
+   * Permissions the packed app declares beyond what its capabilities imply,
+   * fully qualified ("com.android.vending.BILLING").
+   */
+  permissions?: string[]
+}
+
+// The capability vocabulary: everything the runtime can ask the user for, in
+// platform-neutral terms. Each packer maps a name to its platform's
+// permission (pack/main.ts for Android); an unknown name fails here. All are
+// on unless the project switches one off, so a packed app can do what it did
+// in the player; the scaffold lists them all so switching off is a one-line
+// edit.
+export const CAPABILITIES = ["camera", "microphone", "vibration", "internet"] as const
+export type Capability = (typeof CAPABILITIES)[number]
+
+/** The capabilities a project keeps: every one not switched off. */
+export function resolveCapabilities(config: ProjectConfig): Capability[] {
+  return CAPABILITIES.filter((name) => config.capabilities?.[name] !== false)
+}
+
+// A fully qualified permission name: at least two identifier segments
+// joined by dots. Every Android permission carries its namespace
+// (android.permission.*, com.android.vending.*); a bare name is a mistake.
+const ANDROID_PERMISSION_NAME = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$/
+
+function parseAndroidConfig(raw: unknown): AndroidConfig {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail('"solidrt": "android" must be an object')
+  let group = raw as Record<string, unknown>
+  for (let key of Object.keys(group)) {
+    if (!["versionCode", "permissions"].includes(key)) fail(`"solidrt.android": unknown key "${key}"`)
+    if (group[key] === null) delete group[key]
+  }
+  // Android caps versionCode at 2100000000; enforcing it here keeps every
+  // packed artifact installable.
+  if ("versionCode" in group) {
+    let code = group.versionCode
+    if (typeof code !== "number" || !Number.isInteger(code) || code < 1 || code > 2100000000) {
+      fail('"solidrt.android": "versionCode" must be an integer between 1 and 2100000000')
+    }
+  }
+  if ("permissions" in group) {
+    let list = group.permissions
+    if (!Array.isArray(list) || !list.every((p) => typeof p === "string")) {
+      fail('"solidrt.android": "permissions" must be an array of permission names')
+    }
+    for (let name of list as string[]) {
+      if (!ANDROID_PERMISSION_NAME.test(name)) {
+        fail(`"solidrt.android": "permissions" entry "${name}" is not a fully qualified permission name`)
+      }
+    }
+  }
+  return group as AndroidConfig
 }
 
 export type Project = { dir: string; name: string | undefined; version: string | undefined; config: ProjectConfig }
+
+// Every key the `solidrt` object accepts (the ProjectConfig fields).
+const PROJECT_KEYS = ["entry", "appId", "org", "displayName", "icon", "iconBackground", "capabilities", "backup", "fonts", "android"]
 
 function parseProjectConfig(raw: unknown): ProjectConfig {
   if (raw === undefined) return {}
@@ -64,8 +151,9 @@ function parseProjectConfig(raw: unknown): ProjectConfig {
   let config = raw as Record<string, unknown>
   // Null = unset (see the header note): stripped here so every reader sees
   // the same absent key it would for an omitted one.
-  for (let key of ["entry", "appId", "org", "displayName", "icon", "iconBackground", "fonts", "versionCode"]) {
-    if (key in config && config[key] === null) delete config[key]
+  for (let key of Object.keys(config)) {
+    if (!PROJECT_KEYS.includes(key)) fail(`"solidrt": unknown key "${key}"`)
+    if (config[key] === null) delete config[key]
   }
   for (let key of ["entry", "appId", "org", "displayName", "icon"]) {
     if (key in config && typeof config[key] !== "string") fail(`"solidrt": "${key}" must be a string`)
@@ -73,14 +161,20 @@ function parseProjectConfig(raw: unknown): ProjectConfig {
   if ("iconBackground" in config && !(typeof config.iconBackground === "string" && /^#[0-9a-fA-F]{6}$/.test(config.iconBackground))) {
     fail('"solidrt": "iconBackground" must be a "#rrggbb" color')
   }
-  // Android caps versionCode at 2100000000; enforcing it here keeps every
-  // packed artifact installable.
-  if ("versionCode" in config) {
-    let code = config.versionCode
-    if (typeof code !== "number" || !Number.isInteger(code) || code < 1 || code > 2100000000) {
-      fail('"solidrt": "versionCode" must be an integer between 1 and 2100000000')
+  if ("capabilities" in config) {
+    let map = config.capabilities
+    if (typeof map !== "object" || map === null || Array.isArray(map)) {
+      fail('"solidrt": "capabilities" must be a map of capability name to true/false')
+    }
+    for (let [name, value] of Object.entries(map)) {
+      if (!(CAPABILITIES as readonly string[]).includes(name)) {
+        fail(`"solidrt.capabilities": "${name}" is not one of ${CAPABILITIES.join(", ")}`)
+      }
+      if (typeof value !== "boolean") fail(`"solidrt.capabilities": "${name}" must be true or false`)
     }
   }
+  if ("backup" in config && typeof config.backup !== "boolean") fail('"solidrt": "backup" must be true or false')
+  if ("android" in config) config.android = parseAndroidConfig(config.android)
   if ("fonts" in config) {
     let fonts = config.fonts
     if (typeof fonts !== "object" || fonts === null || Array.isArray(fonts)) {

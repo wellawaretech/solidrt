@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Go overlay: the dev client hosts any app, so it declares every
+     permission an app could use. The prod runner declares none at all; a
+     packed app gets its own from package.json (solidrt.capabilities and
+     solidrt.android.permissions, spliced into the compiled manifest by
+     packages/cli/src/pack/android/apk.ts). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
 </manifest>

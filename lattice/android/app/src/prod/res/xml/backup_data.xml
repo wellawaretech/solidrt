@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8 to 11 (fullBackupContent), the opt-in set: only the app's
+     data/ folder. SDL's pref path on Android is getFilesDir() itself, so the
+     packed-app tree (lattice/src/storage.rs) sits directly under the file
+     domain; identity/, cache/ and logs/ stay out. An include list disables
+     the "everything else" default. -->
+<full-backup-content>
+    <include domain="file" path="data" />
+</full-backup-content>

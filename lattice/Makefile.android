@@ -190,7 +190,7 @@ android-dist-armeabi-v7a:
 # other's libmain.so.
 ANDROID_RUNTIME_DIST = $(SRT_HOME)/dist/android-runtime
 
-APK_PROD_DEBUG = android/app/build/outputs/apk/prod/debug/app-prod-debug.apk
+APK_PROD_RELEASE = android/app/build/outputs/apk/prod/release/app-prod-release.apk
 
 .PHONY: android-runtime
 
@@ -200,7 +200,10 @@ APK_PROD_DEBUG = android/app/build/outputs/apk/prod/debug/app-prod-debug.apk
 # feature set as the desktop runtime. On its own this is the dev loop for the
 # runner and builds at PROFILE; android-dist calls it at
 # ANDROID_RUNTIME_PROFILE. Runners are per ABI by decision
-# (okf/backlog/standalone-android-apk.md).
+# (okf/done/standalone-android-apk.md). The Gradle side is the release build
+# type: a debug build is debuggable, which lets `adb shell run-as` read a
+# packed app's private files (okf/done/packed-apk-data-on-device.md); the
+# release type signs with the same checked-in debug keystore.
 android-runtime: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
 	$(call ndk-build,SOLIDRT RUNTIME ($(PROFILE)),,$(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --target-dir target/runtime-android)
 	mkdir -p $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)
@@ -209,8 +212,8 @@ android-runtime: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
 	cp "$$(ls -t target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
 	cp $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
 	$(call check-elf-align,$(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI))
-	cd android && ./gradlew assembleProdDebug -PsrtAbi=$(ANDROID_ABI)
-	cp $(APK_PROD_DEBUG) $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/solidrt.apk
+	cd android && ./gradlew assembleProdRelease -PsrtAbi=$(ANDROID_ABI)
+	cp $(APK_PROD_RELEASE) $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/solidrt.apk
 	@echo "Staged solidrt.apk ($(ANDROID_ABI)) into $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/"
 	# The runner rides in the same platform package as solidrt-go.apk.
 	$(call stage-pkg-apk,$(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/solidrt.apk,solidrt.apk)

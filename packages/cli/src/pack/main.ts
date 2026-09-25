@@ -1,7 +1,7 @@
 import { values, source } from "../lib/args"
 import { bundleFlux, bundleSolid, compileToBytecode, findFluxIsolates } from "../bundle/bundler"
 import { resolvePackFonts } from "../lib/fonts"
-import { loadAppIdentity, loadProject, type Project } from "../lib/project"
+import { loadAppIdentity, loadProject, resolveCapabilities, type Capability, type Project } from "../lib/project"
 import { resolveMode } from "../lib/mode"
 import { packApp, packFlux, packSolid } from "./trailer"
 import { buildPackFolder, writePackFolder } from "./layout"
@@ -22,6 +22,15 @@ const DEFAULT_VERSION_NAME = "1.0"
 // Adaptive-icon background when the project sets no iconBackground: the
 // near-black ground of the unbranded grayscale scaffold icon.
 const DEFAULT_ICON_BACKGROUND = "#1a1a1a"
+// The Android permission each capability declares. The runner declares none
+// itself; SDL requests the runtime grant when a feature opens, which only
+// works for a declared permission.
+const ANDROID_CAPABILITY_PERMISSIONS: Record<Capability, string> = {
+  camera: "android.permission.CAMERA",
+  microphone: "android.permission.RECORD_AUDIO",
+  vibration: "android.permission.VIBRATE",
+  internet: "android.permission.INTERNET",
+}
 
 // The app's Android launcher icon as PNG bytes: the `icon` config key when it
 // names a .png, else the assets/icon.png convention. An SVG icon (the desktop
@@ -113,9 +122,9 @@ export async function main() {
   let folder = buildPackFolder(mode, bytecode, isolates)
 
   // --apk patches the app into an installable Android APK: application id and
-  // label rewritten, the .srtapp payload added as a stored asset, re-aligned
-  // and re-signed - pure TypeScript, no Android SDK
-  // (okf/backlog/standalone-android-apk.md). The base is the production
+  // label rewritten, permissions declared, the .srtapp payload added as a
+  // stored asset, re-aligned and re-signed - pure TypeScript, no Android SDK
+  // (okf/done/standalone-android-apk.md). The base is the production
   // runner APK (`make android-runtime`), which boots the payload; while none
   // is staged, the solidrt-go dev client stands in - that APK installs and
   // launches, but boots the player instead of the payload.
@@ -139,20 +148,31 @@ export async function main() {
     }
     console.log(`>> base: ${base}`)
     let project = loadProject(mode.projectDir)
+    let config = project?.config ?? {}
+    let android = config.android ?? {}
     let icon = resolveLauncherIcon(project)
+    let permissions = [
+      ...resolveCapabilities(config).map((name) => ANDROID_CAPABILITY_PERMISSIONS[name]),
+      ...(android.permissions ?? []),
+    ]
+    let backup = config.backup ?? false
     let { apk, iconApplied } = patchApk(readFileSync(base), {
       appId: identity.appId,
       label: identity.displayName,
       payload: packApp(folder, bytecode),
-      versionCode: project?.config.versionCode ?? DEFAULT_VERSION_CODE,
+      versionCode: android.versionCode ?? DEFAULT_VERSION_CODE,
       versionName: project?.version ?? DEFAULT_VERSION_NAME,
       icon,
-      iconBackground: project?.config.iconBackground ?? DEFAULT_ICON_BACKGROUND,
+      iconBackground: config.iconBackground ?? DEFAULT_ICON_BACKGROUND,
+      permissions,
+      backup,
     })
     if (icon && !iconApplied) {
       console.log(">> note: this base APK has no icon slots; the icon was not applied")
     }
     console.log(`>> icon: ${icon && iconApplied ? "from project" : "placeholder"}`)
+    console.log(`>> permissions: ${permissions.length ? permissions.join(", ") : "none"}`)
+    console.log(`>> backup: ${backup ? "data/ folder" : "off"}`)
     console.log(">> signed with the shared development key (fine for sideloading; distribution signing pending)")
     let outfile = values.output ?? join(distRoot, baseName + ".apk")
     await Bun.write(outfile, apk)

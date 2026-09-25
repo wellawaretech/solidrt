@@ -1,17 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Prod overlay: the runner APK carries the patchable adaptive icon
-     instead of the SolidRT client icon (the label is already flavor-scoped
-     via res/values/strings.xml), and answers links of the app's own scheme.
-     The scheme is the application id (RFC 8252 section 7.1, reverse-DNS
-     private-use schemes): spelled identically to the package name so the
-     compiled manifest's string pool holds it once, and the APK pack's
-     rewrite of the package string renames the scheme with it
-     (packages/cli/src/pack/android/apk.ts, patchManifest). -->
+<!-- Prod overlay: the runner APK `srt pack` (APK output) patches.
+
+     Icon: the patchable adaptive icon instead of the SolidRT client icon
+     (the label is already flavor-scoped via res/values/strings.xml).
+
+     Links: answers links of the app's own scheme. The scheme is the
+     application id (RFC 8252 section 7.1, reverse-DNS private-use schemes):
+     spelled identically to the package name so the compiled manifest's
+     string pool holds it once, and the APK pack's rewrite of the package
+     string renames the scheme with it (packages/cli/src/pack/android/apk.ts,
+     patchManifest).
+
+     Data stays on the device: backup is off and both rule sets (Android 12+
+     reads dataExtractionRules, 8 to 11 read fullBackupContent) exclude every
+     domain, which also covers device-to-device transfer, where allowBackup
+     alone is not honored by every manufacturer. An app that opts in
+     (solidrt.android.backup) has the patcher flip allowBackup and swap the
+     rule files' bytes for the data-only pair, so the resource references here
+     never change. The runner is a release build, so it is not debuggable
+     (no `run-as` into its files); profileable keeps simpleperf and Perfetto
+     working on a packed app without granting any file access. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <application
         android:icon="@mipmap/ic_launcher_prod"
-        tools:replace="android:icon">
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_none"
+        android:dataExtractionRules="@xml/extraction_none"
+        tools:replace="android:icon,android:allowBackup">
+        <profileable android:shell="true" tools:targetApi="29" />
         <activity android:name=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

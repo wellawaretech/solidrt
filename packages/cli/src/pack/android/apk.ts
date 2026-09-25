@@ -2,17 +2,28 @@
 // the application id, versionCode and versionName in the compiled manifest
 // (the id's pool string is also the VIEW intent filter's scheme, so the
 // rewrite renames the scheme the app answers to with it; see the runner's
-// prod AndroidManifest.xml) and the launcher label in the resource table
-// (strings.ts), swap the
-// adaptive-icon slot PNGs (icon.ts), add the .srtapp payload as a stored
-// asset, then re-align and re-sign the zip (zip.ts, sign.ts). The dex, the
-// native libs and every other resource are carried byte-for-byte; the
-// activity class name is stored fully qualified in the manifest, so changing
-// the id never touches the dex (okf/backlog/standalone-android-apk.md).
+// prod AndroidManifest.xml), declare the app's permissions there and, when
+// the app opts in, turn backup on for its data/ folder; rewrite the launcher
+// label in the resource table (strings.ts), swap the adaptive-icon slot PNGs
+// (icon.ts), add the .srtapp payload as a stored asset, then re-align and
+// re-sign the zip (zip.ts, sign.ts). The dex, the native libs and every
+// other resource are carried byte-for-byte; the activity class name is
+// stored fully qualified in the manifest, so changing the id never touches
+// the dex (okf/done/standalone-android-apk.md,
+// okf/done/packed-apk-data-on-device.md).
 
 import { inflateRawSync, deflateRawSync } from "node:zlib"
 import { parseZip, writeZip, crc32, type ZipEntry } from "./zip"
-import { manifestInfo, replacePoolStrings, poolStrings, XML_POOL_OFFSET, TABLE_POOL_OFFSET } from "./strings"
+import {
+  manifestInfo,
+  applicationFlagOffset,
+  addUsesPermissions,
+  replacePoolStrings,
+  poolStrings,
+  BOOL_TRUE,
+  XML_POOL_OFFSET,
+  TABLE_POOL_OFFSET,
+} from "./strings"
 import { backgroundPixel } from "./icon"
 import { signApk } from "./sign"
 
@@ -27,6 +38,15 @@ const PAYLOAD_ENTRY = "assets/app.srtapp"
 // silently skipped.
 const ICON_FG_ENTRY = "res/drawable/app_icon_fg.png"
 const ICON_BG_ENTRY = "res/drawable/app_icon_bg.png"
+
+// The backup rule files the runner carries (prod res/xml/), one pair per
+// rule format: the "none" file the manifest references, and the data-only
+// file whose bytes replace it when the app opts in. Swapping bytes keeps the
+// manifest's resource references untouched.
+const BACKUP_RULES: [none: string, data: string][] = [
+  ["res/xml/backup_none.xml", "res/xml/backup_data.xml"],
+  ["res/xml/extraction_none.xml", "res/xml/extraction_data.xml"],
+]
 
 // The launcher label the base APK's resources.arsc carries, located by value:
 // resolving the label through the resource table proper would take a full
@@ -46,6 +66,11 @@ export type ApkPatch = {
   icon?: Buffer
   // Adaptive-icon background, "#rrggbb".
   iconBackground: string
+  // Fully qualified permission names to declare (the capabilities mapped,
+  // plus the project's extras; duplicates are skipped).
+  permissions: string[]
+  // Back up the app's data/ folder; off keeps everything on the device.
+  backup: boolean
 }
 
 function entryNamed(entries: ZipEntry[], name: string): ZipEntry {
@@ -63,17 +88,30 @@ function replaceData(entry: ZipEntry, bytes: Buffer) {
 }
 
 // The manifest is deflated in the APK; patch the inflated bytes and deflate
-// the result back into the entry. versionCode is a typed integer edited in
-// place, which must happen before the pool rewrite recomputes the file.
-function patchManifest(entry: ZipEntry, appId: string, versionCode: number, versionName: string) {
-  let axml = inflateRawSync(entry.data)
+// the result back into the entry. versionCode and allowBackup are typed
+// values edited in place, which must happen before the permission splice and
+// the pool rewrite move bytes and recompute the file.
+function patchManifest(entry: ZipEntry, patch: ApkPatch, versionName: string) {
+  let axml: Buffer = inflateRawSync(entry.data)
   let info = manifestInfo(axml)
-  axml.writeUInt32LE(versionCode, info.versionCodeOffset)
+  axml.writeUInt32LE(patch.versionCode, info.versionCodeOffset)
+  if (patch.backup) axml.writeUInt32LE(BOOL_TRUE, applicationFlagOffset(axml, "allowBackup"))
+  axml = addUsesPermissions(axml, patch.permissions)
   let replacements = new Map([
-    [info.packageIndex, appId],
+    [info.packageIndex, patch.appId],
     [info.versionNameIndex, versionName],
   ])
   replaceData(entry, replacePoolStrings(axml, XML_POOL_OFFSET, replacements))
+}
+
+// Opt the app into backup: the rule files the manifest references take the
+// bytes of their data-only counterparts (allowBackup itself is flipped in
+// patchManifest).
+function patchBackup(entries: ZipEntry[]) {
+  for (let [none, data] of BACKUP_RULES) {
+    let source = entryNamed(entries, data)
+    replaceData(entryNamed(entries, none), source.method === 0 ? source.data : inflateRawSync(source.data))
+  }
 }
 
 function patchLabel(entry: ZipEntry, label: string) {
@@ -104,7 +142,8 @@ function patchIcon(entries: ZipEntry[], icon: Buffer | undefined, background: st
 
 export function patchApk(base: Buffer, patch: ApkPatch): { apk: Buffer; iconApplied: boolean } {
   let entries = parseZip(base)
-  patchManifest(entryNamed(entries, "AndroidManifest.xml"), patch.appId, patch.versionCode, patch.versionName)
+  patchManifest(entryNamed(entries, "AndroidManifest.xml"), patch, patch.versionName)
+  if (patch.backup) patchBackup(entries)
   patchLabel(entryNamed(entries, "resources.arsc"), patch.label)
   let iconApplied = patchIcon(entries, patch.icon, patch.iconBackground)
 

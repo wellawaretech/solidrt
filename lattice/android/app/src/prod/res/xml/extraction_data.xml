@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ (dataExtractionRules), the opt-in set: only the app's data/
+     folder, for cloud backup and device-to-device transfer alike (see
+     backup_data.xml for the layout). -->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="file" path="data" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="data" />
+    </device-transfer>
+</data-extraction-rules>
