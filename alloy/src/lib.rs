@@ -82,7 +82,7 @@ pub use playback::PlaybackConfig;
 pub use present::{CountTally, Counted, RefreshCounter, RefreshCounting, SignalLedger, SignalRecord};
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
 pub use cadence::CadenceHold;
-pub use vsync::FramePacing;
+pub use vsync::{swap_paces, FramePacing};
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};

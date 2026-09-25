@@ -77,7 +77,26 @@ returns once per refresh. Metronomic presentation, one to two frames more
 input latency than the alternative. On Wayland with a mailbox compositor
 the swap does not block until the queue is full, so the return instant
 jitters within the period; this is the noise the refresh counter tolerates
-(below).
+(below). The release keeps a floor under this chain: a present returning
+more than a quarter period before the end of its one-period slot is held
+to the slot end (`FrameRelease::on_present`, the cadence hold's slot
+mechanism at hold 1), so a swap that does not block runs at the refresh
+rate on a free-running grid instead of unbounded. A blocking swap returns
+inside the slack and is never held; the floor is the guard, not the
+pacer.
+
+**Frame signal, macOS**: the swap does not pace there. ANGLE over Metal
+returns from `eglSwapBuffers` at once with the interval at 1 (measured
+2026-09-25 on an M1 mini at 60 Hz with the 0.0.62 client: 1575 presents/s,
+`present 0.0ms`, window in front or display asleep alike; the refresh
+counter still read 60), and SDL's own display-link pacing lives on its
+native CGL path only, which the GLES driver alloy forces never takes. So
+macOS has a `VsyncSource` backend on `CVDisplayLink` (the mirror of the
+Android one: a link over the active displays, started on the first
+request and stopped after 250 ms without one, its callback's host time
+turned into the vsync `Instant` by its age) and runs VsyncLocked; the
+policy reads the platform fact `alloy::swap_paces()`. Without a link (no
+display) the floor above holds the rate.
 
 **Frame signal, VsyncLocked** (touch devices, Android with a Choreographer):
 the present's signal is deferred to the display vsync. `VsyncSource` arms
@@ -238,7 +257,8 @@ this document is updated as the other two land.
 
 1. **True presentation timestamps.** `wp_presentation` on Wayland, DXGI
    frame statistics or the sync-control extensions on ANGLE, `CVDisplayLink`
-   on macOS, Choreographer frame times and
+   on macOS (in use as the vsync reference since 2026-09-25, not yet as a
+   presentation timestamp), Choreographer frame times and
    `EGL_ANDROID_get_frame_timestamps` on Android. They turn the count into a
    measurement: the tolerance is never exercised and the estimator is
    only a fallback. Behind the same seam; per platform; open
@@ -265,9 +285,11 @@ has the measurements and the two regressions the split introduced and fixed
 
 VsyncLocked for touch, SwapPaced for everything else, chosen in lattice from
 alloy's `InputDevices` fact ([frame-pacing-fluency]). Facts in alloy,
-policy in lattice; alloy never keys behavior on a device. The policy is
-implicit today; making it enumerable and app-overridable is
-[runtime-policy-registry].
+policy in lattice; alloy never keys behavior on a device. One more fact
+gates the choice: SwapPaced needs a swap that blocks, and where it does
+not (`alloy::swap_paces()`, false on macOS) the vsync backend paces
+regardless of modality. The policy is implicit today; making it
+enumerable and app-overridable is [runtime-policy-registry].
 
 ### D5. Suspension: skip for animation, live through for timers
 

@@ -334,3 +334,62 @@ fn banked_signal_inside_the_slot_does_not_release() {
   assert!(matches!(fr.on_wake(t1 + PERIOD * 2, PERIOD, Some(t1 + PERIOD * 2)), Wake::Held { .. }));
   assert!(matches!(fr.on_wake(t1 + PERIOD * 3, PERIOD, Some(t1 + PERIOD * 3)), Wake::Release { emit: 1, .. }));
 }
+
+// The floor under present-return pacing (FrameRelease::on_present): a swap
+// that does not block returns at once, and its present defers to the end of
+// the one-period slot, so production runs at the refresh rate on a stack
+// where the swap paces nothing (ANGLE-Metal).
+#[test]
+fn swap_paced_floor_holds_an_instant_return_to_the_period() {
+  let t0 = Instant::now();
+  let mut fr = FrameRelease::new(false, t0);
+  assert!(emits(fr.on_present(t0, PERIOD)));
+  // The swap returned in a millisecond: held to the slot end at one period.
+  let early = t0 + Duration::from_millis(1);
+  assert!(deferred_arm(fr.on_present(early, PERIOD)).is_none());
+  assert!(!fr.idle());
+  assert_eq!(fr.wait_deadline(), Some(t0 + PERIOD));
+  assert!(matches!(fr.on_wake(early + Duration::from_millis(1), PERIOD, None), Wake::Idle));
+  match fr.on_wake(t0 + PERIOD, PERIOD, None) {
+    Wake::Release { emit, reference, .. } => {
+      assert_eq!(emit, 1);
+      assert_eq!(reference, t0 + PERIOD);
+    }
+    Wake::Idle | Wake::Banked { .. } | Wake::Held { .. } => panic!("the slot ended: release"),
+  }
+  // The grid continues from the slot end: the next instant return waits
+  // for two periods from t0.
+  assert!(deferred_arm(fr.on_present(t0 + PERIOD + Duration::from_millis(1), PERIOD)).is_none());
+  assert_eq!(fr.wait_deadline(), Some(t0 + PERIOD * 2));
+}
+
+// A blocking swap returns around the period boundary; a return within the
+// slack of the slot end emits at once (no timer wake, no added latency) but
+// the next slot starts at the slot end, so early returns never drift the
+// grid or compound into an extra frame.
+#[test]
+fn swap_paced_return_within_the_slack_emits_on_the_grid() {
+  let t0 = Instant::now();
+  let mut fr = FrameRelease::new(false, t0);
+  assert!(emits(fr.on_present(t0, PERIOD)));
+  let jitter = Duration::from_millis(2);
+  assert!(emits(fr.on_present(t0 + PERIOD - jitter, PERIOD)));
+  assert!(fr.idle());
+  // Anchored at t0 + PERIOD, not at the early return: an instant return
+  // now defers to two periods from t0.
+  assert!(deferred_arm(fr.on_present(t0 + PERIOD + Duration::from_millis(1), PERIOD)).is_none());
+  assert_eq!(fr.wait_deadline(), Some(t0 + PERIOD * 2));
+}
+
+// A present past its slot end (a long frame) releases at once and starts a
+// new grid at its return, as before the floor.
+#[test]
+fn swap_paced_late_return_re_anchors_the_grid() {
+  let t0 = Instant::now();
+  let mut fr = FrameRelease::new(false, t0);
+  assert!(emits(fr.on_present(t0, PERIOD)));
+  let late = t0 + PERIOD + PERIOD / 2;
+  assert!(emits(fr.on_present(late, PERIOD)));
+  assert!(deferred_arm(fr.on_present(late + Duration::from_millis(1), PERIOD)).is_none());
+  assert_eq!(fr.wait_deadline(), Some(late + PERIOD));
+}

@@ -1,6 +1,6 @@
 ---
 title: Present-fence pacing on ANGLE (never-blocking waits)
-description: ANGLE/D3D11's glClientWaitSync returns immediately instead of blocking, so depth-capped present pacing degrades to check-and-proceed there; a GetSynciv-spin fallback would restore blocking pacing if Windows drag latency ever shows a real problem. macOS (ANGLE-Metal) unmeasured.
+description: ANGLE/D3D11's glClientWaitSync returns immediately instead of blocking, so depth-capped present pacing degrades to check-and-proceed there; a GetSynciv-spin fallback would restore blocking pacing if Windows drag latency ever shows a real problem. macOS (ANGLE-Metal) fence behavior unmeasured; its swap is known not to block.
 created: 2026-08-04
 ---
 
@@ -46,9 +46,12 @@ identical with and without.
   are always ~0 - its gate signal would need the spin (or the
   instant-expired count) instead of wait time.
 - macOS runs ANGLE too (Metal backend, separate sync implementation);
-  whether it shares the deferred-flush or never-blocking behavior is
+  whether it shares the deferred-flush or never-blocking fence behavior is
   unmeasured. The probe example answers it in minutes once a macOS machine
-  is testing again.
+  is testing again. What is measured there (2026-09-25): the swap itself
+  never blocks on ANGLE-Metal, which is why macOS paces on a display link
+  (okf/design/frame-timing.md, "Frame signal, macOS"); the fence question
+  is separate and still open.
 
 Full probe data and the winbox build recipe for it: memory
 `project_present_fence_angle_d3d11` / `windows-dev-flow` (session
