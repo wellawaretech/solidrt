@@ -140,6 +140,13 @@ export type Material = {
    * an entry under a fading LOD level switches hard at the band's
    * midpoint. */
   lodFade?: boolean
+  /** True when a stage declares `uLayers` (read from the source, like
+   * lodFade; every lit source composing LIGHT_LOOKUP does): the scene
+   * then seeds and follows the mesh's `layers` bitmask on entries drawn
+   * with this material, which is what lightVector masks lights against.
+   * Like the other declared-uniform flags, a source that declares
+   * uLayers without using it is rejected at add(). */
+  layered?: boolean
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
 }
@@ -1324,6 +1331,9 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   let morphed = /\buMorphs\b/.test(opts.vertex)
   // The LOD cross-fade is a fragment-stage discard (Material.lodFade).
   let lodFade = /\buLodFade\b/.test(opts.fragment)
+  // A source mentioning uLayers masks lights by the mesh's layers
+  // (Material.layered); either stage may light, so both are scanned.
+  let layered = /\buLayers\b/.test(opts.vertex) || /\buLayers\b/.test(opts.fragment)
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
   let cutout = opts.cutout === true
   let depth = opts.depth ?? true
@@ -1424,6 +1434,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         skinned,
         morphed,
         lodFade,
+        layered,
         attributes,
         transparent,
         cutout,

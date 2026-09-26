@@ -162,6 +162,11 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
+- **[Per-mesh environment](backlog/3d-env-per-mesh.md)** [2026-09-26]
+  Light layers mask lights and the hemisphere but every receiver samples the
+  one scene-wide uEnv cube, so the sky's IBL still lights a sealed interior; a
+  per-mesh environment assignment (a probe or cube per mesh, Unity's anchor
+  override / Godot's per-instance probe blending in spirit).
 - **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes); what Three, Unity and Godot ship on top of the
@@ -182,12 +187,6 @@ Shaped, not started.
   per-instance frame/atlas value for the stock materials (Godot's custom data,
   Unity's property block) - plus per-instance frustum gating; none changes a
   shipped contract.
-- **[Light layers](backlog/3d-light-layers.md)** [2026-09-22]
-  Meshes and targets have layer masks but lights are scene-wide, so an outside
-  light lights an enclosed interior straight through its shell and an interior
-  light leaks out; a layers mask on every light, matched against mesh layers
-  in the light loop and applied to the light's shadow view, as Unity's
-  cullingMask and Godot's light_cull_mask.
 - **[3D fill and pass count put low-end Android GPUs far off 60 fps](backlog/3d-low-end-gpu-performance.md)** [2026-08-27]
   The third-dimension demo ran at 13 fps on an Adreno 610 tablet: ~44 ms
   fragment work, ~13 ms flat per-pass overhead, ~2 ms composite. The shadow
@@ -1001,6 +1000,12 @@ Finished, kept for the reasoning.
   placement included), from which the class builds one shared depth material
   the shadow views draw its casters with. `castShadow` on an InstancedMesh now
   works like on any mesh.
+- **[Light layers](done/3d-light-layers.md)** [2026-09-26]
+  Meshes and targets have layer masks but lights are scene-wide, so an outside
+  light lights an enclosed interior straight through its shell and an interior
+  light leaks out; a layers mask on every light, matched against mesh layers
+  in lightVector and applied to the light's shadow views, as Unity's
+  cullingMask and Godot's light_cull_mask.
 - **[Level of detail - screen-size selected variants as a core gate](done/3d-lod.md)** [2026-09-11]
   A large scene ships every object at one triangle count; a track with a
   thousand trees either draws full-detail foliage at the horizon or nothing.

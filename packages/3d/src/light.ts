@@ -4,8 +4,13 @@
 
 import { MAX_CASCADES } from "./glsl.ts"
 import type { Vec3 } from "./math.ts"
+import { checkMask } from "./mesh.ts"
 import { makeNode } from "./node.ts"
 import type { SceneNode } from "./node.ts"
+
+// The default light layers mask: every bit set, so a light lights every
+// mesh unless told otherwise (the Unity and Godot default).
+const ALL_LAYERS = 0xffffffff
 
 /** The orthographic frustum a casting light renders its shadow map from,
  * in the light's own space (x right, y up, looking along its direction),
@@ -68,6 +73,10 @@ export type DirectionalLight = SceneNode & {
   /** Linear [r, g, b] 0..1. */
   color: Vec3
   intensity: number
+  /** Layer filter bitmask (default all bits set): the light lights and
+   * shadows only the meshes whose `layers` intersect it - Unity's
+   * cullingMask, Godot's light_cull_mask. Write through setLight. */
+  layers: number
   /** Render a shadow map from this light (any directional light may;
    * each map is a full extra pass over the casting meshes); meshes with
    * `castShadow` draw into it, `lit` materials read it (unless
@@ -91,6 +100,9 @@ export type SpotLight = SceneNode & {
   /** Linear [r, g, b] 0..1. */
   color: Vec3
   intensity: number
+  /** Layer filter bitmask (default all bits set; DirectionalLight.layers
+   * is the contract). */
+  layers: number
   /** Falloff cutoff in world units; the light is zero past it (0 = no
    * cutoff, Three's rule). */
   distance: number
@@ -146,6 +158,9 @@ export type PointLight = SceneNode & {
   /** Linear [r, g, b] 0..1. */
   color: Vec3
   intensity: number
+  /** Layer filter bitmask (default all bits set; DirectionalLight.layers
+   * is the contract). */
+  layers: number
   /** Falloff cutoff in world units (0 = no cutoff). */
   distance: number
   /** Falloff exponent (default 2). */
@@ -169,6 +184,10 @@ export type HemisphereLight = SceneNode & {
   sky: Vec3
   ground: Vec3
   intensity: number
+  /** Layer filter bitmask (default all bits set; DirectionalLight.layers
+   * is the contract): a mesh outside it gets no hemisphere term (its own
+   * `Surface.ambient` still applies). */
+  layers: number
 }
 
 export type Light = DirectionalLight | SpotLight | PointLight | HemisphereLight
@@ -185,6 +204,9 @@ export type DirectionalLightOptions = {
   direction?: Vec3
   color?: Vec3
   intensity?: number
+  /** Layer filter bitmask, default all bits set (the light lights and
+   * shadows only meshes whose `layers` intersect it). */
+  layers?: number
   castShadow?: boolean
   /** Shadow-map options, merged key by key (setLight keeps unmentioned ones). */
   shadow?: ShadowOptions
@@ -193,6 +215,8 @@ export type SpotLightOptions = {
   direction?: Vec3
   color?: Vec3
   intensity?: number
+  /** Layer filter bitmask, default all bits set. */
+  layers?: number
   distance?: number
   angle?: number
   penumbra?: number
@@ -204,13 +228,21 @@ export type SpotLightOptions = {
 export type PointLightOptions = {
   color?: Vec3
   intensity?: number
+  /** Layer filter bitmask, default all bits set. */
+  layers?: number
   distance?: number
   decay?: number
   castShadow?: boolean
   /** Shadow-map options, merged key by key (setLight keeps unmentioned ones). */
   shadow?: SpotShadowOptions
 }
-export type HemisphereLightOptions = { sky?: Vec3; ground?: Vec3; intensity?: number }
+export type HemisphereLightOptions = {
+  sky?: Vec3
+  ground?: Vec3
+  intensity?: number
+  /** Layer filter bitmask, default all bits set. */
+  layers?: number
+}
 
 // Every light may cast; the bound is the shadow-slot budget
 // (MAX_SHADOW_MAPS in glsl.ts, exported from the root with MAX_LIGHTS and
@@ -282,6 +314,7 @@ export function createDirectionalLight(opts: DirectionalLightOptions = {}): Dire
   light.direction = [...(opts.direction ?? [0, -1, 0])] as Vec3
   light.color = [...(opts.color ?? [1, 1, 1])] as Vec3
   light.intensity = opts.intensity ?? 1
+  light.layers = opts.layers !== undefined ? checkMask(opts.layers, "createDirectionalLight") : ALL_LAYERS
   light.castShadow = opts.castShadow === true
   light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: 1, camera: { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500 }, cascades: 1, distance: null, splits: null }
   if (opts.shadow !== undefined) mergeShadow(light.shadow, opts.shadow)
@@ -295,6 +328,7 @@ export function createSpotLight(opts: SpotLightOptions = {}): SpotLight {
   light.direction = [...(opts.direction ?? [0, -1, 0])] as Vec3
   light.color = [...(opts.color ?? [1, 1, 1])] as Vec3
   light.intensity = opts.intensity ?? 1
+  light.layers = opts.layers !== undefined ? checkMask(opts.layers, "createSpotLight") : ALL_LAYERS
   light.distance = opts.distance ?? 0
   light.angle = opts.angle ?? 60
   light.penumbra = opts.penumbra ?? 0
@@ -321,6 +355,7 @@ export function createPointLight(opts: PointLightOptions = {}): PointLight {
   light.type = "point"
   light.color = [...(opts.color ?? [1, 1, 1])] as Vec3
   light.intensity = opts.intensity ?? 1
+  light.layers = opts.layers !== undefined ? checkMask(opts.layers, "createPointLight") : ALL_LAYERS
   light.distance = opts.distance ?? 0
   light.decay = opts.decay ?? 2
   light.castShadow = opts.castShadow === true
@@ -335,12 +370,13 @@ export function createHemisphereLight(opts: HemisphereLightOptions = {}): Hemisp
   light.sky = [...(opts.sky ?? [1, 1, 1])] as Vec3
   light.ground = [...(opts.ground ?? [0.2, 0.2, 0.2])] as Vec3
   light.intensity = opts.intensity ?? 1
+  light.layers = opts.layers !== undefined ? checkMask(opts.layers, "createHemisphereLight") : ALL_LAYERS
   return light
 }
 
 /** The write path for a light's own fields (color, intensity, direction,
- * the cone and falloff, or sky/ground); absent keys keep their value.
- * Its placement goes through setTransform like any node.
+ * layers, the cone and falloff, or sky/ground); absent keys keep their
+ * value. Its placement goes through setTransform like any node.
  * Frame-rate-safe. */
 export function setLight(light: DirectionalLight, update: DirectionalLightOptions): void
 export function setLight(light: SpotLight, update: SpotLightOptions): void
@@ -351,6 +387,15 @@ export function setLight(
   update: DirectionalLightOptions & SpotLightOptions & PointLightOptions & HemisphereLightOptions,
 ): void {
   if (update.intensity !== undefined) light.intensity = update.intensity
+  if (update.layers !== undefined) {
+    let mask = checkMask(update.layers, "setLight")
+    if (mask !== light.layers) {
+      light.layers = mask
+      // A casting light's shadow views re-filter their casters by the new
+      // mask (a re-attach, never a tile rebuild - the maps stay).
+      light._scene?._lightLayersChanged(light)
+    }
+  }
   if (light.type === "directional") {
     if (update.direction !== undefined) light.direction = [...update.direction] as Vec3
     if (update.color !== undefined) light.color = [...update.color] as Vec3

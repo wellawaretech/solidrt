@@ -1062,10 +1062,15 @@ function meshRange(mesh: Mesh): { firstIndex: number; indexCount: number } {
 // discard everything).
 const LOD_SOLID = [1, 1]
 
-function entrySeed(material: Material, params: ShaderParams | null): ShaderParams {
+function entrySeed(material: Material, params: ShaderParams | null, layers: number): ShaderParams {
   let seed: ShaderParams = { uModel: IDENTITY }
   if (material.normalMatrix) seed.uNormal = IDENTITY
   if (material.lodFade) seed.uLodFade = LOD_SOLID
+  // The mesh's layer membership, which lightVector masks lights against;
+  // `| 0` because GLSL ES ints are signed 32-bit (all bits = -1). An
+  // unwritten int uniform reads 0 - no light at all - so a lit entry is
+  // always seeded.
+  if (material.layered) seed.uLayers = layers | 0
   return { ...seed, ...material.params, ...params }
 }
 
@@ -1265,6 +1270,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let bias: number[] = []
     let normalBias: number[] = []
     let radius: number[] = []
+    // Layer masks cross to GLSL as signed 32-bit ints (all bits = -1,
+    // the no-hemisphere default; the shader only ANDs the bit pattern).
+    let masks: number[] = []
+    let hemiMask = -1
     let count = 0
     for (let light of lights) {
       if (light.type === "hemisphere") {
@@ -1273,6 +1282,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         let g = linearColor(light.ground)
         sky = [s[0]! * k, s[1]! * k, s[2]! * k]
         ground = [g[0]! * k, g[1]! * k, g[2]! * k]
+        hemiMask = light.layers | 0
         continue
       }
       // A light past the cap is not lit (sync reports the set once): its
@@ -1305,6 +1315,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       bias.push(light.shadow.bias)
       normalBias.push(light.shadow.normalBias)
       radius.push(light.shadow.radius)
+      masks.push(light.layers | 0)
       count++
     }
     for (let i = count; i < MAX_LIGHTS; i++) {
@@ -1314,6 +1325,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       bias.push(0)
       normalBias.push(0)
       radius.push(1)
+      masks.push(0)
     }
     // The shadow set rides with the lights. Per casting light i: its
     // map slots as uShadowFirst[i] + uShadowCount[i] (0 = a receiving
@@ -1340,10 +1352,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let params: ShaderParams = {
       uHemiSky: sky,
       uHemiGround: ground,
+      uHemiMask: hemiMask,
       uLightCount: count,
       uLightType: types,
       uLightColor: colors,
       uLightParams: coneFalloff,
+      uLightMask: masks,
       uShadowFirst: first,
       uShadowCount: counts,
       uShadowBias: bias,
@@ -1484,8 +1498,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
      * m.castShadow). Re-evaluated per mesh by _setCast; also picks the
      * caster's own shadow material variant over the depth override. */
     shadowFilter: ((mesh: Mesh) => boolean) | null
+    /** The casting light a SHADOW view renders for (null otherwise):
+     * its `layers` compose the view's mask with the scene's, so a mesh
+     * the light cannot see casts nothing into its map. */
+    shadowLight: CastingLight | null
     /** Layer mask: the view draws the meshes whose `layers` intersect
-     * it. A shadow view's follows the scene's. */
+     * it. A shadow view's is the scene's masked by its light's layers. */
     mask: number
     /** Names the view set itself (view.setParams, the fog option): the
      * scene's fan-out skips them so a view override survives scene-wide
@@ -1539,7 +1557,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // mismatch branch in sync() turns it on in the same pass that writes
     // uModel.
     let morph = morphEntry(mesh.material, mesh)
-    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(mesh.material, morph === null ? mesh._params : { ...morph.params, ...mesh._params }), {
+    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(mesh.material, morph === null ? mesh._params : { ...morph.params, ...mesh._params }, mesh.layers), {
       buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(mesh.material, inst) : [])],
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
@@ -1591,7 +1609,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let bufs = mesh._buffers!
     let morph = morphEntry(material, mesh)
     let params = v.override !== null ? (morph === null ? null : morph.params) : morph === null ? mesh._params : { ...morph.params, ...mesh._params }
-    let entry = addDraw(v.texture, material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(material, params), {
+    let entry = addDraw(v.texture, material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(material, params, mesh.layers), {
       buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(material, inst) : [])],
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
@@ -1654,11 +1672,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // entry per mesh the filter admits.
   let makeView = (
     vopts: ViewOptions,
-    shadowFilter: ((mesh: Mesh) => boolean) | null,
+    shadowLight: CastingLight | null,
     cube: number | null = null,
     mipmap = false,
     sky = false,
   ): ViewRecord => {
+    // Non-null shadowLight makes this a SHADOW view: the light's map
+    // tile, drawing the casters its layers admit.
+    let shadowFilter = shadowLight === null ? null : (m: Mesh) => m.castShadow
     let override = vopts.overrideMaterial ?? null
     if (override !== null) {
       for (let mesh of meshes) if (mesh._instances === null) checkLayout(override, mesh.geometry, "View override material")
@@ -1713,7 +1734,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       skipped: new Set(),
       skippedReported: false,
       shadowFilter,
-      mask: shadowFilter !== null ? sceneMask : checkMask(vopts.layers ?? 1, "createView"),
+      shadowLight,
+      mask: shadowLight !== null ? (sceneMask & shadowLight.layers) >>> 0 : checkMask(vopts.layers ?? 1, "createView"),
       ownNames: new Set(),
       camera: makeCamera(),
       entries: new Map(),
@@ -1909,10 +1931,32 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         if ((mesh.layers & v.mask) !== 0) attachView(v, mesh)
         else detachView(v, mesh)
       }
+      // The surviving lit entries follow the membership too (uLayers, the
+      // mask lightVector tests; a fresh attach above was seeded with it).
+      let layered: ShaderParams = { uLayers: mesh.layers | 0 }
+      if (mesh._entry !== null && mesh.material.layered === true) setDrawParams(texture, mesh._entry, layered)
+      for (let v of views) {
+        let entry = v.entries.get(mesh)
+        if (entry !== undefined && viewMaterial(v, mesh).layered === true) setDrawParams(v.texture, entry, layered)
+      }
       hooks._schedule()
     },
     _lightChanged() {
       lightsDirty = true
+      hooks._schedule()
+    },
+    _lightLayersChanged(light) {
+      if (disposed || light.type === "hemisphere") return
+      // The light's shadow views re-filter their casters by the new mask;
+      // the tiles and cameras stay (the uniform rewrite is _lightChanged's).
+      for (let v of views) {
+        if (v.shadowLight !== light) continue
+        v.mask = (sceneMask & light.layers) >>> 0
+        for (let mesh of meshes) {
+          if ((mesh.layers & v.mask) !== 0) attachView(v, mesh)
+          else detachView(v, mesh)
+        }
+      }
       hooks._schedule()
     },
     _attach(mesh) {
@@ -2251,13 +2295,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         if ((mesh.layers & mask) !== 0) attachScene(mesh)
         else detachScene(mesh)
       }
-      // Shadow views follow the scene's mask: what the scene cannot see
-      // must not darken it.
+      // Shadow views follow the scene's mask (what the scene cannot see
+      // must not darken it), narrowed by their light's own layers.
       for (let v of views) {
-        if (v.shadowFilter === null) continue
-        v.mask = mask
+        if (v.shadowLight === null) continue
+        v.mask = (mask & v.shadowLight.layers) >>> 0
         for (let mesh of meshes) {
-          if ((mesh.layers & mask) !== 0) attachView(v, mesh)
+          if ((mesh.layers & v.mask) !== 0) attachView(v, mesh)
           else detachView(v, mesh)
         }
       }

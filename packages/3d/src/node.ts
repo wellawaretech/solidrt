@@ -163,6 +163,9 @@ export type SceneHooks = {
   _setLayers(mesh: Mesh): void
   /** A light's castShadow/shadow options changed. */
   _shadowChanged(light: CastingLight): void
+  /** A light's layers mask changed: re-filter its shadow views' casters
+   * (the uniform rewrite rides the _lightChanged that follows). */
+  _lightLayersChanged(light: Light): void
   _reorder(mesh: Mesh): void
   /** The node's transform changed (for the sort and light bookkeeping). */
   _moved(node: SceneNode): void

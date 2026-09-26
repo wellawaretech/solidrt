@@ -14,6 +14,9 @@ export type SpotLightProps = TransformProps & {
   direction?: Vec3
   color?: Vec3
   intensity?: number
+  /** Layer filter bitmask, default all bits set: the light lights and
+   * shadows only the meshes whose `layers` intersect it. */
+  layers?: number
   /** Falloff cutoff in world units (0 = no cutoff). */
   distance?: number
   /** Cone half-angle in DEGREES, (0, 90]; default 60 (degrees like
@@ -43,6 +46,7 @@ export let SpotLight: VoidComponent<SpotLightProps> = props => {
       direction: props.direction,
       color: props.color,
       intensity: props.intensity,
+      layers: props.layers,
       distance: props.distance,
       angle: props.angle,
       penumbra: props.penumbra,
@@ -55,9 +59,9 @@ export let SpotLight: VoidComponent<SpotLightProps> = props => {
   syncNode(light, props)
   createEffect(
     () =>
-      [props.direction, props.color, props.intensity, props.distance, props.angle, props.penumbra, props.decay, props.castShadow, props.shadow] as const,
-    ([direction, color, intensity, distance, angle, penumbra, decay, castShadow, shadow]) =>
-      setLight(light, { direction, color, intensity, distance, angle, penumbra, decay, castShadow, shadow }),
+      [props.direction, props.color, props.intensity, props.layers, props.distance, props.angle, props.penumbra, props.decay, props.castShadow, props.shadow] as const,
+    ([direction, color, intensity, layers, distance, angle, penumbra, decay, castShadow, shadow]) =>
+      setLight(light, { direction, color, intensity, layers, distance, angle, penumbra, decay, castShadow, shadow }),
   )
   untrack(() => props.ref)?.(light)
   onCleanup(() => destroy(light))

@@ -6,17 +6,25 @@ import { createHemisphereLight, setLight } from "../light.ts"
 import type { HemisphereLight as HemisphereLightNode } from "../light.ts"
 import type { Vec3 } from "../math.ts"
 
-export type HemisphereLightProps = { sky?: Vec3; ground?: Vec3; intensity?: number; ref?: (light: HemisphereLightNode) => void }
+export type HemisphereLightProps = {
+  sky?: Vec3
+  ground?: Vec3
+  intensity?: number
+  /** Layer filter bitmask, default all bits set: a mesh outside it gets
+   * no hemisphere term. */
+  layers?: number
+  ref?: (light: HemisphereLightNode) => void
+}
 
 /** The scene's ambient term as a node (createHemisphereLight); one per
  * scene, the last mounted wins. */
 export let HemisphereLight: VoidComponent<HemisphereLightProps> = props => {
   let ctx = useContext(SceneContext)
-  let light = untrack(() => createHemisphereLight({ sky: props.sky, ground: props.ground, intensity: props.intensity }))
+  let light = untrack(() => createHemisphereLight({ sky: props.sky, ground: props.ground, intensity: props.intensity, layers: props.layers }))
   add(ctx.parent, light)
   createEffect(
-    () => [props.sky, props.ground, props.intensity] as const,
-    ([sky, ground, intensity]) => setLight(light, { sky, ground, intensity }),
+    () => [props.sky, props.ground, props.intensity, props.layers] as const,
+    ([sky, ground, intensity, layers]) => setLight(light, { sky, ground, intensity, layers }),
   )
   untrack(() => props.ref)?.(light)
   onCleanup(() => destroy(light))

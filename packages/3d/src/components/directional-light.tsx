@@ -13,6 +13,9 @@ export type DirectionalLightProps = TransformProps & {
   direction?: Vec3
   color?: Vec3
   intensity?: number
+  /** Layer filter bitmask, default all bits set: the light lights and
+   * shadows only the meshes whose `layers` intersect it. */
+  layers?: number
   /** Render a shadow map from this light (any directional light may;
    * each is a pass). Its shadow camera sits at the light's WORLD
    * position, so give a casting light a `position` above the scene. */
@@ -32,6 +35,7 @@ export let DirectionalLight: VoidComponent<DirectionalLightProps> = props => {
       direction: props.direction,
       color: props.color,
       intensity: props.intensity,
+      layers: props.layers,
       castShadow: props.castShadow,
       shadow: props.shadow,
     }),
@@ -39,8 +43,8 @@ export let DirectionalLight: VoidComponent<DirectionalLightProps> = props => {
   add(ctx.parent, light)
   syncNode(light, props)
   createEffect(
-    () => [props.direction, props.color, props.intensity, props.castShadow, props.shadow] as const,
-    ([direction, color, intensity, castShadow, shadow]) => setLight(light, { direction, color, intensity, castShadow, shadow }),
+    () => [props.direction, props.color, props.intensity, props.layers, props.castShadow, props.shadow] as const,
+    ([direction, color, intensity, layers, castShadow, shadow]) => setLight(light, { direction, color, intensity, layers, castShadow, shadow }),
   )
   untrack(() => props.ref)?.(light)
   onCleanup(() => destroy(light))

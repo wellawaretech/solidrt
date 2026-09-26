@@ -368,9 +368,12 @@ export const PBR = glsl`
  * unit vector TOWARD a directional light; a spot's axis toward the
  * light; unused for a point), `uLightPos[i]` (a spot's or point's world
  * position; unused for a directional), `uLightColor[i]` (rgb, intensity
- * folded in) and `uLightParams[i]` (cosInner, cosOuter, distance, decay
+ * folded in), `uLightParams[i]` (cosInner, cosOuter, distance, decay
  * - the cone cosines a spot fades between, the falloff cutoff and
- * exponent a spot or point attenuates by; unused for a directional).
+ * exponent a spot or point attenuates by; unused for a directional) and
+ * `uLightMask[i]` (the light's `layers` filter bitmask, all bits by
+ * default - lightVector skips a light whose mask misses the mesh's
+ * `uLayers`, see LIGHT_LOOKUP).
  * Compose it before LIGHT_LOOKUP; the stock lit program is the shape.
  */
 export const LIGHT_SLOTS = glsl`
@@ -380,6 +383,7 @@ export const LIGHT_SLOTS = glsl`
   uniform vec3 uLightPos[${MAX_LIGHTS}];
   uniform vec3 uLightColor[${MAX_LIGHTS}];
   uniform vec4 uLightParams[${MAX_LIGHTS}];
+  uniform int uLightMask[${MAX_LIGHTS}];
   const int LIGHT_DIRECTIONAL = 0;
   const int LIGHT_SPOT = 1;
   const int LIGHT_POINT = 2;
@@ -395,13 +399,24 @@ export const LIGHT_SLOTS = glsl`
  * spot's additionally faded across its cone from cosInner to cosOuter.
  * Zero means the light cannot reach the fragment - skip its shadow
  * lookup and its terms (the stock lit program does exactly that).
+ * The first test is the LAYER gate: a light whose `uLightMask[i]`
+ * misses the mesh's `uLayers` (the per-entry membership bitmask the
+ * scene seeds from `mesh.layers` and follows through setLayers) cannot
+ * reach it at all - Unity's cullingMask, Godot's light_cull_mask. Both
+ * operands are uniforms, so the branch is coherent per draw.
  */
 export const LIGHT_LOOKUP = glsl`
   // Floors the falloff divisors so a fragment at the light's own
   // position stays finite (Three's punctual-light rule).
   const float FALLOFF_MIN = 0.01;
 
+  uniform int uLayers;
+
   float lightVector(int i, vec3 worldPos, out vec3 l) {
+    if ((uLightMask[i] & uLayers) == 0) {
+      l = vec3(0.0);
+      return 0.0;
+    }
     if (uLightType[i] == LIGHT_DIRECTIONAL) {
       l = uLightDir[i];
       return 1.0;
@@ -1079,7 +1094,8 @@ export type SceneSourceOptions = {
  *   vec4 sceneOutput(vec3 rgb, float alpha, vec3 position);
  *
  * `sceneLight` is light i seen from a world point: `dir` the unit vector
- * TOWARD it, `color` its rgb already attenuated (falloff, cone) and
+ * TOWARD it, `color` its rgb already attenuated (falloff, cone), layer
+ * masked (a light whose `layers` misses the mesh's, see LIGHT_LOOKUP) and
  * shadowed - zero when it cannot reach the fragment, and then no shadow
  * tap was spent. It is the accessor a custom light model loops over to
  * `uLightCount` (URP's GetAdditionalLight, Godot's light() inputs), and
@@ -1125,6 +1141,7 @@ export function sceneSource(o: SceneSourceOptions = {}): string {
       lights
         ? `uniform vec3 uHemiSky;
     uniform vec3 uHemiGround;
+    uniform int uHemiMask;
     ${LIGHT_SLOTS}
     ${LIGHT_LOOKUP}`
         : ""
@@ -1160,8 +1177,9 @@ export const SCENE = sceneSource()
 
 // The light accessor and the two shade functions, over the sets
 // sceneSource composed before them. A light that cannot reach the point
-// is skipped whole (no shadow tap, no terms), the gate the stock lit
-// program always had.
+// - out of falloff, outside its cone, or layer-masked off the mesh - is
+// skipped whole (no shadow tap, no terms), the gate the stock lit
+// program always had. The hemisphere masks the same way (uHemiMask).
 function sceneShadeSource(receiveShadow: boolean, env: boolean): string {
   return glsl`
     struct SceneLight {
@@ -1180,7 +1198,7 @@ function sceneShadeSource(receiveShadow: boolean, env: boolean): string {
     vec3 shadeBlinn(Surface s, vec3 position) {
       vec3 n = s.normal;
       vec3 v = normalize(uCamPos - position);
-      vec3 light = hemisphere(n, uHemiSky, uHemiGround);
+      vec3 light = (uHemiMask & uLayers) != 0 ? hemisphere(n, uHemiSky, uHemiGround) : vec3(0.0);
       light += s.ambient;
       vec3 spec = vec3(0.0);
       for (int i = 0; i < ${MAX_LIGHTS}; i++) {
@@ -1201,7 +1219,7 @@ function sceneShadeSource(receiveShadow: boolean, env: boolean): string {
       vec3 v = normalize(uCamPos - position);
       vec3 diffuseColor = s.base.rgb * (1.0 - s.metalness);
       vec3 f0 = mix(vec3(DIELECTRIC_F0) * s.base.a, s.base.rgb, s.metalness);
-      vec3 light = hemisphere(n, uHemiSky, uHemiGround);
+      vec3 light = (uHemiMask & uLayers) != 0 ? hemisphere(n, uHemiSky, uHemiGround) : vec3(0.0);
       ${env ? "light += envIrradiance(n);" : ""}
       light += s.ambient;
       vec3 spec = vec3(0.0);

@@ -161,8 +161,11 @@ Groups), and each target carries a mask (default 1) - `layers` on
 createScene/createView, live via `setLayers` on the scene handle and
 each view. A mesh draws where mask & layers is non-zero, so a minimap's
 marker meshes live on bit 2: invisible in the main render, drawn by
-the map view whose mask admits them. Shadow views follow the SCENE's
-mask (what the scene cannot see must not darken it), and
+the map view whose mask admits them. LIGHTS carry a `layers` mask too
+(all bits by default, see Lights below): a light lights and shadows
+only the meshes its mask intersects. Shadow views follow the SCENE's
+mask (what the scene cannot see must not darken it) narrowed by their
+light's own `layers`, and
 pick()/raycast()/overlap()/sweep() skip scene-masked-out meshes like
 invisible ones - unless the query passes its own `{ layers }`, which is
 how a low-poly collision mesh lives undrawn in the scene yet answers
@@ -172,8 +175,13 @@ hides its whole interior, but frustum culling cannot know that and
 there is no occlusion or portal culling. Put the interior, the shell
 and an opening "plug" on their own layers and switch the scene mask by
 the camera's zone (inside, outside, in the doorway) - the reactive
-`<Scene layers>` makes it one signal, and a light's reach is masked
-the same way once lights carry layers.
+`<Scene layers>` makes it one signal - and mask each light (and the
+hemisphere) to its side the same way, so the sun does not light the
+room through its shell nor the room's bulb the street. What light
+`layers` does NOT mask is the ENVIRONMENT term: a `standard` material
+still adds the scene cube's image lighting whatever the masks say, so
+an interior under an outdoor environment wants a tier-3 material with
+`sceneSource({ env: false })` for now (see okf/backlog/3d-env-per-mesh.md).
 Per-view fog: `fog: FogOptions | null` on createView overrides the
 scene's fog for that view (null = unfogged - the clear minimap over a
 fogged scene); absent follows the scene. `overrideMaterial` (Three's
@@ -1915,7 +1923,7 @@ resolve - at one of three tiers, top first:
    maps and encodes it). A custom LIGHT MODEL
    loops `sceneLight(i, position, normal)` to `uLightCount` instead of a
    shade function: light i's direction and its color already attenuated,
-   cone-faded and shadowed (zero when it cannot reach). The stock
+   cone-faded, layer-masked and shadowed (zero when it cannot reach). The stock
    materials are built from this same set, so the tiers cannot drift.
    The demo `the-third-dimension.tsx` has tier 2 (the ground) and tier 3
    (the knot's rim term).
@@ -1939,7 +1947,7 @@ instance or every caster move warns about the skipped write.
 ### Lights
 
 Lights and `phong`: lights are graph NODES, like Three. `createDirectionalLight({
-direction?, color?, intensity? })` / `<DirectionalLight>` is parallel light
+direction?, color?, intensity?, layers? })` / `<DirectionalLight>` is parallel light
 travelling along `direction` in the node's LOCAL space (default `[0, -1,
 0]`, a sun overhead; length ignored), so a parent Group's rotation turns it
 and position/scale do not matter - deliberately a direction, not Three's
@@ -1958,7 +1966,15 @@ decay? })` / `<PointLight>` is the omnidirectional version: position
 only, same falloff, no cone. `createHemisphereLight({ sky?, ground?, intensity?
 })` / `<HemisphereLight>` is the ambient term, a gradient by the WORLD
 normal's tilt (fixed to world up, the node's transform is ignored); one per
-scene, the last attached wins. Placement goes through setTransform, the
+scene, the last attached wins. EVERY light (the hemisphere included)
+takes `layers?: number`, a filter bitmask defaulting to all bits set:
+the light lights, and a casting light shadows, only the meshes whose
+`layers` intersect it (Unity's cullingMask, Godot's light_cull_mask;
+Three has none) - the sealed-interiors pattern's light half (see Views
+and layers), one integer AND per light per fragment on two uniforms,
+so the branch is coherent per draw. A mesh a casting light's mask
+excludes also draws into none of its shadow maps. The environment term
+is NOT masked (see Views and layers). Placement goes through setTransform, the
 light's own fields through `setLight(light, { ... })` (frame-rate-safe,
 like setMeshParams). At most `MAX_LIGHTS` (8, exported from the root and `/glsl`)
 lights per scene, directional, spot and point together (the hemisphere
@@ -1971,13 +1987,21 @@ node's world rotation (direction, negated so the shader reads the
 vector TOWARD the light) and world position, so a MOVING light costs no
 JS. The sync rewrites the rest whenever a light attaches, detaches or
 changes a field - `uHemiSky`/`uHemiGround` (vec3, intensity folded in),
-`uLightCount` (int), `uLightType[N]` (LIGHT_DIRECTIONAL | LIGHT_SPOT |
+`uHemiMask` (int, the hemisphere's layers), `uLightCount` (int),
+`uLightType[N]` (LIGHT_DIRECTIONAL | LIGHT_SPOT |
 LIGHT_POINT), `uLightDir[N]`/`uLightPos[N]`/`uLightColor[N]` (intensity
-folded into the color) and `uLightParams[N]` (cosInner, cosOuter,
-distance, decay) - so a custom fragment composing `LIGHT_SLOTS` +
+folded into the color), `uLightParams[N]` (cosInner, cosOuter,
+distance, decay) and `uLightMask[N]` (each light's layers; masks cross
+as SIGNED 32-bit ints, all bits = -1, the shader only ANDs the bits) -
+so a custom fragment composing `LIGHT_SLOTS` +
 `LIGHT_LOOKUP` from `/glsl` reads the same list through `lightVector(i,
 worldPos, out l)` (returns the attenuation, 0 = skip the light; `phong`
 is the shape), and a light change costs one write however many meshes.
+The mesh side of the mask is `uniform int uLayers` (declared by
+LIGHT_LOOKUP, tested first in lightVector): a per-entry param the scene
+seeds from `mesh.layers` and follows through setLayers on every
+material whose source mentions it - never per frame, and never
+something a fragment declares itself.
 A custom fragment that declares only the old directional subset
 (`uLightCount`/`uLightDir`/`uLightColor`) still works - it just shades
 every light as directional, so keep such materials to directional-only

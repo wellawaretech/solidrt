@@ -11,6 +11,9 @@ import type { Vec3 } from "../math.ts"
 export type PointLightProps = TransformProps & {
   color?: Vec3
   intensity?: number
+  /** Layer filter bitmask, default all bits set: the light lights and
+   * shadows only the meshes whose `layers` intersect it. */
+  layers?: number
   /** Falloff cutoff in world units (0 = no cutoff). */
   distance?: number
   /** Falloff exponent; default 2 (inverse square). */
@@ -34,6 +37,7 @@ export let PointLight: VoidComponent<PointLightProps> = props => {
     createPointLight({
       color: props.color,
       intensity: props.intensity,
+      layers: props.layers,
       distance: props.distance,
       decay: props.decay,
       castShadow: props.castShadow,
@@ -43,8 +47,8 @@ export let PointLight: VoidComponent<PointLightProps> = props => {
   add(ctx.parent, light)
   syncNode(light, props)
   createEffect(
-    () => [props.color, props.intensity, props.distance, props.decay, props.castShadow, props.shadow] as const,
-    ([color, intensity, distance, decay, castShadow, shadow]) => setLight(light, { color, intensity, distance, decay, castShadow, shadow }),
+    () => [props.color, props.intensity, props.layers, props.distance, props.decay, props.castShadow, props.shadow] as const,
+    ([color, intensity, layers, distance, decay, castShadow, shadow]) => setLight(light, { color, intensity, layers, distance, decay, castShadow, shadow }),
   )
   untrack(() => props.ref)?.(light)
   onCleanup(() => destroy(light))

@@ -80,8 +80,9 @@ export type ShadowSystemDeps<V extends ShadowView> = {
   targetSize(): { width: number; height: number }
   /** Base debug label ("scene" by default). */
   label: string
-  /** Make one shadow view: a tile of `into` drawing `filter`'s meshes
-   * with the depth override (the scene's makeView). */
+  /** Make one shadow view for `light`: a tile of `into` drawing the
+   * casting meshes the light's layers admit with the depth override (the
+   * scene's makeView derives the caster filter and the layer mask). */
   makeView(
     vopts: {
       width: number
@@ -93,7 +94,7 @@ export type ShadowSystemDeps<V extends ShadowView> = {
       clearColor: [number, number, number, number]
       label: string
     },
-    filter: (mesh: Mesh) => boolean,
+    light: CastingLight,
   ): V
   disposeView(view: V): void
   /** The light set changed shape: the scene owes a writeLights. */
@@ -203,9 +204,9 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
     deps.schedule()
   }
   // A caster's views: one square tile of the shadow atlas per map,
-  // drawing the casting meshes with the depth override from that map's
-  // frustum. The light rewrite writes the rects in the light's slots on
-  // every receiving target.
+  // drawing the casting meshes the light's layers admit with the depth
+  // override from that map's frustum. The light rewrite writes the rects
+  // in the light's slots on every receiving target.
   let createShadow = (light: CastingLight, rects: ShadowRect[]) => {
     let atlas = shadowAtlas!
     let views = rects.map(rect =>
@@ -220,7 +221,7 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
           clearColor: [1, 1, 1, 1],
           label: deps.label + "-shadow",
         },
-        m => m.castShadow,
+        light,
       ),
     )
     shadows.set(light, { light, views, lastWorld: mat4(), dirty: true, rects })
