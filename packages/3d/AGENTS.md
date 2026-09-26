@@ -545,12 +545,15 @@ faces); an instance is just per-entry uniforms (`uColor`) and bindings
 ### Pure pieces and checks
 
 The pure pieces (`math.ts`, `color.ts`, `geometry.ts`,
-`profile.ts`, `sweep.ts`, `gltf.ts`, `model-file.ts`) are Solid-free and
+`profile.ts`, `sweep.ts`, `gltf.ts`, `model-file.ts`, `splat-data.ts`)
+are Solid-free and
 GPU-free BY DESIGN so they can be checked headless and run under bun:
 `src/model-data.ts` re-exports exactly this set as the published
 `@solidrt/3d/model` entry (the bake tool and app bake scripts), and
 `tests/model-data.test.ts` imports it under `bun test`, so a runtime
 import creeping into any of them fails there; keep them that way.
+`src/splat-data.ts` is its own published entry the same way
+(`@solidrt/3d/splat`, guarded by `tests/splat-data.test.ts`).
 The rigs under `checks/`
 (`geometry-check`, `sweep-check`, `pick-check`, `dispatch-check`,
 `gltf-check`) run on
@@ -580,9 +583,10 @@ collision claims - two copies of this contract have drifted before.
 | `InstancedLod` | as InstancedMesh minus `material`, plus `levels` (`[{ geometry, material, size }]` nearest first, fixed at creation; instanced materials as InstancedMesh's), `castShadow?` (every level); `<Instance>` children populate it as under `InstancedMesh`, each drawing the level its own projected size picks |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), `frustumCulled?` (default true; false for geometry a vertex stage moves beyond the node's box - a billboard, a fullscreen quad; see Culling), `cullMargin?` (world units of slack around the box for bounded displacement), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
-| `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (an optional cull box, never a hit: instances pick by themselves, and without it the mesh culls by their union), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount, and `anchor?` (a SceneNode, fixed at creation: the ancestor the records are relative to, so `<Instance mesh>` children may sit anywhere under it - see createInstancedMesh) |
+| `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (an optional cull box, never a hit: instances pick by themselves, and without it the mesh culls by their union), `instanceOrder?` (draw the records in key order, fixed at creation - see "Instance order"), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount, and `anchor?` (a SceneNode, fixed at creation: the ancestor the records are relative to, so `<Instance mesh>` children may sit anywhere under it - see createInstancedMesh) |
 | `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's style record, one value per component - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it), and `mesh?` (the population, fixed at creation, when the instance is placed outside its `<InstancedMesh>` - inside that mesh's `anchor` subtree) |
-| `RecordMesh` | as Mesh, plus `records` (the per-instance records in the material's first instance layout, an ArrayBufferView; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffers are component-owned and freed on unmount |
+| `RecordMesh` | as Mesh, plus `records` (the per-instance records in the material's first instance layout, an ArrayBufferView; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks), `instanceOrder?` (draw the records in key order, fixed at creation - see "Instance order"); the record buffers are component-owned and freed on unmount |
+| `SplatMesh` | as Mesh, plus `data` (a baked SplatData from loadSplat), `count?` (splats drawn, default all; records are importance-sorted at bake, so a prefix is the scene at that size) and `material?` (a fork of the stock splat class); bounds, the back-to-front instance order and the stock material come from the bake - see "Splats" |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
 | `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `castShadow?`, `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
 | `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `castShadow?` (six face maps, six shadow slots), `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
@@ -1340,7 +1344,10 @@ with uViewProj - the specular/fresnel view vector is
 uViewProj rows, that carries the clip flip), `uniform mat4
 uInvViewProj` (the camera's inverse view-projection, shared likewise -
 a clip position back to world, the world-space ray through a pixel
-without knowing the projection) and `uniform mat4 uNormal` (the world
+without knowing the projection), `uniform vec2 uViewport` (the target's
+pixel size, shared likewise and per target - each view feeds its own -
+so a pixel-space footprint like the splat material's needs no app
+write) and `uniform mat4 uNormal` (the world
 inverse-transpose, written beside uModel for this material's meshes;
 take `mat3(uNormal)` - correct under non-uniform scale, where
 mat3(uModel) bends normals off the surface). Attributes come from the
@@ -1498,7 +1505,8 @@ or in five figures, belong to the function face.
 #### createRecordMesh
 
 `createRecordMesh(geometry, material, records, count?, { bounds?,
-label? })` is the raw form: `records` is the per-instance data laid out
+instanceOrder?, label? })` is the raw form: `records` is the
+per-instance data laid out
 in the material's first instance layout - a Float32Array over an
 all-float layout, otherwise bytes built with `vertexView(layout, buffer)`
 and `attributeAccess` like a geometry stream (a length that is not whole
@@ -1529,6 +1537,29 @@ unhide, renderOrder/params/geometry/material swaps apply, and
 `disposeInstances(mesh)` detaches and frees the record buffers - the one
 explicit free, geometry-buffer rule. `examples/fleet.tsx` (instances,
 components) and `examples/instanced.tsx` (records) are the live proofs.
+
+#### Instance order
+
+`instanceOrder` on either create (and the components) draws a
+population's records in key order, decided core-side; slots as you write
+them never move. `{ position: "iCenter", retain: true, descending: true
+}` names a float32x3/x4 attribute holding a local-space position: records
+draw by their depth along the scene camera's view direction, which the
+SCENE feeds the core whenever the camera or the mesh turns meaningfully
+(mapped through the mesh's rotation; an epsilon gate meters the
+re-sorts) - back-to-front transparency over 100k+ records with zero
+per-frame JS, and with `retain` a camera turn re-sorts and republishes
+core-side while a parked camera uploads nothing. `{ field: "age" }`
+names a float32 attribute and draws by its value, re-ordered when the
+records publish. The costs, by design: an ordered mesh publishes the
+LIVE record set whole on any write (a byte range has no stable position
+under a permutation; `count` defines the sorted population), and one
+buffer holds ONE order - the scene target's entry owns it, views and
+shadow passes draw the same gathered buffers, and a mesh layered out of
+the scene target keeps its last order. Where the key sits decides
+nothing else: raw instancing stays buffer-order everywhere (Three,
+Unity, Godot), so this knob has no engine counterpart to compare
+against; the core primitive is okf/done/gpu-instance-order.md.
 
 ### Background
 
@@ -2525,6 +2556,51 @@ The follow-ups are filed in okf/backlog/3d-model-loader.md. The `.srtm`
 container is VERSION 8 (node table in the header, node-local vertices,
 skins, clips, packed morph targets); older bakes are rejected - re-bake
 with `srt tool 3d/model`.
+
+## Splats
+
+Captured 3D Gaussian splat scenes (phone scans, photogrammetry
+successors) as ordinary content, the model-loading split repeated:
+
+- `@solidrt/3d/splat` (src/splat-data.ts) is the runtime-free data side,
+  the model-data rule: `parseSplat(bytes, { format?, keepOrientation? })`
+  reads a trainer's `.ply`, the de-facto `.splat` interchange or a
+  GUNZIPPED `.spz` (Niantic, version 2 or 3; the entry stays
+  decompression-free, so inflate first) and bakes it - the 3D covariance
+  precomputed per splat (R S St Rt, the vertex-stage wall every
+  bake-less viewer pays at each corner), records importance-sorted (size
+  times opacity, so the first n are the scene at n), y-down captures
+  (.ply, .splat) stood up to y-up (positions and covariances rotated
+  together; `keepOrientation` opts out, `.spz` is y-up already), bounds
+  measured. `encodeSplat`/`decodeSplat` round-trip the `.srts` container
+  (28-byte record: center float32x3, covariance upper triangle as six
+  float16, sRGB color + opacity unorm8x4 - SPLAT_ATTRIBUTES); decode is
+  a header parse plus a byte VIEW, nothing per-splat. `srt tool
+  3d/splat <in> [-o out.srts] [--keep-orientation]` is the parse and
+  bake under bun (tools/splat.ts); an app bake script uses the same
+  entry.
+- On the runtime, `loadSplat(path)` reads a `.srts` (fetch + decode,
+  the loadModel shape) and `createSplatMesh(data, { count?, material?,
+  label? })` / `<SplatMesh>` shows it: a RecordMesh over the stock splat
+  material (a shared instance; `splatMaterialClass` and the
+  SPLAT_VERTEX/SPLAT_FRAGMENT sources are exported for forks) with the
+  header bounds as the cull and picking box and `instanceOrder: {
+  position: "iCenter", retain: true, descending: true }` - so the cloud
+  composes as a mesh (depth-tested against opaque geometry, placed by
+  the transparent entry sort, transformed by its node) and the core
+  draws it back to front with zero per-frame JS; a parked camera
+  uploads nothing (see "Instance order").
+- The vertex stage projects the baked covariance through the Jacobian
+  of `uViewProj * uModel` (no focal/view uniforms; any node transform
+  shapes the footprint with the same matrix that moves the center) and
+  reads the target size from the standard `uViewport`.
+- Two capture caveats worth knowing at the app level: captures are
+  TRAINED against sRGB blending while the scene blends linear light -
+  judge a capture side by side before "correcting" either way - and a
+  capture is only clean near the camera path it was taken from
+  (elsewhere it is floaters), so keep the camera near that path.
+  okf/plans/gaussian-splats.md carries the measurements and the staged
+  escalations (SH bands, transform-feedback projection).
 
 ## Traps
 

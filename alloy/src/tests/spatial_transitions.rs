@@ -44,6 +44,9 @@ impl SinkWriter for Sink {
   fn write_order(&mut self, _: u64, _: &[u64]) -> bool {
     true
   }
+  fn write_order_direction(&mut self, _: u64, _: u64, _: [f32; 3]) -> bool {
+    true
+  }
   fn write_shared(&mut self, _: u64, _: &str, _: &[f32]) -> bool {
     true
   }

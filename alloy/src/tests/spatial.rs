@@ -15,6 +15,7 @@ pub(super) enum Write {
   Count { target: u64, draw: u64, count: u32 },
   Fade { target: u64, draw: u64, fade: [f32; 2] },
   Order { target: u64, order: Vec<u64> },
+  OrderDirection { target: u64, draw: u64, direction: [f32; 3] },
   Shared { target: u64, name: String, values: Vec<f32> },
   Instances { buffer: u64, first: u32, values: Vec<f32> },
   Texture { texture: u64, values: Vec<f32> },
@@ -27,6 +28,9 @@ pub(super) enum Write {
 struct Recorder {
   writes: Vec<Write>,
   dead: Vec<u64>,
+  /// Targets whose ORDER-DIRECTION writes alone do not land - the entry
+  /// lost its instance order while the rest of the sink still works.
+  dead_directions: Vec<u64>,
 }
 
 impl Recorder {
@@ -52,6 +56,10 @@ impl SinkWriter for Recorder {
     self.writes.push(Write::Order { target, order: order.to_vec() });
     self.landed(target)
   }
+  fn write_order_direction(&mut self, target: u64, draw: u64, direction: [f32; 3]) -> bool {
+    self.writes.push(Write::OrderDirection { target, draw, direction });
+    self.landed(target) && !self.dead_directions.contains(&target)
+  }
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool {
     self.writes.push(Write::Shared { target, name: name.to_string(), values: values.to_vec() });
     self.landed(target)
@@ -68,7 +76,7 @@ impl SinkWriter for Recorder {
 }
 
 fn sink(draw: u64) -> DrawSink {
-  DrawSink { target: 1, draw, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default() }
+  DrawSink { target: 1, draw, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: false }
 }
 
 pub(super) fn flush(s: &mut Spatial) -> Vec<Write> {
@@ -79,7 +87,7 @@ pub(super) fn flush(s: &mut Spatial) -> Vec<Write> {
 
 /// A flush whose writes on the `dead` resource ids do not land.
 fn flush_dead(s: &mut Spatial, dead: &[u64]) -> Vec<Write> {
-  let mut out = Recorder { writes: Vec::new(), dead: dead.to_vec() };
+  let mut out = Recorder { dead: dead.to_vec(), ..Recorder::default() };
   s.flush(&mut out);
   out.writes
 }
@@ -141,7 +149,7 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
   let root = s.create([0.0; 3], Q, ONE, true);
   let m = s.create([0.0; 3], Q, ONE, true);
   s.set_parent(m, Some(root)).expect("parent");
-  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 4, fade: false, params: true, order: DrawOrder::default() }).expect("sink");
+  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 4, fade: false, params: true, order: DrawOrder::default(), order_feed: false }).expect("sink");
   flush(&mut s);
   s.set_visible(root, false).expect("hide");
   assert_eq!(flush(&mut s), vec![Write::Count { target: 1, draw: 9, count: 0 }]);
@@ -159,15 +167,15 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
 fn sinks_are_per_target_and_one_move_feeds_them_all() {
   let mut s = Spatial::new();
   let m = s.create([0.0; 3], Q, ONE, true);
-  s.bind_sink(m, DrawSink { target: 1, draw: 7, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default() }).expect("sink");
-  s.bind_sink(m, DrawSink { target: 2, draw: 8, normal: true, count: 1, fade: false, params: true, order: DrawOrder::default() }).expect("sink");
+  s.bind_sink(m, DrawSink { target: 1, draw: 7, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: false }).expect("sink");
+  s.bind_sink(m, DrawSink { target: 2, draw: 8, normal: true, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: false }).expect("sink");
   let writes = flush(&mut s);
   assert_eq!(writes.len(), 4, "count + params per sink: {writes:?}");
   assert_eq!(writes[0], Write::Count { target: 1, draw: 7, count: 1 });
   assert_eq!(writes[2], Write::Count { target: 2, draw: 8, count: 1 });
   // Rebinding on a target replaces that sink; the other stays (and, the
   // node being re-queued, gets a params rewrite - the reparent rule).
-  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default() }).expect("rebind");
+  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: false }).expect("rebind");
   let writes = flush(&mut s);
   assert!(writes.contains(&Write::Count { target: 1, draw: 9, count: 1 }));
   assert!(writes.contains(&Write::Params { target: 1, draw: 9, model: IDENTITY, normal: None }));
@@ -1093,8 +1101,8 @@ fn culling_is_per_target_and_respects_the_opt_out_and_margin() {
   let mut s = Spatial::new();
   let n = s.create([0.0; 3], Q, ONE, true);
   s.set_bounds(n, Some(UNIT)).expect("bounds");
-  s.bind_sink(n, DrawSink { target: 1, draw: 1, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default() }).expect("sink");
-  s.bind_sink(n, DrawSink { target: 2, draw: 2, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default() }).expect("sink");
+  s.bind_sink(n, DrawSink { target: 1, draw: 1, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: false }).expect("sink");
+  s.bind_sink(n, DrawSink { target: 2, draw: 2, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: false }).expect("sink");
   s.set_view(1, Some((cube_at(0.0), IDENTITY)));
   s.set_view(2, Some((cube_at(2.0), IDENTITY)));
   let writes = flush(&mut s);
@@ -1309,7 +1317,7 @@ fn lod_group(s: &mut Spatial, target: u64, fade: bool) -> (u64, [u64; 3]) {
     let n = s.create([0.0; 3], Q, ONE, true);
     s.set_parent(n, Some(g)).expect("parent");
     s.set_bounds(n, Some(UNIT)).expect("bounds");
-    s.bind_sink(n, DrawSink { target, draw: k as u64 + 1, normal: false, count: 1, fade, params: true, order: DrawOrder::default() }).expect("sink");
+    s.bind_sink(n, DrawSink { target, draw: k as u64 + 1, normal: false, count: 1, fade, params: true, order: DrawOrder::default(), order_feed: false }).expect("sink");
     *id = n;
   }
   (g, ids)
@@ -1439,7 +1447,7 @@ fn levels_are_picked_per_target_and_shadow_targets_follow_the_view_they_are_give
   let mut s = Spatial::new();
   let (g, l) = lod_group(&mut s, 1, false);
   for (k, &n) in l.iter().enumerate() {
-    s.bind_sink(n, DrawSink { target: 2, draw: 10 + k as u64, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default() }).expect("sink");
+    s.bind_sink(n, DrawSink { target: 2, draw: 10 + k as u64, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: false }).expect("sink");
   }
   s.set_lod(g, &[level(l[0], 0.5), level(l[1], 0.0)], 0.0, None).expect("lod");
   s.set_view(1, lod_view(1.0));
@@ -1449,7 +1457,7 @@ fn levels_are_picked_per_target_and_shadow_targets_follow_the_view_they_are_give
   assert!(!c.contains(&(1, 2, 1)) && !c.contains(&(2, 10, 1)));
   // A target without a view draws the first level.
   for (k, &n) in l.iter().enumerate() {
-    s.bind_sink(n, DrawSink { target: 3, draw: 20 + k as u64, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default() }).expect("sink");
+    s.bind_sink(n, DrawSink { target: 3, draw: 20 + k as u64, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: false }).expect("sink");
   }
   let c = counts(&flush(&mut s));
   assert!(c.contains(&(3, 20, 1)) && !c.contains(&(3, 21, 1)), "{c:?}");
@@ -1474,7 +1482,7 @@ fn a_lod_reference_measures_by_the_other_targets_view() {
   let mut s = Spatial::new();
   let (g, l) = lod_group(&mut s, 1, false);
   for (k, &n) in l.iter().enumerate() {
-    s.bind_sink(n, DrawSink { target: 2, draw: 10 + k as u64, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default() }).expect("sink");
+    s.bind_sink(n, DrawSink { target: 2, draw: 10 + k as u64, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: false }).expect("sink");
   }
   s.set_lod(g, &[level(l[0], 0.5), level(l[1], 0.0)], 0.0, None).expect("lod");
   // Target 2 (a shadow tile) sees from far away but measures by target 1.
@@ -1535,7 +1543,7 @@ fn nested_groups_chain_and_clearing_a_group_draws_everything_again() {
   for (k, &n) in [a, b].iter().enumerate() {
     s.set_parent(n, Some(inner)).expect("parent");
     s.set_bounds(n, Some(UNIT)).expect("bounds");
-    s.bind_sink(n, DrawSink { target: 1, draw: 30 + k as u64, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default() }).expect("sink");
+    s.bind_sink(n, DrawSink { target: 1, draw: 30 + k as u64, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: false }).expect("sink");
   }
   s.set_lod(outer, &[level(ol[0], 0.5), level(inner, 0.1), level(ol[2], 0.0)], 0.0, None).expect("outer");
   s.set_lod(inner, &[level(a, 0.3), level(b, 0.0)], 0.0, None).expect("inner");
@@ -1650,7 +1658,7 @@ fn sort_view(eye: [f32; 3], forward: [f32; 3]) -> Option<(Mat4, Mat4)> {
 }
 
 fn keyed(draw: u64, queue: DrawQueue, render_order: i32) -> DrawSink {
-  DrawSink { target: 1, draw, normal: false, count: 1, fade: false, params: true, order: DrawOrder { queue, render_order } }
+  DrawSink { target: 1, draw, normal: false, count: 1, fade: false, params: true, order: DrawOrder { queue, render_order }, order_feed: false }
 }
 
 /// A unit box at `position` bound to draw `draw` on target 1.
@@ -1916,4 +1924,80 @@ fn draw_sort_matches_a_linear_oracle() {
       }
     }
   }
+}
+
+// --- Order-direction feed ---
+
+fn feed_sink(target: u64, draw: u64) -> DrawSink {
+  DrawSink { target, draw, normal: false, count: 1, fade: false, params: true, order: DrawOrder::default(), order_feed: true }
+}
+
+fn directions(writes: &[Write]) -> Vec<[f32; 3]> {
+  writes
+    .iter()
+    .filter_map(|w| match w {
+      Write::OrderDirection { direction, .. } => Some(*direction),
+      _ => None,
+    })
+    .collect()
+}
+
+fn assert_direction(got: &[[f32; 3]], want: [f32; 3]) {
+  assert_eq!(got.len(), 1, "one direction write: {got:?}");
+  for k in 0..3 {
+    assert!((got[0][k] - want[k]).abs() < 1e-6, "direction {:?}, want {want:?}", got[0]);
+  }
+}
+
+#[test]
+fn the_order_feed_maps_the_view_forward_into_the_node_frame() {
+  let mut s = Spatial::new();
+  // Half a turn about x: the world's upper 3x3 is diag(1, -1, -1), so the
+  // model-frame key direction of forward f is (f.x, -f.y, -f.z); the
+  // node's translation must not matter (dot(W p + t, f) drops t).
+  let n = s.create([2.0, 3.0, 4.0], [1.0, 0.0, 0.0, 0.0], ONE, true);
+  s.bind_sink(n, feed_sink(1, 7)).expect("sink");
+  // No view on the target yet: nothing feeds.
+  assert!(directions(&flush(&mut s)).is_empty());
+  s.set_view(1, sort_view([0.0; 3], [0.0, 0.6, 0.8]));
+  assert_direction(&directions(&flush(&mut s)), [0.0, -0.6, -0.8]);
+  // Parked view: fed on the change, not per flush.
+  assert!(directions(&flush(&mut s)).is_empty());
+}
+
+#[test]
+fn the_order_feed_gates_on_the_direction_epsilon_and_follows_the_node() {
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  s.bind_sink(n, feed_sink(1, 7)).expect("sink");
+  s.set_view(1, sort_view([0.0; 3], [0.0, 0.0, 1.0]));
+  assert_direction(&directions(&flush(&mut s)), [0.0, 0.0, 1.0]);
+  // A turn of about a degree sits under the ~2 degree gate: no write.
+  s.set_view(1, sort_view([0.0; 3], [0.017, 0.0, 1.0]));
+  assert!(directions(&flush(&mut s)).is_empty());
+  // Five degrees from the last WRITE (not from the skipped turn): a write.
+  s.set_view(1, sort_view([0.0; 3], [0.09, 0.0, 1.0]));
+  assert_eq!(directions(&flush(&mut s)).len(), 1);
+  // The node turning re-feeds exactly like the view turning (10 degrees
+  // about y, well past the gate).
+  s.set_transform(n, [0.0; 3], [0.0, 0.0872, 0.0, 0.9962], ONE).expect("turn");
+  assert_eq!(directions(&flush(&mut s)).len(), 1);
+}
+
+#[test]
+fn a_dropped_direction_write_stops_the_feed_but_keeps_the_sink() {
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  s.bind_sink(n, feed_sink(1, 7)).expect("sink");
+  s.set_view(1, sort_view([0.0; 3], [0.0, 0.0, 1.0]));
+  let mut out = Recorder { dead_directions: vec![1], ..Recorder::default() };
+  s.flush(&mut out);
+  assert_eq!(directions(&out.writes).len(), 1, "the write was attempted");
+  // The feed is off: a full turn writes no direction, while the sink
+  // itself still flows (the node move lands a params write).
+  s.set_view(1, sort_view([0.0; 3], [1.0, 0.0, 0.0]));
+  s.set_transform(n, [5.0, 0.0, 0.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert!(directions(&writes).is_empty());
+  assert!(writes.iter().any(|w| matches!(w, Write::Params { target: 1, draw: 7, .. })));
 }

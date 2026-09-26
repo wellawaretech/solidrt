@@ -8,7 +8,7 @@
 export { add, createGroup, destroy, getMorphNames, getMorphWeights, getRotation, getTransform, lookAt, remove, setMorphWeights, setTransform, setTransition, setVisible, worldPosition } from "./node.ts"
 export type { LodConfig, MorphWeights, NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
 export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setDrawRange, setEnvironment, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, instanceAttribute, updateRecords, INSTANCE_FLOATS } from "./mesh.ts"
-export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceSlots, InstanceStream, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions, UpdateRecordsOptions } from "./mesh.ts"
+export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceOrderOptions, InstanceSlots, InstanceStream, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions, UpdateRecordsOptions } from "./mesh.ts"
 export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight } from "./light.ts"
 // The shader-source caps, also on the /glsl subpath next to the sources they size.
 export { MAX_CASCADES, MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
@@ -49,7 +49,7 @@ export { extrude, lathe, pathFrames, polygon, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
 export { phong, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
 export type { LitOptions, Material, PhongOptions, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
-export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedLod, InstancedMesh, Lod, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SpotLight, Sprite, View3d, useScene, Shot, Shots } from "./components/index.ts"
+export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedLod, InstancedMesh, Lod, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SplatMesh, SpotLight, Sprite, View3d, useScene, Shot, Shots } from "./components/index.ts"
 export type {
   CameraTarget,
   DirectionalLightProps,
@@ -69,6 +69,7 @@ export type {
   RecordMeshProps,
   ScenePointerProps,
   SceneProps,
+  SplatMeshProps,
   SpotLightProps,
   SpriteProps,
   TransformProps,
@@ -81,6 +82,10 @@ export type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelMaterial, Mo
 export { decodeModel, encodeModel } from "./model-file.ts"
 export { createModel, loadGltf, loadModel } from "./model.ts"
 export type { Model, ModelMaps, ModelOptions } from "./model.ts"
+export { decodeSplat, encodeSplat, parseSplat, SPLAT_ATTRIBUTES, SPLAT_RECORD_BYTES } from "./splat-data.ts"
+export type { ParseSplatOptions, SplatData, SplatFormat } from "./splat-data.ts"
+export { createSplatMesh, loadSplat, splatMaterialClass, SPLAT_FRAGMENT, SPLAT_VERTEX } from "./splat.ts"
+export type { SplatMesh as SplatMeshNode, SplatMeshOptions } from "./splat.ts"
 export { bindSkeleton } from "./skeleton.ts"
 export type { BindSkeletonOptions } from "./skeleton.ts"
 export { createMixer } from "./mixer.ts"

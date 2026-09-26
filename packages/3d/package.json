@@ -9,6 +9,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./model": "./src/model-data.ts",
+    "./splat": "./src/splat-data.ts",
     "./math": "./src/math.ts",
     "./glsl": "./src/glsl.ts"
   },

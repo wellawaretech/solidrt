@@ -135,8 +135,11 @@ export function ensureCamera(cam: Camera, width: number, height: number): void {
 // billboard needs no reconstruction from uViewProj. The inverse rides too:
 // uInvViewProj carries a clip position back to world, which is how the
 // background slot (and any shader declaring it) gets a world-space ray
-// per pixel without knowing the projection.
-export function cameraParams(cam: Camera): ShaderParams {
+// per pixel without knowing the projection. The target's pixel size rides
+// as uViewport (the size the camera's aspect came from), so a pixel-space
+// footprint (the splat material) needs no app write and is per target -
+// each view feeds its own.
+export function cameraParams(cam: Camera, width: number, height: number): ShaderParams {
   let v = cam.view
   return {
     uViewProj: cam.viewProj,
@@ -144,5 +147,6 @@ export function cameraParams(cam: Camera): ShaderParams {
     uCamPos: cam.eye,
     uCamRight: [v[0], v[4], v[8]],
     uCamUp: [v[1], v[5], v[9]],
+    uViewport: [width, height],
   }
 }

@@ -3,7 +3,7 @@
 // setter write paths that keep a live scene's draw entries in step. The
 // scene side is reached through the node's SceneHooks (node.ts).
 
-import { createBuffer, destroyBuffer, destroyTexture, writeBuffer } from "@solidrt/core/gpu"
+import { beginBufferWrite, createBuffer, destroyBuffer, destroyTexture, endBufferWrite, writeBuffer } from "@solidrt/core/gpu"
 import type { BufferId, DrawId, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
 import { checkCubeKnobs } from "./environment.ts"
 import type { EnvironmentOptions } from "./environment.ts"
@@ -141,6 +141,10 @@ export type MeshInstances = {
    * shader reads at row gl_InstanceID. Replaced on growth (the entries
    * re-point), freed by disposeInstances. */
   morph: { texture: TextureId; rows: number } | null
+  /** The mesh's instanceOrder resolved against its material's instance
+   * layouts (see InstanceOrderOptions), or null for buffer order. Fixed
+   * at creation; slots as the app writes them never move. */
+  order: ResolvedInstanceOrder | null
 }
 
 export type InstanceSlots = { slots: (InstanceNode | null)[]; free: number[] }
@@ -392,6 +396,96 @@ function markRecords(mesh: Mesh, stream: InstanceStream, lo: number, hi: number)
   mesh._scene?._setRecords(mesh)
 }
 
+/**
+ * Draw a population's records in key order, decided core-side - the
+ * engine's instance order riding the mesh's record streams
+ * (createInstancedMesh and createRecordMesh both take it). Record slots
+ * never move: the app keeps writing slot i forever, and the engine
+ * gathers the records into key order as they publish.
+ *
+ * `position` names an instance attribute (float32x3 or float32x4) whose
+ * first three floats are a position in the mesh's local space: records
+ * draw by their depth along the scene camera's view direction, which the
+ * core feeds itself whenever the camera or the mesh turns meaningfully -
+ * zero per-frame JS, and a parked camera costs nothing. `descending:
+ * true` draws farthest first, the transparent blend order. The order
+ * follows the scene's OWN camera: one buffer holds one order, so views
+ * draw the same records in that order, and a mesh masked out of the
+ * scene target keeps its last order. `retain: true` opts a write-once
+ * population (a splat cloud) into the engine's retained copy: a camera
+ * turn re-sorts and republishes core-side with no publish from here, and
+ * an order-preserving turn uploads nothing.
+ *
+ * `field` names a float32 instance attribute: records draw by that value
+ * as the app wrote it (an age, an explicit sort key), re-ordered when
+ * the records publish.
+ *
+ * An ordered mesh gives up partial record publishes: any write sends the
+ * live record set whole, gathered (a byte range has no stable position
+ * under a permutation).
+ */
+export type InstanceOrderOptions = ({ position: string; retain?: boolean } | { field: string }) & {
+  /** Largest key first - back-to-front for a position key. Default false. */
+  descending?: boolean
+}
+
+/** The instanceOrder resolved against the material's instance layouts at
+ * creation: the key stream's layout key (the entry's pipeline buffer is
+ * found by it at attach, exactly as buffer bindings are), the key's
+ * float offset inside one record, and the declared knobs. */
+export type ResolvedInstanceOrder = { key: string; floats: number; position: boolean; descending: boolean; retain: boolean }
+
+// Resolve an instanceOrder option against the material's instance
+// layouts: the named attribute must exist in one of them, hold floats of
+// the key's shape, and start on a 4-byte boundary of its record.
+function resolveInstanceOrder(order: InstanceOrderOptions | undefined, buffers: VertexBufferLayout[], site: string): ResolvedInstanceOrder | null {
+  if (order === undefined) return null
+  let position = "position" in order
+  let name = position ? (order as { position: string }).position : (order as { field: string }).field
+  if (!position && (order as { retain?: boolean }).retain !== undefined) {
+    throw new Error(site + ": instanceOrder retain applies to a position key; a field key re-orders when its records publish")
+  }
+  for (let b of buffers) {
+    let at = 0
+    for (let a of b.attributes) {
+      if (a.name === name) {
+        if (position && a.format !== "float32x3" && a.format !== "float32x4") {
+          throw new Error(site + ": instanceOrder position attribute '" + name + "' must be float32x3 or float32x4, got " + a.format)
+        }
+        if (!position && a.format !== "float32") {
+          throw new Error(site + ": instanceOrder field attribute '" + name + "' must be float32, got " + a.format)
+        }
+        if (at % 4 !== 0) {
+          throw new Error(site + ": instanceOrder key attribute '" + name + "' starts at byte " + at + " of its record; the key must start on a 4-byte boundary")
+        }
+        return {
+          key: layoutKey(b.attributes),
+          floats: at / 4,
+          position,
+          descending: order.descending === true,
+          retain: position && (order as { retain?: boolean }).retain === true,
+        }
+      }
+      at += VERTEX_FORMATS[a.format].bytes
+    }
+  }
+  throw new Error(site + ": instanceOrder names attribute '" + name + "', which no instance buffer of the material declares")
+}
+
+/**
+ * Whether a material still carries the layout an ordered mesh keys on
+ * (the key stream must be one of the buffers the entry binds). Throws
+ * naming `site`; checked beside the instance pairing at add().
+ */
+export function checkOrderPairing(material: Material, inst: MeshInstances, site: string): void {
+  if (inst.order === null) return
+  let buffers = material.instanceBuffers ?? []
+  let key = inst.order.key
+  if (!buffers.some(b => layoutKey(b.attributes) === key)) {
+    throw new Error(site + ": the material declares no instance buffer with the mesh's instanceOrder key layout (" + key + ")")
+  }
+}
+
 /** What both population kinds take. */
 type PopulationOptions = {
   /** LOCAL bounds covering the population ([minX, minY, minZ, maxX, maxY,
@@ -404,6 +498,10 @@ type PopulationOptions = {
    * follows them) and sorts by its node position; a record mesh is never
    * culled and never picked. */
   bounds?: ArrayLike<number>
+  /** Draw the records in key order, decided core-side (see
+   * InstanceOrderOptions): back-to-front for a transparent population, an
+   * explicit sort field for a JS-stepped one. Fixed at creation. */
+  instanceOrder?: InstanceOrderOptions
   /** Debug label for the record buffer. */
   label?: string
 }
@@ -534,6 +632,7 @@ export function createInstancedMesh(geometry: Geometry, material: Material, opts
     anchor: opts?.anchor ?? null,
     levels: null,
     morph: populationMorph(geometry, capacity, opts?.label),
+    order: resolveInstanceOrder(opts?.instanceOrder, buffers, "createInstancedMesh"),
   }
   return mesh
 }
@@ -651,16 +750,41 @@ export function updateRecords(mesh: InstancedMesh | RecordMesh, options: UpdateR
 }
 
 /** Publish a mesh's pending record writes, one buffer write per dirty
- * stream (the scene calls it from its sync). */
+ * stream (the scene calls it from its sync). An ordered mesh publishes
+ * the LIVE record set whole through the write lease - the engine gathers
+ * it into key order during the copy, and a byte range has no stable
+ * position under a permutation (writeBuffer throws on an ordered buffer). */
 export function publishRecords(mesh: Mesh): void {
   let inst = mesh._instances
   if (inst === null) return
+  if (inst.order !== null) {
+    for (let s of inst.streams) {
+      if (s.dirty === null) continue
+      s.dirty = null
+      let bytes = inst.count * s.stride
+      if (bytes === 0) continue
+      let block = beginBufferWrite(s.buffer)
+      new Uint8Array(block.buffer, 0, bytes).set(vertexBytes(s.data).subarray(0, bytes))
+      endBufferWrite(s.buffer, bytes)
+    }
+    return
+  }
   for (let s of inst.streams) {
     if (s.dirty === null) continue
     let [lo, hi] = s.dirty
     s.dirty = null
     writeBuffer(s.buffer, vertexBytes(s.data).subarray(lo, hi), lo)
   }
+}
+
+/** @internal Mark every stream's live records dirty, so the next sync
+ * republishes the population whole: an ordered mesh (re-)entering a
+ * scene seeds the entry's freshly built engine-side order registry from
+ * the JS mirrors. */
+export function markLiveRecords(mesh: Mesh): void {
+  let inst = mesh._instances
+  if (inst === null || inst.count === 0) return
+  for (let s of inst.streams) markRecords(mesh, s, 0, inst.count * s.stride)
 }
 
 /**
@@ -810,6 +934,7 @@ export function createRecordMesh(
     anchor: null,
     levels: null,
     morph: null,
+    order: resolveInstanceOrder(opts?.instanceOrder, buffers, "createRecordMesh"),
   }
   copyRecords(mesh, records, capacity)
   return mesh
@@ -854,6 +979,10 @@ export function setRecordCount(mesh: RecordMesh, count: number): void {
   let n = Math.max(0, Math.min(Math.floor(count), inst.capacity))
   if (n === inst.count) return
   inst.count = n
+  // Ordered records draw the first n GATHERED records, so a count change
+  // republishes the live set - a shrink would otherwise keep drawing the
+  // old population's nearest records, a growth its stale tail.
+  if (inst.order !== null && n > 0) for (let s of inst.streams) markRecords(mesh, s, 0, n * s.stride)
   mesh._scene?._setCount(mesh)
 }
 

@@ -5,7 +5,7 @@ import { syncMesh } from "./mesh.tsx"
 import type { PopulatedMeshProps } from "./mesh.tsx"
 import { add, destroy } from "../node.ts"
 import { createRecordMesh, disposeInstances, setCastShadow, setGeometry, setRecordCount, setRecords } from "../mesh.ts"
-import type { RecordMesh as RecordMeshNode } from "../mesh.ts"
+import type { InstanceOrderOptions, RecordMesh as RecordMeshNode } from "../mesh.ts"
 import type { Geometry } from "../geometry.ts"
 import type { Material } from "../material.ts"
 
@@ -25,6 +25,10 @@ export type RecordMeshProps = PopulatedMeshProps & {
    * creation. Without them the mesh has no picking leaf, so pointer events
    * never target it. */
   bounds?: ArrayLike<number>
+  /** Draw the records in key order, decided core-side (fixed at
+   * creation; see InstanceOrderOptions): back-to-front for a transparent
+   * population, an explicit sort field for a JS-stepped one. */
+  instanceOrder?: InstanceOrderOptions
   /** Draw into the scene's shadow map (setCastShadow as a prop); default
    * false. Needs a `castShadow` light AND a material class declaring
    * `shadowVertex` (the depth pass with the instance placement) - the
@@ -39,7 +43,7 @@ export type RecordMeshProps = PopulatedMeshProps & {
 export let RecordMesh: VoidComponent<RecordMeshProps> = props => {
   let ctx = useContext(SceneContext)
   let mesh = untrack(() =>
-    createRecordMesh(props.geometry, props.material, props.records, props.count, { bounds: props.bounds }),
+    createRecordMesh(props.geometry, props.material, props.records, props.count, { bounds: props.bounds, instanceOrder: props.instanceOrder }),
   )
   add(ctx.parent, mesh)
   createEffect(

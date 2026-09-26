@@ -78,6 +78,18 @@ impl SinkWriter for Writer<'_> {
     }
   }
 
+  // A depth-ordered entry's fresh key direction: the orderDirection
+  // update, plus the retained re-sort/republish (a no-op on a gather
+  // entry, whose next publish picks the direction up). Runs with no
+  // target borrow held, which rematerialize's note_buffer_content needs.
+  fn write_order_direction(&mut self, target: u64, draw: u64, direction: [f32; 3]) -> bool {
+    let landed = self.landed(self.ctx.set_instance_order_direction(target, draw, direction));
+    if landed {
+      self.ctx.rematerialize_retained_order(target, draw);
+    }
+    landed
+  }
+
   // A shared-slot group's array, whole, through the ordinary shared
   // channel (draw targets store unknown names until a declaring
   // material arrives, so this validates like any setTargetParams).

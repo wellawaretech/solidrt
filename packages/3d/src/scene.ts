@@ -39,7 +39,7 @@
 import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, setDrawBuffers, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { BindDrawOptions, Impact as CoreImpact, NodeId, QueryFilter } from "flux:spatial"
-import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureBindings, TextureId, WrapMode } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, FilterMode, InstanceOrder, ProgramId, RenderPipelineId, ShaderParams, TextureBindings, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import { copy, mat4, transformPoint } from "./math.ts"
@@ -50,7 +50,7 @@ import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } fro
 import type { Camera, CameraState, CameraUpdate } from "./camera.ts"
 import { makeShadowSystem } from "./scene-shadows.ts"
 import { makePointerInput } from "./scene-pointer.ts"
-import { geometryKey, geometryTopology, validateGeometry } from "./geometry.ts"
+import { geometryKey, geometryTopology, layoutKey, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
@@ -63,8 +63,8 @@ export type { EnvironmentOptions } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTransition } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
-import { checkInstancePairing, checkMask, instanceBinding, localBounds, publishRecords } from "./mesh.ts"
-import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
+import { checkInstancePairing, checkMask, checkOrderPairing, instanceBinding, localBounds, markLiveRecords, publishRecords } from "./mesh.ts"
+import type { InstancedMesh, InstanceNode, Mesh, ResolvedInstanceOrder } from "./mesh.ts"
 import type { CastingLight, Light } from "./light.ts"
 
 const IDENTITY = mat4()
@@ -364,14 +364,33 @@ const QUEUE_TRANSPARENT = 3
 let drawQueue = (m: Material): number =>
   m.transparent === true ? QUEUE_TRANSPARENT : m.cutout === true ? QUEUE_CUTOUT : QUEUE_OPAQUE
 // A mesh entry's draw sink: what the core writes into it and where it
-// sorts, from the material the entry draws with.
-let drawBinding = (material: Material, mesh: Mesh, inst: { count: number } | null): BindDrawOptions => ({
+// sorts, from the material the entry draws with. `orderFeed` (the scene
+// entry of a position-ordered population) has the core steer the entry's
+// record order from the target's view.
+let drawBinding = (material: Material, mesh: Mesh, inst: { count: number } | null, orderFeed = false): BindDrawOptions => ({
   normal: material.normalMatrix === true,
   count: inst !== null ? inst.count : 1,
   fade: material.lodFade === true,
   queue: drawQueue(material),
   renderOrder: mesh.renderOrder,
+  orderFeed,
 })
+
+// The engine's instanceOrder for the scene entry of an ordered mesh: the
+// key stream resolved to its pipeline buffer index (the geometry's
+// buffers precede the instance buffers, and the material's declaration
+// order is the pipeline's), the float offsets resolved at creation, and
+// for a position key a seed direction the core-side feed (bindDraw
+// orderFeed) replaces at the first flush.
+const ORDER_SEED_DIRECTION: [number, number, number] = [0, 0, 1]
+let entryInstanceOrder = (order: ResolvedInstanceOrder, material: Material, geometryBuffers: number): InstanceOrder => {
+  let at = (material.instanceBuffers ?? []).findIndex(b => layoutKey(b.attributes) === order.key)
+  if (at < 0) throw new Error("Mesh material declares no instance buffer with the mesh's instanceOrder key layout (" + order.key + ")")
+  let buffer = geometryBuffers + at
+  return order.position
+    ? { position: order.floats, direction: ORDER_SEED_DIRECTION, descending: order.descending, buffer, retain: order.retain }
+    : { field: order.floats, descending: order.descending, buffer }
+}
 
 /** The RESOLVE set's params for a resolve pass of your own (an app-owned
  * atlas tiled views render into, resolved through `resolveFragment` from
@@ -669,8 +688,9 @@ export type Scene = {
   size(): { width: number; height: number }
   /**
    * Scene-wide uniforms: merge app-owned names into the target's SHARED
-   * params, beside the standard uViewProj/uCamPos/uCamRight/uCamUp the
-   * camera writes. One write per frame however many meshes read the name
+   * params, beside the standard uViewProj/uCamPos/uCamRight/uCamUp/
+   * uViewport (the target's pixel size) the camera writes. One write per
+   * frame however many meshes read the name
    * (a clock, a sun direction, fog) - the per-mesh channel is
    * setMeshParams. Merge semantics, no unset; a material that does not
    * declare a name simply skips it. Frame-rate-safe like setTransform.
@@ -1527,6 +1547,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     if (env !== null) params = { ...env.params, ...params }
     let textures = entryTextures(mesh.material, mesh, morph)
     if (env !== null && env.cube !== null) textures = { ...textures, uEnv: env.cube }
+    // The scene entry is the ONE ordered entry of an ordered population
+    // (one buffer holds one order): views bind the same buffers and draw
+    // them in the order the scene's camera decides.
+    let order = inst?.order ?? null
     mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(mesh.material, params, mesh.layers), {
       buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(mesh.material, inst) : [])],
       indexBuffer: bufs.index,
@@ -1534,11 +1558,16 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       ...meshRange(mesh),
       textures,
       instanceCount: 0,
+      ...(order !== null ? { instanceOrder: entryInstanceOrder(order, mesh.material, bufs.buffers.length) } : {}),
       label: drawLabel(mesh),
     })
     // The core turns the entry on (with the world matrix) at the next
     // flush, and off again whenever the node or an ancestor hides.
-    spatial.bindDraw(mesh._node!, texture, mesh._entry, drawBinding(mesh.material, mesh, inst))
+    spatial.bindDraw(mesh._node!, texture, mesh._entry, drawBinding(mesh.material, mesh, inst, order !== null && order.position))
+    // An ordered population republishes whole with its fresh entry: the
+    // engine-side order registry was just (re)built empty, and only a
+    // full publish seeds the gathered buffer and the retained copy.
+    if (order !== null) markLiveRecords(mesh)
   }
   let detachScene = (mesh: Mesh) => {
     if (mesh._entry === null) return
@@ -1636,7 +1665,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       updateCamera(cam, { position, target: [position[0] + d[0], position[1] + d[1], position[2] + d[2]], up: PROBE_FACE_UP[face] })
       ensureCamera(cam, size, size)
       cam.pending = false
-      setTargetParams(target, cameraParams(cam))
+      setTargetParams(target, cameraParams(cam, size, size))
       perFace?.(face)
       if (chain && face < last) renderTarget(target, face, 0)
       else renderTarget(target, face)
@@ -1813,7 +1842,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let cameraMoved = camera.pending
     if (camera.pending) {
       camera.pending = false
-      setTargetParams(texture, cameraParams(camera))
+      setTargetParams(texture, cameraParams(camera, width, height))
       setView(texture, camera)
     }
     shadowSys.placeCameras(cameraMoved)
@@ -1821,7 +1850,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       ensureCamera(v.camera, v.width, v.height)
       if (v.camera.pending) {
         v.camera.pending = false
-        setTargetParams(v.texture, cameraParams(v.camera))
+        setTargetParams(v.texture, cameraParams(v.camera, v.width, v.height))
         setView(v.texture, v.camera)
         if (v.shadowFilter !== null) shadowSys.markMatricesDirty()
       }
@@ -1959,6 +1988,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         )
       }
       if (inst !== null) checkInstancePairing(mesh.material, inst, "Mesh material")
+      // An ordered population's key stream must be among the entry's
+      // buffers, whatever material the mesh wears now - errors here, at
+      // add(), like the pairing above.
+      if (inst !== null) checkOrderPairing(mesh.material, inst, "Mesh material")
       // An anchored population's records are relative to the anchor, so
       // it must be an ancestor (the core's contract: an anchor move then
       // restages every record); anything else binds records that never

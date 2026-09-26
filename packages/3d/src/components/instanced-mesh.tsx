@@ -8,7 +8,7 @@ import type { PopulatedMeshProps } from "./mesh.tsx"
 import { add, destroy, setMorphWeights } from "../node.ts"
 import type { MorphWeights, SceneNode } from "../node.ts"
 import { addInstance, createInstancedMesh, disposeInstances, setCastShadow, setGeometry, setInstanceStyle } from "../mesh.ts"
-import type { InstancedMesh as InstancedMeshNode, InstanceNode } from "../mesh.ts"
+import type { InstancedMesh as InstancedMeshNode, InstanceNode, InstanceOrderOptions } from "../mesh.ts"
 import type { Geometry } from "../geometry.ts"
 import type { Material } from "../material.ts"
 
@@ -30,6 +30,10 @@ export type InstancedMeshProps = Omit<PopulatedMeshProps, "onPointerEnter" | "on
    * transparent sort. Optional here - instances pick by themselves, and
    * without it the mesh culls by the union of their boxes. */
   bounds?: ArrayLike<number>
+  /** Draw the records in key order, decided core-side (fixed at
+   * creation; see InstanceOrderOptions): back-to-front for a transparent
+   * population, an explicit sort field for a stepped one. */
+  instanceOrder?: InstanceOrderOptions
   /** Debug label for the record buffers. */
   label?: string
   /** The node the instance records are relative to (default the mesh;
@@ -63,7 +67,7 @@ export let InstancedMeshContext = createContext<InstancedMeshNode | null>(null)
 export let InstancedMesh: ParentComponent<InstancedMeshProps> = props => {
   let ctx = useContext(SceneContext)
   let mesh = untrack(() =>
-    createInstancedMesh(props.geometry, props.material, { capacity: props.capacity, bounds: props.bounds, anchor: props.anchor, label: props.label }),
+    createInstancedMesh(props.geometry, props.material, { capacity: props.capacity, bounds: props.bounds, anchor: props.anchor, instanceOrder: props.instanceOrder, label: props.label }),
   )
   add(ctx.parent, mesh)
   createEffect(

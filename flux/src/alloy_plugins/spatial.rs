@@ -344,12 +344,13 @@ fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, opts: OptArg<Object<
   let normal = flag("normal", false)?;
   let fade = flag("fade", false)?;
   let params = flag("params", true)?;
+  let order_feed = flag("orderFeed", false)?;
   let count = number("count", 1.0)? as u32;
   let queue = draw_queue(&ctx, number("queue", QUEUE_OPAQUE as f64)? as u32, "bindDraw")?;
   let render_order = number("renderOrder", 0.0)? as i32;
   super::gui(&ctx)
     .alloy
-    .spatial_bind(id, DrawSink { target, draw, normal, count, fade, params, order: DrawOrder { queue, render_order } })
+    .spatial_bind(id, DrawSink { target, draw, normal, count, fade, params, order: DrawOrder { queue, render_order }, order_feed })
     .map_err(|e| throw_str(&ctx, &format!("bindDraw: {e}")))
 }
 

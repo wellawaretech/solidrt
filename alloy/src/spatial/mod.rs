@@ -101,6 +101,13 @@ pub struct DrawSink {
   /// Where the entry sorts on a target ordering its entries
   /// (`set_draw_sort`); ignored elsewhere.
   pub order: DrawOrder,
+  /// Feed the entry's instance-order projected-key direction from the
+  /// target's view, every flush the direction turned past
+  /// `ORDER_DIRECTION_EPS_COS`: the view forward mapped into the node's
+  /// model frame (`write_order_direction`). For an entry whose instance
+  /// records are depth-ordered (a projected-key `instanceOrder`); the
+  /// consumer never computes a direction itself.
+  pub order_feed: bool,
 }
 
 /// The queue a draw entry sorts in on a sorted target, drawn in this
@@ -142,6 +149,9 @@ struct BoundSink {
   /// The `uLodFade` value last written (the solid `[1, 1]` until a band
   /// is entered; entries are created solid).
   fade: [f32; 2],
+  /// The unit direction the order feed last wrote (`DrawSink::order_feed`);
+  /// zeros before the first write, so the first pass always feeds.
+  fed: [f32; 3],
 }
 
 /// The consumer of sink writes, one method per write kind, called in flush
@@ -173,6 +183,12 @@ pub trait SinkWriter {
   /// composes the target's full permutation around these. False means
   /// the order did not land; nothing is released over it.
   fn write_order(&mut self, target: u64, order: &[u64]) -> bool;
+  /// A depth-ordered entry's fresh projected-key direction
+  /// (`DrawSink::order_feed`): the target's view forward in the node's
+  /// model frame, unit length. False stops that sink's feed (the entry
+  /// has no projected instance order to steer); the draw sink itself
+  /// stays bound.
+  fn write_order_direction(&mut self, target: u64, draw: u64, direction: [f32; 3]) -> bool;
   /// A shared-slot group's array param, rewritten whole (slot sinks share
   /// one array value; see `SharedSlotSink`).
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool;
@@ -288,6 +304,14 @@ const ORDER_BUCKET_MARGIN: f32 = 0.1591;
 /// The render_order magnitude the packed key holds; beyond it values
 /// clamp and tie.
 const ORDER_RENDER_LIMIT: i32 = 1 << 20;
+/// The order-direction feed's re-key gate (`DrawSink::order_feed`), the
+/// cosine of the angle a sink's fed direction must turn by before a new
+/// one is written (~2 degrees): each write re-sorts a whole record
+/// population and republishes a retained one, so the gate trades a
+/// bounded mis-order in motion against sort time and upload bandwidth.
+/// Set by feel; revisit against the splat-scale measurements
+/// (okf/plans/gaussian-splats.md).
+const ORDER_DIRECTION_EPS_COS: f32 = 0.99939;
 
 /// A sorted target's state between flushes (`Spatial::set_draw_sort`).
 #[derive(Default)]
@@ -819,6 +843,9 @@ pub struct Spatial {
   /// Per target ordering its bound entries (`set_draw_sort`): the sort's
   /// state between flushes.
   draw_sorts: HashMap<u64, DrawSort>,
+  /// The nodes holding at least one order-feed draw sink
+  /// (`DrawSink::order_feed`); pruned lazily by the feed pass.
+  order_feeds: Vec<u32>,
   /// Bind order counter: every draw sink bound takes the next value.
   bind_seq: u64,
 }
@@ -1482,6 +1509,62 @@ impl Spatial {
       n.sinks = sinks;
       n.queued_touch = false;
     }
+  }
+
+  /// Feed every order-feed sink (`DrawSink::order_feed`) its target's
+  /// current view direction in the node's model frame: with world matrix
+  /// W, dot(W p + t, f) = dot(p, W3x3^T f) + const, so the records'
+  /// world depth along the view forward f is ordered exactly by the key
+  /// direction W3x3^T f - no inverse, correct under any scale. Written
+  /// only when the direction turned past `ORDER_DIRECTION_EPS_COS` since
+  /// the last write, the gate that meters the consumer's re-sort and
+  /// republish. A target without a view feeds nothing (and keeps the
+  /// sink's last direction); a write that does not land stops that
+  /// sink's feed, the sink itself stays.
+  fn order_feed_pass(&mut self, out: &mut dyn SinkWriter) {
+    if self.order_feeds.is_empty() {
+      return;
+    }
+    let mut feeds = std::mem::take(&mut self.order_feeds);
+    feeds.retain(|&i| {
+      if !self.nodes[i as usize].alive {
+        return false;
+      }
+      let world = self.nodes[i as usize].world;
+      let mut sinks = std::mem::take(&mut self.nodes[i as usize].sinks);
+      for b in sinks.iter_mut() {
+        if !b.sink.order_feed {
+          continue;
+        }
+        let Some(view) = self.lod_views.get(&b.sink.target) else {
+          continue;
+        };
+        let f = view.forward;
+        // Column i of the world's upper 3x3 dotted with f = (W3x3^T f)_i.
+        let d = [
+          world[0] * f[0] + world[1] * f[1] + world[2] * f[2],
+          world[4] * f[0] + world[5] * f[1] + world[6] * f[2],
+          world[8] * f[0] + world[9] * f[1] + world[10] * f[2],
+        ];
+        let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        if !(len > 0.0 && len.is_finite()) {
+          continue;
+        }
+        let d = [d[0] / len, d[1] / len, d[2] / len];
+        if d[0] * b.fed[0] + d[1] * b.fed[1] + d[2] * b.fed[2] > ORDER_DIRECTION_EPS_COS {
+          continue;
+        }
+        if out.write_order_direction(b.sink.target, b.sink.draw, d) {
+          b.fed = d;
+        } else {
+          b.sink.order_feed = false;
+        }
+      }
+      let keep = sinks.iter().any(|b| b.sink.order_feed);
+      self.nodes[i as usize].sinks = sinks;
+      keep
+    });
+    self.order_feeds = feeds;
   }
 
   /// The draw order of every sorted target (`set_draw_sort`) whose bound
@@ -3112,11 +3195,14 @@ impl Spatial {
         rekeyed.push(b.sink.target);
       }
     }
-    sinks.push(BoundSink { sink, seq, entry_on: false, fresh: true, fade: [1.0, 1.0] });
+    sinks.push(BoundSink { sink, seq, entry_on: false, fresh: true, fade: [1.0, 1.0], fed: [0.0; 3] });
     for target in rekeyed {
       if let Some(sort) = self.draw_sorts.get_mut(&target) {
         sort.dirty = true;
       }
+    }
+    if sink.order_feed && !self.order_feeds.contains(&i) {
+      self.order_feeds.push(i);
     }
     self.enqueue(i);
     Ok(())
@@ -3246,6 +3332,10 @@ impl Spatial {
     if !self.touched.is_empty() || !self.frustum_dirty.is_empty() {
       self.cull_pass(out);
     }
+    // After the walk (worlds fresh) and unconditionally: the feed reacts
+    // to view writes and node rotations alike, and its own epsilon gate
+    // is the cheap early-out.
+    self.order_feed_pass(out);
     if self.draw_sorts.values().any(|s| s.dirty || s.view_moved) {
       self.order_pass(out);
     }

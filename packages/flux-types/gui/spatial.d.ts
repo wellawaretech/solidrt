@@ -178,6 +178,16 @@ declare module "flux:spatial" {
     queue?: number
     /** Ascending above depth inside the queue; default 0. */
     renderOrder?: number
+    /** Feed the entry's instance-order projected-key direction (the
+     * `orderDirection` update of a position-key `instanceOrder`) from the
+     * target's view: each flush whose view forward, mapped into the
+     * node's model frame, turned past a small core-side epsilon writes
+     * the new direction - on a retained order that re-sorts and
+     * republishes the records core-side, so a whole population follows
+     * the camera with no per-frame work here. For entries that declared
+     * a position-key instanceOrder; on any other entry the first feed
+     * fails (with a warning) and the feed stops, the sink stays. */
+    orderFeed?: boolean
   }
   /**
    * Route the node's world matrix to one draw entry's `uModel` (and

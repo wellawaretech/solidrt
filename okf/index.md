@@ -73,6 +73,15 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   that in lattice; a cumulative drift estimator with hysteresis makes the
   count exact at full rate under swap jitter and honest below it. Tier 2 of
   okf/design/frame-timing.md.
+- **[Gaussian splat rendering](plans/gaussian-splats.md)** [2026-08-24]
+  Captured 3DGS scenes (phone scans, photogrammetry successors) are a growing
+  content class nothing here can display. The viewer is proven by a probe
+  (300k splats in 19 ms at full resolution on a 2022 phone) and the shape
+  settled 2026-09-26 - a pack-time bake to a .srts record with the 3D
+  covariance precomputed, a generic instanceOrder knob on the 3d meshes riding
+  gpu-instance-order's retained projected key with the scene feeding
+  direction, SplatMesh over createRecordMesh, and SH bands via an id-indexed
+  data texture.
 - **[Inspector - a visual devtool app over the dev-server control API](plans/inspector.md)** [2026-08-14]
   A packed SolidRT app presenting live runtime introspection (stats, logs,
   tree over snapshot, clock transport) as a peer front-end to the MCP bridge,
@@ -364,13 +373,6 @@ Shaped, not started.
   not felt. SDL3 has SDL_RumbleGamepad (low/high frequency motors, duration)
   and trigger rumble on pads that support it; one call to plumb, keyed by the
   pad's slot.
-- **[Gaussian splat rendering](backlog/gaussian-splats.md)** [2026-08-24]
-  Captured 3DGS scenes (phone scans, photogrammetry successors) are a growing
-  content class nothing here can display; the render path is instanced
-  camera-facing quads with alpha blending, which the stack already has, plus a
-  strict back-to-front instance order per camera move, which is the one real
-  gap and lands as the projected-key mode of gpu-instance-order. Staged so a
-  demo-tier viewer is library-only work today.
 - **[Go client crashes at launch on the x86_64 emulator](backlog/go-client-emulator-launch-crash.md)** [2026-09-01]
   The currently staged solidrt-go.apk aborts within a second of launch on the
   srt_pixel6 emulator (FORTIFY, destroyed mutex inside libhwui's CommonPool);
@@ -2374,6 +2376,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Engine-free layering upheld, docs excellent, clippy clean; gaps are untested
   subprocess/p2p/ffi, stale docs, an implicit single-thread contract and
   IPv4-only skew.
+- **[Stage A review - what could be better](notes/gaussian-splats-stage-a-review.md)** [2026-09-26]
+  An assessment from building instanceOrder on the 3d meshes plus the core
+  direction feed (gaussian-splats stage A, 2026-09-26) - the wider-scope calls
+  first (triple record residency, upload-vs-index ordering, the JS-side camera
+  funnel, scene.ts's entry-lifecycle web, the verification story), then the
+  narrow punch list of pre-existing breakage, accepted costs and warts.
 - **[Geometry topology and edge builders - what the implementation taught](notes/geometry-topology-edges.md)** [2026-09-08]
   Why topology belongs on the geometry and not the material, why edge builders
   must weld by position, the facet-angle rule for edgesGeometry thresholds,
