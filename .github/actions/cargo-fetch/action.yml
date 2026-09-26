@@ -1,0 +1,13 @@
+name: cargo fetch (retrying)
+description: Resolve and download every dependency before the build, with retries, so a transient network failure costs a minute and a rerun instead of a wasted build.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        for i in 1 2 3; do
+          cargo fetch && exit 0
+          echo "cargo fetch failed (attempt $i), retrying in 15s"; sleep 15
+        done
+        exit 1

@@ -61,6 +61,13 @@ jobs:
 
       - uses: ./.github/actions/js-install
 
+      # Every dependency, git ones included, comes down here before the build:
+      # dist is speech-free but cargo still clones the livekit-wakeword git
+      # source (a git dependency has no index to resolve from), and that
+      # clone is the one network step that has failed release builds. Its
+      # own step, retried, so a failure is a minute and a rerun of this job.
+      - uses: ./.github/actions/cargo-fetch
+
       - name: Build
         run: make dist VERSION="${GITHUB_REF_NAME#v}"
 
@@ -101,6 +108,9 @@ jobs:
 
       - uses: ./.github/actions/js-install
 
+      # The retried dependency fetch, see build-linux.
+      - uses: ./.github/actions/cargo-fetch
+
       - name: Build
         run: make dist VERSION="${GITHUB_REF_NAME#v}"
 
@@ -134,6 +144,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - uses: ./.github/actions/js-install
+
+      # The retried dependency fetch, see build-linux.
+      - uses: ./.github/actions/cargo-fetch
 
       - name: Build
         run: make dist VERSION="${GITHUB_REF_NAME#v}"
@@ -197,6 +210,9 @@ jobs:
       # (solidrt.apk). Both are per-ABI by decision, no fat APK
       # (okf/backlog/standalone-android-apk.md). The Makefile stages them
       # into packages/android-<abi>/ itself.
+      # The retried dependency fetch, see build-linux.
+      - uses: ./.github/actions/cargo-fetch
+
       - name: Build APKs (arm64-v8a)
         run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist VERSION="${GITHUB_REF_NAME#v}"
 
@@ -256,6 +272,9 @@ jobs:
       - uses: ./.github/actions/windows-msys2-tools
 
       - uses: ./.github/actions/js-install
+
+      # The retried dependency fetch, see build-linux.
+      - uses: ./.github/actions/cargo-fetch
 
       - name: Build
         run: make dist VERSION="${GITHUB_REF_NAME#v}"

@@ -424,7 +424,8 @@ fn the_first_frame_anchors_on_the_sound_when_a_sink_consumes() {
   silent.player.play();
   wait_until("a release", || !released(&silent).is_empty());
   let (_, first_ns, _) = released(&silent)[0];
-  assert!(first_ns - play_ns < SLACK_NS, "first frame due {}ns after play", first_ns - play_ns);
+  // "At once" is the worker's own now, which the host may wake late.
+  assert!(first_ns - play_ns < HOST_WAKE_LATE_NS, "first frame due {}ns after play", first_ns - play_ns);
 }
 
 #[test]

@@ -155,3 +155,7 @@ drifting from the next `git mv` onward.
 bun scripts/build-okf-index.ts            regenerate
 bun scripts/build-okf-index.ts --check    fail if stale or if frontmatter is missing
 ```
+
+CI runs the check; `.githooks/pre-commit` runs it (and the components docs
+check) before every commit instead, once enabled per clone with
+`git config core.hooksPath .githooks`.
