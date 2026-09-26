@@ -56,8 +56,10 @@ import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.t
 import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
 import { disposeResolve, makeResolve, replaceResolve, resizeResolve, setResolveBloom } from "./resolve.ts"
 import type { BloomOptions, ResolveInput, ResolveOptions, ResolveRecord } from "./resolve.ts"
-import { createEnvironmentPlaceholder, createPrefilter, bufferFormat } from "./environment.ts"
-import type { Prefilter } from "./environment.ts"
+import { checkCubeKnobs, createEnvironmentPlaceholder, createPrefilter, cubeTurn, bufferFormat, environmentParams } from "./environment.ts"
+import type { EnvironmentOptions, Prefilter } from "./environment.ts"
+
+export type { EnvironmentOptions } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTransition } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
@@ -337,62 +339,10 @@ export type SkyboxOptions = {
   rotation?: number
 }
 
-/**
- * The scene's environment: a cube map every `lit` material with
- * `reflectivity` mirrors (scene.setEnvironment). The same three fields
- * as a skybox, and typically the same cube - Three's `scene.environment`
- * with `environmentIntensity` and `environmentRotation`; Unity's
- * environment reflections source, Godot's reflected light from the sky.
- */
-export type EnvironmentOptions = {
-  /** A cube map (loadEnvironment's baked chain; equirectToCube for an LDR
-   * panorama; createCubeTexture with `mipmap: true` for a hand-baked
-   * sky), faces in +X, -X, +Y, -Y, +Z, -Z order, looked up like the
-   * skybox (no flip). A 2D texture id throws. */
-  cube: TextureId
-  /** Multiplier on the reflected color, >= 0; default 1. */
-  intensity?: number
-  /** Turn about world y in RADIANS (default 0), the skybox's convention:
-   * the environment turns as a node with rotation [0, r, 0] would. */
-  rotation?: number
-}
-
-// The uniform turn a rotated cube map is looked up through: the INVERSE
-// of the sky's turn, because a lookup along view direction v must find
-// the texel that sat at R(-r) v before the sky turned by +r.
-function cubeTurn(rotation: number): Mat4 {
-  let c = Math.cos(rotation)
-  let n = Math.sin(rotation)
-  // prettier-ignore
-  return [
-    c, 0, n, 0,
-    0, 1, 0, 0,
-    -n, 0, c, 0,
-    0, 0, 0, 1,
-  ]
-}
-
-function checkCubeKnobs(o: { intensity?: number; rotation?: number }, site: string): { intensity: number; rotation: number } {
-  let intensity = o.intensity ?? 1
-  let rotation = o.rotation ?? 0
-  if (!Number.isFinite(intensity) || intensity < 0) throw new Error(site + ": intensity must be a finite number >= 0, got " + intensity)
-  if (!Number.isFinite(rotation)) throw new Error(site + ": rotation must be a finite angle in radians, got " + rotation)
-  return { intensity, rotation }
-}
-
 // The entry params a skybox compiles to.
 function skyboxParams(sky: SkyboxOptions, site: string): ShaderParams {
   let k = checkCubeKnobs(sky, site)
   return { uSkyIntensity: k.intensity, uSkyRotation: cubeTurn(k.rotation) }
-}
-
-// The shared params an environment compiles to (null = off: uEnvOn 0
-// makes every reflective material's term vanish; the set ENVIRONMENT in
-// `@solidrt/3d/glsl` declares).
-function environmentParams(env: EnvironmentOptions | null): ShaderParams {
-  if (env === null) return { uEnvIntensity: 0, uEnvRotation: cubeTurn(0), uEnvOn: 0 }
-  let k = checkCubeKnobs(env, "scene.setEnvironment")
-  return { uEnvIntensity: k.intensity, uEnvRotation: cubeTurn(k.rotation), uEnvOn: 1 }
 }
 
 export type { BloomOptions, ResolveInput, ResolveOptions } from "./resolve.ts"
@@ -1542,6 +1492,21 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // environment (the faces, or the chain prefiltered from them): it
   // samples the placeholder instead of itself.
   let ownsEnvironment = (t: TextureId) => environment !== null && views.some(v => v.texture === t && v.probeCube === environment)
+  // A mesh's own environment on one entry (Mesh.environment, applied
+  // where the material reflects - Material.env): the same uEnv* names
+  // the scene writes per target, written per entry, and the entry's
+  // beat the target's (specific beats general). `probeCube` guards a
+  // probe against sampling its own cube through an override - the
+  // black placeholder stands in, writeLights' target-level rule at
+  // entry grain (the engine rejects the same-pass feedback outright).
+  let envOverride = (mesh: Mesh, material: Material, probeCube: TextureId | null): { params: ShaderParams; cube: TextureId | null } | null => {
+    if (mesh.environment === undefined || material.env !== true) return null
+    let e = mesh.environment
+    return {
+      params: environmentParams(e, "setEnvironment"),
+      cube: e === null ? null : probeCube !== null && probeCube === e.cube ? envPlaceholder : e.cube,
+    }
+  }
   // The mesh's entry in the scene's OWN target - what mesh._entry is.
   // Created when the scene mask admits the mesh, dropped when it stops:
   // the same lifecycle a view entry has, so `_buffers` (not `_entry`) is
@@ -1557,12 +1522,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // mismatch branch in sync() turns it on in the same pass that writes
     // uModel.
     let morph = morphEntry(mesh.material, mesh)
-    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(mesh.material, morph === null ? mesh._params : { ...morph.params, ...mesh._params }, mesh.layers), {
+    let env = envOverride(mesh, mesh.material, null)
+    let params = morph === null ? mesh._params : { ...morph.params, ...mesh._params }
+    if (env !== null) params = { ...env.params, ...params }
+    let textures = entryTextures(mesh.material, mesh, morph)
+    if (env !== null && env.cube !== null) textures = { ...textures, uEnv: env.cube }
+    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(mesh.material, params, mesh.layers), {
       buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(mesh.material, inst) : [])],
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
       ...meshRange(mesh),
-      textures: entryTextures(mesh.material, mesh, morph),
+      textures,
       instanceCount: 0,
       label: drawLabel(mesh),
     })
@@ -1609,12 +1579,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let bufs = mesh._buffers!
     let morph = morphEntry(material, mesh)
     let params = v.override !== null ? (morph === null ? null : morph.params) : morph === null ? mesh._params : { ...morph.params, ...mesh._params }
+    // The mesh's own environment rides its own material only (an
+    // override view follows its target, like mesh._params).
+    let env = v.override === null ? envOverride(mesh, material, v.probeCube) : null
+    if (env !== null) params = { ...env.params, ...params }
+    let textures = entryTextures(material, mesh, morph)
+    if (env !== null && env.cube !== null) textures = { ...textures, uEnv: env.cube }
     let entry = addDraw(v.texture, material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(material, params, mesh.layers), {
       buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(material, inst) : [])],
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
       ...meshRange(mesh),
-      textures: entryTextures(material, mesh, morph),
+      textures,
       instanceCount: 0,
       label: drawLabel(mesh),
     })
@@ -2336,7 +2312,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     setEnvironment(env) {
       if (disposed) return
-      let params = environmentParams(env)
+      let params = environmentParams(env, "scene.setEnvironment")
       environment = env === null ? null : env.cube
       let cube = environment ?? envPlaceholder
       // A probe's own faces never sample the probe (see writeLights).
@@ -2690,7 +2666,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   scene.setParams({ uFogColor: [0, 0, 0], uFogNear: 0, uFogInv: 0, uFogDensity: 0, uFogHeight: 0, uFogHeightFalloff: 0 })
   // Likewise the environment set starts at "none" (uEnvOn 0), so a
   // reflective material has coverage before setEnvironment.
-  scene.setParams(environmentParams(null))
+  scene.setParams(environmentParams(null, "scene.setEnvironment"))
   // And the resolve at its defaults (exposure 1, no tone mapping).
   scene.setParams({ uExposure: 1, uToneMapping: TONE_MAPPING_CODE.none })
   if (opts?.fog !== undefined) scene.setFog(opts.fog)

@@ -91,7 +91,7 @@ Out of scope, filed as its own item: the environment cube leaks the
 same way (`envIrradiance`/`envRadiance` from the scene-wide `uEnv`
 light an interior with the sky no matter the light masks) - a
 per-mesh environment assignment is a different mechanism
-(`3d-env-per-mesh.md`).
+(`3d-env-per-mesh.md`, done 2026-09-26).
 
 The mesh-side `uLayers` write is the cost to watch: one param per
 entry, written on attach and on `setLayers`, never per frame.

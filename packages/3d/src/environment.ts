@@ -324,3 +324,58 @@ export function createEnvironmentPlaceholder(label: string): TextureId {
   let black = new Uint8Array([0, 0, 0, 255])
   return createCubeTexture([black, black, black, black, black, black], 1, { autoFree: false, label })
 }
+
+/**
+ * An environment: a cube map every image-lit and reflective term samples
+ * (scene.setEnvironment for the scene's, `Mesh.environment` for one
+ * mesh's own). The same three fields as a skybox, and typically the same
+ * cube - Three's `scene.environment` with `environmentIntensity` and
+ * `environmentRotation`; Unity's environment reflections source, Godot's
+ * reflected light from the sky.
+ */
+export type EnvironmentOptions = {
+  /** A cube map (loadEnvironment's baked chain; equirectToCube for an LDR
+   * panorama; createCubeTexture with `mipmap: true` for a hand-baked
+   * sky), faces in +X, -X, +Y, -Y, +Z, -Z order, looked up like the
+   * skybox (no flip). A 2D texture id throws. */
+  cube: TextureId
+  /** Multiplier on the reflected color, >= 0; default 1. */
+  intensity?: number
+  /** Turn about world y in RADIANS (default 0), the skybox's convention:
+   * the environment turns as a node with rotation [0, r, 0] would. */
+  rotation?: number
+}
+
+// The uniform turn a rotated cube map is looked up through: the INVERSE
+// of the sky's turn, because a lookup along view direction v must find
+// the texel that sat at R(-r) v before the sky turned by +r.
+export function cubeTurn(rotation: number): number[] {
+  let c = Math.cos(rotation)
+  let n = Math.sin(rotation)
+  // prettier-ignore
+  return [
+    c, 0, n, 0,
+    0, 1, 0, 0,
+    -n, 0, c, 0,
+    0, 0, 0, 1,
+  ]
+}
+
+export function checkCubeKnobs(o: { intensity?: number; rotation?: number }, site: string): { intensity: number; rotation: number } {
+  let intensity = o.intensity ?? 1
+  let rotation = o.rotation ?? 0
+  if (!Number.isFinite(intensity) || intensity < 0) throw new Error(site + ": intensity must be a finite number >= 0, got " + intensity)
+  if (!Number.isFinite(rotation)) throw new Error(site + ": rotation must be a finite angle in radians, got " + rotation)
+  return { intensity, rotation }
+}
+
+// The params an environment compiles to (null = off: uEnvOn 0 makes the
+// phong weight vanish and uEnvIntensity 0 zeroes the radiance and
+// irradiance; the set ENVIRONMENT in `@solidrt/3d/glsl` declares them).
+// Target params for the scene's environment, entry params for a mesh's
+// own - the same names, and the entry's beat the target's.
+export function environmentParams(env: EnvironmentOptions | null, site: string): Record<string, number | number[]> {
+  if (env === null) return { uEnvIntensity: 0, uEnvRotation: cubeTurn(0), uEnvOn: 0 }
+  let k = checkCubeKnobs(env, site)
+  return { uEnvIntensity: k.intensity, uEnvRotation: cubeTurn(k.rotation), uEnvOn: 1 }
+}

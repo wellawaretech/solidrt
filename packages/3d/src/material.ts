@@ -147,6 +147,13 @@ export type Material = {
    * Like the other declared-uniform flags, a source that declares
    * uLayers without using it is rejected at add(). */
   layered?: boolean
+  /** True when the fragment declares `uEnv` (read from the source, like
+   * layered; every source composing ENVIRONMENT does - `standard`
+   * always, `phong` with `reflectivity`): the scene then applies a
+   * mesh's own `environment` to entries drawn with this material. On a
+   * material without it the mesh's environment is a no-op, never an
+   * error - "no reflection" is already true. */
+  env?: boolean
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
 }
@@ -1334,6 +1341,10 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // A source mentioning uLayers masks lights by the mesh's layers
   // (Material.layered); either stage may light, so both are scanned.
   let layered = /\buLayers\b/.test(opts.vertex) || /\buLayers\b/.test(opts.fragment)
+  // A source mentioning uEnv reflects the environment (Material.env; the
+  // \b keeps uEnvIntensity and friends from matching, but ENVIRONMENT
+  // always declares the sampler itself).
+  let env = /\buEnv\b/.test(opts.fragment)
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
   let cutout = opts.cutout === true
   let depth = opts.depth ?? true
@@ -1435,6 +1446,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         morphed,
         lodFade,
         layered,
+        env,
         attributes,
         transparent,
         cutout,

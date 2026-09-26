@@ -177,11 +177,10 @@ and an opening "plug" on their own layers and switch the scene mask by
 the camera's zone (inside, outside, in the doorway) - the reactive
 `<Scene layers>` makes it one signal - and mask each light (and the
 hemisphere) to its side the same way, so the sun does not light the
-room through its shell nor the room's bulb the street. What light
-`layers` does NOT mask is the ENVIRONMENT term: a `standard` material
-still adds the scene cube's image lighting whatever the masks say, so
-an interior under an outdoor environment wants a tier-3 material with
-`sceneSource({ env: false })` for now (see okf/backlog/3d-env-per-mesh.md).
+room through its shell nor the room's bulb the street. Light `layers`
+cannot mask the ENVIRONMENT term (image lighting is per target, not
+per light): the interior meshes take `environment={null}` - or an
+interior probe's cube - instead (Mesh.environment, see Environment).
 Per-view fog: `fog: FogOptions | null` on createView overrides the
 scene's fog for that view (null = unfogged - the clear minimap over a
 fogged scene); absent follows the scene. `overrideMaterial` (Three's
@@ -1622,8 +1621,27 @@ sky-lit reflections: ONE `uEnv` samplerCube bound on every target the
 scene draws into (a 1x1 black placeholder while unset) and one
 shared-params write (`uEnvIntensity`, `uEnvRotation`, `uEnvOn`), however
 many meshes reflect; no per-material envMap (Three's Basic/Phong
-`envMap`) - a custom material composes ENVIRONMENT from
-`@solidrt/3d/glsl`. `reflectivity` 0..1 is the
+`envMap` sits on the MATERIAL, but materials are shared here) - a
+custom material composes ENVIRONMENT from `@solidrt/3d/glsl`, and a
+single object's exception is PER MESH: `Mesh.environment`
+(`setEnvironment(mesh, env)`, the `environment` prop on every mesh
+component). `null` removes the environment term from that mesh - the
+sealed-interior pair to masked lights, since light `layers` cannot mask
+image lighting; Unity's reflectionProbeUsage Off, Godot's
+disable_ambient_light in spirit - an `{ cube, intensity?, rotation? }`
+samples that cube instead of the scene's (an interior probe's cube, a
+baked room - Unity assigns probes by volume with an anchor override,
+Godot by probe box and cull_mask; here the app assigns explicitly),
+and absent follows the scene. The same uEnv* names written per ENTRY,
+which beat the target's shared values, so it costs nothing per frame;
+the change rebuilds the mesh's entries, a state switch (a doorway
+crossing), not a per-frame dial. Applied where the material reflects at
+all (`standard`, `phong({ reflectivity })`, a custom ENVIRONMENT
+composer - `Material.env`); on any other material it is a no-op, so an
+interior can be masked wholesale. A reflection probe drawing such a
+mesh never samples its own cube through it (the black placeholder
+stands in, the same rule the scene's own environment follows on probe
+faces). `reflectivity` 0..1 is the
 face-on weight, rising to 1 at grazing angles (Schlick), mixed in as
 `rgb = mix(rgb, reflection, weight)`: 1 is chrome, ~0.05 a glossy
 dielectric with rim reflections; Three's Phong `reflectivity` under its
@@ -1974,7 +1992,8 @@ Three has none) - the sealed-interiors pattern's light half (see Views
 and layers), one integer AND per light per fragment on two uniforms,
 so the branch is coherent per draw. A mesh a casting light's mask
 excludes also draws into none of its shadow maps. The environment term
-is NOT masked (see Views and layers). Placement goes through setTransform, the
+is not a light and not masked: its per-mesh knob is `Mesh.environment`
+(see Environment). Placement goes through setTransform, the
 light's own fields through `setLight(light, { ... })` (frame-rate-safe,
 like setMeshParams). At most `MAX_LIGHTS` (8, exported from the root and `/glsl`)
 lights per scene, directional, spot and point together (the hemisphere

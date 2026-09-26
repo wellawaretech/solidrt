@@ -5,8 +5,9 @@ import { syncNode } from "./node-props.ts"
 import type { TransformProps, PointerEventProps } from "./node-props.ts"
 import { add, destroy, setMorphWeights } from "../node.ts"
 import type { MorphWeights } from "../node.ts"
-import { createMesh, setCastShadow, setCulling, setGeometry, setLayers, setMaterial, setMeshParams, setRenderOrder } from "../mesh.ts"
+import { createMesh, setCastShadow, setCulling, setEnvironment, setGeometry, setLayers, setMaterial, setMeshParams, setRenderOrder } from "../mesh.ts"
 import type { Mesh as MeshNode } from "../mesh.ts"
+import type { EnvironmentOptions } from "../environment.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
 import type { Geometry } from "../geometry.ts"
 import type { Material } from "../material.ts"
@@ -29,6 +30,12 @@ export type MeshProps = TransformProps & PointerEventProps & {
    * draws the mesh when its mask intersects this. Not inherited from
    * ancestor Groups. */
   layers?: number
+  /** This mesh's environment instead of the scene's (setEnvironment as a
+   * prop): `null` removes the environment term - the sealed-interior
+   * pair to masked lights - a `{ cube, intensity?, rotation? }` samples
+   * that cube, absent follows the scene. Rebuilds the mesh's entries on
+   * change: a state switch, not a per-frame dial. */
+  environment?: EnvironmentOptions | null
   /** Frustum culling switch (setCulling as a prop; default true). */
   frustumCulled?: boolean
   /** World units the culled box grows by (setCulling as a prop; default 0). */
@@ -70,6 +77,10 @@ export function syncMesh(mesh: MeshNode, props: Omit<MeshProps, "geometry" | "ma
   createEffect(
     () => props.layers,
     l => setLayers(mesh, l ?? 1),
+  )
+  createEffect(
+    () => props.environment,
+    e => setEnvironment(mesh, e),
   )
   createEffect(
     () => [props.frustumCulled, props.cullMargin] as const,

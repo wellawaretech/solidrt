@@ -162,11 +162,6 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
-- **[Per-mesh environment](backlog/3d-env-per-mesh.md)** [2026-09-26]
-  Light layers mask lights and the hemisphere but every receiver samples the
-  one scene-wide uEnv cube, so the sky's IBL still lights a sealed interior; a
-  per-mesh environment assignment (a probe or cube per mesh, Unity's anchor
-  override / Godot's per-instance probe blending in spirit).
 - **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes); what Three, Unity and Godot ship on top of the
@@ -947,6 +942,11 @@ Finished, kept for the reasoning.
   these are pure builders next to wireframeGeometry, so the item is four
   functions plus the one missing material flag - vertexColors on unlit - and
   no components, renderer or Rust work.
+- **[Per-mesh environment](done/3d-env-per-mesh.md)** [2026-09-26]
+  Light layers mask lights and the hemisphere but every receiver sampled the
+  one scene-wide uEnv cube, so the sky's IBL still lit a sealed interior;
+  Mesh.environment (setEnvironment / the environment prop) gives one mesh its
+  own cube or none, per entry, riding the existing uEnv*/uEnvOn names.
 - **[Environment tier - skybox and environment reflections](done/3d-environment.md)** [2026-09-06]
   "Done 2026-09-06 in four stages: skybox and vRay background, scene
   environment with lit reflectivity, the linear-only color pipeline with

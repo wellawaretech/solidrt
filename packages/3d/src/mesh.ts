@@ -5,6 +5,8 @@
 
 import { createBuffer, destroyBuffer, destroyTexture, writeBuffer } from "@solidrt/core/gpu"
 import type { BufferId, DrawId, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
+import { checkCubeKnobs } from "./environment.ts"
+import type { EnvironmentOptions } from "./environment.ts"
 import { geometryBounds, isFloatLayout, layoutKey, layoutStride, plane, vertexBytes, vertexView, VERTEX_FORMATS } from "./geometry.ts"
 import type { AttributeAccess, Geometry } from "./geometry.ts"
 import { INSTANCE_MATRIX_ATTRIBUTES } from "./glsl.ts"
@@ -32,6 +34,15 @@ export type Mesh = SceneNode & {
    * target draws the mesh when its mask intersects this. Not inherited
    * from ancestor Groups (Three's and Godot's rule). Set with setLayers. */
   layers: number
+  /** This mesh's environment instead of the scene's (resolved; set with
+   * setEnvironment): the cube its image-lit and reflective terms sample,
+   * `null` for NONE (a sealed interior under an outdoor sky reflects and
+   * receives no sky), `undefined` (the default) to follow the scene's,
+   * live through scene.setEnvironment. Applied where the material
+   * reflects at all (Material.env - `standard`, `phong` with
+   * `reflectivity`, a custom source composing ENVIRONMENT); on any other
+   * material it is a no-op, so an interior can be masked wholesale. */
+  environment: { cube: TextureId; intensity: number; rotation: number } | null | undefined
   /** Whether every target's frustum gates the mesh (default true, Three's
    * `frustumCulled`): outside it the entry draws nothing. Off for geometry
    * a vertex stage moves beyond its box (a fullscreen quad, a custom
@@ -213,6 +224,7 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh.renderOrder = 0
   mesh.castShadow = false
   mesh.layers = 1
+  mesh.environment = undefined
   mesh.frustumCulled = true
   mesh.cullMargin = 0
   mesh._cullJoints = null
@@ -917,6 +929,32 @@ export function setCastShadow(mesh: Mesh, cast: boolean): void {
   mesh.castShadow = cast
   mesh._scene?._setCast(mesh)
   for (let l of mesh._instances?.levels ?? []) if (l !== mesh) setCastShadow(l, cast)
+}
+
+/**
+ * Give the mesh an environment of its own, or none: `null` removes the
+ * environment term entirely - a sealed interior under an outdoor sky,
+ * where light `layers` mask the sun but cannot mask image lighting -
+ * `{ cube, intensity?, rotation? }` samples that cube instead of the
+ * scene's (an interior probe's chain, a baked room), and `undefined`
+ * (the default) follows the scene's, live through scene.setEnvironment.
+ * Unity's reflectionProbeUsage Off and Three's `material.envMap`, per
+ * MESH, because materials are shared and interiors are mesh-grained
+ * here. Applied where the material reflects at all (Material.env); a
+ * no-op on any other material. The mesh's entries are rebuilt, so this
+ * is a state change (a camera crossing a doorway), not a frame-rate
+ * dial. A reflection probe drawing this mesh never samples its own cube
+ * through it (the black placeholder stands in, the same-pass rule).
+ */
+export function setEnvironment(mesh: Mesh, environment: EnvironmentOptions | null | undefined): void {
+  let next = environment == null ? environment : { cube: environment.cube, ...checkCubeKnobs(environment, "setEnvironment") }
+  let a = mesh.environment
+  let same = next == null || a == null ? next === a : next.cube === a.cube && next.intensity === a.intensity && next.rotation === a.rotation
+  if (same) return
+  mesh.environment = next
+  rebuildEntry(mesh)
+  // An instanced LOD's levels reflect what the population reflects.
+  for (let l of mesh._instances?.levels ?? []) if (l !== mesh) setEnvironment(l, environment)
 }
 
 /** Frustum culling per mesh: `frustumCulled` (default true) switches the
