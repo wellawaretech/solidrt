@@ -55,7 +55,7 @@ notify = { version = "=8.2.0", default-features = false, features = ["macos_fsev
 # Current-process stats for flux:process (memoryUsage rss).
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 fastwebsockets = { version = "=0.10.0", features = ["upgrade", "unstable-split"] }
-iroh = "=1.1.0"
+iroh = "=1.2.0"
 # Cross-platform PATH lookup for the subprocess `which` (handles Windows PATHEXT).
 which = "=7.0.3"
 # UDP socket options the flux:net multicast beacon needs (SO_REUSEADDR/REUSEPORT)
@@ -64,11 +64,11 @@ which = "=7.0.3"
 socket2 = "=0.6.5"
 # DNS message codec for flux:mdns (mDNS / DNS-SD). Already in the tree (iroh deps),
 # so this adds zero new crates; default features (std only) cover build + parse.
-hickory-proto = "=0.26.1"
+hickory-proto = "=0.26.3"
 # Cross-platform interface enumeration (name / IPv4+prefix / MAC / flags) for
 # flux:net interfaces() - the no-subprocess replacement for parsing `ip addr`.
 # Already in the tree (iroh depends on it).
-netdev = "=0.46.2"
+netdev = "=0.46.3"
 # Pure-Rust, no-JIT wasm interpreter behind forge::wasm (flux:wasm). No
 # per-platform native build or signing story: one .wasm runs on every target.
 # The default `wat` feature also accepts text-format sources, handy for tests
@@ -108,12 +108,12 @@ ndk-sys = { version = "=0.6.0", optional = true }
 # clock (the clock Android's releaseOutputBufferAtTime is expressed in).
 # Already in the tree (which depends on it).
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "=1.1.4", features = ["termios", "process", "time"] }
+rustix = { version = "=1.1.5", features = ["termios", "process", "time"] }
 
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the
 # Android build can link clang_rt.builtins; see build.rs.
-cc = "=1.4.4"
+cc = "=1.4.7"
 # Drives the vendored libopus's CMake project (build.rs); already in the tree
 # (sdl3-sys builds SDL with it).
 cmake = "=0.1.58"
