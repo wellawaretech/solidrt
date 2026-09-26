@@ -85,18 +85,26 @@ rate on a free-running grid instead of unbounded. A blocking swap returns
 inside the slack and is never held; the floor is the guard, not the
 pacer.
 
-**Frame signal, macOS**: the swap does not pace there. ANGLE over Metal
-returns from `eglSwapBuffers` at once with the interval at 1 (measured
-2026-09-25 on an M1 mini at 60 Hz with the 0.0.62 client: 1575 presents/s,
-`present 0.0ms`, window in front or display asleep alike; the refresh
-counter still read 60), and SDL's own display-link pacing lives on its
-native CGL path only, which the GLES driver alloy forces never takes. So
-macOS has a `VsyncSource` backend on `CVDisplayLink` (the mirror of the
-Android one: a link over the active displays, started on the first
-request and stopped after 250 ms without one, its callback's host time
-turned into the vsync `Instant` by its age) and runs VsyncLocked; the
-policy reads the platform fact `alloy::swap_paces()`. Without a link (no
-display) the floor above holds the rate.
+**Frame signal, macOS**: SwapPaced like every desktop, but the swap has to
+be made to block. ANGLE over Metal returns from `eglSwapBuffers` at once
+with the interval at 1 (measured 2026-09-25 on an M1 mini at 60 Hz with the
+0.0.62 client: 1575 presents/s, `present 0.0ms`, window in front or display
+asleep alike; the refresh counter still read 60), and SDL's own
+display-link pacing lives on its native CGL path only, which the GLES
+driver alloy forces never takes. So alloy reproduces SDL's pacing one
+layer up (`alloy/src/display_link.rs`, the transcription of
+`SDL_cocoaopengl.m`): a `CVDisplayLink` over the active displays whose
+callback counts ticks into a condvar, and the window swap waits for the
+next tick before swapping. Above it nothing is macOS-specific. A
+`VsyncSource` backend on the link was tried first and rejected: the link
+calls back mid-period, about one and a half periods ahead of the vsync it
+prepares for (measured: output vsync 24.7 ms ahead at a 16.67 ms period),
+so the Choreographer's "callback = vsync, answer the next one" contract
+does not transfer (two phase variants ran at 40 and 32 fps with fallback
+releases). SDL's tick wait never asks where the callbacks sit. Without a
+link (no display) the floor above holds the rate. The gap is SDL's to
+close (its EGL path could pace like its CGL path):
+[sdl-macos-egl-swap-unpaced-on-angle].
 
 **Frame signal, VsyncLocked** (touch devices, Android with a Choreographer):
 the present's signal is deferred to the display vsync. `VsyncSource` arms
@@ -257,7 +265,7 @@ this document is updated as the other two land.
 
 1. **True presentation timestamps.** `wp_presentation` on Wayland, DXGI
    frame statistics or the sync-control extensions on ANGLE, `CVDisplayLink`
-   on macOS (in use as the vsync reference since 2026-09-25, not yet as a
+   on macOS (in use to pace the swap since 2026-09-25, not yet as a
    presentation timestamp), Choreographer frame times and
    `EGL_ANDROID_get_frame_timestamps` on Android. They turn the count into a
    measurement: the tolerance is never exercised and the estimator is
@@ -285,11 +293,11 @@ has the measurements and the two regressions the split introduced and fixed
 
 VsyncLocked for touch, SwapPaced for everything else, chosen in lattice from
 alloy's `InputDevices` fact ([frame-pacing-fluency]). Facts in alloy,
-policy in lattice; alloy never keys behavior on a device. One more fact
-gates the choice: SwapPaced needs a swap that blocks, and where it does
-not (`alloy::swap_paces()`, false on macOS) the vsync backend paces
-regardless of modality. The policy is implicit today; making it
-enumerable and app-overridable is [runtime-policy-registry].
+policy in lattice; alloy never keys behavior on a device. SwapPaced needs a
+swap that blocks; where the driver's does not (macOS) alloy makes it block
+on the display link rather than changing the policy (the macOS paragraph
+above). The policy is implicit today; making it enumerable and
+app-overridable is [runtime-policy-registry].
 
 ### D5. Suspension: skip for animation, live through for timers
 
@@ -457,6 +465,7 @@ Notes: [android-vsync-release-chain], [tv-gpu-measurement-postmortem].
 Open: listed above.
 
 [frame-pacing]: ../done/frame-pacing.md
+[sdl-macos-egl-swap-unpaced-on-angle]: ../upstream/sdl-macos-egl-swap-unpaced-on-angle.md
 [frame-pacing-fluency]: ../done/frame-pacing-fluency.md
 [timer-deadlines-lag-frame-timeline]: ../done/timer-deadlines-lag-frame-timeline.md
 [onframe-tick-reset-on-reload]: ../done/onframe-tick-reset-on-reload.md

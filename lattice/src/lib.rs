@@ -960,15 +960,9 @@ fn ui_thread(
             // pacing - a saturated buffer queue presents metronomically
             // where the vsync release chain's jitter drops latches (see
             // okf/backlog/frame-pacing-fluency.md; measured 0 drops vs
-            // ~1.4 percent on a 50Hz Android TV). Swap pacing needs a swap
-            // that blocks; where it does not (macOS, see alloy::swap_paces)
-            // the vsync backend paces instead.
+            // ~1.4 percent on a 50Hz Android TV).
             AlloyEvent::InputDevices { keyboard, mouse, touch, screen_keyboard } => {
-              let pacing = if *touch || !alloy::swap_paces() {
-                alloy::FramePacing::VsyncLocked
-              } else {
-                alloy::FramePacing::SwapPaced
-              };
+              let pacing = if *touch { alloy::FramePacing::VsyncLocked } else { alloy::FramePacing::SwapPaced };
               let hold = cadence_hold_policy(*mouse);
               log::info!(
                 "[srt] input devices: keyboard={keyboard} mouse={mouse} touch={touch} screen_keyboard={screen_keyboard} -> pacing {pacing:?}, cadence hold {hold:?}"

@@ -41,11 +41,12 @@ impellers = { version = "=0.4.2", features = ["bindgen_live"] }
 # forwards build-static-vendored to sdl3-mixer-sys, so the format features alone
 # suffice here. Ogg/Vorbis + WAV only.
 [target.'cfg(target_os = "macos")'.dependencies]
-# CVDisplayLink for the macOS vsync backend (vsync.rs): the ANGLE-Metal swap
-# does not block, so the display link is what paces frames there. Generated
-# CoreVideo bindings from the objc2 family, the same publisher and version as
-# the objc2-* crates already in the client's graph (sysinfo, netdev, iroh);
-# objc2-core-foundation for the CFRetained handle. Six functions used.
+# CVDisplayLink for the macOS swap pacer (display_link.rs): the ANGLE-Metal
+# swap does not block, so the window swap waits for the link's tick, as SDL's
+# own CGL path does. Generated CoreVideo bindings from the objc2 family, the
+# same publisher and version as the objc2-* crates already in the client's
+# graph (sysinfo, netdev, iroh); objc2-core-foundation for the CFRetained
+# handle. Four functions used.
 objc2-core-video = { version = "=0.3.2", default-features = false, features = ["CVBase", "CVReturn", "CVDisplayLink", "CVHostTime"] }
 objc2-core-foundation = { version = "=0.3.2", default-features = false }
 impellers = { version = "=0.4.2", features = ["prebuilt_libs", "sys", "static_link"] }

@@ -26,6 +26,12 @@ impl SendablePtr {
 pub(crate) struct SdlGlBinding {
   window: SendablePtr,
   context: SendablePtr,
+  /// The display link the swap waits on (display_link.rs): ANGLE-Metal's
+  /// swap never blocks, so the wait for the display's tick happens here.
+  /// Created at the first swap, on the raster thread; None when the machine
+  /// has no link.
+  #[cfg(target_os = "macos")]
+  pacer: std::cell::OnceCell<Option<crate::display_link::SwapPacer>>,
 }
 
 impl SdlGlBinding {
@@ -33,6 +39,8 @@ impl SdlGlBinding {
     SdlGlBinding {
       window: SendablePtr(window as *mut std::ffi::c_void),
       context: SendablePtr(unsafe { gl_context.raw() as *mut std::ffi::c_void }),
+      #[cfg(target_os = "macos")]
+      pacer: std::cell::OnceCell::new(),
     }
   }
 
@@ -56,6 +64,10 @@ impl GlBinding for SdlGlBinding {
   }
 
   fn swap(&self) -> bool {
+    #[cfg(target_os = "macos")]
+    if let Some(pacer) = self.pacer.get_or_init(crate::display_link::SwapPacer::start) {
+      pacer.wait_tick();
+    }
     crate::sdl_utils::gl_swap_window_checked(self.window())
   }
 

@@ -248,7 +248,8 @@ Shaped, not started.
   ANGLE/D3D11's glClientWaitSync returns immediately instead of blocking, so
   depth-capped present pacing degrades to check-and-proceed there; a
   GetSynciv-spin fallback would restore blocking pacing if Windows drag
-  latency ever shows a real problem. macOS (ANGLE-Metal) unmeasured.
+  latency ever shows a real problem. macOS (ANGLE-Metal) fence behavior
+  unmeasured; its swap is known not to block.
 - **[App icons](backlog/app-icons.md)** [2026-07-27]
   Stages 1+2 done (SVG icon from package.json/convention through the manifest
   to the player, monogram fallback; dev-client window icon via go-gated resvg
@@ -2539,6 +2540,11 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   sends the lifecycle WAKE, and the event wait blocks on that same semaphore,
   so SDL_WaitEvent/SDL_WaitEventTimeout spin through their whole timeout at
   100% CPU; SDL_POLL_SENTINEL=0 is the workaround.
+- **[SDL's macOS EGL path does not pace the swap (ANGLE-Metal swaps never block)](upstream/sdl-macos-egl-swap-unpaced-on-angle.md)** [2026-09-26]
+  With SDL_OPENGL_ES_DRIVER=1 on macOS, SDL swaps through eglSwapBuffers on
+  ANGLE, whose Metal backend honours eglSwapInterval(1) without blocking;
+  SDL's display-link swap wait exists only on the CGL path, so a GLES app runs
+  unbounded (1575 fps measured at 60 Hz).
 - **[SDL v4l2 camera enumeration does not terminate on stepwise frame-size ranges](upstream/sdl-v4l2-camera-stepwise-enumeration.md)** [2026-08-26]
   SDL's V4L2 camera backend expands a stepwise frame-size range one step at a
   time, so a device advertising 32x32-16384x16384 step 2 costs ~67 million

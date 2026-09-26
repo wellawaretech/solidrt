@@ -5,30 +5,19 @@
 // idle. start() returns None on platforms without a backend; the main loop
 // then keeps present-return pacing.
 //
-// Backends: Android (AChoreographer) and macOS (CVDisplayLink), below. iOS
-// would slot in here via SDL_SetiOSAnimationCallback (CADisplayLink) when
-// iOS support lands. This module is the only ndk / ndk-sys consumer in the
-// tree; if SDL ships its own choreographer API (libsdl-org/SDL#15013,
-// milestone 3.8.0), reimplement the Android backend on that and drop both
-// deps - callers only speak request()/try_take().
+// Backends: Android (AChoreographer, below). iOS would slot in here via
+// SDL_SetiOSAnimationCallback (CADisplayLink) when iOS support lands. macOS
+// deliberately has none: its display link paces the swap instead
+// (display_link.rs), because CVDisplayLink calls back mid-period rather than
+// at the vsync and does not fit this request/answer contract. This module is
+// the only ndk / ndk-sys consumer in the tree; if SDL ships its own
+// choreographer API (libsdl-org/SDL#15013, milestone 3.8.0), reimplement the
+// Android backend on that and drop both deps - callers only speak
+// request()/try_take().
 
 use std::cell::Cell;
 use std::sync::mpsc;
 use std::time::Duration;
-
-/// Whether this platform's window swap paces frame production: with the
-/// swap interval at 1 the swap blocks until the display has taken the
-/// buffer, once per refresh, so present-return pacing (SwapPaced) runs at
-/// the refresh rate. False on macOS: the ANGLE-Metal swap returns at once
-/// (measured 2026-09-25 on an M1 at 60 Hz: 1575 presents/s, present 0.0 ms,
-/// window in front or display asleep alike), and SDL's own display-link
-/// pacing exists only on its native CGL path, which the GLES driver alloy
-/// forces (gl::configure_opengl) never takes. There the vsync backend must
-/// pace (VsyncLocked); without one, FrameRelease's floor holds a frame per
-/// refresh period. Read above alloy where the pacing policy is chosen.
-pub const fn swap_paces() -> bool {
-  !cfg!(target_os = "macos")
-}
 
 /// Frame-release policy for the main loop (AlloyCommand::SetFramePacing).
 /// VsyncLocked defers each present's frame signal to the display vsync:
@@ -77,21 +66,7 @@ impl VsyncSource {
         .expect("Failed to spawn vsync thread");
       Some(VsyncSource { req_tx, signal_rx, generation: Cell::new(0) })
     }
-    #[cfg(target_os = "macos")]
-    {
-      let (req_tx, req_rx) = mpsc::channel::<(u64, Duration)>();
-      let (signal_tx, signal_rx) = mpsc::channel::<(u64, std::time::Instant)>();
-      // The display link is created on the vsync thread; `ready` reports
-      // whether it exists, so a machine without one keeps present-return
-      // pacing (and its floor) instead of a backend that never signals.
-      let (ready_tx, ready_rx) = mpsc::channel::<bool>();
-      std::thread::Builder::new()
-        .name("srt-vsync".into())
-        .spawn(move || macos::run(req_rx, signal_tx, ready_tx, wake))
-        .expect("Failed to spawn vsync thread");
-      ready_rx.recv().unwrap_or(false).then_some(VsyncSource { req_tx, signal_rx, generation: Cell::new(0) })
-    }
-    #[cfg(not(any(target_os = "android", target_os = "macos")))]
+    #[cfg(not(target_os = "android"))]
     None
   }
 
@@ -371,9 +346,10 @@ impl FrameRelease {
       // inside its slot defers to the slot end as a timer deadline. With a
       // hold the slot is the cadence hold's; at hold 1 it is one period,
       // and the deferral is the floor that keeps a swap which does not
-      // block (see `swap_paces`) at the refresh rate instead of running
-      // unbounded. A blocking swap returns about a period after the last
-      // one, inside the slack, and is not deferred.
+      // block (ANGLE-Metal without its display link, display_link.rs; the
+      // next such driver) at the refresh rate instead of running unbounded.
+      // A blocking swap returns about a period after the last one, inside
+      // the slack, and is not deferred.
       if let Some(end) = self.slot_end(period) {
         if now + period / SWAP_RETURN_SLACK_DIVISOR < end {
           self.pending += 1;
@@ -668,172 +644,5 @@ mod android {
     };
     let vsync = std::time::Instant::now() - std::time::Duration::from_nanos(age_ns as u64);
     (*(data as *const Cell<Option<std::time::Instant>>)).set(Some(vsync));
-  }
-}
-
-// CVDisplayLink is deprecated by Apple (macOS 15) in favour of CADisplayLink
-// on NSView/NSWindow/NSScreen, and the binding carries that deprecation. It
-// still runs (macOS 26 measured) and SDL's own CGL path paces on it; when it
-// goes, the replacement is CADisplayLink through the same objc2 family, the
-// same thread contract, an internal change to this module.
-#[cfg(target_os = "macos")]
-#[allow(deprecated)]
-mod macos {
-  use std::ptr::NonNull;
-  use std::sync::{mpsc, Arc, Condvar, Mutex};
-  use std::time::{Duration, Instant};
-
-  use objc2_core_foundation::CFRetained;
-  use objc2_core_video::{
-    kCVReturnSuccess, CVDisplayLink, CVGetCurrentHostTime, CVGetHostClockFrequency, CVOptionFlags, CVReturn,
-    CVTimeStamp, CVTimeStampFlags,
-  };
-
-  // Without a request for this long the link is stopped, so CoreVideo's
-  // thread does not wake per refresh while nothing animates; the next
-  // request starts it again (one start per idle-to-active transition,
-  // never per frame).
-  const LINK_IDLE_STOP: Duration = Duration::from_millis(250);
-  // Upper bound on the wait for the link's callback after a request: with
-  // the display asleep the callbacks stop, and the request is answered at
-  // the wake (the present-return reference) instead of stranding this
-  // thread. Longer than any refresh period, so a healthy link never hits
-  // it; the main loop's own fallback deadline covers the frame meanwhile.
-  const SIGNAL_WAIT_TIMEOUT: Duration = Duration::from_millis(100);
-
-  // The callback's hand-off to the vsync thread: the vsync instant of the
-  // latest callback since the last take.
-  struct Signal {
-    vsync: Mutex<Option<Instant>>,
-    fired: Condvar,
-  }
-
-  impl Signal {
-    fn clear(&self) {
-      *self.vsync.lock().expect("vsync signal mutex poisoned") = None;
-    }
-
-    fn wait(&self, timeout: Duration) -> Option<Instant> {
-      let guard = self.vsync.lock().expect("vsync signal mutex poisoned");
-      let (mut guard, _) =
-        self.fired.wait_timeout_while(guard, timeout, |vsync| vsync.is_none()).expect("vsync signal mutex poisoned");
-      guard.take()
-    }
-  }
-
-  pub fn run(
-    req_rx: mpsc::Receiver<(u64, Duration)>,
-    signal_tx: mpsc::Sender<(u64, Instant)>,
-    ready_tx: mpsc::Sender<bool>,
-    wake: impl Fn(),
-  ) {
-    let signal = Arc::new(Signal { vsync: Mutex::new(None), fired: Condvar::new() });
-    let link = create(&signal);
-    if ready_tx.send(link.is_some()).is_err() {
-      return;
-    }
-    let Some(link) = link else { return };
-    let mut running = false;
-    let mut start_warned = false;
-    loop {
-      let request = if running {
-        match req_rx.recv_timeout(LINK_IDLE_STOP) {
-          Ok(request) => request,
-          Err(mpsc::RecvTimeoutError::Timeout) => {
-            link.stop();
-            running = false;
-            continue;
-          }
-          Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-      } else {
-        match req_rx.recv() {
-          Ok(request) => request,
-          Err(_) => break,
-        }
-      };
-      let (mut generation, mut delay) = request;
-      // A burst of requests collapses into one signal answering the latest
-      // generation: the consumer flushes everything pending on each signal.
-      while let Ok((g, d)) = req_rx.try_recv() {
-        generation = g;
-        delay = d;
-      }
-      if !running {
-        if link.start() == kCVReturnSuccess {
-          running = true;
-        } else if !start_warned {
-          start_warned = true;
-          log::warn!("[alloy] display link start failed; answering without vsync");
-        }
-      }
-      // The signal is the first callback after the request; one stored
-      // before it belongs to a vsync already passed (the Choreographer's
-      // one-shot post has the same meaning).
-      signal.clear();
-      let vsync = if running { signal.wait(SIGNAL_WAIT_TIMEOUT) } else { None };
-      if vsync.is_some() && !delay.is_zero() {
-        std::thread::sleep(delay);
-      }
-      // No link, or no callback in time: the answer instant is the best
-      // reference there is.
-      let vsync = vsync.unwrap_or_else(Instant::now);
-      if signal_tx.send((generation, vsync)).is_err() {
-        break;
-      }
-      wake();
-    }
-    if running {
-      link.stop();
-    }
-  }
-
-  // The link over the active displays, its callback wired to `signal`. The
-  // callback's reference to the signal is a leaked Arc: the link lives for
-  // the process (this thread only exits at shutdown), so nothing ever
-  // reconstructs it.
-  fn create(signal: &Arc<Signal>) -> Option<CFRetained<CVDisplayLink>> {
-    let mut raw: *mut CVDisplayLink = std::ptr::null_mut();
-    let status = unsafe { CVDisplayLink::create_with_active_cg_displays(NonNull::from(&mut raw)) };
-    let Some(ptr) = NonNull::new(raw).filter(|_| status == kCVReturnSuccess) else {
-      log::warn!("[alloy] no display link on this machine ({status}); present-return pacing");
-      return None;
-    };
-    let link = unsafe { CFRetained::from_raw(ptr) };
-    let user = Arc::into_raw(signal.clone()) as *mut core::ffi::c_void;
-    let status = unsafe { link.set_output_callback(Some(output), user) };
-    if status != kCVReturnSuccess {
-      log::warn!("[alloy] display link callback rejected ({status}); present-return pacing");
-      return None;
-    }
-    Some(link)
-  }
-
-  // Runs on CoreVideo's display-link thread, once per refresh while the link
-  // runs. `now` is the vsync this callback stands for; its host time becomes
-  // an Instant by subtracting its age, read on the same clock here (as the
-  // Android backend does with the Choreographer frame time), so the
-  // reference sits on the vsync grid rather than callback-plus-wake later.
-  // A stamp without a valid host time is referenced at the callback itself.
-  unsafe extern "C-unwind" fn output(
-    _link: NonNull<CVDisplayLink>,
-    now: NonNull<CVTimeStamp>,
-    _output_time: NonNull<CVTimeStamp>,
-    _flags_in: CVOptionFlags,
-    _flags_out: NonNull<CVOptionFlags>,
-    user: *mut core::ffi::c_void,
-  ) -> CVReturn {
-    let stamp = unsafe { now.as_ref() };
-    let age = if stamp.flags & CVTimeStampFlags::HostTimeValid.0 != 0 {
-      let ticks = CVGetCurrentHostTime().saturating_sub(stamp.hostTime);
-      Duration::from_secs_f64(ticks as f64 / CVGetHostClockFrequency())
-    } else {
-      Duration::ZERO
-    };
-    let vsync = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
-    let signal = unsafe { &*(user as *const Signal) };
-    *signal.vsync.lock().expect("vsync signal mutex poisoned") = Some(vsync);
-    signal.fired.notify_one();
-    kCVReturnSuccess
   }
 }
