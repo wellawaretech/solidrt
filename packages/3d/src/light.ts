@@ -280,7 +280,14 @@ function mergeShadow(into: DirectionalLight["shadow"], update: ShadowOptions): v
   if (update.bias !== undefined) into.bias = update.bias
   if (update.normalBias !== undefined) into.normalBias = update.normalBias
   if (update.radius !== undefined) into.radius = checkRadius(update.radius)
-  if (update.camera !== undefined) Object.assign(into.camera, update.camera)
+  if (update.camera !== undefined) {
+    // Only the keys with a value: an undefined one is absent and keeps
+    // the extent, which the light projection reads as is.
+    for (let key of Object.keys(update.camera) as (keyof ShadowCamera)[]) {
+      let value = update.camera[key]
+      if (value !== undefined) into.camera[key] = value
+    }
+  }
   if (update.cascades !== undefined) {
     let n = update.cascades
     if (!Number.isInteger(n) || n < 1 || n > MAX_CASCADES) throw new Error("shadow.cascades must be an integer from 1 to " + MAX_CASCADES)

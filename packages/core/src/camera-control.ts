@@ -308,7 +308,8 @@ export const BLEND_SECONDS = 0.5
 
 /** A shot's recording target: what its control drives. `camera()` is
  * the shot's latest full camera (the control's partial updates merged
- * over the initial one). */
+ * over the initial one; an undefined field is absent and keeps its
+ * value, as the real target's setCamera treats it). */
 export type ShotTarget<C> = { setCamera(update: Partial<C>): void; camera(): C }
 
 export type ShotBlendOptions = {
@@ -379,7 +380,13 @@ export function createShotBlend<C extends object>(push: (camera: C) => void, mix
       shots.set(name, s)
       return {
         setCamera(update) {
-          Object.assign(s.latest, update)
+          // A component's props arrive as explicit undefineds for the
+          // unset ones; copying those would blank a field the mix then
+          // reads (NaN, or a missing vector).
+          for (let key of Object.keys(update) as (keyof C)[]) {
+            let value = update[key]
+            if (value !== undefined) s.latest[key] = value as C[keyof C]
+          }
           if (s === live && from === null) pushNow()
         },
         camera: () => ({ ...s.latest }),

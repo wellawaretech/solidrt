@@ -256,6 +256,15 @@ const EPS = 0.001
   // A zero blend cuts.
   shots.deactivate("b", { blend: 0 })
   if (shots.camera().v !== 12) fail(`a zero blend cuts to the live shot, got ${shots.camera().v}`)
+  // An undefined field in an update is absent, not a value: a component
+  // sends its unset props that way, and the field must keep its value so
+  // the mix never reads it (at rest the real target hides it; a blend
+  // from or into the shot would not).
+  a.setCamera({ v: undefined })
+  if (shots.camera().v !== 12 || a.camera().v !== 12) fail(`an undefined field keeps its value, got ${a.camera().v}`)
+  shots.activate("b")
+  shots.update(DT)
+  if (!Number.isFinite(shots.camera().v)) fail(`a blend from a shot fed undefined stays finite, got ${shots.camera().v}`)
   let throws = (what: string, f: () => void) => {
     try {
       f()

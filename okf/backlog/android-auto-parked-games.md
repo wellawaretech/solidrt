@@ -135,7 +135,9 @@ decide:
 ```
 
 `category` maps to `android:appCategory` here and to the equivalent on
-other packers later (macOS `LSApplicationCategoryType`). `car` maps to
+other packers later (macOS `LSApplicationCategoryType`). The same attribute
+puts a game in the Android TV launcher's Games row
+(`okf/backlog/android-tv-play-distribution.md`). `car` maps to
 `CAR_LAUNCHER` for Android Auto, and to the automotive `uses-feature` once
 Automotive OS is in scope. While games are the only category Android Auto
 opens, `srt pack` refuses `car` without `category: "game"`.

@@ -247,6 +247,12 @@ Shaped, not started.
   On a touch-only Android device the capability layer gains "keyboard" as soon
   as the virtual keyboard opens, so any keyboard-first behavior gated on it
   would switch on for users who have no keyboard.
+- **[Android TV on Google Play](backlog/android-tv-play-distribution.md)** [2026-09-27]
+  Play offers an app on TVs only after a form-factor opt-in and a TV quality
+  review, not by app category, and every packed app already declares TV
+  support; what fails that review today is the banner (the runner's SolidRT
+  logo, without the app's name, on every packed app) plus the bundle,
+  32/64-bit and 16 KB rules the AAB work has to meet.
 - **[ANGLE textures and teardown crash](backlog/angle-cross-context-impeller-textures.md)** [2026-07-27]
   "The two Windows client killers (a snapshot boundary's cross-context texture
   blacking the window under ANGLE, and the engine-restart GL teardown race)
