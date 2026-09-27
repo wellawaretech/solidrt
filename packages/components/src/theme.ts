@@ -1,6 +1,6 @@
 import { createStore } from "@solidjs/signals"
 import type { FontWeight, WindowShaderProps } from "@solidrt/core"
-import type { Glow, StyleProps } from "./types"
+import type { ElevationLevel, Material, MaterialRole, StyleProps } from "./types"
 
 export type TextStyle = {
   size: number
@@ -32,8 +32,39 @@ const THEMED_COMPONENTS = [
   "divider",
   "progressBar",
   "spinner",
+  "contextMenu",
+  "navShell",
 ] as const
 export type ThemedComponent = (typeof THEMED_COMPONENTS)[number]
+
+// The roles and levels, as runtime lists so defineTheme writes every key.
+const MATERIAL_ROLES = ["surface", "control", "accent", "overlay"] as const satisfies readonly MaterialRole[]
+const ELEVATION_LEVELS = ["flat", "raised", "floating", "overlay"] as const satisfies readonly ElevationLevel[]
+
+/**
+ * The theme's one light, in screen space (x right, y down, z into the
+ * screen), the way a 3D scene's directional light is given by the way it
+ * travels: `[0.3, 1, 1]` comes from above, slightly left, in front. Every
+ * lit face derives from it: shadows fall along its x/y and stretch as it
+ * lowers, the sheen and the bevel run from the lit edge to the shaded one,
+ * and faces take on its `color`. `ambient` (0..1) is the fill light on the
+ * shaded side: the more of it, the fainter the shadows and the flatter the
+ * sheen. Fixed per theme, or moved at event rate with `setTheme({ light })`
+ * (a drag, a time of day); every face re-derives its paint on each move, so
+ * it is not a per-frame animation.
+ */
+export type Light = {
+  direction: [x: number, y: number, z: number]
+  color: string
+  ambient: number
+}
+
+/**
+ * What shadows are cast in: their `color` (black, or a deep tint for a
+ * colored scheme) and a `strength` factor, since the alpha that reads on a
+ * light ground vanishes on a dark one (the lit dark preset uses 1.7).
+ */
+export type ShadowTone = { color: string; strength: number }
 
 // A resolved theme: every value is a plain string/number ready to be read by
 // a component. Authoring happens through defineTheme, which is where
@@ -87,7 +118,7 @@ export type Theme = {
     // The cap riding a track: the Switch knob, the Slider thumb. Unset, the
     // knob is onPrimary and the thumb primary. A palette whose onPrimary is
     // dark (text on a bright accent) sets a light cap here, or its off knob
-    // sinks into the track.
+    // sinks into the track; the lit presets set one, lit like any face.
     thumb?: string
   }
   // Gaps and paddings, multiples of one base unit (sm 1x, md 2x, lg 4x,
@@ -105,7 +136,8 @@ export type Theme = {
   // fast is press/hover feedback, base the color/opacity fades (state
   // changes, the theme cross-fade, popup enter/exit), slow the travel of a
   // control's moving parts (switch knob, segmented indicator, progress
-  // fill). See motion.tsx; policy.motion gates them.
+  // fill) and of a face's shadows as it sinks or lifts. See motion.tsx;
+  // policy.motion gates them.
   motion: { fast: number; base: number; slow: number }
   // Default extents of the components that have one: the panes and rails an
   // app lays its screens around, and the smallest sensible popup/track. Each
@@ -120,18 +152,26 @@ export type Theme = {
   // Per-component paint overrides: merged between a component's themed
   // defaults and the instance's style prop, so a theme can restyle every
   // Button (say, pill corners) without wrapping the component. Instance
-  // style still wins. Every key always present (see defineTheme).
+  // style still wins. `material` and `elevation` in one restyle that
+  // component's faces. Every key always present (see defineTheme).
   components: { [K in ThemedComponent]?: StyleProps }
-  // Emitted light by role. `accent` lands on the accent-colored fills: the
-  // primary and danger Button and Badge, Switch on, Checkbox checked, the
-  // Radio dot, the Slider and ProgressBar fills, the SegmentedControl
-  // indicator (a disabled control never glows). `overlay` lands on the
-  // anchored popups: the Tooltip bubble, the Select dropdown, the
-  // ContextMenu menu. A glow without a color takes each fill's own color.
-  // Per component, theme.components.<name>.glow and an instance's
-  // style.glow override the role. Both keys are always present (see
-  // defineTheme) so a preset switch clears them.
-  glow: { accent?: Glow; overlay?: Glow }
+  // The light every face is lit by (see Light).
+  light: Light
+  // What the faces' shadows are cast in (see ShadowTone).
+  shadow: ShadowTone
+  // The material of each role's faces (see MaterialRole, Material). The
+  // stock presets give every role `{}`, the flat look; the lit presets a
+  // sheen and a bevel per role. Per component, theme.components.<name>
+  // .material merges over the role's, an instance's style.material over
+  // that, and style.glow overrides the glow layer alone (null clears it).
+  // Every role always present (see defineTheme).
+  material: { [R in MaterialRole]: Material }
+  // The height of each elevation level, in the light's units: a face at
+  // height h casts its key shadow h px along the light's slant and blurs it
+  // 2.5 h px, and a tight contact shadow under it. The stock presets are 0
+  // throughout (no face casts); the lit presets use flat 0, raised 2,
+  // floating 6, overlay 14. Every level always present (see defineTheme).
+  elevation: { [L in ElevationLevel]: number }
   // The theme's window finish: a core window shader declaration (a linked
   // program and its params) that Window declares on the window as it is,
   // plus `uScale`, the display scale. Strength and layer switches are the
@@ -147,10 +187,11 @@ export type Theme = {
 
 // -- Authoring ---------------------------------------------------------------
 
-// A color in a theme definition: one value, or a [light, dark] pair resolved
+// A value in a theme definition: one value, or a [light, dark] pair resolved
 // by defineTheme's scheme argument. Pairs are opt-in per token; a definition
 // without any needs no scheme at all (a game ships one look, not two).
-export type ThemeColor = string | [light: string, dark: string]
+export type ThemeValue<T> = T | [light: T, dark: T]
+export type ThemeColor = ThemeValue<string>
 
 export type ThemeDefinition = {
   color: { [K in Exclude<keyof Theme["color"], "ring" | "selection" | "thumb">]: ThemeColor } & {
@@ -181,7 +222,15 @@ export type ThemeDefinition = {
   size?: Partial<Theme["size"]>
   icons?: Theme["icons"]
   components?: Theme["components"]
-  glow?: Theme["glow"]
+  // The light; a field left out takes LIGHT's (from above, slightly left,
+  // in front; white; ambient 0.5).
+  light?: { direction?: Light["direction"]; color?: ThemeColor; ambient?: ThemeValue<number> }
+  // The shadow tone; a field left out takes SHADOW's (black, strength 1).
+  shadow?: { color?: ThemeColor; strength?: ThemeValue<number> }
+  // The material per role; a role left out is `{}`, flat.
+  material?: { [R in MaterialRole]?: Material }
+  // The height per level; a level left out is 0.
+  elevation?: { [L in ElevationLevel]?: number }
   finish?: WindowShaderProps
 }
 
@@ -204,6 +253,10 @@ const BORDER_WIDTH = { sm: 1, focus: 2 }
 // long enough that a part's travel reads as movement rather than a flicker.
 const MOTION = { fast: 100, base: 150, slow: 250 }
 const SIZE = { navRail: 72, navSidebar: 220, splitViewList: 320, menuMinWidth: 120, slider: 200 }
+// The default light: from above, slightly left, in front, white, with half
+// ambient - a neutral key that leaves every base color as it is.
+const LIGHT: Light = { direction: [0.3, 1, 1], color: "#ffffff", ambient: 0.5 }
+const SHADOW: ShadowTone = { color: "#000000", strength: 1 }
 
 // Line height and weight per role; body is the base text, label is body at
 // an emphasized weight (form labels, key/value keys, tags), caption the one
@@ -219,9 +272,16 @@ const ROLE_DEFAULTS: { [K in TextVariant]: { step: number; lineHeight: number; w
   heading: { step: 2, lineHeight: 1.3, weight: 700 },
 }
 
+// The side of a [light, dark] pair for the scheme; a bare value as it is.
+function pick<T>(name: string, value: ThemeValue<T>, scheme?: "light" | "dark"): T {
+  if (!Array.isArray(value)) return value
+  if (!scheme) throw new Error(`Theme value "${name}" is a [light, dark] pair; pass a scheme to defineTheme`)
+  return value[scheme === "light" ? 0 : 1]
+}
+
 /**
  * Resolves a theme definition into a Theme. `scheme` picks the side of every
- * [light, dark] color pair; a definition without pairs needs no scheme
+ * [light, dark] pair; a definition without pairs needs no scheme
  * (modes are a per-theme choice, not a framework requirement). The type
  * scale expands from text.base and text.ratio, with text.roles overriding
  * per role. Throws on a pair without a scheme (throw-in-dev policy).
@@ -232,20 +292,22 @@ export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Th
     let k = key as keyof Theme["color"]
     let value = def.color[k]
     if (value == null) continue
-    if (Array.isArray(value)) {
-      if (!scheme) throw new Error(`Theme color "${key}" is a [light, dark] pair; pass a scheme to defineTheme`)
-      color[k] = value[scheme === "light" ? 0 : 1]
-    } else color[k] = value
+    color[k] = pick(key, value, scheme)
   }
   if (def.color.ring == null) color.ring = color.text
   if (def.color.selection == null) color.selection = color.overlayPressed
-  // Optional keys are still written (thumb here; icons, components and
-  // glow below): setTheme merges a category with Object.assign, which
-  // skips absent keys, so a resolved theme carries every key and a preset
-  // that sets none of them still clears what an earlier preset set.
+  // Optional keys are still written (thumb here; icons, components,
+  // material and elevation below): setTheme merges a category with
+  // Object.assign, which skips absent keys, so a resolved theme carries
+  // every key and a preset that sets none of them still clears what an
+  // earlier preset set.
   if (!("thumb" in color)) color.thumb = undefined
   let components = {} as Theme["components"]
   for (let name of THEMED_COMPONENTS) components[name] = def.components?.[name]
+  let material = {} as Theme["material"]
+  for (let role of MATERIAL_ROLES) material[role] = { ...def.material?.[role] }
+  let elevation = {} as Theme["elevation"]
+  for (let level of ELEVATION_LEVELS) elevation[level] = def.elevation?.[level] ?? 0
   let base = def.text?.base ?? 14
   let ratio = def.text?.ratio ?? 1.26
   let role = (name: TextVariant): TextStyle => {
@@ -279,7 +341,17 @@ export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Th
     size: { ...SIZE, ...def.size },
     icons: { chevronDown: def.icons?.chevronDown, check: def.icons?.check },
     components,
-    glow: { accent: def.glow?.accent, overlay: def.glow?.overlay },
+    light: {
+      direction: def.light?.direction ?? LIGHT.direction,
+      color: def.light?.color != null ? pick("light.color", def.light.color, scheme) : LIGHT.color,
+      ambient: def.light?.ambient != null ? pick("light.ambient", def.light.ambient, scheme) : LIGHT.ambient,
+    },
+    shadow: {
+      color: def.shadow?.color != null ? pick("shadow.color", def.shadow.color, scheme) : SHADOW.color,
+      strength: def.shadow?.strength != null ? pick("shadow.strength", def.shadow.strength, scheme) : SHADOW.strength,
+    },
+    material,
+    elevation,
     finish: {
       program: def.finish?.program,
       params: def.finish?.params,
@@ -337,8 +409,30 @@ const DEFAULT: ThemeDefinition = {
   text: { roles: { caption: { size: 12 } } },
 }
 
+// The lit presets: the same palette under a light, with a sheen and a bevel
+// per role and the elevation levels raised. Strengths tuned by eye on a
+// low-DPI display, dark and light: the accent faces catch the most light,
+// overlays the least. The cap (Switch knob, Slider thumb) is a light face
+// in both schemes, lit like any other. The shadow strength on dark is what
+// a shadow needs there to read at all.
+const LIT: ThemeDefinition = {
+  ...DEFAULT,
+  color: { ...DEFAULT.color, thumb: "#f4f6fa" },
+  light: { ambient: 0.35 },
+  shadow: { strength: [1, 1.7] },
+  material: {
+    surface: { sheen: 0.5, bevel: 0.6 },
+    control: { sheen: 0.6, bevel: 0.7 },
+    accent: { sheen: 1, bevel: 0.9 },
+    overlay: { sheen: 0.4, bevel: 0.6 },
+  },
+  elevation: { flat: 0, raised: 2, floating: 6, overlay: 14 },
+}
+
 export let darkTheme: Theme = defineTheme(DEFAULT, "dark")
 export let lightTheme: Theme = defineTheme(DEFAULT, "light")
+export let litDarkTheme: Theme = defineTheme(LIT, "dark")
+export let litLightTheme: Theme = defineTheme(LIT, "light")
 
 let [themeStore, setThemeStore] = createStore<Theme>({ ...darkTheme })
 
@@ -353,10 +447,11 @@ type ThemePartial = { [K in keyof Theme]?: Partial<Theme[K]> }
 // Switch themes with a full preset (setTheme(lightTheme)), a resolved
 // definition (setTheme(defineTheme({...}))), or apply a targeted override
 // (setTheme({ color: { primary: "#f00" } })). Merges one level deep per
-// category (for components, that level is the component name). A resolved
-// theme carries every key of every category, unset ones as undefined, so
-// it replaces the previous theme outright, per-component overrides and
-// icon slots included; a partial keeps whatever it does not name.
+// category (for components, that level is the component name; for
+// material, the role). A resolved theme carries every key of every
+// category, unset ones as undefined, so it replaces the previous theme
+// outright, per-component overrides and icon slots included; a partial
+// keeps whatever it does not name.
 export function setTheme(partial: ThemePartial) {
   setThemeStore((s) => {
     for (let key in partial) {

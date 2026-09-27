@@ -4,10 +4,10 @@ import { theme } from "./theme"
 import { space } from "./spacing"
 import { typeStyle, typeWeight, lightOnDark } from "./typography"
 import { policy } from "./policy"
-import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { Surface } from "./surface"
+import type { ElevationLevel, MaterialRole, StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 import { colorFade } from "./motion"
-import { glowShadow, partGlow } from "./glow"
 
 export type BadgeVariant = "primary" | "neutral" | "danger"
 
@@ -21,9 +21,10 @@ export interface BadgeProps extends TransitionProps {
   style?: StyleProps
 }
 
-// A small rounded pill for counts, labels, and status. Accent fill with
-// onPrimary text by default, glowing with theme.glow.accent (the neutral
-// variant is a surface tone and does not); override the fill via
+// A small rounded pill for counts, labels, and status. An accent face with
+// onPrimary text by default (the neutral variant is a surface tone), drawn
+// by Surface, flat: a badge sits in text and in list rows, so it casts
+// nothing unless style.elevation raises it. Override the fill via
 // style.backgroundColor, the label color via style.color, and box it with
 // borderColor/borderWidth.
 export function Badge(props: BadgeProps) {
@@ -38,13 +39,14 @@ export function Badge(props: BadgeProps) {
         return { bg: c.primary, fg: c.onPrimary }
     }
   }
+  let role = (): MaterialRole => ((props.variant ?? "primary") === "neutral" ? "surface" : "accent")
   // Theme-level per-component overrides merged under the instance style.
   let styled = () => ({ ...theme.components.badge, ...props.style })
   let bg = () => styled().backgroundColor ?? colors().bg
   let fg = () => styled().color ?? colors().fg
   let radius = () => styled().borderRadius ?? theme.radius.full
+  let elevation = (): ElevationLevel => styled().elevation ?? "flat"
   let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
-  let role = () => ((props.variant ?? "primary") === "neutral" ? undefined : theme.glow.accent)
   // Resolved once via children(): the typeof probe and the mount sites must
   // share one build - reading the raw getter again would orphan native nodes.
   let resolved = children(() => props.children)
@@ -71,7 +73,19 @@ export function Badge(props: BadgeProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
     >
-      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} shadow={glowShadow(partGlow(styled().glow, role()), bg())} />
+      <Surface
+        role={role()}
+        elevation={elevation()}
+        fill={bg()}
+        radius={radius()}
+        material={styled().material}
+        glow={styled().glow}
+        outline={hasBorder() ? { color: styled().borderColor ?? theme.color.border, width: styled().borderWidth ?? theme.borderWidth.sm } : null}
+        fillTransition={split().background}
+        onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+        outlineTransition={split().border}
+        onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
+      />
       <Show when={isText()} fallback={resolved()}>
         <text
           transition={colorFade()}
@@ -81,16 +95,6 @@ export function Badge(props: BadgeProps) {
         >
           {resolved()}
         </text>
-      </Show>
-      <Show when={hasBorder()}>
-        <d-rect
-          drawStyle="stroke"
-          transition={withTransitionDefaults(split().border, colorFade())}
-          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-          color={styled().borderColor ?? theme.color.border}
-          strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
-          radius={radius()}
-        />
       </Show>
     </view>
   )

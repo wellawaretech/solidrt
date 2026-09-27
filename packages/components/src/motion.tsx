@@ -56,6 +56,17 @@ export function pressScale(pressed: boolean): number {
 }
 
 /**
+ * Elevation motion for a face's shadows: a press sinking (its key shadow
+ * fading to the contact shadow), a hover lift (the shadow growing out to
+ * the next level), a retargeted level. A travel spring on the shadow
+ * property, so "reduced" snaps it as it snaps the other movement.
+ */
+export function elevationMotion(): { shadow: Transition } | undefined {
+  if (policy.motion !== "normal") return undefined
+  return { shadow: { duration: theme.motion.slow, bounce: TRAVEL_BOUNCE } satisfies Transition }
+}
+
+/**
  * Enter/exit fade for an overlay surface mounted in place (modal, bottom
  * sheet): fades in at mount, fades out on removal. The node must set
  * `opacity` explicitly - only carried properties animate.
@@ -96,7 +107,8 @@ export function markMotion(): { opacity: Transition; scale?: Transition } | unde
 }
 
 /**
- * The hover/pressed tint every pressable control draws over its own fill.
+ * The hover/pressed tint every pressable face draws over its own fill (the
+ * tint layer of Surface, exported for a control that draws its own rows).
  * One always-mounted rect whose hidden state is the same tint at alpha 0,
  * not "transparent": a fade from transparent black would darken a dark
  * scheme's white tint midway. Pressed swaps in the deeper tint; showing,

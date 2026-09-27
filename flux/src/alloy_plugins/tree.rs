@@ -420,9 +420,10 @@ fn set_property(ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>) 
   // the pair, so the normal write below is authoritative.
   if let Some(prop) = super::properties::transition::anim_prop(&property) {
     // Colors arrive as raw CSS strings (or packed 0xRRGGBBAA numbers
-    // for compatibility); the scalar properties as plain numbers. Anything
-    // else (null, a gradient object, an unparsable string) never animates
-    // - the normal write path raises the proper error for the bad string.
+    // for compatibility); the scalar properties as plain numbers; a shadow
+    // as the property's object, or null for none. Anything else (a null
+    // scalar, a gradient object, an unparsable string, a bad shadow object)
+    // never animates - the normal write path raises the proper error.
     // A box is the layout slide's, which anim_prop never maps a name to:
     // no JS write reaches that arm.
     let target = match prop.kind() {
@@ -435,6 +436,19 @@ fn set_property(ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>) 
         packed.or_else(parsed).map(AnimValue::Color)
       }
       alloy::rendertree::AnimKind::Scalar => value.as_number().map(|n| AnimValue::Scalar(n as f32)),
+      alloy::rendertree::AnimKind::Shadow => {
+        // Decoded as the property path decodes it, including the path
+        // rule (no spread), so a refused object goes the normal way and
+        // fails with that path's error.
+        let on_path = s
+          .tree
+          .borrow()
+          .try_node(node_id)
+          .is_some_and(|el| matches!(el.kind, alloy::rendertree::ElementKind::Path(_)));
+        super::properties::decode_shadow(&to_prop_value(&value)?, !on_path)
+          .ok()
+          .map(|shadow| AnimValue::Shadow(shadow.unwrap_or(alloy::rendertree::ShadowState::NONE)))
+      }
       alloy::rendertree::AnimKind::Box => None,
     };
     if s.tree.borrow_mut().transition_write(node_id, prop, target) {

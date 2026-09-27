@@ -1,7 +1,7 @@
 use crate::color::{color_to_oklab, oklab_to_color};
 use crate::impellers::{Color, Point, Rect, Size};
 use crate::motion::spring_step;
-use crate::rendertree::{Damage, Element, ElementKind, OriginCoord};
+use crate::rendertree::{Damage, Element, ElementKind, OriginCoord, ShadowState};
 use std::cell::Cell;
 
 pub use crate::motion::{Curve, TransitionSpec};
@@ -65,6 +65,11 @@ pub enum AnimProp {
   Color,
   // Rect corner radius, single-number form only.
   Radius,
+  // The drop shadow as one value (rect, oval, path), like CSS box-shadow:
+  // offset, blur, spread and color move together, the color in oklab. An
+  // unset shadow reads as ShadowState::NONE, so a shadow fades in from
+  // nothing and a write of none fades it out (a settle on NONE clears it).
+  Shadow,
   // The layout slide (okf/done/transition-layout-animations.md): the
   // node's painted box in its parent's frame, animated toward the solved
   // one after a reflow. Not a writable property - the JSX name table never
@@ -80,6 +85,7 @@ pub enum AnimKind {
   Scalar,
   Color,
   Box,
+  Shadow,
 }
 
 impl AnimProp {
@@ -90,6 +96,7 @@ impl AnimProp {
     match self {
       Color => AnimKind::Color,
       Layout => AnimKind::Box,
+      Shadow => AnimKind::Shadow,
       X | Y | W | H | X1 | Y1 | X2 | Y2 | ScrollX | ScrollY | Opacity | OriginX | OriginY | Perspective
       | ClipRadius | SrcX | SrcY | SrcW | SrcH | OnLength | OffLength | DashOffset | Rotate | RotateX | RotateY
       | Scale | ScaleX | ScaleY | StrokeWidth | Radius => AnimKind::Scalar,
@@ -98,14 +105,16 @@ impl AnimProp {
 }
 
 /// A value an animatable property carries: the scalar set, solid colors,
-/// and a box (the layout slide's painted box). Colors interpolate in oklab
-/// (with alpha as its own linear lane), so a red-to-blue transition passes
-/// through neither gray nor purple mud.
+/// a box (the layout slide's painted box) and a shadow. Colors interpolate
+/// in oklab (with alpha as its own linear lane), so a red-to-blue transition
+/// passes through neither gray nor purple mud; a shadow's color does the
+/// same beside its geometry lanes.
 #[derive(Clone, Copy, Debug)]
 pub enum AnimValue {
   Scalar(f32),
   Color(Color),
   Box(Rect),
+  Shadow(ShadowState),
 }
 
 impl AnimValue {
@@ -114,6 +123,7 @@ impl AnimValue {
       AnimValue::Scalar(_) => AnimKind::Scalar,
       AnimValue::Color(_) => AnimKind::Color,
       AnimValue::Box(_) => AnimKind::Box,
+      AnimValue::Shadow(_) => AnimKind::Shadow,
     }
   }
 }
@@ -257,16 +267,24 @@ pub struct PendingWrite {
 }
 
 // Track values are lane vectors: scalars use one lane, colors four (oklab
-// L/a/b plus alpha), boxes four (x, y, width, height). Tween and spring
-// math run per lane; a color spring is four independent oscillators sharing
-// one spec.
-pub type Lanes = [f32; 4];
+// L/a/b plus alpha), boxes four (x, y, width, height), shadows eight (dx,
+// dy, blur, spread, then the color's four). Unused lanes hold zero. Tween
+// and spring math run per lane; a color spring is four independent
+// oscillators sharing one spec.
+pub type Lanes = [f32; 8];
 
 fn to_lanes(v: AnimValue) -> (Lanes, AnimKind) {
   let lanes = match v {
-    AnimValue::Scalar(s) => [s, 0.0, 0.0, 0.0],
-    AnimValue::Color(c) => color_to_oklab(c),
-    AnimValue::Box(r) => [r.origin.x, r.origin.y, r.size.width, r.size.height],
+    AnimValue::Scalar(s) => [s, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    AnimValue::Color(c) => {
+      let [l, a, b, alpha] = color_to_oklab(c);
+      [l, a, b, alpha, 0.0, 0.0, 0.0, 0.0]
+    }
+    AnimValue::Box(r) => [r.origin.x, r.origin.y, r.size.width, r.size.height, 0.0, 0.0, 0.0, 0.0],
+    AnimValue::Shadow(s) => {
+      let [l, a, b, alpha] = color_to_oklab(s.color);
+      [s.dx, s.dy, s.blur, s.spread, l, a, b, alpha]
+    }
   };
   (lanes, v.kind())
 }
@@ -274,8 +292,17 @@ fn to_lanes(v: AnimValue) -> (Lanes, AnimKind) {
 fn from_lanes(lanes: Lanes, kind: AnimKind) -> AnimValue {
   match kind {
     AnimKind::Scalar => AnimValue::Scalar(lanes[0]),
-    AnimKind::Color => AnimValue::Color(oklab_to_color(lanes)),
+    AnimKind::Color => AnimValue::Color(oklab_to_color([lanes[0], lanes[1], lanes[2], lanes[3]])),
     AnimKind::Box => AnimValue::Box(Rect::new(Point::new(lanes[0], lanes[1]), Size::new(lanes[2], lanes[3]))),
+    // A bouncy spring may dip the blur under zero on its way; a negative
+    // radius has no meaning, so it reads as a hard edge until it recovers.
+    AnimKind::Shadow => AnimValue::Shadow(ShadowState {
+      dx: lanes[0],
+      dy: lanes[1],
+      blur: lanes[2].max(0.0),
+      spread: lanes[3],
+      color: oklab_to_color([lanes[4], lanes[5], lanes[6], lanes[7]]),
+    }),
   }
 }
 
@@ -315,7 +342,7 @@ pub struct Track {
 
 fn eps_for(from: Lanes, to: Lanes) -> f32 {
   let mut d = 0.0f32;
-  for i in 0..4 {
+  for i in 0..from.len() {
     d = d.max((to[i] - from[i]).abs());
   }
   (d.max(1.0) * 1e-3).max(1e-3)
@@ -354,7 +381,7 @@ impl Track {
         }
         let e = curve.eval(p);
         let mut out = *from;
-        for i in 0..4 {
+        for i in 0..out.len() {
           out[i] += (self.to[i] - out[i]) * e;
         }
         (out, false)
@@ -362,7 +389,7 @@ impl Track {
       (TrackState::Spring { pos, vel }, TransitionSpec::Spring { omega, zeta }) => {
         let dt = (dt_ms / 1000.0) as f32;
         let mut settled = true;
-        for i in 0..4 {
+        for i in 0..pos.len() {
           let (x, v) = spring_step(pos[i] - self.to[i], vel[i], omega, zeta, dt);
           pos[i] = self.to[i] + x;
           vel[i] = v;
@@ -515,7 +542,7 @@ impl Transitions {
       if !keep_spring_state {
         t.state = match spec {
           TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: at_ms },
-          TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: [0.0; 4] },
+          TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: Lanes::default() },
         };
         t.since_ms = at_ms;
       }
@@ -526,7 +553,7 @@ impl Transitions {
     }
     let state = match spec {
       TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: at_ms },
-      TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: [0.0; 4] },
+      TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: Lanes::default() },
     };
     self.tracks.push(Track { node, prop, spec, state, since_ms: at_ms, to, kind, eps: eps_for(cur, to) });
     true
@@ -592,6 +619,16 @@ impl Element {
         return None;
       }
       return Some(AnimValue::Color(paint.color));
+    }
+    if prop == Shadow {
+      // Every shadow-casting kind; an unset shadow is the zero one.
+      let shadow = match &self.kind {
+        ElementKind::Rectangle(r) => r.shadow,
+        ElementKind::Oval(o) => o.shadow,
+        ElementKind::Path(p) => p.shadow,
+        _ => return None,
+      };
+      return Some(AnimValue::Shadow(shadow.unwrap_or(ShadowState::NONE)));
     }
     if prop == Layout {
       // The slide lane reads the box the node is painted at; only a
@@ -724,6 +761,19 @@ impl Element {
             Damage::Compose
           }
         }
+        _ => Damage::None,
+      };
+    }
+    if let AnimValue::Shadow(s) = value {
+      // A settle on the zero shadow clears the element's shadow instead of
+      // leaving an invisible one behind. A path never carries spread (the
+      // property path rejects it); a rect endpoint's spread reaching a path
+      // through a shared declaration is dropped rather than painted wrong.
+      let next = (!s.is_none()).then_some(s);
+      return match (prop, &mut self.kind) {
+        (Shadow, ElementKind::Rectangle(r)) => r.set_shadow(next),
+        (Shadow, ElementKind::Oval(o)) => o.set_shadow(next),
+        (Shadow, ElementKind::Path(p)) => p.set_shadow(next.map(|s| ShadowState { spread: 0.0, ..s })),
         _ => Damage::None,
       };
     }

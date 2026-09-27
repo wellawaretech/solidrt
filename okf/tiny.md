@@ -38,6 +38,9 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 The `srt` CLI, the dev server, MCP, debug commands, examples and probes.
 
+- MCP queries issued right after `load`/`reload` (`get_snapshot`, `get_render_tree`, `call_debug`) time out with "client is connected but did not answer" and succeed on retry: wait for the first frame after a push, or answer "app still loading".
+- Slow-frame warnings arrive about once a second during continuous animation and bury the one real warning in `get_logs` at warn: collapse them into a running summary, or file them under their own tag.
+- `get_stats` top-level fields describe the latest frame, so an app that just went idle reads "0.09 ms JS" beside a busy window summary: add a `latestFrameAgeMs` field, or put the window summary first.
 - `make client` regenerates `lattice/resources/player/index.srt.js` (a tracked bundle) and dirties it by a few lines on every build; either build it deterministically or stop tracking it, so a client build leaves no change to commit.
 - `examples/video/src/probe/render.tsx`'s header says the assets mount is empty under `srt render`; the render command has copied the project's `assets/` into its staged dir since the build-output-dirs work, so the argv workaround and the comment are stale.
 - `alloy/examples/depth_texture.rs` no longer compiles (`DrawSpec` has no field `buffer`, it is `buffers`), so `cargo check -p alloy --examples` fails on it; fix or drop the example.

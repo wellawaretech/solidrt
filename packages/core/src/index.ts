@@ -68,6 +68,7 @@ export type {
   TextInputHints,
   PaintProps,
   ShadowProps,
+  FilterProps,
   BlendMode,
   DrawStyle,
   StrokeCap,

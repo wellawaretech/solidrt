@@ -206,9 +206,50 @@ export function transitionEndFor<P extends string>(
  * px of blur. Without `color` the part glows in its own fill color (a danger
  * button red, a primary one in the accent); a part whose fill has no color
  * to take (a ghost button, a gradient) then casts nothing, so a theme-wide
- * glow never grows a black halo. Theme["glow"] says where the roles land.
+ * glow never grows a black halo. A layer of a Material; Theme["material"]
+ * says where the roles land.
  */
 export type Glow = { radius: number; color?: Color }
+
+/**
+ * The four kinds of face a component's chrome can be. A component picks a
+ * role, never a material: the theme assigns each role its Material and the
+ * Surface primitive draws it. `surface` is what things sit on (Card, Item,
+ * the NavShell strips, the panes), `control` the body of a control (a
+ * secondary Button, a field, a Select trigger, the tracks and grooves),
+ * `accent` the accent-colored fills (a primary Button, Switch on, the
+ * Slider fill, a Badge) and `overlay` what floats over the screen (a
+ * Tooltip, a dropdown, a menu).
+ */
+export type MaterialRole = "surface" | "control" | "accent" | "overlay"
+
+/**
+ * How far a face stands off the ground, as a named level the theme maps to
+ * a height (Theme["elevation"]): its shadows' offset and blur grow with it.
+ * `flat` casts nothing; Card and the raised parts of controls sit at
+ * `raised` by default, popups at `floating` or `overlay`.
+ */
+export type ElevationLevel = "flat" | "raised" | "floating" | "overlay"
+
+/**
+ * A frosted backdrop: the face blurs and saturates what is painted beneath
+ * it (a core `backdropFilter`) and paints `tint` over that, its own fill at
+ * a translucency when unset. A deliberate overlay, never a surface material:
+ * every glass face captures the pixels under it each frame it paints, which
+ * a tiled GPU pays for per panel (okf/notes/backdrop-filter-cost.md).
+ */
+export type Glass = { blur: number; tint?: Color }
+
+/**
+ * The stack of optional layers a face is drawn with; `{}` is the flat look,
+ * a plain fill. `sheen` (0..1) is a fill gradient along the theme light,
+ * lit edge to shaded edge; `bevel` (0..1) a one-pixel stroke from the light
+ * color on the lit edge to black on the shaded one; `glass` the frosted
+ * backdrop; `glow` the emitted-light halo. Layers compose: glass with a
+ * glowing edge is two layers, not a fifth kind. Shadows are not a layer,
+ * they follow the elevation.
+ */
+export type Material = { sheen?: number; bevel?: number; glass?: Glass; glow?: Glow }
 
 // Paint-only props. None of these change the box Taffy computes. Borders are
 // drawn as a stroke overlay (not part of the box model), and the transform is
@@ -242,16 +283,25 @@ export interface StyleProps {
   opacity?: number
   // A halo on the component's accent part: the fill of Button, Badge,
   // Checkbox and Switch, the Slider and ProgressBar fills, the Radio dot,
-  // the SegmentedControl indicator. Unset, the theme's role glow applies
-  // (theme.glow); null clears it here.
+  // the SegmentedControl indicator. Unset, the role's material glow applies
+  // (theme.material); null clears it here.
   glow?: Glow | null
+  // Layers merged over the role's material for this component's faces (a
+  // matte card in a lit theme: `material: { sheen: 0, bevel: 0 }`).
+  material?: Partial<Material>
+  // The elevation of the component's raised face (a Card, a Button, an
+  // Item), replacing its default level: `elevation: "flat"` grounds a card,
+  // `"raised"` lifts a list row (priced in okf/notes/lit-list-cost.md).
+  elevation?: ElevationLevel
 }
 
 // One choice in an options list, shared by the single-choice controls
 // (Select, SegmentedControl). Lives here so those components stay independent
 // of each other: shared shapes go through this module, never a sibling import.
-export interface Option {
-  value: unknown
+// Generic in the value, so a control's `onChange` hands back the type its
+// options were declared with.
+export interface Option<T = unknown> {
+  value: T
   label: string
 }
 

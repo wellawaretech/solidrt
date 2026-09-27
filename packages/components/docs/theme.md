@@ -1,6 +1,6 @@
 # Theming
 
-Appearance (colors, spacing, border, font roles) comes from one shared, reactive theme backed by a Solid store: reads are tracked, so switching the theme at runtime recolors the live UI without remounting. Two presets ship, `darkTheme` and `lightTheme` (default dark); `setTheme(preset)` switches, `setTheme(partial)` merges an override one level deep per category. A resolved theme carries every key of every category (unset ones as `undefined`), so switching to one replaces the previous theme outright, per-component overrides and icon slots included; a partial keeps whatever it does not name. Custom themes are authored with `defineTheme`.
+Appearance (colors, spacing, border, font roles) comes from one shared, reactive theme backed by a Solid store: reads are tracked, so switching the theme at runtime recolors the live UI without remounting. Four presets ship, `darkTheme` and `lightTheme` (the flat look, default dark) and `litDarkTheme` and `litLightTheme` (the same palette under a light, see below); `setTheme(preset)` switches, `setTheme(partial)` merges an override one level deep per category. A resolved theme carries every key of every category (unset ones as `undefined`), so switching to one replaces the previous theme outright, per-component overrides and icon slots included; a partial keeps whatever it does not name. Custom themes are authored with `defineTheme`.
 
 ```jsx
 import { setTheme, darkTheme, lightTheme } from "@solidrt/components"
@@ -49,18 +49,23 @@ setTheme({ radius: 4 })   // sm 2, md 4, lg 6
 
 ## Motion
 
-`motion` holds the three durations (ms) every built-in component transition draws from, so one theme edit retimes the whole package: `fast` (default 100) is press/hover feedback, `base` (150) the color and opacity fades - state changes, the theme cross-fade (a `setTheme` fades every themed color rather than snapping), popup enter/exit - and `slow` (250) the travel of a control's moving parts (switch knob, segmented indicator, progress fill). `policy.motion` gates whether these play at all; a per-instance `transition` prop overrides them per property.
+`motion` holds the three durations (ms) every built-in component transition draws from, so one theme edit retimes the whole package: `fast` (default 100) is press/hover feedback, `base` (150) the color and opacity fades - state changes, the theme cross-fade (a `setTheme` fades every themed color rather than snapping), popup enter/exit - and `slow` (250) the travel of a control's moving parts (switch knob, segmented indicator, progress fill) and of a face's shadows as it sinks or lifts. `policy.motion` gates whether these play at all; a per-instance `transition` prop overrides them per property.
 
 ```jsx
 setTheme({ motion: { base: 250, slow: 400 } })   // a slower, calmer app
 ```
 
-## Glow
+## Light, materials and elevation
 
-`glow` gives the filled parts a halo, a zero-offset blurred shadow read as emitted light, by role: `accent` lands on the accent-colored fills (the primary and danger Button and Badge, Switch on, Checkbox checked, the Radio dot, the Slider and ProgressBar fills, the SegmentedControl indicator; a disabled control never glows), `overlay` on the anchored popups (the Tooltip bubble, the Select dropdown, the ContextMenu menu). Each is `{ radius, color? }`: without a color a part glows in its own fill color, so a danger button glows red and a primary one in the accent, and a fill with no color to take (a ghost button) casts nothing. A pressable face widens its glow while hovered or pressed. The glow sits on the part's opaque fill, so it fades along with a press or popup fade; a shadow itself cannot be transitioned, so a glow snaps on and off. Per component, `theme.components.<name>.glow` and an instance's `style.glow` override the role (`null` clears it).
+Every component draws its faces through `Surface`, and three theme sections decide what a face looks like. `light` is the theme's one light in screen space (`direction` [x right, y down, z into the screen], a `color`, and `ambient`, the fill on the shaded side): shadows fall along it, the sheen and the bevel run from its lit edge to the shaded one, and faces take on its color (a white light leaves every base color as it is). `material` assigns each role its layers: `surface` (Card, Item, the NavShell strips), `control` (a secondary Button, the fields, the Select trigger, the tracks and grooves, the Switch knob and the Slider thumb), `accent` (a primary or danger Button, Switch on, a checked Checkbox, the Radio dot, the Slider and ProgressBar fills, the SegmentedControl indicator, a Badge) and `overlay` (the Tooltip bubble, the Select dropdown, the ContextMenu menu, the sheets). A `Material` is `{ sheen?, bevel?, glass?, glow? }`: `sheen` (0..1) a fill gradient along the light, `bevel` (0..1) a one-pixel stroke from the light color to black, `glass` a frosted backdrop (`{ blur, tint? }`, a deliberate overlay, never a surface material: every glass face captures the pixels under it each frame), `glow` a halo (`{ radius, color? }`; without a color a part glows in its own fill, so a danger button glows red, and a fill with no color to take casts nothing; a pressable face widens it while hovered or pressed). `elevation` maps the four levels (`flat`, `raised`, `floating`, `overlay`) to heights: a face at height h casts a key shadow h px along the light and blurred 2.5 h px, plus a tight contact shadow; a press sinks the face (the key shadow fades toward the contact shadow) on the native shadow transition, and `shadow` (`{ color, strength }`) is what they are cast in.
+
+The stock presets are flat: every material `{}` and every height 0, so nothing casts or shines and the components look as they always have. `litDarkTheme` and `litLightTheme` are the same palette under the light: a sheen and a bevel per role, `raised` 2, `floating` 6, `overlay` 14, a light cap for the Switch knob and Slider thumb, and shadows 1.7 times stronger on dark, where they otherwise vanish. Card and Button stand raised by default (a ghost or disabled button flat), the Switch knob, the Slider thumb and the SegmentedControl indicator too; Item, Badge and the Checkbox sit flat whatever the theme, since a screen holds dozens of them and a blurred shadow per row is what a scrolling list cannot afford on a tablet or a TV (measured in the runtime's notes); popups float. Per component, `theme.components.<name>.material` merges layers over the role's, `.elevation` sets the level and `.glow` the halo alone, and an instance's `style` does the same over that.
 
 ```jsx
-setTheme({ glow: { accent: { radius: 14 }, overlay: { radius: 26, color: "rgba(51,255,119,0.3)" } } })
+setTheme(litDarkTheme)                                                        // the lit look
+setTheme({ light: { ...theme.light, direction: [-0.4, 1, 0.8] } })            // light from the right
+setTheme({ material: { accent: { sheen: 1, bevel: 0.9, glow: { radius: 14 } } } })   // glowing accents
+setTheme({ components: { item: { elevation: "raised" } } })                   // raised rows, deliberately
 ```
 
 ## Window finish
@@ -80,13 +85,13 @@ export let crtTheme = defineTheme({ color: { /* ... */ }, finish: { program, par
 
 ## Per-component overrides
 
-`theme.components` restyles a component everywhere without wrapping it: a `StyleProps` object per component name, merged between the component's themed defaults and each instance's `style` prop (instance style still wins). Every themed component draws the `borderColor`/`borderWidth` it is given (Item rows, the SegmentedControl, Badge, the Slider and ProgressBar grooves included), so one theme boxes the whole library; `glow` sets or clears (`null`) a component's halo.
+`theme.components` restyles a component everywhere without wrapping it: a `StyleProps` object per component name, merged between the component's themed defaults and each instance's `style` prop (instance style still wins). Every themed component draws the `borderColor`/`borderWidth` it is given (Item rows, the SegmentedControl, Badge, the Slider and ProgressBar grooves included), so one theme boxes the whole library; `material`, `elevation` and `glow` restyle its faces (see Light, materials and elevation).
 
 ```jsx
 setTheme({ components: { button: { borderRadius: 999 } } })   // pill buttons app-wide
 ```
 
-Keys: `button`, `card`, `badge`, `switch`, `checkbox`, `radio`, `slider`, `item`, `select`, `segmentedControl`, `textInput`, `richTextEditor`, `tooltip`, `divider`, `progressBar`, `spinner`.
+Keys: `button`, `card`, `badge`, `switch`, `checkbox`, `radio`, `slider`, `item`, `select`, `segmentedControl`, `textInput`, `richTextEditor`, `tooltip`, `divider`, `progressBar`, `spinner`, `contextMenu`, `navShell`.
 
 ## Icon slots
 

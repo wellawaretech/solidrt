@@ -129,9 +129,15 @@ function repeating<T>(read: () => T | null, step: (value: T) => void): void {
 
 // What "select" means per focusable node, registered by createPress's ref.
 // Only the controller path consults it - key activation reaches the focused
-// node by bubbling and never comes through here. Package-internal.
+// node by bubbling and never comes through here.
 let navActions = new Map<number, () => void>()
 
+/**
+ * Registers what the focus navigation's `select` action does on a focusable
+ * node; returns the unregister. createPress does this for every press
+ * control, so a custom control needs it only when it activates without
+ * createPress.
+ */
 export function registerNavAction(nodeId: number, action: () => void): () => void {
   navActions.set(nodeId, action)
   return () => {

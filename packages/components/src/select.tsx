@@ -6,17 +6,17 @@ import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { Option, StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 import { Icon } from "./icon"
 import { colorFade, popupFade, popupFadeOut, PressFeedback, travelMotion } from "./motion"
-import { glowShadow } from "./glow"
+import { Surface } from "./surface"
 
-export interface SelectProps extends TransitionProps {
-  options: Option[]
+export interface SelectProps<T = unknown> extends TransitionProps {
+  options: Option<T>[]
   // Controlled selected value. If omitted, the select is uncontrolled.
-  value?: unknown
-  defaultValue?: unknown
-  onChange?: (value: unknown) => void
+  value?: T
+  defaultValue?: T
+  onChange?: (value: T) => void
   // Shown in the trigger while nothing is selected.
   placeholder?: string
   disabled?: boolean
@@ -36,14 +36,16 @@ let margin = () => theme.spacing.sm
  * value/onChange contract either way; pressing outside closes without a change.
  * The option list is not scrollable yet, so keep it short.
  */
-export function Select(props: SelectProps) {
+export function Select<T>(props: SelectProps<T>) {
   let trigger: { id: number } | undefined
   let [open, setOpen] = createSignal(false)
-  let [internal, setInternal] = createSignal(props.defaultValue)
+  // The value overload: as far as TypeScript knows T could be a function,
+  // which createSignal would read as a compute; the cast picks the value form.
+  let [internal, setInternal] = createSignal<T | undefined>(props.defaultValue as Exclude<T | undefined, Function>)
   let value = () => (props.value !== undefined ? props.value : internal())
   let selected = () => props.options.find((o) => o.value === value())
 
-  let choose = (v: unknown) => {
+  let choose = (v: T) => {
     setOpen(false)
     if (props.value === undefined) setInternal(() => v)
     props.onChange?.(v)
@@ -53,7 +55,7 @@ export function Select(props: SelectProps) {
 
   // One option row, shared by both presentations; only the vertical padding
   // differs (the sheet gets taller touch targets).
-  let OptionRow = (p: { option: Option; padY: number }) => {
+  let OptionRow = (p: { option: Option<T>; padY: number }) => {
     let press = createPress({ onPress: () => choose(p.option.value) })
     return (
       <view
@@ -123,17 +125,18 @@ export function Select(props: SelectProps) {
           paddingTop={theme.spacing.sm}
           paddingBottom={theme.spacing.sm}
         >
-          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} shadow={glowShadow(theme.glow.overlay, theme.color.surface)} />
-          <For each={props.options}>
-            {(o: Option) => <OptionRow option={o} padY={space("sm")} />}
-          </For>
-          <d-rect
-            drawStyle="stroke"
-            transition={colorFade()}
-            color={theme.color.border}
-            strokeWidth={theme.borderWidth.sm}
+          <Surface
+            role="overlay"
+            elevation={styled().elevation ?? "overlay"}
+            fill={theme.color.surface}
             radius={theme.radius.sm}
+            material={styled().material}
+            glow={styled().glow}
+            outline={{ color: theme.color.border, width: theme.borderWidth.sm }}
           />
+          <For each={props.options}>
+            {(o: Option<T>) => <OptionRow option={o} padY={space("sm")} />}
+          </For>
         </view>
       </view>,
     )
@@ -156,9 +159,9 @@ export function Select(props: SelectProps) {
           paddingTop={theme.spacing.md}
           paddingBottom={theme.spacing.md + env.safeArea.bottom}
         >
-          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} />
+          <Surface role="overlay" fill={theme.color.surface} radius={theme.radius.sm} material={styled().material} glow={null} />
           <For each={props.options}>
-            {(o: Option) => <OptionRow option={o} padY={Math.round(theme.spacing.md * 1.5)} />}
+            {(o: Option<T>) => <OptionRow option={o} padY={Math.round(theme.spacing.md * 1.5)} />}
           </For>
         </view>
       </view>,
@@ -169,6 +172,8 @@ export function Select(props: SelectProps) {
       setOpen(!open())
     },
   })
+  // Theme-level per-component overrides merged under the instance style.
+  let styled = () => ({ ...theme.components.select, ...props.style })
   let style = () => ({
     borderColor: theme.color.border,
     borderWidth: theme.borderWidth.sm,
@@ -215,11 +220,20 @@ export function Select(props: SelectProps) {
       focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
-      <PressFeedback
+      <Surface
+        role="control"
+        elevation={style().elevation ?? "flat"}
+        fill={style().backgroundColor ?? "transparent"}
+        radius={style().borderRadius}
+        material={style().material}
+        glow={style().glow}
         pressed={press.pressed() && !props.disabled}
         hovered={press.hovered() && !props.disabled && policy.interaction !== "touch"}
-        radius={style().borderRadius}
+        outline={(style().borderWidth ?? 0) > 0 ? { color: style().borderColor ?? "transparent", width: style().borderWidth! } : null}
+        fillTransition={split().background}
+        onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+        outlineTransition={split().border}
+        onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
       />
       <Show
         when={selected()}
@@ -251,16 +265,6 @@ export function Select(props: SelectProps) {
         <Show when={policy.interaction === "touch"} fallback={<Dropdown />}>
           <Sheet />
         </Show>
-      </Show>
-      <Show when={(style().borderWidth ?? 0) > 0}>
-        <d-rect
-          drawStyle="stroke"
-          transition={withTransitionDefaults(split().border, colorFade())}
-          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-          color={style().borderColor ?? "transparent"}
-          strokeWidth={style().borderWidth}
-          radius={style().borderRadius}
-        />
       </Show>
     </view>
   )

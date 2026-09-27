@@ -28,6 +28,13 @@ The architecture of an area and the decisions behind it, kept current. Read befo
   video, the dev clock, playback), the decisions behind each with the
   alternatives that were rejected, and the known limits with their open items.
   Read before touching anything that says clock, tick, vsync or pacing.
+- **[Lit components](design/lit-components.md)** [2026-09-27]
+  The light and material model for @solidrt/components - a theme light,
+  materials by role, elevation, and one Surface primitive drawing every
+  control's chrome on the 2D path - with the decisions the prototype settled
+  (no 3D-rendered controls, hover lift over tilt, press sink over press scale,
+  an app-owned light at event rate) and the open items. Read before moving the
+  model into the package.
 
 ## Plans
 
@@ -284,11 +291,6 @@ Shaped, not started.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
-- **[Measure backdropFilter cost on Android](backlog/backdrop-filter-android-cost.md)** [2026-09-02]
-  A backdropFilter forces an offscreen capture-and-filter of the pixels
-  beneath per panel; desktop holds 60 fps with four panels over live content,
-  but tiler GPUs pay differently for mid-frame target reads - measure before
-  treating the prop as casual on TV/phone.
 - **[Generate the docs/core.md props reference from the types](backlog/core-docs-generated-props.md)** [2026-08-06]
   Hand-copied prop lists are how core.md drifted (fill/background/imageWidth);
   jsx-runtime.d.ts and types.d.ts are clean enough to generate the per-element
@@ -425,6 +427,11 @@ Shaped, not started.
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an srt doctor helper
   rather than an engine feature.
+- **[Animate gradient colors](backlog/gradient-color-transition.md)** [2026-09-27]
+  A gradient-valued `color` never animates (the color lane reads a gradient as
+  not animatable), so a lit fill snaps on a theme switch where a solid fill
+  cross-fades; interpolate gradients that share a kind and stop count, stop
+  colors in oklab and positions linearly, and keep snapping for the rest.
 - **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
@@ -747,6 +754,12 @@ Shaped, not started.
   solid. Extend it to a CSS-style list with line-through/overline,
   textDecorationColor and dashed/dotted/wavy/double, on the same self-drawn
   per-line mechanism.
+- **[Center single-line labels by their cap band](backlog/text-label-centering.md)** [2026-09-27]
+  Labels sit visibly low in their boxes at some font sizes (1.5px at a 15px
+  base, 0 at 14px), because Impeller splits line leading in proportion to
+  ascent and descent and the baseline snaps to whole pixels; a half-leading
+  placement only moves the error around, so the candidate is cap-band
+  centering, to be simulated before it is built.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -1208,6 +1221,11 @@ Finished, kept for the reasoning.
   runtime waits for, plus a launch fact saying whether the system killed the
   previous session. Includes making Android exit() finish the activity instead
   of backgrounding it."
+- **[Measure backdropFilter cost on Android](done/backdrop-filter-android-cost.md)** [2026-09-27]
+  A backdropFilter forces an offscreen capture-and-filter of the pixels
+  beneath per panel; desktop holds 60 fps with four panels over live content,
+  but tiler GPUs pay differently for mid-frame target reads - measure before
+  treating the prop as casual on TV/phone.
 - **[backdropFilter shows no blur while an ancestor fades](done/backdrop-under-group-opacity.md)** [2026-09-21]
   A backdropFilter under an opacity-below-1 ancestor stays sharp for the whole
   fade and snaps to full frost when it ends, because the group-opacity layer
@@ -1801,6 +1819,11 @@ Finished, kept for the reasoning.
   instead of the inherited box. Dashing becomes our own walker (continuous
   through vertices, animatable with `dashOffset`); endpoints, caps and joins
   stay as they are.
+- **[Move the lit model into @solidrt/components](done/lit-components-package.md)** [2026-09-27]
+  Measure what the lit look costs on the tablet, the TV and Android, then
+  bring Surface, theme.material and theme.elevation into the package on one
+  shadow rect per surface, migrating every component in one pass with flat as
+  the stock look and lit as a preset.
 - **[Local pointer coordinates](done/local-pointer-coords.md)** [2026-07-25]
   Reintroduce per-node localX/localY on pointer events (already carried
   through hit testing, dropped in flux marshalling), and cap move hit-tests to
@@ -2026,6 +2049,10 @@ Finished, kept for the reasoning.
   magnified inspection; a ~15-line viewBox-shrinking registerDebug("zoom")
   turns "look closely at X" into one call, worth shipping in the
   create-solidrt scaffold.
+- **[Animate shadow as one value](done/shadow-transition.md)** [2026-09-27]
+  `shadow` joins the native transitions - offset, blur, spread and color move
+  together on one track, an unset shadow counts as none, so elevation changes
+  animate without cross-faded shadow layers.
 - **[Shell layout fixes found rendering NavShell beside SplitView](done/shell-layout-fixes.md)** [2026-08-26]
   Navigation follows the pane count instead of its own breakpoint, and
   TextInput/Select share Button's vertical padding so controls in a row are
@@ -2372,6 +2399,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   "Execution-structure review: the JS-decides/Rust-executes split is right;
   ranked costs are per-prop string-keyed FFI writes, per-frame JS animation,
   JS scroll physics, event garbage."
+- **[What a frosted panel costs on the small targets](notes/backdrop-filter-cost.md)** [2026-09-27]
+  Measured 2026-09-27 on the Pixel 7, the SM-T500 tablet and the Philips TV -
+  blur-28 backdrop panels of 320x140 logical px over a bar that moves every
+  frame - one panel holds the refresh everywhere (TV 3 to 13 ms GPU per
+  frame), four panels drop the tablet and the TV to 22 fps with hundreds of
+  missed presents.
 - **[Concurrency mechanisms](notes/channels-concurrency.md)** [2026-07-15]
   Survey of CSP, actor and shared-memory models plus TC39 status; the
   conclusion is isolates and ports for parallelism, with engine-free
@@ -2485,6 +2518,13 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   is about a microsecond of call machinery each, the codec path about two, the
   accessor half that, and a bulk typed-array loop over the stream mirror the
   floor; the app's own per-instance math dominates the floor.
+- **[What lit rows cost in a long list](notes/lit-list-cost.md)** [2026-09-27]
+  Measured 2026-09-27 on the SM-T500 tablet, the Pixel 7 and the Philips TV -
+  a 300-row list of rows dressed like the lit Item (key shadow, contact
+  shadow, sheen gradient, bevel), scrolled at 900 px/s - a transparent shadow
+  caster costs a save layer per shadow and drops every tiled GPU to 8-19 fps;
+  opaque casters cost about 0.1-0.9 ms per blurred shadow per frame, which the
+  tablet and the TV cannot afford twice per row.
 - **[Why offscreen rasters are multisampled](notes/offscreen-msaa-provenance.md)** [2026-08-13]
   Offscreen MSAA exists for one case - gradient emoji drawn through the svg
   path into a snapshot boundary - so that case is the regression test for any

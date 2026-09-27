@@ -5,10 +5,10 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { densityScale } from "./density"
 import { Icon } from "./icon"
+import { Surface } from "./surface"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade, markMotion, pressScale, scaleFeedback } from "./motion"
-import { glowShadow, partGlow } from "./glow"
 
 export interface CheckboxProps extends TransitionProps {
   // Controlled checked state. If omitted, the checkbox is uncontrolled.
@@ -22,12 +22,12 @@ export interface CheckboxProps extends TransitionProps {
 
 const SIZE = 20
 
-// A checkbox. When checked, fills with primary (glowing with theme.glow.accent)
-// and draws a checkmark; otherwise shows an empty bordered box. The fill
-// fades, the mark pops in/out
-// (markMotion), and a press shrinks the box slightly (pressScale). Controlled
-// via checked/onChange, or uncontrolled via defaultChecked. When disabled, it
-// takes no pointer events at all.
+// A checkbox. Unchecked it is a sunken control face (a bordered well in the
+// surface color); checked it fills with primary as an accent face, with the
+// accent material's glow, and draws a checkmark. The fill fades, the mark
+// pops in/out (markMotion), and a press shrinks the box slightly
+// (pressScale). Controlled via checked/onChange, or uncontrolled via
+// defaultChecked. When disabled, it takes no pointer events at all.
 export function Checkbox(props: CheckboxProps) {
   let [internal, setInternal] = createSignal(props.defaultChecked ?? false)
   let checked = () => (props.checked !== undefined ? props.checked : internal())
@@ -81,12 +81,20 @@ export function Checkbox(props: CheckboxProps) {
       focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect
-        transition={withTransitionDefaults(split().background, colorFade())}
-        onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
-        color={style().backgroundColor ?? "transparent"}
+      <Surface
+        role={checked() ? "accent" : "control"}
+        elevation={style().elevation ?? "flat"}
+        fill={style().backgroundColor ?? "transparent"}
         radius={style().borderRadius}
-        shadow={glowShadow(checked() && !props.disabled ? partGlow(style().glow, theme.glow.accent) : null, style().backgroundColor ?? "transparent", active())}
+        material={style().material}
+        glow={checked() && !props.disabled ? style().glow : null}
+        sunken={!checked()}
+        active={active()}
+        outline={(style().borderWidth ?? 0) > 0 ? { color: style().borderColor ?? "transparent", width: style().borderWidth! } : null}
+        fillTransition={split().background}
+        onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+        outlineTransition={split().border}
+        onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
       />
       <Show when={checked()}>
         <view
@@ -118,16 +126,6 @@ export function Checkbox(props: CheckboxProps) {
             <Icon src={theme.icons.check!} size={Math.round(size() * 0.75)} color={theme.color.onPrimary} />
           </Show>
         </view>
-      </Show>
-      <Show when={(style().borderWidth ?? 0) > 0}>
-        <d-rect
-          drawStyle="stroke"
-          transition={withTransitionDefaults(split().border, colorFade())}
-          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-          color={style().borderColor ?? "transparent"}
-          strokeWidth={style().borderWidth}
-          radius={style().borderRadius}
-        />
       </Show>
     </view>
   )

@@ -1,7 +1,7 @@
 use super::describe;
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::{
-  AnimKind, AnimProp, AnimValue, Curve, Endpoint, TransitionConfig, TransitionEntry, TransitionSpec,
+  AnimKind, AnimProp, AnimValue, Curve, Endpoint, ShadowState, TransitionConfig, TransitionEntry, TransitionSpec,
 };
 use alloy::spatial::NodeMotion;
 
@@ -46,6 +46,7 @@ pub fn anim_prop(name: &str) -> Option<AnimProp> {
     "strokeWidth" => AnimProp::StrokeWidth,
     "radius" => AnimProp::Radius,
     "color" => AnimProp::Color,
+    "shadow" => AnimProp::Shadow,
     _ => return None,
   })
 }
@@ -85,6 +86,7 @@ pub fn anim_prop_name(prop: AnimProp) -> &'static str {
     AnimProp::StrokeWidth => "strokeWidth",
     AnimProp::Radius => "radius",
     AnimProp::Color => "color",
+    AnimProp::Shadow => "shadow",
     AnimProp::Layout => "layout",
   }
 }
@@ -428,6 +430,11 @@ fn decode_endpoint_value(at: &str, key: &str, value: &PropValue, prop: AnimProp)
       }
       Ok(AnimValue::Scalar(n))
     }
+    // The shadow object as the property takes it, or null for none. Spread
+    // is allowed here (a rect's endpoint); a path drops it on the write.
+    AnimKind::Shadow => super::decode_shadow(value, true)
+      .map(|shadow| AnimValue::Shadow(shadow.unwrap_or(ShadowState::NONE)))
+      .map_err(|e| format!("{at}: {key}: {e}")),
     AnimKind::Box => Err(format!("{at}: {key} does not apply to layout")),
   }
 }

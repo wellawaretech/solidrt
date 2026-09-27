@@ -189,7 +189,11 @@ export interface PaintProps {
  * paint inside, so the box is the outer edge) - except on `path`, where the
  * shadow mirrors the element's own fill/stroke silhouette and `spread` is
  * rejected (an arbitrary path cannot be inflated exactly). `color` is
- * required; there is no currentColor to inherit.
+ * required; there is no currentColor to inherit. Animates as one value
+ * under `transition={{ shadow }}`: offset, blur, spread and color move
+ * together (the color in oklab), an unset shadow counts as none (zero,
+ * transparent), so a shadow fades in from nothing and a `null` write
+ * fades it out.
  */
 export interface ShadowProps {
   x?: number
@@ -484,7 +488,7 @@ export type TransitionCurve = "linear" | "ease" | "ease-in" | "ease-out" | "ease
  * spring entry is a tween of the entry's duration.
  */
 export interface TransitionEndpoint {
-  value: number | string
+  value: number | string | ShadowProps | null
   duration?: number
   curve?: TransitionCurve
   bounce?: number
@@ -509,11 +513,12 @@ export interface TransitionSpring {
    * Mount-time enter animation: at the element's first attach the property
    * snaps to this value and animates to the value it mounted with. Numbers
    * for the scalar properties; the color property takes a CSS color string
-   * or packed number, or a {@link TransitionEndpoint} giving the enter its
+   * or packed number; the shadow property a {@link ShadowProps} object or
+   * `null` for none; or a {@link TransitionEndpoint} giving the enter its
    * own curve, duration, bounce or delay. Per-property entries only (not
    * under `all`); a later move or reorder re-runs nothing.
    */
-  from?: number | string | TransitionEndpoint
+  from?: number | string | ShadowProps | null | TransitionEndpoint
   /**
    * Removal exit animation: when an element unmounts, every `exit`
    * declared on it or under it animates its property to this value
@@ -528,7 +533,7 @@ export interface TransitionSpring {
    * motion: an ease-out enter reads wrong played backwards, so pair it with
    * `exit: { value, curve: "ease-in" }`.
    */
-  exit?: number | string | TransitionEndpoint
+  exit?: number | string | ShadowProps | null | TransitionEndpoint
 }
 
 /**
@@ -547,11 +552,12 @@ export interface TransitionTween {
    * Mount-time enter animation: at the element's first attach the property
    * snaps to this value and animates to the value it mounted with. Numbers
    * for the scalar properties; the color property takes a CSS color string
-   * or packed number, or a {@link TransitionEndpoint} giving the enter its
+   * or packed number; the shadow property a {@link ShadowProps} object or
+   * `null` for none; or a {@link TransitionEndpoint} giving the enter its
    * own curve, duration, bounce or delay. Per-property entries only (not
    * under `all`); a later move or reorder re-runs nothing.
    */
-  from?: number | string | TransitionEndpoint
+  from?: number | string | ShadowProps | null | TransitionEndpoint
   /**
    * Removal exit animation: when an element unmounts, every `exit`
    * declared on it or under it animates its property to this value
@@ -566,7 +572,7 @@ export interface TransitionTween {
    * motion: an ease-out enter reads wrong played backwards, so pair it with
    * `exit: { value, curve: "ease-in" }`.
    */
-  exit?: number | string | TransitionEndpoint
+  exit?: number | string | ShadowProps | null | TransitionEndpoint
 }
 
 /**
@@ -579,7 +585,11 @@ export type TransitionShorthand = string
 
 export type Transition = TransitionSpring | TransitionTween | TransitionShorthand
 
-/** The property names a transition can cover (numeric scalars). */
+/**
+ * The property names a transition can cover: the numeric scalars, `color`
+ * (solid colors, in oklab) and `shadow` (the whole {@link ShadowProps}
+ * value).
+ */
 export type TransitionPropName =
   | "x"
   | "y"
@@ -612,6 +622,7 @@ export type TransitionPropName =
   | "strokeWidth"
   | "radius"
   | "color"
+  | "shadow"
 
 /**
  * Payload of onTransitionEnd: which animated property finished. `"layout"`
@@ -637,8 +648,9 @@ export interface TransitionProps {
    * properties the element carries animate (a d-rect has x, a view's x is
    * its transform); the initial values (every write before the element's
    * first paint) never animate unless the entry sets `from` (an enter
-   * animation), and a non-numeric write (e.g. null) cancels the running
-   * animation and snaps. `null` clears the
+   * animation), and a write the property cannot animate (null on a scalar,
+   * a gradient color) cancels the running animation and snaps; `shadow`
+   * alone animates to and from `null`, its none. `null` clears the
    * declaration; already-running animations finish. A spec built in a
    * conditional widens `curve` to `string` for TypeScript; write
    * `satisfies Transition` on the branch.

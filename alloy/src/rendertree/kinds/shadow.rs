@@ -33,6 +33,17 @@ pub struct ShadowState {
 }
 
 impl ShadowState {
+  /// The shadow an unset one interpolates as (CSS: `none` transitions as
+  /// `0 0 0 0 transparent`): nothing on screen, but a value a track can
+  /// run from or to. A track settling on it clears the element's shadow.
+  pub const NONE: ShadowState = ShadowState { dx: 0.0, dy: 0.0, blur: 0.0, spread: 0.0, color: Color::TRANSPARENT };
+
+  /// Whether this is `NONE`: nothing offset, spread or blurred, and no
+  /// paint (a fully transparent color, whatever its channels).
+  pub fn is_none(&self) -> bool {
+    self.dx == 0.0 && self.dy == 0.0 && self.blur == 0.0 && self.spread == 0.0 && self.color.alpha <= 0.0
+  }
+
   /// The paint the shadow shape draws with: the color, plus the mask blur
   /// when the radius is positive (zero blur is a hard-edged shadow).
   pub fn to_paint(&self) -> Paint {

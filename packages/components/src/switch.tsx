@@ -1,13 +1,13 @@
-import { createSignal, Show } from "@solidrt/core"
+import { createSignal } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { pill, theme } from "./theme"
 import { policy } from "./policy"
 import { densityScale } from "./density"
-import type { StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
+import { Surface, surfaceSinks } from "./surface"
+import type { ElevationLevel, StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
 import { partTransition, partTransitionEnd, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
-import { colorFade, pressScale, scaleFeedback, travelMotion } from "./motion"
-import { glowShadow, partGlow } from "./glow"
+import { pressScale, scaleFeedback, travelMotion } from "./motion"
 
 export interface SwitchProps extends TransitionProps<TransitionViewProp | TransitionStyleProp | "knob"> {
   // Controlled on/off. If omitted, the switch is uncontrolled.
@@ -26,13 +26,15 @@ const W = 44
 const H = 24
 const PAD = 2
 
-// A toggle. Track fills with primary when on (glowing with theme.glow.accent),
-// surfaceAlt when off (a fade); the thumb (theme.color.thumb, else onPrimary)
-// springs across - the `knob` transition entry retimes it. Track and thumb
-// take pill(): round by default, square under radius.full 0. A press
-// shrinks the control slightly (pressScale). Controlled via value/onChange,
-// or uncontrolled via defaultValue. When disabled, it takes no pointer
-// events at all.
+// A toggle. The track is a sunken face, accent when on (primary, with the
+// accent material's glow), control when off (surfaceAlt), fading between
+// them; the thumb (theme.color.thumb, else onPrimary) is a raised control
+// face that springs across - the `knob` transition entry retimes it - and
+// sinks under the finger where its material has depth. Track and thumb take
+// pill(): round by default, square under radius.full 0. A press shrinks the
+// control slightly (pressScale) while the thumb is flat; style.elevation
+// sets the thumb's level. Controlled via value/onChange, or uncontrolled
+// via defaultValue. When disabled, it takes no pointer events at all.
 export function Switch(props: SwitchProps) {
   let [internal, setInternal] = createSignal(props.defaultValue ?? false)
   let on = () => (props.value !== undefined ? props.value : internal())
@@ -58,6 +60,8 @@ export function Switch(props: SwitchProps) {
     ...props.style,
     ...(press.focused() && policy.focusRing ? { borderWidth: theme.borderWidth.focus, borderColor: theme.color.ring } : {}),
   })
+  let thumbElevation = (): ElevationLevel => style().elevation ?? "raised"
+  let sinks = () => surfaceSinks("control", thumbElevation(), style().material)
 
   let split = () => splitTransition(props.transition, ["knob"])
 
@@ -72,7 +76,7 @@ export function Switch(props: SwitchProps) {
       {...props.layout}
       x={style().x}
       y={style().y}
-      scale={(style().scale ?? 1) * pressScale(press.pressed())}
+      scale={(style().scale ?? 1) * (sinks() ? 1 : pressScale(press.pressed()))}
       rotate={style().rotate}
       opacity={style().opacity}
       {...press.handlers}
@@ -80,36 +84,44 @@ export function Switch(props: SwitchProps) {
       focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect
-        transition={withTransitionDefaults(split().background, colorFade())}
-        onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
-        color={style().backgroundColor ?? "transparent"}
+      <Surface
+        role={on() ? "accent" : "control"}
+        fill={style().backgroundColor ?? "transparent"}
         radius={style().borderRadius}
-        shadow={glowShadow(on() && !props.disabled ? partGlow(style().glow, theme.glow.accent) : null, style().backgroundColor ?? "transparent", active())}
+        material={style().material}
+        glow={on() && !props.disabled ? style().glow : null}
+        sunken
+        active={active()}
+        outline={(style().borderWidth ?? 0) > 0 ? { color: style().borderColor ?? "transparent", width: style().borderWidth! } : null}
+        fillTransition={split().background}
+        onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+        outlineTransition={split().border}
+        onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
       />
       <view
         position="absolute"
         top={PAD}
         left={PAD}
+        width={thumb()}
+        height={thumb()}
         x={on() ? w() - thumb() - PAD * 2 : 0}
         transition={partTransition(props.transition, "knob", "x", travelMotion())}
         onTransitionEnd={partTransitionEnd("knob", "x", props.onTransitionEnd)}
       >
         {/* The hairline keeps the thumb visible off: onPrimary on the
             light scheme's surfaceAlt track is about 1.2:1 on its own. */}
-        <d-rect transition={colorFade()} w={thumb()} h={thumb()} radius={pill(thumb())} color={theme.color.thumb ?? theme.color.onPrimary} />
-        <d-rect drawStyle="stroke" transition={colorFade()} w={thumb()} h={thumb()} radius={pill(thumb())} color={theme.color.border} strokeWidth={theme.borderWidth.sm} />
-      </view>
-      <Show when={(style().borderWidth ?? 0) > 0}>
-        <d-rect
-          drawStyle="stroke"
-          transition={withTransitionDefaults(split().border, colorFade())}
-          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-          color={style().borderColor ?? "transparent"}
-          strokeWidth={style().borderWidth}
-          radius={style().borderRadius}
+        <Surface
+          role="control"
+          elevation={thumbElevation()}
+          fill={theme.color.thumb ?? theme.color.onPrimary}
+          radius={pill(thumb())}
+          material={style().material}
+          glow={null}
+          pressed={press.pressed()}
+          tint={false}
+          outline={{ color: theme.color.border, width: theme.borderWidth.sm }}
         />
-      </Show>
+      </view>
     </view>
   )
 }

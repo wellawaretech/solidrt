@@ -2,10 +2,10 @@ import { createSignal, onFrame, onLayout, getBoundingBox, Show } from "@solidrt/
 import type { LayoutProps } from "@solidrt/core"
 import { pill, theme } from "./theme"
 import { policy } from "./policy"
+import { Surface, facePaint } from "./surface"
 import type { StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
-import { partTransition, partTransitionEnd, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { partTransition, partTransitionEnd, splitTransition, transitionEndFor } from "./types"
 import { colorFade, travelMotion } from "./motion"
-import { glowShadow, partGlow } from "./glow"
 
 export interface ProgressBarProps extends TransitionProps<TransitionViewProp | TransitionStyleProp | "fill"> {
   // Progress from 0 to 1. Omit (or leave undefined) for an indeterminate bar: a
@@ -25,10 +25,11 @@ let clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : 
 
 // A horizontal progress bar. Determinate when given a value in [0, 1]: the fill
 // grows from the left. Indeterminate when value is undefined: a short segment
-// slides back and forth (driven by core onFrame). Colors come from the theme;
-// override the track via style.backgroundColor and the fill via style.color,
-// box the track with borderColor/borderWidth. The ends take pill(): round by
-// default, square under radius.full 0. The fill glows with theme.glow.accent.
+// slides back and forth (driven by core onFrame). The track is a sunken
+// control face, the fill an accent face (with the accent material's glow)
+// drawn as a detached rect; override the track via style.backgroundColor and
+// the fill via style.color, box the track with borderColor/borderWidth. The
+// ends take pill(): round by default, square under radius.full 0.
 export function ProgressBar(props: ProgressBarProps) {
   let h = () => (props.layout?.height as number) ?? HEIGHT
   // Theme-level per-component overrides merged under the instance style.
@@ -36,6 +37,7 @@ export function ProgressBar(props: ProgressBarProps) {
   let radius = () => styled().borderRadius ?? pill(h())
   let track = () => styled().backgroundColor ?? theme.color.surfaceAlt
   let fill = () => styled().color ?? theme.color.primary
+  let fillPaint = () => facePaint({ role: "accent", fill: fill(), material: styled().material, glow: styled().glow })
   let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
   let indeterminate = () => props.value === undefined
 
@@ -93,18 +95,20 @@ export function ProgressBar(props: ProgressBarProps) {
       <Show when={animating()}>
         <Animate />
       </Show>
-      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={track()} radius={radius()} />
-      <d-rect transition={fillTransition()} onTransitionEnd={partTransitionEnd("fill", "w", props.onTransitionEnd)} color={fill()} radius={radius()} w={fillWidth()} h={h()} x={indeterminate() ? offset() : 0} shadow={glowShadow(partGlow(styled().glow, theme.glow.accent), fill())} />
-      <Show when={hasBorder()}>
-        <d-rect
-          drawStyle="stroke"
-          transition={withTransitionDefaults(split().border, colorFade())}
-          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-          color={styled().borderColor ?? theme.color.border}
-          strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
-          radius={radius()}
-        />
-      </Show>
+      <Surface
+        role="control"
+        fill={track()}
+        radius={radius()}
+        material={styled().material}
+        glow={null}
+        sunken
+        outline={hasBorder() ? { color: styled().borderColor ?? theme.color.border, width: styled().borderWidth ?? theme.borderWidth.sm } : null}
+        fillTransition={split().background}
+        onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+        outlineTransition={split().border}
+        onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
+      />
+      <d-rect transition={fillTransition()} onTransitionEnd={partTransitionEnd("fill", "w", props.onTransitionEnd)} color={fillPaint().fill} radius={radius()} w={fillWidth()} h={h()} x={indeterminate() ? offset() : 0} shadow={fillPaint().glow} />
     </view>
   )
 }

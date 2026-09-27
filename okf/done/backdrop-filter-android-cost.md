@@ -2,6 +2,7 @@
 title: Measure backdropFilter cost on Android
 description: A backdropFilter forces an offscreen capture-and-filter of the pixels beneath per panel; desktop holds 60 fps with four panels over live content, but tiler GPUs pay differently for mid-frame target reads - measure before treating the prop as casual on TV/phone.
 created: 2026-09-02
+completed: 2026-09-27
 ---
 
 # Measure backdropFilter cost on Android
@@ -22,3 +23,12 @@ a TV), read /stats frameMs + missedPresents + gpuFrameExecMs with the
 frosted panel costs a large fraction of the frame budget there, the prop's
 docs should say so explicitly (they already call it "a deliberate panel,
 not a casual style").
+
+## Outcome
+
+Measured 2026-09-27 on the Pixel 7, the SM-T500 and the Philips TV with
+probes/glass-cost-probe.tsx (blur 28 panels over a moving bar); the
+figures are in [backdrop-filter-cost](../notes/backdrop-filter-cost.md).
+One frosted panel is affordable on every device; four are not on the
+tablet or the TV (22 fps). The prop's docs already call it a deliberate
+panel; the components package keeps glass an overlay-role option.

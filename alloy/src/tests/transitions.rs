@@ -1170,3 +1170,73 @@ fn write_before_the_first_stamp_starts_at_the_first_advanced_frame() {
   tree.advance_transitions();
   assert!((rect_x(&tree, 2) - 40.0).abs() < 0.01, "halfway 50 ms in, got {}", rect_x(&tree, 2));
 }
+
+// The shadow lane (okf/done/shadow-transition.md): one value, offset, blur,
+// spread and color together, with an unset shadow reading as NONE.
+fn rect_shadow(tree: &RenderTree, id: u64) -> Option<ShadowState> {
+  match &tree.node(id).kind {
+    ElementKind::Rectangle(r) => r.shadow,
+    _ => panic!("expected a rect"),
+  }
+}
+
+fn shadow(s: ShadowState) -> transitions::AnimValue {
+  transitions::AnimValue::Shadow(s)
+}
+
+const SHADOW: ShadowState = ShadowState { dx: 8.0, dy: 8.0, blur: 16.0, spread: 2.0, color: crate::impellers::Color::new_srgba(0.0, 0.0, 0.0, 0.5) };
+
+#[test]
+fn shadow_animates_as_one_value_from_none() {
+  let mut tree = tree_with_animated_rect(LINEAR_100);
+  tree.set_transition_now(1000.0);
+  assert!(tree.transition_write(2, AnimProp::Shadow, Some(shadow(SHADOW))), "shadow write consumed");
+  assert!(tree.advance_transitions(), "track runs");
+
+  tree.set_transition_now(1050.0);
+  assert!(tree.advance_transitions());
+  let mid = rect_shadow(&tree, 2).expect("a shadow while animating");
+  assert!((mid.dx - 4.0).abs() < 0.01 && (mid.dy - 4.0).abs() < 0.01, "offset halfway: {mid:?}");
+  assert!((mid.blur - 8.0).abs() < 0.01 && (mid.spread - 1.0).abs() < 0.01, "blur and spread halfway: {mid:?}");
+  assert!((mid.color.alpha - 0.25).abs() < 0.01, "alpha halfway: {mid:?}");
+
+  tree.set_transition_now(1100.0);
+  assert!(!tree.advance_transitions(), "settled");
+  let end = rect_shadow(&tree, 2).expect("the settled shadow");
+  assert!((end.dx - 8.0).abs() < 0.01 && (end.blur - 16.0).abs() < 0.01 && (end.spread - 2.0).abs() < 0.01, "{end:?}");
+  assert!((end.color.alpha - 0.5).abs() < 0.01, "{end:?}");
+}
+
+#[test]
+fn shadow_write_of_none_fades_out_and_clears() {
+  let mut tree = tree_with_animated_rect(LINEAR_100);
+  tree.edit(2, |el| match &mut el.kind {
+    ElementKind::Rectangle(r) => r.set_shadow(Some(SHADOW)),
+    _ => unreachable!(),
+  });
+  tree.set_transition_now(1000.0);
+  assert!(tree.transition_write(2, AnimProp::Shadow, Some(shadow(ShadowState::NONE))), "none is a target");
+  assert!(tree.advance_transitions());
+
+  tree.set_transition_now(1050.0);
+  assert!(tree.advance_transitions());
+  let mid = rect_shadow(&tree, 2).expect("still a shadow halfway out");
+  assert!((mid.dx - 4.0).abs() < 0.01 && (mid.color.alpha - 0.25).abs() < 0.01, "{mid:?}");
+
+  tree.set_transition_now(1100.0);
+  assert!(!tree.advance_transitions(), "settled");
+  assert!(rect_shadow(&tree, 2).is_none(), "a settle on none clears the shadow");
+}
+
+#[test]
+fn shadow_on_a_view_is_not_animatable() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, View::default().with_layout());
+  tree.edit(1, |el| {
+    el.transitions = Some(Box::new(TransitionConfig { all: Some(LINEAR_100.into()), ..Default::default() }));
+    Damage::None
+  });
+  paint(&tree, 1);
+  tree.set_transition_now(1000.0);
+  assert!(!tree.transition_write(1, AnimProp::Shadow, Some(shadow(SHADOW))), "a view casts no shadow");
+}

@@ -5,18 +5,18 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle, lightOnDark } from "./typography"
-import type { Option, StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
-import { partTransition, partTransitionEnd, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { Surface, facePaint } from "./surface"
+import type { ElevationLevel, Option, StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
+import { partTransition, partTransitionEnd, splitTransition, transitionEndFor } from "./types"
 import { colorFade, PressFeedback, travelMotion } from "./motion"
-import { glowShadow, partGlow } from "./glow"
 
-export interface SegmentedControlProps
+export interface SegmentedControlProps<T = unknown>
   extends TransitionProps<TransitionViewProp | TransitionStyleProp | "indicator"> {
-  options: Option[]
+  options: Option<T>[]
   // Controlled selected value. If omitted, the control is uncontrolled.
-  value?: unknown
-  defaultValue?: unknown
-  onChange?: (value: unknown) => void
+  value?: T
+  defaultValue?: T
+  onChange?: (value: T) => void
   disabled?: boolean
   layout?: LayoutProps
   style?: StyleProps
@@ -29,17 +29,21 @@ const DIVIDER = 0
 
 // A single-choice row of equal-width segments, joined flush (the Material
 // style): only the control's outermost corners are rounded, interior segments
-// are square, and hairline dividers separate them. The active segment is one
-// indicator rect drawn under the labels that springs between segments - the
-// `indicator` transition entry retimes it. Controlled via value/onChange, or
-// uncontrolled via defaultValue. The indicator glows with theme.glow.accent.
-// Hover tints inactive segments (non-touch interaction policies only).
-// Override the inactive fill via style, box the control with
-// borderColor/borderWidth, the spacing/sizing via layout.
-export function SegmentedControl(props: SegmentedControlProps) {
-  let [internal, setInternal] = createSignal(props.defaultValue)
+// are square, and hairline dividers separate them. The track is a sunken
+// control face; the active segment is an accent face drawn under the labels
+// as detached rects (its fill and, standing raised, its shadows) that spring
+// between segments - the `indicator` transition entry retimes it; a press on
+// its segment sinks it. Controlled via value/onChange, or uncontrolled via
+// defaultValue. Hover tints inactive segments (non-touch interaction
+// policies only). Override the inactive fill via style, box the control
+// with borderColor/borderWidth, the indicator's level with style.elevation,
+// the spacing/sizing via layout.
+export function SegmentedControl<T>(props: SegmentedControlProps<T>) {
+  // The value overload: as far as TypeScript knows T could be a function,
+  // which createSignal would read as a compute; the cast picks the value form.
+  let [internal, setInternal] = createSignal<T | undefined>(props.defaultValue as Exclude<T | undefined, Function>)
   let value = () => (props.value !== undefined ? props.value : internal())
-  let select = (v: unknown) => {
+  let select = (v: T) => {
     if (props.value === undefined) setInternal(() => v)
     props.onChange?.(v)
   }
@@ -64,6 +68,7 @@ export function SegmentedControl(props: SegmentedControlProps) {
   let idleFill = () => styled().backgroundColor ?? theme.color.surfaceAlt
   let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
   let activeFill = () => (props.disabled ? theme.color.surface : theme.color.primary)
+  let elevation = (): ElevationLevel => styled().elevation ?? "raised"
   let label = (active: boolean) =>
     props.disabled ? theme.color.textMuted : active ? theme.color.onPrimary : theme.color.text
 
@@ -74,8 +79,11 @@ export function SegmentedControl(props: SegmentedControlProps) {
   // callback runs in the element's owned scope, where reading the index
   // signal warns (STRICT_READ_UNTRACKED) and would go stale on a reorder.
   let root: { id: number } | undefined
-  let segs = new Map<unknown, { id: number }>()
+  let segs = new Map<T, { id: number }>()
   let [boxes, setBoxes] = createSignal<{ x: number; w: number }[]>([])
+  // Which segment is pressed, so the indicator sinks under the finger on
+  // its own segment only.
+  let [pressedValue, setPressedValue] = createSignal<T | undefined>(undefined)
   // The indicator's travel spring is armed only after the first placement:
   // the declaration exists from mount, so without this the first measured
   // write would slide the indicator in from x 0. A timer, not the same
@@ -98,6 +106,15 @@ export function SegmentedControl(props: SegmentedControlProps) {
   })
   let activeIndex = () => props.options.findIndex((o) => o.value === value())
   let indicator = () => boxes()[activeIndex()]
+  let indicatorPaint = () =>
+    facePaint({
+      role: "accent",
+      fill: activeFill(),
+      elevation: elevation(),
+      material: styled().material,
+      glow: indicator() && !props.disabled ? styled().glow : null,
+      pressed: pressedValue() !== undefined && pressedValue() === value(),
+    })
 
   let split = () => splitTransition(props.transition, ["indicator"])
   let indicatorTransition = () => {
@@ -122,20 +139,76 @@ export function SegmentedControl(props: SegmentedControlProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
     >
-      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={idleFill()} radius={radius()} />
+      <Surface
+        role="control"
+        fill={idleFill()}
+        radius={radius()}
+        material={styled().material}
+        glow={null}
+        sunken
+        outline={hasBorder() ? { color: styled().borderColor ?? theme.color.border, width: styled().borderWidth ?? theme.borderWidth.sm } : null}
+        fillTransition={split().background}
+        onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+        outlineTransition={split().border}
+        onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
+      />
+      {/* The indicator's shadows ride two hidden rects in its own color under
+          its fill (a rect carries one shadow; opaque casters, see Surface),
+          all three on the same x/w so they travel as one. */}
+      <Show when={indicatorPaint().contactShadow}>
+        {(shadow) => (
+          <d-rect
+            transition={indicatorTransition()}
+            color={indicator() ? activeFill() : withAlpha(activeFill(), 0)}
+            x={indicator()?.x ?? 0}
+            w={indicator()?.w ?? 0}
+            radius={corners(activeIndex())}
+            shadow={shadow()}
+          />
+        )}
+      </Show>
+      <Show when={indicatorPaint().keyShadow}>
+        {(shadow) => (
+          <d-rect
+            transition={indicatorTransition()}
+            color={indicator() ? activeFill() : withAlpha(activeFill(), 0)}
+            x={indicator()?.x ?? 0}
+            w={indicator()?.w ?? 0}
+            radius={corners(activeIndex())}
+            shadow={shadow()}
+          />
+        )}
+      </Show>
       <d-rect
         transition={indicatorTransition()}
         onTransitionEnd={partTransitionEnd("indicator", "x", props.onTransitionEnd)}
-        color={indicator() ? activeFill() : withAlpha(activeFill(), 0)}
+        color={indicator() ? indicatorPaint().fill : withAlpha(activeFill(), 0)}
         x={indicator()?.x ?? 0}
         w={indicator()?.w ?? 0}
         radius={corners(activeIndex())}
-        shadow={glowShadow(indicator() && !props.disabled ? partGlow(styled().glow, theme.glow.accent) : null, activeFill())}
+        shadow={indicatorPaint().glow}
       />
+      <Show when={indicatorPaint().bevel}>
+        {(bevel) => (
+          <d-rect
+            transition={indicatorTransition()}
+            drawStyle="stroke"
+            strokeWidth={1}
+            color={indicator() ? bevel() : withAlpha(activeFill(), 0)}
+            x={indicator()?.x ?? 0}
+            w={indicator()?.w ?? 0}
+            radius={corners(activeIndex())}
+          />
+        )}
+      </Show>
       <For each={props.options}>
         {(opt, i) => {
           let active = () => value() === opt.value
-          let press = createPress({ onPress: () => select(opt.value) })
+          let press = createPress({
+            onPress: () => select(opt.value),
+            onPointerDown: () => setPressedValue(() => opt.value),
+            onPointerUp: () => setPressedValue(undefined),
+          })
           onCleanup(() => segs.delete(opt.value))
           return (
             <view
@@ -175,16 +248,6 @@ export function SegmentedControl(props: SegmentedControlProps) {
           )
         }}
       </For>
-      <Show when={hasBorder()}>
-        <d-rect
-          drawStyle="stroke"
-          transition={withTransitionDefaults(split().border, colorFade())}
-          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-          color={styled().borderColor ?? theme.color.border}
-          strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
-          radius={radius()}
-        />
-      </Show>
     </view>
   )
 }

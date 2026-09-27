@@ -5,10 +5,10 @@ import { pill, theme } from "./theme"
 import { policy } from "./policy"
 import { densityScale } from "./density"
 import { typeStyle } from "./typography"
+import { Surface } from "./surface"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 import { colorFade, markMotion, pressScale, scaleFeedback } from "./motion"
-import { glowShadow, partGlow } from "./glow"
 
 // Shared selection state for a group. Created and consumed within this module, so
 // RadioGroup/Radio are a self-contained pair, not a cross-component dependency.
@@ -69,10 +69,12 @@ export interface RadioProps extends TransitionProps {
 const RING = 20
 
 // A single option in a RadioGroup: a ring with an inner dot when selected,
-// both on pill() (round by default, square under radius.full 0); the dot
-// glows with theme.glow.accent. The ring color fades, the dot pops in/out
-// (markMotion), and a press
-// shrinks the ring - not the whole row, so a long label never wobbles.
+// both on pill() (round by default, square under radius.full 0); the dot is
+// an accent face (Surface, with the accent material's glow; style.elevation
+// raises it). The ring color fades, the dot pops in/out (markMotion), and a
+// press shrinks the ring - not the whole row, so a long label never
+// wobbles. A style backgroundColor or border boxes the row as a surface
+// face.
 export function Radio(props: RadioProps) {
   // useContext throws ContextNotFoundError if a Radio is used outside a
   // RadioGroup (default-less context), so ctx is always present here.
@@ -95,6 +97,7 @@ export function Radio(props: RadioProps) {
   let focusRing = () => press.focused() && policy.focusRing
   let ringColor = () => (focusRing() ? theme.color.ring : selected() ? theme.color.primary : theme.color.border)
   let ringWidth = () => (focusRing() ? theme.borderWidth.focus : 2)
+  let boxed = () => styled().backgroundColor != null || styled().borderRadius != null || (styled().borderWidth ?? 0) > 0
 
   let split = () => splitTransition(props.transition)
 
@@ -118,12 +121,19 @@ export function Radio(props: RadioProps) {
       focusable={!disabled()}
       pointerEvents={disabled() ? "none" : undefined}
     >
-      <Show when={styled().backgroundColor != null || styled().borderRadius != null}>
-        <d-rect
-          transition={withTransitionDefaults(split().background, colorFade())}
-          onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
-          color={styled().backgroundColor ?? "transparent"}
+      <Show when={boxed()}>
+        <Surface
+          role="surface"
+          elevation={styled().elevation ?? "flat"}
+          fill={styled().backgroundColor ?? "transparent"}
           radius={styled().borderRadius}
+          material={styled().material}
+          glow={null}
+          outline={(styled().borderWidth ?? 0) > 0 ? { color: styled().borderColor ?? "transparent", width: styled().borderWidth! } : null}
+          fillTransition={split().background}
+          onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+          outlineTransition={split().border}
+          onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
         />
       </Show>
       <view
@@ -145,16 +155,16 @@ export function Radio(props: RadioProps) {
             scale={1}
             transition={markMotion()}
           >
-            <d-rect
-              x={inset()}
-              y={inset()}
-              w={ring() - inset() * 2}
-              h={ring() - inset() * 2}
-              radius={pill(ring() - inset() * 2)}
-              transition={colorFade()}
-              color={theme.color.primary}
-              shadow={glowShadow(disabled() ? null : partGlow(styled().glow, theme.glow.accent), theme.color.primary)}
-            />
+            <view position="absolute" left={inset()} top={inset()} width={ring() - inset() * 2} height={ring() - inset() * 2}>
+              <Surface
+                role="accent"
+                elevation={styled().elevation ?? "flat"}
+                fill={theme.color.primary}
+                radius={pill(ring() - inset() * 2)}
+                material={styled().material}
+                glow={disabled() ? null : styled().glow}
+              />
+            </view>
           </view>
         </Show>
       </view>
@@ -162,16 +172,6 @@ export function Radio(props: RadioProps) {
         <text transition={colorFade()} color={theme.color.text} {...typeStyle("body")}>
           {resolved()}
         </text>
-      </Show>
-      <Show when={(styled().borderWidth ?? 0) > 0}>
-        <d-rect
-          drawStyle="stroke"
-          transition={withTransitionDefaults(split().border, colorFade())}
-          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-          color={styled().borderColor ?? "transparent"}
-          strokeWidth={styled().borderWidth}
-          radius={styled().borderRadius}
-        />
       </Show>
     </view>
   )

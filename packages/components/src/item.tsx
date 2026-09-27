@@ -5,9 +5,10 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
-import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
-import { colorFade, PressFeedback } from "./motion"
+import { Surface } from "./surface"
+import type { ElevationLevel, StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
+import { colorFade } from "./motion"
 
 export interface ItemProps extends TransitionProps {
   // Leading content: an icon, avatar, checkbox, ...
@@ -38,10 +39,14 @@ export interface ItemProps extends TransitionProps {
 // trailing content pushed to the end. The dense-data workhorse - rows compose
 // with <For> inside a plain column (or a ScrollView); this package ships no
 // List wrapper because a column view IS the list. Paddings and the gap are
-// density-scaled, so a <Density> region compacts rows wholesale. With onPress
-// the row presses like a menu entry: overlay tints for hover/pressed (no
-// scale - rows sit flush in a list), focus ring under the focusRing policy.
-// borderColor/borderWidth box the row.
+// density-scaled, so a <Density> region compacts rows wholesale. Its face is
+// a surface drawn by Surface, flat by default whatever the theme: a screen
+// holds dozens of rows, and a blurred shadow per row is what a scrolling list
+// cannot afford on a tablet or a TV (okf/notes/lit-list-cost.md); a raised
+// row is the app's choice through style.elevation. With onPress the row
+// presses like a menu entry: overlay tints for hover/pressed (no scale -
+// rows sit flush in a list; a row with depth sinks), focus ring under the
+// focusRing policy. borderColor/borderWidth box the row.
 export function Item(props: ItemProps) {
   // Theme-level per-component overrides merged under the instance style.
   let styled = () => ({ ...theme.components.item, ...props.style })
@@ -50,7 +55,10 @@ export function Item(props: ItemProps) {
 
   let bg = () => styled().backgroundColor ?? (props.selected ? theme.color.surfaceAlt : "transparent")
   let radius = () => styled().borderRadius ?? theme.radius.sm
+  let elevation = (): ElevationLevel => styled().elevation ?? "flat"
   let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
+  let pressed = () => interactive() && press.pressed()
+  let hovered = () => interactive() && press.hovered() && policy.interaction !== "touch"
 
   // Resolved once via children(): the typeof probe and the mount site must
   // share one build (see Button).
@@ -94,11 +102,26 @@ export function Item(props: ItemProps) {
       focusable={(props.focusable ?? true) && interactive()}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
-      <PressFeedback
-        pressed={interactive() && press.pressed()}
-        hovered={interactive() && press.hovered() && policy.interaction !== "touch"}
+      <Surface
+        role="surface"
+        elevation={elevation()}
+        fill={bg()}
         radius={radius()}
+        material={styled().material}
+        glow={styled().glow}
+        pressed={pressed()}
+        hovered={hovered()}
+        outline={
+          press.focused() && policy.focusRing
+            ? { color: theme.color.ring, width: theme.borderWidth.focus }
+            : hasBorder()
+              ? { color: styled().borderColor ?? theme.color.border, width: styled().borderWidth ?? theme.borderWidth.sm }
+              : null
+        }
+        fillTransition={split().background}
+        onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+        outlineTransition={split().border}
+        onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
       />
       {props.startContent}
       <view flexDirection="column" flexGrow={1} flexShrink={1} gap={Math.round(space("sm") / 2)}>
@@ -116,19 +139,6 @@ export function Item(props: ItemProps) {
         </Show>
       </view>
       {props.endContent}
-      <Show when={hasBorder()}>
-        <d-rect
-          drawStyle="stroke"
-          transition={withTransitionDefaults(split().border, colorFade())}
-          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-          color={styled().borderColor ?? theme.color.border}
-          strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
-          radius={radius()}
-        />
-      </Show>
-      <Show when={press.focused() && policy.focusRing}>
-        <d-rect drawStyle="stroke" color={theme.color.ring} strokeWidth={theme.borderWidth.focus} radius={radius()} />
-      </Show>
     </view>
   )
 }

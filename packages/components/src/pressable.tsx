@@ -1,5 +1,5 @@
 import { children, untrack } from "@solidrt/core"
-import type { LayoutProps, PointerProps } from "@solidrt/core"
+import type { Element, LayoutProps, PointerProps } from "@solidrt/core"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { createPress, type PressState } from "./press"
@@ -12,7 +12,8 @@ export interface PressableProps extends PointerProps, TransitionProps {
   // restyle on press/hover without wiring their own signals. The state is live
   // (getters, not a snapshot): read it inside a prop or child expression, never
   // eagerly into a local, or the value is captured once where it was read.
-  children?: any | ((state: PressState) => any)
+  // Typed as a union, not `any`, so `{(s) => ...}` gets `s` contextually.
+  children?: Element | ((state: PressState) => Element)
   ref?: (node: { id: number }) => void
   layout?: LayoutProps
   style?: StyleProps | ((state: PressState) => StyleProps)
@@ -37,8 +38,9 @@ export function Pressable(props: PressableProps) {
   // with typeof would orphan one full copy per evaluation. children() memoizes
   // the resolve so probe and mount share one build; a render-prop child
   // ((state) => ...) passes through it intact because flatten only unwraps
-  // zero-arg functions.
-  let resolved = children(() => props.children)
+  // zero-arg functions; the cast is for children()'s signature, which does
+  // not know the render-prop variant.
+  let resolved = children(() => props.children as Element)
   // The render prop runs once: the state it receives is a live object of getters
   // (see press.ts), so a press or hover updates only the props that read it
   // rather than rebuilding this subtree - which is what keeps a nested

@@ -10,8 +10,9 @@ export { ScrollView, type ScrollViewProps } from "./scroll-view"
 export { Dismissible, type DismissibleProps, type DismissDirection } from "./dismissible"
 export { Carousel, type CarouselProps } from "./carousel"
 export { Pressable, type PressableProps, type PressState } from "./pressable"
+export { createPress, type PressOptions } from "./press"
 export { Button, type ButtonProps, type ButtonVariant } from "./button"
-export { createFocusNav, uiActions, uiBindings, type FocusNavOptions, type UiActions, type UiDevices } from "./focus-nav"
+export { createFocusNav, registerNavAction, uiActions, uiBindings, type FocusNavOptions, type UiActions, type UiDevices } from "./focus-nav"
 export { Switch, type SwitchProps } from "./switch"
 export { Checkbox, type CheckboxProps } from "./checkbox"
 export { RadioGroup, Radio, type RadioGroupProps, type RadioProps } from "./radio"
@@ -33,16 +34,24 @@ export { NavShell, type NavShellProps, type NavItem } from "./nav-shell"
 export { SplitView, type SplitViewProps } from "./split-view"
 export { QrCode, type QrCodeProps } from "./qrcode"
 export { Icon, type IconProps } from "./icon"
+export { Surface, facePaint, roleFill, roleMaterial, surfaceSinks, type SurfaceProps, type FacePaint } from "./surface"
+export { lightFrom, lightSource, lightAxis, type LightAxis } from "./light"
+export { PressFeedback } from "./motion"
 export {
   theme,
   setTheme,
   defineTheme,
   darkTheme,
   lightTheme,
+  litDarkTheme,
+  litLightTheme,
   pill,
   type Theme,
   type ThemeDefinition,
   type ThemeColor,
+  type ThemeValue,
+  type Light,
+  type ShadowTone,
   type ThemedComponent,
   type TextStyle,
   type TextVariant,
@@ -66,6 +75,10 @@ export { space } from "./spacing"
 export type {
   StyleProps,
   Glow,
+  Glass,
+  Material,
+  MaterialRole,
+  ElevationLevel,
   FontProps,
   TextLayoutProps,
   EditorLayoutProps,

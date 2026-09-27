@@ -1,12 +1,12 @@
-import { arena, createMemo, createSignal, focusedNode, getBoundingBox, onLayout, onSettled, Show } from "@solidrt/core"
+import { arena, createMemo, createSignal, focusedNode, getBoundingBox, onLayout, onSettled } from "@solidrt/core"
 import type { KeyEvent, LayoutProps, PointerEvent } from "@solidrt/core"
 import { pill, theme } from "./theme"
 import { policy } from "./policy"
 import { densityScale } from "./density"
+import { Surface, facePaint } from "./surface"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 import { colorFade } from "./motion"
-import { glowShadow, partGlow } from "./glow"
 
 export interface SliderProps extends TransitionProps {
   // Controlled value. If omitted, the slider is uncontrolled.
@@ -34,9 +34,12 @@ let clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : 
 // Focused (spatial nav), arrow keys step the value (by `step`, else 1% of the
 // range) and the thumb draws the focus ring under the focusRing policy.
 // Controlled via value/onChange, or uncontrolled via defaultValue. The
-// groove is surfaceAlt, the fill primary (glowing with theme.glow.accent),
-// the thumb theme.color.thumb (else primary); groove and thumb take pill(),
-// round by default and square under radius.full 0.
+// groove is a sunken control face (surfaceAlt), the fill an accent face
+// (primary, with the accent material's glow) drawn as a detached rect so a
+// drag never reflows, the thumb a raised control face (theme.color.thumb,
+// else primary; style.elevation sets its level) that sinks while dragged;
+// groove and thumb take pill(), round by default and square under
+// radius.full 0.
 export function Slider(props: SliderProps) {
   let min = () => props.min ?? 0
   let max = () => props.max ?? 100
@@ -45,6 +48,7 @@ export function Slider(props: SliderProps) {
 
   let track: { id: number } | undefined
   let active: number | null = null
+  let [dragging, setDragging] = createSignal(false)
 
   let height = () => Math.round(HEIGHT * densityScale())
   let thumb = () => Math.round(THUMB * densityScale())
@@ -57,6 +61,7 @@ export function Slider(props: SliderProps) {
   let fillColor = () => styled().color ?? theme.color.primary
   let grooveRadius = () => styled().borderRadius ?? pill(GROOVE)
   let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
+  let fillPaint = () => facePaint({ role: "accent", fill: fillColor(), material: styled().material, glow: props.disabled ? null : styled().glow })
   let split = () => splitTransition(props.transition)
 
   let pct = () => clamp(((value() - min()) / (max() - min())) * 100, 0, 100)
@@ -97,6 +102,7 @@ export function Slider(props: SliderProps) {
       arena.release(active, owner)
       active = null
     }
+    setDragging(false)
   }
   let owner = { cancel: endDrag }
 
@@ -109,6 +115,7 @@ export function Slider(props: SliderProps) {
     // outright so an ancestor scroller's pan cannot take the pointer over.
     arena.steal(e.pointerId, owner)
     active = e.pointerId
+    setDragging(true)
     setFromLocalX(e.localX)
   }
   let handleMove = (e: PointerEvent) => {
@@ -161,35 +168,39 @@ export function Slider(props: SliderProps) {
           get a transition - they track the drag 1:1, and a spring would
           rubber-band it. */}
       <view ref={(n: { id: number }) => (groove = n)} position="relative" flex={1} height={GROOVE}>
-        <d-rect
-          transition={withTransitionDefaults(split().background, colorFade())}
-          onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
-          color={grooveColor()}
+        <Surface
+          role="control"
+          fill={grooveColor()}
           radius={grooveRadius()}
+          material={styled().material}
+          glow={null}
+          sunken
+          outline={hasBorder() ? { color: styled().borderColor ?? theme.color.border, width: styled().borderWidth ?? theme.borderWidth.sm } : null}
+          fillTransition={split().background}
+          onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+          outlineTransition={split().border}
+          onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
         />
         <d-rect
           transition={colorFade()}
-          color={fillColor()}
+          color={fillPaint().fill}
           w={fillPx()}
           h={GROOVE}
           radius={grooveRadius()}
-          shadow={glowShadow(props.disabled ? null : partGlow(styled().glow, theme.glow.accent), fillColor())}
+          shadow={fillPaint().glow}
         />
-        <Show when={hasBorder()}>
-          <d-rect
-            drawStyle="stroke"
-            transition={withTransitionDefaults(split().border, colorFade())}
-            onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-            color={styled().borderColor ?? theme.color.border}
-            strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
-            radius={grooveRadius()}
+        <view position="absolute" left={0} top={(GROOVE - thumb()) / 2} width={thumb()} height={thumb()} x={fillPx() - thumb() / 2}>
+          <Surface
+            role="control"
+            elevation={styled().elevation ?? "raised"}
+            fill={theme.color.thumb ?? theme.color.primary}
+            radius={pill(thumb())}
+            material={styled().material}
+            glow={null}
+            pressed={dragging()}
+            tint={false}
+            outline={focused() && policy.focusRing ? { color: theme.color.ring, width: theme.borderWidth.focus } : null}
           />
-        </Show>
-        <view position="absolute" left={0} top={(GROOVE - thumb()) / 2} x={fillPx() - thumb() / 2}>
-          <d-rect transition={colorFade()} w={thumb()} h={thumb()} radius={pill(thumb())} color={theme.color.thumb ?? theme.color.primary} />
-          <Show when={focused() && policy.focusRing}>
-            <d-rect drawStyle="stroke" w={thumb()} h={thumb()} radius={pill(thumb())} color={theme.color.ring} strokeWidth={theme.borderWidth.focus} />
-          </Show>
         </view>
       </view>
     </view>

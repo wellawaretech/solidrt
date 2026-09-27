@@ -26,6 +26,7 @@ import { registerNavAction } from "./focus-nav"
 import type { EditorLayoutProps, StyleProps, TransitionProps } from "./types"
 import { splitTextLayout, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade } from "./motion"
+import { Surface } from "./surface"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -497,14 +498,18 @@ export function EditorField(props: EditorFieldProps) {
       onKeyDown={handleKeyDown}
       onTextInput={handleTextInput}
     >
-      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={surfaceColor()} radius={borderRadius()} />
-      <d-rect
-        drawStyle="stroke"
-        transition={withTransitionDefaults(split().border, colorFade())}
-        onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-        color={borderColor()}
-        strokeWidth={borderWidth()}
+      <Surface
+        role="control"
+        fill={surfaceColor()}
         radius={borderRadius()}
+        material={props.style?.material}
+        glow={props.style?.glow}
+        sunken
+        outline={{ color: borderColor(), width: borderWidth() }}
+        fillTransition={split().background}
+        onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+        outlineTransition={split().border}
+        onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
       />
       <view
         ref={(n: { id: number }) => (viewport = n)}

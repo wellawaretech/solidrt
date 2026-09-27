@@ -5,11 +5,11 @@ import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle, lightOnDark } from "./typography"
 import { Spinner } from "./spinner"
+import { Surface, surfaceSinks } from "./surface"
 import type { LayoutProps } from "@solidrt/core"
-import type { StyleProps, TransitionProps } from "./types"
+import type { ElevationLevel, MaterialRole, StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
-import { colorFade, scaleFeedback, pressScale, PressFeedback } from "./motion"
-import { glowShadow, partGlow } from "./glow"
+import { colorFade, scaleFeedback, pressScale } from "./motion"
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger"
 export type ButtonSize = "sm" | "md" | "lg"
@@ -43,15 +43,21 @@ export interface ButtonProps extends TransitionProps {
 // labels wider than the preset never clip.
 const SIZE_WIDTH: Record<ButtonSize, number> = { sm: 88, md: 120, lg: 160 }
 
-// A themed press target: a padded, centered, accent-colored box with a label.
-// Press feedback is a slight sprung scale plus the overlayPressed tint, hover
-// feedback the overlayHover tint (non-touch interaction policies only), all
-// reactive reads of the press state so no nodes are recreated. Override the
-// box via style and the padding/sizing via layout; because hover is an
-// overlay, it composes over a caller-set backgroundColor too. When disabled,
-// it takes no pointer events at all. Focus (spatial nav) draws a ring under
-// the focusRing policy in the theme's ring color; Enter/Space/remote-select
-// activates (handled by createPress).
+// A themed press target: a padded, centered box with a label, its face drawn
+// by Surface. The primary and danger variants are accent faces, secondary
+// and ghost control faces; a button stands raised (theme.elevation.raised,
+// zero under the stock presets) unless ghost or disabled, or style.elevation
+// says otherwise. Press feedback is the overlayPressed tint plus, on a face
+// with depth (a sheen, a bevel or a height), the face sinking - its key
+// shadow fading, its lit edge moving to the far side - and on a flat face a
+// slight sprung scale; hover feedback is the overlayHover tint (non-touch
+// interaction policies only), all reactive reads of the press state so no
+// nodes are recreated. Override the box via style and the padding/sizing
+// via layout; because hover is an overlay, it composes over a caller-set
+// backgroundColor too. When disabled, it takes no pointer events at all and
+// never glows. Focus (spatial nav) draws a ring under the focusRing policy
+// in the theme's ring color; Enter/Space/remote-select activates (handled
+// by createPress).
 export function Button(props: ButtonProps) {
   // Fill and label color per variant, read reactively from the theme. No
   // variant draws a border.
@@ -68,16 +74,19 @@ export function Button(props: ButtonProps) {
         return { fill: c.primary, label: c.onPrimary }
     }
   }
+  let variant = () => props.variant ?? "primary"
+  let role = (): MaterialRole => (variant() === "primary" || variant() === "danger" ? "accent" : "control")
   // Theme-level per-component overrides merged under the instance style.
   let styled = (): StyleProps => ({ ...theme.components.button, ...props.style })
   let idleFill = () =>
     props.disabled
-      ? props.variant === "ghost"
+      ? variant() === "ghost"
         ? "transparent"
         : theme.color.surface
       : colors().fill
   let bg = () => styled().backgroundColor ?? idleFill()
   let radius = () => styled().borderRadius ?? theme.radius.md
+  let elevation = (): ElevationLevel => styled().elevation ?? (props.disabled || variant() === "ghost" ? "flat" : "raised")
   let label = () => (props.disabled ? theme.color.textMuted : colors().label)
   // Resolved once via children(): reading the raw children getter builds a new
   // subtree per read, so the typeof probe and the two mount sites below must
@@ -86,20 +95,16 @@ export function Button(props: ButtonProps) {
   let isText = () => typeof resolved() === "string" || typeof resolved() === "number"
   // The label's polarity against the idle fill: onPrimary on a saturated fill
   // is light-on-dark even in a light theme, so it needs the low-DPI weight
-  // compensation there too.
+  // compensation there too. The base fill, not the lit gradient: the
+  // compensation reads a solid color.
   let labelOnDark = () => lightOnDark(label(), bg())
 
   // props (not a literal) so a swapped-in onPress is read at event time.
   let press = createPress(props)
-  // The accent fills glow with the theme's accent role; secondary and ghost
-  // are the quieter variants, and a disabled button sits flat. The glow
-  // widens while hovered or pressed (hover only where a pointer can hover,
-  // the tint's rule).
-  let role = () => {
-    let v = props.variant ?? "primary"
-    return !props.disabled && (v === "primary" || v === "danger") ? theme.glow.accent : undefined
-  }
-  let active = () => !props.disabled && (press.pressed() || (press.hovered() && policy.interaction !== "touch"))
+  let pressed = () => !props.disabled && press.pressed()
+  let hovered = () => !props.disabled && press.hovered() && policy.interaction !== "touch"
+  // A face with depth sinks on press; a flat one shrinks instead.
+  let sinks = () => surfaceSinks(role(), elevation(), styled().material)
   let style = () => ({
     ...styled(),
     ...(press.focused() && policy.focusRing ? { borderWidth: theme.borderWidth.focus, borderColor: theme.color.ring } : {}),
@@ -108,7 +113,7 @@ export function Button(props: ButtonProps) {
     // Always a number: a scale that flips from a number back to undefined
     // hits the transform decoder, which rejects null. Multiply so a
     // caller-set scale is preserved under the press feedback.
-    scale: (styled().scale ?? 1) * pressScale(press.pressed()),
+    scale: (styled().scale ?? 1) * (sinks() ? 1 : pressScale(press.pressed())),
   })
 
   let split = () => splitTransition(props.transition)
@@ -145,11 +150,21 @@ export function Button(props: ButtonProps) {
       focusable={(props.focusable ?? true) && props.disabled !== true}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} shadow={glowShadow(partGlow(styled().glow, role()), bg(), active())} />
-      <PressFeedback
-        pressed={press.pressed() && !props.disabled}
-        hovered={press.hovered() && !props.disabled && policy.interaction !== "touch"}
-        radius={style().borderRadius}
+      <Surface
+        role={role()}
+        elevation={elevation()}
+        fill={bg()}
+        radius={radius()}
+        material={styled().material}
+        glow={props.disabled ? null : styled().glow}
+        chrome={variant() !== "ghost" || pressed() || hovered()}
+        pressed={pressed()}
+        hovered={hovered()}
+        outline={(style().borderWidth ?? 0) > 0 ? { color: style().borderColor ?? "transparent", width: style().borderWidth! } : null}
+        fillTransition={split().background}
+        onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+        outlineTransition={split().border}
+        onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
       />
       <Show when={isText()} fallback={resolved()}>
         <text transition={colorFade()} color={press.pending() ? withAlpha(label(), 0) : label()} {...typeStyle("body", labelOnDark())}>
@@ -160,16 +175,6 @@ export function Button(props: ButtonProps) {
         <view position="absolute" top={0} bottom={0} left={0} right={0} alignItems="center" justifyContent="center">
           <Spinner size={16} thickness={2} style={{ color: label() }} />
         </view>
-      </Show>
-      <Show when={(style().borderWidth ?? 0) > 0}>
-        <d-rect
-          drawStyle="stroke"
-          transition={withTransitionDefaults(split().border, colorFade())}
-          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-          color={style().borderColor ?? "transparent"}
-          strokeWidth={style().borderWidth}
-          radius={style().borderRadius}
-        />
       </Show>
     </view>
   )

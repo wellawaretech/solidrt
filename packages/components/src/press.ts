@@ -56,7 +56,8 @@ export interface PressOptions {
 // Key activation shows no pressed state - the focus ring is the feedback.
 // The arena and the movement recognizers (createPan, createTransform) live in
 // core; press stays here because it couples to this package's focus-nav
-// (registerNavAction) and nothing outside components needs it yet
+// (registerNavAction). Exported: a custom control builds its own root on it
+// exactly as Button and Switch do, instead of wrapping Pressable
 // (okf/plans/component-gestures.md).
 export function createPress(options: PressOptions) {
   let [pressed, setPressed] = createSignal(false)

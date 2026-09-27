@@ -8,7 +8,7 @@ import { typeStyle } from "./typography"
 import type { TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
 import { colorFade, popupFade, popupFadeOut, PressFeedback } from "./motion"
-import { glowShadow } from "./glow"
+import { Surface } from "./surface"
 
 export interface ContextMenuItem {
   label: string
@@ -85,7 +85,7 @@ export function ContextMenu(props: ContextMenuProps) {
   // Anchored at the opening pointer position, flipping up when it would run
   // off the bottom. Same reflow-free placement as Tooltip/Select: portal at
   // the window root, measured in onLayout, moved with x/y paint transforms.
-  // Glows with theme.glow.overlay (the sheet sits on a scrim and does not).
+  // An overlay face (the sheet sits on a scrim, so it stays flat).
   let Menu = () => {
     let menu: { id: number } | undefined
     let [pos, setPos] = createSignal<{ x: number; y: number } | null>(null)
@@ -126,17 +126,21 @@ export function ContextMenu(props: ContextMenuProps) {
           paddingTop={theme.spacing.sm}
           paddingBottom={theme.spacing.sm}
         >
-          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} shadow={glowShadow(theme.glow.overlay, theme.color.surface)} />
+          <Surface
+            role="overlay"
+            elevation={theme.components.contextMenu?.elevation ?? "overlay"}
+            fill={theme.components.contextMenu?.backgroundColor ?? theme.color.surface}
+            radius={theme.components.contextMenu?.borderRadius ?? theme.radius.sm}
+            material={theme.components.contextMenu?.material}
+            glow={theme.components.contextMenu?.glow}
+            outline={{
+              color: theme.components.contextMenu?.borderColor ?? theme.color.border,
+              width: theme.components.contextMenu?.borderWidth ?? theme.borderWidth.sm,
+            }}
+          />
           <For each={props.items}>
             {(item: ContextMenuItem) => <ItemRow item={item} padY={space("sm")} />}
           </For>
-          <d-rect
-            drawStyle="stroke"
-            transition={colorFade()}
-            color={theme.color.border}
-            strokeWidth={theme.borderWidth.sm}
-            radius={theme.radius.sm}
-          />
         </view>
       </view>,
     )
@@ -159,7 +163,13 @@ export function ContextMenu(props: ContextMenuProps) {
           paddingTop={theme.spacing.md}
           paddingBottom={theme.spacing.md + env.safeArea.bottom}
         >
-          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} />
+          <Surface
+            role="overlay"
+            fill={theme.components.contextMenu?.backgroundColor ?? theme.color.surface}
+            radius={theme.components.contextMenu?.borderRadius ?? theme.radius.sm}
+            material={theme.components.contextMenu?.material}
+            glow={null}
+          />
           <For each={props.items}>
             {(item: ContextMenuItem) => <ItemRow item={item} padY={Math.round(theme.spacing.md * 1.5)} />}
           </For>

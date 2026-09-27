@@ -16,7 +16,7 @@ Per-component prose lives in `docs/`, one file per module; the props are the typ
 
 ## Theming
 
-Appearance (colors, spacing, border, font roles) comes from one shared, reactive theme backed by a Solid store: reads are tracked, so switching the theme at runtime recolors the live UI without remounting. Two presets ship, `darkTheme` and `lightTheme` (default dark); `setTheme(preset)` switches, `setTheme(partial)` merges an override one level deep per category. A resolved theme carries every key of every category (unset ones as `undefined`), so switching to one replaces the previous theme outright, per-component overrides and icon slots included; a partial keeps whatever it does not name. Custom themes are authored with `defineTheme`.
+Appearance (colors, spacing, border, font roles) comes from one shared, reactive theme backed by a Solid store: reads are tracked, so switching the theme at runtime recolors the live UI without remounting. Four presets ship, `darkTheme` and `lightTheme` (the flat look, default dark) and `litDarkTheme` and `litLightTheme` (the same palette under a light, see below); `setTheme(preset)` switches, `setTheme(partial)` merges an override one level deep per category. A resolved theme carries every key of every category (unset ones as `undefined`), so switching to one replaces the previous theme outright, per-component overrides and icon slots included; a partial keeps whatever it does not name. Custom themes are authored with `defineTheme`.
 
 ```jsx
 import { setTheme, darkTheme, lightTheme } from "@solidrt/components"
@@ -65,18 +65,23 @@ setTheme({ radius: 4 })   // sm 2, md 4, lg 6
 
 ### Motion
 
-`motion` holds the three durations (ms) every built-in component transition draws from, so one theme edit retimes the whole package: `fast` (default 100) is press/hover feedback, `base` (150) the color and opacity fades - state changes, the theme cross-fade (a `setTheme` fades every themed color rather than snapping), popup enter/exit - and `slow` (250) the travel of a control's moving parts (switch knob, segmented indicator, progress fill). `policy.motion` gates whether these play at all; a per-instance `transition` prop overrides them per property.
+`motion` holds the three durations (ms) every built-in component transition draws from, so one theme edit retimes the whole package: `fast` (default 100) is press/hover feedback, `base` (150) the color and opacity fades - state changes, the theme cross-fade (a `setTheme` fades every themed color rather than snapping), popup enter/exit - and `slow` (250) the travel of a control's moving parts (switch knob, segmented indicator, progress fill) and of a face's shadows as it sinks or lifts. `policy.motion` gates whether these play at all; a per-instance `transition` prop overrides them per property.
 
 ```jsx
 setTheme({ motion: { base: 250, slow: 400 } })   // a slower, calmer app
 ```
 
-### Glow
+### Light, materials and elevation
 
-`glow` gives the filled parts a halo, a zero-offset blurred shadow read as emitted light, by role: `accent` lands on the accent-colored fills (the primary and danger Button and Badge, Switch on, Checkbox checked, the Radio dot, the Slider and ProgressBar fills, the SegmentedControl indicator; a disabled control never glows), `overlay` on the anchored popups (the Tooltip bubble, the Select dropdown, the ContextMenu menu). Each is `{ radius, color? }`: without a color a part glows in its own fill color, so a danger button glows red and a primary one in the accent, and a fill with no color to take (a ghost button) casts nothing. A pressable face widens its glow while hovered or pressed. The glow sits on the part's opaque fill, so it fades along with a press or popup fade; a shadow itself cannot be transitioned, so a glow snaps on and off. Per component, `theme.components.<name>.glow` and an instance's `style.glow` override the role (`null` clears it).
+Every component draws its faces through `Surface`, and three theme sections decide what a face looks like. `light` is the theme's one light in screen space (`direction` [x right, y down, z into the screen], a `color`, and `ambient`, the fill on the shaded side): shadows fall along it, the sheen and the bevel run from its lit edge to the shaded one, and faces take on its color (a white light leaves every base color as it is). `material` assigns each role its layers: `surface` (Card, Item, the NavShell strips), `control` (a secondary Button, the fields, the Select trigger, the tracks and grooves, the Switch knob and the Slider thumb), `accent` (a primary or danger Button, Switch on, a checked Checkbox, the Radio dot, the Slider and ProgressBar fills, the SegmentedControl indicator, a Badge) and `overlay` (the Tooltip bubble, the Select dropdown, the ContextMenu menu, the sheets). A `Material` is `{ sheen?, bevel?, glass?, glow? }`: `sheen` (0..1) a fill gradient along the light, `bevel` (0..1) a one-pixel stroke from the light color to black, `glass` a frosted backdrop (`{ blur, tint? }`, a deliberate overlay, never a surface material: every glass face captures the pixels under it each frame), `glow` a halo (`{ radius, color? }`; without a color a part glows in its own fill, so a danger button glows red, and a fill with no color to take casts nothing; a pressable face widens it while hovered or pressed). `elevation` maps the four levels (`flat`, `raised`, `floating`, `overlay`) to heights: a face at height h casts a key shadow h px along the light and blurred 2.5 h px, plus a tight contact shadow; a press sinks the face (the key shadow fades toward the contact shadow) on the native shadow transition, and `shadow` (`{ color, strength }`) is what they are cast in.
+
+The stock presets are flat: every material `{}` and every height 0, so nothing casts or shines and the components look as they always have. `litDarkTheme` and `litLightTheme` are the same palette under the light: a sheen and a bevel per role, `raised` 2, `floating` 6, `overlay` 14, a light cap for the Switch knob and Slider thumb, and shadows 1.7 times stronger on dark, where they otherwise vanish. Card and Button stand raised by default (a ghost or disabled button flat), the Switch knob, the Slider thumb and the SegmentedControl indicator too; Item, Badge and the Checkbox sit flat whatever the theme, since a screen holds dozens of them and a blurred shadow per row is what a scrolling list cannot afford on a tablet or a TV (measured in the runtime's notes); popups float. Per component, `theme.components.<name>.material` merges layers over the role's, `.elevation` sets the level and `.glow` the halo alone, and an instance's `style` does the same over that.
 
 ```jsx
-setTheme({ glow: { accent: { radius: 14 }, overlay: { radius: 26, color: "rgba(51,255,119,0.3)" } } })
+setTheme(litDarkTheme)                                                        // the lit look
+setTheme({ light: { ...theme.light, direction: [-0.4, 1, 0.8] } })            // light from the right
+setTheme({ material: { accent: { sheen: 1, bevel: 0.9, glow: { radius: 14 } } } })   // glowing accents
+setTheme({ components: { item: { elevation: "raised" } } })                   // raised rows, deliberately
 ```
 
 ### Window finish
@@ -96,13 +101,13 @@ export let crtTheme = defineTheme({ color: { /* ... */ }, finish: { program, par
 
 ### Per-component overrides
 
-`theme.components` restyles a component everywhere without wrapping it: a `StyleProps` object per component name, merged between the component's themed defaults and each instance's `style` prop (instance style still wins). Every themed component draws the `borderColor`/`borderWidth` it is given (Item rows, the SegmentedControl, Badge, the Slider and ProgressBar grooves included), so one theme boxes the whole library; `glow` sets or clears (`null`) a component's halo.
+`theme.components` restyles a component everywhere without wrapping it: a `StyleProps` object per component name, merged between the component's themed defaults and each instance's `style` prop (instance style still wins). Every themed component draws the `borderColor`/`borderWidth` it is given (Item rows, the SegmentedControl, Badge, the Slider and ProgressBar grooves included), so one theme boxes the whole library; `material`, `elevation` and `glow` restyle its faces (see Light, materials and elevation).
 
 ```jsx
 setTheme({ components: { button: { borderRadius: 999 } } })   // pill buttons app-wide
 ```
 
-Keys: `button`, `card`, `badge`, `switch`, `checkbox`, `radio`, `slider`, `item`, `select`, `segmentedControl`, `textInput`, `richTextEditor`, `tooltip`, `divider`, `progressBar`, `spinner`.
+Keys: `button`, `card`, `badge`, `switch`, `checkbox`, `radio`, `slider`, `item`, `select`, `segmentedControl`, `textInput`, `richTextEditor`, `tooltip`, `divider`, `progressBar`, `spinner`, `contextMenu`, `navShell`.
 
 ### Icon slots
 
@@ -114,7 +119,7 @@ import ChevronDown from "lucide-static/icons/chevron-down.svg"
 setTheme({ icons: { chevronDown: ChevronDown } })
 ```
 
-API: `theme`, `setTheme`, `defineTheme`, `darkTheme`, `lightTheme`, `pill`, `Theme`, `ThemeDefinition`, `ThemeColor`, `ThemedComponent`, `TextStyle`, `TextVariant` - typed and commented in [src/theme.ts](./src/theme.ts).
+API: `theme`, `setTheme`, `defineTheme`, `darkTheme`, `lightTheme`, `litDarkTheme`, `litLightTheme`, `pill`, `Theme`, `ThemeDefinition`, `ThemeColor`, `ThemeValue`, `Light`, `ShadowTone`, `ThemedComponent`, `TextStyle`, `TextVariant` - typed and commented in [src/theme.ts](./src/theme.ts).
 
 ## Policies
 
@@ -142,7 +147,7 @@ API: `policy`, `setPolicy`, `setPolicyResolver`, `defaultPolicyResolver`, `Polic
 
 ## Layout and style
 
-Most components group their props into two objects, split by one rule: `layout` properties feed the layout engine (flexbox/grid, sizing, padding, margin, position - the core `LayoutProps` set) and changing them triggers a relayout; `style` properties are paint-only and never affect layout: `color`, `backgroundColor`, `borderColor`, `borderWidth`, `borderRadius`, `opacity`, `glow` (a halo on the component's accent part, see Theming; `null` clears the theme's), and the transform (`x`, `y`, `scale`, `rotate`, `rotateX`/`rotateY` with `perspective`, `originX`/`originY`, `clipRadius`). Event handlers (`onPointerDown`, `onKeyDown`, ...) are top-level props, never inside `layout` or `style`.
+Most components group their props into two objects, split by one rule: `layout` properties feed the layout engine (flexbox/grid, sizing, padding, margin, position - the core `LayoutProps` set) and changing them triggers a relayout; `style` properties are paint-only and never affect layout: `color`, `backgroundColor`, `borderColor`, `borderWidth`, `borderRadius`, `opacity`, `glow` (a halo on the component's accent part; `null` clears the theme's), `material` (layers merged over the role's material for the component's faces) and `elevation` (the level its raised face stands at), see Theming, and the transform (`x`, `y`, `scale`, `rotate`, `rotateX`/`rotateY` with `perspective`, `originX`/`originY`, `clipRadius`). Event handlers (`onPointerDown`, `onKeyDown`, ...) are top-level props, never inside `layout` or `style`.
 
 `StyleProps` is that paint set. `TextLayoutProps` extends `LayoutProps` with the font fields (`fontFamily`, `fontSize`, `lineHeight`, `fontStyle`, `fontWeight`, `textAlign`, `maxLines`) because text shaping affects measurement; note `lineHeight` is a multiplier of `fontSize` (the theme uses 1.3-1.6), not a pixel value. `Option` (`{ value, label }`) is the shared shape of the single-choice controls (`Select`, `SegmentedControl`): shared shapes go through this module so components never import a sibling.
 
@@ -152,7 +157,7 @@ Controls with a moving part of their own name it as an extra entry: `Switch` `kn
 
 The components also ship built-in motion with no props at all: state and theme colors fade, a press shrinks the free-standing controls on a quick spring and fades the overlay tints, marks (checkmark, radio dot) pop in and out, moving parts travel on springs, and the overlays (`Modal`, `Tooltip`, the `Select`/`ContextMenu` popups) fade in and out. Timing comes from `theme.motion` (`fast`/`base`/`slow`), and `policy.motion` gates it: `reduced` keeps the fades but snaps everything that moves, `none` snaps it all. A caller's `transition` entry overrides the built-in for that property, and `transition={null}` suppresses a component's built-ins outright.
 
-API: `StyleProps`, `Glow`, `FontProps`, `TextLayoutProps`, `EditorLayoutProps`, `Option`, `TransitionProps`, `ComponentTransition`, `TransitionViewProp`, `TransitionStyleProp`, `TransitionScrollProp` - typed and commented in [src/types.ts](./src/types.ts).
+API: `StyleProps`, `Glow`, `Glass`, `Material`, `MaterialRole`, `ElevationLevel`, `FontProps`, `TextLayoutProps`, `EditorLayoutProps`, `Option`, `TransitionProps`, `ComponentTransition`, `TransitionViewProp`, `TransitionStyleProp`, `TransitionScrollProp` - typed and commented in [src/types.ts](./src/types.ts).
 
 ## Typography helpers
 
@@ -435,6 +440,28 @@ The mouse cursor is the pointer hand over the box (`cursor` overrides it). `disa
 
 API: `Pressable`, `PressableProps`, `PressState` - typed and commented in [src/pressable.tsx](./src/pressable.tsx).
 
+### createPress
+
+The press recognizer the package's own controls are built on, for a custom control that wants its own root view instead of wrapping `Pressable`: `onPress` fires on a primary-button down followed by an up over the node, a drag out retracts the pressed state and a drag back in restores it, nested recognizers resolve innermost-first through core's arena, and the node's `ref` registers `onPress` as its focus-navigation `select` action so a remote or keyboard activates it while it holds focus. Spread `handlers` on the root view, attach `ref`, and read `pressed()`, `hovered()`, `focused()` and `pending()` (or `state()`, the live object the `Pressable` render prop receives) inside the props that style on them. Options are read at event time, so a component's reactive props object can be passed as is.
+
+```jsx
+import { createPress, theme } from "@solidrt/components"
+
+function Chip(props) {
+  let press = createPress(props)
+  return (
+    <view ref={press.ref} {...press.handlers} padding={8} focusable cursor="pointer">
+      <d-rect color={press.pressed() ? theme.color.overlayPressed : theme.color.surfaceAlt} radius={theme.radius.full} />
+      <text color={theme.color.text}>{props.label}</text>
+    </view>
+  )
+}
+```
+
+`registerNavAction` (from `createFocusNav`'s module) is the piece underneath: a control that activates without `createPress` registers its own `select` action with it.
+
+API: `createPress`, `PressOptions` - typed and commented in [src/press.ts](./src/press.ts).
+
 ### Button
 
 A themed press target over `Pressable`: a padded, centered box with a label. A press shrinks it slightly on a quick spring and tints it with `overlayPressed`; hover tints with `overlayHover` (non-touch policies). `variant` picks the visual role - `primary` (accent fill, the default), `secondary`, `ghost` (no fill until hover), `danger` (destructive) - with fill, tints, and label color from the matching theme tokens; no variant draws a border. `size` (`sm`/`md`/`lg`) pins a minimum width so a row of buttons lines up (a longer label still expands past it); omitted, the button sizes to its content. A string or number child renders as the themed label; any other child renders as-is (an icon, a row, ...).
@@ -491,7 +518,7 @@ When the focused control disappears (an action replacing it, a screen change), f
 
 An open `Modal` traps navigation inside itself with no extra wiring (topmost wins when stacked); pass `scope: () => nodeOrNull` to trap into some other subtree instead. `move`/`tab`/`activate` are exposed for custom triggers.
 
-API: `createFocusNav`, `uiActions`, `uiBindings`, `FocusNavOptions`, `UiActions`, `UiDevices` - typed and commented in [src/focus-nav.ts](./src/focus-nav.ts).
+API: `createFocusNav`, `registerNavAction`, `uiActions`, `uiBindings`, `FocusNavOptions`, `UiActions`, `UiDevices` - typed and commented in [src/focus-nav.ts](./src/focus-nav.ts).
 
 ### Switch
 
@@ -827,6 +854,59 @@ import House from "lucide-static/icons/house.svg"
 ```
 
 API: `Icon`, `IconProps` - typed and commented in [src/icon.tsx](./src/icon.tsx).
+
+### Surface
+
+The one way a component draws a face: a role's material (`theme.material`) under the theme light (`theme.light`) at an elevation (`theme.elevation`), stacked as layers that fill the view it is rendered in - a contact shadow, the glow, the fill (tinted by the light, with the sheen gradient along it, carrying the key shadow the elevation casts), the hover/pressed tint, the bevel and the outline. Every themed component draws its chrome through it, so a theme's light, materials and elevation restyle the whole library at once; under the stock presets (flat materials, zero elevation) a face is a plain fill, the tint and the outline, the look the package has always had. A custom control uses it the same way: render it as the first child of the laid-out view it dresses, pick a `role` (never a material), give it the base `fill`, the `radius`, the press state for the tint and the sink, and an `outline` for its border or focus ring.
+
+```jsx
+import { Surface, createPress, theme } from "@solidrt/components"
+
+function Tile(props) {
+  let press = createPress(props)
+  return (
+    <view ref={press.ref} {...press.handlers} padding={16} cursor="pointer" focusable>
+      <Surface role="surface" elevation="raised" radius={theme.radius.lg} pressed={press.pressed()} hovered={press.hovered()} />
+      <text color={theme.color.text}>{props.label}</text>
+    </view>
+  )
+}
+```
+
+A pressed face sinks (its key shadow fades toward the contact shadow, its lit edge moves to the far side) on the native shadow transition; a `sunken` face is a well or a groove (shaded like a pressed face, casting nothing); `lifted` with `liftTo` retargets the key shadow to a higher level (the Card hover lift); `chrome={false}` keeps only the tint (a ghost button at rest). `material` merges layers over the role's, `glow` overrides that layer alone. Shadows cast from opaque casters hidden under the fill, since a transparent caster's blurred shadow composites in a save layer of its own, which a tiled GPU pays for per shadow; only a glass material (a frosted backdrop, the overlay role's option) casts from a transparent one. `facePaint` gives the same derivation as plain paint values, for a part a control draws itself (a slider fill, a segmented indicator); `roleFill`, `roleMaterial` and `surfaceSinks` are the pieces it is built from.
+
+API: `Surface`, `facePaint`, `roleFill`, `roleMaterial`, `surfaceSinks`, `SurfaceProps`, `FacePaint` - typed and commented in [src/surface.tsx](./src/surface.tsx).
+
+### lightFrom
+
+The light helpers for an app that moves the theme light. `theme.light.direction` is the way the light travels in screen space (x right, y down, z into the screen); `lightFrom(px, py)` turns a point on the unit disk - where the light comes from, a light pad's coordinates - into that direction, and `lightSource(light)` is its inverse, so a pad shows the current light. `lightAxis(direction)` is the quantized, interned axis every face derives its paint from: equal steps return the same object, which is why a dragged light costs a face a re-derivation only when the axis steps.
+
+```jsx
+import { lightFrom, setTheme, theme } from "@solidrt/components"
+
+// A pad: the pointer's position over it, -1..1 per axis, becomes the light.
+setTheme({ light: { ...theme.light, direction: lightFrom(px, py) } })
+```
+
+The light is data for event-rate changes (a drag, a preset switch, a time of day), not a per-frame animation: every lit face re-derives its paint on each move.
+
+API: `lightFrom`, `lightSource`, `lightAxis`, `LightAxis` - typed and commented in [src/light.ts](./src/light.ts).
+
+### PressFeedback
+
+The hover/pressed tint every pressable face draws over its own fill: one always-mounted detached rect in `overlayHover` while hovered and `overlayPressed` while pressed, at alpha 0 otherwise, fading at the theme's feedback speed. Surface draws it as its tint layer; it is exported for a control that draws its own rows over a face it does not own (the option rows of a Select or ContextMenu).
+
+```jsx
+import { PressFeedback, createPress } from "@solidrt/components"
+
+let press = createPress(props)
+<view ref={press.ref} {...press.handlers} padding={8}>
+  <PressFeedback pressed={press.pressed()} hovered={press.hovered()} radius={6} />
+  <text>{props.label}</text>
+</view>
+```
+
+API: `PressFeedback` - typed and commented in [src/motion.tsx](./src/motion.tsx).
 
 ### Density
 

@@ -7,7 +7,8 @@ import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
-import { colorFade, PressFeedback } from "./motion"
+import { colorFade } from "./motion"
+import { Surface } from "./surface"
 
 export interface NavItem {
   value: unknown
@@ -44,6 +45,8 @@ export function NavShell(props: NavShellProps) {
     props.onChange?.(v)
   }
 
+  // Theme-level overrides for the strips' faces.
+  let styled = () => theme.components.navShell ?? {}
   let labelColor = (item: NavItem) => (item.value === value() ? theme.color.primary : theme.color.textMuted)
   // The selection fill: the surfaceAlt tint at alpha 0 while unselected, so
   // selecting fades it in (same trap as PressFeedback: a fade from
@@ -68,11 +71,14 @@ export function NavShell(props: NavShellProps) {
         {...press.handlers}
         cursor="pointer"
       >
-        <d-rect transition={colorFade()} color={itemBg(p.item)} radius={theme.radius.sm} />
-        <PressFeedback
+        <Surface
+          role="surface"
+          fill={itemBg(p.item)}
+          radius={theme.radius.sm}
+          material={styled().material}
+          glow={null}
           pressed={press.pressed()}
           hovered={press.hovered() && policy.interaction !== "touch" && p.item.value !== value()}
-          radius={theme.radius.sm}
         />
         {p.item.icon}
         <text transition={colorFade()} color={labelColor(p.item)} {...typeStyle("caption")}>
@@ -85,7 +91,7 @@ export function NavShell(props: NavShellProps) {
   let Tabs = () => (
     <view flexDirection="column" flexShrink={0}>
       <view flexDirection="row">
-        <d-rect transition={colorFade()} color={theme.color.surface} />
+        <Surface role="surface" fill={styled().backgroundColor ?? theme.color.surface} material={styled().material} glow={null} />
         <For each={props.items}>
           {(item: NavItem) => <StackedItem item={item} padY={theme.spacing.md} layout={{ flex: 1 }} />}
         </For>
@@ -96,7 +102,7 @@ export function NavShell(props: NavShellProps) {
   let Rail = () => (
     <view flexDirection="row" flexShrink={0}>
       <view flexDirection="column" width={theme.size.navRail} gap={theme.spacing.sm} paddingTop={theme.spacing.md}>
-        <d-rect transition={colorFade()} color={theme.color.surface} />
+        <Surface role="surface" fill={styled().backgroundColor ?? theme.color.surface} material={styled().material} glow={null} />
         <For each={props.items}>{(item: NavItem) => <StackedItem item={item} padY={theme.spacing.md} />}</For>
       </view>
     </view>
@@ -105,7 +111,7 @@ export function NavShell(props: NavShellProps) {
   let Sidebar = () => (
     <view flexDirection="row" flexShrink={0}>
       <view flexDirection="column" width={theme.size.navSidebar} gap={theme.spacing.sm} paddingTop={theme.spacing.md}>
-        <d-rect transition={colorFade()} color={theme.color.surface} />
+        <Surface role="surface" fill={styled().backgroundColor ?? theme.color.surface} material={styled().material} glow={null} />
         <For each={props.items}>
           {(item: NavItem) => {
             let press = createPress({ onPress: () => select(item.value) })
@@ -125,11 +131,14 @@ export function NavShell(props: NavShellProps) {
                 {...press.handlers}
                 cursor="pointer"
               >
-                <d-rect transition={colorFade()} color={itemBg(item)} radius={theme.radius.sm} />
-                <PressFeedback
+                <Surface
+                  role="surface"
+                  fill={itemBg(item)}
+                  radius={theme.radius.sm}
+                  material={styled().material}
+                  glow={null}
                   pressed={press.pressed()}
                   hovered={press.hovered() && policy.interaction !== "touch" && item.value !== value()}
-                  radius={theme.radius.sm}
                 />
                 {item.icon}
                 <text

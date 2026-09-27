@@ -5,9 +5,9 @@ import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { TransitionProps } from "./types"
-import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 import { colorFade, popupFadeOut } from "./motion"
-import { glowShadow, partGlow } from "./glow"
+import { Surface } from "./surface"
 
 export interface TooltipProps extends TransitionProps {
   // The tooltip body. A string/number renders as themed text; anything else
@@ -33,8 +33,8 @@ let margin = () => theme.spacing.sm
  * mouse pointer on the wrapped content shows a bubble near it after a short
  * delay. Under the touch policy it never shows, so tooltip content must stay
  * non-essential. The bubble is portal-mounted at the window root and takes no
- * pointer events; it hides on leave and on press. It glows with
- * theme.glow.overlay.
+ * pointer events; it hides on leave and on press. Its bubble is an
+ * overlay face, floating.
  */
 export function Tooltip(props: TooltipProps) {
   let anchor: { id: number } | undefined
@@ -96,26 +96,27 @@ export function Tooltip(props: TooltipProps) {
         opacity={pos() ? 1 : 0}
         transition={popupFadeOut()}
       >
-        <d-rect
-          transition={withTransitionDefaults(split().background, colorFade())}
-          onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
-          color={theme.components.tooltip?.backgroundColor ?? theme.color.surfaceAlt}
+        <Surface
+          role="overlay"
+          elevation={theme.components.tooltip?.elevation ?? "floating"}
+          fill={theme.components.tooltip?.backgroundColor ?? theme.color.surfaceAlt}
           radius={theme.components.tooltip?.borderRadius ?? theme.radius.sm}
-          shadow={glowShadow(partGlow(theme.components.tooltip?.glow, theme.glow.overlay), theme.components.tooltip?.backgroundColor ?? theme.color.surfaceAlt)}
+          material={theme.components.tooltip?.material}
+          glow={theme.components.tooltip?.glow}
+          outline={{
+            color: theme.components.tooltip?.borderColor ?? theme.color.border,
+            width: theme.components.tooltip?.borderWidth ?? theme.borderWidth.sm,
+          }}
+          fillTransition={split().background}
+          onFillTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+          outlineTransition={split().border}
+          onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
         />
         <Show when={isText()} fallback={content()}>
           <text transition={colorFade()} color={theme.color.text} {...typeStyle("body")}>
             {content()}
           </text>
         </Show>
-        <d-rect
-          drawStyle="stroke"
-          transition={withTransitionDefaults(split().border, colorFade())}
-          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
-          color={theme.components.tooltip?.borderColor ?? theme.color.border}
-          strokeWidth={theme.components.tooltip?.borderWidth ?? theme.borderWidth.sm}
-          radius={theme.components.tooltip?.borderRadius ?? theme.radius.sm}
-        />
       </view>,
     )
   }
