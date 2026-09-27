@@ -201,6 +201,15 @@ export function transitionEndFor<P extends string>(
 // into Taffy and changing them triggers a relayout; style properties are
 // paint-only and can change without affecting layout.
 
+/**
+ * Emitted light around a filled part: a zero-offset halo, `radius` logical
+ * px of blur. Without `color` the part glows in its own fill color (a danger
+ * button red, a primary one in the accent); a part whose fill has no color
+ * to take (a ghost button, a gradient) then casts nothing, so a theme-wide
+ * glow never grows a black halo. Theme["glow"] says where the roles land.
+ */
+export type Glow = { radius: number; color?: Color }
+
 // Paint-only props. None of these change the box Taffy computes. Borders are
 // drawn as a stroke overlay (not part of the box model), and the transform is
 // applied at paint time, so both live here.
@@ -231,6 +240,11 @@ export interface StyleProps {
   // clip, scroll); a single number or [tl, tr, br, bl].
   clipRadius?: number | [number, number, number, number]
   opacity?: number
+  // A halo on the component's accent part: the fill of Button, Badge,
+  // Checkbox and Switch, the Slider and ProgressBar fills, the Radio dot,
+  // the SegmentedControl indicator. Unset, the theme's role glow applies
+  // (theme.glow); null clears it here.
+  glow?: Glow | null
 }
 
 // One choice in an options list, shared by the single-choice controls

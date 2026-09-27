@@ -9,6 +9,7 @@ import type { Option, StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { Icon } from "./icon"
 import { colorFade, popupFade, popupFadeOut, PressFeedback, travelMotion } from "./motion"
+import { glowShadow } from "./glow"
 
 export interface SelectProps extends TransitionProps {
   options: Option[]
@@ -80,6 +81,7 @@ export function Select(props: SelectProps) {
   // Anchored under the trigger, sized at least as wide as it. Positioned like
   // Tooltip: portal at the window root, pinned at 0,0 and moved with the x/y
   // paint transforms after measuring, so tracking the anchor never reflows.
+  // Glows with theme.glow.overlay (the sheet sits on a scrim and does not).
   let Dropdown = () => {
     let menu: { id: number } | undefined
     let [pos, setPos] = createSignal<{ x: number; y: number } | null>(null)
@@ -121,7 +123,7 @@ export function Select(props: SelectProps) {
           paddingTop={theme.spacing.sm}
           paddingBottom={theme.spacing.sm}
         >
-          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} />
+          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} shadow={glowShadow(theme.glow.overlay, theme.color.surface)} />
           <For each={props.options}>
             {(o: Option) => <OptionRow option={o} padY={space("sm")} />}
           </For>

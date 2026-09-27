@@ -1,6 +1,6 @@
 # Switch
 
-An on/off toggle: the track fills with `primary` when on and `surfaceAlt` when off (a fade), and the thumb springs across - the `knob` transition entry retimes that travel. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Built on `Pressable`, so `disabled` takes no pointer events. `style` overrides the track colors and radius.
+An on/off toggle: the track fills with `primary` when on and `surfaceAlt` when off (a fade), and the thumb springs across - the `knob` transition entry retimes that travel. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Built on `Pressable`, so `disabled` takes no pointer events. The thumb is `theme.color.thumb` (else `onPrimary`), track and thumb follow `radius.full` through `pill` (square in an all-square theme), and the on track glows with the theme's accent glow. `style` overrides the track colors and radius.
 
 ```jsx
 import { Switch } from "@solidrt/components"

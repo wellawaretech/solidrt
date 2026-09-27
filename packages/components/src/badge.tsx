@@ -7,6 +7,7 @@ import { policy } from "./policy"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade } from "./motion"
+import { glowShadow, partGlow } from "./glow"
 
 export type BadgeVariant = "primary" | "neutral" | "danger"
 
@@ -21,8 +22,10 @@ export interface BadgeProps extends TransitionProps {
 }
 
 // A small rounded pill for counts, labels, and status. Accent fill with
-// onPrimary text by default; override the fill via style.backgroundColor and the
-// label color via style.color.
+// onPrimary text by default, glowing with theme.glow.accent (the neutral
+// variant is a surface tone and does not); override the fill via
+// style.backgroundColor, the label color via style.color, and box it with
+// borderColor/borderWidth.
 export function Badge(props: BadgeProps) {
   let colors = () => {
     let c = theme.color
@@ -40,6 +43,8 @@ export function Badge(props: BadgeProps) {
   let bg = () => styled().backgroundColor ?? colors().bg
   let fg = () => styled().color ?? colors().fg
   let radius = () => styled().borderRadius ?? theme.radius.full
+  let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
+  let role = () => ((props.variant ?? "primary") === "neutral" ? undefined : theme.glow.accent)
   // Resolved once via children(): the typeof probe and the mount sites must
   // share one build - reading the raw getter again would orphan native nodes.
   let resolved = children(() => props.children)
@@ -66,7 +71,7 @@ export function Badge(props: BadgeProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
     >
-      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} shadow={glowShadow(partGlow(styled().glow, role()), bg())} />
       <Show when={isText()} fallback={resolved()}>
         <text
           transition={colorFade()}
@@ -76,6 +81,16 @@ export function Badge(props: BadgeProps) {
         >
           {resolved()}
         </text>
+      </Show>
+      <Show when={hasBorder()}>
+        <d-rect
+          drawStyle="stroke"
+          transition={withTransitionDefaults(split().border, colorFade())}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
+          color={styled().borderColor ?? theme.color.border}
+          strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
+          radius={radius()}
+        />
       </Show>
     </view>
   )

@@ -41,6 +41,7 @@ export interface ItemProps extends TransitionProps {
 // density-scaled, so a <Density> region compacts rows wholesale. With onPress
 // the row presses like a menu entry: overlay tints for hover/pressed (no
 // scale - rows sit flush in a list), focus ring under the focusRing policy.
+// borderColor/borderWidth box the row.
 export function Item(props: ItemProps) {
   // Theme-level per-component overrides merged under the instance style.
   let styled = () => ({ ...theme.components.item, ...props.style })
@@ -49,6 +50,7 @@ export function Item(props: ItemProps) {
 
   let bg = () => styled().backgroundColor ?? (props.selected ? theme.color.surfaceAlt : "transparent")
   let radius = () => styled().borderRadius ?? theme.radius.sm
+  let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
 
   // Resolved once via children(): the typeof probe and the mount site must
   // share one build (see Button).
@@ -114,6 +116,16 @@ export function Item(props: ItemProps) {
         </Show>
       </view>
       {props.endContent}
+      <Show when={hasBorder()}>
+        <d-rect
+          drawStyle="stroke"
+          transition={withTransitionDefaults(split().border, colorFade())}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
+          color={styled().borderColor ?? theme.color.border}
+          strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
+          radius={radius()}
+        />
+      </Show>
       <Show when={press.focused() && policy.focusRing}>
         <d-rect drawStyle="stroke" color={theme.color.ring} strokeWidth={theme.borderWidth.focus} radius={radius()} />
       </Show>

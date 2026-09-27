@@ -9,6 +9,7 @@ import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade, scaleFeedback, pressScale, PressFeedback } from "./motion"
+import { glowShadow, partGlow } from "./glow"
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger"
 export type ButtonSize = "sm" | "md" | "lg"
@@ -90,6 +91,15 @@ export function Button(props: ButtonProps) {
 
   // props (not a literal) so a swapped-in onPress is read at event time.
   let press = createPress(props)
+  // The accent fills glow with the theme's accent role; secondary and ghost
+  // are the quieter variants, and a disabled button sits flat. The glow
+  // widens while hovered or pressed (hover only where a pointer can hover,
+  // the tint's rule).
+  let role = () => {
+    let v = props.variant ?? "primary"
+    return !props.disabled && (v === "primary" || v === "danger") ? theme.glow.accent : undefined
+  }
+  let active = () => !props.disabled && (press.pressed() || (press.hovered() && policy.interaction !== "touch"))
   let style = () => ({
     ...styled(),
     ...(press.focused() && policy.focusRing ? { borderWidth: theme.borderWidth.focus, borderColor: theme.color.ring } : {}),
@@ -135,7 +145,7 @@ export function Button(props: ButtonProps) {
       focusable={(props.focusable ?? true) && props.disabled !== true}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} shadow={glowShadow(partGlow(styled().glow, role()), bg(), active())} />
       <PressFeedback
         pressed={press.pressed() && !props.disabled}
         hovered={press.hovered() && !props.disabled && policy.interaction !== "touch"}

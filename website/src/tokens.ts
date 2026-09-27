@@ -18,8 +18,12 @@ function block(selector: string, lines: string[]): string {
   return `${selector} {\n${lines.map((l) => "  " + l + ";").join("\n")}\n}\n`;
 }
 
+// Optional tokens (thumb) are present as undefined when a theme leaves
+// them unset; an unset token has no variable.
 function colorLines(theme: Theme): string[] {
-  return Object.entries(theme.color).map(([k, v]) => `--srt-${kebab(k)}: ${v}`);
+  return Object.entries(theme.color)
+    .filter(([, v]) => v != null)
+    .map(([k, v]) => `--srt-${kebab(k)}: ${v}`);
 }
 
 // Scheme-independent tokens; both presets share them, so read from one.

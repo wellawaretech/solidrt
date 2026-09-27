@@ -7,6 +7,7 @@ import { typeStyle } from "./typography"
 import type { TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade, popupFadeOut } from "./motion"
+import { glowShadow, partGlow } from "./glow"
 
 export interface TooltipProps extends TransitionProps {
   // The tooltip body. A string/number renders as themed text; anything else
@@ -32,7 +33,8 @@ let margin = () => theme.spacing.sm
  * mouse pointer on the wrapped content shows a bubble near it after a short
  * delay. Under the touch policy it never shows, so tooltip content must stay
  * non-essential. The bubble is portal-mounted at the window root and takes no
- * pointer events; it hides on leave and on press.
+ * pointer events; it hides on leave and on press. It glows with
+ * theme.glow.overlay.
  */
 export function Tooltip(props: TooltipProps) {
   let anchor: { id: number } | undefined
@@ -99,6 +101,7 @@ export function Tooltip(props: TooltipProps) {
           onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={theme.components.tooltip?.backgroundColor ?? theme.color.surfaceAlt}
           radius={theme.components.tooltip?.borderRadius ?? theme.radius.sm}
+          shadow={glowShadow(partGlow(theme.components.tooltip?.glow, theme.glow.overlay), theme.components.tooltip?.backgroundColor ?? theme.color.surfaceAlt)}
         />
         <Show when={isText()} fallback={content()}>
           <text transition={colorFade()} color={theme.color.text} {...typeStyle("body")}>

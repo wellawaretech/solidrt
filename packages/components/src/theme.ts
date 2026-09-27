@@ -1,6 +1,6 @@
 import { createStore } from "@solidjs/signals"
-import type { FontWeight } from "@solidrt/core"
-import type { StyleProps } from "./types"
+import type { FontWeight, WindowShaderProps } from "@solidrt/core"
+import type { Glow, StyleProps } from "./types"
 
 export type TextStyle = {
   size: number
@@ -13,23 +13,27 @@ export type TextVariant = "caption" | "label" | "body" | "title" | "heading"
 
 // The components whose chrome accepts a theme-level paint override (see
 // Theme["components"]). Plain containers (View, Pressable, ...) are not
-// themed, so they take no override either.
-export type ThemedComponent =
-  | "button"
-  | "card"
-  | "badge"
-  | "switch"
-  | "checkbox"
-  | "radio"
-  | "item"
-  | "select"
-  | "segmentedControl"
-  | "textInput"
-  | "richTextEditor"
-  | "tooltip"
-  | "divider"
-  | "progressBar"
-  | "spinner"
+// themed, so they take no override either. A runtime list, so defineTheme
+// can write every key (see there).
+const THEMED_COMPONENTS = [
+  "button",
+  "card",
+  "badge",
+  "switch",
+  "checkbox",
+  "radio",
+  "slider",
+  "item",
+  "select",
+  "segmentedControl",
+  "textInput",
+  "richTextEditor",
+  "tooltip",
+  "divider",
+  "progressBar",
+  "spinner",
+] as const
+export type ThemedComponent = (typeof THEMED_COMPONENTS)[number]
 
 // A resolved theme: every value is a plain string/number ready to be read by
 // a component. Authoring happens through defineTheme, which is where
@@ -80,13 +84,20 @@ export type Theme = {
     // selected glyphs; translucent so the text stays readable. Defaults to
     // overlayPressed (a neutral scheme-aware tint that needs no color math).
     selection: string
+    // The cap riding a track: the Switch knob, the Slider thumb. Unset, the
+    // knob is onPrimary and the thumb primary. A palette whose onPrimary is
+    // dark (text on a bright accent) sets a light cap here, or its off knob
+    // sinks into the track.
+    thumb?: string
   }
   // Gaps and paddings, multiples of one base unit (sm 1x, md 2x, lg 4x,
   // xl 5x); read through space() where density should apply.
   spacing: { sm: number; md: number; lg: number; xl: number }
   // Corner radii. md is THE control radius (Button, TextInput, Select,
   // SegmentedControl); sm is one step under it (Checkbox, Item, menus,
-  // Tooltip), lg one step over (Card), full is the pill.
+  // Tooltip), lg one step over (Card), full the pill: Badge, and through
+  // pill() every part shaped by its own height (Switch, Slider, Radio,
+  // ProgressBar), which a full of 0 squares.
   radius: { sm: number; md: number; lg: number; full: number }
   borderWidth: { sm: number; focus: number }
   // Motion durations (ms). Every built-in transition the components declare
@@ -104,13 +115,34 @@ export type Theme = {
   // Semantic control glyphs, as SVG document strings (the Icon currency).
   // Components draw their built-in vector paths by default; a theme that sets
   // a slot swaps that glyph everywhere it appears. The package still bundles
-  // no icon set.
+  // no icon set. Both keys always present (see defineTheme).
   icons: { chevronDown?: string; check?: string }
   // Per-component paint overrides: merged between a component's themed
   // defaults and the instance's style prop, so a theme can restyle every
   // Button (say, pill corners) without wrapping the component. Instance
-  // style still wins.
+  // style still wins. Every key always present (see defineTheme).
   components: { [K in ThemedComponent]?: StyleProps }
+  // Emitted light by role. `accent` lands on the accent-colored fills: the
+  // primary and danger Button and Badge, Switch on, Checkbox checked, the
+  // Radio dot, the Slider and ProgressBar fills, the SegmentedControl
+  // indicator (a disabled control never glows). `overlay` lands on the
+  // anchored popups: the Tooltip bubble, the Select dropdown, the
+  // ContextMenu menu. A glow without a color takes each fill's own color.
+  // Per component, theme.components.<name>.glow and an instance's
+  // style.glow override the role. Both keys are always present (see
+  // defineTheme) so a preset switch clears them.
+  glow: { accent?: Glow; overlay?: Glow }
+  // The theme's window finish: a core window shader declaration (a linked
+  // program and its params) that Window declares on the window as it is,
+  // plus `uScale`, the display scale. Strength and layer switches are the
+  // theme's own params; an app adjusts one by spreading the current ones
+  // (setTheme merges one level deep, so a partial replaces the whole
+  // params object it names). The theme's
+  // module links the program itself, once, at init: the client brings the
+  // GPU up before the bundle runs. The package ships no finish; the stock
+  // presets have none. Every key always present (see defineTheme):
+  // `program` unset means no finish.
+  finish: Partial<WindowShaderProps>
 }
 
 // -- Authoring ---------------------------------------------------------------
@@ -121,9 +153,10 @@ export type Theme = {
 export type ThemeColor = string | [light: string, dark: string]
 
 export type ThemeDefinition = {
-  color: { [K in Exclude<keyof Theme["color"], "ring" | "selection">]: ThemeColor } & {
+  color: { [K in Exclude<keyof Theme["color"], "ring" | "selection" | "thumb">]: ThemeColor } & {
     ring?: ThemeColor
     selection?: ThemeColor
+    thumb?: ThemeColor
   }
   text?: {
     fontFamily?: string
@@ -148,6 +181,8 @@ export type ThemeDefinition = {
   size?: Partial<Theme["size"]>
   icons?: Theme["icons"]
   components?: Theme["components"]
+  glow?: Theme["glow"]
+  finish?: WindowShaderProps
 }
 
 const SPACING_BASE = 4
@@ -204,6 +239,13 @@ export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Th
   }
   if (def.color.ring == null) color.ring = color.text
   if (def.color.selection == null) color.selection = color.overlayPressed
+  // Optional keys are still written (thumb here; icons, components and
+  // glow below): setTheme merges a category with Object.assign, which
+  // skips absent keys, so a resolved theme carries every key and a preset
+  // that sets none of them still clears what an earlier preset set.
+  if (!("thumb" in color)) color.thumb = undefined
+  let components = {} as Theme["components"]
+  for (let name of THEMED_COMPONENTS) components[name] = def.components?.[name]
   let base = def.text?.base ?? 14
   let ratio = def.text?.ratio ?? 1.26
   let role = (name: TextVariant): TextStyle => {
@@ -235,8 +277,16 @@ export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Th
     borderWidth: { ...BORDER_WIDTH, ...def.borderWidth },
     motion: { ...MOTION, ...def.motion },
     size: { ...SIZE, ...def.size },
-    icons: def.icons ?? {},
-    components: def.components ?? {},
+    icons: { chevronDown: def.icons?.chevronDown, check: def.icons?.check },
+    components,
+    glow: { accent: def.glow?.accent, overlay: def.glow?.overlay },
+    finish: {
+      program: def.finish?.program,
+      params: def.finish?.params,
+      textures: def.finish?.textures,
+      previous: def.finish?.previous,
+      vertexCount: def.finish?.vertexCount,
+    },
   }
 }
 
@@ -303,7 +353,10 @@ type ThemePartial = { [K in keyof Theme]?: Partial<Theme[K]> }
 // Switch themes with a full preset (setTheme(lightTheme)), a resolved
 // definition (setTheme(defineTheme({...}))), or apply a targeted override
 // (setTheme({ color: { primary: "#f00" } })). Merges one level deep per
-// category (for components, that level is the component name).
+// category (for components, that level is the component name). A resolved
+// theme carries every key of every category, unset ones as undefined, so
+// it replaces the previous theme outright, per-component overrides and
+// icon slots included; a partial keeps whatever it does not name.
 export function setTheme(partial: ThemePartial) {
   setThemeStore((s) => {
     for (let key in partial) {
@@ -311,4 +364,14 @@ export function setTheme(partial: ThemePartial) {
       Object.assign(s[k], (partial as any)[k])
     }
   })
+}
+
+/**
+ * A pill or circle radius that follows the theme: half of `size`, capped by
+ * `radius.full`, so a theme with `full: 0` squares every round part (Switch
+ * track and knob, Slider groove and thumb, Radio, ProgressBar) while the
+ * default 9999 leaves them round. For a custom control with a round part.
+ */
+export function pill(size: number): number {
+  return Math.min(theme.radius.full, size / 2)
 }

@@ -8,6 +8,7 @@ import { Icon } from "./icon"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade, markMotion, pressScale, scaleFeedback } from "./motion"
+import { glowShadow, partGlow } from "./glow"
 
 export interface CheckboxProps extends TransitionProps {
   // Controlled checked state. If omitted, the checkbox is uncontrolled.
@@ -21,8 +22,9 @@ export interface CheckboxProps extends TransitionProps {
 
 const SIZE = 20
 
-// A checkbox. When checked, fills with primary and draws a checkmark; otherwise
-// shows an empty bordered box. The fill fades, the mark pops in/out
+// A checkbox. When checked, fills with primary (glowing with theme.glow.accent)
+// and draws a checkmark; otherwise shows an empty bordered box. The fill
+// fades, the mark pops in/out
 // (markMotion), and a press shrinks the box slightly (pressScale). Controlled
 // via checked/onChange, or uncontrolled via defaultChecked. When disabled, it
 // takes no pointer events at all.
@@ -36,6 +38,9 @@ export function Checkbox(props: CheckboxProps) {
     props.onChange?.(next)
   }
   let press = createPress({ onPress: toggle })
+  // Widens the glow; hover counts only where a pointer can hover (the
+  // tint's rule).
+  let active = () => press.pressed() || (press.hovered() && policy.interaction !== "touch")
 
   let size = () => Math.round(SIZE * densityScale())
   // The checkmark in box-relative fractions, so it scales with the density.
@@ -81,6 +86,7 @@ export function Checkbox(props: CheckboxProps) {
         onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
         color={style().backgroundColor ?? "transparent"}
         radius={style().borderRadius}
+        shadow={glowShadow(checked() && !props.disabled ? partGlow(style().glow, theme.glow.accent) : null, style().backgroundColor ?? "transparent", active())}
       />
       <Show when={checked()}>
         <view

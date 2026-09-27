@@ -1,12 +1,13 @@
 import { createSignal, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
-import { theme } from "./theme"
+import { pill, theme } from "./theme"
 import { policy } from "./policy"
 import { densityScale } from "./density"
 import type { StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
 import { partTransition, partTransitionEnd, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade, pressScale, scaleFeedback, travelMotion } from "./motion"
+import { glowShadow, partGlow } from "./glow"
 
 export interface SwitchProps extends TransitionProps<TransitionViewProp | TransitionStyleProp | "knob"> {
   // Controlled on/off. If omitted, the switch is uncontrolled.
@@ -25,8 +26,10 @@ const W = 44
 const H = 24
 const PAD = 2
 
-// A toggle. Track fills with primary when on, surfaceAlt when off (a fade);
-// the thumb springs across - the `knob` transition entry retimes it. A press
+// A toggle. Track fills with primary when on (glowing with theme.glow.accent),
+// surfaceAlt when off (a fade); the thumb (theme.color.thumb, else onPrimary)
+// springs across - the `knob` transition entry retimes it. Track and thumb
+// take pill(): round by default, square under radius.full 0. A press
 // shrinks the control slightly (pressScale). Controlled via value/onChange,
 // or uncontrolled via defaultValue. When disabled, it takes no pointer
 // events at all.
@@ -40,6 +43,9 @@ export function Switch(props: SwitchProps) {
     props.onChange?.(next)
   }
   let press = createPress({ onPress: toggle })
+  // Widens the glow; hover counts only where a pointer can hover (the
+  // tint's rule).
+  let active = () => press.pressed() || (press.hovered() && policy.interaction !== "touch")
 
   let w = () => Math.round(W * densityScale())
   let h = () => Math.round(H * densityScale())
@@ -47,7 +53,7 @@ export function Switch(props: SwitchProps) {
 
   let style = () => ({
     backgroundColor: on() ? theme.color.primary : theme.color.surfaceAlt,
-    borderRadius: h() / 2,
+    borderRadius: pill(h()),
     ...theme.components.switch,
     ...props.style,
     ...(press.focused() && policy.focusRing ? { borderWidth: theme.borderWidth.focus, borderColor: theme.color.ring } : {}),
@@ -79,6 +85,7 @@ export function Switch(props: SwitchProps) {
         onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
         color={style().backgroundColor ?? "transparent"}
         radius={style().borderRadius}
+        shadow={glowShadow(on() && !props.disabled ? partGlow(style().glow, theme.glow.accent) : null, style().backgroundColor ?? "transparent", active())}
       />
       <view
         position="absolute"
@@ -90,8 +97,8 @@ export function Switch(props: SwitchProps) {
       >
         {/* The hairline keeps the thumb visible off: onPrimary on the
             light scheme's surfaceAlt track is about 1.2:1 on its own. */}
-        <d-oval transition={colorFade()} w={thumb()} h={thumb()} color={theme.color.onPrimary} />
-        <d-oval drawStyle="stroke" transition={colorFade()} w={thumb()} h={thumb()} color={theme.color.border} strokeWidth={theme.borderWidth.sm} />
+        <d-rect transition={colorFade()} w={thumb()} h={thumb()} radius={pill(thumb())} color={theme.color.thumb ?? theme.color.onPrimary} />
+        <d-rect drawStyle="stroke" transition={colorFade()} w={thumb()} h={thumb()} radius={pill(thumb())} color={theme.color.border} strokeWidth={theme.borderWidth.sm} />
       </view>
       <Show when={(style().borderWidth ?? 0) > 0}>
         <d-rect

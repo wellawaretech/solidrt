@@ -10139,6 +10139,7 @@ function useParams(route) {
   });
 }
 // ../../packages/components/src/theme.ts
+var THEMED_COMPONENTS = ["button", "card", "badge", "switch", "checkbox", "radio", "slider", "item", "select", "segmentedControl", "textInput", "richTextEditor", "tooltip", "divider", "progressBar", "spinner"];
 var SPACING_BASE = 4;
 function deriveSpacing(base) {
   return {
@@ -10219,6 +10220,11 @@ function defineTheme(def, scheme) {
     color.ring = color.text;
   if (def.color.selection == null)
     color.selection = color.overlayPressed;
+  if (!("thumb" in color))
+    color.thumb = undefined;
+  let components = {};
+  for (let name of THEMED_COMPONENTS)
+    components[name] = def.components?.[name];
   let base = def.text?.base ?? 14;
   let ratio = def.text?.ratio ?? 1.26;
   let role = (name) => {
@@ -10261,8 +10267,22 @@ function defineTheme(def, scheme) {
       ...SIZE,
       ...def.size
     },
-    icons: def.icons ?? {},
-    components: def.components ?? {}
+    icons: {
+      chevronDown: def.icons?.chevronDown,
+      check: def.icons?.check
+    },
+    components,
+    glow: {
+      accent: def.glow?.accent,
+      overlay: def.glow?.overlay
+    },
+    finish: {
+      program: def.finish?.program,
+      params: def.finish?.params,
+      textures: def.finish?.textures,
+      previous: def.finish?.previous,
+      vertexCount: def.finish?.vertexCount
+    }
   };
 }
 var DEFAULT = {
@@ -10436,6 +10456,21 @@ function PressFeedback(props) {
 }
 
 // ../../packages/components/src/window.tsx
+function themeFinish() {
+  let f = theme.finish;
+  if (f.program == null)
+    return null;
+  return {
+    program: f.program,
+    params: {
+      ...f.params,
+      uScale: displayScale()
+    },
+    textures: f.textures,
+    previous: f.previous,
+    vertexCount: f.vertexCount
+  };
+}
 function Window(props) {
   var _el$ = createElement("window");
   spread(_el$, [() => props.layout, {
@@ -10444,6 +10479,9 @@ function Window(props) {
     },
     get fullscreen() {
       return props.fullscreen;
+    },
+    get shader() {
+      return memo2(() => props.shader === undefined)() ? themeFinish() : props.shader;
     },
     get onPointerEnter() {
       return props.onPointerEnter;
@@ -12893,6 +12931,29 @@ function Spinner(props) {
   return _el$;
 }
 
+// ../../packages/components/src/glow.ts
+var GLOW_ALPHA = 0.7;
+var GLOW_ACTIVE = 1.35;
+function partGlow(override, role) {
+  return override !== undefined ? override : role;
+}
+function glowShadow(glow, fill, active = false) {
+  if (!glow)
+    return;
+  let color = glow.color;
+  if (color == null) {
+    if (typeof fill !== "string" || (parseColor2(fill) >>> 0 & 255) === 0)
+      return;
+    color = withAlpha(fill, GLOW_ALPHA);
+  }
+  return {
+    x: 0,
+    y: 0,
+    blur: glow.radius * (active ? GLOW_ACTIVE : 1),
+    color
+  };
+}
+
 // ../../packages/components/src/button.tsx
 var SIZE_WIDTH = {
   sm: 88,
@@ -12937,6 +12998,11 @@ function Button(props) {
   let isText = () => typeof resolved2() === "string" || typeof resolved2() === "number";
   let labelOnDark = () => lightOnDark(label(), bg());
   let press = createPress(props);
+  let role = () => {
+    let v = props.variant ?? "primary";
+    return !props.disabled && (v === "primary" || v === "danger") ? theme.glow.accent : undefined;
+  };
+  let active = () => !props.disabled && (press.pressed() || press.hovered() && policy.interaction !== "touch");
   let style = () => ({
     ...styled(),
     ...press.focused() && policy.focusRing ? {
@@ -13098,17 +13164,20 @@ function Button(props) {
     e: withTransitionDefaults(split().background, colorFade()),
     t: transitionEndFor("background", props.onTransitionEnd),
     a: style().backgroundColor ?? "transparent",
-    o: style().borderRadius
+    o: style().borderRadius,
+    i: glowShadow(partGlow(styled().glow, role()), bg(), active())
   }), ({
     e,
     t,
     a,
-    o
+    o,
+    i
   }, _p$) => {
     e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
     t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
     a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
     o !== _p$?.o && setProp(_el$2, "radius", o, _p$?.o);
+    i !== _p$?.i && setProp(_el$2, "shadow", i, _p$?.i);
   });
   return _el$;
 }
@@ -13343,10 +13412,11 @@ function SegmentedControl(props) {
     return 0;
   };
   let idleFill = () => styled().backgroundColor ?? theme.color.surfaceAlt;
+  let hasBorder = () => styled().borderWidth != null || styled().borderColor != null;
   let activeFill = () => props.disabled ? theme.color.surface : theme.color.primary;
   let label = (active) => props.disabled ? theme.color.textMuted : active ? theme.color.onPrimary : theme.color.text;
   let root;
-  let segs = [];
+  let segs = new Map;
   let [boxes, setBoxes] = createSignal([]);
   let [placed, setPlaced] = createSignal(false);
   onLayout(() => {
@@ -13357,7 +13427,7 @@ function SegmentedControl(props) {
       return;
     let next = [];
     for (let i = 0;i < props.options.length; i++) {
-      let s = segs[i];
+      let s = segs.get(props.options[i].value);
       let b = s && getBoundingBox2(s);
       if (!b)
         return;
@@ -13426,17 +13496,18 @@ function SegmentedControl(props) {
       let press = createPress({
         onPress: () => select(opt.value)
       });
-      var _el$4 = createElement("view"), _el$6 = createElement("text");
-      insertNode2(_el$4, _el$6);
+      onCleanup(() => segs.delete(opt.value));
+      var _el$5 = createElement("view"), _el$7 = createElement("text");
+      insertNode2(_el$5, _el$7);
       ref(() => (n) => {
-        segs[i()] = n;
+        segs.set(opt.value, n);
         press.ref(n);
-      }, _el$4);
-      setProp(_el$4, "repaintBoundary", true);
-      setProp(_el$4, "flexGrow", 1);
-      setProp(_el$4, "flexBasis", 0);
-      setProp(_el$4, "alignItems", "center");
-      spread(_el$4, [{
+      }, _el$5);
+      setProp(_el$5, "repaintBoundary", true);
+      setProp(_el$5, "flexGrow", 1);
+      setProp(_el$5, "flexBasis", 0);
+      setProp(_el$5, "alignItems", "center");
+      spread(_el$5, [{
         get paddingTop() {
           return space("md");
         },
@@ -13458,7 +13529,7 @@ function SegmentedControl(props) {
           return props.disabled ? "none" : undefined;
         }
       }], true);
-      insert(_el$4, createComponent2(PressFeedback, {
+      insert(_el$5, createComponent2(PressFeedback, {
         get pressed() {
           return press.pressed();
         },
@@ -13468,13 +13539,13 @@ function SegmentedControl(props) {
         get radius() {
           return corners(i());
         }
-      }), _el$6);
-      insert(_el$4, createComponent2(Show, {
+      }), _el$7);
+      insert(_el$5, createComponent2(Show, {
         get when() {
           return memo2(() => !!press.focused())() ? policy.focusRing : press.focused();
         },
         get children() {
-          var _el$5 = createElement("d-rect", {
+          var _el$6 = createElement("d-rect", {
             drawStyle: "stroke"
           });
           effect3(() => ({
@@ -13486,14 +13557,14 @@ function SegmentedControl(props) {
             t,
             a
           }, _p$) => {
-            e !== _p$?.e && setProp(_el$5, "color", e, _p$?.e);
-            t !== _p$?.t && setProp(_el$5, "strokeWidth", t, _p$?.t);
-            a !== _p$?.a && setProp(_el$5, "radius", a, _p$?.a);
+            e !== _p$?.e && setProp(_el$6, "color", e, _p$?.e);
+            t !== _p$?.t && setProp(_el$6, "strokeWidth", t, _p$?.t);
+            a !== _p$?.a && setProp(_el$6, "radius", a, _p$?.a);
           });
-          return _el$5;
+          return _el$6;
         }
-      }), _el$6);
-      spread(_el$6, [{
+      }), _el$7);
+      spread(_el$7, [{
         get transition() {
           return colorFade();
         },
@@ -13501,7 +13572,37 @@ function SegmentedControl(props) {
           return label(active());
         }
       }, () => typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)], true);
-      insert(_el$6, () => opt.label);
+      insert(_el$7, () => opt.label);
+      return _el$5;
+    }
+  }), null);
+  insert(_el$, createComponent2(Show, {
+    get when() {
+      return hasBorder();
+    },
+    get children() {
+      var _el$4 = createElement("d-rect", {
+        drawStyle: "stroke"
+      });
+      effect3(() => ({
+        e: withTransitionDefaults(split().border, colorFade()),
+        t: transitionEndFor("border", props.onTransitionEnd),
+        a: styled().borderColor ?? theme.color.border,
+        o: styled().borderWidth ?? theme.borderWidth.sm,
+        i: radius()
+      }), ({
+        e,
+        t,
+        a,
+        o,
+        i
+      }, _p$) => {
+        e !== _p$?.e && setProp(_el$4, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$4, "onTransitionEnd", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$4, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$4, "strokeWidth", o, _p$?.o);
+        i !== _p$?.i && setProp(_el$4, "radius", i, _p$?.i);
+      });
       return _el$4;
     }
   }), null);
@@ -13515,7 +13616,8 @@ function SegmentedControl(props) {
     s: indicator() ? activeFill() : withAlpha(activeFill(), 0),
     h: indicator()?.x ?? 0,
     r: indicator()?.w ?? 0,
-    d: corners(activeIndex())
+    d: corners(activeIndex()),
+    l: glowShadow(indicator() && !props.disabled ? partGlow(styled().glow, theme.glow.accent) : null, activeFill())
   }), ({
     e,
     t,
@@ -13526,7 +13628,8 @@ function SegmentedControl(props) {
     s,
     h,
     r,
-    d
+    d,
+    l
   }, _p$) => {
     e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
     t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
@@ -13538,6 +13641,7 @@ function SegmentedControl(props) {
     h !== _p$?.h && setProp(_el$3, "x", h, _p$?.h);
     r !== _p$?.r && setProp(_el$3, "w", r, _p$?.r);
     d !== _p$?.d && setProp(_el$3, "radius", d, _p$?.d);
+    l !== _p$?.l && setProp(_el$3, "shadow", l, _p$?.l);
   });
   return _el$;
 }

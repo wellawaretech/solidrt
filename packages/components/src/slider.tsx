@@ -1,11 +1,12 @@
 import { arena, createMemo, createSignal, focusedNode, getBoundingBox, onLayout, onSettled, Show } from "@solidrt/core"
 import type { KeyEvent, LayoutProps, PointerEvent } from "@solidrt/core"
-import { theme } from "./theme"
+import { pill, theme } from "./theme"
 import { policy } from "./policy"
 import { densityScale } from "./density"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade } from "./motion"
+import { glowShadow, partGlow } from "./glow"
 
 export interface SliderProps extends TransitionProps {
   // Controlled value. If omitted, the slider is uncontrolled.
@@ -32,7 +33,10 @@ let clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : 
 // path, so a drag keeps updating when the pointer drifts off the track.
 // Focused (spatial nav), arrow keys step the value (by `step`, else 1% of the
 // range) and the thumb draws the focus ring under the focusRing policy.
-// Controlled via value/onChange, or uncontrolled via defaultValue.
+// Controlled via value/onChange, or uncontrolled via defaultValue. The
+// groove is surfaceAlt, the fill primary (glowing with theme.glow.accent),
+// the thumb theme.color.thumb (else primary); groove and thumb take pill(),
+// round by default and square under radius.full 0.
 export function Slider(props: SliderProps) {
   let min = () => props.min ?? 0
   let max = () => props.max ?? 100
@@ -44,6 +48,16 @@ export function Slider(props: SliderProps) {
 
   let height = () => Math.round(HEIGHT * densityScale())
   let thumb = () => Math.round(THUMB * densityScale())
+
+  // Theme-level per-component overrides merged under the instance style:
+  // backgroundColor is the groove, color the fill, borderRadius the groove's
+  // (ProgressBar's reading of the same keys), and the border boxes the groove.
+  let styled = () => ({ ...theme.components.slider, ...props.style })
+  let grooveColor = () => styled().backgroundColor ?? theme.color.surfaceAlt
+  let fillColor = () => styled().color ?? theme.color.primary
+  let grooveRadius = () => styled().borderRadius ?? pill(GROOVE)
+  let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
+  let split = () => splitTransition(props.transition)
 
   let pct = () => clamp(((value() - min()) / (max() - min())) * 100, 0, 100)
 
@@ -122,7 +136,7 @@ export function Slider(props: SliderProps) {
 
   return (
     <view
-      transition={splitTransition(props.transition).root}
+      transition={split().root}
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => (track = n)}
       repaintBoundary
@@ -131,11 +145,11 @@ export function Slider(props: SliderProps) {
       height={height()}
       width={theme.size.slider}
       {...props.layout}
-      x={props.style?.x}
-      y={props.style?.y}
-      scale={props.style?.scale}
-      rotate={props.style?.rotate}
-      opacity={props.style?.opacity}
+      x={styled().x}
+      y={styled().y}
+      scale={styled().scale}
+      rotate={styled().rotate}
+      opacity={styled().opacity}
       pointerEvents={props.disabled ? "none" : "auto"}
       focusable={!props.disabled}
       onPointerDown={handleDown}
@@ -147,12 +161,34 @@ export function Slider(props: SliderProps) {
           get a transition - they track the drag 1:1, and a spring would
           rubber-band it. */}
       <view ref={(n: { id: number }) => (groove = n)} position="relative" flex={1} height={GROOVE}>
-        <d-rect transition={colorFade()} color={theme.color.surfaceAlt} radius={GROOVE / 2} />
-        <d-rect transition={colorFade()} color={theme.color.primary} w={fillPx()} h={GROOVE} radius={GROOVE / 2} />
+        <d-rect
+          transition={withTransitionDefaults(split().background, colorFade())}
+          onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+          color={grooveColor()}
+          radius={grooveRadius()}
+        />
+        <d-rect
+          transition={colorFade()}
+          color={fillColor()}
+          w={fillPx()}
+          h={GROOVE}
+          radius={grooveRadius()}
+          shadow={glowShadow(props.disabled ? null : partGlow(styled().glow, theme.glow.accent), fillColor())}
+        />
+        <Show when={hasBorder()}>
+          <d-rect
+            drawStyle="stroke"
+            transition={withTransitionDefaults(split().border, colorFade())}
+            onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
+            color={styled().borderColor ?? theme.color.border}
+            strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
+            radius={grooveRadius()}
+          />
+        </Show>
         <view position="absolute" left={0} top={(GROOVE - thumb()) / 2} x={fillPx() - thumb() / 2}>
-          <d-oval transition={colorFade()} w={thumb()} h={thumb()} color={theme.color.primary} />
+          <d-rect transition={colorFade()} w={thumb()} h={thumb()} radius={pill(thumb())} color={theme.color.thumb ?? theme.color.primary} />
           <Show when={focused() && policy.focusRing}>
-            <d-oval drawStyle="stroke" w={thumb()} h={thumb()} color={theme.color.ring} strokeWidth={theme.borderWidth.focus} />
+            <d-rect drawStyle="stroke" w={thumb()} h={thumb()} radius={pill(thumb())} color={theme.color.ring} strokeWidth={theme.borderWidth.focus} />
           </Show>
         </view>
       </view>

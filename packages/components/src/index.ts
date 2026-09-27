@@ -39,6 +39,7 @@ export {
   defineTheme,
   darkTheme,
   lightTheme,
+  pill,
   type Theme,
   type ThemeDefinition,
   type ThemeColor,
@@ -64,6 +65,7 @@ export { typeStyle, typeWeight, lightOnDark } from "./typography"
 export { space } from "./spacing"
 export type {
   StyleProps,
+  Glow,
   FontProps,
   TextLayoutProps,
   EditorLayoutProps,

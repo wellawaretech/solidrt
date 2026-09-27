@@ -8,6 +8,7 @@ import { typeStyle } from "./typography"
 import type { TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
 import { colorFade, popupFade, popupFadeOut, PressFeedback } from "./motion"
+import { glowShadow } from "./glow"
 
 export interface ContextMenuItem {
   label: string
@@ -84,6 +85,7 @@ export function ContextMenu(props: ContextMenuProps) {
   // Anchored at the opening pointer position, flipping up when it would run
   // off the bottom. Same reflow-free placement as Tooltip/Select: portal at
   // the window root, measured in onLayout, moved with x/y paint transforms.
+  // Glows with theme.glow.overlay (the sheet sits on a scrim and does not).
   let Menu = () => {
     let menu: { id: number } | undefined
     let [pos, setPos] = createSignal<{ x: number; y: number } | null>(null)
@@ -124,7 +126,7 @@ export function ContextMenu(props: ContextMenuProps) {
           paddingTop={theme.spacing.sm}
           paddingBottom={theme.spacing.sm}
         >
-          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} />
+          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} shadow={glowShadow(theme.glow.overlay, theme.color.surface)} />
           <For each={props.items}>
             {(item: ContextMenuItem) => <ItemRow item={item} padY={space("sm")} />}
           </For>

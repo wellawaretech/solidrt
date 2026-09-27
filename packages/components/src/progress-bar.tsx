@@ -1,10 +1,11 @@
 import { createSignal, onFrame, onLayout, getBoundingBox, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
-import { theme } from "./theme"
+import { pill, theme } from "./theme"
 import { policy } from "./policy"
 import type { StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
 import { partTransition, partTransitionEnd, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade, travelMotion } from "./motion"
+import { glowShadow, partGlow } from "./glow"
 
 export interface ProgressBarProps extends TransitionProps<TransitionViewProp | TransitionStyleProp | "fill"> {
   // Progress from 0 to 1. Omit (or leave undefined) for an indeterminate bar: a
@@ -25,14 +26,17 @@ let clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : 
 // A horizontal progress bar. Determinate when given a value in [0, 1]: the fill
 // grows from the left. Indeterminate when value is undefined: a short segment
 // slides back and forth (driven by core onFrame). Colors come from the theme;
-// override the track via style.backgroundColor and the fill via style.color.
+// override the track via style.backgroundColor and the fill via style.color,
+// box the track with borderColor/borderWidth. The ends take pill(): round by
+// default, square under radius.full 0. The fill glows with theme.glow.accent.
 export function ProgressBar(props: ProgressBarProps) {
   let h = () => (props.layout?.height as number) ?? HEIGHT
-  let radius = () => h() / 2
   // Theme-level per-component overrides merged under the instance style.
   let styled = () => ({ ...theme.components.progressBar, ...props.style })
+  let radius = () => styled().borderRadius ?? pill(h())
   let track = () => styled().backgroundColor ?? theme.color.surfaceAlt
   let fill = () => styled().color ?? theme.color.primary
+  let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
   let indeterminate = () => props.value === undefined
 
   // Measured track width in pixels. Both the determinate fill and the
@@ -90,7 +94,17 @@ export function ProgressBar(props: ProgressBarProps) {
         <Animate />
       </Show>
       <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={track()} radius={radius()} />
-      <d-rect transition={fillTransition()} onTransitionEnd={partTransitionEnd("fill", "w", props.onTransitionEnd)} color={fill()} radius={radius()} w={fillWidth()} h={h()} x={indeterminate() ? offset() : 0} />
+      <d-rect transition={fillTransition()} onTransitionEnd={partTransitionEnd("fill", "w", props.onTransitionEnd)} color={fill()} radius={radius()} w={fillWidth()} h={h()} x={indeterminate() ? offset() : 0} shadow={glowShadow(partGlow(styled().glow, theme.glow.accent), fill())} />
+      <Show when={hasBorder()}>
+        <d-rect
+          drawStyle="stroke"
+          transition={withTransitionDefaults(split().border, colorFade())}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
+          color={styled().borderColor ?? theme.color.border}
+          strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
+          radius={radius()}
+        />
+      </Show>
     </view>
   )
 }

@@ -1,4 +1,4 @@
-import { createSignal, For, Show, getBoundingBox, onLayout, withAlpha } from "@solidrt/core"
+import { createSignal, For, Show, getBoundingBox, onCleanup, onLayout, withAlpha } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
@@ -8,6 +8,7 @@ import { typeStyle, lightOnDark } from "./typography"
 import type { Option, StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
 import { partTransition, partTransitionEnd, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade, PressFeedback, travelMotion } from "./motion"
+import { glowShadow, partGlow } from "./glow"
 
 export interface SegmentedControlProps
   extends TransitionProps<TransitionViewProp | TransitionStyleProp | "indicator"> {
@@ -31,9 +32,10 @@ const DIVIDER = 0
 // are square, and hairline dividers separate them. The active segment is one
 // indicator rect drawn under the labels that springs between segments - the
 // `indicator` transition entry retimes it. Controlled via value/onChange, or
-// uncontrolled via defaultValue. Hover tints inactive segments (non-touch
-// interaction policies only). Override the inactive fill via style, the
-// spacing/sizing via layout.
+// uncontrolled via defaultValue. The indicator glows with theme.glow.accent.
+// Hover tints inactive segments (non-touch interaction policies only).
+// Override the inactive fill via style, box the control with
+// borderColor/borderWidth, the spacing/sizing via layout.
 export function SegmentedControl(props: SegmentedControlProps) {
   let [internal, setInternal] = createSignal(props.defaultValue)
   let value = () => (props.value !== undefined ? props.value : internal())
@@ -60,6 +62,7 @@ export function SegmentedControl(props: SegmentedControlProps) {
   }
 
   let idleFill = () => styled().backgroundColor ?? theme.color.surfaceAlt
+  let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
   let activeFill = () => (props.disabled ? theme.color.surface : theme.color.primary)
   let label = (active: boolean) =>
     props.disabled ? theme.color.textMuted : active ? theme.color.onPrimary : theme.color.text
@@ -67,8 +70,11 @@ export function SegmentedControl(props: SegmentedControlProps) {
   // The indicator is positioned from measured segment boxes (control-relative
   // x and width per segment), so a selection change retargets it without a
   // reflow and unequal rounding never misaligns it. Remeasured each layout.
+  // Segment nodes are keyed by option value, not by the For index: a ref
+  // callback runs in the element's owned scope, where reading the index
+  // signal warns (STRICT_READ_UNTRACKED) and would go stale on a reorder.
   let root: { id: number } | undefined
-  let segs: ({ id: number } | undefined)[] = []
+  let segs = new Map<unknown, { id: number }>()
   let [boxes, setBoxes] = createSignal<{ x: number; w: number }[]>([])
   // The indicator's travel spring is armed only after the first placement:
   // the declaration exists from mount, so without this the first measured
@@ -81,7 +87,7 @@ export function SegmentedControl(props: SegmentedControlProps) {
     if (!r) return
     let next: { x: number; w: number }[] = []
     for (let i = 0; i < props.options.length; i++) {
-      let s = segs[i]
+      let s = segs.get(props.options[i]!.value)
       let b = s && getBoundingBox(s)
       if (!b) return
       next.push({ x: b.x - r.x, w: b.width })
@@ -124,15 +130,17 @@ export function SegmentedControl(props: SegmentedControlProps) {
         x={indicator()?.x ?? 0}
         w={indicator()?.w ?? 0}
         radius={corners(activeIndex())}
+        shadow={glowShadow(indicator() && !props.disabled ? partGlow(styled().glow, theme.glow.accent) : null, activeFill())}
       />
       <For each={props.options}>
         {(opt, i) => {
           let active = () => value() === opt.value
           let press = createPress({ onPress: () => select(opt.value) })
+          onCleanup(() => segs.delete(opt.value))
           return (
             <view
               ref={(n: { id: number }) => {
-                segs[i()] = n
+                segs.set(opt.value, n)
                 press.ref(n)
               }}
               repaintBoundary
@@ -167,6 +175,16 @@ export function SegmentedControl(props: SegmentedControlProps) {
           )
         }}
       </For>
+      <Show when={hasBorder()}>
+        <d-rect
+          drawStyle="stroke"
+          transition={withTransitionDefaults(split().border, colorFade())}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
+          color={styled().borderColor ?? theme.color.border}
+          strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
+          radius={radius()}
+        />
+      </Show>
     </view>
   )
 }

@@ -1,13 +1,14 @@
 import { createSignal, createContext, useContext, Show, children } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
-import { theme } from "./theme"
+import { pill, theme } from "./theme"
 import { policy } from "./policy"
 import { densityScale } from "./density"
 import { typeStyle } from "./typography"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade, markMotion, pressScale, scaleFeedback } from "./motion"
+import { glowShadow, partGlow } from "./glow"
 
 // Shared selection state for a group. Created and consumed within this module, so
 // RadioGroup/Radio are a self-contained pair, not a cross-component dependency.
@@ -67,8 +68,10 @@ export interface RadioProps extends TransitionProps {
 
 const RING = 20
 
-// A single option in a RadioGroup: a ring with an inner dot when selected.
-// The ring color fades, the dot pops in/out (markMotion), and a press
+// A single option in a RadioGroup: a ring with an inner dot when selected,
+// both on pill() (round by default, square under radius.full 0); the dot
+// glows with theme.glow.accent. The ring color fades, the dot pops in/out
+// (markMotion), and a press
 // shrinks the ring - not the whole row, so a long label never wobbles.
 export function Radio(props: RadioProps) {
   // useContext throws ContextNotFoundError if a Radio is used outside a
@@ -130,7 +133,7 @@ export function Radio(props: RadioProps) {
         scale={pressScale(press.pressed())}
         transition={scaleFeedback()}
       >
-        <d-oval drawStyle="stroke" transition={colorFade()} color={ringColor()} strokeWidth={ringWidth()} />
+        <d-rect drawStyle="stroke" transition={colorFade()} radius={pill(ring())} color={ringColor()} strokeWidth={ringWidth()} />
         <Show when={selected()}>
           <view
             position="absolute"
@@ -142,7 +145,16 @@ export function Radio(props: RadioProps) {
             scale={1}
             transition={markMotion()}
           >
-            <d-oval x={inset()} y={inset()} w={ring() - inset() * 2} h={ring() - inset() * 2} transition={colorFade()} color={theme.color.primary} />
+            <d-rect
+              x={inset()}
+              y={inset()}
+              w={ring() - inset() * 2}
+              h={ring() - inset() * 2}
+              radius={pill(ring() - inset() * 2)}
+              transition={colorFade()}
+              color={theme.color.primary}
+              shadow={glowShadow(disabled() ? null : partGlow(styled().glow, theme.glow.accent), theme.color.primary)}
+            />
           </view>
         </Show>
       </view>

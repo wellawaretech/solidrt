@@ -1,6 +1,6 @@
 # Theming
 
-Appearance (colors, spacing, border, font roles) comes from one shared, reactive theme backed by a Solid store: reads are tracked, so switching the theme at runtime recolors the live UI without remounting. Two presets ship, `darkTheme` and `lightTheme` (default dark); `setTheme(preset)` switches, `setTheme(partial)` merges an override one level deep per category. Custom themes are authored with `defineTheme`.
+Appearance (colors, spacing, border, font roles) comes from one shared, reactive theme backed by a Solid store: reads are tracked, so switching the theme at runtime recolors the live UI without remounting. Two presets ship, `darkTheme` and `lightTheme` (default dark); `setTheme(preset)` switches, `setTheme(partial)` merges an override one level deep per category. A resolved theme carries every key of every category (unset ones as `undefined`), so switching to one replaces the previous theme outright, per-component overrides and icon slots included; a partial keeps whatever it does not name. Custom themes are authored with `defineTheme`.
 
 ```jsx
 import { setTheme, darkTheme, lightTheme } from "@solidrt/components"
@@ -33,7 +33,7 @@ The type scale derives from `text.base` (the body size, default 14) and `text.ra
 
 ## Tokens
 
-The color tokens are `background` (window fill), `surface` (control/card fill), `surfaceAlt` (subtle raised/track fill), `text`, `textMuted`, `border`, `primary`/`onPrimary`, `secondary`/`onSecondary` (lower-emphasis accent), `danger` (validation/destructive), `scrim` (modal dim), `ring` (the focus ring; defaults to `text` so it stays visible on primary fills), and the feedback pair `overlayHover`/`overlayPressed`: translucent tints components draw OVER a control's own fill, so one token pair gives hover/pressed feedback on every fill color, including caller-set ones. Non-color tokens are `spacing`, `radius`, `borderWidth` (`sm` for borders, `focus` for the ring), `size` (app-wide default extents: `navRail` 72, `navSidebar` 220, `splitViewList` 320, `menuMinWidth` 120, `slider` 200; each overridable per instance through its layout or prop), and `text` (the type scale: `caption`/`label`/`body`/`title`/`heading` roles, each `{ size, lineHeight, weight }`, plus `fontFamily` and `monoFamily` for code).
+The color tokens are `background` (window fill), `surface` (control/card fill), `surfaceAlt` (subtle raised/track fill), `text`, `textMuted`, `border`, `primary`/`onPrimary`, `secondary`/`onSecondary` (lower-emphasis accent), `danger` (validation/destructive), `scrim` (modal dim), `ring` (the focus ring; defaults to `text` so it stays visible on primary fills), `thumb` (optional: the cap riding a track, the Switch knob and the Slider thumb; unset they are `onPrimary` and `primary`, so a palette whose `onPrimary` is dark sets a light cap here), and the feedback pair `overlayHover`/`overlayPressed`: translucent tints components draw OVER a control's own fill, so one token pair gives hover/pressed feedback on every fill color, including caller-set ones. Non-color tokens are `spacing`, `radius`, `borderWidth` (`sm` for borders, `focus` for the ring), `size` (app-wide default extents: `navRail` 72, `navSidebar` 220, `splitViewList` 320, `menuMinWidth` 120, `slider` 200; each overridable per instance through its layout or prop), and `text` (the type scale: `caption`/`label`/`body`/`title`/`heading` roles, each `{ size, lineHeight, weight }`, plus `fontFamily` and `monoFamily` for code).
 
 ## Spacing
 
@@ -41,7 +41,7 @@ Spacing is one base unit: `spacing` in a theme definition is a number (default 4
 
 ## Radius
 
-Corner radius is set once: `radius` in a theme definition is a single number, the control radius (default 8), and the scale derives from it: `md` is the base (Button, TextInput, RichTextEditor, Select, SegmentedControl, QrCode), `sm` half of it (Checkbox, Item, NavShell items, Select and ContextMenu popups, Tooltip), `lg` one and a half (Card), and `full` the pill (Badge). Set `radius: 0` for a square theme, `radius: 12` for a soft one; buttons and inputs always match. Shapes derived from a control's own height (Switch, Slider, ProgressBar, Radio) are not on the scale. Pass an object (`radius: { sm, md, lg, full }`, any subset) to pin individual steps instead.
+Corner radius is set once: `radius` in a theme definition is a single number, the control radius (default 8), and the scale derives from it: `md` is the base (Button, TextInput, RichTextEditor, Select, SegmentedControl, QrCode), `sm` half of it (Checkbox, Item, NavShell items, Select and ContextMenu popups, Tooltip), `lg` one and a half (Card), and `full` the pill (Badge). Set `radius: 0` for a square theme, `radius: 12` for a soft one; buttons and inputs always match. Shapes derived from a control's own height (Switch, Slider, ProgressBar, Radio) take `full` too, through `pill(size)`: half the size, capped by `radius.full`, so `full: 0` squares every pill and circle in the library (`radius: { sm: 0, md: 0, lg: 0, full: 0 }` is the all-square theme) while the default 9999 leaves them round. `pill` is exported for a custom control with a round part. Pass an object (`radius: { sm, md, lg, full }`, any subset) to pin individual steps instead.
 
 ```jsx
 setTheme({ radius: 4 })   // sm 2, md 4, lg 6
@@ -55,15 +55,38 @@ setTheme({ radius: 4 })   // sm 2, md 4, lg 6
 setTheme({ motion: { base: 250, slow: 400 } })   // a slower, calmer app
 ```
 
+## Glow
+
+`glow` gives the filled parts a halo, a zero-offset blurred shadow read as emitted light, by role: `accent` lands on the accent-colored fills (the primary and danger Button and Badge, Switch on, Checkbox checked, the Radio dot, the Slider and ProgressBar fills, the SegmentedControl indicator; a disabled control never glows), `overlay` on the anchored popups (the Tooltip bubble, the Select dropdown, the ContextMenu menu). Each is `{ radius, color? }`: without a color a part glows in its own fill color, so a danger button glows red and a primary one in the accent, and a fill with no color to take (a ghost button) casts nothing. A pressable face widens its glow while hovered or pressed. The glow sits on the part's opaque fill, so it fades along with a press or popup fade; a shadow itself cannot be transitioned, so a glow snaps on and off. Per component, `theme.components.<name>.glow` and an instance's `style.glow` override the role (`null` clears it).
+
+```jsx
+setTheme({ glow: { accent: { radius: 14 }, overlay: { radius: 26, color: "rgba(51,255,119,0.3)" } } })
+```
+
+## Window finish
+
+`finish` is the theme's window finish: a core window shader declaration (`program`, `params`, and the optional `textures`, `previous`, `vertexCount`) that `Window` declares on the window as it is, so one theme can carry a vignette, scanlines or a color grade. `Window` adds one uniform, `uScale`, the display scale, for effects counted in logical pixels. Strength and layer switches are the theme's own `params`; a theme without a `program` has no finish. An app with a slider updates a param by spreading the current ones, because `setTheme` merges one level deep and a partial replaces the whole `params` object it names: `setTheme({ finish: { params: { ...theme.finish.params, uStrength: v } } })`. The theme's module links the program itself, once, at init (the client brings the GPU up before the bundle runs); the package ships no finish, and the stock presets have none.
+
+```jsx
+import { compileShader, linkProgram, destroyShader, glsl } from "@solidrt/core/gpu"
+
+let fs = compileShader("fragment", glsl`...`, { header: true })   // reads uSource, uScale and its own params
+let vs = compileShader("vertex", glsl`...`)                        // the covering triangle
+let program = linkProgram(vs, fs, { label: "crt-finish" })
+destroyShader(vs); destroyShader(fs)
+
+export let crtTheme = defineTheme({ color: { /* ... */ }, finish: { program, params: { uStrength: 0.4, uScan: 1 } } })
+```
+
 ## Per-component overrides
 
-`theme.components` restyles a component everywhere without wrapping it: a `StyleProps` object per component name, merged between the component's themed defaults and each instance's `style` prop (instance style still wins).
+`theme.components` restyles a component everywhere without wrapping it: a `StyleProps` object per component name, merged between the component's themed defaults and each instance's `style` prop (instance style still wins). Every themed component draws the `borderColor`/`borderWidth` it is given (Item rows, the SegmentedControl, Badge, the Slider and ProgressBar grooves included), so one theme boxes the whole library; `glow` sets or clears (`null`) a component's halo.
 
 ```jsx
 setTheme({ components: { button: { borderRadius: 999 } } })   // pill buttons app-wide
 ```
 
-Keys: `button`, `card`, `badge`, `switch`, `checkbox`, `radio`, `item`, `select`, `segmentedControl`, `textInput`, `richTextEditor`, `tooltip`, `divider`, `progressBar`, `spinner`.
+Keys: `button`, `card`, `badge`, `switch`, `checkbox`, `radio`, `slider`, `item`, `select`, `segmentedControl`, `textInput`, `richTextEditor`, `tooltip`, `divider`, `progressBar`, `spinner`.
 
 ## Icon slots
 
