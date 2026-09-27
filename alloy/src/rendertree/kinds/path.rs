@@ -451,8 +451,20 @@ impl Buildable for Path {
     // at decode). Blur and color come from the shadow, everything shaping
     // the silhouette from the element's paint.
     if let Some(shadow) = &self.shadow {
+      // The shape's painted box, in the pre-shadow-translate frame: the
+      // path's tight extent plus the stroke's reach. Also the base of the
+      // own layer's bounds below.
+      let shape_box = {
+        let StrokeShape { capped, joined } = self.shape.get();
+        let capped = capped || self.dash().is_some();
+        let o = self.paint.stroke_outset(capped, joined);
+        self.bounds.borrow().unwrap_or_else(Rect::zero).inflate(o, o)
+      };
+      let own_layer = shadow.needs_own_layer(&self.paint, shape_box);
       let styled = |style: DrawStyle| {
-        let mut p = shadow.to_paint();
+        // Inside an own layer the blur sits on the layer's image filter,
+        // so the draw itself stays hard (see ShadowState::to_layer_paint).
+        let mut p = if own_layer { shadow.to_hard_paint() } else { shadow.to_paint() };
         p.set_draw_style(style);
         p.set_stroke_width(self.paint.stroke_width);
         p.set_stroke_cap(self.paint.stroke_cap);
@@ -462,6 +474,13 @@ impl Buildable for Path {
       };
       builder.save();
       builder.translate(shadow.dx, shadow.dy);
+      if own_layer {
+        // The layer's bounds, in the translated frame: the shape's box
+        // grown by the blur's reach.
+        let o = shadow.outset();
+        crate::rendertree::counters::note_save_layer();
+        builder.save_layer(&shape_box.inflate(o, o), Some(&shadow.to_layer_paint()), None);
+      }
       match self.dash().filter(|_| self.paint.strokes()) {
         Some(dash) => {
           if self.paint.fills() {
@@ -475,6 +494,9 @@ impl Buildable for Path {
           crate::rendertree::counters::note_draw();
           builder.draw_path(path, &styled(style));
         }
+      }
+      if own_layer {
+        builder.restore();
       }
       builder.restore();
     }

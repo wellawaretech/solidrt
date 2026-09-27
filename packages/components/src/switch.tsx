@@ -88,7 +88,10 @@ export function Switch(props: SwitchProps) {
         transition={partTransition(props.transition, "knob", "x", travelMotion())}
         onTransitionEnd={partTransitionEnd("knob", "x", props.onTransitionEnd)}
       >
+        {/* The hairline keeps the thumb visible off: onPrimary on the
+            light scheme's surfaceAlt track is about 1.2:1 on its own. */}
         <d-oval transition={colorFade()} w={thumb()} h={thumb()} color={theme.color.onPrimary} />
+        <d-oval drawStyle="stroke" transition={colorFade()} w={thumb()} h={thumb()} color={theme.color.border} strokeWidth={theme.borderWidth.sm} />
       </view>
       <Show when={(style().borderWidth ?? 0) > 0}>
         <d-rect

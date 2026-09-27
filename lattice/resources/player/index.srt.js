@@ -10271,7 +10271,7 @@ var DEFAULT = {
     surface: ["#f6f8fa", "#161b22"],
     surfaceAlt: ["#eaeef2", "#21262d"],
     text: ["#1f2328", "#b1bac4"],
-    textMuted: ["#707376", "#828993"],
+    textMuted: ["#606366", "#939aa4"],
     border: ["rgba(0,0,0,0.15)", "rgba(255,255,255,0.14)"],
     primary: "#547ebf",
     onPrimary: "#ffffff",
@@ -11658,14 +11658,16 @@ function createFocusNav(options) {
   createEffect(() => currentScope(), (scopeNode) => {
     if (!scopeNode)
       return;
-    let focused = focusedNode();
-    if (focused != null && getNodePath(focused).includes(scopeNode.id))
-      return;
-    let placed = reachable();
-    if (placed.length > 0)
-      focusFirst(placed);
-    else if (focused != null)
-      setFocus(null);
+    untrack(() => {
+      let focused = focusedNode();
+      if (focused != null && getNodePath(focused).includes(scopeNode.id))
+        return;
+      let placed = reachable();
+      if (placed.length > 0)
+        focusFirst(placed);
+      else if (focused != null)
+        setFocus(null);
+    });
   });
   let input = options?.input ?? defaultMap();
   for (let [name, kind] of Object.entries(uiActions)) {

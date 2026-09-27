@@ -334,11 +334,16 @@ export function createFocusNav(options?: FocusNavOptions) {
     () => currentScope(),
     (scopeNode) => {
       if (!scopeNode) return
-      let focused = focusedNode()
-      if (focused != null && getNodePath(focused).includes(scopeNode.id)) return
-      let placed = reachable()
-      if (placed.length > 0) focusFirst(placed)
-      else if (focused != null) setFocus(null)
+      // The pull reads focus and the candidates for itself, a snapshot, not
+      // a dependency: untracked so the strict-mode read diagnostic stays
+      // quiet (as in `repeating`).
+      untrack(() => {
+        let focused = focusedNode()
+        if (focused != null && getNodePath(focused).includes(scopeNode.id)) return
+        let placed = reachable()
+        if (placed.length > 0) focusFirst(placed)
+        else if (focused != null) setFocus(null)
+      })
     },
   )
 

@@ -148,7 +148,12 @@ when exactly one client is connected.
   generation }`. Pass the previous `latest` as `since` to read only new
   output; `client` keeps one client's entries (all clients without); a
   changed `generation` means the server restarted and cursors and client
-  ids are stale.
+  ids are stale. Native engine diagnostics from the local client the
+  server spawned - flutter/Impeller `[ERROR:...]`/`[WARNING:...]` stderr
+  lines, validation breaks among them - arrive as entries with
+  `client: -1` at level error/warn; they never pass the engine logger, so
+  this is their only route into `/logs`, and a remote client's stderr
+  stays out of reach.
 - `/tree?query=<text>&root=<id>&depth=<n>&props=true` - `{ limit, matches:
   [{ id, kind, path, x, y, width, height }] }` for a query, the nested tree
   otherwise (the `get_render_tree` tool returns it verbatim). Node ids are

@@ -88,9 +88,17 @@ impl Buildable for Rectangle {
         Size::new((rect.size.width + spread * 2.0).max(0.0), (rect.size.height + spread * 2.0).max(0.0)),
       );
       let radii = self.radius.map(|radii| radii.map(|r| (r + spread).max(0.0)));
+      let own_layer = shadow.needs_own_layer(&self.paint, rect);
       builder.save();
       clip_out(builder, &rect, self.radius);
-      draw(builder, &cast, radii, &shadow.to_paint());
+      if own_layer {
+        crate::rendertree::counters::note_save_layer();
+        builder.save_layer(&shadow.extent_of(rect), Some(&shadow.to_layer_paint()), None);
+        draw(builder, &cast, radii, &shadow.to_hard_paint());
+        builder.restore();
+      } else {
+        draw(builder, &cast, radii, &shadow.to_paint());
+      }
       builder.restore();
     }
     // A zero-width stroke paints nothing (PaintState::painted_style): a

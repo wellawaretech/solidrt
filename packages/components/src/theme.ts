@@ -256,12 +256,15 @@ const DEFAULT: ThemeDefinition = {
     // renders thin on low-DPI and its contrast depends on what sits behind
     // it. Precomputed - core's mixColors delegates to flux:rendertree, and a
     // preset is data that must not need the render engine at import time
-    // (the website token build imports this module headless). If text or
-    // background changes, recompute: mixColors(text, background, 0.4).
-    // The dark tone sits a step above the 4.5:1 AA floor (about 5.4:1)
-    // instead of at the mix: the body text already sits low, and the
-    // strict mix falls under it.
-    textMuted: ["#707376", "#828993"],
+    // (the website token build imports this module headless). Both tones
+    // are tuned a step above the 4.5:1 AA floor against surfaceAlt, the
+    // least contrasting surface muted text sits on (list rows, tracks,
+    // fields) - tuning against `background` alone left them at 4.1:1 and
+    // 4.3:1 there. Light lands at 5.2:1 on surfaceAlt (6.0:1 on the
+    // background), dark at 5.4:1 (6.8:1), and both keep a clear step of
+    // de-emphasis under `text`. If a surface changes, recheck the WCAG
+    // ratios against the new surfaceAlt.
+    textMuted: ["#606366", "#939aa4"],
     border: ["rgba(0,0,0,0.15)", "rgba(255,255,255,0.14)"],
     // Accent tuned to the puzzle mark's mid blue.
     primary: "#547ebf",

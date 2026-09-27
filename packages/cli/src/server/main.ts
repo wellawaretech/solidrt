@@ -432,6 +432,23 @@ async function shutdown() {
 }
 onShutdownRequest(shutdown)
 
+// Native engine diagnostics on the spawned client's stderr - flutter and
+// Impeller "[ERROR:path] message" lines, validation breaks among them -
+// never pass the engine logger, so without forwarding they are invisible
+// over the control API: a rendering bug can spam stderr every frame while
+// /logs stays clean. Buffer the error-shaped lines as log entries under
+// their severity (client -1: the process, not a connected device); the rest
+// of the stderr chatter (GL extension dumps, [alloy] startup notes) stays
+// terminal-only. Read-side repeat collapsing keeps the per-frame copies
+// down to one entry. Only the client this server spawned is covered - a
+// remote client's stderr never reaches the server.
+const NATIVE_STDERR_LINE = /^\[(ERROR|FATAL|WARNING):[^\]]*\]/
+function forwardNativeStderr(line: string) {
+  let match = NATIVE_STDERR_LINE.exec(line)
+  if (!match) return
+  appendLog(-1, match[1] === "WARNING" ? "warn" : "error", line)
+}
+
 // Print a child's output line by line as it arrives.
 async function pump(stream: AsyncIterable<Uint8Array>, print: (line: string) => void) {
   let decoder = new TextDecoder()
@@ -472,7 +489,10 @@ if (config.client) {
   let child = command(config.client.cmd, [...config.client.args, "--dev-server", `127.0.0.1:${server.port}`]).spawn()
   localClient = child
   pump(child.stdout, (line) => console.log(line))
-  pump(child.stderr, (line) => console.error(line))
+  pump(child.stderr, (line) => {
+    console.error(line)
+    forwardNativeStderr(line)
+  })
   // The server outlives its client: a wedged or crashed client is restarted
   // with `srt client` (it reattaches by cwd) without losing the server, its
   // bundle, the watcher or the MCP session. The server stops on quit/signal.

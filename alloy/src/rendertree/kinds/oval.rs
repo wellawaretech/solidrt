@@ -35,11 +35,19 @@ impl Buildable for Oval {
         Point::new(rect.origin.x + shadow.dx - spread, rect.origin.y + shadow.dy - spread),
         Size::new((rect.size.width + spread * 2.0).max(0.0), (rect.size.height + spread * 2.0).max(0.0)),
       );
+      let own_layer = shadow.needs_own_layer(&self.paint, rect);
       builder.save();
       crate::rendertree::counters::note_clip(true);
       builder.clip_oval(&rect, ClipOperation::Difference);
       crate::rendertree::counters::note_draw();
-      builder.draw_oval(&cast, &shadow.to_paint());
+      if own_layer {
+        crate::rendertree::counters::note_save_layer();
+        builder.save_layer(&shadow.extent_of(rect), Some(&shadow.to_layer_paint()), None);
+        builder.draw_oval(&cast, &shadow.to_hard_paint());
+        builder.restore();
+      } else {
+        builder.draw_oval(&cast, &shadow.to_paint());
+      }
       builder.restore();
     }
     // A zero-width stroke paints nothing (PaintState::painted_style).

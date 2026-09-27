@@ -63,11 +63,16 @@ export function Slider(props: SliderProps) {
     props.onChange?.(v)
   }
 
-  let setFromClientX = (clientX: number) => {
+  // The handlers sit on the track, and localX is exact in the track's own
+  // frame even after a drag drifts off it (frozen down path), so no origin
+  // lookup is needed. clientX against getBoundingBox would mix frames: the
+  // box's x/y are relative to the nearest positioned ancestor, not the
+  // window clientX lives in.
+  let setFromLocalX = (localX: number) => {
     if (!track) return
-    let box = getBoundingBox(track)
-    if (!box || box.width === 0) return
-    let f = clamp((clientX - box.x) / box.width, 0, 1)
+    let width = getBoundingBox(track)?.width ?? 0
+    if (width === 0) return
+    let f = clamp(localX / width, 0, 1)
     let raw = min() + f * (max() - min())
     if (props.step) raw = Math.round(raw / props.step) * props.step
     commit(clamp(raw, min(), max()))
@@ -90,11 +95,11 @@ export function Slider(props: SliderProps) {
     // outright so an ancestor scroller's pan cannot take the pointer over.
     arena.steal(e.pointerId, owner)
     active = e.pointerId
-    setFromClientX(e.clientX)
+    setFromLocalX(e.localX)
   }
   let handleMove = (e: PointerEvent) => {
     if (active !== e.pointerId) return
-    setFromClientX(e.clientX)
+    setFromLocalX(e.localX)
   }
   let handleUp = (e: PointerEvent) => {
     if (active === e.pointerId) endDrag()
