@@ -89,7 +89,7 @@ csscolorparser = { version = "=0.7.2", default-features = false, features = ["na
 # webp, ...) into the whole workspace via feature unification. The luma helpers
 # we use need only decoders + multi_barcode_readers + qrcode; encoding_rs
 # covers non-UTF-8 QR payload character sets.
-rxing = { version = "=0.9.2", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "encoding_rs"] }
+rxing = { version = "=0.9.3", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "encoding_rs"] }
 # Render-tree dependencies (the retained-mode UI layer in src/rendertree).
 # taffy = flexbox layout; lyon + svgtypes = path geometry/hit-testing.
 # euclid must track the requirement impellers declares: impellers' Point/Size/
@@ -107,7 +107,7 @@ lyon_algorithms = "=1.0.21"
 unicode-linebreak = "=0.1.5"
 unicode-segmentation = "=1.13.3"
 # Bounded LRU for the shared shaped-word cache (rendertree/text/words.rs).
-lru = "=0.18.3"
+lru = "=0.18.5"
 # f32 -> f16 packing for rgba16f uploads (gpu/texture.rs `f16_bytes`).
 half = "=2.7.1"
 # Headless playback context (src/egl_headless.rs): a bare EGL pbuffer on a
