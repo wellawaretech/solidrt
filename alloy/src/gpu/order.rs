@@ -13,6 +13,18 @@
 //! sort must be linear and allocation-free in steady state. It is stable:
 //! equal keys keep slot order, so the untouched case reproduces today's
 //! insertion-order draw exactly.
+//!
+//! Two materializations of one permutation: the gathered records (the
+//! instance buffer holds the records themselves in key order) and, for a
+//! population whose records live in a data texture the shader fetches by
+//! id, the INDEX stream - the instance buffer holds the sorted record
+//! indices as u32, K of them per instance record, and a re-sort uploads
+//! 4 bytes per record instead of the record.
+
+/// The id an index stream carries past the sorted population (every slot
+/// of the last instance's group past the count, and the rest of the
+/// buffer): the shader culls it before any fetch.
+pub const INDEX_NONE: u32 = u32::MAX;
 
 // Digit width of the LSD radix sort: 8 bits = 4 counting passes over u32
 // keys with 256-bucket histograms, the standard cache-friendly split.
@@ -54,6 +66,14 @@ pub struct InstanceOrder {
   /// core-side - no publish from the app. Position keys only (a field
   /// key re-orders when its records republish, so retaining buys nothing).
   pub retain: bool,
+  /// The index materialization: Some(record stride in bytes) when the
+  /// key buffer holds sorted record INDICES rather than records. The
+  /// records themselves are handed off (`instance_order_records`) at this
+  /// stride - the key offsets address them - and the buffer's instance
+  /// record is `arrayStride / 4` u32 ids (K records per drawn instance),
+  /// written whole on every re-sort with `INDEX_NONE` past the population.
+  /// Retains by nature (the mirror is the only record copy).
+  pub indices: Option<usize>,
 }
 
 impl InstanceOrder {
@@ -62,7 +82,9 @@ impl InstanceOrder {
   /// required with `position` and rejected with `field`, `buffer` names the
   /// pipeline buffer index holding the key (default: the first
   /// instance-step buffer), `retain` opts into the retained-copy strategy
-  /// (position keys only). Stored offsets are bytes.
+  /// (position keys only), `indices` (a byte stride) selects the index
+  /// materialization over handed-off records of that stride. Stored
+  /// offsets are bytes.
   pub fn parse(
     field: Option<f64>,
     position: Option<f64>,
@@ -70,6 +92,7 @@ impl InstanceOrder {
     descending: bool,
     buffer: Option<f64>,
     retain: bool,
+    indices: Option<f64>,
   ) -> Result<InstanceOrder, String> {
     let key_buffer = match buffer {
       None => None,
@@ -102,7 +125,26 @@ impl InstanceOrder {
         OrderKey::Projected { offset: float_offset(p, "position")?, direction }
       }
     };
-    Ok(InstanceOrder { key, descending, key_buffer, retain })
+    let indices = match indices {
+      None => None,
+      Some(s) => {
+        if !(s.is_finite() && s > 0.0 && s.fract() == 0.0 && (s as usize) % 4 == 0) {
+          return Err(format!("instanceOrder indices.stride must be a positive multiple of 4 bytes (whole float records), got {s}"));
+        }
+        Some(s as usize)
+      }
+    };
+    let order = InstanceOrder { key, descending, key_buffer, retain, indices };
+    if let Some(stride) = indices {
+      order.check_stride(stride)?;
+    }
+    Ok(order)
+  }
+
+  /// The byte stride of the records the key reads: the handed-off record
+  /// stride under the index materialization, else the instance buffer's.
+  pub fn record_stride(&self, instance_stride: usize) -> usize {
+    self.indices.unwrap_or(instance_stride)
   }
 
   /// The key bytes must sit inside one record of `stride` bytes: a field key
@@ -267,6 +309,20 @@ pub fn order_permutation(order: &InstanceOrder, stride: usize, src: &[u8], scrat
     }
     std::mem::swap(perm, tmp);
   }
+}
+
+/// Write `perm` (perm[i] = the slot drawn i-th) into `dst` as native-endian
+/// u32 ids - the index materialization - and fill the rest of `dst` with
+/// `INDEX_NONE`, so every id slot of the buffer is either a sorted record
+/// or the sentinel and no stale id from a larger population survives. A
+/// trailing partial u32 (a `dst` length not a multiple of 4) is left alone.
+pub fn materialize_indices(perm: &[u32], dst: &mut [u8]) {
+  let slots = dst.len() / 4;
+  for (i, chunk) in dst.chunks_exact_mut(4).enumerate() {
+    let id = if i < perm.len() { perm[i] } else { INDEX_NONE };
+    chunk.copy_from_slice(&id.to_ne_bytes());
+  }
+  debug_assert!(perm.len() <= slots, "permutation longer than the index buffer");
 }
 
 /// Gather `src`'s records into `dst` following `perm` (perm[i] = the slot

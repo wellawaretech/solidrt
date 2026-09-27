@@ -2,6 +2,7 @@ package com.solidrt.app;
 
 import android.content.Intent;
 import android.content.res.AssetManager;
+import android.system.Os;
 import android.util.Log;
 
 import java.io.File;
@@ -20,10 +21,29 @@ public class MainActivity extends SolidRTActivity {
     // to SDL_main), after the shared launch fact, where the go client reads
     // --dev-server and auto-connects. Avoids adb reverse, which does not work
     // over wireless adb.
+    // A second dev extra, `srt_env`: "NAME=value" pairs separated by ';',
+    // set into the process environment here, before SDL_main, so the
+    // runtime's env knobs (SRT_CADENCE_HOLD for a measurement) reach a
+    // launched client the way a shell export does on desktop.
     @Override
     protected String[] getArguments() {
         String[] base = super.getArguments();
         Intent intent = getIntent();
+        String env = intent != null ? intent.getStringExtra("srt_env") : null;
+        if (env != null && !env.isEmpty()) {
+            for (String pair : env.split(";")) {
+                int eq = pair.indexOf('=');
+                if (eq <= 0) {
+                    Log.w(TAG, "srt_env: ignoring '" + pair + "' (expected NAME=value)");
+                    continue;
+                }
+                try {
+                    Os.setenv(pair.substring(0, eq), pair.substring(eq + 1), true);
+                } catch (Exception e) {
+                    Log.w(TAG, "srt_env: failed to set '" + pair + "'", e);
+                }
+            }
+        }
         String addr = intent != null ? intent.getStringExtra("srt_dev_server") : null;
         if (addr == null || addr.isEmpty()) {
             return base;

@@ -179,8 +179,8 @@ fn collect_label(opts: &Option<Object<'_>>) -> rquickjs::Result<Option<String>> 
 }
 
 // Decode the { format? } pixel format the pixel-upload creates accept
-// ("rgba8" default | "rgba8-srgb" | "r8" | "r32f" | "rgba32f" | "rgba16f");
-// an unknown value throws at the create call site.
+// ("rgba8" default | "rgba8-srgb" | "r8" | "r32f" | "rgba32f" | "rgba16f" |
+// "rgba32ui"); an unknown value throws at the create call site.
 fn collect_format(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::TextureFormat> {
   let format = match opts {
     Some(o) => o.get::<_, Option<String>>("format")?,
@@ -190,20 +190,27 @@ fn collect_format(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquick
 }
 
 // The pixel payload of a texture create/upload. The view type must match the
-// id's format - byte formats take a Uint8Array, float formats a Float32Array -
-// so float data handed as raw bytes (or the reverse) throws at the call site
-// instead of uploading a reinterpretation. Held (not just borrowed) so the JS
-// buffer stays pinned while the bytes are read. The half-float format takes
-// the same Float32Array and packs it here, so alloy sees every payload at
-// the format's stored size.
+// id's format - byte formats take a Uint8Array, float formats a Float32Array,
+// the integer format a Uint32Array - so float data handed as raw bytes (or
+// the reverse) throws at the call site instead of uploading a
+// reinterpretation. Held (not just borrowed) so the JS buffer stays pinned
+// while the bytes are read. The half-float format takes the same
+// Float32Array and packs it here, so alloy sees every payload at the
+// format's stored size.
 enum PixelData<'js> {
   Bytes(TypedArray<'js, u8>),
   Floats(TypedArray<'js, f32>),
+  Uints(TypedArray<'js, u32>),
   Halves(Vec<u8>),
 }
 
 impl<'js> PixelData<'js> {
   fn collect(ctx: &Ctx<'_>, data: Value<'js>, format: alloy::TextureFormat, api: &str) -> rquickjs::Result<Self> {
+    if format.is_uint() {
+      return TypedArray::<u32>::from_value(data)
+        .map(PixelData::Uints)
+        .map_err(|_| throw_str(ctx, &format!("{api}: {} data must be a Uint32Array", format.name())));
+    }
     if format.is_float() {
       let floats = TypedArray::<f32>::from_value(data)
         .map_err(|_| throw_str(ctx, &format!("{api}: {} data must be a Float32Array", format.name())))?;
@@ -224,6 +231,7 @@ impl<'js> PixelData<'js> {
     match self {
       PixelData::Bytes(a) => bytes_of(ctx, a, api),
       PixelData::Floats(a) => bytes_of(ctx, a, api),
+      PixelData::Uints(a) => bytes_of(ctx, a, api),
       PixelData::Halves(v) => Ok(v.as_slice()),
     }
   }
@@ -430,10 +438,12 @@ fn collect_entry_half(
 
 // The instanceOrder option: a field key ({ field }) or a projected key
 // ({ position, direction }), float offsets into one instance record, plus
-// descending, the key slot ({ slot }, default 0) and the retained-copy
-// opt-in ({ retain }). Only the array shape is checked here; the key rules
-// (exactly one of the two, offset values, direction values, buffer index
-// bounds, retain with position only, stride fit) are alloy's.
+// descending, the key slot ({ slot }, default 0), the retained-copy
+// opt-in ({ retain }) and the index materialization ({ indices: { stride }
+// }, the handed-off record's byte stride). Only the object shape is
+// checked here; the key rules (exactly one of the two, offset values,
+// direction values, buffer index bounds, retain with position only, stride
+// fit) are alloy's.
 fn collect_instance_order(
   ctx: &Ctx<'_>,
   opts: &Option<Object<'_>>,
@@ -452,7 +462,14 @@ fn collect_instance_order(
   let descending = o.get::<_, Option<bool>>("descending")?.unwrap_or(false);
   let buffer = o.get::<_, Option<f64>>("buffer")?;
   let retain = o.get::<_, Option<bool>>("retain")?.unwrap_or(false);
-  alloy::InstanceOrder::parse(field, position, direction, descending, buffer, retain)
+  let indices = match o.get::<_, Option<Object>>("indices")? {
+    None => None,
+    Some(i) => match i.get::<_, Option<f64>>("stride")? {
+      Some(stride) => Some(stride),
+      None => return Err(throw_str(ctx, &format!("{api}: instanceOrder indices needs a stride (bytes per handed-off record)"))),
+    },
+  };
+  alloy::InstanceOrder::parse(field, position, direction, descending, buffer, retain, indices)
     .map(Some)
     .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
 }

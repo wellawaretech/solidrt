@@ -625,6 +625,11 @@ pub enum UniformKind {
   /// Sampler2D, but only a cube map id (`TextureShape::Cube`) may back it,
   /// and the pass binds the id on the cube map target.
   SamplerCube,
+  /// An unsigned integer sampler (`usampler2D`): bound via texture bindings
+  /// like Sampler2D, but only an integer-format texture (Rgba32ui) may back
+  /// it, and no float sampler may take one (either mismatch samples
+  /// undefined values in GL).
+  USampler2D,
   /// Declared in the source but optimized out by the compiler, so GL
   /// reflects nothing for it: writes are accepted and skipped (with a
   /// warning) rather than rejected as unknown names.
@@ -648,6 +653,7 @@ impl UniformKind {
       glow::SAMPLER_2D => UniformKind::Sampler2D,
       glow::SAMPLER_2D_SHADOW => UniformKind::Sampler2DShadow,
       glow::SAMPLER_CUBE => UniformKind::SamplerCube,
+      glow::UNSIGNED_INT_SAMPLER_2D => UniformKind::USampler2D,
       _ => UniformKind::Other(utype),
     }
   }
@@ -655,13 +661,13 @@ impl UniformKind {
   /// True for the kinds texture bindings serve (plain and comparison
   /// samplers alike); params can set neither.
   pub fn is_sampler(self) -> bool {
-    matches!(self, UniformKind::Sampler2D | UniformKind::Sampler2DShadow | UniformKind::SamplerCube)
+    matches!(self, UniformKind::Sampler2D | UniformKind::Sampler2DShadow | UniformKind::SamplerCube | UniformKind::USampler2D)
   }
 
   /// The texture shape a sampler kind binds; None for non-samplers.
   pub fn sampler_shape(self) -> Option<TextureShape> {
     match self {
-      UniformKind::Sampler2D | UniformKind::Sampler2DShadow => Some(TextureShape::D2),
+      UniformKind::Sampler2D | UniformKind::Sampler2DShadow | UniformKind::USampler2D => Some(TextureShape::D2),
       UniformKind::SamplerCube => Some(TextureShape::Cube),
       _ => None,
     }
@@ -679,6 +685,7 @@ impl UniformKind {
       UniformKind::Sampler2D
       | UniformKind::Sampler2DShadow
       | UniformKind::SamplerCube
+      | UniformKind::USampler2D
       | UniformKind::Inactive
       | UniformKind::Other(_) => None,
     }
@@ -697,6 +704,7 @@ impl UniformKind {
       UniformKind::Sampler2D => "sampler2D",
       UniformKind::Sampler2DShadow => "sampler2DShadow",
       UniformKind::SamplerCube => "samplerCube",
+      UniformKind::USampler2D => "usampler2D",
       UniformKind::Inactive => "declared but inactive",
       UniformKind::Other(_) => "an unsupported type",
     }
@@ -876,9 +884,12 @@ pub struct BoundTexture {
 /// elsewhere answer): a `samplerCube` takes a cube map and a 2D sampler
 /// refuses one (a cube name cannot bind on the 2D target - the draw would
 /// sample garbage or error), and a `sampler2DShadow` takes a depth texture
-/// (a color texture behind a comparison sampler is undefined GL). The
-/// reverse of the last stays legal - a depth id on a plain sampler2D is the
-/// raw depth read. One copy of the rules for every bind path on both
+/// (a color texture behind a comparison sampler is undefined GL), and an
+/// integer texture (Rgba32ui) goes only behind a `usampler2D`, which takes
+/// nothing else (a float sampler over integer texels, or the reverse,
+/// samples undefined values). The reverse of the depth rule stays legal - a
+/// depth id on a plain sampler2D is the raw depth read. One copy of the
+/// rules for every bind path on both
 /// threads: the UI-side rebinds answer from the entry registry, the fused
 /// creates (whose uniform kinds only exist post-compile) from the raster
 /// map. Runs after `validate_texture_bindings`, so every name here is an
@@ -907,6 +918,18 @@ pub fn validate_binding_shapes(
     if slot.kind == UniformKind::Sampler2DShadow && bound.format != TextureFormat::Depth24 {
       return Err(format!(
         "uniform '{name}' is a sampler2DShadow; bind a draw target's depth texture (depthTexture(target))"
+      ));
+    }
+    if slot.kind == UniformKind::USampler2D && !bound.format.is_uint() {
+      return Err(format!(
+        "uniform '{name}' is a usampler2D; texture {id} is {} (bind an rgba32ui texture)",
+        bound.format.name()
+      ));
+    }
+    if slot.kind != UniformKind::USampler2D && bound.format.is_uint() {
+      return Err(format!(
+        "texture {id} is rgba32ui (integer texels); uniform '{name}' is a {} (declare it usampler2D)",
+        slot.glsl_name()
       ));
     }
   }

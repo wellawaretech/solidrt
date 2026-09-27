@@ -1577,6 +1577,24 @@ mirror is BUFFER-lifetime, so a detached-and-re-attached ordered entry
 publish from JS - true for every retained ordered mesh since this
 landed, transfer or not.
 
+The INDEXED form, `instanceOrder: { position: "iCenter", records:
+LAYOUT, descending: true }` (createRecordMesh only), is for a population
+whose records live in a DATA TEXTURE the vertex stage fetches by record
+index - a splat cloud, any large write-once set whose per-instance
+frontend cost matters. `records` is the layout of the record bytes you
+pass (the key attribute lives there), and the material's ONE instance
+buffer is the id stream: uint32/uint32x4 attributes the engine fills
+with the sorted record indices, K ids per instance record, so one drawn
+instance covers K records - repeat the geometry K times and pick the
+record with `gl_VertexID` (quad `gl_VertexID / 4`), fetch it by id
+(`texelFetch` on an `rgba32ui` texture the app built from the same
+bytes and bound per mesh), and cull the id 0xFFFFFFFF that pads the
+last group. Transfer is implied (the records are the engine's sort
+key source), a re-sort uploads 4 bytes per record instead of the
+record, and `count` stays in records while the entry draws
+ceil(count / K) instances (`drawCount`). `MeshInstances.textures` holds
+data textures the population owns, freed by disposeInstances.
+
 ### Background
 
 Background: `scene.setBackground(source | null)`, the `background` option
@@ -2589,38 +2607,62 @@ successors) as ordinary content, the model-loading split repeated:
   (.ply, .splat) stood up to y-up (positions and covariances rotated
   together; `keepOrientation` opts out, `.spz` is y-up already), bounds
   measured. `encodeSplat`/`decodeSplat` round-trip the `.srts` container
-  (28-byte record: center float32x3, covariance upper triangle as six
-  float16, sRGB color + opacity unorm8x4 - SPLAT_ATTRIBUTES); decode is
-  a header parse plus a byte VIEW, nothing per-splat. `srt tool
-  3d/splat <in> [-o out.srts] [--keep-orientation]` is the parse and
-  bake under bun (tools/splat.ts); an app bake script uses the same
-  entry.
+  (the record and SH blocks, next bullet); decode is a header parse
+  plus byte VIEWS, nothing per-splat. `srt tool 3d/splat <in> [-o
+  out.srts] [--sh 0..3] [--keep-orientation]` is the parse and bake
+  under bun (tools/splat.ts); an app bake script uses the same entry.
+- The `.srts` record (version 2) is 32 bytes = two rgba32ui texels:
+  center float32x3 + sRGB color and opacity unorm8x4, then the
+  covariance upper triangle as six float16 + a spare word
+  (SPLAT_ATTRIBUTES as a byte layout, SPLAT_RECORD_TEXELS). `--sh 1..3`
+  bakes that many spherical-harmonic bands beyond the base color from a
+  trainer's `.ply` or an `.spz` (`.splat` has none), capped at the
+  capture's: a second texel block of 2/3/6 texels per splat
+  (SPLAT_SH_TEXELS; the halves packed pairwise, coefficient-major with
+  rgb interleaved), 32/48/96 bytes per splat of texture, so the
+  default is 0 and a bake opts in. The y-up flip negates the
+  coefficients whose basis is odd in (y, z).
 - On the runtime, `loadSplat(path)` reads a `.srts` (fetch + decode,
   the loadModel shape) and `createSplatMesh(data, { count?, material?,
-  transfer?, label? })` / `<SplatMesh>` shows it: a RecordMesh over the
-  stock splat material (a shared instance; `splatMaterialClass` and the
-  SPLAT_VERTEX/SPLAT_FRAGMENT sources are exported for forks) with the
-  header bounds as the cull and picking box and `instanceOrder: {
-  position: "iCenter", retain: true, descending: true }` - so the cloud
-  composes as a mesh (depth-tested against opaque geometry, placed by
-  the transparent entry sort, transformed by its node) and the core
-  draws it back to front with zero per-frame JS; a parked camera
-  uploads nothing (see "Instance order"). The records TRANSFER to the
-  engine by default (a splat cloud is write-once): treat the SplatData
-  as consumed and drop it, and the cloud is resident twice (engine
-  copy + GPU buffer) instead of four times - at 1M splats that is
-  ~57 MB instead of ~115 MB. `transfer: false` keeps the mutable form.
+  label? })` / `<SplatMesh>` shows it: a RecordMesh in the INDEXED form
+  (see "Instance order") - the records handed to the engine as the
+  depth sort's key source AND uploaded once as the `rgba32ui` record
+  texture the vertex stage fetches by id (`uSplatRecords`, plus
+  `uSplatSh` when baked; bound per mesh, so a forked material keeps
+  them), SPLAT_GROUP (16) splats per drawn instance of a merged-quad
+  geometry, the header bounds as the cull and picking box, and the
+  id stream sorted back to front core-side - the cloud composes as a
+  mesh (depth-tested against opaque geometry, placed by the transparent
+  entry sort, transformed by its node), a camera turn re-sorts and
+  republishes 4 bytes per splat with zero per-frame JS, and a parked
+  camera uploads nothing. Write-once: treat the SplatData as consumed
+  and drop it; at 1M splats the cloud is resident as the engine's 32 MB
+  key copy plus 32 MB of texture plus a 4 MB id buffer, and
+  disposeInstances frees all three. `splatMaterialClass(shDegree)` is
+  the stock class per degree (a shared instance each), and
+  `splatVertexSource(shDegree)` / SPLAT_FRAGMENT / SPLAT_ID_ATTRIBUTES
+  are exported for forks; `count` rounds up to whole groups.
 - The vertex stage projects the baked covariance through the Jacobian
   of `uViewProj * uModel` (no focal/view uniforms; any node transform
-  shapes the footprint with the same matrix that moves the center) and
-  reads the target size from the standard `uViewport`.
+  shapes the footprint with the same matrix that moves the center),
+  reads the target size from the standard `uViewport`, and evaluates
+  the SH bands per corner from the view direction (`uCamPos` through
+  the transposed model rotation - exact under rotation and uniform
+  scale). The data textures' row width is the device's (up to 4096),
+  compiled into the source.
+- Why this shape: on the Pixel 7 at 1M splats the one-quad-per-instance
+  form spent two thirds of its vertex side on the instancing frontend;
+  the indexed form takes the full-res frame from 45 to 31 ms and the
+  vertex side from 24 to 8 ms, the per-vertex fetch and random id order
+  cost under a millisecond, and SH1-3 are near free (the bands cost
+  memory, not time). What remains at 1M is fill (overdraw). The table
+  is in okf/done/gaussian-splats.md.
 - Two capture caveats worth knowing at the app level: captures are
-  TRAINED against sRGB blending while the scene blends linear light -
-  judge a capture side by side before "correcting" either way - and a
-  capture is only clean near the camera path it was taken from
-  (elsewhere it is floaters), so keep the camera near that path.
-  okf/plans/gaussian-splats.md carries the measurements and the staged
-  escalations (SH bands, transform-feedback projection).
+  TRAINED against sRGB blending, so show them in a display-space scene
+  (`blendSpace: "display"`) - a linear scene lays a milky veil over
+  stacked translucents - and a capture is only clean near the camera
+  path it was taken from (elsewhere it is floaters), so keep the camera
+  near that path.
 
 ## Traps
 

@@ -1,6 +1,6 @@
 ---
 title: Android TV on Google Play
-description: Play offers an app on TVs only after a form-factor opt-in and a TV quality review, not by app category, and every packed app already declares TV support; what fails that review today is the banner (the runner's SolidRT logo, without the app's name, on every packed app) plus the bundle, 32/64-bit and 16 KB rules the AAB work has to meet.
+description: Play offers an app on TVs only after a form-factor opt-in and a TV quality review, not by app category; a `tv` key in package.json makes TV an explicit intent so pack can declare it, check a TV submission and print the Play steps, and what fails the review today is the banner (the runner's SolidRT logo, without the app's name, on every packed app) plus the bundle, 32/64-bit and 16 KB rules the AAB work has to meet.
 created: 2026-09-27
 ---
 
@@ -20,14 +20,54 @@ app may be a TV app. Three things decide it:
 - Play reviews it against the TV app quality guidelines. Only an approved
   app is discoverable on TVs.
 
-Because the opt-in is the gate, the TV entries cost nothing for an app that
-never targets TV. The runner keeps declaring them for every app, and
-package.json gets no `tv` key.
+Done looks like: a packed app declares TV support exactly when package.json
+says so; it shows its own banner, with its name, on the TV home screen; a
+game sits in the launcher's Games row; its bundle installs from Play on a TV
+with a 32-bit userspace and on an arm64 one; it passes the TV review; and
+pack catches what would fail that review before the upload and says what is
+left to do in Play Console.
 
-Done looks like: a packed app shows its own banner, with its name, on the TV
-home screen; a game sits in the launcher's Games row; its bundle installs
-from Play on a TV with a 32-bit userspace and on an arm64 one; and it passes
-the TV review.
+## The `tv` key
+
+Play's opt-in is the gate, so declaring TV support costs a phone-only app
+nothing on the store. The key is there for the developer's intent: once pack
+knows the app is meant for TVs it can check, warn and guide a TV submission,
+and an app not meant for TVs stops showing on TV launchers.
+
+```json
+"solidrt": {
+  "tv": false
+}
+```
+
+Top level, next to `car` (`okf/backlog/android-auto-parked-games.md`): what
+the app intends, not an Android detail. The scaffold lists it with its real
+default, as for `backup`.
+
+- `tv: true` declares what the runner declares for every app today: the
+  `LEANBACK_LAUNCHER` category, `android.software.leanback` not required,
+  and the banner.
+- `tv: false` has pack strip the `LEANBACK_LAUNCHER` category, so the app
+  shows on no TV launcher, sideloaded or from Play. The leftover banner
+  attribute and not-required leanback feature are inert. Removing an
+  element pair from the compiled manifest needs no string pool or resource
+  map change, so this is simpler than the insertions the Android Auto item
+  needs.
+- The default is `false`: TV is opted into like `car`, and pack's TV checks
+  and guidance run only for an app that asked for TV. That changes today's
+  behavior, where every packed app shows on a TV launcher: an example meant
+  for the TV sets `tv: true`. The go client keeps declaring TV
+  unconditionally.
+
+What pack does with `tv: true`:
+
+- Banner: no `banner` configured is a warning for an APK (sideloaded
+  testing is fine) and refuses an AAB, since TV-BN fails the review for
+  certain.
+- ABIs: an AAB whose `android.abis` lacks either `armeabi-v7a` or
+  `arm64-v8a` is refused (TV-G6).
+- After writing an AAB it prints the Play Console steps below, so the
+  developer does not learn them from a rejected review.
 
 ## What fails review today
 
@@ -41,8 +81,8 @@ the TV review.
   SolidRT banner), and pack swaps its bytes for the app's PNG, 320x180 at
   xhdpi. Config: a top-level `banner` next to `icon`, since it is an app
   identity asset like the icon (a future tvOS packer wants one too), null
-  meaning the placeholder. Without one, pack says so, the way it reports
-  the icon.
+  meaning the placeholder. With `tv: true` and no banner, pack warns or
+  refuses (above).
 - **The camera (TV-MT).** A packed app with the camera capability on (the
   default) is filtered off every device without a camera, TVs included:
   Play infers the camera as required from the permission. Filed in
@@ -51,9 +91,10 @@ the TV review.
   `okf/backlog/play-store-aab.md`.
 - **32/64-bit and 16 KB pages (TV-G6).** In force since 1 August 2026. The
   AAB item's default `android.abis` (`["arm64-v8a", "armeabi-v7a"]`) meets
-  the first half. The second needs every shipped runner library 16 KB
-  aligned; SDL was the weak point, so check the released libs with
-  `readelf -lW` before the first TV submission.
+  the first half, and pack refuses a `tv: true` bundle that drops either
+  ABI. The second needs every shipped runner library 16 KB aligned; SDL was
+  the weak point, so check the released libs with `readelf -lW` before the
+  first TV submission.
 - **The Games row (TV-LG).** A game shows there through
   `android:appCategory="game"`: the `category: "game"` key and patcher edit
   the Android Auto item proposes. Not a failure for a non-game.
@@ -78,10 +119,10 @@ the TV review.
 
 ## Play Console
 
-At least one TV screenshot, a TV banner graphic in the store listing, and
-"Android TV" mentioned in the description; then the form-factor opt-in. The
-review status shows under Android TV on the app's Pricing and distribution
-page.
+What pack prints after a `tv: true` AAB: at least one TV screenshot, a TV
+banner graphic in the store listing, and "Android TV" mentioned in the
+description; then the form-factor opt-in. The review status shows under
+Android TV on the app's Pricing and distribution page.
 
 ## Open questions
 

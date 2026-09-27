@@ -80,9 +80,11 @@ export type { FilterMode, WrapMode, TextureBinding, TextureBindings } from "flux
 // createCubeTexture, createMutableTexture), fixed for the id's lifetime like
 // the sampler state. "rgba8" (default), "rgba8-srgb" (decodes to linear
 // light on sample), "r8", the float data-texture formats "r32f"/"rgba32f"
-// (Float32Array payload, nearest/texelFetch sampling only, no readback) and
-// the HDR image format "rgba16f" (Float32Array payload packed to half float,
-// filterable) - see TextureFormat in flux:gpu for each format's contract.
+// (Float32Array payload, nearest/texelFetch sampling only, no readback), the
+// HDR image format "rgba16f" (Float32Array payload packed to half float,
+// filterable) and the integer data-texture format "rgba32ui" (Uint32Array
+// payload, a uvec4 per texel through a usampler2D, nearest/texelFetch only)
+// - see TextureFormat in flux:gpu for each format's contract.
 // Draw targets (createDrawTarget, createCubeDrawTarget) take the renderable
 // subset: "rgba8", "rgba8-srgb", "rgba16f".
 // "etc2-rgba8" (compressed) is a reserved future value of the same
@@ -245,7 +247,7 @@ export { captureSnapshot, readTexture } from "flux:gpu"
  * scope.
  */
 export function createTexture(
-  data: Uint8Array | Float32Array,
+  data: Uint8Array | Float32Array | Uint32Array,
   width: number,
   height: number,
   opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
@@ -279,7 +281,7 @@ export function createTexture(
  * reactive owner, `{ autoFree: false }` or `destroyTexture` otherwise).
  */
 export function createCubeTexture(
-  faces: (Uint8Array | Float32Array)[] | (Uint8Array | Float32Array)[][],
+  faces: (Uint8Array | Float32Array | Uint32Array)[] | (Uint8Array | Float32Array | Uint32Array)[][],
   size: number,
   opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
 ): gpu.TextureId {
@@ -300,7 +302,7 @@ export function createCubeTexture(
  * flux:gpu) yourself.
  */
 export function createMutableTexture(
-  data: Uint8Array | Float32Array,
+  data: Uint8Array | Float32Array | Uint32Array,
   width: number,
   height: number,
   opts?: CreateOptions & SamplerOptions & TextureFormatOptions,

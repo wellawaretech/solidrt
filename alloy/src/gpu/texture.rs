@@ -98,6 +98,12 @@ pub enum SamplerWrap {
 /// Rgba16f is the HDR image format (environment maps, panoramas): the same
 /// float payload at the boundary, stored as half float, and filterable like
 /// a byte format because GLES 3.0 lists RGBA16F as texture-filterable.
+/// Rgba32ui is the integer data-texture format (four u32 per texel: packed
+/// records a shader unpacks with `uintBitsToFloat`, `unpackHalf2x16` and
+/// `unpackUnorm4x8` - a splat cloud's records and SH bands, any bit-exact
+/// table): a Uint32Array payload, fetched through a `usampler2D`, and like
+/// the 32-bit floats upload-and-sample only and nearest/texelFetch only
+/// (integer textures never filter).
 /// Rgba8Srgb is an rgba8 whose stored bytes are sRGB-encoded: sampling
 /// decodes them to linear light in hardware, before filtering, so the
 /// filter and the mip chain are right - the color-map format of
@@ -125,6 +131,10 @@ pub enum TextureFormat {
   /// color-renderable (`GpuLimits::half_float_renderable`), which
   /// glGenerateMipmap requires of every format.
   Rgba16f,
+  /// Four u32 per pixel - a uvec4 per texel through a `usampler2D`: the
+  /// bit-exact data-texture format (packed records a shader unpacks).
+  /// Nearest-only and sample-only like the 32-bit floats.
+  Rgba32ui,
   /// Rgba8 stored sRGB-encoded (SRGB8_ALPHA8): sampling decodes RGB to
   /// linear light in hardware, alpha stays linear. Upload-and-sample only
   /// like the float formats: the readback path samples (decodes) instead of
@@ -151,9 +161,10 @@ impl TextureFormat {
       Some("r32f") => Ok(TextureFormat::R32f),
       Some("rgba32f") => Ok(TextureFormat::Rgba32f),
       Some("rgba16f") => Ok(TextureFormat::Rgba16f),
+      Some("rgba32ui") => Ok(TextureFormat::Rgba32ui),
       Some("rgba8-srgb") => Ok(TextureFormat::Rgba8Srgb),
       Some(other) => Err(format!(
-        "unknown format '{other}' (expected \"rgba8\", \"rgba8-srgb\", \"r8\", \"r32f\", \"rgba32f\" or \"rgba16f\")"
+        "unknown format '{other}' (expected \"rgba8\", \"rgba8-srgb\", \"r8\", \"r32f\", \"rgba32f\", \"rgba16f\" or \"rgba32ui\")"
       )),
     }
   }
@@ -170,9 +181,16 @@ impl TextureFormat {
       TextureFormat::R32f => 4,
       TextureFormat::Rgba32f => 16,
       TextureFormat::Rgba16f => 8,
+      TextureFormat::Rgba32ui => 16,
       TextureFormat::Rgba8Srgb => 4,
     };
     (width as usize) * (height as usize) * per_pixel
+  }
+
+  /// Whether the payload is unsigned 32-bit integers (a Uint32Array in JS),
+  /// stored as-is and fetched through an integer sampler.
+  pub fn is_uint(self) -> bool {
+    self == TextureFormat::Rgba32ui
   }
 
   /// Whether the payload is floats: one f32 per component at the boundary
@@ -185,21 +203,23 @@ impl TextureFormat {
   /// Whether linear filtering (and with it a mip chain and anisotropy)
   /// applies. The 32-bit float formats are nearest-only: linear float
   /// filtering needs OES_texture_float_linear and RGBA32F is never
-  /// filterable in core, so nearest/texelFetch is their portable contract.
-  /// RGBA16F is texture-filterable in core GLES 3.0 like every byte format;
-  /// depth samples nearest without a comparison mode.
+  /// filterable in core, so nearest/texelFetch is their portable contract;
+  /// an integer format never filters at all. RGBA16F is texture-filterable
+  /// in core GLES 3.0 like every byte format; depth samples nearest without
+  /// a comparison mode.
   pub fn filterable(self) -> bool {
-    !matches!(self, TextureFormat::R32f | TextureFormat::Rgba32f | TextureFormat::Depth24)
+    !matches!(self, TextureFormat::R32f | TextureFormat::Rgba32f | TextureFormat::Rgba32ui | TextureFormat::Depth24)
   }
 
   /// Whether the format is sample-only, with no readback, copy or display
   /// path: the 32-bit floats are not color-renderable in core GLES 3.0, a
-  /// half-float readback would quantize, and an sRGB texture's readback
-  /// would sample (decode) instead of returning the stored bytes. A draw
-  /// target of such a format renders (through a pass) but is read the same
-  /// way: through a pass into an Rgba8 target.
+  /// half-float readback would quantize, an integer texture is shader
+  /// data with no image meaning, and an sRGB texture's readback would
+  /// sample (decode) instead of returning the stored bytes. A draw target
+  /// of such a format renders (through a pass) but is read the same way:
+  /// through a pass into an Rgba8 target.
   pub fn sample_only(self) -> bool {
-    self.is_float() || self == TextureFormat::Rgba8Srgb
+    self.is_float() || self.is_uint() || self == TextureFormat::Rgba8Srgb
   }
 
   /// Pack an f32 payload (its native-endian bytes, as a Float32Array views
@@ -225,6 +245,7 @@ impl TextureFormat {
       TextureFormat::R32f => "r32f",
       TextureFormat::Rgba32f => "rgba32f",
       TextureFormat::Rgba16f => "rgba16f",
+      TextureFormat::Rgba32ui => "rgba32ui",
       TextureFormat::Rgba8Srgb => "rgba8-srgb",
     }
   }
@@ -403,9 +424,9 @@ impl SamplerState {
 
   /// Parse the app-facing options against the texture's declared format.
   /// Same vocabulary as `parse`; a non-filterable format (the 32-bit
-  /// floats) flips the filter default to nearest and refuses linear,
-  /// mipmaps and anisotropy outright (nearest/texelFetch is the portable
-  /// float contract - see `TextureFormat::filterable`).
+  /// floats, the integer format) flips the filter default to nearest and
+  /// refuses linear, mipmaps and anisotropy outright (nearest/texelFetch
+  /// is their portable contract - see `TextureFormat::filterable`).
   pub fn parse_for(format: TextureFormat, opts: &SamplerOptions<'_>) -> Result<Self, String> {
     let mut state = Self::parse(opts)?;
     if !format.filterable() {
@@ -414,7 +435,7 @@ impl SamplerState {
       }
       if state.filter == SamplerFilter::Linear {
         return Err(format!(
-          "{} textures sample nearest-only (float linear filtering is not in core GLES 3.0); drop filter: \"linear\"",
+          "{} textures sample nearest-only (no linear filtering for 32-bit float or integer texels in core GLES 3.0); drop filter: \"linear\"",
           format.name()
         ));
       }

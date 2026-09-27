@@ -178,6 +178,7 @@ fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, sl
       UniformKind::Sampler2D
       | UniformKind::Sampler2DShadow
       | UniformKind::SamplerCube
+      | UniformKind::USampler2D
       | UniformKind::Inactive
       | UniformKind::Other(_) => {}
     }

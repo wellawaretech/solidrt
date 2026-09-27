@@ -426,12 +426,14 @@ fn bound(shape: TextureShape, format: TextureFormat) -> BoundTexture {
   BoundTexture { shape, format }
 }
 
-/// A registry of three ids: 1 a 2D rgba8, 2 a cube map, 3 a depth texture.
+/// A registry of four ids: 1 a 2D rgba8, 2 a cube map, 3 a depth texture,
+/// 4 an integer (rgba32ui) texture.
 fn lookup(id: u64) -> Option<BoundTexture> {
   match id {
     1 => Some(bound(TextureShape::D2, TextureFormat::Rgba8)),
     2 => Some(bound(TextureShape::Cube, TextureFormat::Rgba8)),
     3 => Some(bound(TextureShape::D2, TextureFormat::Depth24)),
+    4 => Some(bound(TextureShape::D2, TextureFormat::Rgba32ui)),
     _ => None,
   }
 }
@@ -469,6 +471,21 @@ fn binding_shapes_require_depth_behind_compare_sampler() {
   let err =
     validate_binding_shapes(&t, &[TextureBinding::new("uShadow", 2)], lookup).expect_err("cube on shadow must error");
   assert!(err.contains("cube map"), "{err}");
+}
+
+// An integer texture binds only behind a usampler2D, and a usampler2D takes
+// nothing else: both mismatches sample undefined values in GL.
+#[test]
+fn binding_shapes_pair_integer_textures_with_integer_samplers() {
+  let t = table(&[("uRecords", UniformKind::USampler2D), ("uTex", UniformKind::Sampler2D)]);
+  assert_eq!(validate_binding_shapes(&t, &[TextureBinding::new("uRecords", 4)], lookup), Ok(()));
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uRecords", 1)], lookup).expect_err("rgba8 on usampler2D must error");
+  assert!(err.contains("usampler2D") && err.contains("rgba32ui"), "{err}");
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uTex", 4)], lookup).expect_err("rgba32ui on sampler2D must error");
+  assert!(err.contains("integer texels") && err.contains("usampler2D"), "{err}");
+  assert!(UniformKind::USampler2D.is_sampler());
+  assert_eq!(UniformKind::USampler2D.sampler_shape(), Some(TextureShape::D2));
+  assert_eq!(UniformKind::USampler2D.components(), None);
 }
 
 #[test]

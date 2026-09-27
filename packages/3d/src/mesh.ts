@@ -146,10 +146,26 @@ export type MeshInstances = {
    * at creation; slots as the app writes them never move. */
   order: ResolvedInstanceOrder | null
   /** Whether the records were transferred to the engine at creation
-   * (RecordMeshOptions.transfer): no JS-side mirror exists, the
-   * population is write-once, and rewrites/growth/attribute access
-   * throw. Fixed at creation; always false on an instanced mesh. */
+   * (RecordMeshOptions.transfer, or an indexed instanceOrder): no JS-side
+   * mirror exists, the population is write-once, and rewrites/growth/
+   * attribute access throw. Fixed at creation; always false on an
+   * instanced mesh. */
   transfer: boolean
+  /** Records per drawn instance: 1, or on an indexed instanceOrder the
+   * ids per id-stream record (the entry's instanceCount is
+   * ceil(count / group), see drawCount). Fixed at creation. */
+  group: number
+  /** Data textures the population owns (an indexed population's record
+   * texture and the like, created by whoever built the mesh), freed by
+   * disposeInstances with the buffers. */
+  textures: TextureId[]
+}
+
+/** The draw's instance count for a population: its records over the
+ * records per instance, rounded up (an indexed population's last group
+ * pads with the engine's sentinel ids). */
+export function drawCount(inst: MeshInstances): number {
+  return Math.ceil(inst.count / inst.group)
 }
 
 export type InstanceSlots = { slots: (InstanceNode | null)[]; free: number[] }
@@ -362,6 +378,29 @@ function makeStream(layout: VertexAttribute[], capacity: number, blank: Uint8Arr
   return stream
 }
 
+// The indexed order's stream: the id buffer the core writes whole with the
+// sorted record indices (ceil(capacity / group) instance records of
+// `group` u32 ids each; it starts zeroed and the entry's attach seeds the
+// first sort), the records handed to the core's order mirror as the key
+// source. No JS mirror exists, as under transfer.
+function makeIndexStream(layout: VertexAttribute[], capacity: number, group: number, records: Uint8Array, label: string | undefined): InstanceStream {
+  let stride = layoutStride(layout)
+  let stream: InstanceStream = {
+    layout,
+    stride,
+    buffer: createBuffer(Math.ceil(capacity / group) * stride, { autoFree: false, label }),
+    data: new Uint8Array(0),
+    blank: new Uint8Array(stride),
+    dirty: null,
+    _view: new DataView(new ArrayBuffer(0)),
+    _floats: false,
+    _components: layoutComponents(layout),
+    _fields: [],
+  }
+  transferRecords(stream.buffer, records)
+  return stream
+}
+
 // The transfer form's stream: records go to the engine at creation and no
 // JS mirror exists (data stays a zero-length view; the operations that
 // would read or write it throw on the transfer flag first). An ordered
@@ -454,23 +493,81 @@ function markRecords(mesh: Mesh, stream: InstanceStream, lo: number, hi: number)
  * An ordered mesh gives up partial record publishes: any write sends the
  * live record set whole, gathered (a byte range has no stable position
  * under a permutation).
+ *
+ * The INDEXED form (`records`) is for a population whose records live in
+ * a data texture the shader fetches by record index (a splat cloud):
+ * `records` is the layout of the records createRecordMesh received -
+ * `position` names a float32x3/x4 attribute IN THAT LAYOUT - and the
+ * material's one instance buffer is the ID STREAM, uint32/uint32x4
+ * attributes the engine fills with the sorted record indices, K ids per
+ * instance record so one drawn instance covers K records (the
+ * geometry repeats K times; `gl_VertexID` picks the id). The records go
+ * to the engine at creation (transfer implied, retain by nature) as the
+ * sort's key source; the app uploads the same bytes as its texture. A
+ * re-sort then uploads 4 bytes per record instead of the record, and
+ * the last instance's group past `count` carries 0xFFFFFFFF, which the
+ * shader culls before fetching.
  */
-export type InstanceOrderOptions = ({ position: string; retain?: boolean } | { field: string }) & {
-  /** Largest key first - back-to-front for a position key. Default false. */
-  descending?: boolean
-}
+export type InstanceOrderOptions =
+  | (({ position: string; retain?: boolean } | { field: string }) & {
+      /** Largest key first - back-to-front for a position key. Default false. */
+      descending?: boolean
+    })
+  | {
+      /** The position attribute of the record layout below. */
+      position: string
+      /** The layout of the handed-off records the shader fetches by
+       * index; the material's instance buffer is the id stream. */
+      records: VertexAttribute[]
+      /** Largest key first - back-to-front. Default false. */
+      descending?: boolean
+    }
 
 /** The instanceOrder resolved against the material's instance layouts at
  * creation: the key stream's layout key (the entry's pipeline buffer is
  * found by it at attach, exactly as buffer bindings are), the key's
  * float offset inside one record, and the declared knobs. */
-export type ResolvedInstanceOrder = { key: string; floats: number; position: boolean; descending: boolean; retain: boolean }
+export type ResolvedInstanceOrder = {
+  key: string
+  floats: number
+  position: boolean
+  descending: boolean
+  retain: boolean
+  /** The index materialization (InstanceOrderOptions' `records` form):
+   * the handed-off record's byte stride; null for gathered records. */
+  indices: { stride: number } | null
+}
 
 // Resolve an instanceOrder option against the material's instance
 // layouts: the named attribute must exist in one of them, hold floats of
-// the key's shape, and start on a 4-byte boundary of its record.
+// the key's shape, and start on a 4-byte boundary of its record. The
+// indexed form resolves the key in the given record layout instead, and
+// the material's one instance buffer must be whole u32 ids.
 function resolveInstanceOrder(order: InstanceOrderOptions | undefined, buffers: VertexBufferLayout[], site: string): ResolvedInstanceOrder | null {
   if (order === undefined) return null
+  if ("records" in order) {
+    if (buffers.length !== 1) {
+      throw new Error(site + ": an indexed instanceOrder takes a material with one instance buffer (the id stream); this one declares " + buffers.length)
+    }
+    let ids = buffers[0]!.attributes
+    for (let a of ids) {
+      if (!a.format.startsWith("uint32")) throw new Error(site + ": the id stream's attribute '" + a.name + "' must be uint32, uint32x2, uint32x3 or uint32x4 (whole record ids), got " + a.format)
+    }
+    let stride = layoutStride(order.records)
+    if (stride === 0 || stride % 4 !== 0) throw new Error(site + ": the indexed record layout is " + stride + " bytes; records must be whole floats")
+    let at = 0
+    for (let a of order.records) {
+      if (a.name === order.position) {
+        if (a.format !== "float32x3" && a.format !== "float32x4") {
+          throw new Error(site + ": instanceOrder position attribute '" + a.name + "' must be float32x3 or float32x4, got " + a.format)
+        }
+        if (at % 4 !== 0) throw new Error(site + ": instanceOrder key attribute '" + a.name + "' starts at byte " + at + " of its record; the key must start on a 4-byte boundary")
+        return { key: layoutKey(ids), floats: at / 4, position: true, descending: order.descending === true, retain: true, indices: { stride } }
+      }
+      at += VERTEX_FORMATS[a.format].bytes
+    }
+    throw new Error(site + ": instanceOrder names attribute '" + order.position + "', which the record layout does not declare")
+  }
   let position = "position" in order
   let name = position ? (order as { position: string }).position : (order as { field: string }).field
   if (!position && (order as { retain?: boolean }).retain !== undefined) {
@@ -495,6 +592,7 @@ function resolveInstanceOrder(order: InstanceOrderOptions | undefined, buffers: 
           position,
           descending: order.descending === true,
           retain: position && (order as { retain?: boolean }).retain === true,
+          indices: null,
         }
       }
       at += VERTEX_FORMATS[a.format].bytes
@@ -678,6 +776,8 @@ export function createInstancedMesh(geometry: Geometry, material: Material, opts
     morph: populationMorph(geometry, capacity, opts?.label),
     order: resolveInstanceOrder(opts?.instanceOrder, buffers, "createInstancedMesh"),
     transfer: false,
+    group: 1,
+    textures: [],
   }
   return mesh
 }
@@ -971,24 +1071,42 @@ export function createRecordMesh(
   opts?: RecordMeshOptions,
 ): RecordMesh {
   let buffers = instancedBuffers(material, "createRecordMesh")
-  let capacity = recordCount(records, buffers[0]!.attributes, "createRecordMesh")
-  let transfer = opts?.transfer === true
+  let order = resolveInstanceOrder(opts?.instanceOrder, buffers, "createRecordMesh")
+  let indices = order?.indices ?? null
+  if (indices !== null && opts?.transfer === false) {
+    throw new Error("createRecordMesh: an indexed instanceOrder hands the records to the engine by nature; transfer cannot be false")
+  }
+  let transfer = opts?.transfer === true || indices !== null
   if (transfer && buffers.length !== 1) {
     throw new Error(
       "createRecordMesh: transfer takes a single-stream material; this one declares " + buffers.length + " instance buffers (further streams need the partial writes transfer gives up)",
     )
   }
-  let order = resolveInstanceOrder(opts?.instanceOrder, buffers, "createRecordMesh")
+  // Under an indexed order the records are laid out by the order's record
+  // layout, not the material's (whose one buffer is the id stream).
+  let capacity: number
+  if (indices !== null) {
+    if (records.byteLength === 0 || records.byteLength % indices.stride !== 0) {
+      throw new Error("createRecordMesh: records hold " + records.byteLength + " bytes, not a positive whole number of " + indices.stride + "-byte records")
+    }
+    capacity = records.byteLength / indices.stride
+  } else {
+    capacity = recordCount(records, buffers[0]!.attributes, "createRecordMesh")
+  }
   // A transferred order always retains: the engine's mirror is the ONE
   // record copy, what re-attaches seed from and count changes republish
   // (a field key gets the same retention, engine-side only).
   if (transfer && order !== null && !order.retain) order = { ...order, retain: true }
   let mesh = createMesh(geometry, material) as RecordMesh
+  let group = indices !== null ? layoutStride(buffers[0]!.attributes) / 4 : 1
   mesh._instances = {
     matrix: null,
-    streams: transfer
-      ? [makeTransferredStream(buffers[0]!.attributes, vertexBytes(records), order !== null, streamLabel(opts?.label, 0))]
-      : buffers.map((b, i) => makeStream(b.attributes, capacity, null, streamLabel(opts?.label, i))),
+    streams:
+      indices !== null
+        ? [makeIndexStream(buffers[0]!.attributes, capacity, group, vertexBytes(records), streamLabel(opts?.label, 0))]
+        : transfer
+          ? [makeTransferredStream(buffers[0]!.attributes, vertexBytes(records), order !== null, streamLabel(opts?.label, 0))]
+          : buffers.map((b, i) => makeStream(b.attributes, capacity, null, streamLabel(opts?.label, i))),
     capacity,
     label: opts?.label,
     count: Math.max(0, Math.min(Math.floor(count ?? capacity), capacity)),
@@ -999,6 +1117,8 @@ export function createRecordMesh(
     morph: null,
     order,
     transfer,
+    group,
+    textures: [],
   }
   if (!transfer) copyRecords(mesh, records, capacity)
   return mesh
@@ -1090,6 +1210,7 @@ export function disposeInstances(mesh: InstancedMesh | RecordMesh): void {
   if (inst.matrix !== null) destroyBuffer(inst.matrix)
   for (let s of inst.streams) destroyBuffer(s.buffer)
   if (inst.morph !== null) destroyTexture(inst.morph.texture)
+  for (let t of inst.textures) destroyTexture(t)
   ;(mesh as Mesh)._instances = null
 }
 

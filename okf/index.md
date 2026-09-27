@@ -73,15 +73,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   that in lattice; a cumulative drift estimator with hysteresis makes the
   count exact at full rate under swap jitter and honest below it. Tier 2 of
   okf/design/frame-timing.md.
-- **[Gaussian splat rendering](plans/gaussian-splats.md)** [2026-08-24]
-  Captured 3DGS scenes (phone scans, photogrammetry successors) are a growing
-  content class nothing here can display. The viewer is proven by a probe
-  (300k splats in 19 ms at full resolution on a 2022 phone) and the shape
-  settled 2026-09-26 - a pack-time bake to a .srts record with the 3D
-  covariance precomputed, a generic instanceOrder knob on the 3d meshes riding
-  gpu-instance-order's retained projected key with the scene feeding
-  direction, SplatMesh over createRecordMesh, and SH bands via an id-indexed
-  data texture.
 - **[Inspector - a visual devtool app over the dev-server control API](plans/inspector.md)** [2026-08-14]
   A packed SolidRT app presenting live runtime introspection (stats, logs,
   tree over snapshot, clock transport) as a peer front-end to the MCP bridge,
@@ -249,8 +240,9 @@ Shaped, not started.
   would switch on for users who have no keyboard.
 - **[Android TV on Google Play](backlog/android-tv-play-distribution.md)** [2026-09-27]
   Play offers an app on TVs only after a form-factor opt-in and a TV quality
-  review, not by app category, and every packed app already declares TV
-  support; what fails that review today is the banner (the runner's SolidRT
+  review, not by app category; a `tv` key in package.json makes TV an explicit
+  intent so pack can declare it, check a TV submission and print the Play
+  steps, and what fails the review today is the banner (the runner's SolidRT
   logo, without the app's name, on every packed app) plus the bundle,
   32/64-bit and 16 KB rules the AAB work has to meet.
 - **[ANGLE textures and teardown crash](backlog/angle-cross-context-impeller-textures.md)** [2026-07-27]
@@ -690,6 +682,39 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
+- **[The engine holds a full 32-byte record copy of a splat cloud when the sort needs 12](backlog/splat-key-copy.md)** [2026-09-27]
+  An indexed instance order keys on the record's position, but the hand-off
+  mirror the core sorts is the whole record block (32 bytes per splat, 32 MB
+  at 1M) next to the same bytes in the record texture; a position-only key
+  copy would cut the CPU-side residency to 12 bytes per splat, and the memory
+  pressure that reaped the phone client at 1M was real.
+- **[A million splats at phone full resolution spend the frame in fill](backlog/splat-overdraw-fill.md)** [2026-09-27]
+  With the instancing frontend gone the Pixel 7 draws 1M splats in ~36 ms at
+  1079x2399, of which ~24 ms is fragment work - the gaussian falloff, the
+  discard and the per-tile blend over the deep overdraw of stacked
+  translucents - and the buffer format does not touch it on a tiler; the
+  levers are overdraw cuts (a tighter extent than e^-4, a higher minimum-alpha
+  cut, a per-splat screen-size cull, a count dial by distance), each a
+  picture-quality trade that wants the human side-by-side.
+- **[The splat fragment skips two of the reference rasterizer's rules](backlog/splat-raster-fidelity.md)** [2026-09-27]
+  The 3DGS rasterizer caps each splat's alpha at 0.99 and, in the antialiased
+  training mode (Mip-Splatting, gsplat's antialiased rasterization), scales
+  opacity by sqrt(det(cov) / det(cov + dilation)); the shipped fragment
+  applies neither, so captures trained antialiased read slightly too opaque at
+  small sizes and a fully opaque splat blocks everything behind it instead of
+  leaking 1%.
+- **[A splat cloud is resident at 32 bytes per splat plus half-float SH where the field ships 8-16](backlog/splat-record-compression.md)** [2026-09-27]
+  The .srts record is 32 bytes and SH bands are uncompressed halves (32/48/96
+  bytes per splat), so a 1M SH3 cloud is ~130 MB of textures and key copy on
+  the phone; spz, sogs and ksplat store the same splat in 8-16 bytes with
+  chunk-quantized positions and 8-bit SH, and a compressed record would also
+  shrink the download and the texture fetch.
+- **[The splat re-sort blocks the UI thread and its spike at 1M is unmeasured](backlog/splat-sort-spike.md)** [2026-09-27]
+  A camera turn past the order gate radix-sorts the cloud's key mirror and
+  republishes the id stream inside the flush, on the UI thread; at 1M splats
+  that is a periodic stall the JS p50 hides and no probe has isolated (p95/max
+  per re-sort on the Pixel 7), so the frame-time cost of the in-engine sort -
+  the design's one unmeasured term - is unknown.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
@@ -1443,6 +1468,15 @@ Finished, kept for the reasoning.
   pattern over refresh periods, five presents per six vsyncs, which is exactly
   50 fps. The build costs 0.11 ms, so nothing is over budget; the producer's
   period is simply 20 ms and the display quantises it.
+- **[Gaussian splat rendering](done/gaussian-splats.md)** [2026-09-27]
+  Captured 3DGS scenes (phone scans, photogrammetry successors) are a growing
+  content class nothing here can display. The viewer is proven by a probe
+  (300k splats in 19 ms at full resolution on a 2022 phone) and the shape
+  settled 2026-09-26 - a pack-time bake to a .srts record with the 3D
+  covariance precomputed, a generic instanceOrder knob on the 3d meshes riding
+  gpu-instance-order's retained projected key with the scene feeding
+  direction, SplatMesh over createRecordMesh, and SH bands via an id-indexed
+  data texture.
 - **[Recognizer deltas are window pixels, so a scaled input element pans at the wrong rate](done/gesture-deltas-window-logical.md)** [2026-09-06]
   createPan and createTransform measure dx/dy in clientX/clientY while every
   consumer applies them in the element's local frame; under a designSize fit
@@ -2388,12 +2422,26 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Engine-free layering upheld, docs excellent, clippy clean; gaps are untested
   subprocess/p2p/ffi, stale docs, an implicit single-thread contract and
   IPv4-only skew.
+- **[The splat viewer against the field](notes/gaussian-splats-against-the-field.md)** [2026-09-27]
+  Where the shipped splat viewer stands against the WebGL viewers
+  (antimatter15, GaussianSplats3D, PlayCanvas, Babylon) and the compute
+  renderers (the reference CUDA rasterizer, Unity's, the WebGPU ports) - the
+  data layout is the WebGL standard, the in-engine sort and the 16-splat
+  instance are ahead of it, the compute class wins on per-frame sorting,
+  front-to-back tile blending and compression, and GLES 3.1 compute is not on
+  the table, so the fill wall is answered by overdraw cuts only.
 - **[Stage A review - what could be better](notes/gaussian-splats-stage-a-review.md)** [2026-09-26]
   An assessment from building instanceOrder on the 3d meshes plus the core
   direction feed (gaussian-splats stage A, 2026-09-26) - the wider-scope calls
   first (triple record residency, upload-vs-index ordering, the JS-side camera
   funnel, scene.ts's entry-lifecycle web, the verification story), then the
   narrow punch list of pre-existing breakage, accepted costs and warts.
+- **[Gaussian splat measurements and traps](notes/gaussian-splats.md)** [2026-09-27]
+  What building the splat viewer established - the instancing frontend as the
+  vertex wall and the id-indexed fetch that collapses it, the linear-vs-sRGB
+  blend divergence and the display blend space, the staging-block leak, the
+  phone's DVFS and thermal measurement traps, and the spz and ply layouts
+  re-derived from their readers.
 - **[Geometry topology and edge builders - what the implementation taught](notes/geometry-topology-edges.md)** [2026-09-08]
   Why topology belongs on the geometry and not the material, why edge builders
   must weld by position, the facet-angle rule for edgesGeometry thresholds,

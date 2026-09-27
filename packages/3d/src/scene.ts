@@ -63,8 +63,8 @@ export type { EnvironmentOptions } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTransition } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
-import { checkInstancePairing, checkMask, checkOrderPairing, instanceBinding, localBounds, markLiveRecords, publishRecords } from "./mesh.ts"
-import type { InstancedMesh, InstanceNode, Mesh, ResolvedInstanceOrder } from "./mesh.ts"
+import { checkInstancePairing, checkMask, checkOrderPairing, drawCount, instanceBinding, localBounds, markLiveRecords, publishRecords } from "./mesh.ts"
+import type { InstancedMesh, InstanceNode, Mesh, MeshInstances, ResolvedInstanceOrder } from "./mesh.ts"
 import type { CastingLight, Light } from "./light.ts"
 
 const IDENTITY = mat4()
@@ -381,9 +381,9 @@ let drawQueue = (m: Material): number =>
 // sorts, from the material the entry draws with. `orderFeed` (the scene
 // entry of a position-ordered population) has the core steer the entry's
 // record order from the target's view.
-let drawBinding = (material: Material, mesh: Mesh, inst: { count: number } | null, orderFeed = false): BindDrawOptions => ({
+let drawBinding = (material: Material, mesh: Mesh, inst: MeshInstances | null, orderFeed = false): BindDrawOptions => ({
   normal: material.normalMatrix === true,
-  count: inst !== null ? inst.count : 1,
+  count: inst !== null ? drawCount(inst) : 1,
   fade: material.lodFade === true,
   queue: drawQueue(material),
   renderOrder: mesh.renderOrder,
@@ -401,8 +401,9 @@ let entryInstanceOrder = (order: ResolvedInstanceOrder, material: Material, geom
   let at = (material.instanceBuffers ?? []).findIndex(b => layoutKey(b.attributes) === order.key)
   if (at < 0) throw new Error("Mesh material declares no instance buffer with the mesh's instanceOrder key layout (" + order.key + ")")
   let buffer = geometryBuffers + at
+  let indices = order.indices !== null ? { indices: order.indices } : {}
   return order.position
-    ? { position: order.floats, direction: ORDER_SEED_DIRECTION, descending: order.descending, buffer, retain: order.retain }
+    ? { position: order.floats, direction: ORDER_SEED_DIRECTION, descending: order.descending, buffer, retain: order.retain, ...indices }
     : { field: order.floats, descending: order.descending, buffer }
 }
 
@@ -1980,7 +1981,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     _setLayers(mesh) {
       if (mesh._buffers === null || disposed) return
       if (mesh._node !== null) spatial.setLayers(mesh._node, mesh.layers)
-      if (mesh._instances !== null) {
+      // An instanced mesh's instance nodes follow its mask; a record mesh
+      // has none.
+      if (mesh._instances !== null && mesh._instances.nodes !== null) {
         for (let n of instanceGroup(mesh as InstancedMesh)) spatial.setLayers(n, mesh.layers)
       }
       if ((mesh.layers & sceneMask) !== 0) attachScene(mesh)
@@ -2181,7 +2184,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // The core composes the count with the visibility switch: a hidden
       // entry stays at 0 and the unhide restores the new count.
       if (mesh._buffers !== null && mesh._node !== null && !disposed && mesh._instances !== null) {
-        spatial.setDrawCount(mesh._node, mesh._instances.count)
+        spatial.setDrawCount(mesh._node, drawCount(mesh._instances))
       }
     },
     _setBuffer(mesh) {

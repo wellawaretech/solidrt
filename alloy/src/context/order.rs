@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::gpu::{
-  gather_ordered, gather_permuted, order_permutation, BufferIds, BufferStride, InstanceOrder, OrderScratch, StepMode,
-  MAX_BUFFERS,
+  gather_ordered, gather_permuted, materialize_indices, order_permutation, BufferIds, BufferStride, InstanceOrder,
+  OrderScratch, StepMode, MAX_BUFFERS,
 };
 use crate::raster::RasterCmd;
 
@@ -80,11 +80,31 @@ impl OrderedEntry {
 
   // Whether the entry keeps the permutation between publishes (and so
   // re-sorts from the buffer mirrors): multi-buffer coherence needs it,
-  // and `retain: true` opts a single-buffer entry in (the write-once
-  // strategy).
+  // `retain: true` opts a single-buffer entry in (the write-once
+  // strategy), and an index stream has nothing but the mirror to sort.
   fn retains(&self) -> bool {
-    self.order.retain || self.slots() > 1
+    self.order.retain || self.slots() > 1 || self.order.indices.is_some()
   }
+
+  // The byte stride of the sorted records: the handed-off record under the
+  // index materialization, the key buffer's instance record otherwise.
+  fn record_stride(&self) -> usize {
+    self.order.record_stride(self.strides[self.key])
+  }
+
+  // The published prefix in bytes for an instance count over an owned
+  // mirror holding `held` bytes (see `published_prefix`).
+  fn published_for(&self, instances: usize, held: usize) -> usize {
+    published_prefix(&self.order, self.strides[self.key], instances, held)
+  }
+}
+
+// The published prefix of a handed-off mirror for an instance count: the
+// first count records - count x K under the index materialization, whose
+// instance record is K u32 ids - capped at what was handed off.
+fn published_prefix(order: &InstanceOrder, instance_stride: usize, instances: usize, held: usize) -> usize {
+  let per_instance = if order.indices.is_some() { instance_stride / 4 } else { 1 };
+  (instances * per_instance * order.record_stride(instance_stride)).min(held)
 }
 
 // The instance-step strides of a pipeline's buffers by index (0 at a
@@ -115,7 +135,9 @@ impl Context {
   /// distinct from every other buffer the entry binds (a buffer read at
   /// two places, or as the index buffer, cannot hold instance records
   /// only). A handed-off key buffer must hold whole records of the key's
-  /// stride. Returns the resolved key buffer index.
+  /// stride. An index-materialized order takes exactly one instance-step
+  /// buffer whose record is whole u32 ids, over handed-off records only.
+  /// Returns the resolved key buffer index.
   pub(super) fn check_instance_order(
     &self,
     order: &InstanceOrder,
@@ -133,7 +155,47 @@ impl Context {
     if instance_strides[key] == 0 {
       return Err(format!("instanceOrder keys on buffer {key}, but the pipeline's buffer {key} is not instance-step"));
     }
-    order.check_stride(instance_strides[key])?;
+    if let Some(record_stride) = order.indices {
+      let instance_stride = instance_strides[key];
+      if instance_stride % 4 != 0 {
+        return Err(format!(
+          "an indexed instanceOrder's instance record is whole u32 ids; buffer {key}'s stride is {instance_stride} bytes"
+        ));
+      }
+      let slots = instance_strides.iter().filter(|&&s| s > 0).count();
+      if slots != 1 {
+        return Err(format!("an indexed instanceOrder takes one instance-step buffer (the id stream); the entry declares {slots}"));
+      }
+      let orders = self.orders.borrow();
+      if let Some(mirror) = orders.mirrors.get(&ids.buffers[key]) {
+        if !mirror.owned {
+          return Err(format!(
+            "buffer {} holds app-published records; an indexed instanceOrder sorts handed-off records (transferRecords)",
+            ids.buffers[key]
+          ));
+        }
+        if mirror.held % record_stride != 0 {
+          return Err(format!(
+            "buffer {} holds {} handed-off bytes, not a whole number of {record_stride}-byte records",
+            ids.buffers[key], mirror.held
+          ));
+        }
+        // The id stream must hold every handed-off record's id, groups
+        // rounded up.
+        let records = mirror.held / record_stride;
+        let per_instance = instance_stride / 4;
+        let needed = records.div_ceil(per_instance) * instance_stride;
+        let size = self.gpu_buffer_len(ids.buffers[key])?;
+        if needed > size {
+          return Err(format!(
+            "buffer {} is {size} bytes; the ids of {records} handed-off records ({per_instance} per instance record of {instance_stride} bytes) need {needed}",
+            ids.buffers[key]
+          ));
+        }
+      }
+    } else {
+      order.check_stride(instance_strides[key])?;
+    }
     let orders = self.orders.borrow();
     for (index, &stride) in instance_strides.iter().enumerate() {
       if stride == 0 {
@@ -152,11 +214,17 @@ impl Context {
         ));
       }
       if let Some(mirror) = orders.mirrors.get(&buffer) {
-        if mirror.owned && mirror.held % stride != 0 {
-          return Err(format!(
-            "buffer {buffer} holds {} handed-off bytes, not a whole number of {stride}-byte instance records",
-            mirror.held
-          ));
+        if mirror.owned && order.indices.is_none() {
+          if mirror.held % stride != 0 {
+            return Err(format!(
+              "buffer {buffer} holds {} handed-off bytes, not a whole number of {stride}-byte instance records",
+              mirror.held
+            ));
+          }
+          let size = self.gpu_buffer_len(buffer)?;
+          if mirror.held > size {
+            return Err(format!("buffer {buffer} is {size} bytes; its {} handed-off record bytes do not fit", mirror.held));
+          }
         }
       }
     }
@@ -192,7 +260,7 @@ impl Context {
     let mut seed = false;
     if let Some(mirror) = orders.mirrors.get_mut(&buffers[key]) {
       if mirror.owned {
-        mirror.published = (instances * strides[key]).min(mirror.held);
+        mirror.published = published_prefix(&order, strides[key], instances, mirror.held);
         seed = mirror.published > 0;
       }
     }
@@ -228,15 +296,14 @@ impl Context {
   /// copy, partial rewrites are off the table, and the ordered entry -
   /// attached now or later - sorts and republishes from here. Hand off
   /// before the entry attaches; the attach seeds the first publish from
-  /// this mirror (nothing draws until then). A second hand-off replaces
+  /// this mirror (nothing draws until then) and checks the records
+  /// against the buffer for the order's form (gathered records must fit
+  /// it; an index stream must hold their ids). A second hand-off replaces
   /// the records wholesale.
   pub fn instance_order_records(&self, id: u64, data: &[u8]) -> Result<(), String> {
-    let size = self.gpu_buffer_len(id)?;
+    self.gpu_buffer_len(id)?;
     if data.is_empty() {
       return Err(format!("record hand-off to buffer {id} is empty"));
-    }
-    if data.len() > size {
-      return Err(format!("record hand-off of {} bytes exceeds buffer {id} size {size}", data.len()));
     }
     let mut orders = self.orders.borrow_mut();
     let mirror = orders.mirrors.entry(id).or_default();
@@ -275,7 +342,7 @@ impl Context {
     if !mirror.owned {
       return false;
     }
-    let published = (instances * entry.strides[entry.key]).min(mirror.held);
+    let published = entry.published_for(instances, mirror.held);
     if published == mirror.published {
       return false;
     }
@@ -387,7 +454,7 @@ impl Context {
     if len == 0 {
       return;
     }
-    order_permutation(&entry.order, entry.strides[entry.key], &mirror.data[..len], &mut orders.scratch);
+    order_permutation(&entry.order, entry.record_stride(), &mirror.data[..len], &mut orders.scratch);
     if orders.scratch.perm() == entry.perm.as_slice() {
       return;
     }
@@ -444,6 +511,12 @@ impl Context {
     };
     let orders = &mut *orders;
     let entry = orders.entries.get_mut(&key).expect("by_buffer names a registered entry");
+    if entry.order.indices.is_some() {
+      self.write_leases.borrow_mut().cancel(id, block);
+      return Err(format!(
+        "buffer {id} holds an indexed instance order's sorted ids; its records are handed off (transferRecords), not published"
+      ));
+    }
     let slot = entry.slot_of(id).expect("an ordered buffer resolves to its slot");
     let stride = entry.strides[slot];
     if len % stride != 0 {
@@ -496,6 +569,11 @@ impl Context {
     };
     let orders = &mut *orders;
     let entry = orders.entries.get_mut(&key).expect("by_buffer names a registered entry");
+    if entry.order.indices.is_some() {
+      return Err(format!(
+        "buffer {id} holds an indexed instance order's sorted ids; its records are handed off (transferRecords), not published"
+      ));
+    }
     let slot = entry.slot_of(id).expect("an ordered buffer resolves to its slot");
     let stride = entry.strides[slot];
     let len = values.len() * 4;
@@ -554,7 +632,8 @@ impl Context {
   /// publish triggered this (already sent); `None` republishes everything -
   /// the retained re-sort path, where no slot published at all. A slot
   /// that never published (empty mirror) or whose buffer is gone
-  /// publishes nothing.
+  /// publishes nothing. An index stream (one slot by contract) is written
+  /// WHOLE: the sorted ids, then the sentinel to the end of the buffer.
   fn republish_slots(&self, entry: &OrderedEntry, mirrors: &HashMap<u64, Mirror>, skip: Option<usize>) {
     for (slot, &stride) in entry.strides.iter().enumerate() {
       if skip == Some(slot) || stride == 0 || entry.buffers[slot] == 0 {
@@ -567,7 +646,8 @@ impl Context {
       if mirror.published == 0 {
         continue;
       }
-      let len = mirror.published;
+      let indexed = entry.order.indices.is_some();
+      let len = if indexed { entry.perm.len() * 4 } else { mirror.published };
       let size = match self.gpu_buffer_len(id) {
         Ok(size) if len <= size => size,
         _ => {
@@ -576,7 +656,13 @@ impl Context {
         }
       };
       let mut dst = self.write_leases.borrow_mut().take_free(id, size);
-      gather_permuted(&entry.perm, stride, &mirror.data[..len], &mut dst[..len]);
+      let len = if indexed {
+        materialize_indices(&entry.perm, &mut dst[..size]);
+        size
+      } else {
+        gather_permuted(&entry.perm, stride, &mirror.data[..len], &mut dst[..len]);
+        len
+      };
       self.send(RasterCmd::WriteBufferLease {
         id,
         block: dst,

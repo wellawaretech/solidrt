@@ -140,7 +140,10 @@ puts a game in the Android TV launcher's Games row
 (`okf/backlog/android-tv-play-distribution.md`). `car` maps to
 `CAR_LAUNCHER` for Android Auto, and to the automotive `uses-feature` once
 Automotive OS is in scope. While games are the only category Android Auto
-opens, `srt pack` refuses `car` without `category: "game"`.
+opens, `srt pack` refuses `car` without `category: "game"`. As with `tv`
+(`okf/backlog/android-tv-play-distribution.md`), knowing the intent also
+lets pack print the Play Console steps after a `car: true` AAB: the
+Android Auto form-factor opt-in, an open testing track, the quality review.
 
 The patcher (`packages/cli/src/pack/android/strings.ts`) today inserts
 `<uses-permission>` elements and flips values in place (backup). This needs

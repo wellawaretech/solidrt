@@ -214,6 +214,7 @@ fn texture_format_parses_and_sizes() {
   assert_eq!(TextureFormat::parse(Some("r32f")).expect("r32f parses"), TextureFormat::R32f);
   assert_eq!(TextureFormat::parse(Some("rgba32f")).expect("rgba32f parses"), TextureFormat::Rgba32f);
   assert_eq!(TextureFormat::parse(Some("rgba16f")).expect("rgba16f parses"), TextureFormat::Rgba16f);
+  assert_eq!(TextureFormat::parse(Some("rgba32ui")).expect("rgba32ui parses"), TextureFormat::Rgba32ui);
   assert_eq!(TextureFormat::parse(Some("rgba8-srgb")).expect("rgba8-srgb parses"), TextureFormat::Rgba8Srgb);
   assert!(TextureFormat::parse(Some("rg8")).is_err());
   assert!(TextureFormat::parse(Some("depth24")).is_err());
@@ -223,7 +224,29 @@ fn texture_format_parses_and_sizes() {
   assert_eq!(TextureFormat::R32f.byte_len(3, 5), 60);
   assert_eq!(TextureFormat::Rgba32f.byte_len(3, 5), 240);
   assert_eq!(TextureFormat::Rgba16f.byte_len(3, 5), 120);
+  assert_eq!(TextureFormat::Rgba32ui.byte_len(3, 5), 240);
   assert_eq!(TextureFormat::Rgba8Srgb.byte_len(3, 5), 60);
+}
+
+// The integer format is shader data like the 32-bit floats: a Uint32Array
+// payload (neither float nor bytes), nearest-only with mipmaps and
+// anisotropy refused, sample-only.
+#[test]
+fn integer_format_samples_like_the_32bit_floats() {
+  use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, TextureFormat};
+
+  let format = TextureFormat::Rgba32ui;
+  assert!(format.is_uint() && !format.is_float());
+  assert!(!TextureFormat::Rgba32f.is_uint());
+  assert!(!format.filterable());
+  assert!(format.sample_only());
+  let state = SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: None, anisotropy: None })
+    .expect("defaults parse");
+  assert_eq!(state.filter, SamplerFilter::Nearest);
+  let linear = SamplerState::parse_for(format, &SamplerOptions { filter: Some("linear"), wrap: None, mipmap: None, anisotropy: None });
+  assert!(linear.expect_err("linear refused").contains("nearest-only"));
+  let mip = SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: None });
+  assert!(mip.expect_err("mipmap refused").contains("mip"));
 }
 
 // The half-float and sRGB formats sample like byte formats (RGBA16F is

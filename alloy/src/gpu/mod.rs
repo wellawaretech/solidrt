@@ -20,7 +20,7 @@ pub(crate) mod vocab;
 
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
-pub use order::{gather_ordered, gather_permuted, order_permutation, InstanceOrder, OrderKey, OrderScratch};
+pub use order::{gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, OrderKey, OrderScratch, INDEX_NONE};
 pub use resources::{
   GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources,
   GpuTextureInfo, GpuWindowShaderInfo, GpuRegionInfo,

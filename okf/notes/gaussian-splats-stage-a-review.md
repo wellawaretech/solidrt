@@ -10,7 +10,7 @@ An assessment from building gaussian-splats stage A, written for triage:
 first the wider-scope items - architecture and process calls I would
 weigh differently, or that this work exposed - then the narrow punch
 list. The what-was-built record is
-[../plans/gaussian-splats.md](../plans/gaussian-splats.md)'s findings.
+[../done/gaussian-splats.md](../done/gaussian-splats.md)'s findings.
 
 ## In a wider scope
 

@@ -219,10 +219,19 @@ declare module "flux:gpu" {
    * via `<texture src>` is out of contract; also a draw target format (the
    * target encodes what a pass writes).
    *
+   * "rgba32ui" is the integer data-texture format: four u32 per texel
+   * (a Uint32Array of width*height*4), fetched through a `usampler2D` as a
+   * uvec4 and unpacked in the shader (`uintBitsToFloat`, `unpackHalf2x16`,
+   * `unpackUnorm4x8`) - bit-exact packed records where a float texel would
+   * canonicalize the bits (a splat cloud's records and SH bands, any
+   * packed table). Nearest-only and sample-only exactly like "rgba32f"
+   * (integer textures never filter), and a float sampler over it (or a
+   * `usampler2D` over any other format) throws at bind.
+   *
    * Reserved future value of this same vocabulary: "etc2-rgba8" (compressed
    * uploads).
    */
-  export type TextureFormat = "rgba8" | "rgba8-srgb" | "r8" | "r32f" | "rgba32f" | "rgba16f"
+  export type TextureFormat = "rgba8" | "rgba8-srgb" | "r8" | "r32f" | "rgba32f" | "rgba16f" | "rgba32ui"
   export type TextureFormatOption = { format?: TextureFormat }
   /**
    * This device's hard ceilings, queried once at startup: process constants.
@@ -276,7 +285,7 @@ declare module "flux:gpu" {
    * float formats ("r32f", "rgba32f", "rgba16f") a Float32Array. Returns
    * the texture id.
    */
-  export function createTexture(data: Uint8Array | Float32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  export function createTexture(data: Uint8Array | Float32Array | Uint32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**
    * Create a cube map from six square faces in GL order (+X, -X, +Y, -Y,
    * +Z, -Z), each exactly one `size` x `size` frame at the declared format
@@ -297,7 +306,7 @@ declare module "flux:gpu" {
    * returns (the cube seen from outside), so a face set authored as seen
    * from inside (Three's) is mirrored per image before upload.
    */
-  export function createCubeTexture(faces: (Uint8Array | Float32Array)[] | (Uint8Array | Float32Array)[][], size: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  export function createCubeTexture(faces: (Uint8Array | Float32Array | Uint32Array)[] | (Uint8Array | Float32Array | Uint32Array)[][], size: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**
    * Create a texture intended to be updated later via {@link uploadTexture}. The
    * seed buffer must hold at least one frame at the declared format's size
@@ -305,14 +314,14 @@ declare module "flux:gpu" {
    * {@link createTexture}, the view type must match the format (Uint8Array
    * for byte formats, Float32Array for float formats).
    */
-  export function createMutableTexture(data: Uint8Array | Float32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  export function createMutableTexture(data: Uint8Array | Float32Array | Uint32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**
    * Replace a mutable texture's pixels; the frame size and required view
    * type (Uint8Array for byte formats, Float32Array for float formats)
    * follow the format the id was created with. `data` may hold several
    * frames; `offset` (default 0) selects which frame to upload.
    */
-  export function uploadTexture(id: TextureId, data: Uint8Array | Float32Array, offset?: number): void
+  export function uploadTexture(id: TextureId, data: Uint8Array | Float32Array | Uint32Array, offset?: number): void
   /**
    * Replace a texture's storage with a new size at the same id (an id-stable
    * resize): `<texture src>` references and shader sampler bindings keep
@@ -322,7 +331,7 @@ declare module "flux:gpu" {
    * state). Render target ids are rejected - resize those with
    * {@link setTargetSize}.
    */
-  export function resizeTexture(id: TextureId, data: Uint8Array | Float32Array, width: number, height: number): void
+  export function resizeTexture(id: TextureId, data: Uint8Array | Float32Array | Uint32Array, width: number, height: number): void
   /**
    * Destroy a texture (immutable, mutable, or shader). Frame-safe: the id is
    * reclaimed by the runtime once the render tree no longer references it, so
@@ -775,6 +784,21 @@ declare module "flux:gpu" {
      * nothing there and throws.
      */
     retain?: boolean
+    /**
+     * The INDEX materialization, for a population whose records live in a
+     * data texture the shader fetches by record index: the records are
+     * handed off with {@link transferRecords} at `stride` bytes each (the
+     * key offsets address them), and the ordered instance buffer holds
+     * the sorted record indices as u32 - `arrayStride / 4` ids per
+     * instance record, so one drawn instance covers K records - written
+     * whole on every re-sort (the sorted ids, then 0xFFFFFFFF to the end
+     * of the buffer, which the shader culls before fetching). A re-sort
+     * then uploads 4 bytes per record instead of the record. Retains by
+     * nature; takes exactly one instance-step buffer, over handed-off
+     * records only (publishing that buffer through the lease throws), and
+     * `instanceCount` picks the first count x K records of the mirror.
+     */
+    indices?: { stride: number }
   }
   /**
    * The order half of a draw-entry update: `orderDirection` replaces the
@@ -896,9 +920,11 @@ declare module "flux:gpu" {
    * re-sorts on `orderDirection` changes, and prefix republishes when the
    * entry's `instanceCount` changes (the first n records are the sorted
    * population). Hand off before the entry attaches; a second call
-   * replaces the records wholesale. `records` must fit the buffer, and
-   * must be whole records of the order key's stride by the time an entry
-   * attaches over the buffer. The mirror is freed with the buffer.
+   * replaces the records wholesale. By the time an entry attaches over
+   * the buffer the records must be whole records of the order's stride
+   * and, for gathered records, fit the buffer (an indexed order's buffer
+   * holds their ids instead, see {@link InstanceOrder}). The mirror is
+   * freed with the buffer.
    */
   export function transferRecords(id: BufferId, records: Uint8Array): void
   /**
