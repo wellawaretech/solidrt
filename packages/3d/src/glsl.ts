@@ -539,6 +539,36 @@ export const SRGB = glsl`
 `
 
 /**
+ * The buffer's blend space (SceneOptions.blendSpace): `uBlendSpace` is 0
+ * in a linear-light scene (the default; every scene writes it, since a
+ * shared program's uniform keeps the last drawn value across targets)
+ * and 1 in a display-space one, where the buffer holds sRGB-encoded
+ * display pixels and BLENDING runs on encoded values - what a capture
+ * trained against sRGB compositing expects. `vec3 blendSpaceOutput(vec3
+ * rgb, float alpha)` is the branch a buffer-writing fragment ends with:
+ * premultiplied linear in, and out either the same value (linear scene)
+ * or the un-premultiplied color clamped, encoded and re-premultiplied
+ * (display scene). Every stock fragment composes it through sceneOutput
+ * (and the skybox on its own); a CUSTOM fragment written for a
+ * display-space scene must end with it too, or its output blends in the
+ * wrong space. The encode carries its own name (not SRGB's
+ * linearToSrgb) so composing this set never collides with a fragment
+ * that also composes SRGB.
+ */
+export const BLEND_SPACE = glsl`
+  uniform float uBlendSpace;
+  vec3 blendSpaceEncode(vec3 c) {
+    c = clamp(c, 0.0, 1.0);
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+  }
+  vec3 blendSpaceOutput(vec3 rgb, float alpha) {
+    if (uBlendSpace < 0.5) return rgb;
+    vec3 c = alpha > 0.0 ? rgb / alpha : rgb;
+    return blendSpaceEncode(c) * alpha;
+  }
+`
+
+/**
  * The LOD cross-fade: `uLodFade` is (threshold, side) - the scene writes
  * the band position of the level this entry draws (see createLod's
  * `fade`), `[1, 1]` when solid. Inside a band the nearer level keeps the
@@ -1111,12 +1141,17 @@ export type SceneSourceOptions = {
  * stage carries the world position in.
  *
  * `sceneOutput` is the tail every library fragment ends with: fog over
- * the premultiplied color, clamped at zero, and that is the pixel the
- * scene buffer holds - LINEAR light, unclamped above (a sun disc of 40
- * stays 40 in a half-float buffer). Exposure, tone mapping and the sRGB
- * encode happen once per pixel in the target's resolve pass (RESOLVE),
- * never in a scene fragment: a fragment that writes fragColor directly
- * writes linear premultiplied light too.
+ * the premultiplied color, clamped at zero, then the blend-space branch
+ * (BLEND_SPACE), and that is the pixel the scene buffer holds. In a
+ * linear scene (the default) that is LINEAR light, unclamped above (a
+ * sun disc of 40 stays 40 in a half-float buffer), and exposure, tone
+ * mapping and the sRGB encode happen once per pixel in the target's
+ * resolve pass (RESOLVE), never in a scene fragment. In a display-space
+ * scene (SceneOptions.blendSpace) the tail encodes here instead, the
+ * buffer holds display pixels and there is no resolve. A fragment that
+ * writes fragColor directly follows the same contract: linear
+ * premultiplied light in a linear scene, blendSpaceOutput's result in a
+ * display-space one.
  *
  *   ${SCENE}
  *   void main() {
@@ -1164,10 +1199,11 @@ export function sceneSource(o: SceneSourceOptions = {}): string {
     ${env ? ENVIRONMENT : ""}
     ${fog ? FOG : ""}
     ${lights ? sceneShadeSource(receiveShadow, env) : ""}
+    ${BLEND_SPACE}
 
     vec4 sceneOutput(vec3 rgb, float alpha, vec3 position) {
       ${fog === "additive" ? "rgb = fogAdditive(rgb, position, uCamPos);" : fog ? "rgb = fog(rgb, alpha, position, uCamPos);" : ""}
-      return vec4(max(rgb, vec3(0.0)), alpha);
+      return vec4(blendSpaceOutput(max(rgb, vec3(0.0)), alpha), alpha);
     }
   `
 }

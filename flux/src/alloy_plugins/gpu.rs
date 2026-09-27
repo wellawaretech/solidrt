@@ -833,6 +833,7 @@ impl ModuleDef for GpuModule {
     decl.declare("beginBufferWrite")?;
     decl.declare("endBufferWrite")?;
     decl.declare("writeBuffer")?;
+    decl.declare("transferRecords")?;
     decl.declare("destroyBuffer")?;
     decl.declare("setDraw")?;
     decl.declare("createDrawTarget")?;
@@ -878,6 +879,7 @@ impl ModuleDef for GpuModule {
     exports.export("beginBufferWrite", Function::new(ctx.clone(), begin_buffer_write)?)?;
     exports.export("endBufferWrite", Function::new(ctx.clone(), end_buffer_write)?)?;
     exports.export("writeBuffer", Function::new(ctx.clone(), write_buffer)?)?;
+    exports.export("transferRecords", Function::new(ctx.clone(), transfer_records)?)?;
     exports.export("destroyBuffer", Function::new(ctx.clone(), destroy_buffer)?)?;
     exports.export("setDraw", Function::new(ctx.clone(), set_draw)?)?;
     exports.export("createDrawTarget", Function::new(ctx.clone(), create_draw_target)?)?;
@@ -1352,6 +1354,22 @@ fn write_buffer(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: OptArg<
     .write_gpu_buffer(id, bytes, offset.0.unwrap_or(0))
     .map_err(|e| throw_str(&ctx, &format!("writeBuffer: {e}")))?;
   st.gui.platform.request_frame();
+  Ok(())
+}
+
+// Hand a buffer's full record set to the engine (the record-transfer
+// form): the core's order mirror takes ownership of the bytes, so the app
+// keeps no copy - the ordered entry sorts and republishes from the mirror
+// (first publish at attach, re-sorts on direction changes, prefix
+// republishes on instance-count changes). No frame request: nothing draws
+// until an entry attaches over the buffer, and that attach requests one.
+fn transfer_records(ctx: Ctx<'_>, id: u64, records: TypedArray<'_, u8>) -> rquickjs::Result<()> {
+  let bytes = bytes_of(&ctx, &records, "transferRecords")?;
+  let st = state(&ctx);
+  st.gui
+    .alloy
+    .instance_order_records(id, bytes)
+    .map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?;
   Ok(())
 }
 

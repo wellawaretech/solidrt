@@ -42,6 +42,7 @@ export const SPLAT_VERTEX = glsl`
   uniform mat4 uModel;
   uniform mat4 uViewProj;
   uniform vec2 uViewport;
+  uniform float uBlendSpace;
   out vec4 vColor;
   out vec2 vOffset;
   ${SPLAT_CONSTANTS}
@@ -108,7 +109,10 @@ export const SPLAT_VERTEX = glsl`
     vec2 pixels = vOffset.x * axis1 + vOffset.y * axis2;
     vec2 ndc = clip.xy / clip.w + pixels * 2.0 / uViewport;
     gl_Position = vec4(ndc * clip.w, clip.z, clip.w);
-    vColor = vec4(srgbToLinear(iColor.rgb), iColor.a);
+    // A display-space scene (SceneOptions.blendSpace) blends the
+    // record's sRGB color as encoded - what the capture was trained
+    // against; a linear scene decodes it like every color input.
+    vColor = vec4(uBlendSpace > 0.5 ? iColor.rgb : srgbToLinear(iColor.rgb), iColor.a);
   }
 `
 
@@ -157,11 +161,19 @@ export type SplatMesh = RecordMesh
 export type SplatMeshOptions = {
   /** How many splats draw (default all). Records are importance-sorted
    * at bake, so the first n are the scene at n; dial later with
-   * setRecordCount. */
+   * setRecordCount (under transfer the engine republishes the prefix
+   * from its own copy). */
   count?: number
   /** A custom splat material (a fork of SPLAT_VERTEX/SPLAT_FRAGMENT over
    * the same record layout); default the stock class's shared instance. */
   material?: Material
+  /** Transfer the records to the engine (RecordMeshOptions.transfer) -
+   * DEFAULT TRUE here: a splat cloud is write-once by nature, and the
+   * transfer halves its resident copies. The cloud is then fixed at its
+   * creation records (rewrites throw); treat the SplatData as consumed
+   * and let it go, so the fetched bytes free too. Pass false to keep the
+   * mutable record-mesh form. */
+  transfer?: boolean
   /** Debug label for the record buffer (default "splat"). */
   label?: string
 }
@@ -172,10 +184,15 @@ export type SplatMeshOptions = {
  * records as-is, its header bounds as the picking and cull box, and the
  * core-side back-to-front order on the splat centers (`retain`: a camera
  * turn re-sorts and republishes core-side with no publish from JS, an
- * order-preserving move uploads nothing). One caveat carried from the
- * capture side: captures are trained against sRGB blending, and the
- * scene blends linear - judge a capture side by side before trusting a
- * "correction" (okf/plans/gaussian-splats.md).
+ * order-preserving move uploads nothing). The records TRANSFER to the
+ * engine by default (write-once; see SplatMeshOptions.transfer): treat
+ * `data` as consumed and let it go, and the cloud is resident twice
+ * (engine copy + GPU) instead of four times. One caveat carried from the
+ * capture side: captures are TRAINED against sRGB blending, so show a
+ * capture in a display-space scene (`blendSpace: "display"`) for the
+ * trained appearance - a linear scene blends it in linear light, which
+ * lays a milky veil over stacked translucent splats
+ * (okf/plans/gaussian-splats.md).
  */
 export function createSplatMesh(data: SplatData, opts?: SplatMeshOptions): SplatMesh {
   if (stockQuad === null) stockQuad = plane({ width: 2, height: 2, label: "splat-quad" })
@@ -183,6 +200,7 @@ export function createSplatMesh(data: SplatData, opts?: SplatMeshOptions): Splat
   return createRecordMesh(stockQuad, opts?.material ?? stockMaterial!, data.records, opts?.count, {
     bounds: data.bounds,
     instanceOrder: { position: "iCenter", retain: true, descending: true },
+    transfer: opts?.transfer !== false,
     label: opts?.label ?? "splat",
   })
 }

@@ -9488,6 +9488,7 @@ function createRootRoute(options = {}) {
     component: options.component ?? null,
     parse: null,
     segments: [],
+    tabs: false,
     _params: () => {}
   };
   place(root, options.children ?? []);
@@ -9501,6 +9502,7 @@ function createRoute(options) {
     component: options.component ?? null,
     parse: options.params?.parse ?? null,
     segments: parseSegments(options.path),
+    tabs: options.tabs ?? false,
     _params: () => {}
   };
   place(route, options.children ?? []);
@@ -9513,7 +9515,43 @@ function place(parent, children2) {
     }
     child.parent = parent;
     parent.children.push(child);
+    checkTabs(child);
   }
+}
+function checkTabs(route) {
+  if (route.parent?.tabs) {
+    if (route.segments.some((s) => s.kind !== "literal")) {
+      throw new Error(`Tab "${formatPattern(route)}": a tab's path is literal`);
+    }
+    let own = formatPattern(route);
+    for (let sibling of route.parent.children) {
+      if (sibling !== route && formatPattern(sibling) === own) {
+        throw new Error(`Tab "${own}" is declared twice`);
+      }
+    }
+  }
+  if (route.tabs) {
+    for (let anc = route.parent;anc; anc = anc.parent) {
+      if (anc.tabs)
+        throw new Error(`Route "${formatPattern(route)}": tabs inside a tab are not supported`);
+      if (anc.segments.some((s) => s.kind !== "literal")) {
+        throw new Error(`Route "${formatPattern(route)}": a tabs route takes no params above it`);
+      }
+    }
+  }
+  for (let child of route.children)
+    checkTabs(child);
+}
+function tabsRoutes(root) {
+  let out = [];
+  let walk = (route) => {
+    if (route.tabs)
+      out.push(route);
+    for (let child of route.children)
+      walk(child);
+  };
+  walk(root);
+  return out;
 }
 function splitPath(path) {
   return path.split("/").filter((s) => s !== "").map((s) => {
@@ -9646,20 +9684,223 @@ function linkToPath(link2) {
 }
 // ../../packages/router/src/router.tsx
 import { reportLocation } from "srt:dev";
+
+// ../../packages/router/src/stack.ts
+function findTabs(root) {
+  let found = tabsRoutes(root);
+  if (found.length === 0)
+    return null;
+  if (found.length > 1) {
+    throw new Error(`Router: one tabs route per tree ("${formatPattern(found[0])}" and "${formatPattern(found[1])}")`);
+  }
+  let route = found[0];
+  return {
+    route,
+    path: formatPath(route),
+    roots: route.children.map((tab) => formatPath(tab))
+  };
+}
+function resolve3(tree4, tabs, path) {
+  let matches2 = matchPath(tree4, path);
+  if (!matches2)
+    return null;
+  if (!tabs)
+    return {
+      path,
+      matches: matches2,
+      tab: null
+    };
+  let at = matches2.findIndex((m) => m.route === tabs.route);
+  if (at < 0)
+    return {
+      path,
+      matches: matches2,
+      tab: null
+    };
+  let tab = matches2[at + 1];
+  if (!tab)
+    return resolve3(tree4, tabs, tabs.roots[0]);
+  return {
+    path,
+    matches: matches2,
+    tab: formatPath(tab.route)
+  };
+}
+function allRoots(tabs, active) {
+  let stacks = {};
+  for (let root of tabs.roots)
+    stacks[root] = [root];
+  return {
+    active,
+    stacks
+  };
+}
+function showTabs(stack, marker) {
+  let at = stack.lastIndexOf(marker);
+  if (at === stack.length - 1)
+    return stack;
+  return at >= 0 ? stack.slice(0, at + 1) : [...stack, marker];
+}
+function withTab(state, tabs, tab, stack) {
+  let current = state.tabs ?? allRoots(tabs, tab);
+  let same = current.stacks[tab] === stack;
+  return {
+    stack: showTabs(state.stack, tabs.path),
+    tabs: {
+      active: tab,
+      stacks: same ? current.stacks : {
+        ...current.stacks,
+        [tab]: stack
+      }
+    }
+  };
+}
+function toRoot(state, tabs, target) {
+  if (target.path !== target.tab)
+    return null;
+  let current = state.tabs?.stacks[target.tab] ?? [target.tab];
+  let showing = state.tabs?.active === target.tab && state.stack[state.stack.length - 1] === tabs.path;
+  return showing && current.length > 1 ? [target.tab] : current;
+}
+function push(state, tabs, target) {
+  if (!tabs || target.tab === null)
+    return {
+      ...state,
+      stack: [...state.stack, target.path]
+    };
+  let current = state.tabs?.stacks[target.tab] ?? [target.tab];
+  return withTab(state, tabs, target.tab, toRoot(state, tabs, target) ?? [...current, target.path]);
+}
+function replace(state, tabs, target) {
+  if (!tabs || target.tab === null)
+    return {
+      ...state,
+      stack: [...state.stack.slice(0, -1), target.path]
+    };
+  let current = state.tabs?.stacks[target.tab] ?? [target.tab];
+  let next = toRoot(state, tabs, target) ?? (current.length > 1 ? [...current.slice(0, -1), target.path] : [target.tab, target.path]);
+  return withTab(state, tabs, target.tab, next);
+}
+function reset(tabs, target) {
+  if (!tabs)
+    return {
+      stack: [target.path],
+      tabs: null
+    };
+  if (target.tab === null)
+    return {
+      stack: [target.path],
+      tabs: allRoots(tabs, tabs.roots[0])
+    };
+  let all = allRoots(tabs, target.tab);
+  all.stacks[target.tab] = target.path === target.tab ? [target.tab] : [target.tab, target.path];
+  return {
+    stack: [tabs.path],
+    tabs: all
+  };
+}
+function back(state, tabs) {
+  if (tabs && state.tabs && state.stack[state.stack.length - 1] === tabs.path) {
+    let active = state.tabs.active;
+    let current = state.tabs.stacks[active] ?? [active];
+    if (current.length > 1)
+      return withTab(state, tabs, active, current.slice(0, -1));
+    if (active !== tabs.roots[0])
+      return {
+        ...state,
+        tabs: {
+          ...state.tabs,
+          active: tabs.roots[0]
+        }
+      };
+  }
+  if (state.stack.length > 1)
+    return {
+      ...state,
+      stack: state.stack.slice(0, -1)
+    };
+  return null;
+}
+function currentPath(state, tabs) {
+  let top = state.stack[state.stack.length - 1];
+  if (tabs && state.tabs && top === tabs.path) {
+    let stack = state.tabs.stacks[state.tabs.active];
+    return stack?.[stack.length - 1];
+  }
+  return top;
+}
+function changed(prev, next) {
+  let out = [];
+  if (prev.stack !== next.stack)
+    out.push(null);
+  if (prev.tabs && next.tabs && prev.tabs.stacks !== next.tabs.stacks) {
+    for (let tab of Object.keys(next.tabs.stacks)) {
+      if (prev.tabs.stacks[tab] !== next.tabs.stacks[tab])
+        out.push(tab);
+    }
+  }
+  return out;
+}
+function initialState(tree4, tabs, initial, normalize) {
+  let target = (path) => {
+    let t = resolve3(tree4, tabs, normalize(path));
+    if (!t)
+      console.warn(`Router: no route matches "${path}"; dropped from the initial stack`);
+    return t;
+  };
+  if (initial !== undefined && !Array.isArray(initial) && typeof initial !== "string") {
+    if (fits(tree4, tabs, initial, normalize))
+      return {
+        stack: initial.stack,
+        tabs: tabs ? initial.tabs : null
+      };
+    initial = undefined;
+  }
+  let paths = initial === undefined ? ["/"] : typeof initial === "string" ? [initial] : initial;
+  let state = null;
+  for (let path of paths) {
+    let t = target(path);
+    if (!t)
+      continue;
+    state = state ? push(state, tabs, t) : reset(tabs, t);
+  }
+  return state ?? {
+    stack: ["/"],
+    tabs: tabs ? allRoots(tabs, tabs.roots[0]) : null
+  };
+}
+function fits(tree4, tabs, saved, normalize) {
+  let misfit = (what) => {
+    console.warn(`Router: the saved stack does not fit the route tree (${what}); not resumed`);
+    return false;
+  };
+  let lands = (path, tab) => resolve3(tree4, tabs, normalize(path))?.tab === tab;
+  for (let path of saved.stack) {
+    if (!(tabs && path === tabs.path) && !lands(path, null))
+      return misfit(`"${path}"`);
+  }
+  if (!tabs)
+    return saved.stack.length > 0 || misfit("empty");
+  if (!tabs.roots.includes(saved.tabs.active))
+    return misfit(`active tab "${saved.tabs.active}"`);
+  for (let root of tabs.roots) {
+    let entries = saved.tabs.stacks[root];
+    if (!entries || entries[0] !== root)
+      return misfit(`tab "${root}"`);
+    for (let path of entries)
+      if (!lands(path, root))
+        return misfit(`"${path}" in tab "${root}"`);
+  }
+  return saved.stack.length > 0 || misfit("empty");
+}
+
+// ../../packages/router/src/router.tsx
 function createRouter(options) {
   let tree4 = options.tree;
+  let tabs = findTabs(tree4);
   let launch = env.launchLink;
-  let start = launch != null ? [linkToPath(launch)] : normalizeInitial(options.initial);
-  let valid = start.filter((path) => {
-    if (matchPath(tree4, path))
-      return true;
-    console.warn(`Router: no route matches "${path}"; dropped from the initial stack`);
-    return false;
-  });
-  let [entries, setEntries] = createSignal(valid.length > 0 ? valid : ["/"]);
-  let location = createMemo(() => {
-    let list = entries();
-    let path = list[list.length - 1];
+  let [state, setState] = createSignal(initialState(tree4, tabs, launch != null ? launch : options.initial, linkToPath));
+  let located = (path) => {
     if (path === undefined)
       return null;
     let matches2 = matchPath(tree4, path);
@@ -9667,8 +9908,16 @@ function createRouter(options) {
       path,
       matches: matches2
     } : null;
-  });
-  let blockers = new Set;
+  };
+  let location = createMemo(() => located(currentPath(state(), tabs)));
+  let tabLocations = new Map;
+  for (let root of tabs?.roots ?? []) {
+    tabLocations.set(root, createMemo(() => {
+      let stack = state().tabs?.stacks[root];
+      return located(stack?.[stack.length - 1]);
+    }));
+  }
+  let blockers = new Map;
   let href = (target) => {
     if (typeof target === "string")
       return linkToPath(target);
@@ -9676,62 +9925,67 @@ function createRouter(options) {
       return formatPath(target.route, target.params);
     return formatPath(target);
   };
-  let allowed = async () => {
+  let allowed = async (scopes) => {
     let pending2 = [];
-    for (let block of blockers) {
-      let verdict = block();
-      if (verdict === false)
-        return false;
-      if (verdict !== true)
-        pending2.push(verdict);
+    for (let scope of scopes) {
+      for (let block of blockers.get(scope) ?? []) {
+        let verdict = block();
+        if (verdict === false)
+          return false;
+        if (verdict !== true)
+          pending2.push(verdict);
+      }
     }
     if (pending2.length === 0)
       return true;
     return (await Promise.all(pending2)).every(Boolean);
   };
   let router = {
-    entries,
+    entries: () => {
+      let s = state();
+      return s.tabs ? {
+        stack: s.stack,
+        tabs: s.tabs
+      } : s.stack;
+    },
     location,
     href,
+    state,
+    tabs,
+    activeTab: () => state().tabs?.active ?? null,
+    tabLocation: (tab) => tabLocations.get(tab) ?? (() => null),
     blockers,
     tree: tree4,
     async navigate(target, options2 = {}) {
       let path = href(target);
-      if (!matchPath(tree4, path)) {
+      let to = resolve3(tree4, tabs, path);
+      if (!to) {
         console.warn(`Router: no route matches "${path}"`);
         return false;
       }
-      if (!await allowed())
+      let apply = (s) => options2.reset ? reset(tabs, to) : options2.replace ? replace(s, tabs, to) : push(s, tabs, to);
+      let before = untrack(state);
+      if (!await allowed(changed(before, apply(before))))
         return false;
-      setEntries((list) => {
-        if (options2.reset)
-          return [path];
-        if (options2.replace)
-          return [...list.slice(0, -1), path];
-        return [...list, path];
-      });
+      setState((s) => apply(s));
       return true;
     },
     async back() {
-      if (untrack(entries).length <= 1)
+      let before = untrack(state);
+      let next = back(before, tabs);
+      if (!next)
         return false;
-      if (!await allowed())
+      if (!await allowed(changed(before, next)))
         return false;
-      setEntries((list) => list.slice(0, -1));
+      setState((s) => back(s, tabs) ?? s);
       return true;
     }
   };
   return router;
 }
-function normalizeInitial(initial) {
-  if (initial === undefined)
-    return ["/"];
-  if (typeof initial === "string")
-    return [linkToPath(initial)];
-  return initial.map(linkToPath);
-}
 var RouterContext = createContext2();
 var DepthContext = createContext2(0);
+var ScopeContext = createContext2();
 function Router(props) {
   let router = untrack(() => props.router ?? createRouter({
     tree: createRootRoute({
@@ -9740,7 +9994,7 @@ function Router(props) {
     initial: props.initial
   }));
   onBack((e) => {
-    if (untrack(router.entries).length <= 1)
+    if (back(untrack(router.state), router.tabs) === null)
       return;
     e.preventDefault();
     router.back();
@@ -9753,8 +10007,18 @@ function Router(props) {
   return createComponent2(RouterContext, {
     value: router,
     get children() {
-      return createComponent2(RouteView, {
-        depth: 0
+      return createComponent2(ScopeContext, {
+        get value() {
+          return {
+            location: router.location,
+            tab: null
+          };
+        },
+        get children() {
+          return createComponent2(RouteView, {
+            depth: 0
+          });
+        }
       });
     }
   });
@@ -9770,38 +10034,106 @@ function routesOf(slot) {
 }
 function RouteView(props) {
   let router = useContext(RouterContext);
-  let route = createMemo(() => router.location()?.matches[props.depth]?.route ?? null);
+  let scope = useContext(ScopeContext);
+  let route = createMemo(() => scope.location()?.matches[props.depth]?.route ?? null);
+  let tabsRoute = router.tabs?.route ?? null;
+  let tabsSeen = createMemo(() => tabsRoute !== null && route() === tabsRoute);
+  let seen = false;
+  let tabsMounted = createMemo(() => seen ||= tabsSeen());
+  let render2 = (r) => r.component ? createComponent2(r.component, {}) : createComponent2(Outlet, {});
   return createComponent2(DepthContext, {
     get value() {
       return props.depth;
     },
     get children() {
-      return createComponent2(Show, {
+      return [createComponent2(Show, {
         get when() {
-          return route();
+          return tabsMounted();
+        },
+        get children() {
+          var _el$ = createElement("view", {
+            flex: 1,
+            flexDirection: "column"
+          });
+          insert(_el$, () => render2(tabsRoute));
+          effect3(() => tabsSeen() ? "flex" : "none", (_v$, _$p) => {
+            setProp(_el$, "display", _v$, _$p);
+          });
+          return _el$;
+        }
+      }), createComponent2(Show, {
+        get when() {
+          return memo2(() => !!tabsSeen())() ? null : route();
         },
         keyed: true,
-        children: (r) => r.component ? createComponent2(r.component, {}) : createComponent2(Outlet, {})
-      });
+        children: render2
+      })];
     }
   });
 }
 function Outlet() {
+  let router = useContext(RouterContext);
   let depth = useContext(DepthContext);
+  let scope = useContext(ScopeContext);
+  let here = untrack(() => scope.location()?.matches[depth]?.route ?? null);
+  if (here !== null && here === router.tabs?.route)
+    return createComponent2(TabsOutlet, {
+      depth
+    });
   return createComponent2(RouteView, {
     depth: depth + 1
+  });
+}
+function TabsOutlet(props) {
+  let router = useContext(RouterContext);
+  let seen = [];
+  let visited = createMemo(() => {
+    let active = router.activeTab();
+    if (active !== null && !seen.includes(active))
+      seen = [...seen, active];
+    return seen;
+  });
+  return createComponent2(For, {
+    get each() {
+      return visited();
+    },
+    children: (tab) => (() => {
+      var _el$2 = createElement("view", {
+        flex: 1,
+        flexDirection: "column"
+      });
+      insert(_el$2, createComponent2(ScopeContext, {
+        get value() {
+          return {
+            location: router.tabLocation(tab),
+            tab
+          };
+        },
+        get children() {
+          return createComponent2(RouteView, {
+            get depth() {
+              return props.depth + 1;
+            }
+          });
+        }
+      }));
+      effect3(() => router.activeTab() === tab ? "flex" : "none", (_v$, _$p) => {
+        setProp(_el$2, "display", _v$, _$p);
+      });
+      return _el$2;
+    })()
   });
 }
 function useRouter() {
   return useContext(RouterContext);
 }
 function useLocation() {
-  return useContext(RouterContext).location;
+  return useContext(ScopeContext).location;
 }
 function useParams(route) {
-  let router = useContext(RouterContext);
+  let scope = useContext(ScopeContext);
   return createMemo(() => {
-    let matches2 = router.location()?.matches ?? [];
+    let matches2 = scope.location()?.matches ?? [];
     let match = (route && matches2.find((m) => m.route === route)) ?? matches2[matches2.length - 1];
     return match?.params ?? {};
   });
@@ -10664,7 +10996,7 @@ function createTextBuffer(options = {}) {
       return Math.max(0, Math.min(options.step(text, offset, direction), text.length));
     return direction === "left" ? Math.max(0, offset - 1) : Math.min(text.length, offset + 1);
   };
-  let replace = (start, end, text) => {
+  let replace2 = (start, end, text) => {
     let v = value();
     let max = options.maxLength?.();
     if (max != null)
@@ -10683,22 +11015,22 @@ function createTextBuffer(options = {}) {
     caret: () => selection().focus,
     insertText: (text) => {
       let [start, end] = range();
-      replace(start, end, text);
+      replace2(start, end, text);
     },
     deleteBackward: () => {
       let [start, end] = range();
       if (start !== end)
-        replace(start, end, "");
+        replace2(start, end, "");
       else if (start > 0)
-        replace(step(value(), start, "left"), start, "");
+        replace2(step(value(), start, "left"), start, "");
     },
     deleteForward: () => {
       let v = value();
       let [start, end] = range();
       if (start !== end)
-        replace(start, end, "");
+        replace2(start, end, "");
       else if (end < v.length)
-        replace(end, step(v, end, "right"), "");
+        replace2(end, step(v, end, "right"), "");
     },
     move: (direction, opts) => {
       let extend = opts?.extend ?? false;
@@ -10735,8 +11067,8 @@ function createTextBuffer(options = {}) {
       });
       flush();
     },
-    setValue: (next) => replace(0, value().length, next),
-    clear: () => replace(0, value().length, "")
+    setValue: (next) => replace2(0, value().length, next),
+    clear: () => replace2(0, value().length, "")
   };
 }
 function createTextEditorLayout(viewport, input) {

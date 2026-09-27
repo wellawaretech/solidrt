@@ -202,12 +202,20 @@ Each stage has standalone value.
   Findings phone (release client), order updates with zero per-frame JS,
   parked camera renders nothing new, verified through the probe's bench
   ladder.
-- **C - the vertex wall.** The covariance-bake measurement, and the
-  transform-feedback escalation only if the numbers demand it.
-- **D - SH bands.** `--sh` at bake, the id-indexed data texture,
-  view-direction evaluation in the vertex stage (camera position is in
-  the shared params). Skinning wants the same texture machinery, so this
-  pays twice.
+- **C - the vertex wall.** DONE 2026-09-27 as measurement (Findings):
+  the wall is the instanced-draw frontend, vertex ALU is invisible, so
+  the transform-feedback escalation is dead and the real lever - K
+  splats per instance with the record fetched by computed id - folds
+  into stage D, whose data texture it shares.
+- **D - SH bands and the instance restructure.** `--sh` at bake, the
+  id-indexed data texture, view-direction evaluation in the vertex
+  stage (camera position is in the shared params); skinning wants the
+  same texture machinery, so this pays twice. Plus stage C's folded-in
+  escalation over that same texture: K splats per instance
+  (gl_InstanceID * K + gl_VertexID / 4 names the splat), the ordering
+  moved to an index stream (4 B/splat re-sorts instead of 28), the
+  per-vertex fetch priced first - the estimator's ceiling is the
+  vertex side dropping from ~20 to ~5-8 ms/M.
 
 ## Not in this item
 
@@ -357,6 +365,208 @@ into `notes/` when this closes.
   would adopt it without a signature change - so it was consciously not
   blocked on here; it stays the review's open recommendation.
 
+- The phone kills were NOT the residency: a staging-block leak, found
+  2026-09-26 by sampling `dumpsys meminfo` during the 1M orbit. The
+  lease pool's recycle channel was drained only in `begin_buffer_write`
+  (the JS publish path); the camera-driven republish path
+  (rematerialize -> republish_slots -> take_free) never drained it, so
+  with JS parked and the camera turning, every consumed ~28.7 MB block
+  sat in the unbounded channel forever and every re-sort minted a new
+  one: ~8.6 republishes/s x 28.7 MB ~= 200 MB/s of native heap, 2.1 GB
+  after 10 s, kernel kill at ~4.8 GB PSS around 20 s - and rasterQueue
+  never left 1-3 (the raster thread kept up; nothing recovered on
+  orbit-off, pinning "retained, not in flight"). Latent since
+  gpu-instance-order stage 3 (`ordered_instance_publish` had the same
+  gap); splats were the first consumer big and fast enough to die of
+  it. Fixed by a `drain_recycled_blocks` helper called at every
+  block-taking entry point; verified by 48 s of 1M desktop orbit at a
+  byte-flat RSS (271,240 kB) where the old build grew ~200 MB/s. The
+  class of bug is exactly what the stage A review's "no context-level
+  Rust test" gap covers - the wiring between context entry points is
+  probe-verified only.
+- The record transfer form landed the same day (the review's hand-off
+  recommendation): core order mirrors moved from entry-lifetime to
+  BUFFER-lifetime (`InstanceOrders.mirrors` keyed by buffer id, freed
+  with the buffer), `transferRecords(buffer, bytes)` hands the full
+  record set to the core (owned mirror: held vs published split), an
+  attach over an owned mirror SEEDS the first ordered publish
+  core-side (insert returns "seed", target.rs runs rematerialize after
+  its borrows drop), and an instanceCount change on an owned mirror
+  republishes the re-sorted prefix (`set_instance_order_count` +
+  rematerialize, riding the same two-step as orderDirection - which is
+  also the path `setDrawCount` from the spatial core takes). JS:
+  `transfer: true` on createRecordMesh (single-stream materials; order
+  implies retain), guards on setRecords/updateRecords/
+  instanceAttribute/growth, no stream mirror allocated;
+  createSplatMesh defaults transfer ON. A consequence for every
+  retained ordered mesh: re-attach (setLayers re-admission included)
+  seeds from the surviving core mirror, so the stage A rule "a
+  (re)attached ordered mesh republishes whole from JS" is gone for
+  them (markLiveRecords self-guards).
+- Transfer verification (desktop, release client): the seeded first
+  order is byte-identical to the old JS-publish path (same head
+  records), a half-turn `view` flip re-sorts from the engine mirror
+  with no JS anywhere, `layers` off/on re-attaches with the order
+  intact, the live `count` dial works, and `poke` (setRecords) throws
+  naming the transfer. Splat residency at 1M drops from four copies
+  (~115 MB with the fetched bytes held) to engine mirror + GPU
+  (~57 MB) once the app drops the SplatData - the probe's bench memo
+  still holds it (remounts need it), so the probe understates the
+  saving.
+- Acceptance on the Pixel 7 (fixed build, same session): native heap
+  FLAT at ~138 MB through 90 s of continuous 1M orbit - the run that
+  hit 2.1 GB in 10 s and died by ~25 s on the leaky build; desktop
+  likewise byte-flat (271,240 kB RSS over 48 s). Parked native heap
+  198 -> 141 MB: the transferred-away JS mirror plus the blocks the
+  old build had already leaked at mount. 300k full-res orbits at
+  26.5 ms GPU vs the leaky build's 35.3 the same morning - recycled
+  blocks instead of a fresh zeroed allocation per re-sort, plus
+  same-day drift. One bounded cost recorded: GL driver memory grows
+  231 -> 444 MB over the orbit and stays (the Mali DDK retains ghost
+  generations for the in-flight re-uploads, ~7 x 28.7 MB at 1M, and
+  its pools never shrink) - not a leak, but another number for stage
+  C's move-indices-not-data question.
+
+- Stage C measured 2026-09-27, on a cold Pixel 7 (27.9 C battery at
+  start, thermal status 0 throughout) - and the first result is the
+  measurement trap that invalidates casual phone numbers: the Mali's
+  DVFS clock ranged 202-848 MHz across rungs (readable without root at
+  /sys/devices/platform/28000000.mali/cur_freq), tracking utilization,
+  and the cadence hold feeds it (a light rung holds presents, the
+  governor downclocks, the per-frame span inflates - a 100k rung read
+  6.98 ms at an unrecorded clock and 15.74 ms at ~251 MHz the same
+  session, no throttle involved). This, not just device warmth, is the
+  ~1.4x drift stage B recorded. Every phone GPU figure from now on
+  carries the sampled clock; only same-clock rows compare directly,
+  and cycles (ms x MHz) are the cross-clock currency for core-bound
+  terms only (memory-bound work does not scale with core clock: the
+  same raster-free rung read 16.0M cycles at 848 and 13.1M at 572).
+- The vertex-wall split (a `shader` rung on splat-mesh-probe: "stock" /
+  "noraster" = full ALU with the position redirected past the clip
+  volume, zero raster / "setup" = attributes fetched, corners culled by
+  a constant, zero ALU). The decisive same-clock row, 1M half-res at
+  572 MHz: stock 34.5 / noraster 22.9 / setup 23.8 ms. Vertex ALU is
+  INVISIBLE - noraster equals setup within noise at every count and
+  every K - so the covariance bake was necessarily cost-neutral on the
+  vertex side (it still bought the smaller record), and the
+  transform-feedback escalation is dead: it attacks ALU, which was
+  never the term. Fill at 1M: 11.6 ms half-res (572), ~28 ms full-res
+  (848).
+- The frontend is the wall, and it is the INSTANCING, not the record
+  fetch (a `quads` estimator rung: a plain RecordMesh drawing
+  floor(count/K) instances of K merged quads - same total vertices,
+  same per-vertex ALU, 1/K the instances, no order feed). Noraster at
+  1M half-res: K=1 16.0M cycles, K=4 6.2M, K=16 4.2M. The two-point
+  fit: ~12.6 cycles per INSTANCE + ~0.6 cycles per VERTEX, so the
+  per-instance frontend is ~79% of the vertex side and collapses when
+  K splats share an instance. At max clock that is ~15 ms/M
+  frontend + ~4 ms/M vertex throughput - the ~21 ms/M growth every
+  earlier table showed, now attributed. The point-cloud precedent in
+  okf/done/gpu-vertex-fill-attribution.md (1.2M instances of a
+  3-vertex primitive, 4x slower than one indexed geometry) said this
+  generically; the estimator confirms it at splat scale.
+- The full-res record, cold with clocks: stock 22.0 ms @ 701 MHz
+  (100k), 32.7 @ 762 (300k), 47.1 @ 848 (1M). At 1M full-res the frame
+  is ~15 ms frontend + ~4 ms verts + ~28 ms fill, all at max clock: at
+  full resolution FILL is the bigger wall, at half resolution the
+  frontend is. The two levers stand in that order at each resolution,
+  and the frontend restructure alone does not buy 1M full-res 60 fps.
+- The order feed re-checked at same clock (1M half-res, 572 MHz):
+  SplatMesh with the live order vs the estimator's order-free K=1 is
+  ~1.6 ms/frame - inside stage B's 1-3.5 ms A/B. ORDER_DIRECTION_EPS
+  stays at ~2 degrees; revisit only if the restructure changes what
+  re-sorts (an index stream re-sort uploads 4 MB at 1M, not 28 MB - an
+  argument FOR the index form, not against it).
+- The escalation, if the numbers are ever demanded at 1M scale, is
+  therefore: K splats per instance, the record fetched by computed id
+  (gl_InstanceID * K + gl_VertexID / 4) from an id-indexed data
+  texture - the same machinery stage D's SH bands want - with the
+  ordering moved to what the plan called the last resort, the index
+  stream. Estimator ceiling: vertex side ~20 ms/M down to ~5-8 ms/M
+  (the added per-vertex texture fetch is not in the estimator and is
+  the first thing a prototype must price). Not started: stage B's
+  acceptance (a few hundred thousand splats orbiting smoothly on the
+  phone) holds without it, so this is a scope decision, not a next
+  step. Update: folded into stage D by the user the same day.
+- The sRGB acceptance pair, 2026-09-27, produced without a browser
+  viewer: an "srgb" fork rung on splat-mesh-probe (the stock vertex
+  minus srgbToLinear, so the blend runs on sRGB-encoded values as the
+  reference viewers blend), its capture read back through one sRGB
+  DECODE offline - exact because the default resolve is exposure 1,
+  tone mapping none, one linearToSrgb encode (the fork's double encode
+  cancels against the decode; only the 1/255 resolve dither survives).
+  The two blends measurably diverge on the train capture: sampled mean
+  delta 15-18/255, peaks ~70/255, concentrated where translucent
+  splats stack - the linear blend lays a milky veil over the
+  near-camera foreground that the sRGB blend does not have, clearly
+  visible in the head-on pose, subtle in the side pose (a slightly
+  brighter ground). VERDICT (the user, same day, on the side-by-side
+  pair): the sRGB blend is the right look - no veil; adopt it for
+  splat rendering. The fix cannot be per-material in a shared buffer
+  (the material would have to encode its output and the one resolve
+  then double-encodes those pixels; there is no per-pixel tag), so
+  the shape to design is a per-SCENE blend space: fragments encode at
+  the shared output, the resolve drops to sample + dither (display
+  space is LDR: exposure/tone mapping do not compose with encoded
+  blending), the splat material's decode goes away in that mode - and
+  a display-space scene no longer needs the half-float buffer, so
+  rgba8 halves the blend bytes and answers the fill-share gate in the
+  same stroke. Not designed or implemented yet.
+- The desktop reference retake, 2026-09-27, on the winbox (RTX 3070
+  through ANGLE D3D11, current tree overlaid and built there, window
+  visible on the desktop at 60 Hz - the stage 1 run's 15 fps throttle
+  gone): the scene pass at 1M splats is 4.8 ms at 1280x720 and 13.9 ms
+  at a 4K-equivalent target (3840x2160, full 1.9 GHz boost), 100k/300k
+  at 3.4/4.7 ms. The quads sweep has the same instancing-frontend
+  shape as the phone (K=1 -> 16 drops the normalized cost ~10x) at
+  absolute costs that never matter. There is no desktop wall; the
+  phone drives the design. Two reads for the record: NVIDIA's clocks
+  bounce 200-1900 MHz at these low utilizations, so per-rung
+  normalization is noisy there (sample the clock, but trust magnitudes,
+  not deltas), and `gpuFrameExecMsPerFrame` reads ~0 on ANGLE D3D11 -
+  the per-target pass timer is the desktop figure.
+- The sRGB verdict's fix landed 2026-09-27: `blendSpace: "linear" |
+  "display"` on SceneOptions and `<Scene>`, fixed at creation. Display
+  space is the web's rendering model as one scene-level mode: fragments
+  encode to sRGB at the shared tail (BLEND_SPACE in `@solidrt/3d/glsl`,
+  composed by sceneOutput, the skybox, and the splat vertex, which
+  skips its record decode there), BLENDING runs on encoded values, the
+  buffer is rgba8 and IS the displayed image - no resolve pass at all
+  (`texture` === `hdrTexture`), views inherit the mode, and resolve /
+  bloom / toneMapping / exposure / reflection probes throw
+  (probes/blend-space-throws-probe.tsx covers all eleven cases). A
+  custom fragment in a display scene must end in blendSpaceOutput or it
+  blends in the wrong space - documented on BLEND_SPACE and sceneOutput.
+- Display-mode acceptance and the regression that almost shipped: the
+  engine render is within 1.2-1.4/255 mean of the human-approved
+  offline reference (the srgb fork + one decode; residue = rgba8
+  quantization vs the fork path's resolve dither), and a linear scene
+  mounted AFTER a display one is byte-identical to the pre-change stock
+  capture - but only after a fix: a shared program's uniform keeps its
+  last drawn value across targets, so "an unwritten uniform reads 0"
+  is false the moment any scene writes it. First linear-after-display
+  run rendered the splats undecoded (byte-equal to the fork capture).
+  Every scene now writes uBlendSpace explicitly, 0 included. The trap
+  generalizes: any scene-mode uniform on a shared program must be
+  written by BOTH modes.
+- The fill lever, measured on the laptop desktop (magnitudes only):
+  1M full-res stock scene pass 29.8 ms linear -> 19.4 ms display
+  (-35%), plus the 0.5 ms resolve pass gone - the rgba8 buffer halves
+  the blend bytes as predicted on an immediate-mode GPU.
+- The phone A/B, same day (cold Pixel 7, same session, same clock):
+  display buys ~NOTHING on the Mali - 1M full-res 41.96 -> 40.94 ms
+  both at 848 MHz, half-res within noise. A tile-based GPU blends
+  on-tile: the blend bytes never cross external memory, so halving the
+  buffer format does not touch the phone's fill term. The ~28 ms "fill
+  share" at 1M full-res is fragment throughput and overdraw (falloff
+  eval, discard, per-tile blend ops), not bandwidth - so the fill
+  lever on phones is OVERDRAW reduction (tighter extents, a higher
+  min-alpha cut), not the buffer format, and the display mode's value
+  on phones is correctness (the trained look) plus the dropped resolve
+  pass, not fill. Stage D's frontend restructure stays the phone's
+  perf lever. (Absolute drift note: this morning's 1M full-res read
+  47.1 at the same clock in another session - 12% session drift, the
+  same-session-only rule again.)
 - Stage 1 probe, 2026-09-26 (`probes/splat-probe.tsx`, local): the public
   "train" capture (1,026,508 splats, the 3DGS paper's Tanks and Temples
   scene) in the antimatter15 `.splat` format, fetched from Hugging Face

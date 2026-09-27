@@ -171,7 +171,12 @@ impl Context {
       self.manual_targets.borrow_mut().insert(id);
     }
     if let Some(order) = order {
-      self.insert_instance_order(id, 0, order, key, strides, buffers);
+      // A handed-off mirror seeds the first ordered publish here, with no
+      // publish from the app (borrow-free: the targets borrow is a
+      // per-statement temporary above).
+      if self.insert_instance_order(id, 0, order, key, strides, buffers, draw.instance_count.max(0) as usize) {
+        self.rematerialize_retained_order(id, 0);
+      }
     }
     Ok(id)
   }
@@ -256,7 +261,12 @@ impl Context {
       self.manual_targets.borrow_mut().insert(id);
     }
     if let Some(order) = order {
-      self.insert_instance_order(id, 0, order, key, strides, buffers);
+      // A handed-off mirror seeds the first ordered publish here, with no
+      // publish from the app (borrow-free: the targets borrow is a
+      // per-statement temporary above).
+      if self.insert_instance_order(id, 0, order, key, strides, buffers, draw.instance_count.max(0) as usize) {
+        self.rematerialize_retained_order(id, 0);
+      }
     }
     Ok(id)
   }
@@ -574,7 +584,12 @@ impl Context {
     }
     drop(targets);
     if let Some(order) = order {
-      self.insert_instance_order(target, draw_id, order, key, strides, entry.buffer_ids());
+      // A handed-off mirror seeds the first ordered publish here, with no
+      // publish from the app - the transfer form's attach, and the
+      // re-attach over a buffer whose mirror survived.
+      if self.insert_instance_order(target, draw_id, order, key, strides, entry.buffer_ids(), entry.draw.instance_count.max(0) as usize) {
+        self.rematerialize_retained_order(target, draw_id);
+      }
     }
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
@@ -913,6 +928,7 @@ impl Context {
       self.commit_order_swap(target, entry_key, next_ids);
     }
     let range_changed = next_range != *range;
+    let instances_changed = next_range.instance_count != range.instance_count;
     *ids = next_ids;
     *bounds = next_bounds;
     *range = next_range;
@@ -936,6 +952,14 @@ impl Context {
     // why this runs after the targets borrow dropped). Gather entries
     // re-order at their next publish, as above.
     if update.order_direction.is_some() {
+      self.rematerialize_retained_order(target, entry_key);
+    }
+    // An instance-count change on an entry over HANDED-OFF records moves
+    // the published prefix of the core's mirror: the first n records
+    // become the sorted population, re-sorted and republished here - the
+    // count dial with no records on the app side. Entries whose records
+    // the app publishes carry a count change in their own republish.
+    if instances_changed && self.set_instance_order_count(target, entry_key, next_range.instance_count.max(0) as usize) {
       self.rematerialize_retained_order(target, entry_key);
     }
     Ok(())

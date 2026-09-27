@@ -3,7 +3,7 @@ import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/
 import { SceneContext } from "./context.tsx"
 import { createScene } from "../scene.ts"
 import { feedPointer } from "../scene-pointer.ts"
-import type { BloomOptions, EnvironmentOptions, FogOptions, ResolveInput, Scene as SceneHandle, SkyboxOptions, ToneMapping } from "../scene.ts"
+import type { BlendSpace, BloomOptions, EnvironmentOptions, FogOptions, ResolveInput, Scene as SceneHandle, SkyboxOptions, ToneMapping } from "../scene.ts"
 import type { ScenePointerEvent, SceneTapEvent, SceneWheelEvent } from "../node.ts"
 import type { CameraUpdate } from "../camera.ts"
 
@@ -75,6 +75,12 @@ export type SceneProps = ScenePointerProps & {
   toneMapping?: ToneMapping
   /** Output exposure (scene.setExposure), default 1. Reactive. */
   exposure?: number
+  /** The buffer's blend space (SceneOptions.blendSpace), default
+   * "linear"; fixed at creation. "display" blends sRGB-encoded values
+   * in an rgba8 buffer that is itself the displayed image - the mode a
+   * splat capture is faithful in - and rejects resolve, bloom,
+   * toneMapping and exposure. */
+  blendSpace?: BlendSpace
   /** The scene target's layer mask (scene.setLayers as a prop; default 1):
    * the scene draws the meshes whose `layers` intersect it. Reactive. */
   layers?: number
@@ -175,6 +181,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
       fog: props.fog,
       toneMapping: props.toneMapping,
       exposure: props.exposure,
+      blendSpace: props.blendSpace,
       resolve: props.resolve,
       bloom: props.bloom,
       layers: props.layers,

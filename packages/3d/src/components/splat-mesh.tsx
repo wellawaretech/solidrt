@@ -10,14 +10,22 @@ import type { SplatMesh as SplatMeshNode, SplatMeshOptions } from "../splat.ts"
 import type { SplatData } from "../splat-data.ts"
 
 export type SplatMeshProps = PopulatedMeshProps & {
-  /** The baked cloud (loadSplat). Reactive; a later value rewrites the
-   * records (bounds stay the creation data's, like RecordMesh bounds). */
+  /** The baked cloud (loadSplat). Under transfer (the default) the cloud
+   * is write-once: swap it by remounting (a keyed <Show>), not by a new
+   * `data` value - the records went to the engine at creation, so treat
+   * the SplatData as consumed. With `transfer: false` the prop is
+   * reactive and a later value rewrites the records (bounds stay the
+   * creation data's, like RecordMesh bounds). */
   data: SplatData
   /** How many splats draw; default all. Records are importance-sorted at
    * bake, so the first n are the scene at n - the LOD/bench dial. */
   count?: number
   /** A custom splat material (see SplatMeshOptions); fixed at creation. */
   material?: SplatMeshOptions["material"]
+  /** Keep the mutable record-mesh form instead of transferring the
+   * records to the engine (see SplatMeshOptions.transfer; fixed at
+   * creation). Default true - transferred. */
+  transfer?: boolean
   ref?: (mesh: SplatMeshNode) => void
 }
 
@@ -27,13 +35,17 @@ export type SplatMeshProps = PopulatedMeshProps & {
  * buffer is component-owned and freed on unmount. */
 export let SplatMesh: VoidComponent<SplatMeshProps> = props => {
   let ctx = useContext(SceneContext)
-  let mesh = untrack(() => createSplatMesh(props.data, { count: props.count, material: props.material }))
+  let mesh = untrack(() => createSplatMesh(props.data, { count: props.count, material: props.material, transfer: props.transfer }))
   add(ctx.parent, mesh)
-  createEffect(
-    () => props.data,
-    d => setRecords(mesh, d.records, untrack(() => props.count)),
-    { defer: true },
-  )
+  // Under transfer the records are engine-owned and write-once; only the
+  // mutable form follows a new `data` value.
+  if (untrack(() => props.transfer === false)) {
+    createEffect(
+      () => props.data,
+      d => setRecords(mesh, d.records, untrack(() => props.count)),
+      { defer: true },
+    )
+  }
   createEffect(
     () => props.count,
     c => {

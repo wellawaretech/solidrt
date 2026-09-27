@@ -58,14 +58,24 @@ impl Context {
   /// owns the bytes exclusively.
   pub fn begin_buffer_write(&self, id: u64) -> Result<(*mut u8, usize), String> {
     let size = *self.buffer_sizes.borrow().get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
+    self.drain_recycled_blocks();
+    self.write_leases.borrow_mut().begin(id, size)
+  }
+
+  /// Blocks the raster thread finished with, back into the pool (retired
+  /// ids drop). Called wherever a staging block is about to be taken - the
+  /// lease pair AND the core-side ordered republishes (rematerialize, the
+  /// spatial instance publish), which otherwise mint a fresh block per
+  /// republish while the returns pile up unread in the channel: a
+  /// camera-driven re-sort stream with no JS publish anywhere leaked the
+  /// full buffer size per re-sort until the process died (found at
+  /// gaussian-splats stage B scale, ~250 MB/s on a phone).
+  pub(super) fn drain_recycled_blocks(&self) {
     let mut leases = self.write_leases.borrow_mut();
-    // Blocks the raster thread finished with, back into the pool (retired
-    // ids drop). Lazy: nothing else needs to observe a recycle promptly.
     while let Ok((rid, block)) = self.block_recycle_rx.try_recv() {
       let sizes = self.buffer_sizes.borrow();
       leases.recycle(rid, block, |i| sizes.contains_key(&i));
     }
-    leases.begin(id, size)
   }
 
   /// Publish the open lease's first `len` bytes at offset 0: the block moves
@@ -79,6 +89,8 @@ impl Context {
   /// through a second pooled block (see `gather_for_publish`), and THAT
   /// block moves to the raster thread - the one copy the ordering costs.
   pub fn end_buffer_write(&self, id: u64, len: usize) -> Result<(), String> {
+    // The gather below may take a second pooled block; give it the returns.
+    self.drain_recycled_blocks();
     let block = self.write_leases.borrow_mut().end(id)?;
     if len == 0 {
       self.write_leases.borrow_mut().cancel(id, block);

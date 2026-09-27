@@ -232,6 +232,12 @@ Shaped, not started.
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
   fence waits show the GPU is over budget.
+- **[Android Auto parked games](backlog/android-auto-parked-games.md)** [2026-09-27]
+  Since Android 15, Android Auto runs a parked game as an ordinary activity on
+  the car display, drawing its own UI, so a solidrt game can reach car screens
+  on the renderer it already has; what is missing is a per-app manifest opt-in
+  through srt pack, a Play upload path, and a verification pass on the Desktop
+  Head Unit for the second display, the density change and the driving block.
 - **[Android client forgets its dev-server address](backlog/android-dev-server-persistence.md)** [2026-07-27]
   The dev-server address only reaches the client as a launch-intent extra, so
   any relaunch that does not come from the CLI (the device's own launcher, a

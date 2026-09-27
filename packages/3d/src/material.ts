@@ -52,6 +52,7 @@ import {
   phongFragment,
   litShadowFragment,
   litVertex,
+  BLEND_SPACE,
   SKIN_DECLS,
   SKIN_MATRIX,
   standardFragment,
@@ -1126,9 +1127,10 @@ export const SKYBOX_FRAGMENT = glsl`
   uniform samplerCube uSky;
   uniform float uSkyIntensity;
   uniform mat4 uSkyRotation;
+  ${BLEND_SPACE}
   void main() {
     vec3 dir = mat3(uSkyRotation) * normalize(vRay);
-    fragColor = vec4(max(texture(uSky, dir).rgb * uSkyIntensity, vec3(0.0)), 1.0);
+    fragColor = vec4(blendSpaceOutput(max(texture(uSky, dir).rgb * uSkyIntensity, vec3(0.0)), 1.0), 1.0);
   }
 `
 

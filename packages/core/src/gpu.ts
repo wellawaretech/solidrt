@@ -758,3 +758,15 @@ export function beginBufferWrite(id: gpu.BufferId): Float32Array {
 export function writeBuffer(id: gpu.BufferId, data: ArrayBuffer | ArrayBufferView, byteOffset?: number): void {
   gpu.writeBuffer(id, toUint8(data), byteOffset)
 }
+
+/**
+ * Hands an ordered instance buffer's full record set to the engine - the
+ * write-once form: the engine keeps the one CPU copy and sorts,
+ * republishes and count-dials from it on its own; the caller keeps
+ * nothing and partial rewrites are off the table. Hand off before the
+ * entry attaches over the buffer. See `transferRecords` in flux:gpu for
+ * the full contract.
+ */
+export function transferRecords(id: gpu.BufferId, records: ArrayBuffer | ArrayBufferView): void {
+  gpu.transferRecords(id, toUint8(records))
+}

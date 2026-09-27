@@ -29,6 +29,10 @@ export type RecordMeshProps = PopulatedMeshProps & {
    * creation; see InstanceOrderOptions): back-to-front for a transparent
    * population, an explicit sort field for a JS-stepped one. */
   instanceOrder?: InstanceOrderOptions
+  /** Transfer the records to the engine at creation (fixed; see
+   * RecordMeshOptions.transfer): the write-once form - no JS mirror, so
+   * a later `records` value throws instead of rewriting. */
+  transfer?: boolean
   /** Draw into the scene's shadow map (setCastShadow as a prop); default
    * false. Needs a `castShadow` light AND a material class declaring
    * `shadowVertex` (the depth pass with the instance placement) - the
@@ -43,7 +47,11 @@ export type RecordMeshProps = PopulatedMeshProps & {
 export let RecordMesh: VoidComponent<RecordMeshProps> = props => {
   let ctx = useContext(SceneContext)
   let mesh = untrack(() =>
-    createRecordMesh(props.geometry, props.material, props.records, props.count, { bounds: props.bounds, instanceOrder: props.instanceOrder }),
+    createRecordMesh(props.geometry, props.material, props.records, props.count, {
+      bounds: props.bounds,
+      instanceOrder: props.instanceOrder,
+      transfer: props.transfer,
+    }),
   )
   add(ctx.parent, mesh)
   createEffect(

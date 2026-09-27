@@ -585,8 +585,8 @@ collision claims - two copies of this contract have drifted before.
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
 | `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (an optional cull box, never a hit: instances pick by themselves, and without it the mesh culls by their union), `instanceOrder?` (draw the records in key order, fixed at creation - see "Instance order"), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount, and `anchor?` (a SceneNode, fixed at creation: the ancestor the records are relative to, so `<Instance mesh>` children may sit anywhere under it - see createInstancedMesh) |
 | `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's style record, one value per component - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it), and `mesh?` (the population, fixed at creation, when the instance is placed outside its `<InstancedMesh>` - inside that mesh's `anchor` subtree) |
-| `RecordMesh` | as Mesh, plus `records` (the per-instance records in the material's first instance layout, an ArrayBufferView; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks), `instanceOrder?` (draw the records in key order, fixed at creation - see "Instance order"); the record buffers are component-owned and freed on unmount |
-| `SplatMesh` | as Mesh, plus `data` (a baked SplatData from loadSplat), `count?` (splats drawn, default all; records are importance-sorted at bake, so a prefix is the scene at that size) and `material?` (a fork of the stock splat class); bounds, the back-to-front instance order and the stock material come from the bake - see "Splats" |
+| `RecordMesh` | as Mesh, plus `records` (the per-instance records in the material's first instance layout, an ArrayBufferView; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks), `instanceOrder?` (draw the records in key order, fixed at creation - see "Instance order"), `transfer?` (hand the records to the engine at creation, the write-once form - a later `records` value then throws; see "Instance order"); the record buffers are component-owned and freed on unmount |
+| `SplatMesh` | as Mesh, plus `data` (a baked SplatData from loadSplat; write-once under the default transfer - swap clouds by remounting), `count?` (splats drawn, default all; records are importance-sorted at bake, so a prefix is the scene at that size), `material?` (a fork of the stock splat class) and `transfer?` (default true: records go to the engine, halving residency; see "Splats"); bounds, the back-to-front instance order and the stock material come from the bake |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
 | `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `castShadow?`, `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
 | `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `castShadow?` (six face maps, six shadow slots), `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
@@ -1560,6 +1560,22 @@ the scene target keeps its last order. Where the key sits decides
 nothing else: raw instancing stays buffer-order everywhere (Three,
 Unity, Godot), so this knob has no engine counterpart to compare
 against; the core primitive is okf/done/gpu-instance-order.md.
+
+`transfer: true` (createRecordMesh only) is the write-once form for a
+large population: the records go to the ENGINE at creation and the mesh
+keeps no JS mirror, so the record bytes are resident once CPU-side
+(engine mirror) plus the GPU buffer, instead of twice more (JS mirror,
+plus the creation bytes the app would keep). The contract is loud:
+setRecords, updateRecords, instanceAttribute and growth throw naming
+the transfer; setRecordCount still works (with an instanceOrder the
+engine re-sorts and republishes the first n records of ITS copy),
+and so do setVisible, transforms, re-attach and disposeInstances (which
+frees the engine copy with the buffer). Takes a single-stream material;
+with an instanceOrder the engine's retained copy is implied. The engine
+mirror is BUFFER-lifetime, so a detached-and-re-attached ordered entry
+(setLayers re-admission included) seeds its order from it with no
+publish from JS - true for every retained ordered mesh since this
+landed, transfer or not.
 
 ### Background
 
@@ -2581,15 +2597,19 @@ successors) as ordinary content, the model-loading split repeated:
   entry.
 - On the runtime, `loadSplat(path)` reads a `.srts` (fetch + decode,
   the loadModel shape) and `createSplatMesh(data, { count?, material?,
-  label? })` / `<SplatMesh>` shows it: a RecordMesh over the stock splat
-  material (a shared instance; `splatMaterialClass` and the
+  transfer?, label? })` / `<SplatMesh>` shows it: a RecordMesh over the
+  stock splat material (a shared instance; `splatMaterialClass` and the
   SPLAT_VERTEX/SPLAT_FRAGMENT sources are exported for forks) with the
   header bounds as the cull and picking box and `instanceOrder: {
   position: "iCenter", retain: true, descending: true }` - so the cloud
   composes as a mesh (depth-tested against opaque geometry, placed by
   the transparent entry sort, transformed by its node) and the core
   draws it back to front with zero per-frame JS; a parked camera
-  uploads nothing (see "Instance order").
+  uploads nothing (see "Instance order"). The records TRANSFER to the
+  engine by default (a splat cloud is write-once): treat the SplatData
+  as consumed and drop it, and the cloud is resident twice (engine
+  copy + GPU buffer) instead of four times - at 1M splats that is
+  ~57 MB instead of ~115 MB. `transfer: false` keeps the mutable form.
 - The vertex stage projects the baked covariance through the Jacobian
   of `uViewProj * uModel` (no focal/view uniforms; any node transform
   shapes the footprint with the same matrix that moves the center) and

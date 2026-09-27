@@ -354,6 +354,20 @@ export type { BloomOptions, ResolveInput, ResolveOptions } from "./resolve.ts"
  * where a filmic curve shifts them. */
 export type ToneMapping = "none" | "aces" | "agx" | "neutral"
 
+/** The buffer's blend space (SceneOptions.blendSpace). "linear" is the
+ * default contract: fragments write linear light into a half-float
+ * buffer and one resolve pass applies exposure, tone mapping and the
+ * sRGB encode. "display" turns the scene display-referred, the way the
+ * web renders: fragments encode to sRGB at output (BLEND_SPACE in the
+ * shared tail), BLENDING runs on encoded values, the buffer is rgba8
+ * and IS the displayed image - no resolve pass, no HDR, and exposure,
+ * tone mapping, bloom, a custom resolve and reflection probes are all
+ * unavailable (they act on linear radiance). The one reason it exists:
+ * content authored or TRAINED against sRGB compositing - a gaussian
+ * splat capture above all - only looks right when the blend itself is
+ * sRGB; a linear blend lays a milky veil over its stacked translucents. */
+export type BlendSpace = "linear" | "display"
+
 // The uToneMapping value per mode; the RESOLVE set branches on it.
 const TONE_MAPPING_CODE: Record<ToneMapping, number> = { none: 0, aces: 1, agx: 2, neutral: 3 }
 // The core's draw queues (flux:spatial bindDraw), drawn in this order.
@@ -424,6 +438,12 @@ export type SceneOptions = {
   toneMapping?: ToneMapping
   /** Output exposure, default 1; see setExposure. */
   exposure?: number
+  /** The buffer's blend space, default "linear"; fixed at creation. See
+   * BlendSpace: "display" blends sRGB-encoded values in an rgba8 buffer
+   * that is itself the displayed image (`texture` is the buffer, there
+   * is no resolve), and rejects resolve, bloom, toneMapping, exposure
+   * and reflection probes. */
+  blendSpace?: BlendSpace
   /** LOD quality knob, default 1: every measured projected size is
    * multiplied by it before the level select, so below 1 the groups hand
    * over to their far levels sooner (Unity's lodBias). Live via
@@ -662,12 +682,15 @@ const PROBE_SIZE = 128
 const PROBE_FOV = 90
 export type Scene = {
   /** The scene's output: an ordinary texture id (`<texture src>`) - the
-   * resolve of the buffer, encoded display pixels. */
+   * resolve of the buffer, encoded display pixels. In a blendSpace
+   * "display" scene there is no resolve and this IS the buffer. */
   texture: TextureId
-  /** The scene's BUFFER: the target the meshes draw into, premultiplied
-   * linear light (half float where the device renders it, see
-   * bufferFormat), sampler-only - the input of a radiance-reading pass (a
-   * bloom chain) whose result a custom resolve adds back in. */
+  /** The scene's BUFFER: the target the meshes draw into, sampler-only.
+   * Premultiplied linear light in a linear scene (half float where the
+   * device renders it, see bufferFormat) - the input of a
+   * radiance-reading pass (a bloom chain) whose result a custom resolve
+   * adds back in. In a blendSpace "display" scene it holds encoded
+   * display pixels and equals `texture`. */
   hdrTexture: TextureId
   /** The buffer's depth as a sampler-only texture id when created with
    * `depth: "texture"`, else null. */
@@ -1097,10 +1120,16 @@ function entryTextures(material: Material, mesh: Mesh, morph: MorphEntry | null)
   return textures
 }
 
-// A buffer's clear color: the sRGB option decoded to premultiplied linear
-// light, what the buffer holds and the resolve tone maps.
-function bufferClear(color: [number, number, number, number] | undefined): [number, number, number, number] | undefined {
+// A buffer's clear color: the sRGB option decoded to premultiplied
+// linear light in a linear scene (what the buffer holds and the resolve
+// tone maps); a display-space buffer holds encoded pixels, so the sRGB
+// components premultiply as they are.
+function bufferClear(color: [number, number, number, number] | undefined, display: boolean): [number, number, number, number] | undefined {
   if (color === undefined) return undefined
+  if (display) {
+    let a = color[3]
+    return [color[0] * a, color[1] * a, color[2] * a, a]
+  }
   let c = premultipliedColor(color)
   return [c[0]!, c[1]!, c[2]!, c[3]!]
 }
@@ -1120,19 +1149,34 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // scene cannot see must not darken it).
   let sceneMask = checkMask(opts?.layers ?? 1, "createScene")
   let label = opts?.label ?? "scene"
+  let blendSpace = opts?.blendSpace ?? "linear"
+  if (blendSpace !== "linear" && blendSpace !== "display") {
+    throw new Error('createScene: expected blendSpace "linear" or "display", got ' + blendSpace)
+  }
+  let display = blendSpace === "display"
+  if (display) {
+    // Display space is LDR and has no resolve stage: everything that
+    // acts on linear radiance past the fragment is off the table.
+    for (let name of ["resolve", "bloom", "toneMapping", "exposure"] as const) {
+      if (opts?.[name] !== undefined) throw new Error(`createScene: ${name} does not compose with blendSpace "display" (the buffer holds encoded display pixels; there is no resolve stage)`)
+    }
+  }
   // `texture` is the scene's BUFFER throughout this file: the draw target
   // every entry, sink, sort and param write names. The handle's `texture`
-  // is its resolve (below), the displayable id.
+  // is its resolve (below); a display-space scene has no resolve and the
+  // buffer is itself the displayable id.
   let texture = createDrawTarget(width, height, null, {
     depth: depthMode,
-    format: bufferFormat(),
-    clearColor: bufferClear(opts?.clearColor),
+    format: display ? "rgba8" : bufferFormat(),
+    clearColor: bufferClear(opts?.clearColor, display),
     samples: opts?.samples,
+    filter: display ? opts?.filter : undefined,
+    wrap: display ? opts?.wrap : undefined,
     label,
     autoFree: false,
   })
   spatial.setDrawSort(texture, true)
-  let resolve = makeResolve(texture, width, height, opts?.resolve, { filter: opts?.filter, wrap: opts?.wrap }, label)
+  let resolve = display ? null : makeResolve(texture, width, height, opts?.resolve, { filter: opts?.filter, wrap: opts?.wrap }, label)
   let disposed = false
   let scheduled = false
 
@@ -1692,6 +1736,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let tiled = vopts.into !== undefined
     if (tiled && vopts.resolve !== undefined) throw new Error("createView: a tiled view (into) has no resolve of its own - resolve the atlas")
     if (tiled && vopts.bloom !== undefined) throw new Error("createView: a tiled view (into) has no resolve to bloom on - resolve the atlas")
+    if (display) {
+      // The views of a display-space scene are display-referred like it:
+      // no resolve of their own, and nothing that would act past one.
+      if (vopts.resolve !== undefined) throw new Error('createView: resolve does not compose with blendSpace "display" (the view buffer is the displayed image)')
+      if (vopts.bloom !== undefined) throw new Error('createView: bloom does not compose with blendSpace "display" (there is no resolve stage)')
+    }
     let viewLabel = vopts.label ?? label + (cube !== null ? "-probe" : "-view")
     let buffer =
       cube !== null
@@ -1701,15 +1751,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
             // solid angle: a generated chain, refreshed per face render.
             mipmap,
             format: bufferFormat(),
-            clearColor: bufferClear(vopts.clearColor),
+            clearColor: bufferClear(vopts.clearColor, display),
             label: viewLabel,
             autoFree: false,
           })
         : createDrawTarget(vopts.width, vopts.height, null, {
             depth: tiled ? undefined : (vopts.depth ?? true),
-            format: tiled ? undefined : bufferFormat(),
-            clearColor: bufferClear(vopts.clearColor),
+            format: tiled ? undefined : display ? "rgba8" : bufferFormat(),
+            clearColor: bufferClear(vopts.clearColor, display),
             samples: vopts.samples,
+            filter: display ? vopts.filter : undefined,
+            wrap: display ? vopts.wrap : undefined,
             label: viewLabel,
             autoFree: false,
             into: vopts.into,
@@ -1727,8 +1779,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       texture: buffer,
       // A shadow view is depth only, a probe's faces are read as a cube,
       // a tile is the atlas's: none of them displays, so none resolves.
+      // A display-space view's buffer is the displayed image itself.
       resolve:
-        cube === null && shadowFilter === null && !tiled
+        cube === null && shadowFilter === null && !tiled && !display
           ? makeResolve(buffer, vopts.width, vopts.height, vopts.resolve, { filter: vopts.filter, wrap: vopts.wrap }, viewLabel)
           : null,
       ownBloom: vopts.bloom !== undefined,
@@ -2247,7 +2300,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   }
 
   let scene: Scene = {
-    texture: resolve.target,
+    texture: resolve === null ? texture : resolve.target,
     hdrTexture: texture,
     depthTexture: depthMode === "texture" ? depthTexture(texture) : null,
     root,
@@ -2261,7 +2314,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       width = w
       height = h
       setTargetSize(texture, w, h)
-      resizeResolve(resolve, w, h)
+      if (resolve !== null) resizeResolve(resolve, w, h)
       camera.dirty = true
       hooks._schedule()
     },
@@ -2270,7 +2323,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (disposed) return
       Object.assign(sceneParams, params)
       setTargetParams(texture, params)
-      setTargetParams(resolve.target, params)
+      if (resolve !== null) setTargetParams(resolve.target, params)
       for (let v of views) {
         // A view's own names (view.setParams, its fog) win over the
         // scene-wide fan-out.
@@ -2353,21 +2406,25 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       scene.setParams(params)
     },
     setToneMapping(mode) {
+      if (resolve === null) throw new Error('scene.setToneMapping: a blendSpace "display" scene has no resolve stage to tone map in')
       let code = TONE_MAPPING_CODE[mode]
       if (code === undefined) throw new Error('scene.setToneMapping: expected "none", "aces", "agx" or "neutral", got ' + mode)
       scene.setParams({ uToneMapping: code })
     },
     setExposure(exposure) {
+      if (resolve === null) throw new Error('scene.setExposure: a blendSpace "display" scene has no resolve stage to expose in')
       if (!Number.isFinite(exposure) || exposure < 0) throw new Error("scene.setExposure: expected a finite number >= 0, got " + exposure)
       scene.setParams({ uExposure: exposure })
     },
     setResolve(r) {
       if (disposed) return
+      if (resolve === null) throw new Error('scene.setResolve: a blendSpace "display" scene has no resolve stage')
       replaceResolve(resolve, texture, r)
       hooks._schedule()
     },
     setBloom(bloom) {
       if (disposed) return
+      if (resolve === null) throw new Error('scene.setBloom: a blendSpace "display" scene has no resolve stage to bloom on')
       sceneBloom = bloom
       setResolveBloom(resolve, texture, width, height, bloom)
       for (let v of views) if (v.resolve !== null && !v.ownBloom) setResolveBloom(v.resolve, v.texture, v.width, v.height, bloom)
@@ -2578,6 +2635,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     createReflectionProbe(popts) {
       if (disposed) throw new Error("createReflectionProbe: the scene is disposed")
+      if (display) throw new Error('createReflectionProbe: a blendSpace "display" scene renders encoded pixels, which a probe would then sample as linear radiance')
       let { cube, setPosition, update, dispose } = makeProbe(popts, checkMask(popts.layers ?? 1, "createReflectionProbe"))
       return { cube, setPosition, update, dispose }
     },
@@ -2612,7 +2670,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // Drain the zeroed direction slots the teardown queued while the
       // targets still exist; afterwards their groups are gone.
       spatial.flush()
-      disposeResolve(resolve)
+      if (resolve !== null) disposeResolve(resolve)
       destroyTexture(texture)
       for (let v of views.slice()) disposeView(v)
       shadowSys.dispose()
@@ -2703,6 +2761,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // And the resolve at its defaults (exposure 1, no tone mapping).
   scene.setParams({ uExposure: 1, uToneMapping: TONE_MAPPING_CODE.none })
   if (opts?.fog !== undefined) scene.setFog(opts.fog)
+  // The one shader-visible trace of the mode: stock fragments (and any
+  // custom one composing BLEND_SPACE) branch on it; views inherit it
+  // through the scene-params seed. Every scene writes it, 0 included: a
+  // program is shared across scenes and its uniform keeps the last
+  // drawn value, so a linear scene must overwrite what a display-space
+  // one left behind.
+  scene.setParams({ uBlendSpace: display ? 1 : 0 })
   if (opts?.toneMapping !== undefined) scene.setToneMapping(opts.toneMapping)
   if (opts?.exposure !== undefined) scene.setExposure(opts.exposure)
   if (opts?.bloom !== undefined) scene.setBloom(opts.bloom)

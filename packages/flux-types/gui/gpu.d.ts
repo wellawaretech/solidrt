@@ -888,6 +888,20 @@ declare module "flux:gpu" {
    */
   export function writeBuffer(id: BufferId, data: Uint8Array, byteOffset?: number): void
   /**
+   * Hand a buffer's full record set to the engine - the write-once form of
+   * an ordered instance buffer ({@link InstanceOrder}): the engine's order
+   * mirror takes ownership of a copy, so the app keeps none, and the
+   * ordered entry sorts and republishes from the mirror on its own - the
+   * first publish when the entry attaches (nothing draws before that),
+   * re-sorts on `orderDirection` changes, and prefix republishes when the
+   * entry's `instanceCount` changes (the first n records are the sorted
+   * population). Hand off before the entry attaches; a second call
+   * replaces the records wholesale. `records` must fit the buffer, and
+   * must be whole records of the order key's stride by the time an entry
+   * attaches over the buffer. The mirror is freed with the buffer.
+   */
+  export function transferRecords(id: BufferId, records: Uint8Array): void
+  /**
    * Destroy a vertex buffer. Pipeline textures drawing from it hold their own
    * reference, so destruction order does not matter; further writes to the id
    * throw.

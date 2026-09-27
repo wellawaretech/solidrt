@@ -3,7 +3,7 @@
 // setter write paths that keep a live scene's draw entries in step. The
 // scene side is reached through the node's SceneHooks (node.ts).
 
-import { beginBufferWrite, createBuffer, destroyBuffer, destroyTexture, endBufferWrite, writeBuffer } from "@solidrt/core/gpu"
+import { beginBufferWrite, createBuffer, destroyBuffer, destroyTexture, endBufferWrite, transferRecords, writeBuffer } from "@solidrt/core/gpu"
 import type { BufferId, DrawId, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
 import { checkCubeKnobs } from "./environment.ts"
 import type { EnvironmentOptions } from "./environment.ts"
@@ -145,6 +145,11 @@ export type MeshInstances = {
    * layouts (see InstanceOrderOptions), or null for buffer order. Fixed
    * at creation; slots as the app writes them never move. */
   order: ResolvedInstanceOrder | null
+  /** Whether the records were transferred to the engine at creation
+   * (RecordMeshOptions.transfer): no JS-side mirror exists, the
+   * population is write-once, and rewrites/growth/attribute access
+   * throw. Fixed at creation; always false on an instanced mesh. */
+  transfer: boolean
 }
 
 export type InstanceSlots = { slots: (InstanceNode | null)[]; free: number[] }
@@ -357,6 +362,32 @@ function makeStream(layout: VertexAttribute[], capacity: number, blank: Uint8Arr
   return stream
 }
 
+// The transfer form's stream: records go to the engine at creation and no
+// JS mirror exists (data stays a zero-length view; the operations that
+// would read or write it throw on the transfer flag first). An ordered
+// stream hands the records to the core's order mirror - the entry's
+// attach publishes the first gather, so the buffer starts zeroed; an
+// unordered one is its own upload, the buffer created with the records.
+function makeTransferredStream(layout: VertexAttribute[], records: Uint8Array, ordered: boolean, label: string | undefined): InstanceStream {
+  let stride = layoutStride(layout)
+  let stream: InstanceStream = {
+    layout,
+    stride,
+    buffer: ordered
+      ? createBuffer(records.byteLength, { autoFree: false, label })
+      : createBuffer(records, { autoFree: false, label }),
+    data: new Uint8Array(0),
+    blank: new Uint8Array(stride),
+    dirty: null,
+    _view: new DataView(new ArrayBuffer(0)),
+    _floats: isFloatLayout(layout),
+    _components: layoutComponents(layout),
+    _fields: [],
+  }
+  if (ordered) transferRecords(stream.buffer, records)
+  return stream
+}
+
 // Encode `values` (one per component, in layout order, as the shader
 // sees them) into record `i` of a stream: one typed-array set over an
 // all-float layout (the values ARE the bytes), the codecs otherwise.
@@ -531,7 +562,20 @@ export type InstancedMeshOptions = PopulationOptions & {
 /** A record mesh's bounds are also its ONLY picking leaf: records are
  * opaque data, so without them the mesh never picks and pointer events
  * never target it. */
-export type RecordMeshOptions = PopulationOptions
+export type RecordMeshOptions = PopulationOptions & {
+  /** Transfer the records to the engine at creation - the write-once
+   * form for a large population (a baked splat cloud): the engine keeps
+   * the one CPU-side copy, and the mesh keeps NO mirror, so the records
+   * are resident once instead of twice and the creation bytes are free
+   * to drop the moment this returns. The population is write-once by
+   * contract: setRecords, updateRecords, instanceAttribute and growth
+   * throw; setRecordCount (an ordered mesh republishes the prefix
+   * core-side), setVisible, transforms, re-attach and disposeInstances
+   * all still work. Takes a single-stream material; with an
+   * instanceOrder the engine's retained copy is implied (`retain` is
+   * forced on). Default false. */
+  transfer?: boolean
+}
 
 function copyBounds(bounds: ArrayLike<number> | undefined, site: string): Float32Array | null {
   if (bounds === undefined) return null
@@ -633,6 +677,7 @@ export function createInstancedMesh(geometry: Geometry, material: Material, opts
     levels: null,
     morph: populationMorph(geometry, capacity, opts?.label),
     order: resolveInstanceOrder(opts?.instanceOrder, buffers, "createInstancedMesh"),
+    transfer: false,
   }
   return mesh
 }
@@ -713,6 +758,7 @@ export function setInstanceStyle(instance: InstanceNode, values: ArrayLike<numbe
 export function instanceAttribute(mesh: InstancedMesh | RecordMesh, name: string): AttributeAccess | null {
   let inst: MeshInstances | null = mesh._instances
   if (inst === null) throw new Error("instanceAttribute: the mesh's instances are disposed")
+  if (inst.transfer) throw new Error("instanceAttribute: the records were transferred at creation (transfer: true) - there is no mirror to read or write")
   for (let s of inst.streams) {
     let i = s.layout.findIndex(a => a.name === name)
     if (i >= 0) return s._fields[i]!
@@ -736,6 +782,7 @@ export type UpdateRecordsOptions = { stream?: number; first?: number; count?: nu
 export function updateRecords(mesh: InstancedMesh | RecordMesh, options: UpdateRecordsOptions = {}): void {
   let inst: MeshInstances | null = mesh._instances
   if (inst === null) throw new Error("updateRecords: the mesh's instances are disposed")
+  if (inst.transfer) throw new Error("updateRecords: the records were transferred at creation (transfer: true) - there is no mirror to publish from")
   let index = options.stream ?? 0
   let stream = inst.streams[index]
   if (!Number.isInteger(index) || stream === undefined) {
@@ -783,7 +830,9 @@ export function publishRecords(mesh: Mesh): void {
  * the JS mirrors. */
 export function markLiveRecords(mesh: Mesh): void {
   let inst = mesh._instances
-  if (inst === null || inst.count === 0) return
+  // A transferred mesh has no mirror; the engine's own (buffer-lifetime)
+  // mirror seeds a re-attached entry instead.
+  if (inst === null || inst.count === 0 || inst.transfer) return
   for (let s of inst.streams) markRecords(mesh, s, 0, inst.count * s.stride)
 }
 
@@ -875,6 +924,7 @@ export function reparentInstance(instance: InstanceNode, parent: SceneNode): voi
 // are freed.
 function growInstances(mesh: InstancedMesh | RecordMesh, next: number): void {
   let inst: MeshInstances = mesh._instances
+  if (inst.transfer) throw new Error("growInstances: a transferred population is fixed at its creation records")
   let previous = inst.capacity
   inst.capacity = next
   let freed: BufferId[] = []
@@ -922,10 +972,23 @@ export function createRecordMesh(
 ): RecordMesh {
   let buffers = instancedBuffers(material, "createRecordMesh")
   let capacity = recordCount(records, buffers[0]!.attributes, "createRecordMesh")
+  let transfer = opts?.transfer === true
+  if (transfer && buffers.length !== 1) {
+    throw new Error(
+      "createRecordMesh: transfer takes a single-stream material; this one declares " + buffers.length + " instance buffers (further streams need the partial writes transfer gives up)",
+    )
+  }
+  let order = resolveInstanceOrder(opts?.instanceOrder, buffers, "createRecordMesh")
+  // A transferred order always retains: the engine's mirror is the ONE
+  // record copy, what re-attaches seed from and count changes republish
+  // (a field key gets the same retention, engine-side only).
+  if (transfer && order !== null && !order.retain) order = { ...order, retain: true }
   let mesh = createMesh(geometry, material) as RecordMesh
   mesh._instances = {
     matrix: null,
-    streams: buffers.map((b, i) => makeStream(b.attributes, capacity, null, streamLabel(opts?.label, i))),
+    streams: transfer
+      ? [makeTransferredStream(buffers[0]!.attributes, vertexBytes(records), order !== null, streamLabel(opts?.label, 0))]
+      : buffers.map((b, i) => makeStream(b.attributes, capacity, null, streamLabel(opts?.label, i))),
     capacity,
     label: opts?.label,
     count: Math.max(0, Math.min(Math.floor(count ?? capacity), capacity)),
@@ -934,9 +997,10 @@ export function createRecordMesh(
     anchor: null,
     levels: null,
     morph: null,
-    order: resolveInstanceOrder(opts?.instanceOrder, buffers, "createRecordMesh"),
+    order,
+    transfer,
   }
-  copyRecords(mesh, records, capacity)
+  if (!transfer) copyRecords(mesh, records, capacity)
   return mesh
 }
 
@@ -966,6 +1030,7 @@ function copyRecords(mesh: RecordMesh, records: ArrayBufferView, written: number
  */
 export function setRecords(mesh: RecordMesh, records: ArrayBufferView, count?: number): void {
   let inst = mesh._instances
+  if (inst.transfer) throw new Error("setRecords: the records were transferred at creation (transfer: true) - the population is write-once; mount a new mesh for new records")
   let written = recordCount(records, inst.streams[0]!.layout, "setRecords")
   if (written > inst.capacity) growInstances(mesh, Math.max(written, inst.capacity * 2))
   copyRecords(mesh, records, written)
@@ -981,8 +1046,10 @@ export function setRecordCount(mesh: RecordMesh, count: number): void {
   inst.count = n
   // Ordered records draw the first n GATHERED records, so a count change
   // republishes the live set - a shrink would otherwise keep drawing the
-  // old population's nearest records, a growth its stale tail.
-  if (inst.order !== null && n > 0) for (let s of inst.streams) markRecords(mesh, s, 0, n * s.stride)
+  // old population's nearest records, a growth its stale tail. A
+  // transferred mesh has no mirror to publish from; the engine follows
+  // the entry's instance count into its own mirror's prefix instead.
+  if (inst.order !== null && !inst.transfer && n > 0) for (let s of inst.streams) markRecords(mesh, s, 0, n * s.stride)
   mesh._scene?._setCount(mesh)
 }
 
