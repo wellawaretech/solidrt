@@ -533,6 +533,21 @@ fn mount_assets(app_id: &str) {
   forge::fs::set_assets_base(go::store::current_version_dir(app_id).map(forge::fs::AssetsBase::Dir));
 }
 
+/// The font set an app runs on: the runner's base fonts plus the app's own,
+/// where every alias the app's manifest binds is the app's alone: a base
+/// entry under it is dropped, whether the app binds a file (its override) or
+/// nothing (a dropped default, so the role falls back to the system font).
+/// Two fonts under one alias would form one family style set in which style
+/// matching keeps the first registered on a tie, so a project's "sans"
+/// override would lose to the base Noto Sans; so would its underline metrics
+/// (FontMetricsTable keeps the first entry too).
+pub fn merge_fonts(base: &[FontPayload], app: manifest::AppFonts) -> Vec<FontPayload> {
+  let claimed = |font: &FontPayload| font.alias.as_ref().is_some_and(|alias| app.aliases.contains(alias));
+  let mut fonts: Vec<FontPayload> = base.iter().filter(|font| !claimed(font)).cloned().collect();
+  fonts.extend(app.fonts);
+  fonts
+}
+
 // Register the font set for `app_id`: the client's base fonts plus the
 // current installed version's manifest fonts, replacing whatever the previous
 // app registered. Rebuilt from scratch on every app switch so fonts are
@@ -540,9 +555,7 @@ fn mount_assets(app_id: &str) {
 // across apps, and no alias is ever registered twice into one context.
 #[cfg(feature = "go")]
 fn apply_app_fonts(app_id: &str, platform: &PlatformContext, base_fonts: &[FontPayload]) {
-  let mut fonts = base_fonts.to_vec();
-  fonts.extend(go::store::app_fonts(app_id));
-  platform.reset_fonts(fonts);
+  platform.reset_fonts(merge_fonts(base_fonts, go::store::app_fonts(app_id)));
 }
 
 // The mechanics of anchoring, separated from storage resolution so tests can

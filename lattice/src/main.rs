@@ -158,7 +158,7 @@ fn main() {
   // the bare runtime: no fonts (text falls back to the platform font
   // manager), no identity.
   #[cfg(not(feature = "go"))]
-  let (app, fonts, app_id): (_, Vec<alloy::rendertree::FontPayload>, Option<String>) =
+  let (app, mut fonts, mut app_id): (_, Vec<alloy::rendertree::FontPayload>, Option<String>) =
     match source_path.as_deref().and_then(|p| lattice::payload::load_path(std::path::PathBuf::from(p))) {
       Some(payload) => {
         lattice::gl_libs::provision(&payload.app_id, &payload.gl_libs);
@@ -180,15 +180,25 @@ fn main() {
     std::process::exit(2);
   }
   #[cfg(feature = "go")]
-  let (app, fonts, app_id): (_, _, Option<String>) = (source_path.map(path_app), lattice::embedded_fonts(), None);
-  // `--assets <dir>`: mount the project's assets/ tree (the directory that
-  // CONTAINS assets/, i.e. the project root) so `assets/...` resolves through
-  // it instead of the data-sandbox cwd - what a packed app or a go-installed
-  // version gets from its payload. `srt render` passes the project root.
+  let (app, mut fonts, mut app_id): (_, _, Option<String>) = (source_path.map(path_app), lattice::embedded_fonts(), None);
+  // `--assets <dir>`: mount a directory holding an assets/ tree so
+  // `assets/...` resolves through it instead of the data-sandbox cwd - what a
+  // packed app or a go-installed version gets from its payload. `srt render`
+  // passes the dir it stages the build into.
+  let mut display_name = None;
   if let Some(dir) = assets {
     let dir = std::path::absolute(&dir).unwrap_or_else(|e| usage(&format!("--assets path '{dir}' is unusable: {e}")));
     if !dir.is_dir() {
       usage(&format!("--assets path '{}' is not a directory", dir.display()));
+    }
+    // A manifest in the mount (the staged dir `srt render` builds has the
+    // installed-version shape) is the app's identity and font bindings, as
+    // a version-store boot reads them: the app runs in its own sandbox with
+    // its fonts registered over the base set.
+    if let Some(manifest) = lattice::manifest::Manifest::load(&dir) {
+      fonts = lattice::merge_fonts(&fonts, manifest.load_fonts(&dir));
+      app_id = app_id.or(Some(manifest.app_id));
+      display_name = manifest.display_name;
     }
     forge::fs::set_assets_base(Some(forge::fs::AssetsBase::Dir(dir)));
   }
@@ -208,7 +218,8 @@ fn main() {
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
   let launch = lattice::Launch { restored: false, link };
-  let result = lattice::start(&rt, app, launch, None, mode, strict, size, stats, dev_server, fonts, storage, app_args);
+  let result =
+    lattice::start(&rt, app, launch, display_name, mode, strict, size, stats, dev_server, fonts, storage, app_args);
   // Playback exits hard, here in the binary: headless callers gate on the
   // exit code (srt render verification), so an incomplete capture must read
   // nonzero - and a plain return would run the runtime's drop, which can

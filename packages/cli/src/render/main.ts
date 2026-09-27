@@ -1,4 +1,4 @@
-import { appArgs, values } from "../lib/args"
+import { appArgs, clientStorageArgs, values } from "../lib/args"
 import { requireBinary, run } from "../lib/util"
 import { bundleSolid, writeIsolates } from "../bundle/bundler"
 import { collectAssets } from "../lib/project"
@@ -21,6 +21,9 @@ export async function main() {
   let jsOutfile = join(outDir, basename(entry).replace(/\.[jt]sx?$/, "") + ".srt.js")
   await Bun.write(jsOutfile, result.code)
   writeIsolates(join(outDir, "isolates"), result.isolates)
+  // The manifest's font annotations are what the runtime registers the
+  // project's fonts from (solidrt.fonts, over its embedded defaults).
+  await Bun.write(join(outDir, "manifest.json"), result.manifest)
   // The project's assets/ tree, copied in (dotfiles filtered, like a pack)
   // so `assets/...` resolves like it does under the dev server and in a
   // packed app (the runtime's cwd is the data sandbox, which holds no
@@ -31,7 +34,10 @@ export async function main() {
     cpSync(join(mode.projectDir!, asset.path), dest)
   }
   let runner = requireBinary("solidrt-go")
-  let playbackArgs = ["--playback"]
+  // The same client tree a dev client uses (--data-root, -c): with the
+  // manifest's appId the render anchors into that app's sandbox, so it
+  // renders the state dev shows.
+  let playbackArgs = ["--playback", ...clientStorageArgs()]
   if (values.fps) playbackArgs.push("--fps", values.fps)
   if (values.duration) playbackArgs.push("--duration", values.duration)
   if (values.size) playbackArgs.push("--size", values.size)

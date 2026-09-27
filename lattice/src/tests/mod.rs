@@ -1,5 +1,6 @@
 #[cfg(feature = "go")]
 mod input;
+mod fonts;
 mod frame_history;
 mod frame_signal;
 mod links;

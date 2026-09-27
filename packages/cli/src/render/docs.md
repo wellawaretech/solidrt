@@ -21,3 +21,8 @@ follows a frame callback: frame k is the app's state after its (k+1)th
 `onFrame` call, at time (k+1)/fps; the mount state before any callback is
 drawn but never written. Frames land in the directory the command runs from;
 `-o <path>` picks another (or a path prefix for the `-NNNNNN.png` names).
+A project's fonts (`solidrt.fonts` in package.json) register over the
+runtime's built-in defaults, so text renders with the same fonts as under
+the dev server. The app runs in the same sandbox as under a dev client
+(`--data-root`, `-c`, the same defaults as `srt run`), so the state a dev
+session built is what the frames show.

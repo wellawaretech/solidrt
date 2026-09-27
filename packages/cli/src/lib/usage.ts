@@ -125,4 +125,6 @@ render options:
       --size <WxH>       Frame size in physical pixels (default: 1280x720)
   -o, --output <path>    Where frames land: a directory (frame-NNNNNN.png inside it)
                          or a path prefix (default: the current directory)
+      --data-root <dir>  Client data root (default: ~/.solidrt/clients)
+  -c, --client <N>       Client number: the app's sandbox under that client's tree (default: 0)
       -- <args...>       Everything after -- is passed to the app (flux:process argv)`

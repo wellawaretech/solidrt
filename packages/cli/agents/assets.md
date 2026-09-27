@@ -31,9 +31,10 @@ preparing a build for distribution.
 
 - Custom fonts go in `assets/fonts/` and are declared in the `solidrt.fonts`
   map in package.json (alias -> file path; role aliases `sans`/`serif`/`mono`
-  replace the built-in defaults, `false` drops one, other keys add fonts
-  selectable via fontFamily). A newly added font shows after restarting the
-  client.
+  replace the built-in defaults, `false` drops one so that role falls back
+  to the system font, other keys add fonts selectable via fontFamily). The
+  dev client, `srt render` and a pack all apply the same map: a newly added
+  or changed font registers on the next reload.
 - The `solidrt` key in package.json is the app's identity: set a stable
   reverse-DNS `appId` before distributing - it keys the app's storage
   folder, defaults from the package name in dev, and `srt pack` warns

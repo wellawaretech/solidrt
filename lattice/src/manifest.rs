@@ -4,6 +4,7 @@
 // (packages/cli/src/project.ts); it is parsed here but never re-serialized -
 // the version id is the sha256 of those exact bytes.
 
+use alloy::rendertree::FontPayload;
 use serde::Deserialize;
 use std::path::Path;
 
@@ -53,11 +54,23 @@ pub struct AssetEntry {
   pub size: u64,
 }
 
-/// A font annotation: an assets/ path registered under an alias at startup.
+/// A font annotation: an alias bound to an assets/ path registered at
+/// startup, or to nothing (no path) when the app drops the runner's default
+/// for that role (`"mono": false` in the project's font map).
 #[derive(Deserialize)]
 pub struct FontRef {
-  pub path: String,
   pub alias: String,
+  #[serde(default)]
+  pub path: Option<String>,
+}
+
+/// An app's fonts as its manifest binds them: the files to register, and
+/// every alias the manifest speaks for, bound or dropped, which a runner's
+/// base set must not fill (see lattice::merge_fonts).
+#[derive(Default)]
+pub struct AppFonts {
+  pub fonts: Vec<FontPayload>,
+  pub aliases: Vec<String>,
 }
 
 pub(crate) fn unknown_version() -> String {
@@ -95,18 +108,22 @@ impl Manifest {
 
   /// Load the font files this manifest annotates, relative to `dir`. A missing
   /// or unreadable font degrades to "not registered" (its role falls back)
-  /// rather than failing the boot.
-  pub fn load_fonts(&self, dir: &Path) -> Vec<(String, Vec<u8>)> {
-    let mut fonts = Vec::new();
+  /// rather than failing the boot; its alias stays claimed either way, as
+  /// the manifest bound it.
+  pub fn load_fonts(&self, dir: &Path) -> AppFonts {
+    let mut app = AppFonts::default();
     for font in &self.fonts {
-      if !safe_asset_path(&font.path) {
+      app.aliases.push(font.alias.clone());
+      let Some(path) = font.path.as_deref().filter(|p| safe_asset_path(p)) else {
         continue;
-      }
-      match std::fs::read(dir.join(&font.path)) {
-        Ok(bytes) => fonts.push((font.alias.clone(), bytes)),
-        Err(e) => log::warn!("[srt] Could not read font {}: {e}", font.path),
+      };
+      match std::fs::read(dir.join(path)) {
+        Ok(bytes) => {
+          app.fonts.push(FontPayload { alias: Some(font.alias.clone()), bytes: std::borrow::Cow::Owned(bytes) })
+        }
+        Err(e) => log::warn!("[srt] Could not read font {path}: {e}"),
       }
     }
-    fonts
+    app
   }
 }

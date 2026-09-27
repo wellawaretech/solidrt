@@ -82,7 +82,7 @@ pub fn load(trailer: forge::trailer::Trailer) -> Option<FactoryPayload> {
     .fonts
     .iter()
     .filter_map(|font| {
-      let bytes = read_file(&font.path)?;
+      let bytes = read_file(font.path.as_deref()?)?;
       Some(alloy::rendertree::FontPayload { alias: Some(font.alias.clone()), bytes: std::borrow::Cow::Owned(bytes) })
     })
     .collect();
@@ -118,11 +118,7 @@ pub fn load_adjacent_folder() -> Option<FactoryPayload> {
   warn_version_mismatch(&manifest);
   let bundle_name = plain_bundle_name(&manifest)?;
   let app = app_from_bundle(bundle_name, std::fs::read(dir.join(bundle_name)).ok()?)?;
-  let fonts = manifest
-    .load_fonts(&dir)
-    .into_iter()
-    .map(|(alias, bytes)| alloy::rendertree::FontPayload { alias: Some(alias), bytes: std::borrow::Cow::Owned(bytes) })
-    .collect();
+  let fonts = manifest.load_fonts(&dir).fonts;
   Some(FactoryPayload {
     app,
     fonts,

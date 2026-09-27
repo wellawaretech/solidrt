@@ -288,7 +288,9 @@ export function buildManifest(code: string, entry: string, extra: ManifestAsset[
 }
 
 export type ManifestAsset = { path: string; sha256: string; size: number }
-export type ManifestFont = { path: string; alias: string }
+/** A font annotation: an alias bound to an assets/ file, or to nothing (no
+ * path) when the app drops the runner's default for that role. */
+export type ManifestFont = { alias: string; path?: string }
 
 /** The manifest entry for in-memory asset bytes at `path`. */
 export function manifestAssetFor(path: string, bytes: Uint8Array): ManifestAsset {
@@ -322,9 +324,11 @@ function walkAssets(assetsDir: string, dir: string, out: ManifestAsset[]) {
 // folder (next to package.json), collected wholesale in sorted order so the
 // manifest bytes are deterministic. Fonts and the icon are annotations
 // pointing into that set: `solidrt.fonts` path entries and `solidrt.icon`
-// must live under assets/ so they reach dev clients and the version store
-// (`false` font entries only drop pack defaults and have no manifest
-// presence). The icon is SVG-only for now: the player renders SVG natively,
+// must live under assets/ so they reach dev clients and the version store.
+// A `false` font entry is an annotation without a path: the role is bound
+// to nothing, so a runner with built-in defaults (the dev client, render)
+// drops its own; `true` keeps the default and needs no entry. The icon is
+// SVG-only for now: the player renders SVG natively,
 // and the raster surfaces (window icon, OS embedding) come with later stages
 // (okf/backlog/app-icons.md). An undeclared assets/icon.svg is picked up by
 // convention.
@@ -348,7 +352,11 @@ export function collectAssets(dir: string | null): {
   let fonts: ManifestFont[] = []
   for (let [alias, value] of Object.entries(project.config.fonts ?? {})) {
     // Booleans toggle role defaults (fonts.ts), which are not project assets.
-    if (typeof value === "boolean") continue
+    if (value === true) continue
+    if (value === false) {
+      fonts.push({ alias })
+      continue
+    }
     let path = assetPathFor(projectDir, resolve(projectDir, value))
     if (!path) {
       fail(`"solidrt.fonts": "${alias}": ${value} must live under assets/ (fonts ship as version assets)`)

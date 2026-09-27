@@ -20,7 +20,7 @@
 // manifest types live in crate::manifest, shared with the packed runner's
 // folder boot (serde_json is in every build since stage 3b).
 
-use crate::manifest::{safe_asset_path, unknown_version, AssetEntry, Manifest};
+use crate::manifest::{safe_asset_path, unknown_version, AppFonts, AssetEntry, Manifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -102,14 +102,10 @@ pub fn load(app_id: &str) -> Option<BootVersion> {
 /// register. Empty when nothing is installed or the manifest names none; a
 /// font file that fails to read is skipped (load_fonts warns), so its role
 /// falls back rather than blocking the app.
-pub fn app_fonts(app_id: &str) -> Vec<alloy::rendertree::FontPayload> {
-  let Some(version_dir) = current_version_dir(app_id) else { return Vec::new() };
-  let Some(manifest) = Manifest::load(&version_dir) else { return Vec::new() };
-  manifest
-    .load_fonts(&version_dir)
-    .into_iter()
-    .map(|(alias, bytes)| alloy::rendertree::FontPayload { alias: Some(alias), bytes: std::borrow::Cow::Owned(bytes) })
-    .collect()
+pub fn app_fonts(app_id: &str) -> AppFonts {
+  let Some(version_dir) = current_version_dir(app_id) else { return AppFonts::default() };
+  let Some(manifest) = Manifest::load(&version_dir) else { return AppFonts::default() };
+  manifest.load_fonts(&version_dir)
 }
 
 /// The current installed version's manifest displayName, if declared.
