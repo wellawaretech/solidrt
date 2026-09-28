@@ -8,6 +8,13 @@
 git-fetch-with-cli = true
 retry = 5
 
+# macOS builds target macOS 14, the CI runner's version, wherever they are
+# built. Without it rustc defaults to 11.0 and the C builds (SDL through cmake,
+# libvpx, opus) to the build host's own macOS, so a binary built on a newer
+# Mac would not start on an older one. A value set in the environment wins.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "14.0"
+
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path"]
 

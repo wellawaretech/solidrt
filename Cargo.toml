@@ -29,6 +29,14 @@ livekit-wakeword = { git = "https://github.com/antoinevanwel/rust-sdks", rev = "
 
 [profile.release]
 
+# Build scripts and proc-macros stay unstripped. With Xcode 27 the strip that
+# cargo's release default (strip = "debuginfo") runs on a proc-macro dylib
+# leaves rustc unable to load it, and its dependents fail with E0463 "can't
+# find crate for `futures_macro`". The shipped binaries are not build-time
+# crates, so they are stripped as before. release-opt inherits this.
+[profile.release.build-override]
+strip = "none"
+
 [profile.release-opt]
 inherits = "release"
 lto = "fat"
