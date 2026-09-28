@@ -25,6 +25,9 @@ concurrency:
 
 # Dist builds are always speech-free (no Whisper / wake word): lattice/Makefile
 # forces SPEECH=0 for every dist-* goal, so this workflow does not pass SPEECH.
+# Every build here passes PROFILE=release-opt, the publish profile (fat LTO,
+# one codegen unit, stripped) for all the binaries; a plain `make dist` builds
+# them at release.
 
 jobs:
   # The release gate is CI itself (same Rust check/test and typecheck), so a
@@ -69,7 +72,7 @@ jobs:
       - uses: ./.github/actions/cargo-fetch
 
       - name: Build
-        run: make dist VERSION="${GITHUB_REF_NAME#v}"
+        run: make dist PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -112,7 +115,7 @@ jobs:
       - uses: ./.github/actions/cargo-fetch
 
       - name: Build
-        run: make dist VERSION="${GITHUB_REF_NAME#v}"
+        run: make dist PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -149,7 +152,7 @@ jobs:
       - uses: ./.github/actions/cargo-fetch
 
       - name: Build
-        run: make dist VERSION="${GITHUB_REF_NAME#v}"
+        run: make dist PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -214,15 +217,15 @@ jobs:
       - uses: ./.github/actions/cargo-fetch
 
       - name: Build APKs (arm64-v8a)
-        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist VERSION="${GITHUB_REF_NAME#v}"
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Build APKs (armeabi-v7a)
-        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist-armeabi-v7a VERSION="${GITHUB_REF_NAME#v}"
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist-armeabi-v7a PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}"
 
       # x86_64 is the emulator and Intel/AMD Chromebook ABI. No physical phone
       # ships it, but without it neither can run a SolidRT app from npm.
       - name: Build APKs (x86_64)
-        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist ANDROID_ABI=x86_64 VERSION="${GITHUB_REF_NAME#v}"
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist ANDROID_ABI=x86_64 PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload arm64-v8a APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -277,7 +280,7 @@ jobs:
       - uses: ./.github/actions/cargo-fetch
 
       - name: Build
-        run: make dist VERSION="${GITHUB_REF_NAME#v}"
+        run: make dist PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

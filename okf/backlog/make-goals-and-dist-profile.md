@@ -1,6 +1,6 @@
 ---
 title: Make the build goals mean what they say
-description: Goal-name cleanup landed 2026-08-28; open is the publish profile: dist builds solidrt and fluxrt at release-opt but solidrt-go, flux and fluxc at plain release, so half the published binaries ship unstripped. Make it one DIST_PROFILE knob, after measuring the client's fat-LTO build time.
+description: Goal-name cleanup landed 2026-08-28; the publish profile was decided 2026-09-28 (one PROFILE for every dist binary, release by default, release-opt for publishing, Android alike) and verified on linux-x64 and Windows; open is verifying the darwin and Android publish builds.
 created: 2026-08-26
 ---
 
@@ -21,7 +21,35 @@ Not done, decided separately: moving `dist`, `download-fonts` and `help` up
 to the root. `dist` is per-OS through lattice's `Makefile.<os>` include, so
 that drags the include up too; not worth it until something else needs it.
 
-## Open: dev profile vs publish profile
+## Decided (2026-09-28), verification open
+
+One knob, the existing `PROFILE`, for every binary of a goal, `dist` and
+`android-dist` included: plain `make dist` builds all five at `release`
+(fast, symbols kept), `make dist PROFILE=release-opt` builds all five fat LTO
+and stripped, client, flux and fluxc too; the Android client and runner both
+follow it (`ANDROID_RUNTIME_PROFILE` is gone). release.yml passes
+`PROFILE=release-opt` to every desktop and Android dist build. The desktop
+`dist` recipes build flux's three binaries through `make -C flux build`.
+
+Measured on a 24-core x86_64 box (Ubuntu 22.04 WSL), `make dist
+PROFILE=release-opt` from a warm dependency cache: client 4m59s, flux 3m13s,
+fluxc 31s, fluxrt 2m05s, solidrt 4m30s, 944 s end to end. Sizes: client
+71 MB (release, unstripped) -> 46 MB, flux 40 -> 20 MB, solidrt 38 MB,
+fluxrt 20 MB, fluxc 1 MB; all stripped, glibc 2.35. CI's 4-core runners will
+be slower; the fat-LTO link is mostly serial.
+
+Windows verified the same day (24-core box, MSVC, warm cache): client 7m00s,
+flux 4m35s, fluxc 42s, fluxrt 2m54s, solidrt 6m23s, 1341 s end to end;
+solidrt-go.exe 46 MB, solidrt.exe 38 MB, flux.exe and fluxrt.exe 20 MB, all
+start.
+
+Still to verify before this moves to `done/`: a darwin publish build (fat LTO
+needs the clang_rt link-arg the client and runtime recipes pass; flux and
+fluxc have never been built fat LTO there), and the Android client `.so` at
+release-opt through cargo-ndk (never built; first test is a release dry run
+or an Android builder).
+
+## Open: dev profile vs publish profile (the analysis that led here)
 
 `dist` today builds `solidrt` and `fluxrt` at `release-opt` and
 `solidrt-go`, `flux`, `fluxc` at plain `release`. That split is not a

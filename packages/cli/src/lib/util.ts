@@ -14,7 +14,7 @@ let BUILD_HINTS: Record<string, string> = {
   solidrt: "make runtime",
   flux: "make -C flux flux",
   fluxc: "make -C flux fluxc",
-  fluxrt: "make -C flux fluxrt PROFILE=release-opt",
+  fluxrt: "make -C flux fluxrt",
 }
 
 export function requireBinary(name: string) {

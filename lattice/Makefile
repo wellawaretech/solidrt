@@ -3,6 +3,11 @@
 VERSION         ?= $(shell git describe --tags --always --dirty | sed 's/^v//')
 SOLIDRT_VERSION  = SOLIDRT_VERSION="$(VERSION)"
 
+# The cargo profile of every binary a goal builds, dist and android-dist
+# included (a command-line PROFILE reaches the recursive makes, flux's too).
+# release, the default, is the fast build that keeps symbols; release-opt
+# (root Cargo.toml: fat LTO, one codegen unit, stripped) is the much slower
+# publish build, which the release workflow passes.
 PROFILE ?= release
 ifeq ($(PROFILE),release)
   CARGO_PROFILE_FLAG = --release
@@ -131,10 +136,11 @@ help:
 	@echo "  package, so the APKs stay in dist/android/ where srt android finds them."
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
+	@echo "Pass PROFILE=release-opt for the publish build: fat LTO and stripped, for"
+	@echo "every binary of the goal (dist and android-dist included), much slower."
 	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
 	@echo "Pass VIDEO=0 to build without video playback (default: on)."
-	@echo "dist targets always build speech-free; solidrt and fluxrt use release-opt,"
-	@echo "as does the Android runner (ANDROID_RUNTIME_PROFILE=$(ANDROID_RUNTIME_PROFILE))."
+	@echo "dist targets always build speech-free."
 	@echo ""
 	@echo "Player:"
 	@echo "  player-bundle      Regenerate the player and BSOD bundles"

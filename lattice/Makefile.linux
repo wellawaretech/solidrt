@@ -27,10 +27,9 @@ runtime:
 dist:
 	$(MAKE) client
 	cp $(HOST_DIST)/solidrt-go $(PKG_LINUX)/solidrt-go
-	$(MAKE) -C $(SRT_HOME)/flux flux fluxc
-	$(MAKE) -C $(SRT_HOME)/flux fluxrt PROFILE=release-opt
+	$(MAKE) -C $(SRT_HOME)/flux build
 	cp $(HOST_DIST)/flux $(PKG_LINUX)/flux
 	cp $(HOST_DIST)/fluxc $(PKG_LINUX)/fluxc
 	cp $(HOST_DIST)/fluxrt $(PKG_LINUX)/fluxrt
-	$(MAKE) runtime PROFILE=release-opt
+	$(MAKE) runtime
 	cp $(HOST_DIST)/solidrt $(PKG_LINUX)/solidrt

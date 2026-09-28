@@ -475,10 +475,10 @@ Shaped, not started.
   to a coarse IP lookup over fetch; add flux:location and
   @solidrt/core/location in the established device-module shape.
 - **[Make the build goals mean what they say](backlog/make-goals-and-dist-profile.md)** [2026-08-26]
-  Goal-name cleanup landed 2026-08-28; open is the publish profile: dist
-  builds solidrt and fluxrt at release-opt but solidrt-go, flux and fluxc at
-  plain release, so half the published binaries ship unstripped. Make it one
-  DIST_PROFILE knob, after measuring the client's fat-LTO build time.
+  Goal-name cleanup landed 2026-08-28; the publish profile was decided
+  2026-09-28 (one PROFILE for every dist binary, release by default,
+  release-opt for publishing, Android alike) and verified on linux-x64 and
+  Windows; open is verifying the darwin and Android publish builds.
 - **[Jank an agent cannot see or measure](backlog/mcp-interaction-perf-visibility.md)** [2026-07-27]
   Most of this landed 2026-08-18 (the 600-frame history, get_stats' window
   with p50/p95/max, the worst frame and rates, the throttled slow-frame

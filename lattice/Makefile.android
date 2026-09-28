@@ -20,12 +20,6 @@ ANDROID_ABI ?= arm64-v8a
 # is a dev-only artifact), so the dist goals stage into it only when it exists.
 PKG_ANDROID = $(CURDIR)/../packages/android-$(ANDROID_ABI)
 
-# The runtime .so in a dist APK is built like the desktop runtime in `make
-# dist`: fat LTO, one codegen unit, stripped. It is by far the slowest build
-# here, so override it (ANDROID_RUNTIME_PROFILE=release) when you only want to
-# check that the packaging assembles. The dev goals never use it.
-ANDROID_RUNTIME_PROFILE ?= release-opt
-
 RUST_TARGET_arm64-v8a   = aarch64-linux-android
 RUST_TARGET_armeabi-v7a = armv7-linux-androideabi
 RUST_TARGET_x86_64      = x86_64-linux-android
@@ -165,9 +159,9 @@ define stage-pkg-apk
 endef
 
 # Both distributable APKs for one ABI: the client (solidrt-go.apk) and the
-# production runner (solidrt.apk). The client keeps PROFILE while the runner
-# builds at ANDROID_RUNTIME_PROFILE, the same split the desktop `dist` goal
-# makes between solidrt-go and solidrt. SPEECH is forced off (see Makefile).
+# production runner (solidrt.apk), both at PROFILE like the desktop `dist`
+# goal (PROFILE=release-opt for the publish build). SPEECH is forced off (see
+# Makefile).
 android-dist: android-client $(GRADLE_WRAPPER_JAR)
 	# dist/android may hold .so files from other ABIs, and gradle's
 	# jniLibs.srcDir would bundle all of them; -PsrtAbi pins the APK to this one.
@@ -176,7 +170,7 @@ android-dist: android-client $(GRADLE_WRAPPER_JAR)
 	cp $(APK_GO_DEBUG) $(ANDROID_DIST)/solidrt-go.apk
 	@echo "Staged solidrt-go.apk ($(ANDROID_ABI)) into $(ANDROID_DIST)/"
 	$(call stage-pkg-apk,$(ANDROID_DIST)/solidrt-go.apk,solidrt-go.apk)
-	$(MAKE) android-runtime ANDROID_ABI=$(ANDROID_ABI) PROFILE=$(ANDROID_RUNTIME_PROFILE)
+	$(MAKE) android-runtime ANDROID_ABI=$(ANDROID_ABI)
 
 # The same, for the 32-bit ABI.
 android-dist-armeabi-v7a:
@@ -197,13 +191,13 @@ APK_PROD_RELEASE = android/app/build/outputs/apk/prod/release/app-prod-release.a
 # Build the production Android runtime: the not(go) engine .so (no player,
 # no dev server; SDL_main boots the .srtapp packed into the APK) assembled
 # into the prod flavor as the runner APK `srt pack --apk` patches. Same
-# feature set as the desktop runtime. On its own this is the dev loop for the
-# runner and builds at PROFILE; android-dist calls it at
-# ANDROID_RUNTIME_PROFILE. Runners are per ABI by decision
-# (okf/done/standalone-android-apk.md). The Gradle side is the release build
-# type: a debug build is debuggable, which lets `adb shell run-as` read a
-# packed app's private files (okf/done/packed-apk-data-on-device.md); the
-# release type signs with the same checked-in debug keystore.
+# feature set as the desktop runtime. It builds at PROFILE, whether on its
+# own (the dev loop for the runner) or from android-dist. Runners are per ABI
+# by decision (okf/done/standalone-android-apk.md). The Gradle side is the
+# release build type: a debug build is debuggable, which lets `adb shell
+# run-as` read a packed app's private files
+# (okf/done/packed-apk-data-on-device.md); the release type signs with the
+# same checked-in debug keystore.
 android-runtime: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
 	$(call ndk-build,SOLIDRT RUNTIME ($(PROFILE)),,$(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --target-dir target/runtime-android)
 	mkdir -p $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)
