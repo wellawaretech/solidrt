@@ -2631,6 +2631,12 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   (marked IMPELLER_NULLABLE) for identity or non-finite matrices; the
   impellers 0.4.2 crate asserts non-null on that return, so a plain identity
   matrix aborts the process.
+- **[impellers links msvcrt on Windows, defeating crt-static](upstream/impellers-windows-static-link-msvcrt.md)** [2026-09-28]
+  With static_link on Windows, impellers' build.rs emits
+  cargo:rustc-link-lib=msvcrt, so our +crt-static solidrt-go.exe still
+  resolves the C runtime from the DLLs and imports VCRUNTIME140.dll,
+  VCRUNTIME140_1.dll and api-ms-win-crt-*, needing the Visual C++
+  redistributable to start.
 - **[quickjs-ng ArrayBuffer.prototype.transfer mishandles external buffers](upstream/quickjs-ng-transfer-external-buffers.md)** [2026-08-03]
   transfer() on a JS_NewArrayBuffer-backed (external) buffer calls js_realloc
   on a pointer the JS allocator does not own when the length changes (heap
