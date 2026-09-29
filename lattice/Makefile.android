@@ -137,7 +137,7 @@ define apk-run
 	adb install -r $(ANDROID_DIST)/solidrt-go.apk
 	adb logcat -c
 	@echo "Launching with dev server: $(if $(DEV_SERVER),$(DEV_SERVER),none (manual/QR connect))"
-	adb shell am start -n com.solidrt.player/com.solidrt.app.MainActivity $(if $(DEV_SERVER),--es srt_dev_server $(DEV_SERVER))
+	adb shell am start -n com.solidrt.player.dev/com.solidrt.app.MainActivity $(if $(DEV_SERVER),--es srt_dev_server $(DEV_SERVER))
 	adb logcat -s SDL SDL/APP libmain DEBUG libc
 endef
 
@@ -162,14 +162,15 @@ endef
 # Both distributable APKs for one ABI: the client (solidrt-go.apk) and the
 # production runner (solidrt.apk), both at PROFILE like the desktop `dist`
 # goal (PROFILE=release-opt for the publish build). SPEECH is forced off (see
-# Makefile). The client is the Gradle release build type: what npm ships is
-# not debuggable, and is signed with the Player key when the environment
-# provides it (app/build.gradle); the dev loop above keeps the debuggable
-# debug build.
+# Makefile). The client is the Gradle release build type, not debuggable.
+# PUBLISH=1 (the release workflow) makes it the published Player,
+# com.solidrt.player signed with the Player key from the environment;
+# without it, it is the dev Player (com.solidrt.player.dev, debug key), like
+# the dev loop's debuggable build above (app/build.gradle).
 android-dist: android-client $(GRADLE_WRAPPER_JAR)
 	# dist/android may hold .so files from other ABIs, and gradle's
 	# jniLibs.srcDir would bundle all of them; -PsrtAbi pins the APK to this one.
-	cd android && ./gradlew assembleGoRelease -PsrtAbi=$(ANDROID_ABI) -PsrtVersion=$(VERSION)
+	cd android && ./gradlew assembleGoRelease -PsrtAbi=$(ANDROID_ABI) -PsrtVersion=$(VERSION) $(if $(PUBLISH),-PsrtPublish)
 	mkdir -p $(ANDROID_DIST)
 	cp $(APK_GO_RELEASE) $(ANDROID_DIST)/solidrt-go.apk
 	@echo "Staged solidrt-go.apk ($(ANDROID_ABI)) into $(ANDROID_DIST)/"

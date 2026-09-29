@@ -8,7 +8,7 @@ import { buildPackFolder, writePackFolder } from "./layout"
 import { patchApk } from "./android/apk"
 import { isPng } from "./android/icon"
 import { requireBinary } from "../lib/util"
-import { resolveApk, resolveRunnerApk, ANDROID_PKG_MAP, DEFAULT_ANDROID_ABI } from "../lib/artifacts"
+import { resolveRunnerApk, ANDROID_PKG_MAP, DEFAULT_ANDROID_ABI } from "../lib/artifacts"
 import { ensureTargets } from "../lib/android-targets"
 import { existsSync, readFileSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
@@ -122,10 +122,10 @@ async function buildApp(mode: Mode) {
 // application id and label rewritten, permissions declared, the .srtapp
 // payload added as a stored asset, re-aligned and re-signed - pure
 // TypeScript, no Android SDK (okf/done/standalone-android-apk.md). A
-// target's base is its production runner APK (`make android-runtime`),
-// which boots the payload; while none is staged, its solidrt-go dev client
-// stands in - that APK installs and launches, but boots the player instead
-// of the payload. Returns the APK written per ABI.
+// target's base is its runner APK, which boots the payload. Every
+// @solidrt/android-<abi> package carries one; a checkout has one where `make
+// android-runtime` staged it, and a target without one is skipped with a
+// note. Returns the APK written per ABI.
 export async function packApks(): Promise<Map<string, string>> {
   let { mode, identity, distRoot, baseName } = packTarget()
   if (!ANDROID_APP_ID.test(identity.appId)) {
@@ -134,9 +134,13 @@ export async function packApks(): Promise<Map<string, string>> {
     )
     process.exit(1)
   }
-  let targets = await ensureTargets([], mode.projectDir)
+  let targets: string[] = []
+  for (let abi of await ensureTargets([], mode.projectDir)) {
+    if (resolveRunnerApk(abi)) targets.push(abi)
+    else console.log(`>> note: no ${abi} runner APK; skipped (in a checkout: make android-runtime ANDROID_ABI=${abi})`)
+  }
   if (targets.length === 0) {
-    console.error(`Could not find a base APK; run make android-runtime, or add the ${ANDROID_PKG_MAP[DEFAULT_ANDROID_ABI]} dev dependency`)
+    console.error(`Could not find a runner APK; add the ${ANDROID_PKG_MAP[DEFAULT_ANDROID_ABI]} dev dependency, or in a checkout run make android-runtime`)
     process.exit(1)
   }
 
@@ -158,25 +162,24 @@ export async function packApks(): Promise<Map<string, string>> {
 
   let written = new Map<string, string>()
   for (let abi of targets) {
-    let base = resolveRunnerApk(abi)
-    if (!base) {
-      base = resolveApk(abi)!
-      console.log(`>> note: no ${abi} runner APK staged; using the go dev client as the base - the payload rides along unloaded`)
-    }
+    let base = resolveRunnerApk(abi)!
     console.log(`>> base (${abi}): ${base}`)
-    let { apk, iconApplied } = patchApk(readFileSync(base), {
-      appId: identity.appId,
-      label: identity.displayName,
-      payload,
-      versionCode: android.versionCode ?? DEFAULT_VERSION_CODE,
-      versionName: project?.version ?? DEFAULT_VERSION_NAME,
-      icon,
-      iconBackground: config.iconBackground ?? DEFAULT_ICON_BACKGROUND,
-      permissions,
-      backup,
-    })
-    if (icon && !iconApplied) {
-      console.log(`>> note: the ${abi} base APK has no icon slots; the icon was not applied`)
+    let apk: Buffer
+    try {
+      apk = patchApk(readFileSync(base), {
+        appId: identity.appId,
+        label: identity.displayName,
+        payload,
+        versionCode: android.versionCode ?? DEFAULT_VERSION_CODE,
+        versionName: project?.version ?? DEFAULT_VERSION_NAME,
+        icon,
+        iconBackground: config.iconBackground ?? DEFAULT_ICON_BACKGROUND,
+        permissions,
+        backup,
+      })
+    } catch (e) {
+      console.error(`Could not patch ${base}: ${e instanceof Error ? e.message : e}`)
+      process.exit(1)
     }
     let outfile = apkPath(values.output ?? join(distRoot, baseName + ".apk"), abi)
     await Bun.write(outfile, apk)

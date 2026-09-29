@@ -34,8 +34,7 @@ const PAYLOAD_ENTRY = "assets/app.srtapp"
 
 // The adaptive-icon slots the runner bakes (ic_launcher_prod.xml): the
 // foreground PNG sits behind a safe-zone inset, the background is a 1x1
-// stretched full-bleed. Absent in a go-client base, where icon patching is
-// silently skipped.
+// stretched full-bleed.
 const ICON_FG_ENTRY = "res/drawable/app_icon_fg.png"
 const ICON_BG_ENTRY = "res/drawable/app_icon_bg.png"
 
@@ -48,12 +47,11 @@ const BACKUP_RULES: [none: string, data: string][] = [
   ["res/xml/extraction_none.xml", "res/xml/extraction_data.xml"],
 ]
 
-// The launcher label the base APK's resources.arsc carries, located by value:
-// resolving the label through the resource table proper would take a full
-// table parse for a string that is fixed per runner build. Two known bases:
-// the runner APK (prod flavor) and, while the runner is pending on a machine,
-// the go dev client.
-const BASE_LABELS = ["SolidRT App", "Player"]
+// The launcher label the runner APK's resources.arsc carries (prod flavor
+// strings.xml), located by value: resolving the label through the resource
+// table proper would take a full table parse for a string that is fixed per
+// runner build.
+const BASE_LABEL = "Runner"
 
 export type ApkPatch = {
   appId: string
@@ -115,37 +113,28 @@ function patchBackup(entries: ZipEntry[]) {
 }
 
 function patchLabel(entry: ZipEntry, label: string) {
-  let strings = poolStrings(entry.data, TABLE_POOL_OFFSET)
-  let index = -1
-  for (let candidate of BASE_LABELS) {
-    let matches = strings.flatMap((s, i) => (s === candidate ? [i] : []))
-    if (matches.length > 1) throw new Error(`Base APK label "${candidate}" is ambiguous in resources.arsc`)
-    if (matches.length === 1) {
-      index = matches[0]!
-      break
-    }
+  let matches = poolStrings(entry.data, TABLE_POOL_OFFSET).flatMap((s, i) => (s === BASE_LABEL ? [i] : []))
+  if (matches.length > 1) throw new Error(`Base APK label "${BASE_LABEL}" is ambiguous in resources.arsc`)
+  let [index] = matches
+  if (index === undefined) {
+    throw new Error(`Base APK label "${BASE_LABEL}" not found in resources.arsc; is the base an older runner build?`)
   }
-  if (index < 0) throw new Error(`Base APK label not found in resources.arsc (expected one of: ${BASE_LABELS.join(", ")})`)
   replaceData(entry, replacePoolStrings(entry.data, TABLE_POOL_OFFSET, new Map([[index, label]])))
 }
 
-// Swap the adaptive-icon slot PNGs. Returns false when the base carries no
-// slots (the go client), so the caller can say the icon was not applied.
-function patchIcon(entries: ZipEntry[], icon: Buffer | undefined, background: string): boolean {
-  let fg = entries.find((e) => e.name.toString("latin1") === ICON_FG_ENTRY)
-  let bg = entries.find((e) => e.name.toString("latin1") === ICON_BG_ENTRY)
-  if (!fg || !bg) return false
-  if (icon) replaceData(fg, icon)
-  replaceData(bg, backgroundPixel(background))
-  return true
+// Swap the adaptive-icon slot PNGs; without an app icon the runner's
+// placeholder foreground stays.
+function patchIcon(entries: ZipEntry[], icon: Buffer | undefined, background: string) {
+  if (icon) replaceData(entryNamed(entries, ICON_FG_ENTRY), icon)
+  replaceData(entryNamed(entries, ICON_BG_ENTRY), backgroundPixel(background))
 }
 
-export function patchApk(base: Buffer, patch: ApkPatch): { apk: Buffer; iconApplied: boolean } {
+export function patchApk(base: Buffer, patch: ApkPatch): Buffer {
   let entries = parseZip(base)
   patchManifest(entryNamed(entries, "AndroidManifest.xml"), patch, patch.versionName)
   if (patch.backup) patchBackup(entries)
   patchLabel(entryNamed(entries, "resources.arsc"), patch.label)
-  let iconApplied = patchIcon(entries, patch.icon, patch.iconBackground)
+  patchIcon(entries, patch.icon, patch.iconBackground)
 
   // The payload entry borrows its bookkeeping fields (fixed timestamp,
   // version words, attributes) from another stored entry so the zip stays
@@ -167,7 +156,7 @@ export function patchApk(base: Buffer, patch: ApkPatch): { apk: Buffer; iconAppl
   })
 
   let { local, cd } = writeZip(entries)
-  return { apk: signApk(local, cd, entries.length), iconApplied }
+  return signApk(local, cd, entries.length)
 }
 
 // The application id an APK carries, read back from its compiled manifest.

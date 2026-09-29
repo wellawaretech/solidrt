@@ -25,9 +25,16 @@ import type { LiveRecord } from "../types/registry"
 // reinstalls regardless. --apk runs `srt pack --apk` and installs the
 // packed app instead.
 
-// Launch component of the "go" dev-client flavor (see lattice/Makefile.android).
-let PACKAGE_ACTIVITY = "com.solidrt.player/com.solidrt.app.MainActivity"
-let PACKAGE = "com.solidrt.player"
+// The published Player's application id. Every build from a checkout
+// without PUBLISH=1 is the dev Player, com.solidrt.player.dev, installed
+// beside it, so the Player a device gets is the one its APK names
+// (playerId).
+let PUBLISHED_PLAYER = "com.solidrt.player"
+
+// The launcher activity every SolidRT APK ships, the Player's and every
+// packed app's, stored fully qualified in the manifest so neither an
+// application-id change nor pack's rewrite touches it.
+let MAIN_ACTIVITY = "com.solidrt.app.MainActivity"
 
 let sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -207,8 +214,8 @@ function printDeviceStatus(devices: string[], abiByDevice: Map<string, string>) 
 let UNRELEASED_VERSION = "0.0.0"
 
 // The versionName of the client installed on `target`, null when none is.
-function installedVersion(adb: string, target: string): string | null {
-  let res = Bun.spawnSync([adb, "-s", target, "shell", "dumpsys", "package", PACKAGE], { stdout: "pipe", stderr: "pipe" })
+function installedVersion(adb: string, target: string, player: string): string | null {
+  let res = Bun.spawnSync([adb, "-s", target, "shell", "dumpsys", "package", player], { stdout: "pipe", stderr: "pipe" })
   return res.stdout.toString().match(/versionName=(\S+)/)?.[1] ?? null
 }
 
@@ -325,34 +332,46 @@ async function resolveTargets(adb: string): Promise<Device[]> {
   return [device(only)]
 }
 
-// Put the client on `target` when it needs one: none installed yet, or
-// --install. An installed client whose version is not the one the project's
-// package carries is updated after asking.
-async function prepare(adb: string, { target, abi }: Device, installed: string | null) {
+// The Player for an `abi` device: the application id its Player APK (the
+// project's package, or a checkout's staged build) names in its manifest,
+// else the published Player.
+function playerId(abi: string): string {
+  let apk = resolveApk(abi)
+  return apk ? apkAppId(apk) : PUBLISHED_PLAYER
+}
+
+// Put the Player on `target` when it needs one: none installed yet, or
+// --install. An installed Player whose version is not the one the project's
+// package carries is updated after asking. Returns the Player's id, the one
+// to launch.
+async function prepare(adb: string, { target, abi }: Device): Promise<string> {
+  let player = playerId(abi)
+  let installed = installedVersion(adb, target, player)
   let expected = androidPackageVersion(abi)
   let update = values.install || installed === null
   if (!update && expected !== null && expected !== UNRELEASED_VERSION && expected !== installed) {
-    update = await confirm(`Player on ${target} is ${installed}; the project's ${ANDROID_PKG_MAP[abi]} is ${expected}. Update it?`)
+    update = await confirm(`${player} on ${target} is ${installed}; the project's ${ANDROID_PKG_MAP[abi]} is ${expected}. Update it?`)
   }
-  if (!update) return
+  if (!update) return player
   let apk = resolveApk(abi)
   if (!apk) {
     console.error(`Could not find a Player APK for ${target} (ABI "${abi}").`)
     process.exit(1)
   }
-  console.log(`[cli] Installing Player on ${target}`)
-  await adbInstall(adb, target, apk, PACKAGE)
+  console.log(`[cli] Installing ${player} on ${target}`)
+  await adbInstall(adb, target, apk, player)
+  return player
 }
 
-// Launch the client on `target`, handing it the dev-server address to dial as
+// Launch `player` on `target`, handing it the dev-server address to dial as
 // a launch-intent extra that MainActivity forwards to native argv
 // (--dev-server); the client auto-connects to it. Replaces adb reverse, which
 // never worked over wireless adb. -S stops a running instance first: a
 // delivered intent does not reach one, so without it the client would keep
 // whatever server it had. With no server there is no extra to pass.
-async function launch(adb: string, { target }: Device, server: LiveRecord | null) {
+async function launch(adb: string, { target }: Device, player: string, server: LiveRecord | null) {
   let devServer = server ? devServerAddress(adb, target, server) : null
-  let launchArgs = [adb, "-s", target, "shell", "am", "start", "-S", "-n", PACKAGE_ACTIVITY]
+  let launchArgs = [adb, "-s", target, "shell", "am", "start", "-S", "-n", `${player}/${MAIN_ACTIVITY}`]
   if (devServer) {
     console.log(`[cli] Client on ${target} will dial dev server at ${devServer}`)
     launchArgs.push("--es", "srt_dev_server", devServer)
@@ -364,16 +383,12 @@ async function launch(adb: string, { target }: Device, server: LiveRecord | null
     console.error("adb start failed:\n" + (await new Response(start.stderr).text()))
     process.exit(1)
   }
-  console.log(`[cli] Launched Player on ${target}`)
+  console.log(`[cli] Launched ${player} on ${target}`)
 }
 
-// The launcher activity every SolidRT base APK ships, stored fully qualified
-// in the manifest so pack's application-id rewrite never touches it.
-let PACKED_ACTIVITY = "com.solidrt.app.MainActivity"
-
-// The application id of a packed APK, read from its own manifest, where
-// pack wrote it.
-function packedAppId(path: string): string {
+// The application id an APK names in its own manifest (for a packed app,
+// where pack wrote it).
+function apkAppId(path: string): string {
   try {
     return apkApplicationId(readFileSync(path))
   } catch (e) {
@@ -388,7 +403,7 @@ function packedAppId(path: string): string {
 async function installPacked(adb: string, target: string, file: string, appId: string) {
   console.log(`[cli] Installing ${appId} on ${target}`)
   await adbInstall(adb, target, file, appId)
-  let start = Bun.spawn([adb, "-s", target, "shell", "am", "start", "-S", "-n", `${appId}/${PACKED_ACTIVITY}`], {
+  let start = Bun.spawn([adb, "-s", target, "shell", "am", "start", "-S", "-n", `${appId}/${MAIN_ACTIVITY}`], {
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -407,7 +422,7 @@ async function installApkFile(path: string) {
     console.error(`No such file: ${path}`)
     process.exit(1)
   }
-  let appId = packedAppId(file)
+  let appId = apkAppId(file)
   let adb = await requireAdb()
   for (let { target } of await resolveTargets(adb)) await installPacked(adb, target, file, appId)
 }
@@ -425,10 +440,10 @@ async function packAndInstall() {
   for (let { target, abi } of devices) {
     let file = apks.get(abi)
     if (!file) {
-      console.error(`No APK for ${target}: the project does not target ${abi} (add ${ANDROID_PKG_MAP[abi] ?? "a build for it"})`)
+      console.error(`No APK for ${target}: no ${abi} runner (add ${ANDROID_PKG_MAP[abi] ?? "a build for it"}, or in a checkout run make android-runtime ANDROID_ABI=${abi})`)
       process.exit(1)
     }
-    await installPacked(adb, target, file, packedAppId(file))
+    await installPacked(adb, target, file, apkAppId(file))
   }
 }
 
@@ -442,21 +457,21 @@ export async function main() {
   if (values.apk) return packAndInstall()
   if (values.census) {
     let adb = await requireAdb()
-    for (let { target } of await resolveTargets(adb)) await census(adb, target, PACKAGE)
+    for (let { target, abi } of await resolveTargets(adb)) await census(adb, target, playerId(abi))
     return
   }
   let server = await resolveServer()
   let adb = await requireAdb()
 
-  // Only a device that gets the client installed needs a target for its ABI.
+  // Only a device that gets the Player installed needs a target for its ABI.
   let devices = await resolveTargets(adb)
-  let installed = new Map(devices.map((d) => [d.target, installedVersion(adb, d.target)]))
-  let installing = devices.filter((d) => values.install || installed.get(d.target) === null)
+  let installing = devices.filter((d) => values.install || installedVersion(adb, d.target, playerId(d.abi)) === null)
   if (installing.length) await ensureTargets(installing.map((d) => d.abi), process.cwd())
-  for (let device of devices) await prepare(adb, device, installed.get(device.target) ?? null)
+  let players = new Map<string, string>()
+  for (let device of devices) players.set(device.target, await prepare(adb, device))
 
   let before = new Set(server ? (await connectedClients(server)).map((c) => c.id) : [])
-  for (let device of devices) await launch(adb, device, server)
+  for (let device of devices) await launch(adb, device, players.get(device.target)!, server)
   if (!server) return
 
   console.log("[cli] Waiting for the client(s) to connect to the dev server...")

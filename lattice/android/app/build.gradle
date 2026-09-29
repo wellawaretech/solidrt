@@ -2,6 +2,22 @@ plugins {
      id 'com.android.application'
 }
 
+// The published Player is built only by `make android-dist PUBLISH=1`
+// (-PsrtPublish), which the release workflow runs: its release build is
+// com.solidrt.player, labelled Player and signed with the Player key - the
+// Player's permanent identity, the only build that can update an installed
+// published Player. Every other go build is the dev Player,
+// com.solidrt.player.dev, labelled Player.dev and signed with the debug key,
+// so a local build never collides with the published one. The key comes from
+// the environment (the workflow decodes it from a secret) as a PKCS12
+// keystore with one password for store and key; publishing without it fails
+// here rather than signing a published Player with the debug key.
+def publish = project.hasProperty('srtPublish')
+def playerKeystore = System.getenv('SRT_PLAYER_KEYSTORE')
+if (publish && !playerKeystore) {
+    throw new GradleException('PUBLISH=1 (-PsrtPublish) needs the Player key: set SRT_PLAYER_KEYSTORE and SRT_PLAYER_KEYSTORE_PASSWORD')
+}
+
 android {
     namespace = "com.solidrt.app"
     compileSdk = 36
@@ -38,15 +54,8 @@ android {
     // auto-generates ~/.android/debug.keystore per machine, so a build from
     // one checkout cannot reinstall over another's. A fixed key (standard
     // debug alias/password, not sensitive) keeps local builds interchangeable.
-    // It signs every debug build and the runner (which `srt pack --apk`
-    // re-signs anyway); never the published Player.
-    //
-    // The published Player's key is the Player's identity: only a build
-    // signed with it can update an installed Player. It comes from the
-    // environment (the release workflow decodes it from a secret) as a
-    // PKCS12 keystore with one password for store and key; without it the go
-    // release build falls back to the debug key, as every local build does.
-    def playerKeystore = System.getenv('SRT_PLAYER_KEYSTORE')
+    // It signs every build but the published Player, the runner included
+    // (which `srt pack --apk` re-signs anyway).
     signingConfigs {
         debug {
             storeFile = file('debug.keystore')
@@ -54,7 +63,7 @@ android {
             keyAlias = 'androiddebugkey'
             keyPassword = 'android'
         }
-        if (playerKeystore) {
+        if (publish) {
             player {
                 storeFile = file(playerKeystore)
                 storeType = 'pkcs12'
@@ -70,14 +79,21 @@ android {
     productFlavors {
         go {
             dimension = "variant"
-            // The Player's id: its identity with the Player key above, both
-            // permanent. The flavor keeps its old name until go becomes player.
-            applicationId = "com.solidrt.player"
-            signingConfig = playerKeystore ? signingConfigs.player : signingConfigs.debug
+            // The dev Player; onVariants below turns the published release
+            // build into com.solidrt.player. The label reaches the manifest
+            // through src/go/AndroidManifest.xml. The flavor keeps its old
+            // name until go becomes player.
+            applicationId = "com.solidrt.player.dev"
+            manifestPlaceholders.put('playerLabel', 'Player.dev')
+            signingConfig = publish ? signingConfigs.player : signingConfigs.debug
         }
         prod {
             dimension = "variant"
-            applicationId = "com.solidrt.app"
+            // The runner: a placeholder id (and label, "Runner") that `srt
+            // pack --apk` rewrites to the app's own. Its link scheme in
+            // src/prod/AndroidManifest.xml is spelled the same, so the
+            // rewrite renames both.
+            applicationId = "com.solidrt.runner"
             signingConfig = signingConfigs.debug
         }
     }
@@ -111,10 +127,17 @@ android {
 // download size wins over the extracted on-device copy (40.8 -> ~17 MB
 // measured; okf/backlog/standalone-android-apk.md). The go client keeps
 // stored libs: it is delivered by tooling, and in-place mmap loads faster.
+//
+// The published Player (see the top of this file) is the go release build
+// under -PsrtPublish; a debug build stays the dev Player even then.
 androidComponents {
     onVariants(selector().all()) { variant ->
         if (variant.flavorName == 'prod') {
             variant.packaging.jniLibs.useLegacyPackaging.set(true)
+        }
+        if (publish && variant.flavorName == 'go' && variant.buildType == 'release') {
+            variant.applicationId.set('com.solidrt.player')
+            variant.manifestPlaceholders.put('playerLabel', 'Player')
         }
     }
 }
