@@ -2,13 +2,14 @@ import { values, source } from "../lib/args"
 import { bundleFlux, bundleSolid, compileToBytecode, findFluxIsolates } from "../bundle/bundler"
 import { resolvePackFonts } from "../lib/fonts"
 import { loadAppIdentity, loadProject, resolveCapabilities, type Capability, type Project } from "../lib/project"
-import { resolveMode } from "../lib/mode"
+import { resolveMode, type Mode } from "../lib/mode"
 import { packApp, packFlux, packSolid } from "./trailer"
 import { buildPackFolder, writePackFolder } from "./layout"
 import { patchApk } from "./android/apk"
 import { isPng } from "./android/icon"
 import { requireBinary } from "../lib/util"
-import { resolveApk, resolveRunnerApk, ANDROID_PKG_MAP } from "../lib/artifacts"
+import { resolveApk, resolveRunnerApk, ANDROID_PKG_MAP, DEFAULT_ANDROID_ABI } from "../lib/artifacts"
+import { ensureTargets } from "../lib/android-targets"
 import { existsSync, readFileSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 
@@ -75,6 +76,116 @@ async function writeExecutable(packed: Buffer, outfile: string) {
   console.log(`>> wrote ${packed.length} bytes to ${outfile}`)
 }
 
+// A per-target APK path: the ABI goes in before the extension, so the
+// targets land side by side (dist/<name>-arm64-v8a.apk).
+function apkPath(path: string, abi: string): string {
+  return path.endsWith(".apk") ? `${path.slice(0, -".apk".length)}-${abi}.apk` : `${path}-${abi}.apk`
+}
+
+// The app being packed and where its outputs go, reported first by every
+// solidrt pack.
+//
+// One output rule: every deliverable defaults into the gitignored dist/
+// build root (okf/backlog/build-output-dirs.md) - files in the root named
+// by the appId's last segment, flow dirs (pack/, render/, bundle/) below
+// it - never next to the sources. --output overrides.
+function packTarget() {
+  let mode = resolveMode()
+  let identity = loadAppIdentity(mode.entry, mode.projectDir)
+  console.log(`>> app: ${identity.appId} (${identity.org} / ${identity.displayName})`)
+  if (identity.defaulted) {
+    console.warn('>> warning: no "solidrt.appId" in package.json; set a stable reverse-DNS id before distributing')
+  }
+  let distRoot = join(mode.projectDir ?? dirname(mode.entry), "dist")
+  let baseName = identity.appId.split(".").pop()!
+  return { mode, identity, distRoot, baseName }
+}
+
+// All solidrt outputs are the same canonical pack: manifest + bundle.bin +
+// assets (fonts included). --folder writes it as a flat folder next to a
+// bare runner; --app writes it alone as one .srtapp for a runner to load;
+// --apk patches it into APKs; the default single-file exe carries it as
+// trailer sections.
+async function buildApp(mode: Mode) {
+  let fonts = resolvePackFonts(mode.projectDir)
+  console.log(`>> fonts: ${fonts.length ? fonts.map((f) => f.alias).join(", ") : "none"}`)
+  let bundled = await bundleSolid(mode)
+  let bytecode = await compileToBytecode(bundled.code)
+  let isolates = []
+  for (let i of bundled.isolates) isolates.push({ id: i.id, bytecode: await compileToBytecode(i.code, i.id) })
+  if (isolates.length) console.log(`>> isolates: ${isolates.map((i) => i.id).join(", ")}`)
+  return { bytecode, folder: buildPackFolder(mode, bytecode, isolates) }
+}
+
+// --apk patches the app into one installable Android APK per installed
+// target (android-targets.ts; the picker runs when there is none):
+// application id and label rewritten, permissions declared, the .srtapp
+// payload added as a stored asset, re-aligned and re-signed - pure
+// TypeScript, no Android SDK (okf/done/standalone-android-apk.md). A
+// target's base is its production runner APK (`make android-runtime`),
+// which boots the payload; while none is staged, its solidrt-go dev client
+// stands in - that APK installs and launches, but boots the player instead
+// of the payload. Returns the APK written per ABI.
+export async function packApks(): Promise<Map<string, string>> {
+  let { mode, identity, distRoot, baseName } = packTarget()
+  if (!ANDROID_APP_ID.test(identity.appId)) {
+    console.error(
+      `"solidrt": "appId" ("${identity.appId}") is not a valid Android application id: use reverse-DNS with at least two dot-separated segments, each starting with a letter (e.g. "com.example.app")`,
+    )
+    process.exit(1)
+  }
+  let targets = await ensureTargets([], mode.projectDir)
+  if (targets.length === 0) {
+    console.error(`Could not find a base APK; run make android-runtime, or add the ${ANDROID_PKG_MAP[DEFAULT_ANDROID_ABI]} dev dependency`)
+    process.exit(1)
+  }
+
+  let { bytecode, folder } = await buildApp(mode)
+  let project = loadProject(mode.projectDir)
+  let config = project?.config ?? {}
+  let android = config.android ?? {}
+  let icon = resolveLauncherIcon(project)
+  let permissions = [
+    ...resolveCapabilities(config).map((name) => ANDROID_CAPABILITY_PERMISSIONS[name]),
+    ...(android.permissions ?? []),
+  ]
+  let backup = config.backup ?? false
+  let payload = packApp(folder, bytecode)
+  console.log(`>> icon: ${icon ? "from project" : "placeholder"}`)
+  console.log(`>> permissions: ${permissions.length ? permissions.join(", ") : "none"}`)
+  console.log(`>> backup: ${backup ? "data/ folder" : "off"}`)
+  console.log(">> signed with the shared development key (fine for sideloading; distribution signing pending)")
+
+  let written = new Map<string, string>()
+  for (let abi of targets) {
+    let base = resolveRunnerApk(abi)
+    if (!base) {
+      base = resolveApk(abi)!
+      console.log(`>> note: no ${abi} runner APK staged; using the go dev client as the base - the payload rides along unloaded`)
+    }
+    console.log(`>> base (${abi}): ${base}`)
+    let { apk, iconApplied } = patchApk(readFileSync(base), {
+      appId: identity.appId,
+      label: identity.displayName,
+      payload,
+      versionCode: android.versionCode ?? DEFAULT_VERSION_CODE,
+      versionName: project?.version ?? DEFAULT_VERSION_NAME,
+      icon,
+      iconBackground: config.iconBackground ?? DEFAULT_ICON_BACKGROUND,
+      permissions,
+      backup,
+    })
+    if (icon && !iconApplied) {
+      console.log(`>> note: the ${abi} base APK has no icon slots; the icon was not applied`)
+    }
+    let outfile = apkPath(values.output ?? join(distRoot, baseName + ".apk"), abi)
+    await Bun.write(outfile, apk)
+    console.log(`>> wrote ${apk.length} bytes to ${outfile}`)
+    written.set(abi, outfile)
+  }
+  return written
+}
+
 export async function main() {
   if (values.flux) {
     if (values.folder || values.app || values.apk) {
@@ -93,92 +204,13 @@ export async function main() {
     process.exit()
   }
 
-  // All solidrt outputs are the same canonical pack: manifest + bundle.bin +
-  // assets (fonts included). --folder writes it as a flat folder next to a
-  // bare runner; --app writes it alone as one .srtapp for a runner to load;
-  // the default single-file exe carries it as trailer sections.
-  //
-  // One output rule: every deliverable defaults into the gitignored dist/
-  // build root (okf/backlog/build-output-dirs.md) - files in the root named
-  // by the appId's last segment, flow dirs (pack/, render/, bundle/) below
-  // it - never next to the sources. --output overrides.
-  let mode = resolveMode()
-  let identity = loadAppIdentity(mode.entry, mode.projectDir)
-  console.log(`>> app: ${identity.appId} (${identity.org} / ${identity.displayName})`)
-  if (identity.defaulted) {
-    console.warn('>> warning: no "solidrt.appId" in package.json; set a stable reverse-DNS id before distributing')
-  }
-  let fonts = resolvePackFonts(mode.projectDir)
-  console.log(`>> fonts: ${fonts.length ? fonts.map((f) => f.alias).join(", ") : "none"}`)
-
-  let distRoot = join(mode.projectDir ?? dirname(mode.entry), "dist")
-  let baseName = identity.appId.split(".").pop()!
-
-  let bundled = await bundleSolid(mode)
-  let bytecode = await compileToBytecode(bundled.code)
-  let isolates = []
-  for (let i of bundled.isolates) isolates.push({ id: i.id, bytecode: await compileToBytecode(i.code, i.id) })
-  if (isolates.length) console.log(`>> isolates: ${isolates.map((i) => i.id).join(", ")}`)
-  let folder = buildPackFolder(mode, bytecode, isolates)
-
-  // --apk patches the app into an installable Android APK: application id and
-  // label rewritten, permissions declared, the .srtapp payload added as a
-  // stored asset, re-aligned and re-signed - pure TypeScript, no Android SDK
-  // (okf/done/standalone-android-apk.md). The base is the production
-  // runner APK (`make android-runtime`), which boots the payload; while none
-  // is staged, the solidrt-go dev client stands in - that APK installs and
-  // launches, but boots the player instead of the payload.
   if (values.apk) {
-    if (!ANDROID_APP_ID.test(identity.appId)) {
-      console.error(
-        `"solidrt": "appId" ("${identity.appId}") is not a valid Android application id: use reverse-DNS with at least two dot-separated segments, each starting with a letter (e.g. "com.example.app")`,
-      )
-      process.exit(1)
-    }
-    let base = resolveRunnerApk()
-    if (!base) {
-      base = resolveApk()
-      if (base) {
-        console.log(">> note: no runner APK staged; using the go dev client as the base - the payload rides along unloaded")
-      }
-    }
-    if (!base) {
-      console.error(`Could not find a base APK; run make android-runtime, or add the ${ANDROID_PKG_MAP["arm64-v8a"]} dev dependency`)
-      process.exit(1)
-    }
-    console.log(`>> base: ${base}`)
-    let project = loadProject(mode.projectDir)
-    let config = project?.config ?? {}
-    let android = config.android ?? {}
-    let icon = resolveLauncherIcon(project)
-    let permissions = [
-      ...resolveCapabilities(config).map((name) => ANDROID_CAPABILITY_PERMISSIONS[name]),
-      ...(android.permissions ?? []),
-    ]
-    let backup = config.backup ?? false
-    let { apk, iconApplied } = patchApk(readFileSync(base), {
-      appId: identity.appId,
-      label: identity.displayName,
-      payload: packApp(folder, bytecode),
-      versionCode: android.versionCode ?? DEFAULT_VERSION_CODE,
-      versionName: project?.version ?? DEFAULT_VERSION_NAME,
-      icon,
-      iconBackground: config.iconBackground ?? DEFAULT_ICON_BACKGROUND,
-      permissions,
-      backup,
-    })
-    if (icon && !iconApplied) {
-      console.log(">> note: this base APK has no icon slots; the icon was not applied")
-    }
-    console.log(`>> icon: ${icon && iconApplied ? "from project" : "placeholder"}`)
-    console.log(`>> permissions: ${permissions.length ? permissions.join(", ") : "none"}`)
-    console.log(`>> backup: ${backup ? "data/ folder" : "off"}`)
-    console.log(">> signed with the shared development key (fine for sideloading; distribution signing pending)")
-    let outfile = values.output ?? join(distRoot, baseName + ".apk")
-    await Bun.write(outfile, apk)
-    console.log(`>> wrote ${apk.length} bytes to ${outfile}`)
+    await packApks()
     process.exit()
   }
+
+  let { mode, distRoot, baseName } = packTarget()
+  let { bytecode, folder } = await buildApp(mode)
 
   if (values.folder) {
     let outDir = values.output ?? join(distRoot, "pack")

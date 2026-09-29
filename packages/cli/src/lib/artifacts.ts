@@ -1,5 +1,5 @@
 import { createRequire } from "node:module"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { resolve, dirname, join } from "node:path"
 import process from "node:process"
 
@@ -72,26 +72,45 @@ export function runnerGlLibs(runnerPath: string): Array<{ name: string; path: st
   })
 }
 
-// The Android client APK is host-independent (it bundles native .so for the
-// device, not the host), so it lives under dist/android/<abi>/ rather than the
-// host triple map. arm64-v8a (a fat APK: arm64-v8a + the x86_64 emulator) and
-// armeabi-v7a (32-bit) ship published npm packages; other ABIs (e.g. x86) only
-// resolve via the SRT_HOME contributor path.
-let DEFAULT_ANDROID_ABI = "arm64-v8a"
+// The Android APKs are host-independent (they bundle native .so for the
+// device, not the host), so they live under dist/android*/<abi>/ rather than
+// the host triple map. Each ABI ships a published npm package carrying its
+// Player (solidrt-go.apk) and its runner (solidrt.apk), both built for that
+// ABI alone; other ABIs (e.g. x86) only resolve via the SRT_HOME contributor
+// path.
+export let DEFAULT_ANDROID_ABI = "arm64-v8a"
 export let ANDROID_PKG_MAP: Record<string, string> = {
   "arm64-v8a": "@solidrt/android-arm64-v8a",
   "armeabi-v7a": "@solidrt/android-armeabi-v7a",
   x86_64: "@solidrt/android-x86_64",
 }
 
+// The installed folder of an ABI's package: the first node_modules/<pkg>
+// walking up from the project (the cwd), then from the CLI itself. A plain
+// filesystem walk, not require.resolve: Bun caches a failed resolution for
+// the life of the process, so a package added mid-run (android-targets.ts)
+// would stay unresolvable.
+function androidPackageDir(abi: string): string | null {
+  let pkg = ANDROID_PKG_MAP[abi]
+  if (!pkg) return null
+  for (let start of [process.cwd(), import.meta.dir]) {
+    for (let dir = start; ; dir = dirname(dir)) {
+      let candidate = join(dir, "node_modules", pkg)
+      if (existsSync(join(candidate, "package.json"))) return candidate
+      if (dirname(dir) === dir) break
+    }
+  }
+  return null
+}
+
 // The client version the project expects on an `abi` device: the version of
 // its @solidrt/android-<abi> dev dependency (the release action pins it to the
 // runtime version). Null when the package is not installed.
 export function androidPackageVersion(abi: string): string | null {
-  let pkg = ANDROID_PKG_MAP[abi]
-  if (!pkg) return null
+  let dir = androidPackageDir(abi)
+  if (!dir) return null
   try {
-    let version = require(`${pkg}/package.json`).version
+    let version = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version
     return typeof version === "string" ? version : null
   } catch {
     return null
@@ -109,13 +128,10 @@ export function resolveRunnerApk(abi: string = DEFAULT_ANDROID_ABI): string | nu
     let apk = resolve(srtRoot, "dist/android-runtime", abi, "solidrt.apk")
     if (existsSync(apk)) return apk
   }
-  let pkg = ANDROID_PKG_MAP[abi]
-  if (pkg) {
-    try {
-      let pkgDir = dirname(require.resolve(`${pkg}/package.json`))
-      let apk = resolve(pkgDir, "solidrt.apk")
-      if (existsSync(apk)) return apk
-    } catch {}
+  let pkgDir = androidPackageDir(abi)
+  if (pkgDir) {
+    let apk = resolve(pkgDir, "solidrt.apk")
+    if (existsSync(apk)) return apk
   }
   return null
 }
@@ -130,13 +146,10 @@ export function resolveApk(abi: string = DEFAULT_ANDROID_ABI) {
   }
 
   // 2. Platform npm package
-  let pkg = ANDROID_PKG_MAP[abi]
-  if (pkg) {
-    try {
-      let pkgDir = dirname(require.resolve(`${pkg}/package.json`))
-      let apk = resolve(pkgDir, "solidrt-go.apk")
-      if (existsSync(apk)) return apk
-    } catch {}
+  let pkgDir = androidPackageDir(abi)
+  if (pkgDir) {
+    let apk = resolve(pkgDir, "solidrt-go.apk")
+    if (existsSync(apk)) return apk
   }
 
   return null

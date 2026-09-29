@@ -41,7 +41,9 @@ validateArgs()
 // the auto-activation by setting NODE_ENV=production. Since that is read at startup,
 // we re-exec rather than mutate process.env. Assumes srt runs via bun (argv is
 // [bun, script, ...]); would need rework if ever shipped as a compiled binary.
-let isProdBuild = (command === "bundle" || command === "render" || command === "pack") && !values.dev
+// `android --apk` packs too.
+let packs = command === "pack" || (command === "android" && values.apk)
+let isProdBuild = (command === "bundle" || command === "render" || packs) && !values.dev
 if (isProdBuild && process.env.NODE_ENV !== "production") {
   let proc = Bun.spawnSync({
     cmd: [process.execPath, ...process.argv.slice(1)],

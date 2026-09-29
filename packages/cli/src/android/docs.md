@@ -14,12 +14,23 @@ devices connected a terminal asks which ones (all preselected, so enter
 launches on every device); `--device` picks one by serial or unique prefix
 (a script must).
 
-`--install` installs (or updates) the client first, from the
-`@solidrt/android-<abi>` dev dependency matching the device's ABI; the
-command says which package to add when it is missing. Without `--install`
-the installed client is left as it is, and a note says when its version is
-not the one that package carries - a client you built and installed
-yourself is never replaced unless you ask.
+A device without the client gets it installed first, from the project's
+Android target for the device's ABI: the `@solidrt/android-<abi>` dev
+dependency, which carries that ABI's client and its runner (the base of
+`srt pack --apk`). A project with no target yet gets a picker the first
+time (which devices it targets: arm64-v8a for current phones and tablets,
+armeabi-v7a for older phones and many Android TVs, x86_64 for emulators and
+Chromebooks); a device whose ABI is not among the targets is offered its
+package. The targets are ordinary dev dependencies, so `bun add -d` and
+`bun remove` change them later. An installed client whose version is not
+the one the project's package carries is updated after asking - a client
+you built and installed yourself stays unless you say so. `--install`
+reinstalls regardless.
+
+`--apk` works on the app instead of the client: it packs it (`srt pack
+--apk`, one APK per target) and installs and launches on each device the
+APK built for its ABI, nothing dev-flavored. `srt android <file.apk>`
+installs and launches an APK you already have.
 
 `--census` does not launch anything: it reads the compositor's own record
 of the client's presents (`dumpsys SurfaceFlinger --latency`) and prints

@@ -31,8 +31,8 @@ Commands:
   tool [<pkg>/<name>]    List the tools the installed packages ship, or run one
                          (everything after the tool name is the tool's own arguments)
   console                Start the dev console: the dev servers on this machine and their clients
-  android [file.apk]     Launch the client on a connected Android device (--install to install it first)
-                         (a packed APK: install and launch that app instead)
+  android [file.apk]     Launch the client on a connected Android device, installing it where missing
+                         (--apk: pack the app and install that instead; a packed APK: install and launch it)
   bundle [file]          Transpile TS/JS/TSX/JSX to JS or bytecode
                          (a prebuilt <name>.srt.js: compile it to bytecode)
   check [file]           Verify the app builds and typechecks, without writing anything
@@ -76,10 +76,15 @@ client options:
       --server <host:port>  Connect to a dev server at this address
 
 android options:
-  (no flags)             Launch the installed client, pointed at the dev server of the project (or file)
-                         in the current directory (the server must run with --lan, or be reached from an emulator)
+  (no flags)             Launch the client, pointed at the dev server of the project (or file) in the
+                         current directory (the server must run with --lan, or be reached from an emulator);
+                         installed from the project's @solidrt/android-<abi> target where missing,
+                         and offered as an update where the project's package carries another version
+                         (the first time, a picker asks which Android targets the project adds)
   <file.apk>             Install a packed APK (srt pack --apk) and launch it, nothing dev-flavored
-      --install          Install or update the client first, from the project's @solidrt/android-<abi> package
+      --apk              Pack the app (srt pack --apk), then install and launch on each device the APK
+                         built for its ABI
+      --install          Reinstall the client first, even when it is current
       --port <N>         Point it at the local dev server on this port
       --device <serial>  Target a specific adb device by serial or unique prefix
       --census           Read the compositor's present census for the client on screen instead of launching:
@@ -111,8 +116,10 @@ pack options:
                          instead of the single-file executable
       --app              Write the app alone as one <name>.srtapp (manifest + bundle + assets,
                          no runner), for a runner to load: solidrt <file>.srtapp
-      --apk              Patch the app into an installable Android APK (id, label, icon,
-                         version, payload; no Android SDK needed; base: the runner APK)
+      --apk              Patch the app into installable Android APKs, one per installed target
+                         (dist/<name>-<abi>.apk; id, label, icon, version, payload; no Android SDK
+                         needed; base: the target's runner APK; the first time, a picker asks
+                         which targets the project adds)
   -f, --flux             Pack for the bare Flux runtime instead of SolidRT (entry must be .ts|.js)
   -m, --minify           Minify the output
   -o, --output <name>    Output filename (default: dist/<appId last segment>)

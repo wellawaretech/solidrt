@@ -135,11 +135,15 @@ export function validateArgs() {
       }
       break
     case "android":
-      // A packed APK to install and launch; flagless/--install drive the
-      // dev client, so mixing the two is a contradiction.
+      // A packed APK to install and launch, or --apk to pack one first;
+      // flagless/--install/--census drive the dev client, so mixing the two
+      // is a contradiction.
       if (source && !source.endsWith(".apk")) usage("srt android [<file.apk>]")
-      if (source && values.install) {
-        usage("srt android <file.apk>  (--install is the dev-client install; a packed APK installs implicitly)")
+      if (source && (values.install || values.apk)) {
+        usage("srt android <file.apk>  (--install and --apk install what they build; a given APK installs as it is)")
+      }
+      if (values.apk && (values.install || values.census)) {
+        usage("srt android --apk  (--apk installs the packed app; --install and --census are for the dev client)")
       }
       break
     case "check":
@@ -170,9 +174,13 @@ export function validateArgs() {
   let serves = command === "run" || command === "server" || command === "demo"
   // The commands that work on a project or a file (mode.ts).
   let onApp = command === "run" || command === "server" || command === "bundle" || command === "pack" || command === "render"
-  // --folder, --app and --apk pick a pack output shape.
-  if ((values.folder || values.app || values.apk) && command !== "pack") {
-    usage("srt pack --folder|--app|--apk  (--folder, --app and --apk are only valid with the pack command)")
+  // --folder, --app and --apk pick a pack output shape; `android --apk`
+  // packs and installs the APKs.
+  if ((values.folder || values.app) && command !== "pack") {
+    usage("srt pack --folder|--app  (--folder and --app are only valid with the pack command)")
+  }
+  if (values.apk && command !== "pack" && command !== "android") {
+    usage("srt <pack|android> --apk  (--apk is only valid with the pack and android commands)")
   }
   if ([values.folder, values.app, values.apk].filter(Boolean).length > 1) {
     usage("srt pack --folder|--app|--apk  (--folder, --app and --apk exclude each other)")

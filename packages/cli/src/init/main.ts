@@ -4,6 +4,7 @@ import { styleText } from "node:util"
 import { source, values } from "../lib/args"
 import { CLI_VERSION } from "../lib/project"
 import { abort, intro, multiselect, outro, spinner, step, text } from "../lib/prompt"
+import { runQuiet } from "../lib/util"
 
 const DEFAULT_NAME = "solidrt-app"
 
@@ -148,15 +149,10 @@ export async function main() {
   // output only matters when it fails, so it is held until then.
   let progress = spinner()
   progress.start("Installing dependencies")
-  let install = Bun.spawn(["bun", "install"], { cwd: dir, stdout: "pipe", stderr: "pipe" })
-  let [out, err, code] = await Promise.all([
-    new Response(install.stdout).text(),
-    new Response(install.stderr).text(),
-    install.exited,
-  ])
-  if (code !== 0) {
+  let install = await runQuiet(["bun", "install"], dir)
+  if (install.code !== 0) {
     progress.error("Dependency install failed")
-    process.stderr.write(out + err)
+    process.stderr.write(install.output)
     abort("Retry with `bun install` in the project")
   }
   progress.stop("Installed dependencies")
