@@ -78,7 +78,7 @@ export type {
   ShotsProps,
 } from "./components/index.ts"
 export { gltfExternalUris, isGlb, modelImageUses, parseGltf } from "./gltf.ts"
-export type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelImageUse, ModelMaterial, ModelNode, ModelPart, ModelSkin, ModelTexture, UriResolver } from "./gltf.ts"
+export type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelImage, ModelImageUse, ModelMaterial, ModelNode, ModelPart, ModelSkin, ModelTexture, UriResolver } from "./gltf.ts"
 export { decodeModel, encodeModel } from "./model-file.ts"
 export { createModel, loadGltf, loadModel, transcodeModelImages } from "./model.ts"
 export type { Model, ModelMaps, ModelOptions } from "./model.ts"

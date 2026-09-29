@@ -150,3 +150,40 @@ async fn watch_throws_for_a_missing_directory() {
   assert!(out.errors().is_empty(), "stderr: {}", out.errors());
   assert_eq!(out.log(), "true true");
 }
+
+// glob(pattern, { cwd }) lists the files a pattern matches, as seen from
+// cwd, sorted; directories are walked and never listed.
+#[tokio::test]
+async fn glob_lists_matching_files_from_cwd() {
+  let dir = TempDir::new();
+  for file in ["assets/lion_head.png", "assets/lion_tail.png", "assets/ui/icon.png", "assets/base.jpg"] {
+    let path = dir.as_path().join(file);
+    std::fs::create_dir_all(path.parent().expect("the file has a directory")).expect("create directory");
+    std::fs::write(&path, file).expect("write file");
+  }
+
+  let code = r#"
+            import { glob } from "flux:fs";
+            let cwd = "__DIR__";
+            console.log((await glob("assets/lion_*.png", { cwd })).join(","));
+            console.log((await glob("assets/**", { cwd })).join(","));
+            console.log((await glob("assets/tiger_*.png", { cwd })).length);
+            try { glob("assets/[", { cwd }) } catch (e) { console.log(e.message) }
+            try { glob("assets/*", { cwd: 7 }) } catch (e) { console.log(e.message) }
+            "#
+  .replace("__DIR__", &dir.path());
+
+  let out = run_source(&code).await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(
+    out.log(),
+    [
+      "assets/lion_head.png,assets/lion_tail.png",
+      "assets/base.jpg,assets/lion_head.png,assets/lion_tail.png,assets/ui/icon.png",
+      "0",
+      "glob: the pattern \"assets/[\" is malformed at character 7: invalid range pattern",
+      "glob: cwd must be a string",
+    ]
+    .join("\n")
+  );
+}

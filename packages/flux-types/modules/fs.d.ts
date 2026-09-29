@@ -120,4 +120,26 @@ declare module "flux:fs" {
    * @param to    Path it should have afterwards.
    */
   export function rename(from: string, to: string): Promise<void>
+  /**
+   * The files whose path matches the glob `pattern`, sorted: Node's
+   * `fs.glob`, as a promise of the whole list. The pattern language is
+   * `matchesGlob`'s (flux:path), and the two agree: a file is listed
+   * exactly when its path matches. Files only; a directory is walked and
+   * never listed, so an empty list means no file matches.
+   *
+   * Each path is given as seen from `cwd`. Without `cwd` the pattern stands
+   * against the process cwd like any relative path, and in a SolidRT app
+   * running an installed version a pattern that starts in `assets/` lists
+   * that version's assets. With `cwd` it is that directory as the OS has
+   * it.
+   *
+   * Throws on a malformed pattern. Rejects when a directory on the way
+   * cannot be read.
+   *
+   * @param pattern  The glob pattern, written with "/".
+   *
+   * @example
+   * let textures = await glob("assets/textures/*.png")
+   */
+  export function glob(pattern: string, options?: { cwd?: string }): Promise<string[]>
 }

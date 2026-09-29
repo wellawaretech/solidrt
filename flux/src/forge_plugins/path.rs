@@ -1,13 +1,14 @@
 use rquickjs::function::Rest;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Ctx, Function, IntoJs, Value};
+use rquickjs::{Ctx, Exception, Function, IntoJs, Value};
 
 use crate::plugins::marshal::OptArg;
 use forge::path;
 
 // Marshalling for `flux:path`: adapt JS args to the engine-free `forge::path`
 // functions, and turn a containment failure (`None`) into JS `null`.
-// basename/dirname/extname are Node's, lexical like the rest.
+// basename/dirname/extname/relative/matchesGlob are Node's, lexical like
+// the rest; a malformed glob pattern throws.
 
 pub struct PathModule;
 
@@ -18,6 +19,8 @@ impl ModuleDef for PathModule {
     decl.declare("basename")?;
     decl.declare("dirname")?;
     decl.declare("extname")?;
+    decl.declare("relative")?;
+    decl.declare("matchesGlob")?;
     Ok(())
   }
 
@@ -27,6 +30,8 @@ impl ModuleDef for PathModule {
     exports.export("basename", Function::new(ctx.clone(), basename)?)?;
     exports.export("dirname", Function::new(ctx.clone(), dirname)?)?;
     exports.export("extname", Function::new(ctx.clone(), extname)?)?;
+    exports.export("relative", Function::new(ctx.clone(), relative)?)?;
+    exports.export("matchesGlob", Function::new(ctx.clone(), matches_glob)?)?;
     Ok(())
   }
 }
@@ -45,6 +50,14 @@ fn dirname(path: String) -> String {
 
 fn extname(path: String) -> String {
   path::extname(&path)
+}
+
+fn relative(from: String, to: String) -> String {
+  path::relative(&from, &to)
+}
+
+fn matches_glob(ctx: Ctx<'_>, path: String, pattern: String) -> rquickjs::Result<bool> {
+  path::matches_glob(&path, &pattern).map_err(|e| Exception::throw_message(&ctx, &format!("matchesGlob: {e}")))
 }
 
 // Returns the resolved absolute path, or an explicit JS `null` (not `undefined`)

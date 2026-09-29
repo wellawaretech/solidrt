@@ -47,4 +47,41 @@ declare module "flux:path" {
    * a leading dot names a hidden file, so `extname(".bashrc")` is "".
    */
   export function extname(path: string): string
+
+  /**
+   * The path that leads from `from` to `to`: Node's `path.relative`.
+   * Lexical. Each side stands against the process cwd when it is relative,
+   * so `relative(".", path)` is `path` as seen from the cwd.
+   * `relative("/a/b", "/a/c/d.txt")` is "../c/d.txt", and a place to itself
+   * is "". Two paths with nothing in common (another drive on Windows) give
+   * `to` as it resolved.
+   */
+  export function relative(from: string, to: string): string
+
+  /**
+   * Whether `path` matches the glob `pattern`, as a whole: Node's
+   * `path.matchesGlob`, with a smaller pattern language.
+   *
+   * - `*` is any run of characters inside one segment, none included
+   * - `**` as a whole segment is any number of segments, none included:
+   *   "a/(**)/b" without the parentheses matches "a/b" and "a/x/y/b", and
+   *   "assets/(**)" every path below "assets" (not "assets" itself)
+   * - `?` is one character of a segment
+   * - `[a-z]` is one character of the set, `[!a-z]` one outside it
+   *
+   * A character the language reads as syntax is written as a set of one:
+   * `[*]`, `[?]`, `[[]`. There are no `{a,b}` groups (test each pattern)
+   * and no escape character. Matching is on the text as given:
+   * case-sensitive, nothing normalized, a leading dot an ordinary
+   * character. On Windows "/" and "\\" match each other, so a pattern is
+   * written with "/" on every platform. Lexical: nothing is read from
+   * disk; `glob` in flux:fs lists the files a pattern matches.
+   *
+   * Throws on a malformed pattern (an unclosed set, a `**` that is not a
+   * whole segment), naming the character.
+   *
+   * @example
+   * matchesGlob("assets/textures/lion_head.png", "assets/textures/lion_*.png") // true
+   */
+  export function matchesGlob(path: string, pattern: string): boolean
 }

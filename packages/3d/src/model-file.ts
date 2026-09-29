@@ -2,7 +2,8 @@
 // the GPU layout, so loading it is a header parse plus typed-array views -
 // no per-vertex work. Written by tools/model.flux.ts (from parseGltf),
 // read by loadModel on flux; both ends are this pure module. An image
-// block carries the image file as it is, a PNG, a JPEG or a KTX2.
+// block carries the image file as it is, a PNG, a JPEG or a KTX2, under
+// the image's name.
 //
 // Layout, all little-endian:
 //   "SRTM" u32 | version u32 | jsonLength u32 | json (padded to 4) | payload
@@ -17,7 +18,7 @@
 // flipped index order) share the vertex block - decodeModel restores the
 // same identities, so the runtime uploads shared bytes once.
 
-import type { ModelChannel, ModelData, ModelExtras, ModelMaterial, ModelNode, ModelSkin } from "./gltf.ts"
+import type { ModelChannel, ModelData, ModelExtras, ModelImage, ModelMaterial, ModelNode, ModelSkin } from "./gltf.ts"
 import { layoutStride, vertexView, VERTEX_FORMATS } from "./geometry.ts"
 import type { VertexAttribute } from "@solidrt/core/gpu"
 import type { Geometry, VertexLayout } from "./geometry.ts"
@@ -55,7 +56,10 @@ const MAGIC = 0x4d545253
 // every earlier version rather than read as a file without them, so a
 // stale bake never silently drops the data an app relies on. Re-bake
 // with `srt tool 3d/model`.
-const VERSION = 10
+// Version 11 names the images: an image record is its block and the
+// image's name (ModelImage.name), which labels its texture. A
+// version-10 file has blocks alone and is rejected the same way.
+const VERSION = 11
 
 // The named layouts the container writes by name; a custom attribute-list
 // layout (a skinned primitive with COLOR_0, a withAttribute channel) is
@@ -76,6 +80,10 @@ function decodeLayout(layout: string | VertexAttribute[], name: string): VertexL
 }
 
 type Block = { offset: number; bytes: number }
+
+/** One image: the block holding its file, and its name. The uri a parse
+ * read it from is not written: the container embeds the image. */
+type ImageHeader = Block & { name: string }
 
 /** One geometry of the table: its interleaved vertex block, index block
  * and packed morph targets. Blocks may be shared between entries. */
@@ -117,7 +125,7 @@ type ClipHeader = { name: string; duration: number; channels: ChannelHeader[] }
 type Header = {
   nodes: ModelNode[]
   materials: ModelMaterial[]
-  images: Block[]
+  images: ImageHeader[]
   geometries: GeometryHeader[]
   parts: PartHeader[]
   skins: SkinHeader[]
@@ -191,7 +199,7 @@ export function encodeModel(data: ModelData): Uint8Array {
     if (part.extras !== undefined) header.extras = part.extras
     return header
   })
-  let images = data.images.map((image) => push(image))
+  let images: ImageHeader[] = data.images.map((image) => ({ ...push(image.bytes), name: image.name }))
   let floats = (f: Float32Array): Block => push(new Uint8Array(f.buffer, f.byteOffset, f.byteLength))
   let skins: SkinHeader[] = data.skins.map((skin) => ({ joints: skin.joints, inverseBind: floats(skin.inverseBind), jointBounds: floats(skin.jointBounds) }))
   let clips: ClipHeader[] = data.clips.map((clip) => ({
@@ -278,7 +286,7 @@ export function decodeModel(bytes: Uint8Array): ModelData {
     if (part.extras !== undefined) out.extras = part.extras
     return out
   })
-  let images = header.images.map((block) => new Uint8Array(buffer, payload + block.offset, block.bytes))
+  let images: ModelImage[] = header.images.map((image) => ({ bytes: new Uint8Array(buffer, payload + image.offset, image.bytes), name: image.name }))
   let floats = (block: Block): Float32Array => new Float32Array(buffer, payload + block.offset, block.bytes / 4)
   let skins: ModelSkin[] = header.skins.map((skin) => ({ joints: skin.joints, inverseBind: floats(skin.inverseBind), jointBounds: floats(skin.jointBounds) }))
   let clips = header.clips.map((clip) => ({

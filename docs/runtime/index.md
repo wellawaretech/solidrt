@@ -43,8 +43,8 @@ serve({
 
 | Module | What it does |
 | --- | --- |
-| `flux:fs` | Files, directories, canonical paths. |
-| `flux:path` | Path joining, containment checks, and the `basename` / `dirname` / `extname` splits. |
+| `flux:fs` | Files, directories, canonical paths, the files a glob pattern matches. |
+| `flux:path` | Path joining, containment checks, the `basename` / `dirname` / `extname` splits, the path from one place to another, glob matching. |
 | `flux:http` | HTTP and WebSocket servers, with routing. |
 | `flux:net` | TCP and UDP sockets. |
 | `flux:p2p` | Direct peer-to-peer connections, no server in the middle. |

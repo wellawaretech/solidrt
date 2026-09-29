@@ -1,9 +1,8 @@
 import { readdirSync, unlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { dirname, join, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
+import { join, resolve } from "node:path"
 import { source, toolArgs } from "../lib/args"
-import { buildFluxScript } from "../lib/flux-script"
+import { buildFluxScript, fluxScriptEnv } from "../lib/flux-script"
 import { requireBinary } from "../lib/util"
 
 // srt tool: the tools the installed @solidrt packages ship - build-time
@@ -97,12 +96,7 @@ async function runUnderFlux(tool: Tool): Promise<number> {
   try {
     let proc = Bun.spawn([flux, script, ...toolArgs], {
       stdio: ["inherit", "inherit", "inherit"],
-      env: {
-        ...process.env,
-        SRT_PLATFORM_DIR: dirname(flux),
-        SRT_BUN: process.execPath,
-        SRT_CLI: fileURLToPath(new URL("../..", import.meta.url)),
-      },
+      env: fluxScriptEnv(flux),
     })
     return await proc.exited
   } finally {

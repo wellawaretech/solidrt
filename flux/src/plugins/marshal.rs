@@ -48,6 +48,20 @@ impl<'js, T: FromJs<'js>> FromParam<'js> for OptArg<T> {
   }
 }
 
+/// An optional string of an options object: `None` when absent,
+/// `undefined` or `null`, a throw naming `api` and the key when it is
+/// anything but a string.
+pub fn string_opt<'js>(ctx: &Ctx<'js>, opts: &Object<'js>, key: &str, api: &str) -> rquickjs::Result<Option<String>> {
+  let v: Value = opts.get(key)?;
+  if v.is_undefined() || v.is_null() {
+    return Ok(None);
+  }
+  match v.as_string() {
+    Some(s) => Ok(Some(s.to_string()?)),
+    None => Err(Exception::throw_message(ctx, &format!("{api}: {key} must be a string"))),
+  }
+}
+
 /// Bridge a fallible native async op to a JS promise. Holds a `PendingOps` for
 /// the op's whole duration (so the engine loop stays alive until it resolves)
 /// and wraps the outcome in `JsResult` (so an `Err(String)` rejects as a clean

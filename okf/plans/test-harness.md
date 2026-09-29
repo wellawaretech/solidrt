@@ -1,6 +1,6 @@
 ---
 title: Test harness - flux:test, srt:test and srt test
-description: Tests for flux programs, SolidRT apps and our own packages, run on our own runtime and deterministic by construction - a base layer on the flux binary (flux:test - describe, test, expect, a stepped clock, settle) and an app layer on the headless SolidRT runtime (srt:test - mount, find, input, frames, reading), behind one command, srt test. The test owns the clock; nothing waits on wall time. Supersedes the JS test infrastructure backlog item; the ten bun test files and the checks/ rigs are its first consumers.
+description: Tests for flux programs, SolidRT apps and our own packages, run on our own runtime and deterministic by construction - a base layer on the flux binary (flux:test - test, expect, a stepped clock, settle) and an app layer on the headless SolidRT runtime (srt:test - mount, find, input, frames, reading), behind one command, srt test. The test owns the clock; nothing waits on wall time. Supersedes the JS test infrastructure backlog item; the ten bun test files and the checks/ rigs are its first consumers.
 created: 2026-08-17
 ---
 
@@ -47,11 +47,11 @@ The candidate lists for first tests are in
 
 | layer | module | runs on | adds |
 | --- | --- | --- | --- |
-| base | `flux:test` | the flux binary | `describe`, `test`, `expect`, `clock`, `settle` |
-| app | `srt:test` | the SolidRT runtime, headless | `mount`, `find`, input, frames, reading |
+| base | `flux:test` | the `flux` binary | `test`, `expect`, `clock`, `settle` |
+| app | `srt:test` | the dev client, headless | `mount`, `find`, input, frames, reading |
 
 `srt:test` re-exports the base, so an app test has one import. `srt test`
-is the command for both.
+is the command for both. Neither module is in a shipping runtime (D20).
 
 ## Decisions
 
@@ -153,16 +153,48 @@ display scale and font set, as `srt render` already does.
 harness, not a rate to manage.
 
 **D17. Standard names, simplified semantics.** The base surface is what the
-ten bun test files use, so their migration is an import change:
-`describe`, `test`, `expect`, `not`, and `toBe`, `toEqual`, `toBeCloseTo`,
-`toThrow`, `toBeNull`, `toContain`, `toMatchObject`, `toBeLessThan`,
-`toBeLessThanOrEqual`, `toBeGreaterThan`, plus `toBeGreaterThanOrEqual`
-for symmetry. No hooks and no mocking framework: none of the files uses
-either.
+ten bun test files assert with: `test`, `expect`, `not`, and `toBe`,
+`toEqual`, `toBeCloseTo`, `toThrow`, `toBeNull`, `toContain`,
+`toMatchObject`, `toBeLessThan`, `toBeLessThanOrEqual`, `toBeGreaterThan`,
+plus `toBeGreaterThanOrEqual` for symmetry. No hooks and no mocking
+framework: none of the files uses either.
+
+**D19. Tests are flat: no `describe`.** The file is the group and the test
+name is a sentence that names its subject
+(`test("matchPath: a param segment matches any value", ...)`). `describe`
+does three jobs elsewhere and none is needed here: a scope for shared
+setup hooks (there are no hooks; setup is a plain function the test
+calls), a name prefix in the report (the file name is one), and running a
+subset (a name filter on `srt test`). The six bun files that use it, 22
+groups, use it one level deep with no hooks, as a label for the function
+under test. Rejected: `describe` for familiarity (nesting plus hooks hides
+what a test depends on; pytest, Go, Rust, `Deno.test` and ava are flat,
+ava by refusal). `test(name, fn)` and the `expect` chain stay: a sentence
+reads better in a report than a function identifier, the chain gives `not`
+and expected/received messages, and it is the form agents know best.
 
 **D18. File convention, mirroring the Rust rule.** One `tests/` folder per
 package or project (`tests/*.test.ts`, `*.test.tsx`), never beside the
 sources, excluded from `files` in `package.json`.
+
+**D20. The test modules are not in a shipping runtime.** `flux:test` sits
+behind a `test` cargo feature in flux, which requires `compile`; the flux
+Makefile turns it on for the `flux` binary only, and `test` joins the
+capabilities list so `srt test` can name a binary built without it.
+`fluxrt` and `fluxc` do not carry it (`fluxrt` is built without `compile`
+and cannot evaluate source at all). Lattice passes the feature through as
+it does `video` and `ktx2`: `srt:test` exists in the dev client
+(`solidrt-go`), not in the production runtime (`solidrt`). Rejected: a
+no-op stub in the shipping runtimes, the way `srt:dev` is registered in
+both today (a packed app has no reason to import a test module, so
+leaving it out is cleaner than stubbing it).
+
+**D21. The JavaScript half of `flux:test` is plain JS inside the flux
+crate, embedded in the binary.** `test` and `expect` need no Rust; only
+the clock and `settle` do. Rejected: a TypeScript package bundled and then
+embedded (the flux build would depend on a bundling step); shipping it in
+the CLI and bundling it into every test (the binary would not provide
+what the `flux:` name says it does).
 
 ## The test surface
 
@@ -225,8 +257,8 @@ do in the runtime.
 
 ### Stage 1 - the base layer and the command
 
-- `flux:test`: `describe`, `test`, `expect` with the matchers of D17,
-  `clock`, `settle`. The stepped clock rides what flux already has:
+- `flux:test` behind the `test` feature (D20, D21): `test`, `expect` with
+  the matchers of D17, `clock`, `settle`. The stepped clock rides what flux already has:
   `install_virtual_time` and `advance_virtual_time` in
   `flux/src/standards_plugins/time.rs`. One `advance_virtual_time` call is
   one task-queue turn (a timer re-armed by a fired callback waits for the
@@ -236,12 +268,15 @@ do in the runtime.
 - `srt test [path]` as a command folder in `packages/cli/src/test/`:
   discover, bundle each file with `-f`, run one process per file, report,
   exit nonzero on any failure. Failures name the source line (the TSX
-  sourcemaps exist).
+  sourcemaps exist). A name filter option runs the tests whose name
+  contains a text, which is what replaces a group for running a subset.
 - `srt check` typechecks `tests/`.
 
 ### Stage 2 - migration on the base layer
 
-- The ten bun test files: `bun:test` becomes `flux:test`.
+- The ten bun test files: `bun:test` becomes `flux:test`. The six that
+  use `describe` also lose the wrapper, and each test name takes the
+  group's label as its prefix (D19). Mechanical.
 - The twenty pure rigs move to `tests/` as `test()` bodies; the oracle
   loops need no rewrite of substance. `gesture-check` moves to the stepped
   clock; the parts of it that ride `performance.now()` keep their
@@ -265,7 +300,8 @@ Prerequisite: [event-timestamp](../backlog/event-timestamp.md).
   alloy and lattice; it keeps decision D6 of
   [frame-timing](../design/frame-timing.md) (a path that never touches
   the wall).
-- **`srt:test`** as a lattice builtin beside `srt:dev` and `srt:events`.
+- **`srt:test`** as a lattice builtin beside `srt:dev` and `srt:events`,
+  in the dev client only (D20).
 - **`label`** on host elements: a rendertree property, reported in the
   tree record and matchable by a query, so `/tree` and the MCP tools gain
   it too.
@@ -306,7 +342,7 @@ Prerequisite: [event-timestamp](../backlog/event-timestamp.md).
   way to fake a backend).
 - The name `app.node()`.
 - Where `flux:test` lives in `flux/src/`: it marshals no forge core and is
-  no web standard, and its `describe`/`test`/`expect` half needs no Rust
+  no web standard, and its `test`/`expect` half needs no Rust
   at all.
 - Whether the CI step builds flux or takes an artifact.
 

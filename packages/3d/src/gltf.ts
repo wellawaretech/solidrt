@@ -19,9 +19,10 @@
 // interleave loop per primitive, so it runs the same under bun (an app's
 // bake script, the check rig) and on flux (loadGltf in
 // model.ts). It never decodes images: material.map indexes the encoded
-// bytes in `images`, and uploading is the engine side's job. An image is
+// files in `images`, and uploading is the engine side's job. An image is
 // a PNG or JPEG, or a KTX2 compressed texture (KHR_texture_basisu, whose
-// source a texture prefers over its plain one).
+// source a texture prefers over its plain one), kept with what its
+// source calls it.
 //
 // Outside the subset: Draco/meshopt-compressed meshes and any other
 // required extension throw naming it; tangents (the base channel and
@@ -233,9 +234,8 @@ export type ModelData = {
   /** The file's animations (empty when it has none). */
   clips: ModelClip[]
   materials: ModelMaterial[]
-  /** Encoded image files (PNG, JPEG or KTX2 bytes) the materials' `map`
-   * index. */
-  images: Uint8Array[]
+  /** The images the materials' maps index. */
+  images: ModelImage[]
   /** The KTX2 images transcoded for this device, by image index (the
    * others absent): what `transcodeModelImages` adds and `createModel`
    * uploads in place of the file. Never in a file; a parse and
@@ -365,6 +365,23 @@ const DEFAULT_MATERIAL: ModelMaterial = {
 }
 
 /** True when the bytes are a .glb container (the "glTF" magic). */
+/** One image of a model: its file as it is, and what its source calls
+ * it. */
+export type ModelImage = {
+  /** The encoded image file: PNG, JPEG or KTX2 bytes. */
+  bytes: Uint8Array
+  /** Its name in the document; without one the uri of its file, and
+   * "image<i>" (its index in the document) for a nameless image embedded
+   * there. Labels its texture, and is how an image embedded in a model
+   * is told from the others (`solidrt.textures`). */
+  name: string
+  /** The file a parse read it from, as the document names it (still
+   * percent-encoded), when it is a file of its own. Absent for an image
+   * embedded in its document, and on everything read from the container,
+   * which embeds its images. */
+  uri?: string
+}
+
 /** How a model samples one of its images: what decides its color space
  * at upload and how it is compressed at bake. */
 export type ModelImageUse = {
@@ -524,7 +541,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
 
   // Images are pulled in only when a material samples them, in first-use
   // order, so `map` indexes a compact list.
-  let images: Uint8Array[] = []
+  let images: ModelImage[] = []
   let imageSlots = new Map<number, number>()
   let imageSlot = (index: number): number => {
     let slot = imageSlots.get(index)
@@ -532,8 +549,12 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       let image = gltf.images?.[index]
       if (image === undefined) throw new Error("parseGltf: texture names a missing image " + index)
       let bytes = image.uri !== undefined ? external(image.uri, "image " + index) : bufferViewBytes(image.bufferView)
+      // A data: uri is the image embedded in the document, not a file.
+      let file: string | undefined = image.uri !== undefined && !image.uri.startsWith("data:") ? image.uri : undefined
+      let entry: ModelImage = { bytes, name: image.name ?? file ?? "image" + index }
+      if (file !== undefined) entry.uri = file
       slot = images.length
-      images.push(bytes)
+      images.push(entry)
       imageSlots.set(index, slot)
     }
     return slot

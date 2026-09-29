@@ -36,10 +36,15 @@ async fn runs_no_more_jobs_at_once_than_it_has_threads() {
   assert_eq!(most.load(Ordering::SeqCst), THREADS, "the pool ran as many jobs at once as it has threads, no more");
 }
 
+// A panic reaches the caller of that job with what it said, a literal
+// message and a formatted one alike, and the worker takes the next job.
 #[tokio::test]
 async fn a_panicking_job_fails_alone() {
   let workers = Workers::new("test-workers-panic", 1);
   let failed: Result<(), String> = workers.run(|| panic!("job failure, expected by this test")).await;
-  assert_eq!(failed, Err("the job panicked".to_string()));
+  assert_eq!(failed, Err("the job panicked: job failure, expected by this test".to_string()));
+  let level = 3;
+  let failed: Result<(), String> = workers.run(move || panic!("level {level} failure, expected by this test")).await;
+  assert_eq!(failed, Err("the job panicked: level 3 failure, expected by this test".to_string()));
   assert_eq!(workers.run(|| 7).await, Ok(7));
 }

@@ -7,7 +7,7 @@ use std::future::Future;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{bytes_of, OptArg};
 #[cfg(feature = "ktx2")]
-use crate::plugins::marshal::{with_pending, CopyBytes};
+use crate::plugins::marshal::{string_opt, with_pending, CopyBytes};
 use crate::plugins::value::Neutral;
 use crate::standards_plugins::body::JsBytes;
 
@@ -124,19 +124,6 @@ fn encode_image<'js>(
 #[cfg(not(feature = "ktx2"))]
 const NO_KTX2: &str = "this runtime was built without compressed textures (check Flux.capabilities for \"ktx2\")";
 
-/// An optional string option: `None` when absent, a throw when not a string.
-#[cfg(feature = "ktx2")]
-fn string_opt<'js>(ctx: &Ctx<'js>, opts: &Object<'js>, key: &str, api: &str) -> rquickjs::Result<Option<String>> {
-  let v: Value = opts.get(key)?;
-  if v.is_undefined() || v.is_null() {
-    return Ok(None);
-  }
-  match v.as_string() {
-    Some(s) => Ok(Some(s.to_string()?)),
-    None => Err(Exception::throw_message(ctx, &format!("{api}: {key} must be a string"))),
-  }
-}
-
 /// The transcode target when the call names none: the block format this
 /// device samples natively - BC7 where the GPU reports it (desktops), ETC2
 /// (GLES 3.0 core) everywhere else. Only a runtime with a GPU can answer.
@@ -226,9 +213,8 @@ fn encode_texture<'js>(
   };
   let pixels = data.copy_bytes();
   Ok(with_pending(&ctx, async move {
-    tokio::task::spawn_blocking(move || forge::ktx2::encode(&pixels, width, height, &options))
+    forge::ktx2::encode_queued(pixels, width, height, options)
       .await
-      .map_err(|e| format!("encodeTexture: {e}"))?
       .map(JsBytes)
       .map_err(|e| format!("encodeTexture: {e}"))
   }))

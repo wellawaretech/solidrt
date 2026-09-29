@@ -6,10 +6,18 @@
 
 import { createMemo, onCleanup } from "@solidjs/signals"
 import { decodeImage, type DecodedImage } from "flux:image"
+import type { TextureCodec } from "flux:image"
 import { createTexture, destroyTexture, type TextureId } from "./gpu"
+import type { TextureCodec as SettingsCodec } from "./textures"
 
 export { decodeImage, encodeImage, encodeTexture, transcodeTexture } from "flux:image"
 export type { DecodedImage, TextureCodec, TranscodedTexture } from "flux:image"
+
+// The codecs the texture settings name (./textures, which takes no type
+// from the runtime) are the encoder's: a codec added to one side alone
+// stops this line from compiling.
+type SameType<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+const SETTINGS_NAME_THE_ENCODERS_CODECS: SameType<SettingsCodec, TextureCodec> = true
 
 export type ImageSource = string | Uint8Array
 

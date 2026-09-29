@@ -1,6 +1,6 @@
 ---
 title: Compressed textures - KTX2 shipped, ETC2 or BC7 on the device
-description: One shipped payload (Basis Universal in KTX2, baked with our own encoder) transcoded at load to the device's native block format - ETC2 on GLES 3.0 targets, BC7 where the BPTC extension is reported; built end to end (device formats, the codec with zstd, the model bake and the loader) and verified on Linux, Windows and Android, open are the macOS device run, the quality a bake should use and the re-measurement on a current Sponza.
+description: One shipped payload (Basis Universal in KTX2, baked with our own encoder) transcoded at load to the device's native block format - ETC2 on GLES 3.0 targets, BC7 where the BPTC extension is reported; built end to end (device formats, the codec with zstd, the model bake and loader, texture settings per application, attribution) and verified on Linux, Windows and Android; settings per file are built (compression on by default, a list of glob entries that raise or exempt files, glob matching and a scan in flux); next are compressed textures outside a model, after the build stage is designed, then the memory a load leaves behind.
 created: 2026-07-30
 ---
 
@@ -16,16 +16,21 @@ the sampler doing the decode for free.
 
 | Step | State |
 |---|---|
-| 1. Device formats on `createTexture` | built, verified in the release client on Linux |
-| 2. `transcodeTexture` / `encodeTexture` | built, verified end to end on Linux; zstd on, a libktx file reads |
-| 3. Tool hosting, model bake, loader, glTF | built, verified on Linux with a baked Sponza |
-| Windows (MSVC, ANGLE over D3D11) | built, both probes pass on device |
+| 1. Device formats on `createTexture` | built, verified on Linux, Windows and Android |
+| 2. `transcodeTexture` / `encodeTexture` | built, verified on the same three; zstd on, a libktx file reads, four transcode threads |
+| 3. Tool hosting, model bake, loader, glTF | built; a baked Sponza loads on Linux, Windows and the tablet |
+| Texture settings per application | built (`solidrt.textures`, `@solidrt/core/textures`) |
+| Attribution | built for everything in the binaries (`THIRD-PARTY-NOTICES.txt`) |
+| Settings per file | built 2026-09-30, verified on Linux (see "Settings per file") |
+| Self-review list | built 2026-09-30, all of it |
 | macOS arm64 | client builds, forge tests pass; not run on device |
-| Android arm64 (Adreno 610) | built, both probes pass on device |
-| Sponza re-measurement | Linux figures on the Khronos sample; the other platforms and a current Sponza are open |
+| Sponza re-measurement | done on Linux, Windows and the tablet; the judgment by eye is open |
 
-Read "Open in this plan" before continuing: its first item (the other
-platforms) decides whether what is built holds outside this machine.
+What is built holds on three platforms. What is left is what a developer
+expects next, then performance: "Open in this plan" has it in that
+order (the user's, 2026-09-29: functionality that must be in before
+performance, "better to do first what developers are expecting to
+get").
 
 ## Field report: Sponza (2026-08-28)
 
@@ -175,8 +180,9 @@ encodeTexture(img: DecodedImage, options: { codec: "etc1s" | "uastc"; srgb?: boo
   (lambda = 20 * (1 - q)^1.3, off at 100) and zeroes the separate
   low-level RDO argument, so RDO is on at every quality below 1 and
   there is no second knob to pass.
-- Both calls copy their input. `encodeTexture` runs on the blocking
-  pool. `transcodeTexture` runs on FOUR transcode threads of its own
+- Both calls copy their input. `encodeTexture` runs on four encode
+  threads of its own (`forge::ktx2::encode_queued`, 2026-09-30).
+  `transcodeTexture` runs on FOUR transcode threads of its own
   (`forge::ktx2::transcode_queued`, decided 2026-09-29), shared by every
   caller in the process and fed in queue order, so a `Promise.all` over
   a scene is bounded whoever wrote it. The threads are a
@@ -216,13 +222,14 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
   quit hooks, and in an isolate. Also
   `flux:path` has `basename`, `dirname`, `extname` with Node's
   semantics; the cores are in `forge::process` and `forge::path`.
-- **The bake.** `srt tool 3d/model --ktx2` (as `tools/model.flux.ts`,
+- **The bake.** `srt tool 3d/model` (as `tools/model.flux.ts`; the
+  `--ktx2` flag it had is gone, see "Settings per file",
   `flux:fs` and `flux:process` in place of `node:fs` and `process.argv`)
   runs `parseGltf` as today, then for each sampled image `decodeImage`
   (premultiplied, the default) and `encodeTexture`: ETC1S with `srgb` for
   the images a material samples as `map` or `emissiveMap`, the slot rule
   `createModel` already uses, UASTC linear for the rest, `mipmap: true`,
-  `wrap: "repeat"`, ONE image at a time (the encoder takes every core).
+  `wrap: "repeat"`, four images at a time (see "Self-review, built").
   The KTX2 bytes replace the image entry and `encodeModel` writes the file
   unchanged. The summary line adds image bytes before and after. Without
   the flag nothing changes. The tool never takes a platform. The
@@ -231,8 +238,8 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
 - **The load path.** `createModel` stays synchronous. A new async
   `transcodeModelImages(data)` sniffs the KTX2 magic (`isKtx2`, from
   core) and starts a transcode per such image; the runtime runs four at
-  a time. As built, `data.images` stays
-  file bytes and the results go into an optional parallel list,
+  a time. As built, `data.images` keeps each image's file
+  (`ModelImage.bytes`) and the results go into an optional parallel list,
   `data.textures` (by image index), rather than replacing the entries:
   a parse and every existing consumer keep their types, and transcoded
   data can still be written by `encodeModel`, which never writes
@@ -245,8 +252,16 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
   `createModel` for the uploads and by the bake for the encodes, so a
   baked image samples as the same image unbaked: an image a color slot
   and a normal slot share is sRGB and takes the accurate codec. The `.srtm` image block carries the
-  KTX2 bytes as-is; version 10 files read identically, so the container
-  version does not move.
+  KTX2 bytes as-is.
+- **Images are records** (2026-09-29). `ModelData.images` is a list of
+  `ModelImage`: `bytes`, `name` (the document's name, else the uri of
+  its file, else "image<i>": Three's rule for a texture's name) and
+  `uri` when the image is a file of its own. The container writes the
+  name with the block and not the uri (it embeds the image), which made
+  it version 11; version 10 files are rejected like every earlier
+  version. `createModel` labels each texture `<label>-<image name>`, so
+  the `/gpu` inventory names the image. `data.textures` stays a list
+  beside it on purpose: a create that streams would remove it.
 - **glTF input.** `parseGltf` accepts `KHR_texture_basisu` in
   `extensionsRequired`, and a texture's
   `extensions.KHR_texture_basisu.source` takes precedence over `source`.
@@ -267,62 +282,325 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
   kinds per extension were rejected: two extensions reading one group
   would each refuse the other's names. Color space, mips and wrap are
   not settings. Not in the scaffold's package.json (the key belongs to
-  an extension); documented in packages/3d/AGENTS.md. Per-model and
-  per-image overrides are left out and would be additive.
+  an extension); documented in packages/3d/AGENTS.md. Settings per
+  file are decided and being built: "Settings per file" below.
 - **Docs.** packages/3d docs and AGENTS notes: the bake flag, what ships,
   what the device does, the sync `createModel` / async
   `transcodeModelImages` rule.
 
 ## Open in this plan
 
-In the order they should be settled:
+### Settings per file (built 2026-09-30)
 
-1. **macOS is not run on device.** The client builds; whether ANGLE
-   over Metal lists the BPTC extension, and both probes, are open. The
-   builder cannot do it: a client started over ssh finds no display
-   while the console session is another user's. It needs a run from a
-   session logged in at the Mac.
-2. **Sponza on a current asset.** The figures under "Sponza, baked"
-   are from the Khronos sample on disk (`demoes/sponza/model/Sponza`),
-   which is an old version. Re-bake and re-measure on the current one.
-3. **The quality a bake uses, per map kind.** The figures are in "UASTC
-   and ETC1S across the quality scale"; the choice is a judgment by eye
-   on real textures, which the figures cannot make. The bake's defaults
-   (decided 2026-09-29: ETC1S 0.75 for color, UASTC 0.9 for normal and
-   data) follow the Khronos KTX guide and glTF-Transform; `data` was
-   first set to ETC1S for the download and changed the same day, when
-   that guidance turned up (a packed map holds unrelated values per
-   channel, which ETC1S handles badly). The comparison in "Sponza,
-   baked" awaits the user's eye. `encodeTexture`'s own default
-   0.5 puts
-   a normal map at 35.7 dB with RDO at lambda 8, and that default was
-   picked before anyone knew quality drove RDO. Effort is fixed at
-   upstream's default and unexamined.
-4. **A compressed load holds every payload at once.** On Windows and
-   Android a loaded compressed model leaves the process about 100 MB
-   larger than it should be; see "What a load leaves behind, per
-   platform". glibc is handled (the mmap threshold is pinned at
-   startup). The fix for all platforms is a create that takes the KTX2
-   and uploads each texture as its transcode finishes, so a few
-   payloads are alive at a time instead of all of them, and none of
-   them passes through the JS heap ("Copies on the way to the GPU").
-5. **Encoder output across machines.** Repeat encodes are byte-identical
-   on one machine. The probe's four files came out the same size from
-   MSVC x86_64 and NDK clang arm64 (607, 509, 610, 509 bytes); their
-   bytes were not compared. The
-   one-payload rule does not need it (a bake runs once, its output
-   ships), a reproducible build would.
-6. **Notices in a packed app.** The platform packages carry
-   `THIRD-PARTY-NOTICES.txt` since 2026-09-29 (see "Attribution"); a
-   packed app does not get it from `srt pack`, which leaves the
-   developer to ship it. Whether pack adds it, and where for each
-   output form, is the user's decision.
-7. **The runtime's size with zstd** is not measured: only the object is
-   (see "Binary size").
-8. **Sponza, re-measured**: bake with `--ktx2`, load on Windows (the
-   original site), Linux and the Adreno 610 tablet; record shipped size,
-   bake time, texture bytes from `/gpu`, client RSS, transcode time per
-   platform; a side-by-side against the RGBA8 bake for the user's eye.
+Unity, Godot and the Khronos KTX guide all let one texture be raised
+above the rest, or left alone; the settings were per kind only.
+
+```json
+"solidrt": {
+  "textures": {
+    "compress": true,
+    "color": { "codec": "etc1s", "quality": 0.75 },
+    "files": [
+      { "match": "assets/sponza/textures/lion_*.png", "codec": "uastc", "quality": 0.95 },
+      { "match": ["assets/ui/**", "assets/hero.glb#lut*"], "compress": false }
+    ]
+  }
+}
+```
+
+What was decided, each by the user:
+
+- **Compression is ON unless the app says otherwise.** "Nothing
+  changes for an app that says nothing" was my argument for off and is
+  no argument: nothing is released, and an app that says nothing would
+  keep paying four times the texture memory. Unity and Godot compress
+  by default. It covers textures whose kind is known (a model's
+  images); nothing compresses a UI image, which is not baked.
+- **`compress` is a setting**, per app, per kind and per entry, the
+  narrower one winning. `--compress` and `--no-compress` stand in for
+  the app's own for one run; `--ktx2` is gone. What a kind or an entry
+  says about itself holds against the flag.
+- **"Not compressed" is `"compress": false`.** `"codec": "none"` names
+  a codec that is none, and `null` already means "unset, as if the key
+  were absent" in this config (`packages/cli/src/lib/project.ts`), so
+  `"codec": null` would read as the kind's codec. An entry with
+  `compress: false` and a codec or a quality fails.
+- **A list named `files`, its pattern field `match`**, a pattern or a
+  list of them, later entries winning field by field: the shape of
+  Prettier's and ESLint's overrides, so the order is written down and
+  does not rest on the key order of a JSON object. `files` and not
+  `overrides` because the same list will declare textures outside a
+  model, where nothing is overridden.
+- **Patterns are globs, matched by the `glob` crate** (rust-lang, no
+  dependencies): `*`, `**`, `?`, `[a-z]`, `[!a-z]`, a literal `*`
+  written `[*]`. No `{a,b}`: `match` takes a list. One pattern covers
+  a folder; a single file is the rare case.
+- **A pattern is matched against the image's path from the project
+  root**, not the uri the glTF writes, so two models that each have a
+  `textures/base.png` are told apart. This is how Unity and Godot key
+  import settings, and it holds for a texture outside a model
+  unchanged.
+- **An embedded image is `<model path>#<image name>`.** The model's
+  path alone names every image embedded in it. A `#` in a file's name
+  is written `[#]`.
+- **A pattern that names nothing fails the bake**, before anything is
+  encoded. A bake sees one model and the settings are the app's, so the
+  question goes to the project's files (the scan comes back empty);
+  the `#name` part is checked by the bake of that model.
+
+As built:
+
+- **forge, flux.** `glob = "=0.3.3"`. `forge::path`: `matches_glob`,
+  `check_glob`, `relative`. `forge::fs::glob(pattern, cwd)`: the files
+  a pattern matches, sorted, honoring the assets mount (a packed mount
+  is matched against its index). On flux: `matchesGlob(path, pattern)`
+  and `relative(from, to)` in `flux:path`, `glob(pattern, { cwd })` in
+  `flux:fs`, Node's names. `relative` was not in what the user
+  approved; the path from the project root needs it and it is Node's.
+  Matching is case-sensitive, a wildcard never stands for a separator,
+  a leading dot is an ordinary character; a malformed pattern throws
+  naming the character.
+- **The scan and the matcher agree**, by test: a file is listed exactly
+  when its path matches. The crate's own scan reads a closing `**` as
+  the directories below where its matcher reads everything below, so
+  the scan asks for the entries of those directories and keeps the
+  files.
+- **The reader** (`packages/core/src/textures.ts`) stays in the
+  runtime-free entry, and so does deciding which setting a texture
+  gets: `textureSettingFor(settings, kind, { file, name }, matchesGlob)`
+  takes the matcher as an argument, `unmatchedTextureFiles(settings,
+  scan)` the scan, `unmatchedTextureNames` the matcher. So the whole of
+  it is tested under bun, where I had told the user it would move to
+  the runtime side. Settings are frozen, the defaults included, and
+  `TextureCodec` is the entry's own type; `packages/core/src/image.ts`
+  holds the line that stops compiling when it and the encoder's
+  disagree.
+- **The bake** (`packages/3d/tools/model.flux.ts`) reads the settings,
+  checks the patterns, asks per image and prints what it did, grouped
+  by kind, codec and quality, with the images it kept.
+- **The CLI rejected the key.** `parseProjectConfig` fails on any key
+  of `solidrt` it does not know and `textures` was not one, so an app
+  that declared texture settings could not `srt run` or `srt pack`.
+  Present since the settings were built. The CLI now takes the key as
+  an object and leaves its content to the reader (it does not depend
+  on core).
+
+Dropped on the way: a matcher of my own in JS (`@solidrt/core/glob`,
+built, tested and deleted); `globset`, whose advantages over `glob` are
+`{a,b}` and matching thousands of patterns in one pass.
+
+Verified, 2026-09-30, Linux:
+
+- `cargo test -p forge --lib --features ktx2` 116 (2 ignored), among
+  them the pattern language, `relative`, the scan, its agreement with
+  the matcher and a packed mount; `cargo test -p flux --features
+  compile,ktx2 --test path --test dir --test file --test process
+  --test image` 14, 7, 8, 8, 7; `-p flux --lib --features gui,ktx2` 70.
+- packages/core `bun test tests` 16; packages/3d `bun test` 40;
+  `srt check` on the 3d package, the tool and the probes.
+- A scratch project with Sponza and a .glb of three named embedded
+  images: the entries raise one color map to UASTC at quality 1, keep
+  the four PNGs and the embedded `lut_warm`, lower `face`; a
+  misspelled file pattern, a misspelled name and a pattern for a model
+  that does not exist fail the bake listing all three; a malformed
+  pattern and a wrong codec fail naming the key; `--no-compress` keeps
+  everything.
+- That Sponza (65 images compressed, 4 kept) loads in the rebuilt
+  release client: 585 ms, 65 textures as BC7 and 4 as rgba8.
+- The rebuilt release client answers `matchesGlob`, `relative` and
+  `glob` from an app.
+
+Not rebuilt: the production runtime (`make runtime`), which was
+already older than the flux binary when this started.
+
+What wider scopes add to it, each additive on the above:
+
+- Textures outside a model: an entry also takes `kind`, `mipmap` and
+  `wrap`, which no material or sampler decides there.
+- Normal maps as two channels: the settings keep their shape, every
+  baked normal map is rebaked.
+
+### The build stage (decided 2026-09-30: its own item)
+
+[asset-build-stage](../backlog/asset-build-stage.md). It is designed
+before "compressed textures outside a model" is built, because it
+decides how an app names a baked file, and built after tool discovery.
+
+### Proposed, awaiting the user's decision
+
+Nothing here is decided. Each was put to the user on 2026-09-29 and not
+answered yet; ask before building.
+
+1. **Notices in a packed app.** The platform packages carry
+   `THIRD-PARTY-NOTICES.txt` (see "Attribution"); `srt pack` does not
+   add it to what it writes, which leaves the developer to ship it.
+   Suggested: next to the executable for the single-file and folder
+   forms, inside the APK's assets for an APK. Where it goes per output
+   form is a packaging decision.
+2. **Sponza: which asset.** The user called the Khronos sample on disk
+   (`~/solidrt/demoes/sponza/model/Sponza`) "a very old version", and
+   separately pointed at that demo for its lighting. Whether the size
+   figures should be redone on another asset was asked and not
+   answered. What does not depend on the asset (a quarter of the
+   texture memory, the load path) is measured.
+
+### Functionality a developer expects, in the suggested order
+
+The order is a suggestion put to the user, not yet confirmed.
+
+1. **Compressed textures outside a model**, after the build stage is
+   designed ([asset-build-stage](../backlog/asset-build-stage.md)),
+   which decides how an app names a baked file. Only the model bake
+   exists. A 2d tile set or a standalone image under `assets/` has the
+   primitives (`encodeTexture`, `transcodeTexture`, `createTexture`)
+   and nothing above them: no tool that bakes it, no loader that takes
+   it. The settings and `isKtx2` are already in core for this.
+2. **Tools of third-party extensions in `srt tool`.** Discovery looks
+   under `node_modules/@solidrt/*` only (okf/ideas.md has the line).
+   Suggested rule: the project's direct dependencies that depend on
+   `@solidrt/core` and ship a `tools/` folder. Scanning every installed
+   package would list unrelated scripts.
+3. **Straight alpha in KTX2 files from other tools.** See "Foreign
+   alpha": a translucent `KHR_texture_basisu` material blends slightly
+   wrong until something premultiplies.
+4. **Untrusted input.** A fetched glTF feeds network bytes into a C++
+   parser; no review or fuzzing was done.
+5. **macOS on device.** The client builds; whether ANGLE over Metal
+   lists the BPTC extension, and the probes, are open. The builder
+   cannot do it: a client started over ssh finds no display while the
+   console session is another user's. It needs a run from a session
+   logged in at the Mac.
+6. **The quality of the defaults, by eye.** The defaults follow the
+   Khronos KTX guide and glTF-Transform (ETC1S 0.75 for color, UASTC
+   0.9 for normal and data; `data` was first ETC1S on a recommendation
+   made before that guidance was looked up). The comparison images
+   were made in the Sponza demo's scene (`probes/sponza-compare/`) and
+   live in a session scratchpad, so they are gone; remake them for the
+   judgment. `encodeTexture`'s own default of 0.5 was picked before
+   anyone knew quality drives RDO, and effort is upstream's default,
+   unexamined.
+
+### Performance and size, after the above
+
+1. **A compressed load holds every payload at once.** On Windows and
+   Android a loaded compressed model leaves the process 100 to 200 MB
+   larger than the textures account for; see "What a load leaves
+   behind, per platform". glibc is handled (the mmap threshold is
+   pinned at startup). The fix for every platform is a create that
+   takes the KTX2 and uploads each texture as its transcode finishes,
+   so a few payloads are alive at a time and none passes through the
+   JS heap ("Copies on the way to the GPU" below). A cache of
+   transcoded bytes does not fix it.
+2. **Opaque textures as ETC2 without alpha**, **ASTC as a target**,
+   **normal maps as two channels**: below, under "Found, outside this
+   plan". ASTC is what Three prefers for UASTC sources.
+3. **The runtime's weight.** The whole zstd library and the encoder
+   are linked into every runtime; one needs the decoder and the
+   transcoder. The runtime's size with zstd is not measured, only the
+   object is (see "Binary size").
+4. **Encoder output across machines.** Repeat encodes are
+   byte-identical on one machine. The probe's four files came out the
+   same size from MSVC x86_64 and NDK clang arm64 (607, 509, 610, 509
+   bytes); their bytes were not compared. The one-payload rule does
+   not need it, a reproducible build would.
+
+### Left unexplained
+
+- A client's memory before any load varies between runs of the same
+  build: 185 or 225 MB on Linux, 117 or 279 MB on the tablet. Readings
+  in this plan are compared as what a load adds for that reason.
+- On every remote client the first debug query after a launch or a
+  load timed out for up to a minute, then answered.
+
+### Smells in the code of steps 1 and 2
+
+Written down 2026-09-29 by the session that wrote that code, each
+confirmed present at commit 2f2e41d2. None changes behavior today and
+none was approved as work; step 3's own list is item 3 under "Proposed".
+
+Layering:
+
+- **A forge plugin reads gui state.** `flux/src/forge_plugins/image.rs`
+  calls `alloy_plugins::try_gui` under `cfg(feature = "gui")` to pick the
+  default transcode target. The placement rule says the crate marshalled
+  decides where a plugin lives; this one marshals forge and consults
+  alloy.
+- **The plugin does the sizing.** `create_texture` in
+  `flux/src/alloy_plugins/gpu.rs` computes the expected payload
+  (`chain_byte_len` or `byte_len`) and words the error; alloy's
+  `create_texture_at` does not check the length at all, only
+  `new_compressed` on the raster thread does, as a backstop. The rule is
+  thin plugins, domain logic in the owning module. The rgba8 path had
+  this shape before; the chain made it larger.
+- **Compressed textures are adopted into Impeller.** The raster create
+  path hands every 2D texture to `gl::adopt_texture`, which describes it
+  to Impeller as RGBA8888. Cube maps skip adoption because they are
+  sampler-only; compressed textures are sampler-only too and do not skip
+  it. Nothing has gone wrong, and nothing was tested that would show it.
+
+Duplication:
+
+- **The block math exists twice**, `BLOCK_EDGE` / `BLOCK_BYTES` and the
+  chain arithmetic in `alloy/src/gpu/texture.rs` and again in
+  `forge/src/ktx2/mod.rs` (forge cannot depend on alloy). Only a test
+  that feeds a forge payload to an alloy create would catch them
+  drifting, and that test is the probe, not a unit test.
+- **The format names cross crates as strings.** `Target::format_name` in
+  forge spells alloy's `TextureFormat` names by hand, and
+  `TranscodedTexture.format` in `image.d.ts` is a literal union copied
+  from `TextureFormat` in `gpu.d.ts`. Three vocabularies kept equal by
+  attention.
+- **`BASE_CAPABILITIES` is two lists** under opposite `cfg`s in
+  `flux/src/plugins/mod.rs`; a capability added to one and not the other
+  compiles.
+- **The texture calls have two bodies each**, the real one and a
+  throwing stub under `cfg(not(feature = "ktx2"))`, with signatures that
+  must be kept alike by hand.
+- **Option parsing is repeated.** `string_opt` was added beside
+  `premultiplied_opt`, and `encode_texture` re-reads `img.data`,
+  `img.width`, `img.height` the way `encode_image` does.
+- **`KTX2 ?= 1` is declared in two Makefiles** (lattice and flux).
+
+The bindings:
+
+- **No version check.** The libvpx bindings pin an ABI version that init
+  verifies; `ktx2/ffi.rs` declares `bt_init` and `bu_init` and trusts
+  the submodule. Upstream exports `bt_get_version` / `bu_get_version`; a
+  pinned constant compared at init would turn a submodule bump that
+  changes a signature into an error instead of undefined behavior.
+- **The `unsafe` blocks are whole function bodies** (`transcode` and
+  `encode` in `forge/src/ktx2/mod.rs`), so the safe checks and the
+  foreign calls are not told apart by the block.
+- **Handles and pointers are `u64`**, as upstream's API has them, so the
+  compiler cannot tell a file handle from a parameter block from a
+  buffer address.
+- **The source list is copied from upstream's CMakeLists.txt** into
+  `forge/build.rs` (32 files). A submodule bump that adds a file fails
+  at link, one that drops a file fails at compile; neither is checked
+  before.
+- **Encoders we never call are compiled**: UASTC HDR, ASTC HDR and LDR,
+  XUBC7, the EXR and DDS writers, the PNG and JPEG readers. The encoder
+  library does not link without them as upstream lays it out.
+
+Smaller:
+
+- **`byte_len` has an `unreachable!`** arm for the compressed formats
+  (they return earlier), a panic path in a function every create calls.
+- **`gl_storage` returns a layout and a type for compressed formats**
+  that nothing may use.
+- **`NDEBUG` is defined in every profile**, so upstream's asserts are
+  off in debug builds too, where they would be wanted.
+- **The readback refusal lists every reason in one sentence** (float,
+  compressed, sRGB) whatever the format was.
+- **An error changed order.** `create_texture` now parses the sampler
+  before checking the size, so a call wrong in both reports the sampler
+  first, where it reported the size.
+- **The encoder takes every core inside a blocking-pool thread**, and
+  concurrent `encodeTexture` calls multiply that (item 3 under
+  "Proposed" has the unbounded-encode half of this).
+- **`byteLength` is arithmetic**, the format's size for the declared
+  dimensions, not what the driver allocated: on a driver that expands
+  ETC2 it understates by four.
 
 ## Found, outside this plan
 
@@ -378,6 +656,17 @@ weight live in [runtime-optimization](../backlog/runtime-optimization.md).
   jobs at once than threads, a panicking job fails alone.
 - packages/core: `bun test tests/textures.test.ts` (5), which also
   proves the entry imports no runtime.
+- `@solidrt/core/glob`: `bun test tests/glob.test.ts` (10): each piece
+  of the pattern language against the paths it matches and the ones it
+  does not, under bun, so the entry imports no runtime.
+- Image records, 2026-09-29: packages/3d `bun test` passes (40), the
+  check rig covering the name rule (the document's name, the uri, the
+  index), the uri of a file image, and names through the container
+  without uris; `srt check` passes on the package, the tool and the
+  probes. Release client, Linux: the Khronos Sponza baked by the tool
+  (version 11, 69 images) loads in `probes/ktx2-model-probe.tsx` and
+  the `/gpu` inventory lists its textures as
+  `probe-<file name of the image>`.
 - flux additions: `cargo test -p forge --lib path` (4), `cargo test -p
   flux --features compile --test path --test process` (11 and 7; the
   `exit` tests run the flux binary).
@@ -579,6 +868,48 @@ bytes from `/gpu`): Linux 554 ms BC7, Windows 508 ms BC7, tablet 1310 ms
 ETC2, 90.7 MB on each; uncompressed 1250, 746 and 3158 to 3384 ms,
 362.7 MB. `flux:process` exit throws in the windowed client on all
 three.
+
+### Self-review, built (2026-09-30)
+
+- **Encodes are bounded.** `forge::ktx2::encode_queued` runs
+  `ENCODE_THREADS` (4, never more than the cores) encodes at a time on
+  a `Workers` of their own; `encodeTexture` goes through it. This plan
+  said an encode takes every core, which the measurement does not
+  bear out (`measure_encodes_at_once`, ignored, in
+  `forge/src/tests/ktx2.rs`; release, 16 cores, eight Sponza maps,
+  two runs):
+
+  | at once | UASTC 0.9, normal maps | ETC1S 0.75, color maps | ETC1S, most memory |
+  |---|---|---|---|
+  | 1 | 19.0 to 21.6 s | 8.6 to 8.9 s | 0.25 GB |
+  | 2 | 12.8 to 14.1 s | 4.5 to 4.9 s | 0.39 GB |
+  | 4 | 10.4 to 11.9 s | 2.7 to 3.0 s | 0.64 GB |
+  | 8 | 11.1 s, 35.1 s | 2.4 to 2.5 s | 1.0 GB |
+
+  ETC1S works an image on little more than one core, UASTC spreads one
+  over several; both stop gaining at four while the memory keeps
+  growing. The 35.1 s is one run on a laptop that throttles when hot.
+- **The bake runs four images at a time** (`IMAGES_IN_FLIGHT` in
+  `tools/model.flux.ts`), each decoded when its turn comes: an encode
+  that waits in the runtime's queue holds its pixels, so starting all
+  69 would hold 69 decoded images. Sponza with `--ktx2`: 64.7 s where
+  it was 130 s, the same bytes per kind (4882, 22110 and 12061 KiB).
+  It loads in the release client (531 ms, 69 textures, BC7).
+- **A panic's message reaches the caller.** `Workers::run` errs with
+  "the job panicked: <what it said>", for a literal and a formatted
+  message alike.
+- **One environment for a flux script.** `fluxScriptEnv` in
+  `packages/cli/src/lib/flux-script.ts`, used by `srt run` and by a
+  tool under flux. Both verified after the change.
+- **The settings entry takes no type from the runtime and its
+  defaults are frozen**: done with the reader, see "Settings per
+  file".
+- Suites, all passing: `cargo test -p forge --lib --features ktx2` 104
+  (2 ignored, the measurements), `-p flux --test image --features
+  ktx2` 7, `-p forge --lib workers` 2.
+- Not rebuilt: the release client. It runs the transcode path, which
+  did not change; the bake runs under the flux binary, which is
+  rebuilt and staged.
 
 ### Attribution (2026-09-29)
 

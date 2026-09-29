@@ -626,15 +626,39 @@ that reads exactly like Solid fallout.
   sharp art and text, so it is not for UI images. The runtime-free half
   is `@solidrt/core/textures`, importable under bun by a bake script or
   an extension's pure modules: `isKtx2(bytes)` tells such a file from a
-  PNG or JPEG, and `textureSettings(packageJson)` reads the codec and
-  quality per kind of texture an app declares under `solidrt.textures`
-  in its package.json, so every bake, whoever wrote it, honors the same
-  settings. The kinds say what the texels ARE, not what draws them:
+  PNG or JPEG, and `textureSettings(packageJson)` reads how an app
+  wants its textures compressed, declared under `solidrt.textures` in
+  its package.json, so every bake, whoever wrote it, honors the same
+  settings. Three levels, the narrower one winning: `compress` for the
+  app (on unless it says otherwise), `compress` / `codec` / `quality`
+  per kind of texture, and `files`, a list of entries that each name
+  files by glob pattern (`match`, a path from the project root) and set
+  the same three for them, a later entry winning over an earlier one.
+  The kinds say what the texels ARE, not what draws them:
   `color` (sRGB color the eye sees), `normal` (directions), `data`
   (other linear values that tolerate a small error: a mask, a
   roughness). An extension maps its own uses onto them. Values that
   must come back exact (a lookup table, a distance field) are none of
-  the three and are not block compressed.
+  the three and are not block compressed: an entry with
+  `"compress": false` keeps them as their file. A bake asks per
+  texture, and checks the patterns before it encodes anything, passing
+  the runtime's matcher and scan in (the entry itself has no runtime):
+
+  ```ts
+  import { glob } from "flux:fs"
+  import { matchesGlob } from "flux:path"
+  import { textureSettings, textureSettingFor, unmatchedTextureFiles } from "@solidrt/core/textures"
+
+  let settings = textureSettings(await file("package.json").json())
+  let unmatched = await unmatchedTextureFiles(settings, (pattern) => glob(pattern, { cwd: "." }))
+  if (unmatched.length > 0) throw new Error("No file matches " + unmatched.join(", "))
+  let setting = textureSettingFor(settings, "color", { file: "assets/tiles/ground.png" }, matchesGlob)
+  if (setting.compress) bytes = await encodeTexture(decodeImage(bytes), { codec: setting.codec, quality: setting.quality, srgb: true, mipmap: true })
+  ```
+
+  A texture embedded in another file (an image inside a .glb) is
+  `{ file, name }`, and a pattern picks it as `<file>#<name>`;
+  `unmatchedTextureNames` reports the names a file does not have.
 
 ## Minimal app, core primitives only (verified to render)
 

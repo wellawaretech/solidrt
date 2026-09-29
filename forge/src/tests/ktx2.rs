@@ -18,6 +18,8 @@ const FOREIGN_LEVELS: u32 = 11;
 /// best blocks and everything below it turns rate-distortion optimization
 /// on, stronger the lower it goes.
 const MEASURED_QUALITY: [f32; 5] = [0.25, 0.5, 0.75, 0.9, 1.0];
+// How many encodes measure_encodes_at_once runs at once.
+const MEASURED_AT_ONCE: [usize; 4] = [1, 2, 4, 8];
 /// Bytes of the four-level chain in a block format: 4 + 1 + 1 + 1 blocks.
 const CHAIN_BLOCK_BYTES: usize = 7 * 16;
 /// Bytes of the four-level chain as rgba8: 64 + 16 + 4 + 1 pixels.
@@ -166,6 +168,56 @@ fn measure_quality() {
 
 // The one-payload rule rests on this: the same input encodes to the same
 // bytes, run after run (and the threaded encoder does not reorder output).
+// Not a test of correctness: measures how long the images named in
+// KTX2_MEASURE_IMAGES take to encode, all of them, with 1 to 8 encodes
+// running at once, and the most memory the process held meanwhile. What
+// ENCODE_THREADS rests on. The codec is KTX2_MEASURE_CODEC ("uastc" when
+// unset), at the quality in KTX2_MEASURE_QUALITY (the default when unset).
+//   KTX2_MEASURE_IMAGES=a.jpg:b.jpg cargo test --release -p forge --lib \
+//     --features ktx2 measure_encodes_at_once -- --ignored --nocapture
+#[test]
+#[ignore]
+fn measure_encodes_at_once() {
+  use std::sync::atomic::{AtomicUsize, Ordering};
+  use std::sync::Arc;
+
+  let paths = std::env::var("KTX2_MEASURE_IMAGES").expect("KTX2_MEASURE_IMAGES names the images");
+  let codec = Codec::parse(&std::env::var("KTX2_MEASURE_CODEC").unwrap_or("uastc".to_string())).expect("codec");
+  let quality = match std::env::var("KTX2_MEASURE_QUALITY") {
+    Ok(quality) => quality.parse().expect("KTX2_MEASURE_QUALITY is a number"),
+    Err(_) => DEFAULT_QUALITY,
+  };
+  let images: Vec<_> = paths
+    .split(':')
+    .map(|path| crate::image::decode(&std::fs::read(path).expect("read image"), true).expect("decode image"))
+    .collect();
+  println!("{} images, {codec:?} at quality {quality}", images.len());
+  let images = Arc::new(images);
+  for at_once in MEASURED_AT_ONCE {
+    // Linux: start the high-water mark of the process over.
+    let _ = std::fs::write("/proc/self/clear_refs", "5");
+    let next = Arc::new(AtomicUsize::new(0));
+    let started = std::time::Instant::now();
+    let threads: Vec<_> = (0..at_once)
+      .map(|_| {
+        let (images, next) = (images.clone(), next.clone());
+        std::thread::spawn(move || {
+          while let Some(image) = images.get(next.fetch_add(1, Ordering::SeqCst)) {
+            let options = EncodeOptions { wrap: MipWrap::Repeat, quality, ..options(codec, false, true) };
+            encode(&image.data, image.width, image.height, &options).expect("encode");
+          }
+        })
+      })
+      .collect();
+    for thread in threads {
+      thread.join().expect("the encode thread ran");
+    }
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let most = status.lines().find(|line| line.starts_with("VmHWM")).unwrap_or("VmHWM: not read").to_string();
+    println!("  {at_once} at once: {:.1} s, {most}", started.elapsed().as_secs_f32());
+  }
+}
+
 #[test]
 fn encoding_is_deterministic() {
   let pixels: Vec<u8> = (0..SIZE * SIZE).flat_map(|i| [(i * 3) as u8, (i * 5) as u8, (i * 7) as u8, 255]).collect();

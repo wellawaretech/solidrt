@@ -310,9 +310,16 @@ if (gltfExternalUris(file).length !== 0) fail("gltfExternalUris: a self-containe
     if (uri === "textures/base.png") return fakePng
     throw new Error("unexpected uri " + uri)
   })
-  if (resolvedGlb.images.length !== 1 || resolvedGlb.images[0]!.join() !== fakePng.join()) {
+  if (resolvedGlb.images.length !== 1 || resolvedGlb.images[0]!.bytes.join() !== fakePng.join()) {
     fail("glb external image: the png bytes did not come through the resolver")
   }
+  // A file of its own keeps its uri, which names it where the document
+  // does not; the document's name wins where it has one.
+  let fromFile = resolvedGlb.images[0]!
+  if (fromFile.uri !== "textures/base.png" || fromFile.name !== "textures/base.png") fail(`glb external image: uri ${fromFile.uri}, name ${fromFile.name}`)
+  let namedGlb = glb({ ...document, images: [{ uri: "textures/base.png", name: "base" }] }, binBlocks, binLength)
+  let named = parseGltf(namedGlb, () => fakePng).images[0]!
+  if (named.uri !== "textures/base.png" || named.name !== "base") fail(`named external image: uri ${named.uri}, name ${named.name}`)
 }
 
 // --- primitive modes ------------------------------------------------------
@@ -383,7 +390,9 @@ for (let part of model.parts) validateGeometry(part.geometry)
 if (model.parts.length !== 4) fail(`parts: ${model.parts.length}, expected 4`)
 if (model.parts.map((p) => p.name).join() !== "shifted,mirrored,flat,skinny") fail(`part names: ${model.parts.map((p) => p.name).join()}`)
 if (model.materials.length !== 4) fail(`materials: ${model.materials.length}, expected 4`)
-if (model.images.length !== 1 || model.images[0]!.join() !== fakePng.join()) fail("images: the png bytes did not come through")
+if (model.images.length !== 1 || model.images[0]!.bytes.join() !== fakePng.join()) fail("images: the png bytes did not come through")
+// Embedded and nameless: named by its index in the document, no uri.
+if (model.images[0]!.name !== "image0" || "uri" in model.images[0]!) fail(`images: an embedded image is ${JSON.stringify({ ...model.images[0]!, bytes: undefined })}`)
 
 // The node table: pre-order (rig materialized by its descendant part),
 // "flat"'s matrix decomposed to TRS, and the meshless "empty" and
@@ -577,7 +586,10 @@ expectSample("cubic position", cubic, 2, [4, 0, 0])
 
 // --- container round trip -------------------------------------------------
 
-let sameModel = (a: ModelData, b: ModelData, label: string): void => {
+// `images` says how far the images are compared: a round trip keeps
+// their names, the same model from another document (its image a file of
+// its own there) keeps their bytes.
+let sameModel = (a: ModelData, b: ModelData, label: string, images: "named" | "bytes" = "named"): void => {
   if (JSON.stringify(a.nodes) !== JSON.stringify(b.nodes)) fail(`${label}: nodes`)
   if (a.parts.length !== b.parts.length) return fail(`${label}: part count`)
   for (let i = 0; i < a.parts.length; i++) {
@@ -613,7 +625,8 @@ let sameModel = (a: ModelData, b: ModelData, label: string): void => {
       if (x.times.join() !== y.times.join() || x.values.join() !== y.values.join()) fail(`${label}: clip ${i} channel ${k} data`)
     }
   }
-  if (a.images.length !== b.images.length || a.images.some((img, i) => img.join() !== b.images[i]!.join())) fail(`${label}: images`)
+  if (a.images.length !== b.images.length || a.images.some((img, i) => img.bytes.join() !== b.images[i]!.bytes.join())) fail(`${label}: images`)
+  if (images === "named" && a.images.some((img, i) => img.name !== b.images[i]!.name)) fail(`${label}: image names`)
   if (a.bounds.join() !== b.bounds.join()) fail(`${label}: bounds`)
   if (JSON.stringify(a.extras) !== JSON.stringify(b.extras)) fail(`${label}: extras`)
   let blobs = (m: ModelData): [string, Uint8Array][] => Object.entries(m.blobs ?? {})
@@ -652,7 +665,7 @@ let resolved = parseGltf(externalBytes, (uri) => {
   if (uri === "textures/base.png") return fakePng
   throw new Error("unexpected uri " + uri)
 })
-sameModel(model, resolved, ".gltf + external files")
+sameModel(model, resolved, ".gltf + external files", "bytes")
 throws("external without resolver", () => parseGltf(externalBytes), "no resolver")
 
 // The prefetch list is the parser's demand set: a document naming every
@@ -706,14 +719,17 @@ throws("external without resolver", () => parseGltf(externalBytes), "no resolver
     if (uri.endsWith(".ktx2")) return fakeKtx2
     throw new Error("parseGltf opened " + uri + ", the fallback a KTX2 source replaces")
   })
-  if (parsed.images.length !== 2 || !parsed.images.every(isKtx2)) fail("KHR_texture_basisu: the two KTX2 images did not come through")
+  if (parsed.images.length !== 2 || !parsed.images.every((img) => isKtx2(img.bytes))) fail("KHR_texture_basisu: the two KTX2 images did not come through")
+  if (parsed.images.map((img) => img.uri).join() !== "textures/base.ktx2,textures/normal.ktx2") fail("KHR_texture_basisu: the images are not the KTX2 files")
   if (parsed.materials[0]!.map !== 0 || parsed.materials[0]!.normalMap !== 1) fail("KHR_texture_basisu: the material does not index the KTX2 images")
   if (parsed.textures !== undefined) fail("a parse carries no transcoded textures")
   // The container carries the KTX2 bytes as it carries any image, and
   // never the transcoded payloads of one device.
   let ready = { data: new Uint8Array(16), width: 4, height: 4, format: "etc2-rgba8" as const, mipmap: false }
   let back = decodeModel(encodeModel({ ...parsed, textures: [ready, ready] }))
-  if (back.images.length !== 2 || back.images.some((img) => img.join() !== fakeKtx2.join())) fail("container: the KTX2 bytes did not round-trip")
+  if (back.images.length !== 2 || back.images.some((img) => img.bytes.join() !== fakeKtx2.join())) fail("container: the KTX2 bytes did not round-trip")
+  // The container embeds its images: the names travel, the uris do not.
+  if (back.images.map((img) => img.name).join() !== "textures/base.ktx2,textures/normal.ktx2" || back.images.some((img) => "uri" in img)) fail("container: image names travel, uris do not")
   if (back.textures !== undefined) fail("container: transcoded textures were written to the file")
 }
 
@@ -725,7 +741,7 @@ throws("external without resolver", () => parseGltf(externalBytes), "no resolver
 {
   let material = (slots: Partial<Record<"map" | "emissiveMap" | "normalMap" | "metalnessRoughnessMap", number>>) =>
     ({ map: null, emissiveMap: null, normalMap: null, metalnessRoughnessMap: null, ...slots }) as unknown as ModelData["materials"][number]
-  let images = [0, 1, 2, 3, 4, 5].map(() => fakePng)
+  let images = [0, 1, 2, 3, 4, 5].map((i) => ({ bytes: fakePng, name: "image" + i }))
   let uses = modelImageUses({
     images,
     materials: [material({ map: 0, normalMap: 1, metalnessRoughnessMap: 2, emissiveMap: 3 }), material({ normalMap: 4, map: 4 }), material({ map: 4 })],

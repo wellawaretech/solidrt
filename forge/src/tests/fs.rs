@@ -166,3 +166,79 @@ async fn dir_watcher_reports_create_and_rename_target() {
   assert!(DirWatcher::open(&missing.to_string_lossy(), false).is_err());
   let _ = std::fs::remove_dir_all(&dir);
 }
+
+// A project tree to scan: files at three depths, a hidden one, an empty
+// directory.
+fn glob_tree(tag: &str) -> std::path::PathBuf {
+  let dir = std::env::temp_dir().join(format!("forge-fs-glob-{}-{tag}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&dir);
+  for file in ["assets/lion_head.png", "assets/lion_tail.png", "assets/base.jpg", "assets/ui/icon.png", "assets/ui/dark/icon.png", "assets/.hidden.png", "src/index.tsx"] {
+    let path = dir.join(file);
+    std::fs::create_dir_all(path.parent().expect("the file has a directory")).expect("create directory");
+    std::fs::write(&path, file).expect("write file");
+  }
+  std::fs::create_dir_all(dir.join("assets/empty")).expect("create empty directory");
+  dir
+}
+
+// The paths come back as the OS spells them; compared with "/".
+async fn glob_from(dir: &std::path::Path, pattern: &str) -> Vec<String> {
+  let found = crate::fs::glob(pattern, Some(&dir.to_string_lossy())).await.expect("the scan ran");
+  found.into_iter().map(|path| path.replace(std::path::MAIN_SEPARATOR, "/")).collect()
+}
+
+#[tokio::test]
+async fn glob_lists_the_files_a_pattern_matches() {
+  let dir = glob_tree("files");
+  assert_eq!(glob_from(&dir, "assets/lion_*.png").await, ["assets/lion_head.png", "assets/lion_tail.png"]);
+  assert_eq!(glob_from(&dir, "assets/*.png").await, ["assets/.hidden.png", "assets/lion_head.png", "assets/lion_tail.png"]);
+  assert_eq!(glob_from(&dir, "assets/base.jpg").await, ["assets/base.jpg"]);
+  assert_eq!(glob_from(&dir, "**/icon.png").await, ["assets/ui/dark/icon.png", "assets/ui/icon.png"]);
+  assert_eq!(glob_from(&dir, "*/index.tsx").await, ["src/index.tsx"]);
+  let _ = std::fs::remove_dir_all(&dir);
+}
+
+// A closing "**" is every file below, as the matcher reads it, and a
+// directory is never an answer, the empty one included.
+#[tokio::test]
+async fn glob_with_a_closing_double_star_lists_every_file_below() {
+  let dir = glob_tree("below");
+  assert_eq!(glob_from(&dir, "assets/ui/**").await, ["assets/ui/dark/icon.png", "assets/ui/icon.png"]);
+  assert_eq!(glob_from(&dir, "assets/*").await, ["assets/.hidden.png", "assets/base.jpg", "assets/lion_head.png", "assets/lion_tail.png"]);
+  assert_eq!(glob_from(&dir, "assets/empty/**").await, Vec::<String>::new());
+  assert_eq!(glob_from(&dir, "**").await.len(), 7);
+  let _ = std::fs::remove_dir_all(&dir);
+}
+
+// What the scan lists is what the matcher matches: no file the one finds
+// does the other refuse, and the reverse.
+#[tokio::test]
+async fn glob_agrees_with_the_matcher() {
+  let dir = glob_tree("agree");
+  let all = glob_from(&dir, "**").await;
+  for pattern in ["assets/**", "assets/*", "**/*.png", "assets/ui/**/*.png", "assets/lion_?ead.png", "assets/[a-l]*.*", "src/**"] {
+    let matched: Vec<String> =
+      all.iter().filter(|path| crate::path::matches_glob(path, pattern).expect("the pattern is well formed")).cloned().collect();
+    assert_eq!(glob_from(&dir, pattern).await, matched, "{pattern}");
+  }
+  let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn glob_without_a_match_is_empty_and_a_malformed_pattern_errs() {
+  let dir = glob_tree("none");
+  assert_eq!(glob_from(&dir, "assets/tiger_*.png").await, Vec::<String>::new());
+  assert_eq!(glob_from(&dir, "nowhere/**").await, Vec::<String>::new());
+  let failed = crate::fs::glob("assets/[", Some(&dir.to_string_lossy())).await;
+  assert_eq!(failed, Err("glob: the pattern \"assets/[\" is malformed at character 7: invalid range pattern".to_string()));
+  let _ = std::fs::remove_dir_all(&dir);
+}
+
+// A packed mount has no directories to walk: its files are the keys of its
+// index, and the pattern is matched against those.
+#[test]
+fn glob_of_a_packed_mount_matches_its_index() {
+  let index = ["assets/ui/icon.png", "assets/lion.png", "assets/model.srtm", "isolates/worker.bin"].map(String::from);
+  let pattern = crate::path::glob_pattern("assets/**/*.png").expect("the pattern is well formed");
+  assert_eq!(crate::fs::matching_paths(index.iter(), &pattern), ["assets/lion.png", "assets/ui/icon.png"]);
+}

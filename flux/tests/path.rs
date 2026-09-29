@@ -5,8 +5,10 @@ mod common;
 use common::run_source;
 
 // flux:path is a lexical path module: resolveWithin fuses normalization with a
-// containment check, join concatenates and normalizes segments, and
-// basename/dirname/extname split a path the way Node's do. All are pure
+// containment check, join concatenates and normalizes segments,
+// basename/dirname/extname split a path the way Node's do, relative leads
+// from one path to another and matchesGlob matches a path against a glob
+// pattern. All are pure
 // string operations (no filesystem access), so these tests assert on output
 // for fixed inputs rather than touching disk. Absolute-path cases assume unix
 // separators, hence the unix gate.
@@ -14,7 +16,7 @@ use common::run_source;
 async fn eval(expr: &str) -> String {
   let code = format!(
     r#"
-    import {{ resolveWithin, join, basename, dirname, extname }} from "flux:path";
+    import {{ resolveWithin, join, basename, dirname, extname, relative, matchesGlob }} from "flux:path";
     console.log(String({expr}));
     "#
   );
@@ -93,4 +95,28 @@ async fn basename_dirname_extname_split_a_path() {
 #[tokio::test]
 async fn basename_takes_an_explicit_undefined_ext() {
   assert_eq!(eval(r#"basename("/a/model.gltf", undefined)"#).await, "model.gltf");
+}
+
+#[tokio::test]
+async fn relative_leads_from_one_path_to_another() {
+  assert_eq!(eval(r#"relative("/a/b", "/a/c/d.txt")"#).await, "../c/d.txt");
+  assert_eq!(eval(r#"relative("/a/b", "/a/b/c")"#).await, "c");
+  assert_eq!(eval(r#"relative("/a/b", "/a/b").length"#).await, "0");
+  // Against the cwd on both sides, so the cwd cancels out.
+  assert_eq!(eval(r#"relative(".", "assets/a.png")"#).await, "assets/a.png");
+}
+
+#[tokio::test]
+async fn matches_glob_matches_whole_paths() {
+  assert_eq!(eval(r#"matchesGlob("assets/lion_head.png", "assets/lion_*.png")"#).await, "true");
+  assert_eq!(eval(r#"matchesGlob("assets/sub/lion_head.png", "assets/lion_*.png")"#).await, "false");
+  assert_eq!(eval(r#"matchesGlob("assets/sub/deep/a.png", "assets/**/*.png")"#).await, "true");
+  assert_eq!(eval(r#"matchesGlob("assets/tile_7.png", "assets/tile_[0-9].png")"#).await, "true");
+  assert_eq!(eval(r#"matchesGlob("assets/Tile_7.png", "assets/tile_?.png")"#).await, "false");
+}
+
+#[tokio::test]
+async fn matches_glob_throws_on_a_malformed_pattern() {
+  let thrown = eval(r#"(() => { try { return matchesGlob("ab", "a[b") } catch (e) { return e.message } })()"#).await;
+  assert_eq!(thrown, "matchesGlob: the pattern \"a[b\" is malformed at character 1: invalid range pattern");
 }

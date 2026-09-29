@@ -2225,7 +2225,9 @@ index into `images`, `doubleSided`, `transparent` = alphaMode BLEND,
 `alphaMode` as written and `alphaCutoff`, spec default 0.5, the
 normal and emissive slots, `metalness`/`roughness` factors and the
 packed `metalnessRoughnessMap` - standard's inputs), `images`
-(the encoded PNG/JPEG bytes, undecoded) and `bounds` (world-space rest
+(each `{ bytes, name, uri? }`: the encoded PNG, JPEG or KTX2 file,
+undecoded; its name in the document, else the uri of its file, else
+"image<i>"; the `uri` when it is a file of its own) and `bounds` (world-space rest
 pose: a part's box through its node, a skinned part's per-joint boxes
 through the joints' rest transforms - where the skin places it, armature
 scale included; conservative under rotation). External
@@ -2273,7 +2275,8 @@ its true roots; a hierarchy reaching a node twice (a cycle) throws.
 #### createModel
 
 `createModel(data, { material?, label?, autoFree? })` - uploads the images (repeat
-wrap, mipmapped, 4x anisotropic), makes one material per glTF material (default `standard`
+wrap, mipmapped, 4x anisotropic; each texture is labeled `<label>-<image name>`, so the
+`/gpu` inventory names the image), makes one material per glTF material (default `standard`
 with the file's color, maps, normal scale, metalness/roughness and
 packed map, emissive and transparency - the glTF material model, so a
 scene showing a model wants an `environment` (a glTF metal in a scene
@@ -2331,30 +2334,67 @@ models and a binary import (`import bytes from "./x.glb" with { type:
 
 #### Compressed textures
 
-`srt tool 3d/model <in> -o assets/<name>.srtm --ktx2` bakes the images
+`srt tool 3d/model <in> -o assets/<name>.srtm` bakes the images
 too: each becomes a KTX2 compressed texture with its mip chain. The file is the
 same for every platform; at load each device turns the images into the
 block format its GPU samples (BC7 on desktops, ETC2 elsewhere), which
 holds them in a quarter of the memory of the decoded image. Measured on
 the Khronos Sponza sample (69 images): 363 MB of textures as PNG/JPEG,
-91 MB baked with `--ktx2`. The encode is slow (two minutes for that
+91 MB compressed. The encode is slow (a minute for that
 model) and runs once, at bake time. Block compression is lossy: judge
 the result on your own textures. What it saves is GPU memory; the file
 shrinks for color maps and can grow for data maps.
 
-How each kind of map is compressed is the app's to say, in the
+How the images are compressed, and whether, is the app's to say, in the
 `textures` group of the `solidrt` key in its package.json (the project
-the tool runs in). These are the defaults; name only what differs:
+the tool runs in, whose root is where the tool is run). These are the
+defaults; name only what differs:
 
 ```json
 "solidrt": {
   "textures": {
+    "compress": true,
     "color": { "codec": "etc1s", "quality": 0.75 },
     "normal": { "codec": "uastc", "quality": 0.9 },
-    "data": { "codec": "uastc", "quality": 0.9 }
+    "data": { "codec": "uastc", "quality": 0.9 },
+    "files": []
   }
 }
 ```
+
+Three levels, the narrower one winning: the app (`compress`), a kind
+of map (`compress`, `codec`, `quality`), and single files:
+
+```json
+"files": [
+  { "match": "assets/sponza/textures/lion_*.png", "codec": "uastc", "quality": 0.95 },
+  { "match": ["assets/ui/**", "assets/hero.glb#lut*"], "compress": false }
+]
+```
+
+- `match` is a glob pattern, or a list of them, against the image's
+  path FROM THE PROJECT ROOT, written with "/": `*` inside a segment,
+  `**` across segments, `?`, `[a-z]`, `[!a-z]` (`matchesGlob` of
+  flux:path; no `{a,b}`, list the patterns). Not the uri the glTF
+  writes: two models with a `textures/base.png` each are two files.
+- An image embedded in the model (a .glb) has no file of its own: the
+  model's path names every image in it, and `#name` after it picks
+  the ones of that name (the glTF image's `name`, "image<i>" without
+  one).
+- An entry sets `compress`, `codec`, `quality` or several, over what
+  the image's kind says. Where several entries name one image, a
+  later entry wins, field by field.
+- `"compress": false` keeps the image as its PNG or JPEG. That is for
+  what must come back exact (a lookup table, a distance field) and
+  for sharp art and text, which block compression damages.
+- A pattern that names nothing FAILS the bake, before anything is
+  encoded: no file of the project matches it, or the baked model has
+  no embedded image of that name. A misspelled pattern would
+  otherwise do nothing and say nothing.
+
+`--compress` and `--no-compress` stand in for the app's `compress` for
+one run (a quick bake while the model is still changing); what a kind
+or an entry says about itself still holds.
 
 The kinds are core's and say what the texels are (`@solidrt/core/textures`).
 This package maps a material's slots onto them: base color and emissive
@@ -2372,13 +2412,15 @@ unrelated values into its channels, which the small codec handles
 badly, so both take the accurate one (what the Khronos KTX guide
 recommends). Set `data` to "etc1s" when the download matters more than
 roughness detail: on the Khronos Sponza sample that is 9 MB less for
-about 2 dB in the views that glossy surfaces fill. An unknown kind, codec or field fails the bake naming the key,
-before anything is encoded, and the bake prints the settings it used
-per kind. The color space (sRGB for `color`), the mip chain and the
+about 2 dB in the views that glossy surfaces fill. An unknown key, codec or field fails the bake naming the key,
+before anything is encoded, and the bake prints how many images it
+compressed with which codec and quality, and how many it kept. The color space (sRGB for `color`), the mip chain and the
 wrap are not settings: they follow how `createModel` samples. The
 settings are the app's, not this package's: an app's own bake script,
 or another extension's, reads the same group with
-`textureSettings(packageJson)` from `@solidrt/core/textures`.
+`textureSettings(packageJson)` from `@solidrt/core/textures` and asks
+`textureSettingFor(settings, kind, { file, name }, matchesGlob)` per
+texture (core's AGENTS.md has the rest).
 
 `loadModel` and `loadGltf` handle such a model as they are, and
 `loadGltf` reads a glTF that carries KTX2 images itself
@@ -2652,9 +2694,9 @@ mesh (JS-written records, no nodes) cannot morph: rejected at add().
 Not in the subset, dropped: tangents and further UV sets; samplers are
 ignored (every texture repeats); additive blending draws as base color.
 The follow-ups are filed in okf/backlog/3d-model-loader.md. The `.srtm`
-container is VERSION 8 (node table in the header, node-local vertices,
-skins, clips, packed morph targets); older bakes are rejected - re-bake
-with `srt tool 3d/model`.
+container is VERSION 11 (node table in the header, node-local vertices,
+skins, clips, packed morph targets, app data, images under their
+names); older bakes are rejected - re-bake with `srt tool 3d/model`.
 
 ## Splats
 

@@ -35,8 +35,8 @@ impl Workers {
   }
 
   /// Queue `job` and wait for its result. Errs only when the job
-  /// panicked, which takes nothing else down: the worker goes on with the
-  /// next job.
+  /// panicked, with what the panic said; that takes nothing else down:
+  /// the worker goes on with the next job.
   pub async fn run<T, F>(&self, job: F) -> Result<T, String>
   where
     T: Send + 'static,
@@ -44,12 +44,28 @@ impl Workers {
   {
     let (done, result) = oneshot::channel();
     let job: Job = Box::new(move || {
+      let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).map_err(|panic| panic_message(panic.as_ref()));
       // The receiver is gone when the caller stopped waiting; the result
       // has nobody to go to then.
-      let _ = done.send(job());
+      let _ = done.send(outcome);
     });
     self.queue.send(job).map_err(|_| "the worker threads are gone".to_string())?;
-    result.await.map_err(|_| "the job panicked".to_string())
+    match result.await {
+      Ok(outcome) => outcome.map_err(|message| format!("the job panicked: {message}")),
+      Err(_) => Err("the job ended without a result".to_string()),
+    }
+  }
+}
+
+/// What a panic said: `panic!` carries a `&str` for a literal message and a
+/// `String` for a formatted one.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+  if let Some(text) = panic.downcast_ref::<&str>() {
+    return (*text).to_string();
+  }
+  match panic.downcast_ref::<String>() {
+    Some(text) => text.clone(),
+    None => "no message".to_string(),
   }
 }
 
@@ -62,8 +78,9 @@ fn work(jobs: &Mutex<Receiver<Job>>) {
       Err(_) => return,
     };
     match job {
-      // A panic in a job drops its result sender, which is how the caller
-      // hears of it; the worker itself stays.
+      // A job catches its own panic and reports it. What is caught here
+      // is a panic around it (a result dropped for a caller that left),
+      // so that the worker stays.
       Ok(job) => drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(job))),
       Err(_) => return,
     }

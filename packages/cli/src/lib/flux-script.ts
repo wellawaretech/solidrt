@@ -1,3 +1,6 @@
+import { dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+
 // A flux script is one plain-JS file: the flux binary runs no TypeScript
 // and loads no module from disk. So a script written as TypeScript modules
 // (the dev server, a package's flux tool) is bundled into one file first.
@@ -17,4 +20,19 @@ export async function buildFluxScript(entry: string, outfile: string, what: stri
     process.exit(1)
   }
   await Bun.write(outfile, result.outputs[0]!)
+}
+
+/**
+ * The environment a flux script of srt runs in: the caller's, plus where
+ * the script finds the platform binaries next to `flux` (the path of the
+ * flux binary that runs it), the bun to run srt with, and srt itself
+ * (src/server/binaries.ts reads them).
+ */
+export function fluxScriptEnv(flux: string): Record<string, string | undefined> {
+  return {
+    ...process.env,
+    SRT_PLATFORM_DIR: dirname(flux),
+    SRT_BUN: process.execPath,
+    SRT_CLI: fileURLToPath(new URL("../..", import.meta.url)),
+  }
 }

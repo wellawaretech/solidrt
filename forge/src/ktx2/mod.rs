@@ -334,9 +334,32 @@ fn init_encoder() {
   INIT.call_once(|| unsafe { ffi::bu_init() });
 }
 
+/// How many encodes run at once, whatever number is asked for. Measured on
+/// 16 cores, eight 1024x1024 to 2048x2048 maps (`measure_encodes_at_once`):
+/// ETC1S works one image on little more than one core, UASTC spreads one
+/// image over several, and both stop gaining here (ETC1S 8.7 s one by one,
+/// 2.9 s at four, 2.5 s at eight; UASTC 20 s, 11 s, 11 s) while the memory
+/// in flight keeps growing with every encode added (ETC1S 0.25 GB, 0.64 GB,
+/// 1.0 GB). Never more than the machine has cores.
+const ENCODE_THREADS: usize = 4;
+
+/// `encode` on the encode threads (`ENCODE_THREADS` of them, shared by
+/// every caller in the process): what an async host calls, so the limit
+/// holds however many encodes it starts. The pixels of an encode that
+/// waits are held meanwhile, so a caller with many images starts a few at
+/// a time all the same.
+pub async fn encode_queued(pixels: Vec<u8>, width: u32, height: u32, options: EncodeOptions) -> Result<Vec<u8>, String> {
+  static WORKERS: OnceLock<Workers> = OnceLock::new();
+  let workers = WORKERS.get_or_init(|| {
+    let cores = std::thread::available_parallelism().map(|cores| cores.get()).unwrap_or(ENCODE_THREADS);
+    Workers::new("ktx2-encode", ENCODE_THREADS.min(cores))
+  });
+  workers.run(move || encode(&pixels, width, height, &options)).await?
+}
+
 /// Encode tightly-packed RGBA8 pixels (premultiplied, see the module docs)
-/// into a KTX2 file. Runs the encoder's own thread pool over the machine's
-/// cores and takes seconds for a large image: bake-time work.
+/// into a KTX2 file. Runs the encoder's own threads beside the caller's
+/// and takes seconds for a large image: bake-time work.
 pub fn encode(pixels: &[u8], width: u32, height: u32, options: &EncodeOptions) -> Result<Vec<u8>, String> {
   if width == 0 || height == 0 {
     return Err(format!("{width}x{height}: width and height must be at least 1"));

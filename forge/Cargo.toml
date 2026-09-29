@@ -57,6 +57,9 @@ percent-encoding = "=2.3.2"
 crossterm = { version = "=0.27.0", default-features = false, features = ["windows", "events"] }
 rusqlite = { version = "=0.40.2", features = ["bundled", "hooks"] }
 path-clean = "=1.0.1"
+# Glob patterns for forge::path::matches_glob and the forge::fs::glob scan
+# (flux:path matchesGlob, flux:fs glob): the rust-lang crate, no dependencies.
+glob = "=0.3.3"
 # Directory change notifications for forge::fs::DirWatcher (flux:fs dir().watch):
 # inotify / FSEvents / ReadDirectoryChangesW behind one API. No crossbeam
 # channel feature: events cross to the caller on a tokio channel.

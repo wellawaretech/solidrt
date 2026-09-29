@@ -304,6 +304,69 @@ fn strip_verbatim(path: PathBuf) -> String {
   s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s)
 }
 
+/// The files whose path matches the glob `pattern` (`path::matches_glob`
+/// has the language), sorted, each as the path from `cwd`. Files only: a
+/// directory is walked, never listed. Without `cwd` the pattern stands
+/// against the process cwd like any relative path, which makes one that
+/// starts in `assets/` or `isolates/` a question to the assets mount while
+/// one is set; with `cwd` it is that directory as the OS has it. Errs on a
+/// malformed pattern and on a directory that cannot be read.
+pub async fn glob(pattern: &str, cwd: Option<&str>) -> Result<Vec<String>, String> {
+  let compiled = crate::path::glob_pattern(pattern).map_err(|e| format!("glob: {e}"))?;
+  let mut root = cwd.map(PathBuf::from);
+  if root.is_none() && is_asset_path(pattern) {
+    match ASSETS_BASE.read().expect("assets base lock").as_ref() {
+      Some(AssetsBase::Dir(base)) => root = Some(base.clone()),
+      Some(AssetsBase::Packed { index, .. }) => return Ok(matching_paths(index.keys(), &compiled)),
+      None => {}
+    }
+  }
+  let pattern = pattern.to_string();
+  tokio::task::spawn_blocking(move || scan(&pattern, root)).await.map_err(|e| format!("glob: {e}"))?
+}
+
+/// The `paths` the compiled pattern matches, sorted: the scan of a packed
+/// mount, whose files are the keys of its index.
+pub(crate) fn matching_paths<'a>(paths: impl Iterator<Item = &'a String>, pattern: &::glob::Pattern) -> Vec<String> {
+  let mut out: Vec<String> = paths.filter(|path| pattern.matches_with(path, crate::path::GLOB_OPTIONS)).cloned().collect();
+  out.sort();
+  out
+}
+
+/// What the crate's scan is asked for a pattern that closes with this
+/// segment: to the matcher a closing `**` is everything below, to the scan
+/// it is the directories below, so the scan is asked for their entries.
+const GLOBSTAR: &str = "**";
+const ENTRIES_BELOW: &str = "/*";
+
+// The scan of the file system, blocking. The crate walks only the
+// directories the pattern can match in.
+fn scan(pattern: &str, root: Option<PathBuf>) -> Result<Vec<String>, String> {
+  let closes_with_globstar = pattern == GLOBSTAR || pattern.ends_with(&format!("/{GLOBSTAR}"));
+  let mut scanned = pattern.to_string();
+  if closes_with_globstar {
+    scanned.push_str(ENTRIES_BELOW);
+  }
+  if let Some(root) = &root {
+    scanned = format!("{}/{scanned}", ::glob::Pattern::escape(&root.to_string_lossy()));
+  }
+  let entries = ::glob::glob_with(&scanned, crate::path::GLOB_OPTIONS).map_err(|e| format!("glob {pattern}: {}", e.msg))?;
+  let mut out = Vec::new();
+  for entry in entries {
+    let path = entry.map_err(|e| format!("glob {pattern}: {}: {}", e.path().display(), e.error()))?;
+    if !path.is_file() {
+      continue;
+    }
+    let from_root = match &root {
+      Some(root) => path.strip_prefix(root).unwrap_or(&path),
+      None => &path,
+    };
+    out.push(from_root.to_string_lossy().into_owned());
+  }
+  out.sort();
+  Ok(out)
+}
+
 /// List a directory's entries; `DirEntry::kind` is the same set as
 /// `StatInfo::file_type`.
 pub async fn read_dir(path: &str) -> Result<Vec<DirEntry>, String> {

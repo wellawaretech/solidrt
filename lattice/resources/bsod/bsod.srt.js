@@ -5148,6 +5148,40 @@ var imageCache = new Map;
 // ../../packages/core/src/cursor.ts
 import { decodeImage as decodeImage3 } from "flux:image";
 import { createCursor as registerCursor, dropCursor } from "flux:rendertree";
+// ../../packages/core/src/textures.ts
+var KINDS = ["color", "normal", "data"];
+var DEFAULT_COMPRESS = true;
+var SMALL_CODEC_QUALITY = 0.75;
+var ACCURATE_CODEC_QUALITY = 0.9;
+function frozen(settings, files) {
+  for (let kind of KINDS)
+    Object.freeze(settings[kind]);
+  for (let rule of files) {
+    Object.freeze(rule.match);
+    Object.freeze(rule);
+  }
+  return Object.freeze({
+    ...settings,
+    files: Object.freeze(files)
+  });
+}
+var DEFAULT_TEXTURE_SETTINGS = frozen({
+  color: {
+    compress: DEFAULT_COMPRESS,
+    codec: "etc1s",
+    quality: SMALL_CODEC_QUALITY
+  },
+  normal: {
+    compress: DEFAULT_COMPRESS,
+    codec: "uastc",
+    quality: ACCURATE_CODEC_QUALITY
+  },
+  data: {
+    compress: DEFAULT_COMPRESS,
+    codec: "uastc",
+    quality: ACCURATE_CODEC_QUALITY
+  }
+}, []);
 // ../../packages/core/src/svg.ts
 import { parseSvg as fluxParseSvg } from "flux:svg";
 var svg = String.raw;

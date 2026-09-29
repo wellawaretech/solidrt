@@ -127,10 +127,14 @@ declare module "flux:image" {
    * blocks and anything below it trades block error for a file that
    * compresses better.
    *
-   * Asynchronous and slow by design (seconds for a large image, on every
-   * core): bake-time work, never something to do at load. Rejects when
-   * `data.length` does not match `width * height * 4`. Throws on a runtime
-   * built without compressed textures.
+   * Asynchronous and slow by design (seconds for a large image):
+   * bake-time work, never something to do at load. The runtime encodes
+   * four at a time and queues the rest, so starting many neither floods
+   * the machine's cores nor multiplies the encoder's memory; the pixels of
+   * an encode that waits are held meanwhile, so with many images decode
+   * and start a few at a time. Rejects when `data.length` does not match
+   * `width * height * 4`. Throws on a runtime built without compressed
+   * textures.
    */
   export function encodeTexture(
     img: DecodedImage,

@@ -10,6 +10,8 @@ import { fail } from "./util"
 //     "org": "Example",             // optional display metadata (publisher)
 //     "displayName": "Example App", // optional display metadata (player/window)
 //     "fonts": { ... },             // see fonts.ts
+//     "textures": { ... },          // how textures are compressed at bake
+//                                   // time (@solidrt/core/textures)
 //     "icon": "./assets/icon.svg",  // optional app icon (SVG, under assets/);
 //                                   // an undeclared assets/icon.svg is picked
 //                                   // up by convention. A .png also feeds the
@@ -71,6 +73,9 @@ export type ProjectConfig = {
    * one (the scaffold's explicit "on"; fonts.ts).
    */
   fonts?: Record<string, string | boolean>
+  /** How textures are compressed at bake time; read and checked by
+   * textureSettings in @solidrt/core/textures, not here. */
+  textures?: Record<string, unknown>
   icon?: string
   /** The ground behind the icon's transparent foreground, "#rrggbb". */
   iconBackground?: string
@@ -143,7 +148,7 @@ function parseAndroidConfig(raw: unknown): AndroidConfig {
 export type Project = { dir: string; name: string | undefined; version: string | undefined; config: ProjectConfig }
 
 // Every key the `solidrt` object accepts (the ProjectConfig fields).
-const PROJECT_KEYS = ["entry", "appId", "org", "displayName", "icon", "iconBackground", "capabilities", "backup", "fonts", "android"]
+const PROJECT_KEYS = ["entry", "appId", "org", "displayName", "icon", "iconBackground", "capabilities", "backup", "fonts", "textures", "android"]
 
 function parseProjectConfig(raw: unknown): ProjectConfig {
   if (raw === undefined) return {}
@@ -174,6 +179,11 @@ function parseProjectConfig(raw: unknown): ProjectConfig {
     }
   }
   if ("backup" in config && typeof config.backup !== "boolean") fail('"solidrt": "backup" must be true or false')
+  // What is in the group is its reader's to check: textureSettings in
+  // @solidrt/core/textures, which every texture bake runs.
+  if ("textures" in config && (typeof config.textures !== "object" || Array.isArray(config.textures))) {
+    fail('"solidrt": "textures" must be an object')
+  }
   if ("android" in config) config.android = parseAndroidConfig(config.android)
   if ("fonts" in config) {
     let fonts = config.fonts

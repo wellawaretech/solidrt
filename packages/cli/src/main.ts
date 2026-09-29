@@ -9,11 +9,12 @@
 import { fileURLToPath } from "node:url"
 import { existsSync, unlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { dirname, resolve } from "node:path"
+import { resolve } from "node:path"
 import { values, command, source, port, appArgs, validateArgs } from "./lib/args"
 import { printUsage, printVersion, hint } from "./lib/usage"
 import { requireBinary } from "./lib/util"
 import { buildServerBundle } from "./lib/server-bundle"
+import { fluxScriptEnv } from "./lib/flux-script"
 
 // -- Help and version --
 
@@ -101,12 +102,7 @@ async function launchServer(withClient: boolean, demo?: { cwd: string; entry: st
     // stdin is passed through for the server's repl (flux:tty): with no
     // terminal there the server runs without one.
     stdio: ["inherit", "inherit", "inherit"],
-    env: {
-      ...process.env,
-      SRT_PLATFORM_DIR: dirname(flux),
-      SRT_BUN: process.execPath,
-      SRT_CLI: fileURLToPath(new URL("..", import.meta.url)),
-    },
+    env: fluxScriptEnv(flux),
   })
   // The server ends itself on these (drops its record, stops the client);
   // this process just relays them and waits.

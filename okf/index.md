@@ -65,9 +65,12 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   One shipped payload (Basis Universal in KTX2, baked with our own encoder)
   transcoded at load to the device's native block format - ETC2 on GLES 3.0
   targets, BC7 where the BPTC extension is reported; built end to end (device
-  formats, the codec with zstd, the model bake and the loader) and verified on
-  Linux, Windows and Android, open are the macOS device run, the quality a
-  bake should use and the re-measurement on a current Sponza.
+  formats, the codec with zstd, the model bake and loader, texture settings
+  per application, attribution) and verified on Linux, Windows and Android;
+  settings per file are built (compression on by default, a list of glob
+  entries that raise or exempt files, glob matching and a scan in flux); next
+  are compressed textures outside a model, after the build stage is designed,
+  then the memory a load leaves behind.
 - **[Fonts as pack-time payload](plans/packaged-fonts.md)** [2026-07-20]
   The solidrt runtime goes font-free and srt pack appends fonts as trailer
   sections, with the three Noto role defaults declared through the
@@ -80,11 +83,11 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 - **[Test harness - flux:test, srt:test and srt test](plans/test-harness.md)** [2026-08-17]
   Tests for flux programs, SolidRT apps and our own packages, run on our own
   runtime and deterministic by construction - a base layer on the flux binary
-  (flux:test - describe, test, expect, a stepped clock, settle) and an app
-  layer on the headless SolidRT runtime (srt:test - mount, find, input,
-  frames, reading), behind one command, srt test. The test owns the clock;
-  nothing waits on wall time. Supersedes the JS test infrastructure backlog
-  item; the ten bun test files and the checks/ rigs are its first consumers.
+  (flux:test - test, expect, a stepped clock, settle) and an app layer on the
+  headless SolidRT runtime (srt:test - mount, find, input, frames, reading),
+  behind one command, srt test. The test owns the clock; nothing waits on wall
+  time. Supersedes the JS test infrastructure backlog item; the ten bun test
+  files and the checks/ rigs are its first consumers.
 - **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
   Client-initiated streaming - open(url) plays a WebM served over HTTP on the
   Android plane with buffering, seek by Range and a cancel-safe close, built
@@ -280,6 +283,14 @@ Shaped, not started.
   Browser-style whole-UI zoom (pinch, ctrl+wheel) as a root-level runtime
   affordance that re-lays out at scale instead of magnifying raster output,
   needing no app cooperation.
+- **[Assets are baked by hand, one tool run per file](backlog/asset-build-stage.md)** [2026-09-30]
+  A compressed texture or a baked model exists only after the developer runs
+  `srt tool` on its source and puts the output under assets/, so sources and
+  outputs drift and nothing rebakes when a setting changes; a build stage that
+  bakes on the copy into dist/<flow>/assets/ (with a manifest that makes it
+  incremental) removes the step, and must be designed before compressed
+  textures outside a model are built because it decides how an app names a
+  baked file.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.

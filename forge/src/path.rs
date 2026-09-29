@@ -1,12 +1,19 @@
 //! Engine-free path core.
 //!
 //! The scripting-engine-independent half of `flux:path`: lexical join, the
-//! resolve-within-a-trusted-base containment check, and the three lexical
-//! splits of a path (`basename`, `dirname`, `extname`). It names no scripting-engine
+//! resolve-within-a-trusted-base containment check, the three lexical
+//! splits of a path (`basename`, `dirname`, `extname`), the path from one
+//! place to another (`relative`) and glob matching (`matches_glob`). It names no scripting-engine
 //! types; the marshalling layer (flux `forge_plugins/path.rs`) adapts JS args
 //! and turns `None` into JS `null`.
+//!
+//! Glob patterns are the `glob` crate's: `*` any run of characters inside
+//! one segment, `**` as a whole segment any number of segments, `?` one
+//! character, `[a-z]` one of a set and `[!a-z]` one outside it. A character
+//! the language reads as syntax is written as a set of one, `[*]`. There
+//! are no `{a,b}` groups and no escape character.
 
-use std::path::{PathBuf, MAIN_SEPARATOR_STR};
+use std::path::{Component, PathBuf, MAIN_SEPARATOR_STR};
 
 use path_clean::PathClean;
 
@@ -103,4 +110,63 @@ pub fn extname(path: &str) -> String {
     Some(at) if at > 0 && name != ".." => name[at..].to_string(),
     _ => String::new(),
   }
+}
+
+/// `path` as an absolute, normalized path: one that is relative stands
+/// against the process cwd.
+fn absolute(path: &str) -> PathBuf {
+  let mut path = PathBuf::from(path);
+  if path.is_relative() {
+    if let Ok(cwd) = std::env::current_dir() {
+      path = cwd.join(path);
+    }
+  }
+  path.clean()
+}
+
+/// The path that leads from `from` to `to`, each standing against the
+/// process cwd when relative. Lexical, Node's `path.relative`: from "/a/b"
+/// to "/a/c/d.txt" is "../c/d.txt", a place to itself is "". Two paths with
+/// nothing in common (another drive on Windows) give `to` as it resolved.
+pub fn relative(from: &str, to: &str) -> String {
+  let from = absolute(from);
+  let to = absolute(to);
+  let from_parts: Vec<Component> = from.components().collect();
+  let to_parts: Vec<Component> = to.components().collect();
+  let shared = from_parts.iter().zip(&to_parts).take_while(|(a, b)| a == b).count();
+  if shared == 0 {
+    return to.to_string_lossy().into_owned();
+  }
+  let mut out = PathBuf::new();
+  for _ in shared..from_parts.len() {
+    out.push("..");
+  }
+  for part in &to_parts[shared..] {
+    out.push(part);
+  }
+  out.to_string_lossy().into_owned()
+}
+
+/// How a glob pattern is matched: on the text as given, a wildcard never
+/// standing for a separator, a leading dot an ordinary character.
+pub(crate) const GLOB_OPTIONS: glob::MatchOptions =
+  glob::MatchOptions { case_sensitive: true, require_literal_separator: true, require_literal_leading_dot: false };
+
+/// The glob `pattern` compiled, or what is wrong with it and where.
+pub(crate) fn glob_pattern(pattern: &str) -> Result<glob::Pattern, String> {
+  glob::Pattern::new(pattern).map_err(|e| format!("the pattern {pattern:?} is malformed at character {}: {}", e.pos, e.msg))
+}
+
+/// Whether the glob `pattern` is well formed; what is wrong with it and
+/// where, when it is not.
+pub fn check_glob(pattern: &str) -> Result<(), String> {
+  glob_pattern(pattern).map(|_| ())
+}
+
+/// Whether `path` matches the glob `pattern`, as a whole (the pattern
+/// language is in the module docs). Lexical: nothing is read from disk and
+/// nothing normalized. Errs on a malformed pattern (an unclosed set, a
+/// `**` that is not a whole segment).
+pub fn matches_glob(path: &str, pattern: &str) -> Result<bool, String> {
+  Ok(glob_pattern(pattern)?.matches_with(path, GLOB_OPTIONS))
 }

@@ -14,7 +14,7 @@
 // read-then-create conveniences over flux:fs; parseGltf / decodeModel +
 // createModel are the primitives under them, for bytes obtained any other
 // way (a binary import, a fetch). Compressed images (KTX2, what `srt tool
-// 3d/model --ktx2` bakes) are turned into this device's block format by
+// 3d/model` bakes) are turned into this device's block format by
 // transcodeModelImages, the one asynchronous step between the two.
 
 import { file } from "flux:fs"
@@ -155,8 +155,8 @@ export type ModelSkinNodes = {
  * run it. Data with no KTX2 image comes back as it is.
  */
 export async function transcodeModelImages(data: ModelData): Promise<ModelData> {
-  if (!data.images.some(isKtx2)) return data
-  let textures = await Promise.all(data.images.map((bytes) => (isKtx2(bytes) ? transcodeTexture(bytes) : undefined)))
+  if (!data.images.some((image) => isKtx2(image.bytes))) return data
+  let textures = await Promise.all(data.images.map((image) => (isKtx2(image.bytes) ? transcodeTexture(image.bytes) : undefined)))
   return { ...data, textures }
 }
 
@@ -176,17 +176,17 @@ export async function transcodeModelImages(data: ModelData): Promise<ModelData> 
 export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   let label = opts.label
   let uses = modelImageUses(data)
-  let textures: TextureId[] = data.images.map((bytes, i) => {
-    let sampling = { wrap: "repeat" as const, anisotropy: MODEL_ANISOTROPY, autoFree: false, label: label ? label + "-image" + i : undefined }
+  let textures: TextureId[] = data.images.map((image, i) => {
+    let sampling = { wrap: "repeat" as const, anisotropy: MODEL_ANISOTROPY, autoFree: false, label: label ? label + "-" + image.name : image.name }
     let ready = data.textures?.[i]
     if (ready !== undefined) {
       return createTexture(ready.data, ready.width, ready.height, { ...sampling, format: ready.format, mipmap: ready.mipmap })
     }
-    if (isKtx2(bytes)) {
-      throw new Error("createModel: image " + i + " is a KTX2 compressed texture, which is transcoded before the model is created: await transcodeModelImages(data) first (loadModel and loadGltf do)")
+    if (isKtx2(image.bytes)) {
+      throw new Error("createModel: image '" + image.name + "' is a KTX2 compressed texture, which is transcoded before the model is created: await transcodeModelImages(data) first (loadModel and loadGltf do)")
     }
-    let image = decodeImage(bytes)
-    return createTexture(image.data, image.width, image.height, { ...sampling, format: uses[i]!.srgb ? "rgba8-srgb" : "rgba8", mipmap: true })
+    let decoded = decodeImage(image.bytes)
+    return createTexture(decoded.data, decoded.width, decoded.height, { ...sampling, format: uses[i]!.srgb ? "rgba8-srgb" : "rgba8", mipmap: true })
   })
   let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean, instanced: boolean): Material => {
     // An emissive factor of zero is emission OFF (the glTF product rule:
