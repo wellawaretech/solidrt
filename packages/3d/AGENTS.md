@@ -2321,13 +2321,75 @@ and one loaded in a component with its unmount. A load that settles
 after its scope is gone (unmounted mid-load) is freed on arrival and
 resolves already disposed - nothing owns it any more. `loadModel` reads the baked `.srtm` written by `srt tool
 3d/model <in.gltf|glb> -o assets/<name>.srtm`: the same parse run once
-under bun, stored in the GPU layout, so loading is views onto the file's
-bytes plus the image decodes. Numbers from a 32k-vertex, 6-texture model
+at build time, stored in the GPU layout, so loading is views onto the
+file's bytes plus the image decodes. Numbers from a 32k-vertex, 6-texture model
 on a release client: `parseGltf` 124 ms on flux (22 ms under bun) against
 40 ms for the whole baked load - the runtime parse is fine for small
 models and a binary import (`import bytes from "./x.glb" with { type:
 "binary" }` then `createModel(parseGltf(bytes))`, see
 `examples/model.tsx`); bake anything big.
+
+#### Compressed textures
+
+`srt tool 3d/model <in> -o assets/<name>.srtm --ktx2` bakes the images
+too: each becomes a KTX2 compressed texture with its mip chain. The file is the
+same for every platform; at load each device turns the images into the
+block format its GPU samples (BC7 on desktops, ETC2 elsewhere), which
+holds them in a quarter of the memory of the decoded image. Measured on
+the Khronos Sponza sample (69 images): 363 MB of textures as PNG/JPEG,
+91 MB baked with `--ktx2`. The encode is slow (two minutes for that
+model) and runs once, at bake time. Block compression is lossy: judge
+the result on your own textures. What it saves is GPU memory; the file
+shrinks for color maps and can grow for data maps.
+
+How each kind of map is compressed is the app's to say, in the
+`textures` group of the `solidrt` key in its package.json (the project
+the tool runs in). These are the defaults; name only what differs:
+
+```json
+"solidrt": {
+  "textures": {
+    "color": { "codec": "etc1s", "quality": 0.75 },
+    "normal": { "codec": "uastc", "quality": 0.9 },
+    "data": { "codec": "etc1s", "quality": 0.75 }
+  }
+}
+```
+
+The kinds are core's and say what the texels are (`@solidrt/core/textures`).
+This package maps a material's slots onto them: base color and emissive
+maps are `color`, normal maps are `normal`, metallic-roughness maps
+(occlusion rides in the same image) are `data`.
+An image several slots share takes the most demanding kind, normal over
+color over data, and stays sRGB when one of them is a color slot;
+`modelImageUses(data)` returns that per image, the rule the loader and
+the bake both follow, for a bake script of your own.
+`codec` and `quality` are `encodeTexture`'s: "etc1s" is small (a
+quarter of a JPEG), "uastc" is accurate and large (often larger than
+the JPEG it replaces), `quality` is 0..1. A normal map steers the
+lighting and shows its errors, so it takes the accurate codec; set
+`data` to "uastc" as well when roughness detail matters more than the
+download. An unknown kind, codec or field fails the bake naming the key,
+before anything is encoded, and the bake prints the settings it used
+per kind. The color space (sRGB for `color`), the mip chain and the
+wrap are not settings: they follow how `createModel` samples. The
+settings are the app's, not this package's: an app's own bake script,
+or another extension's, reads the same group with
+`textureSettings(packageJson)` from `@solidrt/core/textures`.
+
+`loadModel` and `loadGltf` handle such a model as they are, and
+`loadGltf` reads a glTF that carries KTX2 images itself
+(`KHR_texture_basisu`). Only the primitives show the step: transcoding
+is asynchronous and `createModel` is not, so bytes obtained another way
+go through `transcodeModelImages` between the two:
+
+```ts
+let data = await transcodeModelImages(decodeModel(bytes))
+let model = createModel(data)
+```
+
+`createModel` on data whose KTX2 images were not transcoded throws and
+names the function. Data without KTX2 images needs no such step.
 
 #### Baking your own geometry
 

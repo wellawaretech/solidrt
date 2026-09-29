@@ -53,6 +53,20 @@ declare module "flux:process" {
    */
   export let env: Record<string, string | undefined>
   /**
+   * Ends the process with `code` as its exit status, Node's `process.exit`.
+   * For a command line tool that is done or has failed: the process ends
+   * inside the call, so nothing pending runs (timers, promises, requests in
+   * flight); what was printed is flushed first.
+   *
+   * For a script run by the flux binaries. It throws anywhere else: in a
+   * windowed app, which ends with `exit()` from `@solidrt/core` so its
+   * `onQuit` handlers run, and in an isolate, which is not the process.
+   *
+   * @param code  An integer in 0..255, 0 (success) when omitted. Anything
+   *              else throws.
+   */
+  export function exit(code?: number): never
+  /**
    * Listen for an OS signal. The callback receives the signal name. Returns an
    * unsubscribe function. Unix only; a no-op elsewhere.
    *

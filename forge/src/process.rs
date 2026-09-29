@@ -4,7 +4,7 @@
 //! `forge_plugins/process.rs`) owns the event-bus wiring (`ctx.spawn`,
 //! emit/has-listeners, the per-context dedup) and forwards to the pieces here:
 //! host metadata (`platform`/`arch`/`rss`/`home_dir`/`exec_path`/`env_vars`, the OS and host
-//! names), `kill`/`alive`, and `SignalStream`, which hides the
+//! names), `kill`/`alive`, `exit`, and `SignalStream`, which hides the
 //! unix vs non-unix OS signal split behind one async source.
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
@@ -163,4 +163,15 @@ impl SignalStream {
   pub async fn recv(&mut self) -> bool {
     tokio::signal::ctrl_c().await.is_ok()
   }
+}
+
+/// End the current process now with `code` as its exit status. Nothing
+/// pending runs: what is left is the terminal put back out of raw mode and
+/// stdout and stderr flushed, so what was printed is not lost.
+pub fn exit(code: u8) -> ! {
+  use std::io::Write;
+  crate::tty::restore();
+  let _ = std::io::stdout().flush();
+  let _ = std::io::stderr().flush();
+  std::process::exit(i32::from(code))
 }

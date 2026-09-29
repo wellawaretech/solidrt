@@ -141,11 +141,11 @@ fn main() {
     build_libopus();
   }
   if std::env::var_os("CARGO_FEATURE_KTX2").is_some() {
-    build_basis(&target_os);
+    build_basis();
   }
 }
 
-fn build_basis(target_os: &str) {
+fn build_basis() {
   let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
   let src = manifest_dir.join("vendor").join("basis_universal");
   // The two directories compiled from, not the whole checkout (its demos
@@ -173,11 +173,9 @@ fn build_basis(target_os: &str) {
   for (name, value) in BASIS_DEFINES {
     build.define(name, *value);
   }
-  // Android apps carry no libc++_shared unless something stages one, so the
-  // C++ runtime is linked into the library itself.
-  if target_os == "android" {
-    build.cpp_link_stdlib("c++_static");
-  }
+  // Android links the NDK's shared C++ runtime (cc's default there), the one
+  // runtime every C++ library in the process shares: whisper links it too,
+  // and lattice/Makefile.android stages libc++_shared.so into every APK.
   for file in BASIS_SOURCES {
     build.file(src.join(file));
   }

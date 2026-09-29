@@ -13,15 +13,17 @@
 // them and detaches the group. loadGltf / loadModel are the
 // read-then-create conveniences over flux:fs; parseGltf / decodeModel +
 // createModel are the primitives under them, for bytes obtained any other
-// way (a binary import, a fetch).
+// way (a binary import, a fetch). Compressed images (KTX2, what `srt tool
+// 3d/model --ktx2` bakes) are turned into this device's block format by
+// transcodeModelImages, the one asynchronous step between the two.
 
 import { file } from "flux:fs"
 import * as spatial from "flux:spatial"
-import { decodeImage, getOwner, isDisposed, onCleanup, runWithOwner } from "@solidrt/core"
+import { decodeImage, getOwner, isDisposed, isKtx2, onCleanup, runWithOwner, transcodeTexture } from "@solidrt/core"
 import type { Owner } from "@solidrt/core"
 import { createMutableTexture, createTexture, destroyTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
-import { gltfExternalUris, parseGltf } from "./gltf.ts"
+import { gltfExternalUris, modelImageUses, parseGltf } from "./gltf.ts"
 import type { ModelClip, ModelData, ModelExtras, ModelMaterial } from "./gltf.ts"
 import { decodeModel } from "./model-file.ts"
 import { disposeGeometry } from "./geometry-gpu.ts"
@@ -145,30 +147,46 @@ export type ModelSkinNodes = {
 }
 
 /**
+ * Transcode the model's compressed images (KTX2) into this device's block
+ * format, off the JS thread (all are started at once; the runtime runs a
+ * few at a time), and return the data with them as `textures`; the images that are PNG or JPEG are left for
+ * createModel to decode. The step between a parse (or decodeModel) and
+ * createModel for data that may hold KTX2 images; loadModel and loadGltf
+ * run it. Data with no KTX2 image comes back as it is.
+ */
+export async function transcodeModelImages(data: ModelData): Promise<ModelData> {
+  if (!data.images.some(isKtx2)) return data
+  let textures = await Promise.all(data.images.map((bytes) => (isKtx2(bytes) ? transcodeTexture(bytes) : undefined)))
+  return { ...data, textures }
+}
+
+/**
  * Build the scene object for parsed model data: upload its images (repeat
  * wrap, mipmapped, MODEL_ANISOTROPY; the base color and emissive images
  * as "rgba8-srgb" since glTF stores those sRGB-encoded, the data maps as
  * rgba8), make a material per glTF material, the file's node hierarchy as
  * nested Groups, and a mesh per part under its node. Synchronous - the
  * data is already in memory.
+ *
+ * A compressed image uploads as transcodeModelImages left it: at the
+ * format and color space its file names, with the mip chain the file
+ * carries (none can be generated for compressed storage). Data holding a
+ * KTX2 image that was not transcoded throws.
  */
 export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   let label = opts.label
-  let colorImages = new Set<number>()
-  for (let m of data.materials) {
-    if (m.map !== null) colorImages.add(m.map)
-    if (m.emissiveMap !== null) colorImages.add(m.emissiveMap)
-  }
+  let uses = modelImageUses(data)
   let textures: TextureId[] = data.images.map((bytes, i) => {
+    let sampling = { wrap: "repeat" as const, anisotropy: MODEL_ANISOTROPY, autoFree: false, label: label ? label + "-image" + i : undefined }
+    let ready = data.textures?.[i]
+    if (ready !== undefined) {
+      return createTexture(ready.data, ready.width, ready.height, { ...sampling, format: ready.format, mipmap: ready.mipmap })
+    }
+    if (isKtx2(bytes)) {
+      throw new Error("createModel: image " + i + " is a KTX2 compressed texture, which is transcoded before the model is created: await transcodeModelImages(data) first (loadModel and loadGltf do)")
+    }
     let image = decodeImage(bytes)
-    return createTexture(image.data, image.width, image.height, {
-      format: colorImages.has(i) ? "rgba8-srgb" : "rgba8",
-      wrap: "repeat",
-      mipmap: true,
-      anisotropy: MODEL_ANISOTROPY,
-      autoFree: false,
-      label: label ? label + "-image" + i : undefined,
-    })
+    return createTexture(image.data, image.width, image.height, { ...sampling, format: uses[i]!.srgb ? "rgba8-srgb" : "rgba8", mipmap: true })
   })
   let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean, instanced: boolean): Material => {
     // An emissive factor of zero is emission OFF (the glTF product rule:
@@ -434,7 +452,8 @@ export async function loadGltf(path: string, opts?: ModelOptions): Promise<Model
   for (let uri of gltfExternalUris(bytes)) {
     if (!files.has(uri)) files.set(uri, await file(dir + decodeURIComponent(uri)).bytes())
   }
-  return buildOwned(owner, opts, () => createModel(parseGltf(bytes, (uri) => files.get(uri)!), opts))
+  let data = await transcodeModelImages(parseGltf(bytes, (uri) => files.get(uri)!))
+  return buildOwned(owner, opts, () => createModel(data, opts))
 }
 
 /** Read a baked .srtm model (`srt tool 3d/model`) and build it: no parsing,
@@ -442,5 +461,6 @@ export async function loadGltf(path: string, opts?: ModelOptions): Promise<Model
 export async function loadModel(path: string, opts?: ModelOptions): Promise<Model> {
   let owner = getOwner()
   let bytes = await file(path).bytes()
-  return buildOwned(owner, opts, () => createModel(decodeModel(bytes), opts))
+  let data = await transcodeModelImages(decodeModel(bytes))
+  return buildOwned(owner, opts, () => createModel(data, opts))
 }

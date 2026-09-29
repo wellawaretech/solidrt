@@ -612,6 +612,30 @@ that reads exactly like Solid fallout.
   transparent pixels for CPU work, and `encodeImage` converts back to
   straight for the file.
 
+- Compressed textures, for anything that holds many or large textures (a
+  3D model, a tile set): ship ONE KTX2 file per image and let each device
+  turn it into the block format its GPU samples, a quarter of the memory
+  of the decoded image. `encodeTexture(decodeImage(bytes), { codec, srgb,
+  mipmap })` makes the file at bake time (slow, never at load);
+  `transcodeTexture(ktx2)` -> `createTexture(t.data, t.width, t.height,
+  { format: t.format, mipmap: t.mipmap })` loads it, picking the
+  device's format by itself. Start a transcode per texture and await
+  them together: the runtime runs four at a time. Such a texture is
+  sample-only (no upload into it, no readback, no generated mips: the
+  chain comes from the file). Block compression is lossy and damages
+  sharp art and text, so it is not for UI images. The runtime-free half
+  is `@solidrt/core/textures`, importable under bun by a bake script or
+  an extension's pure modules: `isKtx2(bytes)` tells such a file from a
+  PNG or JPEG, and `textureSettings(packageJson)` reads the codec and
+  quality per kind of texture an app declares under `solidrt.textures`
+  in its package.json, so every bake, whoever wrote it, honors the same
+  settings. The kinds say what the texels ARE, not what draws them:
+  `color` (sRGB color the eye sees), `normal` (directions), `data`
+  (other linear values that tolerate a small error: a mask, a
+  roughness). An extension maps its own uses onto them. Values that
+  must come back exact (a lookup table, a distance field) are none of
+  the three and are not block compressed.
+
 ## Minimal app, core primitives only (verified to render)
 
 ```tsx

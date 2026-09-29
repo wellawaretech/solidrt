@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use flux::{FluxEngine, LogLevel, ProcessArgs};
+use flux::{FluxEngine, LogLevel, ProcessArgs, ProcessExit};
 
 const MAGIC: &[u8; 8] = b"FLUXRT\x88\x44";
 
@@ -46,6 +46,7 @@ async fn main() {
   let engine = FluxEngine::builder()
     .logger(log_fn)
     .userdata(ProcessArgs(argv))
+    .userdata(ProcessExit)
     .on_uncaught(move |_| mark_failed.store(true, Ordering::Relaxed))
     .isolate_resolver(flux::resolve_isolate_from_assets)
     .build();

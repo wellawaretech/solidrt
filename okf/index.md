@@ -83,10 +83,10 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 - **[Compressed textures - KTX2 shipped, ETC2 or BC7 on the device](plans/gpu-compressed-textures.md)** [2026-07-30]
   One shipped payload (Basis Universal in KTX2, baked with our own encoder)
   transcoded at load to the device's native block format - ETC2 on GLES 3.0
-  targets, BC7 where the BPTC extension is reported; the device formats and
-  the codec (forge::ktx2, flux:image, zstd included) are built and verified on
-  Linux, open are the other platforms, the model bake and loader, and the
-  quality a bake should use.
+  targets, BC7 where the BPTC extension is reported; built end to end (device
+  formats, the codec with zstd, the model bake and the loader) and verified on
+  Linux, Windows and Android, open are the macOS device run, the quality a
+  bake should use and the re-measurement on a current Sponza.
 - **[Inspector - a visual devtool app over the dev-server control API](plans/inspector.md)** [2026-08-14]
   A packed SolidRT app presenting live runtime introspection (stats, logs,
   tree over snapshot, clock transport) as a peer front-end to the MCP bridge,
@@ -215,7 +215,7 @@ Shaped, not started.
   container with retained hierarchy, skins and animation clips plus the JS
   mixer since 2026-08-31) covers rigged models end to end; still open, each
   something Three's and Unity's glTF loaders take today, are the compressed
-  real-world files (Draco/meshopt, KTX2), tangents and the second UV set,
+  real-world meshes (Draco/meshopt), tangents and the second UV set,
   per-material samplers, merge-by-material and runtime decoding of fetched
   content (morph targets have their own item).
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
@@ -298,6 +298,10 @@ Shaped, not started.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
+- **[Make srt check honor solidrt.entry](backlog/check-honors-project-entry.md)** [2026-09-29]
+  Folder-mode srt check discovers the app entry from a hardcoded src/index.tsx
+  glob and never reads solidrt.entry, so a project with a declared entry is
+  either not found or checked against the wrong file.
 - **[Generate the docs/core.md props reference from the types](backlog/core-docs-generated-props.md)** [2026-08-06]
   Hand-copied prop lists are how core.md drifted (fill/background/imageWidth);
   jsx-runtime.d.ts and types.d.ts are clean enough to generate the per-element

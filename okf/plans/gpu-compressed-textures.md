@@ -1,6 +1,6 @@
 ---
 title: Compressed textures - KTX2 shipped, ETC2 or BC7 on the device
-description: One shipped payload (Basis Universal in KTX2, baked with our own encoder) transcoded at load to the device's native block format - ETC2 on GLES 3.0 targets, BC7 where the BPTC extension is reported; the device formats and the codec (forge::ktx2, flux:image, zstd included) are built and verified on Linux, open are the other platforms, the model bake and loader, and the quality a bake should use.
+description: One shipped payload (Basis Universal in KTX2, baked with our own encoder) transcoded at load to the device's native block format - ETC2 on GLES 3.0 targets, BC7 where the BPTC extension is reported; built end to end (device formats, the codec with zstd, the model bake and the loader) and verified on Linux, Windows and Android, open are the macOS device run, the quality a bake should use and the re-measurement on a current Sponza.
 created: 2026-07-30
 ---
 
@@ -18,9 +18,11 @@ the sampler doing the decode for free.
 |---|---|
 | 1. Device formats on `createTexture` | built, verified in the release client on Linux |
 | 2. `transcodeTexture` / `encodeTexture` | built, verified end to end on Linux; zstd on, a libktx file reads |
-| 3. Tool hosting, model bake, loader, glTF | not started |
-| Other platforms (Android, Windows, macOS) | not built, not run |
-| Sponza re-measurement | waits on step 3 |
+| 3. Tool hosting, model bake, loader, glTF | built, verified on Linux with a baked Sponza |
+| Windows (MSVC, ANGLE over D3D11) | built, both probes pass on device |
+| macOS arm64 | client builds, forge tests pass; not run on device |
+| Android arm64 (Adreno 610) | built, both probes pass on device |
+| Sponza re-measurement | Linux figures on the Khronos sample; the other platforms and a current Sponza are open |
 
 Read "Open in this plan" before continuing: its first item (the other
 platforms) decides whether what is built holds outside this machine.
@@ -40,6 +42,11 @@ both 16 bytes per 4x4 block.
 
 ## The rules that shape the plan
 
+- Others build their own 3d extensions (stated 2026-09-29). So
+  everything a texture bake or a loader needs sits BELOW `@solidrt/3d`,
+  in flux and core, and the 3d package is one consumer among others:
+  nothing texture-related may exist only there.
+
 - An app's payload is the same bytes on every platform: a Windows runtime
   receives exactly what the Android, Linux and macOS runtimes receive. So
   no bake ever targets a device format, nothing ships two copies, and the
@@ -53,8 +60,8 @@ both 16 bytes per 4x4 block.
 ## Platform reality
 
 The original note said ETC2 is "guaranteed native on the GL targets
-(Linux, Android)". Corrected (from driver documentation, only the Linux
-row is observed):
+(Linux, Android)". Corrected (from driver documentation; observed are
+the Linux row, BC7 on Windows, and ETC2 with no BC7 on an Adreno 610):
 
 | Platform | ETC2 | BC7 (`EXT_texture_compression_bptc`) |
 |---|---|---|
@@ -168,7 +175,13 @@ encodeTexture(img: DecodedImage, options: { codec: "etc1s" | "uastc"; srgb?: boo
   (lambda = 20 * (1 - q)^1.3, off at 100) and zeroes the separate
   low-level RDO argument, so RDO is on at every quality below 1 and
   there is no second knob to pass.
-- Both calls copy their input and run on the blocking pool.
+- Both calls copy their input. `encodeTexture` runs on the blocking
+  pool. `transcodeTexture` runs on FOUR transcode threads of its own
+  (`forge::ktx2::transcode_queued`, decided 2026-09-29), shared by every
+  caller in the process and fed in queue order, so a `Promise.all` over
+  a scene is bounded whoever wrote it. The threads are a
+  `forge::workers::Workers`, a fixed pool for CPU-bound jobs that is not
+  specific to textures.
 - ONE cargo feature, `ktx2` (forge, flux, lattice), encoder and
   transcoder both in every build: decided 2026-09-29, "for now". The
   capability `ktx2` reports it; on a build without it both calls exist
@@ -182,16 +195,27 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
 `lattice/Makefile`; `packages/flux-types/modules/image.d.ts`;
 `packages/core/src/image.ts`, `src/index.ts`; `docs/runtime/index.md`.
 
-### 3. Tool hosting, bake and load (packages/cli, packages/3d) - not started
+### 3. Tool hosting, bake and load (packages/cli, packages/3d) - built
 
 - **Tools under flux.** `srt tool` spawns bun for every
   `<package>/tools/<name>.ts`. A tool named `tools/<name>.flux.ts` runs
-  under the flux binary instead (the spawn in `packages/cli/src/main.ts`
-  that hosts the server, with the same `SRT_*` environment), listed under
-  the same `<pkg>/<name>`. Opt-in by file name, no scanning of imports.
-  The model tool moves; `environment.ts` and `splat.ts` stay under bun
-  (splat needs `node:zlib`'s gunzip for `.spz`, which flux does not
+  under the flux binary instead, with the `SRT_*` environment the server
+  gets, listed under the same `<pkg>/<name>`. Opt-in by file name, no
+  scanning of imports. flux runs one plain-JS file (no TypeScript, no
+  module loaded from disk), so the tool is bundled into a temp file
+  first, the way `srt run` bundles the dev server; the shared step is
+  `packages/cli/src/lib/flux-script.ts`. The model tool moved
+  (`tools/model.flux.ts`); `environment.ts` and `splat.ts` stay under
+  bun (splat needs `node:zlib`'s gunzip for `.spz`, which flux does not
   offer).
+- **flux grew for it.** `flux:process` has `exit(code?)` (the process
+  ends inside the call, the engine's shutdown hooks run and output
+  flushed first, an integer in 0..255). The host allows it
+  (`ProcessExit` userdata, set by the flux and fluxrt binaries); it
+  throws in a windowed app, which ends through core's `exit()` and its
+  quit hooks, and in an isolate. Also
+  `flux:path` has `basename`, `dirname`, `extname` with Node's
+  semantics; the cores are in `forge::process` and `forge::path`.
 - **The bake.** `srt tool 3d/model --ktx2` (as `tools/model.flux.ts`,
   `flux:fs` and `flux:process` in place of `node:fs` and `process.argv`)
   runs `parseGltf` as today, then for each sampled image `decodeImage`
@@ -205,13 +229,22 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
   runtime-free `@solidrt/3d/model` entry (`model-data.ts`) stays
   runtime-free.
 - **The load path.** `createModel` stays synchronous. A new async
-  `transcodeModelImages(data)` walks `data.images`, sniffs the KTX2 magic
-  and replaces each KTX2 entry with the `transcodeTexture` result, so an
-  image entry is either encoded PNG/JPEG bytes or a ready payload.
-  `loadModel` and `loadGltf`, already async, call it before `createModel`.
-  `createModel` uploads a ready payload at its format and decodes
-  everything else as today; a KTX2 entry it meets untranscoded throws
-  naming the function to await first. The `.srtm` image block carries the
+  `transcodeModelImages(data)` sniffs the KTX2 magic (`isKtx2`, from
+  core) and starts a transcode per such image; the runtime runs four at
+  a time. As built, `data.images` stays
+  file bytes and the results go into an optional parallel list,
+  `data.textures` (by image index), rather than replacing the entries:
+  a parse and every existing consumer keep their types, and transcoded
+  data can still be written by `encodeModel`, which never writes
+  `textures`. `loadModel` and `loadGltf`, already async, call it before
+  `createModel`. `createModel` uploads a ready payload at its format and
+  decodes everything else as today; a KTX2 image it meets untranscoded
+  throws naming the function to await first. A KTX2 image takes its
+  color space and its mip chain from its file. What an image is sampled
+  as is ONE rule, `modelImageUses` (sRGB or not, and its kind), used by
+  `createModel` for the uploads and by the bake for the encodes, so a
+  baked image samples as the same image unbaked: an image a color slot
+  and a normal slot share is sRGB and takes the accurate codec. The `.srtm` image block carries the
   KTX2 bytes as-is; version 10 files read identically, so the container
   version does not move.
 - **glTF input.** `parseGltf` accepts `KHR_texture_basisu` in
@@ -219,6 +252,23 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
   `extensions.KHR_texture_basisu.source` takes precedence over `source`.
   That closes the KTX2 row of
   [3d-model-loader](../backlog/3d-model-loader.md).
+- **Settings per application** (decided 2026-09-29). The codec and
+  quality per kind of map (`color`, `normal`, `data`) are the
+  `textures` group of the `solidrt` key in the package.json of the
+  project the tool runs in, over the defaults; an unknown kind, codec or
+  field fails the bake before anything is encoded. The reader is
+  `textureSettings` in `packages/core/src/textures.ts`, published as
+  the runtime-free entry `@solidrt/core/textures` (with `isKtx2`), so
+  any extension's bake reads the same settings. The kinds are defined
+  by what the texels ARE (color the eye sees, directions, other linear
+  values that tolerate error), not by material slots: the slot mapping
+  is the 3d package's (`modelImageUses`). Exact values (a lookup table,
+  a distance field) are no kind and are not block compressed. Open
+  kinds per extension were rejected: two extensions reading one group
+  would each refuse the other's names. Color space, mips and wrap are
+  not settings. Not in the scaffold's package.json (the key belongs to
+  an extension); documented in packages/3d/AGENTS.md. Per-model and
+  per-image overrides are left out and would be additive.
 - **Docs.** packages/3d docs and AGENTS notes: the bake flag, what ships,
   what the device does, the sync `createModel` / async
   `transcodeModelImages` rule.
@@ -227,32 +277,43 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
 
 In the order they should be settled:
 
-1. **Only Linux x86_64 has built or run this.** Android (the NDK build,
-   and the choice to link `c++_static`, which is an ODR hazard if another
-   library in the process brings `libc++_shared`, as speech does),
-   Windows MSVC and macOS are unbuilt; that now includes `zstd.c` as a
-   second `cc` build. Unverified on device: that ANGLE over D3D11 and
-   over Metal list the BPTC extension, the ETC2 path on a mobile GPU,
-   both probes on each.
-2. **Step 3**, as designed above.
+1. **macOS is not run on device.** The client builds; whether ANGLE
+   over Metal lists the BPTC extension, and both probes, are open. The
+   builder cannot do it: a client started over ssh finds no display
+   while the console session is another user's. It needs a run from a
+   session logged in at the Mac.
+2. **Sponza on a current asset.** The figures under "Sponza, baked"
+   are from the Khronos sample on disk (`demoes/sponza/model/Sponza`),
+   which is an old version. Re-bake and re-measure on the current one.
 3. **The quality a bake uses, per map kind.** The figures are in "UASTC
    and ETC1S across the quality scale"; the choice is a judgment by eye
-   on real textures, which the figures cannot make. The default 0.5 puts
+   on real textures, which the figures cannot make. The bake's defaults
+   (decided 2026-09-29: ETC1S 0.75 for color and data maps, UASTC 0.9
+   for normal maps) are picked from the figures; the comparison in
+   "Sponza, baked" awaits the user's eye. `encodeTexture`'s own default
+   0.5 puts
    a normal map at 35.7 dB with RDO at lambda 8, and that default was
    picked before anyone knew quality drove RDO. Effort is fixed at
    upstream's default and unexamined.
-4. **Encoder output across machines.** Repeat encodes are byte-identical
-   on one machine. Across compilers and architectures is unchecked. The
+4. **Give freed texture memory back on glibc.** The four transcode
+   threads bound the work, not what the allocator keeps; see "Parallel
+   transcodes keep their memory". Pinning glibc's mmap threshold at
+   startup returns it in every run; it is process-wide, so it is the
+   user's decision.
+5. **Encoder output across machines.** Repeat encodes are byte-identical
+   on one machine. The probe's four files came out the same size from
+   MSVC x86_64 and NDK clang arm64 (607, 509, 610, 509 bytes); their
+   bytes were not compared. The
    one-payload rule does not need it (a bake runs once, its output
    ships), a reproducible build would.
-5. **Attribution.** Basis Universal is Apache 2.0: distributed binaries
+6. **Attribution.** Basis Universal is Apache 2.0: distributed binaries
    owe its NOTICE, and the zstd inside it is BSD (`zstd/LICENSE`). Check
    how libvpx and opus are credited in a packed app and add both the
    same way. The Khronos test fixture is Apache 2.0 and is not
    distributed in any binary.
-6. **The runtime's size with zstd** is not measured: only the object is
+7. **The runtime's size with zstd** is not measured: only the object is
    (see "Binary size").
-7. **Sponza, re-measured**: bake with `--ktx2`, load on Windows (the
+8. **Sponza, re-measured**: bake with `--ktx2`, load on Windows (the
    original site), Linux and the Adreno 610 tablet; record shipped size,
    bake time, texture bytes from `/gpu`, client RSS, transcode time per
    platform; a side-by-side against the RGBA8 bake for the user's eye.
@@ -307,6 +368,17 @@ weight live in [runtime-optimization](../backlog/runtime-optimization.md).
 
 - alloy: `cargo test -p alloy --lib texture` passes, with tests for block
   and chain sizing and the BPTC gate.
+- `forge::workers`: `cargo test -p forge --lib workers` (2): no more
+  jobs at once than threads, a panicking job fails alone.
+- packages/core: `bun test tests/textures.test.ts` (5), which also
+  proves the entry imports no runtime.
+- flux additions: `cargo test -p forge --lib path` (4), `cargo test -p
+  flux --features compile --test path --test process` (11 and 7; the
+  `exit` tests run the flux binary).
+- packages/3d: `bun test` passes (40), with the check rig covering
+  `KHR_texture_basisu` (the KTX2 source wins over the fallback, in the
+  prefetch list and the parse) and the container round trip of KTX2
+  bytes; `srt check` passes on the package and on the tool.
 - forge: `cargo test -p forge --lib --features ktx2 ktx2`, seven tests:
   each codec to each target, decoded color, the sRGB flag, byte-identical
   repeat encodes, refusals, a UASTC file smaller than its payload, and a
@@ -332,6 +404,161 @@ weight live in [runtime-optimization](../backlog/runtime-optimization.md).
   back 120 from both codecs; an sRGB (200, 100, 50) reads back
   (148, 33, 8), its linear-light value; each 64x64 texture holds 5488
   bytes with its chain against 21845 as rgba8.
+
+### Sponza, baked (2026-09-29, Linux, release client)
+
+The Khronos Sponza sample: 25 materials, 69 sampled images, 1024^2 and
+2048^2. `srt tool 3d/model Sponza.gltf --ktx2`, quality 0.75 for ETC1S
+and 0.9 for UASTC, loaded by `probes/ktx2-model-probe.tsx` on Mesa Intel
+(the device picked BC7).
+
+| | PNG/JPEG bake | `--ktx2` bake |
+|---|---|---|
+| `.srtm` | 49569 KiB | 46637 KiB |
+| images in it | 41984 KiB | 39052 KiB |
+| of which color maps (25) | 17.4 MB | 4.8 MB |
+| of which data maps (44) | 23.6 MB | 33.4 MB |
+| bake time | 1.3 s | 130 s (7.6 min of CPU) |
+| texture bytes, `/gpu` | 362.7 MB | 90.7 MB |
+| `loadModel` | 1041 ms | 449 ms |
+| client RSS after load | 241 to 262 MB | 364 to 410 MB |
+
+- GPU texture memory is a quarter, as designed, and the load is faster.
+- The shipped size does not drop: color maps shrink to a quarter, data
+  maps GROW, because UASTC at 0.9 is larger than the JPEGs it replaces,
+  and 44 of the 69 images are data maps. The expectation of "shipped
+  images under 10 MB" counted the 25 base color maps the parser opened
+  then.
+- Client RSS is HIGHER with the compressed bake and does not come down
+  within a minute. Explained under "Parallel transcodes keep their
+  memory"; not fixed.
+- Both bakes render the same picture at a glance; the judgment on
+  quality is the user's.
+
+The table above is the first bake, UASTC 0.9 for every non-color map.
+With the defaults decided since (ETC1S for the metallic-roughness
+maps), same asset:
+
+| kind | images | source | defaults | `data` set to UASTC 0.9 |
+|---|---|---|---|---|
+| color | 25 | 17828 KiB | 4882 KiB | 4882 KiB |
+| normal | 24 | 15827 KiB | 22110 KiB | 22110 KiB |
+| data | 20 | 8329 KiB | 2526 KiB | 12061 KiB |
+| `.srtm` | | 49569 KiB | 37102 KiB | 46637 KiB |
+
+Texture bytes are 90.7 MB either way. The two bakes against the
+uncompressed one, rendered in the Sponza demo's own scene
+(`probes/sponza-compare/`, a copy of its sources run on the repo's
+packages, five fixed poses, clock frozen), PSNR of the rendered frame:
+
+| pose | defaults | `data` as UASTC |
+|---|---|---|
+| nave | 31.4 dB | 33.3 dB |
+| curtains | 30.9 dB | 32.9 dB |
+| floor | 34.5 dB | 36.5 dB |
+| lion | 42.1 dB | 42.2 dB |
+| aisle | 41.4 dB | 41.7 dB |
+
+ETC1S roughness costs about 2 dB of the rendered frame where glossy
+surfaces fill the view and nothing elsewhere, for 9.5 MB of download.
+
+### Parallel transcodes keep their memory (2026-09-29, Linux, glibc)
+
+`probes/ktx2-memory-probe.tsx` runs the load's steps one by one and
+reads the process RSS after each, with at most N transcodes in flight
+(0: all 69 at once, what `transcodeModelImages` does). Sponza, MB:
+
+| in flight | transcode time | before | peak | settled |
+|---|---|---|---|---|
+| all (3 runs) | 210 ms | 194 to 271 | 359 to 438 | same as peak |
+| 8 (3 runs) | 220 to 281 ms | 195 to 234 | 310 to 348 | same as peak |
+| 6 (2 runs) | 254 to 322 ms | 196 to 235 | 308 to 349 | 258, 349 |
+| 4 (4 runs) | 340 to 399 ms | 194 to 195 | 305 to 307 | 234 to 250 |
+| 3 (2 runs) | 469 to 484 ms | 195 | 304 to 305 | 230 to 236 |
+| 1 (2 runs) | 1060 ms | 234 to 235 | 342 to 344 | 265 to 267 |
+| the PNG/JPEG bake | none | 238 | 240 | 240 |
+
+- The transcoded payloads are not leaked: with 4 or fewer in flight the
+  process settles where the uncompressed bake does once the load drops
+  its references.
+- With many in flight the memory is never given back. The runtime uses
+  glibc malloc (no allocator of its own), which keeps an arena per
+  allocating thread, and each transcode allocates on a blocking pool
+  thread; with few in flight the pool reuses a few threads.
+- The peak of about 110 MB above the start is the payloads themselves
+  (90 MB, all needed at once by the synchronous `createModel`) and their
+  copies; only a create that streams would lower it ("Copies on the way
+  to the GPU").
+- Four in flight costs about 150 ms of load here and still beats the
+  uncompressed load (449 ms in all against 1041 ms).
+- glibc only. Android, Windows and macOS have other allocators and are
+  not measured; the tablet is where it counts.
+
+The cause, found by setting glibc's tunables from the environment with
+all 69 in flight (three runs each, MB):
+
+| setting | peak | settled |
+|---|---|---|
+| stock | 332 to 372 | same as peak |
+| `MALLOC_MMAP_THRESHOLD_=131072` | 297 to 298 | 204 to 206 |
+| `MALLOC_TRIM_THRESHOLD_=131072` | 296 to 338 | 204 to 245 |
+| `MALLOC_ARENA_MAX=2` | 298 to 308 | 256 to 260 |
+
+glibc serves a large allocation by mmap and returns it to the system on
+free, but it RAISES the size it calls large each time such a block is
+freed (up to 32 MiB), after which texture-sized buffers come from the
+arena heaps, which are trimmed only from the top. Setting the threshold
+explicitly, at its own default, switches that adjustment off. It is not
+the number of threads: arenas capped at two still keep 70 MB.
+
+With the four runtime threads as built (four runs each): stock settles
+44 to 61 MB above the pre-load level in three runs and keeps all 110 MB
+in one; with the threshold pinned it settles 13 to 17 MB above in all
+four. The pre-load level itself varies by 40 MB between runs (185 or
+225 MB), with every bake, which is what made single readings look
+erratic.
+
+Cost of pinning, measured on the Sponza fly-through (10 s windows, two
+runs each): frame work 34.4 ms stock, 33.8 ms pinned, no difference.
+That scene is GPU-bound on this machine, so it does not rule out a cost
+for an app that allocates large buffers every frame on the CPU.
+
+A trim when the transcode queue drains was considered and dropped: the
+payloads are freed later, on the JS thread, after `createModel` has
+uploaded them.
+
+### Platforms (2026-09-29, commit 8da4e734)
+
+- Windows x86_64 MSVC (RTX 3070, ANGLE over D3D11, GLES 3.0): the client
+  builds and links with Basis and zstd. `limits.bc7Textures` is true,
+  so the BPTC extension is listed. `ktx2-texture-probe`: the device
+  picked `bc7-rgba8`, gray 120 reads back 120, sRGB (200, 100, 50) reads
+  back (147, 33, 8) from ETC1S and (147, 32, 8) from UASTC, 5488 bytes
+  each. `compressed-texture-probe`: ETC2 138 of 138, the mip level 70 of
+  70, BC7 137 of 137, every gate throws, inventory 64 / 112 / 64 bytes.
+  ETC2 there is accepted; whether the driver expands it is not
+  observable from GL.
+- File sizes from the Windows encoder: ETC1S 607 and 610 bytes, the same
+  as on Linux; UASTC 509 bytes with zstd, against 5824 before it.
+- macOS arm64 (Xcode 27): the client builds and links (against the
+  system `libc++`). `cargo test --release -p forge --lib --features
+  ktx2 ktx2` passes, 7 tests, so Basis and zstd compile and run there
+  and the libktx file reads. The test profile with debug info turned off
+  hits the Xcode 27 strip failure (E0463); use `--release`.
+- Android arm64 (SM-T500, Adreno 610, GLES 3.2): `limits.bc7Textures`
+  is false. `ktx2-texture-probe`: the device picked `etc2-rgba8`, gray
+  120 reads back 120, sRGB (200, 100, 50) reads back (148, 33, 8) from
+  ETC1S and (146, 33, 8) from UASTC, 5488 bytes each; file sizes as on
+  Windows. `compressed-texture-probe`: ETC2 138 of 138, the mip level 70
+  of 70, a `bc7-*` create throws naming the limit, every other gate
+  throws, inventory 64 / 112 bytes.
+- Android arm64 (NDK): builds and passes the 16 KB alignment check. The
+  first build linked `c++_static` and did not load on the device:
+  `dlopen failed: cannot locate symbol "__gxx_personality_v0"`, the
+  static runtime without its `c++abi`. forge now links the NDK's shared
+  runtime (cc's default), which every APK already stages and whisper
+  uses; `libmain.so` needs `libc++_shared.so` and exports no Basis or
+  zstd symbol.
 
 Under memory pressure build the tests with `CARGO_PROFILE_DEV_DEBUG=0
 CARGO_PROFILE_TEST_DEBUG=0`: the debug-info link of the Basis objects is

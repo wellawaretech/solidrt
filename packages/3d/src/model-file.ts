@@ -1,7 +1,8 @@
 // The baked model container (.srtm): ModelData as one file whose payload IS
 // the GPU layout, so loading it is a header parse plus typed-array views -
-// no per-vertex work. Written by tools/model.ts under bun (from parseGltf),
-// read by loadModel on flux; both ends are this pure module.
+// no per-vertex work. Written by tools/model.flux.ts (from parseGltf),
+// read by loadModel on flux; both ends are this pure module. An image
+// block carries the image file as it is, a PNG, a JPEG or a KTX2.
 //
 // Layout, all little-endian:
 //   "SRTM" u32 | version u32 | jsonLength u32 | json (padded to 4) | payload

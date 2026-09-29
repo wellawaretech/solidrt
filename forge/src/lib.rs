@@ -37,6 +37,7 @@ pub mod value;
 pub mod video;
 pub mod wasm;
 pub mod websocket;
+pub mod workers;
 
 #[cfg(test)]
 mod tests;

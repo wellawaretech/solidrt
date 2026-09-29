@@ -1,6 +1,6 @@
 use rquickjs::function::MutFn;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Array, Ctx, Function, JsLifetime, Object};
+use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -8,8 +8,9 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 use crate::logger::CtxLogger;
+use crate::plugins::marshal::OptArg;
 use crate::plugins::events::{add_listener, emit_event, has_listeners, remove_listener};
-use forge::process::{alive, arch, env_vars, exec_path, home_dir, kill, pid, platform, rss, SignalStream};
+use forge::process::{alive, arch, env_vars, exec_path, exit, home_dir, kill, pid, platform, rss, SignalStream};
 
 // flux:process - process-level events. The first such surface flux owns on top
 // of its own event bus (register_listener + emit_event), separate from the UI
@@ -83,6 +84,40 @@ fn alive_impl(pid: u32) -> bool {
   alive(pid)
 }
 
+// flux:process also ends the process:
+//
+//   import { exit } from "flux:process"
+//   exit(1)
+//
+// Node's process.exit, for the command line tool that is done or has
+// failed: the process ends inside the call with that status (0 when none is
+// given), nothing pending runs, and what was printed is flushed. The status
+// is what every OS carries, an integer in 0..255. The engine's shutdown
+// hooks run first, as they do when a script ends by itself.
+//
+// Ending the process is the host's to allow: it sets ProcessExit with
+// FluxEngine::builder().userdata(ProcessExit), which the command line
+// binaries do. Anywhere else the call throws: a host with a life cycle of
+// its own (a windowed app and its quit hooks) ends its app its own way, and
+// an isolate is not the process.
+#[derive(Clone, JsLifetime)]
+pub struct ProcessExit;
+
+fn exit_impl(ctx: Ctx<'_>, code: OptArg<f64>) -> rquickjs::Result<()> {
+  if ctx.userdata::<ProcessExit>().is_none() {
+    return Err(Exception::throw_message(
+      &ctx,
+      "exit: this host does not end through flux:process (it is for a command line script; an app ends through its host, an isolate by returning)",
+    ));
+  }
+  let code = code.0.unwrap_or(0.0);
+  if code.fract() != 0.0 || !(0.0..=f64::from(u8::MAX)).contains(&code) {
+    return Err(Exception::throw_message(&ctx, &format!("exit: code {code} is not an integer in 0..255")));
+  }
+  crate::engine::run_shutdown_hooks(&ctx, &ctx.logger());
+  exit(code as u8)
+}
+
 // flux:process also exposes the environment:
 //
 //   import { env } from "flux:process"
@@ -122,6 +157,7 @@ impl ModuleDef for ProcessModule {
     decl.declare("kill")?;
     decl.declare("alive")?;
     decl.declare("env")?;
+    decl.declare("exit")?;
     Ok(())
   }
 
@@ -146,6 +182,7 @@ impl ModuleDef for ProcessModule {
     exports.export("kill", Function::new(ctx.clone(), kill_impl)?)?;
     exports.export("alive", Function::new(ctx.clone(), alive_impl)?)?;
     exports.export("env", env_object(ctx)?)?;
+    exports.export("exit", Function::new(ctx.clone(), exit_impl)?)?;
     Ok(())
   }
 }

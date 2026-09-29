@@ -16,10 +16,12 @@
 // data: buffers and images, and single-file .glb.
 //
 // Pure module by design - a parse is JSON plus typed-array views plus one
-// interleave loop per primitive, so it runs the same under bun (the bake
-// tool in tools/model.ts, the check rig) and on flux (loadGltf in
+// interleave loop per primitive, so it runs the same under bun (an app's
+// bake script, the check rig) and on flux (loadGltf in
 // model.ts). It never decodes images: material.map indexes the encoded
-// bytes in `images`, and uploading is the engine side's job.
+// bytes in `images`, and uploading is the engine side's job. An image is
+// a PNG or JPEG, or a KTX2 compressed texture (KHR_texture_basisu, whose
+// source a texture prefers over its plain one).
 //
 // Outside the subset: Draco/meshopt-compressed meshes and any other
 // required extension throw naming it; tangents (the base channel and
@@ -43,6 +45,8 @@
 // where glTF puts them - root, node, mesh (onto the part), material -
 // the way Three fills userData, so app data authored as custom
 // properties arrives with the model.
+
+import type { TextureKind } from "@solidrt/core/textures"
 
 import { compose, decompose, det3, mat4, multiply, quatNormalize } from "./math.ts"
 import { linearToSrgb } from "./color.ts"
@@ -229,8 +233,14 @@ export type ModelData = {
   /** The file's animations (empty when it has none). */
   clips: ModelClip[]
   materials: ModelMaterial[]
-  /** Encoded image files (PNG/JPEG bytes) the materials' `map` index. */
+  /** Encoded image files (PNG, JPEG or KTX2 bytes) the materials' `map`
+   * index. */
   images: Uint8Array[]
+  /** The KTX2 images transcoded for this device, by image index (the
+   * others absent): what `transcodeModelImages` adds and `createModel`
+   * uploads in place of the file. Never in a file; a parse and
+   * `decodeModel` leave it out. */
+  textures?: (ModelTexture | undefined)[]
   /** World-space rest-pose [minX, minY, minZ, maxX, maxY, maxZ] over every
    * part - each part's local box through its node's composed transform, and
    * a skinned part's per-joint boxes through the joints' rest transforms
@@ -355,6 +365,51 @@ const DEFAULT_MATERIAL: ModelMaterial = {
 }
 
 /** True when the bytes are a .glb container (the "glTF" magic). */
+/** How a model samples one of its images: what decides its color space
+ * at upload and how it is compressed at bake. */
+export type ModelImageUse = {
+  /** A material samples it as color (base color, emissive): its texels
+   * are sRGB-encoded, as glTF stores those. Every other map is linear. */
+  srgb: boolean
+  /** What its errors cost, which picks its codec at bake time (the kinds
+   * of `solidrt.textures`): "normal" when any material samples it as a
+   * normal map, else "color" when it is a color map, else "data". An
+   * image several slots share takes the most demanding of them, and
+   * stays sRGB if one of them is a color slot. */
+  kind: TextureKind
+}
+
+/**
+ * How the model's materials sample each of its images, by image index.
+ * The one rule behind createModel's uploads and the bake's encodes, so a
+ * baked image is sampled as the same image unbaked.
+ */
+export function modelImageUses(data: Pick<ModelData, "images" | "materials">): ModelImageUse[] {
+  let uses: ModelImageUse[] = data.images.map(() => ({ srgb: false, kind: "data" }))
+  let at = (index: number | null): ModelImageUse | undefined => (index === null ? undefined : uses[index])
+  for (let m of data.materials) {
+    for (let color of [at(m.map), at(m.emissiveMap)]) {
+      if (color === undefined) continue
+      color.srgb = true
+      if (color.kind === "data") color.kind = "color"
+    }
+    let normal = at(m.normalMap)
+    if (normal !== undefined) normal.kind = "normal"
+  }
+  return uses
+}
+
+/** A compressed texture ready to upload: the payload `createTexture`
+ * takes at `format`, with the full mip chain when `mipmap`. The shape
+ * `transcodeTexture` returns. */
+export type ModelTexture = {
+  data: Uint8Array
+  width: number
+  height: number
+  format: "etc2-rgba8" | "etc2-rgba8-srgb" | "bc7-rgba8" | "bc7-rgba8-srgb" | "rgba8" | "rgba8-srgb"
+  mipmap: boolean
+}
+
 export function isGlb(bytes: Uint8Array): boolean {
   return bytes.length >= 12 && new DataView(bytes.buffer, bytes.byteOffset, 12).getUint32(0, true) === GLB_MAGIC
 }
@@ -371,14 +426,21 @@ const SAMPLED_TEXTURES: ((material: any) => any)[] = [
   (m) => m.pbrMetallicRoughness?.metallicRoughnessTexture,
 ]
 
+// The image a texture samples: the KTX2 one where the file carries it
+// (KHR_texture_basisu), ahead of the plain source a file may keep beside
+// it as a fallback for loaders without the extension.
+function textureSource(texture: any): number | undefined {
+  return texture?.extensions?.KHR_texture_basisu?.source ?? texture?.source
+}
+
 // The image indices a document's materials sample (SAMPLED_TEXTURES
-// through textures[].source), the demand set imageSlot will meet.
+// through textureSource), the demand set imageSlot will meet.
 function sampledImages(gltf: any): Set<number> {
   let images = new Set<number>()
   for (let m of gltf.materials ?? []) {
     for (let channel of SAMPLED_TEXTURES) {
       let ref = channel(m)
-      let source = ref === undefined ? undefined : gltf.textures?.[ref.index]?.source
+      let source = ref === undefined ? undefined : textureSource(gltf.textures?.[ref.index])
       if (source !== undefined) images.add(source)
     }
   }
@@ -429,9 +491,9 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     }
     // Quantized attributes read through the normalized-integer path,
     // emissive strength is the emissive intensity, GPU instancing is
-    // read as placements; every other required extension changes what
-    // the file means.
-    if (ext !== "KHR_mesh_quantization" && ext !== "KHR_materials_emissive_strength" && ext !== "EXT_mesh_gpu_instancing") {
+    // read as placements, a KTX2 image is an image like another; every
+    // other required extension changes what the file means.
+    if (ext !== "KHR_mesh_quantization" && ext !== "KHR_materials_emissive_strength" && ext !== "EXT_mesh_gpu_instancing" && ext !== "KHR_texture_basisu") {
       throw new Error("parseGltf: the file requires the " + ext + " extension, which is not supported")
     }
   }
@@ -484,8 +546,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   // (the prefetch list): a new channel goes in the table first.
   let textureSlot = (ref: any): number | null => {
     if (ref === undefined) return null
-    let texture = gltf.textures?.[ref.index]
-    return texture?.source !== undefined ? imageSlot(texture.source) : null
+    let source = textureSource(gltf.textures?.[ref.index])
+    return source !== undefined ? imageSlot(source) : null
   }
   let materials: ModelMaterial[] = (gltf.materials ?? []).map((m: any, i: number): ModelMaterial => {
     let pbr = m.pbrMetallicRoughness ?? {}

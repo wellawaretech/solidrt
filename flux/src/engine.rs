@@ -19,18 +19,30 @@ pub struct ShutdownHooks {
 }
 
 impl ShutdownHooks {
-  fn new() -> Self {
+  pub(crate) fn new() -> Self {
     Self { inner: Arc::new(Mutex::new(Vec::new())) }
   }
 
   pub fn add<F: FnOnce(&Logger) + Send + 'static>(&self, f: F) {
-    self.inner.lock().unwrap().push(Box::new(f));
+    self.inner.lock().expect("shutdown hooks lock poisoned").push(Box::new(f));
   }
 
-  fn run(self, logger: &Logger) {
-    for hook in self.inner.lock().unwrap().drain(..) {
+  /// Run the hooks registered so far, each once: a second run finds none.
+  /// The engine's own end and `flux:process` exit both come through here,
+  /// so a hook runs whichever way the process ends.
+  pub(crate) fn run(&self, logger: &Logger) {
+    let hooks: Vec<ShutdownFn> = self.inner.lock().expect("shutdown hooks lock poisoned").drain(..).collect();
+    for hook in hooks {
       hook(logger);
     }
+  }
+}
+
+/// Run the engine's shutdown hooks now, from inside a JS call that is about
+/// to end the process.
+pub(crate) fn run_shutdown_hooks(ctx: &Ctx<'_>, logger: &Logger) {
+  if let Some(hooks) = ctx.userdata::<ShutdownHooks>() {
+    hooks.run(logger);
   }
 }
 

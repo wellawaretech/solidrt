@@ -5,7 +5,8 @@ mod common;
 use common::run_source;
 
 // flux:path is a lexical path module: resolveWithin fuses normalization with a
-// containment check, join concatenates and normalizes segments. Both are pure
+// containment check, join concatenates and normalizes segments, and
+// basename/dirname/extname split a path the way Node's do. All are pure
 // string operations (no filesystem access), so these tests assert on output
 // for fixed inputs rather than touching disk. Absolute-path cases assume unix
 // separators, hence the unix gate.
@@ -13,7 +14,7 @@ use common::run_source;
 async fn eval(expr: &str) -> String {
   let code = format!(
     r#"
-    import {{ resolveWithin, join }} from "flux:path";
+    import {{ resolveWithin, join, basename, dirname, extname }} from "flux:path";
     console.log(String({expr}));
     "#
   );
@@ -75,4 +76,21 @@ async fn join_skips_empty_segments() {
 #[tokio::test]
 async fn join_of_nothing_is_dot() {
   assert_eq!(eval(r#"join()"#).await, ".");
+}
+
+#[tokio::test]
+async fn basename_dirname_extname_split_a_path() {
+  assert_eq!(eval(r#"basename("/a/model.gltf")"#).await, "model.gltf");
+  assert_eq!(eval(r#"basename("/a/model.gltf", ".gltf")"#).await, "model");
+  assert_eq!(eval(r#"dirname("/a/model.gltf")"#).await, "/a");
+  assert_eq!(eval(r#"dirname("model.gltf")"#).await, ".");
+  assert_eq!(eval(r#"extname("/a/model.gltf")"#).await, ".gltf");
+  assert_eq!(eval(r#"extname("model")"#).await, "");
+}
+
+// A wrapper forwards its own optional parameter as it got it, so an explicit
+// undefined reads as "no ext".
+#[tokio::test]
+async fn basename_takes_an_explicit_undefined_ext() {
+  assert_eq!(eval(r#"basename("/a/model.gltf", undefined)"#).await, "model.gltf");
 }

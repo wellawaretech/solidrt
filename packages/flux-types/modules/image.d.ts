@@ -93,7 +93,10 @@ declare module "flux:image" {
    * straight alpha) samples as straight alpha.
    *
    * Asynchronous: the work runs off the JS thread, and a scene's worth of
-   * textures is seconds of it on a slow device. Rejects when the bytes are
+   * textures is seconds of it on a slow device. Start as many as there are
+   * textures: the runtime transcodes four at a time and queues the rest, so
+   * a `Promise.all` over a scene neither floods the device's cores nor
+   * multiplies the memory in flight. Rejects when the bytes are
    * not such a file (another codec, a cube map, an array, a partial mip
    * chain). Throws on a runtime built without compressed textures
    * (`Flux.capabilities` lacks "ktx2").

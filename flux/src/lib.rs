@@ -23,7 +23,7 @@ pub use forge::seek::{SeekableRead, SeekableReader};
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use plugins::js_error::JsResult;
 pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
-pub use forge_plugins::process::ProcessArgs;
+pub use forge_plugins::process::{ProcessArgs, ProcessExit};
 pub use plugins::seekable::{SeekableOpener, SeekableSource};
 pub use standards_plugins::body::{attach_body, JsBytes, JsonValue};
 pub use standards_plugins::fetch::{request_body_from_value, JsResponseData};

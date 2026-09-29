@@ -41,9 +41,11 @@ the work before starting it:
   with the MCP `reload` tool.
 - `bunx srt tool` - list the build-time tools the installed `@solidrt/*`
   packages ship (`<package>/tools/<name>.ts`, named `<package>/<name>`);
-  `bunx srt tool <package>/<name> [arguments]` runs one under bun in the
-  project, everything after the name passed through as the tool's own
-  arguments (each tool prints its own usage on `--help`). What a tool does
+  `bunx srt tool <package>/<name> [arguments]` runs one in the project,
+  everything after the name passed through as the tool's own arguments
+  (each tool prints its own usage on `--help`). A tool runs under bun; one
+  whose file is `<name>.flux.ts` runs under the flux runtime instead, for
+  what only the runtime has, and is named and called the same way. What a tool does
   is the package's business (e.g. `3d/model` bakes a glTF into a model
   file); srt only finds and runs them.
 - `bunx srt check [file|dir]` - build in memory and typecheck, no output

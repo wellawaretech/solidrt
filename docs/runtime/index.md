@@ -44,14 +44,14 @@ serve({
 | Module | What it does |
 | --- | --- |
 | `flux:fs` | Files, directories, canonical paths. |
-| `flux:path` | Path joining and containment checks. |
+| `flux:path` | Path joining, containment checks, and the `basename` / `dirname` / `extname` splits. |
 | `flux:http` | HTTP and WebSocket servers, with routing. |
 | `flux:net` | TCP and UDP sockets. |
 | `flux:p2p` | Direct peer-to-peer connections, no server in the middle. |
 | `flux:mdns` | Local network service discovery. |
 | `flux:sqlite` | SQLite, on a dedicated thread. |
 | `flux:subprocess` | Spawn and drive processes. |
-| `flux:process` | Arguments, environment, platform, executable path, memory usage, signal handlers, process liveness. |
+| `flux:process` | Arguments, environment, platform, executable path, memory usage, signal handlers, process liveness, `exit`. |
 | `flux:wasm` | Run WebAssembly modules, interpreted. Portable across every target; a small constant factor over JavaScript on tight compute, nowhere near browser wasm speed. |
 | `flux:ffi` | Call into native libraries. |
 | `flux:isolate` | Run a module on its own thread and call it like an object. |

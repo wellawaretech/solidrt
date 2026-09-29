@@ -175,9 +175,8 @@ fn transcode_texture<'js>(
   };
   let file = bytes.copy_bytes();
   Ok(with_pending(&ctx, async move {
-    tokio::task::spawn_blocking(move || forge::ktx2::transcode(&file, target))
+    forge::ktx2::transcode_queued(file, target)
       .await
-      .map_err(|e| format!("transcodeTexture: {e}"))?
       .map(|t| Neutral(t.into()))
       .map_err(|e| format!("transcodeTexture: {e}"))
   }))

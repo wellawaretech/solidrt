@@ -12,7 +12,8 @@
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { gltfExternalUris, isGlb, parseGltf } from "../src/gltf.ts"
+import { isKtx2 } from "@solidrt/core/textures"
+import { gltfExternalUris, isGlb, modelImageUses, parseGltf } from "../src/gltf.ts"
 import type { ModelData } from "../src/gltf.ts"
 import { decodeModel, encodeModel } from "../src/model-file.ts"
 import { channelElements, sampleChannel } from "../src/clip.ts"
@@ -680,6 +681,64 @@ throws("external without resolver", () => parseGltf(externalBytes), "no resolver
     return uri.endsWith(".bin") ? bin : fakePng
   })
   if (parsed.images.length !== 4) fail(`the all-channels parse opens the four sampled images, got ${parsed.images.length}`)
+}
+
+// KHR_texture_basisu: a texture's KTX2 source is the image it samples,
+// ahead of the plain source kept beside it as a fallback, in the prefetch
+// list and in the parse alike; the bytes come through untouched (nothing
+// here decodes), and requiring the extension is accepted.
+{
+  let fakeKtx2 = new Uint8Array([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+  if (!isKtx2(fakeKtx2) || isKtx2(fakePng)) fail("isKtx2 tells a KTX2 from a png by its first twelve bytes")
+  let basisu = {
+    ...external,
+    extensionsUsed: ["KHR_texture_basisu"],
+    extensionsRequired: ["KHR_texture_basisu"],
+    materials: [{ name: "compressed", pbrMetallicRoughness: { baseColorTexture: { index: 0 } }, normalTexture: { index: 1 } }],
+    textures: [{ source: 0, extensions: { KHR_texture_basisu: { source: 1 } } }, { extensions: { KHR_texture_basisu: { source: 2 } } }],
+    images: [{ uri: "textures/base.png" }, { uri: "textures/base.ktx2" }, { uri: "textures/normal.ktx2" }],
+  }
+  let basisuBytes = new TextEncoder().encode(JSON.stringify(basisu))
+  let expected = "scene%20data.bin,textures/base.ktx2,textures/normal.ktx2"
+  if (gltfExternalUris(basisuBytes).join() !== expected) fail(`gltfExternalUris with KHR_texture_basisu: ${gltfExternalUris(basisuBytes).join()}`)
+  let parsed = parseGltf(basisuBytes, (uri) => {
+    if (uri.endsWith(".bin")) return bin
+    if (uri.endsWith(".ktx2")) return fakeKtx2
+    throw new Error("parseGltf opened " + uri + ", the fallback a KTX2 source replaces")
+  })
+  if (parsed.images.length !== 2 || !parsed.images.every(isKtx2)) fail("KHR_texture_basisu: the two KTX2 images did not come through")
+  if (parsed.materials[0]!.map !== 0 || parsed.materials[0]!.normalMap !== 1) fail("KHR_texture_basisu: the material does not index the KTX2 images")
+  if (parsed.textures !== undefined) fail("a parse carries no transcoded textures")
+  // The container carries the KTX2 bytes as it carries any image, and
+  // never the transcoded payloads of one device.
+  let ready = { data: new Uint8Array(16), width: 4, height: 4, format: "etc2-rgba8" as const, mipmap: false }
+  let back = decodeModel(encodeModel({ ...parsed, textures: [ready, ready] }))
+  if (back.images.length !== 2 || back.images.some((img) => img.join() !== fakeKtx2.join())) fail("container: the KTX2 bytes did not round-trip")
+  if (back.textures !== undefined) fail("container: transcoded textures were written to the file")
+}
+
+// modelImageUses: the one rule for how an image is sampled, which the
+// upload and the bake share. A color map is sRGB, a normal map takes the
+// accurate codec, the packed metallic-roughness map is plain data; an
+// image a color slot and a normal slot share is BOTH, sRGB and "normal",
+// so its bake samples as the unbaked image does.
+{
+  let material = (slots: Partial<Record<"map" | "emissiveMap" | "normalMap" | "metalnessRoughnessMap", number>>) =>
+    ({ map: null, emissiveMap: null, normalMap: null, metalnessRoughnessMap: null, ...slots }) as unknown as ModelData["materials"][number]
+  let images = [0, 1, 2, 3, 4, 5].map(() => fakePng)
+  let uses = modelImageUses({
+    images,
+    materials: [material({ map: 0, normalMap: 1, metalnessRoughnessMap: 2, emissiveMap: 3 }), material({ normalMap: 4, map: 4 }), material({ map: 4 })],
+  })
+  let expected = [
+    { srgb: true, kind: "color" },
+    { srgb: false, kind: "normal" },
+    { srgb: false, kind: "data" },
+    { srgb: true, kind: "color" },
+    { srgb: true, kind: "normal" },
+    { srgb: false, kind: "data" },
+  ]
+  if (JSON.stringify(uses) !== JSON.stringify(expected)) fail(`modelImageUses: ${JSON.stringify(uses)}`)
 }
 
 let dataUri = { ...external, buffers: [{ byteLength: binLength, uri: "data:application/octet-stream;base64," + btoa(String.fromCharCode(...bin)) }], images: [{ bufferView: pngView, mimeType: "image/png" }] }

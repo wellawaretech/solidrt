@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use flux::{FluxEngine, LogLevel, ModuleCode, ProcessArgs};
+use flux::{FluxEngine, LogLevel, ModuleCode, ProcessArgs, ProcessExit};
 
 // Through forge::tty so a line breaks correctly while the terminal is in raw
 // mode (flux:tty setRawMode), where a bare "\n" would not return the carriage.
@@ -58,6 +58,7 @@ async fn main() {
   let engine = FluxEngine::builder()
     .logger(log_fn)
     .userdata(ProcessArgs(argv))
+    .userdata(ProcessExit)
     .on_uncaught(move |_| mark_failed.store(true, Ordering::Relaxed))
     .isolate_resolver(move |id| {
       // Bytecode first, like the lattice resolver: a compiled bundle dir

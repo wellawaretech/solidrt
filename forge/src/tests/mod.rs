@@ -8,6 +8,7 @@ mod isolate;
 mod ktx2;
 mod mdns;
 mod net;
+mod path;
 mod process;
 mod source;
 mod sqlite;
@@ -24,4 +25,5 @@ mod webm;
 mod texture;
 #[cfg(feature = "video")]
 mod worker;
+mod workers;
 mod wasm;

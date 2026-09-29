@@ -1,6 +1,6 @@
 ---
 title: Model loader follow-ups
-description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3 container with retained hierarchy, skins and animation clips plus the JS mixer since 2026-08-31) covers rigged models end to end; still open, each something Three's and Unity's glTF loaders take today, are the compressed real-world files (Draco/meshopt, KTX2), tangents and the second UV set, per-material samplers, merge-by-material and runtime decoding of fetched content (morph targets have their own item).
+description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3 container with retained hierarchy, skins and animation clips plus the JS mixer since 2026-08-31) covers rigged models end to end; still open, each something Three's and Unity's glTF loaders take today, are the compressed real-world meshes (Draco/meshopt), tangents and the second UV set, per-material samplers, merge-by-material and runtime decoding of fetched content (morph targets have their own item).
 created: 2026-08-26
 ---
 
@@ -38,9 +38,11 @@ with its decoder plugins) and Unity (glTFast) take every one of them.
 - **Bake from own geometry, extras, part reuse** shipped 2026-09-22:
   [3d-model-file-bake-and-reuse](../done/3d-model-file-bake-and-reuse.md).
 
-- **Compressed meshes and textures.** Blender exports Draco by default and
-  KTX2/Basis textures are common, so real-world files bounce off the
-  parser with a clear error today. Three (DRACOLoader, MeshoptDecoder,
+- **Compressed meshes.** KTX2/Basis textures load since 2026-09-29
+  (`KHR_texture_basisu`, transcoded on the device:
+  [gpu-compressed-textures](../plans/gpu-compressed-textures.md)).
+  Blender exports Draco by default, so real-world files still bounce off
+  the parser with a clear error on their meshes. Three (DRACOLoader, MeshoptDecoder,
   KTX2Loader) and Unity (glTFast) decode all three; Godot's importer
   takes none, which is a known hole there, not a precedent. The place for the decoders is the bake
   tool under bun (wasm decoders, no runtime weight), which is the "mature
@@ -69,7 +71,7 @@ with its decoder plugins) and Unity (glTFast) take every one of them.
 - **Runtime-fetched content.** The bake tool runs under bun on the
   developer's machine, so a model the APP downloads (user-made tracks and
   karts, a mod browser, a level editor's exports) meets the runtime
-  parser as-is: Draco/meshopt/KTX2 files bounce with the clear error, and
+  parser as-is: Draco/meshopt files bounce with the clear error, and
   large ones pay the 4 us-per-vertex interleave in the interpreter.
   Three, Unity (glTFast) and Godot (GLTFDocument) all decode at runtime,
   so the parity answer is a runtime decode path for the common

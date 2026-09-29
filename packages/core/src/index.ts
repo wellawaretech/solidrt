@@ -18,6 +18,8 @@ export { createImage, decodeImage, encodeImage, encodeTexture, transcodeTexture 
 export { createCursor } from "./cursor"
 export type { CursorFrame, CursorId, CursorName, CursorOptions } from "./cursor"
 export type { DecodedImage, ImageSource, TextureCodec, TranscodedTexture } from "./image"
+export { isKtx2, textureSettings, DEFAULT_TEXTURE_SETTINGS } from "./textures"
+export type { TextureKind, TextureSetting, TextureSettings } from "./textures"
 export { parseSvg, svg } from "./svg"
 export { Logo } from "./logo"
 export type { LogoProps } from "./logo"

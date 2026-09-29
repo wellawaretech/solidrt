@@ -23,4 +23,28 @@ declare module "flux:path" {
    * guarantee; use `resolveWithin` when a segment is untrusted.
    */
   export function join(...segments: string[]): string
+
+  /**
+   * The last component of `path`, trailing separators ignored: Node's
+   * `path.basename`. Lexical. `basename("/a/model.gltf")` is "model.gltf",
+   * `basename("/a/b/")` is "b".
+   *
+   * @param ext  A suffix to cut off the result, as in
+   *             `basename("/a/model.gltf", ".gltf")`, which is "model". A
+   *             name that is nothing but the suffix keeps it.
+   */
+  export function basename(path: string, ext?: string): string
+
+  /**
+   * `path` without its last component: Node's `path.dirname`. Lexical.
+   * `dirname("/a/b.txt")` is "/a", and a bare name's is ".".
+   */
+  export function dirname(path: string): string
+
+  /**
+   * The extension of `path`'s last component, from its last dot on, or ""
+   * when it has none: Node's `path.extname`. `extname("a.tar.gz")` is ".gz";
+   * a leading dot names a hidden file, so `extname(".bashrc")` is "".
+   */
+  export function extname(path: string): string
 }

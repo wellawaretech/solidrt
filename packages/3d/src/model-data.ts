@@ -2,9 +2,9 @@
 // runtime: the glTF parser, the .srtm container and the pure geometry kit,
 // for a script that bakes an app's own geometry under bun (or any host
 // with no flux). The package root imports `flux:*` and so loads only on
-// the runtime; this entry imports nothing that does. tools/model.ts (the
-// glTF bake) runs on exactly this surface, so an app's bake script and
-// the tool share one path:
+// the runtime; this entry imports nothing that does. tools/model.flux.ts
+// (the glTF bake) takes its model side from exactly this surface, so an
+// app's bake script and the tool share one path:
 //
 //   import { box, encodeModel, transformGeometry } from "@solidrt/3d/model"
 //   writeFileSync("assets/terrain.srtm", encodeModel({ nodes, parts, ... }))
@@ -13,8 +13,8 @@
 // entry pure: tests/model-data.test.ts imports it under bun and fails the
 // moment a runtime import creeps into the chain.
 
-export { gltfExternalUris, isGlb, parseGltf } from "./gltf.ts"
-export type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelMaterial, ModelNode, ModelPart, ModelSkin, UriResolver } from "./gltf.ts"
+export { gltfExternalUris, isGlb, modelImageUses, parseGltf } from "./gltf.ts"
+export type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelImageUse, ModelMaterial, ModelNode, ModelPart, ModelSkin, ModelTexture, UriResolver } from "./gltf.ts"
 export { decodeModel, encodeModel } from "./model-file.ts"
 export { arrowHelper, axesHelper, box, box3Helper, capsule, capsuleHelper, circle, cone, cylinder, dodecahedron, fillAttribute, fillColors, edgesGeometry, mergeVertices, normalsHelper, toNonIndexed, withNormals, geometryBounds, geometryTopology, gridHelper, icosahedron, attributeAccess, geometryAttribute, geometryKey, geometryLayouts, geometrySlot, geometryStreams, geometryVertexCount, isFloatFormat, isFloatLayout, layoutAttributes, layoutKey, layoutSlot, layoutStride, mergeGeometries, octahedron, packGeometry, packMorphTargets, plane, planeHelper, polyhedron, ring, sphere, tetrahedron, torus, torusKnot, transformGeometry, validateGeometry, wireframeGeometry, vertexBytes, vertexCount, vertexView, withAttribute, withColors, withMorphTargets, MORPH_ENTRY_TEXELS, MORPH_TEXEL_FLOATS, BASE_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "./geometry.ts"
 export type { ArrowHelperOptions, AttributeAccess, AttributeFill, VertexStream, WithAttributeOptions, AxesHelperOptions, BoxOptions, CapsuleHelperOptions, CapsuleOptions, CircleOptions, ColorFill, ConeOptions, CylinderOptions, FormatCodec, Geometry, GeometryOptions, GridHelperOptions, MorphTarget, MorphTargets, NormalsHelperOptions, PlaneHelperOptions, PlaneOptions, PolyhedronOptions, RingOptions, SphereOptions, TorusKnotOptions, TorusOptions, VertexLayout } from "./geometry.ts"

@@ -77,10 +77,10 @@ export type {
   ShotProps,
   ShotsProps,
 } from "./components/index.ts"
-export { gltfExternalUris, isGlb, parseGltf } from "./gltf.ts"
-export type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelMaterial, ModelNode, ModelPart, ModelSkin, UriResolver } from "./gltf.ts"
+export { gltfExternalUris, isGlb, modelImageUses, parseGltf } from "./gltf.ts"
+export type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelImageUse, ModelMaterial, ModelNode, ModelPart, ModelSkin, ModelTexture, UriResolver } from "./gltf.ts"
 export { decodeModel, encodeModel } from "./model-file.ts"
-export { createModel, loadGltf, loadModel } from "./model.ts"
+export { createModel, loadGltf, loadModel, transcodeModelImages } from "./model.ts"
 export type { Model, ModelMaps, ModelOptions } from "./model.ts"
 export { decodeSplat, encodeSplat, parseSplat, SPLAT_ATTRIBUTES, SPLAT_RECORD_BYTES, SPLAT_RECORD_TEXELS, SPLAT_SH_TEXELS, SPLAT_TEXEL_BYTES } from "./splat-data.ts"
 export type { ParseSplatOptions, SplatData, SplatFormat } from "./splat-data.ts"

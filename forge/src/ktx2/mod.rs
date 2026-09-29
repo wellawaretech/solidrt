@@ -18,7 +18,9 @@
 
 mod ffi;
 
-use std::sync::Once;
+use std::sync::{Once, OnceLock};
+
+use crate::workers::Workers;
 
 /// The first twelve bytes of every KTX2 file.
 const KTX2_MAGIC: [u8; 12] = [0xAB, b'K', b'T', b'X', b' ', b'2', b'0', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -156,6 +158,21 @@ fn init_transcoder() {
   static INIT: Once = Once::new();
   // SAFETY: builds the transcoder's global tables; Once makes it single.
   INIT.call_once(|| unsafe { ffi::bt_init() });
+}
+
+/// How many transcodes run at once, whatever number is asked for: a scene's
+/// worth of textures arrives in one burst at load, and a thread per texture
+/// would have them fight over the cores of a small device and multiply the
+/// memory in flight. The rest wait their turn.
+const TRANSCODE_THREADS: usize = 4;
+
+/// `transcode` on the transcode threads (`TRANSCODE_THREADS` of them,
+/// shared by every caller in the process): what an async host calls, so
+/// the limit holds however many transcodes it starts.
+pub async fn transcode_queued(bytes: Vec<u8>, target: Target) -> Result<Transcoded, String> {
+  static WORKERS: OnceLock<Workers> = OnceLock::new();
+  let workers = WORKERS.get_or_init(|| Workers::new("ktx2-transcode", TRANSCODE_THREADS));
+  workers.run(move || transcode(&bytes, target)).await?
 }
 
 /// Transcode a KTX2 file (Basis Universal ETC1S or UASTC LDR, a plain 2D
