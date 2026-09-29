@@ -1,7 +1,9 @@
 import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
+import { styleText } from "node:util"
 import { source, values } from "../lib/args"
-import { multiselect, note, text } from "../lib/prompt"
+import { CLI_VERSION } from "../lib/project"
+import { abort, intro, multiselect, outro, spinner, step, text } from "../lib/prompt"
 
 const DEFAULT_NAME = "solidrt-app"
 
@@ -46,8 +48,9 @@ function resolveMarkers(text: string, extensions: Extension[]): string {
 
 // Optional packages an app can opt into on top of core. Each maps to a
 // dependency in the scaffold package.json (kept when selected, removed
-// otherwise), to a marker key fencing its lines in scaffold/AGENTS.md, and
-// optionally to a starter under scaffold/templates/.
+// otherwise), to a marker key fencing its lines in scaffold/AGENTS.md (also
+// its label in the picker), and optionally to a starter under
+// scaffold/templates/.
 interface Extension {
   pkg: string
   key: string
@@ -56,15 +59,10 @@ interface Extension {
 }
 
 const EXTENSIONS: Extension[] = [
-  {
-    pkg: "@solidrt/components",
-    key: "components",
-    template: "components",
-    description: "component framework: widgets, theming, navigation",
-  },
+  { pkg: "@solidrt/router", key: "router", description: "declarative routing between screens" },
+  { pkg: "@solidrt/components", key: "components", template: "components", description: "widgets and theming" },
   { pkg: "@solidrt/2d", key: "2d", description: "general purpose 2D library" },
   { pkg: "@solidrt/3d", key: "3d", description: "general purpose 3D library" },
-  { pkg: "@solidrt/router", key: "router", description: "screens as routes: a typed tree, a stack, links" },
 ]
 
 // Resolve which extensions the app takes: an interactive picker on a TTY,
@@ -72,11 +70,11 @@ const EXTENSIONS: Extension[] = [
 // adds them afterwards with `bun add`.
 async function resolveExtensions(): Promise<Extension[]> {
   if (!process.stdin.isTTY) return []
-  // Core is the runtime every app has, so it is not a choice.
-  note("@solidrt/core is always included", "Packages")
+  // Core is the runtime every app has, so it is not offered: the picker only
+  // adds to it.
   let picked = await multiselect(
-    "Select extensions",
-    EXTENSIONS.map((e) => ({ label: `${e.pkg} - ${e.description}`, value: e.pkg })),
+    "What would you like to add to your app?",
+    EXTENSIONS.map((e) => ({ label: e.key, hint: e.description, value: e.pkg })),
   )
   return EXTENSIONS.filter((e) => picked.includes(e.pkg))
 }
@@ -88,36 +86,30 @@ function resolveTemplate(extensions: Extension[]): string {
 }
 
 export async function main() {
+  intro(`Create a SolidRT app ${styleText("dim", CLI_VERSION)}`)
+
   // The target folder comes from the positional arg, or an interactive prompt
   // (defaulting to a suggested name) when omitted.
   let dir = source
   if (!dir) {
-    dir = await text("Project name", DEFAULT_NAME)
-    if (!dir) {
-      console.error("!! A project name is required")
-      process.exit(1)
-    }
+    dir = await text("Project name (target directory)", DEFAULT_NAME)
+    if (!dir) abort("A project name is required")
   }
 
   // The folder must not exist yet, so init can never touch an existing project.
   let existing = await readdir(dir).catch(() => null)
-  if (existing) {
-    console.error(`!! ${resolve(dir)} already exists; choose a new folder name`)
-    process.exit(1)
-  }
+  if (existing) abort(`${resolve(dir)} already exists; choose a new folder name`)
 
   let extensions = await resolveExtensions()
   let template = resolveTemplate(extensions)
   let summary = ["@solidrt/core", ...extensions.map((e) => e.pkg)].join(", ")
 
-  console.log(`>> Scaffolding SolidRT project in ${resolve(dir)} (${summary})`)
   for (let { from, to } of TEMPLATE_FILES) {
     let dest = join(dir, to)
     await mkdir(dirname(dest), { recursive: true })
     let body: string | Buffer = await readFile(join(SCAFFOLD_DIR, from))
     if (to === "AGENTS.md") body = resolveMarkers(body.toString("utf8"), extensions)
     await writeFile(dest, body)
-    console.log(`   Write ${to}`)
   }
 
   // The template's files become the project's src/. Entries may be nested
@@ -126,7 +118,6 @@ export async function main() {
   await mkdir(join(dir, "src"), { recursive: true })
   for (let file of await readdir(templateDir)) {
     await cp(join(templateDir, file), join(dir, "src", file), { recursive: true })
-    console.log(`   Write src/${file}`)
   }
 
   // The assets/ convention folder, created up front: everything in it ships
@@ -138,7 +129,6 @@ export async function main() {
   await mkdir(join(dir, "assets"), { recursive: true })
   for (let icon of ["icon.svg", "icon.png"]) {
     await writeFile(join(dir, "assets", icon), await readFile(join(SCAFFOLD_DIR, icon)))
-    console.log(`   Write assets/${icon}`)
   }
 
   // The scaffold package.json carries a placeholder name and every extension
@@ -151,21 +141,27 @@ export async function main() {
     if (!extensions.includes(ext)) delete pkg.dependencies[ext.pkg]
   }
   await writeFile(pkgPath, JSON.stringify(pkg, null, 2) + "\n")
+  step(`Scaffolded ${resolve(dir)} (${summary})`)
 
   // Deps are declared in scaffold/package.json (Solid peers resolve via
-  // @solidrt/core's peerDependencies), so a plain install is enough.
-  console.log("\n>> Installing dependencies")
-  let install = Bun.spawnSync(["bun", "install"], {
-    cwd: dir,
-    stdout: "inherit",
-    stderr: "inherit",
-  })
-  if (install.exitCode !== 0) {
-    console.error("\n!! Dependency install failed; retry with `bun install` in the project")
-    process.exit(1)
+  // @solidrt/core's peerDependencies), so a plain install is enough. Its
+  // output only matters when it fails, so it is held until then.
+  let progress = spinner()
+  progress.start("Installing dependencies")
+  let install = Bun.spawn(["bun", "install"], { cwd: dir, stdout: "pipe", stderr: "pipe" })
+  let [out, err, code] = await Promise.all([
+    new Response(install.stdout).text(),
+    new Response(install.stderr).text(),
+    install.exited,
+  ])
+  if (code !== 0) {
+    progress.error("Dependency install failed")
+    process.stderr.write(out + err)
+    abort("Retry with `bun install` in the project")
   }
+  progress.stop("Installed dependencies")
 
   let prefix = dir === "." ? "" : `cd ${dir} && `
-  console.log(`\n>> Done. Next:\n   ${prefix}bun run dev\n`)
+  outro(`Done. Next: ${prefix}bun run dev`)
   process.exit()
 }
