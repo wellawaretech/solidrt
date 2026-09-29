@@ -80,9 +80,9 @@ development.
 
 ### 1. Go client on the DHU
 
-Declare `appCategory="game"` and `CAR_LAUNCHER` in the go overlay
-(`lattice/android/app/src/go/AndroidManifest.xml`). The per-app rule binds
-Play submissions under the Android Auto form factor, which the go client is
+Declare `appCategory="game"` and `CAR_LAUNCHER` in the Player overlay
+(`lattice/android/app/src/player/AndroidManifest.xml`). The per-app rule binds
+Play submissions under the Android Auto form factor, which the Player is
 not. Android Auto lists a sideloaded app only with "Unknown sources" on in
 its developer settings. Every later step is verified on this.
 

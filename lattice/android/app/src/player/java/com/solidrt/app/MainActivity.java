@@ -11,14 +11,14 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Arrays;
 
-// The go dev client's activity: the shared SolidRT body plus the dev loop's
+// The Player's activity: the shared SolidRT body plus the dev loop's
 // two extras - the player assets extracted into filesDir, and the
 // dev-server address forwarded from the launch intent.
 public class MainActivity extends SolidRTActivity {
 
     // The dev CLI (`srt client --android`) passes the dev-server address to dial
     // as an intent extra. Forward it to native as argv (SDL hands getArguments()
-    // to SDL_main), after the shared launch fact, where the go client reads
+    // to SDL_main), after the shared launch fact, where the Player reads
     // --dev-server and auto-connects. Avoids adb reverse, which does not work
     // over wireless adb.
     // A second dev extra, `srt_env`: "NAME=value" pairs separated by ';',

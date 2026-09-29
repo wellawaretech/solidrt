@@ -45,9 +45,9 @@ ANDROID_CLANG_TRIPLE     = $(CLANG_TRIPLE_$(ANDROID_ABI))
 BINDGEN_VAR_armeabi-v7a   = BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi
 BINDGEN_ARGS_armeabi-v7a  = --target=armv7a-linux-androideabi26 --sysroot=$(NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/sysroot
 
-ANDROID_DIST   = $(SRT_HOME)/dist/android/$(ANDROID_ABI)
-APK_GO_DEBUG   = android/app/build/outputs/apk/go/debug/app-go-debug.apk
-APK_GO_RELEASE = android/app/build/outputs/apk/go/release/app-go-release.apk
+ANDROID_DIST       = $(SRT_HOME)/dist/android/$(ANDROID_ABI)
+APK_PLAYER_DEBUG   = android/app/build/outputs/apk/player/debug/app-player-debug.apk
+APK_PLAYER_RELEASE = android/app/build/outputs/apk/player/release/app-player-release.apk
 
 GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 
@@ -131,8 +131,8 @@ define apk-run
 	$(call ndk-stage,$(1))
 	# gradle's jniLibs.srcDir bundles every ABI staged under dist/android, so
 	# -PsrtAbi pins the APK to the one this loop just built.
-	cd android && ./gradlew assembleGoDebug -PsrtAbi=$(ANDROID_ABI)
-	cp $(APK_GO_DEBUG) $(ANDROID_DIST)/solidrt-go.apk
+	cd android && ./gradlew assemblePlayerDebug -PsrtAbi=$(ANDROID_ABI)
+	cp $(APK_PLAYER_DEBUG) $(ANDROID_DIST)/solidrt-go.apk
 	@echo "Staged solidrt-go.apk ($(ANDROID_ABI)) into $(ANDROID_DIST)/"
 	adb install -r $(ANDROID_DIST)/solidrt-go.apk
 	adb logcat -c
@@ -170,9 +170,9 @@ endef
 android-dist: android-client $(GRADLE_WRAPPER_JAR)
 	# dist/android may hold .so files from other ABIs, and gradle's
 	# jniLibs.srcDir would bundle all of them; -PsrtAbi pins the APK to this one.
-	cd android && ./gradlew assembleGoRelease -PsrtAbi=$(ANDROID_ABI) -PsrtVersion=$(VERSION) $(if $(PUBLISH),-PsrtPublish)
+	cd android && ./gradlew assemblePlayerRelease -PsrtAbi=$(ANDROID_ABI) -PsrtVersion=$(VERSION) $(if $(PUBLISH),-PsrtPublish)
 	mkdir -p $(ANDROID_DIST)
-	cp $(APK_GO_RELEASE) $(ANDROID_DIST)/solidrt-go.apk
+	cp $(APK_PLAYER_RELEASE) $(ANDROID_DIST)/solidrt-go.apk
 	@echo "Staged solidrt-go.apk ($(ANDROID_ABI)) into $(ANDROID_DIST)/"
 	$(call stage-pkg-apk,$(ANDROID_DIST)/solidrt-go.apk,solidrt-go.apk)
 	$(MAKE) android-runtime ANDROID_ABI=$(ANDROID_ABI)
@@ -183,19 +183,19 @@ android-dist-armeabi-v7a:
 
 # -- Production runtime APK ---------------------------
 
-# Where the runtime .so files and the runner APK are staged; the prod
+# Where the runtime .so files and the runner APK are staged; the runner
 # flavor's jniLibs.srcDir in app/build.gradle points here. Kept apart from
 # dist/android so go and runtime builds of the same ABI never overwrite each
 # other's libmain.so.
 ANDROID_RUNTIME_DIST = $(SRT_HOME)/dist/android-runtime
 
-APK_PROD_RELEASE = android/app/build/outputs/apk/prod/release/app-prod-release.apk
+APK_RUNNER_RELEASE = android/app/build/outputs/apk/runner/release/app-runner-release.apk
 
 .PHONY: android-runtime
 
 # Build the production Android runtime: the not(go) engine .so (no player,
 # no dev server; SDL_main boots the .srtapp packed into the APK) assembled
-# into the prod flavor as the runner APK `srt pack --apk` patches. Same
+# into the runner flavor as the runner APK `srt pack --apk` patches. Same
 # feature set as the desktop runtime. It builds at PROFILE, whether on its
 # own (the dev loop for the runner) or from android-dist. Runners are per ABI
 # by decision (okf/done/standalone-android-apk.md). The Gradle side is the
@@ -211,8 +211,8 @@ android-runtime: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
 	cp "$$(ls -t target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
 	cp $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
 	$(call check-elf-align,$(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI))
-	cd android && ./gradlew assembleProdRelease -PsrtAbi=$(ANDROID_ABI)
-	cp $(APK_PROD_RELEASE) $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/solidrt.apk
+	cd android && ./gradlew assembleRunnerRelease -PsrtAbi=$(ANDROID_ABI)
+	cp $(APK_RUNNER_RELEASE) $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/solidrt.apk
 	@echo "Staged solidrt.apk ($(ANDROID_ABI)) into $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/"
 	# The runner rides in the same platform package as solidrt-go.apk.
 	$(call stage-pkg-apk,$(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/solidrt.apk,solidrt.apk)

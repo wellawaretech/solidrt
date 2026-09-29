@@ -23,11 +23,11 @@ import java.util.concurrent.TimeUnit;
 import org.libsdl.app.SDLActivity;
 import org.libsdl.app.SDLSurface;
 
-// The SolidRT activity body shared by both flavors: the go dev client and the
-// production runtime (each flavor's MainActivity subclasses this; the
+// The SolidRT activity body shared by both flavors: the Player and the
+// runner (each flavor's MainActivity subclasses this; the
 // manifest component name com.solidrt.app.MainActivity is the launch
 // contract). Owns the native library set and the keyboard facts the runtime
-// cannot observe from SDL; flavor-specific behavior (the go client's asset
+// cannot observe from SDL; flavor-specific behavior (the Player's asset
 // extraction and dev-server intent extra) lives in the subclasses.
 public class SolidRTActivity extends SDLActivity {
     protected static final String TAG = "SolidRT";
@@ -276,8 +276,8 @@ public class SolidRTActivity extends SDLActivity {
         }
     }
 
-    // Flavor hook, run before SDL comes up: the go client extracts its
-    // player assets here; the production runtime does nothing (its payload
+    // Flavor hook, run before SDL comes up: the Player extracts its
+    // player assets here; the runner does nothing (its payload
     // is read in place from the APK, never extracted).
     protected void prepareAssets() {
     }

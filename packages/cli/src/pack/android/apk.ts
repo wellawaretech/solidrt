@@ -2,7 +2,7 @@
 // the application id, versionCode and versionName in the compiled manifest
 // (the id's pool string is also the VIEW intent filter's scheme, so the
 // rewrite renames the scheme the app answers to with it; see the runner's
-// prod AndroidManifest.xml), declare the app's permissions there and, when
+// AndroidManifest.xml), declare the app's permissions there and, when
 // the app opts in, turn backup on for its data/ folder; rewrite the launcher
 // label in the resource table (strings.ts), swap the adaptive-icon slot PNGs
 // (icon.ts), add the .srtapp payload as a stored asset, then re-align and
@@ -32,13 +32,13 @@ import { signApk } from "./sign"
 // zip entry), stored so it is read in place with no extraction.
 const PAYLOAD_ENTRY = "assets/app.srtapp"
 
-// The adaptive-icon slots the runner bakes (ic_launcher_prod.xml): the
+// The adaptive-icon slots the runner bakes (ic_launcher_runner.xml): the
 // foreground PNG sits behind a safe-zone inset, the background is a 1x1
 // stretched full-bleed.
 const ICON_FG_ENTRY = "res/drawable/app_icon_fg.png"
 const ICON_BG_ENTRY = "res/drawable/app_icon_bg.png"
 
-// The backup rule files the runner carries (prod res/xml/), one pair per
+// The backup rule files the runner carries (runner res/xml/), one pair per
 // rule format: the "none" file the manifest references, and the data-only
 // file whose bytes replace it when the app opts in. Swapping bytes keeps the
 // manifest's resource references untouched.
@@ -47,7 +47,7 @@ const BACKUP_RULES: [none: string, data: string][] = [
   ["res/xml/extraction_none.xml", "res/xml/extraction_data.xml"],
 ]
 
-// The launcher label the runner APK's resources.arsc carries (prod flavor
+// The launcher label the runner APK's resources.arsc carries (runner flavor
 // strings.xml), located by value: resolving the label through the resource
 // table proper would take a full table parse for a string that is fixed per
 // runner build.

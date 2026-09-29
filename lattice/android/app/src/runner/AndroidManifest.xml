@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Prod overlay: the runner APK `srt pack` (APK output) patches.
+<!-- Runner overlay: the runner APK `srt pack` (APK output) patches.
 
      Icon: the patchable adaptive icon instead of the SolidRT client icon
      (the label is already flavor-scoped via res/values/strings.xml).
@@ -23,7 +23,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <application
-        android:icon="@mipmap/ic_launcher_prod"
+        android:icon="@mipmap/ic_launcher_runner"
         android:allowBackup="false"
         android:fullBackupContent="@xml/backup_none"
         android:dataExtractionRules="@xml/extraction_none"

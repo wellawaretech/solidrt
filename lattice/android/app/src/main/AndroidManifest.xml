@@ -34,8 +34,8 @@
         android:required="false" />
 
     <!-- Audio recording support. Permissions are flavor-scoped, none here:
-         the go client declares every one (src/go), a packed app declares
-         what it keeps through package.json (src/prod is the runner
+         the Player declares every one (src/player), a packed app declares
+         what it keeps through package.json (src/runner is the runner
          `srt pack` (APK output) patches). -->
     <uses-feature
         android:name="android.hardware.microphone"

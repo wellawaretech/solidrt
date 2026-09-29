@@ -6,7 +6,7 @@ plugins {
 // (-PsrtPublish), which the release workflow runs: its release build is
 // com.solidrt.player, labelled Player and signed with the Player key - the
 // Player's permanent identity, the only build that can update an installed
-// published Player. Every other go build is the dev Player,
+// published Player. Every other player build is the dev Player,
 // com.solidrt.player.dev, labelled Player.dev and signed with the debug key,
 // so a local build never collides with the published one. The key comes from
 // the environment (the workflow decodes it from a secret) as a PKCS12
@@ -77,21 +77,20 @@ android {
     // debug key, which takes precedence over a flavor's.
     flavorDimensions = ["variant"]
     productFlavors {
-        go {
+        player {
             dimension = "variant"
             // The dev Player; onVariants below turns the published release
             // build into com.solidrt.player. The label reaches the manifest
-            // through src/go/AndroidManifest.xml. The flavor keeps its old
-            // name until go becomes player.
+            // through src/player/AndroidManifest.xml.
             applicationId = "com.solidrt.player.dev"
             manifestPlaceholders.put('playerLabel', 'Player.dev')
             signingConfig = publish ? signingConfigs.player : signingConfigs.debug
         }
-        prod {
+        runner {
             dimension = "variant"
             // The runner: a placeholder id (and label, "Runner") that `srt
             // pack --apk` rewrites to the app's own. Its link scheme in
-            // src/prod/AndroidManifest.xml is spelled the same, so the
+            // src/runner/AndroidManifest.xml is spelled the same, so the
             // rewrite renames both.
             applicationId = "com.solidrt.runner"
             signingConfig = signingConfigs.debug
@@ -104,16 +103,16 @@ android {
         }
     }
     // Native libs and assets are per flavor, not on main: flavor sourceSets
-    // add to main's, so anything staged here for go would also land in the
-    // prod runner APK. The go client carries the player assets (extracted
-    // at launch by its MainActivity); the runner APK carries no assets of its
+    // add to main's, so anything staged here for the Player would also land
+    // in the runner APK. The Player carries the player assets (extracted at
+    // launch by its MainActivity); the runner APK carries no assets of its
     // own - `srt pack --apk` injects the app payload into a copy.
     sourceSets {
-        go {
+        player {
             jniLibs.srcDir '../../../dist/android'
             assets.srcDirs = ['../../../dist/assets']
         }
-        prod {
+        runner {
             jniLibs.srcDir '../../../dist/android-runtime'
         }
     }
@@ -122,20 +121,20 @@ android {
     }
 }
 
-// The prod runner ships its native libs deflated (extractNativeLibs=true):
-// the runner APK is direct distribution, where the wire is the file, so
+// The runner ships its native libs deflated (extractNativeLibs=true): the
+// runner APK is direct distribution, where the wire is the file, so
 // download size wins over the extracted on-device copy (40.8 -> ~17 MB
-// measured; okf/backlog/standalone-android-apk.md). The go client keeps
-// stored libs: it is delivered by tooling, and in-place mmap loads faster.
+// measured; okf/backlog/standalone-android-apk.md). The Player keeps stored
+// libs: it is delivered by tooling, and in-place mmap loads faster.
 //
-// The published Player (see the top of this file) is the go release build
-// under -PsrtPublish; a debug build stays the dev Player even then.
+// The published Player (see the top of this file) is the player release
+// build under -PsrtPublish; a debug build stays the dev Player even then.
 androidComponents {
     onVariants(selector().all()) { variant ->
-        if (variant.flavorName == 'prod') {
+        if (variant.flavorName == 'runner') {
             variant.packaging.jniLibs.useLegacyPackaging.set(true)
         }
-        if (publish && variant.flavorName == 'go' && variant.buildType == 'release') {
+        if (publish && variant.flavorName == 'player' && variant.buildType == 'release') {
             variant.applicationId.set('com.solidrt.player')
             variant.manifestPlaceholders.put('playerLabel', 'Player')
         }

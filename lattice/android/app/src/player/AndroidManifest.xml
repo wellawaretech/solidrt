@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Go overlay: the dev client hosts any app, so it declares every
-     permission an app could use. The prod runner declares none at all; a
+<!-- Player overlay: the Player hosts any app, so it declares every
+     permission an app could use. The runner declares none at all; a
      packed app gets its own from package.json (solidrt.capabilities and
      solidrt.android.permissions, spliced into the compiled manifest by
      packages/cli/src/pack/android/apk.ts). -->
