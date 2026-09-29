@@ -228,6 +228,64 @@ fn texture_format_parses_and_sizes() {
   assert_eq!(TextureFormat::Rgba8Srgb.byte_len(3, 5), 60);
 }
 
+// The block-compressed formats size by whole 4x4 blocks (16 bytes each, a
+// partial edge block counts whole), and a mip chain is the sum of its
+// levels down to 1x1 - what a compressed create with mipmap takes, since
+// the chain is uploaded rather than generated. They sample like byte
+// formats (filterable, mip chain and anisotropy accepted) and are
+// sample-only like the float formats.
+#[test]
+fn compressed_formats_size_by_block_and_chain() {
+  use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, TextureFormat};
+
+  for (name, format) in [
+    ("etc2-rgba8", TextureFormat::Etc2Rgba8),
+    ("etc2-rgba8-srgb", TextureFormat::Etc2Rgba8Srgb),
+    ("bc7-rgba8", TextureFormat::Bc7Rgba8),
+    ("bc7-rgba8-srgb", TextureFormat::Bc7Rgba8Srgb),
+  ] {
+    assert_eq!(TextureFormat::parse(Some(name)).expect("compressed format parses"), format);
+    assert_eq!(format.name(), name);
+    assert!(format.is_compressed());
+    assert!(format.filterable());
+    assert!(format.sample_only());
+    assert!(!format.is_float() && !format.is_uint());
+    // One block per 4x4, partial blocks whole.
+    assert_eq!(format.byte_len(4, 4), 16);
+    assert_eq!(format.byte_len(8, 4), 32);
+    assert_eq!(format.byte_len(5, 3), 32);
+    assert_eq!(format.byte_len(1, 1), 16);
+    // 8x4 -> 4x2 -> 2x1 -> 1x1: four levels of one or two blocks.
+    assert_eq!(format.chain_byte_len(8, 4), 32 + 16 + 16 + 16);
+    // A non-power-of-two chain floors its edges like GL (5x3 -> 2x1 -> 1x1).
+    assert_eq!(format.chain_byte_len(5, 3), 32 + 16 + 16);
+    let state = SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: Some(8.0) })
+      .expect("linear, mipmap and anisotropy parse");
+    assert_eq!(state.filter, SamplerFilter::Linear);
+    assert!(state.mipmap);
+  }
+  assert!(!TextureFormat::Rgba8.is_compressed());
+  assert_eq!(TextureFormat::Rgba8.chain_byte_len(4, 4), 64 + 16 + 4);
+}
+
+// The BC7 formats are gated on the BPTC extension the limits report; ETC2 is
+// GLES 3.0 core and passes everywhere.
+#[test]
+fn bc7_formats_need_the_bptc_extension() {
+  use crate::gpu::texture::TextureFormat;
+  use crate::gpu::GpuLimits;
+
+  let without = GpuLimits::FLOOR;
+  let with = GpuLimits { bc7_textures: true, ..GpuLimits::FLOOR };
+  for format in [TextureFormat::Etc2Rgba8, TextureFormat::Etc2Rgba8Srgb, TextureFormat::Rgba8] {
+    without.check_upload_format(format).expect("core formats pass without the extension");
+  }
+  for format in [TextureFormat::Bc7Rgba8, TextureFormat::Bc7Rgba8Srgb] {
+    assert!(without.check_upload_format(format).expect_err("bc7 refused").contains("bc7Textures"));
+    with.check_upload_format(format).expect("bc7 passes with the extension");
+  }
+}
+
 // The integer format is shader data like the 32-bit floats: a Uint32Array
 // payload (neither float nor bytes), nearest-only with mipmaps and
 // anisotropy refused, sample-only.

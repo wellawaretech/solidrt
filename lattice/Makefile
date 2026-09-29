@@ -65,6 +65,20 @@ endif
 GO_FEATURES      := $(GO_FEATURES)$(VIDEO_FEATURES)
 RUNTIME_FEATURES := $(RUNTIME_FEATURES)$(VIDEO_FEATURES)
 
+# Compressed textures (forge::ktx2 + flux:image transcodeTexture /
+# encodeTexture + the `ktx2` capability) are on for every goal, dist
+# included; KTX2=0 leaves them out. A non-default cargo feature like video,
+# so a plain `cargo build` needs no forge/vendor submodule. See
+# okf/plans/gpu-compressed-textures.md.
+KTX2 ?= 1
+ifeq ($(KTX2),0)
+KTX2_FEATURES =
+else
+KTX2_FEATURES = ,ktx2
+endif
+GO_FEATURES      := $(GO_FEATURES)$(KTX2_FEATURES)
+RUNTIME_FEATURES := $(RUNTIME_FEATURES)$(KTX2_FEATURES)
+
 SRT_HOME ?= $(abspath $(CURDIR)/..)
 
 # The player app sources live in apps/player like any regular app; the
@@ -140,6 +154,7 @@ help:
 	@echo "every binary of the goal (dist and android-dist included), much slower."
 	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
 	@echo "Pass VIDEO=0 to build without video playback (default: on)."
+	@echo "Pass KTX2=0 to build without compressed textures (default: on)."
 	@echo "dist targets always build speech-free."
 	@echo ""
 	@echo "Player:"

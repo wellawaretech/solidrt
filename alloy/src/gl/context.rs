@@ -217,6 +217,12 @@ pub(crate) fn query_limits(gl: &glow::Context) -> GpuLimits {
     // on rgba16f, never an error.
     let half_float_renderable =
       ext.contains("GL_EXT_color_buffer_half_float") || ext.contains("GL_EXT_color_buffer_float");
+    // BC7 uploads: the desktop block format, an extension at every GLES
+    // level (ANGLE over D3D11 and Metal, Mesa) and absent on mobile GPUs;
+    // a fact for the upload-format gate, never an error. ETC2 needs no
+    // query: GLES 3.0 core.
+    let bc7_textures =
+      ext.contains("GL_EXT_texture_compression_bptc") || ext.contains("GL_ARB_texture_compression_bptc");
     GpuLimits {
       max_texture_size: tex.min(rb).max(floor.max_texture_size as i32) as u32,
       max_cube_map_size: cube.max(floor.max_cube_map_size as i32) as u32,
@@ -225,6 +231,7 @@ pub(crate) fn query_limits(gl: &glow::Context) -> GpuLimits {
       max_anisotropy: anisotropy.max(floor.max_anisotropy as i32) as u32,
       max_vertex_uniform_vectors: vertex_vectors.max(floor.max_vertex_uniform_vectors as i32) as u32,
       half_float_renderable,
+      bc7_textures,
     }
   }
 }

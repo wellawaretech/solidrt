@@ -1696,6 +1696,7 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
         "format": t.format,
         "shape": t.shape,
         "sampler": sampler_json(&t.sampler),
+        "byteLength": t.byte_length,
       });
       insert_label(&mut obj, &t.label);
       obj

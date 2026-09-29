@@ -43,7 +43,7 @@ lifetime like the sampler state.
   changes.
 
 The vocabulary is shared forward: `"etc2-rgba8"`
-([gpu-compressed-textures](../backlog/gpu-compressed-textures.md)) and
+([gpu-compressed-textures](../plans/gpu-compressed-textures.md)) and
 `"rgba8-srgb"` (linear-space rendering, per
 [gpu-pixel-contract-docs](gpu-pixel-contract-docs.md)) are documented as
 reserved values of the same option - grammar: base layout plus a qualifier

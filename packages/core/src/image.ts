@@ -8,8 +8,8 @@ import { createMemo, onCleanup } from "@solidjs/signals"
 import { decodeImage, type DecodedImage } from "flux:image"
 import { createTexture, destroyTexture, type TextureId } from "./gpu"
 
-export { decodeImage, encodeImage } from "flux:image"
-export type { DecodedImage } from "flux:image"
+export { decodeImage, encodeImage, encodeTexture, transcodeTexture } from "flux:image"
+export type { DecodedImage, TextureCodec, TranscodedTexture } from "flux:image"
 
 export type ImageSource = string | Uint8Array
 

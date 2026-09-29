@@ -193,7 +193,10 @@ when exactly one client is connected.
   only the resources created with exactly that label (ids change on reload,
   labels do not). Each texture carries its `format` and declared `sampler`
   (`filter`/`wrap`/`mipmap`/`anisotropy`), the creation-time state a soft
-  or aliased map is usually missing. A draw target's entries report uniforms wider than a vec4
+  or aliased map is usually missing, and its `byteLength`: the texel
+  storage at that format, mip chain and cube faces included, so summing
+  it over the textures is a scene's texture memory (a compressed format
+  is a quarter of rgba8). A draw target's entries report uniforms wider than a vec4
   (matrices) as their length, `"[16]"`; `draw` names the one entry (ids are
   per target, so pair it with `label`) reported in full. An entry carries
   its own `label` when the add gave one (a 3d mesh reports its geometry's

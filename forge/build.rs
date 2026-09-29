@@ -46,8 +46,87 @@
 // links the release CRT only, and the Debug configs would pick the debug
 // CRT.
 
+//
+// Everywhere, with the `ktx2` feature: compile the vendored Basis Universal
+// (forge/vendor/basis_universal, a submodule pinned to a release tag)
+// straight through cc - its transcoder, its encoder and the C API over
+// both (forge/src/ktx2/ffi.rs binds that API). Upstream's CMake project
+// builds a command line tool and a C++ library; the C API sources are only
+// in its wasm and python targets, so the file list here is upstream's
+// ENCODER_LIB_SRC_LIST plus the two API files. The switches are upstream's
+// defaults for a portable build (no SSE kernels, no OpenCL, no astcenc)
+// plus the transcoder's legacy output formats turned off; the modern ones
+// (HDR, XUASTC, ASTC) cannot be turned off in this release (their switches
+// no longer compile), which is most of what the transcoder weighs:
+// okf/backlog/runtime-optimization.md. Zstd supercompression is on: UASTC
+// files ship compressed, and the KTX2 files other tools write are commonly
+// UASTC with zstd. The zstd is the single-file library upstream vendors in
+// the same submodule (zstd/zstd.c), compiled as C in a build of its own
+// because the Basis build is C++; the whole library, not zstddeclib.c,
+// because the encoder compresses.
+
 use std::path::PathBuf;
 use std::process::Command;
+
+/// The Basis Universal sources compiled into forge, relative to the
+/// submodule root: upstream's encoder library list (CMakeLists.txt,
+/// ENCODER_LIB_SRC_LIST) and the C API over encoder and transcoder.
+const BASIS_SOURCES: &[&str] = &[
+  "transcoder/basisu_transcoder.cpp",
+  "encoder/basisu_wasm_transcoder_api.cpp",
+  "encoder/basisu_wasm_api.cpp",
+  "encoder/basisu_backend.cpp",
+  "encoder/basisu_basis_file.cpp",
+  "encoder/basisu_comp.cpp",
+  "encoder/basisu_enc.cpp",
+  "encoder/basisu_etc.cpp",
+  "encoder/basisu_frontend.cpp",
+  "encoder/basisu_gpu_texture.cpp",
+  "encoder/basisu_pvrtc1_4.cpp",
+  "encoder/basisu_resampler.cpp",
+  "encoder/basisu_resample_filters.cpp",
+  "encoder/basisu_ssim.cpp",
+  "encoder/basisu_uastc_enc.cpp",
+  "encoder/basisu_bc7e_scalar.cpp",
+  "encoder/basisu_dds_export.cpp",
+  "encoder/basisu_bc7enc.cpp",
+  "encoder/jpgd.cpp",
+  "encoder/basisu_kernels_sse.cpp",
+  "encoder/basisu_bc15_spmd.cpp",
+  "encoder/basisu_bc15_spmd_sse.cpp",
+  "encoder/basisu_opencl.cpp",
+  "encoder/pvpngreader.cpp",
+  "encoder/basisu_uastc_hdr_4x4_enc.cpp",
+  "encoder/basisu_astc_hdr_6x6_enc.cpp",
+  "encoder/basisu_astc_hdr_common.cpp",
+  "encoder/basisu_astc_ldr_common.cpp",
+  "encoder/basisu_astc_ldr_encode.cpp",
+  "encoder/basisu_astc_ldr_fencode.cpp",
+  "encoder/basisu_xbc7_encode.cpp",
+  "encoder/basisu_tinyexr.cpp",
+  "encoder/3rdparty/android_astc_decomp.cpp",
+];
+
+/// The zstd Basis Universal supercompresses with: upstream's single-file
+/// copy of the library, relative to the submodule root.
+const BASIS_ZSTD_SOURCE: &str = "zstd/zstd.c";
+
+/// Compile switches for the Basis Universal build (name, value): the
+/// portable configuration, and the transcoder output formats no target of
+/// ours samples (ETC2 EAC A8, BC7 and UASTC stay on).
+const BASIS_DEFINES: &[(&str, &str)] = &[
+  ("BASISU_SUPPORT_SSE", "0"),
+  ("BASISU_SUPPORT_OPENCL", "0"),
+  ("BASISU_SUPPORT_ASTCENC", "0"),
+  ("BASISD_SUPPORT_KTX2_ZSTD", "1"),
+  ("BASISD_SUPPORT_PVRTC1", "0"),
+  ("BASISD_SUPPORT_PVRTC2", "0"),
+  ("BASISD_SUPPORT_ATC", "0"),
+  ("BASISD_SUPPORT_FXT1", "0"),
+  ("BASISD_SUPPORT_DXT1", "0"),
+  ("BASISD_SUPPORT_DXT5A", "0"),
+  ("BASISD_SUPPORT_ETC2_EAC_RG11", "0"),
+];
 
 fn main() {
   let target_os = std::env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
@@ -61,6 +140,55 @@ fn main() {
   if video {
     build_libopus();
   }
+  if std::env::var_os("CARGO_FEATURE_KTX2").is_some() {
+    build_basis(&target_os);
+  }
+}
+
+fn build_basis(target_os: &str) {
+  let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
+  let src = manifest_dir.join("vendor").join("basis_universal");
+  // The two directories compiled from, not the whole checkout (its demos
+  // and test files are most of it and none of our business).
+  println!("cargo:rerun-if-changed={}", src.join("encoder").display());
+  println!("cargo:rerun-if-changed={}", src.join("transcoder").display());
+  println!("cargo:rerun-if-changed={}", src.join("zstd").display());
+  if !src.join("transcoder").join("basisu_transcoder.cpp").exists() {
+    panic!(
+      "forge/vendor/basis_universal is empty; fetch the submodule first:\n  git submodule update --init forge/vendor/basis_universal"
+    );
+  }
+  let mut build = cc::Build::new();
+  build
+    .cpp(true)
+    .std("c++17")
+    .warnings(false)
+    // Upstream requires it (its CMakeLists.txt says so on line one); MSVC
+    // never assumes strict aliasing.
+    .flag_if_supported("-fno-strict-aliasing")
+    .flag_if_supported("-fvisibility=hidden")
+    // The C API asserts on a bad handle or file before returning false; a
+    // malformed file must fail the call, not abort the runtime.
+    .define("NDEBUG", None);
+  for (name, value) in BASIS_DEFINES {
+    build.define(name, *value);
+  }
+  // Android apps carry no libc++_shared unless something stages one, so the
+  // C++ runtime is linked into the library itself.
+  if target_os == "android" {
+    build.cpp_link_stdlib("c++_static");
+  }
+  for file in BASIS_SOURCES {
+    build.file(src.join(file));
+  }
+  build.compile("basisu");
+  // After basisu on the link line: it is what refers to the ZSTD_* symbols.
+  cc::Build::new()
+    .warnings(false)
+    .flag_if_supported("-fvisibility=hidden")
+    .define("NDEBUG", None)
+    .file(src.join(BASIS_ZSTD_SOURCE))
+    .compile("basisu_zstd");
 }
 
 fn build_libopus() {

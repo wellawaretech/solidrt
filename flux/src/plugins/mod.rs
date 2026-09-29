@@ -221,8 +221,15 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
 /// JS branches on availability (`Flux.capabilities.includes("subprocess")`)
 /// rather than on the OS. A conditionally-compiled feature would be added under
 /// its own cfg, so it only appears when actually present.
+#[cfg(not(feature = "ktx2"))]
 pub const BASE_CAPABILITIES: &[&str] =
   &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "svg", "image", "wasm", "ffi", "isolate", "tty"];
+/// With the `ktx2` feature: `ktx2` says flux:image's transcodeTexture and
+/// encodeTexture work here (they throw on a build without it).
+#[cfg(feature = "ktx2")]
+pub const BASE_CAPABILITIES: &[&str] = &[
+  "sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "svg", "image", "wasm", "ffi", "isolate", "tty", "ktx2",
+];
 
 fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {
   let arr = Array::new(ctx.clone()).expect("create capabilities array");

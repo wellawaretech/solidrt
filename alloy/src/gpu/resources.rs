@@ -43,6 +43,12 @@ pub struct GpuTextureInfo {
   /// other creation-time state beside `format`, so a soft or aliased map
   /// can be diagnosed from the inventory instead of the create call.
   pub sampler: SamplerState,
+  /// The texel storage at the declared format, in bytes: every level of the
+  /// mip chain when the sampling keeps one, all six faces of a cube map.
+  /// What the id costs in GPU memory as declared (a driver that expands a
+  /// compressed format it lacks in hardware holds more; multisample and
+  /// depth attachments of a target are not part of it).
+  pub byte_length: usize,
   /// The create's debug label, when one was given.
   pub label: Option<String>,
 }

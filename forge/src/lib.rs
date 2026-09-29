@@ -16,6 +16,8 @@ pub mod fs;
 pub mod http;
 pub mod image;
 pub mod isolate;
+#[cfg(feature = "ktx2")]
+pub mod ktx2;
 pub mod logger;
 pub mod mdns;
 pub mod net;

@@ -16,6 +16,15 @@ path = "src/lib.rs"
 # vendor submodules nor nasm); every lattice Makefile goal enables it. See
 # okf/backlog/video-playback.md.
 video = ["dep:ndk", "dep:ndk-sys"]
+# forge::ktx2: compressed textures - KTX2 files of Basis Universal texel data
+# transcoded to the device's block format (ETC2, BC7), and the encoder that
+# bakes them. The vendored Basis Universal (forge/vendor/basis_universal, a
+# submodule pinned to a release tag) built by build.rs through cc, reached
+# over its C API with hand-written bindings. Encoder and transcoder both
+# (splitting them is a size item: okf/backlog/runtime-optimization.md). Not
+# a cargo default, like video: a plain build needs no submodule. See
+# okf/plans/gpu-compressed-textures.md.
+ktx2 = []
 
 [dependencies]
 log = { workspace = true }

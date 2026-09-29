@@ -5143,7 +5143,7 @@ import { captureSnapshot, readTexture } from "flux:gpu";
 var glsl = String.raw;
 // ../../packages/core/src/image.ts
 import { decodeImage } from "flux:image";
-import { decodeImage as decodeImage2, encodeImage } from "flux:image";
+import { decodeImage as decodeImage2, encodeImage, encodeTexture, transcodeTexture } from "flux:image";
 var imageCache = new Map;
 // ../../packages/core/src/cursor.ts
 import { decodeImage as decodeImage3 } from "flux:image";

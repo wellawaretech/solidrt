@@ -55,7 +55,7 @@ serve({
 | `flux:wasm` | Run WebAssembly modules, interpreted. Portable across every target; a small constant factor over JavaScript on tight compute, nowhere near browser wasm speed. |
 | `flux:ffi` | Call into native libraries. |
 | `flux:isolate` | Run a module on its own thread and call it like an object. |
-| `flux:image` | Decode and encode images. |
+| `flux:image` | Decode and encode images; transcode and encode compressed textures (KTX2). |
 | `flux:svg` | Parse an SVG document into draw data. |
 
 A GUI build of Flux, which is what SolidRT runs on, adds the device and

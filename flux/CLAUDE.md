@@ -60,6 +60,15 @@ layers. `value.rs` is where
 forge and the plugin returns `Neutral(result.into())`; do not hand-write a
 per-type `IntoJs` for plain data results.
 
+JS buffer bytes (an `ArrayBuffer` or typed array argument) are borrowed
+through `marshal::JsBytes` and its helpers - `bytes_of`, `elements_of`,
+`elements_mut_of` for a synchronous in-place read (they throw
+`"<api>: detached buffer"`), `CopyBytes::copy_bytes` for bytes that outlive
+the call - never `as_raw`/`as_bytes` plus `from_raw_parts` in a plugin.
+The borrow is engine memory that only stays valid while no JS runs; that
+contract is stated once, on `JsBytes`, and the helpers are the only
+`unsafe` for it.
+
 ## Module surface
 
 Prefer focused `flux:` modules over growing the `Flux.*` global. Web-standard

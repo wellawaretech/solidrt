@@ -180,7 +180,8 @@ fn collect_label(opts: &Option<Object<'_>>) -> rquickjs::Result<Option<String>> 
 
 // Decode the { format? } pixel format the pixel-upload creates accept
 // ("rgba8" default | "rgba8-srgb" | "r8" | "r32f" | "rgba32f" | "rgba16f" |
-// "rgba32ui"); an unknown value throws at the create call site.
+// "rgba32ui" | the compressed "etc2-rgba8"/"bc7-rgba8" and their "-srgb"
+// twins); an unknown value throws at the create call site.
 fn collect_format(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::TextureFormat> {
   let format = match opts {
     Some(o) => o.get::<_, Option<String>>("format")?,
@@ -931,6 +932,7 @@ impl ModuleDef for GpuModule {
     limits_obj.set("maxAnisotropy", limits.max_anisotropy)?;
     limits_obj.set("maxVertexUniformVectors", limits.max_vertex_uniform_vectors)?;
     limits_obj.set("halfFloatRenderable", limits.half_float_renderable)?;
+    limits_obj.set("bc7Textures", limits.bc7_textures)?;
     exports.export("limits", limits_obj)?;
     Ok(())
   }
@@ -946,14 +948,22 @@ fn create_texture(
   let format = collect_format(&ctx, &opts.0, "createTexture")?;
   let data = PixelData::collect(&ctx, data, format, "createTexture")?;
   let pixels = data.bytes(&ctx, "createTexture")?;
-  let expected = format.byte_len(width, height);
-  if pixels.len() != expected {
-    return Err(throw_str(
-      &ctx,
-      &format!("createTexture: expected {expected} bytes ({}), got {}", format.name(), pixels.len()),
-    ));
-  }
   let sampler = collect_sampler(&ctx, &opts.0, format, "createTexture")?;
+  // A compressed create with a chain takes the whole chain (its levels are
+  // uploaded, never generated); every other create takes exactly one frame.
+  let expected = if format.is_compressed() && sampler.mipmap {
+    format.chain_byte_len(width, height)
+  } else {
+    format.byte_len(width, height)
+  };
+  if pixels.len() != expected {
+    let what = if format.is_compressed() && sampler.mipmap {
+      format!("{} full mip chain, {} levels", format.name(), alloy::mip_levels(width.max(height)))
+    } else {
+      format.name().to_string()
+    };
+    return Err(throw_str(&ctx, &format!("createTexture: expected {expected} bytes ({what}), got {}", pixels.len())));
+  }
   let label = collect_label(&opts.0)?;
   let st = state(&ctx);
   let id = st
@@ -1065,6 +1075,12 @@ fn create_mutable_texture(
   opts: OptArg<Object<'_>>,
 ) -> rquickjs::Result<u64> {
   let format = collect_format(&ctx, &opts.0, "createMutableTexture")?;
+  if format.is_compressed() {
+    return Err(throw_str(
+      &ctx,
+      &format!("createMutableTexture: {} is create-once (no uploadTexture into compressed storage); use createTexture", format.name()),
+    ));
+  }
   let data = PixelData::collect(&ctx, data, format, "createMutableTexture")?;
   let all = data.bytes(&ctx, "createMutableTexture")?;
   let frame_size = format.byte_len(width, height);

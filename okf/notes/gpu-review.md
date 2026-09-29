@@ -967,7 +967,7 @@ draw-range/instancing bullet in
 [gpu-fused-create-refactor](../backlog/gpu-fused-create-refactor.md), and
 mipmaps, compressed textures and sampleable depth in
 [gpu-mipmaps](../done/gpu-mipmaps.md),
-[gpu-compressed-textures](../backlog/gpu-compressed-textures.md) and the
+[gpu-compressed-textures](../plans/gpu-compressed-textures.md) and the
 extensions file respectively.
 
 Two workload notes sit outside the ranked list but shape the do-order. For

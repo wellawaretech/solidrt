@@ -189,6 +189,7 @@ impl Context {
   ) -> Result<(), String> {
     let limits = self.gpu_limits();
     limits.check_texture_size(width, height)?;
+    limits.check_upload_format(format)?;
     limits.check_mipmap(format, sampler.mipmap)?;
     // A create at a fresh id cannot be referenced by anything yet; a replace
     // at a live id (stream resize, camera format change) is a content change
@@ -235,6 +236,9 @@ impl Context {
     if size == 0 {
       return Err("cube map face size must be non-zero".to_string());
     }
+    if format.is_compressed() {
+      return Err(format!("{} is a 2D upload format; a cube map takes the uncompressed formats", format.name()));
+    }
     let limits = self.gpu_limits();
     limits.check_cube_map_size(size)?;
     let levels = check_cube_faces(size, &faces, format)?;
@@ -248,6 +252,16 @@ impl Context {
     self.rpc(|reply| RasterCmd::CreateCubeTexture { id, size, faces, sampler, format, label, reply })??;
     self.textures.insert(id, TextureEntry::cube(size, sampler, format));
     Ok(id)
+  }
+
+  /// The error an upload-shaped verb returns for a compressed id: like a
+  /// cube map it is create-once (its chain is uploaded at creation and
+  /// compressed storage takes no partial rewrite).
+  fn reject_compressed(&self, id: u64, format: TextureFormat, verb: &str) -> Result<(), String> {
+    if format.is_compressed() {
+      return Err(format!("texture {id} is {}: create-once, {verb}", format.name()));
+    }
+    Ok(())
   }
 
   /// The error a 2D-shaped verb returns for a cube map id, or None for
@@ -272,6 +286,7 @@ impl Context {
     self.reject_cube(id, "a cube map is create-once, there is no upload into it")?;
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
     let (width, height, format) = (entry.width(), entry.height(), entry.format);
+    self.reject_compressed(id, format, "there is no upload into it")?;
     let frame_size = format.byte_len(width, height);
     let end = offset.checked_add(frame_size).ok_or_else(|| "offset overflow".to_string())?;
     if end > pixels.len() {
@@ -310,6 +325,7 @@ impl Context {
     // Sampling and format are properties of the id and survive the id-stable
     // resize, as does the label (None here = keep, applied raster-side).
     let (sampler, format) = (entry.sampler(), entry.format);
+    self.reject_compressed(id, format, "there is no resize")?;
     let frame_size = format.byte_len(width, height);
     if pixels.len() < frame_size {
       return Err(format!(
@@ -515,7 +531,7 @@ impl Context {
     let dst_entry = self.textures.get(dst).ok_or_else(|| format!("texture {dst} not found"))?;
     if src_entry.format.sample_only() {
       return Err(format!(
-        "texture {src} is {}: sample-only (a copy would quantize float to the target's rgba8, or decode sRGB)",
+        "texture {src} is {}: sample-only (a copy would quantize float to the target's rgba8, decode sRGB, or expand compressed blocks); render it through a pass instead",
         src_entry.format.name()
       ));
     }

@@ -70,7 +70,7 @@ talk to the driver, on a GLES 3.0 floor that can probe upward per device.
   single frame.
 - **Device-appropriate formats chosen at pack time** - ASTC on Android, BC
   on desktop, float targets, depth textures, MRT - instead of the WebGL2
-  lowest common denominator (../backlog/gpu-compressed-textures.md,
+  lowest common denominator (../plans/gpu-compressed-textures.md,
   ../done/gpu-float-texture-formats.md,
   ../done/gpu-sampleable-depth.md).
 - **No context-loss theater**, no per-tab context limit, no conservative

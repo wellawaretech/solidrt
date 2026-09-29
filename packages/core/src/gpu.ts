@@ -84,11 +84,12 @@ export type { FilterMode, WrapMode, TextureBinding, TextureBindings } from "flux
 // HDR image format "rgba16f" (Float32Array payload packed to half float,
 // filterable) and the integer data-texture format "rgba32ui" (Uint32Array
 // payload, a uvec4 per texel through a usampler2D, nearest/texelFetch only)
-// - see TextureFormat in flux:gpu for each format's contract.
-// Draw targets (createDrawTarget, createCubeDrawTarget) take the renderable
-// subset: "rgba8", "rgba8-srgb", "rgba16f".
-// "etc2-rgba8" (compressed) is a reserved future value of the same
-// vocabulary.
+// and the block-compressed formats "etc2-rgba8"/"etc2-rgba8-srgb" (GLES 3.0
+// core, every device) and "bc7-rgba8"/"bc7-rgba8-srgb" (desktops, behind
+// limits.bc7Textures): raw 4x4 blocks, the full mip chain when mipmap is
+// set, create-once and sample-only - see TextureFormat in flux:gpu for each
+// format's contract. Draw targets (createDrawTarget, createCubeDrawTarget)
+// take the renderable subset: "rgba8", "rgba8-srgb", "rgba16f".
 export type TextureFormatOptions = { format?: gpu.TextureFormat }
 export type { TextureFormat } from "flux:gpu"
 

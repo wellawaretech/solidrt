@@ -80,6 +80,13 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   that in lattice; a cumulative drift estimator with hysteresis makes the
   count exact at full rate under swap jitter and honest below it. Tier 2 of
   okf/design/frame-timing.md.
+- **[Compressed textures - KTX2 shipped, ETC2 or BC7 on the device](plans/gpu-compressed-textures.md)** [2026-07-30]
+  One shipped payload (Basis Universal in KTX2, baked with our own encoder)
+  transcoded at load to the device's native block format - ETC2 on GLES 3.0
+  targets, BC7 where the BPTC extension is reported; the device formats and
+  the codec (forge::ktx2, flux:image, zstd included) are built and verified on
+  Linux, open are the other platforms, the model bake and loader, and the
+  quality a bake should use.
 - **[Inspector - a visual devtool app over the dev-server control API](plans/inspector.md)** [2026-08-14]
   A packed SolidRT app presenting live runtime introspection (stats, logs,
   tree over snapshot, clock transport) as a peer front-end to the MCP bridge,
@@ -390,12 +397,6 @@ Shaped, not started.
   raster thread, i.e. the frame loop - and both are calls the standards
   eventually grew an async-only form for; invisible while compiles happen at
   startup, real for live-coding and any per-frame readback consumer.
-- **[Compressed texture uploads (ETC2)](backlog/gpu-compressed-textures.md)** [2026-07-30]
-  ES 3.0 mandates ETC2/EAC in core, a free 4-8x texture memory cut on every GL
-  target, but createTexture is RGBA8-only, so a 25-map glTF scene (Sponza)
-  holds ~182 MB of texture for ~18 MB of source; with the honest caveat that
-  ANGLE on Windows may software-expand it - the same split that made both web
-  standards gate the feature.
 - **[GPU context loss](backlog/gpu-context-loss.md)** [2026-07-27]
   A lost GL context used to leave the app running against a dead swapchain;
   swap-result checking, exit after two failed presents and the Android
@@ -646,6 +647,11 @@ Shaped, not started.
   "Back to a list screen remounts it, so its scroll offset and focused row are
   lost; each stack entry should own a keyed store that lives while the entry
   is on the stack, with ScrollView opting in and focus restored on pop."
+- **[Runtime optimization - what the binary weighs and how to shrink it](backlog/runtime-optimization.md)** [2026-09-29]
+  The runtime is 61 MB at release (about 40 MB at release-opt) and size
+  already decides what ships - speech recognition is compiled out of every
+  build for it; this collects the measured weights and the ways down, starting
+  with a per-crate size audit nobody has run yet.
 - **[Runtime policies - tracked, app-readable, app-overridable](backlog/runtime-policy-registry.md)** [2026-08-13]
   The runtime is accumulating behavior policies it selects on the app's behalf
   from device facts (frame pacing being the first with real consequences).

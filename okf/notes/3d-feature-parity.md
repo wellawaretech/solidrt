@@ -163,7 +163,7 @@ geometry has no fix and decals are blocked on it.
 | Compute shaders | yes: WebGPU only | yes | yes: RenderingDevice | no | untracked; GLES 3.1 compute is the native option [3d-differentiators](3d-differentiators.md) lists |
 | Indirect / multi-draw indirect | yes: WebGPU only | yes | yes: RenderingDevice | no | untracked |
 | 2D array and 3D textures | yes | yes | yes | no | untracked |
-| Compressed textures (ETC2 / BC / Basis) | yes | yes | yes | no | [gpu-compressed-textures](../backlog/gpu-compressed-textures.md) |
+| Compressed textures (ETC2 / BC / Basis) | yes | yes | yes | no | [gpu-compressed-textures](../plans/gpu-compressed-textures.md) |
 | Render / draw introspection | yes: renderer.info | yes: stats, frame debugger | yes: monitors | no | [3d-scene-draw-introspection](../backlog/3d-scene-draw-introspection.md) |
 | Views: multiple cameras, render to texture | yes | yes | yes: SubViewport | yes | |
 | Frustum culling | yes | yes | yes | yes | core-side |

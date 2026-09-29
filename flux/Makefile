@@ -28,8 +28,17 @@ build: flux fluxc fluxrt
 build-opt:
 	$(MAKE) build PROFILE=release-opt
 
+# The flux binary hosts the dev server and the bake tools, so it carries
+# the texture encoder (flux:image encodeTexture); KTX2=0 leaves it out.
+KTX2 ?= 1
+ifeq ($(KTX2),0)
+FLUX_FEATURES =
+else
+FLUX_FEATURES = --features ktx2
+endif
+
 flux:
-	cargo build $(CARGO_PROFILE_FLAG) --bin flux
+	cargo build $(CARGO_PROFILE_FLAG) $(FLUX_FEATURES) --bin flux
 	$(call stage-bin,flux)
 
 fluxc:

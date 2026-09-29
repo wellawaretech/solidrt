@@ -9,8 +9,8 @@ use impellers::ISize;
 use std::num::NonZeroU32;
 
 use crate::gpu::texture::{
-  check_cube_faces, mip_size, SamplerFilter, SamplerState, SamplerWrap, TextureFormat, TextureShape, ANISOTROPY_LEVELS,
-  CUBE_FACES, MIN_ANISOTROPY,
+  check_cube_faces, mip_levels, mip_size, SamplerFilter, SamplerState, SamplerWrap, TextureFormat, TextureShape,
+  ANISOTROPY_LEVELS, CUBE_FACES, MIN_ANISOTROPY,
 };
 
 /// The GL sampler objects covering every SamplerState combination (filter x
@@ -172,6 +172,12 @@ pub(super) fn gl_storage(format: TextureFormat) -> (u32, u32, u32) {
     TextureFormat::Rgba16f => (glow::RGBA16F, glow::RGBA, glow::HALF_FLOAT),
     TextureFormat::Rgba32ui => (glow::RGBA32UI, glow::RGBA_INTEGER, glow::UNSIGNED_INT),
     TextureFormat::Rgba8Srgb => (glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE),
+    // Compressed storage is allocated by glCompressedTexImage2D from the
+    // blocks themselves (`new_compressed`); the layout and type are moot.
+    TextureFormat::Etc2Rgba8 => (glow::COMPRESSED_RGBA8_ETC2_EAC, glow::RGBA, glow::UNSIGNED_BYTE),
+    TextureFormat::Etc2Rgba8Srgb => (glow::COMPRESSED_SRGB8_ALPHA8_ETC2_EAC, glow::RGBA, glow::UNSIGNED_BYTE),
+    TextureFormat::Bc7Rgba8 => (glow::COMPRESSED_RGBA_BPTC_UNORM, glow::RGBA, glow::UNSIGNED_BYTE),
+    TextureFormat::Bc7Rgba8Srgb => (glow::COMPRESSED_SRGB_ALPHA_BPTC_UNORM, glow::RGBA, glow::UNSIGNED_BYTE),
   }
 }
 
@@ -217,6 +223,62 @@ impl GpuTexture {
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
       GpuTexture { gl_texture, width, height, shape: TextureShape::D2, sampler, format, label: None }
+    }
+  }
+
+  /// A block-compressed 2D texture (`TextureFormat::is_compressed`),
+  /// allocated and filled in one go from `blocks`: the base level alone, or
+  /// with `sampler.mipmap` the full chain level-major
+  /// (`TextureFormat::chain_byte_len`; checked UI-side, backstopped here),
+  /// one glCompressedTexImage2D per level. Create-once like a cube map:
+  /// `upload` refuses it (no chain can be regenerated, and compressed
+  /// storage takes no glTexSubImage2D). Restores the 2D binding it touches.
+  pub fn new_compressed(
+    gl: &glow::Context,
+    size: ISize,
+    blocks: &[u8],
+    sampler: SamplerState,
+    format: TextureFormat,
+  ) -> Result<Self, String> {
+    let (width, height) = (size.width as u32, size.height as u32);
+    let levels = if sampler.mipmap { mip_levels(width.max(height)) } else { 1 };
+    let expected = if sampler.mipmap { format.chain_byte_len(width, height) } else { format.byte_len(width, height) };
+    if blocks.len() != expected {
+      return Err(format!(
+        "{} {width}x{height} with {levels} level(s) takes {expected} bytes, got {}",
+        format.name(),
+        blocks.len()
+      ));
+    }
+    let (internal, _, _) = gl_storage(format);
+    unsafe {
+      let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
+      let gl_texture = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
+      gl.bind_texture(glow::TEXTURE_2D, Some(gl_texture));
+      let mut offset = 0;
+      for level in 0..levels {
+        let (w, h) = (mip_size(width, level), mip_size(height, level));
+        let len = format.byte_len(w, h);
+        gl.compressed_tex_image_2d(
+          glow::TEXTURE_2D,
+          level as i32,
+          internal as i32,
+          w as i32,
+          h as i32,
+          0,
+          len as i32,
+          &blocks[offset..offset + len],
+        );
+        offset += len;
+      }
+      // The chain is complete as uploaded (or absent); the fallback filter
+      // keeps the object sampling-complete for Impeller like `new`.
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAX_LEVEL, levels as i32 - 1);
+      let filter = fallback_filter(format);
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
+      gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+      Ok(GpuTexture { gl_texture, width, height, shape: TextureShape::D2, sampler, format, label: None })
     }
   }
 
@@ -301,8 +363,9 @@ impl GpuTexture {
     // RG8 rows are width*2; alignment 1 is correct for every width. Float
     // rows are multiples of 4 bytes at any width, so the default holds.
     let Some((gl_format, ty, alignment)) = upload_layout(self.format) else {
-      // Gated UI-side (a depth id is not an upload texture); backstop.
-      log::warn!("[alloy] upload into a depth texture ignored: depth is render-written");
+      // Gated UI-side (a depth id is not an upload texture, a compressed
+      // one is create-once); backstop.
+      log::warn!("[alloy] upload into a {} texture ignored: it is not an upload format", self.format.name());
       return;
     };
     unsafe {
@@ -339,7 +402,8 @@ impl GpuTexture {
 }
 
 /// The unpack layout (pixel format, component type, row alignment) of an
-/// upload format; None for the render-written depth format.
+/// upload format; None for the render-written depth format and the
+/// create-once compressed formats (`new_compressed` fills those).
 fn upload_layout(format: TextureFormat) -> Option<(u32, u32, i32)> {
   match format {
     TextureFormat::Rgba8 => Some((glow::RGBA, glow::UNSIGNED_BYTE, 4)),
@@ -350,6 +414,10 @@ fn upload_layout(format: TextureFormat) -> Option<(u32, u32, i32)> {
     TextureFormat::Rgba16f => Some((glow::RGBA, glow::HALF_FLOAT, 4)),
     TextureFormat::Rgba32ui => Some((glow::RGBA_INTEGER, glow::UNSIGNED_INT, 4)),
     TextureFormat::Rgba8Srgb => Some((glow::RGBA, glow::UNSIGNED_BYTE, 4)),
-    TextureFormat::Depth24 => None,
+    TextureFormat::Depth24
+    | TextureFormat::Etc2Rgba8
+    | TextureFormat::Etc2Rgba8Srgb
+    | TextureFormat::Bc7Rgba8
+    | TextureFormat::Bc7Rgba8Srgb => None,
   }
 }

@@ -228,10 +228,41 @@ declare module "flux:gpu" {
    * (integer textures never filter), and a float sampler over it (or a
    * `usampler2D` over any other format) throws at bind.
    *
-   * Reserved future value of this same vocabulary: "etc2-rgba8" (compressed
-   * uploads).
+   * "etc2-rgba8", "etc2-rgba8-srgb", "bc7-rgba8" and "bc7-rgba8-srgb" are
+   * the block-compressed formats: 4x4 texel blocks of 16 bytes (1 byte per
+   * texel, a quarter of rgba8) that the sampler decodes for free, so a
+   * texture-heavy scene holds a quarter of the GPU memory. The payload is
+   * the raw blocks as a Uint8Array: ceil(width/4) * ceil(height/4) * 16
+   * bytes per level, and with `mipmap: true` the FULL chain concatenated
+   * level-major down to 1x1 (a compressed chain is uploaded, never
+   * generated - the runtime cannot build mips on compressed storage). The
+   * "-srgb" twins decode to linear light on sample exactly like
+   * "rgba8-srgb". Filterable like the byte formats (linear, mipmap,
+   * anisotropy all apply), and create-once and sample-only: createMutableTexture,
+   * uploadTexture, resizeTexture, readTexture, copyTexture and cube maps
+   * throw for them, and `<texture src>` display is out of contract.
+   * Availability differs by device, which is the point of the two codecs:
+   * the "etc2-*" formats are GLES 3.0 core and every device takes them
+   * (a desktop driver without the hardware format expands them to RGBA8,
+   * losing the memory cut but not correctness), so ETC2 is the only
+   * compressed format that is portable to SHIP raw; the "bc7-*" formats
+   * exist where `limits.bc7Textures` is true (every desktop: ANGLE over
+   * D3D11 and Metal, Mesa) and throw elsewhere, so BC7 is a load-time
+   * target - what `transcodeTexture` in flux:image picks on a desktop from
+   * one shipped KTX2 payload - not a format an app ships raw.
    */
-  export type TextureFormat = "rgba8" | "rgba8-srgb" | "r8" | "r32f" | "rgba32f" | "rgba16f" | "rgba32ui"
+  export type TextureFormat =
+    | "rgba8"
+    | "rgba8-srgb"
+    | "r8"
+    | "r32f"
+    | "rgba32f"
+    | "rgba16f"
+    | "rgba32ui"
+    | "etc2-rgba8"
+    | "etc2-rgba8-srgb"
+    | "bc7-rgba8"
+    | "bc7-rgba8-srgb"
   export type TextureFormatOption = { format?: TextureFormat }
   /**
    * This device's hard ceilings, queried once at startup: process constants.
@@ -277,13 +308,25 @@ declare module "flux:gpu" {
      * "rgba16f" texture throws where this is false.
      */
     halfFloatRenderable: boolean
+    /**
+     * Whether the "bc7-rgba8" and "bc7-rgba8-srgb" formats upload on this
+     * device (the EXT_texture_compression_bptc extension: every desktop,
+     * no mobile GPU). The "etc2-*" formats are GLES 3.0 core and need no
+     * flag. A loader with one shipped payload picks BC7 where this is
+     * true and ETC2 otherwise; `transcodeTexture` in flux:image applies
+     * that rule when given no target.
+     */
+    bc7Textures: boolean
   }
   /**
    * Create an immutable texture from a pixel buffer holding exactly one
    * frame at the declared format's size. The view type must match the
    * format: byte formats ("rgba8", "rgba8-srgb", "r8") take a Uint8Array,
-   * float formats ("r32f", "rgba32f", "rgba16f") a Float32Array. Returns
-   * the texture id.
+   * float formats ("r32f", "rgba32f", "rgba16f") a Float32Array. A
+   * compressed format ("etc2-*", "bc7-*") takes its raw blocks as a
+   * Uint8Array, the full mip chain when `mipmap: true` (see
+   * {@link TextureFormat}); the byte count in the error names what is
+   * expected. Returns the texture id.
    */
   export function createTexture(data: Uint8Array | Float32Array | Uint32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**

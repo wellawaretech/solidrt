@@ -86,7 +86,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    Draco/meshopt and KTX2 decoding in the bake, merge-by-material,
    vertex colors, runtime-fetched content. KTX2 has an engine half the bake
    cannot supply on its own -
-   [gpu-compressed-textures](../backlog/gpu-compressed-textures.md), the
+   [gpu-compressed-textures](../plans/gpu-compressed-textures.md), the
    ETC2 upload path `createTexture` does not have.
 8. [x] **Mipmaps.** Engine: [gpu-mipmaps](../done/gpu-mipmaps.md) (landed 2026-08-23: `mipmap: true` on texture creation).
    Textured models alias immediately at minification; the one engine item

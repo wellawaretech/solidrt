@@ -11,7 +11,7 @@ use crate::gl;
 use crate::gl::{GpuTexture, RenderPipeline, ShaderProgram, Timed};
 use crate::gpu::{
   AttributeTable, BufferLayout, GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources,
-  GpuTextureInfo, GpuWindowShaderInfo, PipelineDesc, SamplerState, TextureFormat, TextureShape, UniformTable,
+  GpuTextureInfo, GpuWindowShaderInfo, PipelineDesc, SamplerState, TextureFormat, TextureShape, UniformTable, CUBE_FACES,
 };
 use std::rc::Rc;
 
@@ -27,11 +27,18 @@ impl RasterState {
     label: Option<String>,
   ) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
-    let mut gpu = GpuTexture::new(&self.gl, size, sampler, format);
+    // Compressed storage is allocated from its blocks (the whole chain at
+    // once); plain storage is allocated empty and filled by the upload path.
+    let mut gpu = if format.is_compressed() {
+      GpuTexture::new_compressed(&self.gl, size, pixels, sampler, format)?
+    } else {
+      let gpu = GpuTexture::new(&self.gl, size, sampler, format);
+      gpu.upload(&self.gl, pixels, size);
+      gpu
+    };
     // A replace-at-id with no new label is an id-stable resize: labels are
     // create-time state and follow the id through it.
     gpu.label = label.or_else(|| self.textures.get(&id).and_then(|old| old.label.clone()));
-    gpu.upload(&self.gl, pixels, size);
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
         let replaced = self.textures.insert(id, gpu).is_some();
@@ -220,6 +227,15 @@ impl RasterState {
         format: gpu.format.name(),
         shape: gpu.shape.name(),
         sampler: gpu.sampler,
+        byte_length: {
+          let faces = if gpu.shape == TextureShape::Cube { CUBE_FACES } else { 1 };
+          let level_bytes = if gpu.sampler.mipmap {
+            gpu.format.chain_byte_len(gpu.width, gpu.height)
+          } else {
+            gpu.format.byte_len(gpu.width, gpu.height)
+          };
+          faces * level_bytes
+        },
         label: gpu.label.clone(),
       })
       .collect();

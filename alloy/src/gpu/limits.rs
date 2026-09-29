@@ -44,6 +44,13 @@ pub struct GpuLimits {
   /// practically every device; where it is absent an HDR cube map samples
   /// its base level (or, later, ships its levels explicitly).
   pub half_float_renderable: bool,
+  /// Whether BC7 textures upload here (GL_EXT_texture_compression_bptc, or
+  /// the ARB spelling on a desktop profile): the block format every desktop
+  /// GPU decodes in hardware, listed by ANGLE over D3D11 and Metal and by
+  /// Mesa; absent on mobile GPUs, where ETC2 (GLES 3.0 core) is the native
+  /// one. A `bc7-*` create where this is false throws naming the limit
+  /// (`check_upload_format`).
+  pub bc7_textures: bool,
 }
 
 impl GpuLimits {
@@ -58,7 +65,21 @@ impl GpuLimits {
     max_anisotropy: 1,
     max_vertex_uniform_vectors: 256,
     half_float_renderable: false,
+    bc7_textures: false,
   };
+
+  /// Check an upload format against the device: the BC7 formats exist only
+  /// behind the BPTC extension; everything else in the vocabulary is GLES
+  /// 3.0 core.
+  pub fn check_upload_format(&self, format: TextureFormat) -> Result<(), String> {
+    if matches!(format, TextureFormat::Bc7Rgba8 | TextureFormat::Bc7Rgba8Srgb) && !self.bc7_textures {
+      return Err(format!(
+        "{} is not supported on this device (no EXT_texture_compression_bptc); check limits.bc7Textures and use etc2-rgba8, which every device takes",
+        format.name()
+      ));
+    }
+    Ok(())
+  }
 
   /// Check a texture or target size against the device ceiling (and against
   /// zero: a 0-sized attachment only surfaces later as an opaque framebuffer
@@ -77,7 +98,8 @@ impl GpuLimits {
 
   /// Check a texture's mip request against its format: the chain comes from
   /// glGenerateMipmap, which needs a color-renderable format, and half float
-  /// is renderable only through an extension.
+  /// is renderable only through an extension. A compressed format's chain
+  /// is uploaded, never generated, so it passes regardless.
   pub fn check_mipmap(&self, format: TextureFormat, mipmap: bool) -> Result<(), String> {
     if mipmap && format == TextureFormat::Rgba16f && !self.half_float_renderable {
       return Err(

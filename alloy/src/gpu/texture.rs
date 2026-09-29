@@ -113,10 +113,20 @@ pub enum SamplerWrap {
 /// sampler-only like the uploads of those formats. Shader and pipeline
 /// textures are always RGBA8.
 ///
-/// Reserved future value of the same app-facing vocabulary, so it slots in
-/// without an API rethink: "etc2-rgba8" (compressed uploads; changes
-/// `byte_len` to block sizing and the upload verb to glCompressedTexImage2D).
-/// Grammar: base layout plus a qualifier suffix.
+/// The block-compressed formats (`is_compressed`) store 4x4 texel blocks of
+/// 16 bytes, 1 byte per texel, decoded by the sampler: Etc2Rgba8 (and its
+/// sRGB twin) is GLES 3.0 core, so every device takes it, though a desktop
+/// driver without the hardware format expands it to RGBA8 on upload;
+/// Bc7Rgba8 (and its sRGB twin) needs `GpuLimits::bc7_textures`
+/// (EXT_texture_compression_bptc: ANGLE over D3D11 and Metal, Mesa
+/// desktop), the format every desktop decodes in hardware. The payload is
+/// raw blocks, the FULL mip chain level-major when the sampling declares
+/// one (`chain_byte_len`): glGenerateMipmap cannot run on compressed
+/// storage, so the chain comes from the file. Create-once (no upload or
+/// resize, like a cube map), sample-only like the float formats, filterable
+/// like the byte formats. The one shipping-portable raw form is ETC2; BC7 is
+/// a load-time target picked from the limits (the transcode path in forge).
+/// Grammar: an optional codec prefix, the base layout, a qualifier suffix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum TextureFormat {
   #[default]
@@ -140,6 +150,17 @@ pub enum TextureFormat {
   /// like the float formats: the readback path samples (decodes) instead of
   /// returning the stored bytes, so there is no readback or copy.
   Rgba8Srgb,
+  /// ETC2/EAC RGBA8 blocks (COMPRESSED_RGBA8_ETC2_EAC), GLES 3.0 core.
+  Etc2Rgba8,
+  /// ETC2/EAC blocks stored sRGB-encoded (COMPRESSED_SRGB8_ALPHA8_ETC2_EAC),
+  /// GLES 3.0 core; decoded to linear light on sample like Rgba8Srgb.
+  Etc2Rgba8Srgb,
+  /// BC7 blocks (COMPRESSED_RGBA_BPTC_UNORM), behind
+  /// `GpuLimits::bc7_textures`.
+  Bc7Rgba8,
+  /// BC7 blocks stored sRGB-encoded (COMPRESSED_SRGB_ALPHA_BPTC_UNORM),
+  /// behind `GpuLimits::bc7_textures`.
+  Bc7Rgba8Srgb,
   /// Two channels, one byte each, sampled as `(r, g, 0, 1)`. Exists for the
   /// interleaved UV plane of NV12 YUV textures (see `yuv`); not offered in
   /// the app-facing `parse` until an app-level consumer exists.
@@ -163,16 +184,25 @@ impl TextureFormat {
       Some("rgba16f") => Ok(TextureFormat::Rgba16f),
       Some("rgba32ui") => Ok(TextureFormat::Rgba32ui),
       Some("rgba8-srgb") => Ok(TextureFormat::Rgba8Srgb),
+      Some("etc2-rgba8") => Ok(TextureFormat::Etc2Rgba8),
+      Some("etc2-rgba8-srgb") => Ok(TextureFormat::Etc2Rgba8Srgb),
+      Some("bc7-rgba8") => Ok(TextureFormat::Bc7Rgba8),
+      Some("bc7-rgba8-srgb") => Ok(TextureFormat::Bc7Rgba8Srgb),
       Some(other) => Err(format!(
-        "unknown format '{other}' (expected \"rgba8\", \"rgba8-srgb\", \"r8\", \"r32f\", \"rgba32f\", \"rgba16f\" or \"rgba32ui\")"
+        "unknown format '{other}' (expected \"rgba8\", \"rgba8-srgb\", \"r8\", \"r32f\", \"rgba32f\", \"rgba16f\", \"rgba32ui\", \"etc2-rgba8\", \"etc2-rgba8-srgb\", \"bc7-rgba8\" or \"bc7-rgba8-srgb\")"
       )),
     }
   }
 
-  /// The byte length of one frame at this format. The sizing seam every
-  /// validation site goes through: today all formats are per-pixel, and a
-  /// future block-compressed format changes only this function.
+  /// The byte length of one level at this format. The sizing seam every
+  /// validation site goes through: per-pixel for the plain formats, per
+  /// 4x4 block (a partial edge block counts whole) for the compressed ones.
   pub fn byte_len(self, width: u32, height: u32) -> usize {
+    if self.is_compressed() {
+      let blocks_x = (width as usize).div_ceil(BLOCK_EDGE);
+      let blocks_y = (height as usize).div_ceil(BLOCK_EDGE);
+      return blocks_x * blocks_y * BLOCK_BYTES;
+    }
     let per_pixel = match self {
       TextureFormat::Rgba8 => 4,
       TextureFormat::R8 => 1,
@@ -183,8 +213,27 @@ impl TextureFormat {
       TextureFormat::Rgba16f => 8,
       TextureFormat::Rgba32ui => 16,
       TextureFormat::Rgba8Srgb => 4,
+      TextureFormat::Etc2Rgba8 | TextureFormat::Etc2Rgba8Srgb | TextureFormat::Bc7Rgba8 | TextureFormat::Bc7Rgba8Srgb => {
+        unreachable!("compressed formats size by block")
+      }
     };
     (width as usize) * (height as usize) * per_pixel
+  }
+
+  /// The byte length of the full mip chain of a `width` x `height` level 0
+  /// at this format, level-major down to 1x1 (`mip_levels` of the longer
+  /// edge, each level `byte_len` of its `mip_size` edges): what a
+  /// compressed create with `mipmap` takes, since its chain is uploaded,
+  /// never generated.
+  pub fn chain_byte_len(self, width: u32, height: u32) -> usize {
+    (0..mip_levels(width.max(height))).map(|level| self.byte_len(mip_size(width, level), mip_size(height, level))).sum()
+  }
+
+  /// Whether the format stores 4x4 blocks the sampler decodes (see the type
+  /// docs): sized by `byte_len` per block, uploaded with
+  /// glCompressedTexImage2D level by level, create-once.
+  pub fn is_compressed(self) -> bool {
+    matches!(self, TextureFormat::Etc2Rgba8 | TextureFormat::Etc2Rgba8Srgb | TextureFormat::Bc7Rgba8 | TextureFormat::Bc7Rgba8Srgb)
   }
 
   /// Whether the payload is unsigned 32-bit integers (a Uint32Array in JS),
@@ -215,11 +264,12 @@ impl TextureFormat {
   /// path: the 32-bit floats are not color-renderable in core GLES 3.0, a
   /// half-float readback would quantize, an integer texture is shader
   /// data with no image meaning, and an sRGB texture's readback would
-  /// sample (decode) instead of returning the stored bytes. A draw target
-  /// of such a format renders (through a pass) but is read the same way:
-  /// through a pass into an Rgba8 target.
+  /// sample (decode) instead of returning the stored bytes, and compressed
+  /// storage is not color-renderable at all. A draw target of such a format
+  /// renders (through a pass) but is read the same way: through a pass into
+  /// an Rgba8 target.
   pub fn sample_only(self) -> bool {
-    self.is_float() || self.is_uint() || self == TextureFormat::Rgba8Srgb
+    self.is_float() || self.is_uint() || self == TextureFormat::Rgba8Srgb || self.is_compressed()
   }
 
   /// Pack an f32 payload (its native-endian bytes, as a Float32Array views
@@ -247,9 +297,18 @@ impl TextureFormat {
       TextureFormat::Rgba16f => "rgba16f",
       TextureFormat::Rgba32ui => "rgba32ui",
       TextureFormat::Rgba8Srgb => "rgba8-srgb",
+      TextureFormat::Etc2Rgba8 => "etc2-rgba8",
+      TextureFormat::Etc2Rgba8Srgb => "etc2-rgba8-srgb",
+      TextureFormat::Bc7Rgba8 => "bc7-rgba8",
+      TextureFormat::Bc7Rgba8Srgb => "bc7-rgba8-srgb",
     }
   }
 }
+
+/// The block geometry every compressed format here shares: ETC2/EAC RGBA8
+/// and BC7 both pack a 4x4 texel block into 16 bytes.
+const BLOCK_EDGE: usize = 4;
+const BLOCK_BYTES: usize = 16;
 
 /// The dimensionality of a texture id, declared at creation like `format`.
 /// `Cube` is a cube map: six square faces behind one id, sampled with a

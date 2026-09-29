@@ -4,3 +4,6 @@
 [submodule "forge/vendor/opus"]
 	path = forge/vendor/opus
 	url = https://github.com/xiph/opus.git
+[submodule "forge/vendor/basis_universal"]
+	path = forge/vendor/basis_universal
+	url = https://github.com/BinomialLLC/basis_universal.git

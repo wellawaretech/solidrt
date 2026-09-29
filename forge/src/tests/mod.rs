@@ -4,6 +4,8 @@ mod fetch;
 mod fs;
 mod image;
 mod isolate;
+#[cfg(feature = "ktx2")]
+mod ktx2;
 mod mdns;
 mod net;
 mod process;
