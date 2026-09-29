@@ -2,8 +2,8 @@
 title: impellers links msvcrt on Windows, defeating crt-static
 description: With static_link on Windows, impellers' build.rs emits cargo:rustc-link-lib=msvcrt, so our +crt-static solidrt-go.exe still resolves the C runtime from the DLLs and imports VCRUNTIME140.dll, VCRUNTIME140_1.dll and api-ms-win-crt-*, needing the Visual C++ redistributable to start.
 project: impellers (github.com/coderedart/impellers)
-versions: impellers 0.4.2 (latest release, 2026-05-28); line unchanged on master as of 2026-09-28
-status: filed
+versions: impellers 0.4.2; fixed in 0.4.3 (2026-09-29), our pin since 2026-09-29
+status: resolved
 link: https://github.com/coderedart/impellers/pull/7
 created: 2026-09-28
 ---
@@ -68,38 +68,22 @@ github.com/antoinevanwel/impellers (branch `windows-static-crt`, based on
 master). The PR also mentions that the crate's `repository` field still points
 to github.com/coderedart/flutter, which returns 404.
 
-## Our side until it lands
+## Outcome
 
-Nothing applied: our Windows builds keep importing the DLL CRT. Apply the
-patch below only when we need a Windows exe that runs without the Visual C++
-redistributable and upstream has not released the fix yet.
+Merged 2026-09-28 (`f885a2d`, no review comments) and released as impellers
+0.4.3 on 2026-09-29. Our pin moved `=0.4.2` -> `=0.4.3` the same day. No
+local patch had been applied, so no workaround comes out, and the static-CRT
+comments in `lattice/Makefile.windows` still describe the /MT intent
+correctly.
 
-The patch, when needed:
+0.4.3 is more than the fix: `build.rs` downloads the prebuilt Impeller by its
+own `STATIC_MAJOR/MINOR/PATCH` constants (not the crate version, and never
+`ENGINE_SHA`), and the release moves them from `a_0.5.14` to `a_0.5.15`,
+engine `c177d531` -> `5d33e22e`. So the bump is also an Impeller engine
+update on every platform. The Rust bindings in `src/` are unchanged, and
+`a_0.5.15` carries the same ten platform zips.
 
-1. In the fork, a branch `solidrt-patch`: `windows-static-crt` (the PR branch,
-   master plus the fix) plus one commit that deletes the `flutter` submodule
-   (`git rm flutter` and `.gitmodules`). The PR branch stays clean for
-   upstream. Dropping the submodule matters: cargo checks out the submodules
-   of a git dependency, so without it every machine that builds solidrt
-   (laptop, builders, CI) would clone flutter/flutter. The crate does not
-   need it: its bindings are pre-generated, `bindgen_live` (armv7 Android)
-   uses the bundled `impeller.h`, and the Impeller binaries are downloaded.
-2. In the root `Cargo.toml`, one line under the existing `[patch.crates-io]`,
-   next to livekit-wakeword:
-   `impellers = { git = "https://github.com/antoinevanwel/impellers", rev = "<patch commit>" }`.
-   Cargo moves impellers to the git source in `Cargo.lock`; nothing else in
-   the repo changes.
-3. Check with the win32-x64-msvc builder (`objdump -p solidrt-go.exe | grep
-   "DLL Name"` shows no vcruntime or api-ms-win-crt) and one other builder,
-   since the patch applies to every platform.
-
-Which base the branch uses does not matter: master is one commit past the
-0.4.2 release (`169c3a4`, bumps the flutter submodule and `ENGINE_SHA`, edits
-CONTRIBUTING.md), the crate version stays 0.4.2, and `build.rs` downloads the
-prebuilt Impeller by crate version (release tag `a_0.4.2`), never reading
-`ENGINE_SHA`.
-
-When upstream releases the fix: bump the impellers pin (or drop the patch
-line if it was applied), move this note to `resolved`, and check the
-static-CRT comments in `lattice/Makefile.windows`, which describe the /MT
-intent.
+Confirmed 2026-09-29 on the win32-x64-msvc builder (0.0.64-9-gf7292f62):
+`objdump -p solidrt-go.exe | grep "DLL Name"` lists no vcruntime and no
+api-ms-win-crt. The one API-set import left, `api-ms-win-core-synch-l1-2-0`,
+is a Windows core API set (Rust std's WaitOnAddress), not the CRT.

@@ -2,9 +2,9 @@
 title: solid-js types re-export boundary primitives its d.ts strips
 description: solid-js 2.0.0-rc.9 types/index.d.ts re-exports createErrorBoundary, createLoadingBoundary and createRevealOrder from client/hydration.js, but those are @internal and stripped from client/hydration.d.ts; with skipLibCheck they silently type as any, without it TS2305.
 project: solid-js (github.com/solidjs/solid, packages/solid)
-versions: solid-js 2.0.0-rc.9 (source at the tag has the exports; the published d.ts does not)
-status: unfiled
-link:
+versions: solid-js 2.0.0-rc.9 through rc.11 (checked 2026-09-29; source at the tag has the exports, the published d.ts does not)
+status: filed
+link: https://github.com/solidjs/solid/issues/3709
 created: 2026-09-21
 ---
 
@@ -44,3 +44,14 @@ renderer.ts now imports `createErrorBoundary` from `@solidjs/signals`,
 where it is public and typed, with a comment on why; five other core
 files already import from signals directly. Nothing else in the repo
 names the three primitives.
+
+## Upstream
+
+Filed 2026-09-29 as https://github.com/solidjs/solid/issues/3709, checked
+against the rc.11 tarball and `next` at `0bf5758916`. The report suggests
+the fix `index.ts` already uses for `materializeContainerTrace`: move the
+three names into a `/** @internal */ export { ... } from
+"./client/hydration.js"` block, which strips them from `index.d.ts` too
+(`materializeContainerTrace` is absent from the published rc.11 d.ts, so
+the pattern works). When it lands, renderer.ts can keep importing from
+`@solidjs/signals`; only the comment on why needs updating.

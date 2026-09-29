@@ -2,7 +2,7 @@
 title: rquickjs Opt rejects an explicitly passed undefined
 description: Opt<T> treats only an ABSENT argument as None; an explicit undefined (ordinary JS for "not given", and what any wrapper forwarding its own optional parameter produces) is still converted into T and fails. Proposal is an undefined/null-tolerant optional param type, or Opt doing it natively.
 project: rquickjs (github.com/DelSkayn/rquickjs)
-versions: rquickjs 0.12.1
+versions: rquickjs 0.12.1; Opt unchanged in 0.14.0 (checked 2026-09-29)
 status: unfiled
 link:
 created: 2026-08-13
