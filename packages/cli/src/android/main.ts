@@ -6,6 +6,7 @@ import { ensureTargets } from "../lib/android-targets"
 import { values, port, source } from "../lib/args"
 import { devDir } from "../lib/dev-dir"
 import { confirm, multiselect } from "../lib/prompt"
+import { runQuiet } from "../lib/util"
 import { apkApplicationId } from "../pack/android/apk"
 import { census } from "./census"
 import { installPlatformTools, platformToolsAvailable } from "./platform-tools"
@@ -25,8 +26,8 @@ import type { LiveRecord } from "../types/registry"
 // packed app instead.
 
 // Launch component of the "go" dev-client flavor (see lattice/Makefile.android).
-let PACKAGE_ACTIVITY = "com.solidrt.go/com.solidrt.app.MainActivity"
-let PACKAGE = "com.solidrt.go"
+let PACKAGE_ACTIVITY = "com.solidrt.player/com.solidrt.app.MainActivity"
+let PACKAGE = "com.solidrt.player"
 
 let sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -236,13 +237,38 @@ async function waitForClients(server: LiveRecord, before: Set<number>, count: nu
 
 type Device = { target: string; abi: string }
 
-// Install `file` on `target`, exiting on failure.
-async function adbInstall(adb: string, target: string, file: string) {
-  let install = Bun.spawn([adb, "-s", target, "install", "-r", file], { stdout: "pipe", stderr: "pipe" })
-  if ((await install.exited) !== 0) {
-    console.error("adb install failed:\n" + (await new Response(install.stderr).text()))
-    process.exit(1)
+// The install failures only an uninstall clears, by the reason each names:
+// the installed app is signed with another key (the published Player over
+// a local build or the other way round, or an older release's key) or is a
+// newer version (a project pinned to an older release).
+const BLOCKED_INSTALLS: Record<string, string> = {
+  INSTALL_FAILED_UPDATE_INCOMPATIBLE: "is signed with another key",
+  INSTALL_FAILED_VERSION_DOWNGRADE: "is a newer version",
+}
+
+// Install `file` on `target`, exiting on failure. When the installed
+// `packageId` blocks it, offer to uninstall that first: it clears the app's
+// data, so it is asked, and a non-TTY only says how.
+async function adbInstall(adb: string, target: string, file: string, packageId: string) {
+  let install = await runQuiet([adb, "-s", target, "install", "-r", file], process.cwd())
+  if (install.code === 0) return
+  let blocked = Object.keys(BLOCKED_INSTALLS).find((code) => install.output.includes(code))
+  if (blocked) {
+    let reason = `${packageId} on ${target} ${BLOCKED_INSTALLS[blocked]}`
+    if (!(await confirm(`${reason}. Uninstall it first? This clears its data.`, false))) {
+      console.error(`${reason}; uninstall it first with adb -s ${target} uninstall ${packageId} (this clears its data)`)
+      process.exit(1)
+    }
+    let uninstall = await runQuiet([adb, "-s", target, "uninstall", packageId], process.cwd())
+    if (uninstall.code !== 0) {
+      console.error("adb uninstall failed:\n" + uninstall.output)
+      process.exit(1)
+    }
+    install = await runQuiet([adb, "-s", target, "install", file], process.cwd())
+    if (install.code === 0) return
   }
+  console.error("adb install failed:\n" + install.output)
+  process.exit(1)
 }
 
 // Resolve the target devices (serial and ABI). With --device, treat the
@@ -315,7 +341,7 @@ async function prepare(adb: string, { target, abi }: Device, installed: string |
     process.exit(1)
   }
   console.log(`[cli] Installing Player on ${target}`)
-  await adbInstall(adb, target, apk)
+  await adbInstall(adb, target, apk, PACKAGE)
 }
 
 // Launch the client on `target`, handing it the dev-server address to dial as
@@ -361,7 +387,7 @@ function packedAppId(path: string): string {
 // dev server.
 async function installPacked(adb: string, target: string, file: string, appId: string) {
   console.log(`[cli] Installing ${appId} on ${target}`)
-  await adbInstall(adb, target, file)
+  await adbInstall(adb, target, file, appId)
   let start = Bun.spawn([adb, "-s", target, "shell", "am", "start", "-S", "-n", `${appId}/${PACKED_ACTIVITY}`], {
     stdout: "pipe",
     stderr: "pipe",

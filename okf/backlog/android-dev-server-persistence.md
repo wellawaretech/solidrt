@@ -19,7 +19,7 @@ launcher - brought the app up against `apps/default` with no dev-server
 connection and no path back from the couch. Recovery was:
 
 ```
-adb shell am start -n com.solidrt.go/com.solidrt.app.MainActivity \
+adb shell am start -n com.solidrt.player/com.solidrt.app.MainActivity \
   --es srt_dev_server 192.168.2.69:34884
 ```
 

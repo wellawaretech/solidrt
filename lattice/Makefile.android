@@ -45,8 +45,9 @@ ANDROID_CLANG_TRIPLE     = $(CLANG_TRIPLE_$(ANDROID_ABI))
 BINDGEN_VAR_armeabi-v7a   = BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi
 BINDGEN_ARGS_armeabi-v7a  = --target=armv7a-linux-androideabi26 --sysroot=$(NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/sysroot
 
-ANDROID_DIST  = $(SRT_HOME)/dist/android/$(ANDROID_ABI)
-APK_GO_DEBUG  = android/app/build/outputs/apk/go/debug/app-go-debug.apk
+ANDROID_DIST   = $(SRT_HOME)/dist/android/$(ANDROID_ABI)
+APK_GO_DEBUG   = android/app/build/outputs/apk/go/debug/app-go-debug.apk
+APK_GO_RELEASE = android/app/build/outputs/apk/go/release/app-go-release.apk
 
 GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 
@@ -136,7 +137,7 @@ define apk-run
 	adb install -r $(ANDROID_DIST)/solidrt-go.apk
 	adb logcat -c
 	@echo "Launching with dev server: $(if $(DEV_SERVER),$(DEV_SERVER),none (manual/QR connect))"
-	adb shell am start -n com.solidrt.go/com.solidrt.app.MainActivity $(if $(DEV_SERVER),--es srt_dev_server $(DEV_SERVER))
+	adb shell am start -n com.solidrt.player/com.solidrt.app.MainActivity $(if $(DEV_SERVER),--es srt_dev_server $(DEV_SERVER))
 	adb logcat -s SDL SDL/APP libmain DEBUG libc
 endef
 
@@ -161,13 +162,16 @@ endef
 # Both distributable APKs for one ABI: the client (solidrt-go.apk) and the
 # production runner (solidrt.apk), both at PROFILE like the desktop `dist`
 # goal (PROFILE=release-opt for the publish build). SPEECH is forced off (see
-# Makefile).
+# Makefile). The client is the Gradle release build type: what npm ships is
+# not debuggable, and is signed with the Player key when the environment
+# provides it (app/build.gradle); the dev loop above keeps the debuggable
+# debug build.
 android-dist: android-client $(GRADLE_WRAPPER_JAR)
 	# dist/android may hold .so files from other ABIs, and gradle's
 	# jniLibs.srcDir would bundle all of them; -PsrtAbi pins the APK to this one.
-	cd android && ./gradlew assembleGoDebug -PsrtAbi=$(ANDROID_ABI)
+	cd android && ./gradlew assembleGoRelease -PsrtAbi=$(ANDROID_ABI) -PsrtVersion=$(VERSION)
 	mkdir -p $(ANDROID_DIST)
-	cp $(APK_GO_DEBUG) $(ANDROID_DIST)/solidrt-go.apk
+	cp $(APK_GO_RELEASE) $(ANDROID_DIST)/solidrt-go.apk
 	@echo "Staged solidrt-go.apk ($(ANDROID_ABI)) into $(ANDROID_DIST)/"
 	$(call stage-pkg-apk,$(ANDROID_DIST)/solidrt-go.apk,solidrt-go.apk)
 	$(MAKE) android-runtime ANDROID_ABI=$(ANDROID_ABI)

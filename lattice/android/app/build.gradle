@@ -20,14 +20,33 @@ android {
                 abiFilters.addAll(project.property('srtAbi').split(',').toList())
             }
         }
+        // The build's version (-PsrtVersion, make's VERSION): versionName is
+        // what `srt android` compares against the project's
+        // @solidrt/android-<abi> package, versionCode orders updates. A
+        // version without a leading x.y.z (a branch name, in a dry-run
+        // release) keeps versionCode 1.
+        if (project.hasProperty('srtVersion')) {
+            def version = project.property('srtVersion').toString()
+            versionName = version
+            def release = version =~ /^(\d+)\.(\d+)\.(\d+)/
+            if (release.find()) {
+                versionCode = release.group(1).toInteger() * 1000000 + release.group(2).toInteger() * 1000 + release.group(3).toInteger()
+            }
+        }
     }
     // Explicit debug signing key, checked into the repo. Without this, AGP
-    // auto-generates ~/.android/debug.keystore per machine (and per CI run),
-    // so every published APK is signed with a different key and reinstalling
-    // over a prior build fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE. A
-    // fixed key (standard debug alias/password, not sensitive) keeps upgrades
-    // working across machines and releases. The debug build type uses this by
-    // default; release references it explicitly below.
+    // auto-generates ~/.android/debug.keystore per machine, so a build from
+    // one checkout cannot reinstall over another's. A fixed key (standard
+    // debug alias/password, not sensitive) keeps local builds interchangeable.
+    // It signs every debug build and the runner (which `srt pack --apk`
+    // re-signs anyway); never the published Player.
+    //
+    // The published Player's key is the Player's identity: only a build
+    // signed with it can update an installed Player. It comes from the
+    // environment (the release workflow decodes it from a secret) as a
+    // PKCS12 keystore with one password for store and key; without it the go
+    // release build falls back to the debug key, as every local build does.
+    def playerKeystore = System.getenv('SRT_PLAYER_KEYSTORE')
     signingConfigs {
         debug {
             storeFile = file('debug.keystore')
@@ -35,21 +54,35 @@ android {
             keyAlias = 'androiddebugkey'
             keyPassword = 'android'
         }
+        if (playerKeystore) {
+            player {
+                storeFile = file(playerKeystore)
+                storeType = 'pkcs12'
+                storePassword = System.getenv('SRT_PLAYER_KEYSTORE_PASSWORD')
+                keyAlias = System.getenv('SRT_PLAYER_KEY_ALIAS') ?: 'solidrt-player'
+                keyPassword = System.getenv('SRT_PLAYER_KEYSTORE_PASSWORD')
+            }
+        }
     }
+    // Release signing is per flavor; the debug build type keeps its own
+    // debug key, which takes precedence over a flavor's.
     flavorDimensions = ["variant"]
     productFlavors {
         go {
             dimension = "variant"
-            applicationId = "com.solidrt.go"
+            // The Player's id: its identity with the Player key above, both
+            // permanent. The flavor keeps its old name until go becomes player.
+            applicationId = "com.solidrt.player"
+            signingConfig = playerKeystore ? signingConfigs.player : signingConfigs.debug
         }
         prod {
             dimension = "variant"
             applicationId = "com.solidrt.app"
+            signingConfig = signingConfigs.debug
         }
     }
     buildTypes {
         release {
-            signingConfig = signingConfigs.debug
             minifyEnabled = false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }

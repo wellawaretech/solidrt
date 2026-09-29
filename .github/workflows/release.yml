@@ -216,15 +216,37 @@ jobs:
       # The retried dependency fetch, see build-linux.
       - uses: ./.github/actions/cargo-fetch
 
+      # The Player's signing key (lattice/android/app/build.gradle): a base64
+      # PKCS12 keystore secret, decoded to a temp file whose path the build
+      # steps inherit. The password reaches only those steps. Without the
+      # secret the release stops here: the Player it would publish could not
+      # update the ones installed from npm.
+      - name: Decode Player signing key
+        env:
+          PLAYER_KEYSTORE: ${{ secrets.ANDROID_PLAYER_KEYSTORE }}
+        run: |
+          if [ -z "$PLAYER_KEYSTORE" ]; then
+            echo "::error::The ANDROID_PLAYER_KEYSTORE secret is not set"
+            exit 1
+          fi
+          echo "$PLAYER_KEYSTORE" | base64 -d > "$RUNNER_TEMP/player.p12"
+          echo "SRT_PLAYER_KEYSTORE=$RUNNER_TEMP/player.p12" >> "$GITHUB_ENV"
+
       - name: Build APKs (arm64-v8a)
+        env:
+          SRT_PLAYER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_PLAYER_KEYSTORE_PASSWORD }}
         run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Build APKs (armeabi-v7a)
+        env:
+          SRT_PLAYER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_PLAYER_KEYSTORE_PASSWORD }}
         run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist-armeabi-v7a PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}"
 
       # x86_64 is the emulator and Intel/AMD Chromebook ABI. No physical phone
       # ships it, but without it neither can run a SolidRT app from npm.
       - name: Build APKs (x86_64)
+        env:
+          SRT_PLAYER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_PLAYER_KEYSTORE_PASSWORD }}
         run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist ANDROID_ABI=x86_64 PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload arm64-v8a APK
