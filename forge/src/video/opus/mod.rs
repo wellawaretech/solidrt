@@ -3,7 +3,7 @@
 // 48 kHz every Opus stream is defined at. Used on every platform, Android
 // included: Android's own "audio/opus" codec is libopus behind the codec
 // framework, so going through it would cost buffer copies and gain
-// nothing (okf/plans/android-video-punch-through.md).
+// nothing (okf/done/android-video-punch-through.md).
 
 mod ffi;
 

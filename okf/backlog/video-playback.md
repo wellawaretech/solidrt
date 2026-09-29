@@ -323,8 +323,12 @@ worker, audio corrects the anchor instead of selecting frames, and the
 frames are latched by the raster thread against the frame's deadline. What
 stays open on this path:
 
-- Rate and step, on either player: designed once for both
-  ([[android-video-punch-through]], follow-ups).
+- Rate, step and settable `currentTime`, on either player, designed once
+  for both: `rate` as a slope on the worker's anchor (keyframe-only trick
+  play above 2x; audio above 1x drops out unless time-stretched), `step` as
+  one release while paused.
+- `present: "plane"` off Android: the texture player presented fullscreen
+  behind the UI, so an app written for the plane runs everywhere.
 - Fullscreen 1080p on the TV is outside the UI clock's budget by
   construction ([[android-video-punch-through]] explains why no rung here
   lifts it); 720p is the ceiling on that device through this path.

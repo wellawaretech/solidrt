@@ -6,7 +6,7 @@ created: 2026-08-19
 
 # Retro presets for @solidrt/2d
 
-Stage 3 of the 2D extension (okf/plans/2d-extension.md). "Retro" is an
+Stage 3 of the 2D extension (okf/done/2d-extension.md). "Retro" is an
 aesthetic constraint, not an architecture: everything here is a thin preset
 over existing machinery, and its value is identity (demos, docs, the
 showcase) as much as function.

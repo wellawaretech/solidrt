@@ -3,7 +3,7 @@
 //! under the (translucent) UI. alloy owns it because alloy owns the window
 //! and the JNI seam to the activity; the decoder is forge's and takes the
 //! plane's `NativeWindow` as a plain platform handle. One plane at a time.
-//! See okf/plans/android-video-punch-through.md.
+//! See okf/done/android-video-punch-through.md.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
@@ -44,7 +44,7 @@ pub fn lost() -> bool {
 /// commits the plane and the window together, so while this is true the
 /// window's buffer must not carry unfinished GPU work into that commit -
 /// it would hold the video frame sharing it
-/// (okf/plans/android-video-punch-through.md). Any thread.
+/// (okf/notes/android-video-plane-compositing.md). Any thread.
 pub fn active() -> bool {
   PLANE_ACTIVE.load(Ordering::Relaxed)
 }

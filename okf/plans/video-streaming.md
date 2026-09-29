@@ -550,7 +550,8 @@ Mode 2 adds:
 - **Server:** a relay that caches the bytes before the first Cluster and starts
   each client at a cluster whose first VIDEO block is a keyframe (in pipe
   output no cluster starts with a video block), or one ffmpeg per client
-  (`-listen` serves a single client).
+  (`-listen` serves a single client). A producer of our own, without
+  ffmpeg, needs a WebM writer of the subset the reader takes.
 
 Related: [[android-video-punch-through]], [[video-playback]],
 [[plane-adaptive-fence-wait]].

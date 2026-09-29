@@ -489,6 +489,6 @@ Open: listed above.
 [angle-present-fence-pacing]: ../backlog/angle-present-fence-pacing.md
 [runtime-policy-registry]: ../backlog/runtime-policy-registry.md
 [video-playback]: ../backlog/video-playback.md
-[frame-signal-refresh-count]: ../plans/frame-signal-refresh-count.md
+[frame-signal-refresh-count]: ../done/frame-signal-refresh-count.md
 [cadence-hold]: ../plans/cadence-hold.md
 [vsync-locked-js-bound-double-signal]: ../done/vsync-locked-js-bound-double-signal.md

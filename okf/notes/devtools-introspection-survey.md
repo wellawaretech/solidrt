@@ -22,7 +22,7 @@ Browser devtools are four capabilities stacked:
 The control API today gives capability 1, request/response only, and none of
 the other three.
 
-The positioning from `okf/plans/inspector.md` is the organizing principle:
+The positioning from `okf/done/inspector.md` is the organizing principle:
 one agent-shaped API, two peer front-ends (MCP bridge for agents, console for
 humans). So every idea below is phrased as "one `/__control__` endpoint plus
 one console block or header widget" - the agent gets each capability for free
@@ -32,6 +32,12 @@ widget-inspector style). It would help on a lone device, but it splits the
 surface in two and undercuts the one-API story. The overlay post-pass
 participating as display hands for the external tool (highlight, pick
 affordance) gets most of that benefit without a second UI.
+
+The same plan fixed where such a tool may sit: never as a websocket client
+of the dev server it observes. The server broadcasts and latches
+`load`/`reload` for late-joining clients, so a tool that must survive an app
+switch would be replaced by the app under inspection. It talks `/__control__`
+over HTTP only, which is why the console runs as a packed app.
 
 ## Candidate extensions, in value order
 
@@ -92,7 +98,7 @@ repl to route.
 
 ### 6. Streaming
 
-Already on the inspector plan's open list as `/__control__/subscribe`. The
+The inspector plan's open list had it as `/__control__/subscribe`. The
 enabler for the "live views" genre the console SPEC assigns to header/nav:
 stats sparklines, a tree that updates as the app mutates, log follow without
 per-card polling. Still after 1-3: polling is acceptable at dev-tool rates,

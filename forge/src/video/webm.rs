@@ -5,7 +5,7 @@
 // decoders want it, and VP9 has no out-of-band parameter sets. Written
 // rather than taken from a crate because the subset is a few hundred lines
 // and a general Matroska reader links at more than half a VP9 decoder
-// (okf/plans/android-video-punch-through.md).
+// (okf/done/android-video-punch-through.md).
 //
 // The byte source is any `SeekableReader` plus the facts about it (a local
 // file, or a streamed source from `forge::source`): it may be unbounded (an

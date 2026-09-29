@@ -76,7 +76,7 @@ it grew out of. What remains of this item is stage 1, the harness.
 
 This is tier 3 of [frame-timing](../design/frame-timing.md), and it reads
 its input from the present ledger and the refresh count that
-[frame-signal-refresh-count](../plans/frame-signal-refresh-count.md) builds
+[frame-signal-refresh-count](../done/frame-signal-refresh-count.md) builds
 (tier 2): a cadence decision needs an honest measurement of the cadence the
 app is actually achieving, which did not exist while the timeline pinned
 every present to one period. Its verdicts wait for tier 2's numbers. The
@@ -103,7 +103,7 @@ changed instead of leaving it to be inferred.
 ## Stage 3: the stretched timeline is invisible to the app (2026-08-17)
 
 Superseded in substance by
-[frame-signal-refresh-count](../plans/frame-signal-refresh-count.md)
+[frame-signal-refresh-count](../done/frame-signal-refresh-count.md)
 (2026-09-21): the timeline no longer stretches. It advances by the display
 refreshes each frame covered, so under a sustained stall the app's `tick`
 deltas grow with the real frame time and an app can read its own frame

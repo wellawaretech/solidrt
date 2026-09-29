@@ -296,7 +296,7 @@ impl RasterState {
     // commit later and the video keeps its slot, which is the trade worth
     // making while a video is on screen. Only while a plane exists; a paused
     // plane pays it for nothing, which is a refinement, not a defect
-    // (okf/plans/android-video-punch-through.md).
+    // (okf/notes/android-video-plane-compositing.md).
     if crate::video_plane_active() {
       self.finish_gpu_work();
     }

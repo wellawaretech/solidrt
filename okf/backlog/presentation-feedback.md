@@ -6,7 +6,7 @@ created: 2026-09-21
 
 # Presentation feedback - measure the refresh a frame was shown on
 
-After [frame-signal-refresh-count](../plans/frame-signal-refresh-count.md)
+After [frame-signal-refresh-count](../done/frame-signal-refresh-count.md)
 the app timeline advances by a refresh count that alloy estimates from
 reference instants: the swap's return, the vsync release, the tick
 deadline. The estimate is exact whenever those instants sit within 0.75

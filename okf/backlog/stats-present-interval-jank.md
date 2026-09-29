@@ -35,7 +35,7 @@ counting sees it.
 ## Implemented: missedPresents (stage 1)
 
 Since 2026-09-21 the count comes from the refresh count on every frame
-signal ([frame-signal-refresh-count](../plans/frame-signal-refresh-count.md),
+signal ([frame-signal-refresh-count](../done/frame-signal-refresh-count.md),
 stage 2): the main loop counts the display refreshes each signal covers
 (`alloy/src/present.rs`), and for a present that follows a demanded one,
 the refreshes of the interval beyond the first are the misses
@@ -93,7 +93,7 @@ Two design points that settled the shape:
 Answers to the questions that were open:
 
 - The paced frame clock advances by the display refreshes alloy counts per
-  frame signal (since [frame-signal-refresh-count](../plans/frame-signal-refresh-count.md);
+  frame signal (since [frame-signal-refresh-count](../done/frame-signal-refresh-count.md);
   before that it accumulated one period per signal to hide swap jitter, and
   a JS-side tick-gap counter was structurally blind). A tick delta of two
   periods is now a readable miss from JS; the ledger that count is recorded

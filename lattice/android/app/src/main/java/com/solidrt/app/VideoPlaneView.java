@@ -17,7 +17,7 @@ import java.util.concurrent.CountDownLatch;
 // also samples the display's vsync phase for native: every Choreographer
 // frame time crosses to the decoder worker, which snaps its release times
 // onto the vsync grid (a desired present time landing just past a latch
-// deadline slips a whole period). See okf/plans/android-video-punch-through.md.
+// deadline slips a whole period). See okf/notes/android-video-plane-compositing.md.
 public class VideoPlaneView extends SurfaceView implements SurfaceHolder.Callback {
     public static final int FIT_CONTAIN = 0;
     public static final int FIT_COVER = 1;

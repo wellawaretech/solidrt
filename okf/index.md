@@ -40,18 +40,6 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
-- **[The 2D extension (@solidrt/2d) and the buffer write lease](plans/2d-extension.md)** [2026-08-19]
-  An instanced sprite layer as the third extension, built on a new zero-copy
-  GPU buffer write lease in core; tiers, measurements, and the design
-  decisions
-- **[Fullscreen video by surface punch-through on Android](plans/android-video-punch-through.md)** [2026-09-12]
-  Fullscreen VP9 playback decodes straight into its own SurfaceView,
-  composited by SurfaceFlinger under a translucent UI, off our frame loop
-  entirely. Round one (2026-09-12) is silent playback with play/pause/seek on
-  the TV and the tablet; round two (built 2026-09-12, device verification
-  open) adds Opus audio from WebM, with the sink position correcting the clock
-  anchor instead of selecting frames. Decided 2026-09-12, reversing the
-  2026-08-12 rejection; the texture pipeline keeps every non-fullscreen use.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -73,13 +61,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
   assets in the manifest, then signed OTA."
-- **[Frame signals carry a refresh count; the app timeline advances by it](plans/frame-signal-refresh-count.md)** [2026-09-21]
-  Replace the one-period-per-present model with slow correction (which lags
-  and then hops below about 24 fps) by counting the display refreshes each
-  frame signal covers in alloy and advancing the animation timeline by exactly
-  that in lattice; a cumulative drift estimator with hysteresis makes the
-  count exact at full rate under swap jitter and honest below it. Tier 2 of
-  okf/design/frame-timing.md.
 - **[Compressed textures - KTX2 shipped, ETC2 or BC7 on the device](plans/gpu-compressed-textures.md)** [2026-07-30]
   One shipped payload (Basis Universal in KTX2, baked with our own encoder)
   transcoded at load to the device's native block format - ETC2 on GLES 3.0
@@ -87,10 +68,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   formats, the codec with zstd, the model bake and the loader) and verified on
   Linux, Windows and Android, open are the macOS device run, the quality a
   bake should use and the re-measurement on a current Sponza.
-- **[Inspector - a visual devtool app over the dev-server control API](plans/inspector.md)** [2026-08-14]
-  A packed SolidRT app presenting live runtime introspection (stats, logs,
-  tree over snapshot, clock transport) as a peer front-end to the MCP bridge,
-  both clients of /__control__. Never a dev-server client.
 - **[Fonts as pack-time payload](plans/packaged-fonts.md)** [2026-07-20]
   The solidrt runtime goes font-free and srt pack appends fonts as trailer
   sections, with the three Noto role defaults declared through the
@@ -881,6 +858,10 @@ Finished, kept for the reasoning.
   axis; bring it to the design's pipeline - soft zone, hard limits, lookahead,
   per-axis damping, the offset and shake lanes, damped bounds, rotation
   smoothing - with the framing math shared with the 3d orbit control.
+- **[The 2D extension (@solidrt/2d) and the buffer write lease](done/2d-extension.md)** [2026-08-31]
+  An instanced sprite layer as the third extension, built on a new zero-copy
+  GPU buffer write lease in core; tiers, measurements, and the design
+  decisions
 - **[The sprite layer is the root of its pointer walk](done/2d-layer-background-events.md)** [2026-09-06]
   SpriteLayer's dispatch delivered only to sprites, so any app combining
   per-sprite interaction with pan/zoom on empty space re-implemented pick,
@@ -1201,6 +1182,14 @@ Finished, kept for the reasoning.
   rig's EXT_multisampled_render_to_texture path, whose resolve-out must be a
   sampling draw, never a blit (Adreno). TV at 50 fps / 4x MSAA / 0.1 percent
   drops; full investigation record and measurement rules inside.
+- **[Fullscreen video by surface punch-through on Android](done/android-video-punch-through.md)** [2026-09-13]
+  Fullscreen VP9 playback decodes straight into its own SurfaceView,
+  composited by SurfaceFlinger under a translucent UI, off our frame loop
+  entirely. Round one (2026-09-12) is silent playback with play/pause/seek on
+  the TV and the tablet; round two (2026-09-12, verified on the TV 2026-09-13)
+  adds Opus audio from WebM, with the sink position correcting the clock
+  anchor instead of selecting frames. Decided 2026-09-12, reversing the
+  2026-08-12 rejection; the texture pipeline keeps every non-fullscreen use.
 - **[Animation core - clip sampling and blending as a producer into the spatial arena](done/animation-core.md)** [2026-09-03]
   There is no animation system; per-frame clip sampling is O(animated nodes)
   interpreted work and skinning is O(vertices), both below the interpreter
@@ -1496,6 +1485,13 @@ Finished, kept for the reasoning.
   pattern over refresh periods, five presents per six vsyncs, which is exactly
   50 fps. The build costs 0.11 ms, so nothing is over budget; the producer's
   period is simply 20 ms and the display quantises it.
+- **[Frame signals carry a refresh count; the app timeline advances by it](done/frame-signal-refresh-count.md)** [2026-09-21]
+  Replace the one-period-per-present model with slow correction (which lags
+  and then hops below about 24 fps) by counting the display refreshes each
+  frame signal covers in alloy and advancing the animation timeline by exactly
+  that in lattice; a cumulative drift estimator with hysteresis makes the
+  count exact at full rate under swap jitter and honest below it. Tier 2 of
+  okf/design/frame-timing.md.
 - **[Gaussian splat rendering](done/gaussian-splats.md)** [2026-09-27]
   Captured 3DGS scenes (phone scans, photogrammetry successors) are a growing
   content class nothing here can display. The viewer is proven by a probe
@@ -1787,6 +1783,10 @@ Finished, kept for the reasoning.
   prompts per device. Stable source ids, save()/load(), rebind() over the
   devices, hold/tap/doubleTap/chord as button sources and a reactive device()
   close that.
+- **[Inspector - a visual devtool app over the dev-server control API](done/inspector.md)** [2026-08-25]
+  A packed SolidRT app presenting live runtime introspection (stats, logs,
+  tree over snapshot, clock transport) as a peer front-end to the MCP bridge,
+  both clients of /__control__. Never a dev-server client.
 - **[Isolate follow-ups](done/isolate-follow-ups.md)** [2026-08-21]
   The open ends left when isolates (okf/done/isolates-and-ports.md) closed,
   kept in one place so none vanished with the done record. All of them are now
@@ -2391,6 +2391,14 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   pre-queue work plus the BLAST binder transaction) and 25% in the draw, with
   no busy-wait anywhere; HWUI pays a similar price on the same device, and the
   recipe for profiling the client's threads is here.
+- **[The Android video plane against the compositor](notes/android-video-plane-compositing.md)** [2026-09-12]
+  What putting fullscreen video on its own SurfaceView under a translucent UI
+  showed on a Philips TV (Android 8) and a Galaxy Tab A7 (Android 12) - HWC
+  composition with a translucent SDL layer, plane handles across an engine
+  reload, 25-on-60 pulldown and the vsync snap, SurfaceFlinger's
+  one-comparison latch rule, why an isolated UI present costs the video a
+  frame, and the fence wait that fixes it at a measured cost to animating
+  apps.
 - **[The Android vsync release chain, traced against the compositor](notes/android-vsync-release-chain.md)** [2026-09-12]
   What a 5 s atrace of an animating app on a 60 Hz Android 12 tablet shows
   about the vsync-locked frame chain - the Choreographer callbacks are on
@@ -2553,6 +2561,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Whole-project session review (2026-08-28) vs Flutter/RN/Electron; core
   renderer bet right, product layer (tests, text editing, a11y, security,
   docs) is the gap; 8 ranked priorities.
+- **[Refresh counting, measured](notes/refresh-count-measurements.md)** [2026-09-21]
+  What the refresh counter was measured against on the laptop (60 Hz,
+  SwapPaced) and the Pixel 7 (90 Hz, VsyncLocked) - the old clock's GAIN ramp
+  and 500 ms snap, the coalesced-signal and set_hz traps the counting hit, the
+  banked-release reference on Android, and how much reference noise the
+  0.75-period tolerance absorbs.
 - **[Replacing Impeller with an own renderer](notes/replacing-impeller.md)** [2026-09-07]
   What Impeller still does for us, what an own GL renderer would cost
   (call-surface inventory, crate map, sizing, the parity tail), and what it

@@ -141,7 +141,7 @@ pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
   // the frame draw already writes (it clears to transparent black): with
   // SDL's SurfaceView flagged translucent (SolidRTActivity), uncovered
   // pixels then show the video plane beneath the UI
-  // (okf/plans/android-video-punch-through.md). Without alpha bits the
+  // (okf/done/android-video-punch-through.md). Without alpha bits the
   // buffer is RGBX and the hole never opens. Android only: nowhere else is
   // there a plane to show through to, and a desktop window's alpha means
   // something else to its compositor.

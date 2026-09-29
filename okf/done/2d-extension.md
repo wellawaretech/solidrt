@@ -2,6 +2,7 @@
 title: The 2D extension (@solidrt/2d) and the buffer write lease
 description: An instanced sprite layer as the third extension, built on a new zero-copy GPU buffer write lease in core; tiers, measurements, and the design decisions
 created: 2026-08-19
+completed: 2026-08-31
 ---
 
 # The 2D extension (@solidrt/2d) and the buffer write lease
@@ -90,7 +91,10 @@ application needs. The original order took the tier model straight down
 things that block apps sooner. Tiering is a performance argument, and none of
 the items below is one - they are gaps in the layer as an API.
 
-1. **Capacity growth** (okf/backlog/2d-layer-capacity-growth.md). The only
+Closed 2026-09-29: items 1, 2, 3 and 6 landed; baked layers and atlas limits
+(4 and 5) continue as their own backlog items.
+
+1. **Capacity growth** (okf/done/2d-layer-capacity-growth.md). The only
    item here that is a runtime failure rather than a tradeoff: past
    `capacity`, `addSprite` throws and the app has no recovery. First.
 2. **A sort key** (okf/done/2d-sprite-sort-key.md). Supersedes the
@@ -99,7 +103,9 @@ the items below is one - they are gaps in the layer as an API.
    whose premise is that per-element costs are what kill you.
 3. **The frame animation helper** - `createAnimation(frames, fps)`, pulled
    out of the retro presets item, which was gating a handful of lines every
-   sprite population wants behind a demo kit.
+   sprite population wants behind a demo kit. Shipped 2026-08-31
+   (`packages/2d/src/animation.ts`, recorded in
+   okf/backlog/2d-retro-presets.md).
 4. **Baked layers** (okf/backlog/2d-baked-layers.md), unchanged in substance
    and still the big one: primitive count is the budget on tiled GPUs. Now
    also carries the spatial index, since culling and picking want the same

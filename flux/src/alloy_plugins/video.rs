@@ -9,7 +9,7 @@
 //! decoded frames the worker pushes into alloy's YUV texture latch with the
 //! time each is due on alloy's clock, and on Android the PLANE player -
 //! decoder output on its own surface beneath a translucent UI, composited
-//! by the platform (okf/plans/android-video-punch-through.md). Neither runs
+//! by the platform (okf/done/android-video-punch-through.md). Neither runs
 //! anything on the JS thread or in the frame loop: demux, decode, the
 //! clock, frame selection and audio are the worker's, and the raster thread
 //! latches the texture player's due frame at each frame's presentation

@@ -64,5 +64,5 @@ Alternatively the deadline stays for the lost-signal case but the Tick
 that follows it is suppressed while a frame request is latched (a JS
 frame in progress will present). Either way this is a frame-driver
 property and belongs with [frame-driver-pacing-contract](frame-driver-pacing-contract.md);
-the honest count from [frame-signal-refresh-count](../plans/frame-signal-refresh-count.md)
+the honest count from [frame-signal-refresh-count](frame-signal-refresh-count.md)
 is what made it measurable.

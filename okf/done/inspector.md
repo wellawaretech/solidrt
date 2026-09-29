@@ -2,13 +2,19 @@
 title: Inspector - a visual devtool app over the dev-server control API
 description: A packed SolidRT app presenting live runtime introspection (stats, logs, tree over snapshot, clock transport) as a peer front-end to the MCP bridge, both clients of /__control__. Never a dev-server client.
 created: 2026-08-14
+completed: 2026-08-25
 ---
 
 # Inspector
 
 A first-party SolidRT application that presents live runtime introspection
 visually: the human-facing peer of the MCP bridge. Shaped 2026-08-13,
-implementation started; lives at `apps/inspector/`.
+implementation started at `apps/inspector/`.
+
+Closed unfinished 2026-08-25: superseded by the console (`apps/console`,
+started by `srt console` as a packed app), which took over the job and keeps
+this plan's invariant. `apps/inspector/` was never committed. The panels below
+were not built here, and the open list is not carried forward.
 
 ## The shape
 
@@ -116,23 +122,24 @@ Done so far:
   snapshot (window-root node, base64 PNG).
 - `src/index.tsx` - server/client list, manual-add form, capture pane.
 
-Open:
+Open when the app was dropped (not carried forward):
 
-- [ ] Stats panel (sparklines over polled `/stats`)
-- [ ] Log tail panel
-- [ ] Tree-over-snapshot overlay and clock transport
-- [ ] Debug-command forms
-- [ ] Remote targets: tunnel/ticket path (manual host:port entry is in)
-- [ ] `SERVERS_DIR` is hardcoded to an absolute home path in `servers.ts` -
-      flux exposes no environment and the client cwd is the app data dir, so
-      the app cannot derive it; needs a real answer before anyone else runs
-      this
-- [ ] `solidrt.displayName` in `package.json` before it appears in a
-      launcher list
-- [ ] Pack-and-release CI step for the distributable binaries
-- [ ] Streaming: control is request/response only; live stats means polling.
-      Acceptable now; a proper version wants a `/__control__/subscribe`
-      stream (server work, separate item when it hurts)
+- Stats panel (sparklines over polled `/stats`)
+- Log tail panel
+- Tree-over-snapshot overlay and clock transport
+- Debug-command forms
+- Remote targets: tunnel/ticket path (manual host:port entry is in)
+- `SERVERS_DIR` is hardcoded to an absolute home path in `servers.ts` -
+  flux exposes no environment and the client cwd is the app data dir, so
+  the app cannot derive it; needs a real answer before anyone else runs
+  this
+- `solidrt.displayName` in `package.json` before it appears in a
+  launcher list
+- Pack-and-release CI step for the distributable binaries
+- Streaming: control is request/response only; live stats means polling.
+  A proper version wants a `/__control__/subscribe` stream; it continues
+  as candidate 6 in
+  [devtools-introspection-survey](../notes/devtools-introspection-survey.md)
 
 Deliberately elsewhere: the open-vs-closed and monetization thread is
 product material and stays out of the public repo (the decision that binds
@@ -140,6 +147,5 @@ this plan: the inspector is open and free, the API is the moat).
 
 ## Findings
 
-- The dev server broadcasts and latches `load`/`reload` for late-joining
-  clients, so any tool that must survive an app switch can never be a
-  websocket client of the server it observes.
+Cut into [devtools-introspection-survey](../notes/devtools-introspection-survey.md)
+(Framing).

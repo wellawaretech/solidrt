@@ -3,7 +3,7 @@
 // Rust - `releaseOutputBufferAtTime` hands each decoded buffer to the
 // surface with the system time it is due at, and SurfaceFlinger latches it
 // on that vsync. Our frame loop is not involved at all
-// (okf/plans/android-video-punch-through.md).
+// (okf/done/android-video-punch-through.md).
 //
 // This file is the surface presenter the shared worker (worker.rs) drives:
 // the codec input step, one output dequeue held until the worker releases

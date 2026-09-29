@@ -8306,6 +8306,7 @@ var arena = {
 var VELOCITY_WINDOW_MS = 100;
 var VELOCITY_MAX = 8000;
 var VELOCITY_REST_MS = 50;
+var VELOCITY_MIN_STEP_MS = 1;
 var VELOCITY_SAMPLES = 20;
 var FLING_MIN_VELOCITY = 50;
 var ZERO = {
@@ -8352,38 +8353,56 @@ function createVelocityTracker() {
         return ZERO;
       if (at - movedAt > VELOCITY_REST_MS)
         return ZERO;
-      let n = 0;
-      let tm = 0;
-      let xm = 0;
-      let ym = 0;
+      let newest = (head - 1 + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
+      let s0 = 0;
+      let s1 = 0;
+      let s2 = 0;
+      let s3 = 0;
+      let s4 = 0;
+      let x0 = 0;
+      let x1 = 0;
+      let x2 = 0;
+      let y0 = 0;
+      let y1 = 0;
+      let y2 = 0;
+      let times = 0;
+      let prev = Infinity;
       for (let i = 0;i < count; i++) {
         let k = (head - 1 - i + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
         if (at - ts[k] > VELOCITY_WINDOW_MS)
           break;
-        n++;
-        tm += ts[k];
-        xm += xs[k];
-        ym += ys[k];
+        let t = ts[k] - ts[newest];
+        if (prev - t >= VELOCITY_MIN_STEP_MS) {
+          times++;
+          prev = t;
+        }
+        let x = xs[k] - xs[newest];
+        let y = ys[k] - ys[newest];
+        let tt = t * t;
+        s0 += 1;
+        s1 += t;
+        s2 += tt;
+        s3 += tt * t;
+        s4 += tt * tt;
+        x0 += x;
+        x1 += t * x;
+        x2 += tt * x;
+        y0 += y;
+        y1 += t * y;
+        y2 += tt * y;
       }
-      if (n < 2)
+      if (times < 2)
         return ZERO;
-      tm /= n;
-      xm /= n;
-      ym /= n;
-      let tt = 0;
-      let tx = 0;
-      let ty = 0;
-      for (let i = 0;i < n; i++) {
-        let k = (head - 1 - i + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
-        let dt = ts[k] - tm;
-        tt += dt * dt;
-        tx += dt * (xs[k] - xm);
-        ty += dt * (ys[k] - ym);
-      }
-      if (tt === 0)
-        return ZERO;
-      let vx = tx / tt * 1000;
-      let vy = ty / tt * 1000;
+      let det = s0 * (s2 * s4 - s3 * s3) - s1 * (s1 * s4 - s2 * s3) + s2 * (s1 * s3 - s2 * s2);
+      let slope = (m0, m1, m2) => {
+        let line = (s0 * m1 - s1 * m0) / (s0 * s2 - s1 * s1);
+        if (times < 3)
+          return line;
+        let curve = (s0 * (m1 * s4 - s3 * m2) - m0 * (s1 * s4 - s3 * s2) + s2 * (s1 * m2 - m1 * s2)) / det;
+        return curve * line < 0 ? 0 : curve;
+      };
+      let vx = slope(x0, x1, x2) * 1000;
+      let vy = slope(y0, y1, y2) * 1000;
       let speed = Math.hypot(vx, vy);
       if (speed > VELOCITY_MAX) {
         let f = VELOCITY_MAX / speed;
@@ -13051,8 +13070,8 @@ var SCROLL_SPRING = {
   duration: 250
 };
 var MOMENTUM_DECAY = 2;
-var MOMENTUM_CURVE = [0.19, 1, 0.22, 1];
-var MOMENTUM_MS = Math.round(10 * Math.LN2 / MOMENTUM_DECAY * 1000);
+var MOMENTUM_CURVE = [0.15, 1, 0.36, 1];
+var MOMENTUM_MS = Math.round(MOMENTUM_CURVE[1] / MOMENTUM_CURVE[0] / MOMENTUM_DECAY * 1000);
 var LIVE_EPSILON = 0.5;
 function ScrollView(props) {
   let viewport;
@@ -16488,6 +16507,7 @@ function AppCard(props) {
       },
       get style() {
         return {
+          elevation: "flat",
           backgroundColor: props.active ? theme.color.surfaceAlt : s.hovered ? theme.color.surfaceAlt : theme.color.surface
         };
       },
@@ -17982,7 +18002,7 @@ function App() {
       return env.systemTheme !== "light";
     return mode === "dark";
   };
-  createEffect(() => dark(), (d) => setTheme(d ? darkTheme : lightTheme));
+  createEffect(() => dark(), (d) => setTheme(d ? litDarkTheme : litLightTheme));
   let nav = createFocusNav();
   return createComponent2(Window, mergeProps({
     title: "SolidRT",

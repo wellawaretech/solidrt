@@ -548,12 +548,12 @@ contract. `plane.rs` shrinks to the surface presenter and the open.
 
 - **Rate, step and settable currentTime** on either player: the worker's
   anchor gets a slope, step is one release while paused. Designed once for
-  both after this lands ([[android-video-punch-through]], follow-ups); the
+  both after this lands ([[video-playback]]); the
   anchor and the presenter contract here leave room for both (a slope is
   one field on `Anchor`, a step is one `release_at(now)` while paused).
 - **`present: "plane"` off Android** presenting the texture player
-  fullscreen behind the UI: additive on this item, listed in the plane
-  plan's follow-ups.
+  fullscreen behind the UI: additive on this item, listed in
+  [[video-playback]].
 - **Mid-stream resolution change** on the texture path: a decoded frame
   whose size differs from the texture's ends the stream with `unsupported`,
   matching the plane; an id-stable YUV resize is the later addition

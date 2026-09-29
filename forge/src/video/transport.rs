@@ -27,7 +27,7 @@ pub const RELEASE_LEAD_NS: i64 = 50_000_000;
 // period ahead clears it. Handing over earlier is harmless rather than
 // better - a transaction whose desired time has not come is queued and
 // re-examined at every following compositor wake - which is why 50 ms and
-// one period measure the same (okf/plans/android-video-punch-through.md).
+// one period measure the same (okf/notes/android-video-plane-compositing.md).
 pub const RELEASE_LEAD_PERIODS: i64 = 1;
 // A frame later than this is dropped rather than shown: decode fell behind
 // and skipping is how it catches up. One and a half 50 Hz periods.

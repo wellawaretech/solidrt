@@ -8,7 +8,7 @@ created: 2026-09-21
 
 The picture this fits into is [frame-timing](../design/frame-timing.md),
 decision D2 (the three tiers). Tier 2, the honest refresh count, landed
-with [frame-signal-refresh-count](frame-signal-refresh-count.md) and is
+with [frame-signal-refresh-count](../done/frame-signal-refresh-count.md) and is
 what makes this tier measurable: the ledger now records how many refreshes
 every present was shown for. This file is the work.
 

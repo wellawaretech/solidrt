@@ -7,7 +7,7 @@ created: 2026-08-19
 # Streaming GPU buffers sampled at frame time
 
 The buffer write lease (beginBufferWrite/endBufferWrite, landed with
-okf/plans/2d-extension.md) is a per-commit pair: fill a leased block, publish
+okf/done/2d-extension.md) is a per-commit pair: fill a leased block, publish
 it. This note records the alternative that was designed, compared, and
 deferred - a buffer with NO per-commit call at all - so the reasoning
 survives until a consumer justifies building it.

@@ -1,5 +1,5 @@
 // forge::video - the video playback capability core, engine-free (see
-// okf/plans/android-video-punch-through.md and
+// okf/done/android-video-punch-through.md and
 // okf/backlog/video-playback.md). The container is WebM (webm.rs): coded
 // VP9 frames and Opus packets come out of it as they are stored, and two
 // players consume them:

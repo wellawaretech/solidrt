@@ -62,7 +62,7 @@ public class SolidRTActivity extends SDLActivity {
     // video plane is attached: the phase of the display's vsync grid.
     static native void nativeVideoPlaneVsync(long frameTimeNanos);
 
-    // The video plane (okf/plans/android-video-punch-through.md): at most one
+    // The video plane (okf/done/android-video-punch-through.md): at most one
     // SurfaceView beneath SDL's, created and removed on request from native.
     private VideoPlaneView videoPlane;
 

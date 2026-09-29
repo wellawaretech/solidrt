@@ -6,7 +6,7 @@ created: 2026-08-19
 
 # Baked layers and tilemaps for @solidrt/2d
 
-Stage 2 of the 2D extension (okf/plans/2d-extension.md). The sprite layer
+Stage 2 of the 2D extension (okf/done/2d-extension.md). The sprite layer
 batches draw CALLS, but on tiled GPUs the budget is primitive count
 (@solidrt/core agents/performance.md, "Where GPU work stops being free": 20k
 verts -> 80ms on a 2017 Android TV, while 9x the fill was free) - so a

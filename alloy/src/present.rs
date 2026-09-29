@@ -162,9 +162,9 @@ const LEDGER_CAPACITY: usize = 512;
 
 /// The last LEDGER_CAPACITY frame signals with their refresh counts: the
 /// cadence an app actually achieved, as a readable fact rather than an
-/// inference from rates. Written by the main loop beside the counter; the
-/// stats readers and the missed-present accounting move onto it in the
-/// second stage of okf/plans/frame-signal-refresh-count.md.
+/// inference from rates. Written by the main loop beside the counter, which
+/// also derives the missed-present accounting from the same counts
+/// (okf/done/frame-signal-refresh-count.md).
 pub struct SignalLedger {
   ring: Vec<SignalRecord>,
   next: usize,
