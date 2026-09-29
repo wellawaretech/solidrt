@@ -3,11 +3,11 @@
 // row's play button to launch straight away) and manages the dev-server
 // connection (address entry, discovery, QR scan on a full-screen camera view,
 // recents - all gathered in the connect panel). Built from
-// @solidrt/components; follows the OS dark/light preference and the layout
-// policy: wide windows show a WhatsApp-style split (list left, selected app's
-// details right), narrow ones navigate between two screens. Bundled by
-// `make player-bundle` and embedded via include_str! (see lattice/src/lib.rs
-// PLAYER_SOURCE).
+// @solidrt/components in its lit look; follows the OS dark/light preference
+// and the layout policy: wide windows show a WhatsApp-style split (list left,
+// selected app's details right), narrow ones navigate between two screens.
+// Bundled by `make player-bundle` and embedded via include_str! (see
+// lattice/src/lib.rs PLAYER_SOURCE).
 //
 // Screens are routes (routes.ts): the router owns the stack and the back
 // step, so a link (`/app/<id>`, `/settings`) opens a screen directly and the
@@ -17,13 +17,14 @@
 import { router } from "./routes"
 import { render, env, createEffect } from "@solidrt/core"
 import { Router } from "@solidrt/router"
-import { Window, SafeArea, createFocusNav, theme, setTheme, darkTheme, lightTheme } from "@solidrt/components"
+import { Window, SafeArea, createFocusNav, theme, setTheme, litDarkTheme, litLightTheme } from "@solidrt/components"
 import { themeMode, fullscreen } from "./parts/app-state"
 
 function App() {
   // Theme mode: "system" follows the OS preference (settable back to, unlike a
   // one-way toggle), "light"/"dark" pin it. Effective dark is dark until the OS
-  // preference resolves.
+  // preference resolves. The mode picks the scheme only: the player is lit in
+  // both (the lit presets, the same palette under a light).
   let dark = () => {
     let mode = themeMode()
     if (mode === "system") return env.systemTheme !== "light"
@@ -31,7 +32,7 @@ function App() {
   }
   createEffect(
     () => dark(),
-    (d) => setTheme(d ? darkTheme : lightTheme),
+    (d) => setTheme(d ? litDarkTheme : litLightTheme),
   )
 
   // Focus navigation (TV remote, keyboard, gamepad) over the focusable

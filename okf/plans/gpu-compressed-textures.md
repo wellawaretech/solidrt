@@ -288,9 +288,12 @@ In the order they should be settled:
 3. **The quality a bake uses, per map kind.** The figures are in "UASTC
    and ETC1S across the quality scale"; the choice is a judgment by eye
    on real textures, which the figures cannot make. The bake's defaults
-   (decided 2026-09-29: ETC1S 0.75 for color and data maps, UASTC 0.9
-   for normal maps) are picked from the figures; the comparison in
-   "Sponza, baked" awaits the user's eye. `encodeTexture`'s own default
+   (decided 2026-09-29: ETC1S 0.75 for color, UASTC 0.9 for normal and
+   data) follow the Khronos KTX guide and glTF-Transform; `data` was
+   first set to ETC1S for the download and changed the same day, when
+   that guidance turned up (a packed map holds unrelated values per
+   channel, which ETC1S handles badly). The comparison in "Sponza,
+   baked" awaits the user's eye. `encodeTexture`'s own default
    0.5 puts
    a normal map at 35.7 dB with RDO at lambda 8, and that default was
    picked before anyone knew quality drove RDO. Effort is fixed at
@@ -435,11 +438,11 @@ and 0.9 for UASTC, loaded by `probes/ktx2-model-probe.tsx` on Mesa Intel
 - Both bakes render the same picture at a glance; the judgment on
   quality is the user's.
 
-The table above is the first bake, UASTC 0.9 for every non-color map.
-With the defaults decided since (ETC1S for the metallic-roughness
-maps), same asset:
+The table above is the first bake, UASTC 0.9 for every non-color map,
+which is what the defaults are. Against `data` set to ETC1S 0.75, same
+asset:
 
-| kind | images | source | defaults | `data` set to UASTC 0.9 |
+| kind | images | source | `data` set to ETC1S 0.75 | defaults |
 |---|---|---|---|---|
 | color | 25 | 17828 KiB | 4882 KiB | 4882 KiB |
 | normal | 24 | 15827 KiB | 22110 KiB | 22110 KiB |
@@ -451,7 +454,7 @@ uncompressed one, rendered in the Sponza demo's own scene
 (`probes/sponza-compare/`, a copy of its sources run on the repo's
 packages, five fixed poses, clock frozen), PSNR of the rendered frame:
 
-| pose | defaults | `data` as UASTC |
+| pose | `data` as ETC1S | defaults |
 |---|---|---|
 | nave | 31.4 dB | 33.3 dB |
 | curtains | 30.9 dB | 32.9 dB |

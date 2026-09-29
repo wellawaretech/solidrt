@@ -47,13 +47,14 @@ const SCROLL_SPRING = { duration: 250 }
 // normal deceleration rate of 0.998 per ms). A fling travels its release
 // speed over this.
 const MOMENTUM_DECAY = 2
-// The curve a fling glides on: easeOutExpo, 1 - 2^(-10 t), the shape of an
-// exponential decay.
-const MOMENTUM_CURVE: TransitionCurve = [0.19, 1, 0.22, 1]
-// The tween's length, ms: where that curve's decay rate is MOMENTUM_DECAY
-// (10 ln 2 over the rate). Constant on purpose: a faster fling travels
-// farther, not longer, as a decay does; the tail is sub-pixel.
-const MOMENTUM_MS = Math.round(((10 * Math.LN2) / MOMENTUM_DECAY) * 1000)
+// The curve a fling glides on: the cubic-bezier closest to an exponential
+// decay (within 0.4% of the distance) when timed as below.
+const MOMENTUM_CURVE = [0.15, 1, 0.36, 1] satisfies TransitionCurve
+// The tween's length, ms: the curve leaves at slope y1/x1, so over this
+// length the glide leaves at exactly the release speed and decays at
+// MOMENTUM_DECAY. Constant on purpose: a faster fling travels farther, not
+// longer, as a decay does; the tail is sub-pixel.
+const MOMENTUM_MS = Math.round((MOMENTUM_CURVE[1] / MOMENTUM_CURVE[0] / MOMENTUM_DECAY) * 1000)
 // A read-back offset this close to the written one means nothing is in
 // flight: no instant write.
 const LIVE_EPSILON = 0.5

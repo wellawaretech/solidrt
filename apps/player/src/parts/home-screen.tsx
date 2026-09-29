@@ -123,6 +123,9 @@ function AppCard(props: {
         <Card
           layout={{ flexDirection: "row", alignItems: "center", gap: space("lg") }}
           style={{
+            // Flat whatever the theme, like Item: a row in a scrolling list
+            // cannot afford a blurred shadow pair on a tablet or a TV.
+            elevation: "flat",
             backgroundColor: props.active
               ? theme.color.surfaceAlt
               : s.hovered

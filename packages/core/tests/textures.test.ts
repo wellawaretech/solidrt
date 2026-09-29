@@ -20,8 +20,8 @@ test("no package.json, no solidrt key and no textures group give the defaults", 
 })
 
 test("a kind overrides its fields and leaves the rest at the defaults", () => {
-  let settings = textureSettings({ solidrt: { textures: { data: { codec: "uastc", quality: 0.9 }, color: { quality: 0.5 } } } })
-  expect(settings.data).toEqual({ codec: "uastc", quality: 0.9 })
+  let settings = textureSettings({ solidrt: { textures: { data: { codec: "etc1s", quality: 0.6 }, color: { quality: 0.5 } } } })
+  expect(settings.data).toEqual({ codec: "etc1s", quality: 0.6 })
   expect(settings.color).toEqual({ codec: DEFAULT_TEXTURE_SETTINGS.color.codec, quality: 0.5 })
   expect(settings.normal).toEqual(DEFAULT_TEXTURE_SETTINGS.normal)
 })

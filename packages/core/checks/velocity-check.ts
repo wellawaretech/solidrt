@@ -1,7 +1,11 @@
 // Checks for the velocity tracker (velocity.ts): a constant speed reads
-// exactly, a rested finger reads zero, the window and the clamp hold, a
-// frame-batched stream (same-age sample pairs) reads as the unbatched
-// one, a shift keeps the fit, and the fling gate. Explicit timestamps, so
+// exactly, a flick accelerating into the lift reads the speed at the lift,
+// a stop's resampler bounce does not fling, a hard brake never reads
+// backward, near-simultaneous samples read no jolt, a rested finger reads
+// zero,
+// the window and the clamp hold, a frame-batched stream (same-age sample
+// pairs) reads as the unbatched one, a shift keeps the fit, and the fling
+// gate. Explicit timestamps, so
 // it is deterministic and needs no timers. Pure-module input only, so it
 // runs headless on flux, bundled from the repo root:
 //
@@ -32,6 +36,28 @@ let near = (a: number, b: number, eps = 1e-6) => Math.abs(a - b) <= eps
   if (!near(v.vx, 500) || !near(v.vy, 250)) fail(`a read one frame later reads the same line, got ${v.vx},${v.vy}`)
 }
 
+// ---- A flick accelerating into the lift reads the speed at the lift ----
+{
+  let t = createVelocityTracker()
+  // x = t + t^2 / 96: 1 px/ms at the window's start, 3 px/ms at the lift.
+  // A line through the window reads its average, 2000 px/s.
+  for (let i = 0; i <= 6; i++) t.push(i * 16 + (i * 16) ** 2 / 96, 0, i * 16)
+  let v = t.velocity(96)
+  if (!near(v.vx, 3000)) fail(`an accelerating flick reads its lift speed 3000, got ${v.vx}`)
+}
+
+// ---- A stop's resampler bounce does not fling ----
+{
+  let t = createVelocityTracker()
+  // 625 px/s to 100, then the resampler's extrapolated step on the first
+  // empty frame and its settle back on the second.
+  for (let i = 0; i <= 10; i++) t.push(i * 10, 0, i * 16)
+  t.push(110, 0, 11 * 16)
+  t.push(100, 0, 12 * 16)
+  let v = flingVelocity(t.velocity(12 * 16))
+  if (v.vx !== 0) fail(`a stop's extrapolate-and-settle is not a fling, got ${v.vx}`)
+}
+
 // ---- The window: only the last 100 ms count ----
 {
   let t = createVelocityTracker()
@@ -53,6 +79,29 @@ let near = (a: number, b: number, eps = 1e-6) => Math.abs(a - b) <= eps
   }
   let v = t.velocity(time)
   if (!near(v.vx, 1000, 1e-6)) fail(`the window holds the last 100 ms only, got ${v.vx}`)
+}
+
+// ---- A hard brake never reads backward ----
+{
+  let t = createVelocityTracker()
+  // Steps of 30, 25, 20, 15, 10, 5, 0 px: the quadratic alone overshoots
+  // to a negative slope.
+  let xs = [0, 30, 55, 75, 90, 100, 105, 105]
+  xs.forEach((x, i) => t.push(x, 0, i * 16))
+  let v = t.velocity(7 * 16)
+  if (v.vx !== 0) fail(`a hard brake reads zero, not a reverse speed, got ${v.vx}`)
+}
+
+// ---- Near-simultaneous samples read no jolt ----
+{
+  let t = createVelocityTracker()
+  // Two samples 0.05 ms apart are one instant: two distinct times, so the
+  // line, not a curve pinned by the pair.
+  t.push(0, 0, 0)
+  t.push(10, 0, 16)
+  t.push(10.5, 0, 16.05)
+  let v = t.velocity(16.05)
+  if (!(v.vx > 500 && v.vx < 800)) fail(`near-simultaneous samples read the line, got ${v.vx}`)
 }
 
 // ---- A rested finger reads zero; fewer than two samples read zero ----

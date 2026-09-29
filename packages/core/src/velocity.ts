@@ -1,9 +1,15 @@
 // The velocity tracker every recognizer reads at a lift: the pointer's
 // speed from the positions of its last VELOCITY_WINDOW_MS as a
-// least-squares line, not the last two samples. The final sample before a
-// lift is often stationary, and frame batching makes the last delta a
-// whole frame old, so a two-point estimate reads anything from zero to a
-// jolt; a fit over the window reads the finger's actual speed. One
+// least-squares quadratic read at the newest sample (Flutter's
+// VelocityTracker, Android's LSQ2), not the last two samples. The final
+// sample before a lift is often stationary, and frame batching makes the
+// last delta a whole frame old, so a two-point estimate reads anything from
+// zero to a jolt; a fit over the window reads the finger's actual speed.
+// Quadratic, not a line: a flick accelerates into the lift, and a line
+// reads the window's average speed, well under the speed at the lift. The
+// line stays as the guard: a quadratic overshoots under a hard brake and
+// can point backward, so an axis where the two disagree in direction
+// reads zero. One
 // estimator whatever recognizer asks (createPan, createTransform, the
 // pointer feed), so the 2d camera and a control after it never re-derive
 // their own.
@@ -26,6 +32,10 @@ const VELOCITY_MAX = 8000
 // up to two frames after the finger stopped, and any same-position
 // re-delivery must not restart the clock either.
 const VELOCITY_REST_MS = 50
+// Samples closer in time than this (ms) are one instant to the fit:
+// handler-time stamps within a frame differ by microseconds, and a curve
+// pinned by such a pair reads a jolt.
+const VELOCITY_MIN_STEP_MS = 1
 // Ring capacity: a 100 ms window holds 12 samples at 120 Hz; the rest is
 // room for a burst of same-frame samples.
 const VELOCITY_SAMPLES = 20
@@ -44,8 +54,9 @@ export interface VelocityTracker {
    * continuous instead of dropping it. */
   shift(dx: number, dy: number): void
   reset(): void
-  /** The speed at `at` (default now), px/s per axis: a least-squares fit
-   * over the window, zero after a rest, clamped to VELOCITY_MAX. */
+  /** The speed at `at` (default now), px/s per axis: a least-squares
+   * quadratic over the window read at its newest sample, zero after a
+   * rest, clamped to VELOCITY_MAX. */
   velocity(at?: number): Velocity
 }
 
@@ -90,38 +101,63 @@ export function createVelocityTracker(): VelocityTracker {
     velocity(at = performance.now()) {
       if (count < 2) return ZERO
       if (at - movedAt > VELOCITY_REST_MS) return ZERO
-      // Means over the window, then the slope of each axis against time.
-      let n = 0
-      let tm = 0
-      let xm = 0
-      let ym = 0
+      // Sums over the window, time and position measured from the newest
+      // sample so the fit's slope at t = 0 is the answer: the power sums
+      // of t, each axis's moments against them, and how many distinct
+      // times (VELOCITY_MIN_STEP_MS apart) the window holds.
+      let newest = (head - 1 + VELOCITY_SAMPLES) % VELOCITY_SAMPLES
+      let s0 = 0
+      let s1 = 0
+      let s2 = 0
+      let s3 = 0
+      let s4 = 0
+      let x0 = 0
+      let x1 = 0
+      let x2 = 0
+      let y0 = 0
+      let y1 = 0
+      let y2 = 0
+      let times = 0
+      let prev = Infinity
       for (let i = 0; i < count; i++) {
         let k = (head - 1 - i + VELOCITY_SAMPLES) % VELOCITY_SAMPLES
         if (at - ts[k]! > VELOCITY_WINDOW_MS) break
-        n++
-        tm += ts[k]!
-        xm += xs[k]!
-        ym += ys[k]!
-      }
-      if (n < 2) return ZERO
-      tm /= n
-      xm /= n
-      ym /= n
-      let tt = 0
-      let tx = 0
-      let ty = 0
-      for (let i = 0; i < n; i++) {
-        let k = (head - 1 - i + VELOCITY_SAMPLES) % VELOCITY_SAMPLES
-        let dt = ts[k]! - tm
-        tt += dt * dt
-        tx += dt * (xs[k]! - xm)
-        ty += dt * (ys[k]! - ym)
+        let t = ts[k]! - ts[newest]!
+        if (prev - t >= VELOCITY_MIN_STEP_MS) {
+          times++
+          prev = t
+        }
+        let x = xs[k]! - xs[newest]!
+        let y = ys[k]! - ys[newest]!
+        let tt = t * t
+        s0 += 1
+        s1 += t
+        s2 += tt
+        s3 += tt * t
+        s4 += tt * tt
+        x0 += x
+        x1 += t * x
+        x2 += tt * x
+        y0 += y
+        y1 += t * y
+        y2 += tt * y
       }
       // Every sample the same age (one batched frame): no slope to read.
-      if (tt === 0) return ZERO
+      if (times < 2) return ZERO
+      // One axis's slope at t = 0, px per ms: the quadratic
+      // c0 + c1 t + c2 t^2 (c1 by Cramer's rule) once three distinct times
+      // pin it, the line before that; zero where the quadratic points
+      // against the line.
+      let det = s0 * (s2 * s4 - s3 * s3) - s1 * (s1 * s4 - s2 * s3) + s2 * (s1 * s3 - s2 * s2)
+      let slope = (m0: number, m1: number, m2: number) => {
+        let line = (s0 * m1 - s1 * m0) / (s0 * s2 - s1 * s1)
+        if (times < 3) return line
+        let curve = (s0 * (m1 * s4 - s3 * m2) - m0 * (s1 * s4 - s3 * s2) + s2 * (s1 * m2 - m1 * s2)) / det
+        return curve * line < 0 ? 0 : curve
+      }
       // Slopes are px per ms; the result is px per second.
-      let vx = (tx / tt) * 1000
-      let vy = (ty / tt) * 1000
+      let vx = slope(x0, x1, x2) * 1000
+      let vy = slope(y0, y1, y2) * 1000
       let speed = Math.hypot(vx, vy)
       if (speed > VELOCITY_MAX) {
         let f = VELOCITY_MAX / speed

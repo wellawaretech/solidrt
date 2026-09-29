@@ -55,17 +55,21 @@ export type TextureSettings = Record<TextureKind, TextureSetting>
 
 const CODECS: TextureCodec[] = ["etc1s", "uastc"]
 
-// The defaults, by what each kind tolerates. Color and data take the small
-// codec (ETC1S moves little across its scale, so it sits high); directions
-// show their errors as blotches in the lighting, so they take the accurate
-// one, at the quality below which it gives up detail for almost no bytes.
+// The defaults, by what each kind tolerates. Color takes the small codec
+// (ETC1S moves little across its scale, so it sits high). Directions show
+// their errors as blotches in the lighting, and data is often several
+// unrelated values packed into the channels of one image, which the small
+// codec handles badly: both take the accurate one, at the quality below
+// which it gives up detail for almost no bytes. This is what the Khronos
+// KTX guide and glTF-Transform recommend. The accurate codec is the larger
+// download; an app that prefers the smaller one says so in its settings.
 const SMALL_CODEC_QUALITY = 0.75
 const ACCURATE_CODEC_QUALITY = 0.9
 
 export const DEFAULT_TEXTURE_SETTINGS: TextureSettings = {
   color: { codec: "etc1s", quality: SMALL_CODEC_QUALITY },
   normal: { codec: "uastc", quality: ACCURATE_CODEC_QUALITY },
-  data: { codec: "etc1s", quality: SMALL_CODEC_QUALITY },
+  data: { codec: "uastc", quality: ACCURATE_CODEC_QUALITY },
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

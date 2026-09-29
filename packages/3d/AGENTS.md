@@ -2351,7 +2351,7 @@ the tool runs in). These are the defaults; name only what differs:
   "textures": {
     "color": { "codec": "etc1s", "quality": 0.75 },
     "normal": { "codec": "uastc", "quality": 0.9 },
-    "data": { "codec": "etc1s", "quality": 0.75 }
+    "data": { "codec": "uastc", "quality": 0.9 }
   }
 }
 ```
@@ -2367,9 +2367,12 @@ the bake both follow, for a bake script of your own.
 `codec` and `quality` are `encodeTexture`'s: "etc1s" is small (a
 quarter of a JPEG), "uastc" is accurate and large (often larger than
 the JPEG it replaces), `quality` is 0..1. A normal map steers the
-lighting and shows its errors, so it takes the accurate codec; set
-`data` to "uastc" as well when roughness detail matters more than the
-download. An unknown kind, codec or field fails the bake naming the key,
+lighting and shows its errors, and a metallic-roughness map packs
+unrelated values into its channels, which the small codec handles
+badly, so both take the accurate one (what the Khronos KTX guide
+recommends). Set `data` to "etc1s" when the download matters more than
+roughness detail: on the Khronos Sponza sample that is 9 MB less for
+about 2 dB in the views that glossy surfaces fill. An unknown kind, codec or field fails the bake naming the key,
 before anything is encoded, and the bake prints the settings it used
 per kind. The color space (sRGB for `color`), the mip chain and the
 wrap are not settings: they follow how `createModel` samples. The
