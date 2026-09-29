@@ -12,6 +12,7 @@
     "flux",
     "fluxc",
     "fluxrt",
-    "LICENSE"
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.txt"
   ]
 }

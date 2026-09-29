@@ -30,3 +30,4 @@ packages/*/*.dll
 packages/*/*.dylib
 packages/*/*.apk
 frame-00*
+packages/*/THIRD-PARTY-NOTICES.txt

@@ -1488,6 +1488,7 @@ pub fn start(
   storage: storage::StorageSpec,
   args: Vec<String>,
 ) -> Result<(), String> {
+  forge::process::return_large_allocations();
   alloy::install_logger();
   install_panic_hook();
   log::info!("[srt] SolidRT version {VERSION}");

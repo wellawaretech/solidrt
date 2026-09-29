@@ -298,22 +298,25 @@ In the order they should be settled:
    a normal map at 35.7 dB with RDO at lambda 8, and that default was
    picked before anyone knew quality drove RDO. Effort is fixed at
    upstream's default and unexamined.
-4. **Give freed texture memory back on glibc.** The four transcode
-   threads bound the work, not what the allocator keeps; see "Parallel
-   transcodes keep their memory". Pinning glibc's mmap threshold at
-   startup returns it in every run; it is process-wide, so it is the
-   user's decision.
+4. **A compressed load holds every payload at once.** On Windows and
+   Android a loaded compressed model leaves the process about 100 MB
+   larger than it should be; see "What a load leaves behind, per
+   platform". glibc is handled (the mmap threshold is pinned at
+   startup). The fix for all platforms is a create that takes the KTX2
+   and uploads each texture as its transcode finishes, so a few
+   payloads are alive at a time instead of all of them, and none of
+   them passes through the JS heap ("Copies on the way to the GPU").
 5. **Encoder output across machines.** Repeat encodes are byte-identical
    on one machine. The probe's four files came out the same size from
    MSVC x86_64 and NDK clang arm64 (607, 509, 610, 509 bytes); their
    bytes were not compared. The
    one-payload rule does not need it (a bake runs once, its output
    ships), a reproducible build would.
-6. **Attribution.** Basis Universal is Apache 2.0: distributed binaries
-   owe its NOTICE, and the zstd inside it is BSD (`zstd/LICENSE`). Check
-   how libvpx and opus are credited in a packed app and add both the
-   same way. The Khronos test fixture is Apache 2.0 and is not
-   distributed in any binary.
+6. **Notices in a packed app.** The platform packages carry
+   `THIRD-PARTY-NOTICES.txt` since 2026-09-29 (see "Attribution"); a
+   packed app does not get it from `srt pack`, which leaves the
+   developer to ship it. Whether pack adds it, and where for each
+   output form, is the user's decision.
 7. **The runtime's size with zstd** is not measured: only the object is
    (see "Binary size").
 8. **Sponza, re-measured**: bake with `--ktx2`, load on Windows (the
@@ -526,9 +529,91 @@ runs each): frame work 34.4 ms stock, 33.8 ms pinned, no difference.
 That scene is GPU-bound on this machine, so it does not rule out a cost
 for an app that allocates large buffers every frame on the CPU.
 
+BUILT 2026-09-29 (decided by the user): `forge::process::
+return_large_allocations` pins the threshold with `mallopt`, called at
+the start of lattice's `start` and of the flux and fluxrt binaries.
+Built in, four runs: 13 to 17 MB above the pre-load level every time.
+Its cost on CPU-side work, Starlings (large per-frame buffer writes),
+six runs each: frame work 1.8 to 9.9 ms stock, 1.5 to 3.3 ms pinned,
+missed presents 0 to 54 stock, 0 to 53 pinned. No difference this
+machine can resolve.
+
 A trim when the transcode queue drains was considered and dropped: the
 payloads are freed later, on the JS thread, after `createModel` has
 uploaded them.
+
+### What a load leaves behind, per platform (2026-09-29)
+
+`probes/ktx2-memory-probe.tsx` on fresh clients, the model kept alive,
+process RSS in MB, two runs each (the default bake against the
+PNG/JPEG one; both hold 69 textures, 90.7 and 362.7 MB):
+
+| client | bake | start | after the create | a minute later |
+|---|---|---|---|---|
+| Windows (RTX 3070, D3D11) | compressed | 137 to 140 | 381 to 383 | 290 to 293 |
+| Windows | uncompressed | 137 | 433 to 436 | 189 to 192 |
+| tablet (Adreno 610) | compressed | 117 to 279 | 385 to 494 | 382 to 447 |
+| tablet | uncompressed | 117 | 455 to 456 | 452 to 458 |
+
+- RSS is not texture memory. On Windows the textures live in VRAM and
+  leave the process; on the tablet they are shared memory and stay in.
+- Windows: the uncompressed load ends 53 MB above its start, the
+  compressed one 153 MB above. The difference is about the size of the
+  payloads (91 MB).
+- Tablet: the compressed load ends 70 MB below the uncompressed one,
+  where the textures alone are 272 MB smaller. About 200 MB is
+  something else.
+- The cause is the shape of the load, not the transcode: every payload
+  is alive at once (transcoder buffer, its copy in a JS typed array,
+  the copy in the raster command) until the synchronous `createModel`
+  has taken them all, where the uncompressed path decodes, uploads and
+  frees one image after another and reuses the same memory. Each
+  platform's allocator then keeps what that peak cost. A cache of
+  transcoded bytes would not change it: the same bytes pass through
+  the same buffers, only read instead of computed.
+- The start level itself varied on the tablet (117 or 279), as it did
+  on Linux; readings are compared as what a load adds.
+
+The baked model on the three platforms (load, format picked, texture
+bytes from `/gpu`): Linux 554 ms BC7, Windows 508 ms BC7, tablet 1310 ms
+ETC2, 90.7 MB on each; uncompressed 1250, 746 and 3158 to 3384 ms,
+362.7 MB. `flux:process` exit throws in the windowed client on all
+three.
+
+### Attribution (2026-09-29)
+
+Nothing credited third-party software before this: the platform
+packages shipped the MIT `LICENSE` alone, so Basis Universal had no
+mechanism to join. Built for everything in the binaries, not for Basis
+alone:
+
+- `scripts/build-third-party-notices.ts` writes
+  `THIRD-PARTY-NOTICES.txt` for a Rust target: the crates the runtime
+  links (from `cargo tree` over normal edges at the dist features; 391
+  to 399 by target), the native libraries and assets from a table in
+  the script (SDL, SDL_mixer, Impeller, ANGLE on Windows and macOS,
+  QuickJS, libffi, Basis Universal with its NOTICE, Zstandard, libvpx
+  off Android, Opus, libc++ on Android, the Noto fonts), and the
+  JavaScript libraries the built-in apps bundle. Identical texts print
+  once. About 2.1 MB, of which 1.3 MB is the Flutter engine's license
+  file, which is what the Impeller prebuilt names as its license.
+- The dist goals run it (`stage-notices` in `lattice/Makefile`), the
+  seven platform packages list the file, the release workflow uploads
+  it. Generated, so gitignored like the binaries.
+- `third-party-licenses/` holds the three texts no file in reach of
+  the build carries (Impeller, ANGLE, libc++), with where each is from
+  and when to refresh it.
+- `cargo metadata` alone over-reports: it lists optional dependencies
+  no feature turns on (SDL_image and SDL_ttf, which are not linked).
+- Known limits: 22 to 31 crates ship no license file in their package
+  and are listed under their license expression, without their own
+  copyright line; the libraries bundled inside SDL_mixer beyond
+  stb_vorbis are not listed (the build links only the WAV and
+  stb_vorbis decoders); one linked crate is MPL-2.0 (`attohttpc`, by
+  way of iroh's port mapping), whose terms are met by naming its
+  source, which the notice does.
+- Not run: a full `make dist`, so the step is verified by a dry run
+  of the goals and by running the script for four targets.
 
 ### Platforms (2026-09-29, commit 8da4e734)
 

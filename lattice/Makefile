@@ -94,6 +94,15 @@ BSOD_JS  = $(CURDIR)/resources/bsod/bsod.srt.js
 
 include $(SRT_HOME)/platform.mk
 
+# The notices a distributed binary owes (the license texts of everything in
+# it that is not ours), generated for the build they ship with and written
+# next to the binaries of a platform package.
+# $(1) = rust target triple, $(2) = the package folder
+NOTICES = THIRD-PARTY-NOTICES.txt
+define stage-notices
+	bun $(SRT_HOME)/scripts/build-third-party-notices.ts --target $(1) --out $(2)/$(NOTICES)
+endef
+
 include Makefile.android
 ifeq ($(findstring apple-darwin,$(HOST_TARGET)),apple-darwin)
 include Makefile.darwin

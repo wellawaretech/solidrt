@@ -77,6 +77,14 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
+- **[Test harness - flux:test, srt:test and srt test](plans/test-harness.md)** [2026-08-17]
+  Tests for flux programs, SolidRT apps and our own packages, run on our own
+  runtime and deterministic by construction - a base layer on the flux binary
+  (flux:test - describe, test, expect, a stepped clock, settle) and an app
+  layer on the headless SolidRT runtime (srt:test - mount, find, input,
+  frames, reading), behind one command, srt test. The test owns the clock;
+  nothing waits on wall time. Supersedes the JS test infrastructure backlog
+  item; the ten bun test files and the checks/ rigs are its first consumers.
 - **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
   Client-initiated streaming - open(url) plays a WebM served over HTTP on the
   Android plane with buffering, seek by Range and a cancel-safe close, built
@@ -338,6 +346,14 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
+- **[Input events carry a timeStamp on the animation timeline](backlog/event-timestamp.md)** [2026-09-29]
+  PointerEvent carries no timestamp, so the velocity tracker, double-tap and
+  the 2d and 3d dispatchers stamp events with performance.now() at handler
+  time - a wall read that inherits the handler's execution jitter and cannot
+  be stepped by a test or by srt render. Give every input event a timeStamp on
+  the animation timeline, move package logic off performance.now(), and keep
+  performance.now() for measuring work only. Prerequisite of the test
+  harness's app layer.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
@@ -438,13 +454,6 @@ Shaped, not started.
   transfer() was parked on the rquickjs quickjs-ng bump, and the workspace is
   on rquickjs 0.14.0 since, so check whether the steal is now the safe
   from_source over a slot-holding source and build stages 1+2 together.
-- **[JS test infrastructure](backlog/js-test-infrastructure.md)** [2026-08-17]
-  The workspace has no JS test story at all - zero test files in core,
-  components, cli, 3d; the only automated checks are ad-hoc self-reporting
-  scripts (packages/3d/checks, flux/examples/*_test.js) with no runner, no
-  discovery, no CI step. Decide the runner (flux, not bun, is the runtime
-  under test), the file convention, and the CI hook, then fold the existing
-  rigs into it.
 - **[Content damage for live-sampled textures](backlog/live-texture-content-damage.md)** [2026-09-12]
   A texture whose pixels change behind an unchanged id produces no damage,
   because nodes displaying it hold a live reference and need none to show the

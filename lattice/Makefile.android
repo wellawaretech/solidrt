@@ -176,6 +176,7 @@ android-dist: android-client $(GRADLE_WRAPPER_JAR)
 	@echo "Staged solidrt-go.apk ($(ANDROID_ABI)) into $(ANDROID_DIST)/"
 	$(call stage-pkg-apk,$(ANDROID_DIST)/solidrt-go.apk,solidrt-go.apk)
 	$(MAKE) android-runtime ANDROID_ABI=$(ANDROID_ABI)
+	if [ -d $(PKG_ANDROID) ]; then $(call stage-notices,$(ANDROID_TARGET),$(PKG_ANDROID)); fi
 
 # The same, for the 32-bit ABI.
 android-dist-armeabi-v7a:

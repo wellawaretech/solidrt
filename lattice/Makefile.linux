@@ -33,3 +33,4 @@ dist:
 	cp $(HOST_DIST)/fluxrt $(PKG_LINUX)/fluxrt
 	$(MAKE) runtime
 	cp $(HOST_DIST)/solidrt $(PKG_LINUX)/solidrt
+	$(call stage-notices,$(HOST_TARGET),$(PKG_LINUX))

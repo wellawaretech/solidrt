@@ -79,3 +79,4 @@ dist:
 	cp $(HOST_DIST)/fluxrt.exe $(PKG_WIN)/fluxrt.exe
 	$(MAKE) runtime
 	cp $(HOST_DIST)/solidrt.exe $(PKG_WIN)/solidrt.exe
+	$(call stage-notices,$(HOST_TARGET),$(PKG_WIN))

@@ -4,7 +4,8 @@
 //! `forge_plugins/process.rs`) owns the event-bus wiring (`ctx.spawn`,
 //! emit/has-listeners, the per-context dedup) and forwards to the pieces here:
 //! host metadata (`platform`/`arch`/`rss`/`home_dir`/`exec_path`/`env_vars`, the OS and host
-//! names), `kill`/`alive`, `exit`, and `SignalStream`, which hides the
+//! names), `kill`/`alive`, `exit`, the allocator setting
+//! (`return_large_allocations`), and `SignalStream`, which hides the
 //! unix vs non-unix OS signal split behind one async source.
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
@@ -174,4 +175,34 @@ pub fn exit(code: u8) -> ! {
   let _ = std::io::stdout().flush();
   let _ = std::io::stderr().flush();
   std::process::exit(i32::from(code))
+}
+
+/// The size from which glibc serves an allocation as a mapping of its own,
+/// which goes back to the system the moment it is freed: glibc's own
+/// default, 128 KiB.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const GLIBC_MMAP_THRESHOLD: libc::c_int = 128 * 1024;
+
+/// Make the process give large buffers back to the system when they are
+/// freed. Call once, at startup.
+///
+/// glibc does that for an allocation above its mmap threshold, but it
+/// raises the threshold by itself each time such a block is freed (up to
+/// 32 MiB), after which buffers the size of a texture or a decoded image
+/// come from the arena heaps, which shrink only from their top: a burst
+/// of them at load leaves the process as large as its peak for good.
+/// Setting the threshold, even to its default, switches the adjustment
+/// off. Measured on a 69 texture model: 110 MB kept without, 15 MB with,
+/// and no cost to the frame that this machine could resolve.
+///
+/// glibc only. The other platforms' allocators do not have the
+/// adjustment, and this does nothing there.
+pub fn return_large_allocations() {
+  #[cfg(all(target_os = "linux", target_env = "gnu"))]
+  // SAFETY: mallopt sets a parameter of the allocator; it takes no pointer
+  // and may be called at any time. A refusal (0) leaves the default
+  // behavior, which is what there was before.
+  unsafe {
+    libc::mallopt(libc::M_MMAP_THRESHOLD, GLIBC_MMAP_THRESHOLD);
+  }
 }

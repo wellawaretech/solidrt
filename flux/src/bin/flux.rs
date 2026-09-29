@@ -14,6 +14,7 @@ fn log_fn(_level: LogLevel, msg: &str) {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+  forge::process::return_large_allocations();
   // The first argument is the script path ("-" or absent: stdin); everything
   // after it is the program's argument vector, forwarded to JS through
   // flux:process (which exposes app arguments only, no executable/script).

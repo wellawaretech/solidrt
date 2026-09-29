@@ -73,3 +73,4 @@ dist:
 	cp $(HOST_DIST)/fluxrt $(PKG_DARWIN)/fluxrt
 	$(MAKE) runtime
 	cp $(HOST_DIST)/solidrt $(PKG_DARWIN)/solidrt
+	$(call stage-notices,$(HOST_TARGET),$(PKG_DARWIN))

@@ -84,6 +84,7 @@ jobs:
             packages/linux-x64-gnu/flux
             packages/linux-x64-gnu/fluxc
             packages/linux-x64-gnu/fluxrt
+            packages/linux-x64-gnu/THIRD-PARTY-NOTICES.txt
 
   # Same recipe as build-linux on GitHub's arm64 runner: the Linux build is
   # host-native, so the arm64 runner produces aarch64 binaries (Raspberry Pi
@@ -127,6 +128,7 @@ jobs:
             packages/linux-arm64-gnu/flux
             packages/linux-arm64-gnu/fluxc
             packages/linux-arm64-gnu/fluxrt
+            packages/linux-arm64-gnu/THIRD-PARTY-NOTICES.txt
 
   build-darwin:
     runs-on: macos-14
@@ -166,6 +168,7 @@ jobs:
             packages/darwin-arm64/fluxrt
             packages/darwin-arm64/libEGL.dylib
             packages/darwin-arm64/libGLESv2.dylib
+            packages/darwin-arm64/THIRD-PARTY-NOTICES.txt
 
   build-android:
     # The runner image version is deliberately independent of build-linux here.
@@ -256,6 +259,7 @@ jobs:
           path: |
             packages/android-arm64-v8a/solidrt-go.apk
             packages/android-arm64-v8a/solidrt.apk
+            packages/android-arm64-v8a/THIRD-PARTY-NOTICES.txt
 
       - name: Upload armeabi-v7a APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -264,6 +268,7 @@ jobs:
           path: |
             packages/android-armeabi-v7a/solidrt-go.apk
             packages/android-armeabi-v7a/solidrt.apk
+            packages/android-armeabi-v7a/THIRD-PARTY-NOTICES.txt
 
       - name: Upload x86_64 APKs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -272,6 +277,7 @@ jobs:
           path: |
             packages/android-x86_64/solidrt-go.apk
             packages/android-x86_64/solidrt.apk
+            packages/android-x86_64/THIRD-PARTY-NOTICES.txt
 
   build-windows:
     runs-on: windows-latest
@@ -316,6 +322,7 @@ jobs:
             packages/win32-x64-msvc/fluxrt.exe
             packages/win32-x64-msvc/libEGL.dll
             packages/win32-x64-msvc/libGLESv2.dll
+            packages/win32-x64-msvc/THIRD-PARTY-NOTICES.txt
 
   publish:
     runs-on: ubuntu-24.04

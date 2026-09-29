@@ -15,6 +15,7 @@ fn log_fn(_level: LogLevel, msg: &str) {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+  forge::process::return_large_allocations();
   // The same section trailer the solidrt runner uses (forge::trailer; written
   // by packages/cli/src/packer.ts). A fluxrt payload carries only kind-2 file
   // sections: "bundle.bin" is the program, "isolates/<id>.bin" its isolate

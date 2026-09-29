@@ -45,3 +45,11 @@ preparing a build for distribution.
   `bunx srt pack --folder` writes the flat app folder
   (runner + manifest.json + bundle + assets/, plus the runner's GL
   libraries on Windows and macOS) to `dist/pack/`.
+- A packed app contains the SolidRT runtime, and with it third-party
+  software whose licenses ask that their notices travel with every copy.
+  They are in
+  `node_modules/@solidrt/<platform>/THIRD-PARTY-NOTICES.txt` (one per
+  platform package, generated for the binaries beside it). Ship that file
+  with the app you distribute - next to the executable, or wherever the
+  app shows its licenses - together with the notices of whatever npm
+  packages the app itself bundles. `srt pack` does not add it for you.
