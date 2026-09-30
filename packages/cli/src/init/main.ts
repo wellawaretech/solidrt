@@ -51,7 +51,9 @@ function resolveMarkers(text: string, extensions: Extension[]): string {
 // dependency in the scaffold package.json (kept when selected, removed
 // otherwise), to a marker key fencing its lines in scaffold/AGENTS.md (also
 // its label in the picker), and optionally to a starter under
-// scaffold/templates/.
+// scaffold/templates/. Extensions that bring a starter combine: the
+// folder for several is their templates joined with `+`, in the order
+// below (`router+components`).
 interface Extension {
   pkg: string
   key: string
@@ -60,7 +62,7 @@ interface Extension {
 }
 
 const EXTENSIONS: Extension[] = [
-  { pkg: "@solidrt/router", key: "router", description: "declarative routing between screens" },
+  { pkg: "@solidrt/router", key: "router", template: "router", description: "declarative routing between screens" },
   { pkg: "@solidrt/components", key: "components", template: "components", description: "widgets and theming" },
   { pkg: "@solidrt/2d", key: "2d", description: "general purpose 2D library" },
   { pkg: "@solidrt/3d", key: "3d", description: "general purpose 3D library" },
@@ -80,10 +82,11 @@ async function resolveExtensions(): Promise<Extension[]> {
   return EXTENSIONS.filter((e) => picked.includes(e.pkg))
 }
 
-// The starter src/ comes from the first selected extension that brings a
-// template; with none, the core `default` starter.
+// The starter src/ comes from the selected extensions that bring a
+// template, combined; with none, the core `default` starter.
 function resolveTemplate(extensions: Extension[]): string {
-  return extensions.find((e) => e.template)?.template ?? DEFAULT_TEMPLATE
+  let templates = extensions.flatMap((e) => e.template ?? [])
+  return templates.join("+") || DEFAULT_TEMPLATE
 }
 
 export async function main() {

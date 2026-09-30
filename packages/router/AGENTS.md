@@ -57,11 +57,75 @@ let item = createRoute({                                    // a value: typed pa
   route, or with children a pathless layout. Children match in
   declaration order.
 
+## App structure
+
+Split a routed app by role, so the entry reads as a map of the app:
+
+```
+src/
+  index.tsx          the entry: render(), the window and the route tree
+  app.tsx            App, the root layout: what stays around every screen
+                     (background, safe area, nav bar), renders <Outlet />
+  state.ts           module-scope signals the screens share
+  routes/
+    home.tsx         /                one file per screen
+    settings.tsx     /settings        a layout: renders <Outlet />
+    settings/
+      theme.tsx      /settings/theme  its children, in a folder of its name
+    item.tsx         /item/$id        exports its route value (typed params)
+    not-found.tsx    /$
+```
+
+```tsx
+// src/index.tsx
+render(() => (
+  <window title="My app">
+    <Router initial="/">
+      <Route path="/" component={App}>
+        <Route path="/" component={Home} />
+        <SettingsRoutes />
+        <Route route={item} />
+        <Route path="/$" component={NotFound} />
+      </Route>
+    </Router>
+  </window>
+))
+
+// src/routes/settings.tsx: a section that owns its subtree
+export function SettingsRoutes() {
+  return (
+    <Route path="/settings" component={Settings}>
+      <Route path="/" component={Overview} />
+      <Route path="/theme" component={Theme} />
+    </Route>
+  )
+}
+```
+
+- Prefer the JSX tree. The tree as values (`createRouter` at module scope)
+  is for code outside the component tree that must reach the router.
+- The file layout is a convention, not a mechanism: a path comes from the
+  `path` of its `<Route>` and nothing reads the file system. Name a file
+  after the path so a screen is found by its link.
+- index.tsx holds the window and the tree, nothing else. App-wide effects
+  (theme, focus navigation) go in `App`; a window prop that changes reads
+  state.ts.
+- A screen is one file until it has children; then its children go in a
+  folder of its name. While the tree is small, write it whole in index.tsx.
+  When a section grows, its file exports a component returning its
+  `<Route>` subtree (`SettingsRoutes` above, a fragment for several
+  siblings), placed in the tree like a `<Route>`.
+- A screen with typed params defines its `createRoute` value in its own
+  file, next to the `useParams(item)` that reads it; index.tsx places it.
+- routes/ holds screens only. Pieces several screens share live beside it.
+- With tabs, the tabs route goes under `App` and its component draws the
+  bar.
+
 ## Traps
 
 - A `<Route>` is not an element: it evaluates to a route value. Only
-  `<Route>` elements go under `<Router>` or another `<Route>`; anything
-  else there throws at mount.
+  `<Route>` elements, or components returning them, go under `<Router>`
+  or another `<Route>`; anything else there throws at mount.
 - A route value has one place in one tree: placing it twice (two `<Route
   route={x}>`, or a `children:` list and a `<Route route={x}>`) throws.
 - With a JSX tree the router exists only inside `<Router>`: screens reach
@@ -71,7 +135,7 @@ let item = createRoute({                                    // a value: typed pa
   screen reads a route only inside a handler or a hook call, never at
   module scope.
 - Route components take no props. State a screen shares with others is a
-  module-scope signal (see the player's parts/app-state.ts), not a prop.
+  module-scope signal (state.ts above), not a prop.
 - A layout route's component must render `<Outlet />` or its child never
   appears; a route without a component is an outlet alone.
 - `<Router>` registers its `onBack` before anything it renders. A dialog

@@ -50,6 +50,62 @@ A `<Route>` is not an element: it evaluates to a route value that its
 parent places in the tree, once, when `<Router>` mounts. The router made
 this way is reached through the hooks (`useNavigate`, `useRouter`).
 
+## App structure
+
+A routed app splits by role, so the entry reads as a map of the app:
+
+```
+src/
+  index.tsx          the entry: render(), the window and the route tree
+  app.tsx            App, the root layout: what stays around every screen
+  state.ts           module-scope signals the screens share
+  routes/
+    home.tsx         /
+    settings.tsx     /settings        a layout: renders <Outlet />
+    settings/
+      theme.tsx      /settings/theme
+    item.tsx         /item/$id
+    not-found.tsx    /$
+```
+
+The entry holds the window and the tree and nothing else. `App` is the
+outermost layout route (the `Shell` above): the background, the safe area,
+a nav bar, the app-wide effects, around an `<Outlet />`. State that screens
+share is module-scope signals in `state.ts`, since route components take no
+props. Each screen is a file under `routes/`, named after its path; a
+screen with children keeps its file as the layout and gets a folder of the
+same name for them.
+
+This is a convention, not a mechanism: a path comes from the `path` of its
+`<Route>`, and nothing reads the file system. Naming the file after the
+path is what lets a screen be found by its link.
+
+While the tree is small it is written whole in the entry. When a section
+grows, it can own its subtree: a component that returns `<Route>` elements
+is placed in the tree like a `<Route>` (a fragment returns several
+siblings), so the entry keeps one line per section.
+
+```tsx
+// src/routes/settings.tsx
+export function SettingsRoutes() {
+  return (
+    <Route path="/settings" component={Settings}>
+      <Route path="/" component={Overview} />
+      <Route path="/theme" component={Theme} />
+    </Route>
+  )
+}
+
+// src/index.tsx
+<Route path="/" component={App}>
+  <Route path="/" component={Home} />
+  <SettingsRoutes />
+  <Route path="/$" component={NotFound} />
+</Route>
+```
+
+`srt init` with the router selected starts a project in this shape.
+
 ## Params are validated
 
 A path arrives as strings, and from outside the app they are untrusted. A

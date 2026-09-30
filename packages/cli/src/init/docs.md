@@ -3,7 +3,7 @@
 {{ usage init }}
 
 Scaffolds a new SolidRT project into a new (empty) folder: package.json,
-tsconfig.json, AGENTS.md, a starter src/index.tsx, an empty assets/
+tsconfig.json, AGENTS.md, a starter src/ (entry src/index.tsx), an empty assets/
 (everything in it ships with the app) and an `.mcp.json`, then installs the
 dependencies. The picker offers extensions on an interactive terminal.
 
