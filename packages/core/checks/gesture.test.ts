@@ -4,15 +4,15 @@
 // window, slop and bounce, and a press beside a double-tap deferring its
 // fire (a mock press over arena.defer). Synthetic pointer events. The
 // pan, swipe, long-press and double-tap recognizers import no runtime
-// module (createTransform does: the pointerFrame terminator), so this runs
-// on the bare flux binary: `srt test packages/core`.
+// module (createTransform does: the pointerFrame terminator).
 //
-// Time, recognizer by recognizer. The long-press keeps time with
-// setTimeout alone, so its test takes the clock and asserts exact
-// instants. The pan, the swipe and the double-tap read performance.now()
-// (the velocity tracker, the double-tap window), which a stepped clock
-// does not move: they wait on real timers and assert with tolerances
-// until input events carry a timeStamp (okf/backlog/event-timestamp.md).
+// Parked here, outside tests/, so `srt test` does not run it: these are
+// tests of time passing in SolidRT logic, which makes them app tests
+// (okf/plans/test-harness.md, D5). They come back under srt:test, stepped
+// by frames, once input events carry a timeStamp
+// (okf/backlog/event-timestamp.md). Until then they wait on real timers,
+// assert with tolerances and run by hand:
+// `srt test packages/core/checks/gesture.test.ts`.
 
 import { test } from "flux:test"
 import { createRoot } from "@solidjs/signals"
@@ -28,10 +28,6 @@ let fail = (msg: string): void => {
   throw new Error(msg)
 }
 let sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
-
-// The hold a long-press fires after: long-press.ts's LONG_PRESS_MS.
-const LONG_PRESS_MS = 500
-
 
 // A synthetic event: every frame the same, the pointer at (x, y).
 let ev = (pointerId: number, x: number, y: number, button = 0): PointerEvent =>
@@ -135,7 +131,7 @@ test("createSwipe: fast, slow, off-axis, axis rule", async () => {
   if (log.join("|") !== "start|end") fail(`a diagonal drag ends without a swipe, got ${log.join("|")}`)
 })
 
-test("createLongPress: timer, slop, steal", async clock => {
+test("createLongPress: timer, slop, steal", async () => {
   let log: string[] = []
   let lp = inRoot(() =>
     createLongPress({
@@ -145,10 +141,10 @@ test("createLongPress: timer, slop, steal", async clock => {
     }),
   )
   lp.handlers.onPointerDown(ev(30, 50, 60))
-  await clock.advance(LONG_PRESS_MS - 1)
-  if (log.length !== 0) fail("a long-press has not fired a millisecond before its time")
-  await clock.advance(1)
-  if (log.join("|") !== "press 50,60") fail(`a long-press fires at ${LONG_PRESS_MS} ms with the down's point, got ${log.join("|")}`)
+  await sleep(400)
+  if (log.length !== 0) fail("a long-press has not fired at 400 ms")
+  await sleep(200)
+  if (log.join("|") !== "press 50,60") fail(`a long-press fires by 600 ms with the down's point, got ${log.join("|")}`)
   lp.handlers.onPointerMove(ev(30, 58, 60))
   lp.handlers.onPointerMove(ev(30, 58, 70))
   lp.handlers.onPointerUp(ev(30, 58, 70))
@@ -156,16 +152,16 @@ test("createLongPress: timer, slop, steal", async clock => {
   log.length = 0
   // Travel past the slop before the timer disarms it.
   lp.handlers.onPointerDown(ev(31, 0, 0))
-  await clock.advance(100)
+  await sleep(100)
   lp.handlers.onPointerMove(ev(31, 12, 0))
-  await clock.advance(550)
+  await sleep(550)
   lp.handlers.onPointerUp(ev(31, 12, 0))
   if (log.length !== 0) fail(`12 px of travel cancels the long-press, got ${log.join("|")}`)
   // A lift before the timer disarms it.
   lp.handlers.onPointerDown(ev(32, 0, 0))
-  await clock.advance(100)
+  await sleep(100)
   lp.handlers.onPointerUp(ev(32, 0, 0))
-  await clock.advance(550)
+  await sleep(550)
   if (log.length !== 0) fail("a lift before the timer fires nothing")
   // A press holding the pointer is cancelled by the steal at the timer;
   // a pan that already won keeps the finger.
@@ -173,14 +169,14 @@ test("createLongPress: timer, slop, steal", async clock => {
   let press = { cancel: () => cancelled++ }
   arena.claim(33, press)
   lp.handlers.onPointerDown(ev(33, 0, 0))
-  await clock.advance(600)
+  await sleep(600)
   if (log.join("|") !== "press 0,0" || cancelled !== 1) fail(`the timer's steal cancels the press, got ${log.join("|")} cancelled ${cancelled}`)
   lp.handlers.onPointerUp(ev(33, 0, 0))
   log.length = 0
   let pan = { cancel() {} }
   lp.handlers.onPointerDown(ev(34, 0, 0))
   arena.steal(34, pan)
-  await clock.advance(600)
+  await sleep(600)
   if (log.length !== 0) fail("a pan that won the finger keeps the long-press out")
   arena.release(34, pan)
   lp.handlers.onPointerUp(ev(34, 0, 0))

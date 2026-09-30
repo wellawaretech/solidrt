@@ -56,9 +56,8 @@ the work before starting it:
   the folder (default: the cwd), each file bundled and run in its own `flux`
   process, not under Bun. A test file imports `test` and `expect` from
   `flux:test` (flat tests, no `describe`, no hooks; the matchers are in
-  flux-types `modules/test.d.ts`). A test whose function takes the clock,
-  `test(name, async clock => { ... })`, runs with stepped timers:
-  `await clock.advance(ms)` instead of waiting. `Math.random()` is seeded
+  flux-types `modules/test.d.ts`). A test runs on real time (timers,
+  `performance.now()`, `Date.now()`). `Math.random()` is seeded
   and restarts for every test, so random inputs are the same on every run;
   `--seed <n>` picks another sequence. `--filter <text>` runs the tests
   whose name contains the text; everything after `--` reaches the test

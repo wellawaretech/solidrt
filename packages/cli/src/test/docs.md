@@ -33,17 +33,9 @@ is a plain function a test calls. `--filter` is how a subset is run. The
 matchers are listed with the module, in the
 [Runtime reference](/runtime/modules/).
 
-A test runs on real time unless its function takes the clock. Then its
-timers are on a virtual timeline that moves only when the test says so, and
-timer logic is tested without waiting and without tolerances:
-
-```ts
-test("a session expires after its timeout", async clock => {
-  let session = createSession()
-  await clock.advance(SESSION_TIMEOUT_MS)
-  expect(session.expired).toBe(true)
-})
-```
+A test runs on real time: its timers, `performance.now()` and `Date.now()`
+are the wall clock's. Logic with a timeout is tested by waiting for it, or
+takes its delay as a parameter, so a test can pass a short one.
 
 Each file runs in a fresh process, one file after another, with the folder
 that holds its `tests/` folder as the working directory, so a relative path

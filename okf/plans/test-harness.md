@@ -1,6 +1,6 @@
 ---
 title: Test harness - flux:test, srt:test and srt test
-description: Tests for flux programs, SolidRT apps and our own packages, run on our own runtime and deterministic by construction - a base layer on the flux binary (flux:test - test, expect, a stepped clock, settle) and an app layer on the headless SolidRT runtime (srt:test - mount, find, input, frames, reading), behind one command, srt test. The test owns the clock; nothing waits on wall time. Supersedes the JS test infrastructure backlog item; the ten bun test files and the checks/ rigs are its first consumers.
+description: Tests for flux programs, SolidRT apps and our own packages, run on our own runtime and deterministic by construction - a base layer on the flux binary (flux:test - test, expect, run, a seeded Math.random; real time) and an app layer on the headless SolidRT runtime (srt:test - mount, find, input, frames, reading; stepped by frames, no wall time), behind one command, srt test. Supersedes the JS test infrastructure backlog item; the ten bun test files and the checks/ rigs are its first consumers.
 created: 2026-08-17
 ---
 
@@ -13,29 +13,34 @@ that have no window, and up to SolidRT apps an author wants to test.
 
 ## Where this stands (2026-09-30)
 
-Stages 1 and 2 are built and verified.
+Stages 1, 2 and 2b are built and verified. Stage 3, the CI job, is
+written and has not run yet.
 
 - Stage 1: `flux:test` (`test`, `expect`, `run`) behind the `test`
   feature on the `flux` binary, `srt test`, and the ten former bun test
   files on flux.
-- Stage 2: the stepped clock (`test(name, async clock => ...)`), the
-  arguments after `--`, the 19 pure rigs as test files (the four GPU rigs
-  are what is left under `checks/`), and a first test of cli logic
-  (`packages/cli/tests/remap.test.ts`).
+- Stage 2: the arguments after `--`, the 19 pure rigs as test files (the
+  four GPU rigs are what is left under `checks/`), a first test of cli
+  logic (`packages/cli/tests/remap.test.ts`), and the seeded
+  `Math.random` (D28, D29).
+- Stage 2b: the stepped clock that stage 2 built is out of `flux:test`
+  again (D27), and the twelve tests about time passing are parked beside
+  the GPU rigs until the app layer.
+- Stage 3: the `test-js` job in `.github/workflows/ci.yml`.
 
-`bunx srt test` at the repo root: 306 tests in 29 files, about 11 s, most
-of it the real waits of the gesture tests that still ride
-`performance.now()`. `cargo test -p flux --lib --features test`: 46
-tests. `srt check` passes for the packages with their test files in.
+`bunx srt test` at the repo root: 294 tests in 28 files, about 5 s, none
+of which depends on how much time passed. `cargo test -p flux --lib
+--features test`: 40 tests. `srt check` passes for the packages with
+their test files in.
 
-To pick up: stage 3 (CI), whose shape is proposed and waits for the
-user's word: `srt test` as a step of the `test-flux` job on all four
-platforms, on a debug `flux` binary built in the job. With it, one open
-call from [Owed after stage 2](#owed-after-stage-2): whether an uncaught
-error failing its own test comes before stage 3 or with stage 4. Then
-stage 4, the app layer, which waits on
-[event-timestamp](../backlog/event-timestamp.md) and now also carries
-`settle()`.
+To pick up, in this order:
+
+1. The first run of the `test-js` job, which is also the first run of
+   `srt test` on Windows and macOS: see
+   [Stage 3](#stage-3---ci-written-2026-09-30-not-run).
+2. Stage 4, the app layer, which waits on
+   [event-timestamp](../backlog/event-timestamp.md), carries `settle()`,
+   and is where stepping comes back, on frames.
 
 ## Problem
 
@@ -72,7 +77,7 @@ The candidate lists for first tests are in
 
 | layer | module | runs on | adds |
 | --- | --- | --- | --- |
-| base | `flux:test` | the `flux` binary | `test`, `expect`, `run`, the stepped clock |
+| base | `flux:test` | the `flux` binary | `test`, `expect`, `run`, a seeded `Math.random` |
 | app | `srt:test` | the dev client, headless | `mount`, `find`, input, frames, reading |
 
 `srt:test` re-exports the base, so an app test has one import. `srt test`
@@ -101,19 +106,40 @@ module it uses; `srt test` applies that once such a test exists.
 the CLI, which already bundles for flux (`srt bundle -f`). Rejected: a
 `flux test` subcommand on a binary whose one job is to run a script.
 
-**D5. Time.** A flux test runs on real time unless it takes the clock
-(D27), and then it runs stepped; an app test is always stepped, since
-frames require it.
-Under a stepped clock nothing advances unless the test says so. Rejected:
-always stepped (a flux test talks to sockets, subprocesses and peers, and
-the other side lives on wall time).
+**D5. Time: a flux test lives on the wall, an app test has no wall**
+(reworded 2026-09-30). The line follows the module a test imports, as the
+binary does (D3).
 
-**D6. `performance.now()` stays real time and is not virtualized under
-test.** It is for measuring work. Package logic takes time from the event
-or the frame tick instead: [event-timestamp](../backlog/event-timestamp.md).
-Rejected: a virtual `performance.now()` in test mode (a synchronous wait
-loop on it would never end, and the production code would still ride the
-wrong clock).
+| | flux test (`flux:test`) | app test (`srt:test`) |
+| --- | --- | --- |
+| what drives time | the wall | frames, which the test requests |
+| timers | real | stepped with the frames |
+| `performance.now()` | real | 0 |
+| `Date.now()` | real | fixed |
+| `Math.random()` | seeded | seeded |
+
+In a flux program time matters: a monotonic clock is a legitimate input
+of a server (a latency, a rate limit, a deadline), and the other side of
+a socket lives on wall time. In an app the frame is the only clock, and a
+test that reads the wall cannot be repeated. `srt render` and playback
+are in the right-hand column by the same reasoning, and do not yet
+freeze anything. A test of SolidRT logic that needs time to pass is an
+app test, whether or not it needs a window; a pure package test stays a
+flux test and takes every time it uses as an input. Rejected: a stepped
+clock in a flux test (D27); freezing `performance.now()` in every test
+(it breaks correct flux programs; measured, it fails exactly the six
+tests that are app tests by this rule, and forcing `Date.now()` to 0
+fails none).
+
+**D6. `performance.now()` is never virtual: real in a flux test, 0 in an
+app test** (reworded 2026-09-30; it read "stays real time" for both
+layers). It is for measuring work. SolidRT logic takes time from the
+event or the frame tick instead:
+[event-timestamp](../backlog/event-timestamp.md). At 0, logic that still
+reads it fails the same way on every run instead of passing within a
+tolerance. Rejected: a `performance.now()` that follows the stepped
+clock (a synchronous wait loop on it would never end, and the production
+code would still ride the wrong clock while its tests pass).
 
 **D7. Tests run in-process.** The test runs in the JS context of the code
 under test, and each `await` on a time verb hands control to the runtime's
@@ -220,7 +246,7 @@ leaving it out is cleaner than stubbing it).
 
 **D21. The JavaScript half of `flux:test` is plain JS inside the flux
 crate, embedded in the binary.** `test` and `expect` need no Rust; only
-the clock and `settle` do. Rejected: a TypeScript package bundled and then
+the seed of `Math.random` does. Rejected: a TypeScript package bundled and then
 embedded (the flux build would depend on a bundling step); shipping it in
 the CLI and bundling it into every test (the binary would not provide
 what the `flux:` name says it does).
@@ -228,7 +254,7 @@ what the `flux:` name says it does).
 **D22. `flux:test` lives in `flux/src/test_plugins/`, a fourth plugin
 layer** (2026-09-30). The placement rule has no slot for it: it is no web
 standard and marshals neither forge nor alloy, but flux's own facilities
-(the virtual timers, the pending-operation count). The root CLAUDE.md and
+(the seed of `Math.random` today). The root CLAUDE.md and
 `flux/CLAUDE.md` each gain a line for the layer when it is built.
 
 **D23. Test files run one after another** (2026-09-30). Running them in
@@ -275,18 +301,16 @@ tools); every test on the dev client (a flux program tested on a binary
 it does not ship on, and a pure test needing the client build and a GL
 context in CI).
 
-**D27. A test that takes the clock runs stepped** (2026-09-30):
-`test(name, async clock => { ... })`. A test function with a parameter
-is handed the clock and its timers are virtual from before its body
-runs; one without runs on real time. Virtual time covers only timers
-registered after it is installed, so the choice has to be made before
-the body, and the parameter makes it impossible to order wrongly. It
-mirrors `async app =>` in the app layer. Each test starts at 0, and
-timers left at its end are dropped. Rejected: an imported `clock` whose
-first `advance` switches the test over (a timer the test registered
-before that call is already on the real path, which is every
-`createSession(); await clock.advance(...)`); an explicit first call,
-`clock.install()` (forgettable, and a wrong order fails silently).
+**D27. `flux:test` has no clock** (2026-09-30, reversing the decision of
+the same day that a test taking a `clock` parameter runs stepped, which
+was built in stage 2). Stepping only the timers of a flux test left it
+with two clocks that disagree, stepped timers beside a real
+`performance.now()` and `Date.now()`, and the tests it was built for are
+app tests under D5. A flux program with a timeout is tested by waiting
+for it, or takes its delay as a parameter. Stepping is the app layer's,
+on frames (`app.frame`, `app.advance`). Rejected: moving
+`performance.now()` and `Date.now()` with the stepped clock as well (a
+second time model inside the layer whose point is real time).
 
 **D28. `Math.random` is seeded under test** (2026-09-30, replacing the
 first form of the same day, in which each test file named a seed of its
@@ -338,12 +362,6 @@ test("the server answers with the stored row", async () => {
   let res = await fetch(`http://127.0.0.1:${server.port}/rows/1`)
   expect(res.status).toBe(200)
   server.stop()
-})
-
-test("a session expires after its timeout", async clock => {
-  let session = createSession()
-  await clock.advance(SESSION_TIMEOUT_MS)
-  expect(session.expired).toBe(true)
 })
 ```
 
@@ -457,7 +475,7 @@ the group's label as its prefix (D19). Mechanical. Verification: all ten
 pass under `srt test`; then one assertion is broken on purpose to confirm
 that the failure names the right file and line, and restored.
 
-### Stage 2 - the clock and the rigs (built 2026-09-30)
+### Stage 2 - the clock and the rigs (built 2026-09-30; the clock is removed again by stage 2b)
 
 - The clock (D27) on what flux already has: `install_virtual_time` and
   `advance_virtual_time` in `flux/src/standards_plugins/time.rs`, which
@@ -472,8 +490,9 @@ that the failure names the right file and line, and restored.
 - The nineteen pure rigs move to `tests/` as `test()` bodies: a rig's
   sections become its tests and its `fail(msg)` helper throws, so the
   oracle loops need no rewrite of substance. The seven rigs that draw
-  random inputs draw them from the seeded `Math.random` (D28). `gesture-check` moves to the stepped clock; the
-  parts of it that ride `performance.now()` keep their real waits and
+  random inputs draw them from the seeded `Math.random` (D28).
+  `gesture-check` moves to the stepped clock; the parts of it that ride
+  `performance.now()` keep their real waits and
   tolerances until [event-timestamp](../backlog/event-timestamp.md)
   lands. The four GPU rigs stay in `checks/` until stage 5.
 - `srt test <file> -- <args>`: the arguments after `--` reach the test as
@@ -485,17 +504,95 @@ that the failure names the right file and line, and restored.
 Not in this stage, and not this plan's: tests of the flux modules. See
 the finding on what is tested where.
 
-### Stage 3 - CI
+### Stage 2b - the clock leaves flux:test (built 2026-09-30)
 
-A step in `.github/workflows/ci.yml` that runs `srt test`. It needs a flux
-binary, so it rides the `test-flux` job or a cached artifact; decide which.
+D27. What goes:
+
+- `test(name, async clock => ...)`, the `Clock` type and its paragraphs
+  in `packages/flux-types/modules/test.d.ts`, the clock section of
+  `packages/cli/src/test/docs.md` and the line in `packages/cli/AGENTS.md`.
+- In `flux/src/test_plugins/`: the stepped clock in `test.js` and the
+  natives `installClock`, `uninstallClock`, `clockNow`, `nextDeadline`,
+  `advanceTo`, `turn` and `wallTimeout`; the per-test cap goes back onto
+  an ordinary `setTimeout`, which is real again in every flux test.
+- The four Rust tests of the clock in `flux/src/tests/test_module.rs`.
+- What stage 2 added to `flux/src/standards_plugins/time.rs` for it:
+  `uninstall_virtual_time`, `next_virtual_deadline`, `virtual_now`,
+  `set_wall_timeout`, the `Timers` userdata, and their exports and tests.
+  Lattice used none of them, and `time.rs` and its tests are back to what
+  they were before the harness. The app layer may want the deadline walk
+  back in stage 4, and it is in git (commit "Test harness (1)").
+
+What is parked, beside the four GPU rigs under `checks/`, until
+`srt:test` exists (stage 4), because these tests are about time passing
+in SolidRT logic (D5):
+
+- all of `gesture.test.ts` (11 tests), now
+  `packages/core/checks/gesture.test.ts`. The long-press, the only user
+  of the clock, is back on the rig's real waits (nothing at 400 ms, fired
+  by 600);
+- the test "interactions: hold, tap, doubleTap, chord" of
+  `input-map.test.ts`, now
+  `packages/core/checks/input-map-interactions.test.ts`; the other twelve
+  stay.
+
+Nothing is skipped or retried: they are not flux tests. `srt test` finds
+only `tests/` folders, so a parked file runs when it is named
+(`srt test packages/core/checks/gesture.test.ts`; all twelve pass), and
+the package's typecheck still covers it. After this the flux suite holds
+no test that depends on how much time passed, which is what lets CI gate
+on it.
+
+Two of the eleven parked gesture tests are not about time ("the arena
+relation: pend, defer, decide" and "classifySwipe", both synchronous)
+and went along with their file. They could stay behind as a flux test;
+open.
+
+### Stage 3 - CI (written 2026-09-30, not run)
+
+A job of its own, `test-js`, in `.github/workflows/ci.yml`: the JS tests
+are a suite, and a suite is one job with the same command on every
+platform. The same four runners as `test-flux`.
+
+- checkout, the Rust toolchain, `rust-cache` with a key of its own
+  (`test-js-<platform>`), libclang on the Linux rows,
+  `windows-msys2-tools` on Windows (for `make`), `setup-bun`,
+  `js-install`;
+- `make -C flux flux PROFILE=debug KTX2=0`, which builds and stages the
+  binary where `srt` looks for it;
+- `bun packages/cli/src/main.ts test`, with `SRT_HOME` set to the
+  workspace, on that step only: the flux Makefile derives its own, and a
+  Windows path from the environment would not survive its `include`.
+
+Every step runs in bash, as the Windows release build does. Checked
+here: the workflow parses, and the test command passes on Linux x64 with
+`SRT_HOME` set, against the release binary. The debug build was not
+repeated after stage 2b.
+
+The binary is built in the job, in the debug profile: the suite is
+functional verification, and it passes there (18 s against 11 s on
+release, before the gesture tests were parked). No artifact: nothing
+outside the release workflow builds a `flux` binary to take one from.
+The release workflow calls `ci.yml` as its gate, so the JS tests gate a
+release too. Rejected: a step in `test-flux` (a red job would mean
+either suite, and a failing cargo test would hide the JS result; the
+argument for it was the shared compile).
+
+This is also the first run of `srt test` on Windows and macOS (the bundle
+on stdin, the record prefix). A run on the winbox and the Mac through the
+builders before the first push is offered and not decided.
+
+App tests join later as a second job where the dev client builds, Linux
+first.
 
 ### Stage 4 - the app layer
 
-Prerequisite: [event-timestamp](../backlog/event-timestamp.md).
+Prerequisite: [event-timestamp](../backlog/event-timestamp.md). With it
+the twelve parked tests (stage 2b) come back as app tests.
 
-- **Test mode in the runtime.** Headless, on the stepped clock, the test
-  requesting each frame. The playback loop today is the reverse: it runs
+- **Test mode in the runtime.** Headless, stepped by frames, the test
+  requesting each frame, and without a wall (D5): `performance.now()`
+  reads 0 and the date is fixed. The playback loop today is the reverse: it runs
   a fixed number of frames and returns (`run_playback_loop` in
   `alloy/src/playback.rs`). This is the largest piece and a change in
   alloy and lattice; it keeps decision D6 of
@@ -582,46 +679,31 @@ Left as it is:
   Half of the messages (491) already print the value. No blanket
   rewrite: it risks weakening checks for little; new tests use `expect`.
 - The pan, swipe and double-tap tests wait on real timers and assert
-  with tolerances (about 6 s of the run). A flake risk once CI gates on
-  them; removed by event-timestamp.
+  with tolerances. They are parked since stage 2b and gate nothing;
+  event-timestamp removes the waits.
 
-The clock, open:
+Left open:
 
-- Timers due at the same instant fire in one turn, with no microtask
-  checkpoint between them: a second timer runs before the promise chain
-  the first started. `a_test_that_takes_the_clock_steps_its_timers` pins
-  it ("a@100 b@100 a-chain"). Measured 2026-09-30: the real path does
-  the same. Two `setTimeout`s of one delay (20 ms, and 0) on the wall
-  clock log "a b a-chain b-chain" too, since both are ready in one poll
-  of the executor. So the test clock matches both of flux's timer paths,
-  and the difference from the web (a microtask checkpoint after every
-  task) is flux's, not the test clock's. Whether flux should checkpoint
-  after each timer callback is a runtime question of its own; the test
-  clock stays as it is.
-- An uncaught error does not fail the test it happened in (stepped and
-  real time alike). Every test reports ok and the file fails with "The
-  file reported an uncaught error outside its tests". The report is on
-  stderr, so it is listed after the tests, and a rejection nobody
-  handles is printed at the engine's next checkpoint, which can be
-  several tests later or after the last one. D14 wants the failure on
-  the test. Not designed yet: it needs a way from flux's uncaught
-  reporting into `flux:test`. Before stage 3 or with the failure output
-  of stage 4: the user's call.
+- Timers due at the same instant fire with no microtask checkpoint
+  between them: a second timer runs before the promise chain the first
+  started. Measured 2026-09-30 on the real path: two `setTimeout`s of
+  one delay (20 ms, and 0) log "a b a-chain b-chain", since both are
+  ready in one poll of the executor. The web runs a checkpoint after
+  every task. A question for the runtime, not for the harness; unfiled.
+- An uncaught error does not fail the test it happened in. The report is
+  good enough for a CI log as it is: the error arrives on stdout with its
+  source line, under the test that was running when it fired, and the
+  file fails with "The file reported an uncaught error outside its
+  tests". A rejection nobody handles is printed at the engine's next
+  checkpoint, which can be a later test. Making it the test's own
+  failure needs a way from flux's uncaught reporting into `flux:test`;
+  it goes with the failure output of stage 4 (D14).
 - A test that times out keeps running after its result is out, and can
-  disturb the tests after it. Reproduced 2026-09-30: a timer a timed-out
-  stepped test set once its wait ended landed on the next stepped test's
-  clock and fired under that test's `advance`. (`clock.advance` on the
-  ended clock throws, as meant.) Documented in the types and left: the
-  file is already failing, so a leak cannot turn a run green.
-
-The clock, checked 2026-09-30: the turn between two stops drains the job
-queue with `Ctx::execute_pending_job`, which clears a throwing job's
-exception where the engine's own drain reports it, and nothing is
-swallowed by that. A throwing timer callback, a throwing
-`queueMicrotask` callback and a rejection nobody handles are reported
-from inside a stepped test as they are from a real-time one, and the
-process exits 1 (the first two are reported where they are called, the
-third by the rejection tracker; a promise job never throws).
+  disturb the tests after it. Documented in the types and left: the file
+  is already failing, so a leak cannot turn a run green.
+- CI compiles the `ktx2` feature nowhere; only the release build does,
+  so a break in that code reaches main unnoticed. Found while shaping
+  stage 3, which builds with `KTX2=0`. Filed in `okf/tiny.md` (DX).
 
 Verified 2026-09-30, after the timer refactor (`set_wall_timeout` split
 out of `setTimeout`, `Timers` kept as userdata):
@@ -642,8 +724,8 @@ out of `setTimeout`, `Timers` kept as userdata):
 
 Not verified:
 
-- The `test-flux` CI step now passes `--features test`; the workflow has
-  not run. The JS tests gate nothing until stage 3.
+- The `test-flux` CI step now passes `--features test`, and the
+  `test-js` job is new; the workflow has not run.
 - `srt test` has only run on Linux x64. The bundle on stdin and the
   record prefix (a control character) are untested on Windows and macOS.
 
@@ -660,7 +742,6 @@ inventory of how the rigs call `fail()` belonged in the proposal.
   or left as they are (randomness is settled: seeded, D28). A flux test
   needs the real network either way (`serve` plus `fetch` over loopback
   is the dogfooded way to fake a backend).
-- Whether the CI step builds flux or takes an artifact.
 
 ## Done looks like
 
@@ -669,7 +750,7 @@ inventory of how the rigs call `fail()` belonged in the proposal.
   failure.
 - No file imports `bun:test`, and no `checks/` folder is left.
 - A scaffolded app can carry a test that mounts a component, taps it,
-  steps time and asserts on the tree, with no wall-clock wait anywhere.
+  steps frames and asserts on the tree, with no wall-clock wait anywhere.
 - A failing test tells an agent what was on screen and when.
 
 ## Not this item

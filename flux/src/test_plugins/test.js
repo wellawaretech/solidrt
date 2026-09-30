@@ -1,8 +1,9 @@
 // The JavaScript half of flux:test: the registry behind `test`, the `expect`
-// matchers, the stepped clock, the seed of `Math.random` and `run`. Evaluated once per context by the
-// module definition (mod.rs), which calls this function with the natives it
-// needs the engine for and exports what it returns. Plain JS on purpose:
-// the flux build has no bundling step (okf/plans/test-harness.md, D21).
+// matchers, the seed of `Math.random` and `run`. Evaluated once per context
+// by the module definition (mod.rs), which calls this function with the
+// natives it needs the engine for and exports what it returns. Plain JS on
+// purpose: the flux build has no bundling step (okf/plans/test-harness.md,
+// D21).
 (native) => {
   // How long one test may take before it fails as timed out, when `run` is
   // given no `timeoutMs`. A safety cap against a test that never finishes,
@@ -15,10 +16,6 @@
   // the rest is counted. Keeps the message of a large buffer readable.
   const FORMAT_MAX_DEPTH = 6
   const FORMAT_MAX_ITEMS = 50
-  // How many task-queue turns `clock.advance` takes at one virtual instant
-  // before it gives up: timers that keep re-arming with no delay would
-  // otherwise hold time still forever.
-  const CLOCK_MAX_TURNS_PER_INSTANT = 1000
   // The seed `Math.random` runs on when `run` is given none. Any fixed
   // number does: what matters is that it is the same on every run.
   const DEFAULT_SEED = 0
@@ -321,56 +318,6 @@
     return new Expectation(received, false)
   }
 
-  // -- The stepped clock --
-
-  // The clock of one stepped test. Virtual time is installed for the
-  // test's whole body (the caller does that before the body runs) and
-  // moves only through `advance`. `end` cuts an advance still walking when
-  // the test is over, a timed-out one's included.
-  function steppedClock() {
-    let live = true
-    let alive = (verb) => {
-      if (!live) throw new Error(`clock.${verb}: the test this clock belongs to has ended`)
-    }
-    let clock = {
-      get now() {
-        alive("now")
-        return native.clockNow()
-      },
-      async advance(ms) {
-        alive("advance")
-        if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) {
-          throw new TypeError(`clock.advance: the time must be a non-negative number of milliseconds, got ${format(ms)}`)
-        }
-        let target = native.clockNow() + ms
-        let turns = 0
-        // Deadline by deadline, not in one jump: each stop is a task-queue
-        // turn of its own, so a timer sees the time it was set for, an
-        // interval fires as often as fits, and what one timer starts has
-        // run before the next fires.
-        while (true) {
-          let next = native.nextDeadline()
-          if (next === undefined || next > target) break
-          turns = next > native.clockNow() ? 0 : turns + 1
-          if (turns > CLOCK_MAX_TURNS_PER_INSTANT) {
-            throw new Error(`clock.advance: timers keep re-arming at ${next} ms without letting time pass`)
-          }
-          native.advanceTo(next)
-          await native.turn()
-          alive("advance")
-        }
-        native.advanceTo(target)
-        await native.turn()
-      },
-    }
-    return {
-      clock,
-      end() {
-        live = false
-      },
-    }
-  }
-
   // -- Running --
 
   function describeError(thrown) {
@@ -382,32 +329,22 @@
     // Every test draws the seed's sequence from its start, so what it draws
     // does not depend on the tests before it, or on a filter.
     native.seedRandom(seed)
-    // A test that takes the clock runs stepped: its timers are virtual from
-    // before its body runs, since a timer registered on the wall clock
-    // stays there.
-    let stepped = entry.fn.length > 0 ? steppedClock() : undefined
-    if (stepped) native.installClock()
     let start = performance.now()
     let timer
-    // The cap rides the wall clock whatever the test does to time. It is
-    // also what keeps the engine alive while a test waits on a promise that
-    // never settles: without it the process would end cleanly with the test
-    // unreported.
+    // The cap is also what keeps the engine alive while a test waits on a
+    // promise that never settles: without it the process would end cleanly
+    // with the test unreported.
     let timeout = new Promise((resolve) => {
-      timer = native.wallTimeout(() => resolve({ message: `Timed out after ${timeoutMs} ms`, stack: "" }), timeoutMs)
+      timer = setTimeout(() => resolve({ message: `Timed out after ${timeoutMs} ms`, stack: "" }), timeoutMs)
     })
     let outcome = Promise.resolve()
-      .then(() => entry.fn(stepped?.clock))
+      .then(() => entry.fn())
       .then(
         () => undefined,
         (thrown) => describeError(thrown),
       )
     let error = await Promise.race([outcome, timeout])
     clearTimeout(timer)
-    if (stepped) {
-      stepped.end()
-      native.uninstallClock()
-    }
     let durationMs = performance.now() - start
     return error ? { name: entry.name, ok: false, durationMs, error } : { name: entry.name, ok: true, durationMs }
   }

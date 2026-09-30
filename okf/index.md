@@ -83,10 +83,10 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 - **[Test harness - flux:test, srt:test and srt test](plans/test-harness.md)** [2026-08-17]
   Tests for flux programs, SolidRT apps and our own packages, run on our own
   runtime and deterministic by construction - a base layer on the flux binary
-  (flux:test - test, expect, a stepped clock, settle) and an app layer on the
-  headless SolidRT runtime (srt:test - mount, find, input, frames, reading),
-  behind one command, srt test. The test owns the clock; nothing waits on wall
-  time. Supersedes the JS test infrastructure backlog item; the ten bun test
+  (flux:test - test, expect, run, a seeded Math.random; real time) and an app
+  layer on the headless SolidRT runtime (srt:test - mount, find, input,
+  frames, reading; stepped by frames, no wall time), behind one command, srt
+  test. Supersedes the JS test infrastructure backlog item; the ten bun test
   files and the checks/ rigs are its first consumers.
 - **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
   Client-initiated streaming - open(url) plays a WebM served over HTTP on the

@@ -145,6 +145,63 @@ jobs:
       - name: Test flux
         run: cargo test -p flux --lib --features test
 
+  # The JS tests (`tests/*.test.ts` of the packages), run by `srt test` on a
+  # `flux` binary built here, on the same four platforms: the suite runs on
+  # the runtime the code ships on, so it is tested wherever that runtime is.
+  # A job of its own, not a step of test-flux, so a red job names one suite.
+  # The binary is a debug build (the suite is functional verification) and
+  # without ktx2, whose C++ encoder the tests do not use. The make target
+  # stages it under dist/, where SRT_HOME makes `srt` look. SRT_HOME is set
+  # on the test step only: the Makefile derives its own, and a Windows path
+  # from the environment would not survive its include.
+  test-js:
+    name: test-js (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: linux-arm
+            runner: ubuntu-22.04-arm
+          - platform: darwin
+            runner: macos-14
+          - platform: windows
+            runner: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          key: test-js-${{ matrix.platform }}
+
+      - name: Install libclang
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev clang
+
+      # For make; the image's own is not on PATH.
+      - if: matrix.platform == 'windows'
+        uses: ./.github/actions/windows-msys2-tools
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - uses: ./.github/actions/js-install
+
+      - name: Build flux
+        run: make -C flux flux PROFILE=debug KTX2=0
+
+      - name: Test JS
+        env:
+          SRT_HOME: ${{ github.workspace }}
+        run: bun packages/cli/src/main.ts test
+
   types:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

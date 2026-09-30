@@ -6,8 +6,12 @@
  * The names are the familiar ones and the semantics are simplified. Tests
  * are flat: there is no `describe` and there are no hooks. The file is the
  * group, the test name is a sentence that names its subject, and shared
- * setup is a plain function a test calls. A test that takes the clock
- * steps time itself, so timer logic is tested without waiting.
+ * setup is a plain function a test calls.
+ *
+ * A test runs on real time: timers, `performance.now()` and `Date.now()`
+ * are the wall clock's, as they are for the program under test and for
+ * whatever is on the other side of its sockets. Logic with a timeout is
+ * tested by waiting for it, or takes its delay as a parameter.
  *
  * `Math.random()` is seeded once this module is imported, and every test
  * draws the seed's sequence from its start: random inputs, and code under
@@ -32,54 +36,10 @@ declare module "flux:test" {
    * returns fulfills, and fails when it throws or the promise rejects.
    * Tests run one after another, in the order they were registered.
    *
-   * A test runs on real time, unless its function takes the clock: then
-   * it runs stepped (see {@link Clock}). Taking the clock is declaring the
-   * parameter, `clock => ...`. A parameter with a default value and a rest
-   * parameter do not count: such a test runs on real time and is handed no
-   * clock.
-   *
    * Throws when the name is empty or already taken in this file, and when
    * called while tests run: register at the top level of the file.
-   *
-   * @example
-   * test("a session expires after its timeout", async clock => {
-   *   let session = createSession()
-   *   await clock.advance(SESSION_TIMEOUT_MS)
-   *   expect(session.expired).toBe(true)
-   * })
    */
-  export function test(name: string, fn: (clock: Clock) => void | Promise<void>): void
-
-  /**
-   * The clock of a stepped test, which is a test whose function declares
-   * the parameter. For that test `setTimeout` and `setInterval` are on a
-   * virtual timeline that starts at 0 and moves only when the test says
-   * so: nothing fires by itself, and nothing waits on the wall clock. The
-   * timeline is in place before the test's body runs, so a timer the
-   * code under test registers is on it, and timers still waiting when the
-   * test ends are dropped.
-   *
-   * Only timers are stepped. `performance.now()` and `Date.now()` stay
-   * real time, and so does everything outside the process: a socket, a
-   * subprocess or a file read completes when it completes. How long the
-   * test may take is still measured on the wall clock.
-   */
-  export interface Clock {
-    /** The virtual time in milliseconds since the test started. */
-    readonly now: number
-    /**
-     * Moves the virtual time forward by `ms` and fires the timers that
-     * come due, each at its own time and in order: an interval fires as
-     * often as fits, and a timer registered by a fired callback fires too
-     * when it falls inside the span. Everything a callback sets in motion
-     * that needs no further time (a chain of promises) has run before the
-     * next timer fires and before the returned promise resolves.
-     *
-     * Throws when timers keep re-arming with no delay, which would hold
-     * time still.
-     */
-    advance(ms: number): Promise<void>
-  }
+  export function test(name: string, fn: () => void | Promise<void>): void
 
   /**
    * Starts an assertion on `received`. Each matcher throws when it does not
@@ -174,7 +134,7 @@ declare module "flux:test" {
     seed?: number
     /**
      * How long one test may take, in milliseconds of real time (default
-     * 5000), stepped or not. A test that takes longer fails as timed out
+     * 5000). A test that takes longer fails as timed out
      * and the run moves on. What the test started is not cancelled: it
      * keeps running beside the tests after it and can disturb them (a
      * timer it sets from then on belongs to whichever test runs at that

@@ -107,42 +107,6 @@ pub fn install_virtual_time(ctx: &Ctx<'_>, now_ms: f64) {
   ctx.store_userdata(state).expect("store virtual time");
 }
 
-/// Take this context's timers off the virtual timeline again: the timers
-/// still waiting on it are dropped unfired, each with its engine-liveness
-/// hold, and timers registered from here on take the wall-clock path. For a
-/// host that steps time for a while and then hands it back (flux:test, one
-/// stepped test among real-time ones). Returns false when the state is in
-/// use, which is the case while `advance_virtual_time` fires callbacks;
-/// no-op without `install_virtual_time`.
-pub fn uninstall_virtual_time(ctx: &Ctx<'_>) -> bool {
-  let Ok(removed) = ctx.remove_userdata::<VirtualTime>() else { return false };
-  if let Some(vt) = removed {
-    let dropped = vt.0.callbacks.borrow_mut().drain().count();
-    let pending = pending(ctx);
-    for _ in 0..dropped {
-      pending.release();
-    }
-  }
-  true
-}
-
-/// The current reading of the virtual timeline: what the last advance set,
-/// or the install's seed. None without `install_virtual_time`.
-pub fn virtual_now(ctx: &Ctx<'_>) -> Option<f64> {
-  ctx.userdata::<VirtualTime>().map(|vt| vt.0.now.get())
-}
-
-/// The deadline of the earliest timer still waiting on the virtual timeline,
-/// canceled ones aside. None when nothing waits, and without
-/// `install_virtual_time`. A host that walks time deadline by deadline asks
-/// this between advances.
-pub fn next_virtual_deadline(ctx: &Ctx<'_>) -> Option<f64> {
-  let vt = ctx.userdata::<VirtualTime>()?;
-  let callbacks = vt.0.callbacks.borrow();
-  let queue = vt.0.queue.borrow();
-  queue.iter().find(|(_, entry)| callbacks.contains_key(&entry.id)).map(|(&(deadline, _), _)| f64::from_bits(deadline))
-}
-
 /// Give schedule-time deadlines a fresh reading of the virtual timeline (the
 /// same one `advance_virtual_time` reports; see VirtualState::now_source).
 /// The source must be cheap and must never run JS. No-op without
@@ -223,7 +187,7 @@ pub fn advance_virtual_time(ctx: &Ctx<'_>, now_ms: f64) {
 
 type ActiveMap = Rc<std::cell::RefCell<HashMap<u32, oneshot::Sender<()>>>>;
 
-#[derive(Clone, JsLifetime)]
+#[derive(Clone)]
 pub(crate) struct Timers {
   next_id: Rc<Cell<u32>>,
   active: ActiveMap,
@@ -270,17 +234,11 @@ impl Timers {
   }
 
   fn set_timeout<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, ms: u64) -> u32 {
+    let id = self.alloc_id();
     if let Some(vt) = ctx.userdata::<VirtualTime>() {
-      let id = self.alloc_id();
       vt.clone().schedule(ctx, cb, id, ms as f64, None);
       return id;
     }
-    self.set_wall_timeout(ctx, cb, ms)
-  }
-
-  // The wall-clock half of setTimeout, whatever the context's timeline.
-  fn set_wall_timeout<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, ms: u64) -> u32 {
-    let id = self.alloc_id();
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
     self.active.borrow_mut().insert(id, cancel_tx);
     self.pending.hold();
@@ -326,16 +284,6 @@ impl Timers {
     });
     id
   }
-}
-
-/// A one-shot timer on the wall clock even while the context's timers are
-/// virtual: for a host's own deadline that must not ride the timeline it
-/// steps (flux:test's cap on a stepped test). Returns an id `clearTimeout`
-/// takes, like any timer's.
-#[cfg(feature = "test")]
-pub(crate) fn set_wall_timeout<'js>(ctx: &Ctx<'js>, cb: Function<'js>, ms: u64) -> u32 {
-  let timers = ctx.userdata::<Timers>().expect("timers userdata").clone();
-  timers.set_wall_timeout(ctx, cb, ms)
 }
 
 // The engine's native queueMicrotask, stashed in context userdata by
@@ -391,7 +339,6 @@ fn delay_ms(ms: OptArg<f64>) -> u64 {
 
 fn init_timers(ctx: &Ctx<'_>) {
   let timers = Timers::new(ctx);
-  ctx.store_userdata(timers.clone()).expect("store timers");
   let globals = ctx.globals();
 
   let set_timeout = Function::new(

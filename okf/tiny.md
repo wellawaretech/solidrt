@@ -50,6 +50,7 @@ The `srt` CLI, the dev server, MCP, debug commands, examples and probes.
 - Write the multi-pass shader chain example in `packages/core/examples` (a plasma target bound as a cube pipeline's sampler input, only the plasma's uniforms driven): the demonstration that sampler bindings are live dependencies, unblocked since target dependency propagation (okf/done/gpu-example-gaps.md).
 - `srt android`: pass an `--env NAME=value` (repeatable) through to the go client's `srt_env` intent extra (lattice/android MainActivity, 2026-09-27) so a measurement can pin `SRT_CADENCE_HOLD` without a hand-typed `am start`; the phone bench protocol in okf/done/gaussian-splats.md (stage D findings) is the consumer.
 - Splat order gate: ORDER_DIRECTION_EPS_COS (~2 degrees, set by feel) was priced when a re-sort republished 28 MB at 1M; the indexed form republishes 4 MB, so measure a tighter gate (0.5-1 degree) on the Pixel 7 for the popping it removes against the re-sorts it adds (okf/backlog/splat-sort-spike.md measures the sort itself).
+- CI compiles the `ktx2` feature nowhere (the release build alone does; `test-js` builds `flux` with `KTX2=0`), so a break in forge's texture encoder or its flux marshalling reaches main unnoticed: add `flux/ktx2` to the `cargo check` step of the `check` job in `.github/workflows/ci.yml`.
 
 ## Runtime
 
