@@ -193,3 +193,51 @@ async fn abort_before_the_answer_ends_a_queued_reader() {
   // iterating caller never awaits it, so no unhandled rejection may surface.
   assert!(!out.has_error(), "errors: {}", out.errors());
 }
+
+// A context seeded by its host (flux:test, for a test) seeds the isolates it
+// spawns, each with a seed of its own derived from the parent's: what a
+// child draws from Math.random is the same on every run, differs from child
+// to child, and takes nothing out of the parent's sequence.
+const DRAWER: &str = r#"
+export function draw() { return Math.random() }
+"#;
+
+/// Run `code` on an engine whose Math.random is seeded with `seed` and that
+/// resolves isolate "drawer" to DRAWER; the captured log.
+async fn run_seeded(seed: u64, code: &str) -> Captured {
+  let sink = LogSink::new();
+  let engine = FluxEngine::builder()
+    .logger(sink.logger())
+    .plugin(move |ctx| flux::seed_random(&ctx, seed).expect("seed Math.random"))
+    .isolate_resolver(|id| match id {
+      "drawer" => Ok(ModuleCode::Source(DRAWER.to_string())),
+      _ => Err(format!("unknown isolate '{id}'")),
+    })
+    .build();
+  engine.eval_source(code).await;
+  sink.captured()
+}
+
+#[tokio::test]
+async fn a_seeded_context_seeds_its_isolates() {
+  const SPAWN_TWO: &str = r#"
+    import { isolate } from "flux:isolate"
+    let a = isolate("drawer")
+    let b = isolate("drawer")
+    let drawn = [await a.draw(), await a.draw(), await b.draw(), Math.random()]
+    a.terminate()
+    b.terminate()
+    console.log(drawn.join())
+    "#;
+  let first = run_seeded(1, SPAWN_TWO).await.log();
+  let again = run_seeded(1, SPAWN_TWO).await.log();
+  let other = run_seeded(2, SPAWN_TWO).await.log();
+  let values: Vec<&str> = first.split(',').collect();
+  assert_eq!(values.len(), 4, "log: {first}");
+  assert_eq!(first, again, "the same seed drew differently on a second run");
+  assert_ne!(first, other, "another seed drew the same");
+  assert_ne!(values[0], values[2], "two isolates drew the same sequence");
+  // The parent's first value is the first of seed 1's own sequence
+  // (src/tests/random.rs pins it): spawning took nothing from it.
+  assert_eq!(values[3], "0.29404672187536485");
+}

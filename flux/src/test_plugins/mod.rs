@@ -7,15 +7,15 @@
 // The surface is plain JS (test.js), embedded here and evaluated once per
 // context; this file exports what that source returns. The source is a
 // function of the natives below, the pieces that need the engine: the
-// stepped clock over flux's virtual timers, and a timer that stays on the
-// wall clock while a test steps time.
+// stepped clock over flux's virtual timers, a timer that stays on the wall
+// clock while a test steps time, and the seed of `Math.random`.
 
 use rquickjs::context::EvalOptions;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Exception, Function, Object, Promise, Value};
 
 use crate::pending::PendingOps;
-use crate::standards_plugins::time;
+use crate::standards_plugins::{random, time};
 
 /// The module name, and the file name stack frames inside the harness cite
 /// ("at toBe (flux:test:210:13)"), which is how a reporter tells harness
@@ -45,6 +45,7 @@ impl ModuleDef for TestModule {
     native.set("advanceTo", Function::new(ctx.clone(), advance_to)?)?;
     native.set("turn", Function::new(ctx.clone(), turn)?)?;
     native.set("wallTimeout", Function::new(ctx.clone(), wall_timeout)?)?;
+    native.set("seedRandom", Function::new(ctx.clone(), seed_random)?)?;
 
     let mut options = EvalOptions::default();
     options.filename = Some(MODULE_NAME.to_string());
@@ -110,4 +111,14 @@ fn turn<'js>(ctx: Ctx<'js>) -> rquickjs::Result<Promise<'js>> {
 fn wall_timeout<'js>(ctx: Ctx<'js>, callback: Function<'js>, ms: f64) -> u32 {
   let ms = if ms.is_finite() { ms.max(0.0) as u64 } else { 0 };
   time::set_wall_timeout(&ctx, callback, ms)
+}
+
+/// Restart `Math.random` at the start of `seed`'s sequence (see
+/// `random::seed_random`). The JS half hands over a non-negative integer;
+/// anything else is refused here too, since a cast would make up a seed.
+fn seed_random(ctx: Ctx<'_>, seed: f64) -> rquickjs::Result<()> {
+  if !seed.is_finite() || seed < 0.0 || seed.fract() != 0.0 {
+    return Err(Exception::throw_message(&ctx, "seedRandom: the seed must be a non-negative integer"));
+  }
+  random::seed_random(&ctx, seed as u64)
 }

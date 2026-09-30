@@ -1,31 +1,20 @@
-// Check for the tile-grid math (tiles-math.ts): a cell's chunk and record
+// Tests for the tile-grid math (tiles-math.ts): a cell's chunk and record
 // slot against a brute-force oracle, the chunk walk of a rect covering
 // every cell of the rect exactly once and nothing outside it, each slice
 // inside its own chunk, and the cell/rect validation throws. Pure-module
 // input only (tiles-math.ts imports nothing), so it runs headless on flux:
-// `srt test packages/2d`. The random inputs come from a fixed seed, printed
-// by a failure; `srt test <this file> -- <seed>` tries another.
+// `srt test packages/2d`. The random inputs come from Math.random, which
+// `srt test` seeds: the same on every run, and `--seed <n>` tries others.
 
 import { test } from "flux:test"
-import { argv } from "flux:process"
 import { checkCell, checkRect, chunkOf, eachChunkSlice, slotOf } from "../src/tiles-math.ts"
 
-// The seed of the random inputs below. A failure prints it;
-// `srt test <this file> -- <seed>` runs with another.
-const SEED = 20260935
-let seed = Number(argv[0] ?? SEED)
-
-let s = seed >>> 0
-function rand(): number {
-  s = (Math.imul(s, 1664525) + 1013904223) >>> 0
-  return s / 4294967296
-}
 function int(lo: number, hi: number): number {
-  return lo + Math.floor(rand() * (hi - lo + 1))
+  return lo + Math.floor(Math.random() * (hi - lo + 1))
 }
 
 function fail(msg: string): void {
-  throw new Error(`${msg} (seed ${seed})`)
+  throw new Error(msg)
 }
 let throws = (what: string, f: () => void) => {
   let threw = false

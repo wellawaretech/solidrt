@@ -71,13 +71,13 @@ function discover(dir: string): string[] {
 // What is appended to a test file's bundle: run what the file registered
 // and print each result as a record. In a block, so its names cannot meet
 // the file's own top-level ones.
-function runnerSource(filter: string | undefined): string {
+function runnerSource(filter: string | undefined, seed: number | undefined): string {
   let print = (record: string) => `console.log(${JSON.stringify(RECORD_PREFIX)} + JSON.stringify(${record}))`
   return [
     `import { run as __srtTestRun } from "flux:test"`,
     `{`,
     `  ${print(`{ type: "loaded" }`)}`,
-    `  for await (let result of __srtTestRun(${JSON.stringify({ filter })})) ${print(`{ type: "result", result }`)}`,
+    `  for await (let result of __srtTestRun(${JSON.stringify({ filter, seed })})) ${print(`{ type: "result", result }`)}`,
     `  ${print(`{ type: "done" }`)}`,
     `}`,
     ``,
@@ -124,7 +124,7 @@ async function lines(stream: ReadableStream<Uint8Array>, onLine: (line: string) 
   if (rest !== "") onLine(rest)
 }
 
-async function runFile(flux: string, file: string, filter: string | undefined): Promise<FileOutcome> {
+async function runFile(flux: string, file: string, filter: string | undefined, seed: number | undefined): Promise<FileOutcome> {
   let outcome: FileOutcome = { tests: [], output: [], error: null }
   if (file.endsWith(".tsx")) {
     outcome.error = "App tests (.test.tsx, on srt:test) are not supported yet"
@@ -139,10 +139,10 @@ async function runFile(flux: string, file: string, filter: string | undefined): 
   let maps = bundled.map ? { [ENTRY_MODULE]: bundled.map } : null
 
   // Everything after `--` on the command line reaches the file as its
-  // flux:process argv (a seed for a seeded test, say).
+  // flux:process argv.
   let proc = Bun.spawn([flux, "-", ...appArgs], {
     cwd: workingDir(file),
-    stdin: new Blob([bundled.code + "\n" + runnerSource(filter)]),
+    stdin: new Blob([bundled.code + "\n" + runnerSource(filter, seed)]),
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -245,6 +245,16 @@ async function requireTestModule(flux: string) {
   }
 }
 
+// --seed: the number Math.random starts from in every test. Without it the
+// tests run on flux:test's own fixed seed, so a run is the same either way.
+function seedOption(): number | undefined {
+  let raw = values.seed
+  if (raw === undefined) return undefined
+  let seed = Number(raw)
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(seed)) fail(`Invalid --seed value "${raw}": expected a non-negative integer`)
+  return seed
+}
+
 export async function main() {
   let target = resolve(source ?? ".")
   if (!existsSync(target)) fail(`No such file or folder: ${source} (resolved from ${process.cwd()})`)
@@ -257,11 +267,12 @@ export async function main() {
   await requireTestModule(flux)
 
   let filter = values.filter
+  let seed = seedOption()
   let failed = 0
   let passed = 0
   let brokenFiles = 0
   for (let file of files) {
-    let outcome = await runFile(flux, file, filter)
+    let outcome = await runFile(flux, file, filter, seed)
     // With a filter, a file none of whose tests match has nothing to say.
     if (filter !== undefined && outcome.tests.length === 0 && !outcome.error) continue
     report(relative(process.cwd(), file), outcome)
@@ -275,6 +286,9 @@ export async function main() {
   }
   let parts = [failed > 0 ? count(failed, "failed") : "", count(passed, "passed")].filter(Boolean)
   if (brokenFiles > 0) parts.push(`${count(brokenFiles, brokenFiles === 1 ? "file" : "files")} did not complete`)
-  console.log(`Tests: ${parts.join(", ")} (${count(files.length, files.length === 1 ? "file" : "files")})`)
+  // A run on another seed says which, so a failure in it can be run again.
+  let notes = [count(files.length, files.length === 1 ? "file" : "files")]
+  if (seed !== undefined) notes.push(`seed ${seed}`)
+  console.log(`Tests: ${parts.join(", ")} (${notes.join(", ")})`)
   process.exit(failed > 0 || brokenFiles > 0 ? 1 : 0)
 }

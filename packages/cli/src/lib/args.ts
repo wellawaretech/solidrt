@@ -68,6 +68,7 @@ const OPTIONS = {
     clear: { type: "boolean", default: false },
     seconds: { type: "string" },
     filter: { type: "string" },
+    seed: { type: "string" },
 } as const
 
 export let { values, positionals } = parse()
@@ -222,6 +223,10 @@ export function validateArgs() {
   // --filter picks tests by name.
   if (values.filter !== undefined && command !== "test") {
     usage("srt test --filter <text>  (--filter is only valid with the test command)")
+  }
+  // --seed picks the sequence Math.random runs on in the tests.
+  if (values.seed !== undefined && command !== "test") {
+    usage("srt test --seed <n>  (--seed is only valid with the test command)")
   }
   // --port binds the dev server (`run`, `server`) or picks one (`client`,
   // `android`, `mcp`).

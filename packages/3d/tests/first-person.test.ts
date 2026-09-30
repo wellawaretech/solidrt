@@ -1,4 +1,4 @@
-// Checks for the first-person control (first-person.ts) as a pure axes
+// Tests for the first-person control (first-person.ts) as a pure axes
 // consumer: the look and move verbs, the look/move/rise deltas in the
 // vocabulary's units, the rates integrated by update(dt) with the unit
 // clamp on diagonals, walk vs fly, clampPosition, the pitch clamps, glideTo
@@ -29,7 +29,7 @@ function make(options: FirstPersonCameraOptions = {}) {
   return { cam, last: () => last }
 }
 
-test("Verbs", () => {
+test("verbs", () => {
   let { cam, last } = make({ position: [0, 1.6, 0] })
   cam.lookBy(Math.PI / 2, 0)
   if (!nearV(cam.forward(), [-1, 0, 0])) fail(`yaw positive turns left (faces -x), got ${cam.forward()}`)
@@ -43,7 +43,7 @@ test("Verbs", () => {
   if (!cam.update(0.016) || cam.update(0.016)) fail("update reports a verb's change once")
 })
 
-test("Deltas", () => {
+test("deltas", () => {
   let { cam } = make()
   // Half a turn per element height (DRAG_TURNS 0.5); a drag right turns
   // right (yaw negative), a drag down looks down (pitch negative).
@@ -58,7 +58,7 @@ test("Deltas", () => {
   if (!near(cam.eye()[1], 1.6)) fail("rise is inert while walking")
 })
 
-test("Rates, the unit clamp, fly, clampPosition", () => {
+test("rates, the unit clamp, fly, clampPosition", () => {
   let opts: FirstPersonCameraOptions = { position: [0, 1.6, 0], moveSpeed: 2 }
   let { cam } = make(opts)
   if (cam.active()) fail("a still walker rests")
@@ -113,7 +113,7 @@ test("Rates, the unit clamp, fly, clampPosition", () => {
   if (!near(cam.pose().pitch, Math.min(0.4 * 2 * Math.PI, Math.PI / 2 - 0.01))) fail(`a look rate of 1 over a second turns 0.4 turns, clamped at the pole: ${cam.pose().pitch}`)
 })
 
-test("Clamps and validation", () => {
+test("clamps and validation", () => {
   let { cam } = make({ minPitch: -0.3, maxPitch: 0.3 })
   cam.lookBy(0, 2)
   if (cam.pose().pitch !== 0.3) fail(`maxPitch clamps, got ${cam.pose().pitch}`)
@@ -153,10 +153,7 @@ test("glideTo: eased pose, exact landing, clampPosition per frame, rest", () => 
   cam.glideTo({ position: [0, 1.6, -5] })
   for (let i = 0; i < SETTLE_TICKS; i++) {
     if (!cam.update(DT)) break
-    if (cam.eye()[2] < -1 - 1e-9) {
-      fail(`a glide's frames go through clampPosition, z ${cam.eye()[2]} at tick ${i}`)
-      break
-    }
+    if (cam.eye()[2] < -1 - 1e-9) fail(`a glide's frames go through clampPosition, z ${cam.eye()[2]} at tick ${i}`)
   }
   if (!near(cam.eye()[2], -1)) fail(`a glide lands where clampPosition allows, got ${cam.eye()}`)
   // Any input drops a glide; so does a set() of a pose field.
@@ -174,7 +171,7 @@ test("glideTo: eased pose, exact landing, clampPosition per frame, rest", () => 
   if (cam.update(DT) || cam.pose().yaw !== yaw) fail("set() of a pose field drops a glide")
 })
 
-test("The shake lane: a view kick in turns, the pose and the eye untouched", () => {
+test("the shake lane: a view kick in turns, the pose and the eye untouched", () => {
   let { cam, last } = make({ position: [0, 1.6, 0] })
   cam.shake(0.02, 0.5, { direction: [1, 0] })
   flush()

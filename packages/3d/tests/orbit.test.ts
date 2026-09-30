@@ -1,4 +1,4 @@
-// Checks for the orbit control (orbit.ts) as a pure axes consumer: the pose
+// Tests for the orbit control (orbit.ts) as a pure axes consumer: the pose
 // verbs, the rotate/zoom/pan deltas in the vocabulary's units, the anchored
 // zoom (one anchor per pinch gesture, per notch for the wheel), the pivot
 // re-seat on a rotate begin, the rates integrated by update(dt) with
@@ -62,7 +62,7 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   return SETTLE_TICKS + 1
 }
 
-test("Verbs push at once; update reports the change once", () => {
+test("verbs push at once; update reports the change once", () => {
   let { orbit, last, writes } = make({ distance: 4 })
   if (writes() !== 1) fail(`creation pushes once, got ${writes()}`)
   orbit.rotateBy(0.5, 0.25)
@@ -84,7 +84,7 @@ test("Verbs push at once; update reports the change once", () => {
   if (!near(orbit.pose().distance, 3)) fail("a point behind the eye is ignored")
 })
 
-test("Deltas in the vocabulary's units (damping off: at once)", () => {
+test("deltas in the vocabulary's units (damping off: at once)", () => {
   let { orbit } = make({ distance: 4, azimuth: 0, elevation: 0, damping: 0 })
   // One element height of drag travel is one full turn (DRAG_TURNS 1),
   // a drag right turning azimuth negative, a drag down raising the eye.
@@ -105,7 +105,7 @@ test("Deltas in the vocabulary's units (damping off: at once)", () => {
   if (!near(orbit.pose().target[1], 0.5 * frustum)) fail(`a pan down lifts the target (the scene follows the finger), got ${orbit.pose().target[1]}`)
 })
 
-test("Anchored zoom: one anchor per pinch, per notch for the wheel", () => {
+test("anchored zoom: one anchor per pinch, per notch for the wheel", () => {
   let anchors = 0
   let { orbit } = make({
     distance: 4,
@@ -135,7 +135,7 @@ test("Anchored zoom: one anchor per pinch, per notch for the wheel", () => {
   pivoted.orbit.axes.end("rotate")
 })
 
-test("A release velocity glides on (damping on), or not at all (damping off)", () => {
+test("a release velocity glides on (damping on), or not at all (damping off)", () => {
   let { orbit } = make({ distance: 4, azimuth: 0, elevation: 0 })
   orbit.axes.begin("rotate")
   orbit.axes.nudge("rotate", [0.1, 0])
@@ -161,7 +161,7 @@ test("A release velocity glides on (damping on), or not at all (damping off)", (
   if (settle(stiff.orbit) !== 0) fail("damping off: a release glides nothing")
 })
 
-test("Rates, active(), auto-orbit pause", () => {
+test("rates, active(), auto-orbit pause", () => {
   let { orbit } = make({ distance: 4, orbitSpeed: 1 })
   if (!orbit.active()) fail("an auto-orbit is active")
   orbit.set({ orbiting: false })
@@ -190,7 +190,7 @@ test("Rates, active(), auto-orbit pause", () => {
   if (!near(orbit.pose().azimuth, 1)) fail(`the auto-orbit resumes after the gesture, got ${orbit.pose().azimuth}`)
 })
 
-test("Clamps and validation", () => {
+test("clamps and validation", () => {
   let { orbit } = make({ distance: 4, minDistance: 2, maxDistance: 8, minElevation: -0.5, maxElevation: 0.5 })
   orbit.zoomBy(8)
   if (orbit.pose().distance !== 2) fail(`minDistance clamps the zoom, got ${orbit.pose().distance}`)
@@ -215,7 +215,7 @@ test("Clamps and validation", () => {
   throws("nudge with a bad delta", () => orbit.axes.nudge("zoom", [1, 2] as never))
 })
 
-test("The damped wheel notch: a glide, anchor pinned, compounding", () => {
+test("the damped wheel notch: a glide, anchor pinned, compounding", () => {
   let { orbit, writes } = make({ distance: 4, target: [0, 0, 0], zoomAnchor: () => [1, 0, 0] })
   let before = writes()
   orbit.axes.nudge("zoom", 0.5, [0.2, 0.2])
@@ -229,10 +229,7 @@ test("The damped wheel notch: a glide, anchor pinned, compounding", () => {
     let p = orbit.pose()
     // The anchor [1, 0, 0] stays pinned: the target sits on the line from
     // the anchor to the reference target, scaled by the distance ratio.
-    if (!near(p.target[0], 1 - p.distance / 4)) {
-      fail(`the eased target stays anchored at tick ${ticks}: distance ${p.distance}, target ${p.target}`)
-      break
-    }
+    if (!near(p.target[0], 1 - p.distance / 4)) fail(`the eased target stays anchored at tick ${ticks}: distance ${p.distance}, target ${p.target}`)
   }
   if (ticks === 0 || ticks >= SETTLE_TICKS) fail(`a notch glides and then rests, ticks=${ticks}`)
   if (orbit.pose().distance !== goal) fail(`the glide lands exactly on the notch's distance ${goal}, got ${orbit.pose().distance}`)
@@ -364,10 +361,7 @@ test("clampPose: every write path, the whole pose in, fields out", () => {
   orbit.glideTo({ elevation: -1, distance: 8 })
   for (let i = 0; i < SETTLE_TICKS; i++) {
     if (!orbit.update(DT)) break
-    if (!(eyeY() >= floor - 1e-9)) {
-      fail(`a glide's frames are clamped, eye y ${eyeY()} at tick ${i}`)
-      break
-    }
+    if (!(eyeY() >= floor - 1e-9)) fail(`a glide's frames are clamped, eye y ${eyeY()} at tick ${i}`)
   }
   if (!(eyeY() >= floor - 1e-9) || orbit.pose().distance !== 8) fail(`a glide lands on the clamped goal: ${JSON.stringify(orbit.pose())}`)
   // The hook can move the target too (the clampTarget use).
@@ -387,7 +381,7 @@ test("clampPose: every write path, the whole pose in, fields out", () => {
   if (!threw) fail("a non-finite clampPose result must throw")
 })
 
-test("Push: a dolly step past the floor moves through, the anchor keeps its pixel", () => {
+test("push: a dolly step past the floor moves through, the anchor keeps its pixel", () => {
   let { orbit } = make({ distance: 4, minDistance: 2, maxDistance: 8, target: [0, 0, 0], push: true })
   // The eye at (0, 0, 4) looks down -z; a zoom to a quarter wants 1,
   // clamps at 2, and the overflow of 1 carries eye and target forward.
@@ -425,7 +419,7 @@ test("Push: a dolly step past the floor moves through, the anchor keeps its pixe
   if (!nearV(notch.orbit.pose().target, [0, 0, -1], 1e-6) || notch.orbit.pose().distance !== 2) fail(`a damped notch at the floor pushes through: ${JSON.stringify(notch.orbit.pose())}`)
 })
 
-test("The follow: framing in view space, depth, the orbit's input around it", () => {
+test("the follow: framing in view space, depth, the orbit's input around it", () => {
   // Looking down -z from (0, 0, 4): right is +x, up is +y, forward -z.
   let { orbit } = make({ distance: 4, target: [0, 0, 0] })
   orbit.follow([1, 0.5, 0])
@@ -490,7 +484,7 @@ test("The follow: framing in view space, depth, the orbit's input around it", ()
   if (!(ahead.orbit.pose().target[0] > point)) fail(`lookahead frames ahead: target ${ahead.orbit.pose().target[0]}, point ${point}`)
 })
 
-test("The follow's heading: the azimuth recentres behind the walker after the rotate input rests", () => {
+test("the follow's heading: the azimuth recentres behind the walker after the rotate input rests", () => {
   let { orbit } = make({ distance: 4, target: [0, 0, 0], azimuth: 0, follow: { heading: { wait: 0.5 } } })
   // A walker facing -x (yaw pi/2 in the first-person convention): the
   // camera settles at azimuth pi/2, behind it.
@@ -530,7 +524,7 @@ test("The follow's heading: the azimuth recentres behind the walker after the ro
   if (orbit.pose().azimuth !== 0.3) fail("a follow without a heading leaves the azimuth")
 })
 
-test("The lanes: the offset, setOrbitPoint preserves the picture, a shake stays out of the pose", () => {
+test("the lanes: the offset, setOrbitPoint preserves the picture, a shake stays out of the pose", () => {
   let height = 2 * Math.tan((FOV * Math.PI) / 360) * 4
   let { orbit } = make({ distance: 4, target: [0, 0, 0], offset: [0.25, 0] })
   let cam = orbit.camera()
@@ -586,7 +580,7 @@ test("The lanes: the offset, setOrbitPoint preserves the picture, a shake stays 
   if (shaken.orbit.active()) fail("an ended shake rests")
 })
 
-test("Occlusion: pulled in at once, eased back out; the pose untouched", () => {
+test("occlusion: pulled in at once, eased back out; the pose untouched", () => {
   let free: number | null = null
   let { orbit } = make({ distance: 4, target: [0, 0, 0], occluder: () => free })
   if (!nearV(orbit.camera().position, [0, 0, 4])) fail("no occluder: the eye is the pose's")
@@ -607,7 +601,7 @@ test("Occlusion: pulled in at once, eased back out; the pose untouched", () => {
   if (orbit.active()) fail("a landed return rests")
 })
 
-test("The pan plane and the focus axis", () => {
+test("the pan plane and the focus axis", () => {
   let ground = make({ distance: 4, target: [0, 0, 0], elevation: 0.5, panPlane: "ground" })
   ground.orbit.panBy(0, 1)
   if (!nearV(ground.orbit.pose().target, [0, 0, -1], 1e-9)) fail(`a ground pan slides along the horizontal forward, got ${ground.orbit.pose().target}`)
@@ -628,7 +622,7 @@ test("The pan plane and the focus axis", () => {
   if (orbit.update(DT)) fail("a zero focus delta does nothing")
 })
 
-test("Shots: the mix, and an orbit control driving a shot through the blender", () => {
+test("shots: the mix, and an orbit control driving a shot through the blender", () => {
   let a: CameraState = { position: [0, 0, 4], target: [0, 0, 0], up: [0, 1, 0], fov: 60, near: 0.1, far: 100, ortho: null }
   let b: CameraState = { position: [4, 0, 0], target: [1, 1, 1], up: [0, 1, 0], fov: 30, near: 0.1, far: 200, ortho: { left: -1, right: 1, top: 1, bottom: -1 } }
   let m = mixCamera(a, b, 0.25)

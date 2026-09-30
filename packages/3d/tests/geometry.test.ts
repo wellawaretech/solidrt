@@ -1,4 +1,4 @@
-// Check rig for the geometry-as-data ops (src/geometry.ts):
+// Tests for the geometry-as-data ops (src/geometry.ts):
 // transformGeometry against hand-computed points and normals (non-uniform
 // scale included), mergeGeometries offsets, uint32 widening and the
 // mixed-layout rejection, the exported bounds/ray helpers, and the debug
@@ -16,15 +16,12 @@ function fail(msg: string): void {
   throw new Error(msg)
 }
 let near = (a: number, b: number, eps = 1e-5): boolean => Math.abs(a - b) <= eps
-// The rigs here build base all-float layouts, so the vertex bytes read
+// The tests here build base all-float layouts, so the vertex bytes read
 // back as floats; the view type is not the geometry contract.
 let floats = (g: Geometry): Float32Array => new Float32Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength / Float32Array.BYTES_PER_ELEMENT)
 let expectVec = (label: string, got: ArrayLike<number>, want: ArrayLike<number>): void => {
   for (let i = 0; i < want.length; i++) {
-    if (!near(got[i]!, want[i]!)) {
-      fail(`${label}: got [${Array.from(got as number[]).map((v) => v.toFixed(4))}] want [${Array.from(want as number[]).map((v) => v.toFixed(4))}]`)
-      return
-    }
+    if (!near(got[i]!, want[i]!)) fail(`${label}: got [${Array.from(got as number[]).map((v) => v.toFixed(4))}] want [${Array.from(want as number[]).map((v) => v.toFixed(4))}]`)
   }
 }
 let throws = (label: string, fn: () => unknown): void => {
@@ -41,10 +38,7 @@ let throws = (label: string, fn: () => unknown): void => {
 // Vertex i of channel `name` as floats, through the accessor.
 let read = (g: Geometry, name: string, i: number): number[] => {
   let a = geometryAttribute(g, name)
-  if (a === null) {
-    fail("read: no " + name + " channel")
-    return []
-  }
+  if (a === null) throw new Error("read: no " + name + " channel")
   let out: number[] = []
   for (let k = 0; k < a.components; k++) out.push(a.get(i, k))
   return out
@@ -259,10 +253,7 @@ test("the polyhedron family", () => {
     if (floats(g).length !== tris * 3 * BASE_FLOATS) fail(name + ": vertex count " + floats(g).length / BASE_FLOATS)
     if (g.indices.length !== tris * 3) fail(name + ": index count " + g.indices.length)
     for (let i = 0; i < g.indices.length; i++) {
-      if (g.indices[i] !== i) {
-        fail(name + ": indices are not 0..n-1")
-        break
-      }
+      if (g.indices[i] !== i) fail(name + ": indices are not 0..n-1")
     }
     let v = floats(g)
     let at = (i: number, k: number): Vec3 => [v[i * BASE_FLOATS + k]!, v[i * BASE_FLOATS + k + 1]!, v[i * BASE_FLOATS + k + 2]!]
@@ -272,43 +263,25 @@ test("the polyhedron family", () => {
       let cx = (p[0]![0] + p[1]![0] + p[2]![0]) / 3
       let cy = (p[0]![1] + p[1]![1] + p[2]![1]) / 3
       let cz = (p[0]![2] + p[1]![2] + p[2]![2]) / 3
-      if (n[0] * cx + n[1] * cy + n[2] * cz <= 0) {
-        fail(name + ": triangle " + t + " winds inward")
-        return
-      }
+      if (n[0] * cx + n[1] * cy + n[2] * cz <= 0) fail(name + ": triangle " + t + " winds inward")
       let us: number[] = []
       for (let k = 0; k < 3; k++) {
         let q = p[k]!
-        if (!near(Math.hypot(q[0], q[1], q[2]), radius)) {
-          fail(name + ": corner off the circumsphere: " + Math.hypot(q[0], q[1], q[2]))
-          return
-        }
+        if (!near(Math.hypot(q[0], q[1], q[2]), radius)) fail(name + ": corner off the circumsphere: " + Math.hypot(q[0], q[1], q[2]))
         let want = detail === 0 ? n : normalize(q)
         let got = at(t * 3 + k, 3)
-        if (!near(got[0], want[0]) || !near(got[1], want[1]) || !near(got[2], want[2])) {
-          fail(name + ": normal of triangle " + t + " corner " + k)
-          return
-        }
+        if (!near(got[0], want[0]) || !near(got[1], want[1]) || !near(got[2], want[2])) fail(name + ": normal of triangle " + t + " corner " + k)
         let u = v[(t * 3 + k) * BASE_FLOATS + 6]!
         let vv = v[(t * 3 + k) * BASE_FLOATS + 7]!
-        if (u < 0 || u > U_MAX || vv < 0 || vv > 1) {
-          fail(name + ": uv out of range " + u + "," + vv)
-          return
-        }
+        if (u < 0 || u > U_MAX || vv < 0 || vv > 1) fail(name + ": uv out of range " + u + "," + vv)
         us.push(u)
       }
-      if (Math.max(...us) > 0.9 && Math.min(...us) < 0.1) {
-        fail(name + ": triangle " + t + " straddles the seam: " + us.join(","))
-        return
-      }
+      if (Math.max(...us) > 0.9 && Math.min(...us) < 0.1) fail(name + ": triangle " + t + " straddles the seam: " + us.join(","))
       for (let k = 0; k < 3; k++) {
         let q = p[k]!
         if (q[0] !== 0 || q[2] !== 0) continue
         let others = us.filter((_u, i) => i !== k)
-        if (us[k]! < Math.min(...others) - 1e-5 || us[k]! > Math.max(...others) + 1e-5) {
-          fail(name + ": y-axis corner u " + us[k] + " outside its triangle's " + others.join(","))
-          return
-        }
+        if (us[k]! < Math.min(...others) - 1e-5 || us[k]! > Math.max(...others) + 1e-5) fail(name + ": y-axis corner u " + us[k] + " outside its triangle's " + others.join(","))
       }
     }
   }

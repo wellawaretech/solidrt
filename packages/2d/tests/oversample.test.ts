@@ -1,33 +1,22 @@
-// Check for the oversample auto-pick math (oversample-math.ts): fit
+// Tests for the oversample auto-pick math (oversample-math.ts): fit
 // rounding and bounds, the shrink hysteresis and maxOversample cap in
 // pickOversample, and the rotation divide-out in tileWorldScale - asserted
 // with a full-turn camera sweep against an AABB oracle, so the class of bug
 // where a rotating camera re-bakes every chunk cannot come back silently.
 // Pure-module input only (oversample-math.ts imports nothing), so it runs
-// headless on flux: `srt test packages/2d`. The random inputs come from a
-// fixed seed, printed by a failure; `srt test <this file> -- <seed>` tries
-// another.
+// headless on flux: `srt test packages/2d`. The random inputs come from
+// Math.random, which `srt test` seeds: the same on every run, and `--seed
+// <n>` tries others.
 
 import { test } from "flux:test"
-import { argv } from "flux:process"
 import { fitOversampleWithin, pickOversample, tileWorldScale } from "../src/oversample-math.ts"
 
-// The seed of the random inputs below. A failure prints it;
-// `srt test <this file> -- <seed>` runs with another.
-const SEED = 20260933
-let seed = Number(argv[0] ?? SEED)
-
-let s = seed >>> 0
-function rand(): number {
-  s = (Math.imul(s, 1664525) + 1013904223) >>> 0
-  return s / 4294967296
-}
 function range(lo: number, hi: number): number {
-  return lo + rand() * (hi - lo)
+  return lo + Math.random() * (hi - lo)
 }
 
 function fail(msg: string): void {
-  throw new Error(`${msg} (seed ${seed})`)
+  throw new Error(msg)
 }
 
 // Generous bounds that never bind, for the cases probing something else.
@@ -111,10 +100,7 @@ test("tileWorldScale: the divide-out recovers the zoom at any rotation, and a fu
       let r = (step / TURN_STEPS) * 2 * Math.PI
       let [boxW, boxH] = rotatedBox(worldW, worldH, zoom, r)
       let scale = tileWorldScale(boxW, boxH, worldW, worldH, r)
-      if (Math.abs(scale - zoom) > zoom * SCALE_TOLERANCE) {
-        fail(`divide-out at rot ${r}: scale ${scale}, want zoom ${zoom} (world ${worldW} x ${worldH})`)
-        break
-      }
+      if (Math.abs(scale - zoom) > zoom * SCALE_TOLERANCE) fail(`divide-out at rot ${r}: scale ${scale}, want zoom ${zoom} (world ${worldW} x ${worldH})`)
       let n = pickOversample(current, scale, 512, 512, BIG_BUDGET, BIG_MAX_SIZE, undefined)
       if (n !== null) {
         current = n

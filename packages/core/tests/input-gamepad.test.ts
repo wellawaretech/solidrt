@@ -1,4 +1,4 @@
-// Checks for the gamepad device (input-gamepad-device.ts) over a signal of
+// Tests for the gamepad device (input-gamepad-device.ts) over a signal of
 // pad snapshots standing in for core's gamepads(): the slot and every-pad
 // devices' sources (sticks with the dead zone, dpad, triggers, shoulders,
 // buttons), and the join device (createGamepadJoin: a pad joins on its
@@ -19,7 +19,7 @@ let near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps
 
 let pad = (id: number, buttons: string[] = [], axes: Record<string, number> = {}): GamepadState => ({ id, name: `pad ${id}`, buttons, axes, mapped: true })
 
-test("Slot and every-pad devices", () => {
+test("slot and every-pad devices", () => {
   let [pads, setPads] = createSignal<(GamepadState | null)[]>([])
   let p0 = createGamepadSlot(pads, 0)
   let all = createGamepadSlot(pads, undefined)
@@ -68,7 +68,7 @@ test("Slot and every-pad devices", () => {
   if (!threw) fail("a bad slot must throw")
 })
 
-test("Joining", () => {
+test("joining", () => {
   let [pads, setPads] = createSignal<(GamepadState | null)[]>([pad(1), pad(2)])
   // Two panes, each under a scope of its own (the join releases on dispose).
   let a = createRoot(dispose => ({ dev: createGamepadJoin(pads), dispose }))
@@ -118,7 +118,7 @@ test("Joining", () => {
   d.dispose()
 })
 
-test("Ids, resolve() and listen()", () => {
+test("ids, resolve() and listen()", () => {
   let [pads, setPads] = createSignal<(GamepadState | null)[]>([pad(1, ["start"], { leftX: 0.9, leftY: 0 })])
   let dev = createGamepadSlot(pads, 0)
   if (dev.name !== "gamepad" || dev.leftStick.id !== "gamepad:leftStick" || dev.button("south").id !== "gamepad:button:south" || dev.axis("leftX").id !== "gamepad:axis:leftX") fail("gamepad ids")

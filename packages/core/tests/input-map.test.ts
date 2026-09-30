@@ -1,4 +1,4 @@
-// Checks for the input map (input-map.ts), the control-side axes contract
+// Tests for the input map (input-map.ts), the control-side axes contract
 // (input-axes.ts) and the keyboard device (input-keyboard.ts): source
 // combination and its clamps, the button-on-axis rule, kind mismatches
 // throwing, injection by name, the delta channel with its brackets, drive()
@@ -38,7 +38,7 @@ let throws = (what: string, f: () => void) => {
 let key = (code: string, k = code): KeyEvent => ({ key: k, code, repeat: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, currentTarget: 0, target: 0, stopPropagation() {} })
 
 // The chord vocabulary both devices share: canonical order and name,
-test("The chord vocabulary both devices share: canonical order and name, most specific wins, unknown names throw", () => {
+test("the chord vocabulary both devices share: canonical order and name, most specific wins, unknown names throw", () => {
   // most specific wins, unknown names throw.
   {
     let mods = parseModifiers("chord", "Ctrl+Shift", ["Ctrl", "Shift"])
@@ -63,7 +63,7 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   return { source, set: (v: number | Vec2 | boolean) => (value = v) }
 }
 
-test("Combination: sum, then clamp", () => {
+test("combination: sum, then clamp", () => {
   let input = createInputMap({ look: "vec2", zoom: "axis", jump: "button" })
   let a = valued("vec2", "a", [0.6, 0])
   let b = valued("vec2", "b", [0.6, 0.8])
@@ -104,7 +104,7 @@ test("Combination: sum, then clamp", () => {
   if (input.bindings("look").length !== 1 || input.bindings().length !== 5) fail("unbind drops one binding")
 })
 
-test("Injection by name, edges", () => {
+test("injection by name, edges", () => {
   let input = createInputMap({ move: "vec2", jump: "button" })
   input.set("move", [0, -1])
   flush()
@@ -123,7 +123,7 @@ test("Injection by name, edges", () => {
   throws("set a boolean on a vec2", () => input.set("move", true as never))
 })
 
-test("The delta channel, drive() into axes, processors", () => {
+test("the delta channel, drive() into axes, processors", () => {
   let input = createInputMap({ rotate: "vec2", zoom: "axis" })
   let log: string[] = []
   let axes = createAxes(
@@ -198,7 +198,7 @@ test("The delta channel, drive() into axes, processors", () => {
   throws("invert a button", () => invert({ kind: "button", label: "b" } as never))
 })
 
-test("The keyboard device", () => {
+test("the keyboard device", () => {
   let input = createInputMap({ move: "vec2", rise: "axis", jump: "button" })
   input.bind("move", keyboard.wasd, keyboard.arrows)
   input.bind("rise", keyboard.axis("KeyQ", "KeyE"))
@@ -231,7 +231,7 @@ test("The keyboard device", () => {
   throws("empty key", () => keyboard.key(""))
 })
 
-test("Modifier specs", () => {
+test("modifier specs", () => {
   let input = createInputMap({ cycle: "axis", save: "button", jump: "button" })
   input.bind("cycle", keyboard.axis("Shift+Tab", "Tab"))
   input.bind("save", keyboard.key("Ctrl+KeyS"))
@@ -270,7 +270,7 @@ test("Modifier specs", () => {
   throws("modifier without a key", () => keyboard.key("Shift+"))
 })
 
-test("Contexts: enable/disable by action name", () => {
+test("contexts: enable/disable by action name", () => {
   let input = createInputMap({ move: "vec2", jump: "button", zoom: "axis" })
   let stick = valued("vec2", "stick", [0.5, 0])
   let btn = valued("button", "btn", true)
@@ -329,7 +329,7 @@ test("Contexts: enable/disable by action name", () => {
   throws("disable unknown", () => input.disable("fly" as never))
 })
 
-test("Source ids, save() and load()", () => {
+test("source ids, save() and load()", () => {
   if (keyboard.key("Shift+Tab").id !== "keyboard:key:Shift+Tab") fail(`key id: ${keyboard.key("Shift+Tab").id}`)
   if (keyboard.wasd.id !== "keyboard:vec2:KeyW/KeyS/KeyA/KeyD") fail(`wasd id: ${keyboard.wasd.id}`)
   if (keyboard.axis("Minus", "Equal").id !== "keyboard:axis:Minus/Equal") fail("axis id")
@@ -522,7 +522,7 @@ test("rebind(): listening devices", async () => {
   if (input.bindings("look")[0]!.source.id !== "invert(gamepad:leftStick)") fail("load through a device's resolve")
 })
 
-test("Interactions: hold, tap, doubleTap, chord", async () => {
+test("interactions: hold, tap, doubleTap, chord", async () => {
   let input = createInputMap({ charge: "button", dash: "button", dodge: "button", both: "button" })
   let a = signalled("button", "a", false)
   let b = signalled("button", "b", false)
@@ -635,7 +635,7 @@ test("device(): the last device that moved anything bound", () => {
   input.handlers.onBlur()
 })
 
-test("A pulse (a button source with a delta channel) on an axis action drives it by delta only", () => {
+test("a pulse (a button source with a delta channel) on an axis action drives it by delta only", () => {
   let map = createInputMap({ zoom: "axis" })
   let pressed = true
   let sink: { delta(value: number, focal?: [number, number]): void } | null = null

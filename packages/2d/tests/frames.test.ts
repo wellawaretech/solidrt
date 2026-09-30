@@ -1,30 +1,19 @@
-// Check rig for the atlas frame math (frames.ts): grid slicing against a
+// Tests for the atlas frame math (frames.ts): grid slicing against a
 // directly-computed oracle across random sheet shapes, spacing, and
 // margins, plus namedFrames and the validation throws. Pure-module input
 // only, so it runs headless on flux: `srt test packages/2d`. The random
-// inputs come from a fixed seed, printed by a failure; `srt test <this
-// file> -- <seed>` tries another.
+// inputs come from Math.random, which `srt test` seeds: the same on every
+// run, and `--seed <n>` tries others.
 
 import { test } from "flux:test"
-import { argv } from "flux:process"
 import { grid, namedFrames, writeFrame, FULL_FRAME } from "../src/frames.ts"
 
-// The seed of the random inputs below. A failure prints it;
-// `srt test <this file> -- <seed>` runs with another.
-const SEED = 20260932
-let seed = Number(argv[0] ?? SEED)
-
-let s = seed >>> 0
-function rand(): number {
-  s = (Math.imul(s, 1664525) + 1013904223) >>> 0
-  return s / 4294967296
-}
 function int(lo: number, hi: number): number {
-  return lo + Math.floor(rand() * (hi - lo + 1))
+  return lo + Math.floor(Math.random() * (hi - lo + 1))
 }
 
 function fail(msg: string): void {
-  throw new Error(`${msg} (seed ${seed})`)
+  throw new Error(msg)
 }
 
 function close(a: number, b: number): boolean {
@@ -110,7 +99,6 @@ test("grid: every frame lands where the oracle places the cell, over random shee
   // Randomized sweep: every frame's pixel rect, reconstructed from its UVs,
   // must land exactly where the oracle places the cell.
   const SWEEPS = 2000
-  let checked = 0
   for (let i = 0; i < SWEEPS; i++) {
     let cols = int(1, 12)
     let rows = int(1, 12)
@@ -122,10 +110,7 @@ test("grid: every frame lands where the oracle places the cell, over random shee
     let width = marginX * 2 + cols * cellW + (cols - 1) * spacing
     let height = marginY * 2 + rows * cellH + (rows - 1) * spacing
     let frames = grid({ width, height }, cols, rows, { cellW, cellH, spacing, marginX, marginY })
-    if (frames.length !== cols * rows) {
-      fail(`grid(${cols}, ${rows}) returned ${frames.length} frames`)
-      continue
-    }
+    if (frames.length !== cols * rows) fail(`grid(${cols}, ${rows}) returned ${frames.length} frames`)
     let col = int(0, cols - 1)
     let row = int(0, rows - 1)
     let f = frames[row * cols + col]!
@@ -144,7 +129,6 @@ test("grid: every frame lands where the oracle places the cell, over random shee
           `cell (${col}, ${row}): UV rect maps to (${f.u0 * width}, ${f.v0 * height}), expected (${x}, ${y})`,
       )
     }
-    checked++
   }
 })
 

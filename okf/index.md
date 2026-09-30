@@ -671,6 +671,11 @@ Shaped, not started.
   per-element writes with no cascade, so an app dropping to a raw <text>
   repeats the color and a component from elsewhere cannot pick up the app's
   text style.
+- **[A headless render is not reproducible when the app draws random numbers](backlog/seeded-random-headless-render.md)** [2026-09-30]
+  srt render and playback step time deterministically but leave Math.random on
+  the engine's clock-seeded generator, so an app with particles, a shake or a
+  shuffled list renders other frames on every run; seed the context with
+  flux's seed_random, fixed by default, with a --seed option.
 - **[SegmentedControl warns STRICT_READ_UNTRACKED per option](backlog/segmented-control-strict-read.md)** [2026-09-23]
   "Mounting a SegmentedControl logs Solid's STRICT_READ_UNTRACKED warning once
   per option (the player's settings screen shows three); the option row's For

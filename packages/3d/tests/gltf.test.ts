@@ -1,4 +1,4 @@
-// Check rig for the glTF parser (src/gltf.ts) and the .srtm container
+// Tests for the glTF parser (src/gltf.ts) and the .srtm container
 // (src/model-file.ts): a glb built in memory from the box generator, split
 // back into planar accessors the way exporters write them, under a node
 // tree - a translated mesh under a translated parent (hierarchy retained,
@@ -22,7 +22,7 @@ function fail(msg: string): void {
   throw new Error(msg)
 }
 let near = (a: number, b: number, eps = 1e-5): boolean => Math.abs(a - b) <= eps
-// The rigs here build base all-float layouts, so the vertex bytes read
+// The tests here build base all-float layouts, so the vertex bytes read
 // back as floats; the view type is not the geometry contract.
 let floats = (g: Geometry): Float32Array => new Float32Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength / Float32Array.BYTES_PER_ELEMENT)
 let nearAll = (a: ArrayLike<number>, b: number[]): boolean => a.length === b.length && b.every((v, i) => near(a[i]!, v))
@@ -154,10 +154,7 @@ let morphWeightsView = pushView(asBytes(morphWeights))
 // Vertex i of channel `name` as floats, through the accessor.
 let read = (g: Geometry, name: string, i: number): number[] => {
   let a = geometryAttribute(g, name)
-  if (a === null) {
-    fail("read: no " + name + " channel")
-    return []
-  }
+  if (a === null) throw new Error("read: no " + name + " channel")
   let out: number[] = []
   for (let k = 0; k < a.components; k++) out.push(a.get(i, k))
   return out
@@ -402,10 +399,7 @@ let sample: number[] = [0, 0, 0, 0]
 let expectSample = (label: string, channel: ModelData["clips"][number]["channels"][number], t: number, expected: number[]): void => {
   sampleChannel(channel, t, sample)
   for (let e = 0; e < expected.length; e++) {
-    if (!near(sample[e]!, expected[e]!)) {
-      fail(`${label} at ${t}: [${sample.slice(0, expected.length).join()}], expected [${expected.join()}]`)
-      return
-    }
+    if (!near(sample[e]!, expected[e]!)) fail(`${label} at ${t}: [${sample.slice(0, expected.length).join()}], expected [${expected.join()}]`)
   }
 }
 
@@ -414,7 +408,7 @@ let expectSample = (label: string, channel: ModelData["clips"][number]["channels
 // its own there) keeps their bytes.
 let sameModel = (a: ModelData, b: ModelData, label: string, images: "named" | "bytes" = "named"): void => {
   if (JSON.stringify(a.nodes) !== JSON.stringify(b.nodes)) fail(`${label}: nodes`)
-  if (a.parts.length !== b.parts.length) return fail(`${label}: part count`)
+  if (a.parts.length !== b.parts.length) fail(`${label}: part count`)
   for (let i = 0; i < a.parts.length; i++) {
     let p = a.parts[i]!, q = b.parts[i]!
     if (p.name !== q.name || p.material !== q.material || p.node !== q.node || p.skin !== q.skin) fail(`${label}: part ${i} header`)
@@ -467,9 +461,16 @@ let bin = new Uint8Array(binLength)
   }
 }
 
-let model = parseGltf(file)
-for (let part of model.parts) validateGeometry(part.geometry)
+// The glb above, parsed. Each test parses its own, so a parser throw fails
+// the test that asked, by name, and not the file while it loads.
+function parsed(): ModelData {
+  let model = parseGltf(file)
+  for (let part of model.parts) validateGeometry(part.geometry)
+  return model
+}
+
 test("parse: parts, materials, the embedded image", () => {
+  let model = parsed()
   if (model.parts.length !== 4) fail(`parts: ${model.parts.length}, expected 4`)
   if (model.parts.map((p) => p.name).join() !== "shifted,mirrored,flat,skinny") fail(`part names: ${model.parts.map((p) => p.name).join()}`)
   if (model.materials.length !== 4) fail(`materials: ${model.materials.length}, expected 4`)
@@ -479,6 +480,7 @@ test("parse: parts, materials, the embedded image", () => {
 })
 
 test("parse: the node table", () => {
+  let model = parsed()
   // The node table: pre-order (rig materialized by its descendant part),
   // "flat"'s matrix decomposed to TRS, and the meshless "empty" and
   // "tail" retained ONLY as a skin's joints / an animation target
@@ -490,6 +492,7 @@ test("parse: the node table", () => {
 })
 
 test("parse: the skin", () => {
+  let model = parsed()
   // The skin: joints remapped to the compact table, binds through, the
   // skinned layout with renormalized weights, node transform ignored.
   if (model.skins.length !== 1) fail(`skins: ${model.skins.length}, expected 1`)
@@ -522,6 +525,7 @@ test("parse: the skin", () => {
   }
 })
 test("parse: node transforms, the matrix form decomposed", () => {
+  let model = parsed()
   let rig = model.nodes[0]!
   let shiftedNode = model.nodes[1]!
   let mirroredNode = model.nodes[2]!
@@ -534,15 +538,13 @@ test("parse: node transforms, the matrix form decomposed", () => {
 })
 
 test("parse: vertices stay node-local; a mirroring node flips the winding in the index order", () => {
+  let model = parsed()
   // Vertices stay node-local: the shifted part's geometry is the cube's,
   // untranslated - the node carries the placement.
   let shifted = model.parts[0]!.geometry
   if (floats(shifted).length !== floats(cube).length) fail("shifted: vertex count changed")
   for (let i = 0; i < vertexCount * BASE_FLOATS; i++) {
-    if (!near(floats(shifted)[i]!, floats(cube)[i]!)) {
-      fail(`shifted: vertex float ${i} = ${floats(shifted)[i]}, expected ${floats(cube)[i]} (local, unbaked)`)
-      break
-    }
+    if (!near(floats(shifted)[i]!, floats(cube)[i]!)) fail(`shifted: vertex float ${i} = ${floats(shifted)[i]}, expected ${floats(cube)[i]} (local, unbaked)`)
   }
   if (shifted.indices.join() !== cube.indices.join()) fail("shifted: indices changed")
 
@@ -555,10 +557,7 @@ test("parse: vertices stay node-local; a mirroring node flips the winding in the
   if (windingAgrees(mirrored)) fail("mirrored: winding was not flipped under the mirroring transform")
   for (let i = 0; i < vertexCount; i++) {
     let at = i * BASE_FLOATS
-    if (!near(floats(mirrored)[at]!, floats(cube)[at]!) || !near(floats(mirrored)[at + 3]!, floats(cube)[at + 3]!)) {
-      fail(`mirrored: vertex ${i} x/nx not local (baked?)`)
-      break
-    }
+    if (!near(floats(mirrored)[at]!, floats(cube)[at]!) || !near(floats(mirrored)[at + 3]!, floats(cube)[at + 3]!)) fail(`mirrored: vertex ${i} x/nx not local (baked?)`)
   }
   let flippedIndices: number[] = []
   for (let t = 0; t < cube.indices.length; t += 3) flippedIndices.push(cube.indices[t]!, cube.indices[t + 2]!, cube.indices[t + 1]!)
@@ -566,6 +565,7 @@ test("parse: vertices stay node-local; a mirroring node flips the winding in the
 })
 
 test("parse: a mesh without normals gets flat normals, the node's rotation not baked in", () => {
+  let model = parsed()
   let flat = model.parts[2]!.geometry
   let triangles = cube.indices.length / 3
   if (floats(flat).length !== triangles * 3 * BASE_FLOATS) fail(`flat: ${floats(flat).length / BASE_FLOATS} vertices, expected ${triangles * 3} (un-indexed)`)
@@ -578,7 +578,6 @@ test("parse: a mesh without normals gets flat normals, the node's rotation not b
       let b = a + k * BASE_FLOATS
       if (!near(floats(flat)[a + 3]!, floats(flat)[b + 3]!) || !near(floats(flat)[a + 4]!, floats(flat)[b + 4]!) || !near(floats(flat)[a + 5]!, floats(flat)[b + 5]!)) {
         fail(`flat: triangle ${t} corners disagree on the normal`)
-        break
       }
     }
   }
@@ -592,6 +591,7 @@ test("parse: a mesh without normals gets flat normals, the node's rotation not b
 })
 
 test("parse: materials", () => {
+  let model = parsed()
   let red = model.materials[0]!
   let glass = model.materials[1]!
   // Factors are linear in the file and sRGB on the material: 0 and 1 survive
@@ -614,6 +614,7 @@ test("parse: materials", () => {
 })
 
 test("parse: bounds, the skinned part placed by its joints at rest", () => {
+  let model = parsed()
   // The unskinned parts span x -0.5..2.5 (the cube under "shifted" at
   // x 2, "mirrored", "flat"); the skinned part is placed by its joints at
   // rest, not by its node or its bind-pose box: joint 0 ("empty", world
@@ -625,6 +626,7 @@ test("parse: bounds, the skinned part placed by its joints at rest", () => {
 })
 
 test("clips and sampling: linear, slerp, step, cubic", () => {
+  let model = parsed()
   if (model.clips.map((c) => c.name).join() !== "move,bounce") fail(`clips: ${model.clips.map((c) => c.name).join()}`)
   let move = model.clips[0]!
   let bounce = model.clips[1]!
@@ -659,6 +661,7 @@ test("clips and sampling: linear, slerp, step, cubic", () => {
 })
 
 test("the container round trip", () => {
+  let model = parsed()
   let encoded = encodeModel(model)
   sameModel(model, decodeModel(encoded), "round trip")
   // A ragged offset must not break the views (decodeModel copies once).
@@ -676,6 +679,7 @@ test("the container round trip", () => {
 })
 
 test("a .gltf with external files, and without a resolver", () => {
+  let model = parsed()
   if (gltfExternalUris(externalBytes).join() !== "scene%20data.bin,textures/base.png") fail(`gltfExternalUris: ${gltfExternalUris(externalBytes).join()}`)
   let resolved = parseGltf(externalBytes, (uri) => {
     if (uri === "scene%20data.bin") return bin
@@ -776,6 +780,7 @@ test("modelImageUses: how an image is sampled", () => {
 })
 
 test("a .gltf with a data: uri buffer", () => {
+  let model = parsed()
   let dataUri = { ...external, buffers: [{ byteLength: binLength, uri: "data:application/octet-stream;base64," + btoa(String.fromCharCode(...bin)) }], images: [{ bufferView: pngView, mimeType: "image/png" }] }
   sameModel(model, parseGltf(new TextEncoder().encode(JSON.stringify(dataUri))), ".gltf + data: uri")
 })
@@ -902,10 +907,7 @@ test("morph targets", () => {
     for (let slot = 0; slot < corners; slot++) {
       let source = cube.indices[slot]!
       let count = flatFace.morphs.texels[slot * MORPH_TEXEL_FLOATS + 1]
-      if (count !== (source === 0 || source === 5 ? 1 : 0)) {
-        fail(`flatface corner ${slot} (source ${source}): ${count} entries`)
-        break
-      }
+      if (count !== (source === 0 || source === 5 ? 1 : 0)) fail(`flatface corner ${slot} (source ${source}): ${count} entries`)
     }
   }
   // The weights clip: one channel of two elements per key, sampled by

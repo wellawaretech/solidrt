@@ -30,6 +30,7 @@ pub use plugins::seekable::{SeekableOpener, SeekableSource};
 pub use standards_plugins::body::{attach_body, JsBytes, JsonValue};
 pub use standards_plugins::fetch::{request_body_from_value, JsResponseData};
 pub use standards_plugins::headers::header_pairs_from_init;
+pub use standards_plugins::random::seed_random;
 pub use standards_plugins::time::{
   advance_virtual_time, advance_virtual_time_to_now, install_virtual_time, next_virtual_deadline,
   set_virtual_now_source, timeline_now_ms, uninstall_virtual_time, virtual_now, Timeline,

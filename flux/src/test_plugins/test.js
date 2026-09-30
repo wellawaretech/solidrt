@@ -1,5 +1,5 @@
 // The JavaScript half of flux:test: the registry behind `test`, the `expect`
-// matchers, the stepped clock and `run`. Evaluated once per context by the
+// matchers, the stepped clock, the seed of `Math.random` and `run`. Evaluated once per context by the
 // module definition (mod.rs), which calls this function with the natives it
 // needs the engine for and exports what it returns. Plain JS on purpose:
 // the flux build has no bundling step (okf/plans/test-harness.md, D21).
@@ -19,6 +19,13 @@
   // before it gives up: timers that keep re-arming with no delay would
   // otherwise hold time still forever.
   const CLOCK_MAX_TURNS_PER_INSTANT = 1000
+  // The seed `Math.random` runs on when `run` is given none. Any fixed
+  // number does: what matters is that it is the same on every run.
+  const DEFAULT_SEED = 0
+
+  // Seeded from here on, so that what a test file draws while it loads is
+  // reproducible too; each test then restarts the sequence (see runOne).
+  native.seedRandom(DEFAULT_SEED)
 
   let tests = []
   let running = false
@@ -371,7 +378,10 @@
     return { message: `Thrown: ${format(thrown)}`, stack: "" }
   }
 
-  async function runOne(entry, timeoutMs) {
+  async function runOne(entry, timeoutMs, seed) {
+    // Every test draws the seed's sequence from its start, so what it draws
+    // does not depend on the tests before it, or on a filter.
+    native.seedRandom(seed)
     // A test that takes the clock runs stepped: its timers are virtual from
     // before its body runs, since a timer registered on the wall clock
     // stays there.
@@ -402,13 +412,13 @@
     return error ? { name: entry.name, ok: false, durationMs, error } : { name: entry.name, ok: true, durationMs }
   }
 
-  async function* iterate(filter, timeoutMs) {
+  async function* iterate(filter, timeoutMs, seed) {
     if (running) throw new Error("run: a run is already in progress")
     running = true
     try {
       for (let entry of [...tests]) {
         if (filter !== undefined && !entry.name.includes(filter)) continue
-        yield await runOne(entry, timeoutMs)
+        yield await runOne(entry, timeoutMs, seed)
       }
     } finally {
       running = false
@@ -417,12 +427,13 @@
 
   function run(options = {}) {
     if (options === null || typeof options !== "object") throw new TypeError("run: the options must be an object")
-    let { filter, timeoutMs = DEFAULT_TIMEOUT_MS } = options
+    let { filter, timeoutMs = DEFAULT_TIMEOUT_MS, seed = DEFAULT_SEED } = options
     if (filter !== undefined && typeof filter !== "string") throw new TypeError("run: filter must be a string")
     if (typeof timeoutMs !== "number" || !(timeoutMs > 0) || !Number.isFinite(timeoutMs)) {
       throw new TypeError("run: timeoutMs must be a positive number")
     }
-    return iterate(filter, timeoutMs)
+    if (!Number.isSafeInteger(seed) || seed < 0) throw new TypeError("run: seed must be a non-negative integer")
+    return iterate(filter, timeoutMs, seed)
   }
 
   return { test, expect, run }

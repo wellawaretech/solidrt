@@ -82,7 +82,7 @@ use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Prom
 use tokio::sync::{mpsc, oneshot};
 
 use crate::engine::{EngineConfig, FluxEngineBuilder, ModuleCode};
-use crate::logger::Logger;
+use crate::logger::{CtxLogger, Logger};
 use crate::plugins::marshal::{mark_observed, with_pending, OptArg};
 use crate::plugins::value::{self, Neutral};
 use crate::standards_plugins::abort::AbortSignal;
@@ -535,7 +535,10 @@ impl Isolate {
     let (parent_link, child_link) = Link::pair();
     let kill = Arc::new(Kill::default());
     ctx.userdata::<Isolates>().expect("isolates registry").0.lock().expect("isolates lock poisoned").push(kill.clone());
-    spawn_thread(config, self.id.clone(), code, self.args.clone(), self.memory_limit, child_link, kill.clone())?;
+    // A seeded parent (a test) seeds its children, so what they draw from
+    // Math.random is as reproducible as what it draws.
+    let random_seed = crate::standards_plugins::random::child_seed(ctx);
+    spawn_thread(config, self.id.clone(), code, self.args.clone(), self.memory_limit, random_seed, child_link, kill.clone())?;
 
     let instance = Arc::new(Instance {
       id: self.id.clone(),
@@ -698,12 +701,14 @@ fn proxy_get<'js>(ctx: Ctx<'js>, handle: Class<'js, Isolate>, prop: JsValue<'js>
 /// switch fires. The child inherits the parent's host config; its uncaught
 /// errors are forwarded on the link; once its module has evaluated it serves
 /// calls from the link against the module namespace.
+#[allow(clippy::too_many_arguments)]
 fn spawn_thread(
   mut config: EngineConfig,
   id: String,
   code: ModuleCode,
   args: Vec<String>,
   memory_limit: Option<usize>,
+  random_seed: Option<u64>,
   link: Link,
   kill: Arc<Kill>,
 ) -> Result<(), String> {
@@ -740,6 +745,13 @@ fn spawn_thread(
           .userdata(crate::ProcessArgs(args));
         if let Some(limit) = memory_limit {
           builder = builder.memory_limit(limit);
+        }
+        if let Some(seed) = random_seed {
+          builder = builder.plugin(move |ctx| {
+            if let Err(e) = crate::seed_random(&ctx, seed) {
+              ctx.logger().error(&format!("isolate: failed to seed Math.random: {e}"));
+            }
+          });
         }
         let engine = builder.build();
         tokio::select! {

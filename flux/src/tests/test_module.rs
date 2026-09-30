@@ -436,3 +436,63 @@ fn advance_rejects_bad_input_and_timers_that_hold_time_still() {
     .join("\n")
   );
 }
+
+// Math.random is seeded for a test file: from the import on, and restarted
+// for every test, so a test draws the same values whatever ran before it.
+#[test]
+fn every_test_draws_the_seeds_sequence_from_its_start() {
+  let report = report_of(&format!(
+    r#"
+    import {{ test, run }} from "flux:test"
+    {COLLECT}
+    let drawn = {{}}
+    let atLoad = Math.random()
+    test("first", () => {{ drawn.first = [Math.random(), Math.random()] }})
+    test("second", () => {{ drawn.second = [Math.random(), Math.random()] }})
+    await collect()
+    let full = drawn.second
+    await collect({{ filter: "second" }})
+    await collect({{ seed: 7, filter: "second" }})
+    let other = drawn.second
+    console.log(JSON.stringify([
+      drawn.first[0] === atLoad,
+      drawn.first.join() === full.join(),
+      drawn.first[0] !== drawn.first[1],
+      other.join() !== full.join(),
+    ]))
+    "#
+  ));
+  assert_eq!(report, "[true,true,true,true]");
+}
+
+// The default seed and an explicit one name the generator's pinned
+// sequences (tests/random.rs): what a test draws is the same on every run.
+#[test]
+fn the_seed_option_picks_the_sequence() {
+  let report = report_of(&format!(
+    r#"
+    import {{ test, run }} from "flux:test"
+    {COLLECT}
+    let drawn = []
+    test("draws", () => {{ drawn.push(Math.random()) }})
+    await collect()
+    await collect({{ seed: 12345 }})
+    await collect({{ seed: 0 }})
+    console.log(drawn.join())
+    "#
+  ));
+  assert_eq!(report, "0.4833481342839381,0.28097516969868397,0.4833481342839381");
+}
+
+#[test]
+fn run_rejects_a_seed_that_is_no_non_negative_integer() {
+  let report = report_of(
+    r#"
+    import { run } from "flux:test"
+    let thrown = (fn) => { try { fn() } catch (e) { return e.message } return "no throw" }
+    console.log([-1, 1.5, "7", NaN, 2 ** 53].map((seed) => thrown(() => run({ seed }))).join("|"))
+    "#,
+  );
+  let expected = "run: seed must be a non-negative integer";
+  assert_eq!(report, [expected; 5].join("|"));
+}

@@ -112,6 +112,7 @@ bundle options:
 
 test options:
       --filter <text>    Run only the tests whose name contains this text
+      --seed <n>         Run the tests on another Math.random sequence (default: 0)
       -- <args...>       Everything after -- reaches the test files (flux:process argv)
 
 console options:

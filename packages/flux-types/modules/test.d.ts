@@ -9,6 +9,13 @@
  * setup is a plain function a test calls. A test that takes the clock
  * steps time itself, so timer logic is tested without waiting.
  *
+ * `Math.random()` is seeded once this module is imported, and every test
+ * draws the seed's sequence from its start: random inputs, and code under
+ * test that calls `Math.random()`, are the same on every run and do not
+ * depend on the tests that ran before. It is the engine's generator in
+ * kind and resolution, only its start is fixed. An isolate the test spawns
+ * is seeded too, with a seed derived from the test's.
+ *
  * Present on the `flux` binary only (capability `"test"`), not in a
  * shipping runtime.
  *
@@ -26,7 +33,10 @@ declare module "flux:test" {
    * Tests run one after another, in the order they were registered.
    *
    * A test runs on real time, unless its function takes the clock: then
-   * it runs stepped (see {@link Clock}).
+   * it runs stepped (see {@link Clock}). Taking the clock is declaring the
+   * parameter, `clock => ...`. A parameter with a default value and a rest
+   * parameter do not count: such a test runs on real time and is handed no
+   * clock.
    *
    * Throws when the name is empty or already taken in this file, and when
    * called while tests run: register at the top level of the file.
@@ -156,10 +166,21 @@ declare module "flux:test" {
     /** Run only the tests whose name contains this text. */
     filter?: string
     /**
+     * The seed `Math.random()` starts from in every test, a non-negative
+     * integer (default 0). A seed names one sequence, the same on every
+     * run and platform; another seed is how the same tests try other
+     * random inputs.
+     */
+    seed?: number
+    /**
      * How long one test may take, in milliseconds of real time (default
      * 5000), stepped or not. A test that takes longer fails as timed out
-     * and the run moves on; what the test started is not cancelled. A
-     * safety cap against a test that never finishes, not a wait.
+     * and the run moves on. What the test started is not cancelled: it
+     * keeps running beside the tests after it and can disturb them (a
+     * timer it sets from then on belongs to whichever test runs at that
+     * moment), so fix a timed-out test before trusting the results that
+     * follow it in the same file. A safety cap against a test that never
+     * finishes, not a wait.
      */
     timeoutMs?: number
   }

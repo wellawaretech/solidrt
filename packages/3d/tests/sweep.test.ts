@@ -1,4 +1,4 @@
-// Check rig for the profile kit's solids (src/sweep.ts, src/profile.ts):
+// Tests for the profile kit's solids (src/sweep.ts, src/profile.ts):
 // extrude / lathe / sweep / tube / polygon structure - index ranges, unit
 // normals, cap orientation and placement, bevel clamping, lathe angle
 // rejection, the tube -> sweep pass-through - and the generator layout
@@ -17,7 +17,7 @@ function fail(msg: string): void {
   throw new Error(msg)
 }
 let near = (a: number, b: number, eps = 1e-5): boolean => Math.abs(a - b) <= eps
-// The rigs here build base all-float layouts, so the vertex bytes read
+// The tests here build base all-float layouts, so the vertex bytes read
 // back as floats; the view type is not the geometry contract.
 let floats = (g: Geometry): Float32Array => new Float32Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength / Float32Array.BYTES_PER_ELEMENT)
 let throws = (label: string, fn: () => unknown): void => {
@@ -37,30 +37,20 @@ let structure = (name: string, g: Geometry): void => {
     validateGeometry(g)
   } catch (e) {
     fail(`${name}: ${String(e)}`)
-    return
   }
   let count = g.vertices.byteLength / layoutStride(g.layout)
   if (g.indices.length % 3 !== 0) fail(`${name}: index count ${g.indices.length} not triangles`)
   for (let i = 0; i < g.indices.length; i++) {
-    if (g.indices[i]! >= count) {
-      fail(`${name}: index ${g.indices[i]} out of range (${count} vertices)`)
-      break
-    }
+    if (g.indices[i]! >= count) fail(`${name}: index ${g.indices[i]} out of range (${count} vertices)`)
   }
   let nrm = geometryAttribute(g, "aNormal")!
   let uv = geometryAttribute(g, "aUV")!
   for (let i = 0; i < count; i++) {
     let len = Math.hypot(nrm.get(i, 0), nrm.get(i, 1), nrm.get(i, 2))
-    if (!near(len, 1, 1e-4)) {
-      fail(`${name}: vertex ${i} normal length ${len.toFixed(5)}`)
-      break
-    }
+    if (!near(len, 1, 1e-4)) fail(`${name}: vertex ${i} normal length ${len.toFixed(5)}`)
     let u = uv.get(i, 0)
     let v = uv.get(i, 1)
-    if (u < -1e-6 || u > 1 + 1e-6 || v < -1e-6 || v > 1 + 1e-6) {
-      fail(`${name}: vertex ${i} uv (${u}, ${v}) outside 0..1`)
-      break
-    }
+    if (u < -1e-6 || u > 1 + 1e-6 || v < -1e-6 || v > 1 + 1e-6) fail(`${name}: vertex ${i} uv (${u}, ${v}) outside 0..1`)
   }
 }
 
@@ -124,10 +114,7 @@ test("polygon: one flat face, facing +z", () => {
   let stride = BASE_FLOATS
   let count = floats(g).length / stride
   for (let i = 0; i < count; i++) {
-    if (!near(floats(g)[i * stride + 5]!, 1)) {
-      fail("polygon normal +z")
-      break
-    }
+    if (!near(floats(g)[i * stride + 5]!, 1)) fail("polygon normal +z")
   }
   if (g.indices.length !== (count - 2) * 3) fail("polygon triangulation count: " + g.indices.length)
   if (polygon(square, { label: "sq" }).label !== "sq") fail("polygon label option")
@@ -210,10 +197,7 @@ test("the layout option: one-pass wide emission equals generate-then-withColors"
     if (layoutKey(wide.layout) !== layoutKey("colored")) fail(name + ": wide layout")
     if (floats(via).length !== floats(wide).length) fail(name + ": wide length")
     for (let i = 0; i < floats(via).length; i++) {
-      if (floats(via)[i] !== floats(wide)[i]) {
-        fail(name + ": wide bytes differ at " + i)
-        break
-      }
+      if (floats(via)[i] !== floats(wide)[i]) fail(name + ": wide bytes differ at " + i)
     }
     if (via.indices.length !== wide.indices.length) fail(name + ": wide indices")
   }

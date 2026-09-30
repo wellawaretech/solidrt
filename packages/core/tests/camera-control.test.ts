@@ -1,4 +1,4 @@
-// Checks for the shared camera-control math (src/camera-control.ts): the
+// Tests for the shared camera-control math (src/camera-control.ts): the
 // ease, the framing zones (dead zone, the soft band, hard limits, per-axis
 // damping, the settle), the lookahead filter, the lanes (offset plus summed
 // shakes, decay to zero, never in a pose) and the validation throws.
@@ -17,7 +17,7 @@ const DT = 1 / 60
 // The settle threshold the checks frame with, a viewport fraction.
 const EPS = 0.001
 
-test("The ease: frame-rate independent, closes the gap", () => {
+test("the ease: frame-rate independent, closes the gap", () => {
   let two = 1 - (1 - easeStep(GLIDE_EASE, DT)) * (1 - easeStep(GLIDE_EASE, DT))
   if (!near(easeStep(GLIDE_EASE, 2 * DT), two)) fail("two half-steps compose to one full step")
   if (!near(easeStep(FOLLOW_EASE, 1), 1 - Math.exp(-FOLLOW_EASE))) fail("easeStep is 1 - e^(-rate dt)")
@@ -27,7 +27,7 @@ test("The ease: frame-rate independent, closes the gap", () => {
   if (followRate({ damping: 0 }, "x") !== Infinity) fail("damping 0 is at once")
 })
 
-test("Framing: the dead zone ignores, the band eases, the limits clamp", () => {
+test("framing: the dead zone ignores, the band eases, the limits clamp", () => {
   // No zones: the point is chased the whole way, eased.
   let f = frame([0.3, -0.2], undefined, DT, EPS)
   let k = easeStep(FOLLOW_EASE, DT)
@@ -60,7 +60,7 @@ test("Framing: the dead zone ignores, the band eases, the limits clamp", () => {
   if (!near(inverted.x, 0.1) || !inverted.settled) fail(`hard limits inside the dead zone widen to it and clamp whole, got ${JSON.stringify(inverted)}`)
 })
 
-test("Framing over frames: a fast point never passes the hard limit", () => {
+test("framing over frames: a fast point never passes the hard limit", () => {
   let opts = { deadZone: { width: 0.2, height: 0.2 }, hardLimits: { width: 0.6, height: 0.6 }, damping: 4 }
   // The point runs right at 2 viewport widths per second; the camera
   // follows lazily, but the offset stays within the limit every frame.
@@ -99,7 +99,7 @@ test("Framing over frames: a fast point never passes the hard limit", () => {
   if (settledAt < 0) fail("a resting point lets the framing settle")
 })
 
-test("Lookahead: velocity times time, smoothed", () => {
+test("lookahead: velocity times time, smoothed", () => {
   let look = createLookahead()
   let out: number[] = [0, 0]
   // A point moving at 60 units/s for a few frames predicts 0.5 s ahead.
@@ -124,7 +124,7 @@ test("Lookahead: velocity times time, smoothed", () => {
   if (!near(out3[2]!, 2 + 60, 1e-6)) fail(`3d lookahead, got ${out3[2]}`)
 })
 
-test("Lanes: offset plus shakes, decay, never in a pose", () => {
+test("lanes: offset plus shakes, decay, never in a pose", () => {
   let lanes = createLanes()
   let t = lanes.total([0.1, -0.2])
   if (t[0] !== 0.1 || t[1] !== -0.2 || lanes.active()) fail("the offset alone is the total, no shake active")
@@ -156,7 +156,7 @@ test("Lanes: offset plus shakes, decay, never in a pose", () => {
   if (lanes.active()) fail("clear stops every shake")
 })
 
-test("Validation", () => {
+test("validation", () => {
   let throws = (what: string, f: () => void) => {
     let threw = false
     try {
@@ -180,7 +180,7 @@ test("Validation", () => {
   checkFollowOptions("check", { deadZone: { width: 0.2, height: 0.2 }, hardLimits: { width: 0.8, height: 0.8 }, damping: { x: 1, y: 2 }, lookahead: { time: 0.2, smoothing: 0.1 } })
 })
 
-test("The activity gate: the plain flag survives unflushed writes", () => {
+test("the activity gate: the plain flag survives unflushed writes", () => {
   let busy = false
   let rates = false
   let gate = createActivity(() => busy, () => rates)
@@ -200,7 +200,7 @@ test("The activity gate: the plain flag survives unflushed writes", () => {
   if (!gate.active()) fail("a busy control is active")
 })
 
-test("Shots: live by priority, pushes at rest, blends smoothly, lands exactly", () => {
+test("shots: live by priority, pushes at rest, blends smoothly, lands exactly", () => {
   type Cam = { v: number }
   let pushed: number[] = []
   let shots = createShotBlend<Cam>(c => pushed.push(c.v), (a, b, t) => ({ v: a.v + (b.v - a.v) * t }), { v: 0 }, { blend: 0.5 })

@@ -13,7 +13,7 @@ that have no window, and up to SolidRT apps an author wants to test.
 
 ## Where this stands (2026-09-30)
 
-Stages 1 and 2 are built and verified, uncommitted.
+Stages 1 and 2 are built and verified.
 
 - Stage 1: `flux:test` (`test`, `expect`, `run`) behind the `test`
   feature on the `flux` binary, `srt test`, and the ten former bun test
@@ -25,11 +25,15 @@ Stages 1 and 2 are built and verified, uncommitted.
 
 `bunx srt test` at the repo root: 306 tests in 29 files, about 11 s, most
 of it the real waits of the gesture tests that still ride
-`performance.now()`. `cargo test -p flux --lib --features test`: 37
+`performance.now()`. `cargo test -p flux --lib --features test`: 46
 tests. `srt check` passes for the packages with their test files in.
 
-To pick up: stage 3 (CI), a small decision (build flux in the job or
-take an artifact), then stage 4, the app layer, which waits on
+To pick up: stage 3 (CI), whose shape is proposed and waits for the
+user's word: `srt test` as a step of the `test-flux` job on all four
+platforms, on a debug `flux` binary built in the job. With it, one open
+call from [Owed after stage 2](#owed-after-stage-2): whether an uncaught
+error failing its own test comes before stage 3 or with stage 4. Then
+stage 4, the app layer, which waits on
 [event-timestamp](../backlog/event-timestamp.md) and now also carries
 `settle()`.
 
@@ -284,11 +288,42 @@ before that call is already on the real path, which is every
 `createSession(); await clock.advance(...)`); an explicit first call,
 `clock.install()` (forgettable, and a wrong order fails silently).
 
-**D28. Randomness in a test is seeded with a fixed constant** (2026-09-30).
-A seeded test names its seed as a constant and prints it on failure;
-`srt test <file> -- <seed>` overrides it, everything after `--` reaching
-the test as `flux:process` argv, as it does under `srt run`. A random
-seed per run is never the default.
+**D28. `Math.random` is seeded under test** (2026-09-30, replacing the
+first form of the same day, in which each test file named a seed of its
+own and carried a generator). Importing `flux:test` seeds `Math.random`,
+and every test draws the seed's sequence from its start, so random inputs
+do not depend on the tests before or on a filter. It is the standard
+function and no test API: a test writes `Math.random()`, and code under
+test that calls it (the camera shake does) is reproducible with it. The
+seed is a fixed constant of the harness; `srt test --seed <n>` runs the
+same tests on another sequence and says so in its last line. A random
+seed per run is never the default. Everything after `--` still reaches
+the test as `flux:process` argv, as it does under `srt run`. Rejected: an
+imported `random` (a second source of randomness that the code under
+test never sees); a generator and a seed constant per test file (what
+the rigs had: seven copies of the arithmetic).
+
+**D29. Seeding is a facility of flux, and a seeded context keeps the
+engine's generator in kind** (2026-09-30). `seed_random(ctx, seed)`
+(`flux/src/standards_plugins/random.rs`) sits beside
+`install_virtual_time`: a host opts a context in, and `flux:test` is one
+host. QuickJS seeds its own `Math.random` from the clock and has no call
+to seed it, so a seeded context gets flux's function: the same
+xorshift64* and 52 bits a value, the state started from the seed through
+splitmix64 (so seeds 1 and 2 are unrelated). A context nobody seeded
+keeps the builtin, which is every shipping app: the seeded function is a
+native call and the builtin is not. An isolate spawned by a seeded
+context is seeded with a seed derived from its parent's seed and its
+place among the children, without drawing from the parent's sequence.
+The sequence of a seed is pinned by a test against an independent
+implementation, since a seed somebody noted down has to mean the same
+inputs later and elsewhere. Rejected: replacing `Math.random` in JS
+inside `flux:test` (a 32-bit generator where the engine has 52 bits, and
+out of reach for isolates, `srt render` and the app layer); flux's
+function in every context (a native call per `Math.random()` in shipping
+apps, for a test feature). `srt render` and playback are hosts that do
+not seed yet:
+[seeded-random-headless-render](../backlog/seeded-random-headless-render.md).
 
 ## The test surface
 
@@ -436,13 +471,13 @@ that the failure names the right file and line, and restored.
   a `setTimeout` never fires, so the cap rides real time natively.
 - The nineteen pure rigs move to `tests/` as `test()` bodies: a rig's
   sections become its tests and its `fail(msg)` helper throws, so the
-  oracle loops need no rewrite of substance. The seven seeded rigs take
-  a fixed seed (D28). `gesture-check` moves to the stepped clock; the
+  oracle loops need no rewrite of substance. The seven rigs that draw
+  random inputs draw them from the seeded `Math.random` (D28). `gesture-check` moves to the stepped clock; the
   parts of it that ride `performance.now()` keep their real waits and
   tolerances until [event-timestamp](../backlog/event-timestamp.md)
   lands. The four GPU rigs stay in `checks/` until stage 5.
 - `srt test <file> -- <args>`: the arguments after `--` reach the test as
-  `flux:process` argv (D28).
+  `flux:process` argv.
 - A first test from the review notes' candidate lists:
   `remapPositions` in the cli. The core candidates all import a runtime
   module and wait for the app layer (see Findings).
@@ -509,12 +544,122 @@ Prerequisite: [event-timestamp](../backlog/event-timestamp.md).
 | recorded input as a test | a generator over `--capture` output |
 | a gui test part in flux | the node verbs (`find`, `findAll`, reading, snapshots) compiled under `test` + `gui` in flux; `srt:test` re-exports it and keeps what is Solid (`mount`, `load`, `link`, `debug`) (D26) |
 
+## Owed after stage 2
+
+Stage 2 moved 19 rigs in one pass. The tests passed and the checks bit
+(three were broken on purpose), but the pass left work short of "best
+quality" and unverified. What came of it:
+
+Settled 2026-09-30:
+
+- Random inputs come from the seeded `Math.random` (D28, D29); the seven
+  files lost their seed constants, their generators and the seed their
+  `fail()` appended. Checked by a failure forced on one drawn input: the
+  same message in the full run and under a filter, another under
+  `--seed`; and by the camera shake, whose random direction is now the
+  same on every run. The suite passes under five seeds.
+- The 2d and 3d dispatch tests build a fake layer (scene) of their own
+  per test, `world()`; none depends on the tests before it, and each of
+  the 29 passes run alone under `--filter`. The listeners a test added
+  and never removed, which saw the events of the tests after it, went
+  with the shared layer.
+- `gltf.test.ts` parses in a function the twelve tests that read the
+  model call (`parsed()`): a parser throw fails those tests by name.
+- The types say what "takes the clock" is (a declared parameter; a
+  default value or a rest parameter does not count), and that what a
+  timed-out test started keeps running beside the tests after it.
+- The residue: the `checked` counters nothing read, the `break`,
+  `continue` and `return` after a `fail()` that throws (two of them
+  narrowed a type and became a plain `throw`), 71 capitalized test names
+  (four start with an identifier or a proper noun and keep their case),
+  and the headers that said "Check rig for" or "Checks for".
+
+Left as it is:
+
+- The moved tests still read `if (!cond) fail(msg)`, 991 sites, and none
+  uses `expect`, so none gets expected and received printed by a matcher,
+  and a sweep stops at its first mismatch where the rig listed them all.
+  Half of the messages (491) already print the value. No blanket
+  rewrite: it risks weakening checks for little; new tests use `expect`.
+- The pan, swipe and double-tap tests wait on real timers and assert
+  with tolerances (about 6 s of the run). A flake risk once CI gates on
+  them; removed by event-timestamp.
+
+The clock, open:
+
+- Timers due at the same instant fire in one turn, with no microtask
+  checkpoint between them: a second timer runs before the promise chain
+  the first started. `a_test_that_takes_the_clock_steps_its_timers` pins
+  it ("a@100 b@100 a-chain"). Measured 2026-09-30: the real path does
+  the same. Two `setTimeout`s of one delay (20 ms, and 0) on the wall
+  clock log "a b a-chain b-chain" too, since both are ready in one poll
+  of the executor. So the test clock matches both of flux's timer paths,
+  and the difference from the web (a microtask checkpoint after every
+  task) is flux's, not the test clock's. Whether flux should checkpoint
+  after each timer callback is a runtime question of its own; the test
+  clock stays as it is.
+- An uncaught error does not fail the test it happened in (stepped and
+  real time alike). Every test reports ok and the file fails with "The
+  file reported an uncaught error outside its tests". The report is on
+  stderr, so it is listed after the tests, and a rejection nobody
+  handles is printed at the engine's next checkpoint, which can be
+  several tests later or after the last one. D14 wants the failure on
+  the test. Not designed yet: it needs a way from flux's uncaught
+  reporting into `flux:test`. Before stage 3 or with the failure output
+  of stage 4: the user's call.
+- A test that times out keeps running after its result is out, and can
+  disturb the tests after it. Reproduced 2026-09-30: a timer a timed-out
+  stepped test set once its wait ended landed on the next stepped test's
+  clock and fired under that test's `advance`. (`clock.advance` on the
+  ended clock throws, as meant.) Documented in the types and left: the
+  file is already failing, so a leak cannot turn a run green.
+
+The clock, checked 2026-09-30: the turn between two stops drains the job
+queue with `Ctx::execute_pending_job`, which clears a throwing job's
+exception where the engine's own drain reports it, and nothing is
+swallowed by that. A throwing timer callback, a throwing
+`queueMicrotask` callback and a rejection nobody handles are reported
+from inside a stepped test as they are from a real-time one, and the
+process exits 1 (the first two are reported where they are called, the
+third by the rejection tracker; a promise job never throws).
+
+Verified 2026-09-30, after the timer refactor (`set_wall_timeout` split
+out of `setTimeout`, `Timers` kept as userdata):
+
+- All 21 integration test binaries of `flux/tests/`, one at a time at 2
+  jobs (8 at once had run the machine out of memory): 170 tests pass.
+  The other 2 of the 172 are the `ktx2` tests in `image.rs`, which a
+  default-feature build leaves out.
+- The dev client, rebuilt (release) and run on an app of timers: a
+  0 ms and a 50 ms timeout fire, a cleared timeout does not, an interval
+  fires three times and stops at its clear; the same again after a
+  reload, and the shutdown is clean.
+- The website builds, with both pages in it (`tools/test`,
+  `runtime/modules/test`). Not read by eye.
+- The JS tests on a debug `flux` binary, which is what a CI job that
+  builds in the test profile would run them on: 306 pass, 18.4 s against
+  11.5 s on release, three runs of three.
+
+Not verified:
+
+- The `test-flux` CI step now passes `--features test`; the workflow has
+  not run. The JS tests gate nothing until stage 3.
+- `srt test` has only run on Linux x64. The bundle on stdin and the
+  record prefix (a control character) are untested on Windows and macOS.
+
+Lessons of the scope widening, for the next stage's proposal: count and
+read before proposing. Three things were proposed and then found wrong
+by looking: tests for the flux modules (`flux/tests/` already has 172),
+a `parseColor` test (it imports a gui module), "20 pure rigs" (19). And
+the must-throw trap was found halfway through the conversion by luck; an
+inventory of how the rigs call `fail()` belonged in the proposal.
+
 ## Open
 
-- Network, calendar time and randomness in an app test: closed, fixed and
-  seeded by default, or left as they are. A flux test needs the real
-  network either way (`serve` plus `fetch` over loopback is the dogfooded
-  way to fake a backend).
+- Network and calendar time in an app test: closed and fixed by default,
+  or left as they are (randomness is settled: seeded, D28). A flux test
+  needs the real network either way (`serve` plus `fetch` over loopback
+  is the dogfooded way to fake a backend).
 - Whether the CI step builds flux or takes an artifact.
 
 ## Done looks like
@@ -534,6 +679,16 @@ framework.
 
 ## Findings
 
+- QuickJS's `Math.random` is xorshift64* with 52 random bits a value, its
+  state private to the context and seeded from the clock in microseconds
+  when the context is created; nothing in its API seeds it. A
+  reproducible `Math.random` therefore has to be a function of our own
+  (D29).
+- Code under test draws random numbers too: `shake()` in
+  `packages/core/src/camera-control.ts` picks its direction and phase
+  with `Math.random()` when none is given, so the shake tests of core,
+  2d and 3d ran on other values every run until `Math.random` was seeded.
+  A test-only random source would not have reached it.
 - The node verbs are not SolidRT-specific. `flux:rendertree` and the text
   query behind `/tree?query=` (`snapshot_matches`, reached through
   `flux::gui::tree::with_tree`) are in flux's `gui` layer already; only
@@ -562,9 +717,10 @@ framework.
   bare flux binary: `parseColor` imports `flux:rendertree`,
   `createTextBuffer` imports the window and layout bindings. They need
   the app layer, or a split of the pure part from the binding.
-- The dispatch tests in 2d and 3d share one fake layer across their
-  tests and depend on running in order, as the rigs did; a `--filter`
-  run of one of them starts from a different state.
+- The dispatch tests in 2d and 3d shared one fake layer across their
+  tests and depended on running in order, as the rigs did. A listener
+  one test added and never removed saw every event of the tests after
+  it, which nothing noticed. Each test builds its own since 2026-09-30.
 - What is tested where (2026-09-30). forge's tests cover the capability
   logic. `flux/tests/*.rs`, 172 cargo integration tests in 21 files, run
   JS source through the real engine and assert on its log, which is the

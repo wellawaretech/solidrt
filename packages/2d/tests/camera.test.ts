@@ -5,31 +5,20 @@
 // the component's view props cannot drift; unprojectCamera as the exact
 // round-trip inverse; plus the documented conventions as hand-written
 // cases. Pure-module input only (camera.ts imports no GUI), so it runs
-// headless on flux: `srt test packages/2d`. The random inputs come from a
-// fixed seed, printed by a failure; `srt test <this file> -- <seed>` tries
-// another.
+// headless on flux: `srt test packages/2d`. The random inputs come from
+// Math.random, which `srt test` seeds: the same on every run, and `--seed
+// <n>` tries others.
 
 import { test } from "flux:test"
-import { argv } from "flux:process"
 import { checkCamera, projectCamera, unprojectCamera } from "../src/camera.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 
-// The seed of the random inputs below. A failure prints it;
-// `srt test <this file> -- <seed>` runs with another.
-const SEED = 20260931
-let seed = Number(argv[0] ?? SEED)
-
-let s = seed >>> 0
-function rand(): number {
-  s = (Math.imul(s, 1664525) + 1013904223) >>> 0
-  return s / 4294967296
-}
 function range(lo: number, hi: number): number {
-  return lo + rand() * (hi - lo)
+  return lo + Math.random() * (hi - lo)
 }
 
 function fail(msg: string): void {
-  throw new Error(`${msg} (seed ${seed})`)
+  throw new Error(msg)
 }
 
 // Absolute tolerance for comparing screen/world coordinates: inputs span
@@ -104,7 +93,6 @@ test("projectCamera matches the view-prop oracle and unprojectCamera round-trips
   // Randomized sweep: projectCamera vs the view-prop oracle, and the
   // unproject round trip.
   const SWEEPS = 20000
-  let checked = 0
   for (let i = 0; i < SWEEPS; i++) {
     let camera: CameraUpdate = {
       x: range(-2000, 2000),
@@ -115,9 +103,9 @@ test("projectCamera matches the view-prop oracle and unprojectCamera round-trips
       pivotY: range(-1000, 1000),
     }
     // Absent keys read as defaults; drop some to sweep that path too.
-    if (rand() < 0.2) delete camera.rotation
-    if (rand() < 0.2) delete camera.zoom
-    if (rand() < 0.2) {
+    if (Math.random() < 0.2) delete camera.rotation
+    if (Math.random() < 0.2) delete camera.zoom
+    if (Math.random() < 0.2) {
       delete camera.pivotX
       delete camera.pivotY
     }
@@ -132,6 +120,5 @@ test("projectCamera matches the view-prop oracle and unprojectCamera round-trips
     if (!close(back, [wx, wy])) {
       fail(`round trip drifted at (${wx}, ${wy}) camera ${JSON.stringify(camera)}: back (${back[0]}, ${back[1]})`)
     }
-    checked++
   }
 })

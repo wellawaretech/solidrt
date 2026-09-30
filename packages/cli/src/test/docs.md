@@ -11,6 +11,7 @@ srt test                       # every tests/*.test.ts under the current folder
 srt test packages/router       # the same, under that folder
 srt test tests/route.test.ts   # one file
 srt test --filter matchPath    # only the tests whose name contains the text
+srt test --seed 12345          # the same tests on another Math.random sequence
 ```
 
 A test file lives in a `tests/` folder of its package or project, never
@@ -53,14 +54,17 @@ finish within 5 seconds fails as timed out, and a file whose process ends
 before every test has reported fails as a whole, so a test cannot pass by
 never finishing. The command exits nonzero on any failure.
 
-A test that draws random inputs names its seed as a constant, so a run is
-the same every time, and prints the seed when it fails. Everything after
-`--` reaches the test file as its `flux:process` argv, which is how such a
-test takes another seed for one run:
+`Math.random()` is seeded in a test file, and every test draws its sequence
+from the start. A test that draws random inputs, and code under test that
+calls `Math.random()`, therefore does the same on every run, whatever tests
+ran before it. `--seed <n>` runs the tests on another sequence, to try more
+inputs; a failure found that way comes back with the same number:
 
 ```sh
-srt test tests/pick.test.ts -- 12345
+srt test tests/pick.test.ts --seed 12345
 ```
+
+Everything after `--` reaches the test file as its `flux:process` argv.
 
 A test can import every headless module (`flux:fs`, `flux:http`,
 `flux:sqlite`, ...): a server under test is started with `serve` and called

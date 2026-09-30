@@ -15,6 +15,7 @@ pub mod crypto;
 pub mod fetch;
 pub mod headers;
 pub mod http;
+pub mod random;
 pub mod request;
 pub mod response;
 pub mod text;

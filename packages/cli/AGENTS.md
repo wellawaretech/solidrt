@@ -58,9 +58,11 @@ the work before starting it:
   `flux:test` (flat tests, no `describe`, no hooks; the matchers are in
   flux-types `modules/test.d.ts`). A test whose function takes the clock,
   `test(name, async clock => { ... })`, runs with stepped timers:
-  `await clock.advance(ms)` instead of waiting. `--filter <text>` runs the
-  tests whose name contains the text; everything after `--` reaches the
-  test files as `flux:process` argv (the seed of a seeded test). Exits
+  `await clock.advance(ms)` instead of waiting. `Math.random()` is seeded
+  and restarts for every test, so random inputs are the same on every run;
+  `--seed <n>` picks another sequence. `--filter <text>` runs the tests
+  whose name contains the text; everything after `--` reaches the test
+  files as `flux:process` argv. Exits
   nonzero on any failure; a failure prints expected, received and the
   source line. Headless only for now: no `.test.tsx`, no app UI.
 - `bunx srt bundle` - bundle the project into `dist/bundle/` (or

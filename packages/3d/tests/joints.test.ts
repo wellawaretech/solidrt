@@ -1,7 +1,7 @@
 // The skinned vertex stage's palette contract, and - by importing glsl.ts
 // on the bare flux binary at all - the module's purity contract: glsl.ts
 // must keep working with no flux:gpu in its graph (bake tools and headless
-// rigs run it without a gui runtime, and this binary has none: a gui
+// tests run it without a gui runtime, and this binary has none: a gui
 // import would fail to link here).
 import { expect, test } from "flux:test"
 import { litVertex, unlitVertex } from "../src/glsl.ts"

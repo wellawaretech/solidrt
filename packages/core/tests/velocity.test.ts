@@ -1,4 +1,4 @@
-// Checks for the velocity tracker (velocity.ts): a constant speed reads
+// Tests for the velocity tracker (velocity.ts): a constant speed reads
 // exactly, a flick accelerating into the lift reads the speed at the lift,
 // a stop's resampler bounce does not fling, a hard brake never reads
 // backward, near-simultaneous samples read no jolt, a rested finger reads
@@ -16,7 +16,7 @@ function fail(msg: string): void {
 }
 let near = (a: number, b: number, eps = 1e-6) => Math.abs(a - b) <= eps
 
-test("A constant speed reads exactly; a diagonal keeps both axes", () => {
+test("a constant speed reads exactly; a diagonal keeps both axes", () => {
   let t = createVelocityTracker()
   // 16 ms steps of 8 px: 500 px/s rightward, 250 px/s down.
   for (let i = 0; i <= 10; i++) t.push(i * 8, i * 4, 1000 + i * 16)
@@ -28,7 +28,7 @@ test("A constant speed reads exactly; a diagonal keeps both axes", () => {
   if (!near(v.vx, 500) || !near(v.vy, 250)) fail(`a read one frame later reads the same line, got ${v.vx},${v.vy}`)
 })
 
-test("A flick accelerating into the lift reads the speed at the lift", () => {
+test("a flick accelerating into the lift reads the speed at the lift", () => {
   let t = createVelocityTracker()
   // x = t + t^2 / 96: 1 px/ms at the window's start, 3 px/ms at the lift.
   // A line through the window reads its average, 2000 px/s.
@@ -37,7 +37,7 @@ test("A flick accelerating into the lift reads the speed at the lift", () => {
   if (!near(v.vx, 3000)) fail(`an accelerating flick reads its lift speed 3000, got ${v.vx}`)
 })
 
-test("A stop's resampler bounce does not fling", () => {
+test("a stop's resampler bounce does not fling", () => {
   let t = createVelocityTracker()
   // 625 px/s to 100, then the resampler's extrapolated step on the first
   // empty frame and its settle back on the second.
@@ -48,7 +48,7 @@ test("A stop's resampler bounce does not fling", () => {
   if (v.vx !== 0) fail(`a stop's extrapolate-and-settle is not a fling, got ${v.vx}`)
 })
 
-test("The window: only the last 100 ms count", () => {
+test("the window: only the last 100 ms count", () => {
   let t = createVelocityTracker()
   // 200 ms slow (100 px/s), then 100 ms fast (1000 px/s): the fast part
   // alone is in the window.
@@ -70,7 +70,7 @@ test("The window: only the last 100 ms count", () => {
   if (!near(v.vx, 1000, 1e-6)) fail(`the window holds the last 100 ms only, got ${v.vx}`)
 })
 
-test("A hard brake never reads backward", () => {
+test("a hard brake never reads backward", () => {
   let t = createVelocityTracker()
   // Steps of 30, 25, 20, 15, 10, 5, 0 px: the quadratic alone overshoots
   // to a negative slope.
@@ -80,7 +80,7 @@ test("A hard brake never reads backward", () => {
   if (v.vx !== 0) fail(`a hard brake reads zero, not a reverse speed, got ${v.vx}`)
 })
 
-test("Near-simultaneous samples read no jolt", () => {
+test("near-simultaneous samples read no jolt", () => {
   let t = createVelocityTracker()
   // Two samples 0.05 ms apart are one instant: two distinct times, so the
   // line, not a curve pinned by the pair.
@@ -91,7 +91,7 @@ test("Near-simultaneous samples read no jolt", () => {
   if (!(v.vx > 500 && v.vx < 800)) fail(`near-simultaneous samples read the line, got ${v.vx}`)
 })
 
-test("A rested finger reads zero; fewer than two samples read zero", () => {
+test("a rested finger reads zero; fewer than two samples read zero", () => {
   let t = createVelocityTracker()
   for (let i = 0; i <= 5; i++) t.push(i * 8, 0, i * 16)
   let v = t.velocity(5 * 16 + 60)
@@ -109,7 +109,7 @@ test("A rested finger reads zero; fewer than two samples read zero", () => {
   if (createVelocityTracker().velocity(0).vx !== 0) fail("no samples read zero")
 })
 
-test("The clamp", () => {
+test("the clamp", () => {
   let t = createVelocityTracker()
   // 400 px per 16 ms = 25000 px/s, at a 3:4 ratio.
   for (let i = 0; i <= 4; i++) t.push(i * 240, i * 320, i * 16)
@@ -118,7 +118,7 @@ test("The clamp", () => {
   if (!near(v.vx / v.vy, 0.75, 1e-9)) fail(`the clamp keeps the direction, got ${v.vx}/${v.vy}`)
 })
 
-test("Frame batching: same-age samples do not skew", () => {
+test("frame batching: same-age samples do not skew", () => {
   let plain = createVelocityTracker()
   let batched = createVelocityTracker()
   for (let i = 0; i <= 6; i++) {
@@ -139,7 +139,7 @@ test("Frame batching: same-age samples do not skew", () => {
   if (flat.velocity(50).vx !== 0) fail("all samples at one time read zero")
 })
 
-test("A shift keeps the fit; a reset empties it", () => {
+test("a shift keeps the fit; a reset empties it", () => {
   let t = createVelocityTracker()
   for (let i = 0; i <= 5; i++) t.push(i * 8, i * 8, i * 16)
   t.shift(-1000, 250)
@@ -152,14 +152,14 @@ test("A shift keeps the fit; a reset empties it", () => {
   if (t.velocity(96).vx !== 0) fail("reset empties the tracker")
 })
 
-test("The ring: more samples than the capacity keep the newest", () => {
+test("the ring: more samples than the capacity keep the newest", () => {
   let t = createVelocityTracker()
   for (let i = 0; i < 60; i++) t.push(i * 5, 0, i * 16)
   let v = t.velocity(59 * 16)
   if (!near(v.vx, 312.5)) fail(`a long stream reads its recent speed, got ${v.vx}`)
 })
 
-test("The fling gate", () => {
+test("the fling gate", () => {
   let slow = flingVelocity({ vx: 30, vy: 30 })
   if (slow.vx !== 0 || slow.vy !== 0) fail("a 42 px/s release is not a fling")
   let fast = flingVelocity({ vx: 40, vy: 40 })

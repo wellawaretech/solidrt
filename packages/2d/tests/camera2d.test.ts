@@ -1,4 +1,4 @@
-// Checks for the 2d camera control (camera2d.ts): the contain clamp and its
+// Tests for the 2d camera control (camera2d.ts): the contain clamp and its
 // centering, anchored zoom under any pivot and rotation, the eased glides
 // (a wheel notch, glideTo, fit, a rotation) landing exactly, follow through
 // the framing (a dead zone, hard limits that keep a fast target in view,
@@ -9,37 +9,26 @@
 // unbracketed zoom delta, rates integrated by update) and the validation
 // throws - hand-written cases plus a seeded sweep. Pure-module input only
 // (camera2d.ts imports no GUI or runtime module), so it runs headless on
-// flux: `srt test packages/2d`. The random inputs come from a fixed seed,
-// printed by a failure; `srt test <this file> -- <seed>` tries another. The
-// device side (the pointer feed's recognizer over core's transform
-// recognizer) needs the runtime's event bus and is exercised live by
-// examples/camera.tsx.
+// flux: `srt test packages/2d`. The random inputs come from Math.random,
+// which `srt test` seeds: the same on every run, and `--seed <n>` tries
+// others. The device side (the pointer feed's recognizer over core's
+// transform recognizer) needs the runtime's event bus and is exercised live
+// by examples/camera.tsx.
 
 import { test } from "flux:test"
 import { flush } from "@solidjs/signals"
-import { argv } from "flux:process"
 import { createCamera2d } from "../src/camera2d.ts"
 import type { Camera2d, Camera2dOptions } from "../src/camera2d.ts"
 import { projectCamera } from "../src/camera.ts"
 import { createShots, mixCamera2d } from "../src/shots.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 
-// The seed of the random inputs below. A failure prints it;
-// `srt test <this file> -- <seed>` runs with another.
-const SEED = 20260930
-let seed = Number(argv[0] ?? SEED)
-
-let s = seed >>> 0
-function rand(): number {
-  s = (Math.imul(s, 1664525) + 1013904223) >>> 0
-  return s / 4294967296
-}
 function range(lo: number, hi: number): number {
-  return lo + rand() * (hi - lo)
+  return lo + Math.random() * (hi - lo)
 }
 
 function fail(msg: string): void {
-  throw new Error(`${msg} (seed ${seed})`)
+  throw new Error(msg)
 }
 
 // Absolute tolerance for coordinates: inputs span a few thousand pixels,
@@ -87,7 +76,7 @@ function settle(cam: Camera2d): number {
   return SETTLE_TICKS + 1
 }
 
-test("Default fit, contain centering, the fit-zoom pan no-op", () => {
+test("default fit, contain centering, the fit-zoom pan no-op", () => {
   let { cam, last } = make({ world: { width: 1000, height: 500 } })
   let c = cam.camera()
   if (!near(c.zoom!, 0.8)) fail(`default fit zoom: expected 0.8, got ${c.zoom}`)
@@ -101,7 +90,7 @@ test("Default fit, contain centering, the fit-zoom pan no-op", () => {
   if (!near(after.x!, c.x!) || !near(after.y!, c.y!)) fail(`panning at fit zoom is a no-op, moved to ${after.x},${after.y}`)
 })
 
-test("The contain clamp at a zoom, snap writes", () => {
+test("the contain clamp at a zoom, snap writes", () => {
   let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 2 })
   cam.set({ x: 5000 })
   if (!near(cam.camera().x, 800)) fail(`set clamps x to the right edge (800), got ${cam.camera().x}`)
@@ -120,7 +109,7 @@ test("Godot's rule: limits ignore rotation", () => {
   if (!near(c.rotation!, 1)) fail(`rotation survives the clamp, got ${c.rotation}`)
 })
 
-test("Anchored zoom under any pivot and rotation (unbounded so no clamp interferes)", () => {
+test("anchored zoom under any pivot and rotation (unbounded so no clamp interferes)", () => {
   for (let i = 0; i < SWEEP; i++) {
     let pivot = { x: range(0, 1), y: range(0, 1) }
     let { cam } = make({ minZoom: 0.01, maxZoom: 100, pivot, x: range(-1000, 1000), y: range(-1000, 1000), zoom: range(0.2, 5), rotation: range(-Math.PI, Math.PI) })
@@ -145,7 +134,7 @@ test("Anchored zoom under any pivot and rotation (unbounded so no clamp interfer
   }
 })
 
-test("The wheel glide: anchor pinned every tick, exact landing, rest", () => {
+test("the wheel glide: anchor pinned every tick, exact landing, rest", () => {
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, x: 300, y: 200, zoom: 1.5, rotation: 0.4 })
   let sx = 123
   let sy = 456
@@ -157,10 +146,7 @@ test("The wheel glide: anchor pinned every tick, exact landing, rest", () => {
   for (; ticks < SETTLE_TICKS; ticks++) {
     if (!cam.update(DT)) break
     let [px, py] = projectCamera(cam.camera(), wx, wy)
-    if (!near(px, ax, 1e-6) || !near(py, ay, 1e-6)) {
-      fail(`wheel glide keeps the anchor pinned at tick ${ticks}: ${ax},${ay} -> ${px},${py}`)
-      break
-    }
+    if (!near(px, ax, 1e-6) || !near(py, ay, 1e-6)) fail(`wheel glide keeps the anchor pinned at tick ${ticks}: ${ax},${ay} -> ${px},${py}`)
   }
   if (ticks === 0 || ticks >= SETTLE_TICKS) fail(`wheel glide should run and then rest, ticks=${ticks}`)
   if (cam.camera().zoom !== target) fail(`wheel glide lands exactly on its target ${target}, got ${cam.camera().zoom}`)
@@ -218,7 +204,7 @@ test("glideTo: eased pose, exact landing, rest", () => {
   if (r.x + r.width > 1000 + EPS || r.y + r.height > 500 + EPS) fail(`glide destination stays inside the world, view ${JSON.stringify(r)}`)
 })
 
-test("Live options: bounds, zoom range and pivot read where applied", () => {
+test("live options: bounds, zoom range and pivot read where applied", () => {
   let { cam, options, last } = make({ world: { width: 1000, height: 500 }, maxZoom: 10, zoom: 5, x: 500, y: 250 })
   if (!near(cam.camera().zoom, 5)) fail(`live options: initial zoom 5, got ${cam.camera().zoom}`)
   // A tighter maxZoom re-clamps on set({}) - the component's re-clamp entry.
@@ -274,7 +260,7 @@ test("fit(rect): snapping and gliding, maxZoom below the fit", () => {
   if (!near(r.width, 1600)) fail(`capped fit view is 1600 wide, got ${r.width}`)
 })
 
-test("Deferred fit: an unknown viewport neither throws nor clamps", () => {
+test("deferred fit: an unknown viewport neither throws nor clamps", () => {
   let view = { width: 0, height: 0 }
   let { cam, last } = make({ world: { width: 1000, height: 500 } }, view)
   if (last() === null || cam.camera().zoom !== 1) fail("unknown viewport: the pose still reaches the target, unfitted")
@@ -290,7 +276,7 @@ test("Deferred fit: an unknown viewport neither throws nor clamps", () => {
   if (!near(c.pivotX!, 200) || !near(c.x!, 700)) fail(`resize keeps the world point at the moved pivot, got pivotX ${c.pivotX} x ${c.x}`)
 })
 
-test("Follow: tight; settles and rests", () => {
+test("follow: tight; settles and rests", () => {
   let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 2, x: 500, y: 250 })
   cam.follow(600, 250)
   let ticks = settle(cam)
@@ -301,7 +287,7 @@ test("Follow: tight; settles and rests", () => {
   cam.follow(600, 250)
   if (cam.update(DT)) fail("re-following a reached target writes nothing")
 })
-test("Follow: through a dead zone, and the world clamp", () => {
+test("follow: through a dead zone, and the world clamp", () => {
   let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 2, x: 500, y: 250, follow: { deadZone: { width: 0.5, height: 0.5 } } })
   // Zone half-width 200 px; the target at screen x 800 overshoots by 200 px
   // = 100 world px, so the camera stops at 600 with the target on the edge.
@@ -318,7 +304,7 @@ test("Follow: through a dead zone, and the world clamp", () => {
   if (!near(cam.camera().x, 200, 1e-3)) fail(`follow honors the world clamp (200), got ${cam.camera().x}`)
 })
 
-test("A wheel zoom survives a per-frame follow of a moving target", () => {
+test("a wheel zoom survives a per-frame follow of a moving target", () => {
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 2, x: 500, y: 250 })
   cam.follow(500, 250)
   settle(cam)
@@ -344,7 +330,7 @@ test("A wheel zoom survives a per-frame follow of a moving target", () => {
   if (!near(cam.camera().x, last, 1e-3)) fail(`follow cancels a pose glide, got ${cam.camera().x}`)
 })
 
-test("Framing: hard limits keep a fast target in view, per-axis damping, lookahead", () => {
+test("framing: hard limits keep a fast target in view, per-axis damping, lookahead", () => {
   // A point running at 3000 px/s under a lazy follow: with hard limits
   // of half the view it never gets more than a quarter of the width from
   // the pivot; without them the same follow lets it run away.
@@ -390,7 +376,7 @@ test("Framing: hard limits keep a fast target in view, per-axis damping, lookahe
   if (!near(ahead.cam.camera().x, point, 1e-3)) fail(`after the point rests the follow lands on it, got ${ahead.cam.camera().x} want ${point}`)
 })
 
-test("Lanes: the offset shows the pose point off the pivot; a shake never enters the pose or shows the outside", () => {
+test("lanes: the offset shows the pose point off the pivot; a shake never enters the pose or shows the outside", () => {
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300, offset: [0, -0.25] })
   if (!near(cam.pose().y, 300) || !near(cam.camera().y, 450)) fail(`the offset lane shifts the final camera, not the pose: pose ${cam.pose().y}, camera ${cam.camera().y}`)
   let [sx, sy] = projectCamera(cam.camera(), 400, 300)
@@ -427,7 +413,7 @@ test("Lanes: the offset shows the pose point off the pivot; a shake never enters
   if (mid.cam.pose().x !== 500 || mid.cam.pose().y !== 250) fail(`a shake inside the world leaves the pose alone: ${JSON.stringify(mid.cam.pose())}`)
 })
 
-test("Damped bounds: a fling eases into the limit; a direct write clamps at once", () => {
+test("damped bounds: a fling eases into the limit; a direct write clamps at once", () => {
   let { cam } = make({ world: { width: 1000, height: 500, damping: 1 }, zoom: 2, x: 300, y: 250 })
   cam.release([4000, 0])
   let crossed = false
@@ -449,7 +435,7 @@ test("Damped bounds: a fling eases into the limit; a direct write clamps at once
   }
 })
 
-test("A pose glide inherits a pending anchor glide's zoom (a double tap that also glides)", () => {
+test("a pose glide inherits a pending anchor glide's zoom (a double tap that also glides)", () => {
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300 })
   cam.zoomAt(200, 150, 2, { glide: true })
   cam.glideTo(100, 100)
@@ -461,7 +447,7 @@ test("A pose glide inherits a pending anchor glide's zoom (a double tap that als
   if (cam.camera().zoom !== 3) fail(`an explicit glideTo zoom wins, got ${cam.camera().zoom}`)
 })
 
-test("A rotation glide: eased, exact landing", () => {
+test("a rotation glide: eased, exact landing", () => {
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300 })
   cam.glideTo(400, 300, 1, Math.PI / 2)
   cam.update(DT)
@@ -471,7 +457,7 @@ test("A rotation glide: eased, exact landing", () => {
   if (cam.camera().rotation !== Math.PI / 2) fail(`a rotation glide lands exactly, got ${cam.camera().rotation}`)
 })
 
-test("Inertia: a flick keeps gliding and decays to rest; a rested or disabled release does not", () => {
+test("inertia: a flick keeps gliding and decays to rest; a rested or disabled release does not", () => {
   // A drag of ten frames at 20 px, then the lift with the velocity the
   // gesture measured (the recognizer's, not the camera's: it has no
   // estimator).
@@ -509,7 +495,7 @@ test("Inertia: a flick keeps gliding and decays to rest; a rested or disabled re
   if (!near(cam.camera().x, 0, 1e-3)) fail(`a release while following eases back instead of flinging, got x ${cam.camera().x}`)
 })
 
-test("Pivot at the top-left: the scrolling camera", () => {
+test("pivot at the top-left: the scrolling camera", () => {
   let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 1, pivot: { x: 0, y: 0 } })
   cam.set({ x: -50, y: 0 })
   let c = cam.camera()
@@ -520,7 +506,7 @@ test("Pivot at the top-left: the scrolling camera", () => {
   if (c.x !== 100 || !near(c.y!, -50)) fail(`glideTo under a top-left pivot lands x=100, y=-50, got ${c.x},${c.y}`)
 })
 
-test("Validation", () => {
+test("validation", () => {
   let throws = (what: string, f: () => void) => {
     let threw = false
     try {
@@ -545,7 +531,7 @@ test("Validation", () => {
   throws("fit without world or rect", () => make().cam.fit())
 })
 
-test("The axes: brackets, bracketed vs unbracketed zoom, rates", () => {
+test("the axes: brackets, bracketed vs unbracketed zoom, rates", () => {
   let { cam, view } = make({ minZoom: 0.01, maxZoom: 100, x: 400, y: 300, zoom: 1 })
   // A pan gesture: its begin stops a glide, its deltas are viewport heights
   // of content travel (the world follows the finger, so the camera point
@@ -602,7 +588,7 @@ test("The axes: brackets, bracketed vs unbracketed zoom, rates", () => {
   if (!near(cam.camera().zoom, 2, 1e-9)) fail(`a zoom rate of 1 doubles per second, got ${cam.camera().zoom}`)
 })
 
-test("Shots: the zoom blends in log space; a shot's control drives the view through the blender", () => {
+test("shots: the zoom blends in log space; a shot's control drives the view through the blender", () => {
   let a = { x: 0, y: 0, zoom: 1, rotation: 0, pivotX: 0, pivotY: 0 }
   let b = { x: 100, y: 50, zoom: 4, rotation: 1, pivotX: 10, pivotY: 20 }
   let m = mixCamera2d(a, b, 0.5)

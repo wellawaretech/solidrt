@@ -3,29 +3,18 @@
 // transforms the rect's corners forward and half-plane-tests the point,
 // plus hand-written edge cases. Pure-module input only (pick.ts imports no
 // GUI), so it runs headless on flux: `srt test packages/2d`. The random
-// inputs come from a fixed seed, printed by a failure; `srt test <this
-// file> -- <seed>` tries another.
+// inputs come from Math.random, which `srt test` seeds: the same on every
+// run, and `--seed <n>` tries others.
 
 import { test } from "flux:test"
-import { argv } from "flux:process"
 import { pointInSprite } from "../src/pick.ts"
 
-// The seed of the random inputs below. A failure prints it;
-// `srt test <this file> -- <seed>` runs with another.
-const SEED = 20260934
-let seed = Number(argv[0] ?? SEED)
-
-let s = seed >>> 0
-function rand(): number {
-  s = (Math.imul(s, 1664525) + 1013904223) >>> 0
-  return s / 4294967296
-}
 function range(lo: number, hi: number): number {
-  return lo + rand() * (hi - lo)
+  return lo + Math.random() * (hi - lo)
 }
 
 function fail(msg: string): void {
-  throw new Error(`${msg} (seed ${seed})`)
+  throw new Error(msg)
 }
 
 // Oracle: transform the four corners forward, then test the point against
@@ -69,14 +58,13 @@ test("pointInSprite matches the corner-transform oracle, over random rects", () 
   // Randomized differential sweep. Points near the boundary are the
   // interesting ones, so half the samples hug the rect's extent.
   const SWEEPS = 20000
-  let checked = 0
   for (let i = 0; i < SWEEPS; i++) {
     let cx = range(-100, 100)
     let cy = range(-100, 100)
     let w = range(0.1, 60)
     let h = range(0.1, 60)
     let rot = range(-7, 7)
-    let reach = (w + h) * (rand() < 0.5 ? 0.75 : 2)
+    let reach = (w + h) * (Math.random() < 0.5 ? 0.75 : 2)
     let px = cx + range(-reach, reach)
     let py = cy + range(-reach, reach)
     let got = pointInSprite(px, py, cx, cy, w, h, rot)
@@ -92,6 +80,5 @@ test("pointInSprite matches the corner-transform oracle, over random rects", () 
         fail(`mismatch at p=(${px}, ${py}) rect=(${cx}, ${cy}, ${w}x${h}, rot ${rot}): got ${got}, oracle ${want}`)
       }
     }
-    checked++
   }
 })
