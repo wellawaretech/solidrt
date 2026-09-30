@@ -108,7 +108,7 @@ export function createPan(options: PanOptions) {
           armed = null
           origin = { x: e.parentX, y: e.parentY }
           tracker.reset()
-          tracker.push(e.parentX, e.parentY, e.timeStamp)
+          if (!e.predicted) tracker.push(e.parentX, e.parentY, e.timeStamp)
           options.onPanStart?.()
         } else {
           // The arena is resolved against us; the drag belongs elsewhere.
@@ -117,7 +117,8 @@ export function createPan(options: PanOptions) {
         return
       }
       if (active === e.pointerId && origin) {
-        tracker.push(e.parentX, e.parentY, e.timeStamp)
+        // The pan follows a predicted position; its velocity does not.
+        if (!e.predicted) tracker.push(e.parentX, e.parentY, e.timeStamp)
         options.onPanMove?.(e.parentX - origin.x, e.parentY - origin.y)
         origin = { x: e.parentX, y: e.parentY }
       }

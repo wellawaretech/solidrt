@@ -147,6 +147,8 @@ export function createTransform(options: TransformOptions) {
   let spanRate = 0
   // Motion arrived this frame; measured and emitted at the terminator.
   let dirty = false
+  // A move of the current batch was predicted (see flush).
+  let predicted = false
   // The anchor must be retaken at the terminator (activation and set-change
   // rebases): mid-batch the pointer map is mixed-age, so anchoring
   // immediately would bake a jolt into the next delta. A rebase frame
@@ -208,9 +210,14 @@ export function createTransform(options: TransformOptions) {
   let owner: ArenaOwner = { cancel }
 
   // The per-frame measure point: runs at the pointerFrame terminator, when
-  // every tracked pointer's position is the same age: the terminator's
-  // timeStamp, the time of what is measured here.
+  // every tracked pointer's move of the batch has dispatched: the
+  // terminator's timeStamp (the latest of theirs) is the time of what is
+  // measured here.
   let flush = (frame: { timeStamp: number }) => {
+    // The measure follows a predicted position; the velocity history takes
+    // real ones only.
+    let real = !predicted
+    predicted = false
     if (!active) return
     if (rebase) {
       // Anchor from same-age positions; emits nothing - an activation or
@@ -220,7 +227,7 @@ export function createTransform(options: TransformOptions) {
       let prev = ref
       ref = measure()
       if (prev) tracker.shift(ref.px - prev.px, ref.py - prev.py)
-      tracker.push(ref.px, ref.py, frame.timeStamp)
+      if (real) tracker.push(ref.px, ref.py, frame.timeStamp)
       spanBase = ref.span
       smoothSpan = ref.span
       rebase = false
@@ -230,7 +237,7 @@ export function createTransform(options: TransformOptions) {
     if (!dirty || !ref) return
     dirty = false
     let m = measure()
-    tracker.push(m.px, m.py, frame.timeStamp)
+    if (real) tracker.push(m.px, m.py, frame.timeStamp)
     let prevSpan = smoothSpan
     smoothSpan += (m.span - smoothSpan) * SPAN_SMOOTH
     spanRate += (Math.abs(smoothSpan - prevSpan) - spanRate) * QUIET_SMOOTH
@@ -286,6 +293,7 @@ export function createTransform(options: TransformOptions) {
     onPointerMove: (e: PointerEvent) => {
       if (!pointers.has(e.pointerId) || !ref) return
       pointers.set(e.pointerId, at(e))
+      if (e.predicted) predicted = true
       if (!active) {
         // Arming runs per event: the slop test tolerates a mixed-age
         // measure (8px against <=1 frame of staleness), and the arena

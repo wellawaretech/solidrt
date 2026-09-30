@@ -35,6 +35,8 @@ mod script;
 pub mod spatial;
 mod threads;
 #[cfg(target_os = "android")]
+pub mod touch;
+#[cfg(target_os = "android")]
 pub mod video_plane;
 
 /// Whether a video plane is presenting beneath the window, false on every
@@ -62,7 +64,7 @@ pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use context::{CaptureDone, CaptureInfo, Context, Overlay, YuvFrameSink};
 pub use event::{
-  AlloyCommand, AlloyEvent, Cursor, CursorFrame, CursorImage, CursorShape, GamepadState, Modifiers, Orientation, PointerType, SuspendHold,
+  AlloyCommand, AlloyEvent, Arrival, Cursor, CursorFrame, CursorImage, CursorShape, EventSender, GamepadState, Modifiers, Orientation, PointerType, SuspendHold,
   TextCapitalization, TextInputOptions, TextInputType,
 };
 pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand};

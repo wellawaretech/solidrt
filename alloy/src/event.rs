@@ -320,6 +320,36 @@ impl Drop for SuspendHoldInner {
   }
 }
 
+/// An event on the channel to the embedder, with when it happened: the
+/// platform's time for an input event (see `EventSender::send_at`), the
+/// send for everything else.
+pub struct Arrival {
+  pub event: AlloyEvent,
+  pub at: std::time::Instant,
+}
+
+/// The sending half of the event channel to the embedder.
+#[derive(Clone)]
+pub struct EventSender(std::sync::mpsc::Sender<Arrival>);
+
+impl EventSender {
+  pub(crate) fn new(tx: std::sync::mpsc::Sender<Arrival>) -> Self {
+    EventSender(tx)
+  }
+
+  /// Send an event that happens now. Err when the receiver is gone.
+  pub fn send(&self, event: AlloyEvent) -> Result<(), ()> {
+    self.send_at(event, std::time::Instant::now())
+  }
+
+  /// Send an event that happened at `at`: an input event with a time of
+  /// its own (the platform's event time, a touch sample's time), which is
+  /// what its `timeStamp` comes from however long it waits in a queue.
+  pub fn send_at(&self, event: AlloyEvent, at: std::time::Instant) -> Result<(), ()> {
+    self.0.send(Arrival { event, at }).map_err(|_| ())
+  }
+}
+
 #[derive(Clone)]
 pub enum AlloyEvent {
   // The platform is ending this app instance: desktop window close or
@@ -395,35 +425,47 @@ pub enum AlloyEvent {
   // `present_at` is when the frame this signal asks for is expected to
   // reach the screen: the signal's reference instant plus the cadence
   // hold's periods (the virtual frame time in playback), the deadline a
-  // frame's video content is latched against.
+  // frame's video content is latched against. `reference` is the instant
+  // the refreshes were counted from (the vsync under vsync-locked pacing, a
+  // swap's return otherwise), the frame time touch is resampled to (see
+  // resample.rs). `grid` is where the count places the signal: the
+  // counter's anchor plus the counted refreshes, which advances by exactly
+  // `refreshes` periods from signal to signal, so a timeline that advances
+  // by the count can place an instant between signals against it.
   FrameRendered {
     frame: u64,
     fps: u32,
     refreshes: u32,
     present_at: std::time::Instant,
+    reference: std::time::Instant,
+    grid: std::time::Instant,
   },
   // Idle tick: emitted at the refresh cadence when no display list has arrived
   // for a full refresh period, so the UI thread keeps running its per-frame
   // logic (timers, signal flush, camera pump) while nothing is presented.
   // `frame` is the present counter, i.e. one past the last FrameRendered's
-  // frame: the index the next present will get. `refreshes` as above.
+  // frame: the index the next present will get. The rest as above.
   Tick {
     frame: u64,
     fps: u32,
     refreshes: u32,
     present_at: std::time::Instant,
+    reference: std::time::Instant,
+    grid: std::time::Instant,
   },
   // Display refresh rate in Hz. Its own event (independent of frames): emitted
   // at startup and whenever the rate changes (e.g. Android 90 <-> 60Hz).
   DisplayRefreshRate {
     hz: f32,
   },
-  // Never emitted by the run loop: the pump consumes moves into the
+  // A producer's moves do not travel: the pump consumes them into the
   // resampler at translation (see resample.rs), and every other producer of
   // pointer events must do the same at its send site. `rel` is the hardware
   // motion delta when the device reports one (mouse `xrel`/`yrel`, in the
   // same logical units as `x`/`y`); None for producers without one (touch,
   // synthetic input), whose movement is derived from positions instead.
+  // The one move that does travel is the resampler's own: the flush ahead
+  // of an up, with `rel` the movement since the last dispatched move.
   PointerMove {
     pointer_id: u64,
     pointer_type: PointerType,
@@ -839,6 +881,23 @@ pub(crate) fn link_from_drop(payload: &str) -> Option<String> {
     Some(payload.to_string())
   } else {
     None
+  }
+}
+
+// A finger sample of Android's own touch path (see touch.rs) as the event
+// SDL's finger events translate to above, which is where every other
+// platform's touch comes from.
+#[cfg(target_os = "android")]
+pub(crate) fn translate_touch(sample: &crate::touch::TouchSample, window: &sdl3::video::Window) -> AlloyEvent {
+  use crate::touch::TouchKind;
+  let (lw, lh) = touch_window_logical_size(window);
+  let (pointer_id, pointer_type) = (sample.finger_id, PointerType::Touch);
+  let (x, y) = (sample.x * lw, sample.y * lh);
+  let modifiers = sdl_utils::mod_state().into();
+  match sample.kind {
+    TouchKind::Down => AlloyEvent::PointerDown { pointer_id, pointer_type, button: 0, x, y, modifiers },
+    TouchKind::Move => AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, rel: None, modifiers },
+    TouchKind::Up => AlloyEvent::PointerUp { pointer_id, pointer_type, button: 0, x, y, modifiers },
   }
 }
 

@@ -47,14 +47,17 @@ pub enum Advance {
 //   each; intervals collapse to one fire per advance).
 // - the input reading, what an input event's `timeStamp` is
 //   (okf/plans/event-timestamp.md): neither of the two above can carry it.
-//   Like the animation reading it advances by counted refreshes, so the
-//   moves of consecutive frames are whole periods apart, as the slot
-//   positions the resampler delivers are. Like the timer reading it lives
-//   through a suspension (two taps on either side of a background stretch
-//   are far apart) and it can be read between ticks: an event that arrives
-//   between frames is stamped with when it arrived (`input_arrival_ms`),
-//   not with the last frame's time. A move is stamped with its frame's
-//   latched reading (`input_slot_ms`).
+//   Like the animation reading it advances by counted refreshes. Like the
+//   timer reading it lives through a suspension (two taps on either side
+//   of a background stretch are far apart) and it has a reading for any
+//   instant, not only for a tick: an event is stamped with when it
+//   happened (`input_at_ms`), which for a move is the time of the position
+//   it carries (alloy's resample.rs) and for the rest the platform's event
+//   time. The reading is placed against the signal's grid instant (where
+//   alloy's refresh count puts the signal), not against the instant the
+//   tick ran: the grid advances by exactly the counted refreshes, so the
+//   reading of an instant does not depend on which tick it is read after,
+//   and no tick's execution jitter reaches a stamp.
 #[derive(Clone)]
 pub struct PacedClock {
   // f64 bits: latest animation reading in ms.
@@ -75,15 +78,12 @@ pub struct PacedClock {
   hz: Arc<AtomicU64>,
   // f64 bits: the input reading latched by the last tick.
   input_ms: Arc<AtomicU64>,
-  // f64 bits: the raw wall reading of the last tick, which an arrival
-  // between ticks measures its elapsed time from.
-  input_raw: Arc<AtomicU64>,
-  // f64 bits: how fast the input reading runs between ticks against the
-  // wall: the clock control's scale, 0 while paused or stepped.
+  // f64 bits: the raw wall reading of the last tick's grid instant, which
+  // the reading of any other instant is measured from.
+  input_grid: Arc<AtomicU64>,
+  // f64 bits: how fast the input reading runs against the wall: the clock
+  // control's scale, 0 while paused or stepped.
   input_rate: Arc<AtomicU64>,
-  // f64 bits: the last stamp handed out, the floor of the next (see
-  // `issue_input`).
-  input_issued: Arc<AtomicU64>,
 }
 
 impl PacedClock {
@@ -95,9 +95,8 @@ impl PacedClock {
       started: Arc::new(AtomicBool::new(false)),
       hz: Arc::new(AtomicU64::new(DEFAULT_HZ.to_bits())),
       input_ms: Arc::new(AtomicU64::new(0.0f64.to_bits())),
-      input_raw: Arc::new(AtomicU64::new(0.0f64.to_bits())),
+      input_grid: Arc::new(AtomicU64::new(0.0f64.to_bits())),
       input_rate: Arc::new(AtomicU64::new(0.0f64.to_bits())),
-      input_issued: Arc::new(AtomicU64::new(0.0f64.to_bits())),
     }
   }
 
@@ -110,9 +109,11 @@ impl PacedClock {
   }
 
   // Consume one frame signal: `raw_ms` is the wall reading on the shared
-  // origin, `refreshes` the display refreshes the signal covered (alloy's
-  // count), `advance` the clock control's verdict for the frame.
-  pub fn tick(&self, raw_ms: f64, refreshes: u32, advance: Advance) {
+  // origin, `grid_ms` the signal's grid instant on the same origin (where
+  // alloy's count places the signal), `refreshes` the display refreshes the
+  // signal covered (alloy's count), `advance` the clock control's verdict
+  // for the frame.
+  pub fn tick(&self, raw_ms: f64, grid_ms: f64, refreshes: u32, advance: Advance) {
     let period = self.period_ms();
     let step = match advance {
       Advance::Paused => 0.0,
@@ -130,8 +131,8 @@ impl PacedClock {
     let now = f64::from_bits(self.now_ms.load(Ordering::Relaxed)) + step;
     self.now_ms.store(now.to_bits(), Ordering::Relaxed);
     // The input reading: the same step, except that a suspension is lived
-    // through (the counted refreshes as they are), and the rate an arrival
-    // between this tick and the next advances at.
+    // through (the counted refreshes as they are), and the rate the reading
+    // runs at around this tick's grid instant.
     let (input_step, input_rate) = match advance {
       Advance::Paused | Advance::Step => (step, 0.0),
       Advance::Run(scale) if scale == 1.0 => (refreshes as f64 * period, 1.0),
@@ -139,7 +140,7 @@ impl PacedClock {
     };
     let input = f64::from_bits(self.input_ms.load(Ordering::Relaxed)) + input_step;
     self.input_ms.store(input.to_bits(), Ordering::Relaxed);
-    self.input_raw.store(raw_ms.to_bits(), Ordering::Relaxed);
+    self.input_grid.store(grid_ms.to_bits(), Ordering::Relaxed);
     self.input_rate.store(input_rate.to_bits(), Ordering::Relaxed);
     // The timer timeline: raw wall time at scale 1 (no quantization, no
     // suspension skip); paused, stepped or scaled frames advance it by the
@@ -192,38 +193,26 @@ impl PacedClock {
     (raw_ms - toff).max(latched)
   }
 
-  // The stamp of a move dispatched in the frame of the last tick: the
-  // input reading that tick latched, the slot's time.
-  pub fn input_slot_ms(&self) -> f64 {
-    self.issue_input(f64::from_bits(self.input_ms.load(Ordering::Relaxed)))
+  // The input reading the last tick latched: the stamp of what a frame
+  // produces itself (the hover refresh, which has no event behind it).
+  pub fn input_frame_ms(&self) -> f64 {
+    f64::from_bits(self.input_ms.load(Ordering::Relaxed))
   }
 
-  // The stamp of an event that arrives between ticks (down, up, wheel,
-  // key), from the raw wall reading it arrived at (same origin tick() is
-  // fed): the latched reading plus the wall time since that tick, at the
-  // clock control's rate, so it stands still while paused. An event that
-  // arrived before the latest tick and is stamped after it (it waited
-  // behind a frame) reads that much before the latched reading, as far
-  // back as the last stamp handed out. Before the first tick there is no
-  // anchor and it reports the latched reading.
-  pub fn input_arrival_ms(&self, raw_ms: f64) -> f64 {
+  // The stamp of an input event that happened at the raw wall reading
+  // `raw_ms` (same origin tick() is fed): the latched reading plus the
+  // event's distance from the last tick's grid instant, at the clock
+  // control's rate, so it stands still while paused. The distance is
+  // negative for what happened before the grid instant (a resampled move,
+  // an event that waited behind a frame). Before the first tick there is
+  // no anchor and it reports the latched reading.
+  pub fn input_at_ms(&self, raw_ms: f64) -> f64 {
     let latched = f64::from_bits(self.input_ms.load(Ordering::Relaxed));
     if !self.started.load(Ordering::Relaxed) {
-      return self.issue_input(latched);
+      return latched;
     }
-    let since = raw_ms - f64::from_bits(self.input_raw.load(Ordering::Relaxed));
-    self.issue_input(latched + since * f64::from_bits(self.input_rate.load(Ordering::Relaxed)))
-  }
-
-  // Stamps never go back. An arrival stamp can land a little past the next
-  // tick's latched reading (the tick advances by whole periods, the arrival
-  // by the wall), and the following stamp is then held at the earlier one.
-  // Only the stamp is held: the reading itself is not moved, so an
-  // overshoot does not accumulate.
-  fn issue_input(&self, stamp: f64) -> f64 {
-    let stamp = stamp.max(f64::from_bits(self.input_issued.load(Ordering::Relaxed)));
-    self.input_issued.store(stamp.to_bits(), Ordering::Relaxed);
-    stamp
+    let since = raw_ms - f64::from_bits(self.input_grid.load(Ordering::Relaxed));
+    latched + since * f64::from_bits(self.input_rate.load(Ordering::Relaxed))
   }
 
   // The refresh period a refresh is worth, for consumers scheduling or

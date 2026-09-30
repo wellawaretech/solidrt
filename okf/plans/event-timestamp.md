@@ -22,9 +22,16 @@ riding the wrong clock.
 
 ## Where this stands (2026-09-30)
 
-Built and verified on the desktop client and two Android devices,
-uncommitted. Open: rest detection below the refresh rate (see
-[Open details](#open-details)).
+Two layers. The first (the input reading, `timeStamp` on every event,
+package logic off `performance.now()`) is built, verified on the desktop
+client and two Android devices, and committed. The second,
+[Real sample times](#real-sample-times-decided-2026-09-30), is built,
+uncommitted, and verified on the desktop client and both Android devices
+with synthetic and injected input; what is owed is a real finger (see
+there). The
+bullets and measurements below describe the first layer; where they say a
+move carries its slot's time or an arrival its arrival time, the second
+layer replaced that with the event's own time.
 
 - The input reading in `lattice/src/paced_clock.rs`, five tests beside
   the existing seven.
@@ -105,12 +112,12 @@ and after on one input:
 - `performance.now()` stays real elapsed time, for measuring work. Package
   logic does not read it.
 
-Rejected: stamping real hardware sample times and interpolating, as Android
-and Flutter do. SDL's Android path carries no usable sample times (touch is
-stamped at JNI receipt and historical batch samples are dropped), which is
-why the resampler models slots. Given a slot position, the slot's time is
-the truthful stamp. Going beneath SDL for sample times would be a
-different item and a device campaign.
+Reversed 2026-09-30: real sample times were rejected here at first (SDL's
+Android path carries none, so the resampler modelled slots and a move was
+stamped with its slot's time). The rest detection below the refresh rate
+showed what that costs, and the investigation showed the times are within
+reach. See [Real sample times](#real-sample-times-decided-2026-09-30),
+which replaces the slot model and the slot stamp of a move.
 
 Rejected: virtualizing `performance.now()` under test. See decision D6 in
 [test-harness](test-harness.md).
@@ -294,22 +301,190 @@ Measured on the desktop client, the Pixel 7 and the SM-T500:
   the two frames the rest window was sized for; at 15 fps it is 200 ms.
   It was wrong before as well, by accident in the other direction: the
   up's handler ran late behind the frame, which lengthened the rest
-  (45 ms here, still a fling on the desktop). What the rule needs is when
-  the finger last really moved: the arrival time of the resampler's last
-  fresh sample, which the pump has and a move does not carry. To decide:
-  a second time on the move event, the rest judged natively, or left as a
-  limit of apps far below the refresh rate.
-
-- How far an arrival stamp overshoots the next signal's reading is not
-  measured. It is bounded by the signal's execution jitter; the
-  never-go-back rule makes it harmless, the size says how often it
-  applies.
+  (45 ms here, still a fling on the desktop). The cause is one gap: a
+  move does not know when the finger was there. Closed by
+  [Real sample times](#real-sample-times-decided-2026-09-30).
 - Reading the timeline inside a move handler now gives the frame's own
   time, since the clock ticks before the moves: `flux::Timeline` (video
   sync) read from a handler is one frame fresher than it was. Transitions
   are stamped after the moves, as before.
 - Whether a pointer session survives a suspension at all. With this
   reading the stamps are right either way.
+
+## Real sample times (decided 2026-09-30)
+
+Every input event is stamped with when it happened, not with its slot or
+its arrival, and the resampler resamples by time. Chosen over a targeted
+fix of the rest rule (a second time on the move, the rest judged
+natively, or a documented limit) under the rule "no backwards
+compatibility, the best solution only".
+
+What SDL gives (SDL 3.4.10 source; upstream main is the same for
+Android). Every SDL event has a `timestamp` in ns on SDL's tick base and
+the sdl3 crate exposes it on every variant:
+
+| platform | pointer and touch `timestamp` | sample time |
+| --- | --- | --- |
+| Wayland | the compositor's event time (ms; ns with `zwp_input_timestamps_v1`) | yes |
+| macOS | `NSEvent.timestamp` | yes |
+| iOS | `UIEvent.timestamp`; coalesced touches are dropped | yes |
+| X11 | receipt in the pump (`X11_GetEventTimestamp` is a FIXME returning now) | as receipt |
+| Windows | `msg.time`; touch ignores `TOUCHINPUT.dwTime` | no: moves in 15.6 ms tick steps (measured) |
+| Android | 0, so the time of the JNI call; historical samples never read | no |
+
+On a desktop the receipt time is a good sample time: input is not batched
+to vsync and the pump thread blocks on the queue. Android is the one
+platform that needs a path of our own, and the place exists:
+`lattice/android/.../SDLSurface.java` is our patched copy and
+`SolidRTActivity` has natives already. `MotionEvent` carries a time for
+the current and every historical sample (ms, ns from API 34), on the
+clock the Choreographer frame time is on, which is the frame signal's
+reference under vsync-locked pacing.
+
+The design:
+
+1. Pointer, wheel and key events carry their time in alloy: SDL's
+   `timestamp` on the desktop, the `MotionEvent` time on Android.
+2. An Android touch path of our own: the finger branch of
+   `SDLSurface.onTouch` hands every historical sample and the current
+   one, each with its time, to a SolidRT native in place of
+   `onNativeTouch`. SDL finger events stop on Android; mouse, pen, pinch
+   and the touch device list stay with SDL.
+3. The resampler resamples by time. A frame's position is the one at
+   T = the frame's reference minus a latency constant: interpolated
+   between the samples around T; extrapolated (touch only) when the
+   newest sample is older than T, up to a bound; beyond the bound the
+   newest real sample once, then silence. The slot assumption and the
+   misses state machine go.
+4. A move's `timeStamp` is the time of the position it carries: T when
+   resampled, the sample's own time otherwise, never the frame's.
+5. An up flushes: samples newer than the last dispatched move go out as
+   one move ahead of the up, or a finger that moved until the lift would
+   read as rested below the refresh rate.
+6. The input reading maps event times: the frame signal carries its
+   reference instant, the paced clock anchors the reading to it (not to
+   the tick's execution time), and a stamp is the latched reading plus
+   the event's distance from the reference, at the clock's rate. Pause,
+   scale, step and the test clock are as before. `EventSender`'s send
+   time stays for events with no time of their own (gamepad snapshots).
+
+The rest rule in `packages/core/src/velocity.ts` does not change: the
+up's stamp minus the last moved sample's stamp is the true rest at any
+frame rate.
+
+Built 2026-09-30, uncommitted:
+
+- alloy: events travel in an envelope with their time (`Arrival`,
+  `EventSender::send_at`); the pump takes SDL's event timestamp
+  (`sdl_utils::event_instant`); frame signals carry `reference` and
+  `grid` (`RefreshCounter::grid_ms`); `resample.rs` is the time-based
+  resampler, with `RESAMPLE_LATENCY` (5 ms, Android's own),
+  `RESAMPLE_MIN_AHEAD` and `PREDICT_MAX_PERIODS` as its tuning constants;
+  `touch.rs` is the queue the Android native feeds.
+- Android: `SolidRTSurface` (created by `SolidRTActivity`) overrides
+  `onTouch` and hands every finger sample to `nativeTouch`; SDL's own
+  Java is untouched by it.
+- lattice: `PacedClock::input_at_ms` against the grid instant, the global
+  never-go-back clamp gone (the reading of an instant no longer depends
+  on the tick it is read after); the frame verb stamps each move with its
+  own time and the terminator with the latest; the flush move ahead of an
+  up dispatches on arrival with a terminator of its own.
+- core: `predicted` on move events; the recognizers keep predicted moves
+  out of the velocity tracker, which reads the rest from when the
+  position was reached.
+- Tests: the alloy resampler and grid tests, 64 lattice, 309 JS (a pan
+  test among them: a predicted move moves the pan and stays out of its
+  velocity).
+
+Found while building, not in the design above:
+
+- A predicted move is ahead of the finger, and when the finger had
+  stopped the real position follows with an earlier time. That is the one
+  case where a stamp goes back. Decided 2026-09-30: the move says so.
+  `PointerEvent.predicted` (also on the global pointer event and the 2d
+  and 3d layer and scene events) is true for it; pan, swipe, transform
+  and the pointer feed follow a predicted position and keep it out of
+  their velocity. The web keeps predictions apart in
+  `getPredictedEvents()`; here the predicted position is the move, since
+  bridging the frame is its purpose, and the flag is what separates it.
+- A slow drag into a lift flung on the tablet (real finger, 2026-09-30):
+  the finger pauses, then its contact shifts as it leaves the panel, two
+  or three samples covering 0.9 to 2.7 px in the last 8 to 25 ms, the
+  last one 9 ms before the up. The rest rule cannot see it and a fit
+  through so short a span read 60 to 450 px/s. The tracker now does what
+  Flutter's and Android's do: a gap over 40 ms between two samples cuts
+  the history (`VELOCITY_STOP_GAP_MS`), and samples covering less than
+  the pan slop are no motion (`VELOCITY_MIN_TRAVEL`, 8 px). Whether the
+  tablet did this before real sample times is not known: the earlier
+  finger tests were flings and a long rest.
+- A cancelled touch (`ACTION_CANCEL`) is not passed on, as before: SDL's
+  cancel event was never translated, so a pointer the system takes over
+  stays down. Unchanged here, worth an item of its own.
+- A synthetic touch drag (the control API) is resampled like a finger's,
+  so a position read mid-drag can be an interpolated one; the up flushes
+  the last position.
+
+Measured 2026-09-30, release clients, `probes/timestamp-probe.tsx`. The
+probe tracks each drag on the event stamps and on `performance.now()` in
+the handler, the clock before this item.
+
+Desktop (Wayland, 60 Hz), synthetic drags of 20 px per 16 ms through the
+control API, so a true speed near 1166 px/s:
+
+| drag | stamps | handler time |
+| --- | --- | --- |
+| mouse, lift 5 ms after the last move | rest 6.2 ms, 1156 px/s | rest 0.6 ms, 1347 px/s |
+| mouse, 80 ms rest | rest 81.4 ms, zero | rest 70.5 ms, zero |
+| touch, lift 5 ms after | rest 6.2 ms, 1167 px/s | rest 0.1 ms, 1189 px/s |
+| touch, 80 ms rest | rest 81.3 ms, zero; resampled moves 16.67 ms apart | rest 64.0 ms, zero |
+| mouse, app near 16 fps, lift 5 ms after | rest 6.1 ms, 1169 px/s | 666 px/s |
+| mouse, near 16 fps, 80 ms rest | rest 80.1 ms, zero | rest 60.2 ms |
+| touch, near 16 fps, lift 5 ms after | rest 6.1 ms, 1167 px/s | 423 px/s |
+| touch, near 16 fps, 80 ms rest | rest 81.2 ms, zero | rest 60.1 ms |
+
+The two rest rows near 16 fps are the case this section exists for: it
+read 6 ms and flung before. Taps near 16 fps: 31.2 ms held, 101 ms apart,
+a double tap.
+
+Android, through the new touch path (`adb shell input swipe` of 600 px in
+300 ms and `input tap`, which enter as real `MotionEvent`s; true speeds
+762 and 1333 logical px/s):
+
+| check | Pixel 7 (90 Hz) | SM-T500 (60 Hz) |
+| --- | --- | --- |
+| swipe, lift velocity on stamps | 762.6 px/s | 1310 px/s |
+| the same on handler time | 848 px/s | 1390 px/s |
+| swipe with the app near 13 fps, stamps | 762.6 px/s | 1334 px/s |
+| the same on handler time | 817 px/s | 1480 px/s |
+| two taps | down and up share a stamp (the injector's one time), a double tap | the same |
+
+Windows (SDL's stamp against the receipt, `alloy/examples/
+event_time_probe.rs`, cursor moved by script): the stamp trails the
+receipt by 0 to 16.7 ms, 8 ms on average, and moves in steps of 15.6 ms
+with a double step 6 percent of the time, which is a 60 Hz stream
+quantized to the system tick. So Windows takes the pump's receipt
+(`sdl_utils::event_instant`), as built. X11 needs no run: SDL's stamp
+there is the receipt by its source.
+
+Known limits and what is owed:
+
+- Real finger, both devices, 2026-09-30 (the probe's list, swiped and
+  flung): responsiveness judged good by eye, the constants left as they
+  are. A slow drag into a lift no longer glides (see the tracker rules
+  above). One tablet lift after a pause still read 1453 px/s: the panel
+  reported 28 px in the last 34 ms, which position data cannot tell from
+  a short flick; left as it is. Two Pixel lifts after a pause moved 9 to
+  10 px and read 389 and 618 px/s, just over `VELOCITY_MIN_TRAVEL`; if
+  lift-off glides come back, Flutter's 18 px is the next value to try,
+  and contact pressure or size at the lift is the signal that could
+  separate a roll-off from a flick (Android only, not built).
+- Not done with a finger: a rest before the lift with the app held near
+  15 fps (verified with synthetic input only).
+- Below API 34 Android sample times are whole milliseconds.
+- Far below the refresh rate the velocity window holds two or three
+  samples (one move per frame plus the flush). All raw samples on the
+  move (the web's `getCoalescedEvents()`) would fill it; additive, not
+  in this item.
 
 ## Done looks like
 

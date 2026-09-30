@@ -59,6 +59,7 @@ type InternalEvent = {
   x: number
   y: number
   timeStamp: number
+  predicted: boolean
   pointerId: number
   pointerType: string
   button?: number
@@ -169,6 +170,7 @@ export function makePointerInput(deps: PointerInputDeps): PointerInput {
         x,
         y,
         timeStamp: e.timeStamp,
+        predicted: e.predicted,
         pointerId: e.pointerId,
         pointerType: e.pointerType,
         button: e.button,

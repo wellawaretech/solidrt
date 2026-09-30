@@ -74,27 +74,50 @@ impl ClockControl {
 pub trait UiRuntime {
   /// An alloy event arrived. Frame signals (FrameRendered / Tick) never come
   /// through here; they become `frame` calls. `raw_ms` is the wall reading
-  /// at which the event was sent to the loop (see `EventSender`).
+  /// at which the event happened (see `EventSender`).
   fn event(&mut self, event: &AlloyEvent, raw_ms: f64);
   /// A frame signal (present or idle tick): run the engine's per-frame work
   /// computing frame `next_frame`. `refreshes` is the display refreshes the
-  /// signal covered, as alloy counted them; `present_at` is when the frame
-  /// is expected to reach the screen.
-  fn frame(&mut self, next_frame: u64, refreshes: u32, present_at: Instant);
+  /// signal covered, as alloy counted them.
+  fn frame(&mut self, next_frame: u64, refreshes: u32, times: FrameTimes);
+}
+
+/// The instants of one frame signal (see alloy's FrameRendered):
+/// `present_at` is when the frame is expected to reach the screen,
+/// `reference` the instant its refreshes were counted from, which touch is
+/// resampled against, and `grid` where the count places the signal, which
+/// the input reading is placed against.
+#[derive(Clone, Copy)]
+pub struct FrameTimes {
+  pub present_at: Instant,
+  pub reference: Instant,
+  pub grid: Instant,
 }
 
 /// An event on its way to the UI loop, with the wall reading (ms on the
-/// paced clock's origin) at which it was sent.
+/// paced clock's origin) at which it happened.
 pub(crate) struct Arrived {
   pub event: AlloyEvent,
   pub raw_ms: f64,
 }
 
-/// The sending half of the UI loop's event channel. It notes the wall
-/// reading of every send, on the sender's thread: the loop shares its
-/// thread with the engine, so an event waits behind whatever JS is running,
-/// and the time it is taken out of the channel is not the time it arrived.
-/// That reading is what an input event's `timeStamp` is derived from.
+/// `at` as a wall reading in ms on the paced clock's origin. Negative for
+/// an instant before the origin.
+pub(crate) fn raw_ms(wall_start: tokio::time::Instant, at: Instant) -> f64 {
+  let origin = wall_start.into_std();
+  match at.checked_duration_since(origin) {
+    Some(since) => since.as_secs_f64() * 1000.0,
+    None => -(origin.duration_since(at).as_secs_f64() * 1000.0),
+  }
+}
+
+/// The sending half of the UI loop's event channel. Every event travels
+/// with the wall reading of when it happened, which is what an input
+/// event's `timeStamp` is derived from: the loop shares its thread with the
+/// engine, so an event waits behind whatever JS is running, and the time it
+/// is taken out of the channel is not its time. An input event brings its
+/// own (`send_at`: the platform's event time, a touch sample's time);
+/// anything else happens when it is sent, on the sender's thread.
 #[derive(Clone)]
 pub(crate) struct EventSender {
   tx: tokio::sync::mpsc::UnboundedSender<Arrived>,
@@ -106,10 +129,15 @@ impl EventSender {
     Self { tx, wall_start }
   }
 
-  /// Err when the loop is gone.
+  /// Send an event that happens now. Err when the loop is gone.
   pub fn send(&self, event: AlloyEvent) -> Result<(), ()> {
     let raw_ms = self.wall_start.elapsed().as_secs_f64() * 1000.0;
     self.tx.send(Arrived { event, raw_ms }).map_err(|_| ())
+  }
+
+  /// Send an event that happened at `at`. Err when the loop is gone.
+  pub fn send_at(&self, event: AlloyEvent, at: Instant) -> Result<(), ()> {
+    self.tx.send(Arrived { event, raw_ms: raw_ms(self.wall_start, at) }).map_err(|_| ())
   }
 }
 
@@ -126,11 +154,11 @@ pub(crate) fn coalesce_frame_signals(older: AlloyEvent, newer: AlloyEvent) -> Al
     _ => 0,
   };
   match newer {
-    AlloyEvent::FrameRendered { frame, fps, refreshes, present_at } => {
-      AlloyEvent::FrameRendered { frame, fps, refreshes: refreshes + carried, present_at }
+    AlloyEvent::FrameRendered { frame, fps, refreshes, present_at, reference, grid } => {
+      AlloyEvent::FrameRendered { frame, fps, refreshes: refreshes + carried, present_at, reference, grid }
     }
-    AlloyEvent::Tick { frame, fps, refreshes, present_at } => {
-      AlloyEvent::Tick { frame, fps, refreshes: refreshes + carried, present_at }
+    AlloyEvent::Tick { frame, fps, refreshes, present_at, reference, grid } => {
+      AlloyEvent::Tick { frame, fps, refreshes: refreshes + carried, present_at, reference, grid }
     }
     other => other,
   }
@@ -161,10 +189,11 @@ pub struct FluxRuntime {
   platform: Arc<PlatformContext>,
   // Sampling handle onto the resampler its producers feed (the alloy pump
   // for real input, the dev connection for synthetic input; see alloy's
-  // resample.rs for the slot model and the producer-side rule): moves never
-  // arrive as events. frame() drains one resampled move per pointer per
-  // frame signal and follows the batch with the "pointerFrame" terminator,
-  // so every move a frame delivers is the same age. Idle Ticks keep frame
+  // resample.rs for the resampling and the producer-side rule): a
+  // producer's moves never arrive as events. frame() drains one resampled
+  // move per pointer per frame signal and follows the batch with the
+  // "pointerFrame" terminator. The one move that arrives as an event is
+  // the resampler's flush ahead of an up. Idle Ticks keep frame
   // signals coming at refresh cadence, so a buffered move is never more
   // than one period from dispatch even when nothing is painting - hover
   // needs no arrival path anymore. Frame pacing also bounds a device
@@ -274,13 +303,13 @@ impl FluxRuntime {
 }
 
 impl FluxRuntime {
-  // The `timeStamp` of an input event that arrived at the wall reading
-  // `raw_ms` (see the input reading in paced_clock.rs): its arrival time in
-  // run mode, the frame's time in playback, where no wall time passes
-  // between frames.
-  fn arrival_stamp(&self, raw_ms: f64) -> f64 {
+  // The `timeStamp` of an input event that happened at the wall reading
+  // `raw_ms` (see the input reading in paced_clock.rs): its own time in run
+  // mode, the frame's time in playback, where no wall time passes between
+  // frames.
+  fn stamp(&self, raw_ms: f64) -> f64 {
     match &self.paced {
-      Some(pc) => pc.input_arrival_ms(raw_ms),
+      Some(pc) => pc.input_at_ms(raw_ms),
       None => self.timeline.now_ms(),
     }
   }
@@ -302,9 +331,9 @@ impl UiRuntime for FluxRuntime {
     // flux marshals the engine-agnostic window / keyboard / device events
     // (including the sticky window facts) directly; pointer events remain
     // because their dispatch is hit-testing, not pure marshalling.
-    // Stamped with when the event was sent, not with when this loop or the
+    // Stamped with when the event happened, not with when this loop or the
     // engine got to it.
-    let stamp = self.arrival_stamp(raw_ms);
+    let stamp = self.stamp(raw_ms);
     if flux::gui::events::forward(eh, event, stamp) {
       return;
     }
@@ -312,7 +341,7 @@ impl UiRuntime for FluxRuntime {
       // Downs, ups and wheels dispatch on arrival (hit test against the last
       // computed layout, like Flutter): no frame is needed to deliver them.
       // Handlers that mutate state request the next frame through their ffi
-      // calls. Moves never arrive here: their producers consume them into
+      // calls. A producer's moves never arrive here: they are consumed into
       // the resampler at emission, and frame() dispatches one position per
       // pointer per frame signal (see `resampler`).
       AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
@@ -333,9 +362,9 @@ impl UiRuntime for FluxRuntime {
         )
       }
       AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
-        // The producer dropped the pointer's history (a buffered move
-        // dispatching after this up would be stale); the up carries the
-        // final position.
+        // The producer ended the pointer's history, and what no frame had
+        // dispatched of it arrived as a move ahead of this up (below); the
+        // up carries the final position.
         dispatch(
           eh,
           InputEvent::PointerUp {
@@ -348,6 +377,25 @@ impl UiRuntime for FluxRuntime {
           },
           stamp,
         )
+      }
+      // The resampler's flush ahead of an up: the pointer's last position
+      // and its time, which the lift is read against. A batch of one, so
+      // it gets its terminator like a frame's moves.
+      AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, rel, modifiers } => {
+        let (dx, dy) = rel.unwrap_or((0.0, 0.0));
+        let event = InputEvent::PointerMove {
+          pointer_id: *pointer_id,
+          pointer_type: *pointer_type,
+          x: *x,
+          y: *y,
+          dx,
+          dy,
+          modifiers: *modifiers,
+        };
+        eh.exec(move |ctx| {
+          flux::gui::input::dispatch(&ctx, event, stamp, false);
+          flux::gui::input::frame_end(&ctx, stamp);
+        });
       }
       AlloyEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => dispatch(
         eh,
@@ -371,7 +419,8 @@ impl UiRuntime for FluxRuntime {
   /// sampled moves, then drive flux's frame protocol (`frame::advance`, the
   /// speech pump, and `frame::deliver` unless the clock is paused).
   /// `next_frame` is the present index the frame being computed would get.
-  fn frame(&mut self, next_frame: u64, refreshes: u32, present_at: Instant) {
+  fn frame(&mut self, next_frame: u64, refreshes: u32, times: FrameTimes) {
+    let FrameTimes { present_at, reference, grid } = times;
     let exec = self.exec.borrow();
     let Some(eh) = exec.as_ref() else {
       return;
@@ -384,8 +433,12 @@ impl UiRuntime for FluxRuntime {
     }
     // Sampled at frame-signal time: the alloy loop feeds the vsync's input
     // into the resampler before emitting the signal, so this frame's touch
-    // samples are already in the history.
-    let moves = self.resampler.sample();
+    // samples are already in the history. Touch is resampled against the
+    // signal's reference instant; playback has no such instant and takes
+    // each pointer's newest sample.
+    let resample_frame =
+      self.paced.as_ref().map(|pc| (reference, std::time::Duration::from_secs_f64(pc.period_ms() / 1000.0)));
+    let moves = self.resampler.sample(resample_frame);
     // Pointer-fact bookkeeping from the sampled positions (raw moves never
     // leave their producers); the per-frame hover refresh reads these.
     for m in &moves {
@@ -427,8 +480,8 @@ impl UiRuntime for FluxRuntime {
       // reading. In playback all three are the deterministic frame clock.
       // performance.now() is on NONE of them - that stays real elapsed time.
       // Render event carries seconds; JS scales to ms. The clock ticks ahead
-      // of the moves below, so a move is stamped with its own frame's
-      // reading.
+      // of the moves below, so their stamps are placed against this
+      // frame's grid instant.
       let (ts, timer_ts, input_ts) = match &paced {
         Some(pc) => {
           let raw = wall_start.elapsed().as_secs_f64() * 1000.0;
@@ -439,8 +492,8 @@ impl UiRuntime for FluxRuntime {
           } else {
             Advance::Run(scale)
           };
-          pc.tick(raw, refreshes, advance);
-          (pc.now_ms(), pc.timer_now_ms(), pc.input_slot_ms())
+          pc.tick(raw, raw_ms(wall_start, grid), refreshes, advance);
+          (pc.now_ms(), pc.timer_now_ms(), pc.input_frame_ms())
         }
         None => {
           let t = flux::timeline_now_ms(&ctx);
@@ -448,10 +501,18 @@ impl UiRuntime for FluxRuntime {
         }
       };
       // Resampled moves run ahead of the frame work so the frame consumes
-      // the state they dirty; timed as moves, not frame cost.
+      // the state they dirty; timed as moves, not frame cost. Each is
+      // stamped with the time of the position it carries (the frame's time
+      // in playback), and the batch's terminator with the latest of them.
       let has_moves = !moves.is_empty();
+      let mut batch_ts = f64::NEG_INFINITY;
       for m in moves {
         let start = std::time::Instant::now();
+        let move_ts = match &paced {
+          Some(pc) => pc.input_at_ms(raw_ms(wall_start, m.at)),
+          None => input_ts,
+        };
+        batch_ts = batch_ts.max(move_ts);
         flux::gui::input::dispatch(
           &ctx,
           InputEvent::PointerMove {
@@ -463,17 +524,18 @@ impl UiRuntime for FluxRuntime {
             dy: m.dy,
             modifiers: m.modifiers,
           },
-          input_ts,
+          move_ts,
+          m.predicted,
         );
         timing.lock().expect("js timing lock poisoned").record_move(start.elapsed().as_secs_f32() * 1000.0);
       }
       if has_moves {
-        // The batch terminator: all of this frame's moves have dispatched
-        // and every pointer is the same age, so recognizers measure now. It
+        // The batch terminator: all of this frame's moves have dispatched,
+        // so recognizers measure now. It
         // fires even if every move was interest-gated away (harmless), and
         // ahead of the deliver gate below so a paused clock still pairs
         // moves with their terminator.
-        flux::gui::input::frame_end(&ctx, input_ts);
+        flux::gui::input::frame_end(&ctx, batch_ts);
       }
       let start = std::time::Instant::now();
       // Stamp the frame for draw() on every path, the paused one included
@@ -523,5 +585,5 @@ impl UiRuntime for FluxRuntime {
 // Queue a pointer event for hit-test dispatch on the JS thread (see
 // flux::gui::input::dispatch).
 fn dispatch(eh: &ExecHandle, event: InputEvent, time_stamp_ms: f64) {
-  eh.exec(move |ctx| flux::gui::input::dispatch(&ctx, event, time_stamp_ms));
+  eh.exec(move |ctx| flux::gui::input::dispatch(&ctx, event, time_stamp_ms, false));
 }

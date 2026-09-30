@@ -2,7 +2,8 @@
 // exactly, a flick accelerating into the lift reads the speed at the lift,
 // a stop's resampler bounce does not fling, a hard brake never reads
 // backward, near-simultaneous samples read no jolt, a rested finger reads
-// zero, the window and the clamp hold, a frame-batched stream (same-age
+// zero, a pause cuts the history and a lift-off twitch reads zero, the
+// window and the clamp hold, a frame-batched stream (same-age
 // sample pairs) reads as the unbatched one, a shift keeps the fit, and the
 // fling gate. Explicit timestamps, so it is deterministic and needs no
 // timers. Pure-module input only, so it runs headless on flux: `srt test
@@ -107,6 +108,30 @@ test("a rested finger reads zero; fewer than two samples read zero", () => {
   one.push(0, 0, 0)
   if (one.velocity(0).vx !== 0) fail("one sample reads zero")
   if (createVelocityTracker().velocity(0).vx !== 0) fail("no samples read zero")
+})
+
+test("a pause cuts the history; a lift-off twitch reads zero", () => {
+  // A fast drag, a 60 ms pause, then a slower motion: only what came after
+  // the pause is measured.
+  let t = createVelocityTracker()
+  for (let i = 0; i <= 5; i++) t.push(i * 30, 0, i * 16)
+  for (let i = 0; i <= 3; i++) t.push(160 + i * 4, 0, 140 + i * 16)
+  let v = t.velocity(188)
+  if (!near(v.vx, 250)) fail(`the motion after the pause reads 250 px/s, got ${v.vx}`)
+  // A slow drag that pauses, then the finger leaves the panel: two samples
+  // 1.5 px apart in its last 17 ms are not a motion, whatever speed a fit
+  // through them would read.
+  let lift = createVelocityTracker()
+  for (let i = 0; i <= 5; i++) lift.push(i * 8, 0, i * 16)
+  lift.push(41, 0, 140)
+  lift.push(42.5, 0, 157)
+  v = lift.velocity(166)
+  if (v.vx !== 0 || v.vy !== 0) fail(`a twitch at the lift reads zero, got ${v.vx}`)
+  // The same travel without the pause before it is the end of the drag.
+  let drag = createVelocityTracker()
+  for (let i = 0; i <= 5; i++) drag.push(i * 8, 0, i * 16)
+  drag.push(41.5, 0, 96)
+  if (drag.velocity(105).vx === 0) fail("a drag that slows into the lift still reads its fit")
 })
 
 test("the clamp", () => {

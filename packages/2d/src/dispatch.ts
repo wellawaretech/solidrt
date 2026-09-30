@@ -60,6 +60,7 @@ type InternalEvent = {
   x: number
   y: number
   timeStamp: number
+  predicted: boolean
   pointerId: number
   pointerType: string
   button?: number
@@ -134,6 +135,7 @@ export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: num
         x,
         y,
         timeStamp: e.timeStamp,
+        predicted: e.predicted,
         pointerId: e.pointerId,
         pointerType: e.pointerType,
         button: e.button,

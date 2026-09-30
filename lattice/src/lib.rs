@@ -378,6 +378,23 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeVideoPlaneVsync(
   alloy::video_plane::set_vsync_ns(frame_time_ns);
 }
 
+// Receives one finger sample from SolidRTSurface (Android UI thread): the
+// touch path that carries each sample's own time, which SDL's does not
+// (see alloy's touch.rs).
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeTouch(
+  _env: *mut core::ffi::c_void,
+  _class: *mut core::ffi::c_void,
+  pointer_id: core::ffi::c_int,
+  action: core::ffi::c_int,
+  x: f32,
+  y: f32,
+  time_ns: i64,
+) {
+  alloy::touch::push(pointer_id as i32, action as i32, x, y, time_ns);
+}
+
 // --- End Android entry point ------------------------------
 
 // The player is the go client's home; the production runtime never
@@ -671,7 +688,7 @@ fn ui_thread(
   handle: tokio::runtime::Handle,
   atx: Arc<alloy::Context>,
   alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
-  event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
+  event_rx: std::sync::mpsc::Receiver<alloy::Arrival>,
   resampler: alloy::resample::SharedResampler,
   user_input_muted: Arc<AtomicBool>,
   opts: RunOptions,
@@ -777,8 +794,8 @@ fn ui_thread(
     links::listen(app_id, store.client_dir.clone(), &handle, ev_tx.clone(), alloy_cmd_tx.clone());
   }
   std::thread::spawn(move || {
-    while let Ok(event) = event_rx.recv() {
-      if ev_tx.send(event).is_err() {
+    while let Ok(alloy::Arrival { event, at }) = event_rx.recv() {
+      if ev_tx.send_at(event, at).is_err() {
         break;
       }
     }
@@ -975,8 +992,10 @@ fn ui_thread(
             }
             // Move positions are recorded by the frame verb from the
             // resampler's samples; only the arrival-dispatched events pass
-            // through here.
-            AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
+            // through here, the resampler's flush ahead of an up among
+            // them.
+            AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers, .. }
+            | AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
               input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
               input_state_events.set_modifiers(*modifiers);
             }
@@ -1017,12 +1036,14 @@ fn ui_thread(
             // shift the field by +1. The JS-side bootstrap owns frame 0;
             // without the shift, playback mode re-runs frame 0 at tick 0 and
             // duplicates a PNG.
-            AlloyEvent::FrameRendered { frame, refreshes, present_at, .. } => {
-              ui_runtime.frame(frame + 1, refreshes, present_at)
+            AlloyEvent::FrameRendered { frame, refreshes, present_at, reference, grid, .. } => {
+              ui_runtime.frame(frame + 1, refreshes, runtime::FrameTimes { present_at, reference, grid })
             }
             // Tick's frame is already the next present index (one past the
             // last FrameRendered), so no +1 here.
-            AlloyEvent::Tick { frame, refreshes, present_at, .. } => ui_runtime.frame(frame, refreshes, present_at),
+            AlloyEvent::Tick { frame, refreshes, present_at, reference, grid, .. } => {
+              ui_runtime.frame(frame, refreshes, runtime::FrameTimes { present_at, reference, grid })
+            }
             // The back intent dispatches to JS like any window event, backed
             // by a liveness watchdog: the emit just queued runs synchronously
             // on the JS executor, so a probe queued behind it proves the

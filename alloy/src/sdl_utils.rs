@@ -297,6 +297,28 @@ pub fn window_display_scale(window: &sdl3::video::Window) -> f32 {
   unsafe { SDL_GetWindowDisplayScale(window.raw()) }
 }
 
+/// The instant an SDL event timestamp stands for. SDL stamps events in
+/// nanoseconds on its own tick base (the platform's event time where the
+/// backend has one, the receipt in the pump otherwise, never later than
+/// now); `epoch` is that base as an Instant (see `ticks_epoch`).
+pub fn event_instant(epoch: std::time::Instant, timestamp_ns: u64) -> std::time::Instant {
+  // Windows is the exception: its event time is the message tick, which
+  // moves in steps of the system timer, coarser than the receipt. Input is
+  // not batched on a desktop and the pump blocks on the queue, so the
+  // receipt is the better reading there.
+  if cfg!(target_os = "windows") {
+    return std::time::Instant::now();
+  }
+  (epoch + std::time::Duration::from_nanos(timestamp_ns)).min(std::time::Instant::now())
+}
+
+/// SDL's tick base as an Instant: the instant SDL_GetTicksNS counts from.
+pub fn ticks_epoch() -> std::time::Instant {
+  let now = std::time::Instant::now();
+  let ticks = unsafe { sdl3::sys::timer::SDL_GetTicksNS() };
+  now.checked_sub(std::time::Duration::from_nanos(ticks)).unwrap_or(now)
+}
+
 pub fn mod_state() -> sdl3::keyboard::Mod {
   unsafe { sdl3::keyboard::Mod::from_bits(SDL_GetModState().0).unwrap_or(sdl3::keyboard::Mod::NOMOD) }
 }

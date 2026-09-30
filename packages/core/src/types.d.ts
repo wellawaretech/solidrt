@@ -284,9 +284,11 @@ export interface PointerEvent {
    * When the event happened, in milliseconds. Every input event carries one,
    * on one clock, so two stamps subtract to the time between two events: a
    * tap's length, the gap of a double tap, the age of the last move at a
-   * lift. The moves of one frame share a stamp, and the moves of consecutive
-   * frames are whole frame periods apart, as the positions they carry are;
-   * a down, an up, a wheel or a key carries the time it arrived. Use it
+   * lift. It is the input's own time, not its delivery's: a move carries the
+   * time the pointer was at the position it reports, however late the
+   * frame that delivers it, and a down, an up, a wheel or a key the time
+   * the platform recorded for it. A `predicted` move runs ahead of its
+   * pointer, so the real move after it can carry an earlier time. Use it
    * where you would reach for `performance.now()` in a handler: that one
    * measures when the handler ran, not when the input happened, and it does
    * not follow the dev clock, `srt render` or a test. The origin is
@@ -294,6 +296,17 @@ export interface PointerEvent {
    * a timer or the `onFrame` tick).
    */
   timeStamp: number
+  /**
+   * True for a move whose position the pointer was never reported at. Touch
+   * is delivered in batches, and a batch can miss the frame it belongs to;
+   * the runtime then bridges the gap with one predicted step, so a drag
+   * does not stall and jump. Draw with it, as with any move. Do not measure
+   * with it: leave it out of a velocity or a path. If the finger had in
+   * fact stopped, the next move reports where it really is, with the time
+   * it got there, which is earlier than the predicted move's. False on
+   * every other event.
+   */
+  predicted: boolean
   clientX: number
   clientY: number
   /**
@@ -354,7 +367,7 @@ export interface WheelEvent extends PointerEvent {
 // to the window root alone. <window onKeyDown> is therefore the app-global
 // shortcut point.
 export interface KeyEvent {
-  /** When the key event arrived, in milliseconds, on the clock of
+  /** When the key event happened, in milliseconds, on the clock of
    * `PointerEvent.timeStamp`. */
   timeStamp: number
   key: string

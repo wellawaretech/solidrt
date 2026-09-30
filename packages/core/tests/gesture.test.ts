@@ -29,7 +29,7 @@ let fail = (msg: string): void => {
 // A synthetic event at time `at` (ms): every frame the same, the pointer
 // at (x, y).
 let ev = (pointerId: number, x: number, y: number, at: number, button = 0): PointerEvent =>
-  ({ timeStamp: at, clientX: x, clientY: y, localX: x, localY: y, parentX: x, parentY: y, movementX: 0, movementY: 0, currentTarget: 1, target: 1, pointerId, pointerType: "touch", button, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, stopPropagation() {} }) as PointerEvent
+  ({ timeStamp: at, predicted: false, clientX: x, clientY: y, localX: x, localY: y, parentX: x, parentY: y, movementX: 0, movementY: 0, currentTarget: 1, target: 1, pointerId, pointerType: "touch", button, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, stopPropagation() {} }) as PointerEvent
 
 type Handlers = { onPointerDown(e: PointerEvent): void; onPointerMove(e: PointerEvent): void; onPointerUp(e: PointerEvent): void }
 
@@ -90,6 +90,26 @@ test("createPan: the lift velocity", () => {
   drag(pan.handlers, 12, 3000, 0, 0, 0.4, 0, 30, 16)
   v = ends[2]
   if (!v || v.vx !== 0) fail(`a 25 px/s crawl is not a fling, got ${JSON.stringify(v)}`)
+})
+
+test("createPan: a predicted move moves the pan and stays out of its velocity", () => {
+  let ends: Velocity[] = []
+  let moved = 0
+  let pan = inRoot(() => createPan({ onPanMove: dx => (moved += dx), onPanEnd: v => ends.push(v) }))
+  // 10 px every 16 ms, then the runtime bridges a late delivery with a
+  // predicted step, the finger turns out to have stopped, and its real
+  // position follows with the time it got there.
+  pan.handlers.onPointerDown(ev(20, 0, 0, 1000))
+  for (let i = 1; i <= 6; i++) pan.handlers.onPointerMove(ev(20, i * 10, 0, 1000 + i * 16))
+  pan.handlers.onPointerMove({ ...ev(20, 70, 0, 1000 + 7 * 16), predicted: true })
+  if (moved !== 60) fail(`the pan follows the predicted step, moved ${moved}`)
+  pan.handlers.onPointerMove(ev(20, 60, 0, 1000 + 6 * 16))
+  if (moved !== 50) fail(`the pan settles on the real position, moved ${moved}`)
+  // A lift 60 ms after the finger got there is a rest, though the predicted
+  // move is only 44 ms old.
+  pan.handlers.onPointerUp(ev(20, 60, 0, 1000 + 6 * 16 + 60))
+  let v = ends[0]
+  if (!v || v.vx !== 0 || v.vy !== 0) fail(`the rest is read from the real position, got ${JSON.stringify(v)}`)
 })
 
 test("classifySwipe", () => {

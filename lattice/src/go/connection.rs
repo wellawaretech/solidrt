@@ -45,8 +45,9 @@ pub struct DevFlags {
   /// thread, not in the UI thread's event channel.
   pub alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
   /// Resampler feed for injected pointer events, mirroring the alloy pump:
-  /// moves are consumed into it (never sent as events), downs seed and ups
-  /// drop the history before their events travel (see alloy's resample.rs).
+  /// moves are consumed into it (never sent as events), a down seeds the
+  /// history and an up flushes it before the event travels (see alloy's
+  /// resample.rs).
   pub resampler: alloy::resample::SharedResampler,
   /// The alloy run loop's user-input mute (App::user_input_mute), set by
   /// the dev tools while an agent measures or tests: the server's `mute`
@@ -702,10 +703,9 @@ async fn try_serve(
                             // Producer-side resampler feed, mirroring the alloy
                             // pump (see DevFlags::resampler): moves are consumed
                             // here and dispatch from the frame verb's samples.
-                            if resampler.feed(&event) {
-                              continue;
-                            }
-                            if input_tx.send(event).is_err() {
+                            // A synthetic event happens when it is sent.
+                            let sent = resampler.feed(event, std::time::Instant::now(), |event, at| input_tx.send_at(event, at));
+                            if sent.is_err() {
                               // The runtime is shutting down; nobody left to reply to.
                               return;
                             }

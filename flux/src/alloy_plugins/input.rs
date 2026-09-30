@@ -24,10 +24,13 @@ pub fn store_state(ctx: &Ctx<'_>) {
 // One routed delivery as the JS pointer event object. `targets`, `localX/Y`
 // and `parentX/Y` are index-parallel (the router guarantees it); JS collapses
 // them to per-handler scalars during the dispatch walk. `time_stamp_ms` is
-// the event's `timeStamp` (see `dispatch`).
-fn build_pointer_obj<'js>(ctx: &Ctx<'js>, ev: &RoutedPointer, time_stamp_ms: f64) -> Object<'js> {
+// the event's `timeStamp` and `predicted` its `predicted` (see `dispatch`),
+// which only a move can be: the enter and leave a predicted move causes are
+// real crossings of where the pointer is shown.
+fn build_pointer_obj<'js>(ctx: &Ctx<'js>, ev: &RoutedPointer, time_stamp_ms: f64, predicted: bool) -> Object<'js> {
   let obj = Object::new(ctx.clone()).expect("pointer obj");
   obj.set("timeStamp", time_stamp_ms).expect("set timeStamp");
+  obj.set("predicted", predicted && matches!(ev.kind, RoutedKind::Move { .. })).expect("set predicted");
   let targets = Array::new(ctx.clone()).expect("targets array");
   let local_xs = Array::new(ctx.clone()).expect("localX array");
   let local_ys = Array::new(ctx.clone()).expect("localY array");
@@ -73,7 +76,7 @@ fn build_pointer_obj<'js>(ctx: &Ctx<'js>, ev: &RoutedPointer, time_stamp_ms: f64
   obj
 }
 
-fn emit_routed(ctx: &Ctx<'_>, events: Vec<RoutedPointer>, time_stamp_ms: f64) {
+fn emit_routed(ctx: &Ctx<'_>, events: Vec<RoutedPointer>, time_stamp_ms: f64, predicted: bool) {
   for ev in events {
     let name = match ev.kind {
       RoutedKind::Move { .. } => "pointerMove",
@@ -83,7 +86,7 @@ fn emit_routed(ctx: &Ctx<'_>, events: Vec<RoutedPointer>, time_stamp_ms: f64) {
       RoutedKind::Leave => "pointerLeave",
       RoutedKind::Wheel { .. } => "wheel",
     };
-    let obj = build_pointer_obj(ctx, &ev, time_stamp_ms);
+    let obj = build_pointer_obj(ctx, &ev, time_stamp_ms, predicted);
     emit_event(ctx, name, obj);
   }
 }
@@ -93,9 +96,11 @@ fn emit_routed(ctx: &Ctx<'_>, events: Vec<RoutedPointer>, time_stamp_ms: f64) {
 /// per frame, so input keeps working when no frame is being produced.
 /// Handlers that mutate state request the next frame through their ffi calls.
 /// `time_stamp_ms` becomes the `timeStamp` of every event emitted: the
-/// runner's input time in milliseconds, which it owns (a move's is its
-/// frame's, an event that arrived between frames carries its arrival time).
-pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent, time_stamp_ms: f64) {
+/// runner's input time in milliseconds, which it owns (when the input
+/// happened; for a move, the time of the position it carries). `predicted`
+/// marks a move whose position the pointer was never reported at (the
+/// runner's resampler bridging a late delivery); false for everything else.
+pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent, time_stamp_ms: f64, predicted: bool) {
   let tree = ctx.userdata::<super::tree::SharedRenderTree>().expect("render tree userdata");
   let state = ctx.userdata::<EngineState>().expect("input state userdata");
   // Routing resolves fully (tree and router borrows released) before any
@@ -106,7 +111,7 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent, time_stamp_ms: f64) {
     (events, router.take_cursor_change())
   };
   apply_cursor(ctx, cursor);
-  emit_routed(ctx, events, time_stamp_ms);
+  emit_routed(ctx, events, time_stamp_ms, predicted);
 }
 
 // The hovered path's cursor when it changed (PointerRouter::take_cursor_change):
@@ -148,5 +153,5 @@ pub fn refresh_hover(ctx: &Ctx<'_>, pointers: Vec<(PointerKey, (f32, f32))>, mod
     (events, router.take_cursor_change())
   };
   apply_cursor(ctx, cursor);
-  emit_routed(ctx, events, time_stamp_ms);
+  emit_routed(ctx, events, time_stamp_ms, false);
 }

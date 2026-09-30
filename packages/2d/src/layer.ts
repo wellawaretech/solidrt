@@ -267,6 +267,9 @@ export type LayerEventBase = {
   y: number
   /** When the event happened, ms: the element event's `timeStamp`. */
   timeStamp: number
+  /** The element event's `predicted`: a move the pointer was never
+   * reported at. Draw with it, do not measure with it. */
+  predicted: boolean
   pointerId: number
   pointerType: string
   button?: number

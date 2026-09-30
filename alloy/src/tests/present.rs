@@ -245,3 +245,24 @@ fn a_held_interval_is_not_a_miss() {
   let idle = c.count(20.0 * P60, 6, true, true, None);
   assert_eq!((idle.missed, idle.interval), (0, 0));
 }
+
+// The grid instant (what lattice's input reading is placed against): once
+// the warm-up's signals have refined the anchor it advances by exactly the counted refreshes, whatever the
+// noise on the reference instants, and stays within the tolerance of them.
+#[test]
+fn grid_advances_by_the_counted_refreshes_under_jitter() {
+  let mut counter = RefreshCounter::new();
+  let mut rng = Noise(7);
+  let noise = 0.5 * P60;
+  let mut last: Option<f64> = None;
+  for k in 0..200 {
+    let reference = 1000.0 + k as f64 * P60 + rng.next(noise);
+    let n = counter.on_signal(reference);
+    let grid = counter.grid_ms();
+    assert!((grid - reference).abs() < P60, "signal {k}: grid {grid} is off its reference {reference}");
+    if let Some(last) = last.filter(|_| k > 16) {
+      assert!((grid - last - n as f64 * P60).abs() < 1e-6, "signal {k}: grid moved {} for {n} refreshes", grid - last);
+    }
+    last = Some(grid);
+  }
+}

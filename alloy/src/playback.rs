@@ -48,7 +48,7 @@ pub struct PlaybackConfig {
 pub(crate) fn run_playback_loop(
   window: sdl3::video::Window,
   rx: mpsc::Receiver<FrameOutput>,
-  event_tx: mpsc::Sender<AlloyEvent>,
+  event_tx: crate::EventSender,
   raster: &RasterSender,
   mut playback: PlaybackConfig,
 ) -> Result<(), String> {
@@ -101,7 +101,11 @@ pub(crate) fn run_playback_loop(
     let virtual_ns = (draw + 1) as i64 * 1_000_000_000 / playback.fps as i64;
     crate::clock::set_virtual_ns(virtual_ns);
     let present_at = crate::clock::at(virtual_ns);
-    event_tx.send(AlloyEvent::FrameRendered { frame: draw, fps: playback.fps, refreshes: 1, present_at }).ok();
+    // No wall time in playback: the reference and the grid are the virtual
+    // frame time too, and nothing is resampled against them.
+    let signal =
+      AlloyEvent::FrameRendered { frame: draw, fps: playback.fps, refreshes: 1, present_at, reference: present_at, grid: present_at };
+    event_tx.send(signal).ok();
   }
   raster.drain();
 

@@ -159,6 +159,7 @@ function world() {
 function ev(localX: number, localY: number, pointerId = 1, extra: Partial<ElementWheelEvent> = {}): ElementWheelEvent {
   return {
     timeStamp: 0,
+    predicted: false,
     localX,
     localY,
     clientX: localX,

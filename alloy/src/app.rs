@@ -324,13 +324,14 @@ impl App {
   /// process exit code - alloy itself never exits the process here.
   pub fn run(
     self,
-    dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
+    dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<crate::Arrival>) + Send + 'static,
   ) -> Result<(), String> {
     let App { sdl_context, mut window, platform, mode, resampler, user_input_muted } = self;
     let surface_size = platform.surface_size_handle();
 
     let (tx, rx) = mpsc::channel::<FrameOutput>();
-    let (event_tx, event_rx) = mpsc::channel::<AlloyEvent>();
+    let (event_tx, event_rx) = mpsc::channel::<crate::Arrival>();
+    let event_tx = crate::EventSender::new(event_tx);
     let (cmd_tx, cmd_rx) = mpsc::channel::<AlloyCommand>();
     // Live counters shared with the raster thread and the Context (see
     // raster::RasterStats). The loop below reads the queue depth to gate the
@@ -349,6 +350,8 @@ impl App {
         sender.push_custom_event(FrameReady).ok();
       }))
     };
+    #[cfg(target_os = "android")]
+    crate::touch::set_wake(wake.clone());
     let raster =
       platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.is_playback(), stats.clone());
 
@@ -445,6 +448,8 @@ impl App {
     // what a count means for the app timeline is the embedder's policy.
     let start_time = Instant::now();
     let ms_since_start = |at: Instant| at.saturating_duration_since(start_time).as_secs_f64() * 1000.0;
+    // Where a count places its signal (Counted::grid_ms), as an instant.
+    let grid_instant = |counted: crate::present::Counted| start_time + Duration::from_secs_f64(counted.grid_ms.max(0.0) / 1000.0);
     let mut refreshes = crate::present::RefreshCounting::new();
     // The cadence hold (see cadence.rs): the controller reads each present's
     // work time and sets the hold FrameRelease enforces; the policy comes
@@ -550,6 +555,8 @@ impl App {
     // each waits on the other's channel - and window close or SIGTERM (which
     // SDL translates into a Quit event) lands in the dead channel and wedges
     // the process until SIGKILL.
+    // SDL's tick base, which its event timestamps count from.
+    let sdl_epoch = crate::sdl_utils::ticks_epoch();
     'run: loop {
       let tick_period = Duration::from_secs_f64(1.0 / watch.refresh_rate().max(1.0) as f64);
       refreshes.set_hz(watch.refresh_rate());
@@ -608,7 +615,8 @@ impl App {
                 // The next frame presents at the end of the slot the hold
                 // opens from this reference (one period without a hold).
                 let present_at = reference + tick_period * cadence.hold();
-                event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at }).ok();
+                let grid = grid_instant(counted);
+                event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at, reference, grid }).ok();
                 frame += 1;
                 last_frame_signal = Instant::now();
                 last_emission = last_frame_signal;
@@ -697,9 +705,11 @@ impl App {
           // The Tick is the loop's heartbeat, so an idle app with a finished
           // producer winds down within one tick period (see 'run).
           let now = Instant::now();
-          let count = count_signal(&mut refreshes, now, frame, false, false, None).refreshes;
+          let counted = count_signal(&mut refreshes, now, frame, false, false, None);
           let present_at = now + tick_period;
-          if event_tx.send(AlloyEvent::Tick { frame, fps, refreshes: count, present_at }).is_err() {
+          let signal =
+            AlloyEvent::Tick { frame, fps, refreshes: counted.refreshes, present_at, reference: now, grid: grid_instant(counted) };
+          if event_tx.send(signal).is_err() {
             break 'run;
           }
           stats.idle_ticks.fetch_add(1, Ordering::Relaxed);
@@ -727,19 +737,11 @@ impl App {
         event_tx.send(AlloyEvent::PointerLock { locked: false }).ok();
       }
       liveness.begin_pump();
-      for sdl_event in first_event.into_iter().chain(event_pump.poll_iter()) {
-        if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
-          use sdl3::event::DisplayEvent;
-          if matches!(display_event, DisplayEvent::CurrentModeChanged | DisplayEvent::DesktopModeChanged) {
-            if let Some(e) = watch.check_refresh(&window) {
-              event_tx.send(e).ok();
-            }
-          }
-        }
-        if let Some(g) = gamepads.as_mut() {
-          g.handle_event(&sdl_event);
-        }
-        if let Some(mut e) = translate_event(sdl_event, &window) {
+      {
+        // One translated input or window event on its way out: `at` is when
+        // it happened (the platform's event time, a touch sample's time).
+        // False when the embedder is gone.
+        let mut deliver = |mut e: AlloyEvent, at: Instant| -> bool {
           // Mouse position bookkeeping and the pointer-lock freeze: while
           // locked, mouse events carry the lock point (see
           // pointer_lock_frozen); unlocked, remember the real position as
@@ -768,17 +770,41 @@ impl App {
           // began cannot stay stuck; window and display facts (resize,
           // visibility, quit) are not input.
           if muted && crate::event::is_muted_input(&e) {
-            continue;
+            return true;
+          }
+          if matches!(e, AlloyEvent::PointerMove { .. }) {
+            pointer_moves += 1;
           }
           // Producer-side resampler feed (see resample.rs): moves are
-          // consumed here - the UI side samples one position per pointer
-          // per frame slot - while downs seed and ups drop the history
-          // before their events travel.
-          if resampler.feed(&e) {
-            pointer_moves += 1;
-            continue;
+          // consumed here - the UI side dispatches one position per pointer
+          // per frame - while a down seeds the history and an up flushes it
+          // before the event travels.
+          resampler.feed(e, at, |e, at| event_tx.send_at(e, at)).is_ok()
+        };
+        for sdl_event in first_event.into_iter().chain(event_pump.poll_iter()) {
+          if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
+            use sdl3::event::DisplayEvent;
+            if matches!(display_event, DisplayEvent::CurrentModeChanged | DisplayEvent::DesktopModeChanged) {
+              if let Some(e) = watch.check_refresh(&window) {
+                event_tx.send(e).ok();
+              }
+            }
           }
-          if event_tx.send(e).is_err() {
+          if let Some(g) = gamepads.as_mut() {
+            g.handle_event(&sdl_event);
+          }
+          let at = crate::sdl_utils::event_instant(sdl_epoch, sdl_event.get_timestamp());
+          if let Some(e) = translate_event(sdl_event, &window) {
+            if !deliver(e, at) {
+              break 'run;
+            }
+          }
+        }
+        // Android's finger samples arrive beside SDL's queue, each with its
+        // own time (see touch.rs).
+        #[cfg(target_os = "android")]
+        for sample in crate::touch::drain() {
+          if !deliver(crate::event::translate_touch(&sample, &window), sample.at) {
             break 'run;
           }
         }
@@ -824,7 +850,8 @@ impl App {
                 learn(&mut cadence, &mut release, &mut refreshes, counted, work, reference, tick_period);
               }
               let present_at = reference + tick_period * cadence.hold();
-              event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at }).ok();
+              let grid = grid_instant(counted);
+              event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at, reference, grid }).ok();
               frame += 1;
             }
             last_frame_signal = Instant::now();
@@ -889,7 +916,8 @@ impl App {
                     learn(&mut cadence, &mut release, &mut refreshes, counted, work, reference, tick_period);
                   }
                   let present_at = reference + tick_period * cadence.hold();
-                  event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at }).ok();
+                  let grid = grid_instant(counted);
+                  event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at, reference, grid }).ok();
                   frame += 1;
                 }
                 last_frame_signal = Instant::now();

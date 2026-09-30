@@ -109,7 +109,7 @@ export function createSwipe(options: SwipeOptions) {
       pan.handlers.onPointerDown(e)
     },
     onPointerMove: (e: PointerEvent) => {
-      if (down && down.id === e.pointerId) finger.push(e.clientX, e.clientY, e.timeStamp)
+      if (down && down.id === e.pointerId && !e.predicted) finger.push(e.clientX, e.clientY, e.timeStamp)
       pan.handlers.onPointerMove(e)
     },
     onPointerUp: (e: PointerEvent) => {

@@ -123,6 +123,15 @@ impl RefreshCounter {
     }
     n as u32
   }
+
+  /// Where the count places the last signal, ms on the caller's origin: the
+  /// anchor plus the counted refreshes. It advances by exactly the counted
+  /// refreshes from signal to signal (outside the warm-up's phase
+  /// refinement and a rate change), which the reference instants, with
+  /// their noise, do not. 0 before the first signal.
+  pub fn grid_ms(&self) -> f64 {
+    self.anchor_ms.map_or(0.0, |anchor| anchor + self.counted as f64 * self.period_ms())
+  }
 }
 
 /// One frame signal as the main loop counted it. `presented` is false for an
@@ -148,12 +157,14 @@ pub struct SignalRecord {
 /// the display missed in the interval it closed, and that interval itself
 /// when it was a demanded one (the refreshes the display showed the previous
 /// frame for; 0 for a Tick and for an interval opened by an idle present),
-/// which is the cadence controller's measured fact.
+/// which is the cadence controller's measured fact. `grid_ms` is where the
+/// count places the signal (see `RefreshCounter::grid_ms`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Counted {
   pub refreshes: u32,
   pub missed: u32,
   pub interval: u32,
+  pub grid_ms: f64,
 }
 
 // Frame signals the ledger keeps; enough for a few seconds at any refresh
@@ -297,7 +308,7 @@ impl RefreshCounting {
       self.tally.work_sum_ms += work;
       self.tally.work_max_ms = self.tally.work_max_ms.max(work);
     }
-    Counted { refreshes, missed, interval }
+    Counted { refreshes, missed, interval, grid_ms: self.counter.grid_ms() }
   }
 
   /// The tally since the last take, reset to zero.

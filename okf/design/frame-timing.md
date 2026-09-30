@@ -169,7 +169,7 @@ one.
 | refresh count | alloy, per frame signal | the fact the app timeline advances by |
 | animation timeline | `PacedClock::now_ms` (lattice) | `onFrame` tick, `requestAnimationFrame`, the render event, element and node transitions, silent video streams |
 | timer timeline | `PacedClock::timer_now_ms` | `setTimeout`, `setInterval` in a GUI app |
-| input reading | `PacedClock::input_slot_ms`, `input_arrival_ms` | the `timeStamp` of input events (pointer, wheel, key, pad state) |
+| input reading | `PacedClock::input_at_ms`, `input_frame_ms` | the `timeStamp` of input events (pointer, wheel, key, pad state) |
 | playback clock | frame / fps (lattice, `srt render`) | everything above, deterministically, when recording |
 | audio sink | forge audio position | video streams with audio (master clock; the picture follows) |
 
@@ -189,20 +189,26 @@ Rules that follow, each learned the hard way:
   deliberately unbuilt: waking a saturated JS thread to run timer work is
   the backlog loop the tick gate exists to prevent.
 - Input events are stamped with the input reading, which is neither
-  timeline ([event-timestamp]). The resampler delivers one position per
-  pointer per frame slot, consecutive ones a slot apart, so a move's stamp
-  advances by counted refreshes as the animation timeline does; stamped
-  with the wall at the frame signal it would pair an even position with a
-  jittered time. But it lives through a suspension, as the timer timeline
-  does (two taps on either side of a background stretch are far apart),
-  and an event that arrives between frame signals (down, up, wheel, key)
-  is stamped with its arrival time, not the last signal's: below the
-  refresh rate a frame interval is as long as the rest window of a lift
-  (50 ms at 20 fps). Stamps never go back: an arrival can land a little
-  past the next signal's reading, and the next stamp is held at it. The
-  clock ticks ahead of the frame's move dispatch, so a move carries its
-  own frame's reading. Package logic takes input time from the event and
-  never reads `performance.now()`.
+  timeline ([event-timestamp]), and the stamp is the input's own time, not
+  its delivery's. Every input event travels with when it happened: the
+  platform's event time (SDL's event timestamp; on Android each touch
+  sample's `MotionEvent` time, through a touch path of our own, because
+  SDL's carries none), and for a move the time of the position it carries.
+  Touch is resampled by time against the frame signal's reference instant,
+  as Android and Flutter do (alloy's `resample.rs`); mouse and pen dispatch
+  their newest sample. So a lift is read against when the pointer was last
+  really somewhere else, at any frame rate. The reading advances by counted
+  refreshes as the animation timeline does, lives through a suspension as
+  the timer timeline does (two taps on either side of a background stretch
+  are far apart), and has a value for any instant: the latched reading
+  plus the instant's distance from the signal's grid instant, where
+  alloy's refresh count places the signal. The grid advances by exactly
+  the counted refreshes, so an instant reads the same whichever tick it is
+  read after and no tick's execution jitter reaches a stamp. A stamp can
+  go back in one case: a touch move predicted across a late delivery
+  (`predicted` on the event, which recognizers keep out of their velocity),
+  followed by the real position when the finger had stopped. Package logic
+  takes input time from the event and never reads `performance.now()`.
 - `performance.now()` is on none of these: real elapsed time, advancing
   through a paused dev clock. An app that times its animation off it under
   `srt render` plays at the wrong speed (Sponza feedback item 28 tried it).

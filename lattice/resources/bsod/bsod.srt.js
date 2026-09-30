@@ -4586,6 +4586,7 @@ function backDefault() {
 }
 var animationFrames = new Map;
 var refreshRate = 60;
+var latestTick = 0;
 var backHandlers = [];
 var windowRootId = 0;
 function setWindowRoot(nodeId) {
@@ -4610,6 +4611,8 @@ function attachWindow(nodeId) {
   let unsubRefreshRate = null;
   let unsubFirstResize = null;
   function runFrame(t, frame, bootstrap = false) {
+    if (!bootstrap)
+      latestTick = t;
     if (!bootstrap && animationFrames.size > 0) {
       let frames = animationFrames;
       animationFrames = new Map;

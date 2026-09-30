@@ -6770,6 +6770,7 @@ function onPointerMove(fn) {
     globalMoveUnsub = on("pointerMove", (raw) => {
       let e = {
         timeStamp: raw.timeStamp,
+        predicted: raw.predicted,
         clientX: raw.clientX,
         clientY: raw.clientY,
         target: raw.target,
@@ -7023,7 +7024,9 @@ function backDefault() {
 var nextFrameId = 1;
 var animationFrames = new Map;
 var refreshRate = 60;
-function onFrame(fn) {
+var latestTick = 0;
+function onFrame(fn, options) {
+  let demand = options?.demand !== false;
   let frameId = null;
   let cancelled = false;
   let extendedFn = (tick, frame, rate) => {
@@ -7031,7 +7034,8 @@ function onFrame(fn) {
       return;
     frameId = nextFrameId++;
     animationFrames.set(frameId, extendedFn);
-    requestFrame();
+    if (demand)
+      requestFrame();
     try {
       fn(tick, frame, rate);
     } catch (err) {
@@ -7040,7 +7044,8 @@ function onFrame(fn) {
   };
   frameId = nextFrameId++;
   animationFrames.set(frameId, extendedFn);
-  requestFrame();
+  if (demand)
+    requestFrame();
   let cleanup2 = () => {
     cancelled = true;
     animationFrames.delete(frameId);
@@ -7189,6 +7194,8 @@ function attachWindow(nodeId) {
   let unsubRefreshRate = null;
   let unsubFirstResize = null;
   function runFrame(t, frame, bootstrap = false) {
+    if (!bootstrap)
+      latestTick = t;
     if (!bootstrap && animationFrames.size > 0) {
       let frames = animationFrames;
       animationFrames = new Map;
@@ -8378,16 +8385,8 @@ function createVelocityTracker() {
   let ts = new Float64Array(VELOCITY_SAMPLES);
   let head = 0;
   let count = 0;
-  let movedAt = -Infinity;
   return {
     push(x, y, at) {
-      if (count === 0)
-        movedAt = at;
-      else {
-        let last = (head - 1 + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
-        if (xs[last] !== x || ys[last] !== y)
-          movedAt = at;
-      }
       xs[head] = x;
       ys[head] = y;
       ts[head] = at;
@@ -8409,9 +8408,16 @@ function createVelocityTracker() {
     velocity(at) {
       if (count < 2)
         return ZERO;
+      let newest = (head - 1 + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
+      let movedAt = ts[newest];
+      for (let i = 1;i < count; i++) {
+        let k = (head - 1 - i + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
+        if (xs[k] !== xs[newest] || ys[k] !== ys[newest])
+          break;
+        movedAt = ts[k];
+      }
       if (at - movedAt > VELOCITY_REST_MS)
         return ZERO;
-      let newest = (head - 1 + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
       let s0 = 0;
       let s1 = 0;
       let s2 = 0;
@@ -8529,7 +8535,8 @@ function createPan(options) {
             y: e.parentY
           };
           tracker.reset();
-          tracker.push(e.parentX, e.parentY, e.timeStamp);
+          if (!e.predicted)
+            tracker.push(e.parentX, e.parentY, e.timeStamp);
           options.onPanStart?.();
         } else {
           reset();
@@ -8537,7 +8544,8 @@ function createPan(options) {
         return;
       }
       if (active === e.pointerId && origin2) {
-        tracker.push(e.parentX, e.parentY, e.timeStamp);
+        if (!e.predicted)
+          tracker.push(e.parentX, e.parentY, e.timeStamp);
         options.onPanMove?.(e.parentX - origin2.x, e.parentY - origin2.y);
         origin2 = {
           x: e.parentX,

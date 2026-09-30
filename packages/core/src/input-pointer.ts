@@ -465,7 +465,7 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
         transform.handlers.onPointerMove(e)
         hold.move(e)
         taps.move(e)
-        if (opening && opening.id === e.pointerId) finger.push(e.clientX, e.clientY, e.timeStamp)
+        if (opening && opening.id === e.pointerId && !e.predicted) finger.push(e.clientX, e.clientY, e.timeStamp)
       },
       onPointerUp(e) {
         if (downs.get(e.pointerId) !== (e.button ?? PRIMARY)) return

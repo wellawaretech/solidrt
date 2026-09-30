@@ -80,10 +80,11 @@ public class SolidRTActivity extends SDLActivity {
     // transparent black, so uncovered pixels show what is beneath: the video
     // plane while one exists, else the window's black background as before.
     // Both settings must precede the window attaching, which is why they are
-    // made at surface creation rather than in onCreate.
+    // made at surface creation rather than in onCreate. The surface is our
+    // subclass, for its touch path (see SolidRTSurface).
     @Override
     protected SDLSurface createSDLSurface(Context context) {
-        SDLSurface surface = super.createSDLSurface(context);
+        SDLSurface surface = new SolidRTSurface(context);
         surface.getHolder().setFormat(PixelFormat.TRANSLUCENT);
         surface.setZOrderMediaOverlay(true);
         return surface;
