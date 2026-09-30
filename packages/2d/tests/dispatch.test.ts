@@ -43,7 +43,7 @@ function world() {
   let sprites: (Sprite & Fake)[] = []
   let size: [number, number] = [400, 200]
   // What a test moves: the time the dispatch reads, and the camera.
-  let state: { clock: number; camera: CameraUpdate } = { clock: 0, camera: { x: 0, y: 0, zoom: 1, rotation: 0, pivotX: 0, pivotY: 0 } }
+  let state: { camera: CameraUpdate } = { camera: { x: 0, y: 0, zoom: 1, rotation: 0, pivotX: 0, pivotY: 0 } }
 
   let tag = (e: { sprite: Sprite | null; tapCount?: number }) => (e.sprite ? (e.sprite as Sprite & Fake).name : "-") + (e.tapCount ? "#" + e.tapCount : "")
   let handlers = (name: string, stop: Set<string> = new Set()) => ({
@@ -97,7 +97,6 @@ function world() {
     pick,
     root,
     listeners,
-    now: () => state.clock,
   })
   listeners.add(handlers("root"))
   let G = group("G")
@@ -119,6 +118,7 @@ function world() {
 
 function ev(localX: number, localY: number, pointerId = 1, extra: Partial<ElementWheelEvent> = {}): ElementWheelEvent {
   return {
+    timeStamp: 0,
     localX,
     localY,
     clientX: localX,
@@ -223,7 +223,7 @@ test("tap rules: slop, release off the target, repeats, restarts", () => {
   // I. Tap rules: travel past the slop is a drag; a release off the target
   // is nothing; repeats count within the window, on the same target, near
   // the same spot; a new target or a lapse restarts at 1.
-  let { leaf, logged, state } = world()
+  let { leaf, logged } = world()
   leaf.onPointerDown(ev(100, 100))
   leaf.onPointerMove(ev(110, 100))
   leaf.onPointerUp(ev(100, 100))
@@ -231,30 +231,19 @@ test("tap rules: slop, release off the target, repeats, restarts", () => {
   leaf.onPointerDown(ev(119, 100))
   leaf.onPointerUp(ev(124, 100))
   expect("release off target", logged(), ["S:down(S)", "G:down(S)", "root:down(S)", "S:up(S)", "G:up(S)", "root:up(S)"])
-  state.clock = 1000
-  leaf.onPointerDown(ev(100, 100))
-  leaf.onPointerUp(ev(100, 100))
-  state.clock = 1200
-  leaf.onPointerDown(ev(105, 100))
-  leaf.onPointerUp(ev(105, 100))
-  state.clock = 1400
-  leaf.onPointerDown(ev(100, 100))
-  leaf.onPointerUp(ev(100, 100))
-  state.clock = 1800
-  leaf.onPointerDown(ev(100, 100))
-  leaf.onPointerUp(ev(100, 100))
-  state.clock = 1900
-  leaf.onPointerDown(ev(300, 100))
-  leaf.onPointerUp(ev(300, 100))
-  state.clock = 2000
-  leaf.onPointerDown(ev(10, 10))
-  leaf.onPointerUp(ev(10, 10))
-  state.clock = 2100
-  leaf.onPointerDown(ev(40, 10))
-  leaf.onPointerUp(ev(40, 10))
-  state.clock = 2200
-  leaf.onPointerDown(ev(45, 10))
-  leaf.onPointerUp(ev(45, 10))
+  // A tap at (x, y) whose down and up carry the time `at`, ms.
+  let tapAt = (at: number, x: number, y: number) => {
+    leaf.onPointerDown(ev(x, y, 1, { timeStamp: at }))
+    leaf.onPointerUp(ev(x, y, 1, { timeStamp: at }))
+  }
+  tapAt(1000, 100, 100)
+  tapAt(1200, 105, 100)
+  tapAt(1400, 100, 100)
+  tapAt(1800, 100, 100)
+  tapAt(1900, 300, 100)
+  tapAt(2000, 10, 10)
+  tapAt(2100, 40, 10)
+  tapAt(2200, 45, 10)
   expect(
     "tap count",
     logged().filter(l => l.includes("tap")),

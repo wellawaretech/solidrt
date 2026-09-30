@@ -468,13 +468,16 @@ re-runs an effect per sprite per frame for nothing.
 ### Frame animation
 
 Frame animation (animation.ts): `createAnimation(frames, fps, { loop })`
-is a clip with a shared wall-clock timer stepping every attached sprite
+is a clip with a shared clock on the app's frame time (it freezes with
+the dev clock and plays at its own speed under `srt render`) stepping
+every attached sprite
 (`anim.add(sprite)` / `remove`; `play`/`pause`; `frame()`/`playing()`
 read the clock, methods like the 3d mixer's `playing()`; `loop: false`
 holds the last frame and fires `onFinish`, the mixer's name for it in
-@solidrt/3d). One timer per playing clip, one setSprite
-per sprite per STEP - an 8fps cycle is 8 publishes a second regardless of
-display rate, and a paused clip costs nothing. A sprite belongs to at
+@solidrt/3d). One no-demand frame callback per playing clip, one
+setSprite per sprite per STEP - an 8fps cycle is 8 publishes and 8
+presents a second regardless of display rate, and a paused clip costs
+nothing. A sprite belongs to at
 most one animation (add detaches the previous); removed sprites prune
 lazily on the next step. Works on both layer kinds; with `<Sprite>`,
 attach via `ref` and leave the `frame` prop off - the clip owns that

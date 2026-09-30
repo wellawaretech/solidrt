@@ -21,13 +21,16 @@ pub struct RenderFrame {
   /// When the frame is expected to reach the screen (alloy's frame signal
   /// says): the deadline its video content is latched against.
   pub present_at: Instant,
+  /// The frame's input time, ms (the paced clock's input reading as this
+  /// frame's signal latched it): what stamps the hover events draw() emits.
+  pub input_ms: f64,
 }
 
 impl Default for RenderFrame {
   // Before any frame signal (the mount frame): the frame presents as soon
   // as it can, at the virtual time in playback.
   fn default() -> Self {
-    RenderFrame { start: None, frame: 0, period_ms: 0.0, present_at: alloy::clock::now() }
+    RenderFrame { start: None, frame: 0, period_ms: 0.0, present_at: alloy::clock::now(), input_ms: 0.0 }
   }
 }
 

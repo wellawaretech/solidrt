@@ -280,6 +280,20 @@ export interface TransformProps {
 // the DOM MouseEvent). pointerType distinguishes mouse from touch; button is the
 // pressed button on down/up (0 = primary); the modifier flags mirror the DOM.
 export interface PointerEvent {
+  /**
+   * When the event happened, in milliseconds. Every input event carries one,
+   * on one clock, so two stamps subtract to the time between two events: a
+   * tap's length, the gap of a double tap, the age of the last move at a
+   * lift. The moves of one frame share a stamp, and the moves of consecutive
+   * frames are whole frame periods apart, as the positions they carry are;
+   * a down, an up, a wheel or a key carries the time it arrived. Use it
+   * where you would reach for `performance.now()` in a handler: that one
+   * measures when the handler ran, not when the input happened, and it does
+   * not follow the dev clock, `srt render` or a test. The origin is
+   * arbitrary (compare stamps with each other, not with `performance.now()`,
+   * a timer or the `onFrame` tick).
+   */
+  timeStamp: number
   clientX: number
   clientY: number
   /**
@@ -340,6 +354,9 @@ export interface WheelEvent extends PointerEvent {
 // to the window root alone. <window onKeyDown> is therefore the app-global
 // shortcut point.
 export interface KeyEvent {
+  /** When the key event arrived, in milliseconds, on the clock of
+   * `PointerEvent.timeStamp`. */
+  timeStamp: number
   key: string
   code: string
   repeat: boolean

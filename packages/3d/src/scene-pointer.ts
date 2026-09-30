@@ -58,6 +58,7 @@ type InternalEvent = {
   distance: number | null
   x: number
   y: number
+  timeStamp: number
   pointerId: number
   pointerType: string
   button?: number
@@ -95,8 +96,6 @@ export type PointerInputDeps = {
   root: Scene | ViewHandle
   /** The root's listeners, in registration order. */
   listeners: Set<ScenePointerListener>
-  /** The clock for tap repeats (default performance.now; checks inject). */
-  now?: () => number
 }
 
 export type PointerInput = {
@@ -108,7 +107,6 @@ export type PointerInput = {
 }
 
 export function makePointerInput(deps: PointerInputDeps): PointerInput {
-  let now = deps.now ?? (() => performance.now())
   let presses = new Map<number, Press>()
   let hover = new Map<number, Target>()
   let lastTap: { time: number; cx: number; cy: number; target: Target | null; count: number } | null = null
@@ -170,6 +168,7 @@ export function makePointerInput(deps: PointerInputDeps): PointerInput {
         distance: hit === null ? null : hit.distance,
         x,
         y,
+        timeStamp: e.timeStamp,
         pointerId: e.pointerId,
         pointerType: e.pointerType,
         button: e.button,
@@ -245,7 +244,7 @@ export function makePointerInput(deps: PointerInputDeps): PointerInput {
         if (press.moved || !press.alone) return
         let release = nearest(x, y)
         if (press.target === null ? release !== null : release === null || !sameHit(release, press.target)) return
-        let time = now()
+        let time = e.timeStamp
         let repeat = lastTap !== null && time - lastTap.time <= TAP_INTERVAL_MS && sameTarget(lastTap.target, press.target) && Math.hypot(e.clientX - lastTap.cx, e.clientY - lastTap.cy) <= TAP_REPEAT_SLOP
         let count = repeat ? lastTap!.count + 1 : 1
         lastTap = { time, cx: e.clientX, cy: e.clientY, target: press.target, count }

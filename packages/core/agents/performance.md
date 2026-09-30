@@ -92,7 +92,12 @@ Rules, in order of leverage:
    while a condition holds is an effect returning it:
    `createEffect(() => active(), on => { if (!on) return; return onFrame(...) })`
    - the apply phase has no owner, so onFrame registers nothing there and
-   the returned cleanup is the handle the effect disposes.
+   the returned cleanup is the handle the effect disposes. A loop that
+   follows time but changes the picture only now and then (a clip stepping
+   at 8 fps, a clock face) registers with `onFrame(fn, { demand: false })`:
+   it is called on every frame the runtime runs, requests none itself, and
+   the app presents only when the body writes something. `frameTime()`
+   reads the current frame's tick with no callback at all.
 5. repaintBoundary works like Flutter's: transforms and opacity on the
    boundary node itself (or any ancestor) are hoisted out of the cache and
    applied at composite time, so animating x/y/scale/rotate/opacity of a

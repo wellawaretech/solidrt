@@ -309,16 +309,29 @@ fn the_release_policy_waits_drops_and_reanchors_against_the_clock() {
   // frame (the frame in hand is released at its time whatever the clock
   // did, and the lead absorbs a jump smaller than itself) and less than the
   // stall threshold: decode is "behind", the late frames are dropped until
-  // the schedule catches up, then releases resume on the same anchor.
-  let jump = lead + DROP_LATE_NS + 3 * frame_ns;
-  assert!(jump < STALL_REANCHOR_NS);
+  // the schedule catches up, then releases resume on the same anchor. The
+  // jump stays two frames short of the stall threshold: the clock is the
+  // real one plus the jump, so what a busy host adds by waking the worker
+  // late counts as lateness too, and must not turn the drop into a stall.
+  let jump = lead + DROP_LATE_NS + 2 * frame_ns;
+  assert!(jump + 2 * frame_ns <= STALL_REANCHOR_NS);
+  let at_jump = released(&rig).len();
   offset.fetch_add(jump, Ordering::Relaxed);
   wait_on(&rig, "a late frame to be dropped", || dropped() > dropped_before_jump);
   let seen = released(&rig).len();
   wait_on(&rig, "releases to resume", || released(&rig).len() >= seen + 3);
   let count = dropped() - dropped_before_jump;
-  assert!(count <= (jump / frame_ns) as usize + 1, "{count} frames dropped for a {jump}ns jump");
   let resumed = released(&rig);
+  // The drops are the frames the clock passed over and no more, judged on
+  // the clock itself, from the last release before the jump to the latest:
+  // every frame in that span was handed over or dropped. Counted against
+  // the jump alone, a host that wakes the worker late (more time passes,
+  // more frames are late) would fail it.
+  let (_, _, before_ns) = resumed[at_jump - 1];
+  let (_, _, latest_ns) = resumed[resumed.len() - 1];
+  let handed = resumed.len() - at_jump;
+  let passed = ((latest_ns - before_ns + HOST_WAKE_LATE_NS + SLACK_NS) / frame_ns) as usize + 1;
+  assert!(count + handed <= passed, "{count} frames dropped and {handed} handed over while the clock passed {passed}");
   let (_, release_ns, now_ns) = resumed[resumed.len() - 1];
   assert!(on_lead(release_ns - now_ns, lead), "the schedule continues on the anchor after the drops");
 

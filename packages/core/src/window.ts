@@ -181,6 +181,21 @@ let animationFrames = new Map<number, Function>()
 // callbacks. Defaults to 60 until the first displayRefreshRate event arrives.
 let refreshRate = 60
 
+// The tick of the latest frame the runtime delivered (see frameTime).
+let latestTick = 0
+
+export interface FrameOptions {
+  /**
+   * Whether the callback is a request for frames (default true). With
+   * `demand: false` it asks for nothing: it still runs before every frame
+   * the runtime delivers, painted or not, but it does not keep the app
+   * rendering. What it writes requests its frame as any write does, so a
+   * loop that changes something a few times a second presents a few times
+   * a second.
+   */
+  demand?: boolean
+}
+
 /**
  * Calls `fn` before every frame is painted: `tick` is the time in ms, `frame` is
  * the present count, and `rate` is the current refresh rate in Hz. `tick`
@@ -203,8 +218,16 @@ let refreshRate = 60
  * one - an effect's apply phase, an event handler - the returned cleanup is
  * the only handle, so return it from the apply (`return onFrame(...)`) to run
  * a loop only while a condition holds.
+ *
+ * A registered callback is a standing request for the next frame: the app
+ * renders and presents every refresh while it is registered, whatever the
+ * body does. `{ demand: false }` registers it without that request, for a
+ * loop that follows time and only sometimes changes the picture (a sprite
+ * clip stepping at 8 fps, a countdown that ticks once a second): it is
+ * called on the same ticks, and the app presents only when it writes.
  */
-export function onFrame(fn: (tick: number, frame: number, rate: number) => void) {
+export function onFrame(fn: (tick: number, frame: number, rate: number) => void, options?: FrameOptions) {
+  let demand = options?.demand !== false
   let frameId: number = null!
   // Cancellation is a flag, not map membership: while a frame runs the whole
   // callback map is swapped out, so a cleanup() called from another onFrame
@@ -219,7 +242,7 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void)
     // pending onFrame callback is a standing request for the next frame.
     frameId = nextFrameId++
     animationFrames.set(frameId, extendedFn)
-    requestFrame()
+    if (demand) requestFrame()
     try {
       fn(tick, frame, rate)
     } catch (err) {
@@ -229,7 +252,7 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void)
 
   frameId = nextFrameId++
   animationFrames.set(frameId, extendedFn)
-  requestFrame()
+  if (demand) requestFrame()
 
   let cleanup = () => {
     cancelled = true
@@ -237,6 +260,20 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void)
   }
   if (getOwner()) onCleanup(cleanup)
   return cleanup
+}
+
+/**
+ * The time of the current frame in ms: the `tick` its onFrame callbacks
+ * receive, readable anywhere without registering one. Inside a frame (a
+ * frame callback, an effect, the render pass) it is that frame's tick;
+ * between frames (an event handler, a timer) it is the latest frame's. It
+ * is 0 before the first frame. Not reactive, and reading it requests no
+ * frame. Use it to time things against the app's own clock from code that
+ * has no tick in hand: it follows the dev tools' clock control, `srt
+ * render` and a test, where performance.now() does not.
+ */
+export function frameTime(): number {
+  return latestTick
 }
 
 // ------ Resize ----------------
@@ -538,6 +575,7 @@ export function attachWindow(nodeId: number) {
   // registered and run on the first real render event, before the first
   // paint with their writes applied.
   function runFrame(t: number, frame: number, bootstrap = false) {
+    if (!bootstrap) latestTick = t
     if (!bootstrap && animationFrames.size > 0) {
       let frames = animationFrames
       animationFrames = new Map()

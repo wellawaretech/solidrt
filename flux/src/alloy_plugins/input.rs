@@ -23,9 +23,11 @@ pub fn store_state(ctx: &Ctx<'_>) {
 
 // One routed delivery as the JS pointer event object. `targets`, `localX/Y`
 // and `parentX/Y` are index-parallel (the router guarantees it); JS collapses
-// them to per-handler scalars during the dispatch walk.
-fn build_pointer_obj<'js>(ctx: &Ctx<'js>, ev: &RoutedPointer) -> Object<'js> {
+// them to per-handler scalars during the dispatch walk. `time_stamp_ms` is
+// the event's `timeStamp` (see `dispatch`).
+fn build_pointer_obj<'js>(ctx: &Ctx<'js>, ev: &RoutedPointer, time_stamp_ms: f64) -> Object<'js> {
   let obj = Object::new(ctx.clone()).expect("pointer obj");
+  obj.set("timeStamp", time_stamp_ms).expect("set timeStamp");
   let targets = Array::new(ctx.clone()).expect("targets array");
   let local_xs = Array::new(ctx.clone()).expect("localX array");
   let local_ys = Array::new(ctx.clone()).expect("localY array");
@@ -71,7 +73,7 @@ fn build_pointer_obj<'js>(ctx: &Ctx<'js>, ev: &RoutedPointer) -> Object<'js> {
   obj
 }
 
-fn emit_routed(ctx: &Ctx<'_>, events: Vec<RoutedPointer>) {
+fn emit_routed(ctx: &Ctx<'_>, events: Vec<RoutedPointer>, time_stamp_ms: f64) {
   for ev in events {
     let name = match ev.kind {
       RoutedKind::Move { .. } => "pointerMove",
@@ -81,7 +83,7 @@ fn emit_routed(ctx: &Ctx<'_>, events: Vec<RoutedPointer>) {
       RoutedKind::Leave => "pointerLeave",
       RoutedKind::Wheel { .. } => "wheel",
     };
-    let obj = build_pointer_obj(ctx, &ev);
+    let obj = build_pointer_obj(ctx, &ev, time_stamp_ms);
     emit_event(ctx, name, obj);
   }
 }
@@ -90,7 +92,10 @@ fn emit_routed(ctx: &Ctx<'_>, events: Vec<RoutedPointer>) {
 /// and emit the matching JS pointer events. Runs when the event arrives, not
 /// per frame, so input keeps working when no frame is being produced.
 /// Handlers that mutate state request the next frame through their ffi calls.
-pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent) {
+/// `time_stamp_ms` becomes the `timeStamp` of every event emitted: the
+/// runner's input time in milliseconds, which it owns (a move's is its
+/// frame's, an event that arrived between frames carries its arrival time).
+pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent, time_stamp_ms: f64) {
   let tree = ctx.userdata::<super::tree::SharedRenderTree>().expect("render tree userdata");
   let state = ctx.userdata::<EngineState>().expect("input state userdata");
   // Routing resolves fully (tree and router borrows released) before any
@@ -101,7 +106,7 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent) {
     (events, router.take_cursor_change())
   };
   apply_cursor(ctx, cursor);
-  emit_routed(ctx, events);
+  emit_routed(ctx, events, time_stamp_ms);
 }
 
 // The hovered path's cursor when it changed (PointerRouter::take_cursor_change):
@@ -119,17 +124,22 @@ fn apply_cursor(ctx: &Ctx<'_>, cursor: Option<Cursor>) {
 /// same job. Every pointer position JS holds is the same age at this point,
 /// so multi-pointer recognizers subscribe to it as their "measure once per
 /// frame" signal instead of measuring per move (which would pair one fresh
-/// position with stale ones). Fires only on frames that had moves.
-pub fn frame_end(ctx: &Ctx<'_>) {
-  emit_event(ctx, "pointerFrame", ());
+/// position with stale ones). Fires only on frames that had moves, and
+/// carries their `timeStamp` (`time_stamp_ms`, as in `dispatch`), the time
+/// of the positions measured at it.
+pub fn frame_end(ctx: &Ctx<'_>, time_stamp_ms: f64) {
+  let obj = Object::new(ctx.clone()).expect("pointerFrame obj");
+  obj.set("timeStamp", time_stamp_ms).expect("set timeStamp");
+  emit_event(ctx, "pointerFrame", obj);
 }
 
 /// Re-run the hover diff for every live pointer. Called after each produced
 /// frame: layout changes can move elements under a stationary cursor, which
 /// arrival-time dispatch cannot see. `pointers` is the runner's
 /// device-position snapshot; that bookkeeping outlives any single engine, so
-/// it stays on the runner's side of the boundary.
-pub fn refresh_hover(ctx: &Ctx<'_>, pointers: Vec<(PointerKey, (f32, f32))>, modifiers: Modifiers) {
+/// it stays on the runner's side of the boundary. `time_stamp_ms` stamps the
+/// enter and leave events it emits, as in `dispatch`: the frame's input time.
+pub fn refresh_hover(ctx: &Ctx<'_>, pointers: Vec<(PointerKey, (f32, f32))>, modifiers: Modifiers, time_stamp_ms: f64) {
   let tree = ctx.userdata::<super::tree::SharedRenderTree>().expect("render tree userdata");
   let state = ctx.userdata::<EngineState>().expect("input state userdata");
   let (events, cursor) = {
@@ -138,5 +148,5 @@ pub fn refresh_hover(ctx: &Ctx<'_>, pointers: Vec<(PointerKey, (f32, f32))>, mod
     (events, router.take_cursor_change())
   };
   apply_cursor(ctx, cursor);
-  emit_routed(ctx, events);
+  emit_routed(ctx, events, time_stamp_ms);
 }

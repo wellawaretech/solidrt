@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Notify};
 
-use crate::source::{Facts, HttpSource, OpenFuture, Opened, Producer, Reader, STREAM_RING_BYTES};
+use crate::source::{Facts, HttpSource, OpenFuture, Opened, Producer, Reader, STREAM_RING_BYTES, STREAM_SKIP_BY_READ_BYTES};
 use crate::stream::{from_bytes, ByteStream};
 
 /// A ring small enough that a few chunks fill it.
@@ -221,36 +221,44 @@ fn read_all(reader: &mut Reader) -> (Vec<u8>, io::Result<()>) {
 
 #[test]
 fn http_range_source_reads_and_seeks() {
-  let data = Arc::new(file(1_200_000));
+  // The far seek's target is out of the reader's local reach however far
+  // the download got before the seek (it can have filled the ring and no
+  // more, and a skip by read reaches STREAM_SKIP_BY_READ_BYTES past that),
+  // so it restarts on every host. The tail is within a skip by read of the
+  // target, so that seek is local on every host.
+  let first_len = 1000;
+  let far = first_len + STREAM_RING_BYTES + STREAM_SKIP_BY_READ_BYTES as usize + 100_000;
+  let len = far + 200_000;
+  let data = Arc::new(file(len));
   let (addr, requests) = serve(ranged(data.clone(), "\"v1\""));
   let mut reader = http_reader(addr, STREAM_RING_BYTES);
-  assert_eq!(reader.facts().expect("facts"), Facts { len: Some(1_200_000), seekable: true });
+  assert_eq!(reader.facts().expect("facts"), Facts { len: Some(len as u64), seekable: true });
 
-  let mut first = vec![0u8; 1000];
+  let mut first = vec![0u8; first_len];
   reader.read_exact(&mut first).expect("first bytes");
-  assert_eq!(first, data[..1000]);
+  assert_eq!(first, data[..first_len]);
 
   // Far forward: a restart at the target.
-  assert_eq!(reader.seek(SeekFrom::Start(1_000_000)).expect("seek"), 1_000_000);
+  assert_eq!(reader.seek(SeekFrom::Start(far as u64)).expect("seek"), far as u64);
   let mut mid = vec![0u8; 100];
   reader.read_exact(&mut mid).expect("bytes after the seek");
-  assert_eq!(mid, data[1_000_000..1_000_100]);
+  assert_eq!(mid, data[far..far + 100]);
 
   // The position read, then a short forward skip (local) to the tail.
-  assert_eq!(reader.seek(SeekFrom::Current(0)).expect("position"), 1_000_100);
-  assert_eq!(reader.seek(SeekFrom::End(-10)).expect("seek from end"), 1_199_990);
+  assert_eq!(reader.seek(SeekFrom::Current(0)).expect("position"), (far + 100) as u64);
+  assert_eq!(reader.seek(SeekFrom::End(-10)).expect("seek from end"), (len - 10) as u64);
   let (tail, end) = read_all(&mut reader);
   end.expect("clean end");
-  assert_eq!(tail, data[1_199_990..]);
+  assert_eq!(tail, data[len - 10..]);
 
   // Backwards: a restart.
   assert_eq!(reader.seek(SeekFrom::Start(0)).expect("rewind"), 0);
   reader.read_exact(&mut first).expect("bytes after the rewind");
-  assert_eq!(first, data[..1000]);
+  assert_eq!(first, data[..first_len]);
 
   let requests = lock(&requests);
   let ranges: Vec<_> = requests.iter().map(|r| r.header("range").unwrap_or("").to_string()).collect();
-  assert_eq!(ranges, ["bytes=0-", "bytes=1000000-", "bytes=0-"]);
+  assert_eq!(ranges, ["bytes=0-".to_string(), format!("bytes={far}-"), "bytes=0-".to_string()]);
 }
 
 #[test]

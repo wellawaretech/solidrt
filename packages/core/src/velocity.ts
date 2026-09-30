@@ -17,8 +17,10 @@
 // Samples are positions in whatever frame the caller measures (the
 // recognizers push the node's parent frame, so the velocity applies 1:1
 // as their deltas do; a swipe classifier pushes window pixels, the
-// finger's own travel) with performance.now() at handler time, the
-// precedent in transform.ts: PointerEvent carries no timestamp.
+// finger's own travel), each with the `timeStamp` of the pointer event it
+// came from. The tracker reads no clock: the read at a lift takes the
+// up's `timeStamp`, so the moves of consecutive frames are whole frame
+// periods apart and the age of the last one is the event's own.
 
 // Fit horizon: Flutter's and Android's VelocityTracker window.
 const VELOCITY_WINDOW_MS = 100
@@ -32,9 +34,9 @@ const VELOCITY_MAX = 8000
 // up to two frames after the finger stopped, and any same-position
 // re-delivery must not restart the clock either.
 const VELOCITY_REST_MS = 50
-// Samples closer in time than this (ms) are one instant to the fit:
-// handler-time stamps within a frame differ by microseconds, and a curve
-// pinned by such a pair reads a jolt.
+// Samples closer in time than this (ms) are one instant to the fit: two
+// samples of one frame carry the same stamp, and a curve pinned by such a
+// pair reads a jolt.
 const VELOCITY_MIN_STEP_MS = 1
 // Ring capacity: a 100 ms window holds 12 samples at 120 Hz; the rest is
 // room for a burst of same-frame samples.
@@ -47,17 +49,18 @@ export const FLING_MIN_VELOCITY = 50
 export type Velocity = { vx: number; vy: number }
 
 export interface VelocityTracker {
-  /** Record a position; `at` defaults to performance.now(). */
-  push(x: number, y: number, at?: number): void
+  /** Record a position at time `at`, ms: the `timeStamp` of the event
+   * that carried it. */
+  push(x: number, y: number, at: number): void
   /** Translate every sample: a recognizer rebasing its reference point
    * (a finger joining or leaving a transform) keeps the history
    * continuous instead of dropping it. */
   shift(dx: number, dy: number): void
   reset(): void
-  /** The speed at `at` (default now), px/s per axis: a least-squares
-   * quadratic over the window read at its newest sample, zero after a
-   * rest, clamped to VELOCITY_MAX. */
-  velocity(at?: number): Velocity
+  /** The speed at time `at` (the lift's `timeStamp`), px/s per axis: a
+   * least-squares quadratic over the window read at its newest sample,
+   * zero after a rest, clamped to VELOCITY_MAX. */
+  velocity(at: number): Velocity
 }
 
 const ZERO: Velocity = { vx: 0, vy: 0 }
@@ -75,7 +78,7 @@ export function createVelocityTracker(): VelocityTracker {
   // When the position last changed (the rest rule's clock).
   let movedAt = -Infinity
   return {
-    push(x, y, at = performance.now()) {
+    push(x, y, at) {
       if (count === 0) movedAt = at
       else {
         let last = (head - 1 + VELOCITY_SAMPLES) % VELOCITY_SAMPLES
@@ -98,7 +101,7 @@ export function createVelocityTracker(): VelocityTracker {
       head = 0
       count = 0
     },
-    velocity(at = performance.now()) {
+    velocity(at) {
       if (count < 2) return ZERO
       if (at - movedAt > VELOCITY_REST_MS) return ZERO
       // Sums over the window, time and position measured from the newest

@@ -28,10 +28,17 @@ written and has not run yet.
   the GPU rigs until the app layer.
 - Stage 3: the `test-js` job in `.github/workflows/ci.yml`.
 
-`bunx srt test` at the repo root: 294 tests in 28 files, about 5 s, none
+`bunx srt test` at the repo root: 308 tests in 29 files, about 5 s, none
 of which depends on how much time passed. `cargo test -p flux --lib
 --features test`: 40 tests. `srt check` passes for the packages with
 their test files in.
+
+[event-timestamp](event-timestamp.md), the prerequisite of stage 4, is
+built for input (2026-09-30): input events carry a `timeStamp` and the
+recognizers read it, so most of what stage 2b parked came back on stated
+times (ten gesture tests, three interaction tests). Four stay parked for the app layer, the ones that wait on a
+timer: `packages/core/checks/gesture-timers.test.ts` (the long-press,
+and the double-tap window passing) and `input-map-hold.test.ts`.
 
 To pick up, in this order:
 
@@ -39,7 +46,7 @@ To pick up, in this order:
    `srt test` on Windows and macOS: see
    [Stage 3](#stage-3---ci-written-2026-09-30-not-run).
 2. Stage 4, the app layer, which waits on
-   [event-timestamp](../backlog/event-timestamp.md), carries `settle()`,
+   [event-timestamp](event-timestamp.md), carries `settle()`,
    and is where stepping comes back, on frames.
 
 ## Problem
@@ -135,7 +142,7 @@ fails none).
 app test** (reworded 2026-09-30; it read "stays real time" for both
 layers). It is for measuring work. SolidRT logic takes time from the
 event or the frame tick instead:
-[event-timestamp](../backlog/event-timestamp.md). At 0, logic that still
+[event-timestamp](event-timestamp.md). At 0, logic that still
 reads it fails the same way on every run instead of passing within a
 tolerance. Rejected: a `performance.now()` that follows the stepped
 clock (a synchronous wait loop on it would never end, and the production
@@ -493,7 +500,7 @@ that the failure names the right file and line, and restored.
   random inputs draw them from the seeded `Math.random` (D28).
   `gesture-check` moves to the stepped clock; the parts of it that ride
   `performance.now()` keep their real waits and
-  tolerances until [event-timestamp](../backlog/event-timestamp.md)
+  tolerances until [event-timestamp](event-timestamp.md)
   lands. The four GPU rigs stay in `checks/` until stage 5.
 - `srt test <file> -- <args>`: the arguments after `--` reach the test as
   `flux:process` argv.
@@ -543,10 +550,11 @@ the package's typecheck still covers it. After this the flux suite holds
 no test that depends on how much time passed, which is what lets CI gate
 on it.
 
-Two of the eleven parked gesture tests are not about time ("the arena
-relation: pend, defer, decide" and "classifySwipe", both synchronous)
-and went along with their file. They could stay behind as a flux test;
-open.
+Since [event-timestamp](event-timestamp.md) (2026-09-30) the recognizers
+take their time from the events, so what was parked here is back in
+`tests/` on stated times, except the four tests that wait on a timer:
+`packages/core/checks/gesture-timers.test.ts` and
+`input-map-hold.test.ts`. The two files named above are gone.
 
 ### Stage 3 - CI (written 2026-09-30, not run)
 
@@ -587,8 +595,8 @@ first.
 
 ### Stage 4 - the app layer
 
-Prerequisite: [event-timestamp](../backlog/event-timestamp.md). With it
-the twelve parked tests (stage 2b) come back as app tests.
+Prerequisite: [event-timestamp](event-timestamp.md). With it
+the four tests still parked (stage 2b) come back as app tests.
 
 - **Test mode in the runtime.** Headless, stepped by frames, the test
   requesting each frame, and without a wall (D5): `performance.now()`
@@ -597,7 +605,11 @@ the twelve parked tests (stage 2b) come back as app tests.
   `alloy/src/playback.rs`). This is the largest piece and a change in
   alloy and lattice; it keeps decision D6 of
   [frame-timing](../design/frame-timing.md) (a path that never touches
-  the wall).
+  the wall). A frame is 1/60 s by default, what `srt render` defaults
+  to and what apps run at, and a test can set another rate (decided
+  2026-09-30). The frame is the time resolution of a test: at 60 fps
+  nothing happens between 483 and 500 ms, so a test that asserts a
+  threshold to the millisecond sets 1000.
 - **`srt:test`** as a lattice builtin beside `srt:dev` and `srt:events`,
   in the dev client only (D20).
 - **`label`** on host elements: a rendertree property, reported in the

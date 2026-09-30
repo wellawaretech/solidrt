@@ -5122,11 +5122,34 @@ import { on as on3 } from "srt:events";
 // ../../packages/core/src/gamepad.ts
 import { on as on4 } from "srt:events";
 var gamepadsAccessor;
+var buttonTimes = [];
+var lastPads = [];
+function recordButtonTimes(pads, at) {
+  for (let slot = 0;slot < Math.max(pads.length, lastPads.length); slot++) {
+    let before = lastPads[slot]?.buttons ?? [];
+    let after = pads[slot]?.buttons ?? [];
+    let times = buttonTimes[slot] ??= new Map;
+    for (let name of after)
+      if (!before.includes(name))
+        times.set(name, at);
+    for (let name of before)
+      if (!after.includes(name))
+        times.set(name, at);
+  }
+  lastPads = pads;
+}
+function gamepadButtonChangedAt(slot, name) {
+  return buttonTimes[slot]?.get(name) ?? null;
+}
 function gamepads() {
   if (!gamepadsAccessor) {
     runWithOwner(null, () => {
       let [pads, setPads] = createSignal([]);
-      on4("gamepads", (e) => setPads(e.pads ?? []));
+      on4("gamepads", (e) => {
+        let next = e.pads ?? [];
+        recordButtonTimes(next, e.timeStamp);
+        setPads(next);
+      });
       gamepadsAccessor = pads;
     });
   }
@@ -5287,6 +5310,7 @@ var matches = (event, key) => {
 };
 function held(specs) {
   let down = new Set;
+  let changedAt = null;
   let [count, setCount] = createSignal(0, {
     ownedWrite: true
   });
@@ -5294,17 +5318,23 @@ function held(specs) {
     count,
     key(event, isDown) {
       let onKey = specs.filter((s) => matches(event, s.key));
+      let before = [...down].join();
       for (let s of onKey)
         down.delete(s.text);
       if (isDown)
         for (let s of mostSpecific(onKey, (s2) => s2.mods, event))
           down.add(s.text);
+      if ([...down].join() !== before)
+        changedAt = event.timeStamp;
       setCount(down.size);
     },
     blur() {
+      if (down.size > 0)
+        changedAt = null;
       down.clear();
       setCount(0);
     },
+    changedAt: () => changedAt,
     has(text) {
       return down.has(text);
     }
@@ -5318,6 +5348,7 @@ function key(spec) {
     id: `${DEVICE}:key:${spec}`,
     device: DEVICE,
     rate: () => state.count() > 0,
+    changedAt: state.changedAt,
     key: state.key,
     blur: state.blur
   };
@@ -5404,7 +5435,7 @@ var DEVICE2 = "gamepad";
 var deadzone = (x, y) => Math.hypot(x, y) < STICK_DEADZONE ? [0, 0] : [x, y];
 var STICKS = [["leftStick", "leftX", "leftY"], ["rightStick", "rightX", "rightY"]];
 var DPAD_BUTTONS = ["dpadUp", "dpadDown", "dpadLeft", "dpadRight"];
-function createGamepadDevice(pads, slot, who) {
+function createGamepadDevice(pads, slot, buttonChangedAt, who) {
   let sumAxis = (read2) => () => {
     let sum = 0;
     for (let pad of pads())
@@ -5486,7 +5517,8 @@ function createGamepadDevice(pads, slot, who) {
           label: `${who} ${name}`,
           id: `${DEVICE2}:button:${name}`,
           device: DEVICE2,
-          rate: anyButton(name)
+          rate: anyButton(name),
+          changedAt: () => buttonChangedAt(name)
         };
         buttons.set(name, source);
       }
@@ -5580,13 +5612,25 @@ function createGamepadSlot(read2, slot) {
   if (slot !== undefined && !(Number.isInteger(slot) && slot >= 0))
     throw new Error(`gamepad: slot must be a non-negative integer, got ${String(slot)}`);
   let pads = () => {
-    let all = read2();
+    let all = read2.pads();
     if (slot === undefined)
       return all.filter((p) => p !== null);
     let pad = all[slot];
     return pad ? [pad] : [];
   };
-  return createGamepadDevice(pads, () => slot, slot === undefined ? "gamepad" : `gamepad ${slot}`);
+  let changedAt = (name) => {
+    if (slot !== undefined)
+      return read2.buttonChangedAt(slot, name);
+    let latest2 = null;
+    let count = untrack(read2.pads).length;
+    for (let i = 0;i < count; i++) {
+      let at = read2.buttonChangedAt(i, name);
+      if (at !== null && (latest2 === null || at > latest2))
+        latest2 = at;
+    }
+    return latest2;
+  };
+  return createGamepadDevice(pads, () => slot, changedAt, slot === undefined ? "gamepad" : `gamepad ${slot}`);
 }
 var claimed = new Set;
 function createGamepadJoin(read2) {
@@ -5595,7 +5639,7 @@ function createGamepadJoin(read2) {
   });
   let mine;
   let dispose2 = createRoot((dispose3) => {
-    createEffect(() => read2(), (pads2) => {
+    createEffect(() => read2.pads(), (pads2) => {
       if (mine !== undefined)
         return;
       for (let i = 0;i < pads2.length; i++) {
@@ -5621,17 +5665,25 @@ function createGamepadJoin(read2) {
     let s = slot();
     if (s === undefined)
       return [];
-    let pad = read2()[s];
+    let pad = read2.pads()[s];
     return pad ? [pad] : [];
   };
-  return createGamepadDevice(pads, slot, "gamepad (joined)");
+  let changedAt = (name) => {
+    let s = untrack(slot);
+    return s === undefined ? null : read2.buttonChangedAt(s, name);
+  };
+  return createGamepadDevice(pads, slot, changedAt, "gamepad (joined)");
 }
 
 // ../../packages/core/src/input-gamepad.ts
+var reader = {
+  pads: gamepads,
+  buttonChangedAt: gamepadButtonChangedAt
+};
 function gamepad(slot) {
-  return createGamepadSlot(gamepads, slot);
+  return createGamepadSlot(reader, slot);
 }
-gamepad.next = () => createGamepadJoin(gamepads);
+gamepad.next = () => createGamepadJoin(reader);
 // ../../packages/core/src/input-pointer.ts
 var WHEEL_OCTAVES = 0.0015 / Math.LN2;
 // src/bsod.tsx

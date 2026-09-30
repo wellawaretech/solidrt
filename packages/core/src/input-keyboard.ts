@@ -17,7 +17,9 @@
 //
 // Held state is a count behind a signal, so a source's rate is reactive
 // (a held key wakes a control's frame loop) and a blur - the up that never
-// arrives once focus has left - clears it. Composites clamp nothing: the
+// arrives once focus has left - clears it. A source also reports when its
+// keys last changed (the key event's timeStamp; nothing after a blur,
+// which is no release by the player). Composites clamp nothing: the
 // map's combination does (W and D together read [1, -1] before the
 // vec2 clamp to unit length, so diagonals walk at the same speed).
 //
@@ -60,9 +62,11 @@ let matches = (event: KeyEvent, key: string): boolean => {
   return key.length === 4 && key.startsWith("Key") && event.key.toLowerCase() === key[3]!.toLowerCase()
 }
 
-// A set of specs with a reactive "how many are held" count.
+// A set of specs with a reactive "how many are held" count, and the time
+// of the key event that last changed which are held.
 function held(specs: Spec[]) {
   let down = new Set<string>()
+  let changedAt: number | null = null
   // ownedWrite: a map forwards key events from wherever its handlers sit.
   let [count, setCount] = createSignal(0, { ownedWrite: true })
   return {
@@ -72,14 +76,18 @@ function held(specs: Spec[]) {
       // on its most specific matches (a repeat under a newly held Shift
       // moves "Tab" to "Shift+Tab" and back), an up frees them all.
       let onKey = specs.filter(s => matches(event, s.key))
+      let before = [...down].join()
       for (let s of onKey) down.delete(s.text)
       if (isDown) for (let s of mostSpecific(onKey, s => s.mods, event)) down.add(s.text)
+      if ([...down].join() !== before) changedAt = event.timeStamp
       setCount(down.size)
     },
     blur() {
+      if (down.size > 0) changedAt = null
       down.clear()
       setCount(0)
     },
+    changedAt: () => changedAt,
     has(text: string) {
       return down.has(text)
     },
@@ -95,6 +103,7 @@ function key(spec: string): InputSource<"button"> {
     id: `${DEVICE}:key:${spec}`,
     device: DEVICE,
     rate: () => state.count() > 0,
+    changedAt: state.changedAt,
     key: state.key,
     blur: state.blur,
   }

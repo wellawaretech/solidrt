@@ -43,6 +43,33 @@ export interface GamepadState {
 
 let gamepadsAccessor: (() => (GamepadState | null)[]) | undefined
 
+// When each pad button last changed: per slot, button name to the
+// `timeStamp` of the "gamepads" event that pressed or released it. Kept
+// here, where every snapshot passes once, because a reader of the
+// accessor sees only the latest one.
+let buttonTimes: Map<string, number>[] = []
+let lastPads: (GamepadState | null)[] = []
+
+function recordButtonTimes(pads: (GamepadState | null)[], at: number): void {
+  for (let slot = 0; slot < Math.max(pads.length, lastPads.length); slot++) {
+    let before = lastPads[slot]?.buttons ?? []
+    let after = pads[slot]?.buttons ?? []
+    let times = (buttonTimes[slot] ??= new Map())
+    for (let name of after) if (!before.includes(name)) times.set(name, at)
+    for (let name of before) if (!after.includes(name)) times.set(name, at)
+  }
+  lastPads = pads
+}
+
+/** When the button `name` of the pad in `slot` was last pressed or
+ * released, as the `timeStamp` (ms, the clock of `PointerEvent.timeStamp`)
+ * of the pad snapshot that carried the change; null when it never
+ * changed. Needs `gamepads()` to have been read: the snapshots are
+ * watched from its first read on. */
+export function gamepadButtonChangedAt(slot: number, name: string): number | null {
+  return buttonTimes[slot]?.get(name) ?? null
+}
+
 /**
  * Connected gamepads as a reactive accessor. Slots are stable web-style: a
  * pad keeps its index for its whole connection, disconnecting leaves a null
@@ -56,7 +83,11 @@ export function gamepads(): (GamepadState | null)[] {
     // and the first read is usually a tracked scope (see environment.ts).
     runWithOwner(null, () => {
       let [pads, setPads] = createSignal<(GamepadState | null)[]>([])
-      on("gamepads", (e: { pads?: (GamepadState | null)[] }) => setPads(e.pads ?? []))
+      on("gamepads", (e: { pads?: (GamepadState | null)[]; timeStamp: number }) => {
+        let next = e.pads ?? []
+        recordButtonTimes(next, e.timeStamp)
+        setPads(next)
+      })
       gamepadsAccessor = pads
     })
   }

@@ -323,7 +323,7 @@ impl RenderInner {
       // here we only re-check hover, since this frame's layout may have moved
       // elements under a stationary pointer.
       let t = Instant::now();
-      flux::gui::input::refresh_hover(qtx, input_state.pointers(), input_state.modifiers());
+      flux::gui::input::refresh_hover(qtx, input_state.pointers(), input_state.modifiers(), render_frame.input_ms);
       phases.hover = t.elapsed();
 
       {

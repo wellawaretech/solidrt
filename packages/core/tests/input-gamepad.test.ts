@@ -9,6 +9,7 @@
 import { test } from "flux:test"
 import { createRoot, createSignal, flush } from "@solidjs/signals"
 import { createGamepadJoin, createGamepadSlot } from "../src/input-gamepad-device.ts"
+import type { PadsReader } from "../src/input-gamepad-device.ts"
 import type { GamepadState } from "../src/gamepad.ts"
 import { createInputMap } from "../src/input.ts"
 
@@ -17,12 +18,32 @@ function fail(msg: string): void {
 }
 let near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps
 
+// A reader over a signal of snapshots, as core's gamepads() is one: `at`
+// is the time of the snapshot being set, which the reader records per
+// changed button the way gamepad.ts does from the "gamepads" event.
+function reader(initial: (GamepadState | null)[] = []) {
+  let [pads, write] = createSignal<(GamepadState | null)[]>(initial)
+  let times = new Map<string, number>()
+  let last = initial
+  let setPads = (next: (GamepadState | null)[], at = 0) => {
+    for (let slot = 0; slot < Math.max(next.length, last.length); slot++) {
+      let before = last[slot]?.buttons ?? []
+      let after = next[slot]?.buttons ?? []
+      for (let name of [...before, ...after]) if (before.includes(name) !== after.includes(name)) times.set(`${slot}:${name}`, at)
+    }
+    last = next
+    write(next)
+  }
+  let read: PadsReader = { pads, buttonChangedAt: (slot, name) => times.get(`${slot}:${name}`) ?? null }
+  return { read, setPads }
+}
+
 let pad = (id: number, buttons: string[] = [], axes: Record<string, number> = {}): GamepadState => ({ id, name: `pad ${id}`, buttons, axes, mapped: true })
 
 test("slot and every-pad devices", () => {
-  let [pads, setPads] = createSignal<(GamepadState | null)[]>([])
-  let p0 = createGamepadSlot(pads, 0)
-  let all = createGamepadSlot(pads, undefined)
+  let { read, setPads } = reader([])
+  let p0 = createGamepadSlot(read, 0)
+  let all = createGamepadSlot(read, undefined)
   if (p0.slot !== 0 || all.slot !== undefined) fail("slot devices report their slot")
   setPads([pad(1, ["south", "dpadLeft"], { leftX: 0.5, leftY: -0.5, rightX: 0.05, rightY: 0.05, leftTrigger: 0.25, rightTrigger: 1 }), pad(2, ["rightShoulder"], { leftX: 0.5, leftY: 0 })])
   flush()
@@ -60,7 +81,7 @@ test("slot and every-pad devices", () => {
   let bad: unknown = "x"
   let threw = false
   try {
-    createGamepadSlot(pads, bad as number)
+    createGamepadSlot(read, bad as number)
   } catch (err) {
     threw = true
     if (!(err instanceof Error)) fail(`bad slot: unexpected ${err}`)
@@ -69,10 +90,10 @@ test("slot and every-pad devices", () => {
 })
 
 test("joining", () => {
-  let [pads, setPads] = createSignal<(GamepadState | null)[]>([pad(1), pad(2)])
+  let { read, setPads } = reader([pad(1), pad(2)])
   // Two panes, each under a scope of its own (the join releases on dispose).
-  let a = createRoot(dispose => ({ dev: createGamepadJoin(pads), dispose }))
-  let b = createRoot(dispose => ({ dev: createGamepadJoin(pads), dispose }))
+  let a = createRoot(dispose => ({ dev: createGamepadJoin(read), dispose }))
+  let b = createRoot(dispose => ({ dev: createGamepadJoin(read), dispose }))
   flush()
   if (a.dev.slot !== undefined || b.dev.slot !== undefined) fail("nothing joins before a press")
   if (a.dev.leftStick.rate!()[0] !== 0) fail("an unjoined device reads zero")
@@ -92,7 +113,7 @@ test("joining", () => {
   if (b.dev.slot !== 0) fail(`the next pad joins the next device, got ${b.dev.slot}`)
   if (a.dev.slot !== 1) fail("a joined device keeps its slot")
   // Reactive slot: a memo-style read sees the join.
-  let c = createRoot(dispose => ({ dev: createGamepadJoin(pads), dispose }))
+  let c = createRoot(dispose => ({ dev: createGamepadJoin(read), dispose }))
   let seen: (number | undefined)[] = []
   seen.push(c.dev.slot)
   setPads([pad(1, ["start"]), pad(2, ["south"]), pad(3, ["east"])])
@@ -101,7 +122,7 @@ test("joining", () => {
   if (seen[0] !== undefined || seen[1] !== 2) fail(`a third pad joins the third device, got ${seen}`)
   // Disposal frees the slot for a later joiner.
   a.dispose()
-  let d = createRoot(dispose => ({ dev: createGamepadJoin(pads), dispose }))
+  let d = createRoot(dispose => ({ dev: createGamepadJoin(read), dispose }))
   flush()
   if (d.dev.slot !== 1) fail(`a disposed device's pad rejoins the next device (its button is still held), got ${d.dev.slot}`)
   // Through a map: slot 1 (pad 2) still holds south, so the action reads
@@ -119,8 +140,8 @@ test("joining", () => {
 })
 
 test("ids, resolve() and listen()", () => {
-  let [pads, setPads] = createSignal<(GamepadState | null)[]>([pad(1, ["start"], { leftX: 0.9, leftY: 0 })])
-  let dev = createGamepadSlot(pads, 0)
+  let { read, setPads } = reader([pad(1, ["start"], { leftX: 0.9, leftY: 0 })])
+  let dev = createGamepadSlot(read, 0)
   if (dev.name !== "gamepad" || dev.leftStick.id !== "gamepad:leftStick" || dev.button("south").id !== "gamepad:button:south" || dev.axis("leftX").id !== "gamepad:axis:leftX") fail("gamepad ids")
   if (dev.button("south").device !== "gamepad") fail("gamepad sources carry their device")
   if (dev.resolve("leftStick") !== dev.leftStick || dev.resolve("dpad") !== dev.dpad) fail("resolve hands back the device's own stick sources")
@@ -179,4 +200,21 @@ test("ids, resolve() and listen()", () => {
   setPads([pad(1, [], { rightTrigger: 1 })])
   flush()
   if (found.length !== 1) fail("a stopped listen hears nothing")
+})
+
+test("a button says when it changed: the snapshot that pressed or released it", () => {
+  let { read, setPads } = reader()
+  let p0 = createGamepadSlot(read, 0)
+  let all = createGamepadSlot(read, undefined)
+  let south = p0.button("south")
+  if (south.changedAt?.() !== null) fail("a button that never changed has no time")
+  setPads([pad(1, ["south"]), pad(2)], 1000)
+  // A later snapshot that leaves the button alone does not move its time.
+  setPads([pad(1, ["south"], { leftX: 0.5 }), pad(2, ["east"])], 1016)
+  if (south.changedAt?.() !== 1000) fail(`the press is timed by its own snapshot, got ${south.changedAt?.()}`)
+  setPads([pad(1), pad(2, ["east", "south"])], 1100)
+  flush()
+  if (south.changedAt?.() !== 1100) fail(`the release is timed by its snapshot, got ${south.changedAt?.()}`)
+  // Every pad: the latest change on any of them.
+  if (all.button("east").changedAt?.() !== 1016 || all.button("south").changedAt?.() !== 1100) fail("the every-pad device reads the latest change on any slot")
 })

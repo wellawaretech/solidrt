@@ -6769,6 +6769,7 @@ function onPointerMove(fn) {
   if (globalMoveSubs.size === 1) {
     globalMoveUnsub = on("pointerMove", (raw) => {
       let e = {
+        timeStamp: raw.timeStamp,
         clientX: raw.clientX,
         clientY: raw.clientY,
         target: raw.target,
@@ -7971,11 +7972,34 @@ var env = {
 // ../../packages/core/src/gamepad.ts
 import { on as on4 } from "srt:events";
 var gamepadsAccessor;
+var buttonTimes = [];
+var lastPads = [];
+function recordButtonTimes(pads, at) {
+  for (let slot = 0;slot < Math.max(pads.length, lastPads.length); slot++) {
+    let before = lastPads[slot]?.buttons ?? [];
+    let after = pads[slot]?.buttons ?? [];
+    let times = buttonTimes[slot] ??= new Map;
+    for (let name of after)
+      if (!before.includes(name))
+        times.set(name, at);
+    for (let name of before)
+      if (!after.includes(name))
+        times.set(name, at);
+  }
+  lastPads = pads;
+}
+function gamepadButtonChangedAt(slot, name) {
+  return buttonTimes[slot]?.get(name) ?? null;
+}
 function gamepads() {
   if (!gamepadsAccessor) {
     runWithOwner(null, () => {
       let [pads, setPads] = createSignal([]);
-      on4("gamepads", (e) => setPads(e.pads ?? []));
+      on4("gamepads", (e) => {
+        let next = e.pads ?? [];
+        recordButtonTimes(next, e.timeStamp);
+        setPads(next);
+      });
       gamepadsAccessor = pads;
     });
   }
@@ -8356,7 +8380,7 @@ function createVelocityTracker() {
   let count = 0;
   let movedAt = -Infinity;
   return {
-    push(x, y, at = performance.now()) {
+    push(x, y, at) {
       if (count === 0)
         movedAt = at;
       else {
@@ -8382,7 +8406,7 @@ function createVelocityTracker() {
       head = 0;
       count = 0;
     },
-    velocity(at = performance.now()) {
+    velocity(at) {
       if (count < 2)
         return ZERO;
       if (at - movedAt > VELOCITY_REST_MS)
@@ -8505,7 +8529,7 @@ function createPan(options) {
             y: e.parentY
           };
           tracker.reset();
-          tracker.push(e.parentX, e.parentY);
+          tracker.push(e.parentX, e.parentY, e.timeStamp);
           options.onPanStart?.();
         } else {
           reset();
@@ -8513,7 +8537,7 @@ function createPan(options) {
         return;
       }
       if (active === e.pointerId && origin2) {
-        tracker.push(e.parentX, e.parentY);
+        tracker.push(e.parentX, e.parentY, e.timeStamp);
         options.onPanMove?.(e.parentX - origin2.x, e.parentY - origin2.y);
         origin2 = {
           x: e.parentX,
@@ -8523,7 +8547,7 @@ function createPan(options) {
     },
     onPointerUp: (e) => {
       if (active === e.pointerId) {
-        let velocity = flingVelocity(tracker.velocity());
+        let velocity = flingVelocity(tracker.velocity(e.timeStamp));
         reset();
         options.onPanEnd?.(velocity);
       } else if (armed === e.pointerId) {
@@ -8580,6 +8604,12 @@ var checkButtonSource = (what, source) => {
   checkSource(source);
   if (source.kind !== "button")
     throw new Error(`${what}: "${source.label}" is a ${source.kind}, not a button`);
+};
+var checkTimedSource = (what, source) => {
+  checkButtonSource(what, source);
+  if (typeof source.changedAt !== "function") {
+    throw new Error(`${what}: "${source.label}" does not say when it changes (no changedAt), so its presses cannot be timed`);
+  }
 };
 var checkMs = (what, ms) => {
   if (!Number.isFinite(ms) || ms < 0)
@@ -8646,7 +8676,7 @@ function derived(source, label, id2, edge) {
   let dispose2 = createRoot((dispose3) => {
     createEffect(() => source.rate(), (down, prev) => {
       if (down !== prev)
-        edge(down, performance.now(), hooks);
+        edge(down, source.changedAt?.() ?? null, hooks);
     }, {
       defer: true
     });
@@ -8675,7 +8705,7 @@ var pulse = (hooks) => {
 function hold(source, ms = HOLD_MS) {
   checkButtonSource("hold", source);
   checkMs("hold", ms);
-  return derived(source, `${source.label} (hold ${ms} ms)`, `hold(${ms},${source.id})`, (down, _now, hooks) => {
+  return derived(source, `${source.label} (hold ${ms} ms)`, `hold(${ms},${source.id})`, (down, _at, hooks) => {
     if (down)
       hooks.later(ms, () => hooks.set(true));
     else {
@@ -8685,34 +8715,43 @@ function hold(source, ms = HOLD_MS) {
   });
 }
 function tap(source, ms = TAP_MS) {
-  checkButtonSource("tap", source);
+  checkTimedSource("tap", source);
   checkMs("tap", ms);
-  let downAt = 0;
-  return derived(source, `${source.label} (tap)`, `tap(${ms},${source.id})`, (down, now, hooks) => {
+  let downAt = null;
+  return derived(source, `${source.label} (tap)`, `tap(${ms},${source.id})`, (down, at, hooks) => {
     if (down)
-      downAt = now;
-    else if (now - downAt <= ms)
-      pulse(hooks);
+      downAt = at;
+    else {
+      if (at !== null && downAt !== null && at - downAt <= ms)
+        pulse(hooks);
+      downAt = null;
+    }
   });
 }
 function doubleTap(source, gapMs = DOUBLE_TAP_GAP_MS, tapMs = TAP_MS) {
-  checkButtonSource("doubleTap", source);
+  checkTimedSource("doubleTap", source);
   checkMs("doubleTap", gapMs);
   checkMs("doubleTap", tapMs);
-  let downAt = 0;
+  let downAt = null;
   let lastTap = -Infinity;
-  return derived(source, `${source.label} (double tap)`, `doubleTap(${gapMs},${tapMs},${source.id})`, (down, now, hooks) => {
+  return derived(source, `${source.label} (double tap)`, `doubleTap(${gapMs},${tapMs},${source.id})`, (down, at, hooks) => {
     if (down) {
-      downAt = now;
+      downAt = at;
       return;
     }
-    if (now - downAt > tapMs)
+    let pressedAt = downAt;
+    downAt = null;
+    if (at === null || pressedAt === null) {
+      lastTap = -Infinity;
       return;
-    if (now - lastTap <= gapMs) {
+    }
+    if (at - pressedAt > tapMs)
+      return;
+    if (at - lastTap <= gapMs) {
       lastTap = -Infinity;
       pulse(hooks);
     } else
-      lastTap = now;
+      lastTap = at;
   });
 }
 function chord(...sources) {
@@ -8726,6 +8765,17 @@ function chord(...sources) {
     id: `chord(${sources.map((s) => s.id).join(",")})`,
     device: sources[0].device,
     rate: () => sources.every((s) => s.rate?.() === true),
+    changedAt: sources.every((s) => s.changedAt) ? () => {
+      let latest2 = null;
+      for (let s of sources) {
+        let at = s.changedAt();
+        if (at === null)
+          return null;
+        if (latest2 === null || at > latest2)
+          latest2 = at;
+      }
+      return latest2;
+    } : undefined,
     key: (event, down) => {
       for (let s of sources)
         s.key?.(event, down);
@@ -8868,6 +8918,7 @@ var matches = (event, key) => {
 };
 function held(specs) {
   let down = new Set;
+  let changedAt = null;
   let [count, setCount] = createSignal(0, {
     ownedWrite: true
   });
@@ -8875,17 +8926,23 @@ function held(specs) {
     count,
     key(event, isDown) {
       let onKey = specs.filter((s) => matches(event, s.key));
+      let before = [...down].join();
       for (let s of onKey)
         down.delete(s.text);
       if (isDown)
         for (let s of mostSpecific(onKey, (s2) => s2.mods, event))
           down.add(s.text);
+      if ([...down].join() !== before)
+        changedAt = event.timeStamp;
       setCount(down.size);
     },
     blur() {
+      if (down.size > 0)
+        changedAt = null;
       down.clear();
       setCount(0);
     },
+    changedAt: () => changedAt,
     has(text) {
       return down.has(text);
     }
@@ -8899,6 +8956,7 @@ function key(spec) {
     id: `${DEVICE}:key:${spec}`,
     device: DEVICE,
     rate: () => state.count() > 0,
+    changedAt: state.changedAt,
     key: state.key,
     blur: state.blur
   };
@@ -9460,7 +9518,7 @@ var DEVICE2 = "gamepad";
 var deadzone = (x, y) => Math.hypot(x, y) < STICK_DEADZONE ? [0, 0] : [x, y];
 var STICKS = [["leftStick", "leftX", "leftY"], ["rightStick", "rightX", "rightY"]];
 var DPAD_BUTTONS = ["dpadUp", "dpadDown", "dpadLeft", "dpadRight"];
-function createGamepadDevice(pads, slot, who) {
+function createGamepadDevice(pads, slot, buttonChangedAt, who) {
   let sumAxis = (read2) => () => {
     let sum = 0;
     for (let pad of pads())
@@ -9542,7 +9600,8 @@ function createGamepadDevice(pads, slot, who) {
           label: `${who} ${name}`,
           id: `${DEVICE2}:button:${name}`,
           device: DEVICE2,
-          rate: anyButton(name)
+          rate: anyButton(name),
+          changedAt: () => buttonChangedAt(name)
         };
         buttons.set(name, source);
       }
@@ -9636,13 +9695,25 @@ function createGamepadSlot(read2, slot) {
   if (slot !== undefined && !(Number.isInteger(slot) && slot >= 0))
     throw new Error(`gamepad: slot must be a non-negative integer, got ${String(slot)}`);
   let pads = () => {
-    let all = read2();
+    let all = read2.pads();
     if (slot === undefined)
       return all.filter((p) => p !== null);
     let pad = all[slot];
     return pad ? [pad] : [];
   };
-  return createGamepadDevice(pads, () => slot, slot === undefined ? "gamepad" : `gamepad ${slot}`);
+  let changedAt = (name) => {
+    if (slot !== undefined)
+      return read2.buttonChangedAt(slot, name);
+    let latest2 = null;
+    let count = untrack(read2.pads).length;
+    for (let i = 0;i < count; i++) {
+      let at = read2.buttonChangedAt(i, name);
+      if (at !== null && (latest2 === null || at > latest2))
+        latest2 = at;
+    }
+    return latest2;
+  };
+  return createGamepadDevice(pads, () => slot, changedAt, slot === undefined ? "gamepad" : `gamepad ${slot}`);
 }
 var claimed = new Set;
 function createGamepadJoin(read2) {
@@ -9651,7 +9722,7 @@ function createGamepadJoin(read2) {
   });
   let mine;
   let dispose2 = createRoot((dispose3) => {
-    createEffect(() => read2(), (pads2) => {
+    createEffect(() => read2.pads(), (pads2) => {
       if (mine !== undefined)
         return;
       for (let i = 0;i < pads2.length; i++) {
@@ -9677,17 +9748,25 @@ function createGamepadJoin(read2) {
     let s = slot();
     if (s === undefined)
       return [];
-    let pad = read2()[s];
+    let pad = read2.pads()[s];
     return pad ? [pad] : [];
   };
-  return createGamepadDevice(pads, slot, "gamepad (joined)");
+  let changedAt = (name) => {
+    let s = untrack(slot);
+    return s === undefined ? null : read2.buttonChangedAt(s, name);
+  };
+  return createGamepadDevice(pads, slot, changedAt, "gamepad (joined)");
 }
 
 // ../../packages/core/src/input-gamepad.ts
+var reader = {
+  pads: gamepads,
+  buttonChangedAt: gamepadButtonChangedAt
+};
 function gamepad(slot) {
-  return createGamepadSlot(gamepads, slot);
+  return createGamepadSlot(reader, slot);
 }
-gamepad.next = () => createGamepadJoin(gamepads);
+gamepad.next = () => createGamepadJoin(reader);
 // ../../packages/core/src/input-pointer.ts
 var WHEEL_OCTAVES = 0.0015 / Math.LN2;
 // ../../packages/router/src/route.ts

@@ -78,7 +78,7 @@ impl DevSession {
     capture_enabled: Arc<AtomicBool>,
     connected: Arc<AtomicBool>,
     clock: crate::runtime::ClockControl,
-    input_tx: UnboundedSender<alloy::AlloyEvent>,
+    input_tx: crate::runtime::EventSender,
     alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
     resampler: alloy::resample::SharedResampler,
     user_input_muted: Arc<AtomicBool>,

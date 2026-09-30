@@ -72,14 +72,14 @@ pub fn listen(
   app_id: &str,
   client_dir: PathBuf,
   handle: &tokio::runtime::Handle,
-  events: tokio::sync::mpsc::UnboundedSender<AlloyEvent>,
+  events: crate::runtime::EventSender,
   commands: std::sync::mpsc::Sender<AlloyCommand>,
 ) {
   platform::listen(app_id.to_string(), client_dir, handle, events, commands);
 }
 
 /// One accepted hand-off connection: read the link, deliver it, acknowledge.
-async fn serve<S>(stream: S, app_id: String, events: tokio::sync::mpsc::UnboundedSender<AlloyEvent>, commands: std::sync::mpsc::Sender<AlloyCommand>)
+async fn serve<S>(stream: S, app_id: String, events: crate::runtime::EventSender, commands: std::sync::mpsc::Sender<AlloyCommand>)
 where
   S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -143,7 +143,7 @@ mod platform {
     app_id: String,
     client_dir: PathBuf,
     handle: &tokio::runtime::Handle,
-    events: tokio::sync::mpsc::UnboundedSender<AlloyEvent>,
+    events: crate::runtime::EventSender,
     commands: std::sync::mpsc::Sender<AlloyCommand>,
   ) {
     let path = client_dir.join(ENDPOINT_FILE);
@@ -355,7 +355,7 @@ mod platform {
     app_id: String,
     client_dir: PathBuf,
     handle: &tokio::runtime::Handle,
-    events: tokio::sync::mpsc::UnboundedSender<AlloyEvent>,
+    events: crate::runtime::EventSender,
     commands: std::sync::mpsc::Sender<AlloyCommand>,
   ) {
     use tokio::net::windows::named_pipe::ServerOptions;

@@ -76,7 +76,8 @@ export type DeviceName = "keyboard" | "gamepad" | "pointer"
  * One device control as an input source. `rate` reads its current value
  * (reactive); `deltas` subscribes a sink to the amounts a gesture
  * produces; `key`/`blur` receive the key events a map forwards
- * (InputMap.handlers). A source may carry any subset.
+ * (InputMap.handlers); `changedAt` says when the rate last changed. A
+ * source may carry any subset.
  */
 export interface InputSource<K extends ActionKind = ActionKind> {
   readonly kind: K
@@ -90,6 +91,16 @@ export interface InputSource<K extends ActionKind = ActionKind> {
    * may leave it out and never counts as the active device. */
   readonly device?: DeviceName
   rate?: () => ActionValue<K>
+  /**
+   * When `rate` last changed: the `timeStamp` (ms) of the input event that
+   * changed it, or null when the value was dropped and not let go by the
+   * player (a blur releases every held key with no event), and before any
+   * change. What `tap` and `doubleTap` measure with, so a button source
+   * has to carry it to sit under one: the time travels with the value,
+   * since whoever sees the change sees it after the event is gone. Not
+   * reactive.
+   */
+  changedAt?: () => number | null
   deltas?: (sink: DeltaSink) => () => void
   key?: (event: KeyEvent, down: boolean) => void
   blur?: () => void

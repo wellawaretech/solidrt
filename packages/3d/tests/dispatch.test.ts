@@ -50,8 +50,6 @@ function world() {
   let listeners = new Set<ScenePointerListener>()
   let pickables: Pickable[] = []
   let size = { width: 400, height: 200 }
-  // What a test moves: the time the dispatch reads.
-  let state = { clock: 0 }
 
   let tag = (e: { mesh: Mesh | null; instance: InstanceNode | null; tapCount?: number }) =>
     (e.mesh ? (e.mesh as Mesh & Fake).name : "-") + (e.instance ? "/" + (e.instance as InstanceNode & Fake).name : "") + (e.tapCount ? "#" + e.tapCount : "")
@@ -136,7 +134,6 @@ function world() {
     targetSize: () => size,
     root,
     listeners,
-    now: () => state.clock,
   })
   listeners.add(handlers("root"))
   let G = group("G")
@@ -147,7 +144,6 @@ function world() {
   instance("I2", IM, 300, 60, 40, 40)
 
   return {
-    state,
     root,
     listeners,
     dispatch,
@@ -162,6 +158,7 @@ function world() {
 
 function ev(localX: number, localY: number, pointerId = 1, extra: Partial<ElementWheelEvent> = {}): ElementWheelEvent {
   return {
+    timeStamp: 0,
     localX,
     localY,
     clientX: localX,
@@ -291,7 +288,7 @@ test("tap rules: slop, release off the target, repeats, restarts", () => {
   // is nothing (another instance of the same mesh included); repeats count
   // within the window, on the same target, near the same spot; a new target
   // or a lapse restarts at 1.
-  let { leaf, logged, state } = world()
+  let { leaf, logged } = world()
   leaf.onPointerDown(ev(100, 100))
   leaf.onPointerMove(ev(110, 100))
   leaf.onPointerUp(ev(100, 100))
@@ -302,36 +299,21 @@ test("tap rules: slop, release off the target, repeats, restarts", () => {
   leaf.onPointerDown(ev(300, 38))
   leaf.onPointerUp(ev(300, 42))
   expect("release on another instance", logged(), ["I1:down(IM/I1)", "IM:down(IM/I1)", "root:down(IM/I1)", "I1:up(IM/I1)", "IM:up(IM/I1)", "root:up(IM/I1)"])
-  state.clock = 1000
-  leaf.onPointerDown(ev(100, 100))
-  leaf.onPointerUp(ev(100, 100))
-  state.clock = 1200
-  leaf.onPointerDown(ev(105, 100))
-  leaf.onPointerUp(ev(105, 100))
-  state.clock = 1400
-  leaf.onPointerDown(ev(100, 100))
-  leaf.onPointerUp(ev(100, 100))
-  state.clock = 1800
-  leaf.onPointerDown(ev(100, 100))
-  leaf.onPointerUp(ev(100, 100))
-  state.clock = 1900
-  leaf.onPointerDown(ev(300, 100))
-  leaf.onPointerUp(ev(300, 100))
-  state.clock = 2000
-  leaf.onPointerDown(ev(10, 10))
-  leaf.onPointerUp(ev(10, 10))
-  state.clock = 2100
-  leaf.onPointerDown(ev(40, 10))
-  leaf.onPointerUp(ev(40, 10))
-  state.clock = 2200
-  leaf.onPointerDown(ev(45, 10))
-  leaf.onPointerUp(ev(45, 10))
-  state.clock = 2300
-  leaf.onPointerDown(ev(300, 20))
-  leaf.onPointerUp(ev(300, 20))
-  state.clock = 2400
-  leaf.onPointerDown(ev(300, 25))
-  leaf.onPointerUp(ev(300, 25))
+  // A tap at (x, y) whose down and up carry the time `at`, ms.
+  let tapAt = (at: number, x: number, y: number) => {
+    leaf.onPointerDown(ev(x, y, 1, { timeStamp: at }))
+    leaf.onPointerUp(ev(x, y, 1, { timeStamp: at }))
+  }
+  tapAt(1000, 100, 100)
+  tapAt(1200, 105, 100)
+  tapAt(1400, 100, 100)
+  tapAt(1800, 100, 100)
+  tapAt(1900, 300, 100)
+  tapAt(2000, 10, 10)
+  tapAt(2100, 40, 10)
+  tapAt(2200, 45, 10)
+  tapAt(2300, 300, 20)
+  tapAt(2400, 300, 25)
   expect(
     "tap count",
     logged().filter(l => l.includes("tap")),

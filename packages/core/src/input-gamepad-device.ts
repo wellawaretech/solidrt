@@ -1,8 +1,8 @@
-// A gamepad as input sources, over any accessor of pad snapshots: sticks
+// A gamepad as input sources, over any reader of pad snapshots: sticks
 // and the dpad as vec2, triggers and shoulders as axes, any button as a
-// button, any raw axis by name. Runtime-free (the accessor is injected,
+// button, any raw axis by name. Runtime-free (the reader is injected,
 // the public `gamepad` in input-gamepad.ts hands in core's gamepads()),
-// so the join logic below runs headless in the checks.
+// so the join logic below runs headless in the tests.
 //
 // Every read is reactive when the accessor is (gamepads() is a signal),
 // so a stick moved while a control's frame loop is off wakes it. Sticks
@@ -33,7 +33,14 @@ const LISTEN_THRESHOLD = 0.5
 // saved binding restores onto the device the app hands in.
 const DEVICE = "gamepad"
 
-export type PadsAccessor = () => (GamepadState | null)[]
+/** What a gamepad device reads: the pad snapshots by slot (reactive),
+ * and when a slot's button last changed (the `timeStamp` of the snapshot
+ * that pressed or released it, null when it never did), which is what a
+ * button source reports as its `changedAt`. */
+export interface PadsReader {
+  pads(): (GamepadState | null)[]
+  buttonChangedAt(slot: number, name: string): number | null
+}
 
 export interface GamepadDevice extends InputDevice {
   readonly name: "gamepad"
@@ -74,9 +81,10 @@ const DPAD_BUTTONS = ["dpadUp", "dpadDown", "dpadLeft", "dpadRight"]
 
 /**
  * The sources over `pads()` (the pads this device reads now, reactive),
- * with `slot()` as the device's slot and `who` as the label prefix.
+ * with `slot()` as the device's slot, `buttonChangedAt` as the time a
+ * button of the pads it reads last changed, and `who` as the label prefix.
  */
-export function createGamepadDevice(pads: () => GamepadState[], slot: () => number | undefined, who: string): GamepadDevice {
+export function createGamepadDevice(pads: () => GamepadState[], slot: () => number | undefined, buttonChangedAt: (name: string) => number | null, who: string): GamepadDevice {
   let sumAxis = (read: (pad: GamepadState) => number) => (): number => {
     let sum = 0
     for (let pad of pads()) sum += read(pad)
@@ -145,7 +153,7 @@ export function createGamepadDevice(pads: () => GamepadState[], slot: () => numb
       if (typeof name !== "string" || name.length === 0) throw new Error(`gamepad.button: expected a button name, got ${String(name)}`)
       let source = buttons.get(name)
       if (!source) {
-        source = { kind: "button", label: `${who} ${name}`, id: `${DEVICE}:button:${name}`, device: DEVICE, rate: anyButton(name) }
+        source = { kind: "button", label: `${who} ${name}`, id: `${DEVICE}:button:${name}`, device: DEVICE, rate: anyButton(name), changedAt: () => buttonChangedAt(name) }
         buttons.set(name, source)
       }
       return source
@@ -216,22 +224,34 @@ export function createGamepadDevice(pads: () => GamepadState[], slot: () => numb
 }
 
 /** One slot, or every connected pad when `slot` is undefined. */
-export function createGamepadSlot(read: PadsAccessor, slot: number | undefined): GamepadDevice {
+export function createGamepadSlot(read: PadsReader, slot: number | undefined): GamepadDevice {
   if (slot !== undefined && !(Number.isInteger(slot) && slot >= 0)) throw new Error(`gamepad: slot must be a non-negative integer, got ${String(slot)}`)
   let pads = (): GamepadState[] => {
-    let all = read()
+    let all = read.pads()
     if (slot === undefined) return all.filter((p): p is GamepadState => p !== null)
     let pad = all[slot]
     return pad ? [pad] : []
   }
-  return createGamepadDevice(pads, () => slot, slot === undefined ? "gamepad" : `gamepad ${slot}`)
+  // Every pad: the latest change on any slot, as the button reads pressed
+  // while any of them holds it.
+  let changedAt = (name: string): number | null => {
+    if (slot !== undefined) return read.buttonChangedAt(slot, name)
+    let latest: number | null = null
+    let count = untrack(read.pads).length
+    for (let i = 0; i < count; i++) {
+      let at = read.buttonChangedAt(i, name)
+      if (at !== null && (latest === null || at > latest)) latest = at
+    }
+    return latest
+  }
+  return createGamepadDevice(pads, () => slot, changedAt, slot === undefined ? "gamepad" : `gamepad ${slot}`)
 }
 
 // Slots held by joining devices, shared so a pad joins once.
 let claimed = new Set<number>()
 
 /** A device that claims the next unclaimed pad to press any button. */
-export function createGamepadJoin(read: PadsAccessor): GamepadDevice {
+export function createGamepadJoin(read: PadsReader): GamepadDevice {
   // ownedWrite: the claim lands inside an effect, the release in a cleanup.
   let [slot, setSlot] = createSignal<number | undefined>(undefined, { ownedWrite: true })
   let mine: number | undefined
@@ -239,7 +259,7 @@ export function createGamepadJoin(read: PadsAccessor): GamepadDevice {
   // the device only when there is none to tie it to.
   let dispose = createRoot(dispose => {
     createEffect(
-      () => read(),
+      () => read.pads(),
       pads => {
         if (mine !== undefined) return
         for (let i = 0; i < pads.length; i++) {
@@ -263,8 +283,12 @@ export function createGamepadJoin(read: PadsAccessor): GamepadDevice {
   let pads = (): GamepadState[] => {
     let s = slot()
     if (s === undefined) return []
-    let pad = read()[s]
+    let pad = read.pads()[s]
     return pad ? [pad] : []
   }
-  return createGamepadDevice(pads, slot, "gamepad (joined)")
+  let changedAt = (name: string): number | null => {
+    let s = untrack(slot)
+    return s === undefined ? null : read.buttonChangedAt(s, name)
+  }
+  return createGamepadDevice(pads, slot, changedAt, "gamepad (joined)")
 }

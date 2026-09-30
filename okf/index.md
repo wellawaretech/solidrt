@@ -61,6 +61,16 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
   assets in the manifest, then signed OTA."
+- **[Input events carry a timeStamp](plans/event-timestamp.md)** [2026-09-29]
+  PointerEvent carries no timestamp, so the velocity tracker, double-tap and
+  the 2d and 3d dispatchers stamp events with performance.now() at handler
+  time - a wall read that inherits the handler's execution jitter and cannot
+  be stepped by a test or by srt render. Give every input event a timeStamp on
+  an input reading of the paced clock (counted refreshes like the animation
+  timeline, no suspension skip, the arrival time for an event that lands
+  between frames), move package logic off performance.now(), and keep
+  performance.now() for measuring work only. Prerequisite of the test
+  harness's app layer.
 - **[Compressed textures - KTX2 shipped, ETC2 or BC7 on the device](plans/gpu-compressed-textures.md)** [2026-07-30]
   One shipped payload (Basis Universal in KTX2, baked with our own encoder)
   transcoded at load to the device's native block format - ETC2 on GLES 3.0
@@ -357,14 +367,6 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
-- **[Input events carry a timeStamp on the animation timeline](backlog/event-timestamp.md)** [2026-09-29]
-  PointerEvent carries no timestamp, so the velocity tracker, double-tap and
-  the 2d and 3d dispatchers stamp events with performance.now() at handler
-  time - a wall read that inherits the handler's execution jitter and cannot
-  be stepped by a test or by srt render. Give every input event a timeStamp on
-  the animation timeline, move package logic off performance.now(), and keep
-  performance.now() for measuring work only. Prerequisite of the test
-  harness's app layer.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for

@@ -273,6 +273,8 @@ export type SceneEventBase = {
    * (a view's own pixels under a view leaf). */
   x: number
   y: number
+  /** When the event happened, ms: the element event's `timeStamp`. */
+  timeStamp: number
   pointerId: number
   pointerType: string
   button?: number

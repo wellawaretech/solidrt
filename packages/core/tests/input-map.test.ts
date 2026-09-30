@@ -6,14 +6,16 @@
 // composites and modifier specs over synthetic key events, and
 // enable/disable contexts. Pure-module input only (the
 // `@solidrt/core/input` entry imports no runtime module), so it runs
-// headless on flux: `srt test packages/core`. The interactions (hold, tap,
-// doubleTap, chord) are about time passing and wait for the app layer in
-// checks/input-map-interactions.test.ts. The gamepad device and the pointer
-// feed need the runtime and are exercised live by the camera examples.
+// headless on flux: `srt test packages/core`. The interactions take their
+// time from their source (tap, doubleTap, chord: stated here, no waiting);
+// `hold` keeps time with a timer, which is about time passing and waits
+// for the app layer in checks/input-map-hold.test.ts. The gamepad device
+// and the pointer feed need the runtime and are exercised live by the
+// camera examples.
 
 import { test } from "flux:test"
 import { createSignal, flush } from "@solidjs/signals"
-import { chord, createAxes, createInputMap, hold, invert, keyboard, resolveSource, scale } from "../src/input.ts"
+import { chord, createAxes, createInputMap, doubleTap, hold, invert, keyboard, resolveSource, scale, tap } from "../src/input.ts"
 import { chordName, mostSpecific, parseModifiers } from "../src/input-chord.ts"
 import type { InputSource, Vec2 } from "../src/input.ts"
 import type { KeyEvent } from "../src/types"
@@ -34,7 +36,7 @@ let throws = (what: string, f: () => void) => {
   if (!threw) fail(`${what} must throw`)
 }
 
-let key = (code: string, k = code): KeyEvent => ({ key: k, code, repeat: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, currentTarget: 0, target: 0, stopPropagation() {} })
+let key = (code: string, k = code, timeStamp = 0): KeyEvent => ({ timeStamp, key: k, code, repeat: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, currentTarget: 0, target: 0, stopPropagation() {} })
 
 // The chord vocabulary both devices share: canonical order and name,
 test("the chord vocabulary both devices share: canonical order and name, most specific wins, unknown names throw", () => {
@@ -518,6 +520,128 @@ test("rebind(): listening devices", async () => {
   // A loaded id resolves through the device.
   input.load({ look: ["invert(gamepad:leftStick)"] }, { gamepad: pad })
   if (input.bindings("look")[0]!.source.id !== "invert(gamepad:leftStick)") fail("load through a device's resolve")
+})
+
+// A button source behind a signal that says when it changed, as a device
+// source does: `set(down, at)` is an input event at time `at` (ms), and
+// `drop()` a release with no event (a blur).
+function timed(label: string) {
+  let [value, set] = createSignal(false, { ownedWrite: true })
+  let changedAt: number | null = null
+  let source: InputSource<"button"> = { kind: "button", label, id: `custom:${label}`, rate: value, changedAt: () => changedAt }
+  return {
+    source,
+    set(down: boolean, at: number) {
+      changedAt = at
+      set(down)
+      flush()
+    },
+    drop() {
+      changedAt = null
+      set(false)
+      flush()
+    },
+  }
+}
+
+test("interactions: tap and doubleTap measure on the source's own time", async () => {
+  let input = createInputMap({ dash: "button", dodge: "button" })
+  let a = timed("a")
+  input.bind("dash", tap(a.source, 200))
+  input.bind("dodge", doubleTap(a.source, 300, 200))
+  let counts = { dash: 0, dodge: 0 }
+  for (let name of Object.keys(counts) as (keyof typeof counts)[]) input.onPress(name, () => counts[name]++)
+  // A press of `length` ms starting at `at`.
+  let press = async (at: number, length: number) => {
+    a.set(true, at)
+    a.set(false, at + length)
+    await tick()
+  }
+  await press(1000, 200)
+  if (counts.dash !== 1) fail(`a press of exactly the tap time taps, got ${counts.dash}`)
+  if (input.pressed("dash")) fail("a tap releases on its own")
+  await press(2000, 201)
+  if (counts.dash !== 1) fail("a press a millisecond longer is not a tap")
+  // Two taps whose releases are 300 ms apart: a double tap. 301: not.
+  await press(3000, 50)
+  await press(3300, 50)
+  if (counts.dodge !== 1) fail(`two taps 300 ms apart double-tap, got ${counts.dodge}`)
+  await press(4000, 50)
+  await press(4301, 50)
+  if (counts.dodge !== 1) fail("two taps 301 ms apart do not double-tap")
+  if (counts.dash !== 5) fail(`each short press taps, got ${counts.dash}`)
+  // A long press between two taps is no tap and does not pair them up.
+  await press(6000, 50)
+  await press(6100, 250)
+  if (counts.dodge !== 1) fail("a tap and a long press do not double-tap")
+})
+
+test("interactions: a press dropped by a blur is no tap", async () => {
+  let input = createInputMap({ dash: "button", dodge: "button", jump: "button" })
+  let a = timed("a")
+  input.bind("dash", tap(a.source))
+  input.bind("dodge", doubleTap(a.source))
+  let counts = { dash: 0, dodge: 0, jump: 0 }
+  for (let name of Object.keys(counts) as (keyof typeof counts)[]) input.onPress(name, () => counts[name]++)
+  a.set(true, 1000)
+  a.drop()
+  await tick()
+  if (counts.dash !== 0) fail("a dropped press does not tap")
+  // A tap, a dropped press, a tap: the drop ends the pair.
+  a.set(true, 2000)
+  a.set(false, 2050)
+  await tick()
+  a.set(true, 2100)
+  a.drop()
+  await tick()
+  a.set(true, 2150)
+  a.set(false, 2200)
+  await tick()
+  if (counts.dash !== 2 || counts.dodge !== 0) fail(`taps around a dropped press: ${counts.dash} taps, ${counts.dodge} double taps`)
+  // The keyboard source, through the map's own handlers: a key let go
+  // taps, a key lost to a blur does not.
+  input.bind("jump", tap(keyboard.key("KeyJ")))
+  let h = input.handlers
+  h.onKeyDown(key("KeyJ", "j", 3000))
+  flush()
+  h.onKeyUp(key("KeyJ", "j", 3100))
+  flush()
+  await tick()
+  if (counts.jump !== 1) fail(`a key let go within the tap time taps, got ${counts.jump}`)
+  h.onKeyDown(key("KeyJ", "j", 4000))
+  flush()
+  h.onBlur()
+  flush()
+  await tick()
+  if (counts.jump !== 1) fail("a key lost to a blur does not tap")
+})
+
+test("interactions: chord, and what a timed interaction asks of its source", () => {
+  let input = createInputMap({ both: "button" })
+  let a = timed("a")
+  let b = timed("b")
+  let both = chord(a.source, b.source)
+  input.bind("both", both)
+  let presses = 0
+  input.onPress("both", () => presses++)
+  a.set(true, 1000)
+  if (input.pressed("both")) fail("a chord needs every source")
+  b.set(true, 1040)
+  if (!input.pressed("both") || presses !== 1) fail("a chord presses when the last source lands")
+  if (both.changedAt?.() !== 1040) fail(`a chord changes when its last source did, got ${both.changedAt?.()}`)
+  a.set(false, 1100)
+  if (input.pressed("both")) fail("a chord releases when any source lifts")
+  if (both.changedAt?.() !== 1100) fail(`a chord's release is its first lift, got ${both.changedAt?.()}`)
+  b.drop()
+  if (both.changedAt?.() !== null) fail("a chord with a dropped source was dropped")
+  let untimed = valued("button", "u", false).source
+  if (chord(a.source, untimed).changedAt !== undefined) fail("a chord over a source with no time has none")
+  throws("tap a source with no time", () => tap(untimed))
+  throws("doubleTap a source with no time", () => doubleTap(untimed))
+  throws("tap a hold", () => tap(hold(a.source)))
+  throws("hold an axis", () => hold(valued("axis", "z", 0).source as never))
+  throws("hold a negative time", () => hold(a.source, -1))
+  throws("chord of one", () => chord(a.source))
 })
 
 test("device(): the last device that moved anything bound", () => {

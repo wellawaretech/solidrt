@@ -6,11 +6,15 @@
 // the plain press on another action, and the consumer reads one bool.
 //
 // Timing: an interaction watches its source's rate under a root of its
-// own and keeps time with setTimeout, so it works headless and needs no
-// frame loop; the root is disposed with the creating scope (a component
-// body) and lives for the session without one. `tap` and `doubleTap`
-// are edges, not levels: they read pressed for one task, long enough
-// for a map's onPress to fire, then release on their own.
+// own, so it works headless and needs no frame loop; the root is disposed
+// with the creating scope (a component body) and lives for the session
+// without one. `hold` keeps time with setTimeout. `tap` and `doubleTap`
+// measure between the source's edges with the source's own time
+// (`changedAt`, the timeStamp of the input event behind each edge): they
+// see an edge at the flush, after the event is gone, so they read no
+// clock of their own, and a source without `changedAt` cannot sit under
+// them. They are edges, not levels: they read pressed for one task, long
+// enough for a map's onPress to fire, then release on their own.
 //
 // Every processor composes the source's id (`invert(gamepad:leftStick)`,
 // `hold(400,keyboard:key:Space)`), so a saved binding restores through
@@ -47,6 +51,13 @@ let checkAxisSource = (what: string, source: InputSource): void => {
 let checkButtonSource = (what: string, source: InputSource): void => {
   checkSource(source)
   if (source.kind !== "button") throw new Error(`${what}: "${source.label}" is a ${source.kind}, not a button`)
+}
+
+let checkTimedSource = (what: string, source: InputSource): void => {
+  checkButtonSource(what, source)
+  if (typeof source.changedAt !== "function") {
+    throw new Error(`${what}: "${source.label}" does not say when it changes (no changedAt), so its presses cannot be timed`)
+  }
 }
 
 let checkMs = (what: string, ms: number): void => {
@@ -98,11 +109,13 @@ export function scale<K extends "axis" | "vec2">(source: InputSource<K>, factor:
 }
 
 // A button source derived from one button source's press and release
-// edges: `edge(down, now)` runs on each, with `set` for the derived
-// state and `later` for a timer that the disposal clears.
+// edges: `edge(down, at)` runs on each, with `set` for the derived
+// state and `later` for a timer that the disposal clears. `at` is the
+// source's time for the edge (its changedAt), null when it has none: a
+// source that carries no time, or a value that was dropped (a blur).
 type EdgeHooks = { set: (pressed: boolean) => void; later: (ms: number, run: () => void) => void; clearLater: () => void }
 
-function derived(source: InputSource<"button">, label: string, id: string, edge: (down: boolean, now: number, hooks: EdgeHooks) => void): InputSource<"button"> {
+function derived(source: InputSource<"button">, label: string, id: string, edge: (down: boolean, at: number | null, hooks: EdgeHooks) => void): InputSource<"button"> {
   // ownedWrite: the edges land inside an effect and timers.
   let [pressed, setPressed] = createSignal(false, { ownedWrite: true })
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -124,7 +137,7 @@ function derived(source: InputSource<"button">, label: string, id: string, edge:
     createEffect(
       () => source.rate!(),
       (down, prev) => {
-        if (down !== prev) edge(down, performance.now(), hooks)
+        if (down !== prev) edge(down, source.changedAt?.() ?? null, hooks)
       },
       { defer: true },
     )
@@ -151,7 +164,7 @@ let pulse = (hooks: EdgeHooks): void => {
 export function hold(source: InputSource<"button">, ms = HOLD_MS): InputSource<"button"> {
   checkButtonSource("hold", source)
   checkMs("hold", ms)
-  return derived(source, `${source.label} (hold ${ms} ms)`, `hold(${ms},${source.id})`, (down, _now, hooks) => {
+  return derived(source, `${source.label} (hold ${ms} ms)`, `hold(${ms},${source.id})`, (down, _at, hooks) => {
     if (down) hooks.later(ms, () => hooks.set(true))
     else {
       hooks.clearLater()
@@ -161,40 +174,55 @@ export function hold(source: InputSource<"button">, ms = HOLD_MS): InputSource<"
 }
 
 /** A press released within `ms` (default 200): pressed for one task on the
- * release, so onPress fires once per tap and a long press is not one. */
+ * release, so onPress fires once per tap and a long press is not one. A
+ * press the player did not let go (a blur dropped it) is no tap. The
+ * source has to say when it changes (`changedAt`). */
 export function tap(source: InputSource<"button">, ms = TAP_MS): InputSource<"button"> {
-  checkButtonSource("tap", source)
+  checkTimedSource("tap", source)
   checkMs("tap", ms)
-  let downAt = 0
-  return derived(source, `${source.label} (tap)`, `tap(${ms},${source.id})`, (down, now, hooks) => {
-    if (down) downAt = now
-    else if (now - downAt <= ms) pulse(hooks)
+  let downAt: number | null = null
+  return derived(source, `${source.label} (tap)`, `tap(${ms},${source.id})`, (down, at, hooks) => {
+    if (down) downAt = at
+    else {
+      if (at !== null && downAt !== null && at - downAt <= ms) pulse(hooks)
+      downAt = null
+    }
   })
 }
 
 /** Two taps (each within `tapMs`, default 200) at most `gapMs` (default
- * 300) apart: pressed for one task on the second release. */
+ * 300) apart: pressed for one task on the second release. A press the
+ * player did not let go (a blur dropped it) is no tap and ends the pair.
+ * The source has to say when it changes (`changedAt`). */
 export function doubleTap(source: InputSource<"button">, gapMs = DOUBLE_TAP_GAP_MS, tapMs = TAP_MS): InputSource<"button"> {
-  checkButtonSource("doubleTap", source)
+  checkTimedSource("doubleTap", source)
   checkMs("doubleTap", gapMs)
   checkMs("doubleTap", tapMs)
-  let downAt = 0
+  let downAt: number | null = null
   let lastTap = -Infinity
-  return derived(source, `${source.label} (double tap)`, `doubleTap(${gapMs},${tapMs},${source.id})`, (down, now, hooks) => {
+  return derived(source, `${source.label} (double tap)`, `doubleTap(${gapMs},${tapMs},${source.id})`, (down, at, hooks) => {
     if (down) {
-      downAt = now
+      downAt = at
       return
     }
-    if (now - downAt > tapMs) return
-    if (now - lastTap <= gapMs) {
+    let pressedAt = downAt
+    downAt = null
+    if (at === null || pressedAt === null) {
+      lastTap = -Infinity
+      return
+    }
+    if (at - pressedAt > tapMs) return
+    if (at - lastTap <= gapMs) {
       lastTap = -Infinity
       pulse(hooks)
-    } else lastTap = now
+    } else lastTap = at
   })
 }
 
 /** Pressed while every source is: Shift+click on one action, a two-button
- * combo on a pad. Key events reach each keyboard source among them. */
+ * combo on a pad. Key events reach each keyboard source among them. It
+ * changes when the last of its sources to change did (`changedAt`, when
+ * each of them carries one). */
 export function chord(...sources: InputSource<"button">[]): InputSource<"button"> {
   if (sources.length < 2) throw new Error("chord: needs at least two button sources")
   for (let s of sources) checkButtonSource("chord", s)
@@ -204,6 +232,18 @@ export function chord(...sources: InputSource<"button">[]): InputSource<"button"
     id: `chord(${sources.map(s => s.id).join(",")})`,
     device: sources[0]!.device,
     rate: () => sources.every(s => s.rate?.() === true),
+    changedAt: sources.every(s => s.changedAt)
+      ? () => {
+          let latest: number | null = null
+          for (let s of sources) {
+            let at = s.changedAt!()
+            // One source dropped (a blur): so was the chord.
+            if (at === null) return null
+            if (latest === null || at > latest) latest = at
+          }
+          return latest
+        }
+      : undefined,
     key: (event, down) => {
       for (let s of sources) s.key?.(event, down)
     },

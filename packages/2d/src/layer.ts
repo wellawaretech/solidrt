@@ -265,6 +265,8 @@ export type LayerEventBase = {
   /** Pointer position in LAYER pixels (the camera mapping undone). */
   x: number
   y: number
+  /** When the event happened, ms: the element event's `timeStamp`. */
+  timeStamp: number
   pointerId: number
   pointerType: string
   button?: number

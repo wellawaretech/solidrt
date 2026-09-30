@@ -1,7 +1,8 @@
-// The paced clock's two readings (see paced_clock.rs): the animation reading
+// The paced clock's readings (see paced_clock.rs): the animation reading
 // advances by the refreshes alloy counted for each frame signal, so it keeps
 // wall rate under slow frames without ever lagging; the timer reading, which
-// virtual timer deadlines advance against, is the wall clock itself.
+// virtual timer deadlines advance against, is the wall clock itself; the
+// input reading stamps input events.
 
 use crate::paced_clock::{Advance, PacedClock};
 use alloy::RefreshCounter;
@@ -151,4 +152,110 @@ fn zero_refreshes_advance_nothing() {
   let before = clock.now_ms();
   clock.tick(PERIOD + 1.0, 0, Advance::Run(1.0));
   assert!((clock.now_ms() - before).abs() < EPS, "a zero count moved the animation reading");
+}
+
+// The input reading (okf/plans/event-timestamp.md): the moves of
+// consecutive frames are stamped whole periods apart whatever the wall did
+// to the signals, as the slot positions they carry are.
+#[test]
+fn move_stamps_are_whole_periods_apart() {
+  let clock = PacedClock::new();
+  let mut counter = RefreshCounter::new();
+  let mut raw = 0.0;
+  let mut last = None;
+  for i in 0..60 {
+    // Signals jittered around a two-period cadence.
+    raw += 2.0 * PERIOD + if i % 2 == 0 { 3.0 } else { -3.0 };
+    clock.tick(raw, counter.on_signal(raw), Advance::Run(1.0));
+    let stamp = clock.input_slot_ms();
+    if let Some(last) = last {
+      let periods: f64 = (stamp - last) / PERIOD;
+      assert!((periods - periods.round()).abs() < EPS, "tick {i}: moves {} ms apart", stamp - last);
+    }
+    last = Some(stamp);
+  }
+}
+
+// An event that arrives between two ticks is stamped with when it arrived:
+// the latched reading plus the wall time since that tick. Before the first
+// tick there is no anchor.
+#[test]
+fn an_arrival_between_ticks_reads_its_own_time() {
+  let clock = PacedClock::new();
+  assert!((clock.input_arrival_ms(500.0) - 0.0).abs() < EPS, "arrival before the first tick leaked raw");
+  clock.tick(1000.0, 1, Advance::Run(1.0));
+  let slot = clock.input_slot_ms();
+  assert!((clock.input_arrival_ms(1040.0) - (slot + 40.0)).abs() < EPS, "arrival 40 ms into a slow frame");
+}
+
+// Stamps never go back: an arrival a little past the next tick's latched
+// reading holds the next move's stamp at its own, and the reading itself is
+// not moved, so the frame after is on the period grid again.
+#[test]
+fn a_stamp_is_never_earlier_than_the_one_before() {
+  let clock = PacedClock::new();
+  clock.tick(0.0, 1, Advance::Run(1.0));
+  let slot = clock.input_slot_ms();
+  let arrival = clock.input_arrival_ms(PERIOD + 2.0);
+  assert!((arrival - (slot + PERIOD + 2.0)).abs() < EPS, "arrival stamp {arrival}");
+  clock.tick(PERIOD + 3.0, 1, Advance::Run(1.0));
+  assert!((clock.input_slot_ms() - arrival).abs() < EPS, "the move after an overshooting arrival went back");
+  clock.tick(2.0 * PERIOD + 3.0, 1, Advance::Run(1.0));
+  assert!((clock.input_slot_ms() - (slot + 2.0 * PERIOD)).abs() < EPS, "the overshoot moved the reading itself");
+}
+
+// The input reading lives through a suspension, where the animation
+// reading skips it: two taps on either side of a background stretch are
+// far apart.
+#[test]
+fn input_reading_lives_through_a_suspension() {
+  let clock = PacedClock::new();
+  let mut raw = 0.0;
+  for _ in 0..10 {
+    raw += PERIOD;
+    clock.tick(raw, 1, Advance::Run(1.0));
+  }
+  let before = clock.input_arrival_ms(raw + 1.0);
+  raw += 10_000.0;
+  clock.tick(raw, 600, Advance::Run(1.0));
+  let after = clock.input_arrival_ms(raw + 1.0);
+  assert!((after - before - 600.0 * PERIOD).abs() < EPS, "taps across a suspension read {} ms apart", after - before);
+}
+
+// The dev clock control governs the input reading as it does the other
+// two: a pause holds it still between ticks as well, a step moves it one
+// period, a scale advances it at that rate.
+#[test]
+fn input_reading_follows_pause_step_and_scale() {
+  let clock = PacedClock::new();
+  clock.tick(0.0, 1, Advance::Run(1.0));
+  clock.tick(PERIOD, 1, Advance::Paused);
+  let paused = clock.input_slot_ms();
+  assert!((clock.input_arrival_ms(PERIOD + 500.0) - paused).abs() < EPS, "an arrival moved a paused input reading");
+  clock.tick(2.0 * PERIOD, 1, Advance::Step);
+  assert!((clock.input_slot_ms() - (paused + PERIOD)).abs() < EPS, "a step moved the input reading by other than a period");
+  assert!((clock.input_arrival_ms(2.0 * PERIOD + 500.0) - (paused + PERIOD)).abs() < EPS, "an arrival after a step moved it");
+  clock.tick(3.0 * PERIOD, 3, Advance::Run(0.5));
+  let scaled = clock.input_slot_ms();
+  assert!((scaled - (paused + 1.5 * PERIOD)).abs() < EPS, "scaled input step {}", scaled - paused);
+  assert!((clock.input_arrival_ms(3.0 * PERIOD + 10.0) - (scaled + 5.0)).abs() < EPS, "scaled arrival");
+}
+
+// An event that arrived before a tick and is stamped after it (it waited in
+// the channel behind a frame) reads its own time, before that tick's
+// reading: a press 30 ms long across a 50 ms frame is 30 ms, not the frame.
+#[test]
+fn an_arrival_stamped_after_the_next_tick_keeps_its_own_time() {
+  let clock = PacedClock::new();
+  clock.tick(1000.0, 1, Advance::Run(1.0));
+  let slot = clock.input_slot_ms();
+  // A frame of three periods: the down arrives 10 ms into it and the up
+  // 30 ms later; both are stamped only after the frame's end, past the tick.
+  clock.tick(1000.0 + 3.0 * PERIOD, 3, Advance::Run(1.0));
+  let down = clock.input_arrival_ms(1010.0);
+  let up = clock.input_arrival_ms(1040.0);
+  assert!((down - (slot + 10.0)).abs() < EPS, "down read {}", down - slot);
+  assert!((up - down - 30.0).abs() < EPS, "a 30 ms press read {} ms", up - down);
+  // The frame's own moves, stamped after those, are not before them.
+  assert!(clock.input_slot_ms() >= up);
 }

@@ -21,8 +21,8 @@ const SPAN_SMOOTH = 0.28
 // thresholds is the hysteresis that keeps the gate from chattering.
 // All three step-based constants assume a ~65Hz frame rate (the captured
 // tablet); a 120Hz panel halves per-step deltas. If that ever bites,
-// convert the thresholds to px/s with performance.now() read at the
-// pointerFrame terminator.
+// convert the thresholds to px/s with the pointerFrame terminator's
+// timeStamp.
 const QUIET = 0.3
 const ENGAGE = 0.6
 const QUIET_SMOOTH = 0.19
@@ -208,8 +208,9 @@ export function createTransform(options: TransformOptions) {
   let owner: ArenaOwner = { cancel }
 
   // The per-frame measure point: runs at the pointerFrame terminator, when
-  // every tracked pointer's position is the same age.
-  let flush = () => {
+  // every tracked pointer's position is the same age: the terminator's
+  // timeStamp, the time of what is measured here.
+  let flush = (frame: { timeStamp: number }) => {
     if (!active) return
     if (rebase) {
       // Anchor from same-age positions; emits nothing - an activation or
@@ -219,7 +220,7 @@ export function createTransform(options: TransformOptions) {
       let prev = ref
       ref = measure()
       if (prev) tracker.shift(ref.px - prev.px, ref.py - prev.py)
-      tracker.push(ref.px, ref.py)
+      tracker.push(ref.px, ref.py, frame.timeStamp)
       spanBase = ref.span
       smoothSpan = ref.span
       rebase = false
@@ -229,7 +230,7 @@ export function createTransform(options: TransformOptions) {
     if (!dirty || !ref) return
     dirty = false
     let m = measure()
-    tracker.push(m.px, m.py)
+    tracker.push(m.px, m.py, frame.timeStamp)
     let prevSpan = smoothSpan
     smoothSpan += (m.span - smoothSpan) * SPAN_SMOOTH
     spanRate += (Math.abs(smoothSpan - prevSpan) - spanRate) * QUIET_SMOOTH
@@ -328,7 +329,7 @@ export function createTransform(options: TransformOptions) {
         if (pointers.size === 0) {
           // The lift's own position is not measured (no terminator
           // follows it); the fit over the delivered frames is the speed.
-          let velocity = flingVelocity(tracker.velocity())
+          let velocity = flingVelocity(tracker.velocity(e.timeStamp))
           active = false
           ref = null
           pinch = false

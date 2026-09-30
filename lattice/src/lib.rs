@@ -757,7 +757,12 @@ fn ui_thread(
   // Bridge the synchronous Alloy event channel onto an async one: a blocking
   // recv on a dedicated thread forwards each event, so the event loop can await
   // events instead of polling on a timer.
-  let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<alloy::AlloyEvent>();
+  let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<runtime::Arrived>();
+  // Raw wall origin behind the paced clock: the frame verb feeds ticks from
+  // it, the sender below notes every event's arrival on it, and the
+  // schedule-time timer reading samples it (see set_virtual_now_source).
+  let wall_start = tokio::time::Instant::now();
+  let ev_tx = runtime::EventSender::new(ev_tx, wall_start);
   // The dev connection's input-injection sender: synthetic downs/ups enter
   // the same batch loop as real SDL input (hit testing, focus, input
   // state); synthetic moves feed the resampler at the send site, following
@@ -806,15 +811,35 @@ fn ui_thread(
     // Dev-tool pause/step/scale state, shared with the dev connection (which
     // is the only writer); permanently scale 1 in builds without one.
     let clock_control = runtime::ClockControl::new();
-    // Raw wall origin behind the paced clock, shared with the schedule-time
-    // timer reading installed below (see set_virtual_now_source).
-    let wall_start = tokio::time::Instant::now();
+    // flux::Timeline is the frame timeline the rAF/render timestamps march
+    // on - frame-stepped, pausable by the dev clock control - for native
+    // consumers (video sync). The virtual timers march on it only in
+    // playback; in run mode they take the paced clock's wall-anchored timer
+    // reading (see the install below). Injected into each engine; persists
+    // across reloads for continuous time. performance.now() is deliberately
+    // NOT on it: that is real elapsed time, for measuring work; Date.now()
+    // is calendar time.
+    let timeline = match playback_fps {
+      // Playback mode: derive time from the present counter (frame/fps) so
+      // the frame timeline is deterministic and recordings reproducible.
+      Some(rfps) if rfps > 0 => {
+        let playback_frame = playback_frame.clone();
+        flux::Timeline::new(move || playback_frame.load(Ordering::Relaxed) as f64 * 1000.0 / rfps as f64)
+      }
+      // Run mode: the paced frame clock (see paced_clock; the frame verb ticks
+      // it, correcting toward wall time at normal speed).
+      _ => {
+        let paced = paced_clock.clone().expect("run mode has a paced clock");
+        flux::Timeline::new(move || paced.now_ms())
+      }
+    };
     let mut ui_runtime = runtime::FluxRuntime::new(
       current_exec_events,
       playback_frame.clone(),
       paced_clock.clone(),
       clock_control.clone(),
       wall_start,
+      timeline.clone(),
       platform.clone(),
       resampler.clone(),
       input_state.clone(),
@@ -889,29 +914,30 @@ fn ui_thread(
         // frame verb samples one position per pointer per signal, so a
         // stalled drain replays no stale positions either.
         let Some(first) = ev_rx.recv().await else { break };
-        let mut events: Vec<AlloyEvent> = Vec::new();
-        let mut frame_signal: Option<AlloyEvent> = None;
+        let mut events: Vec<runtime::Arrived> = Vec::new();
+        let mut frame_signal: Option<runtime::Arrived> = None;
         let mut incoming = Some(first);
         loop {
-          let event = match incoming.take() {
-            Some(event) => event,
+          let arrived = match incoming.take() {
+            Some(arrived) => arrived,
             None => match ev_rx.try_recv() {
-              Ok(event) => event,
+              Ok(arrived) => arrived,
               Err(_) => break,
             },
           };
-          match event {
+          match arrived.event {
             signal @ (AlloyEvent::FrameRendered { .. } | AlloyEvent::Tick { .. }) => {
-              frame_signal = Some(match frame_signal.take() {
-                Some(older) => runtime::coalesce_frame_signals(older, signal),
+              let event = match frame_signal.take() {
+                Some(older) => runtime::coalesce_frame_signals(older.event, signal),
                 None => signal,
-              });
+              };
+              frame_signal = Some(runtime::Arrived { event, raw_ms: arrived.raw_ms });
             }
-            event => events.push(event),
+            event => events.push(runtime::Arrived { event, raw_ms: arrived.raw_ms }),
           }
         }
         let batch = events.into_iter().chain(frame_signal);
-        for event in batch {
+        for runtime::Arrived { event, raw_ms } in batch {
           if capture_enabled_events.load(Ordering::Relaxed) {
             if let Some(script_event) = alloy::ScriptEvent::from_alloy_event(&event) {
               let kind = if script_event.down { "keydown" } else { "keyup" };
@@ -1008,7 +1034,7 @@ fn ui_thread(
             // engine changed meanwhile: that request belonged to an app that
             // is already gone.
             AlloyEvent::Back => {
-              ui_runtime.event(&AlloyEvent::Back);
+              ui_runtime.event(&AlloyEvent::Back, raw_ms);
               let alive = Arc::new(std::sync::atomic::AtomicBool::new(false));
               if let Some(exec) = current_exec_probe.borrow().as_ref() {
                 let probe = alive.clone();
@@ -1039,7 +1065,7 @@ fn ui_thread(
               // Forward to the engine as the sticky `visibility` event.
               // Same-state repeats are normal here (app + window paths, plus
               // the Android background watch); core's env signal dedupes.
-              ui_runtime.event(&AlloyEvent::Visibility { visible });
+              ui_runtime.event(&AlloyEvent::Visibility { visible }, raw_ms);
             }
             AlloyEvent::Suspend { hold } => {
               log::info!("[srt] suspend");
@@ -1054,7 +1080,7 @@ fn ui_thread(
                 drop(hold);
               });
             }
-            event => ui_runtime.event(&event),
+            event => ui_runtime.event(&event, raw_ms),
           }
         }
       }
@@ -1103,29 +1129,6 @@ fn ui_thread(
       alloy_cmd_tx: alloy_cmd_tx.clone(),
       #[cfg(feature = "go")]
       dev: dev_session.as_ref().map(|d| d.exit_handle()),
-    };
-
-    // flux::Timeline is the frame timeline the rAF/render timestamps march
-    // on - frame-stepped, pausable by the dev clock control - for native
-    // consumers (video sync). The virtual timers march on it only in
-    // playback; in run mode they take the paced clock's wall-anchored timer
-    // reading (see the install below). Injected into each engine; persists
-    // across reloads for continuous time. performance.now() is deliberately
-    // NOT on it: that is real elapsed time, for measuring work; Date.now()
-    // is calendar time.
-    let timeline = match playback_fps {
-      // Playback mode: derive time from the present counter (frame/fps) so
-      // the frame timeline is deterministic and recordings reproducible.
-      Some(rfps) if rfps > 0 => {
-        let playback_frame = playback_frame.clone();
-        flux::Timeline::new(move || playback_frame.load(Ordering::Relaxed) as f64 * 1000.0 / rfps as f64)
-      }
-      // Run mode: the paced frame clock (see paced_clock; the frame verb ticks
-      // it, correcting toward wall time at normal speed).
-      _ => {
-        let paced = paced_clock.clone().expect("run mode has a paced clock");
-        flux::Timeline::new(move || paced.now_ms())
-      }
     };
 
     if storage::get().is_none() {

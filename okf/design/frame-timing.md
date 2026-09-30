@@ -142,9 +142,10 @@ runaway where ticks fed a backlogged raster thread more work per period
 than it retired ([idle-tick-gpu-backlog-runaway]), and the busy flag is
 what stopped a JS-bound app under VsyncLocked from running two frames per
 present (the fallback deadline gave the in-flight window up mid-build and
-Ticks resumed while JS was still building; [cadence-hold], stage 0). On a SwapPaced desktop client the tick
-runs at 2-3 Hz rather than the refresh rate when the picture does not
-change; still open ([idle-onframe-tick-rate]).
+Ticks resumed while JS was still building; [cadence-hold], stage 0). A
+SwapPaced desktop client once ticked at 2-3 Hz when the picture did not
+change; measured again on 2026-09-24 it ticks at the refresh rate, as the
+TV does ([idle-onframe-tick-rate]).
 
 **Collapsing.** Lattice drains the alloy event channel per batch and keeps
 only the newest frame signal (`lattice/src/lib.rs`): a frame is a request
@@ -159,7 +160,7 @@ timeline ran at a third of wall time at 20 fps.
 
 ## The clocks
 
-Six clocks exist, and most timing bugs were one consumer riding the wrong
+Seven clocks exist, and most timing bugs were one consumer riding the wrong
 one.
 
 | clock | where | what runs on it |
@@ -168,6 +169,7 @@ one.
 | refresh count | alloy, per frame signal | the fact the app timeline advances by |
 | animation timeline | `PacedClock::now_ms` (lattice) | `onFrame` tick, `requestAnimationFrame`, the render event, element and node transitions, silent video streams |
 | timer timeline | `PacedClock::timer_now_ms` | `setTimeout`, `setInterval` in a GUI app |
+| input reading | `PacedClock::input_slot_ms`, `input_arrival_ms` | the `timeStamp` of input events (pointer, wheel, key, pad state) |
 | playback clock | frame / fps (lattice, `srt render`) | everything above, deterministically, when recording |
 | audio sink | forge audio position | video streams with audio (master clock; the picture follows) |
 
@@ -186,7 +188,22 @@ Rules that follow, each learned the hard way:
   resume frame, browser-style. The wake-at-earliest-deadline half is
   deliberately unbuilt: waking a saturated JS thread to run timer work is
   the backlog loop the tick gate exists to prevent.
-- `performance.now()` is on neither timeline: real elapsed time, advancing
+- Input events are stamped with the input reading, which is neither
+  timeline ([event-timestamp]). The resampler delivers one position per
+  pointer per frame slot, consecutive ones a slot apart, so a move's stamp
+  advances by counted refreshes as the animation timeline does; stamped
+  with the wall at the frame signal it would pair an even position with a
+  jittered time. But it lives through a suspension, as the timer timeline
+  does (two taps on either side of a background stretch are far apart),
+  and an event that arrives between frame signals (down, up, wheel, key)
+  is stamped with its arrival time, not the last signal's: below the
+  refresh rate a frame interval is as long as the rest window of a lift
+  (50 ms at 20 fps). Stamps never go back: an arrival can land a little
+  past the next signal's reading, and the next stamp is held at it. The
+  clock ticks ahead of the frame's move dispatch, so a move carries its
+  own frame's reading. Package logic takes input time from the event and
+  never reads `performance.now()`.
+- `performance.now()` is on none of these: real elapsed time, advancing
   through a paused dev clock. An app that times its animation off it under
   `srt render` plays at the wrong speed (Sponza feedback item 28 tried it).
 - The dev clock control (`/clock?scale=`, `?step=`) gates frame delivery
@@ -427,7 +444,6 @@ miss counts had come out right only because the stray Ticks re-set it).
   than as late as its budget allows. Both are follow-ons listed in
   [cadence-hold]; the second is what would give the Pixel's 20 ms frame
   its third slot back (held at four today).
-- Idle `onFrame` on a SwapPaced desktop ticks at 2-3 Hz: [idle-onframe-tick-rate].
 - A display mode change is not observed on Android: [android-refresh-rate-change-unobserved].
 - The pacing budget samples the swap's throttle wait as pipeline cost, so
   the vsync delay sits at its floor: [pacing-budget-samples-swap-throttle].
@@ -479,7 +495,8 @@ Open: listed above.
 [stats-present-interval-jank]: ../backlog/stats-present-interval-jank.md
 [frame-driver-pacing-contract]: ../backlog/frame-driver-pacing-contract.md
 [presentation-feedback]: ../backlog/presentation-feedback.md
-[idle-onframe-tick-rate]: ../backlog/idle-onframe-tick-rate.md
+[idle-onframe-tick-rate]: ../done/idle-onframe-tick-rate.md
+[event-timestamp]: ../plans/event-timestamp.md
 [android-refresh-rate-change-unobserved]: ../backlog/android-refresh-rate-change-unobserved.md
 [pacing-budget-samples-swap-throttle]: ../backlog/pacing-budget-samples-swap-throttle.md
 [transition-clock-startup-anchor]: ../backlog/transition-clock-startup-anchor.md

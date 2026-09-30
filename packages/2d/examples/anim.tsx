@@ -1,6 +1,7 @@
 // Frame animation via createAnimation: a row of sprites sharing one looping
 // clip (one clock, one setSprite per sprite per STEP - an app's whole crowd
-// animates off a handful of timers, no onFrame loop), plus a one-shot clip
+// animates off a handful of no-demand frame callbacks, presenting only on
+// a step), plus a one-shot clip
 // that holds its last frame and fires onFinish. Self-asserting: samples the
 // sprites' frames against the wall clock and logs ANIM-OK / ANIM-FAIL.
 //
@@ -15,7 +16,7 @@ import logoBytes from "./logo.png" with { type: "binary" }
 const W = 520
 const H = 200
 const SPRITE = 96
-// Slow enough that timer jitter cannot blur a sampled frame boundary: the
+// Slow enough that a late timer cannot blur a sampled frame boundary: the
 // checks sample mid-frame, half a period from either edge.
 const LOOP_FPS = 2
 const SHOT_FPS = 5
@@ -53,9 +54,9 @@ function App() {
     return indexOf(getSprite(sprite)!.frame)
   }
 
-  // Sample mid-frame against the wall clock. At LOOP_FPS = 2 a frame is
-  // 500ms; the clip steps within ~250ms of a boundary (tick at half a
-  // period), so mid-frame samples have ~250ms of margin either way.
+  // Sample mid-frame on timers. At LOOP_FPS = 2 a frame is 500ms and the
+  // clip steps on the display frame a boundary falls in, so mid-frame
+  // samples have ~250ms of margin either way.
   let period = 1000 / LOOP_FPS
   setTimeout(() => {
     check(shownIndex(looped[0]!) === 0, "loop shows frame 0 in its first period")

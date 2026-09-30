@@ -316,6 +316,14 @@ that reads exactly like Solid fallout.
   nothing focused, the window alone), so `<window onKeyDown>` is the
   app-global shortcut point; `stopPropagation()` ends the walk. `focusable`
   declares focus-navigation candidacy (enumerate via getFocusables()).
+  Every pointer, wheel and key event carries `timeStamp` (ms): when the
+  input happened. Time anything about input with it (a press length, the
+  gap between two taps, a speed from two positions), never with
+  `performance.now()` in the handler: that is when the handler ran, and
+  it does not follow the dev clock, `srt render` or a test. The moves of
+  one frame share a stamp and consecutive frames are whole frame periods
+  apart; a down, up, wheel or key carries its arrival time. Compare
+  stamps only with each other.
 
 - Gesture recognizers, shared by every package: `createPan` (single-pointer
   drag, axis-aware slop, per-event dx/dy) and `createTransform` (merged
@@ -332,7 +340,8 @@ that reads exactly like Solid fallout.
   and two-finger translation different meanings - dx/dy alone cannot tell
   them apart).
   Both ends carry the lift velocity (`onPanEnd(velocity)`,
-  `onTransformEnd(velocity)`: parent-frame px/s from `createVelocityTracker`,
+  `onTransformEnd(velocity)`: parent-frame px/s from `createVelocityTracker`
+  (`push(x, y, e.timeStamp)`, `velocity(up.timeStamp)`: it reads no clock),
   a least-squares fit over the last 100 ms of positions, never the last
   two samples - the final sample before a lift is often stationary and
   frame batching makes the last delta a frame old; zero after a 50 ms
@@ -432,7 +441,12 @@ that reads exactly like Solid fallout.
   `chord(...sources)` are the interactions (Unity's Hold/Tap/MultiTap):
   button sources made from button sources, so a charged attack is
   `hold(pad.button("west"))` on one action next to the plain press on
-  another; a tap reads pressed for one task, enough for onPress.
+  another; a tap reads pressed for one task, enough for onPress. `tap`
+  and `doubleTap` time a press with the source's own `changedAt()` (the
+  `timeStamp` of the event behind each edge; keyboard keys and pad
+  buttons carry it), so a custom button source has to provide it to sit
+  under one, and they throw on one that does not (a pointer pulse, a
+  `hold`). A key lost to a blur is no tap.
   Consumers with the axes contract (`createAxes({ rotate: "vec2", zoom:
   "axis" }, { onNudge, onBegin, onEnd })`, what every camera control
   exposes as `.axes`) are connected by name with `input.drive(control.axes,
@@ -581,7 +595,14 @@ that reads exactly like Solid fallout.
   apply, return it so the loop runs only while the condition holds); `rate` is the
   display's nominal refresh rate in Hz, which a fixed-timestep loop needs
   (see @solidrt/cli agents/debugging.md on stepping); `requestAnimationFrame`
-  exists as a web-standard one-shot but is not the preferred driver. A JS
+  exists as a web-standard one-shot but is not the preferred driver.
+  `onFrame(fn, { demand: false })` is the same hook without the standing
+  frame request: it runs on every frame the runtime delivers and the app
+  presents only when the body writes, for a loop that follows time but
+  seldom changes the picture. `frameTime()` is the current frame's `tick`
+  read from anywhere (not reactive, requests nothing): the app's own
+  clock for code with no tick in hand, where `performance.now()` would
+  ignore the dev clock, `srt render` and tests. A JS
   tween loop or an animation library pushing interpolated values through
   signals is the single most expensive mistake available here - read
   agents/performance.md before writing either.

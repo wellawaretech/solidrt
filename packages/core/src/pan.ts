@@ -108,7 +108,7 @@ export function createPan(options: PanOptions) {
           armed = null
           origin = { x: e.parentX, y: e.parentY }
           tracker.reset()
-          tracker.push(e.parentX, e.parentY)
+          tracker.push(e.parentX, e.parentY, e.timeStamp)
           options.onPanStart?.()
         } else {
           // The arena is resolved against us; the drag belongs elsewhere.
@@ -117,7 +117,7 @@ export function createPan(options: PanOptions) {
         return
       }
       if (active === e.pointerId && origin) {
-        tracker.push(e.parentX, e.parentY)
+        tracker.push(e.parentX, e.parentY, e.timeStamp)
         options.onPanMove?.(e.parentX - origin.x, e.parentY - origin.y)
         origin = { x: e.parentX, y: e.parentY }
       }
@@ -126,7 +126,7 @@ export function createPan(options: PanOptions) {
       if (active === e.pointerId) {
         // The up is not a sample: it sits where the last move left the
         // pointer, and its age is what tells a rest from a flick.
-        let velocity = flingVelocity(tracker.velocity())
+        let velocity = flingVelocity(tracker.velocity(e.timeStamp))
         reset()
         options.onPanEnd?.(velocity)
       } else if (armed === e.pointerId) {

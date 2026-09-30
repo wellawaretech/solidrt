@@ -63,7 +63,7 @@ export function createTapSequence(options: TapSequenceOptions) {
   }
   return {
     down(e: PointerEvent) {
-      let now = performance.now()
+      let now = e.timeStamp
       if (first) {
         if (first.upAt === null) {
           // A second finger while the first is down: neither is a tap.
@@ -88,7 +88,7 @@ export function createTapSequence(options: TapSequenceOptions) {
     },
     up(e: PointerEvent) {
       if (!first || first.id !== e.pointerId || first.upAt !== null) return
-      let now = performance.now()
+      let now = e.timeStamp
       if (now - first.downAt > TAP_MAX_MS) {
         settle(false)
         return

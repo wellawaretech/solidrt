@@ -39,7 +39,7 @@ pub struct DevFlags {
   /// the UI thread's batch loop through the same channel as real SDL input
   /// (hit testing, input-state bookkeeping, focus). Moves follow the
   /// producer-side resampler rule instead (see `resampler`).
-  pub input_tx: UnboundedSender<alloy::AlloyEvent>,
+  pub input_tx: crate::runtime::EventSender,
   /// The alloy loop's command channel, for the `input` query's synthetic
   /// gamepads (AlloyCommand::Gamepad): pads live with SDL's on that
   /// thread, not in the UI thread's event channel.

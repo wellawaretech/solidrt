@@ -47,8 +47,6 @@ export type DispatchDeps = {
   root: ViewHandle
   /** The root's listeners, in registration order. */
   listeners: Set<LayerPointerListener>
-  /** The clock for tap repeats (default performance.now; checks inject). */
-  now?: () => number
 }
 
 type HandlerName = "onPointerDown" | "onPointerMove" | "onPointerUp" | "onWheel" | "onTap"
@@ -61,6 +59,7 @@ type InternalEvent = {
   currentTarget: Sprite | SpriteGroup | ViewHandle
   x: number
   y: number
+  timeStamp: number
   pointerId: number
   pointerType: string
   button?: number
@@ -89,7 +88,6 @@ type Press = {
 }
 
 export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: number; height: number }) | null) => LayerHandlers {
-  let now = deps.now ?? (() => performance.now())
   let presses = new Map<number, Press>()
   let hover = new Map<number, Sprite>()
   let lastTap: { time: number; cx: number; cy: number; target: Sprite | null; count: number } | null = null
@@ -135,6 +133,7 @@ export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: num
         currentTarget: sprite ?? deps.root,
         x,
         y,
+        timeStamp: e.timeStamp,
         pointerId: e.pointerId,
         pointerType: e.pointerType,
         button: e.button,
@@ -199,7 +198,7 @@ export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: num
         // press, released over the target it pressed (empty space for the
         // layer itself).
         if (press.moved || !press.alone || topmost(x, y) !== press.target) return
-        let time = now()
+        let time = e.timeStamp
         let repeat =
           lastTap !== null &&
           time - lastTap.time <= TAP_INTERVAL_MS &&

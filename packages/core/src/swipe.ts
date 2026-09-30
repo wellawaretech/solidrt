@@ -80,8 +80,8 @@ export function createSwipe(options: SwipeOptions) {
   // The down's window position and the finger's window-px velocity, over
   // every event the wrapped pan sees.
   let down: { id: number; x: number; y: number } | null = null
-  // The lift's window position, set just before the pan's up runs.
-  let lift: { x: number; y: number } | null = null
+  // The lift's window position and time, set just before the pan's up runs.
+  let lift: { x: number; y: number; at: number } | null = null
   let finger = createVelocityTracker()
   let pan = createPan({
     get axis() {
@@ -92,7 +92,7 @@ export function createSwipe(options: SwipeOptions) {
     onPanEnd: velocity => {
       let direction: SwipeDirection | null = null
       if (down && lift) {
-        direction = classifySwipe(finger.velocity(), { dx: lift.x - down.x, dy: lift.y - down.y }, directions())
+        direction = classifySwipe(finger.velocity(lift.at), { dx: lift.x - down.x, dy: lift.y - down.y }, directions())
       }
       if (direction) options.onSwipe?.(direction, velocity)
       options.onSwipeEnd?.(velocity)
@@ -104,16 +104,16 @@ export function createSwipe(options: SwipeOptions) {
       if (down === null && (e.button == null || e.button === 0)) {
         down = { id: e.pointerId, x: e.clientX, y: e.clientY }
         finger.reset()
-        finger.push(e.clientX, e.clientY)
+        finger.push(e.clientX, e.clientY, e.timeStamp)
       }
       pan.handlers.onPointerDown(e)
     },
     onPointerMove: (e: PointerEvent) => {
-      if (down && down.id === e.pointerId) finger.push(e.clientX, e.clientY)
+      if (down && down.id === e.pointerId) finger.push(e.clientX, e.clientY, e.timeStamp)
       pan.handlers.onPointerMove(e)
     },
     onPointerUp: (e: PointerEvent) => {
-      if (down && down.id === e.pointerId) lift = { x: e.clientX, y: e.clientY }
+      if (down && down.id === e.pointerId) lift = { x: e.clientX, y: e.clientY, at: e.timeStamp }
       pan.handlers.onPointerUp(e)
       if (down && down.id === e.pointerId) {
         down = null

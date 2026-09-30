@@ -6,6 +6,7 @@
 // instead of snapping to uneven widths). okf/backlog/2d-layer-display-scale.md.
 // The pure math lives in oversample-math.ts (checkable headless); this
 // module binds it to the device limits and adds the thrash sentinel.
+import { frameTime } from "@solidrt/core"
 import { limits } from "@solidrt/core/gpu"
 import { fitOversampleWithin } from "./oversample-math.ts"
 
@@ -36,7 +37,9 @@ export function fitOversample(scale: number, targetW: number, targetH: number, b
  * healthy layer settles in a change or two (mount, then the post-resize
  * scale); reaching this count means something re-picks every frame. */
 const THRASH_CHANGES = 4
-/** The window those changes must land in, ms. */
+/** The window those changes must land in, ms of the app's frame time: a
+ * warning about what happens per frame counts on the clock frames run on,
+ * so it means the same under `srt render` and a paused dev clock. */
 const THRASH_WINDOW_MS = 1000
 
 /**
@@ -52,7 +55,7 @@ export function thrashSentinel(what: string): () => void {
   let warned = false
   return () => {
     if (warned) return
-    let now = performance.now()
+    let now = frameTime()
     stamps.push(now)
     while (stamps.length > 0 && now - stamps[0]! > THRASH_WINDOW_MS) stamps.shift()
     if (stamps.length < THRASH_CHANGES) return

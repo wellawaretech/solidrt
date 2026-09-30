@@ -14,7 +14,10 @@ use crate::{emit_event, emit_sticky, has_listeners, ExecHandle};
 /// by pointer dispatch, the pacing clock's refresh rate) stays on its side.
 /// The match is exhaustive on purpose: a new `AlloyEvent` variant does not
 /// compile until it is marshalled here or listed as runner-owned.
-pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
+/// `time_stamp_ms` is the runner's input time for this event, in
+/// milliseconds (see `input::dispatch`): the `timeStamp` of the input
+/// events among these (keys, gamepad state).
+pub fn forward(exec: &ExecHandle, event: &AlloyEvent, time_stamp_ms: f64) -> bool {
   match event {
     AlloyEvent::WindowFocus => emit_named(exec, "windowFocus"),
     AlloyEvent::WindowBlur => emit_named(exec, "windowBlur"),
@@ -120,7 +123,7 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
       });
     }
     AlloyEvent::Key { down, key, code, modifiers, repeat } => {
-      emit_key(exec, if *down { "keydown" } else { "keyup" }, key.clone(), code, *modifiers, *repeat)
+      emit_key(exec, if *down { "keydown" } else { "keyup" }, key.clone(), code, *modifiers, *repeat, time_stamp_ms)
     }
     AlloyEvent::TextInput { text } => {
       let text = text.clone();
@@ -178,6 +181,7 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
         }
         let obj = Object::new(ctx.clone()).expect("create object");
         obj.set("pads", arr).expect("set pads");
+        obj.set("timeStamp", time_stamp_ms).expect("set timeStamp");
         emit_sticky(&ctx, "gamepads", obj);
       });
     }
@@ -287,6 +291,7 @@ fn emit_key(
   code: &'static str,
   modifiers: Modifiers,
   repeat: bool,
+  time_stamp_ms: f64,
 ) {
   exec.exec(move |ctx| {
     let obj = Object::new(ctx.clone()).expect("create object");
@@ -297,6 +302,7 @@ fn emit_key(
     obj.set("ctrlKey", modifiers.ctrl).expect("set ctrlKey");
     obj.set("altKey", modifiers.alt).expect("set altKey");
     obj.set("metaKey", modifiers.meta).expect("set metaKey");
+    obj.set("timeStamp", time_stamp_ms).expect("set timeStamp");
     emit_event(&ctx, name, obj);
   });
 }

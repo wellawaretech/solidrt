@@ -38,9 +38,10 @@ function syncInterest(nodeId: number): void {
 /**
  * A pointer fact with no per-node fields: window coordinates plus pointer
  * identity and modifiers. `target` is the deepest node under the pointer
- * (0 when nothing is hit).
+ * (0 when nothing is hit). `timeStamp` is `PointerEvent.timeStamp`.
  */
 export interface GlobalPointerEvent {
+  timeStamp: number
   clientX: number
   clientY: number
   target: number
@@ -70,6 +71,7 @@ export function onPointerMove(fn: (e: GlobalPointerEvent) => void): () => void {
   if (globalMoveSubs.size === 1) {
     globalMoveUnsub = on("pointerMove", (raw: any) => {
       let e: GlobalPointerEvent = {
+        timeStamp: raw.timeStamp,
         clientX: raw.clientX,
         clientY: raw.clientY,
         target: raw.target,

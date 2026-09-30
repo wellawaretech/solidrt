@@ -73,13 +73,44 @@ impl ClockControl {
 /// guess here would break the contract later.
 pub trait UiRuntime {
   /// An alloy event arrived. Frame signals (FrameRendered / Tick) never come
-  /// through here; they become `frame` calls.
-  fn event(&mut self, event: &AlloyEvent);
+  /// through here; they become `frame` calls. `raw_ms` is the wall reading
+  /// at which the event was sent to the loop (see `EventSender`).
+  fn event(&mut self, event: &AlloyEvent, raw_ms: f64);
   /// A frame signal (present or idle tick): run the engine's per-frame work
   /// computing frame `next_frame`. `refreshes` is the display refreshes the
   /// signal covered, as alloy counted them; `present_at` is when the frame
   /// is expected to reach the screen.
   fn frame(&mut self, next_frame: u64, refreshes: u32, present_at: Instant);
+}
+
+/// An event on its way to the UI loop, with the wall reading (ms on the
+/// paced clock's origin) at which it was sent.
+pub(crate) struct Arrived {
+  pub event: AlloyEvent,
+  pub raw_ms: f64,
+}
+
+/// The sending half of the UI loop's event channel. It notes the wall
+/// reading of every send, on the sender's thread: the loop shares its
+/// thread with the engine, so an event waits behind whatever JS is running,
+/// and the time it is taken out of the channel is not the time it arrived.
+/// That reading is what an input event's `timeStamp` is derived from.
+#[derive(Clone)]
+pub(crate) struct EventSender {
+  tx: tokio::sync::mpsc::UnboundedSender<Arrived>,
+  wall_start: tokio::time::Instant,
+}
+
+impl EventSender {
+  pub fn new(tx: tokio::sync::mpsc::UnboundedSender<Arrived>, wall_start: tokio::time::Instant) -> Self {
+    Self { tx, wall_start }
+  }
+
+  /// Err when the loop is gone.
+  pub fn send(&self, event: AlloyEvent) -> Result<(), ()> {
+    let raw_ms = self.wall_start.elapsed().as_secs_f64() * 1000.0;
+    self.tx.send(Arrived { event, raw_ms }).map_err(|_| ())
+  }
 }
 
 /// Collapse two frame signals into the newer one carrying both refresh
@@ -124,6 +155,9 @@ pub struct FluxRuntime {
   // Wall origin for the paced clock's correction target. tokio's Instant so
   // tokio's test clock can drive it.
   wall_start: tokio::time::Instant,
+  // The frame timeline flux's native consumers read. Here it is the input
+  // time in playback mode, which has one clock for everything (frame / fps).
+  timeline: flux::Timeline,
   platform: Arc<PlatformContext>,
   // Sampling handle onto the resampler its producers feed (the alloy pump
   // for real input, the dev connection for synthetic input; see alloy's
@@ -218,6 +252,7 @@ impl FluxRuntime {
     // it, and the embedder samples it for the schedule-time timer reading
     // (see lib.rs), so both sides of the timer timeline share one origin.
     wall_start: tokio::time::Instant,
+    timeline: flux::Timeline,
     platform: Arc<PlatformContext>,
     resampler: SharedResampler,
     input_state: Arc<InputState>,
@@ -228,6 +263,7 @@ impl FluxRuntime {
       paced,
       clock_control,
       wall_start,
+      timeline,
       platform,
       resampler,
       gate_engine: None,
@@ -237,8 +273,21 @@ impl FluxRuntime {
   }
 }
 
+impl FluxRuntime {
+  // The `timeStamp` of an input event that arrived at the wall reading
+  // `raw_ms` (see the input reading in paced_clock.rs): its arrival time in
+  // run mode, the frame's time in playback, where no wall time passes
+  // between frames.
+  fn arrival_stamp(&self, raw_ms: f64) -> f64 {
+    match &self.paced {
+      Some(pc) => pc.input_arrival_ms(raw_ms),
+      None => self.timeline.now_ms(),
+    }
+  }
+}
+
 impl UiRuntime for FluxRuntime {
-  fn event(&mut self, event: &AlloyEvent) {
+  fn event(&mut self, event: &AlloyEvent, raw_ms: f64) {
     // The pacing clock's refresh rate is this runtime's own bookkeeping (its
     // tick runs inside frame()), tracked whether or not an engine is live.
     if let AlloyEvent::DisplayRefreshRate { hz } = event {
@@ -253,7 +302,10 @@ impl UiRuntime for FluxRuntime {
     // flux marshals the engine-agnostic window / keyboard / device events
     // (including the sticky window facts) directly; pointer events remain
     // because their dispatch is hit-testing, not pure marshalling.
-    if flux::gui::events::forward(eh, event) {
+    // Stamped with when the event was sent, not with when this loop or the
+    // engine got to it.
+    let stamp = self.arrival_stamp(raw_ms);
+    if flux::gui::events::forward(eh, event, stamp) {
       return;
     }
     match event {
@@ -277,6 +329,7 @@ impl UiRuntime for FluxRuntime {
             y: *y,
             modifiers: *modifiers,
           },
+          stamp,
         )
       }
       AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
@@ -293,6 +346,7 @@ impl UiRuntime for FluxRuntime {
             y: *y,
             modifiers: *modifiers,
           },
+          stamp,
         )
       }
       AlloyEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => dispatch(
@@ -306,14 +360,15 @@ impl UiRuntime for FluxRuntime {
           delta_y: *delta_y,
           modifiers: *modifiers,
         },
+        stamp,
       ),
       _ => {}
     }
   }
 
   /// Run the per-frame JS work for one frame signal (FrameRendered or idle
-  /// Tick): dispatch the sampled moves, publish the frame index, advance the
-  /// paced clock, then drive flux's frame protocol (`frame::advance`, the
+  /// Tick): publish the frame index, advance the paced clock, dispatch the
+  /// sampled moves, then drive flux's frame protocol (`frame::advance`, the
   /// speech pump, and `frame::deliver` unless the clock is paused).
   /// `next_frame` is the present index the frame being computed would get.
   fn frame(&mut self, next_frame: u64, refreshes: u32, present_at: Instant) {
@@ -350,6 +405,48 @@ impl UiRuntime for FluxRuntime {
     let platform = self.platform.clone();
     let timing = self.timing.clone();
     eh.exec(move |ctx| {
+      // Publish the present being computed before reading the clock, so in
+      // playback mode the clock reports this frame's virtual time.
+      playback_frame.store(next_frame, Ordering::Relaxed);
+      // Dev-tool clock control: at scale 0 frame delivery to JS is gated (a
+      // true pause: onFrame, rAF and the reactive flush all hang off the
+      // render event), except that each queued step lets exactly one frame
+      // through at one full period. Everything above and below this gate -
+      // touch dispatch, cameras, capture settling, the draw path - keeps
+      // running, so the compositor and the capture tools stay alive while
+      // app time stands still.
+      let scale = clock_control.scale();
+      let deliver = scale != 0.0 || clock_control.take_step();
+      // rAF and the render event march on the frame timeline (which
+      // flux::Timeline also reports): the paced clock in run mode, advancing
+      // by the display refreshes alloy counted for this signal, the
+      // frame-derived virtual clock in playback. The virtual timers march on
+      // the paced clock's wall-anchored timer reading instead - same
+      // pause/step/scale policy, deadlines wall-accurate whatever the frames
+      // do (see paced_clock). Input events are stamped with its input
+      // reading. In playback all three are the deterministic frame clock.
+      // performance.now() is on NONE of them - that stays real elapsed time.
+      // Render event carries seconds; JS scales to ms. The clock ticks ahead
+      // of the moves below, so a move is stamped with its own frame's
+      // reading.
+      let (ts, timer_ts, input_ts) = match &paced {
+        Some(pc) => {
+          let raw = wall_start.elapsed().as_secs_f64() * 1000.0;
+          let advance = if !deliver {
+            Advance::Paused
+          } else if scale == 0.0 {
+            Advance::Step
+          } else {
+            Advance::Run(scale)
+          };
+          pc.tick(raw, refreshes, advance);
+          (pc.now_ms(), pc.timer_now_ms(), pc.input_slot_ms())
+        }
+        None => {
+          let t = flux::timeline_now_ms(&ctx);
+          (t, t, t)
+        }
+      };
       // Resampled moves run ahead of the frame work so the frame consumes
       // the state they dirty; timed as moves, not frame cost.
       let has_moves = !moves.is_empty();
@@ -366,6 +463,7 @@ impl UiRuntime for FluxRuntime {
             dy: m.dy,
             modifiers: m.modifiers,
           },
+          input_ts,
         );
         timing.lock().expect("js timing lock poisoned").record_move(start.elapsed().as_secs_f32() * 1000.0);
       }
@@ -375,54 +473,15 @@ impl UiRuntime for FluxRuntime {
         // fires even if every move was interest-gated away (harmless), and
         // ahead of the deliver gate below so a paused clock still pairs
         // moves with their terminator.
-        flux::gui::input::frame_end(&ctx);
+        flux::gui::input::frame_end(&ctx, input_ts);
       }
       let start = std::time::Instant::now();
-      // Publish the present being computed before reading the clock, so in
-      // playback mode the clock reports this frame's virtual time.
-      playback_frame.store(next_frame, Ordering::Relaxed);
       // Stamp the frame for draw() on every path, the paused one included
       // (its demand gate latches video against the same deadline); the JS
       // start instant is added below, on delivery.
       crate::frame::RENDER_FRAME.with(|c| {
-        c.set(crate::frame::RenderFrame { start: None, frame: next_frame, period_ms: judge_period_ms, present_at })
+        c.set(crate::frame::RenderFrame { start: None, frame: next_frame, period_ms: judge_period_ms, present_at, input_ms: input_ts })
       });
-      // Dev-tool clock control: at scale 0 frame delivery to JS is gated (a
-      // true pause: onFrame, rAF and the reactive flush all hang off the
-      // render event), except that each queued step lets exactly one frame
-      // through at one full period. Everything above and below this gate -
-      // touch dispatch, cameras, capture settling, the draw path - keeps
-      // running, so the compositor and the capture tools stay alive while
-      // app time stands still.
-      let scale = clock_control.scale();
-      let deliver = scale != 0.0 || clock_control.take_step();
-      // rAF and the render event march on the frame timeline (which
-      // flux::Timeline also reports): the paced clock in run mode, advancing
-      // by the display refreshes alloy counted for this signal, the
-      // frame-derived virtual clock in playback. The virtual timers march on
-      // the paced clock's wall-anchored timer reading instead - same
-      // pause/step/scale policy, deadlines wall-accurate whatever the frames
-      // do (see paced_clock). In playback both are the deterministic frame
-      // clock. performance.now() is on NEITHER - that stays real elapsed
-      // time. Render event carries seconds; JS scales to ms.
-      let (ts, timer_ts) = match &paced {
-        Some(pc) => {
-          let raw = wall_start.elapsed().as_secs_f64() * 1000.0;
-          let advance = if !deliver {
-            Advance::Paused
-          } else if scale == 0.0 {
-            Advance::Step
-          } else {
-            Advance::Run(scale)
-          };
-          pc.tick(raw, refreshes, advance);
-          (pc.now_ms(), pc.timer_now_ms())
-        }
-        None => {
-          let t = flux::timeline_now_ms(&ctx);
-          (t, t)
-        }
-      };
       // The pre-delivery half of flux's frame protocol: both animation
       // clocks stamped with this frame's app time (so property writes during
       // the flush start their tracks at ts, the draw path's advance reads the
@@ -463,6 +522,6 @@ impl UiRuntime for FluxRuntime {
 
 // Queue a pointer event for hit-test dispatch on the JS thread (see
 // flux::gui::input::dispatch).
-fn dispatch(eh: &ExecHandle, event: InputEvent) {
-  eh.exec(move |ctx| flux::gui::input::dispatch(&ctx, event));
+fn dispatch(eh: &ExecHandle, event: InputEvent, time_stamp_ms: f64) {
+  eh.exec(move |ctx| flux::gui::input::dispatch(&ctx, event, time_stamp_ms));
 }

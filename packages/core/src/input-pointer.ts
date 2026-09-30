@@ -454,7 +454,7 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
           if (downs.size === 1) {
             opening = { id: e.pointerId, x: e.clientX, y: e.clientY, mods: mods(e), alone: true }
             finger.reset()
-            finger.push(e.clientX, e.clientY)
+            finger.push(e.clientX, e.clientY, e.timeStamp)
           } else if (opening) opening.alone = false
         }
       },
@@ -465,7 +465,7 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
         transform.handlers.onPointerMove(e)
         hold.move(e)
         taps.move(e)
-        if (opening && opening.id === e.pointerId) finger.push(e.clientX, e.clientY)
+        if (opening && opening.id === e.pointerId) finger.push(e.clientX, e.clientY, e.timeStamp)
       },
       onPointerUp(e) {
         if (downs.get(e.pointerId) !== (e.button ?? PRIMARY)) return
@@ -475,7 +475,7 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
         taps.up(e)
         if (opening && opening.id === e.pointerId) {
           if (opening.alone && downs.size === 0) {
-            let direction: SwipeDirection | null = classifySwipe(finger.velocity(), { dx: e.clientX - opening.x, dy: e.clientY - opening.y })
+            let direction: SwipeDirection | null = classifySwipe(finger.velocity(e.timeStamp), { dx: e.clientX - opening.x, dy: e.clientY - opening.y })
             if (direction) swipe.fire(opening.mods, direction)
           }
           opening = null

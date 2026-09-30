@@ -1,23 +1,20 @@
 // Sprite frame animation: a clip (frames + fps) with a shared clock that
-// steps every attached sprite's frame through setSprite. One timer per
-// playing clip and one frame write per attached sprite per STEP (not per
-// display frame), so an 8fps walk cycle generates 8 publishes a second and
-// a paused clip costs nothing - the demand-gate story unchanged. The clip
+// steps every attached sprite's frame through setSprite. One frame callback
+// per playing clip, registered without demand, and one frame write per
+// attached sprite per STEP (not per display frame), so an 8fps walk cycle
+// generates 8 publishes and 8 presents a second and a paused clip costs
+// nothing - the demand-gate story unchanged. The clock is the app's frame
+// time: the clip freezes and resumes with the dev tools' clock, plays at
+// its own speed under `srt render`, and a step lands on the frame it is
+// due in. The clip
 // does not own its sprites (destroySprite prunes lazily on the next step),
 // and a sprite belongs to at most one animation. Plain JS over setSprite,
 // so it works on both layer kinds and composes with <Sprite> via ref (leave
 // the frame prop off - the clip owns that field).
-import { getOwner, onCleanup } from "@solidrt/core"
+import { getOwner, onCleanup, onFrame, runWithOwner } from "@solidrt/core"
 import type { Frame } from "./frames.ts"
 import type { Sprite } from "./layer.ts"
 import { setSprite } from "./layer.ts"
-
-// Timer period as a fraction of the clip's frame duration: the step index
-// is computed from the wall clock (drift-free), so the timer only decides
-// how late after a frame boundary the step lands - half a frame bounds
-// that lateness at half a frame, where a full-frame period could show a
-// frame almost a whole frame late.
-const TICK_RATIO = 0.5
 
 export type AnimationOptions = {
   /** Wrap around (default) or play once and hold the last frame. */
@@ -61,7 +58,7 @@ let attachedTo = new WeakMap<Sprite, SpriteAnimation>()
 /**
  * A frame animation clip: `frames` (usually a slice of a `grid()` result)
  * played at `fps`. Sprites attach with `add`; the clip steps their `frame`
- * on its own wall-clock timer, independent of display rate.
+ * on the app's frame time, independent of display rate.
  */
 export function createAnimation(frames: Frame[], fps: number, opts?: AnimationOptions): SpriteAnimation {
   if (frames.length === 0) throw new Error("createAnimation: frames is empty")
@@ -74,24 +71,30 @@ export function createAnimation(frames: Frame[], fps: number, opts?: AnimationOp
   let playing = true
   let ended = false
   let disposed = false
-  let timer: number | null = null
-  let elapsedBase = 0 // ms of clip time accumulated before the running stretch
-  let runStart = 0 // performance.now() when the clock last started
+  // The running clock's frame callback, null while stopped.
+  let stop: (() => void) | null = null
+  let elapsed = 0 // ms of clip time played so far
+  // The frame time the clip last advanced to, null until the running
+  // clock's first frame: that one only anchors, so a clip starts at the
+  // frame it was started in, whenever in it.
+  let lastTick: number | null = null
 
   function startClock(): void {
-    if (timer !== null || !playing || sprites.size === 0) return
+    if (stop !== null || !playing || sprites.size === 0) return
     // A looping single-frame clip never changes; a one-shot still needs
     // the clock once, to end.
     if (loop && frames.length === 1) return
-    runStart = performance.now()
-    timer = setInterval(tick, (1000 / fps) * TICK_RATIO)
+    lastTick = null
+    // No demand: the clip follows the frames the app runs anyway and asks
+    // for one only by writing a step. Under no owner: the clock is the
+    // clip's (stopClock ends it), not the scope's that attached a sprite.
+    stop = runWithOwner(null, () => onFrame(tick, { demand: false }))
   }
 
   function stopClock(): void {
-    if (timer === null) return
-    elapsedBase += performance.now() - runStart
-    clearInterval(timer)
-    timer = null
+    if (stop === null) return
+    stop()
+    stop = null
   }
 
   function writeAll(): void {
@@ -112,8 +115,11 @@ export function createAnimation(frames: Frame[], fps: number, opts?: AnimationOp
     writeAll()
   }
 
-  function tick(): void {
-    let raw = Math.floor(((elapsedBase + performance.now() - runStart) * fps) / 1000)
+  function tick(now: number): void {
+    // Never backward: across a hot reload the frame time restarts.
+    if (lastTick !== null) elapsed += Math.max(0, now - lastTick)
+    lastTick = now
+    let raw = Math.floor((elapsed * fps) / 1000)
     if (!loop && raw >= frames.length) {
       // The last frame has shown for its full duration: hold it and stop.
       setIndex(frames.length - 1)
@@ -147,7 +153,7 @@ export function createAnimation(frames: Frame[], fps: number, opts?: AnimationOp
       if (disposed || playing) return
       if (ended) {
         ended = false
-        elapsedBase = 0
+        elapsed = 0
         current = 0
         writeAll()
       }
