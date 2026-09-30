@@ -222,6 +222,26 @@ fn a_file_that_fails_to_load_runs_no_test() {
   assert_eq!(output.len(), 1, "the error is reported once, got {output:?}");
 }
 
+// A failed load is reported when it fails, not when the cap passes: what
+// the file left pending keeps its engine alive, and the host does not wait
+// for that.
+#[test]
+fn a_failed_load_is_reported_at_once_whatever_the_file_left_running() {
+  let started = std::time::Instant::now();
+  let records = records_with(
+    r#"
+    import { test } from "flux:test"
+    setInterval(() => {}, 1000)
+    test("never runs", () => {})
+    await Promise.reject(new Error("rejected at load"))
+    "#,
+    RunOptions { timeout: Duration::from_secs(30), ..RunOptions::default() },
+  );
+  assert!(started.elapsed() < Duration::from_secs(5), "the host waited for the cap");
+  let Record::Failed { message, .. } = &records[0] else { panic!("expected a failure, got {:?}", records[0]) };
+  assert!(message.contains("rejected at load"), "got {message}");
+}
+
 // Registered tests only run under a host; elsewhere the file would end
 // cleanly with nothing run.
 #[test]
@@ -476,4 +496,54 @@ fn the_seed_option_picks_the_sequence() {
   let draw = |seed: u64| logged_each(source, RunOptions { seed, ..RunOptions::default() }).join("");
   assert_eq!(draw(0), "0.4833481342839381");
   assert_eq!(draw(12345), "0.28097516969868397");
+}
+
+// settle() ends when nothing the test started is in flight and what the
+// finished work woke has run: here a write nobody awaits, whose
+// continuation hops through the job queue and starts a second write.
+#[test]
+fn settle_waits_for_work_in_flight_and_what_it_starts() {
+  let path = std::env::temp_dir().join(format!("flux-settle-{}.txt", std::process::id()));
+  let source = r#"
+    import { test, expect, settle } from "flux:test"
+    import { file } from "flux:fs"
+    test("settles", async () => {
+      let target = file(PATH)
+      let done = false
+      ;(async () => {
+        await target.write("one")
+        await Promise.resolve()
+        await Promise.resolve()
+        await target.write("two")
+        done = true
+      })()
+      await settle()
+      expect(done).toBe(true)
+      expect(await target.text()).toBe("two")
+    })
+  "#
+  .replace("PATH", &format!("{:?}", path.to_string_lossy()));
+  let results = results(&source);
+  let _ = std::fs::remove_file(&path);
+  assert_eq!(rows(&results), "settles|true|");
+}
+
+// What stands is not waited for: a timer far in the future and an event
+// listener keep the engine alive, and settle() still ends at once.
+#[test]
+fn settle_does_not_wait_for_what_stands() {
+  let results = results(
+    r#"
+    import { test, expect, settle } from "flux:test"
+    test("settles", async () => {
+      let fired = false
+      let timer = setTimeout(() => { fired = true }, 60000)
+      await settle()
+      await settle()
+      expect(fired).toBe(false)
+      clearTimeout(timer)
+    })
+    "#,
+  );
+  assert_eq!(rows(&results), "settles|true|");
 }

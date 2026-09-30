@@ -32,7 +32,7 @@ const HARNESS_FRAME = "(flux:test:"
 // The runtime modules the `flux` binary does not have: lattice's builtins
 // and flux's gui layer. A test file whose bundle imports one runs on the
 // dev client.
-const APP_MODULE = /^srt:|^flux:(rendertree|camera|microphone|audio|gpu|spatial|video)$/
+const APP_MODULE = /^srt:|^flux:(rendertree|camera|microphone|audio|gpu|spatial|video|test\/gui)$/
 // Where an app test's staged bundle and its data root live, under the
 // project's build output.
 const STAGE_DIR = join("dist", "test")

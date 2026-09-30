@@ -32,6 +32,10 @@ const QUERY_TIMEOUT_MS = 5000
 // waits at most about this long for each before giving up.
 const CLOCK_STEP_WAIT_MS = 50
 const MAX_WAIT_MS = 30000
+// How long a settle query waits for the app to come to rest unless the
+// caller says otherwise (the client's own default, stated here so the
+// query timeout can be stretched by it).
+const SETTLE_MAX_MS = 5000
 // Delay between acking POST /shutdown and running the shutdown, so the
 // response reaches the caller before the listener closes.
 const SHUTDOWN_ACK_MS = 100
@@ -374,6 +378,7 @@ const CONTROL_ENDPOINTS = [
   "/__control__/texture",
   "/__control__/clock",
   "/__control__/input",
+  "/__control__/settle",
   "/__control__/buffer",
   "/__control__/reload",
   "/__control__/load",
@@ -408,6 +413,15 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (Number.isFinite(depth)) extra.depth = depth
       let q = query.get("query")
       if (q) extra.query = q
+      // at=<x>,<y>: the nodes a pointer at that window point reaches.
+      let at = query.get("at")
+      if (at !== undefined) {
+        let [x, y] = at.split(",").map(Number)
+        if (at.split(",").length !== 2 || !Number.isFinite(x) || !Number.isFinite(y)) {
+          return Response.json({ error: "Invalid at: expected <x>,<y> in logical points" }, { status: 400 })
+        }
+        extra.at = { x, y }
+      }
       if (query.get("props") === "true") extra.props = true
       return handleQuery(query, "tree", extra)
     }
@@ -577,6 +591,20 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (totalMs > 30000)
         return Response.json({ error: "Input sequence too long: delays and holds total over 30000 ms" }, { status: 400 })
       return handleQuery(query, "input", { events }, QUERY_TIMEOUT_MS + totalMs)
+    }
+    case "/__control__/settle": {
+      // Wait for the app to come to rest: nothing in flight, no timer due,
+      // no frame demanded. ?max=<ms> bounds the wait (wall time); the reply
+      // says whether it settled and, if not, what is left. The client does
+      // the waiting, so the query timeout stretches by the cap.
+      let maxMs = SETTLE_MAX_MS
+      let maxParam = query.get("max")
+      if (maxParam !== undefined) {
+        maxMs = parseInt(maxParam, 10)
+        if (!Number.isFinite(maxMs) || maxMs < 0 || maxMs > MAX_WAIT_MS)
+          return Response.json({ error: `Settle max must be an integer between 0 and ${MAX_WAIT_MS}` }, { status: 400 })
+      }
+      return handleQuery(query, "settle", { maxMs }, QUERY_TIMEOUT_MS + maxMs)
     }
     case "/__control__/buffer": {
       let bufferId = parseInt(query.get("id") ?? "", 10)

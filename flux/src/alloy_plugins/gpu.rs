@@ -1786,6 +1786,16 @@ fn reject_with(ctx: &Ctx<'_>, reject: Persistent<Function<'static>>, msg: &str) 
   }
 }
 
+/// Whether a captureSnapshot is under way: queued for a paint, or painted
+/// and waiting for the frame that settles its promise (see `tick`). Either
+/// way it needs a frame to move on.
+pub(crate) fn capture_pending(ctx: &Ctx<'_>) -> bool {
+  let Some(state) = ctx.userdata::<TextureState>() else {
+    return false;
+  };
+  state.0.gui.alloy.has_pending_captures() || !state.0.capture_settle.borrow().is_empty()
+}
+
 /// Per-frame hook (see `frame::advance`). Drains the capture outcomes the
 /// completion callbacks enqueued during the last paint and settles each
 /// promise, tracking the new texture id for reload cleanup.

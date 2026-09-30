@@ -155,15 +155,23 @@ when exactly one client is connected.
   this is their only route into `/logs`, and a remote client's stderr
   stays out of reach.
 - `/tree?query=<text>&root=<id>&depth=<n>&props=true` - `{ limit, matches:
-  [{ id, kind, path, x, y, width, height }] }` for a query, the nested tree
-  otherwise (the `get_render_tree` tool returns it verbatim). Node ids are
+  [{ id, kind, path, x, y, width, height }] }` for a query (a node's kind
+  equals it, or its text or `label` contains it, case-insensitive), the
+  nested tree otherwise (the `get_render_tree` tool returns it verbatim).
+  `/tree?at=<x>,<y>` is the hit test as a read: `{ hit: [...] }`, the
+  records of the nodes a pointer at that window point reaches, root first,
+  the node it lands on last, empty when nothing takes a pointer there -
+  what covers a node that does not respond to a tap. Node ids are
   per client and change on reload; re-query after `/reload`. The per-node
-  record, documented here and nowhere else:
+  record, documented here and nowhere else (an app test reads a node as
+  this same record, through `@solidrt/core/test`):
   - `id`, `kind`, `x`, `y`, `width`, `height`: the window-relative box of
     the node as painted, the axis-aligned bounds of its painted corners;
     zero before the first layout. `detached: true` marks a d-* node.
-  - `text`: a text's content; `children`, cut off past `depth`, with
-    `childCount` saying how many the node has (descend with `root=<id>`).
+  - `text`: a text's content; `label`: the node's `label` prop, a stable
+    name that survives a reload where ids do not; `children`, cut off past
+    `depth`, with `childCount` saying how many the node has (descend with
+    `root=<id>`).
   - `props` (with `props=true`): the node's current property values under
     their JSX names, off-default values only - an absent or empty `props`
     means everything is at its default. Answers "is rotate/color/d applied
@@ -293,6 +301,14 @@ when exactly one client is connected.
   real pipeline, same event shape as the `send_input` tool (tap real
   coordinates read from `/tree` just before: the window's logical size
   follows the display it sits on, so a size read earlier can be stale).
+  A gesture is spelled out in one place, for this API and for app tests
+  alike: a `tap` is a down and an up, the up one frame and its `holdMs`
+  later, never in the same frame (a real tap is not 0 ms, and the pressed
+  state would never render); a pointer `drag` (`to: { x, y }`,
+  `durationMs`, default 300) is a down, one move per frame along the line
+  and an up at the end point; a mouse tap or drag first moves the pointer
+  to the point, a frame ahead of the down, so hover is what a real mouse
+  leaves. A frame here is one 60 Hz interval.
   A wheel event's `deltaX`/`deltaY` reach the app unscaled, in the units
   a physical wheel reports: one mouse notch is 100, and a positive
   `deltaY` scrolls content down.
@@ -304,6 +320,19 @@ when exactly one client is connected.
   "disconnect", "slot": 0 }` frees the slot. Synthetic pads take slots
   next to physical ones and reach `gamepads()` and everything on it; the
   mute leaves them alone.
+- `/settle` (`?max=<ms>`, default 5000, at most 30000) - waits until the
+  app is at rest and says whether it got there: `{ settled, waitedMs,
+  demand, inFlight, timerDue }`. At rest means nothing the app started is
+  in flight (a fetch, a file or body read, a query, an isolate call), no
+  timer is due and no frame is demanded. Call it after `/input`, `/debug`,
+  `/link` or `/reload` and before `/tree` or `/snapshot`, in place of a
+  sleep. When `settled` is false the rest says why: `demand` lists what
+  still wants frames ("onFrame", "a transition on view labelled \"drawer\"",
+  "a playing video", "requestAnimationFrame", "a write to the tree or to a
+  texture"), `inFlight` counts the work per kind (`{ "fetch": 1 }`). An
+  app that animates by itself never settles; freeze it with `/clock`
+  instead. `?max=0` reads the state without waiting. What stands (a
+  server, an open socket, a timer not yet due) is not waited for.
 - POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused;
   `{ scale, pendingSteps }` back. Steps apply one per frame at the client's
   frame rate, and the reply waits for them: `pendingSteps` is 0 once they

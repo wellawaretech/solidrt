@@ -83,7 +83,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::engine::{EngineConfig, FluxEngineBuilder, ModuleCode};
 use crate::logger::{CtxLogger, Logger};
-use crate::plugins::marshal::{mark_observed, with_pending, OptArg};
+use crate::plugins::marshal::{mark_observed, with_standing, OptArg};
 use crate::plugins::value::{self, Neutral};
 use crate::standards_plugins::abort::AbortSignal;
 use forge::isolate::{CallError, Kill, Link, Msg, Thrown};
@@ -387,7 +387,11 @@ impl Isolate {
       (sig, rx)
     });
     let (pump_ctx, pump_state, pump_promise) = (ctx.clone(), state.clone(), promise.clone());
+    // The call is work in flight until the child has answered it; from then
+    // on a stream is read step by step, and a read waits on its producer.
+    let hold = crate::pending::PendingOps::of(&ctx).in_flight("isolate call");
     ctx.spawn(async move {
+      let _hold = hold;
       let reject_with = |t: Thrown| {
         if let Ok(err) = build_thrown(&pump_ctx, t) {
           let _ = reject.call::<_, ()>((err,));
@@ -616,7 +620,7 @@ fn stream_step<'js>(ctx: Ctx<'js>, state: &Rc<CallState>, msg: Msg) -> rquickjs:
     state.answer(Err(e.into()));
   }
   let state = state.clone();
-  with_pending(&ctx, async move {
+  with_standing(&ctx, "isolate stream read", async move {
     let done = |r: Result<Result<Option<Value>, Thrown>, oneshot::error::RecvError>| match r {
       Ok(r) => StepResult(r),
       Err(_) => StepResult(Err(format!("stream '{}' dropped", state.name).into())),

@@ -4,13 +4,14 @@ use forge::events::{ListenerRegistry, StickyCache};
 use rquickjs::function::MutFn;
 use rquickjs::{Ctx, Function, IntoJs, Persistent, Value};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 // Marshalling for the event-bus mechanism: hold the engine-free
 // `forge::events::ListenerRegistry` keyed by event name, store JS callbacks as
 // Persistent handles, and turn the registry's is_first/is_last signals into
-// PendingOps hold/release so the engine loop stays alive while there are
-// listeners. The bus also carries the sticky mechanism: emit_sticky caches the
+// a standing PendingOps hold per event name, so the engine loop stays alive
+// while there are listeners. The bus also carries the sticky mechanism: emit_sticky caches the
 // latest value per event and sticky_cached reads it back for replay on
 // subscribe. flux owns these mechanisms but imposes no policy - it has no
 // notion of which events exist, no JS on/once surface, and no say in which
@@ -30,6 +31,15 @@ impl Default for ListenerMap {
   }
 }
 
+// The hold of every event name that has listeners.
+#[derive(Clone, rquickjs::JsLifetime, Default)]
+struct ListenerHolds(#[qjs(skip_trace)] Rc<RefCell<HashMap<String, crate::pending::Hold>>>);
+
+fn release_hold(ctx: &Ctx<'_>, event: &str) {
+  let holds = ctx.userdata::<ListenerHolds>().unwrap();
+  holds.0.borrow_mut().remove(event);
+}
+
 // Sticky events cache their most recent value for replay to late subscribers
 // (engine reload, top-level await before render(), late subscribe). The
 // engine-free cache lives in forge, generic over the payload; flux
@@ -43,20 +53,21 @@ struct StickyMap(#[qjs(skip_trace)] Rc<RefCell<StickyCache<Persistent<Value<'sta
 // surface is exposed; that is the consumer's job.
 pub(crate) fn init(ctx: &Ctx<'_>) {
   ctx.store_userdata(ListenerMap::default()).expect("store listener map");
+  ctx.store_userdata(ListenerHolds::default()).expect("store listener holds");
   ctx.store_userdata(StickyMap::default()).expect("store sticky cache");
 }
 
 // Adds a listener for `event` and returns its integer id. The first listener
-// for an event name calls pending.hold() so the engine loop does not exit
+// for an event name takes a standing hold so the engine loop does not exit
 // while there are active listeners to service; the last removal releases it.
 // once=true removes the listener after its first invocation.
 pub fn add_listener<'js>(ctx: &Ctx<'js>, event: String, callback: Function<'js>, once: bool) -> u32 {
   let persistent = Persistent::save(ctx, callback);
   let store = ctx.userdata::<ListenerMap>().unwrap();
-  let pending = ctx.userdata::<PendingOps>().unwrap();
-  let (id, is_first) = store.0.borrow_mut().insert(event, persistent, once);
+  let (id, is_first) = store.0.borrow_mut().insert(event.clone(), persistent, once);
   if is_first {
-    pending.hold();
+    let holds = ctx.userdata::<ListenerHolds>().unwrap();
+    holds.0.borrow_mut().insert(event, PendingOps::of(ctx).standing("event listener"));
   }
   id
 }
@@ -66,10 +77,9 @@ pub fn add_listener<'js>(ctx: &Ctx<'js>, event: String, callback: Function<'js>,
 // second removal is a no-op.
 pub fn remove_listener(ctx: &Ctx<'_>, event: &str, id: u32) -> bool {
   let store = ctx.userdata::<ListenerMap>().unwrap();
-  let pending = ctx.userdata::<PendingOps>().unwrap();
   let was_last = store.0.borrow_mut().remove(event, id);
   if was_last {
-    pending.release();
+    release_hold(ctx, event);
   }
   was_last
 }
@@ -79,9 +89,8 @@ pub fn remove_listener(ctx: &Ctx<'_>, event: &str, id: u32) -> bool {
 // nothing may keep the loop alive.
 pub fn clear_listeners(ctx: &Ctx<'_>, event: &str) {
   let store = ctx.userdata::<ListenerMap>().unwrap();
-  let pending = ctx.userdata::<PendingOps>().unwrap();
   if store.0.borrow_mut().clear(event) {
-    pending.release();
+    release_hold(ctx, event);
   }
 }
 
@@ -136,9 +145,8 @@ pub fn emit_event<'js, D: IntoJs<'js>>(ctx: &Ctx<'js>, event: &str, data: D) {
   // Prune once-listeners we just fired. A listener could have unsubscribed itself
   // during dispatch; prune is a no-op for already-removed IDs.
   if !once_ids.is_empty() {
-    let pending = ctx.userdata::<PendingOps>().unwrap();
     if store.0.borrow_mut().prune(event, &once_ids) {
-      pending.release();
+      release_hold(ctx, event);
     }
   }
 }

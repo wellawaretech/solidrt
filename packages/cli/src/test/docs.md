@@ -74,6 +74,24 @@ A test can import every headless module (`flux:fs`, `flux:http`,
 `flux:sqlite`, ...): a server under test is started with `serve` and called
 with `fetch` over loopback.
 
+Work a test set off without holding its promise is waited for with
+`settle()`, not with a sleep:
+
+```ts
+import { test, expect, settle } from "flux:test"
+
+test("save writes the record", async () => {
+  save(record) // writes in the background
+  await settle()
+  expect(await file(path).text()).toBe(expected)
+})
+```
+
+`settle()` ends when nothing the test started is still in flight: work that
+completes by itself (a fetch, a body or file read, a query, a connect, an
+isolate call) has landed and what it woke has run. What stands is not
+waited for: a listening server, an open socket, a running child, a timer.
+
 ## App tests
 
 A test that imports `@solidrt/core/test` is an app test. It runs on the dev
@@ -93,6 +111,31 @@ test("the hint shows after half a second", async app => {
 }, { fps: 1000 })
 ```
 
+A test of UI mounts it, names nodes the way a user would and sends input
+through the real pipeline:
+
+```tsx
+import { test, expect } from "@solidrt/core/test"
+
+test("a tap increments", async app => {
+  let counter = await app.mount(() => <Counter />)
+  await app.tap(counter.find({ text: "Increment" }))
+  expect(counter.find({ text: "1" }).visible).toBe(true)
+})
+```
+
+`app.mount(ui)` takes what `render` takes and returns a locator for the
+window; `app.load(() => import("../src/index.tsx"))` starts a whole entry.
+`find` names a node by its `text`, by its `label` prop or by `kind` (a
+string matches exactly, a RegExp a part), and `app.ref()` is a locator that
+is also a ref. A locator is resolved every time it is used and names one
+node: `text`, `box`, `props`, `visible` and `record` read it as the control
+API's `/tree` reports it, and reading through one that matches nothing
+says which texts and labels are there instead. `app.tap`, `app.drag`,
+`app.key`, `app.type` and `app.input` send input in the `send_input` event
+shape; a tap on a node that something covers fails and names the cover.
+The data folder and the fetch cache are empty at the start of every test.
+
 `app.frame(n)` runs frames, `app.advance(ms)` runs as many as cover that
 much time, and `app.time` is the app time so far. Nothing runs between two
 frames: a timer fires with the frame its time falls in, so the frame is
@@ -101,6 +144,28 @@ asserts a threshold to the millisecond sets `{ fps: 1000 }`).
 `performance.now()` reads 0, and the calendar starts at
 2000-01-01T00:00:00Z, in UTC, and moves with the frames. Every test starts
 at time 0 in an engine of its own, like a flux test.
+
+`app.settle()` runs the app until it is at rest, which is what a test
+waits on in place of guessing a number of frames:
+
+```tsx
+test("the list loads", async app => {
+  let root = await app.load(() => import("../src/index.tsx"))
+  await app.tap(root.find({ text: "Load" }))
+  await app.settle()
+  expect(root.find({ label: "rows" }).findAll({ kind: "text" }).length).toBe(20)
+})
+```
+
+At rest means: nothing the app started is in flight (waited for with no
+app time passing), no timer is due, and no frame is demanded. A demanded
+frame is run, so a running transition is played to its end and the test
+reads the end state; a timer that is already due fires with the next
+frame. A timer due later is not waited for: `app.advance(ms)` reaches it.
+An app that never comes to rest (a frame callback that never stops, a
+looping animation, a playing video) fails the settle after 5000 ms of app
+time, `app.settle({ maxMs })` for another cap, and the error names what
+still wanted frames.
 
 Anything that imports the app runtime (`srt:` modules, or a module of the
 rendering layer such as `flux:rendertree`) makes a file an app test; a

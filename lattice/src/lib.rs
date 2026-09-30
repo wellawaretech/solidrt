@@ -2,6 +2,8 @@ mod frame;
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 mod frame_history;
 pub mod gl_libs;
+#[cfg(any(feature = "go", feature = "test"))]
+mod input_plan;
 #[cfg(feature = "go")]
 mod go;
 pub mod links;
@@ -13,6 +15,8 @@ mod stats;
 mod paced_clock;
 mod plugins;
 mod runtime;
+#[cfg(any(feature = "go", feature = "test"))]
+mod settle;
 #[cfg(feature = "speech")]
 pub mod speech;
 pub mod storage;
@@ -1198,7 +1202,7 @@ fn ui_thread(
     #[cfg(feature = "test")]
     let mut test_run = test.map(|test| flux::test::FileRun::new(test.options));
     #[cfg(feature = "test")]
-    let stepper = test_host::Stepper::new(step_tx, playback_frame.clone(), frame_rate.clone());
+    let stepper = test_host::Stepper::new(step_tx, playback_frame.clone(), frame_rate.clone(), resampler.clone());
     #[cfg(not(feature = "test"))]
     let _ = &frame_rate;
 
@@ -1219,6 +1223,9 @@ fn ui_thread(
       #[cfg(feature = "test")]
       if test_run.is_some() {
         stepper.reset();
+        if let (Some(store), Some(app_id)) = (storage::get(), &current_app_id) {
+          test_host::empty_sandbox(store, app_id);
+        }
       }
       let render_tree = RenderTree::new();
       let platform = platform.clone();
@@ -1386,6 +1393,7 @@ fn ui_thread(
       let builder = match &session {
         Some(session) => {
           session.install(builder).userdata(stepper.clone()).plugin(|ctx| {
+            ctx.store_userdata(plugins::test::WindowReady::default()).expect("store window ready");
             if let Err(e) = flux::freeze_wall(&ctx, test_host::EPOCH_MS) {
               log::error!("[srt] test mode: failed to freeze the wall clock: {e}");
             }

@@ -17,7 +17,7 @@ use tokio::sync::oneshot;
 
 use alloy::AlloyCommand;
 
-use crate::plugins::marshal::with_pending;
+use crate::plugins::marshal::with_in_flight;
 
 /// Send a clipboard command whose responder resolves the returned receiver;
 /// a dead platform loop becomes an Err the promise rejects with.
@@ -40,7 +40,7 @@ pub fn init_clipboard(ctx: &Ctx<'_>, cmd_tx: Sender<AlloyCommand>) {
     ctx.clone(),
     MutFn::from(move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
       let rx = roundtrip(&read_tx, AlloyCommand::GetClipboardText, "navigator.clipboard.readText");
-      Ok(with_pending(&ctx, async move {
+      Ok(with_in_flight(&ctx, "clipboard", async move {
         match rx {
           Ok(rx) => rx
             .await
@@ -62,7 +62,7 @@ pub fn init_clipboard(ctx: &Ctx<'_>, cmd_tx: Sender<AlloyCommand>) {
         .and_then(|text| {
           roundtrip(&cmd_tx, |respond| AlloyCommand::SetClipboardText(text, respond), "navigator.clipboard.writeText")
         });
-      Ok(with_pending(&ctx, async move {
+      Ok(with_in_flight(&ctx, "clipboard", async move {
         match rx {
           Ok(rx) => rx
             .await

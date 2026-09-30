@@ -157,6 +157,11 @@ pub(crate) async fn init_context(
     resolver.add_module(crate::test_plugins::MODULE_NAME);
     loader.add_module(crate::test_plugins::MODULE_NAME, crate::test_plugins::TestModule);
   }
+  #[cfg(all(feature = "test", feature = "gui"))]
+  {
+    resolver.add_module(crate::test_plugins::gui::MODULE_NAME);
+    loader.add_module(crate::test_plugins::gui::MODULE_NAME, crate::test_plugins::gui::GuiTestModule);
+  }
 
   for f in module_overrides {
     f(&mut resolver, &mut loader);

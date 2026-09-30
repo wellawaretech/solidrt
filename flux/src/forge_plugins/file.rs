@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::pending::PendingOps;
-use crate::plugins::marshal::{with_pending, CopyBytes};
+use crate::plugins::marshal::{with_in_flight, CopyBytes};
 use crate::plugins::seekable::SeekableSource;
 use crate::plugins::value::Neutral;
 use crate::standards_plugins::body::{attach_body, JsBytes};
@@ -28,7 +28,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   let obj = Object::new(ctx.clone())?;
   obj.set("path", path.as_ref().clone())?;
 
-  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+  let pending = PendingOps::of(&ctx);
 
   // Body methods read from disk on each call (not consume-once).
   let path_for_body = path.clone();
@@ -38,11 +38,10 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
     &obj,
     move || {
       let path = path_for_body.clone();
-      let pending = pending_for_body.clone();
+      let hold = pending_for_body.in_flight("file read");
       async move {
-        pending.hold();
         let r = fs::read(&path).await;
-        pending.release();
+        drop(hold);
         r
       }
     },
@@ -55,7 +54,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { Ok::<bool, String>(fs::file_exists(&path).await) }))
+        Ok(with_in_flight(&ctx, "file", async move { Ok::<bool, String>(fs::file_exists(&path).await) }))
       }
     }),
   )
@@ -68,7 +67,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { fs::stat(&path).await.map(|s| Neutral(s.into())) }))
+        Ok(with_in_flight(&ctx, "file", async move { fs::stat(&path).await.map(|s| Neutral(s.into())) }))
       }
     }),
   )
@@ -87,7 +86,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
         }
         let (offset, length) = (offset as u64, length as u64);
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { fs::read_range(&path, offset, length).await.map(JsBytes) }))
+        Ok(with_in_flight(&ctx, "file", async move { fs::read_range(&path, offset, length).await.map(JsBytes) }))
       }
     }),
   )
@@ -101,7 +100,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
       move |ctx: Ctx<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
         let bytes = data_bytes(&ctx, &data, "write")?;
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { fs::write(&path, &bytes).await }))
+        Ok(with_in_flight(&ctx, "file", async move { fs::write(&path, &bytes).await }))
       }
     }),
   )
@@ -114,7 +113,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { fs::remove(&path).await }))
+        Ok(with_in_flight(&ctx, "file", async move { fs::remove(&path).await }))
       }
     }),
   )
@@ -127,7 +126,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
       let path = path.clone();
       move |ctx: Ctx<'_>, to: String| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { fs::rename(&path, &to).await }))
+        Ok(with_in_flight(&ctx, "file", async move { fs::rename(&path, &to).await }))
       }
     }),
   )
@@ -141,7 +140,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
       move |ctx: Ctx<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
         let bytes = data_bytes(&ctx, &data, "append")?;
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { fs::append(&path, &bytes).await }))
+        Ok(with_in_flight(&ctx, "file", async move { fs::append(&path, &bytes).await }))
       }
     }),
   )

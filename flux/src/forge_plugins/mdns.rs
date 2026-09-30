@@ -15,7 +15,7 @@
 //! All three take an optional `{ timeoutMs }` (default 1500) bounding how long the
 //! query collects answers, and resolve to an empty array on a LAN with no
 //! responders rather than rejecting. They are plain async functions (no JS classes
-//! to build), so each is a `with_pending` future rejecting through the `JsResult`
+//! to build), so each is a `with_in_flight` future rejecting through the `JsResult`
 //! path (a clean `Error`, no `IO Error:` prefix).
 
 use std::future::Future;
@@ -25,7 +25,7 @@ use rquickjs::promise::Promised;
 use rquickjs::{Ctx, Function, Object};
 
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{with_pending, OptArg};
+use crate::plugins::marshal::{with_in_flight, OptArg};
 use crate::plugins::value::Neutral;
 use forge::Value;
 
@@ -42,8 +42,9 @@ fn mdns_resolve<'js>(
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Neutral>>>> {
   let timeout_ms = opt_timeout(&opts)?;
-  Ok(with_pending(
+  Ok(with_in_flight(
     &ctx,
+    "mdns query",
     async move { forge::mdns::resolve(ips, timeout_ms).await.map(|hosts| Neutral(Value::list(hosts))) },
   ))
 }
@@ -56,7 +57,7 @@ fn mdns_browse<'js>(
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Neutral>>>> {
   let timeout_ms = opt_timeout(&opts)?;
-  Ok(with_pending(&ctx, async move {
+  Ok(with_in_flight(&ctx, "mdns query", async move {
     forge::mdns::browse(service, timeout_ms).await.map(|found| Neutral(Value::list(found)))
   }))
 }
@@ -67,7 +68,7 @@ fn mdns_services<'js>(
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Vec<String>>>>> {
   let timeout_ms = opt_timeout(&opts)?;
-  Ok(with_pending(&ctx, async move { forge::mdns::services(timeout_ms).await }))
+  Ok(with_in_flight(&ctx, "mdns query", async move { forge::mdns::services(timeout_ms).await }))
 }
 
 // ---- module + helpers -------------------------------------------------------

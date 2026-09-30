@@ -335,6 +335,12 @@ impl UiRuntime for FluxRuntime {
     // engine got to it.
     let stamp = self.stamp(raw_ms);
     if flux::gui::events::forward(eh, event, stamp) {
+      // The window's size has reached the engine: a test's mount waits on
+      // it (queued behind the forward, so the size is there when it runs).
+      #[cfg(feature = "test")]
+      if matches!(event, AlloyEvent::Resize { .. }) {
+        eh.exec(|ctx| crate::plugins::test::window_ready(&ctx));
+      }
       return;
     }
     match event {
@@ -581,6 +587,9 @@ impl UiRuntime for FluxRuntime {
       // A frame a test asked for has run: its promise settles.
       #[cfg(feature = "test")]
       crate::plugins::test::frame_done(&ctx);
+      // And whoever waits for the app to come to rest looks again.
+      #[cfg(any(feature = "go", feature = "test"))]
+      crate::settle::frame_ran(&ctx);
     });
   }
 }

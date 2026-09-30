@@ -27,7 +27,7 @@ pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextAnchor, Tex
 pub use transitions::{
   AnimKind, AnimProp, AnimValue, Curve, Endpoint, Lifecycle, Slide, TransitionConfig, TransitionEntry, TransitionSpec,
 };
-pub use tree::{NodeMatch, NodeSnapshot, RenderTree, SlideRemaining};
+pub use tree::{Match, NodeMatch, NodeQuery, NodeSnapshot, RenderTree, SlideRemaining};
 
 use crate::impellers::DisplayListBuilder;
 use crate::Cursor;
@@ -431,6 +431,11 @@ pub struct Element {
   // doomed, sliding (transitions.rs `Lifecycle`, each fact documented on
   // its field).
   pub lifecycle: Lifecycle,
+  // A stable name the app gives the node, for whoever has to find it again
+  // without anything visible to find it by (a test, a dev tool): reported
+  // in snapshots and matched by `RenderTree::find`. Never affects layout,
+  // paint or hit testing.
+  pub label: Option<String>,
 }
 
 impl Element {
@@ -450,6 +455,7 @@ impl Element {
       last_extent: Cell::new(cull::Extent::Empty),
       transitions: None,
       lifecycle: Lifecycle::default(),
+      label: None,
     }
   }
 
@@ -475,6 +481,7 @@ impl Element {
       last_extent: Cell::new(cull::Extent::Empty),
       transitions: None,
       lifecycle: Lifecycle::default(),
+      label: None,
     }
   }
 

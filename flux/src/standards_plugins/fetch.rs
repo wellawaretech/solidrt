@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
-use crate::plugins::marshal::{with_pending, CopyBytes, OptArg};
+use crate::plugins::marshal::{with_in_flight, CopyBytes, OptArg};
 use crate::standards_plugins::abort::AbortSignal;
 use crate::standards_plugins::body::{is_async_iterable, pump_async_iterable};
 use crate::standards_plugins::headers::header_pairs_from_init;
@@ -86,7 +86,7 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
         };
 
         let Some(sig) = signal else {
-          return with_pending(&ctx, async move { net.await.map(JsResponseData) }).into_js(&ctx);
+          return with_in_flight(&ctx, "fetch", async move { net.await.map(JsResponseData) }).into_js(&ctx);
         };
 
         // Aborting must reject with the signal's own reason (a JS value), so
@@ -96,8 +96,7 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
         // already-aborted signal rejects without sending anything.
         let (promise, resolve, reject) = Promise::new(&ctx)?;
         let mut abort_rx = sig.borrow().subscribe();
-        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
-        pending.hold();
+        let hold = PendingOps::of(&ctx).in_flight("fetch");
         let task_ctx = ctx.clone();
         ctx.spawn(async move {
           tokio::pin!(net);
@@ -115,7 +114,7 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
             }
             r = &mut net => settle_fetch(&task_ctx, &resolve, &reject, r),
           }
-          pending.release();
+          drop(hold);
         });
         Ok(promise.into_value())
       },

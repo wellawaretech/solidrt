@@ -2,7 +2,7 @@
 //!
 //! Cross-cutting glue the plugins' async methods repeat. Per-API decoding (this
 //! plugin's specific argument/result surface) stays in each plugin; only the
-//! uniform value/async plumbing lives here: `with_pending` bridges a fallible
+//! uniform value/async plumbing lives here: `with_in_flight` bridges a fallible
 //! native future to a JS promise, and `iter_result` + `attach_async_iterator`
 //! build the Rust-backed async-iterables (fetch/p2p byte streams, the p2p accept
 //! iterator). More (an `object_builder` HRTB coercion, an actor request/reply
@@ -62,31 +62,35 @@ pub fn string_opt<'js>(ctx: &Ctx<'js>, opts: &Object<'js>, key: &str, api: &str)
   }
 }
 
-/// Bridge a fallible native async op to a JS promise. Holds a `PendingOps` for
-/// the op's whole duration (so the engine loop stays alive until it resolves)
-/// and wraps the outcome in `JsResult` (so an `Err(String)` rejects as a clean
-/// JS `Error`, with no `IO Error:` prefix).
-///
-/// Collapses the block every async method repeated:
-/// ```ignore
-/// let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
-/// Ok(Promised(async move {
-///   pending.hold();
-///   let r = work().await;
-///   pending.release();
-///   JsResult(r)
-/// }))
-/// ```
-/// into `Ok(with_pending(&ctx, async move { work().await }))`.
-pub fn with_pending<'js, T, F>(ctx: &Ctx<'js>, fut: F) -> Promised<impl Future<Output = JsResult<T>>>
+/// Bridge a fallible native async op that completes by itself to a JS
+/// promise. The engine is held as work in flight (of `kind`, see
+/// `PendingOps`) from this call until the op ends, and the outcome is wrapped
+/// in `JsResult` (so an `Err(String)` rejects as a clean JS `Error`, with no
+/// `IO Error:` prefix): `Ok(with_in_flight(&ctx, "file", async move {
+/// work().await }))`.
+pub fn with_in_flight<'js, T, F>(ctx: &Ctx<'js>, kind: &'static str, fut: F) -> Promised<impl Future<Output = JsResult<T>>>
 where
   F: Future<Output = Result<T, String>>,
 {
-  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+  let hold = PendingOps::of(ctx).in_flight(kind);
   Promised(async move {
-    pending.hold();
     let r = fut.await;
-    pending.release();
+    drop(hold);
+    JsResult(r)
+  })
+}
+
+/// `with_in_flight` for an op that waits on the outside world with no bound
+/// (a read on an open socket, a child's exit): the engine is held as
+/// standing, so nothing that waits for work in flight waits for it.
+pub fn with_standing<'js, T, F>(ctx: &Ctx<'js>, kind: &'static str, fut: F) -> Promised<impl Future<Output = JsResult<T>>>
+where
+  F: Future<Output = Result<T, String>>,
+{
+  let hold = PendingOps::of(ctx).standing(kind);
+  Promised(async move {
+    let r = fut.await;
+    drop(hold);
     JsResult(r)
   })
 }

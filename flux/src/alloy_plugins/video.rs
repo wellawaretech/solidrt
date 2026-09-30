@@ -372,7 +372,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
   let user_agent = crate::standards_plugins::http::user_agent(&ctx);
   let (reader, opened) = Reader::open(source.into_opener(user_agent));
   let aborted = signal.as_ref().map(|sig| sig.borrow().subscribe());
-  let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
+  let hold = crate::pending::PendingOps::of(&ctx).in_flight("video open");
   let task_ctx = ctx.clone();
   ctx.spawn(async move {
     enum Outcome {
@@ -380,7 +380,6 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
       Aborted,
       TimedOut,
     }
-    pending.hold();
     let timeout = tokio::time::sleep(Duration::from_millis(OPEN_TIMEOUT_MS));
     tokio::pin!(timeout);
     let outcome = tokio::select! {
@@ -401,7 +400,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
     }
     #[cfg(not(target_os = "android"))]
     let _ = plane;
-    pending.release();
+    drop(hold);
     let ctx = task_ctx;
     let settled = match outcome {
       Outcome::Opened(Ok(info)) => match build_player(ctx.clone(), &state, reader, info, present, label) {

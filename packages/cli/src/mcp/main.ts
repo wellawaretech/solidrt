@@ -135,9 +135,14 @@ let MODIFIER_ARGS = {
 let EVENT_ARG = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("pointer"),
-    action: z.enum(["down", "up", "move", "tap"]),
+    action: z.enum(["down", "up", "move", "tap", "drag"]),
     x: z.number().describe("Logical points, the space get_render_tree reports"),
     y: z.number(),
+    to: z
+      .object({ x: z.number(), y: z.number() })
+      .optional()
+      .describe("drag only: where the drag ends"),
+    durationMs: z.number().int().min(0).max(5000).optional().describe("drag only: how long the drag takes (default 300)"),
     button: z.number().int().min(0).max(4).optional().describe("0 = left (default), 1 = middle, 2 = right"),
     pointerType: z.enum(["mouse", "touch"]).optional().describe("mouse (default) keeps hovering afterwards; touch ends hover-free"),
     holdMs: HOLD_ARG,
@@ -306,9 +311,17 @@ let TOOLS: {
       query: z
         .string()
         .describe(
-          "Search instead of snapshot: return `matches`, nodes whose kind equals or text contains this " +
-            "(case-insensitive), each with a `path` of ancestor ids from the search root. Combine with `root` to " +
-            "scope the search; `depth` is ignored.",
+          "Search instead of snapshot: return `matches`, nodes whose kind equals or whose text or label " +
+            "contains this (case-insensitive), each with a `path` of ancestor ids from the search root. Combine " +
+            "with `root` to scope the search; `depth` is ignored.",
+        )
+        .optional(),
+      at: z
+        .object({ x: z.number(), y: z.number() })
+        .describe(
+          "Hit test instead of snapshot: return `hit`, the nodes a pointer at this window point (logical points) " +
+            "reaches, root first, the node it lands on last; empty when nothing takes a pointer there. What a tap " +
+            "at that point would reach, e.g. to see what covers a node that does not respond.",
         )
         .optional(),
       props: z
@@ -500,10 +513,26 @@ let TOOLS: {
     },
   },
   {
+    name: "settle",
+    annotations: READ_ONLY,
+    description:
+      "Wait until a running app client is at rest, in place of a sleep: nothing the app started is still in flight (a fetch, a file or body read, a query, an isolate call), no timer is due, and no frame is demanded (no running transition, no pending tree write). Call it after send_input, call_debug, open_link or reload and before reading the tree or taking a snapshot, so the read sees the finished state. Returns `settled` (true when the app came to rest within max_ms) and `waitedMs`; when false, what is left: `demand` (why frames are still wanted: \"onFrame\", \"a transition on view labelled ...\", \"a playing video\", \"requestAnimationFrame\", ...), `inFlight` (a count per kind of work, e.g. {fetch: 1}) and `timerDue`. An app that animates on its own (a game loop, a looping animation, a video) never settles: that is the answer, not an error - freeze it with set_time_scale 0 and step_frames instead. What stands is not waited for: servers, open sockets, timers not yet due. With max_ms 0 it reads the state without waiting.",
+    inputSchema: {
+      max_ms: z
+        .number()
+        .int()
+        .min(0)
+        .max(30000)
+        .describe("How long to wait for rest, in milliseconds of wall time (default 5000, max 30000)")
+        .optional(),
+      client: CLIENT_ARG,
+    },
+  },
+  {
     name: "send_input",
     annotations: DRIVES_APP,
     description:
-      "Send synthetic input to a running app client through the real input pipeline (hit testing, focus, event bubbling) - the same path physical input takes, unlike call_debug which sets state directly, so use this to verify interactions actually work. Events run in order; each may wait delayMs (0-5000 ms) before firing, and the call returns after the last event has entered the pipeline, so a following get_snapshot sees the result. Event kinds: {type:'pointer', action:'down'|'up'|'move'|'tap', x, y} for clicks and drags - coordinates in logical points, the same space get_render_tree reports; 'tap' is down+up with an optional holdMs between; button 0 = left (default), 1 = middle, 2 = right; pointerType 'mouse' (default) keeps hovering at its last position afterwards like a real cursor, use 'touch' for gestures that should end hover-free. {type:'key', action:'down'|'up'|'tap', key} with W3C key names exactly as the runtime reports them ('w', 'ArrowLeft', 'Enter', ' '); a 'tap' with holdMs holds the key down that long, e.g. holdMs 500 = walk forward half a second in one call; modifier booleans shift/ctrl/alt/meta. {type:'text', text} enters text through the TextInput path - focus the target first with a pointer tap on it (the tap also activates the text session). {type:'wheel', x, y, deltaX, deltaY} scrolls; deltas reach the app unscaled, in a physical wheel's units (one mouse notch is 100), positive deltaY scrolls content down. {type:'gamepad', action:'connect'|'set'|'disconnect', slot, buttons, axes} drives a synthetic gamepad through the same pad pipeline physical pads use (gamepads(), the input map's gamepad devices, gamepad.next() joining, focus navigation): 'connect' seats a pad (lowest free slot unless slot is given; read the slot back from the app or count from 0), 'set' holds a LEVEL state - the named buttons down and the axes at those values - until the next set, so a press is set {buttons:['south']} then set {} (or one set with holdMs), a stick pushed up is set {axes:{leftY:-1}}; 'disconnect' frees the slot. The mute does not affect synthetic pads. Recipes: click a button = [{type:'pointer',action:'tap',x:400,y:300}]. Drag = down, then moves with delayMs 16 each, then up. Tap a pad button = [{type:'gamepad',action:'connect'},{type:'gamepad',action:'set',slot:0,buttons:['south'],holdMs:100}]. Deterministic interaction test = set_time_scale 0, send_input, step_frames, get_snapshot. A down/up over empty space hits nothing, exactly like real input - check coordinates against get_render_tree when a click seems to do nothing.",
+      "Send synthetic input to a running app client through the real input pipeline (hit testing, focus, event bubbling) - the same path physical input takes, unlike call_debug which sets state directly, so use this to verify interactions actually work. Events run in order; each may wait delayMs (0-5000 ms) before firing, and the call returns after the last event has entered the pipeline, so a following get_snapshot sees the result. Event kinds: {type:'pointer', action:'down'|'up'|'move'|'tap'|'drag', x, y} for clicks and drags - coordinates in logical points, the same space get_render_tree reports; 'tap' is down, then up a frame (and holdMs, if given) later, never in the same frame; 'drag' is a down at x,y, one move per frame along the line to `to` over durationMs (default 300), and an up there; a mouse tap or drag first moves the pointer to x,y, a frame ahead of the down, so hover is what a real mouse leaves; button 0 = left (default), 1 = middle, 2 = right; pointerType 'mouse' (default) keeps hovering at its last position afterwards like a real cursor, use 'touch' for gestures that should end hover-free. {type:'key', action:'down'|'up'|'tap', key} with W3C key names exactly as the runtime reports them ('w', 'ArrowLeft', 'Enter', ' '); a 'tap' with holdMs holds the key down that long, e.g. holdMs 500 = walk forward half a second in one call; modifier booleans shift/ctrl/alt/meta. {type:'text', text} enters text through the TextInput path - focus the target first with a pointer tap on it (the tap also activates the text session). {type:'wheel', x, y, deltaX, deltaY} scrolls; deltas reach the app unscaled, in a physical wheel's units (one mouse notch is 100), positive deltaY scrolls content down. {type:'gamepad', action:'connect'|'set'|'disconnect', slot, buttons, axes} drives a synthetic gamepad through the same pad pipeline physical pads use (gamepads(), the input map's gamepad devices, gamepad.next() joining, focus navigation): 'connect' seats a pad (lowest free slot unless slot is given; read the slot back from the app or count from 0), 'set' holds a LEVEL state - the named buttons down and the axes at those values - until the next set, so a press is set {buttons:['south']} then set {} (or one set with holdMs), a stick pushed up is set {axes:{leftY:-1}}; 'disconnect' frees the slot. The mute does not affect synthetic pads. Recipes: click a button = [{type:'pointer',action:'tap',x:400,y:300}]. Drag = [{type:'pointer',action:'drag',x:100,y:300,to:{x:400,y:300},durationMs:300}]. Tap a pad button = [{type:'gamepad',action:'connect'},{type:'gamepad',action:'set',slot:0,buttons:['south'],holdMs:100}]. Deterministic interaction test = set_time_scale 0, send_input, step_frames, get_snapshot. A down/up over empty space hits nothing, exactly like real input - check coordinates against get_render_tree when a click seems to do nothing.",
     inputSchema: {
       events: z.array(EVENT_ARG).min(1).max(200).describe("Event sequence, executed in order"),
       client: CLIENT_ARG,
@@ -556,6 +585,10 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       if (typeof args?.root === "number") params.set("root", String(args.root))
       if (typeof args?.depth === "number") params.set("depth", String(args.depth))
       if (typeof args?.query === "string") params.set("query", args.query)
+      if (args?.at && typeof args.at === "object") {
+        let at = args.at as { x: number; y: number }
+        params.set("at", `${at.x},${at.y}`)
+      }
       if (args?.props === true) params.set("props", "true")
       if (typeof args?.client === "number") params.set("client", String(args.client))
       let qs = params.toString()
@@ -612,6 +645,13 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       let params = new URLSearchParams({ step: String(args.n) })
       if (typeof args?.client === "number") params.set("client", String(args.client))
       return control(`/clock?${params.toString()}`, "POST")
+    }
+    case "settle": {
+      let params = new URLSearchParams()
+      if (typeof args?.max_ms === "number") params.set("max", String(args.max_ms))
+      if (typeof args?.client === "number") params.set("client", String(args.client))
+      let qs = params.toString()
+      return control(`/settle${qs ? `?${qs}` : ""}`)
     }
     case "send_input": {
       if (!Array.isArray(args?.events) || args.events.length === 0)

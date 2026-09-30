@@ -26,9 +26,9 @@
 //! (`setBroadcast`, `setMulticastTtl`, ...) where that is the expected term.
 //!
 //! The `connect` / `listen` / `udp` factories keep a hand-rolled `Promised`
-//! rather than `with_pending`: they must build a JS class, so the future captures
+//! rather than `with_in_flight`: they must build a JS class, so the future captures
 //! `Ctx`. They reject with `Exception::throw_message` (a clean `Error`, no
-//! `IO Error:` prefix), the same clean rejection `with_pending` gives the rest.
+//! `IO Error:` prefix), the same clean rejection `with_in_flight` gives the rest.
 
 use std::future::Future;
 use std::net::Ipv4Addr;
@@ -41,7 +41,7 @@ use rquickjs::{Array, Class, Ctx, Exception, FromJs, Function, IntoJs, JsLifetim
 
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg, Step};
+use crate::plugins::marshal::{attach_async_iterator, iter_result, with_in_flight, with_standing, OptArg, Step};
 use crate::standards_plugins::body::{extract_body_value, JsBytes};
 
 // ---- free functions ---------------------------------------------------------
@@ -55,7 +55,7 @@ fn net_probe<'js>(
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<String>>>> {
   let timeout_ms = opt_u64(&opts, "timeoutMs", 1000)?;
-  Ok(with_pending(&ctx, async move {
+  Ok(with_in_flight(&ctx, "probe", async move {
     Ok::<String, String>(forge::net::probe(&host, port, timeout_ms).await.as_str().to_string())
   }))
 }
@@ -68,12 +68,11 @@ fn net_connect<'js>(
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetConn>>> + 'js>> {
   let timeout_ms = opt_u64(&opts, "timeoutMs", 10_000)?;
-  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+  let hold = PendingOps::of(&ctx).in_flight("connect");
   let ctx2 = ctx.clone();
   Ok(Promised(async move {
-    pending.hold();
     let r = forge::net::connect(&host, port, timeout_ms).await;
-    pending.release();
+    drop(hold);
     match r {
       Ok(conn) => NetConn::create(&ctx2, conn),
       Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
@@ -88,12 +87,11 @@ fn net_listen<'js>(
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetListener>>> + 'js>> {
   let host = opt_string(&opts, "host")?.unwrap_or_else(|| "0.0.0.0".to_string());
-  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+  let hold = PendingOps::of(&ctx).in_flight("listen");
   let ctx2 = ctx.clone();
   Ok(Promised(async move {
-    pending.hold();
     let r = forge::net::listen(&host, port).await;
-    pending.release();
+    drop(hold);
     match r {
       Ok(listener) => NetListener::create(&ctx2, listener),
       Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
@@ -109,12 +107,11 @@ fn net_udp<'js>(
 ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetUdp>>> + 'js>> {
   let port = opt_u64(&opts, "port", 0)? as u16;
   let reuse = opt_bool(&opts, "reuse")?.unwrap_or(false);
-  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+  let hold = PendingOps::of(&ctx).in_flight("udp bind");
   let ctx2 = ctx.clone();
   Ok(Promised(async move {
-    pending.hold();
     let r = forge::net::udp_bind(port, reuse).await;
-    pending.release();
+    drop(hold);
     match r {
       Ok(udp) => NetUdp::create(&ctx2, udp),
       Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
@@ -136,7 +133,7 @@ fn net_icmp_echo<'js>(
     None => Vec::new(),
   };
   let timeout_ms = opt_u64(&opts, "timeoutMs", 1000)?;
-  Ok(with_pending(&ctx, async move {
+  Ok(with_in_flight(&ctx, "probe", async move {
     Ok::<IcmpMsg, String>(IcmpMsg(forge::net::icmp_echo(&host, bytes, timeout_ms).await))
   }))
 }
@@ -176,7 +173,7 @@ impl NetConn {
   /// `{ done: true }` at EOF. Pull-based, so the socket only advances as JS reads.
   pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Step<JsBytes>>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) }))
+    Ok(with_standing(&ctx, "socket read", async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) }))
   }
 
   /// Write all of `data` (string or Uint8Array). Resolves once it's handed off.
@@ -187,7 +184,7 @@ impl NetConn {
   ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
     let bytes = extract_body_value(&data, "Conn.write")?;
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.write(bytes).await }))
+    Ok(with_in_flight(&ctx, "socket write", async move { inner.write(bytes).await }))
   }
 
   /// Half-close: end the write side (the peer sees FIN) while reads continue
@@ -195,7 +192,7 @@ impl NetConn {
   #[qjs(rename = "closeWrite")]
   pub fn close_write<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.close_write().await }))
+    Ok(with_in_flight(&ctx, "socket write", async move { inner.close_write().await }))
   }
 
   /// Close the connection now: a pending read ends, the peer sees FIN at once.
@@ -239,12 +236,12 @@ impl NetListener {
     ctx: Ctx<'js>,
   ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Object<'js>>>>> {
     let inner = self.inner.clone();
-    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+    // A pending accept waits on a peer: standing, like the listener.
+    let hold = PendingOps::of(&ctx).standing("accept");
     let ctx2 = ctx.clone();
     Ok(Promised(async move {
-      pending.hold();
       let r = inner.accept().await;
-      pending.release();
+      drop(hold);
       match r {
         Ok(Some(conn)) => {
           let conn = NetConn::create(&ctx2, conn)?;
@@ -299,14 +296,14 @@ impl NetUdp {
   ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
     let bytes = extract_body_value(&data, "Udp.send")?;
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.send(&bytes, &host, port).await.map(|_| ()) }))
+    Ok(with_in_flight(&ctx, "socket write", async move { inner.send(&bytes, &host, port).await.map(|_| ()) }))
   }
 
   /// Receive one datagram, resolving `{ data: Uint8Array, host, port }`, or
   /// `null` once the socket is closed.
   pub fn recv<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<RecvMsg>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.recv().await.map(RecvMsg) }))
+    Ok(with_standing(&ctx, "socket read", async move { inner.recv().await.map(RecvMsg) }))
   }
 
   /// Close the socket: release it (and its bound port) and resolve a pending

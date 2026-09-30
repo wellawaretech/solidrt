@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::logger::report_uncaught;
-use crate::pending::PendingOps;
+use crate::pending::{Hold, PendingOps};
 use crate::plugins::marshal::OptArg;
 
 // ----- Virtual time: embedder-driven timers -----
@@ -40,9 +40,10 @@ struct VirtualState {
   // Firing order: (deadline ms bits, registration seq). Deadlines never go
   // negative, so the f64 bit pattern orders like the number.
   queue: RefCell<BTreeMap<(u64, u64), VirtualEntry>>,
-  // id -> callback. Cancellation removes the callback and leaves the queue
-  // entry stale (lazy deletion); advance() skips ids with no callback.
-  callbacks: RefCell<HashMap<u32, Persistent<Function<'static>>>>,
+  // id -> callback and the timer's standing hold on the engine.
+  // Cancellation removes the callback and leaves the queue entry stale
+  // (lazy deletion); advance() skips ids with no callback.
+  callbacks: RefCell<HashMap<u32, (Persistent<Function<'static>>, Hold)>>,
   // Optional fresh reading of the same timeline the advances report,
   // sampled at schedule time (see set_virtual_now_source). Without one,
   // deadlines anchor to the last advance's reading, which is up to one
@@ -66,8 +67,8 @@ impl VirtualTime {
   }
 
   fn schedule<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, id: u32, delay_ms: f64, period_ms: Option<f64>) {
-    self.0.callbacks.borrow_mut().insert(id, Persistent::save(ctx, cb));
-    pending(ctx).hold();
+    let hold = PendingOps::of(ctx).standing(if period_ms.is_some() { "interval" } else { "timer" });
+    self.0.callbacks.borrow_mut().insert(id, (Persistent::save(ctx, cb), hold));
     // Deadline base: the fresh reading when a source is installed (never
     // behind the advance timeline - max keeps a lagging source from
     // scheduling into the past), the last advance's reading otherwise.
@@ -79,18 +80,29 @@ impl VirtualTime {
   }
 
   /// Remove a live timer; false when the id is unknown or already fired.
-  fn cancel(&self, ctx: &Ctx<'_>, id: u32) -> bool {
-    if self.0.callbacks.borrow_mut().remove(&id).is_some() {
-      pending(ctx).release();
-      true
-    } else {
-      false
-    }
+  fn cancel(&self, id: u32) -> bool {
+    self.0.callbacks.borrow_mut().remove(&id).is_some()
+  }
+
+  /// Whether a live timer is due at or before `now_ms`.
+  fn due(&self, now_ms: f64) -> bool {
+    let callbacks = self.0.callbacks.borrow();
+    self.0.queue.borrow().iter().take_while(|((deadline, _), _)| f64::from_bits(*deadline) <= now_ms).any(|(_, entry)| callbacks.contains_key(&entry.id))
   }
 }
 
-fn pending(ctx: &Ctx<'_>) -> PendingOps {
-  ctx.userdata::<PendingOps>().expect("pending ops userdata").clone()
+/// Whether a timer of this context is due now and has not fired: on a
+/// virtual timeline a timer fires with the next advance, so until that comes
+/// the app has work waiting that no frame request stands for. "Now" is the
+/// now-source's reading (the last advance's without one). False without
+/// `install_virtual_time`: wall timers fire by themselves.
+pub fn timer_due(ctx: &Ctx<'_>) -> bool {
+  let Some(vt) = ctx.userdata::<VirtualTime>() else { return false };
+  let now = match vt.0.now_source.borrow().as_ref() {
+    Some(source) => source().max(vt.0.now.get()),
+    None => vt.0.now.get(),
+  };
+  vt.due(now)
 }
 
 /// Put this context's timers on a virtual timeline, seeded at `now_ms` (the
@@ -159,17 +171,14 @@ pub fn advance_virtual_time(ctx: &Ctx<'_>, now_ms: f64) {
     };
     let Some(entry) = entry else { break };
     let persistent = match entry.period_ms {
-      // One-shot: consume the callback and its engine-liveness hold.
+      // One-shot: consume the callback, and with it the timer's hold.
       None => match vt.0.callbacks.borrow_mut().remove(&entry.id) {
-        Some(p) => {
-          pending(ctx).release();
-          p
-        }
+        Some((p, _hold)) => p,
         None => continue, // canceled; stale queue entry
       },
       // Interval: keep the callback and re-arm one period past now.
       Some(_) => match vt.0.callbacks.borrow().get(&entry.id) {
-        Some(p) => p.clone(),
+        Some((p, _hold)) => p.clone(),
         None => continue,
       },
     };
@@ -185,7 +194,9 @@ pub fn advance_virtual_time(ctx: &Ctx<'_>, now_ms: f64) {
 
 // ----- Scheduling: setTimeout / setInterval / queueMicrotask -----
 
-type ActiveMap = Rc<std::cell::RefCell<HashMap<u32, oneshot::Sender<()>>>>;
+// id -> the cancel signal of a wall-clock timer and its standing hold on
+// the engine, released with the entry: on fire or cancel, whichever is first.
+type ActiveMap = Rc<std::cell::RefCell<HashMap<u32, (oneshot::Sender<()>, Hold)>>>;
 
 #[derive(Clone)]
 pub(crate) struct Timers {
@@ -199,7 +210,7 @@ impl Timers {
     Self {
       next_id: Rc::new(Cell::new(1)),
       active: Rc::new(std::cell::RefCell::new(HashMap::new())),
-      pending: ctx.userdata::<PendingOps>().unwrap().clone(),
+      pending: PendingOps::of(ctx),
     }
   }
 
@@ -211,7 +222,6 @@ impl Timers {
 
   fn remove(&self, id: u32) {
     self.active.borrow_mut().remove(&id);
-    self.pending.release();
   }
 
   fn cancel(&self, ctx: &Ctx<'_>, id: u32) {
@@ -219,18 +229,15 @@ impl Timers {
     // allocated from the same counter either way, so an id lives in exactly
     // one of the two stores.
     if let Some(vt) = ctx.userdata::<VirtualTime>() {
-      if vt.clone().cancel(ctx, id) {
+      if vt.clone().cancel(id) {
         return;
       }
     }
-    if let Some(tx) = self.active.borrow_mut().remove(&id) {
+    if let Some((tx, _hold)) = self.active.borrow_mut().remove(&id) {
       let _ = tx.send(());
-      self.pending.release();
     }
     // Unknown or already-fired id: a no-op, matching Node and the browser, where
-    // clearing a timer that never existed (or has already run) does nothing. The
-    // pending op is released on whichever of fire/cancel happens first, so there
-    // is nothing to release here.
+    // clearing a timer that never existed (or has already run) does nothing.
   }
 
   fn set_timeout<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, ms: u64) -> u32 {
@@ -240,8 +247,7 @@ impl Timers {
       return id;
     }
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
-    self.active.borrow_mut().insert(id, cancel_tx);
-    self.pending.hold();
+    self.active.borrow_mut().insert(id, (cancel_tx, self.pending.standing("timer")));
     let timers = self.clone();
     ctx.spawn(async move {
       tokio::select! {
@@ -265,8 +271,7 @@ impl Timers {
       return id;
     }
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
-    self.active.borrow_mut().insert(id, cancel_tx);
-    self.pending.hold();
+    self.active.borrow_mut().insert(id, (cancel_tx, self.pending.standing("interval")));
     ctx.spawn(async move {
       let mut interval = tokio::time::interval(Duration::from_millis(ms));
       interval.tick().await; // skip immediate first tick

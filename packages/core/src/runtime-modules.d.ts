@@ -256,4 +256,31 @@ declare module "srt:test" {
   export function setFrameRate(fps: number): void
   /** App time as of the last frame, in milliseconds; 0 before the first. */
   export function time(): number
+  /**
+   * Fulfills once the window's size has reached the engine, at once when
+   * it already has. No frame runs for it and no time passes: a mounted
+   * window builds its first frame on that size.
+   */
+  export function windowReady(): Promise<void>
+  /**
+   * Expands `events` (JSON text, the control API's `/input` event shape)
+   * into the steps that are sent and returns what passes before each:
+   * `[ms, frames]` per step, at least that much time and that many frames.
+   * Throws on an invalid event, before anything is sent. The steps are then
+   * sent with `inputStep`, in order.
+   */
+  export function inputPlan(events: string): [ms: number, frames: number][]
+  /**
+   * Sends step `index` of the current plan into the input pipeline: a
+   * down, an up, a key or a wheel is dispatched on arrival, ahead of the
+   * next frame; a move with that frame.
+   */
+  export function inputStep(index: number): void
+  /**
+   * Runs frames until the app is at rest: nothing in flight, no timer due,
+   * no frame demanded. Work in flight is waited for with no app time
+   * passing. Rejects once `maxMs` of app time have passed without rest,
+   * with what is left in the message.
+   */
+  export function settle(maxMs: number): Promise<void>
 }

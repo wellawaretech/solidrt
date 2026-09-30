@@ -5,20 +5,20 @@ use std::future::Future;
 
 use super::{dir, file};
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{string_opt, with_pending, OptArg};
+use crate::plugins::marshal::{string_opt, with_in_flight, OptArg};
 use forge::fs;
 
 // `realpath(path)`: the canonical absolute path, resolved by the OS. A plain
 // forward to forge::fs; the result is a string, so nothing to encode.
 fn realpath<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Promised<impl Future<Output = JsResult<String>>>> {
-  Ok(with_pending(&ctx, async move { fs::realpath(&path).await }))
+  Ok(with_in_flight(&ctx, "fs", async move { fs::realpath(&path).await }))
 }
 
 // `rename(from, to)`: move a file or directory. A plain forward to
 // forge::fs; both arguments are strings and the result is void, so nothing to
 // encode.
 fn rename<'js>(ctx: Ctx<'js>, from: String, to: String) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
-  Ok(with_pending(&ctx, async move { fs::rename(&from, &to).await }))
+  Ok(with_in_flight(&ctx, "fs", async move { fs::rename(&from, &to).await }))
 }
 
 // `glob(pattern, { cwd? })`: the files a glob pattern matches. A malformed
@@ -34,7 +34,7 @@ fn glob<'js>(
     None => None,
   };
   forge::path::check_glob(&pattern).map_err(|e| Exception::throw_message(&ctx, &format!("glob: {e}")))?;
-  Ok(with_pending(&ctx, async move { fs::glob(&pattern, cwd.as_deref()).await }))
+  Ok(with_in_flight(&ctx, "fs", async move { fs::glob(&pattern, cwd.as_deref()).await }))
 }
 
 pub struct FsModule;

@@ -4,6 +4,8 @@ use std::rc::Rc;
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
 use flux::rquickjs::{Ctx, Exception, Function, JsLifetime, Persistent, Promise};
 
+use crate::input_plan::{self, Injected};
+use crate::settle::Cap;
 use crate::test_host::Stepper;
 
 // The `srt:test` module: the engine verbs of an app test, which
@@ -16,7 +18,7 @@ use crate::test_host::Stepper;
 /// that keeps the engine alive until then (the frame's signal travels
 /// through the runner's loop, outside the engine).
 #[derive(Clone, Default, JsLifetime)]
-struct PendingFrame(#[qjs(skip_trace)] Rc<RefCell<Option<(Persistent<Function<'static>>, flux::EngineHold)>>>);
+struct PendingFrame(#[qjs(skip_trace)] Rc<RefCell<Option<(Persistent<Function<'static>>, flux::Hold)>>>);
 
 fn stepper(ctx: &Ctx<'_>, verb: &str) -> flux::rquickjs::Result<Stepper> {
   match ctx.userdata::<Stepper>() {
@@ -39,7 +41,7 @@ fn frame<'js>(ctx: Ctx<'js>) -> flux::rquickjs::Result<Promise<'js>> {
     ));
   }
   let (promise, resolve, _reject) = ctx.promise()?;
-  *pending.0.borrow_mut() = Some((Persistent::save(&ctx, resolve), flux::hold_engine(&ctx)));
+  *pending.0.borrow_mut() = Some((Persistent::save(&ctx, resolve), flux::hold_engine(&ctx, "frame")));
   stepper.step();
   Ok(promise)
 }
@@ -57,6 +59,111 @@ pub(crate) fn frame_done(ctx: &Ctx<'_>) {
   if let Err(e) = settled {
     flux::report_uncaught(ctx, e, "srt:test frame()");
   }
+}
+
+/// Whether the window's size has reached this engine (the first resize,
+/// which is what an app's first frame is built on), and who waits for it.
+/// Installed with the engine, ahead of any import: the resize can land
+/// before the file has evaluated.
+#[derive(Clone, Default, JsLifetime)]
+pub(crate) struct WindowReady(#[qjs(skip_trace)] Rc<RefCell<ReadyState>>);
+
+#[derive(Default)]
+struct ReadyState {
+  ready: bool,
+  waiting: Vec<(Persistent<Function<'static>>, flux::Hold)>,
+}
+
+/// The window's size reached this engine: whoever waited on it goes on.
+pub(crate) fn window_ready(ctx: &Ctx<'_>) {
+  let Some(state) = ctx.userdata::<WindowReady>() else {
+    return;
+  };
+  let waiting = {
+    let mut state = state.0.borrow_mut();
+    state.ready = true;
+    std::mem::take(&mut state.waiting)
+  };
+  for (resolve, _hold) in waiting {
+    if let Err(e) = resolve.restore(ctx).and_then(|resolve| resolve.call::<_, ()>(())) {
+      flux::report_uncaught(ctx, e, "srt:test windowReady()");
+    }
+  }
+}
+
+/// `windowReady()`: fulfills once the window's size has reached the
+/// engine, at once when it already has. No frame runs for it and no time
+/// passes: what a mount waits on before its first frame is there to read.
+fn window_ready_promise<'js>(ctx: Ctx<'js>) -> flux::rquickjs::Result<Promise<'js>> {
+  stepper(&ctx, "windowReady()")?;
+  let state = ctx.userdata::<WindowReady>().expect("window ready installed").clone();
+  let (promise, resolve, _reject) = ctx.promise()?;
+  if state.0.borrow().ready {
+    resolve.call::<_, ()>(())?;
+  } else {
+    state.0.borrow_mut().waiting.push((Persistent::save(&ctx, resolve), flux::hold_engine(&ctx, "window")));
+  }
+  Ok(promise)
+}
+
+/// The input plan a test is sending, step by step (see `input_plan`).
+#[derive(Clone, Default, JsLifetime)]
+struct InputPlan(#[qjs(skip_trace)] Rc<RefCell<Vec<Option<Injected>>>>);
+
+/// `inputPlan(events)`: expand `events` (JSON text, the `/input` event
+/// shape) into steps and return what passes before each: `[ms, frames]`
+/// per step. The steps are then sent with `inputStep`, in order.
+fn plan_input(ctx: Ctx<'_>, events: String) -> flux::rquickjs::Result<Vec<Vec<f64>>> {
+  let stepper = stepper(&ctx, "inputPlan()")?;
+  let throw = |message: String| Exception::throw_message(&ctx, &format!("srt:test input: {message}"));
+  let events: serde_json::Value = serde_json::from_str(&events).map_err(|e| throw(e.to_string()))?;
+  let steps = input_plan::plan(Some(&events), stepper.frame_ms()).map_err(throw)?;
+  let waits = steps.iter().map(|step| vec![step.wait.ms as f64, step.wait.frames as f64]).collect();
+  let plan = ctx.userdata::<InputPlan>().expect("input plan installed").clone();
+  *plan.0.borrow_mut() = steps.into_iter().map(|step| Some(step.inject)).collect();
+  Ok(waits)
+}
+
+/// `inputStep(index)`: send one step of the current plan.
+fn step_input(ctx: Ctx<'_>, index: usize) -> flux::rquickjs::Result<()> {
+  let stepper = stepper(&ctx, "inputStep()")?;
+  let plan = ctx.userdata::<InputPlan>().expect("input plan installed").clone();
+  let step = plan.0.borrow_mut().get_mut(index).and_then(Option::take);
+  let Some(step) = step else {
+    return Err(Exception::throw_message(&ctx, "srt:test inputStep(index): no such step left in the plan"));
+  };
+  stepper.inject(step).map_err(|e| Exception::throw_message(&ctx, &format!("srt:test input: {e}")))
+}
+
+/// `settle(maxMs)`: run frames until the app is at rest (settle.rs):
+/// nothing in flight, no timer due, no frame demanded. Rejects once `maxMs`
+/// of app time have passed without that, saying what is left.
+fn settle<'js>(ctx: Ctx<'js>, max_ms: f64) -> flux::rquickjs::Result<Promise<'js>> {
+  let stepper = stepper(&ctx, "settle()")?;
+  if !max_ms.is_finite() || max_ms < 0.0 {
+    return Err(Exception::throw_message(
+      &ctx,
+      "srt:test settle(maxMs): the cap must be a non-negative number of milliseconds",
+    ));
+  }
+  let (promise, resolve, reject) = ctx.promise()?;
+  let task_ctx = ctx.clone();
+  ctx.spawn(async move {
+    let now_ms = || stepper.time_ms();
+    let step = || stepper.step();
+    let outcome = crate::settle::settle(&task_ctx, Cap::AppTime { max_ms, now_ms: &now_ms }, Some(&step)).await;
+    let settled = match outcome {
+      Ok(()) => resolve.call::<_, ()>(()),
+      Err(left) => {
+        let message = format!("settle: the app did not come to rest within {max_ms} ms of app time: {}", left.describe());
+        Exception::from_message(task_ctx.clone(), &message).and_then(|error| reject.call::<_, ()>((error,)))
+      }
+    };
+    if let Err(e) = settled {
+      flux::report_uncaught(&task_ctx, e, "srt:test settle()");
+    }
+  });
+  Ok(promise)
 }
 
 /// `frameRate()`: the frames per second this engine steps at.
@@ -89,6 +196,10 @@ impl ModuleDef for SrtTestModule {
     decl.declare("frameRate")?;
     decl.declare("setFrameRate")?;
     decl.declare("time")?;
+    decl.declare("windowReady")?;
+    decl.declare("inputPlan")?;
+    decl.declare("inputStep")?;
+    decl.declare("settle")?;
     Ok(())
   }
 
@@ -100,6 +211,13 @@ impl ModuleDef for SrtTestModule {
     exports.export("frameRate", Function::new(ctx.clone(), frame_rate)?)?;
     exports.export("setFrameRate", Function::new(ctx.clone(), set_frame_rate)?)?;
     exports.export("time", Function::new(ctx.clone(), time)?)?;
+    if ctx.userdata::<InputPlan>().is_none() {
+      ctx.store_userdata(InputPlan::default()).expect("store input plan");
+    }
+    exports.export("windowReady", Function::new(ctx.clone(), window_ready_promise)?)?;
+    exports.export("inputPlan", Function::new(ctx.clone(), plan_input)?)?;
+    exports.export("inputStep", Function::new(ctx.clone(), step_input)?)?;
+    exports.export("settle", Function::new(ctx.clone(), settle)?)?;
     Ok(())
   }
 }

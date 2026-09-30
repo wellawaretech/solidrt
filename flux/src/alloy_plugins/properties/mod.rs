@@ -104,6 +104,16 @@ pub fn apply_jsx(
     return Ok(Damage::None);
   }
 
+  // Element-level, kind-independent: the node's stable name (see
+  // Element::label). Metadata only.
+  if name == "label" {
+    el.label = match value {
+      PropValue::Null => None,
+      _ => Some(str_of(value, "label")?.to_string()),
+    };
+    return Ok(Damage::None);
+  }
+
   // `position` is decoded here rather than in the layout style adapter because
   // it has a side effect beyond the taffy Style: it marks the element as a
   // positioning context used to resolve container-relative bounding boxes.

@@ -32,11 +32,20 @@ pub fn advance(ctx: &Ctx<'_>, now_ms: f64) {
   };
   tree::stamp_clock(ctx, now_ms);
   spatial::stamp_clock(ctx, now_ms);
+  // This frame's reasons to ask for the next one are collected from here.
+  let mut reasons = Vec::new();
   let players = spatial::advance_players(ctx);
   let mut demand = players.active || players.wrote;
+  if players.active {
+    reasons.push("an animation player".to_string());
+  }
   // A camera frame landed in its texture: the screen content changed even
   // though the tree did not.
-  demand |= camera::tick(ctx);
+  if camera::tick(ctx) {
+    demand = true;
+    reasons.push("a camera".to_string());
+  }
+  *s.demand.borrow_mut() = reasons;
   // Settle any captureSnapshot promises whose captures alloy rendered on the
   // previous paint pass.
   gpu::tick(ctx);
@@ -107,11 +116,62 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
   // an animating app's intervals are judged.
   // A streaming texture (a playing video) is standing demand alloy holds:
   // the loop ticks on the refresh grid while it plays.
-  let standing = s.gui.platform.take_standing_demand() || s.gui.alloy.streaming_textures();
-  if anim_active || spatial.active || standing || super::raf::has_pending(ctx) {
+  let on_frame = s.gui.platform.take_standing_demand();
+  let streaming = s.gui.alloy.streaming_textures();
+  let raf = super::raf::has_pending(ctx);
+  if anim_active || spatial.active || on_frame || streaming || raf {
     s.gui.platform.request_frame();
   }
+  {
+    let mut reasons = s.demand.borrow_mut();
+    if anim_active {
+      let node = s.tree.borrow().running_transition();
+      reasons.push(match node {
+        Some(node) => format!("a transition on {node}"),
+        None => "a transition".to_string(),
+      });
+    }
+    if spatial.active {
+      reasons.push("a spatial transition".to_string());
+    }
+    if on_frame {
+      reasons.push("onFrame".to_string());
+    }
+    if raf {
+      reasons.push("requestAnimationFrame".to_string());
+    }
+    if streaming {
+      reasons.push("a playing video".to_string());
+    }
+  }
   f(Some(Frame { pending, tree: &s.tree, platform: &s.gui.platform, atx: &s.gui.alloy, present_at }))
+}
+
+/// Why the app wants another frame, as of now: empty when it wants none.
+/// A frame is wanted while the request latch is set or a capture waits for
+/// its paint. The entries name the standing reasons the last frame found (a
+/// running transition and its node, `onFrame`, a playing video, ...); a
+/// request with none of them is a one-shot write since that frame, reported
+/// as such. What a waiter reads to decide whether the app is at rest, and
+/// what it says when the app never comes to rest. Empty before the GUI is
+/// installed.
+pub fn demand(ctx: &Ctx<'_>) -> Vec<String> {
+  let Some(s) = tree::try_state(ctx) else {
+    return Vec::new();
+  };
+  let capture = gpu::capture_pending(ctx);
+  let requested = s.gui.platform.frame_request_handle().load(std::sync::atomic::Ordering::Relaxed);
+  if !requested && !capture {
+    return Vec::new();
+  }
+  let mut reasons = if requested { s.demand.borrow().clone() } else { Vec::new() };
+  if capture {
+    reasons.push("captureSnapshot".to_string());
+  }
+  if reasons.is_empty() {
+    reasons.push("a write to the tree or to a texture".to_string());
+  }
+  reasons
 }
 
 /// A frame past the demand gate (see `draw`), bound to the tree it draws.

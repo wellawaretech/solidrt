@@ -11,7 +11,7 @@ use std::rc::Rc;
 use tokio::sync::mpsc;
 
 use crate::logger::{format_js_error, Logger};
-use crate::pending::PendingOps;
+use crate::pending::{Hold, PendingOps};
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, CopyBytes, Step};
 
@@ -85,12 +85,13 @@ impl MessageBody {
   /// Consume the body once into an async-iterable of Uint8Array chunks (`.body`).
   /// A streamed body iterates the network stream; a buffered one yields its bytes
   /// as a single chunk, so `for await (const c of msg.body)` works uniformly.
-  pub(crate) fn as_async_iterable<'js>(&self, ctx: &Ctx<'js>, pending: PendingOps) -> rquickjs::Result<Value<'js>> {
+  pub(crate) fn as_async_iterable<'js>(&self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let stream = match self {
       MessageBody::Incoming(incoming) => incoming.take().ok_or_else(|| throw_consumed(ctx))?,
       MessageBody::Buffered(state) => forge::stream::from_bytes(state.take().ok_or_else(|| throw_consumed(ctx))?),
     };
-    Ok(byte_stream_iterable(ctx, stream, pending)?.into_value())
+    let pending = PendingOps::of(ctx);
+    Ok(byte_stream_iterable(ctx, stream, move || pending.in_flight("body read"))?.into_value())
   }
 }
 
@@ -102,18 +103,18 @@ pub(crate) enum BodySource {
 }
 
 impl BodySource {
-  async fn collect(self, pending: PendingOps) -> Result<Vec<u8>, String> {
+  async fn collect(self, hold: Hold) -> Result<Vec<u8>, String> {
     match self {
       BodySource::Bytes(bytes) => Ok(bytes),
-      BodySource::Stream(stream) => drain_stream(stream, pending).await,
+      BodySource::Stream(stream) => drain_stream(stream, hold).await,
     }
   }
 }
 
-/// Read a byte stream to EOF, concatenating chunks. Holds a pending op across the
-/// network reads so the engine stays alive until the body is fully drained.
-async fn drain_stream(mut stream: ByteStream, pending: PendingOps) -> Result<Vec<u8>, String> {
-  pending.hold();
+/// Read a byte stream to EOF, concatenating chunks. `hold` is the read's hold
+/// on the engine, taken where the read was asked for and kept until the body
+/// is fully drained.
+async fn drain_stream(mut stream: ByteStream, hold: Hold) -> Result<Vec<u8>, String> {
   let mut buf = Vec::new();
   let mut error = None;
   while let Some(item) = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
@@ -125,32 +126,32 @@ async fn drain_stream(mut stream: ByteStream, pending: PendingOps) -> Result<Vec
       }
     }
   }
-  pending.release();
+  drop(hold);
   match error {
     Some(e) => Err(e.to_string()),
     None => Ok(buf),
   }
 }
 
-async fn collect_text_raw(source: BodySource, pending: PendingOps) -> Result<String, String> {
-  let bytes = source.collect(pending).await?;
+async fn collect_text_raw(source: BodySource, hold: Hold) -> Result<String, String> {
+  let bytes = source.collect(hold).await?;
   String::from_utf8(bytes).map_err(|e| e.to_string())
 }
 
-pub(crate) async fn collect_text(source: BodySource, pending: PendingOps) -> JsResult<String> {
-  JsResult(collect_text_raw(source, pending).await)
+pub(crate) async fn collect_text(source: BodySource, hold: Hold) -> JsResult<String> {
+  JsResult(collect_text_raw(source, hold).await)
 }
 
-pub(crate) async fn collect_bytes(source: BodySource, pending: PendingOps) -> JsResult<JsBytes> {
-  JsResult(source.collect(pending).await.map(JsBytes))
+pub(crate) async fn collect_bytes(source: BodySource, hold: Hold) -> JsResult<JsBytes> {
+  JsResult(source.collect(hold).await.map(JsBytes))
 }
 
-pub(crate) async fn collect_array_buffer(source: BodySource, pending: PendingOps) -> JsResult<JsArrayBuffer> {
-  JsResult(source.collect(pending).await.map(JsArrayBuffer))
+pub(crate) async fn collect_array_buffer(source: BodySource, hold: Hold) -> JsResult<JsArrayBuffer> {
+  JsResult(source.collect(hold).await.map(JsArrayBuffer))
 }
 
-pub(crate) async fn collect_json(source: BodySource, pending: PendingOps) -> JsResult<JsonValue> {
-  JsResult(collect_text_raw(source, pending).await.map(JsonValue))
+pub(crate) async fn collect_json(source: BodySource, hold: Hold) -> JsResult<JsonValue> {
+  JsResult(collect_text_raw(source, hold).await.map(JsonValue))
 }
 
 /// Return type of the iterator's `next()`: a promise resolving to one step.
@@ -161,12 +162,13 @@ type IterStepFuture = Promised<Pin<Box<dyn Future<Output = JsResult<Step<JsBytes
 /// `[Symbol.asyncIterator]()` returns the object itself, so `for await` works.
 /// The structural dual of `pump_async_iterable` (JS-produces -> Rust-consumes):
 /// here Rust produces and JS consumes. Pull-based, so the network only advances
-/// as JS pulls; a `pending` op is held only across each in-flight read, so an
-/// abandoned iterator leaks nothing.
+/// as JS pulls; `hold` is taken for each read and released when it lands, so
+/// an abandoned iterator holds nothing. The caller decides its class: a
+/// response body is work in flight, a running child's output is standing.
 pub(crate) fn byte_stream_iterable<'js>(
   ctx: &Ctx<'js>,
   stream: ByteStream,
-  pending: PendingOps,
+  hold: impl Fn() -> Hold + 'static,
 ) -> rquickjs::Result<Object<'js>> {
   let cell = Rc::new(RefCell::new(Some(stream)));
   let iter = Object::new(ctx.clone())?;
@@ -175,16 +177,15 @@ pub(crate) fn byte_stream_iterable<'js>(
     ctx.clone(),
     MutFn::from(move |_ctx: Ctx<'_>| -> rquickjs::Result<IterStepFuture> {
       let cell = cell.clone();
-      let pending = pending.clone();
+      let hold = hold();
       Ok(Promised(Box::pin(async move {
         // Take the stream out so no RefCell borrow is held across the await. A
         // concurrent (un-awaited) next() finding it gone just reports done.
         let Some(mut stream) = cell.borrow_mut().take() else {
           return JsResult(Ok(Step(None)));
         };
-        pending.hold();
         let item = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await;
-        pending.release();
+        drop(hold);
         JsResult(match item {
           Some(Ok(chunk)) => {
             *cell.borrow_mut() = Some(stream);
@@ -383,9 +384,11 @@ where
           return Err(throw_consumed(&ctx));
         }
         consumed.set(true);
-        let fetch = fetch_bytes.clone();
+        // Started here, not in the promise's future: what it holds is held
+        // from the call on.
+        let fetch = fetch_bytes();
         Ok(Promised(async move {
-          JsResult(match fetch().await {
+          JsResult(match fetch.await {
             Ok(bytes) => String::from_utf8(bytes).map_err(|e| e.to_string()),
             Err(msg) => Err(msg),
           })
@@ -405,8 +408,10 @@ where
           return Err(throw_consumed(&ctx));
         }
         consumed.set(true);
-        let fetch = fetch_bytes.clone();
-        Ok(Promised(async move { JsResult(fetch().await.map(JsBytes)) }))
+        // Started here, not in the promise's future: what it holds is held
+        // from the call on.
+        let fetch = fetch_bytes();
+        Ok(Promised(async move { JsResult(fetch.await.map(JsBytes)) }))
       }
     }),
   )
@@ -422,8 +427,10 @@ where
           return Err(throw_consumed(&ctx));
         }
         consumed.set(true);
-        let fetch = fetch_bytes.clone();
-        Ok(Promised(async move { JsResult(fetch().await.map(JsArrayBuffer)) }))
+        // Started here, not in the promise's future: what it holds is held
+        // from the call on.
+        let fetch = fetch_bytes();
+        Ok(Promised(async move { JsResult(fetch.await.map(JsArrayBuffer)) }))
       }
     }),
   )
@@ -439,9 +446,11 @@ where
           return Err(throw_consumed(&ctx));
         }
         consumed.set(true);
-        let fetch = fetch_bytes.clone();
+        // Started here, not in the promise's future: what it holds is held
+        // from the call on.
+        let fetch = fetch_bytes();
         Ok(Promised(async move {
-          JsResult(match fetch().await {
+          JsResult(match fetch.await {
             Ok(bytes) => String::from_utf8(bytes).map(JsonValue).map_err(|e| e.to_string()),
             Err(msg) => Err(msg),
           })

@@ -9,6 +9,7 @@ pub mod camera;
 pub mod events;
 pub mod frame;
 pub mod input;
+pub mod inspect;
 pub mod microphone;
 pub(crate) mod properties;
 pub mod raf;

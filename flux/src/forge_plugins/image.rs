@@ -7,7 +7,7 @@ use std::future::Future;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{bytes_of, OptArg};
 #[cfg(feature = "ktx2")]
-use crate::plugins::marshal::{string_opt, with_pending, CopyBytes};
+use crate::plugins::marshal::{string_opt, with_in_flight, CopyBytes};
 use crate::plugins::value::Neutral;
 use crate::standards_plugins::body::JsBytes;
 
@@ -161,7 +161,7 @@ fn transcode_texture<'js>(
     None => device_target(&ctx)?,
   };
   let file = bytes.copy_bytes();
-  Ok(with_pending(&ctx, async move {
+  Ok(with_in_flight(&ctx, "image", async move {
     forge::ktx2::transcode_queued(file, target)
       .await
       .map(|t| Neutral(t.into()))
@@ -212,7 +212,7 @@ fn encode_texture<'js>(
     quality: opts.get::<_, Option<f64>>("quality")?.map(|q| q as f32).unwrap_or(forge::ktx2::DEFAULT_QUALITY),
   };
   let pixels = data.copy_bytes();
-  Ok(with_pending(&ctx, async move {
+  Ok(with_in_flight(&ctx, "image", async move {
     forge::ktx2::encode_queued(pixels, width, height, options)
       .await
       .map(JsBytes)

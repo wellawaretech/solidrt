@@ -248,12 +248,12 @@ pub(crate) fn spawn_socket<'js>(
   remote: Option<Remote>,
   topics: Topics,
 ) {
-  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
-  pending.hold();
+  let pending = PendingOps::of(ctx);
+  let hold = pending.standing("websocket");
   let ctx2 = ctx.clone();
   ctx.spawn(async move {
     run_socket(ctx2, socket, handlers, shutdown_rx, logger, &pending, data, remote, topics).await;
-    pending.release();
+    drop(hold);
   });
 }
 
@@ -299,15 +299,14 @@ async fn run_socket<'js>(
 
   // The writer is its own task so the reader's close-grace deadline can end the
   // connection (and fire `close`) even if a wedged peer stalls writes.
-  pending.hold();
+  let writer_hold = pending.standing("websocket");
   let writer_dispatch = dispatch.clone();
   let writer_handle = handle.clone();
   let writer_sink = sink.clone();
   let writer_logger = logger.clone();
-  let writer_pending = pending.clone();
   ctx.spawn(async move {
     run_writer(write_half, queue, writer_sink, &*writer_dispatch, &writer_handle, &writer_logger).await;
-    writer_pending.release();
+    drop(writer_hold);
   });
 
   run_reader(read_half, sink, close_notify, shutdown_rx, &*dispatch, &handle, &logger).await;

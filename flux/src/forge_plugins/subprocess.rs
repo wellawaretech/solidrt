@@ -5,7 +5,7 @@ use rquickjs::{Ctx, Exception, Function, Object, TypedArray, Value};
 use std::rc::Rc;
 
 use crate::pending::PendingOps;
-use crate::plugins::marshal::{with_pending, CopyBytes, OptArg};
+use crate::plugins::marshal::{with_in_flight, with_standing, CopyBytes, OptArg};
 use crate::standards_plugins::body::byte_stream_iterable;
 use crate::plugins::value::Neutral;
 use forge::subprocess::{self, CommandSpec, Spawned};
@@ -114,7 +114,7 @@ fn build_command<'js>(
       let spec = spec.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let spec = spec.clone();
-        Ok(with_pending(&ctx, async move { spec.run_output().await.map(|o| Neutral(o.into())) }))
+        Ok(with_in_flight(&ctx, "subprocess", async move { spec.run_output().await.map(|o| Neutral(o.into())) }))
       }
     }),
   )
@@ -149,25 +149,30 @@ where
 // spawn() is synchronous (the process is launched here); a failure to launch
 // throws a clean Error. The supervisor and initial-stdin tasks are spawned here
 // because spawning is host-specific.
+// A read of a running child's output waits on the child: standing.
+fn output_hold(pending: &PendingOps) -> impl Fn() -> crate::pending::Hold + 'static {
+  let pending = pending.clone();
+  move || pending.standing("subprocess output")
+}
+
 fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<Object<'js>> {
   let Spawned { child, stdout, stderr, supervisor, initial_stdin } =
     spec.spawn().map_err(|m| Exception::throw_message(&ctx, &m))?;
-  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+  let pending = PendingOps::of(&ctx);
 
   // opts.stdin (if given) is written first; the pipe then stays open for further
-  // writes. Held alive (PendingOps) until the write completes.
+  // writes. Work in flight until the write completes.
   if let Some(bytes) = initial_stdin {
     let child = child.clone();
-    let pending = pending.clone();
+    let hold = pending.in_flight("subprocess write");
     ctx.spawn(async move {
-      pending.hold();
       let _ = child.write_stdin(bytes).await;
-      pending.release();
+      drop(hold);
     });
   }
 
   // The supervisor owns the child and waits for exit (or a kill request),
-  // publishing the status. Holds a pending op for the child's lifetime so the
+  // publishing the status. A standing hold for the child's lifetime, so the
   // engine stays alive until it exits. A detached child is the opposite on
   // both counts: its supervisor runs on the process runtime, which outlives
   // this context (an engine rebuild drops every ctx.spawn task, and with it
@@ -176,11 +181,10 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
   if spec.detached {
     tokio::spawn(supervisor.run());
   } else {
-    let pending = pending.clone();
+    let hold = pending.standing("subprocess");
     ctx.spawn(async move {
-      pending.hold();
       supervisor.run().await;
-      pending.release();
+      drop(hold);
     });
   }
 
@@ -188,8 +192,8 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
   // they iterate to nothing.
   let obj = Object::new(ctx.clone())?;
   obj.set("pid", child.pid())?;
-  obj.set("stdout", byte_stream_iterable(&ctx, stdout, pending.clone())?)?;
-  obj.set("stderr", byte_stream_iterable(&ctx, stderr, pending.clone())?)?;
+  obj.set("stdout", byte_stream_iterable(&ctx, stdout, output_hold(&pending))?)?;
+  obj.set("stderr", byte_stream_iterable(&ctx, stderr, output_hold(&pending))?)?;
 
   // write(data) -> Promise: serialized behind the stdin lock.
   let write_fn = Function::new(
@@ -199,7 +203,7 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
       move |ctx: Ctx<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
         let bytes = value_to_bytes(&ctx, &data)?;
         let child = child.clone();
-        Ok(with_pending(&ctx, async move { child.write_stdin(bytes).await }))
+        Ok(with_in_flight(&ctx, "subprocess write", async move { child.write_stdin(bytes).await }))
       }
     }),
   )
@@ -214,7 +218,7 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
       let child = child.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let child = child.clone();
-        Ok(with_pending(&ctx, async move {
+        Ok(with_in_flight(&ctx, "subprocess write", async move {
           child.end_stdin().await;
           Ok::<(), String>(())
         }))
@@ -241,7 +245,7 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
       let child = child.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let child = child.clone();
-        Ok(with_pending(&ctx, async move { Ok::<Neutral, String>(Neutral(child.status().await.into())) }))
+        Ok(with_standing(&ctx, "subprocess", async move { Ok::<Neutral, String>(Neutral(child.status().await.into())) }))
       }
     }),
   )

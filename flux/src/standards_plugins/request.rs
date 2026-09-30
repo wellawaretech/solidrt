@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::pending::PendingOps;
+use crate::pending::{Hold, PendingOps};
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::OptArg;
 use crate::forge_plugins::websocket::ServeUpgrade;
@@ -106,39 +106,37 @@ impl<'js> Request<'js> {
   /// uploads); a buffered one yields its bytes as one chunk. `for await` ready.
   #[qjs(get)]
   pub fn body(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
-    self.body.as_async_iterable(&ctx, pending)
+    self.body.as_async_iterable(&ctx)
   }
 
   pub fn text(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<String>> {
-    let (source, pending) = self.reader(&ctx)?;
-    Ok(Promised(Box::pin(collect_text(source, pending))))
+    let (source, hold) = self.reader(&ctx)?;
+    Ok(Promised(Box::pin(collect_text(source, hold))))
   }
 
   pub fn bytes(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsBytes>> {
-    let (source, pending) = self.reader(&ctx)?;
-    Ok(Promised(Box::pin(collect_bytes(source, pending))))
+    let (source, hold) = self.reader(&ctx)?;
+    Ok(Promised(Box::pin(collect_bytes(source, hold))))
   }
 
   #[qjs(rename = "arrayBuffer")]
   pub fn array_buffer(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsArrayBuffer>> {
-    let (source, pending) = self.reader(&ctx)?;
-    Ok(Promised(Box::pin(collect_array_buffer(source, pending))))
+    let (source, hold) = self.reader(&ctx)?;
+    Ok(Promised(Box::pin(collect_array_buffer(source, hold))))
   }
 
   pub fn json(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsonValue>> {
-    let (source, pending) = self.reader(&ctx)?;
-    Ok(Promised(Box::pin(collect_json(source, pending))))
+    let (source, hold) = self.reader(&ctx)?;
+    Ok(Promised(Box::pin(collect_json(source, hold))))
   }
 }
 
 impl<'js> Request<'js> {
   /// Consume the body once for a reader (`text`/`bytes`/`json`), returning the
-  /// drainable source and a `PendingOps` handle.
-  fn reader(&self, ctx: &Ctx<'js>) -> rquickjs::Result<(BodySource, PendingOps)> {
+  /// drainable source and the read's hold on the engine.
+  fn reader(&self, ctx: &Ctx<'js>) -> rquickjs::Result<(BodySource, Hold)> {
     let source = self.body.take_source(ctx)?;
-    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
-    Ok((source, pending))
+    Ok((source, PendingOps::of(ctx).in_flight("body read")))
   }
 }
 

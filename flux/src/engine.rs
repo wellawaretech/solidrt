@@ -380,6 +380,20 @@ impl FluxEngine {
   where
     F: for<'js> FnOnce(Ctx<'js>, rquickjs::Object<'js>) + Send + 'static,
   {
+    self.eval_module_or(name, code, on_ready, |_| {}).await
+  }
+
+  /// `eval_module` for a host that has to know when the evaluation failed
+  /// (it did not load, it threw, its top-level `await` rejected): `on_failed`
+  /// is called then, after the failure is reported, and `on_ready` is not.
+  /// The loop runs on either way: what the module left pending keeps the
+  /// engine alive, so without this a host waiting on `on_ready` would wait
+  /// until the engine ends.
+  pub async fn eval_module_or<F, E>(self, name: String, code: ModuleCode, on_ready: F, on_failed: E)
+  where
+    F: for<'js> FnOnce(Ctx<'js>, rquickjs::Object<'js>) + Send + 'static,
+    E: for<'js> FnOnce(Ctx<'js>) + Send + 'static,
+  {
     self
       .run(move |ctx| {
         use rquickjs::{CatchResultExt, Module};
@@ -392,18 +406,28 @@ impl FluxEngine {
             Module::declare(ctx.clone(), name, source).catch(&ctx).map_err(|e| format!("module error: {e:?}"))
           }
           #[cfg(not(feature = "compile"))]
-          ModuleCode::Source(_) => Err(format!("this build cannot evaluate source module '{name}' (compile feature off)")),
+          ModuleCode::Source(_) => {
+            Err(format!("this build cannot evaluate source module '{name}' (compile feature off)"))
+          }
         };
         let evaluated = declared.and_then(|m| m.eval().catch(&ctx).map_err(|e| format!("module error: {e:?}")));
         let (module, promise) = match evaluated {
           Ok(pair) => pair,
-          Err(msg) => return report_error(&ctx, &msg),
+          Err(msg) => {
+            report_error(&ctx, &msg);
+            return on_failed(ctx);
+          }
         };
         report_rejection(&ctx, promise.clone());
-        on_fulfilled(&ctx, promise, move |ctx| match module.namespace() {
-          Ok(ns) => on_ready(ctx, ns),
-          Err(e) => report_error(&ctx, &format!("module namespace error: {e}")),
-        });
+        on_settled(
+          &ctx,
+          promise,
+          move |ctx| match module.namespace() {
+            Ok(ns) => on_ready(ctx, ns),
+            Err(e) => report_error(&ctx, &format!("module namespace error: {e}")),
+          },
+          on_failed,
+        );
       })
       .await;
   }
@@ -457,6 +481,10 @@ impl FluxEngine {
     // channel and the release notification; an exec closure re-arms it.
     let mut runtime_drained = false;
     loop {
+      // A turn of this loop: what waits on one (a settle, see
+      // `PendingOps::settled`) is woken from here, outside any pass over
+      // the engine's tasks.
+      pending.turn();
       // Register for the release notification before re-checking the count:
       // Notify stores no permit, so a release landing between the check and
       // the await would otherwise be lost and park the loop for good.
@@ -527,20 +555,22 @@ fn flush_rejections(rejections: &plugins::RejectionLog, logger: &Logger, on_unca
   }
 }
 
-/// Run `f` once `promise` fulfills (a rejection is somebody else's report).
-/// The rejection is observed here all the same, with a handler that does
-/// nothing: `then` derives a promise that rejects along with `promise`, and
-/// with no handler of its own that one would be reported as unhandled, the
-/// same error a second time.
-fn on_fulfilled<'js, F>(ctx: &Ctx<'js>, promise: rquickjs::Promise<'js>, f: F)
+/// Run `fulfilled` once `promise` fulfills, `rejected` once it rejects. The
+/// rejection itself is somebody else's report (`report_rejection`); it has
+/// to be observed here all the same: `then` derives a promise that rejects
+/// along with `promise`, and with no handler of its own that one would be
+/// reported as unhandled, the same error a second time.
+fn on_settled<'js, F, E>(ctx: &Ctx<'js>, promise: rquickjs::Promise<'js>, fulfilled: F, rejected: E)
 where
   F: FnOnce(Ctx<'js>) + 'js,
+  E: FnOnce(Ctx<'js>) + 'js,
 {
   use rquickjs::function::{OnceFn, This};
   use rquickjs::Function;
 
-  let handlers = Function::new(ctx.clone(), OnceFn::from(move |ctx: Ctx<'js>| f(ctx)))
-    .and_then(|fulfilled| Function::new(ctx.clone(), || {}).map(|rejected| (fulfilled, rejected)));
+  let handlers = Function::new(ctx.clone(), OnceFn::from(move |ctx: Ctx<'js>| fulfilled(ctx))).and_then(|fulfilled| {
+    Function::new(ctx.clone(), OnceFn::from(move |ctx: Ctx<'js>| rejected(ctx))).map(|rejected| (fulfilled, rejected))
+  });
   let (fulfilled, rejected) = match handlers {
     Ok(handlers) => handlers,
     Err(e) => return ctx.logger().error(&format!("failed to build fulfillment handler: {e}")),

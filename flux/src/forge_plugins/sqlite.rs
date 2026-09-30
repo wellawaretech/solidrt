@@ -80,7 +80,7 @@ use rquickjs::{Array, Class, Ctx, Exception, Function, JsLifetime, Value};
 
 use crate::logger::report_uncaught;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{with_pending, OptArg};
+use crate::plugins::marshal::{with_in_flight, OptArg};
 use crate::plugins::value::{self, Neutral};
 use forge::sqlite::{SqlValue, SqliteConnection};
 
@@ -107,7 +107,7 @@ impl Database {
     path: String,
     mode: OptArg<String>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Database>>>> {
-    Ok(with_pending(&ctx, async move { SqliteConnection::open(path, mode.0).await.map(|conn| Database { conn }) }))
+    Ok(with_in_flight(&ctx, "sqlite", async move { SqliteConnection::open(path, mode.0).await.map(|conn| Database { conn }) }))
   }
 
   /// Subscribe to writes on this connection. After each command that changed
@@ -121,7 +121,7 @@ impl Database {
   /// flips a flag: the parked task stops calling immediately and unwinds on
   /// the next write event or on close. The task does not hold the engine loop
   /// open: write events only follow commands, and each in-flight command
-  /// already holds via `with_pending`.
+  /// already holds via `with_in_flight`.
   ///
   /// Contract (see the type docs for the full list): only this connection's
   /// writes are seen; WITHOUT ROWID tables do not report; a rolled-back
@@ -167,7 +167,7 @@ impl Database {
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Neutral>>>> {
     let conn = self.conn.clone();
     let bound = extract_params(&ctx, params.0)?;
-    Ok(with_pending(&ctx, async move { conn.run(sql, bound, false).await.map(|r| Neutral(r.into())) }))
+    Ok(with_in_flight(&ctx, "sqlite", async move { conn.run(sql, bound, false).await.map(|r| Neutral(r.into())) }))
   }
 
   /// Run a batch of statements (separated by `;`) with no parameters. Intended
@@ -178,7 +178,7 @@ impl Database {
     sql: String,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<()>>>> {
     let conn = self.conn.clone();
-    Ok(with_pending(&ctx, async move { conn.exec(sql).await }))
+    Ok(with_in_flight(&ctx, "sqlite", async move { conn.exec(sql).await }))
   }
 
   /// Run a batch of `[sql, params]` statements in a single transaction. All run
@@ -191,7 +191,7 @@ impl Database {
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Neutral>>>> {
     let parsed = extract_statements(&ctx, statements)?;
     let conn = self.conn.clone();
-    Ok(with_pending(&ctx, async move { conn.transaction(parsed).await.map(|t| Neutral(t.into())) }))
+    Ok(with_in_flight(&ctx, "sqlite", async move { conn.transaction(parsed).await.map(|t| Neutral(t.into())) }))
   }
 
   /// Close the connection, releasing it. Safe to call more than once; later
@@ -201,7 +201,7 @@ impl Database {
     ctx: Ctx<'js>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<()>>>> {
     let conn = self.conn.clone();
-    Ok(with_pending(&ctx, async move {
+    Ok(with_in_flight(&ctx, "sqlite", async move {
       conn.close().await;
       Ok::<(), String>(())
     }))
@@ -229,7 +229,7 @@ impl Statement {
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Vec<String>>>>> {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
-    Ok(with_pending(&ctx, async move { conn.read_set(sql).await }))
+    Ok(with_in_flight(&ctx, "sqlite", async move { conn.read_set(sql).await }))
   }
 
   /// All matching rows, as an array of plain objects.
@@ -241,7 +241,7 @@ impl Statement {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
     let bound = extract_params(&ctx, params.0)?;
-    Ok(with_pending(&ctx, async move { conn.query(sql, bound, true).await.map(|r| Neutral(r.into())) }))
+    Ok(with_in_flight(&ctx, "sqlite", async move { conn.query(sql, bound, true).await.map(|r| Neutral(r.into())) }))
   }
 
   /// The first matching row as a plain object, or `undefined` if there are none.
@@ -253,7 +253,7 @@ impl Statement {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
     let bound = extract_params(&ctx, params.0)?;
-    Ok(with_pending(&ctx, async move { conn.get(sql, bound, true).await.map(|r| r.into_value().map(Neutral)) }))
+    Ok(with_in_flight(&ctx, "sqlite", async move { conn.get(sql, bound, true).await.map(|r| r.into_value().map(Neutral)) }))
   }
 
   /// Execute as a write. Resolves to `{ changes, lastInsertRowid }`.
@@ -265,7 +265,7 @@ impl Statement {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
     let bound = extract_params(&ctx, params.0)?;
-    Ok(with_pending(&ctx, async move { conn.run(sql, bound, true).await.map(|r| Neutral(r.into())) }))
+    Ok(with_in_flight(&ctx, "sqlite", async move { conn.run(sql, bound, true).await.map(|r| Neutral(r.into())) }))
   }
 }
 

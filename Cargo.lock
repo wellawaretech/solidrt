@@ -1107,6 +1107,7 @@ dependencies = [
  "libc",
  "log",
  "rquickjs",
+ "serde_json",
  "taffy",
  "tokio",
 ]

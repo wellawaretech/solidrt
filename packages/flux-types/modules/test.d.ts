@@ -65,6 +65,25 @@ declare module "flux:test" {
    */
   export function expect(received: unknown): Matchers
 
+  /**
+   * Fulfills once nothing the test started is still in flight: work that
+   * completes by itself (a fetch, a body or file read, a query, a connect,
+   * a call into an isolate) has landed, and what it woke has run and
+   * started nothing more. For work a test set off without holding its
+   * promise; awaiting the promise itself is the direct way when there is
+   * one.
+   *
+   * What stands is not waited for: a listening server, an open socket or a
+   * read waiting on its peer, a running child process, an event listener,
+   * a timer. A test that wants a timer to fire waits for it itself.
+   *
+   * @example
+   * save(record) // writes in the background
+   * await settle()
+   * expect(await file(path).text()).toBe(expected)
+   */
+  export function settle(): Promise<void>
+
   export interface Matchers {
     /** The same matchers, inverted: each throws when it does hold. */
     not: Matchers

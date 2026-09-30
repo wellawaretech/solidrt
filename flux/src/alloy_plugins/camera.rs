@@ -23,6 +23,8 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
 
 struct PendingOpen {
   session: u64,
+  // The open is work in flight until the device answers (see `tick`).
+  _hold: crate::pending::Hold,
   resolve: Persistent<Function<'static>>,
   reject: Persistent<Function<'static>>,
 }
@@ -135,6 +137,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
     Ok(session) => {
       state.0.pending.borrow_mut().push(PendingOpen {
         session,
+        _hold: crate::pending::PendingOps::of(&ctx).in_flight("camera open"),
         resolve: Persistent::save(&ctx, resolve),
         reject: Persistent::save(&ctx, reject),
       });

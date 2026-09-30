@@ -4,7 +4,8 @@
 
 Exposes the running app to a coding agent over MCP: logs (source-mapped back
 to your TSX), stats (and the on-screen overlay), the live render tree,
-screenshots and texture readback, GPU resources, input injection, a
+screenshots and texture readback, GPU resources, input injection, a wait
+for the app to come to rest (`settle`), a
 virtual-time transport (`step_frames`, `set_time_scale`), reload and load, a
 mute on the user's own input while the agent measures or tests
 (`mute_user_input`/`unmute_user_input`), a pause on reload-on-save while it

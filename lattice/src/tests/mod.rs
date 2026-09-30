@@ -1,4 +1,4 @@
-#[cfg(feature = "go")]
+#[cfg(any(feature = "go", feature = "test"))]
 mod input;
 mod fonts;
 mod frame_history;

@@ -106,7 +106,7 @@ pub struct QueryHandles {
 /// calling (mixed-version fleets are normal). Keep in sync with the query
 /// match in `try_serve`.
 const QUERY_KINDS: &[&str] =
-  &["clock", "input", "stats", "tree", "snapshot", "gpu", "texture", "buffer", "debug_list", "debug_call", "link", "location"];
+  &["clock", "input", "settle", "stats", "tree", "snapshot", "gpu", "texture", "buffer", "debug_list", "debug_call", "link", "location"];
 
 #[cfg(not(target_os = "android"))]
 const SERVICE_TYPE: &str = "_solidrt._tcp.local.";
@@ -686,7 +686,7 @@ async fn try_serve(
                 // sequences run on their own task so a hold or delay never
                 // blocks this loop; the reply follows the last event so a
                 // caller knows the gesture has fully entered the pipeline.
-                match parse_input_events(json.get("events")) {
+                match crate::input_plan::plan(json.get("events"), CONTROL_FRAME_MS) {
                   Ok(seq) => {
                     let delivered = seq.len();
                     let input_tx = flags.input_tx.clone();
@@ -694,12 +694,15 @@ async fn try_serve(
                     let resampler = flags.resampler.clone();
                     let reply_tx = queries.outbound_tx.clone();
                     tokio::spawn(async move {
-                      for (delay_ms, step) in seq {
-                        if delay_ms > 0 {
-                          tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                      for crate::input_plan::Step { wait, inject } in seq {
+                        // A step that needs a frame ahead of it gets a
+                        // frame interval: there is no frame to wait on here.
+                        let wait_ms = (wait.ms as f64).max(wait.frames as f64 * CONTROL_FRAME_MS);
+                        if wait_ms > 0.0 {
+                          tokio::time::sleep(Duration::from_secs_f64(wait_ms / 1000.0)).await;
                         }
-                        match step {
-                          Injected::Event(event) => {
+                        match inject {
+                          crate::input_plan::Injected::Event(event) => {
                             // Producer-side resampler feed, mirroring the alloy
                             // pump (see DevFlags::resampler): moves are consumed
                             // here and dispatch from the frame verb's samples.
@@ -710,7 +713,7 @@ async fn try_serve(
                               return;
                             }
                           }
-                          Injected::Gamepad(cmd) => {
+                          crate::input_plan::Injected::Gamepad(cmd) => {
                             if alloy_cmd_tx.send(alloy::AlloyCommand::Gamepad(cmd)).is_err() {
                               return;
                             }
@@ -724,6 +727,53 @@ async fn try_serve(
                   }
                   Err(e) => {
                     let _ = client.send(tokio_websockets::Message::text(error_reply(id, &e))).await;
+                  }
+                }
+              }
+              Some("settle") => {
+                // Wait for the app to come to rest (settle.rs) and say
+                // whether it did: the condition an agent waits on in place
+                // of a sleep. The wait runs as a task of the engine, on the
+                // display's own frames, bounded by `maxMs` of wall time;
+                // what is left when the cap passes comes back in the reply.
+                let max_ms = json.get("maxMs").and_then(|m| m.as_f64()).unwrap_or(crate::settle::DEFAULT_MAX_MS);
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) if max_ms.is_finite() && max_ms >= 0.0 => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let task_ctx = ctx.clone();
+                      ctx.spawn(async move {
+                        let started = std::time::Instant::now();
+                        let cap = crate::settle::Cap::Wall(Duration::from_secs_f64(max_ms / 1000.0));
+                        let left = crate::settle::settle(&task_ctx, cap, None).await.err();
+                        let in_flight: serde_json::Map<String, serde_json::Value> = left
+                          .iter()
+                          .flat_map(|left| left.in_flight.iter())
+                          .map(|(kind, count)| (kind.to_string(), serde_json::json!(count)))
+                          .collect();
+                        let reply = serde_json::json!({
+                          "type": "result",
+                          "id": id,
+                          "data": {
+                            "settled": left.is_none(),
+                            "waitedMs": started.elapsed().as_secs_f64() * 1000.0,
+                            "inFlight": in_flight,
+                            "demand": left.as_ref().map(|left| left.demand.clone()).unwrap_or_default(),
+                            "timerDue": left.as_ref().is_some_and(|left| left.timer_due),
+                          },
+                        })
+                        .to_string();
+                        let _ = reply_tx.send(reply);
+                      });
+                    });
+                  }
+                  Some(_) => {
+                    let e = "settle: maxMs must be a non-negative number of milliseconds";
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, e))).await;
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
                   }
                 }
               }
@@ -790,12 +840,16 @@ async fn try_serve(
                 let depth = json.get("depth").and_then(|n| n.as_u64()).map(|n| n as usize);
                 let search = json.get("query").and_then(|q| q.as_str()).map(str::to_string);
                 let props = json.get("props").and_then(|p| p.as_bool()).unwrap_or(false);
+                // `at`: the nodes a pointer at that window point reaches,
+                // instead of a snapshot or a search.
+                let coordinate = |name: &str| json.get("at").and_then(|at| at.get(name)).and_then(|v| v.as_f64());
+                let at = coordinate("x").zip(coordinate("y")).map(|(x, y)| (x as f32, y as f32));
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     eh.exec(move |ctx| {
-                      let _ = reply_tx.send(tree_reply(&ctx, id, root, depth, search.as_deref(), props));
+                      let _ = reply_tx.send(tree_reply(&ctx, id, root, depth, search.as_deref(), at, props));
                     });
                   }
                   None => {
@@ -994,216 +1048,10 @@ fn error_reply(id: u64, message: &str) -> String {
   serde_json::json!({"type": "result", "id": id, "error": message}).to_string()
 }
 
-/// Reserved pointer id for injected pointer events: far outside anything SDL
-/// hands out, so a synthetic pointer never aliases a live one in the router
-/// or the runner's input state.
-const SYNTHETIC_POINTER_ID: u64 = 1 << 60;
-/// Per-event cap on `delayMs`/`holdMs` and whole-sequence duration cap for
-/// `input` queries, bounding how long a sequence task can run. The dev server
-/// sizes its query timeout from the same request, so these two never race.
-const INPUT_DELAY_MAX_MS: u64 = 5000;
-const INPUT_TOTAL_MAX_MS: u64 = 30_000;
-/// Highest slot a synthetic gamepad may name: a cap on the slot vector a
-/// driven session can grow, well past any couch.
-const GAMEPAD_SLOT_MAX: u64 = 16;
-
-/// One step of an `input` query's plan: an event for the UI thread's input
-/// channel, or a synthetic-gamepad command for the alloy loop, where the
-/// pads live.
-pub(crate) enum Injected {
-  Event(alloy::AlloyEvent),
-  Gamepad(alloy::GamepadCommand),
-}
-
-/// Parse an `input` query's `events` array into a flat send plan of
-/// (delay-before-send ms, step). A `tap` expands to down + up with its
-/// `holdMs` as the up's delay, and a gamepad `set` with `holdMs` to the
-/// state + the neutral state after it. Everything is validated upfront:
-/// any invalid event rejects the whole sequence before a single event is
-/// sent.
-pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<Vec<(u64, Injected)>, String> {
-  use alloy::{AlloyEvent, GamepadCommand, Modifiers, PointerType};
-  let arr = events.and_then(|e| e.as_array()).ok_or("events must be an array")?;
-  if arr.is_empty() {
-    return Err("events must not be empty".into());
-  }
-  let mut out = Vec::new();
-  let mut total: u64 = 0;
-  for (i, ev) in arr.iter().enumerate() {
-    let field_ms = |name: &str| -> Result<u64, String> {
-      match ev.get(name) {
-        None => Ok(0),
-        Some(v) => match v.as_u64() {
-          Some(ms) if ms <= INPUT_DELAY_MAX_MS => Ok(ms),
-          _ => Err(format!("events[{i}]: {name} must be an integer 0..={INPUT_DELAY_MAX_MS}")),
-        },
-      }
-    };
-    let str_field = |name: &str| ev.get(name).and_then(|v| v.as_str());
-    let num_field = |name: &str| -> Result<f32, String> {
-      ev.get(name)
-        .and_then(|v| v.as_f64())
-        .filter(|v| v.is_finite())
-        .map(|v| v as f32)
-        .ok_or_else(|| format!("events[{i}]: {name} must be a finite number"))
-    };
-    let flag = |name: &str| ev.get(name).and_then(|v| v.as_bool()).unwrap_or(false);
-    let modifiers = Modifiers { shift: flag("shift"), ctrl: flag("ctrl"), alt: flag("alt"), meta: flag("meta") };
-    let delay = field_ms("delayMs")?;
-    let hold = field_ms("holdMs")?;
-    let ty = str_field("type").ok_or_else(|| format!("events[{i}]: missing type"))?;
-    let action = str_field("action");
-    let holds = action == Some("tap") || (ty == "gamepad" && action == Some("set"));
-    if ev.get("holdMs").is_some() && !holds {
-      return Err(format!("events[{i}]: holdMs only applies to action \"tap\" and a gamepad \"set\""));
-    }
-    let mut push = |delay: u64, event: AlloyEvent| out.push((delay, Injected::Event(event)));
-    match ty {
-      "key" => {
-        let key = str_field("key")
-          .filter(|k| !k.is_empty())
-          .ok_or_else(|| format!("events[{i}]: key events need a non-empty key name"))?;
-        let make = |down: bool| AlloyEvent::Key {
-          down,
-          key: key.to_string(),
-          code: alloy::w3c_code_for_key(key),
-          modifiers,
-          repeat: false,
-        };
-        match action {
-          Some("down") => push(delay, make(true)),
-          Some("up") => push(delay, make(false)),
-          Some("tap") => {
-            push(delay, make(true));
-            push(hold, make(false));
-          }
-          _ => return Err(format!("events[{i}]: key action must be down, up or tap")),
-        }
-      }
-      "pointer" => {
-        let x = num_field("x")?;
-        let y = num_field("y")?;
-        let pointer_type = match str_field("pointerType") {
-          None | Some("mouse") => PointerType::Mouse,
-          Some("touch") => PointerType::Touch,
-          Some(_) => return Err(format!("events[{i}]: pointerType must be mouse or touch")),
-        };
-        let button = match ev.get("button") {
-          None => 0u8,
-          Some(v) => match v.as_u64() {
-            Some(b) if b <= 4 => b as u8,
-            _ => return Err(format!("events[{i}]: button must be an integer 0..=4")),
-          },
-        };
-        let down =
-          || AlloyEvent::PointerDown { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, button, x, y, modifiers };
-        let up = || AlloyEvent::PointerUp { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, button, x, y, modifiers };
-        // No hardware delta for synthetic moves: movement derives from the
-        // position diff, the honest synthetic delta.
-        let mv =
-          || AlloyEvent::PointerMove { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, x, y, rel: None, modifiers };
-        match action {
-          Some("move") => push(delay, mv()),
-          Some("down") => push(delay, down()),
-          Some("up") => push(delay, up()),
-          Some("tap") => {
-            push(delay, down());
-            push(hold, up());
-          }
-          _ => return Err(format!("events[{i}]: pointer action must be down, up, move or tap")),
-        }
-      }
-      "wheel" => {
-        let x = num_field("x")?;
-        let y = num_field("y")?;
-        let delta_x = num_field("deltaX")?;
-        let delta_y = num_field("deltaY")?;
-        push(
-          delay,
-          AlloyEvent::Wheel {
-            pointer_id: SYNTHETIC_POINTER_ID,
-            pointer_type: PointerType::Mouse,
-            x,
-            y,
-            delta_x,
-            delta_y,
-            modifiers,
-          },
-        );
-      }
-      "text" => {
-        let text = str_field("text")
-          .filter(|t| !t.is_empty())
-          .ok_or_else(|| format!("events[{i}]: text events need a non-empty text"))?;
-        push(delay, AlloyEvent::TextInput { text: text.to_string() });
-      }
-      "gamepad" => {
-        // A synthetic pad: level state held until the next set, names
-        // from the mapped vocabulary (see alloy::gamepad).
-        let slot_field = || -> Result<usize, String> {
-          ev.get("slot")
-            .and_then(|v| v.as_u64())
-            .filter(|s| *s < GAMEPAD_SLOT_MAX)
-            .map(|s| s as usize)
-            .ok_or_else(|| format!("events[{i}]: slot must be an integer 0..{GAMEPAD_SLOT_MAX}"))
-        };
-        let cmd = match action {
-          Some("connect") => {
-            let slot = if ev.get("slot").is_some() { Some(slot_field()?) } else { None };
-            let name = str_field("name").filter(|n| !n.is_empty()).unwrap_or("Synthetic gamepad").to_string();
-            GamepadCommand::Connect { slot, name }
-          }
-          Some("set") => {
-            let slot = slot_field()?;
-            let mut buttons = Vec::new();
-            if let Some(list) = ev.get("buttons") {
-              let list = list.as_array().ok_or_else(|| format!("events[{i}]: buttons must be an array of names"))?;
-              for b in list {
-                let name = b
-                  .as_str()
-                  .and_then(alloy::synthetic_button_name)
-                  .ok_or_else(|| format!("events[{i}]: unknown gamepad button {b} (south, east, west, north, back, guide, start, leftStick, rightStick, leftShoulder, rightShoulder, dpadUp, dpadDown, dpadLeft, dpadRight)"))?;
-                if !buttons.contains(&name) {
-                  buttons.push(name);
-                }
-              }
-            }
-            let mut axes = Vec::new();
-            if let Some(map) = ev.get("axes") {
-              let map = map.as_object().ok_or_else(|| format!("events[{i}]: axes must be an object of name to value"))?;
-              for (name, value) in map {
-                let name = alloy::synthetic_axis_name(name).ok_or_else(|| {
-                  format!("events[{i}]: unknown gamepad axis {name} (leftX, leftY, rightX, rightY, leftTrigger, rightTrigger)")
-                })?;
-                let value = value
-                  .as_f64()
-                  .filter(|v| v.is_finite() && (-1.0..=1.0).contains(v))
-                  .ok_or_else(|| format!("events[{i}]: axis {name} must be a number in -1..1"))?;
-                axes.push((name, value as f32));
-              }
-            }
-            if ev.get("holdMs").is_some() {
-              out.push((delay, Injected::Gamepad(GamepadCommand::Set { slot, buttons, axes })));
-              GamepadCommand::Set { slot, buttons: Vec::new(), axes: Vec::new() }
-            } else {
-              GamepadCommand::Set { slot, buttons, axes }
-            }
-          }
-          Some("disconnect") => GamepadCommand::Disconnect { slot: slot_field()? },
-          _ => return Err(format!("events[{i}]: gamepad action must be connect, set or disconnect")),
-        };
-        let at = if ev.get("holdMs").is_some() { hold } else { delay };
-        out.push((at, Injected::Gamepad(cmd)));
-      }
-      _ => return Err(format!("events[{i}]: type must be key, pointer, wheel, text or gamepad")),
-    }
-    total += delay + hold;
-    if total > INPUT_TOTAL_MAX_MS {
-      return Err(format!("Sequence too long: delays and holds total over {INPUT_TOTAL_MAX_MS} ms"));
-    }
-  }
-  Ok(out)
-}
+/// The frame interval an input plan is run at from the control API (see
+/// input_plan.rs): one refresh of a 60 Hz display, the rate apps are built
+/// for. A faster display only gets its moves resampled.
+const CONTROL_FRAME_MS: f64 = 1000.0 / 60.0;
 
 /// Default window the stats summary covers when the query names none.
 const STATS_WINDOW_DEFAULT_MS: f64 = 5000.0;
@@ -1421,25 +1269,37 @@ const TREE_MATCH_LIMIT: usize = 100;
 
 /// Snapshot the render tree and encode it. With
 /// `search`, reply with the matching nodes (id paths included) instead of a
-/// subtree. Runs on the JS thread (see the query handling above).
+/// subtree; with `at`, with the nodes a pointer at that point reaches, root
+/// first (`hit`, empty when nothing is hit). Runs on the JS thread (see the
+/// query handling above).
 fn tree_reply(
   ctx: &flux::rquickjs::Ctx<'_>,
   id: u64,
   root: Option<u64>,
   depth: Option<usize>,
   search: Option<&str>,
+  at: Option<(f32, f32)>,
   props: bool,
 ) -> String {
   let reply = flux::gui::tree::with_tree(ctx, |tree| {
     let props_tree = props.then_some(tree);
+    if let Some((x, y)) = at {
+      let hit: Vec<_> = tree
+        .hit_path(alloy::rendertree::Point::new(x, y))
+        .into_iter()
+        .filter_map(|node| tree.snapshot_from(Some(node), Some(0)))
+        .map(|node| flux::gui::inspect::node_record(&node, props_tree))
+        .collect();
+      return serde_json::json!({"type": "result", "id": id, "data": {"hit": hit}}).to_string();
+    }
     if let Some(needle) = search {
       return match tree.snapshot_matches(root, needle, TREE_MATCH_LIMIT) {
         Some(matches) => {
           let entries: Vec<_> = matches
             .iter()
             .map(|m| {
-              let mut obj = node_json(&m.node, props_tree);
-              let map = obj.as_object_mut().expect("node_json is an object");
+              let mut obj = flux::gui::inspect::node_record(&m.node, props_tree);
+              let map = obj.as_object_mut().expect("a node record is an object");
               map.remove("children");
               map.insert("path".into(), m.path.clone().into());
               obj
@@ -1455,7 +1315,7 @@ fn tree_reply(
       };
     }
     match tree.snapshot_from(root, depth) {
-      Some(node) => serde_json::json!({"type": "result", "id": id, "data": node_json(&node, props_tree)}).to_string(),
+      Some(node) => serde_json::json!({"type": "result", "id": id, "data": flux::gui::inspect::node_record(&node, props_tree)}).to_string(),
       None => match root {
         Some(r) => error_reply(id, &format!("no node with id {r}")),
         None => error_reply(id, "no render tree (the app has not rendered)"),
@@ -2075,120 +1935,5 @@ fn debug_call_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, name: &str, args: Op
         ),
       }
     }
-  }
-}
-
-/// One node of the `/tree` control endpoint's record. What each field
-/// means is documented once, in packages/cli/agents/debugging.md ("The
-/// control API without MCP", the `/tree` entry); a field added here is
-/// added there. `props`, when set, is the live tree, and the fields that
-/// need it (`props`, `quad`, `exiting`/`exit`, `slide`) come from it.
-fn node_json(
-  node: &alloy::rendertree::NodeSnapshot,
-  props: Option<&alloy::rendertree::RenderTree>,
-) -> serde_json::Value {
-  let mut obj = serde_json::json!({
-    "id": node.id,
-    "kind": node.kind,
-    "x": round2(node.x),
-    "y": round2(node.y),
-    "width": round2(node.width),
-    "height": round2(node.height),
-  });
-  let map = obj.as_object_mut().expect("node_json is an object");
-  if node.detached {
-    map.insert("detached".into(), true.into());
-  }
-  if let Some(text) = &node.text {
-    map.insert("text".into(), text.clone().into());
-  }
-  if let Some(tree) = props {
-    if let Some(element) = tree.try_node(node.id) {
-      let values = flux::gui::read_jsx(element);
-      if !values.is_empty() {
-        let mut props_map = serde_json::Map::with_capacity(values.len());
-        for (name, value) in values {
-          props_map.insert(name.into(), read_value_json(value));
-        }
-        map.insert("props".into(), props_map.into());
-      }
-      // An exit in flight: the root carries `exiting`, and every node in
-      // the cascade names the motion in force per exiting property, so a
-      // per-direction curve is a one-line read rather than a curve fit on
-      // stepped values.
-      if element.lifecycle.exiting {
-        map.insert("exiting".into(), true.into());
-      }
-      let exits: serde_json::Map<String, serde_json::Value> = tree
-        .exit_motions(node.id)
-        .into_iter()
-        .map(|(prop, exit)| {
-          let mut motion = exit.spec.to_string();
-          if exit.delay_ms > 0.0 {
-            motion.push_str(&format!(" delay {}ms", exit.delay_ms));
-          }
-          (flux::gui::anim_prop_name(prop).to_string(), motion.into())
-        })
-        .collect();
-      if !exits.is_empty() {
-        map.insert("exit".into(), exits.into());
-      }
-      // A layout slide in flight: the box above is the one the node is
-      // painted at, `slide` what it has still to cover to its solved box
-      // (offset and growth), so a slide and a jump read apart frame by
-      // frame.
-      if let Some(remaining) = tree.slide_remaining(node.id) {
-        let (offset, growth) = (remaining.offset, remaining.growth);
-        map.insert(
-          "slide".into(),
-          serde_json::json!({ "x": round2(offset.x), "y": round2(offset.y), "w": round2(growth.x), "h": round2(growth.y) }),
-        );
-      }
-    }
-    if let Some(quad) = tree.painted_quad(node.id) {
-      if !quad_is_aabb(&quad) {
-        let flat: Vec<serde_json::Value> = quad.iter().flat_map(|p| [round2(p.x).into(), round2(p.y).into()]).collect();
-        map.insert("quad".into(), flat.into());
-      }
-    }
-  }
-  if !node.children.is_empty() {
-    map.insert("children".into(), node.children.iter().map(|c| node_json(c, props)).collect::<Vec<_>>().into());
-  }
-  // A depth cap cut this node's children off: surface how many exist so a
-  // reader knows to descend with root=<id>.
-  if node.children.len() < node.child_count {
-    map.insert("childCount".into(), node.child_count.into());
-  }
-  obj
-}
-
-/// True when the painted quad is still the axis-aligned box the snapshot
-/// already reports (top-left, top-right, bottom-right, bottom-left of its own
-/// AABB) - the untransformed common case, where emitting it would be noise.
-fn quad_is_aabb(quad: &[alloy::rendertree::Point; 4]) -> bool {
-  const EPS: f32 = 0.01;
-  let eq = |a: f32, b: f32| (a - b).abs() < EPS;
-  let (min_x, max_x) =
-    (quad.iter().map(|p| p.x).fold(f32::MAX, f32::min), quad.iter().map(|p| p.x).fold(f32::MIN, f32::max));
-  let (min_y, max_y) =
-    (quad.iter().map(|p| p.y).fold(f32::MAX, f32::min), quad.iter().map(|p| p.y).fold(f32::MIN, f32::max));
-  eq(quad[0].x, min_x)
-    && eq(quad[0].y, min_y)
-    && eq(quad[1].x, max_x)
-    && eq(quad[1].y, min_y)
-    && eq(quad[2].x, max_x)
-    && eq(quad[2].y, max_y)
-    && eq(quad[3].x, min_x)
-    && eq(quad[3].y, max_y)
-}
-
-fn read_value_json(value: flux::gui::ReadValue) -> serde_json::Value {
-  match value {
-    flux::gui::ReadValue::Num(n) => round2(n as f32).into(),
-    flux::gui::ReadValue::Int(n) => n.into(),
-    flux::gui::ReadValue::Bool(b) => b.into(),
-    flux::gui::ReadValue::Str(s) => s.into(),
-    flux::gui::ReadValue::Nums(list) => list.into_iter().map(|n| round2(n as f32)).collect::<Vec<_>>().into(),
   }
 }

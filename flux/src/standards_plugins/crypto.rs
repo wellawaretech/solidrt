@@ -8,7 +8,7 @@
 
 use rquickjs::{function::MutFn, promise::Promised, ArrayBuffer, Ctx, Function, IntoJs, Object, TypedArray, Value};
 
-use crate::plugins::marshal::{with_pending, CopyBytes};
+use crate::plugins::marshal::{with_in_flight, CopyBytes};
 
 /// A digest as an `ArrayBuffer` (what the standard resolves to).
 struct DigestBytes(Vec<u8>);
@@ -47,7 +47,7 @@ pub fn init_crypto(ctx: &Ctx<'_>) {
     ctx.clone(),
     MutFn::from(move |ctx: Ctx<'_>, algorithm: Value<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
       let result = digest(&algorithm, &data);
-      Ok(with_pending(&ctx, async move { result }))
+      Ok(with_in_flight(&ctx, "digest", async move { result }))
     }),
   )
   .expect("failed to create crypto.subtle.digest");

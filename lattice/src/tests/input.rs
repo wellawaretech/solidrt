@@ -1,42 +1,105 @@
-use crate::go::{parse_input_events, Injected};
+// The input plan (input_plan.rs): the `/input` event shape expanded into
+// the events that are sent and what passes between them.
+
+use crate::input_plan::{plan, Injected, Step, Wait};
 use alloy::{AlloyEvent, GamepadCommand, PointerType};
 use serde_json::json;
 
-fn parse(v: serde_json::Value) -> Result<Vec<(u64, Injected)>, String> {
-  parse_input_events(Some(&v))
+// The frame interval the plans here are made for.
+const FRAME_MS: f64 = 1000.0 / 60.0;
+
+fn parse(v: serde_json::Value) -> Result<Vec<Step>, String> {
+  plan(Some(&v), FRAME_MS)
 }
 
-fn event(step: &(u64, Injected)) -> (u64, &AlloyEvent) {
-  match &step.1 {
-    Injected::Event(e) => (step.0, e),
+/// A step's event with the milliseconds that pass before it.
+fn event(step: &Step) -> (u64, &AlloyEvent) {
+  match &step.inject {
+    Injected::Event(e) => (step.wait.ms, e),
     Injected::Gamepad(_) => panic!("expected an event step"),
   }
 }
 
-fn pad(step: &(u64, Injected)) -> (u64, &GamepadCommand) {
-  match &step.1 {
-    Injected::Gamepad(c) => (step.0, c),
+fn pad(step: &Step) -> (u64, &GamepadCommand) {
+  match &step.inject {
+    Injected::Gamepad(c) => (step.wait.ms, c),
     Injected::Event(_) => panic!("expected a gamepad step"),
   }
 }
 
+// A mouse is where it presses before it presses: the tap starts with a
+// move to the point, and the down follows a frame later.
 #[test]
-fn pointer_tap_expands_to_down_then_up() {
-  let seq = parse(json!([{ "type": "pointer", "action": "tap", "x": 40.0, "y": 60.5, "holdMs": 120 }]))
+fn a_mouse_tap_is_a_move_a_down_a_frame_later_and_an_up() {
+  let seq = parse(json!([{ "type": "pointer", "action": "tap", "x": 40.0, "y": 60.5, "holdMs": 120, "delayMs": 30 }]))
     .expect("valid tap parses");
-  assert_eq!(seq.len(), 2);
-  let (d0, AlloyEvent::PointerDown { pointer_type, button, x, y, .. }) = event(&seq[0]) else {
-    panic!("first event must be a PointerDown");
+  assert_eq!(seq.len(), 3);
+  let (_, AlloyEvent::PointerMove { x, y, .. }) = event(&seq[0]) else {
+    panic!("first event must be a PointerMove");
   };
-  assert_eq!(d0, 0);
+  assert_eq!((*x, *y), (40.0, 60.5));
+  assert_eq!(seq[0].wait, Wait { ms: 30, frames: 0 });
+  let (_, AlloyEvent::PointerDown { pointer_type, button, x, y, .. }) = event(&seq[1]) else {
+    panic!("second event must be a PointerDown");
+  };
+  assert_eq!(seq[1].wait, Wait { ms: 0, frames: 1 });
   assert_eq!(*pointer_type, PointerType::Mouse);
   assert_eq!(*button, 0);
   assert_eq!((*x, *y), (40.0, 60.5));
-  let (d1, AlloyEvent::PointerUp { x, y, .. }) = event(&seq[1]) else {
-    panic!("second event must be a PointerUp");
+  let (_, AlloyEvent::PointerUp { x, y, .. }) = event(&seq[2]) else {
+    panic!("third event must be a PointerUp");
   };
-  assert_eq!(d1, 120);
+  assert_eq!(seq[2].wait, Wait { ms: 120, frames: 1 });
   assert_eq!((*x, *y), (40.0, 60.5));
+}
+
+// A finger is nowhere before it touches: no move. The up still comes a
+// frame after the down, whatever the hold.
+#[test]
+fn a_touch_tap_is_a_down_and_an_up_a_frame_later() {
+  let seq = parse(json!([{ "type": "pointer", "action": "tap", "x": 1, "y": 2, "pointerType": "touch" }]))
+    .expect("valid tap parses");
+  assert_eq!(seq.len(), 2);
+  assert!(matches!(event(&seq[0]).1, AlloyEvent::PointerDown { pointer_type: PointerType::Touch, .. }));
+  assert_eq!(seq[0].wait, Wait { ms: 0, frames: 0 });
+  assert!(matches!(event(&seq[1]).1, AlloyEvent::PointerUp { .. }));
+  assert_eq!(seq[1].wait, Wait { ms: 0, frames: 1 });
+}
+
+// One move per frame along the line, the last at the end point, then the
+// up there.
+#[test]
+fn a_drag_is_a_down_a_move_per_frame_and_an_up() {
+  let seq = parse(json!([{
+    "type": "pointer", "action": "drag", "x": 10, "y": 20, "to": { "x": 70, "y": 20 },
+    "durationMs": 50, "pointerType": "touch"
+  }]))
+  .expect("valid drag parses");
+  // 50 ms at 60 fps is 3 frames.
+  assert_eq!(seq.len(), 5);
+  assert!(matches!(event(&seq[0]).1, AlloyEvent::PointerDown { .. }));
+  let xs: Vec<f32> = seq[1..4]
+    .iter()
+    .map(|step| match event(step).1 {
+      AlloyEvent::PointerMove { x, .. } => *x,
+      _ => panic!("expected a PointerMove"),
+    })
+    .collect();
+  assert_eq!(xs, vec![30.0, 50.0, 70.0]);
+  assert!(seq[1..].iter().all(|step| step.wait == Wait { ms: 0, frames: 1 }));
+  let (_, AlloyEvent::PointerUp { x, y, .. }) = event(&seq[4]) else {
+    panic!("last event must be a PointerUp");
+  };
+  assert_eq!((*x, *y), (70.0, 20.0));
+  // A mouse drag starts with the move to its start point.
+  let mouse =
+    parse(json!([{ "type": "pointer", "action": "drag", "x": 0, "y": 0, "to": { "x": 9, "y": 0 }, "durationMs": 16 }]))
+      .expect("valid drag parses");
+  assert!(matches!(event(&mouse[0]).1, AlloyEvent::PointerMove { .. }));
+  assert!(matches!(event(&mouse[1]).1, AlloyEvent::PointerDown { .. }));
+  assert_eq!(mouse.len(), 4);
+  let bad = parse(json!([{ "type": "pointer", "action": "drag", "x": 0, "y": 0 }])).err().expect("must reject");
+  assert!(bad.contains("to: { x, y }"), "got {bad}");
 }
 
 #[test]
@@ -68,8 +131,8 @@ fn delays_and_touch_pass_through() {
   ]))
   .expect("drag parses");
   assert_eq!(seq.len(), 3);
-  assert_eq!(seq[0].0, 0);
-  assert_eq!(seq[1].0, 16);
+  assert_eq!(seq[0].wait.ms, 0);
+  assert_eq!(seq[1].wait.ms, 16);
   let (_, AlloyEvent::PointerMove { pointer_type, .. }) = event(&seq[1]) else {
     panic!("second event must be a PointerMove");
   };
@@ -149,6 +212,9 @@ fn invalid_events_reject_the_whole_sequence() {
   let bad = |v: serde_json::Value| parse(v).err().expect("must reject");
   assert!(bad(json!([{ "type": "key", "action": "tap", "key": "w" }, { "type": "warp" }])).contains("events[1]"));
   assert!(bad(json!([{ "type": "key", "action": "press", "key": "w" }])).contains("down, up or tap"));
+  assert!(
+    bad(json!([{ "type": "pointer", "action": "press", "x": 1, "y": 1 }])).contains("down, up, move, tap or drag")
+  );
   assert!(bad(json!([{ "type": "key", "action": "down", "key": "" }])).contains("non-empty key"));
   assert!(bad(json!([{ "type": "pointer", "action": "tap", "x": 1 }])).contains("y must be"));
   assert!(bad(json!([{ "type": "pointer", "action": "down", "x": 1, "y": 1, "holdMs": 10 }])).contains("holdMs"));
@@ -156,7 +222,7 @@ fn invalid_events_reject_the_whole_sequence() {
     .contains("mouse or touch"));
   assert!(bad(json!([{ "type": "key", "action": "tap", "key": "w", "holdMs": 9000 }])).contains("0..=5000"));
   assert!(bad(json!([])).contains("not be empty"));
-  assert!(parse_input_events(None).is_err());
+  assert!(plan(None, FRAME_MS).is_err());
 }
 
 #[test]

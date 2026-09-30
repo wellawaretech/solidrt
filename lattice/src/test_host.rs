@@ -10,9 +10,11 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use alloy::resample::SharedResampler;
 use alloy::AlloyEvent;
 use flux::rquickjs::JsLifetime;
 
+use crate::input_plan::Injected;
 use crate::runtime::EventSender;
 
 /// The frame rate a test steps at unless it sets another: what apps run at
@@ -42,11 +44,20 @@ pub(crate) struct Stepper {
   frame: Arc<AtomicU64>,
   #[qjs(skip_trace)]
   rate: Arc<AtomicU32>,
+  // Where a synthetic pointer's moves go, as a real producer's do (see
+  // alloy's resample.rs): the frame verb samples them.
+  #[qjs(skip_trace)]
+  resampler: SharedResampler,
 }
 
 impl Stepper {
-  pub(crate) fn new(events: EventSender, frame: Arc<AtomicU64>, rate: Arc<AtomicU32>) -> Self {
-    Self { events, frame, rate }
+  pub(crate) fn new(
+    events: EventSender,
+    frame: Arc<AtomicU64>,
+    rate: Arc<AtomicU32>,
+    resampler: SharedResampler,
+  ) -> Self {
+    Self { events, frame, rate, resampler }
   }
 
   /// A new engine starts at frame 0, time 0, on the default rate.
@@ -80,6 +91,29 @@ impl Stepper {
     Ok(())
   }
 
+  /// The frame interval, in ms.
+  pub(crate) fn frame_ms(&self) -> f64 {
+    1000.0 / self.rate() as f64
+  }
+
+  /// Send one step of an input plan into the real pipeline, the way the
+  /// control API does: a down, an up, a key or a wheel enters the UI
+  /// loop's channel and is dispatched on arrival, ahead of the next frame
+  /// the test asks for; a move feeds the resampler and is dispatched with
+  /// that frame.
+  pub(crate) fn inject(&self, step: Injected) -> Result<(), String> {
+    match step {
+      Injected::Event(event) => {
+        let events = self.events.clone();
+        let _ = self.resampler.feed(event, std::time::Instant::now(), |event, at| events.send_at(event, at));
+        Ok(())
+      }
+      // The pads live in alloy's interactive loop, which a test does not
+      // run (okf/plans/test-harness.md, step 4.3).
+      Injected::Gamepad(_) => Err("a synthetic gamepad is not available in a test yet".to_string()),
+    }
+  }
+
   /// Ask for the next frame: the signal the UI loop turns into the frame
   /// verb, at the next frame's virtual time, which is also the process
   /// clock's reading from here (what video is latched against).
@@ -91,5 +125,23 @@ impl Stepper {
     let at = alloy::clock::at(virtual_ns);
     let signal = AlloyEvent::FrameRendered { frame, fps, refreshes: 1, present_at: at, reference: at, grid: at };
     let _ = self.events.send(signal);
+  }
+}
+
+/// Empty the app's sandbox, ahead of every test engine: its data folder
+/// (the working directory, which stays) and its fetch cache. A test then
+/// starts from no stored state, whatever the tests before it wrote; the
+/// file is evaluated after this, so what it opens at module level is opened
+/// in the emptied sandbox.
+pub(crate) fn empty_sandbox(store: &crate::storage::Storage, app_id: &str) {
+  for dir in [store.app_dir(app_id).join("data"), store.cache_dir(app_id)] {
+    let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+    for entry in entries.flatten() {
+      let path = entry.path();
+      let removed = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+      if let Err(e) = removed {
+        log::warn!("[srt] test mode: could not remove {} from the sandbox: {e}", path.display());
+      }
+    }
   }
 }

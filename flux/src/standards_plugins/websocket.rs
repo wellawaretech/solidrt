@@ -61,26 +61,26 @@ impl<'js> WebSocket<'js> {
     let target = parse_ws_url(&url).map_err(|msg| Exception::throw_message(&ctx, &msg))?;
     let socket = ClientSocket::new();
     let handlers: Rc<RefCell<Handlers<'js>>> = Rc::default();
-    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
-    pending.hold();
+    let pending = PendingOps::of(&ctx);
+    let hold = pending.standing("websocket");
     let logger = ctx.logger();
     let dispatch = JsClientDispatch { ctx: ctx.clone(), handlers: handlers.clone(), logger: logger.clone() };
     // The writer is its own task, spawned here (spawning is host-specific)
-    // with its own liveness hold.
+    // with its own standing hold.
     let writer_ctx = ctx.clone();
     let writer_pending = pending.clone();
     let writer_logger = logger.clone();
     let spawn_writer = move |writer: ClientWriter| {
-      writer_pending.hold();
+      let hold = writer_pending.standing("websocket");
       writer_ctx.spawn(async move {
         writer.run(&writer_logger).await;
-        writer_pending.release();
+        drop(hold);
       });
     };
     let task_socket = socket.clone();
     ctx.spawn(async move {
       run_client(task_socket, target, &dispatch, spawn_writer, &logger).await;
-      pending.release();
+      drop(hold);
     });
     Ok(WebSocket { socket, handlers, url })
   }

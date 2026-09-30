@@ -393,7 +393,19 @@ export interface TextEvent {
   text: string
 }
 
-export interface PointerProps {
+export interface NodeProps {
+  /**
+   * A stable name for the node, for whoever has to find it again with
+   * nothing visible to find it by: a test (`find({ label })` from
+   * `@solidrt/core/test`) or a dev tool (the tree record carries it and the
+   * tree query matches it). Never affects layout, paint or input. Prefer
+   * finding a node by its text where it has one: such a test breaks when
+   * what the user sees breaks.
+   */
+  label?: string
+}
+
+export interface PointerProps extends NodeProps {
   onPointerDown?: (event: PointerEvent) => void
   onPointerUp?: (event: PointerEvent) => void
   onPointerMove?: (event: PointerEvent) => void

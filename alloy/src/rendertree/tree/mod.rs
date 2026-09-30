@@ -2,7 +2,7 @@ mod geometry;
 mod inspect;
 mod transitions;
 
-pub use inspect::{NodeMatch, NodeSnapshot};
+pub use inspect::{Match, NodeMatch, NodeQuery, NodeSnapshot};
 pub use transitions::SlideRemaining;
 
 use std::cell::RefCell;

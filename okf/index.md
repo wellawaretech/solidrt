@@ -758,6 +758,12 @@ Shaped, not started.
   partly-built subtree without freeing it, so every retry leaks the elements
   built before the suspend point - and the leak sentinel that catches it names
   the wrong cause.
+- **[An app test cannot choose its window size or display scale](backlog/test-window-size-and-scale.md)** [2026-09-30]
+  Every app test runs at the one surface the dev client was started with
+  (1280x720, scale 1), so a responsive layout, a breakpoint or a display-scale
+  dependent paint cannot be tested; let a test name its size and scale
+  (test(name, fn, { size, scale })), which needs the headless surface rebuilt
+  or sub-sized between engines on all three headless backends.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,

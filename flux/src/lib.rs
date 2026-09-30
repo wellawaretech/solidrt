@@ -25,7 +25,7 @@ pub use forge::fetch::{do_fetch, ResponseData};
 pub use forge::process::{arch, platform};
 pub use forge::seek::{SeekableRead, SeekableReader};
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
-pub use pending::{hold_engine, EngineHold};
+pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
 pub use plugins::js_error::JsResult;
 pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use forge_plugins::process::{ProcessArgs, ProcessExit};
@@ -36,7 +36,7 @@ pub use standards_plugins::headers::header_pairs_from_init;
 pub use standards_plugins::random::seed_random;
 pub use standards_plugins::time::{
   advance_virtual_time, advance_virtual_time_to_now, freeze_wall, install_virtual_time, set_virtual_now_source,
-  timeline_now_ms, Timeline,
+  timeline_now_ms, timer_due, Timeline,
 };
 pub use rquickjs;
 

@@ -20,10 +20,10 @@
 //! key persistence (the caller stores the `secretKey` getter value itself).
 //!
 //! The stream-building paths (`connect`, the `accept` iterator's `next`) keep a
-//! hand-rolled `Promised` rather than `with_pending`: they must build a JS class
+//! hand-rolled `Promised` rather than `with_in_flight`: they must build a JS class
 //! and spawn the writer task, so the future captures `Ctx`. They report errors
 //! with `Exception::throw_message` (a clean `Error`, no `IO Error:` prefix), the
-//! same clean rejection `with_pending`/`JsResult` give the other methods.
+//! same clean rejection `with_in_flight`/`JsResult` give the other methods.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -37,7 +37,7 @@ use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Valu
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg, Step};
+use crate::plugins::marshal::{attach_async_iterator, iter_result, with_in_flight, with_standing, OptArg, Step};
 use crate::standards_plugins::body::{extract_body_value, JsBytes};
 use crate::plugins::value::Neutral;
 use forge::p2p::{decode_hex32, Endpoint, Stream, StreamWriter};
@@ -84,7 +84,7 @@ impl P2pEndpoint {
     opts: OptArg<Object<'js>>,
   ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<P2pEndpoint>>>> {
     let (secret, relay_url, alpns, local, port) = parse_create_opts(&ctx, opts.0)?;
-    Ok(with_pending(&ctx, async move {
+    Ok(with_in_flight(&ctx, "p2p", async move {
       Endpoint::bind(secret, relay_url, alpns, local, port).await.map(|inner| P2pEndpoint { inner })
     }))
   }
@@ -106,7 +106,7 @@ impl P2pEndpoint {
   /// direct addresses, so a peer can `connect` without relying on discovery.
   pub fn ticket<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<String>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { Ok::<String, String>(inner.ticket().await) }))
+    Ok(with_in_flight(&ctx, "p2p", async move { Ok::<String, String>(inner.ticket().await) }))
   }
 
   /// Dial a peer and open one bidirectional stream over `protocol`. `peer` is
@@ -119,12 +119,11 @@ impl P2pEndpoint {
     protocol: String,
   ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, P2pStream>>>>> {
     let inner = self.inner.clone();
-    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+    let hold = PendingOps::of(&ctx).in_flight("p2p connect");
     let ctx2 = ctx.clone();
     Ok(Promised(async move {
-      pending.hold();
       let r = inner.connect(peer, protocol).await;
-      pending.release();
+      drop(hold);
       match r {
         Ok((stream, writer)) => P2pStream::create(&ctx2, stream, writer),
         Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
@@ -142,12 +141,12 @@ impl P2pEndpoint {
     let next_fn = Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<AcceptStep<'js>> {
       let inner = inner.clone();
       let alpn = alpn.clone();
-      let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+      // A pending accept waits on a peer: standing, like the endpoint.
+      let hold = PendingOps::of(&ctx).standing("p2p accept");
       let ctx2 = ctx.clone();
       Ok(Promised(Box::pin(async move {
-        pending.hold();
         let r = inner.accept_one(&alpn).await;
-        pending.release();
+        drop(hold);
         match r {
           Ok(Some((stream, writer))) => {
             let stream = P2pStream::create(&ctx2, stream, writer)?;
@@ -173,13 +172,13 @@ impl P2pEndpoint {
     id: String,
   ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Neutral>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.conn_info(id).await.map(|c| Neutral(c.into())) }))
+    Ok(with_in_flight(&ctx, "p2p", async move { inner.conn_info(id).await.map(|c| Neutral(c.into())) }))
   }
 
   /// Close the endpoint, ending any `accept` iteration.
   pub fn close<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move {
+    Ok(with_in_flight(&ctx, "p2p", async move {
       inner.close().await;
       Ok::<(), String>(())
     }))
@@ -200,12 +199,11 @@ impl P2pStream {
   /// (spawning is host-specific, so it stays in marshalling) and make the
   /// instance async-iterable.
   fn create<'js>(ctx: &Ctx<'js>, inner: Rc<Stream>, writer: StreamWriter) -> rquickjs::Result<Class<'js, P2pStream>> {
-    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+    let hold = PendingOps::of(ctx).standing("p2p stream");
     let logger = ctx.logger();
-    pending.hold();
     ctx.spawn(async move {
       writer.run(&logger).await;
-      pending.release();
+      drop(hold);
     });
 
     let instance = Class::instance(ctx.clone(), P2pStream { inner })?;
@@ -221,7 +219,7 @@ impl P2pStream {
   /// transport only advances as JS iterates.
   pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Step<JsBytes>>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) }))
+    Ok(with_standing(&ctx, "p2p stream read", async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) }))
   }
 
   /// Queue bytes (string or Uint8Array) on the send half.

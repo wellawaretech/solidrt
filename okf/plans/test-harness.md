@@ -17,7 +17,8 @@ Stages 1, 2, 2b and 3 are built and committed; the `test-js` CI job has
 not had its first run. Stage 4 was redesigned on 2026-09-30 under the rule
 "the best solution, not the least effort; no backwards compatibility"
 (D30 to D35, [Stage 4](#stage-4---the-app-layer-redesigned-2026-09-30)),
-and its first two steps are built, uncommitted:
+and its first four steps are built; 4.1 and 4.2 are committed, 4.3 is
+staged and 4.4 sits unstaged on top of it:
 
 - Step 4.1, the test host: every test runs in an engine of its own (D30).
   `flux --test` is the host, `run` and the appended runner lines are gone
@@ -30,20 +31,40 @@ and its first two steps are built, uncommitted:
   back in `packages/core/tests/` as app tests, their thresholds asserted
   to the millisecond.
 
-`bunx srt test` at the repo root: 314 tests in 31 files, about 7.3 s (the
-310 flux tests took about 5 s on one engine per file and 6.5 s on one per
-test). `cargo test -p flux --lib --features test`: 46 tests; alloy 628,
-lattice 64. `srt check` passes for core, cli and router. `srt render`
-still captures, and the interactive client presents and answers `/tree`
-on the rebuilt binary.
+- Step 4.3, the verbs: `app.mount` and `app.load`, locators (`find`,
+  `findAll`, `app.ref()`), reading (`text`, `box`, `props`, `visible`,
+  `record`), input (`tap`, `drag`, `key`, `type`, `input`) through the
+  shared input plan, `label` on every element, the node verbs in flux,
+  and the sandbox emptied per engine. The control API changed with it
+  (D37): a tap's up is a frame after its down, a mouse gesture moves
+  first, `drag` is an action, `/tree?at=x,y` is the hit test as a read,
+  and the tree query matches a label.
+
+- Step 4.4, `settle()`: "the app is at rest" as a runtime facility with
+  three hosts (D39): `settle()` in a flux test, `app.settle()` in an app
+  test, and the control API's `/settle` with the MCP `settle` tool on a
+  running client. Under it, flux's holds on the engine are typed (work in
+  flight or standing), named by kind and released on drop (D40), and the
+  frame protocol records why it asked for the next frame, so a settle
+  that fails says what is left.
+
+`bunx srt test` at the repo root: 334 tests in 34 files, 7 to 11 s
+depending on what else the machine does (the 310 flux tests took about
+5 s on one engine per file and 6.5 s on one per test). `cargo test -p
+flux --lib --features test`: 49 tests (99 with `gui`); alloy 638, lattice
+66; the 21 `flux/tests/` binaries pass on the converted holds. `srt
+check` passes for core, cli and router. On the rebuilt interactive client
+`/settle` was driven through the control API: a running transition named
+by its node, a fetch in flight, a standing `onFrame`.
 
 Nothing is parked any more except the four GPU rigs under `checks/`
 (stage 5).
 
 To pick up, in this order:
 
-1. Step 4.3: the verbs (`mount`, `label`, locators, reading, input).
-2. Steps 4.4 to 4.6 as listed under Stage 4.
+1. What step 4.3 left: see its "Not done" list (`link`, `debug`, the
+   gamepad, the pixel and GPU readers), and what step 4.4 left.
+2. Steps 4.5 and 4.6 as listed under Stage 4.
 3. The first run of the `test-js` job, which is also the first run of
    `srt test` on Windows and macOS: see
    [Stage 3](#stage-3---ci-written-2026-09-30-not-run).
@@ -190,7 +211,7 @@ checked once and fails deterministically.
 **D11. `settle()` is a condition.** It ends when no frame is demanded and
 nothing is in flight, and fails past a cap, which catches a runaway
 `onFrame`. Rejected: a wall-clock wait, which is what `srt render
---settle` is today.
+--settle` is today. Made precise by D39 to D41.
 
 **D12. An action runs the frame it lands in and no more.** Input is
 frame-batched, so the tree is current when the verb returns. A gesture
@@ -422,6 +443,82 @@ freezes the wall and seeds `Math.random`
 playback loop is rebuilt on the stepped mode (render becomes a host that
 steps and captures), so alloy has one headless path. Last in the order,
 once tests have proven the stepped loop.
+
+**D36. `visible` means painted; a covered target fails the tap**
+(2026-09-30, reversing the second half of D12). `visible` is true when the
+node's painted quad, clipped by every clipping ancestor and the window,
+still has area and the opacity multiplied up the chain is above 0: a node
+scrolled out of a ScrollView is not visible. Whether something covers it
+is checked where it matters: `app.tap(locator)` runs the real hit test at
+the point first and throws, naming the node that is there, when the hit
+path does not contain the target. `app.tap({ x, y })` lands on whatever is
+there. Rejected: one loose `visible` (mounted, a box with area, own
+opacity), which reads true under a modal; D12's "a tap lands on whatever
+the hit test finds, a cover included" (a covered button is then a silent
+wrong tap).
+
+**D37. One gesture vocabulary, planned once** (2026-09-30). A test takes
+the `/input` events as they are, and their `delayMs` and `holdMs` are app
+time, which the host turns into frames. The expansion of a gesture into
+events lives in one planner in lattice, shared by the control API and the
+tests, and it takes the frame interval as a parameter. Three rules change
+with it, for the control API too: the up of a tap comes at least one
+frame after its down (a real tap is never 0 ms, and a down and up in one
+batch never render the pressed state); a mouse tap or drag moves to the
+point a frame ahead of the down, so hover is what a real mouse leaves; and
+`drag` is an action of `/input` (`to`, `durationMs`), one move per frame.
+
+**D38. The sandbox is emptied before every engine** (2026-09-30). The
+data folder and the fetch cache, by the host, ahead of each engine of a
+file's run, the listing included. With an engine per test the file is
+evaluated after the wipe, so a database opened at module level is opened
+in the engine that uses it. A flux test gets no sandbox: it runs in its
+package's folder on purpose (relative paths), and none reads or writes
+files today. Window size and display scale per test are split off:
+[test-window-size-and-scale](../backlog/test-window-size-and-scale.md).
+
+**D39. "At rest" is a runtime facility, not a test feature**
+(2026-09-30). One condition, one loop (`lattice/src/settle.rs`), three
+hosts: a test (`app.settle()`; `settle()` from `flux:test` is its flux
+half), the control API (`/settle`, the MCP `settle` tool: what an agent
+waits on in place of a sleep, on the interactive client) and `srt render`
+once playback is on the stepped mode (step 4.6, where the `--settle <ms>`
+wall sleep is deleted, not kept beside it). The loop is native and owns no
+frame source: a stepped host hands it the step, a client on a display
+hands it nothing and the display's frames come by themselves. Rejected:
+the loop as JS in core, which render and the control API would each have
+had to write again.
+
+**D40. A hold on the engine has a class and a kind, and is released on
+drop** (2026-09-30). `PendingOps` was one counter behind hand-paired
+`hold()`/`release()` calls. It now hands out `Hold` guards: `in_flight(kind)`
+for work that completes by itself, `standing(kind)` for what lasts until
+its owner or the outside world ends it. Engine liveness is both, as
+before; settling waits for the first only. The class of a binding is
+decided by one question: does it end without anyone else acting? A read
+on an open stream does not (socket, UDP, p2p, an isolate stream, a
+child's output and exit), so it is standing, like the stream; a response
+body is finite and in flight. A hold is taken where the work is started,
+not inside its future: what a script started is in flight from the call
+on, polled or not, and a future dropped half way releases like one that
+ran to its end. The kinds are counted, so whoever waits can say what for
+("still in flight: 1 fetch, 2 sqlite").
+
+**D41. What settling does with time** (2026-09-30).
+- A timer already due is unsettled, and a frame fires it: on the frame
+  timeline a timer fires with the next frame, so until that comes the app
+  has work waiting that no frame request stands for. Time still passes
+  only through frames. A timer due later is standing; `advance` reaches
+  it.
+- A demanded frame is run, so a running transition is played to its end
+  and the test reads the end state. What demands frames forever (an
+  `onFrame` loop, a looping animation, a playing video) fails at the cap,
+  named.
+- Work in flight is waited for with no app time passing; one that never
+  lands ends at the test's own wall cap.
+- The cap is app time in a test (5000 ms, `app.settle({ maxMs })`), so it
+  means the same at 60 and at 1000 fps, and wall time on a client whose
+  frames the display paces (`/settle?max=`).
 
 ## The test surface
 
@@ -734,27 +831,142 @@ file); `test_module`-style Rust tests of the stepper (it is covered by
 the four app tests); isolates of a test file's project (the bundler
 searches them under the entry's folder, which is `tests/`).
 
-**Step 4.3 - the verbs.** D31, D32. `@solidrt/core/test` (`mount`, the
-`app` object, locators); `label` on host elements (a rendertree property,
-in the `/tree` record and matched by its query, so the MCP tools gain it
-too); the node verbs and the record shaping in flux; input in the
-`/input` event shape through the existing parser, `tap` as down and up at
-the painted center plus one frame, `drag` with a duration as one move per
-frame. `find` matches natively on `{ text, label, kind }`: a string is an
-exact match, a RegExp a partial one. A fresh data root per file, the
-sandbox emptied before each test.
+**Step 4.3 - the verbs (built 2026-09-30).** D31, D32, D36, D37, D38.
 
-**Step 4.4 - `settle()`, for both layers.** `PendingOps`
-(`flux/src/pending.rs`) counts what keeps the engine alive, which is not
-yet what `settle()` needs: see Findings. It gets a second count for work
-in flight; the 26 hold sites in 13 files are classified into work in
-flight (fetch, body and file reads, connects and binds, a subprocess
-stdin write, video open, the generic async-op wrapper) and standing holds
-(a listening server, an open socket or stream, a pending accept, a
-running child, event listeners, timers). `settle()` waits for what is in
-flight and, in an app test, steps while a frame is demanded; it fails past
-a frame cap. `srt render --settle` becomes this condition (D35). Then
-audit the GUI-side loads.
+| file | change |
+| --- | --- |
+| `alloy/src/rendertree/mod.rs`, `tree/inspect.rs` | `Element::label`; `find` (exact, by kind, text and label, with `Match::Present` for a pattern the caller checks), `is_visible`, `path_to`, `hit_path`; the label in `NodeSnapshot` and in the loose `/tree` query |
+| `flux/src/alloy_plugins/inspect.rs` | the node record (`node_record`), moved here from `lattice/src/go/connection.rs`, with `label` |
+| `flux/src/alloy_plugins/properties/mod.rs` | the `label` prop, kind-independent |
+| `flux/src/test_plugins/gui.rs` | native `flux:test/gui` (under `test` + `gui`): `find`, `node`, `visible`, `path`, `hit`; records cross as JSON text |
+| `flux/src/engine.rs`, `test_plugins/host.rs` | `eval_module_or`: the host hears of a failed evaluation at once, instead of when the cap passes (what the file left pending keeps its engine alive) |
+| `lattice/src/input_plan.rs` | the input plan, moved out of `go/connection.rs`: `plan(events, frame_ms)` with a `Wait { ms, frames }` per step; the tap, mouse-move and `drag` rules of D37 |
+| `lattice/src/go/connection.rs` | the control API runs the shared plan (a frame is one 60 Hz interval there); `/tree` takes `at` |
+| `lattice/src/plugins/test.rs`, `test_host.rs`, `runtime.rs`, `lib.rs` | `srt:test` gains `windowReady`, `inputPlan`, `inputStep`; the stepper injects a plan's steps as the control API does; the sandbox is emptied before every engine |
+| `packages/core/src/test.ts`, `types.d.ts`, `runtime-modules.d.ts` | the surface: `mount`, `load`, `find`, `findAll`, `ref`, the locator readers, `tap`, `drag`, `key`, `type`, `input`; `label` on `NodeProps`, which every element's props extend |
+| `packages/flux-types/gui/test.d.ts` | the types of `flux:test/gui` |
+| `packages/cli/src/server/control.ts`, `mcp/main.ts`, `agents/debugging.md` | `at` on `/tree` and `get_render_tree`, `drag` on `send_input`, the gesture rules and the label documented |
+| `packages/core/tests/app.test.tsx`, `sandbox.test.ts`, `alloy/src/tests/inspect.rs`, `lattice/src/tests/input.rs` | 12 app tests of the layer itself, 2 of the sandbox, 9 rendertree tests, the plan's tests |
+
+How the pieces answer the decisions:
+
+- `mount` calls core's `render` (content that is no `<window>` is put in
+  one) and then waits on `windowReady()`: the window builds its first
+  frame on its size, which reaches an engine through two threads, so
+  whether it is there when a test starts is a race. The wait costs no
+  frame and no app time. `load` awaits the entry's import instead.
+- A locator holds a function that answers the ids it names now; the
+  readers resolve it on every read and throw unless it names one node. A
+  find that matches nothing lists the texts and labels in its scope.
+  A string is matched natively; for a RegExp the native side returns the
+  nodes that have the field and the pattern is applied in JS.
+- A text that is all of its parent's text is one match, the parent's: a
+  `<text><span>x</span></text>` is one visible text.
+- `tap` accepts reaching the node, something inside it, or the container
+  it sits in (a node that takes no pointer events itself); anything else
+  at the point is a cover and fails the tap with its name.
+- An input verb asks the native side for the plan's waits, runs frames to
+  cover each and sends the step; one frame after the last step, so the
+  tree is current when the verb returns (D12's first half).
+- A database left open at module level and a file a test wrote are gone
+  for the next test (`sandbox.test.ts`), and a server left listening ends
+  with its engine.
+
+Not done in this step:
+
+- `app.link(link)` and `app.debug(name, args)`; both exist behind the
+  control API in `go/connection.rs` and need the same sharing the input
+  plan got.
+- A synthetic gamepad in a test: the pads live in alloy's interactive
+  loop, which stepped mode does not run. `app.input` rejects a gamepad
+  event with a sentence that says so.
+- The readers past the tree: a textual tree snapshot, a pixel probe,
+  texture reads and the GPU inventory (D13); they go with the failure
+  output in step 4.5, which needs the tree dump anyway.
+- Window size and display scale per test:
+  [test-window-size-and-scale](../backlog/test-window-size-and-scale.md).
+- The MCP bridge's new arguments (`at`, `drag`) were exercised through the
+  control API with curl, not through a re-spawned bridge; the website was
+  not rebuilt.
+
+**Step 4.4 - `settle()`, a runtime facility (built 2026-09-30).** D11,
+D39, D40, D41.
+
+| file | change |
+| --- | --- |
+| `flux/src/pending.rs` | `PendingOps` rewritten: `Hold` guards of two classes with a kind each, counts per kind, `settled()` (nothing in flight and the job queue dry), `turn()`; exported `hold_engine(ctx, kind)`, `settled`, `in_flight`, `describe_in_flight`, `Hold` |
+| `flux/src/engine.rs` | the run loop calls `pending.turn()` every time it comes round |
+| `flux/src/plugins/marshal.rs` | `with_pending` became `with_in_flight(ctx, kind, fut)` and `with_standing(ctx, kind, fut)`, the hold taken at the call |
+| every plugin that held (`events`, `video`, `camera`, `file`, `fs`, `dir`, `net`, `serve`, `websocket` twice, `subprocess`, `p2p`, `isolate`, `mdns`, `sqlite`, `image`, `clipboard`, `crypto`, `fetch`, `body`, `request`, `response`, `time`) | converted to the guards and classified; no raw hold or release is left |
+| `flux/src/standards_plugins/time.rs` | `timer_due(ctx)`: a live virtual timer at or before the timeline's reading |
+| `flux/src/alloy_plugins/frame.rs`, `tree.rs`, `gpu.rs` | the frame protocol records why it asked for the next frame; `frame::demand(ctx)` reads it (empty: no frame wanted), a pending `captureSnapshot` included |
+| `alloy/src/rendertree/transitions.rs`, `tree/inspect.rs` | `running_node`, `running_transition`, `describe(id)`: the node a transition runs on, named by text, label or id |
+| `flux/src/test_plugins/mod.rs` | `settle` exported from `flux:test` (native, beside the JS surface) |
+| `lattice/src/settle.rs` | the loop: wait for what is in flight, run a frame while a timer is due or a frame is demanded, until all three hold at once; `Cap::AppTime` or `Cap::Wall`; `Unsettled` says what is left |
+| `lattice/src/runtime.rs` | the frame verb tells the waiters a frame ran |
+| `lattice/src/plugins/test.rs` | `srt:test` `settle(maxMs)`, stepping through the stepper |
+| `lattice/src/go/connection.rs` | the `settle` query of the control API, on the display's frames and a wall cap |
+| `packages/core/src/test.ts`, `runtime-modules.d.ts` | `app.settle({ maxMs })` |
+| `packages/cli/src/server/control.ts`, `mcp/main.ts` | `/settle?max=`, the `settle` tool |
+| `packages/flux-types/modules/test.d.ts`, `packages/cli/src/test/docs.md`, `agents/debugging.md`, `mcp/docs.md`, both `AGENTS.md`, `flux/CLAUDE.md`, the root `CLAUDE.md` | the condition documented where each reader meets it |
+| `packages/core/tests/settle.test.tsx`, `flux/src/tests/test_module.rs`, `alloy/src/tests/inspect.rs` | 6 app tests, 2 flux tests, 1 rendertree test |
+
+How "the job queue is dry" is known. A task of the engine (a `Promised`,
+a `ctx.spawn`) is polled only in a pass over the engine's tasks, and
+rquickjs starts a pass only when no job is pending (`idle()` and
+`execute_pending_job` both run jobs first). So a settle that is polled
+finds the queue dry, except for what tasks polled ahead of it in the same
+pass queued by finishing work. A task that wakes itself is polled again
+in the same pass, so yielding is not enough: after the in-flight count
+reads zero the settle wakes the engine loop, which comes round and wakes
+it back (`turn`), from outside any pass, and then looks again. If no work
+started or ended meanwhile (a change counter), the jobs of everything
+that finished have run and started nothing. Rejected: draining the queue
+from inside the task with `ctx.execute_pending_job()`, which swallows a
+job's error and moves the rejection checkpoint.
+
+How the classes came out, against the count the step was prepared with:
+
+- Of the 48 `with_pending` sites, five were not work in flight: the socket
+  read and the UDP `recv` in `net`, the stream read in `p2p`, the stream
+  step in `isolate`, and a child's `status()`. They are standing now. The
+  other 43 are in flight, each with its kind.
+- Of the direct sites: in flight are `fetch`, the body reads, the file
+  read, `connect`, `listen` and the UDP bind in `net`, the p2p `connect`,
+  the initial stdin write of a child, and the video open; standing are
+  the event listeners, the timers and intervals, the `serve` loops, both
+  websocket kinds with their writers, the accepts, the p2p stream writer,
+  a child's supervisor and its output streams.
+- Three things were in flight with no hold at all: an isolate call (the
+  engine lived on its task alone), a camera open, and a
+  `captureSnapshot`. The first two hold now. The capture is frame demand
+  instead: it is serviced by a paint and settled by the frame after it,
+  so it has to be able to ask for frames while nothing else does.
+- Image decode, texture upload and font registration are synchronous or
+  ride on `fetch` and the body read; nothing of them was outside.
+
+Verified: 334 JS tests in 34 files; flux 49 lib tests (99 with `gui`),
+alloy 638, lattice 66, the 21 `flux/tests/` binaries; `/settle` on the
+interactive release client through the control API, where a 600 ms
+transition reported `a transition on view labelled "drawer"` and settled
+after 553 ms, an 800 ms fetch reported `{ "fetch": 1 }` and settled after
+841 ms with its text in the tree, and a standing `onFrame` reported
+`onFrame` at a 500 ms cap.
+
+Not done in this step:
+
+- `srt render --settle`: step 4.6 (D39). The flag still is the wall
+  sleep.
+- A test that times out while work is in flight says "Timed out after
+  5000 ms" and not what was in flight; the kinds are one call away
+  (`flux::in_flight`) and belong in the failure output of step 4.5.
+- The MCP `settle` tool was exercised as `/settle` with curl, not through
+  a re-spawned bridge.
+- `startRecognition` (speech, an optional feature) resolves from a frame
+  tick like a camera open and holds nothing; not converted.
+- A response body read as a stream is in flight per chunk, which a
+  server-sent event stream never finishes: such an app does not settle
+  while it listens, and says "1 body read".
 
 **Step 4.5 - failure output, docs, CI.** D14; the types and the testing
 guide; the four parked files moved to `tests/`; a Linux CI job for app
@@ -876,10 +1088,11 @@ inventory of how the rigs call `fail()` belonged in the proposal.
 
 ## Open
 
-- What a test host does with resources a dropped engine held natively. A
-  test that starts `serve()` and never stops it: whether the listener
-  ends with the engine is unchecked (an isolate's `terminate()` drops its
-  engine the same way, and shutdown hooks do not run on a drop).
+- What a test host does with resources a dropped engine held natively.
+  Checked 2026-09-30 for `serve()`: a server left listening ends with its
+  test's engine (the next test binds the same fixed port). Unchecked for
+  the rest (an open database, a child process); shutdown hooks do not run
+  on a drop, as under an isolate's `terminate()`.
 
 ## Done looks like
 
@@ -965,13 +1178,9 @@ framework.
 - Bringing `tests/` into the packages' typecheck programs (they were
   excluded while they ran under bun) surfaced one type error, in
   `packages/3d/tests/invert.test.ts`, fixed with the migration.
-- `PendingOps` counts what keeps the engine alive, and that includes
-  standing holds beside work that completes by itself. Holders as of
-  2026-09-29: fetch and body reads, file reads, net, p2p, websocket,
-  subprocess, `serve`, timers, events, video. A listening server or an
-  open websocket never releases on its own, and a pending timer under a
-  stepped clock releases only when the test advances, so `is_idle()` is
-  not the `settle()` condition as it stands.
+- `PendingOps` counted what keeps the engine alive, standing holds beside
+  work that completes by itself, so `is_idle()` was not the `settle()`
+  condition. Step 4.4 split the two (D40).
 - `srt render --settle` is a wall-clock sleep after the mount frame
   (`PlaybackConfig::settle`): the frame clock does not run meanwhile and
   I/O completions land.

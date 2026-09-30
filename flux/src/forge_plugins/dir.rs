@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 use crate::plugins::events::{add_listener, remove_listener};
-use crate::plugins::marshal::{with_pending, OptArg};
+use crate::plugins::marshal::{with_in_flight, OptArg};
 use crate::plugins::value::Neutral;
 use forge::fs;
 use forge::Value;
@@ -110,7 +110,7 @@ fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> 
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { fs::read_dir(&path).await.map(|entries| Neutral(Value::list(entries))) }))
+        Ok(with_in_flight(&ctx, "directory", async move { fs::read_dir(&path).await.map(|entries| Neutral(Value::list(entries))) }))
       }
     }),
   )
@@ -123,7 +123,7 @@ fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> 
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { Ok::<bool, String>(fs::dir_exists(&path).await) }))
+        Ok(with_in_flight(&ctx, "directory", async move { Ok::<bool, String>(fs::dir_exists(&path).await) }))
       }
     }),
   )
@@ -136,7 +136,7 @@ fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> 
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { fs::create_dir(&path).await }))
+        Ok(with_in_flight(&ctx, "directory", async move { fs::create_dir(&path).await }))
       }
     }),
   )

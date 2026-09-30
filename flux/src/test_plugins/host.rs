@@ -149,6 +149,8 @@ enum Listed {
 enum Signal {
   Names(Vec<String>),
   Finished,
+  /// The file's evaluation failed; the error is among the uncaught ones.
+  LoadFailed,
 }
 
 /// How the host's wait on an engine ended.
@@ -270,7 +272,9 @@ impl Session {
       Task::Run(name) => Some(name.clone()),
     };
     let _watchdog = Watchdog::arm(self.interrupt.clone(), self.timeout);
-    let evaluation = engine.eval_module(ENTRY_MODULE.to_string(), code, move |ctx, _namespace| {
+    let failed = tx.clone();
+    let on_failed = move |_: Ctx<'_>| drop(failed.send(Signal::LoadFailed));
+    let on_ready = move |ctx: Ctx<'_>, _namespace: rquickjs::Object<'_>| {
       let lines = locked(&shared.output).len();
       *locked(&shared.loaded_at) = Some(lines);
       let registry = ctx.userdata::<Registry>().map(|registry| (*registry).clone());
@@ -288,7 +292,8 @@ impl Session {
         }
         Some(name) => start(ctx, registry, &name, shared, exec, tx),
       }
-    });
+    };
+    let evaluation = engine.eval_module_or(ENTRY_MODULE.to_string(), code, on_ready, on_failed);
     tokio::pin!(evaluation);
     let end = tokio::select! {
       biased;

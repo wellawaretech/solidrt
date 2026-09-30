@@ -468,7 +468,7 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   let port: u16 = opts.get::<_, Option<u16>>("port")?.unwrap_or(0);
   let fetch_fn: Option<Function<'js>> = opts.get("fetch").ok();
   let error_fn: Option<Function<'js>> = opts.get("error").ok();
-  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+  let pending = PendingOps::of(&ctx);
   let logger = ctx.logger();
   let routes = parse_routes(&opts, &logger)?;
   let websocket = parse_ws_handlers(&opts)?;
@@ -505,11 +505,10 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   )?;
   let handlers = Handlers { fetch_fn, error_fn, routes, websocket, server: server.clone() };
 
-  pending.hold();
+  let loop_hold = pending.standing("server");
   let loop_ctx = ctx.clone();
   let loop_logger = logger.clone();
   let loop_shared = shared.clone();
-  let loop_pending = pending.clone();
   let loop_handlers = handlers.clone();
   ctx.spawn(async move {
     let shutdown_rx = loop_shared.subscribe();
@@ -523,20 +522,19 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
       loop_ctx.spawn(serve_connection(sock, remote, handler, loop_logger.clone(), conn_rx));
     };
     accept_loop(listener, accept_logger, shutdown_rx, on_conn).await;
-    // Paired with the hold() above. Connection tasks shut themselves down on the
-    // same signal, so the runtime drains and the engine can exit.
-    loop_pending.release();
+    // Connection tasks shut themselves down on the same signal, so the
+    // runtime drains and the engine can exit.
+    drop(loop_hold);
   });
 
   // The p2p twin of the TCP loop: a connection's io is its first bi-stream, its
   // peer identity the remote endpoint id. `close()` stops both loops through the
   // shared shutdown signal; the endpoint itself stays open for its owner.
   if let Some((endpoint, alpn)) = p2p {
-    pending.hold();
+    let loop_hold = pending.standing("server");
     let loop_ctx = ctx.clone();
     let loop_logger = logger.clone();
     let loop_shared = shared.clone();
-    let loop_pending = pending.clone();
     ctx.spawn(async move {
       let shutdown_rx = loop_shared.subscribe();
       let accept_logger = loop_logger.clone();
@@ -554,7 +552,7 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
         });
       };
       accept_loop_p2p(endpoint, alpn, accept_logger, shutdown_rx, on_conn).await;
-      loop_pending.release();
+      drop(loop_hold);
     });
   }
 

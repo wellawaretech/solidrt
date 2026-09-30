@@ -60,7 +60,8 @@ the work before starting it:
   own: the file is evaluated again for each test, so module state, timers
   and listeners of one test never reach the next, and an uncaught error
   fails the test it happened in. A test runs on real time (timers,
-  `performance.now()`, `Date.now()`). `Math.random()` is seeded
+  `performance.now()`, `Date.now()`); `settle()` from `flux:test` waits for
+  work the test set off without holding its promise. `Math.random()` is seeded
   in every test's engine, so random inputs are the same on every run;
   `--seed <n>` picks another sequence. `--filter <text>` runs the tests
   whose name contains the text; everything after `--` reaches the test
@@ -69,10 +70,13 @@ the work before starting it:
   source line. A file that imports `@solidrt/core/test` (or any app
   runtime module; always a `.test.tsx`) is an app test and runs on the dev
   client, headless: `test(name, async app => ...)`, time passes only by
-  `app.frame(n)` / `app.advance(ms)`, timers fire with the frame their time
+  `app.frame(n)` / `app.advance(ms)` / `app.settle()` (until the app is at
+  rest), timers fire with the frame their time
   falls in, `performance.now()` is 0 and the date starts at 2000-01-01 UTC
-  and moves with the frames. Mounting UI, finding nodes and input are not
-  built yet.
+  and moves with the frames; `app.mount(ui)`, `find({ text | label |
+  kind })`, `app.tap` / `drag` / `key` / `type` / `input` (the `send_input`
+  event shape, through the real pipeline) are described in core's AGENTS.md
+  ("Testing an app").
 - `bunx srt bundle` - bundle the project into `dist/bundle/` (or
   `--output <dir>`): `<name>.srt.js` plus the app's isolate modules as
   `isolates/<id>.js`. With `--compile`, bytecode (`.srt.bin`/`.bin`)

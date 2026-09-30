@@ -261,6 +261,9 @@ pub(crate) struct RenderTreeInner {
   // The one frame driver over this tree (`frame::draw`): every draw path
   // shares its retained display list.
   pub(crate) render_driver: RefCell<FrameDriver>,
+  // Why the last frame asked for the next one (`frame::demand`): written by
+  // the frame protocol, read by whoever waits for the app to come to rest.
+  pub(crate) demand: RefCell<Vec<String>>,
   // Image cursors this engine registered (createCursor): the next handle
   // and the live ones, dropped with the engine so a reload leaves nothing
   // behind in the loop's cursor cache.
@@ -286,6 +289,7 @@ pub(crate) fn store_state(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<
     gui: super::gui(ctx),
     alloy_cmd_tx,
     render_driver: RefCell::new(FrameDriver::new()),
+    demand: RefCell::new(Vec::new()),
     next_cursor_id: Cell::new(1),
     live_cursors: RefCell::new(Vec::new()),
   };

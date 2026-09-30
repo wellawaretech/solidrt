@@ -41,6 +41,7 @@
 /// <reference path="./gui/spatial.d.ts" />
 /// <reference path="./gui/video.d.ts" />
 /// <reference path="./gui/raf.d.ts" />
+/// <reference path="./gui/test.d.ts" />
 
 declare let Flux: {
   /** The flux runtime version. */
