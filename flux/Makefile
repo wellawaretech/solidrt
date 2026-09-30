@@ -29,12 +29,13 @@ build-opt:
 	$(MAKE) build PROFILE=release-opt
 
 # The flux binary hosts the dev server and the bake tools, so it carries
-# the texture encoder (flux:image encodeTexture); KTX2=0 leaves it out.
+# the texture encoder (flux:image encodeTexture); KTX2=0 leaves it out. It
+# is also what `srt test` runs test files on, so it alone carries flux:test.
 KTX2 ?= 1
 ifeq ($(KTX2),0)
-FLUX_FEATURES =
+FLUX_FEATURES = --features test
 else
-FLUX_FEATURES = --features ktx2
+FLUX_FEATURES = --features ktx2,test
 endif
 
 flux:

@@ -1,25 +1,20 @@
 // Checks for the first-person control (first-person.ts) as a pure axes
 // consumer: the look and move verbs, the look/move/rise deltas in the
 // vocabulary's units, the rates integrated by update(dt) with the unit
-// clamp on diagonals, walk vs fly, clampPosition, the pitch clamps,
-// glideTo (exact landing, clampPosition every frame, dropped by input and
-// set()) and active(). Pure-module input only, headless on flux, from the
-// repo root:
-//
-//   bunx srt bundle -f --stdout packages/3d/checks/first-person-check.ts | target/release/flux -
-//
-// Deterministic; prints FAIL lines and throws at the end.
+// clamp on diagonals, walk vs fly, clampPosition, the pitch clamps, glideTo
+// (exact landing, clampPosition every frame, dropped by input and set())
+// and active(). Pure-module input only, headless on flux: `srt test
+// packages/3d`. Deterministic.
 
+import { test } from "flux:test"
 import { flush } from "@solidjs/signals"
 import { createFirstPersonCamera } from "../src/first-person.ts"
 import type { FirstPersonCameraOptions } from "../src/first-person.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 import type { Vec3 } from "../src/math.ts"
 
-let failures = 0
-let fail = (msg: string) => {
-  failures++
-  console.log(`FAIL ${msg}`)
+function fail(msg: string): void {
+  throw new Error(msg)
 }
 let near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps
 let nearV = (a: Vec3, b: Vec3, eps = 1e-9) => near(a[0], b[0], eps) && near(a[1], b[1], eps) && near(a[2], b[2], eps)
@@ -34,8 +29,7 @@ function make(options: FirstPersonCameraOptions = {}) {
   return { cam, last: () => last }
 }
 
-// ---- Verbs ----
-{
+test("Verbs", () => {
   let { cam, last } = make({ position: [0, 1.6, 0] })
   cam.lookBy(Math.PI / 2, 0)
   if (!nearV(cam.forward(), [-1, 0, 0])) fail(`yaw positive turns left (faces -x), got ${cam.forward()}`)
@@ -47,10 +41,9 @@ function make(options: FirstPersonCameraOptions = {}) {
   if (!near(cam.eye()[1], 1.6)) fail("up is ignored while walking")
   if (!nearV(last()!.position as Vec3, cam.eye())) fail("the verbs push the pose")
   if (!cam.update(0.016) || cam.update(0.016)) fail("update reports a verb's change once")
-}
+})
 
-// ---- Deltas ----
-{
+test("Deltas", () => {
   let { cam } = make()
   // Half a turn per element height (DRAG_TURNS 0.5); a drag right turns
   // right (yaw negative), a drag down looks down (pitch negative).
@@ -63,10 +56,9 @@ function make(options: FirstPersonCameraOptions = {}) {
   if (!nearV(cam.eye(), [0, 1.6, -1])) fail(`a move delta steps a world unit forward (-z at yaw 0), got ${cam.eye()}`)
   cam.axes.nudge("rise", 1)
   if (!near(cam.eye()[1], 1.6)) fail("rise is inert while walking")
-}
+})
 
-// ---- Rates, the unit clamp, fly, clampPosition ----
-{
+test("Rates, the unit clamp, fly, clampPosition", () => {
   let opts: FirstPersonCameraOptions = { position: [0, 1.6, 0], moveSpeed: 2 }
   let { cam } = make(opts)
   if (cam.active()) fail("a still walker rests")
@@ -119,28 +111,28 @@ function make(options: FirstPersonCameraOptions = {}) {
   cam.update(1)
   look()
   if (!near(cam.pose().pitch, Math.min(0.4 * 2 * Math.PI, Math.PI / 2 - 0.01))) fail(`a look rate of 1 over a second turns 0.4 turns, clamped at the pole: ${cam.pose().pitch}`)
-}
+})
 
-// ---- Clamps and validation ----
-{
+test("Clamps and validation", () => {
   let { cam } = make({ minPitch: -0.3, maxPitch: 0.3 })
   cam.lookBy(0, 2)
   if (cam.pose().pitch !== 0.3) fail(`maxPitch clamps, got ${cam.pose().pitch}`)
   let throws = (what: string, f: () => void) => {
+    let threw = false
     try {
       f()
-      fail(`${what} must throw`)
     } catch (err) {
+      threw = true
       if (!(err instanceof Error)) fail(`${what}: unexpected ${err}`)
     }
+    if (!threw) fail(`${what} must throw`)
   }
   throws("moveBy NaN", () => cam.moveBy(NaN, 0))
   throws("glideTo NaN", () => cam.glideTo({ yaw: NaN }))
   throws("a target without setCamera", () => createFirstPersonCamera({} as never))
-}
+})
 
-// ---- glideTo: eased pose, exact landing, clampPosition per frame, rest ----
-{
+test("glideTo: eased pose, exact landing, clampPosition per frame, rest", () => {
   let opts: FirstPersonCameraOptions = { position: [0, 1.6, 0], maxPitch: 0.3 }
   let { cam, last } = make(opts)
   cam.glideTo({ position: [4, 1.6, -2], yaw: 1, pitch: 1 })
@@ -180,10 +172,9 @@ function make(options: FirstPersonCameraOptions = {}) {
   cam.set({ pitch: 0.1 })
   cam.update(DT)
   if (cam.update(DT) || cam.pose().yaw !== yaw) fail("set() of a pose field drops a glide")
-}
+})
 
-// ---- The shake lane: a view kick in turns, the pose and the eye untouched ----
-{
+test("The shake lane: a view kick in turns, the pose and the eye untouched", () => {
   let { cam, last } = make({ position: [0, 1.6, 0] })
   cam.shake(0.02, 0.5, { direction: [1, 0] })
   flush()
@@ -208,7 +199,4 @@ function make(options: FirstPersonCameraOptions = {}) {
   if (!nearV(last()!.target as Vec3, [0, 1.6, -1])) fail("after the shake the look is the pose's again")
   flush()
   if (cam.active()) fail("an ended shake rests")
-}
-
-console.log(failures === 0 ? "FIRST-PERSON-OK" : `FIRST-PERSON-FAIL ${failures}`)
-if (failures > 0) throw new Error(`${failures} first-person check(s) failed`)
+})

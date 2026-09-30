@@ -1,59 +1,60 @@
 // Checks for the input map (input-map.ts), the control-side axes contract
 // (input-axes.ts) and the keyboard device (input-keyboard.ts): source
 // combination and its clamps, the button-on-axis rule, kind mismatches
-// throwing, injection by name, the delta channel with its brackets,
-// drive() into createAxes, invert()/scale(), the bindings listing, and
-// the keyboard composites and modifier specs over synthetic key events,
-// and enable/disable contexts. Pure-module input
-// only (the `@solidrt/core/input` entry imports no runtime module), so it
-// runs headless on flux, bundled from the repo root:
-//
-//   bunx srt bundle -f --stdout packages/core/checks/input-map-check.ts | target/release/flux -
-//
-// Deterministic. A failure prints FAIL lines and throws at the end, so a
-// CI step can gate on the exit code. The gamepad device and the pointer
-// feed need the runtime and are exercised live by the camera examples.
+// throwing, injection by name, the delta channel with its brackets, drive()
+// into createAxes, invert()/scale(), the bindings listing, and the keyboard
+// composites and modifier specs over synthetic key events, and
+// enable/disable contexts. Pure-module input only (the
+// `@solidrt/core/input` entry imports no runtime module), so it runs
+// headless on flux: `srt test packages/core`. Deterministic, except the
+// interactions (hold, tap, doubleTap): they keep time with setTimeout and
+// performance.now() together, so their test waits on real timers. The
+// gamepad device and the pointer feed need the runtime and are exercised
+// live by the camera examples.
 
+import { test } from "flux:test"
 import { createSignal, flush } from "@solidjs/signals"
 import { chord, createAxes, createInputMap, doubleTap, hold, invert, keyboard, resolveSource, scale, tap } from "../src/input.ts"
 import { chordName, mostSpecific, parseModifiers } from "../src/input-chord.ts"
 import type { InputSource, Vec2 } from "../src/input.ts"
 import type { KeyEvent } from "../src/types"
 
-let failures = 0
-let fail = (msg: string) => {
-  failures++
-  console.log(`FAIL ${msg}`)
+function fail(msg: string): void {
+  throw new Error(msg)
 }
 let near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps
 let same = (a: Vec2, b: Vec2, eps = 1e-9) => near(a[0], b[0], eps) && near(a[1], b[1], eps)
 let throws = (what: string, f: () => void) => {
+  let threw = false
   try {
     f()
-    fail(`${what} must throw`)
   } catch (err) {
+    threw = true
     if (!(err instanceof Error)) fail(`${what}: unexpected ${err}`)
   }
+  if (!threw) fail(`${what} must throw`)
 }
 
 let key = (code: string, k = code): KeyEvent => ({ key: k, code, repeat: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, currentTarget: 0, target: 0, stopPropagation() {} })
 
 // The chord vocabulary both devices share: canonical order and name,
-// most specific wins, unknown names throw.
-{
-  let mods = parseModifiers("chord", "Ctrl+Shift", ["Ctrl", "Shift"])
-  if (chordName(mods) !== "Shift+Ctrl") fail(`chord canonical order: ${chordName(mods)}`)
-  if (chordName(parseModifiers("chord", "Control+Ctrl", ["Control", "Ctrl"])) !== "Ctrl") fail("chord dedupes Control/Ctrl")
-  if (chordName([]) !== "") fail("bare chord name")
-  throws('parseModifiers("Hyper")', () => parseModifiers("chord", "Hyper", ["Hyper"]))
-  let specs = [{ mods: parseModifiers("chord", "", []) }, { mods: parseModifiers("chord", "Ctrl", ["Ctrl"]) }, { mods: parseModifiers("chord", "Ctrl+Shift", ["Ctrl", "Shift"]) }]
-  let ev = (ctrl: boolean, shift: boolean) => ({ shiftKey: shift, ctrlKey: ctrl, altKey: false, metaKey: false })
-  let pick = (ctrl: boolean, shift: boolean) => mostSpecific(specs, s => s.mods, ev(ctrl, shift)).map(s => chordName(s.mods))
-  if (pick(false, false).join() !== "") fail(`mostSpecific bare: ${pick(false, false)}`)
-  if (pick(true, false).join() !== "Ctrl") fail(`mostSpecific Ctrl: ${pick(true, false)}`)
-  if (pick(true, true).join() !== "Shift+Ctrl") fail(`mostSpecific Ctrl+Shift: ${pick(true, true)}`)
-  if (pick(false, true).join() !== "") fail(`mostSpecific Shift alone falls to bare: ${pick(false, true)}`)
-}
+test("The chord vocabulary both devices share: canonical order and name, most specific wins, unknown names throw", () => {
+  // most specific wins, unknown names throw.
+  {
+    let mods = parseModifiers("chord", "Ctrl+Shift", ["Ctrl", "Shift"])
+    if (chordName(mods) !== "Shift+Ctrl") fail(`chord canonical order: ${chordName(mods)}`)
+    if (chordName(parseModifiers("chord", "Control+Ctrl", ["Control", "Ctrl"])) !== "Ctrl") fail("chord dedupes Control/Ctrl")
+    if (chordName([]) !== "") fail("bare chord name")
+    throws('parseModifiers("Hyper")', () => parseModifiers("chord", "Hyper", ["Hyper"]))
+    let specs = [{ mods: parseModifiers("chord", "", []) }, { mods: parseModifiers("chord", "Ctrl", ["Ctrl"]) }, { mods: parseModifiers("chord", "Ctrl+Shift", ["Ctrl", "Shift"]) }]
+    let ev = (ctrl: boolean, shift: boolean) => ({ shiftKey: shift, ctrlKey: ctrl, altKey: false, metaKey: false })
+    let pick = (ctrl: boolean, shift: boolean) => mostSpecific(specs, s => s.mods, ev(ctrl, shift)).map(s => chordName(s.mods))
+    if (pick(false, false).join() !== "") fail(`mostSpecific bare: ${pick(false, false)}`)
+    if (pick(true, false).join() !== "Ctrl") fail(`mostSpecific Ctrl: ${pick(true, false)}`)
+    if (pick(true, true).join() !== "Shift+Ctrl") fail(`mostSpecific Ctrl+Shift: ${pick(true, true)}`)
+    if (pick(false, true).join() !== "") fail(`mostSpecific Shift alone falls to bare: ${pick(false, true)}`)
+  }
+})
 
 // A value source of one kind with a settable value.
 function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, initial: number | Vec2 | boolean) {
@@ -62,8 +63,7 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   return { source, set: (v: number | Vec2 | boolean) => (value = v) }
 }
 
-// ---- Combination: sum, then clamp ----
-{
+test("Combination: sum, then clamp", () => {
   let input = createInputMap({ look: "vec2", zoom: "axis", jump: "button" })
   let a = valued("vec2", "a", [0.6, 0])
   let b = valued("vec2", "b", [0.6, 0.8])
@@ -102,10 +102,9 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   if (input.bindings("look").length !== 2) fail(`two look bindings, got ${input.bindings("look").length}`)
   input.unbind("look", a.source)
   if (input.bindings("look").length !== 1 || input.bindings().length !== 5) fail("unbind drops one binding")
-}
+})
 
-// ---- Injection by name, edges ----
-{
+test("Injection by name, edges", () => {
   let input = createInputMap({ move: "vec2", jump: "button" })
   input.set("move", [0, -1])
   flush()
@@ -122,10 +121,9 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   flush()
   if (presses !== 2 || releases !== 1) fail(`press/release edges: ${presses} presses, ${releases} releases`)
   throws("set a boolean on a vec2", () => input.set("move", true as never))
-}
+})
 
-// ---- The delta channel, drive() into axes, processors ----
-{
+test("The delta channel, drive() into axes, processors", () => {
   let input = createInputMap({ rotate: "vec2", zoom: "axis" })
   let log: string[] = []
   let axes = createAxes(
@@ -198,10 +196,9 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   throws("drive with a missing action", () => input.drive(createAxes({ pan: "vec2" })))
   throws("drive with a kind mismatch", () => input.drive(createAxes({ zoom: "vec2" })))
   throws("invert a button", () => invert({ kind: "button", label: "b" } as never))
-}
+})
 
-// ---- The keyboard device ----
-{
+test("The keyboard device", () => {
   let input = createInputMap({ move: "vec2", rise: "axis", jump: "button" })
   input.bind("move", keyboard.wasd, keyboard.arrows)
   input.bind("rise", keyboard.axis("KeyQ", "KeyE"))
@@ -232,10 +229,9 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   flush()
   if (!same(input.value("move"), [0, 0]) || input.value("rise") !== 0 || input.pressed("jump")) fail("blur releases every held key")
   throws("empty key", () => keyboard.key(""))
-}
+})
 
-// ---- Modifier specs ----
-{
+test("Modifier specs", () => {
   let input = createInputMap({ cycle: "axis", save: "button", jump: "button" })
   input.bind("cycle", keyboard.axis("Shift+Tab", "Tab"))
   input.bind("save", keyboard.key("Ctrl+KeyS"))
@@ -272,10 +268,9 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   if (input.pressed("jump")) fail("logical ' ' up releases Space")
   throws("unknown modifier", () => keyboard.key("Foo+Tab"))
   throws("modifier without a key", () => keyboard.key("Shift+"))
-}
+})
 
-// ---- Contexts: enable/disable by action name ----
-{
+test("Contexts: enable/disable by action name", () => {
   let input = createInputMap({ move: "vec2", jump: "button", zoom: "axis" })
   let stick = valued("vec2", "stick", [0.5, 0])
   let btn = valued("button", "btn", true)
@@ -332,10 +327,9 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   if (!same(axes.rate("move"), [0, 0]) || axes.active()) fail("a disabled action reads neutral through drive()")
   throws("enable nothing", () => (input.enable as () => void)())
   throws("disable unknown", () => input.disable("fly" as never))
-}
+})
 
-// ---- Source ids, save() and load() ----
-{
+test("Source ids, save() and load()", () => {
   if (keyboard.key("Shift+Tab").id !== "keyboard:key:Shift+Tab") fail(`key id: ${keyboard.key("Shift+Tab").id}`)
   if (keyboard.wasd.id !== "keyboard:vec2:KeyW/KeyS/KeyA/KeyD") fail(`wasd id: ${keyboard.wasd.id}`)
   if (keyboard.axis("Minus", "Equal").id !== "keyboard:axis:Minus/Equal") fail("axis id")
@@ -379,7 +373,7 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   if (other.bindings("jump")[0]!.source.id !== "keyboard:key:Space") fail("a failed load changes nothing")
   throws("resolve without a device", () => resolveSource("keyboard:key:Space", {}))
   throws("resolve a bad number", () => resolveSource("scale(x,keyboard:axis:Minus/Equal)", devices))
-}
+})
 
 // A device standing in for a pad or a pointer feed: `listen` reports
 // whatever the check pushes, and `resolve` hands back the pushed sources.
@@ -425,232 +419,223 @@ function signalled<K extends "axis" | "vec2" | "button">(kind: K, label: string,
 let tick = () => new Promise<void>(resolve => setTimeout(resolve, 0))
 let sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
-async function asyncChecks() {
-  // ---- rebind(): keys ----
-  {
-    let input = createInputMap({ jump: "button", move: "vec2", zoom: "axis" })
-    input.bind("jump", keyboard.key("Space"))
-    input.bind("move", keyboard.wasd, keyboard.arrows)
-    input.bind("zoom", keyboard.axis("Minus", "Equal"))
-    let h = input.handlers
-    let pending = input.rebind("jump", { keyboard })
-    throws("a second rebind while one is pending", () => input.rebind("jump", { keyboard }))
-    // A bare modifier names nothing; a repeat is not a press; the key
-    // that lands is captured, not played.
-    h.onKeyDown({ ...key("ShiftLeft", "Shift"), shiftKey: true })
-    h.onKeyDown({ ...key("KeyJ", "j"), repeat: true })
-    h.onKeyDown(key("Space", " "))
-    flush()
-    if (input.pressed("jump")) fail("a captured key does not play")
-    let bound = await pending
-    if (bound.id !== "keyboard:key:Space") fail(`rebind binds the captured key, got ${bound.id}`)
-    if (input.bindings("jump").length !== 1) fail("replace (default) swaps the same device's binding")
-    h.onKeyUp(key("Space", " "))
-    // With modifiers, and without replacing.
-    let p2 = input.rebind("jump", { keyboard }, { replace: false })
-    h.onKeyDown({ ...key("KeyJ", "j"), ctrlKey: true })
-    let b2 = await p2
-    if (b2.id !== "keyboard:key:Ctrl+KeyJ") fail(`rebind carries modifiers, got ${b2.id}`)
-    if (input.bindings("jump").map(b => b.source.id).join() !== "keyboard:key:Space,keyboard:key:Ctrl+KeyJ") fail("replace: false adds")
-    h.onKeyUp(key("KeyJ", "j"))
-    // A part of a composite: WASD's up becomes I; the arrows stay.
-    let p3 = input.rebind("move", { keyboard }, { part: "up" })
-    h.onKeyDown(key("KeyI", "i"))
-    let b3 = await p3
-    if (b3.id !== "keyboard:vec2:KeyI/KeyS/KeyA/KeyD") fail(`part rebind swaps one key, got ${b3.id}`)
-    if (input.bindings("move").map(b => b.source.id).join() !== "keyboard:vec2:ArrowUp/ArrowDown/ArrowLeft/ArrowRight,keyboard:vec2:KeyI/KeyS/KeyA/KeyD") fail(`part rebind keeps the other composite: ${input.bindings("move").map(b => b.source.id)}`)
-    h.onKeyUp(key("KeyI", "i"))
-    h.onKeyDown(key("KeyI", "i"))
-    flush()
-    if (!same(input.value("move"), [0, -1])) fail("the rebound composite plays")
-    h.onKeyUp(key("KeyI", "i"))
-    let p4 = input.rebind("zoom", { keyboard }, { part: "pos" })
-    h.onKeyDown(key("KeyX", "x"))
-    if ((await p4).id !== "keyboard:axis:Minus/KeyX") fail("axis part rebind")
-    h.onKeyUp(key("KeyX", "x"))
-    // Without a part, an axis action ignores keys.
-    let ctrl = new AbortController()
-    let p5 = input.rebind("zoom", { keyboard }, { signal: ctrl.signal })
-    h.onKeyDown(key("KeyZ", "z"))
-    h.onKeyUp(key("KeyZ", "z"))
-    let settled = false
-    p5.then(
-      () => (settled = true),
-      () => (settled = true),
-    )
-    await tick()
-    if (settled) fail("a key without a part does not rebind an axis")
-    ctrl.abort()
-    let reason: unknown
-    await p5.catch(err => (reason = err))
-    if (!(reason instanceof Error)) fail(`abort rejects with the reason, got ${String(reason)}`)
-    // An aborted signal rejects at once; a bad part throws.
-    let aborted = new AbortController()
-    aborted.abort()
-    let early: unknown
-    await input.rebind("jump", { keyboard }, { signal: aborted.signal }).catch(err => (early = err))
-    if (!(early instanceof Error)) fail("an already-aborted signal rejects at once")
-    throws("part on a button", () => input.rebind("jump", { keyboard }, { part: "up" }))
-    throws("wrong part for an axis", () => input.rebind("zoom", { keyboard }, { part: "up" }))
-    throws("no devices", () => input.rebind("jump", {}))
-    // A part with no composite bound rejects.
-    let bare = createInputMap({ move: "vec2" })
-    let p6 = bare.rebind("move", { keyboard }, { part: "left" })
-    bare.handlers.onKeyDown(key("KeyA", "a"))
-    let noComposite: unknown
-    await p6.catch(err => (noComposite = err))
-    if (!(noComposite instanceof Error)) fail("a part rebind with no composite rejects")
-    // The map plays again after a rebind.
-    h.onKeyDown(key("Space", " "))
-    flush()
-    if (!input.pressed("jump")) fail("keys play after a rebind")
-    h.onBlur()
-  }
+test("rebind(): keys", async () => {
+  let input = createInputMap({ jump: "button", move: "vec2", zoom: "axis" })
+  input.bind("jump", keyboard.key("Space"))
+  input.bind("move", keyboard.wasd, keyboard.arrows)
+  input.bind("zoom", keyboard.axis("Minus", "Equal"))
+  let h = input.handlers
+  let pending = input.rebind("jump", { keyboard })
+  throws("a second rebind while one is pending", () => input.rebind("jump", { keyboard }))
+  // A bare modifier names nothing; a repeat is not a press; the key
+  // that lands is captured, not played.
+  h.onKeyDown({ ...key("ShiftLeft", "Shift"), shiftKey: true })
+  h.onKeyDown({ ...key("KeyJ", "j"), repeat: true })
+  h.onKeyDown(key("Space", " "))
+  flush()
+  if (input.pressed("jump")) fail("a captured key does not play")
+  let bound = await pending
+  if (bound.id !== "keyboard:key:Space") fail(`rebind binds the captured key, got ${bound.id}`)
+  if (input.bindings("jump").length !== 1) fail("replace (default) swaps the same device's binding")
+  h.onKeyUp(key("Space", " "))
+  // With modifiers, and without replacing.
+  let p2 = input.rebind("jump", { keyboard }, { replace: false })
+  h.onKeyDown({ ...key("KeyJ", "j"), ctrlKey: true })
+  let b2 = await p2
+  if (b2.id !== "keyboard:key:Ctrl+KeyJ") fail(`rebind carries modifiers, got ${b2.id}`)
+  if (input.bindings("jump").map(b => b.source.id).join() !== "keyboard:key:Space,keyboard:key:Ctrl+KeyJ") fail("replace: false adds")
+  h.onKeyUp(key("KeyJ", "j"))
+  // A part of a composite: WASD's up becomes I; the arrows stay.
+  let p3 = input.rebind("move", { keyboard }, { part: "up" })
+  h.onKeyDown(key("KeyI", "i"))
+  let b3 = await p3
+  if (b3.id !== "keyboard:vec2:KeyI/KeyS/KeyA/KeyD") fail(`part rebind swaps one key, got ${b3.id}`)
+  if (input.bindings("move").map(b => b.source.id).join() !== "keyboard:vec2:ArrowUp/ArrowDown/ArrowLeft/ArrowRight,keyboard:vec2:KeyI/KeyS/KeyA/KeyD") fail(`part rebind keeps the other composite: ${input.bindings("move").map(b => b.source.id)}`)
+  h.onKeyUp(key("KeyI", "i"))
+  h.onKeyDown(key("KeyI", "i"))
+  flush()
+  if (!same(input.value("move"), [0, -1])) fail("the rebound composite plays")
+  h.onKeyUp(key("KeyI", "i"))
+  let p4 = input.rebind("zoom", { keyboard }, { part: "pos" })
+  h.onKeyDown(key("KeyX", "x"))
+  if ((await p4).id !== "keyboard:axis:Minus/KeyX") fail("axis part rebind")
+  h.onKeyUp(key("KeyX", "x"))
+  // Without a part, an axis action ignores keys.
+  let ctrl = new AbortController()
+  let p5 = input.rebind("zoom", { keyboard }, { signal: ctrl.signal })
+  h.onKeyDown(key("KeyZ", "z"))
+  h.onKeyUp(key("KeyZ", "z"))
+  let settled = false
+  p5.then(
+    () => (settled = true),
+    () => (settled = true),
+  )
+  await tick()
+  if (settled) fail("a key without a part does not rebind an axis")
+  ctrl.abort()
+  let reason: unknown
+  await p5.catch(err => (reason = err))
+  if (!(reason instanceof Error)) fail(`abort rejects with the reason, got ${String(reason)}`)
+  // An aborted signal rejects at once; a bad part throws.
+  let aborted = new AbortController()
+  aborted.abort()
+  let early: unknown
+  await input.rebind("jump", { keyboard }, { signal: aborted.signal }).catch(err => (early = err))
+  if (!(early instanceof Error)) fail("an already-aborted signal rejects at once")
+  throws("part on a button", () => input.rebind("jump", { keyboard }, { part: "up" }))
+  throws("wrong part for an axis", () => input.rebind("zoom", { keyboard }, { part: "up" }))
+  throws("no devices", () => input.rebind("jump", {}))
+  // A part with no composite bound rejects.
+  let bare = createInputMap({ move: "vec2" })
+  let p6 = bare.rebind("move", { keyboard }, { part: "left" })
+  bare.handlers.onKeyDown(key("KeyA", "a"))
+  let noComposite: unknown
+  await p6.catch(err => (noComposite = err))
+  if (!(noComposite instanceof Error)) fail("a part rebind with no composite rejects")
+  // The map plays again after a rebind.
+  h.onKeyDown(key("Space", " "))
+  flush()
+  if (!input.pressed("jump")) fail("keys play after a rebind")
+  h.onBlur()
+})
 
-  // ---- rebind(): listening devices ----
-  {
-    let pad = fakeDevice("gamepad")
-    let pointer = fakeDevice("pointer")
-    let input = createInputMap({ jump: "button", look: "vec2" })
-    input.bind("jump", keyboard.key("Space"), pad.make("button", "button:east"))
-    let p = input.rebind("jump", { keyboard, gamepad: pad, pointer })
-    if (pad.listening !== 1 || pointer.listening !== 1) fail("rebind listens on every device given")
-    // A source of the wrong kind is ignored; the right one binds and
-    // replaces the pad's binding only.
-    pad.push(pad.make("vec2", "leftStick"))
-    pad.push(pad.make("button", "button:south"))
-    let bound = await p
-    if (bound.id !== "gamepad:button:south") fail(`pad rebind, got ${bound.id}`)
-    if (input.bindings("jump").map(b => b.source.id).join() !== "keyboard:key:Space,gamepad:button:south") fail(`replace is per device: ${input.bindings("jump").map(b => b.source.id)}`)
-    if (pad.listening !== 0 || pointer.listening !== 0) fail("a settled rebind stops listening")
-    let p2 = input.rebind("look", { gamepad: pad, pointer })
-    pointer.push(pointer.make("vec2", "drag:Ctrl"))
-    if ((await p2).id !== "pointer:drag:Ctrl") fail("pointer rebind")
-    // A loaded id resolves through the device.
-    input.load({ look: ["invert(gamepad:leftStick)"] }, { gamepad: pad })
-    if (input.bindings("look")[0]!.source.id !== "invert(gamepad:leftStick)") fail("load through a device's resolve")
-  }
+test("rebind(): listening devices", async () => {
+  let pad = fakeDevice("gamepad")
+  let pointer = fakeDevice("pointer")
+  let input = createInputMap({ jump: "button", look: "vec2" })
+  input.bind("jump", keyboard.key("Space"), pad.make("button", "button:east"))
+  let p = input.rebind("jump", { keyboard, gamepad: pad, pointer })
+  if (pad.listening !== 1 || pointer.listening !== 1) fail("rebind listens on every device given")
+  // A source of the wrong kind is ignored; the right one binds and
+  // replaces the pad's binding only.
+  pad.push(pad.make("vec2", "leftStick"))
+  pad.push(pad.make("button", "button:south"))
+  let bound = await p
+  if (bound.id !== "gamepad:button:south") fail(`pad rebind, got ${bound.id}`)
+  if (input.bindings("jump").map(b => b.source.id).join() !== "keyboard:key:Space,gamepad:button:south") fail(`replace is per device: ${input.bindings("jump").map(b => b.source.id)}`)
+  if (pad.listening !== 0 || pointer.listening !== 0) fail("a settled rebind stops listening")
+  let p2 = input.rebind("look", { gamepad: pad, pointer })
+  pointer.push(pointer.make("vec2", "drag:Ctrl"))
+  if ((await p2).id !== "pointer:drag:Ctrl") fail("pointer rebind")
+  // A loaded id resolves through the device.
+  input.load({ look: ["invert(gamepad:leftStick)"] }, { gamepad: pad })
+  if (input.bindings("look")[0]!.source.id !== "invert(gamepad:leftStick)") fail("load through a device's resolve")
+})
 
-  // ---- Interactions: hold, tap, doubleTap, chord ----
-  {
-    let input = createInputMap({ charge: "button", dash: "button", dodge: "button", both: "button" })
-    let a = signalled("button", "a", false)
-    let b = signalled("button", "b", false)
-    input.bind("charge", hold(a.source, 30))
-    input.bind("dash", tap(a.source, 30))
-    input.bind("dodge", doubleTap(a.source, 60, 30))
-    input.bind("both", chord(a.source, b.source))
-    let counts = { charge: 0, dash: 0, dodge: 0, both: 0 }
-    for (let name of Object.keys(counts) as (keyof typeof counts)[]) input.onPress(name, () => counts[name]++)
-    // A short press: a tap, not a hold.
-    a.set(true)
-    flush()
-    a.set(false)
-    flush()
-    await tick()
-    if (counts.dash !== 1 || counts.charge !== 0) fail(`a short press taps (${counts.dash}) and does not hold (${counts.charge})`)
-    if (input.pressed("dash")) fail("a tap releases on its own")
-    // A long press: a hold, not a tap.
-    a.set(true)
-    flush()
-    await sleep(50)
-    if (!input.pressed("charge")) fail("held past the time, hold reads pressed")
-    a.set(false)
-    flush()
-    await tick()
-    if (input.pressed("charge") || counts.dash !== 1) fail("release ends the hold and a long press is not a tap")
-    // Two quick taps: a double tap, and two taps. The gap since the
-    // taps above is let pass first, so the pair is the one counted.
-    await sleep(80)
-    for (let i = 0; i < 2; i++) {
-      a.set(true)
-      flush()
-      a.set(false)
-      flush()
-      await tick()
-    }
-    if (counts.dodge !== 1) fail(`two quick taps double-tap once, got ${counts.dodge}`)
-    if (counts.dash !== 3) fail(`each tap counts, got ${counts.dash}`)
-    // Two slow taps: no double tap.
-    await sleep(80)
-    a.set(true)
-    flush()
-    a.set(false)
-    flush()
-    await sleep(80)
+test("Interactions: hold, tap, doubleTap, chord", async () => {
+  let input = createInputMap({ charge: "button", dash: "button", dodge: "button", both: "button" })
+  let a = signalled("button", "a", false)
+  let b = signalled("button", "b", false)
+  input.bind("charge", hold(a.source, 30))
+  input.bind("dash", tap(a.source, 30))
+  input.bind("dodge", doubleTap(a.source, 60, 30))
+  input.bind("both", chord(a.source, b.source))
+  let counts = { charge: 0, dash: 0, dodge: 0, both: 0 }
+  for (let name of Object.keys(counts) as (keyof typeof counts)[]) input.onPress(name, () => counts[name]++)
+  // A short press: a tap, not a hold.
+  a.set(true)
+  flush()
+  a.set(false)
+  flush()
+  await tick()
+  if (counts.dash !== 1 || counts.charge !== 0) fail(`a short press taps (${counts.dash}) and does not hold (${counts.charge})`)
+  if (input.pressed("dash")) fail("a tap releases on its own")
+  // A long press: a hold, not a tap.
+  a.set(true)
+  flush()
+  await sleep(50)
+  if (!input.pressed("charge")) fail("held past the time, hold reads pressed")
+  a.set(false)
+  flush()
+  await tick()
+  if (input.pressed("charge") || counts.dash !== 1) fail("release ends the hold and a long press is not a tap")
+  // Two quick taps: a double tap, and two taps. The gap since the
+  // taps above is let pass first, so the pair is the one counted.
+  await sleep(80)
+  for (let i = 0; i < 2; i++) {
     a.set(true)
     flush()
     a.set(false)
     flush()
     await tick()
-    if (counts.dodge !== 1) fail("taps too far apart do not double-tap")
-    // The chord: both, not either.
-    a.set(true)
-    flush()
-    if (input.pressed("both")) fail("a chord needs every source")
-    b.set(true)
-    flush()
-    if (!input.pressed("both") || counts.both !== 1) fail("a chord presses when the last source lands")
-    a.set(false)
-    flush()
-    if (input.pressed("both")) fail("a chord releases when any source lifts")
-    throws("hold an axis", () => hold(valued("axis", "z", 0).source as never))
-    throws("hold a negative time", () => hold(a.source, -1))
-    throws("chord of one", () => chord(a.source))
   }
+  if (counts.dodge !== 1) fail(`two quick taps double-tap once, got ${counts.dodge}`)
+  if (counts.dash !== 3) fail(`each tap counts, got ${counts.dash}`)
+  // Two slow taps: no double tap.
+  await sleep(80)
+  a.set(true)
+  flush()
+  a.set(false)
+  flush()
+  await sleep(80)
+  a.set(true)
+  flush()
+  a.set(false)
+  flush()
+  await tick()
+  if (counts.dodge !== 1) fail("taps too far apart do not double-tap")
+  // The chord: both, not either.
+  a.set(true)
+  flush()
+  if (input.pressed("both")) fail("a chord needs every source")
+  b.set(true)
+  flush()
+  if (!input.pressed("both") || counts.both !== 1) fail("a chord presses when the last source lands")
+  a.set(false)
+  flush()
+  if (input.pressed("both")) fail("a chord releases when any source lifts")
+  throws("hold an axis", () => hold(valued("axis", "z", 0).source as never))
+  throws("hold a negative time", () => hold(a.source, -1))
+  throws("chord of one", () => chord(a.source))
+})
 
-  // ---- device(): the last device that moved anything bound ----
-  {
-    let pad = fakeDevice("gamepad")
-    let input = createInputMap({ move: "vec2", jump: "button", zoom: "axis" })
-    let stickValue: Vec2 = [0, 0]
-    let stick: InputSource<"vec2"> = { kind: "vec2", label: "stick", id: "gamepad:leftStick", device: "gamepad", rate: () => stickValue }
-    let [stickVersion, bumpStick] = createSignal(0, { ownedWrite: true })
-    let reactiveStick: InputSource<"vec2"> = { ...stick, rate: () => (stickVersion(), stickValue) }
-    let custom = signalled("button", "custom", false)
-    input.bind("move", keyboard.wasd, reactiveStick)
-    input.bind("jump", keyboard.key("Space"), custom.source)
-    input.bind("zoom", pad.make("axis", "wheel"))
-    flush()
-    if (input.device() !== undefined) fail("no device before any input")
-    input.handlers.onKeyDown(key("KeyW", "w"))
-    flush()
-    if (input.device() !== "keyboard") fail(`a key names the keyboard, got ${input.device()}`)
-    stickValue = [0.5, 0]
-    bumpStick(1)
-    flush()
-    if (input.device() !== "gamepad") fail(`a stick names the pad, got ${input.device()}`)
-    // A source without a device never counts; a delta names its device.
-    custom.set(true)
-    flush()
-    if (input.device() !== "gamepad") fail("a custom source without a device does not switch")
-    let feedSink: { delta(v: number, f?: Vec2): void } | null = null
-    let wheel: InputSource<"axis"> = {
-      kind: "axis",
-      label: "wheel",
-      id: "pointer:wheel",
-      device: "pointer",
-      deltas(s) {
-        feedSink = s
-        return () => (feedSink = null)
-      },
-    }
-    input.bind("zoom", wheel)
-    feedSink!.delta(1)
-    flush()
-    if (input.device() !== "pointer") fail(`a delta names its device, got ${input.device()}`)
-    input.handlers.onKeyUp(key("KeyW", "w"))
-    input.handlers.onKeyDown(key("KeyW", "w"))
-    flush()
-    if (input.device() !== "keyboard") fail("back to the keyboard")
-    input.handlers.onBlur()
+test("device(): the last device that moved anything bound", () => {
+  let pad = fakeDevice("gamepad")
+  let input = createInputMap({ move: "vec2", jump: "button", zoom: "axis" })
+  let stickValue: Vec2 = [0, 0]
+  let stick: InputSource<"vec2"> = { kind: "vec2", label: "stick", id: "gamepad:leftStick", device: "gamepad", rate: () => stickValue }
+  let [stickVersion, bumpStick] = createSignal(0, { ownedWrite: true })
+  let reactiveStick: InputSource<"vec2"> = { ...stick, rate: () => (stickVersion(), stickValue) }
+  let custom = signalled("button", "custom", false)
+  input.bind("move", keyboard.wasd, reactiveStick)
+  input.bind("jump", keyboard.key("Space"), custom.source)
+  input.bind("zoom", pad.make("axis", "wheel"))
+  flush()
+  if (input.device() !== undefined) fail("no device before any input")
+  input.handlers.onKeyDown(key("KeyW", "w"))
+  flush()
+  if (input.device() !== "keyboard") fail(`a key names the keyboard, got ${input.device()}`)
+  stickValue = [0.5, 0]
+  bumpStick(1)
+  flush()
+  if (input.device() !== "gamepad") fail(`a stick names the pad, got ${input.device()}`)
+  // A source without a device never counts; a delta names its device.
+  custom.set(true)
+  flush()
+  if (input.device() !== "gamepad") fail("a custom source without a device does not switch")
+  let feedSink: { delta(v: number, f?: Vec2): void } | null = null
+  let wheel: InputSource<"axis"> = {
+    kind: "axis",
+    label: "wheel",
+    id: "pointer:wheel",
+    device: "pointer",
+    deltas(s) {
+      feedSink = s
+      return () => (feedSink = null)
+    },
   }
-}
+  input.bind("zoom", wheel)
+  feedSink!.delta(1)
+  flush()
+  if (input.device() !== "pointer") fail(`a delta names its device, got ${input.device()}`)
+  input.handlers.onKeyUp(key("KeyW", "w"))
+  input.handlers.onKeyDown(key("KeyW", "w"))
+  flush()
+  if (input.device() !== "keyboard") fail("back to the keyboard")
+  input.handlers.onBlur()
+})
 
-asyncChecks().then(
-  () => {
-// ---- A pulse (a button source with a delta channel) on an axis action drives it by delta only ----
-{
+test("A pulse (a button source with a delta channel) on an axis action drives it by delta only", () => {
   let map = createInputMap({ zoom: "axis" })
   let pressed = true
   let sink: { delta(value: number, focal?: [number, number]): void } | null = null
@@ -675,13 +660,4 @@ asyncChecks().then(
   let held = { kind: "button" as const, label: "test key", id: "test:key", rate: () => true }
   map.bind([{ action: "zoom", source: held }])
   if (map.value("zoom") !== 1) fail(`a held button without a delta channel still reads 1 on an axis, got ${map.value("zoom")}`)
-}
-
-    console.log(failures === 0 ? "INPUT-MAP-OK" : `INPUT-MAP-FAIL ${failures}`)
-    if (failures > 0) throw new Error(`${failures} input map check(s) failed`)
-  },
-  err => {
-    console.log(`INPUT-MAP-FAIL threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
-    throw err
-  },
-)
+})

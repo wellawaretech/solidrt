@@ -1,19 +1,18 @@
 // Check rig for the atlas frame math (frames.ts): grid slicing against a
-// directly-computed oracle across random sheet shapes, spacing, and margins,
-// plus namedFrames and the validation throws. Pure-module input only, so it
-// runs headless on flux, bundled from the repo root:
-//
-//   bunx srt bundle -f --stdout packages/2d/checks/frames-check.ts | target/release/flux - [seed]
-//
-// A seeded PRNG keeps failures reproducible - rerun with the printed seed.
-// A failure prints FAIL lines and throws at the end, and the flux binary
-// exits 1 on the uncaught throw, so a CI step can gate on the exit code.
+// directly-computed oracle across random sheet shapes, spacing, and
+// margins, plus namedFrames and the validation throws. Pure-module input
+// only, so it runs headless on flux: `srt test packages/2d`. The random
+// inputs come from a fixed seed, printed by a failure; `srt test <this
+// file> -- <seed>` tries another.
 
+import { test } from "flux:test"
 import { argv } from "flux:process"
 import { grid, namedFrames, writeFrame, FULL_FRAME } from "../src/frames.ts"
 
-let seed = Number(argv[0] ?? Math.floor(Math.random() * 0xffffffff))
-console.log("seed", seed)
+// The seed of the random inputs below. A failure prints it;
+// `srt test <this file> -- <seed>` runs with another.
+const SEED = 20260932
+let seed = Number(argv[0] ?? SEED)
 
 let s = seed >>> 0
 function rand(): number {
@@ -24,10 +23,8 @@ function int(lo: number, hi: number): number {
   return lo + Math.floor(rand() * (hi - lo + 1))
 }
 
-let failures = 0
-function fail(msg: string) {
-  failures++
-  console.log(`FAIL: ${msg}`)
+function fail(msg: string): void {
+  throw new Error(`${msg} (seed ${seed})`)
 }
 
 function close(a: number, b: number): boolean {
@@ -35,55 +32,61 @@ function close(a: number, b: number): boolean {
 }
 
 function assertThrows(what: string, fn: () => void) {
+  let threw = false
   try {
     fn()
-    fail(`${what}: expected a throw`)
   } catch {
+    threw = true
     // expected
   }
+  if (!threw) fail(`${what}: expected a throw`)
 }
 
 // Hand-written: a 2x2 grid over a 32x32 sheet is quarters.
-{
+test("grid: a 2x2 grid over a 32x32 sheet is quarters", () => {
   let frames = grid({ width: 32, height: 32 }, 2, 2)
   if (frames.length !== 4) fail(`2x2 grid has ${frames.length} frames`)
   let f = frames[3]!
   if (!(close(f.u0, 0.5) && close(f.v0, 0.5) && close(f.u1, 1) && close(f.v1, 1))) {
     fail(`2x2 grid frame 3 is (${f.u0}, ${f.v0})-(${f.u1}, ${f.v1}), expected the bottom-right quarter`)
   }
-}
+})
 // Row-major order: frame[cols] starts the second row.
-{
+test("grid: row-major order", () => {
   let frames = grid({ width: 48, height: 32 }, 3, 2)
   let second = frames[3]!
   if (!(close(second.u0, 0) && close(second.v0, 0.5))) fail("grid is not row-major")
-}
+})
 // An Atlas record (texture plus size) slices as it is: the slicers read
 // only width and height, so extra fields pass.
-{
+test("grid: an atlas record slices as it is", () => {
   let atlas = { texture: 1, width: 64, height: 64 }
   let f = grid(atlas, 4, 4)[5]!
   if (!(close(f.u0, 0.25) && close(f.v0, 0.25))) fail("grid over an atlas record")
-}
-// FULL_FRAME is the unit rect.
-if (!(FULL_FRAME.u0 === 0 && FULL_FRAME.v0 === 0 && FULL_FRAME.u1 === 1 && FULL_FRAME.v1 === 1)) {
-  fail("FULL_FRAME is not the unit rect")
-}
+})
+test("FULL_FRAME is the unit rect", () => {
+  // FULL_FRAME is the unit rect.
+  if (!(FULL_FRAME.u0 === 0 && FULL_FRAME.v0 === 0 && FULL_FRAME.u1 === 1 && FULL_FRAME.v1 === 1)) {
+    fail("FULL_FRAME is not the unit rect")
+  }
+})
 
-// Validation throws.
-assertThrows("zero cols", () => grid({ width: 32, height: 32 }, 0, 2))
-assertThrows("fractional rows", () => grid({ width: 32, height: 32 }, 2, 1.5))
-assertThrows("non-positive sheet", () => grid({ width: 0, height: 32 }, 2, 2))
-assertThrows("cells eaten by spacing", () => grid({ width: 8, height: 8 }, 8, 1, { spacing: 4 }))
-assertThrows("named non-positive frame", () => namedFrames({ width: 32, height: 32 }, { bad: [0, 0, 0, 4] }))
-assertThrows("named non-positive atlas", () => namedFrames({ width: 0, height: 32 }, { a: [0, 0, 4, 4] }))
-assertThrows("grid inset inverts the cell", () => grid({ width: 32, height: 32 }, 4, 4, { inset: 4 }))
-assertThrows("named inset inverts the rect", () => namedFrames({ width: 32, height: 32 }, { a: [0, 0, 8, 2] }, { inset: 1 }))
-assertThrows("negative inset", () => grid({ width: 32, height: 32 }, 2, 2, { inset: -0.5 }))
+test("grid and namedFrames: validation throws", () => {
+  // Validation throws.
+  assertThrows("zero cols", () => grid({ width: 32, height: 32 }, 0, 2))
+  assertThrows("fractional rows", () => grid({ width: 32, height: 32 }, 2, 1.5))
+  assertThrows("non-positive sheet", () => grid({ width: 0, height: 32 }, 2, 2))
+  assertThrows("cells eaten by spacing", () => grid({ width: 8, height: 8 }, 8, 1, { spacing: 4 }))
+  assertThrows("named non-positive frame", () => namedFrames({ width: 32, height: 32 }, { bad: [0, 0, 0, 4] }))
+  assertThrows("named non-positive atlas", () => namedFrames({ width: 0, height: 32 }, { a: [0, 0, 4, 4] }))
+  assertThrows("grid inset inverts the cell", () => grid({ width: 32, height: 32 }, 4, 4, { inset: 4 }))
+  assertThrows("named inset inverts the rect", () => namedFrames({ width: 32, height: 32 }, { a: [0, 0, 8, 2] }, { inset: 1 }))
+  assertThrows("negative inset", () => grid({ width: 32, height: 32 }, 2, 2, { inset: -0.5 }))
+})
 
 // inset shaves every side: a 16x16 cell at (16, 0) of a 32x16 sheet with a
 // half-texel inset spans pixels 16.5..31.5 by 0.5..15.5.
-{
+test("inset shaves every side", () => {
   let f = grid({ width: 32, height: 16 }, 2, 1, { inset: 0.5 })[1]!
   if (!(close(f.u0 * 32, 16.5) && close(f.v0 * 16, 0.5) && close(f.u1 * 32, 31.5) && close(f.v1 * 16, 15.5))) {
     fail(`grid inset frame is (${f.u0 * 32}, ${f.v0 * 16})-(${f.u1 * 32}, ${f.v1 * 16}) px`)
@@ -92,61 +95,63 @@ assertThrows("negative inset", () => grid({ width: 32, height: 32 }, 2, 2, { ins
   if (!(close(g.u0 * 64, 17) && close(g.v0 * 32, 9) && close(g.u1 * 64, 47) && close(g.v1 * 32, 23))) {
     fail(`namedFrames inset hero is (${g.u0 * 64}, ${g.v0 * 32})-(${g.u1 * 64}, ${g.v1 * 32}) px`)
   }
-}
+})
 
 // namedFrames maps pixel rects to UVs.
-{
+test("namedFrames maps pixel rects to UVs", () => {
   let frames = namedFrames({ width: 64, height: 32 }, { hero: [16, 8, 32, 16] })
   let f = frames.hero
   if (!(close(f.u0, 0.25) && close(f.v0, 0.25) && close(f.u1, 0.75) && close(f.v1, 0.75))) {
     fail(`namedFrames hero is (${f.u0}, ${f.v0})-(${f.u1}, ${f.v1})`)
   }
-}
+})
 
-// Randomized sweep: every frame's pixel rect, reconstructed from its UVs,
-// must land exactly where the oracle places the cell.
-const SWEEPS = 2000
-let checked = 0
-for (let i = 0; i < SWEEPS; i++) {
-  let cols = int(1, 12)
-  let rows = int(1, 12)
-  let cellW = int(1, 32)
-  let cellH = int(1, 32)
-  let spacing = int(0, 4)
-  let marginX = int(0, 6)
-  let marginY = int(0, 6)
-  let width = marginX * 2 + cols * cellW + (cols - 1) * spacing
-  let height = marginY * 2 + rows * cellH + (rows - 1) * spacing
-  let frames = grid({ width, height }, cols, rows, { cellW, cellH, spacing, marginX, marginY })
-  if (frames.length !== cols * rows) {
-    fail(`grid(${cols}, ${rows}) returned ${frames.length} frames`)
-    continue
+test("grid: every frame lands where the oracle places the cell, over random sheets", () => {
+  // Randomized sweep: every frame's pixel rect, reconstructed from its UVs,
+  // must land exactly where the oracle places the cell.
+  const SWEEPS = 2000
+  let checked = 0
+  for (let i = 0; i < SWEEPS; i++) {
+    let cols = int(1, 12)
+    let rows = int(1, 12)
+    let cellW = int(1, 32)
+    let cellH = int(1, 32)
+    let spacing = int(0, 4)
+    let marginX = int(0, 6)
+    let marginY = int(0, 6)
+    let width = marginX * 2 + cols * cellW + (cols - 1) * spacing
+    let height = marginY * 2 + rows * cellH + (rows - 1) * spacing
+    let frames = grid({ width, height }, cols, rows, { cellW, cellH, spacing, marginX, marginY })
+    if (frames.length !== cols * rows) {
+      fail(`grid(${cols}, ${rows}) returned ${frames.length} frames`)
+      continue
+    }
+    let col = int(0, cols - 1)
+    let row = int(0, rows - 1)
+    let f = frames[row * cols + col]!
+    let x = marginX + col * (cellW + spacing)
+    let y = marginY + row * (cellH + spacing)
+    if (
+      !(
+        close(f.u0 * width, x) &&
+        close(f.v0 * height, y) &&
+        close(f.u1 * width, x + cellW) &&
+        close(f.v1 * height, y + cellH)
+      )
+    ) {
+      fail(
+        `grid(${cols}x${rows}, cell ${cellW}x${cellH}, spacing ${spacing}, margin ${marginX}/${marginY}) ` +
+          `cell (${col}, ${row}): UV rect maps to (${f.u0 * width}, ${f.v0 * height}), expected (${x}, ${y})`,
+      )
+    }
+    checked++
   }
-  let col = int(0, cols - 1)
-  let row = int(0, rows - 1)
-  let f = frames[row * cols + col]!
-  let x = marginX + col * (cellW + spacing)
-  let y = marginY + row * (cellH + spacing)
-  if (
-    !(
-      close(f.u0 * width, x) &&
-      close(f.v0 * height, y) &&
-      close(f.u1 * width, x + cellW) &&
-      close(f.v1 * height, y + cellH)
-    )
-  ) {
-    fail(
-      `grid(${cols}x${rows}, cell ${cellW}x${cellH}, spacing ${spacing}, margin ${marginX}/${marginY}) ` +
-        `cell (${col}, ${row}): UV rect maps to (${f.u0 * width}, ${f.v0 * height}), expected (${x}, ${y})`,
-    )
-  }
-  checked++
-}
+})
 
 // writeFrame: the UV-side mirror. flipX swaps u0/u1, flipY v0/v1, both is
 // both, and toggling the changed axes on the stored floats undoes it (an
 // involution), which is what a flip write without a new frame relies on.
-{
+test("writeFrame: the flips mirror the UVs and toggling undoes them", () => {
   let data = new Float32Array(8)
   let f = { u0: 0.1, v0: 0.2, u1: 0.3, v1: 0.4 }
   let expect = (what: string, u0: number, v0: number, u1: number, v1: number) => {
@@ -169,7 +174,4 @@ for (let i = 0; i < SWEEPS; i++) {
   writeFrame(data, 4, data[4]!, data[5]!, data[6]!, data[7]!, false, true)
   expect("toggle Y back", 0.1, 0.2, 0.3, 0.4)
   if (data[0] !== 0 || data[3] !== 0) fail("writeFrame wrote outside its four floats")
-}
-
-if (failures === 0) console.log(`PASS: ${checked} random grids + edge cases`)
-else throw new Error(`${failures} FAILURES (seed ${seed})`)
+})

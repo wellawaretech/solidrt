@@ -1,11 +1,12 @@
-// @solidrt/core/textures under bun: the entry is runtime-free (this import
-// is the proof), isKtx2 sniffs the file, and the texture settings an app
+// @solidrt/core/textures under srt test: the entry imports no gui or srt:
+// module (this import is the proof: the bare flux binary has neither),
+// isKtx2 sniffs the file, and the texture settings an app
 // declares in package.json (solidrt.textures) read as defaults where
 // nothing is said and a named error where something is wrong. Which
 // setting a texture gets is decided with the matcher passed in; here that
-// is bun's, which reads these patterns as the runtime's does.
-import { expect, test } from "bun:test"
-import { matchesGlob } from "node:path"
+// is the runtime's own.
+import { expect, test } from "flux:test"
+import { matchesGlob } from "flux:path"
 import { DEFAULT_TEXTURE_SETTINGS, isKtx2, textureSettingFor, textureSettings, unmatchedTextureFiles, unmatchedTextureNames } from "../src/textures.ts"
 
 let read = (textures: unknown, run?: { compress?: boolean }) => textureSettings({ solidrt: { textures } }, run)

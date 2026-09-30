@@ -3,12 +3,9 @@
 // normals, cap orientation and placement, bevel clamping, lathe angle
 // rejection, the tube -> sweep pass-through - and the generator layout
 // option's byte identity with withColors. Pure-module inputs only, so it
-// runs headless on flux, bundled from the repo root:
-//
-//   bunx srt bundle -f --stdout packages/3d/checks/sweep-check.ts | target/release/flux -
-//
-// A failure prints FAIL lines and throws at the end, so the run exits nonzero.
+// runs headless on flux: `srt test packages/3d`.
 
+import { test } from "flux:test"
 import { extrude, lathe, pathFrames, polygon, sweep, tube } from "../src/sweep.ts"
 import { roundRect } from "../src/profile.ts"
 import type { Profile } from "../src/profile.ts"
@@ -16,22 +13,22 @@ import { geometryAttribute, geometryBounds, layoutKey, layoutStride, validateGeo
 import type { Geometry } from "../src/geometry.ts"
 import type { Vec3 } from "../src/math.ts"
 
-let failures = 0
-let fail = (msg: string): void => {
-  failures++
-  console.log("FAIL:", msg)
+function fail(msg: string): void {
+  throw new Error(msg)
 }
 let near = (a: number, b: number, eps = 1e-5): boolean => Math.abs(a - b) <= eps
 // The rigs here build base all-float layouts, so the vertex bytes read
 // back as floats; the view type is not the geometry contract.
 let floats = (g: Geometry): Float32Array => new Float32Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength / Float32Array.BYTES_PER_ELEMENT)
 let throws = (label: string, fn: () => unknown): void => {
+  let threw = false
   try {
     fn()
-    fail(`${label}: did not throw`)
   } catch {
+    threw = true
     // expected
   }
+  if (!threw) fail(`${label}: did not throw`)
 }
 
 // Structural invariants every solid here must satisfy.
@@ -93,7 +90,7 @@ let square: Profile = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
 
 // extrude: a plain box-like prism - 4 creased profile points make 8 ring
 // entries plus the seam duplicate (u = 1), 2 slices, plus two 4-vertex caps.
-{
+test("extrude: a plain prism", () => {
   let g = extrude(square, { depth: 2 })
   structure("extrude plain", g)
   outward("extrude plain", g, [0, 0, 0])
@@ -102,11 +99,11 @@ let square: Profile = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
   let b = geometryBounds(g)
   if (!near(b[2]!, -1) || !near(b[5]!, 1)) fail("extrude depth centered: " + b[2] + ".." + b[5])
   if (!near(b[0]!, -0.5) || !near(b[3]!, 0.5)) fail("extrude profile extent")
-}
+})
 
 // extrude with bevel: bounds shrink nowhere (bevel is inset into the
 // prism), slices grow with bevelSegments, bevel clamps below half depth.
-{
+test("extrude with bevel: bounds, slices, the clamp", () => {
   let g = extrude(square, { depth: 1, bevel: 0.1, bevelSegments: 3 })
   structure("extrude bevel", g)
   outward("extrude bevel", g, [0, 0, 0])
@@ -118,10 +115,10 @@ let square: Profile = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
   structure("extrude bevel clamp", huge)
   let hb = geometryBounds(huge)
   if (!near(hb[5]!, 0.5)) fail("extrude bevel clamp keeps depth")
-}
+})
 
 // polygon: one flat face, facing +z, UVs mapping the box.
-{
+test("polygon: one flat face, facing +z", () => {
   let g = polygon(roundRect(1, 0.5, 0.1, 3))
   structure("polygon", g)
   let stride = BASE_FLOATS
@@ -134,12 +131,12 @@ let square: Profile = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
   }
   if (g.indices.length !== (count - 2) * 3) fail("polygon triangulation count: " + g.indices.length)
   if (polygon(square, { label: "sq" }).label !== "sq") fail("polygon label option")
-}
+})
 
 // lathe: a closed ring profile (tube wall) revolved fully is watertight-ish:
 // no caps, every vertex on a circle of its profile radius.
 let wall: Profile = [[0.3, -0.5], [0.5, -0.5], [0.5, 0.5], [0.3, 0.5]]
-{
+test("lathe: a full turn, a half turn with caps, the angle throws", () => {
   let g = lathe(wall, { segments: 12 })
   structure("lathe full", g)
   // A hollow ring is not convex (its inner wall faces the axis), so the
@@ -157,12 +154,12 @@ let wall: Profile = [[0.3, -0.5], [0.5, -0.5], [0.5, 0.5], [0.3, 0.5]]
   if (hb[5]! > 1e-6 && hb[2]! < -1e-6) fail("lathe half spans both z signs: " + hb[2] + ".." + hb[5])
   throws("lathe zero angle", () => lathe(wall, { angle: 0 }))
   throws("lathe over full", () => lathe(wall, { angle: Math.PI * 2 + 0.1 }))
-}
+})
 
 // sweep: a straight path along +z equals an extrude in extent; a bent path
 // keeps structure; creased vs smooth points change vertex counts.
 let straight: Vec3[] = [[0, 0, -1], [0, 0, 1]]
-{
+test("sweep: a straight path, a bent path, creased and smooth points", () => {
   let g = sweep(square, straight)
   structure("sweep straight", g)
   outward("sweep straight", g, [0, 0, 0])
@@ -178,10 +175,10 @@ let straight: Vec3[] = [[0, 0, -1], [0, 0, 1]]
   structure("sweep creased", creased)
   if (floats(creased).length <= floats(smooth).length) fail("creased joint duplicates its ring")
   throws("sweep one point", () => sweep(square, [[0, 0, 0]]))
-}
+})
 
 // pathFrames: tangents unit, cross axes perpendicular, lengths cumulative.
-{
+test("pathFrames: tangents unit, cross axes perpendicular, lengths cumulative", () => {
   let f = pathFrames([[0, 0, 0], [0, 0, 2], [3, 0, 2]])
   if (f.lengths.length !== 3 || !near(f.lengths[2]!, 5)) fail("pathFrames lengths: " + f.lengths)
   for (let i = 0; i < f.tangents.length; i++) {
@@ -191,10 +188,10 @@ let straight: Vec3[] = [[0, 0, -1], [0, 0, 1]]
     if (!near(Math.hypot(...t), 1) || !near(Math.hypot(...x), 1) || !near(Math.hypot(...y), 1)) fail("pathFrames unit axes")
     if (!near(t[0] * x[0] + t[1] * x[1] + t[2] * x[2], 0) || !near(x[0] * y[0] + x[1] * y[1] + x[2] * y[2], 0)) fail("pathFrames orthogonal")
   }
-}
+})
 
 // tube: the round-profile sweep - radius bounds and radialSegments ring.
-{
+test("tube: radius bounds and the radialSegments ring", () => {
   let g = tube(straight, { radius: 0.25, radialSegments: 8 })
   structure("tube", g)
   outward("tube", g, [0, 0, 0])
@@ -204,10 +201,10 @@ let straight: Vec3[] = [[0, 0, -1], [0, 0, 1]]
   let d = tube(straight)
   let bd = geometryBounds(d)
   if (!near(bd[3]!, 0.5)) fail("tube default radius")
-}
+})
 
 // Layout option: one-pass wide emission equals generate-then-withColors.
-{
+test("the layout option: one-pass wide emission equals generate-then-withColors", () => {
   let same = (name: string, std: Geometry, wide: Geometry) => {
     let via = withColors(std, () => [0, 0, 0, 0])
     if (layoutKey(wide.layout) !== layoutKey("colored")) fail(name + ": wide layout")
@@ -225,7 +222,4 @@ let straight: Vec3[] = [[0, 0, -1], [0, 0, 1]]
   same("sweep", sweep(square, straight), sweep(square, straight, { layout: "colored" }))
   same("tube", tube(straight, { radialSegments: 5 }), tube(straight, { radialSegments: 5, layout: "colored" }))
   same("polygon", polygon(square), polygon(square, { layout: "colored" }))
-}
-
-if (failures > 0) throw new Error(failures + " sweep check(s) failed")
-console.log("PASS: profile kit solids")
+})

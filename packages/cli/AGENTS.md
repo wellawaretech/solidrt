@@ -52,6 +52,17 @@ the work before starting it:
   and no reload. With a folder it covers every entry under it (src/index.tsx
   and examples/*), so `bunx srt check .` answers "did I break any example"
   in one call. The dev server runs it once at startup without gating on it.
+- `bunx srt test [file|dir]` - run the tests: every `tests/*.test.ts` under
+  the folder (default: the cwd), each file bundled and run in its own `flux`
+  process, not under Bun. A test file imports `test` and `expect` from
+  `flux:test` (flat tests, no `describe`, no hooks; the matchers are in
+  flux-types `modules/test.d.ts`). A test whose function takes the clock,
+  `test(name, async clock => { ... })`, runs with stepped timers:
+  `await clock.advance(ms)` instead of waiting. `--filter <text>` runs the
+  tests whose name contains the text; everything after `--` reaches the
+  test files as `flux:process` argv (the seed of a seeded test). Exits
+  nonzero on any failure; a failure prints expected, received and the
+  source line. Headless only for now: no `.test.tsx`, no app UI.
 - `bunx srt bundle` - bundle the project into `dist/bundle/` (or
   `--output <dir>`): `<name>.srt.js` plus the app's isolate modules as
   `isolates/<id>.js`. With `--compile`, bytecode (`.srt.bin`/`.bin`)

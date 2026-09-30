@@ -1,12 +1,13 @@
 // The runtime-free entry (src/model-data.ts, published as
-// @solidrt/3d/model) under bun test: a bake script's whole surface with
-// no flux:* shim, so a runtime import creeping into the chain fails here
-// rather than in an app's next bake. Builds a two-part ModelData from the
+// @solidrt/3d/model) under srt test: a bake script's whole surface. The
+// bare flux binary this runs on has no gui module, so a gui or srt: import
+// creeping into the chain fails here rather than in an app's next bake (a
+// headless flux: module would not: the binary has those). Builds a two-part ModelData from the
 // geometry kit (a shared part with a placement, a plain one), round-trips
 // it through the container and checks the app-data slots - extras on the
 // root, a node and a part, named blobs - come back deep-equal and the
 // blobs aligned for typed views.
-import { expect, test } from "bun:test"
+import { expect, test } from "flux:test"
 import * as entry from "../src/model-data.ts"
 import type { ModelData } from "../src/model-data.ts"
 

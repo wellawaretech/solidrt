@@ -167,7 +167,7 @@ control; the shared framing and lane math is written once in core (the
    then.
 9. **Defaults, docs, checks.** Decide the touch-first model-viewer
    defaults (anchor on, push off, follow off) and show them in
-   `orbitBindings`' docs and the pick example; `orbit-check.ts` covers
+   `orbitBindings`' docs and the pick example; `orbit.test.ts` covers
    the push, the lanes, the follow framing and the occlusion return;
    the fly demo moves to the built-ins and its TEMPORARY block goes.
 

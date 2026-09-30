@@ -108,8 +108,9 @@ jobs:
 
   # The headless flux runtime (QuickJS + the forge marshalling: value, time,
   # marshal, intrinsics) on the same four platforms, same principle as
-  # test-forge. `--lib` with default features: the gui half needs alloy (SDL,
-  # Impeller) and lives in `check` on Linux. QuickJS builds through bindgen,
+  # test-forge. `--lib` without gui: the gui half needs alloy (SDL, Impeller)
+  # and lives in `check` on Linux. The `test` feature adds flux:test, which
+  # the `flux` binary carries, and its tests. QuickJS builds through bindgen,
   # so libclang must be present: the macOS and Windows images ship it (the
   # client builds there with no setup), the Ubuntu images need the package.
   test-flux:
@@ -142,7 +143,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libclang-dev clang
 
       - name: Test flux
-        run: cargo test -p flux --lib
+        run: cargo test -p flux --lib --features test
 
   types:
     runs-on: ubuntu-24.04

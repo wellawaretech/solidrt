@@ -1,29 +1,23 @@
 // Checks for the shared camera-control math (src/camera-control.ts): the
 // ease, the framing zones (dead zone, the soft band, hard limits, per-axis
-// damping, the settle), the lookahead filter, the lanes (offset plus
-// summed shakes, decay to zero, never in a pose) and the validation
-// throws. Pure-module input only, so it runs headless on flux, bundled
-// from the repo root:
-//
-//   bunx srt bundle -f --stdout packages/core/checks/camera-control-check.ts | target/release/flux -
-//
-// Deterministic; prints FAIL lines and throws at the end.
+// damping, the settle), the lookahead filter, the lanes (offset plus summed
+// shakes, decay to zero, never in a pose) and the validation throws.
+// Pure-module input only, so it runs headless on flux: `srt test
+// packages/core`. Deterministic.
 
+import { test } from "flux:test"
 import { checkFollowOptions, checkShake, createActivity, createLanes, createLookahead, createShotBlend, easeStep, followRate, FOLLOW_EASE, frame, GLIDE_EASE } from "../src/camera-control"
 import { flush } from "@solidjs/signals"
 
-let failures = 0
-let fail = (msg: string) => {
-  failures++
-  console.log(`FAIL ${msg}`)
+function fail(msg: string): void {
+  throw new Error(msg)
 }
 let near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps
 const DT = 1 / 60
 // The settle threshold the checks frame with, a viewport fraction.
 const EPS = 0.001
 
-// ---- The ease: frame-rate independent, closes the gap ----
-{
+test("The ease: frame-rate independent, closes the gap", () => {
   let two = 1 - (1 - easeStep(GLIDE_EASE, DT)) * (1 - easeStep(GLIDE_EASE, DT))
   if (!near(easeStep(GLIDE_EASE, 2 * DT), two)) fail("two half-steps compose to one full step")
   if (!near(easeStep(FOLLOW_EASE, 1), 1 - Math.exp(-FOLLOW_EASE))) fail("easeStep is 1 - e^(-rate dt)")
@@ -31,10 +25,9 @@ const EPS = 0.001
   if (followRate({ damping: 2 }, "y") !== FOLLOW_EASE / 2) fail("damping 2 halves the rate")
   if (followRate({ damping: { x: 0.5 } }, "x") !== FOLLOW_EASE * 2 || followRate({ damping: { x: 0.5 } }, "y") !== FOLLOW_EASE) fail("per-axis damping reads its axis, others default")
   if (followRate({ damping: 0 }, "x") !== Infinity) fail("damping 0 is at once")
-}
+})
 
-// ---- Framing: the dead zone ignores, the band eases, the limits clamp ----
-{
+test("Framing: the dead zone ignores, the band eases, the limits clamp", () => {
   // No zones: the point is chased the whole way, eased.
   let f = frame([0.3, -0.2], undefined, DT, EPS)
   let k = easeStep(FOLLOW_EASE, DT)
@@ -65,10 +58,9 @@ const EPS = 0.001
   // point past the dead edge is clamped to it at once.
   let inverted = frame([0.3, 0], { deadZone: { width: 0.4, height: 0.4 }, hardLimits: { width: 0.2, height: 0.2 } }, DT, EPS)
   if (!near(inverted.x, 0.1) || !inverted.settled) fail(`hard limits inside the dead zone widen to it and clamp whole, got ${JSON.stringify(inverted)}`)
-}
+})
 
-// ---- Framing over frames: a fast point never passes the hard limit ----
-{
+test("Framing over frames: a fast point never passes the hard limit", () => {
   let opts = { deadZone: { width: 0.2, height: 0.2 }, hardLimits: { width: 0.6, height: 0.6 }, damping: 4 }
   // The point runs right at 2 viewport widths per second; the camera
   // follows lazily, but the offset stays within the limit every frame.
@@ -105,10 +97,9 @@ const EPS = 0.001
     }
   }
   if (settledAt < 0) fail("a resting point lets the framing settle")
-}
+})
 
-// ---- Lookahead: velocity times time, smoothed ----
-{
+test("Lookahead: velocity times time, smoothed", () => {
   let look = createLookahead()
   let out: number[] = [0, 0]
   // A point moving at 60 units/s for a few frames predicts 0.5 s ahead.
@@ -131,10 +122,9 @@ const EPS = 0.001
   let out3: number[] = [0, 0, 0]
   for (let i = 0; i < 3; i++) three.predict([0, 0, i], { time: 1 }, DT, out3)
   if (!near(out3[2]!, 2 + 60, 1e-6)) fail(`3d lookahead, got ${out3[2]}`)
-}
+})
 
-// ---- Lanes: offset plus shakes, decay, never in a pose ----
-{
+test("Lanes: offset plus shakes, decay, never in a pose", () => {
   let lanes = createLanes()
   let t = lanes.total([0.1, -0.2])
   if (t[0] !== 0.1 || t[1] !== -0.2 || lanes.active()) fail("the offset alone is the total, no shake active")
@@ -164,17 +154,18 @@ const EPS = 0.001
   if (!(summed > 0.05)) fail(`two shakes sum, peak ${summed}`)
   lanes.clear()
   if (lanes.active()) fail("clear stops every shake")
-}
+})
 
-// ---- Validation ----
-{
+test("Validation", () => {
   let throws = (what: string, f: () => void) => {
+    let threw = false
     try {
       f()
-      fail(`${what} must throw`)
     } catch (err) {
+      threw = true
       if (!(err instanceof Error) || !err.message.startsWith("check")) fail(`${what}: unexpected error ${err}`)
     }
+    if (!threw) fail(`${what} must throw`)
   }
   throws("deadZone 2", () => checkFollowOptions("check", { deadZone: { width: 2, height: 0 } }))
   throws("hardLimits -1", () => checkFollowOptions("check", { hardLimits: { width: 0.5, height: -1 } }))
@@ -187,10 +178,9 @@ const EPS = 0.001
   throws("shake direction bad", () => checkShake("check", 0.1, 1, { direction: [1] as never }))
   checkFollowOptions("check", undefined)
   checkFollowOptions("check", { deadZone: { width: 0.2, height: 0.2 }, hardLimits: { width: 0.8, height: 0.8 }, damping: { x: 1, y: 2 }, lookahead: { time: 0.2, smoothing: 0.1 } })
-}
+})
 
-// ---- The activity gate: the plain flag survives unflushed writes ----
-{
+test("The activity gate: the plain flag survives unflushed writes", () => {
   let busy = false
   let rates = false
   let gate = createActivity(() => busy, () => rates)
@@ -208,10 +198,9 @@ const EPS = 0.001
   gate.notify()
   flush()
   if (!gate.active()) fail("a busy control is active")
-}
+})
 
-// ---- Shots: live by priority, pushes at rest, blends smoothly, lands exactly ----
-{
+test("Shots: live by priority, pushes at rest, blends smoothly, lands exactly", () => {
   type Cam = { v: number }
   let pushed: number[] = []
   let shots = createShotBlend<Cam>(c => pushed.push(c.v), (a, b, t) => ({ v: a.v + (b.v - a.v) * t }), { v: 0 }, { blend: 0.5 })
@@ -266,12 +255,14 @@ const EPS = 0.001
   shots.update(DT)
   if (!Number.isFinite(shots.camera().v)) fail(`a blend from a shot fed undefined stays finite, got ${shots.camera().v}`)
   let throws = (what: string, f: () => void) => {
+    let threw = false
     try {
       f()
-      fail(`${what} must throw`)
     } catch (err) {
+      threw = true
       if (!(err instanceof Error) || !err.message.startsWith("createShotBlend")) fail(`${what}: unexpected error ${err}`)
     }
+    if (!threw) fail(`${what} must throw`)
   }
   // remove frees the name and falls back by priority.
   shots.activate("b", { blend: 0 })
@@ -281,7 +272,4 @@ const EPS = 0.001
   throws("duplicate shot", () => shots.shot("a"))
   throws("unknown shot", () => shots.activate("zzz"))
   throws("negative blend", () => shots.activate("a", { blend: -1 }))
-}
-
-if (failures > 0) throw new Error(`${failures} camera-control check(s) failed`)
-console.log("camera-control checks passed")
+})

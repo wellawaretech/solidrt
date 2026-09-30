@@ -17,7 +17,7 @@
 // counted up for repeats (DOM's detail, Unity's clickCount).
 //
 // Pure BY DESIGN (types and camera.ts, nothing with GPU imports) so
-// checks/dispatch-check.ts drives it headless with a fake pick.
+// tests/dispatch.test.ts drives it headless with a fake pick.
 
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 import { unprojectCamera } from "./camera.ts"

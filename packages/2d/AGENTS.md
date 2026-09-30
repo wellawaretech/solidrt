@@ -350,7 +350,7 @@ the nearest view (the `<SpriteLayer>`'s own or the enclosing
 axes, frames only while `active()`. A view's feed normalizes a drag by
 the leaf's own box, so a leaf under a designSize fit pans and zooms
 correctly. camera2d.ts imports `@solidrt/core/input` and
-`@solidrt/core/camera-control` only, so checks/camera2d-check.ts pins
+`@solidrt/core/camera-control` only, so tests/camera2d.test.ts pins
 the clamp, anchoring, glides, the framing, the lanes, damped bounds,
 inertia and the axes headless; examples/camera.tsx (function face) and
 examples/pick.tsx (`<Camera2d>`) are the live guards. The shared
@@ -485,7 +485,7 @@ keeps, so other props stay reactive).
 
 frames.ts, pick.ts, camera.ts, camera-motion.ts, dispatch.ts,
 oversample-math.ts and tiles-math.ts (the tile grid's chunk and slot
-math, checks/tiles-check.ts) are pure (no GPU imports) BY DESIGN so they
+math, tests/tiles.test.ts) are pure (no GPU imports) BY DESIGN so they
 can be checked headless; keep them that way.
 
 ## The baked tile layer (tiles.ts)
@@ -632,7 +632,7 @@ pressed flag from down to up (`native.button` is set on down/up only).
 Root listeners all run, in registration order (the root is the last
 stop, nothing is left to claim); a record layer has no groups, so the
 chain is the sprite then the root. Event x/y are layer pixels with the
-camera undone. checks/dispatch-check.ts pins the walk, claiming, capture,
+camera undone. tests/dispatch.test.ts pins the walk, claiming, capture,
 hover, wheel and tap rules headless.
 
 ## Traps
@@ -782,7 +782,7 @@ hover, wheel and tap rules headless.
 - Every rotation must agree on direction (clockwise, y-down):
   `pointInSprite` in pick.ts with the vertex stage's `iRot`, and
   `projectCamera` in camera.ts with `uCameraRot` and `<TileLayer>`'s view
-  transform. The differential checks (pick-check.ts, camera-check.ts)
+  transform. The differential tests (tests/pick.test.ts, tests/camera.test.ts)
   guard the JS math against oracles but NOT against the shader - if you
   touch one rotation, touch all, then run examples/camera-probe.tsx (the
   live guard: shader vs projectCamera, node/record parity, the pointer

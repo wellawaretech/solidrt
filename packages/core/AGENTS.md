@@ -479,8 +479,8 @@ that reads exactly like Solid fallout.
   forward], forward = -y), `rise` axis (up). The runtime-free
   half (`createInputMap`, `createAxes`, `keyboard`, the processors) is
   importable as `@solidrt/core/input` for headless checks;
-  checks/input-map-check.ts runs it on the bare flux binary, and
-  checks/input-gamepad-check.ts drives the gamepad device and the join
+  tests/input-map.test.ts runs it on the bare flux binary, and
+  tests/input-gamepad.test.ts drives the gamepad device and the join
   order over a signal of pad snapshots (input-gamepad-device.ts is
   runtime-free; input-gamepad.ts hands it gamepads()). The pointer
   feed's discrete pulses (`doubleTap`, `longPress`) bound to an AXIS
@@ -494,7 +494,7 @@ that reads exactly like Solid fallout.
   on, and the shot blender (`createShotBlend`: several cameras, a
   priority, a timed blend, over the packages' `createShots`) - is
   `@solidrt/core/camera-control`, pure, pinned by
-  checks/camera-control-check.ts; okf/design/camera-controls.md is the
+  tests/camera-control.test.ts; okf/design/camera-controls.md is the
   pipeline the 2d and 3d controls run over it.
 
 - Reactivity is SolidJS 2.0 (`@solidjs/signals`), NOT Solid 1.x. `createSignal`

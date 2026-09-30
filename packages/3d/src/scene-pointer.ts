@@ -19,7 +19,7 @@
 // dispatch.ts is the same model one dimension down.
 //
 // Pure BY DESIGN (types only, nothing with GPU imports) so
-// checks/dispatch-check.ts drives it headless with a fake pick.
+// tests/dispatch.test.ts drives it headless with a fake pick.
 
 import type { PointerEvent as ElementPointerEvent, PointerFeed } from "@solidrt/core"
 import type { NodePointerEvent, SceneNode, ScenePointerListener } from "./node.ts"

@@ -3,8 +3,8 @@
 // covariance bake and the .srts container, for `srt tool 3d/splat` and any
 // app bake script under bun. The package root imports `flux:*` and so
 // loads only on the runtime; this entry imports nothing that does (the
-// model-data rule; tests/splat-data.test.ts imports it under bun and fails
-// the moment a runtime import creeps into the chain).
+// model-data rule; tests/splat-data.test.ts imports it on the bare flux
+// binary and fails the moment a gui or srt: import creeps into the chain).
 //
 //   import { encodeSplat, parseSplat } from "@solidrt/3d/splat"
 //   writeFileSync("assets/scan.srts", encodeSplat(parseSplat(bytes)))

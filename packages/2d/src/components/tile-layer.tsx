@@ -136,7 +136,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
   // World -> screen: p maps to pivot + R(rotation) * zoom * (p - camera) -
   // projectCamera (camera.ts) spelled with element transforms as origin at
   // the camera point, rotate + scale there, then translate the camera point
-  // onto the pivot. checks/camera-check.ts holds the two spellings together.
+  // onto the pivot. tests/camera.test.ts holds the two spellings together.
   let camX = () => props.camera?.x ?? 0
   let camY = () => props.camera?.y ?? 0
   return (

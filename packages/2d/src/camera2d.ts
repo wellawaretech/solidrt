@@ -23,7 +23,7 @@
 // business - an input map over the view's pointer feed, a pad, a debug
 // command - and `camera2dBindings` in input.ts is the standard wiring
 // (drag pans, pinch and wheel zoom, twist rolls). This module imports no
-// GUI or runtime module, so checks/camera2d-check.ts runs it headless.
+// GUI or runtime module, so tests/camera2d.test.ts runs it headless.
 //
 // Conventions, decided against Godot's Camera2D, Unity's Cinemachine and
 // Three's MapControls (plus the map/whiteboard libraries for the canvas

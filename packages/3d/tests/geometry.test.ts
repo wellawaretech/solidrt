@@ -1,24 +1,19 @@
-// Check rig for the geometry-as-data ops (src/geometry.ts): transformGeometry
-// against hand-computed points and normals (non-uniform scale included),
-// mergeGeometries offsets, uint32 widening and the mixed-layout rejection,
-// the exported bounds/ray helpers, and the debug helper builders (counts,
-// bounds, the color channel). Pure-module inputs only, so it runs
-// headless on flux, bundled from the repo root:
-//
-//   bunx srt bundle -f --stdout packages/3d/checks/geometry-check.ts | target/release/flux -
-//
-// A failure prints FAIL lines and throws at the end, so the run exits nonzero.
+// Check rig for the geometry-as-data ops (src/geometry.ts):
+// transformGeometry against hand-computed points and normals (non-uniform
+// scale included), mergeGeometries offsets, uint32 widening and the
+// mixed-layout rejection, the exported bounds/ray helpers, and the debug
+// helper builders (counts, bounds, the color channel). Pure-module inputs
+// only, so it runs headless on flux: `srt test packages/3d`.
 
+import { test } from "flux:test"
 import { arrowHelper, axesHelper, box, box3Helper, capsule, capsuleHelper, cone, cylinder, dodecahedron, edgesGeometry, mergeVertices, normalsHelper, toNonIndexed, withMorphTargets, withNormals, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, geometryKey, geometrySlot, geometryStreams, geometryVertexCount, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, BASE_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
 import { cross, normalize, rayBoxDistance, sub } from "../src/math.ts"
 import type { Geometry, PolyhedronOptions } from "../src/geometry.ts"
 import type { VertexFormat } from "@solidrt/core/gpu"
 import type { Vec3 } from "../src/math.ts"
 
-let failures = 0
-let fail = (msg: string): void => {
-  failures++
-  console.log("FAIL:", msg)
+function fail(msg: string): void {
+  throw new Error(msg)
 }
 let near = (a: number, b: number, eps = 1e-5): boolean => Math.abs(a - b) <= eps
 // The rigs here build base all-float layouts, so the vertex bytes read
@@ -33,12 +28,14 @@ let expectVec = (label: string, got: ArrayLike<number>, want: ArrayLike<number>)
   }
 }
 let throws = (label: string, fn: () => unknown): void => {
+  let threw = false
   try {
     fn()
-    fail(`${label}: did not throw`)
   } catch {
+    threw = true
     // expected
   }
+  if (!threw) fail(`${label}: did not throw`)
 }
 
 // Vertex i of channel `name` as floats, through the accessor.
@@ -65,34 +62,34 @@ let tri = (): Geometry => ({
 })
 
 // Translation moves positions, leaves normals and uvs alone.
-{
+test("transformGeometry: a translation moves positions, leaves normals and uvs alone", () => {
   let g = transformGeometry(tri(), { position: [10, 20, 30] })
   expectVec("translate pos", floats(g).subarray(0, 3), [11, 20, 30])
   expectVec("translate normal", floats(g).subarray(3, 6), [0, 0, 1])
   expectVec("translate uv", floats(g).subarray(14, 16), [1, 0])
   if (g.label !== "tri-transformed") fail("label default: " + g.label)
   if (g.indices.length !== 3) fail("indices carried")
-}
+})
 
 // 90 degrees about y: +x -> -z, the +z normal -> +x.
-{
+test("transformGeometry: 90 degrees about y", () => {
   let g = transformGeometry(tri(), { rotation: [0, Math.PI / 2, 0] })
   expectVec("rotate pos", floats(g).subarray(0, 3), [0, 0, -1])
   expectVec("rotate normal", floats(g).subarray(3, 6), [1, 0, 0])
-}
+})
 
 // Quaternion form agrees with the euler form.
-{
+test("transformGeometry: the quaternion form agrees with the euler form", () => {
   let s = Math.sin(0.4), c = Math.cos(0.4)
   let b = transformGeometry(tri(), { quaternion: [0, s, 0, c] })
   let e = transformGeometry(tri(), { rotation: [0, 0.8, 0] })
   expectVec("quat vs euler", floats(b).subarray(0, 6), floats(e).subarray(0, 6))
-}
+})
 
 // Non-uniform scale: a tilted normal must go through the inverse transpose.
 // Normal (1,1,0)/sqrt2 on a surface scaled by (2,1,1): the plane x+y=c
 // becomes x/2+y=c, whose normal is (0.5,1,0) normalized, NOT (2,1,0).
-{
+test("transformGeometry: a non-uniform scale takes normals through the inverse transpose", () => {
   let g: Geometry = {
     vertices: new Float32Array([0, 0, 0, Math.SQRT1_2, Math.SQRT1_2, 0, 0, 0]),
     indices: new Uint16Array([0, 0, 0]),
@@ -102,21 +99,23 @@ let tri = (): Geometry => ({
   expectVec("non-uniform normal", floats(t).subarray(3, 6), [0.5 / l, 1 / l, 0])
   let u = transformGeometry(g, { scale: 3 })
   expectVec("uniform scale normal", floats(u).subarray(3, 6), [Math.SQRT1_2, Math.SQRT1_2, 0])
-}
+})
 
 // Colored layout: stride 12, color slots copy through untouched.
-{
+test("transformGeometry: the colored layout's color slots copy through untouched", () => {
   let c = withColors(tri(), [1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1])
   let g = transformGeometry(c, { position: [1, 0, 0] })
   if (g.layout !== "colored") fail("colored layout kept")
   expectVec("colored pos", floats(g).subarray(12, 15), [1, 1, 0])
   expectVec("colored color", floats(g).subarray(20, 24), [0, 1, 0, 1])
-}
+})
 
-throws("rotation and quaternion", () => transformGeometry(tri(), { rotation: [0, 0, 0], quaternion: [0, 0, 0, 1] }))
+test("transformGeometry: rotation and quaternion together throw", () => {
+  throws("rotation and quaternion", () => transformGeometry(tri(), { rotation: [0, 0, 0], quaternion: [0, 0, 0, 1] }))
+})
 
 // Merge: offsets and counts.
-{
+test("mergeGeometries: offsets and counts", () => {
   let a = box()
   let b = transformGeometry(box(), { position: [3, 0, 0] })
   let m = mergeGeometries([a, b], "pair")
@@ -127,10 +126,10 @@ throws("rotation and quaternion", () => transformGeometry(tri(), { rotation: [0,
   if (!(m.indices instanceof Uint16Array)) fail("merge stays uint16")
   if (m.label !== "pair") fail("merge label")
   expectVec("merge bounds", geometryBounds(m), [-0.5, -0.5, -0.5, 3.5, 0.5, 0.5])
-}
+})
 
 // Merge past 64k vertices widens the index array.
-{
+test("mergeGeometries: past 64k vertices the index array widens", () => {
   let parts: Geometry[] = []
   for (let i = 0; i < 70000 / 4 + 1; i++) parts.push(plane())
   let m = mergeGeometries(parts)
@@ -138,15 +137,17 @@ throws("rotation and quaternion", () => transformGeometry(tri(), { rotation: [0,
   let last = parts.length - 1
   let lastPart = parts[last]!
   if (m.indices[m.indices.length - 1]! !== lastPart.indices[lastPart.indices.length - 1]! + last * 4) fail("uint32 offset")
-}
+})
 
-throws("merge mixed layouts", () => mergeGeometries([tri(), withColors(tri(), () => [1, 1, 1, 1])]))
-throws("merge empty", () => mergeGeometries([]))
+test("mergeGeometries: mixed layouts and an empty list throw", () => {
+  throws("merge mixed layouts", () => mergeGeometries([tri(), withColors(tri(), () => [1, 1, 1, 1])]))
+  throws("merge empty", () => mergeGeometries([]))
+})
 
 // Open layouts: withAttribute appends a channel after the base prefix,
 // stride and slots follow the list, and withColors is the aColor spelling
 // (preset name kept, identical bytes).
-{
+test("open layouts: withAttribute appends a channel, withColors is the aColor spelling", () => {
   let t = withAttribute(tri(), { name: "aTangent", format: "float32x3" }, (_i, pos) => [pos[0], pos[1], 9])
   if (layoutStride(t.layout) !== 44) fail("tangent stride: " + layoutStride(t.layout))
   if (layoutKey(t.layout) !== "aPos:float32x3,aNormal:float32x3,aUV:float32x2,aTangent:float32x3") fail("tangent key: " + layoutKey(t.layout))
@@ -181,14 +182,14 @@ throws("merge empty", () => mergeGeometries([]))
   throws("fill size mismatch", () => withAttribute(tri(), { name: "aW", format: "float32" }, [1, 2]))
   throws("callback size mismatch", () => withAttribute(tri(), { name: "aW", format: "float32" }, () => [1, 2]))
   throws("fillAttribute unknown name", () => fillAttribute(t, "aNope", () => [0]))
-}
+})
 
 // Prefixless layouts: a geometry may drop the normal and uv and carry
 // [aPos, aData] at 4 floats a vertex, whatever its topology; transform
 // and the fill callback read the standard channels by slot, so aData is
 // never touched and an absent normal/uv arrives as zeros. Only aPos
 // first is required, and only the generators demand the prefix.
-{
+test("prefixless layouts: [aPos, aData] at 4 floats a vertex", () => {
   let cloud: Geometry = {
     vertices: new Float32Array([0, 0, 0, 7, 1, 2, 3, 8]),
     indices: new Uint16Array([0, 1]),
@@ -212,11 +213,11 @@ throws("merge empty", () => mergeGeometries([]))
   validateGeometry({ ...cloud, topology: undefined, indices: new Uint16Array([0, 1, 0]) })
   throws("layout without aPos first", () => validateGeometry({ ...cloud, layout: [{ name: "aData", format: "float32" }, { name: "aPos", format: "float32x3" }] }))
   throws("prefixless generator layout", () => plane({ layout: [{ name: "aPos", format: "float32x3" }] }))
-}
+})
 
 // Generators emitting a wider layout in one pass: identical bytes to
 // generate-then-repack, and the string tail still means label.
-{
+test("generators emitting a wider layout in one pass", () => {
   let check = (name: string, std: Geometry, wide: Geometry) => {
     let viaColors = withColors(std, () => [0, 0, 0, 0])
     if (layoutKey(wide.layout) !== layoutKey("colored")) fail(name + ": wide layout key")
@@ -241,7 +242,7 @@ throws("merge empty", () => mergeGeometries([]))
   throws("generator bad layout", () => box({ layout: [{ name: "aColor", format: "float32x4" }] }))
   throws("torus bad layout", () => torus({ layout: [{ name: "aColor", format: "float32x4" }] }))
   throws("packGeometry ragged", () => packGeometry([1, 2, 3], [0]))
-}
+})
 
 // The polyhedron family: counts per detail, every corner on the
 // circumsphere, CCW winding seen from outside, face normals at detail 0
@@ -249,7 +250,7 @@ throws("merge empty", () => mergeGeometries([]))
 // the seam and the y-axis corners taking their triangle's azimuth, the
 // closed solids' edge counts through the position weld, and the generic
 // builder over an open face list.
-{
+test("the polyhedron family", () => {
   // After the seam patch a u lifted by a full turn stays under 1 + the
   // lift threshold (0.2).
   let U_MAX = 1.2
@@ -340,28 +341,28 @@ throws("merge empty", () => mergeGeometries([]))
   throws("polyhedron negative detail", () => icosahedron({ detail: -1 }))
   throws("polyhedron ragged vertices", () => polyhedron([1, 0], [0, 1, 2]))
   throws("polyhedron ragged indices", () => polyhedron([1, 0, 0, 0, 1, 0, 0, 0, 1], [0, 1]))
-}
+})
 
 // validateGeometry: the add()-time structural check.
-{
+test("validateGeometry: the add()-time structural check", () => {
   validateGeometry(box())
   validateGeometry(withColors(box(), () => [0, 0, 0, 0]))
   throws("validate ragged colored", () => validateGeometry({ vertices: new Float32Array(16), indices: new Uint16Array([0, 1]), layout: "colored", label: "ragged" }))
   throws("validate bad layout", () => validateGeometry({ vertices: new Float32Array(8), indices: new Uint16Array([0]), layout: [{ name: "aColor", format: "float32x4" }] }))
   throws("validate no indices", () => validateGeometry({ vertices: new Float32Array(24), indices: new Uint16Array(0) }))
-}
+})
 
 // Public ray helper: hit from outside, inside, miss.
-{
+test("the public ray helper: hit from outside, inside, miss", () => {
   if (!near(rayBoxDistance(-2, 0, 0, 1, 0, 0, -1, -1, -1, 1, 1, 1), 1)) fail("ray enters at 1")
   if (rayBoxDistance(0, 0, 0, 1, 0, 0, -1, -1, -1, 1, 1, 1) !== 0) fail("ray inside is 0")
   if (rayBoxDistance(-2, 5, 0, 1, 0, 0, -1, -1, -1, 1, 1, 1) !== -1) fail("ray misses")
-}
+})
 
 // Topology: the count rule per topology at validate, the wireframe and
 // edge builders over the source's own vertices (welded by position, so a
 // split vertex never draws an edge twice), and what carries it through.
-{
+test("topology: the count rule, the wireframe and edge builders", () => {
   let b = box()
   let wire = wireframeGeometry(b)
   if (wire.topology !== "lines") fail(`wireframe topology: ${String(wire.topology)}`)
@@ -406,11 +407,11 @@ throws("merge empty", () => mergeGeometries([]))
   throws("validate short line strip", () => validateGeometry({ vertices: v, indices: new Uint16Array([0]), topology: "line-strip" }))
   throws("validate short triangle strip", () => validateGeometry({ vertices: v, indices: new Uint16Array([0, 1]), topology: "triangle-strip" }))
   throws("validate unknown topology", () => validateGeometry({ vertices: v, indices: new Uint16Array([0]), topology: "fans" as never }))
-}
+})
 
 // The debug helpers: lines topology, counts, bounds, and the color channel
 // where there is one (pure primaries survive the sRGB decode exactly).
-{
+test("the debug helpers: lines topology, counts, bounds, the color channel", () => {
   let count = (g: Geometry): number => vertexCount(g.vertices, g.layout, "rig")
   let slot = layoutSlot("colored", "aColor")!
   let colorAt = (g: Geometry, i: number): number[] => read(g, "aColor", i)
@@ -481,13 +482,13 @@ throws("merge empty", () => mergeGeometries([]))
   expectVec("arrowHelper base corner", floats(arrow).subarray(3 * BASE_FLOATS, 3 * BASE_FLOATS + 3), [0.04, 1.6, 0])
   let custom = arrowHelper({ length: 1, headLength: 0.5, headWidth: 1 })
   expectVec("arrowHelper custom head", geometryBounds(custom), [-0.5, 0, -0.5, 0.5, 1, 0.5])
-}
+})
 
 // Packed formats: every codec round-trips through the bytes the engine
 // reads, the packed channel survives transform and merge, and the
 // float32 view rule holds (a packed layout is a Uint8Array, an all-float
 // one a Float32Array).
-{
+test("packed formats: every codec round-trips, survives transform and merge", () => {
   // The raw bytes each format encodes a known value to, little-endian.
   let cases: { format: VertexFormat; value: number[]; bytes: number[]; back?: number[] }[] = [
     { format: "float32", value: [1.5], bytes: [0, 0, 0xc0, 0x3f] },
@@ -532,12 +533,12 @@ throws("merge empty", () => mergeGeometries([]))
   throws("packed byte count", () => validateGeometry({ ...packed, vertices: vertexBytes(packed.vertices).subarray(0, 50) }))
   throws("unaligned view", () => validateGeometry({ ...packed, vertices: new Uint8Array(new ArrayBuffer(packed.vertices.byteLength + 1), 1) }))
   throws("packed generator layout", () => box({ layout: [...VERTEX_LAYOUTS.base, { name: "aColor", format: "unorm8x4" }] }))
-}
+})
 
 // Streams: a channel in a buffer of its own, found by name across streams,
 // carried through transform, merge and the edge builders, and the stream
 // rules (equal counts, unique names, valid indices).
-{
+test("streams: a channel in a buffer of its own", () => {
   let base = tri()
   let waved = withAttribute(base, { name: "aWave", format: "float32" }, (i) => [i * 0.5], { stream: 1 })
   if (waved.streams?.length !== 1) fail("stream count: " + waved.streams?.length)
@@ -575,13 +576,13 @@ throws("merge empty", () => mergeGeometries([]))
   throws("duplicate across streams", () => withAttribute(waved, { name: "aWave", format: "float32" }, () => [0]))
   throws("mixed stream layouts merge", () => mergeGeometries([waved, base]))
   if (geometryStreams(base).length !== 1) fail("a plain geometry is one stream")
-}
+})
 
 // capsule(): the sphere grid split by the band. Counts, bounds from the
 // total height, every normal unit and radial from its own cap's center
 // (the band vertices shade as a cylinder), v monotone in 0..1 by arc
 // length, the height = 2r case a sphere, and the too-short throw.
-{
+test("capsule(): the sphere grid split by the band", () => {
   let radius = 0.3
   let height = 1.4
   let capSegments = 3
@@ -621,13 +622,13 @@ throws("merge empty", () => mergeGeometries([]))
   expectVec("cylinder middle row radius", floats(tapered).subarray(2 * 9 * BASE_FLOATS, 2 * 9 * BASE_FLOATS + 3), [-0.4, 0, 0])
   if (cone({ radialSegments: 8, heightSegments: 3 }).indices.length !== (3 * 8 * 2 - 8 + 8) * 3) fail("cone heightSegments index count")
   throws("cylinder fractional heightSegments", () => cylinder({ heightSegments: 1.5 }))
-}
+})
 
 // capsuleHelper(volume): lines, every vertex at `radius` from the segment
 // with its normal pointing away from the nearest segment point, the
 // counts (rings, four lines, four half circles), the sphere case with one
 // ring and no lines, and the segments validation.
-{
+test("capsuleHelper(volume)", () => {
   let volume = { a: [1, 0, 0] as Vec3, b: [1, 2, 1] as Vec3, radius: 0.4 }
   let segments = 8
   let h = capsuleHelper(volume, { segments, label: "cap" })
@@ -653,12 +654,12 @@ throws("merge empty", () => mergeGeometries([]))
   expectVec("capsuleHelper sphere bounds", geometryBounds(ball), [-1, -1, -1, 1, 1, 1])
   throws("capsuleHelper segments not a multiple of 4", () => capsuleHelper(volume, { segments: 6 }))
   throws("capsuleHelper zero segments", () => capsuleHelper(volume, { segments: 0 }))
-}
+})
 
 
 // The normals ops and the index pair. Standard-layout readers: vertex i's
 // position and normal as Vec3.
-{
+test("the normals ops and the index pair", () => {
   let posOf = (g: Geometry, i: number): Vec3 => [floats(g)[i * BASE_FLOATS]!, floats(g)[i * BASE_FLOATS + 1]!, floats(g)[i * BASE_FLOATS + 2]!]
   let nrmOf = (g: Geometry, i: number): Vec3 => [floats(g)[i * BASE_FLOATS + 3]!, floats(g)[i * BASE_FLOATS + 4]!, floats(g)[i * BASE_FLOATS + 5]!]
   let count = (g: Geometry): number => geometryVertexCount(g, "check")
@@ -785,7 +786,4 @@ throws("merge empty", () => mergeGeometries([]))
     expectVec("normalsHelper color " + i, [color.get(i * 2, 0), color.get(i * 2, 1), color.get(i * 2, 2), color.get(i * 2, 3)], [1, 0, 0, 1])
   }
   throws("normalsHelper without aNormal", () => normalsHelper(bare))
-}
-
-if (failures > 0) throw new Error(failures + " geometry check(s) failed")
-console.log("PASS: geometry ops")
+})

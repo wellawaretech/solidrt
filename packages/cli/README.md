@@ -23,6 +23,7 @@ android` (and `server`, `client`, `pack` for the rest).
 | [`srt demo [n]`](src/demo/docs.md) | list the demos the CLI ships, or run one |
 | [`srt console`](src/console/docs.md) | start the dev console: the dev servers on this machine and their clients |
 | [`srt check [file]`](src/check/docs.md) | build and typecheck, writing nothing |
+| [`srt test [file]`](src/test/docs.md) | run the tests (tests/*.test.ts) on the flux runtime |
 | [`srt bundle [file]`](src/bundle/docs.md) | transpile to JS or bytecode (dist/bundle/) |
 | [`srt render [file]`](src/render/docs.md) | render frames offscreen, optionally replaying a script |
 | [`srt pack [file]`](src/pack/docs.md) | bundle + compile to a standalone executable (experimental) |
@@ -79,6 +80,7 @@ reproducible and turns an interaction into a video.
 
 ```sh
 srt check .                # build and typecheck every entry, no build output
+srt test                   # run every tests/*.test.ts on the flux runtime
 srt bundle                 # transpile to JS or bytecode
 srt pack                   # standalone executable (experimental)
 ```

@@ -67,6 +67,7 @@ const OPTIONS = {
     layer: { type: "string" },
     clear: { type: "boolean", default: false },
     seconds: { type: "string" },
+    filter: { type: "string" },
 } as const
 
 export let { values, positionals } = parse()
@@ -152,6 +153,12 @@ export function validateArgs() {
         usage("srt check [entry.[tsx|jsx|ts|js] | folder]")
       }
       break
+    case "test":
+      // A test file, or a folder whose tests/ folders are searched (test/main.ts).
+      if (source && !/\.test\.tsx?$/.test(source) && !(existsSync(source) && statSync(source).isDirectory())) {
+        usage("srt test [file.test.[ts|tsx] | folder]")
+      }
+      break
     case "demo":
       // A number from the printed list, or the qualified name beside it.
       if (source && !/^\d+$/.test(source) && !/^[\w.-]+\/[\w.-]+$/.test(source)) {
@@ -211,6 +218,10 @@ export function validateArgs() {
   }
   if ((values.clear || values.seconds !== undefined || values.layer !== undefined) && !census) {
     usage("srt android --census [--clear] [--seconds <N>] [--layer <name>]  (only valid with android --census)")
+  }
+  // --filter picks tests by name.
+  if (values.filter !== undefined && command !== "test") {
+    usage("srt test --filter <text>  (--filter is only valid with the test command)")
   }
   // --port binds the dev server (`run`, `server`) or picks one (`client`,
   // `android`, `mcp`).

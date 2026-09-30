@@ -36,8 +36,10 @@ Commands:
   bundle [file]          Transpile TS/JS/TSX/JSX to JS or bytecode
                          (a prebuilt <name>.srt.js: compile it to bytecode)
   check [file]           Verify the app builds and typechecks, without writing anything
-                         (no file: every examples/*/src/index.tsx, packages/*/examples/*.tsx
-                         and packages/*/demos/src/*.tsx)
+                         (no file: every examples/*/src/index.tsx, packages/*/examples/*.tsx,
+                         packages/*/demos/src/*.tsx and tests/*.test.ts)
+  test [file]            Run the tests: every tests/*.test.ts under the current folder,
+                         or under the given one, or the one given file
   render [file]          Replay a script (optional) and render frames for video generation
   pack [file]            Bundle + compile to a standalone executable (experimental)
   mcp                    MCP server (stdio) exposing the running dev server to coding agents
@@ -107,6 +109,10 @@ bundle options:
       --stdout           Write bundle to stdout
       --json             Write the bundle, its manifest and its isolates as one JSON object
                          to stdout (the dev server's rebuild; --server <host:port> names it)
+
+test options:
+      --filter <text>    Run only the tests whose name contains this text
+      -- <args...>       Everything after -- reaches the test files (flux:process argv)
 
 console options:
       -- <args...>       Everything after -- reaches the console (flux:process argv)

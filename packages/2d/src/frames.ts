@@ -1,5 +1,5 @@
 // Atlas frame math, pure: names and grid coordinates to normalized UV rects.
-// No GPU or GUI imports, so the checks rig (checks/frames-check.ts) exercises
+// No GPU or GUI imports, so its test (tests/frames.test.ts) exercises
 // this module headless on the flux binary.
 
 /**

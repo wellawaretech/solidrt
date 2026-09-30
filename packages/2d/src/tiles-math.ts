@@ -1,6 +1,6 @@
 // The pure tile-grid math: cell and rect validation, a cell's chunk and
 // record slot, and the walk of a rect chunk by chunk - plain arithmetic
-// with no GPU imports, so the headless check (checks/tiles-check.ts)
+// with no GPU imports, so the headless check (tests/tiles.test.ts)
 // drives it directly; tiles.ts wraps it with the chunk textures.
 
 /** Throw unless (col, row) is a cell of the cols x rows grid. */

@@ -37,7 +37,7 @@
 // format's codec.
 //
 // Pure module by design - geometry is data, and every function here is
-// array math (the check rig checks/geometry-check.ts runs it headless on
+// array math (tests/geometry.test.ts runs it headless on
 // flux). The GPU buffer step lives in geometry-gpu.ts.
 
 import type { Topology, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"

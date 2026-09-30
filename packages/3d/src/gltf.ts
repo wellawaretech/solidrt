@@ -435,7 +435,7 @@ export function isGlb(bytes: Uint8Array): boolean {
 // samples, and so the only images the parser ever opens: the prefetch
 // list (gltfExternalUris) and the parser's demand set are both derived
 // from this one table, so a channel added to the map is added here too or
-// checks/gltf-check.ts fails on its all-channels fixture.
+// tests/gltf.test.ts fails on its all-channels fixture.
 const SAMPLED_TEXTURES: ((material: any) => any)[] = [
   (m) => m.pbrMetallicRoughness?.baseColorTexture,
   (m) => m.normalTexture,

@@ -1,7 +1,7 @@
 // Camera-mapping probe: the live guard that the three spellings of the
 // camera mapping agree - projectCamera (camera.ts), the vertex stages'
 // uCameraRot (shaders.ts), and pointer dispatch's unprojectCamera
-// (layer.ts). The headless check (checks/camera-check.ts) ties
+// (layer.ts). The headless check (tests/camera.test.ts) ties
 // projectCamera to the <view>-prop oracle but cannot see the shader; this
 // probe closes that gap on a real client. Self-asserting: watch the logs
 // for CAMERA lines ending in CAMERA-OK. Run it after touching ANY

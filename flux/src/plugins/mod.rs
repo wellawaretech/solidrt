@@ -6,7 +6,8 @@
 // `standards_plugins` = web-standard JS APIs (console, fetch, Headers/Request/
 // Response, timers, WebSocket client), whatever backs them; `forge_plugins` =
 // the `flux:*` capability modules binding forge; `alloy_plugins` = the
-// alloy-backed render/capture bindings (feature `gui`).
+// alloy-backed render/capture bindings (feature `gui`); `test_plugins` =
+// flux:test, over flux's own facilities (feature `test`).
 pub mod events;
 pub mod js_error;
 pub mod marshal;
@@ -151,6 +152,12 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:isolate");
   loader.add_module("flux:isolate", crate::forge_plugins::isolate::IsolateModule);
 
+  #[cfg(feature = "test")]
+  {
+    resolver.add_module(crate::test_plugins::MODULE_NAME);
+    loader.add_module(crate::test_plugins::MODULE_NAME, crate::test_plugins::TestModule);
+  }
+
   for f in module_overrides {
     f(&mut resolver, &mut loader);
   }
@@ -217,18 +224,30 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
   }
 }
 
-/// Feature names every flux build provides, surfaced as `Flux.capabilities`.
+/// Feature names this flux build provides, surfaced as `Flux.capabilities`.
 /// JS branches on availability (`Flux.capabilities.includes("subprocess")`)
-/// rather than on the OS. A conditionally-compiled feature would be added under
-/// its own cfg, so it only appears when actually present.
-#[cfg(not(feature = "ktx2"))]
-pub const BASE_CAPABILITIES: &[&str] =
-  &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "svg", "image", "wasm", "ffi", "isolate", "tty"];
-/// With the `ktx2` feature: `ktx2` says flux:image's transcodeTexture and
-/// encodeTexture work here (they throw on a build without it).
-#[cfg(feature = "ktx2")]
+/// rather than on the OS. A conditionally-compiled feature sits under its
+/// own cfg, so it only appears when actually present: `ktx2` says
+/// flux:image's transcodeTexture and encodeTexture work here (they throw on
+/// a build without it), `test` that flux:test can be imported.
 pub const BASE_CAPABILITIES: &[&str] = &[
-  "sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "svg", "image", "wasm", "ffi", "isolate", "tty", "ktx2",
+  "sqlite",
+  "fs",
+  "http",
+  "p2p",
+  "process",
+  "path",
+  "subprocess",
+  "svg",
+  "image",
+  "wasm",
+  "ffi",
+  "isolate",
+  "tty",
+  #[cfg(feature = "ktx2")]
+  "ktx2",
+  #[cfg(feature = "test")]
+  "test",
 ];
 
 fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {

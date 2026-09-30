@@ -1,10 +1,10 @@
 // The runtime-free splat entry (src/splat-data.ts, published as
-// @solidrt/3d/splat) under bun test: the three capture parsers against
+// @solidrt/3d/splat) under srt test: the three capture parsers against
 // hand-built inputs, the covariance bake against the closed-form answers,
 // the y-up flip (covariance and SH), the SH texel packing, the importance
 // order and the .srts round trip - so a bake regression fails here rather
 // than as a wrong-looking cloud.
-import { expect, test } from "bun:test"
+import { expect, test } from "flux:test"
 import * as entry from "../src/splat-data.ts"
 import { parseSplat, encodeSplat, decodeSplat, SPLAT_RECORD_BYTES, SPLAT_SH_TEXELS, SPLAT_TEXEL_BYTES } from "../src/splat-data.ts"
 import type { SplatData } from "../src/splat-data.ts"

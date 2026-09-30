@@ -550,17 +550,16 @@ are Solid-free and
 GPU-free BY DESIGN so they can be checked headless and run under bun:
 `src/model-data.ts` re-exports exactly this set as the published
 `@solidrt/3d/model` entry (the bake tool and app bake scripts), and
-`tests/model-data.test.ts` imports it under `bun test`, so a runtime
-import creeping into any of them fails there; keep them that way.
+`tests/model-data.test.ts` imports it under `srt test`, on the bare flux
+binary, so a gui or `srt:` import creeping into any of them fails there
+(a headless `flux:` import would not); keep them that way.
 `src/splat-data.ts` is its own published entry the same way
 (`@solidrt/3d/splat`, guarded by `tests/splat-data.test.ts`).
-The rigs under `checks/`
-(`geometry-check`, `sweep-check`, `pick-check`, `dispatch-check`,
-`gltf-check`) run on
-flux from the repo root: `bunx srt bundle -f --stdout
-packages/3d/checks/<name>.ts | target/release/flux -`. Run the ones
-touching what you changed. `raycast-check.tsx` and
-`collision-check.tsx` are the exceptions: they assert the documented
+The tests under `tests/` run on the bare flux binary: `bunx srt test
+packages/3d` from the repo root, or one file, or `--filter <text>` for
+the tests whose name contains it. Run them after a change to the pure
+modules. The two rigs left under `checks/`, `raycast-check.tsx` and
+`collision-check.tsx`, need a GPU: they assert the documented
 picking contract (triangle accuracy, the box tier, pick/raycast
 parity, layer masks, the `{ meshes }` filter) and collision contract
 (exact sweep times, the surface rule, the slide filter, layers and
@@ -810,7 +809,7 @@ driving - the predicate every camera control shares) are reactive
 (HUD-safe); the pose is plain state via `pose()`/`set()` (also the
 debug-command shape). It drives position and target only; fov/near/far
 stay on scene.setCamera (or the Scene `camera` prop). The auto-orbit
-pauses while a gesture is open. checks/orbit-check.ts pins every stage
+pauses while a gesture is open. tests/orbit.test.ts pins every stage
 headless.
 
 In a component tree, skip the wiring: `<OrbitCamera input={input}
@@ -868,7 +867,7 @@ the shot's recording target, so an `<OrbitCamera>` or
 it, the container runs the blend on frames while one is in flight. A
 shot's picks and raycasts (`anchor`, `occlusion`) go through the
 owner's actual camera, which is the shot's own only while it is live
-and at rest. Pinned in checks/orbit-check.ts; probes/shots-3d-probe.tsx
+and at rest. Pinned in tests/orbit.test.ts; probes/shots-3d-probe.tsx
 is the live guard.
 
 ### First-person camera
@@ -931,8 +930,8 @@ swap with it), `moveSpeed`/`lookSpeed` follow their props, and a pitch
 clamp change re-clamps at once. Like the orbit control it drives
 position and yaw/pitch only: fov/near/far stay on scene.setCamera (or
 the Scene `camera` prop), so a walker in a scene bigger than the default
-`far` of 100 sets one there. checks/orbit-check.ts and
-checks/first-person-check.ts pin both controls headless (they import
+`far` of 100 sets one there. tests/orbit.test.ts and
+tests/first-person.test.ts pin both controls headless (they import
 `@solidrt/core/input` only).
 
 ### Overlay projection
@@ -1098,7 +1097,7 @@ natural size, under any ancestor transforms or design-size fits (the hit
 test undoes them; localX/localY arrive in the leaf's layout frame). A
 leaf laid out at a different size (the supersampling pattern) uses
 `scene.handlersFor(() => ({ width, height }))` with its layout size.
-checks/dispatch-check.ts pins the walk, claiming, capture, hover, wheel
+tests/dispatch.test.ts pins the walk, claiming, capture, hover, wheel
 and tap rules headless; examples/pick.tsx is the live guard.
 
 ### Geometry generators

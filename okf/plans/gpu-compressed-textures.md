@@ -12,7 +12,7 @@ paid 4 bytes per texel per mip level on every device. GLES 3.0 mandates
 ETC2/EAC in core and every desktop exposes BC7, both 1 byte per texel with
 the sampler doing the decode for free.
 
-## State (2026-09-29)
+## State (2026-09-30)
 
 | Step | State |
 |---|---|
@@ -21,16 +21,17 @@ the sampler doing the decode for free.
 | 3. Tool hosting, model bake, loader, glTF | built; a baked Sponza loads on Linux, Windows and the tablet |
 | Texture settings per application | built (`solidrt.textures`, `@solidrt/core/textures`) |
 | Attribution | built for everything in the binaries (`THIRD-PARTY-NOTICES.txt`) |
-| Settings per file | built 2026-09-30, verified on Linux (see "Settings per file") |
+| 4. Settings per file | built 2026-09-30, verified on Linux; not run on Windows or Android |
 | Self-review list | built 2026-09-30, all of it |
 | macOS arm64 | client builds, forge tests pass; not run on device |
 | Sponza re-measurement | done on Linux, Windows and the tablet; the judgment by eye is open |
 
-What is built holds on three platforms. What is left is what a developer
-expects next, then performance: "Open in this plan" has it in that
-order (the user's, 2026-09-29: functionality that must be in before
-performance, "better to do first what developers are expecting to
-get").
+Steps 1 to 3 hold on three platforms; step 4 and the self-review list
+are verified on Linux only. What is left is what a developer expects
+next, then performance: "Open in this plan" has it in that order (the
+user's, 2026-09-29: functionality that must be in before performance,
+"better to do first what developers are expecting to get"), and starts
+with where to pick up.
 
 ## Field report: Sponza (2026-08-28)
 
@@ -288,9 +289,7 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
   what the device does, the sync `createModel` / async
   `transcodeModelImages` rule.
 
-## Open in this plan
-
-### Settings per file (built 2026-09-30)
+### 4. Settings per file (packages/core, forge, flux, packages/3d) - built 2026-09-30
 
 Unity, Godot and the Khronos KTX guide all let one texture be raised
 above the rest, or left alone; the settings were per kind only.
@@ -420,6 +419,63 @@ What wider scopes add to it, each additive on the above:
 - Normal maps as two channels: the settings keep their shape, every
   baked normal map is rebaked.
 
+## Open in this plan
+
+### Where to pick up (left 2026-09-30)
+
+Nothing is half done: every change of 2026-09-29 and 2026-09-30 is
+built, tested and written up above. Nothing is committed; the user
+commits.
+
+**The next step** is the design of the build stage
+([asset-build-stage](../backlog/asset-build-stage.md)): a design to
+review, no code. The user was asked on 2026-09-30 whether to draft it
+and has not answered, so ask first. It comes before "compressed
+textures outside a model" because it decides how an app names a baked
+file. When the work starts the item moves to `plans/`.
+
+**Asked and not answered:**
+
+1. Whether to draft the build stage's design (above).
+2. `relative(from, to)` was added to `flux:path` without being asked
+   for (step 4 needs the path from the project root, and it is
+   Node's). Keep it or take it out.
+3. The two under "Proposed, awaiting the user's decision" below.
+4. The order under "Functionality a developer expects" is still a
+   suggestion.
+
+**For the user to do, none of it blocking:**
+
+- Every `.srtm` baked before 2026-09-29 is version 10 and is refused:
+  re-bake with `srt tool 3d/model`. The one in the repo
+  (`probes/model-reuse/reuse.srtm`) is done.
+- A bake now compresses by default and takes about a minute for
+  Sponza; `--no-compress` is the quick one.
+- `make runtime`: the production runtime in `dist/` is older than the
+  flux binary and the client, which are rebuilt and staged.
+- The git index holds `packages/core/src/glob.ts` and its test as
+  added, the working tree has them deleted (they were staged by
+  something other than this session, which never stages). Several
+  other files of this work are staged in part the same way.
+- `make client` regenerated `lattice/resources/bsod/bsod.srt.js` and
+  `lattice/resources/player/index.srt.js`.
+- Windows and Android have not run step 4: `matchesGlob` treats "/"
+  and "\\" alike on Windows by the crate's word, not by a run here.
+
+**Traps met on the way:**
+
+- This plan was edited by another session while this one worked (the
+  section "Smells in the code of steps 1 and 2" arrived mid-session).
+  Re-read before editing, and edit by replacing text, never by writing
+  the file back whole.
+- Texture settings patterns are matched under flux only. Bun's matcher
+  reads `{a,b}` and backslash escapes, ours does not; the tests under
+  bun use patterns both read alike.
+- Large scratch goes to `target/scratch/`, not the session scratchpad
+  (RAM). The machine had 4 to 5 GB free all session: builds ran with
+  `CARGO_BUILD_JOBS=4`, test builds with `CARGO_PROFILE_DEV_DEBUG=0
+  CARGO_PROFILE_TEST_DEBUG=0`.
+
 ### The build stage (decided 2026-09-30: its own item)
 
 [asset-build-stage](../backlog/asset-build-stage.md). It is designed
@@ -516,7 +572,8 @@ The order is a suggestion put to the user, not yet confirmed.
 
 Written down 2026-09-29 by the session that wrote that code, each
 confirmed present at commit 2f2e41d2. None changes behavior today and
-none was approved as work; step 3's own list is item 3 under "Proposed".
+none was approved as work. Step 3's own list was approved and is built
+("Self-review, built"); two entries here changed with it and say so.
 
 Layering:
 
@@ -558,7 +615,9 @@ Duplication:
   must be kept alike by hand.
 - **Option parsing is repeated.** `string_opt` was added beside
   `premultiplied_opt`, and `encode_texture` re-reads `img.data`,
-  `img.width`, `img.height` the way `encode_image` does.
+  `img.width`, `img.height` the way `encode_image` does. (2026-09-30:
+  `string_opt` moved to the shared toolkit, `plugins/marshal.rs`, which
+  `flux:fs` uses too; the rest stands.)
 - **`KTX2 ?= 1` is declared in two Makefiles** (lattice and flux).
 
 The bindings:
@@ -596,8 +655,10 @@ Smaller:
   before checking the size, so a call wrong in both reports the sampler
   first, where it reported the size.
 - **The encoder takes every core inside a blocking-pool thread**, and
-  concurrent `encodeTexture` calls multiply that (item 3 under
-  "Proposed" has the unbounded-encode half of this).
+  concurrent `encodeTexture` calls multiply that. (2026-09-30: no
+  longer so. Encodes run four at a time on threads of their own, and
+  one encode does not take every core: "Self-review, built" has the
+  measurement.)
 - **`byteLength` is arithmetic**, the format's size for the declared
   dimensions, not what the driver allocated: on a driver that expands
   ETC2 it understates by four.

@@ -1,31 +1,25 @@
-// Checks for the gamepad device (input-gamepad-device.ts) over a signal
-// of pad snapshots standing in for core's gamepads(): the slot and
-// every-pad devices' sources (sticks with the dead zone, dpad, triggers,
-// shoulders, buttons), and the join device (createGamepadJoin: a pad
-// joins on its first button press, one device per pad, disposal frees
-// the slot). Runtime-free, so it runs headless on flux, bundled from the
-// repo root:
-//
-//   bunx srt bundle -f --stdout packages/core/checks/input-gamepad-check.ts | target/release/flux -
-//
-// Deterministic. A failure prints FAIL lines and throws at the end.
+// Checks for the gamepad device (input-gamepad-device.ts) over a signal of
+// pad snapshots standing in for core's gamepads(): the slot and every-pad
+// devices' sources (sticks with the dead zone, dpad, triggers, shoulders,
+// buttons), and the join device (createGamepadJoin: a pad joins on its
+// first button press, one device per pad, disposal frees the slot).
+// Runtime-free, so it runs headless on flux: `srt test packages/core`.
+// Deterministic.
 
+import { test } from "flux:test"
 import { createRoot, createSignal, flush } from "@solidjs/signals"
 import { createGamepadJoin, createGamepadSlot } from "../src/input-gamepad-device.ts"
 import type { GamepadState } from "../src/gamepad.ts"
 import { createInputMap } from "../src/input.ts"
 
-let failures = 0
-let fail = (msg: string) => {
-  failures++
-  console.log(`FAIL ${msg}`)
+function fail(msg: string): void {
+  throw new Error(msg)
 }
 let near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps
 
 let pad = (id: number, buttons: string[] = [], axes: Record<string, number> = {}): GamepadState => ({ id, name: `pad ${id}`, buttons, axes, mapped: true })
 
-// ---- Slot and every-pad devices ----
-{
+test("Slot and every-pad devices", () => {
   let [pads, setPads] = createSignal<(GamepadState | null)[]>([])
   let p0 = createGamepadSlot(pads, 0)
   let all = createGamepadSlot(pads, undefined)
@@ -64,16 +58,17 @@ let pad = (id: number, buttons: string[] = [], axes: Record<string, number> = {}
   let move = input.value("move")
   if (!near(move[0], 0.3) || !near(move[1], 0.4) || input.pressed("jump")) fail(`map follows the pad snapshot, got ${move} ${input.pressed("jump")}`)
   let bad: unknown = "x"
+  let threw = false
   try {
     createGamepadSlot(pads, bad as number)
-    fail("a bad slot must throw")
   } catch (err) {
+    threw = true
     if (!(err instanceof Error)) fail(`bad slot: unexpected ${err}`)
   }
-}
+  if (!threw) fail("a bad slot must throw")
+})
 
-// ---- Joining ----
-{
+test("Joining", () => {
   let [pads, setPads] = createSignal<(GamepadState | null)[]>([pad(1), pad(2)])
   // Two panes, each under a scope of its own (the join releases on dispose).
   let a = createRoot(dispose => ({ dev: createGamepadJoin(pads), dispose }))
@@ -121,10 +116,9 @@ let pad = (id: number, buttons: string[] = [], axes: Record<string, number> = {}
   b.dispose()
   c.dispose()
   d.dispose()
-}
+})
 
-// ---- Ids, resolve() and listen() ----
-{
+test("Ids, resolve() and listen()", () => {
   let [pads, setPads] = createSignal<(GamepadState | null)[]>([pad(1, ["start"], { leftX: 0.9, leftY: 0 })])
   let dev = createGamepadSlot(pads, 0)
   if (dev.name !== "gamepad" || dev.leftStick.id !== "gamepad:leftStick" || dev.button("south").id !== "gamepad:button:south" || dev.axis("leftX").id !== "gamepad:axis:leftX") fail("gamepad ids")
@@ -133,12 +127,14 @@ let pad = (id: number, buttons: string[] = [], axes: Record<string, number> = {}
   if (dev.resolve("button:south") !== dev.button("south")) fail("resolve: same name, same button source")
   if (dev.resolve("axis:rightTrigger") !== dev.axis("rightTrigger")) fail("resolve: same name, same axis source")
   let bad = (spec: string) => {
+    let threw = false
     try {
       dev.resolve(spec)
-      fail(`resolve("${spec}") must throw`)
     } catch (err) {
+      threw = true
       if (!(err instanceof Error)) fail(`resolve("${spec}"): unexpected ${err}`)
     }
+    if (!threw) fail(`resolve("${spec}") must throw`)
   }
   bad("leftStick:x")
   bad("stick")
@@ -183,7 +179,4 @@ let pad = (id: number, buttons: string[] = [], axes: Record<string, number> = {}
   setPads([pad(1, [], { rightTrigger: 1 })])
   flush()
   if (found.length !== 1) fail("a stopped listen hears nothing")
-}
-
-console.log(failures === 0 ? "INPUT-GAMEPAD-OK" : `INPUT-GAMEPAD-FAIL ${failures}`)
-if (failures > 0) throw new Error(`${failures} gamepad check(s) failed`)
+})

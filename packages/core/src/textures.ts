@@ -1,8 +1,8 @@
 // @solidrt/core/textures - what a texture bake and a loader share, without
 // the runtime: this entry imports nothing the runtime provides, so a bake
 // script under bun and an extension's pure modules use it as it is
-// (tests/textures.test.ts imports it under bun and fails the moment a
-// runtime import creeps in). Any extension that bakes or loads textures
+// (tests/textures.test.ts imports it on the bare flux binary and fails the
+// moment a gui or srt: import creeps in). Any extension that bakes or loads textures
 // builds on this, the first-party 3d one included.
 //
 // isKtx2 tells a compressed texture file from a PNG or JPEG.

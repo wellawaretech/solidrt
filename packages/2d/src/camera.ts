@@ -1,6 +1,6 @@
 // The 2d camera vocabulary, pure: the one camera type both layers share
 // and its world <-> screen mapping as plain functions - no GPU or GUI
-// imports, so the checks rig (checks/camera-check.ts) exercises this
+// imports, so its test (tests/camera.test.ts) exercises this
 // module headless on the flux binary. Three consumers implement or undo
 // exactly this mapping and must agree with it: the vertex stages
 // (shaders.ts, uCamera + uCameraRot), the tile layer's composite

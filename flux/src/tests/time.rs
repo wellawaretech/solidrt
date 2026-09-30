@@ -7,7 +7,10 @@
 use rquickjs::{Context, Ctx, Runtime};
 
 use crate::pending::PendingOps;
-use crate::standards_plugins::time::{advance_virtual_time, install_virtual_time, set_virtual_now_source};
+use crate::standards_plugins::time::{
+  advance_virtual_time, install_virtual_time, next_virtual_deadline, set_virtual_now_source, uninstall_virtual_time,
+  virtual_now,
+};
 
 fn with_virtual_ctx(f: impl FnOnce(&Ctx<'_>)) {
   let rt = Runtime::new().expect("js runtime");
@@ -167,5 +170,43 @@ fn lagging_now_source_never_schedules_into_the_past() {
     assert_eq!(log(ctx), "");
     advance_virtual_time(ctx, 300.0);
     assert_eq!(log(ctx), "a");
+  });
+}
+
+// A host that walks time deadline by deadline (flux:test's clock) asks for
+// the next one between advances; a canceled timer's stale queue entry must
+// not be reported as a stop.
+#[test]
+fn next_deadline_is_the_earliest_live_timer() {
+  with_virtual_ctx(|ctx| {
+    assert_eq!(next_virtual_deadline(ctx), None);
+    ctx
+      .eval::<(), _>("globalThis.first = setTimeout(() => log.push('a'), 50); setTimeout(() => log.push('b'), 80)")
+      .expect("register");
+    assert_eq!(next_virtual_deadline(ctx), Some(50.0));
+    ctx.eval::<(), _>("clearTimeout(first)").expect("cancel");
+    assert_eq!(next_virtual_deadline(ctx), Some(80.0));
+    advance_virtual_time(ctx, 80.0);
+    assert_eq!(next_virtual_deadline(ctx), None);
+    assert_eq!(virtual_now(ctx), Some(80.0));
+  });
+}
+
+// Handing time back drops what still waited, each timer with its
+// engine-liveness hold: a leftover timer must neither fire later nor keep
+// the engine alive.
+#[test]
+fn uninstall_drops_waiting_timers_and_their_holds() {
+  with_virtual_ctx(|ctx| {
+    ctx
+      .eval::<(), _>("setTimeout(() => log.push('a'), 50); setInterval(() => log.push('i'), 10)")
+      .expect("register");
+    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+    assert!(!pending.is_idle());
+    assert!(uninstall_virtual_time(ctx));
+    assert!(pending.is_idle());
+    assert_eq!(virtual_now(ctx), None);
+    advance_virtual_time(ctx, 100.0);
+    assert_eq!(log(ctx), "");
   });
 }

@@ -1,24 +1,21 @@
-// Checks for the orbit control (orbit.ts) as a pure axes consumer: the
-// pose verbs, the rotate/zoom/pan deltas in the vocabulary's units, the
-// anchored zoom (one anchor per pinch gesture, per notch for the wheel),
-// the pivot re-seat on a rotate begin, the rates integrated by update(dt)
-// with active() gating, the damped wheel notch (anchor pinned every tick,
-// notches compounding, exact landing, dropped by input and set()),
-// glideTo, fit against the aspect, clampPose on every write path, the
-// clamps and update()'s change report; and the pipeline stages of
-// okf/design/camera-controls.md: the push past the floor (speed
-// continuous, the anchor's pixel kept), the follow through the framing
-// (zones, depth, lookahead, the orbit's input around it), the lanes (the
-// offset, setOrbitPoint's picture-preserving re-seat, a shake outside
-// the pose), the occlusion constraint (in at once, out eased), the pan
-// plane and the focus axis. Pure-module input only (orbit.ts
-// imports `@solidrt/core/input`, no runtime module), so it runs headless
-// on flux, bundled from the repo root:
-//
-//   bunx srt bundle -f --stdout packages/3d/checks/orbit-check.ts | target/release/flux -
-//
-// Deterministic; prints FAIL lines and throws at the end.
+// Checks for the orbit control (orbit.ts) as a pure axes consumer: the pose
+// verbs, the rotate/zoom/pan deltas in the vocabulary's units, the anchored
+// zoom (one anchor per pinch gesture, per notch for the wheel), the pivot
+// re-seat on a rotate begin, the rates integrated by update(dt) with
+// active() gating, the damped wheel notch (anchor pinned every tick,
+// notches compounding, exact landing, dropped by input and set()), glideTo,
+// fit against the aspect, clampPose on every write path, the clamps and
+// update()'s change report; and the pipeline stages of
+// okf/design/camera-controls.md: the push past the floor (speed continuous,
+// the anchor's pixel kept), the follow through the framing (zones, depth,
+// lookahead, the orbit's input around it), the lanes (the offset,
+// setOrbitPoint's picture-preserving re-seat, a shake outside the pose),
+// the occlusion constraint (in at once, out eased), the pan plane and the
+// focus axis. Pure-module input only (orbit.ts imports
+// `@solidrt/core/input`, no runtime module), so it runs headless on flux:
+// `srt test packages/3d`. Deterministic.
 
+import { test } from "flux:test"
 import { flush } from "@solidjs/signals"
 import { createOrbitCamera } from "../src/orbit.ts"
 import { createShots, mixCamera } from "../src/shots.ts"
@@ -27,10 +24,8 @@ import type { OrbitCameraOptions } from "../src/orbit.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 import type { Vec3 } from "../src/math.ts"
 
-let failures = 0
-let fail = (msg: string) => {
-  failures++
-  console.log(`FAIL ${msg}`)
+function fail(msg: string): void {
+  throw new Error(msg)
 }
 let near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps
 let nearV = (a: Vec3, b: Vec3, eps = 1e-9) => near(a[0], b[0], eps) && near(a[1], b[1], eps) && near(a[2], b[2], eps)
@@ -67,8 +62,7 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   return SETTLE_TICKS + 1
 }
 
-// ---- Verbs push at once; update reports the change once ----
-{
+test("Verbs push at once; update reports the change once", () => {
   let { orbit, last, writes } = make({ distance: 4 })
   if (writes() !== 1) fail(`creation pushes once, got ${writes()}`)
   orbit.rotateBy(0.5, 0.25)
@@ -88,10 +82,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   if (!nearV(last()!.position as Vec3, [0, 0, 4])) fail("setPivot leaves the eye where it is")
   orbit.setPivot([0, 0, 9])
   if (!near(orbit.pose().distance, 3)) fail("a point behind the eye is ignored")
-}
+})
 
-// ---- Deltas in the vocabulary's units (damping off: at once) ----
-{
+test("Deltas in the vocabulary's units (damping off: at once)", () => {
   let { orbit } = make({ distance: 4, azimuth: 0, elevation: 0, damping: 0 })
   // One element height of drag travel is one full turn (DRAG_TURNS 1),
   // a drag right turning azimuth negative, a drag down raising the eye.
@@ -110,10 +103,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   orbit.set({ target: [0, 0, 0] })
   orbit.axes.nudge("pan", [0, 0.5])
   if (!near(orbit.pose().target[1], 0.5 * frustum)) fail(`a pan down lifts the target (the scene follows the finger), got ${orbit.pose().target[1]}`)
-}
+})
 
-// ---- Anchored zoom: one anchor per pinch, per notch for the wheel ----
-{
+test("Anchored zoom: one anchor per pinch, per notch for the wheel", () => {
   let anchors = 0
   let { orbit } = make({
     distance: 4,
@@ -141,10 +133,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   pivoted.orbit.axes.begin("rotate")
   if (!near(pivoted.orbit.pose().distance, 2)) fail(`rotateAnchor re-seats the pivot on a rotate begin, got ${pivoted.orbit.pose().distance}`)
   pivoted.orbit.axes.end("rotate")
-}
+})
 
-// ---- A release velocity glides on (damping on), or not at all (damping off) ----
-{
+test("A release velocity glides on (damping on), or not at all (damping off)", () => {
   let { orbit } = make({ distance: 4, azimuth: 0, elevation: 0 })
   orbit.axes.begin("rotate")
   orbit.axes.nudge("rotate", [0.1, 0])
@@ -168,10 +159,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   stiff.orbit.axes.begin("rotate")
   stiff.orbit.axes.end("rotate", [0.5, 0])
   if (settle(stiff.orbit) !== 0) fail("damping off: a release glides nothing")
-}
+})
 
-// ---- Rates, active(), auto-orbit pause ----
-{
+test("Rates, active(), auto-orbit pause", () => {
   let { orbit } = make({ distance: 4, orbitSpeed: 1 })
   if (!orbit.active()) fail("an auto-orbit is active")
   orbit.set({ orbiting: false })
@@ -198,22 +188,23 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   orbit.axes.end("rotate")
   orbit.update(1)
   if (!near(orbit.pose().azimuth, 1)) fail(`the auto-orbit resumes after the gesture, got ${orbit.pose().azimuth}`)
-}
+})
 
-// ---- Clamps and validation ----
-{
+test("Clamps and validation", () => {
   let { orbit } = make({ distance: 4, minDistance: 2, maxDistance: 8, minElevation: -0.5, maxElevation: 0.5 })
   orbit.zoomBy(8)
   if (orbit.pose().distance !== 2) fail(`minDistance clamps the zoom, got ${orbit.pose().distance}`)
   orbit.rotateBy(0, 3)
   if (orbit.pose().elevation !== 0.5) fail(`maxElevation clamps the rotation, got ${orbit.pose().elevation}`)
   let throws = (what: string, f: () => void) => {
+    let threw = false
     try {
       f()
-      fail(`${what} must throw`)
     } catch (err) {
+      threw = true
       if (!(err instanceof Error)) fail(`${what}: unexpected ${err}`)
     }
+    if (!threw) fail(`${what} must throw`)
   }
   throws("zoomBy 0", () => orbit.zoomBy(0))
   throws("rotateBy NaN", () => orbit.rotateBy(NaN, 0))
@@ -222,10 +213,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   throws("a target without camera()", () => createOrbitCamera({ setCamera() {} } as never))
   throws("a target without size()", () => createOrbitCamera({ setCamera() {}, camera: () => ({ fov: 60, ortho: null }) } as never))
   throws("nudge with a bad delta", () => orbit.axes.nudge("zoom", [1, 2] as never))
-}
+})
 
-// ---- The damped wheel notch: a glide, anchor pinned, compounding ----
-{
+test("The damped wheel notch: a glide, anchor pinned, compounding", () => {
   let { orbit, writes } = make({ distance: 4, target: [0, 0, 0], zoomAnchor: () => [1, 0, 0] })
   let before = writes()
   orbit.axes.nudge("zoom", 0.5, [0.2, 0.2])
@@ -282,10 +272,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   quick.orbit.axes.nudge("zoom", 1)
   let quickTicks = settle(quick.orbit)
   if (!(slowTicks > quickTicks * 1.5)) fail(`damping 2 coasts longer: ${slowTicks} vs ${quickTicks} ticks`)
-}
+})
 
-// ---- glideTo: eased pose, clamps on the goal, exact landing, rest ----
-{
+test("glideTo: eased pose, clamps on the goal, exact landing, rest", () => {
   let { orbit, last } = make({ distance: 4, maxDistance: 10 })
   orbit.glideTo({ azimuth: 1, elevation: 0.5, distance: 20, target: [1, 2, 3] })
   if (orbit.pose().distance !== 4) fail("glideTo does not jump")
@@ -308,10 +297,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   spinning.orbit.glideTo({ distance: 2 })
   for (let i = 0; i < 60; i++) spinning.orbit.update(DT)
   if (!near(spinning.orbit.pose().azimuth, 1, 1e-6)) fail(`the auto-orbit runs through a glide, got ${spinning.orbit.pose().azimuth}`)
-}
+})
 
-// ---- fit: the bounding sphere against the tighter fov ----
-{
+test("fit: the bounding sphere against the tighter fov", () => {
   let bounds = [-1, -2, -3, 3, 2, 1]
   let center: Vec3 = [1, 0, -1]
   let radius = Math.hypot(4, 4, 4) / 2
@@ -342,10 +330,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   ortho.rig.ortho = null
   ortho.orbit.fit([2, 2, 2, 2, 2, 2])
   if (!nearV(ortho.orbit.pose().target, [2, 2, 2]) || ortho.orbit.pose().distance !== 4) fail("fit on a point re-centres and keeps the distance")
-}
+})
 
-// ---- clampPose: every write path, the whole pose in, fields out ----
-{
+test("clampPose: every write path, the whole pose in, fields out", () => {
   let calls = 0
   // The floor: the eye stays at or above y = 0.5, an elevation floor that
   // tightens with the distance.
@@ -390,16 +377,17 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   let poison = false
   let bad = make({ distance: 4, clampPose: () => (poison ? { distance: NaN } : undefined) })
   poison = true
+  let threw = false
   try {
     bad.orbit.zoomBy(2)
-    fail("a non-finite clampPose result must throw")
   } catch (err) {
+    threw = true
     if (!(err instanceof Error)) fail(`clampPose NaN: unexpected ${err}`)
   }
-}
+  if (!threw) fail("a non-finite clampPose result must throw")
+})
 
-// ---- Push: a dolly step past the floor moves through, the anchor keeps its pixel ----
-{
+test("Push: a dolly step past the floor moves through, the anchor keeps its pixel", () => {
   let { orbit } = make({ distance: 4, minDistance: 2, maxDistance: 8, target: [0, 0, 0], push: true })
   // The eye at (0, 0, 4) looks down -z; a zoom to a quarter wants 1,
   // clamps at 2, and the overflow of 1 carries eye and target forward.
@@ -435,10 +423,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   notch.orbit.axes.nudge("zoom", 1)
   settle(notch.orbit)
   if (!nearV(notch.orbit.pose().target, [0, 0, -1], 1e-6) || notch.orbit.pose().distance !== 2) fail(`a damped notch at the floor pushes through: ${JSON.stringify(notch.orbit.pose())}`)
-}
+})
 
-// ---- The follow: framing in view space, depth, the orbit's input around it ----
-{
+test("The follow: framing in view space, depth, the orbit's input around it", () => {
   // Looking down -z from (0, 0, 4): right is +x, up is +y, forward -z.
   let { orbit } = make({ distance: 4, target: [0, 0, 0] })
   orbit.follow([1, 0.5, 0])
@@ -501,10 +488,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
     ahead.orbit.update(DT)
   }
   if (!(ahead.orbit.pose().target[0] > point)) fail(`lookahead frames ahead: target ${ahead.orbit.pose().target[0]}, point ${point}`)
-}
+})
 
-// ---- The follow's heading: the azimuth recentres behind the walker after the rotate input rests ----
-{
+test("The follow's heading: the azimuth recentres behind the walker after the rotate input rests", () => {
   let { orbit } = make({ distance: 4, target: [0, 0, 0], azimuth: 0, follow: { heading: { wait: 0.5 } } })
   // A walker facing -x (yaw pi/2 in the first-person convention): the
   // camera settles at azimuth pi/2, behind it.
@@ -542,10 +528,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   orbit.follow([1, 0, 0])
   settle(orbit)
   if (orbit.pose().azimuth !== 0.3) fail("a follow without a heading leaves the azimuth")
-}
+})
 
-// ---- The lanes: the offset, setOrbitPoint preserves the picture, a shake stays out of the pose ----
-{
+test("The lanes: the offset, setOrbitPoint preserves the picture, a shake stays out of the pose", () => {
   let height = 2 * Math.tan((FOV * Math.PI) / 360) * 4
   let { orbit } = make({ distance: 4, target: [0, 0, 0], offset: [0.25, 0] })
   let cam = orbit.camera()
@@ -599,10 +584,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   if (!nearV(shaken.orbit.camera().position, [0, 0, 4], 1e-9)) fail("after the shake the camera is the pose again")
   flush()
   if (shaken.orbit.active()) fail("an ended shake rests")
-}
+})
 
-// ---- Occlusion: pulled in at once, eased back out; the pose untouched ----
-{
+test("Occlusion: pulled in at once, eased back out; the pose untouched", () => {
   let free: number | null = null
   let { orbit } = make({ distance: 4, target: [0, 0, 0], occluder: () => free })
   if (!nearV(orbit.camera().position, [0, 0, 4])) fail("no occluder: the eye is the pose's")
@@ -621,10 +605,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   if (!near(orbit.camera().position[2], 4, 1e-3)) fail(`the return lands on the pose's distance, got ${orbit.camera().position[2]}`)
   flush()
   if (orbit.active()) fail("a landed return rests")
-}
+})
 
-// ---- The pan plane and the focus axis ----
-{
+test("The pan plane and the focus axis", () => {
   let ground = make({ distance: 4, target: [0, 0, 0], elevation: 0.5, panPlane: "ground" })
   ground.orbit.panBy(0, 1)
   if (!nearV(ground.orbit.pose().target, [0, 0, -1], 1e-9)) fail(`a ground pan slides along the horizontal forward, got ${ground.orbit.pose().target}`)
@@ -643,10 +626,9 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   if (!nearV(orbit.pose().target, [5, 0, 0])) fail(`focus without a focal uses the view centre, got ${orbit.pose().target}`)
   orbit.axes.nudge("focus", 0)
   if (orbit.update(DT)) fail("a zero focus delta does nothing")
-}
+})
 
-// ---- Shots: the mix, and an orbit control driving a shot through the blender ----
-{
+test("Shots: the mix, and an orbit control driving a shot through the blender", () => {
   let a: CameraState = { position: [0, 0, 4], target: [0, 0, 0], up: [0, 1, 0], fov: 60, near: 0.1, far: 100, ortho: null }
   let b: CameraState = { position: [4, 0, 0], target: [1, 1, 1], up: [0, 1, 0], fov: 30, near: 0.1, far: 200, ortho: { left: -1, right: 1, top: 1, bottom: -1 } }
   let m = mixCamera(a, b, 0.25)
@@ -670,7 +652,4 @@ function settle(orbit: ReturnType<typeof make>["orbit"]): number {
   for (let i = 0; i < 30; i++) shots.update(DT)
   if (!nearV((last as CameraState).position, [1, 0, 2], 1e-9)) fail(`the blend lands on the close shot, got ${(last as CameraState).position}`)
   void close
-}
-
-console.log(failures === 0 ? "ORBIT-OK" : `ORBIT-FAIL ${failures}`)
-if (failures > 0) throw new Error(`${failures} orbit check(s) failed`)
+})

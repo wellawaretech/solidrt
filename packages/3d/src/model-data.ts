@@ -10,8 +10,10 @@
 //   writeFileSync("assets/terrain.srtm", encodeModel({ nodes, parts, ... }))
 //
 // createModel / loadModel on the runtime read what it writes. Keep this
-// entry pure: tests/model-data.test.ts imports it under bun and fails the
-// moment a runtime import creeps into the chain.
+// entry pure. tests/model-data.test.ts imports it on the bare flux binary
+// and fails the moment a gui or srt: import creeps into the chain; a
+// headless flux: import it would not notice, and a bake script under bun
+// would.
 
 export { gltfExternalUris, isGlb, modelImageUses, parseGltf } from "./gltf.ts"
 export type { ModelChannel, ModelClip, ModelData, ModelExtras, ModelImage, ModelImageUse, ModelMaterial, ModelNode, ModelPart, ModelSkin, ModelTexture, UriResolver } from "./gltf.ts"

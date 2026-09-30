@@ -118,7 +118,7 @@ drag never waits for a frame.
 
 What each control implements (the shared math is
 `@solidrt/core/camera-control`: the ease, the framing block, the lanes;
-`packages/core/checks/camera-control-check.ts` pins it):
+`packages/core/tests/camera-control.test.ts` pins it):
 
 | Stage | 2d (`createCamera2d`) | Orbit | First-person |
 |---|---|---|---|

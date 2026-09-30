@@ -1,5 +1,5 @@
-// Picking narrowphase, pure: no GPU or GUI imports, so the checks rig
-// (checks/pick-check.ts) exercises this module headless on the flux binary.
+// Picking narrowphase, pure: no GPU or GUI imports, so its test
+// (tests/pick.test.ts) exercises this module headless on the flux binary.
 // layer.ts walks its draw order calling this per sprite (topmost first).
 
 /** Exact containment test against a rotated rect (center, size, rotation). */

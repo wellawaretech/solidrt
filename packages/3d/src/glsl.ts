@@ -19,7 +19,7 @@
 import type { CullMode, VertexAttribute } from "@solidrt/core/gpu"
 
 // core/gpu's glsl tag, aliased locally (it is String.raw) so this module
-// stays runtime-pure: no flux:gpu import, so the checks/ rigs and any
+// stays runtime-pure: no flux:gpu import, so the tests and any
 // bake-time tool can run it headless on bare flux.
 let glsl = String.raw
 

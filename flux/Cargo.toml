@@ -35,6 +35,11 @@ video = ["forge/video"]
 # flux:image transcodeTexture / encodeTexture and the `ktx2` capability
 # (behind forge/ktx2): not a cargo default; see forge/Cargo.toml.
 ktx2 = ["forge/ktx2"]
+# flux:test (test, expect, run) and the `test` capability: what `srt test`
+# runs a test file with. It evaluates an embedded JS source, hence `compile`.
+# Not a cargo default: the Makefile turns it on for the `flux` binary only,
+# so no shipping runtime (fluxrt, the production solidrt) carries it.
+test = ["compile"]
 
 [dependencies]
 forge = { workspace = true }

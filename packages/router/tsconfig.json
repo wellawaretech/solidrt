@@ -20,7 +20,5 @@
     "noImplicitOverride": true,
     "types": ["@solidrt/flux-types"]
   },
-  // tests/ runs under bun test, not flux: not part of this program.
-  "include": ["."],
-  "exclude": ["tests"]
+  "include": ["."]
 }
