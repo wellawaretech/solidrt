@@ -1,7 +1,17 @@
 /**
- * Tests for a flux program: `test` registers one, `expect` asserts inside
- * it, and `run` runs what was registered. `srt test` is the usual way to
- * run a test file; it calls `run` and reports.
+ * Tests for a flux program: `test` registers one and `expect` asserts
+ * inside it. A test file is run by a test host, `srt test <file>` (the
+ * `flux` binary's `--test` mode underneath); imported anywhere else the
+ * module throws, since nothing would run the tests.
+ *
+ * Every test runs in an engine of its own. The host evaluates the file
+ * once to list its tests and once more for each test, so a test starts
+ * from the file's freshly evaluated state: a variable, a listener or a
+ * timer of one test is not there for the next, a test's result does not
+ * depend on the tests before it, and an uncaught error (a throw in a timer
+ * callback, a rejection nobody handles) fails the test it happened in. The
+ * file's top level therefore runs once per test, plus once for the
+ * listing; keep it to registering tests and cheap setup.
  *
  * The names are the familiar ones and the semantics are simplified. Tests
  * are flat: there is no `describe` and there are no hooks. The file is the
@@ -13,12 +23,18 @@
  * whatever is on the other side of its sockets. Logic with a timeout is
  * tested by waiting for it, or takes its delay as a parameter.
  *
- * `Math.random()` is seeded once this module is imported, and every test
- * draws the seed's sequence from its start: random inputs, and code under
- * test that calls `Math.random()`, are the same on every run and do not
- * depend on the tests that ran before. It is the engine's generator in
- * kind and resolution, only its start is fixed. An isolate the test spawns
- * is seeded too, with a seed derived from the test's.
+ * `Math.random()` is seeded in a test's engine, from before the file is
+ * evaluated: random inputs, and code under test that calls
+ * `Math.random()`, are the same on every run and do not depend on the
+ * tests that ran before. It is the engine's generator in kind and
+ * resolution, only its start is fixed. An isolate the test spawns is
+ * seeded too, with a seed derived from the test's. `srt test --seed <n>`
+ * runs the tests on another sequence.
+ *
+ * A test that does not finish within 5 seconds of real time fails as timed
+ * out, a synchronous loop included, and a test that waits on a promise
+ * nothing will settle fails at once. Either way its engine is dropped with
+ * whatever it left running. A safety cap, not a wait.
  *
  * Present on the `flux` binary only (capability `"test"`), not in a
  * shipping runtime.
@@ -34,10 +50,11 @@ declare module "flux:test" {
   /**
    * Registers a test. `fn` passes when it returns, or when the promise it
    * returns fulfills, and fails when it throws or the promise rejects.
-   * Tests run one after another, in the order they were registered.
+   * Tests run one after another, in the order they were registered. The
+   * file has to register the same tests every time it is evaluated.
    *
    * Throws when the name is empty or already taken in this file, and when
-   * called while tests run: register at the top level of the file.
+   * called while a test runs: register at the top level of the file.
    */
   export function test(name: string, fn: () => void | Promise<void>): void
 
@@ -103,59 +120,4 @@ declare module "flux:test" {
     toBeGreaterThan(expected: number | bigint): void
     toBeGreaterThanOrEqual(expected: number | bigint): void
   }
-
-  /** What one test came to. */
-  export interface TestResult {
-    name: string
-    ok: boolean
-    /** How long the test took, in milliseconds of real time. */
-    durationMs: number
-    /** Set when the test failed. */
-    error?: {
-      /**
-       * The thrown error's name and message, `"Thrown: <value>"` for a
-       * thrown value that is no error, or `"Timed out after <n> ms"`.
-       */
-      message: string
-      /** The thrown error's stack; empty for a timeout or a non-error. */
-      stack: string
-    }
-  }
-
-  export interface RunOptions {
-    /** Run only the tests whose name contains this text. */
-    filter?: string
-    /**
-     * The seed `Math.random()` starts from in every test, a non-negative
-     * integer (default 0). A seed names one sequence, the same on every
-     * run and platform; another seed is how the same tests try other
-     * random inputs.
-     */
-    seed?: number
-    /**
-     * How long one test may take, in milliseconds of real time (default
-     * 5000). A test that takes longer fails as timed out
-     * and the run moves on. What the test started is not cancelled: it
-     * keeps running beside the tests after it and can disturb them (a
-     * timer it sets from then on belongs to whichever test runs at that
-     * moment), so fix a timed-out test before trusting the results that
-     * follow it in the same file. A safety cap against a test that never
-     * finishes, not a wait.
-     */
-    timeoutMs?: number
-  }
-
-  /**
-   * Runs the registered tests and yields each one's result as it finishes.
-   * A test starts when its result is asked for, so breaking out of the
-   * loop stops the run. One run at a time.
-   *
-   * @example
-   * import { run } from "flux:test"
-   *
-   * for await (let result of run({ filter: "matchPath" })) {
-   *   console.log(result.ok ? "ok" : "FAILED", result.name)
-   * }
-   */
-  export function run(options?: RunOptions): AsyncIterableIterator<TestResult>
 }

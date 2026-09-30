@@ -42,3 +42,22 @@ impl PendingOps {
     self.inner.notify.notified()
   }
 }
+
+/// Keeps the engine alive while it is held: for an embedder's own work on
+/// the engine's behalf that is in flight outside it (a frame a test asked
+/// the runner for), which a promise alone does not do - the loop ends when
+/// the job queue is dry and nothing is pending. Released on drop.
+pub struct EngineHold(PendingOps);
+
+/// Hold the engine of `ctx` (see `EngineHold`).
+pub fn hold_engine(ctx: &rquickjs::Ctx<'_>) -> EngineHold {
+  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+  pending.hold();
+  EngineHold(pending)
+}
+
+impl Drop for EngineHold {
+  fn drop(&mut self) {
+    self.0.release();
+  }
+}

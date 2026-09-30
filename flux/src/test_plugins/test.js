@@ -1,14 +1,9 @@
-// The JavaScript half of flux:test: the registry behind `test`, the `expect`
-// matchers, the seed of `Math.random` and `run`. Evaluated once per context
-// by the module definition (mod.rs), which calls this function with the
-// natives it needs the engine for and exports what it returns. Plain JS on
-// purpose: the flux build has no bundling step (okf/plans/test-harness.md,
-// D21).
-(native) => {
-  // How long one test may take before it fails as timed out, when `run` is
-  // given no `timeoutMs`. A safety cap against a test that never finishes,
-  // not a wait: a test that finishes is never held to it.
-  const DEFAULT_TIMEOUT_MS = 5000
+// The JavaScript half of flux:test: the registry behind `test` and the
+// `expect` matchers. Evaluated once per context by the module definition
+// (mod.rs), which exports `test` and `expect` and keeps `names` and `runOne`
+// for the host that runs the file (host.rs). Plain JS on purpose: the flux
+// build has no bundling step (okf/plans/test-harness.md, D21).
+() => {
   // `toBeCloseTo` without `digits`: equal to two decimal places.
   const DEFAULT_CLOSE_DIGITS = 2
   // How deep a value is printed in a failure message before it is cut to
@@ -16,13 +11,6 @@
   // the rest is counted. Keeps the message of a large buffer readable.
   const FORMAT_MAX_DEPTH = 6
   const FORMAT_MAX_ITEMS = 50
-  // The seed `Math.random` runs on when `run` is given none. Any fixed
-  // number does: what matters is that it is the same on every run.
-  const DEFAULT_SEED = 0
-
-  // Seeded from here on, so that what a test file draws while it loads is
-  // reproducible too; each test then restarts the sequence (see runOne).
-  native.seedRandom(DEFAULT_SEED)
 
   let tests = []
   let running = false
@@ -30,7 +18,7 @@
   function test(name, fn) {
     if (typeof name !== "string" || name === "") throw new TypeError("test: the name must be a non-empty string")
     if (typeof fn !== "function") throw new TypeError(`test: "${name}" needs a function`)
-    if (running) throw new Error(`test: "${name}" is registered while tests run; register tests at the top level`)
+    if (running) throw new Error(`test: "${name}" is registered while a test runs; register tests at the top level`)
     if (tests.some((entry) => entry.name === name)) throw new Error(`test: "${name}" is registered twice`)
     tests.push({ name, fn })
   }
@@ -318,60 +306,36 @@
     return new Expectation(received, false)
   }
 
-  // -- Running --
+  // -- What the host calls --
 
   function describeError(thrown) {
     if (thrown instanceof Error) return { message: `${thrown.name}: ${thrown.message}`, stack: thrown.stack ?? "" }
     return { message: `Thrown: ${format(thrown)}`, stack: "" }
   }
 
-  async function runOne(entry, timeoutMs, seed) {
-    // Every test draws the seed's sequence from its start, so what it draws
-    // does not depend on the tests before it, or on a filter.
-    native.seedRandom(seed)
-    let start = performance.now()
-    let timer
-    // The cap is also what keeps the engine alive while a test waits on a
-    // promise that never settles: without it the process would end cleanly
-    // with the test unreported.
-    let timeout = new Promise((resolve) => {
-      timer = setTimeout(() => resolve({ message: `Timed out after ${timeoutMs} ms`, stack: "" }), timeoutMs)
-    })
-    let outcome = Promise.resolve()
+  // The names this evaluation of the file registered, in order.
+  function names() {
+    return tests.map((entry) => entry.name)
+  }
+
+  // Run the one test this engine was built for. The promise never rejects:
+  // it fulfills with null when the test passed and with its error when not.
+  function runOne(name) {
+    let entry = tests.find((candidate) => candidate.name === name)
+    if (!entry) {
+      return Promise.resolve({
+        message: `The test "${name}" was not registered when its file was evaluated for it; a file has to register the same tests every time it is evaluated`,
+        stack: "",
+      })
+    }
+    running = true
+    return Promise.resolve()
       .then(() => entry.fn())
       .then(
-        () => undefined,
+        () => null,
         (thrown) => describeError(thrown),
       )
-    let error = await Promise.race([outcome, timeout])
-    clearTimeout(timer)
-    let durationMs = performance.now() - start
-    return error ? { name: entry.name, ok: false, durationMs, error } : { name: entry.name, ok: true, durationMs }
   }
 
-  async function* iterate(filter, timeoutMs, seed) {
-    if (running) throw new Error("run: a run is already in progress")
-    running = true
-    try {
-      for (let entry of [...tests]) {
-        if (filter !== undefined && !entry.name.includes(filter)) continue
-        yield await runOne(entry, timeoutMs, seed)
-      }
-    } finally {
-      running = false
-    }
-  }
-
-  function run(options = {}) {
-    if (options === null || typeof options !== "object") throw new TypeError("run: the options must be an object")
-    let { filter, timeoutMs = DEFAULT_TIMEOUT_MS, seed = DEFAULT_SEED } = options
-    if (filter !== undefined && typeof filter !== "string") throw new TypeError("run: filter must be a string")
-    if (typeof timeoutMs !== "number" || !(timeoutMs > 0) || !Number.isFinite(timeoutMs)) {
-      throw new TypeError("run: timeoutMs must be a positive number")
-    }
-    if (!Number.isSafeInteger(seed) || seed < 0) throw new TypeError("run: seed must be a non-negative integer")
-    return iterate(filter, timeoutMs, seed)
-  }
-
-  return { test, expect, run }
+  return { test, expect, names, runOne }
 }

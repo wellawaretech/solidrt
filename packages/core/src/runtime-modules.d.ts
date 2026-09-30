@@ -236,3 +236,24 @@ declare module "srt:apps" {
 declare module "srt:render" {
   export function renderFrame(): void
 }
+
+// The engine verbs of an app test (lattice, dev client only), which
+// @solidrt/core/test builds its surface on; tests import that, not this.
+// The verbs work only in an engine a test host built (`srt test`) and throw
+// anywhere else. App time there is frame / frameRate and nothing else: no
+// frame runs unless one is asked for.
+declare module "srt:test" {
+  /**
+   * Runs one frame: timers due by its time fire, then frame callbacks and
+   * the flush, then the draw if anything demanded one. Fulfills once the
+   * frame has run. One frame at a time: throws while the previous one is
+   * still pending.
+   */
+  export function frame(): Promise<void>
+  /** The frames per second this engine steps at (60 unless set). */
+  export function frameRate(): number
+  /** Another frame rate, a positive integer. Throws once a frame has run. */
+  export function setFrameRate(fps: number): void
+  /** App time as of the last frame, in milliseconds; 0 before the first. */
+  export function time(): number
+}

@@ -362,8 +362,8 @@ pub(crate) struct RasterState {
   // Size of the last drawn frame, so geometry transitions are logged exactly
   // once. Diagnostic only (resize-race visibility).
   last_size: ISize,
-  // Playback mode: a frame is read back and shipped instead of presented.
-  capture_frames: bool,
+  // What becomes of a drawn frame (see FrameSink).
+  sink: FrameSink,
   // Consecutive failed presents; a short streak confirms context loss.
   present_failures: u32,
   // Instant of the last slow-frame warning, for the 1/s rate limit.
@@ -583,6 +583,27 @@ impl FrameTiming {
   }
 }
 
+/// What becomes of a frame the raster thread has drawn, fixed by the app's
+/// mode. The two headless sinks share a contract: every submitted frame is
+/// drawn, in order, and none is superseded; nothing is swapped, and video
+/// waits for the frame that is due.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrameSink {
+  /// Interactive: presented to the window.
+  Window,
+  /// Playback: read back and shipped to the capture loop, one per submit.
+  Capture,
+  /// Stepped: left in the offscreen surface. Whoever wants pixels asks for
+  /// a capture of a node.
+  Discard,
+}
+
+impl FrameSink {
+  pub(crate) fn headless(self) -> bool {
+    self != FrameSink::Window
+  }
+}
+
 impl RasterState {
   #[allow(clippy::too_many_arguments)]
   pub(crate) fn new(
@@ -590,7 +611,7 @@ impl RasterState {
     impeller_ctx: ImpellerContext,
     binding: Box<dyn GlBinding>,
     surface_size: Arc<AtomicU64>,
-    capture_frames: bool,
+    sink: FrameSink,
     stats: Arc<RasterStats>,
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -614,7 +635,7 @@ impl RasterState {
       limits,
       offscreen_rig: gl::OffscreenRig::new(),
       last_size: ISize::new(0, 0),
-      capture_frames,
+      sink,
       present_failures: 0,
       slow_frame_log: None,
       last_frame_gpu_micros: None,
@@ -667,7 +688,7 @@ impl RasterState {
       };
       let batch: Vec<RasterCmd> = std::iter::once(first).chain(rx.try_iter()).collect();
       let last_frame =
-        if self.capture_frames { None } else { batch.iter().rposition(|cmd| matches!(cmd, RasterCmd::Frame { .. })) };
+        if self.sink.headless() { None } else { batch.iter().rposition(|cmd| matches!(cmd, RasterCmd::Frame { .. })) };
       for (i, cmd) in batch.into_iter().enumerate() {
         if cmd.invalidates_resolved_content() {
           self.content_dirty = true;
@@ -687,7 +708,7 @@ impl RasterState {
             // A shed frame's damage folds into the frame that draws in its
             // place, so its changes still reach the screen.
             self.damage.fold(damage);
-            if (self.capture_frames || Some(i) == last_frame) && self.frame(dl, present_at).is_err() {
+            if (self.sink.headless() || Some(i) == last_frame) && self.frame(dl, present_at).is_err() {
               break 'outer; // main loop is gone
             }
           }

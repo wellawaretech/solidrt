@@ -1,15 +1,20 @@
-import { existsSync, readdirSync, statSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs"
 import { basename, dirname, join, relative, resolve } from "node:path"
+import { bundleWith, writeIsolates } from "../bundle/bundler"
 import { appArgs, source, values } from "../lib/args"
+import { collectAssets } from "../lib/project"
 import { fail, requireBinary } from "../lib/util"
 import { remapPositions } from "../server/remap"
 
 // srt test: run the test files of a project on the runtime the code ships
 // on (okf/plans/test-harness.md). Each `tests/*.test.ts` is bundled on its
-// own and run in a fresh `flux` process, one file after another; the tests
-// register through flux:test, a few lines appended to the bundle run them
-// with its public `run`, and every result comes back as one JSON line on
-// stdout. This command is the only reporter.
+// own and handed to a fresh test host process, one file after another. The
+// binary is the host: it evaluates the file once to list the tests it
+// registers through flux:test and once more for each test, in an engine of
+// its own, and prints one JSON record per line on stdout. Which binary
+// follows from the file's imports: `flux --test` for a flux program, the
+// dev client (`solidrt-go --test`, headless and stepped by frames) for a
+// file that imports the app runtime. This command is the only reporter.
 
 // Where tests live, and what a test file is called: one tests/ folder per
 // package or project, never beside the sources.
@@ -18,30 +23,45 @@ const TEST_FILE = /\.test\.tsx?$/
 // Folders never searched for a tests/ folder: dependencies and build
 // output. Dot folders are skipped as well.
 const SKIPPED_DIRS = ["node_modules", "dist", "target"]
-// The module name flux gives the script it runs, which is what its stack
-// frames cite and so what the bundle's sourcemap is keyed by.
+// The module name the test host evaluates the file under, which is what
+// its stack frames cite and so what the bundle's sourcemap is keyed by.
 const ENTRY_MODULE = "main"
 // What a stack frame inside the harness cites; those frames are dropped
 // from a report, since they say nothing about the test.
 const HARNESS_FRAME = "(flux:test:"
-// Marks a stdout line as a record of this command's, not the test's own
-// output. It starts with a control character (the ASCII record separator)
-// so that no test prints it by accident.
+// The runtime modules the `flux` binary does not have: lattice's builtins
+// and flux's gui layer. A test file whose bundle imports one runs on the
+// dev client.
+const APP_MODULE = /^srt:|^flux:(rendertree|camera|microphone|audio|gpu|spatial|video)$/
+// Where an app test's staged bundle and its data root live, under the
+// project's build output.
+const STAGE_DIR = join("dist", "test")
+// Marks a stdout line as a record of the test host's, not something a
+// native library printed. It starts with a control character (the ASCII
+// record separator) so that nothing prints it by accident.
 const RECORD_PREFIX = "\x1esrt-test "
 // How long one file may run before its process is stopped. A safety cap
-// against a synchronous loop or a wedged process, which the per-test cap
-// inside flux:test cannot see; not a wait.
+// against a wedged process, which the host's own cap per test cannot see;
+// not a wait.
 const FILE_TIMEOUT_MS = 120_000
 
-type TestResult = { name: string; ok: boolean; durationMs: number; error?: { message: string; stack: string } }
-type RunRecord = { type: "loaded" } | { type: "result"; result: TestResult } | { type: "done" }
-
-/** One test's result with what it printed while it ran. */
-type Reported = TestResult & { output: string[] }
+/** One test's result, with what its engine logged while it ran. */
+type TestResult = {
+  name: string
+  ok: boolean
+  durationMs: number
+  error?: { message: string; stack: string }
+  output: string[]
+}
+type RunRecord =
+  | { type: "loaded"; tests: string[]; output: string[] }
+  | { type: "failed"; message: string; output: string[] }
+  | { type: "result"; result: TestResult }
+  | { type: "done" }
 
 type FileOutcome = {
-  tests: Reported[]
-  /** What the file printed outside any test: while loading, or after the last one. */
+  tests: TestResult[]
+  /** What the file logged while it loaded, and what the process printed beside its records. */
   output: string[]
   /** Why the file as a whole failed, whatever its tests reported. */
   error: string | null
@@ -68,30 +88,22 @@ function discover(dir: string): string[] {
 
 // -- One file --
 
-// What is appended to a test file's bundle: run what the file registered
-// and print each result as a record. In a block, so its names cannot meet
-// the file's own top-level ones.
-function runnerSource(filter: string | undefined, seed: number | undefined): string {
-  let print = (record: string) => `console.log(${JSON.stringify(RECORD_PREFIX)} + JSON.stringify(${record}))`
-  return [
-    `import { run as __srtTestRun } from "flux:test"`,
-    `{`,
-    `  ${print(`{ type: "loaded" }`)}`,
-    `  for await (let result of __srtTestRun(${JSON.stringify({ filter, seed })})) ${print(`{ type: "result", result }`)}`,
-    `  ${print(`{ type: "done" }`)}`,
-    `}`,
-    ``,
-  ].join("\n")
+type Bundled = { code: string; map: string | null; app: boolean }
+
+// The runtime modules a bundle imports: what the bundler left external.
+function runtimeImports(code: string): string[] {
+  return [...code.matchAll(/^import\s(?:[^"']*?\sfrom\s*)?["']((?:flux|srt):[^"']+)["']/gm)].map((match) => match[1]!)
 }
 
-async function bundle(file: string): Promise<{ code: string; map: string | null } | string> {
+// A flux program's bundle: plain TypeScript, the runtime modules external.
+async function bundleFlux(file: string): Promise<Bundled | string> {
   let result
   try {
     result = await Bun.build({
       entrypoints: [file],
       target: "browser",
       format: "esm",
-      external: ["flux:*"],
+      external: ["flux:*", "srt:*"],
       sourcemap: "external",
       throw: false,
     })
@@ -101,7 +113,30 @@ async function bundle(file: string): Promise<{ code: string; map: string | null 
   if (!result.success) return result.logs.map(String).join("\n")
   let entry = result.outputs.find((o) => o.kind === "entry-point")
   if (!entry) return "The bundler produced no output"
-  return { code: await entry.text(), map: entry.sourcemap ? await entry.sourcemap.text() : null }
+  let code = await entry.text()
+  return { code, map: entry.sourcemap ? await entry.sourcemap.text() : null, app: runtimeImports(code).some((name) => APP_MODULE.test(name)) }
+}
+
+// An app's bundle (JSX through the Solid transform), staged like a render:
+// the bundle, its isolates, the manifest and the project's assets under one
+// root, which the client mounts. Returns the staged bundle's path.
+async function stageApp(file: string): Promise<{ path: string; stage: string; map: string | null } | string> {
+  let dir = workingDir(file)
+  let project = existsSync(join(dir, "package.json")) ? dir : null
+  let result = await bundleWith({ entry: file, dev: true, minify: false, project })
+  if (!result) return "See the compile error above"
+  let stage = join(dir, STAGE_DIR, basename(file).replace(/\.test\.tsx?$/, ""))
+  rmSync(stage, { recursive: true, force: true })
+  let path = join(stage, "test.srt.js")
+  await Bun.write(path, result.code)
+  writeIsolates(join(stage, "isolates"), result.isolates)
+  await Bun.write(join(stage, "manifest.json"), result.manifest)
+  for (let asset of collectAssets(project).assets) {
+    let dest = join(stage, asset.path)
+    mkdirSync(dirname(dest), { recursive: true })
+    cpSync(join(project!, asset.path), dest)
+  }
+  return { path, stage, map: result.map }
 }
 
 // The directory a test file runs in: the package or project that holds its
@@ -124,77 +159,110 @@ async function lines(stream: ReadableStream<Uint8Array>, onLine: (line: string) 
   if (rest !== "") onLine(rest)
 }
 
-async function runFile(flux: string, file: string, filter: string | undefined, seed: number | undefined): Promise<FileOutcome> {
+async function runFile(file: string, filter: string | undefined, seed: number | undefined): Promise<FileOutcome> {
   let outcome: FileOutcome = { tests: [], output: [], error: null }
-  if (file.endsWith(".tsx")) {
-    outcome.error = "App tests (.test.tsx, on srt:test) are not supported yet"
-    return outcome
-  }
-  let bundled = await bundle(file)
-  if (typeof bundled === "string") {
+  let unbundled = (log: string) => {
     outcome.error = "The file failed to bundle"
-    outcome.output = bundled.split("\n")
+    outcome.output = log.split("\n")
     return outcome
   }
-  let maps = bundled.map ? { [ENTRY_MODULE]: bundled.map } : null
+  // JSX needs the Solid transform, so a .tsx file is an app test as it
+  // stands; a .ts file is one when its bundle imports the app runtime.
+  let bundled: Bundled | string = file.endsWith(".tsx") ? { code: "", map: null, app: true } : await bundleFlux(file)
+  if (typeof bundled === "string") return unbundled(bundled)
 
-  // Everything after `--` on the command line reaches the file as its
-  // flux:process argv.
-  let proc = Bun.spawn([flux, "-", ...appArgs], {
-    cwd: workingDir(file),
-    stdin: new Blob([bundled.code + "\n" + runnerSource(filter, seed)]),
-    stdout: "pipe",
-    stderr: "pipe",
-  })
+  // The host's flags come ahead of the script; everything after `--` on
+  // the command line reaches the file as its flux:process argv.
+  let hostArgs = ["--test"]
+  if (filter !== undefined) hostArgs.push("--filter", filter)
+  if (seed !== undefined) hostArgs.push("--seed", String(seed))
+  let proc
+  let map = bundled.map
+  if (bundled.app) {
+    let staged = await stageApp(file)
+    if (typeof staged === "string") return unbundled(staged)
+    map = staged.map
+    // A data root of the file's own, empty at the start; the calendar's
+    // zone is fixed so that local-time methods read the same everywhere.
+    let client = [...hostArgs, "--data-root", join(staged.stage, "data"), "--assets", staged.stage, staged.path, ...appArgs]
+    proc = Bun.spawn([await testHost("solidrt-go"), ...client], {
+      cwd: workingDir(file),
+      env: { ...process.env, TZ: "UTC" },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+  } else {
+    // "-": the bundle on stdin.
+    proc = Bun.spawn([await testHost("flux"), ...hostArgs, "-", ...appArgs], {
+      cwd: workingDir(file),
+      stdin: new Blob([bundled.code]),
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+  }
+  let maps = map ? { [ENTRY_MODULE]: map } : null
   let timedOut = false
   let timer = setTimeout(() => {
     timedOut = true
     proc.kill()
   }, FILE_TIMEOUT_MS)
 
-  // Lines between two records are what the test between them printed.
-  let pending: string[] = []
+  // What a test logged arrives inside its record; a line that is no record
+  // is something the process printed beside them.
+  let remap = (text: string[]) => text.map((line) => remapPositions(line, maps))
+  let failed: string[] = []
   let loaded = false
   let done = false
   let onLine = (line: string) => {
     if (!line.startsWith(RECORD_PREFIX)) {
-      pending.push(remapPositions(line, maps))
+      outcome.output.push(remapPositions(line, maps))
       return
     }
     let record = JSON.parse(line.slice(RECORD_PREFIX.length)) as RunRecord
     if (record.type === "result") {
-      outcome.tests.push({ ...record.result, output: pending })
+      outcome.tests.push({ ...record.result, output: remap(record.result.output) })
+    } else if (record.type === "loaded") {
+      loaded = true
+      outcome.output.push(...remap(record.output))
+    } else if (record.type === "failed") {
+      failed.push(record.message)
+      outcome.output.push(...remap(record.output))
     } else {
-      if (record.type === "loaded") loaded = true
-      else done = true
-      outcome.output.push(...pending)
+      done = true
     }
-    pending = []
   }
   let stderr: string[] = []
-  let [, , code] = await Promise.all([
-    lines(proc.stdout, onLine),
-    lines(proc.stderr, (line) => stderr.push(line)),
-    proc.exited,
-  ])
+  await Promise.all([lines(proc.stdout, onLine), lines(proc.stderr, (line) => stderr.push(line)), proc.exited])
   clearTimeout(timer)
-  outcome.output.push(...pending, ...stderr)
-  while (outcome.output.at(-1)?.trim() === "") outcome.output.pop()
 
+  // Source positions for the bundle's, and no frames of the harness.
+  let cited = (text: string) =>
+    remapPositions(text, maps)
+      .split("\n")
+      .filter((line) => line.trim() !== "" && !line.includes(HARNESS_FRAME))
+      .join("\n")
   for (let test of outcome.tests) {
     if (!test.error) continue
-    test.error.stack = remapPositions(test.error.stack, maps)
-      .split("\n")
-      .filter((frame) => frame.trim() !== "" && !frame.includes(HARNESS_FRAME))
-      .join("\n")
+    test.error.message = cited(test.error.message)
+    test.error.stack = cited(test.error.stack)
   }
 
   let last = outcome.tests.at(-1)?.name
   let after = last === undefined ? "before its first test reported" : `after "${last}"`
   if (timedOut) outcome.error = `The file did not finish within ${FILE_TIMEOUT_MS / 1000} s and was stopped ${after}`
-  else if (!loaded) outcome.error = "The file failed before its tests ran"
+  else if (failed.length > 0) {
+    // An uncaught error is in the output already; the host's own reason (a
+    // file that timed out or never finished loading) is only here.
+    let reason = cited(failed[0])
+    let logged = outcome.output.join("\n").includes(reason)
+    outcome.error = logged ? "The file failed before its tests ran" : `The file failed before its tests ran: ${reason}`
+  }
+  else if (!loaded) outcome.error = "The test host ended before the file had loaded"
   else if (!done) outcome.error = `The run ended ${after}, with tests left unreported`
-  else if (code !== 0) outcome.error = "The file reported an uncaught error outside its tests"
+  // stderr is the host's own log (the client's runtime lines): worth
+  // reading when the file as a whole went wrong, noise when it ran.
+  if (outcome.error) outcome.output.push(...stderr)
+  while (outcome.output.at(-1)?.trim() === "") outcome.output.pop()
   return outcome
 }
 
@@ -231,18 +299,28 @@ function report(name: string, outcome: FileOutcome) {
   if (outcome.error || outcome.tests.some((t) => !t.ok || t.output.length > 0) || outcome.output.length > 0) console.log("")
 }
 
-// A `flux` binary built without the `test` feature has no flux:test, and
-// the import would fail once per file with a resolver error; ask it once.
-async function requireTestModule(flux: string) {
-  let proc = Bun.spawn([flux, "-"], {
-    stdin: new Blob([`console.log(Flux.capabilities.includes("test"))`]),
-    stdout: "pipe",
-    stderr: "inherit",
-  })
-  let [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
-  if (out.trim() !== "true") {
-    fail(`The flux binary at ${flux} was built without flux:test. Build it with the test feature: make -C flux flux, in a SolidRT checkout.`)
+// The host binaries, resolved and checked on first use: a `flux` built
+// without the `test` feature has no flux:test and takes `--test` for a
+// script path, and a client built without it refuses the flag.
+let hosts = new Map<string, string>()
+
+async function testHost(name: "flux" | "solidrt-go"): Promise<string> {
+  let known = hosts.get(name)
+  if (known) return known
+  let path = requireBinary(name)
+  if (name === "flux") {
+    let proc = Bun.spawn([path, "-"], {
+      stdin: new Blob([`console.log(Flux.capabilities.includes("test"))`]),
+      stdout: "pipe",
+      stderr: "inherit",
+    })
+    let [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+    if (out.trim() !== "true") {
+      fail(`The flux binary at ${path} was built without flux:test. Build it with the test feature: make -C flux flux, in a SolidRT checkout.`)
+    }
   }
+  hosts.set(name, path)
+  return path
 }
 
 // --seed: the number Math.random starts from in every test. Without it the
@@ -263,16 +341,13 @@ export async function main() {
     fail(`No test files found under ${target} (looked for ${TESTS_DIR}/*.test.ts and ${TESTS_DIR}/*.test.tsx)`)
   }
 
-  let flux = requireBinary("flux")
-  await requireTestModule(flux)
-
   let filter = values.filter
   let seed = seedOption()
   let failed = 0
   let passed = 0
   let brokenFiles = 0
   for (let file of files) {
-    let outcome = await runFile(flux, file, filter, seed)
+    let outcome = await runFile(file, filter, seed)
     // With a filter, a file none of whose tests match has nothing to say.
     if (filter !== undefined && outcome.tests.length === 0 && !outcome.error) continue
     report(relative(process.cwd(), file), outcome)

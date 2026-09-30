@@ -9,7 +9,10 @@ use std::sync::atomic::Ordering;
 use impellers::{DisplayList, ISize};
 
 use super::repaint::WindowRoute;
-use super::{DamageRect, PresentDamage, RasterState, PRESENT_FAILURE_EXIT_THRESHOLD, PRESENT_FENCE_DEPTH, PRESENT_FENCE_TIMEOUT_NS};
+use super::{
+  DamageRect, FrameSink, PresentDamage, RasterState, PRESENT_FAILURE_EXIT_THRESHOLD, PRESENT_FENCE_DEPTH,
+  PRESENT_FENCE_TIMEOUT_NS,
+};
 use crate::backend::FrameOutput;
 use crate::gl;
 use crate::gl::Timed;
@@ -86,10 +89,11 @@ impl RasterState {
         height: ov.decl.height as i32,
       }));
     }
-    // Playback captures every pixel and the window shader redraws its whole
-    // layer; neither frame kind may be pruned to a patch.
+    // A headless frame is read in full (every pixel of a capture, any node
+    // of a stepped frame) and the window shader redraws its whole layer;
+    // neither frame kind may be pruned to a patch.
     let fast_path = gl::window_fast_path(&self.gl);
-    let patch_barred = self.capture_frames || self.window_shader.is_some();
+    let patch_barred = self.sink.headless() || self.window_shader.is_some();
     let mut route = self.damage.route(own_damage, size, fast_path, patch_barred);
     let wait_start = std::time::Instant::now();
     self.await_present_fence();
@@ -117,10 +121,10 @@ impl RasterState {
     if drawn {
       self.draw_overlay(size);
     }
-    if self.capture_frames {
+    if self.sink == FrameSink::Capture {
       let pixels = if drawn { gl::read_fbo0_pixels(&self.gl, size) } else { Vec::new() };
       self.tx.send(FrameOutput::Captured(pixels)).map_err(|_| ())?;
-    } else {
+    } else if self.sink == FrameSink::Window {
       let present_start = std::time::Instant::now();
       let mut presented = false;
       if drawn {
@@ -261,8 +265,8 @@ impl RasterState {
   /// vsync arming, pacing samples) must only ever see presents the UI thread
   /// actually built.
   pub(crate) fn prime_window(&self) {
-    // Playback keeps the window hidden and never swaps.
-    if self.capture_frames {
+    // A headless surface is never swapped.
+    if self.sink.headless() {
       return;
     }
     unsafe {
@@ -378,7 +382,7 @@ impl RasterState {
     // the frame timestamps must be enabled on it afresh.
     gl::forget_window_samples();
     self.frame_timestamps.forget();
-    if !self.capture_frames && !self.binding.set_swap_interval() {
+    if !self.sink.headless() && !self.binding.set_swap_interval() {
       log::warn!("[alloy] set swap interval failed: {}", self.binding.error());
     }
     true
@@ -400,7 +404,7 @@ impl RasterState {
     let lookahead_ns = crate::yuv::lookahead_ns();
     let mut taken = Vec::new();
     for (id, entry) in self.yuv_latches.iter_mut() {
-      if let Some(frame) = entry.latch.take(deadline_ns, lookahead_ns, self.capture_frames) {
+      if let Some(frame) = entry.latch.take(deadline_ns, lookahead_ns, self.sink.headless()) {
         let back = 1 - entry.front;
         entry.front = back;
         taken.push((*id, back, frame));

@@ -578,6 +578,9 @@ impl UiRuntime for FluxRuntime {
       // ts, so the frame consumes the state the callbacks dirtied.
       flux::gui::frame::deliver(&ctx, next_frame, ts, timer_ts);
       timing.lock().expect("js timing lock poisoned").record_frame(start.elapsed().as_secs_f32() * 1000.0);
+      // A frame a test asked for has run: its promise settles.
+      #[cfg(feature = "test")]
+      crate::plugins::test::frame_done(&ctx);
     });
   }
 }

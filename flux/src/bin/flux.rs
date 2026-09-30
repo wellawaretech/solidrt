@@ -1,4 +1,6 @@
-// flux - run a JS source file via FluxEngine
+// flux - run a JS source file via FluxEngine, or (`--test`, in a build
+// with the `test` feature) run it as a test file: every test it registers
+// in an engine of its own, each result one record line on stdout.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,7 +28,9 @@ async fn main() {
     default_panic(info);
   }));
 
-  let mut args = std::env::args().skip(1);
+  let mut args = std::env::args().skip(1).peekable();
+  #[cfg(feature = "test")]
+  let test = test_options(&mut args);
   let path = args.next();
   let argv: Vec<String> = args.collect();
 
@@ -55,28 +59,61 @@ async fn main() {
   // a timer or event callback) fails the run: the engine reports and keeps
   // going, the binary turns that into a nonzero exit like node and bun do.
   let failed = Arc::new(AtomicBool::new(false));
-  let mark_failed = failed.clone();
-  let engine = FluxEngine::builder()
-    .logger(log_fn)
-    .userdata(ProcessArgs(argv))
-    .userdata(ProcessExit)
-    .on_uncaught(move |_| mark_failed.store(true, Ordering::Relaxed))
-    .isolate_resolver(move |id| {
-      // Bytecode first, like the lattice resolver: a compiled bundle dir
-      // ships isolates/<id>.bin, a source layout isolates/<id>.js.
-      let dir = base.join("isolates");
-      if let Ok(bytes) = std::fs::read(dir.join(format!("{id}.bin"))) {
-        return Ok(ModuleCode::Bytecode(bytes));
-      }
-      let file = dir.join(format!("{id}.js"));
-      std::fs::read_to_string(&file)
-        .map(ModuleCode::Source)
-        .map_err(|e| format!("isolate '{id}': cannot read {}: {e}", file.display()))
+  // One builder per engine: a plain run builds one, a test run one for the
+  // listing and one for every test.
+  let builder = || {
+    let base = base.clone();
+    FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv.clone())).userdata(ProcessExit).isolate_resolver(
+      move |id| {
+        // Bytecode first, like the lattice resolver: a compiled bundle dir
+        // ships isolates/<id>.bin, a source layout isolates/<id>.js.
+        let dir = base.join("isolates");
+        if let Ok(bytes) = std::fs::read(dir.join(format!("{id}.bin"))) {
+          return Ok(ModuleCode::Bytecode(bytes));
+        }
+        let file = dir.join(format!("{id}.js"));
+        std::fs::read_to_string(&file)
+          .map(ModuleCode::Source)
+          .map_err(|e| format!("isolate '{id}': cannot read {}: {e}", file.display()))
+      },
+    )
+  };
+  #[cfg(feature = "test")]
+  if let Some(options) = test {
+    let passed = flux::test::run_file(ModuleCode::Source(source), options, builder, |record| {
+      forge::tty::write_line(&record.line())
     })
-    .build();
+    .await;
+    std::process::exit(if passed { 0 } else { 1 });
+  }
+  let mark_failed = failed.clone();
+  let engine = builder().on_uncaught(move |_| mark_failed.store(true, Ordering::Relaxed)).build();
   engine.eval_source(&source).await;
   forge::tty::restore();
   if failed.load(Ordering::Relaxed) {
     std::process::exit(1);
   }
+}
+
+// The test flags, which come ahead of the script path: `--test`, then
+// `--filter <text>` and `--seed <n>` in any order. None without `--test`.
+#[cfg(feature = "test")]
+fn test_options(args: &mut std::iter::Peekable<impl Iterator<Item = String>>) -> Option<flux::test::RunOptions> {
+  args.next_if(|arg| arg == "--test")?;
+  let mut options = flux::test::RunOptions::default();
+  while let Some(flag) = args.next_if(|arg| arg == "--filter" || arg == "--seed") {
+    let Some(value) = args.next() else {
+      eprintln!("flux: {flag} requires a value");
+      std::process::exit(2);
+    };
+    if flag == "--filter" {
+      options.filter = Some(value);
+    } else {
+      options.seed = value.parse().unwrap_or_else(|_| {
+        eprintln!("flux: --seed value must be a non-negative integer");
+        std::process::exit(2);
+      });
+    }
+  }
+  Some(options)
 }

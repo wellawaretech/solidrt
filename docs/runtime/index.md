@@ -57,7 +57,7 @@ serve({
 | `flux:isolate` | Run a module on its own thread and call it like an object. |
 | `flux:image` | Decode and encode images; transcode and encode compressed textures (KTX2). |
 | `flux:svg` | Parse an SVG document into draw data. |
-| `flux:test` | Tests for a flux program: `test`, `expect`, `run`. On the `flux` binary only, what `srt test` runs on. |
+| `flux:test` | Tests for a flux program: `test`, `expect`. On the `flux` binary only, which runs a test file with `--test`, every test in an engine of its own; what `srt test` runs on. |
 
 A GUI build of Flux, which is what SolidRT runs on, adds the device and
 rendering modules: `flux:rendertree` (the native tree `@solidrt/core` drives),

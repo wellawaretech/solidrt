@@ -19,6 +19,7 @@
     "./microphone": "./src/microphone.ts",
     "./speech-recognition": "./src/speech-recognition.ts",
     "./text-input": "./src/text-input.ts",
+    "./test": "./src/test.ts",
     "./textures": "./src/textures.ts",
     "./video": "./src/video.ts",
     "./jsx-runtime": "./jsx-runtime.d.ts",

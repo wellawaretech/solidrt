@@ -13,6 +13,7 @@ use crate::gl;
 use crate::liveness::SurfaceLiveness;
 use crate::mode::Mode;
 use crate::playback::run_playback_loop;
+use crate::stepped::run_stepped_loop;
 use crate::raster::RasterCmd;
 
 pub struct App {
@@ -46,7 +47,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // For the playback fallback below, force 1:1 pixel mapping so the hidden
   // window is exactly the requested size in physical pixels regardless of
   // display scale.
-  if mode.is_playback() {
+  if mode.is_headless() {
     sdl3::hint::set("SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY", "1");
     // The process clock is the capture's virtual frame time from before any
     // app code runs (see clock.rs), so a producer opened at mount already
@@ -72,7 +73,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // assertion in a probe takes the process down at once. An embedder's own
   // hook installed before this one is chained (it runs first). Playback
   // keeps the default: its capture loop reports an incomplete run itself.
-  if !mode.is_playback() {
+  if !mode.is_headless() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
       default_hook(info);
@@ -98,7 +99,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // and re-entering setup re-initializes video on the next driver.
   let resampler = crate::resample::SharedResampler::new();
   let user_input_muted = Arc::new(AtomicBool::new(false));
-  if mode.is_playback() {
+  if mode.is_headless() {
     sdl3::hint::set("SDL_VIDEO_DRIVER", "offscreen");
     match setup_video(&sdl_context, title, (width, height), &mode) {
       Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler, user_input_muted },
@@ -167,11 +168,11 @@ fn setup_video(
   // A playback window is hidden and fixed-size: keeping it non-resizable stops
   // the compositor from negotiating a different surface size on a scaled display,
   // which would diverge from the requested capture dimensions.
-  if !mode.is_playback() {
+  if !mode.is_headless() {
     builder.resizable();
   }
   let mut window = builder.build().map_err(|e| format!("window creation: {e}{}", gl_library_hint(&e.to_string())))?;
-  if mode.is_playback() {
+  if mode.is_headless() {
     window.hide();
   }
 
@@ -340,7 +341,7 @@ impl App {
     // Frame wakeup for the interactive loop below: it sleeps on the SDL event
     // queue, so a presented frame must push an event to be noticed before the
     // wait's timeout. Playback mode blocks on the frame channel directly.
-    let wake: Option<Arc<dyn Fn() + Send + Sync>> = if mode.is_playback() {
+    let wake: Option<Arc<dyn Fn() + Send + Sync>> = if mode.is_headless() {
       None
     } else {
       let events = sdl_context.event().expect("Failed to get SDL event subsystem");
@@ -353,7 +354,7 @@ impl App {
     #[cfg(target_os = "android")]
     crate::touch::set_wake(wake.clone());
     let raster =
-      platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.is_playback(), stats.clone());
+      platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.frame_sink(), stats.clone());
 
     // Surface-liveness policy (rebind + repaint across the surface
     // lifecycle; see liveness.rs). The latch half arrives later via
@@ -372,6 +373,12 @@ impl App {
         event_tx.send(event).ok();
       }
       return run_playback_loop(window, rx, event_tx, &raster, playback);
+    }
+    if let Mode::Stepped(stepped) = mode {
+      run_stepped_loop(window, cmd_rx, event_tx, stepped);
+      // As in playback: nothing may be drawing when the window drops.
+      raster.drain();
+      return Ok(());
     }
 
     let initial = current_resize_event(&window);

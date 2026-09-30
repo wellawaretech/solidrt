@@ -419,7 +419,8 @@ Found while building, not in the design above:
   finger tests were flings and a long rest.
 - A cancelled touch (`ACTION_CANCEL`) is not passed on, as before: SDL's
   cancel event was never translated, so a pointer the system takes over
-  stays down. Unchanged here, worth an item of its own.
+  stays down. Unchanged here; filed as
+  [touch-cancel](../backlog/touch-cancel.md).
 - A synthetic touch drag (the control API) is resampled like a finger's,
   so a position read mid-drag can be an interpolated one; the up flushes
   the last position.

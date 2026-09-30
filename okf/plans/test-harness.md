@@ -1,6 +1,6 @@
 ---
 title: Test harness - flux:test, srt:test and srt test
-description: Tests for flux programs, SolidRT apps and our own packages, run on our own runtime and deterministic by construction - a base layer on the flux binary (flux:test - test, expect, run, a seeded Math.random; real time) and an app layer on the headless SolidRT runtime (srt:test - mount, find, input, frames, reading; stepped by frames, no wall time), behind one command, srt test. Supersedes the JS test infrastructure backlog item; the ten bun test files and the checks/ rigs are its first consumers.
+description: Tests for flux programs, SolidRT apps and our own packages, run on our own runtime and deterministic by construction - a base layer on the flux binary (flux:test - test, expect, a seeded Math.random; real time) and an app layer on the headless SolidRT runtime (@solidrt/core/test - mount, find, input, frames, reading; stepped by frames, no wall time), every test in an engine of its own, behind one command, srt test. Supersedes the JS test infrastructure backlog item; the ten bun test files and the checks/ rigs are its first consumers.
 created: 2026-08-17
 ---
 
@@ -13,41 +13,40 @@ that have no window, and up to SolidRT apps an author wants to test.
 
 ## Where this stands (2026-09-30)
 
-Stages 1, 2 and 2b are built and verified. Stage 3, the CI job, is
-written and has not run yet.
+Stages 1, 2, 2b and 3 are built and committed; the `test-js` CI job has
+not had its first run. Stage 4 was redesigned on 2026-09-30 under the rule
+"the best solution, not the least effort; no backwards compatibility"
+(D30 to D35, [Stage 4](#stage-4---the-app-layer-redesigned-2026-09-30)),
+and its first two steps are built, uncommitted:
 
-- Stage 1: `flux:test` (`test`, `expect`, `run`) behind the `test`
-  feature on the `flux` binary, `srt test`, and the ten former bun test
-  files on flux.
-- Stage 2: the arguments after `--`, the 19 pure rigs as test files (the
-  four GPU rigs are what is left under `checks/`), a first test of cli
-  logic (`packages/cli/tests/remap.test.ts`), and the seeded
-  `Math.random` (D28, D29).
-- Stage 2b: the stepped clock that stage 2 built is out of `flux:test`
-  again (D27), and the twelve tests about time passing are parked beside
-  the GPU rigs until the app layer.
-- Stage 3: the `test-js` job in `.github/workflows/ci.yml`.
+- Step 4.1, the test host: every test runs in an engine of its own (D30).
+  `flux --test` is the host, `run` and the appended runner lines are gone
+  (D24 and D4 reversed), a test's output travels inside its record (D25
+  amended), and an uncaught error fails the test it happened in.
+- Step 4.2, test mode in the runtime: alloy's stepped mode, the step in
+  lattice, the frozen wall, `solidrt-go --test`, `@solidrt/core/test`
+  with `app.frame`, `app.advance` and `app.time`, and `srt test` choosing
+  the binary by the bundle's imports. The four parked timer tests are
+  back in `packages/core/tests/` as app tests, their thresholds asserted
+  to the millisecond.
 
-`bunx srt test` at the repo root: 308 tests in 29 files, about 5 s, none
-of which depends on how much time passed. `cargo test -p flux --lib
---features test`: 40 tests. `srt check` passes for the packages with
-their test files in.
+`bunx srt test` at the repo root: 314 tests in 31 files, about 7.3 s (the
+310 flux tests took about 5 s on one engine per file and 6.5 s on one per
+test). `cargo test -p flux --lib --features test`: 46 tests; alloy 628,
+lattice 64. `srt check` passes for core, cli and router. `srt render`
+still captures, and the interactive client presents and answers `/tree`
+on the rebuilt binary.
 
-[event-timestamp](event-timestamp.md), the prerequisite of stage 4, is
-built for input (2026-09-30): input events carry a `timeStamp` and the
-recognizers read it, so most of what stage 2b parked came back on stated
-times (ten gesture tests, three interaction tests). Four stay parked for the app layer, the ones that wait on a
-timer: `packages/core/checks/gesture-timers.test.ts` (the long-press,
-and the double-tap window passing) and `input-map-hold.test.ts`.
+Nothing is parked any more except the four GPU rigs under `checks/`
+(stage 5).
 
 To pick up, in this order:
 
-1. The first run of the `test-js` job, which is also the first run of
+1. Step 4.3: the verbs (`mount`, `label`, locators, reading, input).
+2. Steps 4.4 to 4.6 as listed under Stage 4.
+3. The first run of the `test-js` job, which is also the first run of
    `srt test` on Windows and macOS: see
    [Stage 3](#stage-3---ci-written-2026-09-30-not-run).
-2. Stage 4, the app layer, which waits on
-   [event-timestamp](event-timestamp.md), carries `settle()`,
-   and is where stepping comes back, on frames.
 
 ## Problem
 
@@ -84,10 +83,11 @@ The candidate lists for first tests are in
 
 | layer | module | runs on | adds |
 | --- | --- | --- | --- |
-| base | `flux:test` | the `flux` binary | `test`, `expect`, `run`, a seeded `Math.random` |
-| app | `srt:test` | the dev client, headless | `mount`, `find`, input, frames, reading |
+| base | `flux:test` | the `flux` binary | `test`, `expect`, a seeded `Math.random` |
+| app | `@solidrt/core/test`, over the native `srt:test` | the dev client, headless | `mount`, `find`, input, frames, reading |
 
-`srt:test` re-exports the base, so an app test has one import. `srt test`
+`@solidrt/core/test` re-exports the base, so an app test has one import
+(D31). `srt test`
 is the command for both. Neither module is in a shipping runtime (D20).
 
 ## Decisions
@@ -109,12 +109,14 @@ rule underneath is wider: a file that imports any gui-backed module
 (`flux:gpu`, `flux:rendertree`, ...) needs the dev client, whatever test
 module it uses; `srt test` applies that once such a test exists.
 
-**D4. The command is `srt test`.** Discovery and TypeScript bundling live in
-the CLI, which already bundles for flux (`srt bundle -f`). Rejected: a
-`flux test` subcommand on a binary whose one job is to run a script.
+**D4. The command is `srt test`.** Discovery, TypeScript bundling and
+reporting live in the CLI, which already bundles for flux (`srt bundle
+-f`). Amended 2026-09-30 (D30): the binary has a `--test` mode after all,
+since the engine loop of a test file is native; it rejected "a `flux test`
+subcommand on a binary whose one job is to run a script".
 
 **D5. Time: a flux test lives on the wall, an app test has no wall**
-(reworded 2026-09-30). The line follows the module a test imports, as the
+(reworded 2026-09-30; the date row changed by D34). The line follows the module a test imports, as the
 binary does (D3).
 
 | | flux test (`flux:test`) | app test (`srt:test`) |
@@ -122,7 +124,7 @@ binary does (D3).
 | what drives time | the wall | frames, which the test requests |
 | timers | real | stepped with the frames |
 | `performance.now()` | real | 0 |
-| `Date.now()` | real | fixed |
+| `Date.now()` | real | a fixed epoch plus frame time (D34) |
 | `Math.random()` | seeded | seeded |
 
 In a flux program time matters: a monotonic clock is a legitimate input
@@ -267,8 +269,9 @@ standard and marshals neither forge nor alloy, but flux's own facilities
 **D23. Test files run one after another** (2026-09-30). Running them in
 parallel is additive later, as an option on `srt test`.
 
-**D24. The tests are run by a public `run(options?)`, an async iterable
-of results** (2026-09-30). `srt test` appends a few lines to a test
+**D24. Reversed 2026-09-30 by D30: there is no `run`.** The text below is
+what was decided and built first. *The tests are run by a public
+`run(options?)`, an async iterable of results* (2026-09-30). `srt test` appends a few lines to a test
 file's bundle that iterate it:
 `for await (let result of run({ filter })) ...`. Tests run as the
 consumer pulls, in registration order, so each result leaves before the
@@ -286,8 +289,11 @@ the reporter moves into flux); `run` exported but left out of the types
 `run(onResult, options?)` (it needs a second callback, `onStart`, to name
 a test that never finishes, where the timeout result needs nothing).
 
-**D25. Results reach the command as JSON lines on stdout** (2026-09-30).
-One line per result behind a fixed prefix; every other stdout line is the
+**D25. Results reach the command as JSON lines on stdout** (2026-09-30;
+amended the same day by D30: the host prints the records, and what a test
+logged travels inside its record, collected by its engine's log sink, so
+attribution no longer rests on line order). One line per result behind a
+fixed prefix; every other stdout line is the
 test's own console output, attributed to the test running then. The CLI
 is the only reporter, so both ends of the contract live there, and one
 ordered stream keeps output tied to its test (D14). A test that prints
@@ -356,6 +362,67 @@ apps, for a test feature). `srt render` and playback are hosts that do
 not seed yet:
 [seeded-random-headless-render](../backlog/seeded-random-headless-render.md).
 
+**D30. Every test runs in an engine of its own, in both layers**
+(2026-09-30). The host evaluates the file once to list the tests it
+registers and once more for each test, in a fresh engine that runs that
+test and nothing else. A test starts from the file's freshly evaluated
+module state, so a store, a listener or a timer of one test is not there
+for the next: a result does not depend on the tests before it or on a
+filter, the rule D28 set for `Math.random`. It also closes what was open
+after stage 2: an uncaught error is the error of the test whose engine
+raised it, a timed-out test is dropped with its engine (a synchronous
+loop included, through the engine's interrupt), and a test waiting on a
+promise nothing settles fails at once, when its engine runs out of work.
+In the app layer it removes the need for an unmount in core (`render()`
+stays once per engine) and lets a test load an app entry. The host is
+native because engines are: one function in flux (`flux::test`), used by
+the `flux` binary's `--test` mode and by the dev client's. Cost, measured
+on release: about 10 ms per test for an 80 KB bundle; the 310 tests went
+from about 5 s to 6.5 s. Compiling a file to bytecode once was considered
+for that and not built: the overhead is small. Rejected: one engine per
+file with an unmount between tests (module state leaks, which the 2d and
+3d dispatch tests already showed nobody notices); a process per test (the
+dev client's GL setup per test).
+
+**D31. An app test imports `@solidrt/core/test`** (2026-09-30). `mount`
+has to run the UI in a Solid root of the test bundle's own copy of Solid
+and core, which a native module cannot reach, so the Solid half is
+TypeScript in core, over a native `srt:test` that holds the engine verbs.
+The same pattern as the rest of core: native modules are the low level,
+apps import core. Rejected: `srt:test` as the import, resolved by the
+bundler to core's source (the first `srt:` name that is no native module);
+handing core's mount to the host through generated runner lines.
+
+**D32. The node verbs live in flux, under `test` + `gui`** (2026-09-30,
+D26's "later" done now). `find`, the readers and the `/tree` record
+shaping (`node_json`, today in `lattice/src/go/connection.rs`) marshal
+alloy's rendertree, which is flux's layer; the control API and the tests
+then share one record. Frames, input injection and `settle()`'s frame half
+stay in lattice, which owns the loop.
+
+**D33. Test mode is a third headless mode of alloy that emits no frame
+signals; a step is lattice's** (2026-09-30). `app.frame()` queues a frame
+signal on the UI loop's channel and resolves after the frame verb ran.
+The demand gate stays honest (a frame nobody demanded draws nothing),
+which is what `settle()` reads. Rejected: building on the playback loop as
+it is (it renders unconditionally and reads back every frame).
+
+**D34. Calendar time in an app test is a fixed epoch plus frame time**
+(2026-09-30, closing the open point on calendar time). A fixed date made
+every elapsed-time or countdown display untestable; this is as
+repeatable. The host sets `TZ=UTC`, so local-time methods read the same
+on every machine. `performance.now()` stays 0 (D6). The network stays
+real: `serve` plus `fetch` over loopback is the way to fake a backend, and
+`settle()` waits for what is in flight.
+
+**D35. `srt render` joins the same footing** (2026-09-30). Playback
+freezes the wall and seeds `Math.random`
+([seeded-random-headless-render](../backlog/seeded-random-headless-render.md)),
+`--settle` becomes the condition of D11 instead of a wall sleep, and the
+playback loop is rebuilt on the stepped mode (render becomes a host that
+steps and captures), so alloy has one headless path. Last in the order,
+once tests have proven the stepped loop.
+
 ## The test surface
 
 Base layer, on the flux binary:
@@ -375,7 +442,7 @@ test("the server answers with the stored row", async () => {
 App layer, on the headless runtime:
 
 ```tsx
-import { test, expect } from "srt:test"
+import { test, expect } from "@solidrt/core/test"
 
 test("a tap increments", async app => {
   let counter = await app.mount(() => <Counter />)
@@ -593,40 +660,108 @@ builders before the first push is offered and not decided.
 App tests join later as a second job where the dev client builds, Linux
 first.
 
-### Stage 4 - the app layer
+### Stage 4 - the app layer (redesigned 2026-09-30)
 
-Prerequisite: [event-timestamp](event-timestamp.md). With it
-the four tests still parked (stage 2b) come back as app tests.
+Decisions D30 to D35. Prerequisite done:
+[event-timestamp](event-timestamp.md). What the code said against the
+first shape of this stage: `srt:test` cannot hold `mount` as a native
+module (D31); core has no unmount and an entry's top level runs once per
+engine (D30 removes both problems); the playback loop renders
+unconditionally and reads back every frame (D33); and the per-test cap
+and duration rode `setTimeout` and `performance.now()`, which are stepped
+and 0 in an app test (the host measures and caps natively now).
 
-- **Test mode in the runtime.** Headless, stepped by frames, the test
-  requesting each frame, and without a wall (D5): `performance.now()`
-  reads 0 and the date is fixed. The playback loop today is the reverse: it runs
-  a fixed number of frames and returns (`run_playback_loop` in
-  `alloy/src/playback.rs`). This is the largest piece and a change in
-  alloy and lattice; it keeps decision D6 of
-  [frame-timing](../design/frame-timing.md) (a path that never touches
-  the wall). A frame is 1/60 s by default, what `srt render` defaults
-  to and what apps run at, and a test can set another rate (decided
-  2026-09-30). The frame is the time resolution of a test: at 60 fps
-  nothing happens between 483 and 500 ms, so a test that asserts a
-  threshold to the millisecond sets 1000.
-- **`srt:test`** as a lattice builtin beside `srt:dev` and `srt:events`,
-  in the dev client only (D20).
-- **`label`** on host elements: a rendertree property, reported in the
-  tree record and matchable by a query, so `/tree` and the MCP tools gain
-  it too.
-- **`settle()`, for both layers** (moved here from stage 2 on
-  2026-09-30: nothing before the app layer needs it). `PendingOps`
-  (`flux/src/pending.rs`) counts what keeps the engine alive, which is
-  not yet what `settle()` needs: see Findings. The flux half is a
-  classification of its 26 hold sites in 13 files into work in flight
-  (fetch, body and file reads, connects and binds, a subprocess stdin
-  write, video open, the generic async-op wrapper) and standing holds (a
-  listening server, an open socket or stream, a pending accept, a running
-  child, event listeners, timers); `settle()` resolves once nothing is in
-  flight and the job queue has drained, bounded by the test's own cap.
-  Then audit the GUI-side loads.
-- Locators, the input verbs, reading, and the failure output of D14.
+**Step 4.1 - the test host (built 2026-09-30).** D30.
+
+| file | change |
+| --- | --- |
+| `flux/src/test_plugins/host.rs` | the host, exported as `flux::test`: `Session` (one engine: `install` on a builder, then the listing or the result), `run_file` (a whole file, for a host with one builder function), `Record` and its stdout line |
+| `flux/src/test_plugins/test.js`, `mod.rs` | `test`, `expect`; `names` and `runOne` kept for the host in context userdata; no `run`, no timer, no native; the module throws when imported outside a host |
+| `flux/src/bin/flux.rs` | `--test [--filter <text>] [--seed <n>] <script>` |
+| `flux/src/engine.rs` | `eval_module` reported a failed module twice (the promise `on_fulfilled` derived had no rejection handler); fixed, isolates gain from it too |
+| `packages/cli/src/test/main.ts` | no runner lines; spawns `flux --test`, reads `loaded`, `failed`, `result` (with `output`) and `done` |
+| `flux/src/tests/test_module.rs` | rewritten onto the host, with tests for fresh state, the cap over a synchronous loop, an uncaught error and a failed load |
+| `packages/flux-types/modules/test.d.ts`, `packages/cli/src/test/docs.md`, `packages/cli/AGENTS.md`, `docs/runtime/index.md`, `flux/CLAUDE.md` | the model described |
+
+How an engine reports: the file is evaluated with `eval_module`; once its
+top level has finished the host reads the names, or starts the one test
+and waits for its promise. The end of a test reaches the host two engine
+turns later, so a rejection the test left unhandled is reported at the
+checkpoint in between. The cap is a timer of the host's plus a watchdog
+thread that sets the engine's interrupt flag, which is what unwinds a
+synchronous loop; after the interrupt the engine's log is cut.
+
+A file's top level runs once per test plus once for the listing, which is
+documented on the types. A file has to register the same tests on every
+evaluation; a test missing on its own run fails with a sentence that says
+so.
+
+**Step 4.2 - test mode in the runtime (built 2026-09-30).** D33, D34.
+
+| file | change |
+| --- | --- |
+| `alloy/src/mode.rs`, `stepped.rs`, `app.rs` | `Mode::Stepped`: headless like playback, a loop that emits no frame signal and only answers `EmitInitEvents` (every engine asks); `is_playback` became `is_headless` |
+| `alloy/src/raster/` | `capture_frames: bool` became `FrameSink` (`Window`, `Capture`, `Discard`): both headless sinks draw every submitted frame and swap nothing, only `Capture` reads back |
+| `alloy/src/clock.rs` | `set_virtual_ns` is public: the embedder steps the clock in stepped mode |
+| `flux/src/standards_plugins/time.rs` | `freeze_wall(ctx, epoch_ms)`: `performance.now()` 0, and `Date.now()`, `new Date()` and `Date()` on the epoch plus the frame timeline (a replaced `Date` global over the engine's own, same prototype) |
+| `flux/src/pending.rs` | `hold_engine`: an embedder's hold on the engine while its own work for it is in flight (a stepped frame travels through the runner's loop) |
+| `flux/src/test_plugins/host.rs` | `FileRun`: the per-file state machine, for a host that builds its engines in a loop of its own |
+| `lattice/src/test_host.rs` | the `Stepper` (the frame signal alloy does not emit, the rate, the reset per engine) and the epoch |
+| `lattice/src/plugins/test.rs` | native `srt:test`: `frame`, `frameRate`, `setFrameRate`, `time` |
+| `lattice/src/lib.rs`, `runtime.rs`, `main.rs`, `Cargo.toml`, `Makefile` | the `test` feature (on for the dev client, `TEST=0` leaves it out), `start_tests`, the engine loop driving a `FileRun`, the frame verb settling the pending frame, `--test`, `--filter`, `--seed` |
+| `packages/core/src/test.ts`, `runtime-modules.d.ts`, `package.json` | `@solidrt/core/test`: `test(name, async app => ..., { fps })`, `app.frame(n)`, `app.advance(ms)`, `app.time` |
+| `packages/cli/src/test/main.ts` | the binary by the bundle's imports (any `srt:` module or gui `flux:` module, or a `.tsx` file, is an app test); an app test is bundled with the Solid transform and staged under `dist/test/<name>/` with a data root of its own; `TZ=UTC`; the host's stderr is shown only when the file as a whole failed |
+
+The frame is the time resolution of a test: at 60 fps nothing happens
+between 483 and 500 ms, so a test that asserts a threshold to the
+millisecond sets 1000.
+
+Found while building:
+
+- The engine loop ended under a test awaiting a frame: a promise holds
+  nothing, and the frame's signal travels outside the engine. Hence
+  `hold_engine`.
+- The virtual timers are seeded from the timeline when the engine's
+  builder is put together, so the stepper has to be reset before that: a
+  test's timers were otherwise due against the previous test's end time,
+  which the double-tap test caught (its single fired 100 ms late).
+- A test with no window still gets its timers: they fire in flux's frame
+  delivery, not in core's render handler. The reactive flush is core's
+  and needs a mounted window, so such a test calls `flush()` itself.
+
+Not done in this step: the sandbox emptied per test (the data root is per
+file); `test_module`-style Rust tests of the stepper (it is covered by
+the four app tests); isolates of a test file's project (the bundler
+searches them under the entry's folder, which is `tests/`).
+
+**Step 4.3 - the verbs.** D31, D32. `@solidrt/core/test` (`mount`, the
+`app` object, locators); `label` on host elements (a rendertree property,
+in the `/tree` record and matched by its query, so the MCP tools gain it
+too); the node verbs and the record shaping in flux; input in the
+`/input` event shape through the existing parser, `tap` as down and up at
+the painted center plus one frame, `drag` with a duration as one move per
+frame. `find` matches natively on `{ text, label, kind }`: a string is an
+exact match, a RegExp a partial one. A fresh data root per file, the
+sandbox emptied before each test.
+
+**Step 4.4 - `settle()`, for both layers.** `PendingOps`
+(`flux/src/pending.rs`) counts what keeps the engine alive, which is not
+yet what `settle()` needs: see Findings. It gets a second count for work
+in flight; the 26 hold sites in 13 files are classified into work in
+flight (fetch, body and file reads, connects and binds, a subprocess
+stdin write, video open, the generic async-op wrapper) and standing holds
+(a listening server, an open socket or stream, a pending accept, a
+running child, event listeners, timers). `settle()` waits for what is in
+flight and, in an app test, steps while a frame is demanded; it fails past
+a frame cap. `srt render --settle` becomes this condition (D35). Then
+audit the GUI-side loads.
+
+**Step 4.5 - failure output, docs, CI.** D14; the types and the testing
+guide; the four parked files moved to `tests/`; a Linux CI job for app
+tests (what a GL context costs on the runner is unchecked).
+
+**Step 4.6 - playback on the stepped mode.** D35, with the frozen wall
+and the seeded `Math.random` in `srt render`.
 
 ### Stage 5 - migration on the app layer
 
@@ -702,17 +837,8 @@ Left open:
   one delay (20 ms, and 0) log "a b a-chain b-chain", since both are
   ready in one poll of the executor. The web runs a checkpoint after
   every task. A question for the runtime, not for the harness; unfiled.
-- An uncaught error does not fail the test it happened in. The report is
-  good enough for a CI log as it is: the error arrives on stdout with its
-  source line, under the test that was running when it fired, and the
-  file fails with "The file reported an uncaught error outside its
-  tests". A rejection nobody handles is printed at the engine's next
-  checkpoint, which can be a later test. Making it the test's own
-  failure needs a way from flux's uncaught reporting into `flux:test`;
-  it goes with the failure output of stage 4 (D14).
-- A test that times out keeps running after its result is out, and can
-  disturb the tests after it. Documented in the types and left: the file
-  is already failing, so a leak cannot turn a run green.
+- Closed by D30 (2026-09-30): an uncaught error fails the test it
+  happened in, and a test that times out ends with its engine.
 - CI compiles the `ktx2` feature nowhere; only the release build does,
   so a break in that code reaches main unnoticed. Found while shaping
   stage 3, which builds with `KTX2=0`. Filed in `okf/tiny.md` (DX).
@@ -750,10 +876,10 @@ inventory of how the rigs call `fail()` belonged in the proposal.
 
 ## Open
 
-- Network and calendar time in an app test: closed and fixed by default,
-  or left as they are (randomness is settled: seeded, D28). A flux test
-  needs the real network either way (`serve` plus `fetch` over loopback
-  is the dogfooded way to fake a backend).
+- What a test host does with resources a dropped engine held natively. A
+  test that starts `serve()` and never stops it: whether the listener
+  ends with the engine is unchecked (an isolate's `terminate()` drops its
+  engine the same way, and shutdown hooks do not run on a drop).
 
 ## Done looks like
 

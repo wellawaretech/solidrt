@@ -16,6 +16,10 @@ mod runtime;
 #[cfg(feature = "speech")]
 pub mod speech;
 pub mod storage;
+#[cfg(feature = "test")]
+mod test_host;
+#[cfg(feature = "test")]
+pub use test_host::TestRun;
 
 #[cfg(test)]
 mod tests;
@@ -197,7 +201,7 @@ use runtime::UiRuntime;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 // --- Start Android entry point ------------------------------
@@ -464,6 +468,12 @@ pub struct Launch {
   pub link: Option<String>,
 }
 
+// What a test run is started with; nothing in a build without test mode.
+#[cfg(feature = "test")]
+type TestSetup = test_host::TestRun;
+#[cfg(not(feature = "test"))]
+type TestSetup = std::convert::Infallible;
+
 struct RunOptions {
   app: Option<AppSource>,
   launch: Launch,
@@ -486,6 +496,10 @@ struct RunOptions {
   args: Vec<String>,
   // `--strict`: the capture's error tally (see ErrorTally); None otherwise.
   errors: Option<Arc<ErrorTally>>,
+  // Test mode (test_host.rs): the run's options, and where its outcome goes
+  // (false once the file failed to load or a test failed).
+  test: Option<TestSetup>,
+  test_passed: Arc<AtomicBool>,
 }
 
 /// What `--strict` gates a capture on: the error-level lines the engine
@@ -704,7 +718,14 @@ fn ui_thread(
     storage: storage_spec,
     args,
     errors,
+    test,
+    test_passed,
   } = opts;
+  #[cfg(not(feature = "test"))]
+  let _ = (&test, &test_passed);
+  // Test mode steps every frame itself (test_host.rs); playback is the
+  // lockstep capture.
+  let stepped = test.is_some();
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
@@ -754,7 +775,9 @@ fn ui_thread(
   // Playback mode renders every frame unconditionally: the lockstep capture
   // loop blocks waiting for each frame's display list, so a frame skipped by
   // the demand-driven gate would deadlock it.
-  platform.set_always_render(matches!(playback_fps, Some(rfps) if rfps > 0));
+  // Stepped mode keeps the gate: a frame nobody demanded draws nothing,
+  // which is what a test's settle reads.
+  platform.set_always_render(!stepped && matches!(playback_fps, Some(rfps) if rfps > 0));
   platform.set_stats_enabled(stats);
   let input_state = Arc::new(InputState::new());
   // The go client's boot rule: no app source means the player, always,
@@ -786,6 +809,9 @@ fn ui_thread(
   // the producer-side rule (see alloy's resample.rs).
   #[cfg(feature = "go")]
   let input_inject_tx = ev_tx.clone();
+  // Test mode's frame signals enter the same loop (see test_host::Stepper).
+  #[cfg(feature = "test")]
+  let step_tx = ev_tx.clone();
   // A packed desktop app answers links for the second instance the OS starts
   // with one (links.rs). Not the dev client, which is no scheme handler, and
   // not Android, where the activity is singleInstance.
@@ -836,12 +862,18 @@ fn ui_thread(
     // across reloads for continuous time. performance.now() is deliberately
     // NOT on it: that is real elapsed time, for measuring work; Date.now()
     // is calendar time.
+    // The rate of that clock: fixed for a capture, a test's to set before
+    // its first frame (see test_host::Stepper).
+    let frame_rate = Arc::new(AtomicU32::new(playback_fps.unwrap_or(0)));
     let timeline = match playback_fps {
       // Playback mode: derive time from the present counter (frame/fps) so
       // the frame timeline is deterministic and recordings reproducible.
       Some(rfps) if rfps > 0 => {
         let playback_frame = playback_frame.clone();
-        flux::Timeline::new(move || playback_frame.load(Ordering::Relaxed) as f64 * 1000.0 / rfps as f64)
+        let frame_rate = frame_rate.clone();
+        flux::Timeline::new(move || {
+          playback_frame.load(Ordering::Relaxed) as f64 * 1000.0 / frame_rate.load(Ordering::Relaxed) as f64
+        })
       }
       // Run mode: the paced frame clock (see paced_clock; the frame verb ticks
       // it, correcting toward wall time at normal speed).
@@ -1161,6 +1193,15 @@ fn ui_thread(
     // reports (release_engine_textures).
     let mut texture_baseline: Option<usize> = None;
 
+    // Test mode: the file's run (which engine comes next, the records) and
+    // the stepper its engines step frames through.
+    #[cfg(feature = "test")]
+    let mut test_run = test.map(|test| flux::test::FileRun::new(test.options));
+    #[cfg(feature = "test")]
+    let stepper = test_host::Stepper::new(step_tx, playback_frame.clone(), frame_rate.clone());
+    #[cfg(not(feature = "test"))]
+    let _ = &frame_rate;
+
     loop {
       // Re-anchor before anything in this spin touches the sandbox: the data
       // dir may have been deleted since the last spin, and a reload naming
@@ -1173,6 +1214,12 @@ fn ui_thread(
       // the anchored app changes across reloads.
       let fetch_cache_dir = storage::get()
         .map(|store| store.cache_dir(current_app_id.as_deref().unwrap_or("default")));
+      // A test engine starts at frame 0 and time 0: before anything below
+      // reads the timeline (the virtual timers are seeded from it).
+      #[cfg(feature = "test")]
+      if test_run.is_some() {
+        stepper.reset();
+      }
       let render_tree = RenderTree::new();
       let platform = platform.clone();
       let atx = atx.clone();
@@ -1329,6 +1376,23 @@ fn ui_thread(
         Some(dev) => dev.augment_builder(builder),
         None => builder,
       };
+      #[cfg(feature = "test")]
+      let builder = builder.module_override("srt:test", plugins::test::SrtTestModule);
+      // A test engine: the session's log sink, cap and seed, the stepper,
+      // and the wall taken out (see test_host.rs).
+      #[cfg(feature = "test")]
+      let session = test_run.as_ref().map(|run| run.session());
+      #[cfg(feature = "test")]
+      let builder = match &session {
+        Some(session) => {
+          session.install(builder).userdata(stepper.clone()).plugin(|ctx| {
+            if let Err(e) = flux::freeze_wall(&ctx, test_host::EPOCH_MS) {
+              log::error!("[srt] test mode: failed to freeze the wall clock: {e}");
+            }
+          })
+        }
+        None => builder,
+      };
       let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
       // The launch fact is process-level, replayed into every engine (a dev
@@ -1368,6 +1432,24 @@ fn ui_thread(
       #[cfg(feature = "go")]
       if let Some(dev) = &dev_session {
         dev.replay_state(&engine.exec_handle());
+      }
+
+      // Test mode drives the engine through its session in place of a plain
+      // evaluation: the listing, or one test's result, then the next engine.
+      #[cfg(feature = "test")]
+      if let (Some(run), Some(session)) = (test_run.as_mut(), session) {
+        let code = match &current_app {
+          AppSource::Text(source) => flux::ModuleCode::Source(source.clone()),
+          AppSource::Bytecode(bytes) => flux::ModuleCode::Bytecode(bytes.clone()),
+        };
+        let over = local.run_until(run.drive(session, engine, code, |record| println!("{}", record.line()))).await;
+        if !run.passed() {
+          test_passed.store(false, Ordering::Relaxed);
+        }
+        if over {
+          break;
+        }
+        continue;
       }
 
       log::info!("[srt] flux engine start");
@@ -1512,19 +1594,59 @@ pub fn start(
   storage: storage::StorageSpec,
   args: Vec<String>,
 ) -> Result<(), String> {
+  start_with(rt, app_source, launch, display_name, mode, strict, size, stats, dev_server, fonts, storage, args, None)
+}
+
+/// Run `app` as a test file (test_host.rs): headless, stepped by the
+/// tests, every test in an engine of its own, one record line on stdout
+/// per result. Err when the file failed to load or a test failed.
+#[cfg(feature = "test")]
+pub fn start_tests(
+  rt: &tokio::runtime::Runtime,
+  app: AppSource,
+  run: TestRun,
+  size: (u32, u32),
+  fonts: Vec<FontPayload>,
+  storage: storage::StorageSpec,
+  args: Vec<String>,
+) -> Result<(), String> {
+  let mode = alloy::Mode::Stepped(alloy::SteppedConfig { fps: test_host::DEFAULT_FPS });
+  let launch = Launch { restored: false, link: None };
+  start_with(rt, Some(app), launch, None, mode, false, size, false, None, fonts, storage, args, Some(run))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_with(
+  rt: &tokio::runtime::Runtime,
+  app_source: Option<AppSource>,
+  launch: Launch,
+  display_name: Option<String>,
+  mode: alloy::Mode,
+  strict: bool,
+  size: (u32, u32),
+  stats: bool,
+  dev_server: Option<String>,
+  fonts: Vec<FontPayload>,
+  storage: storage::StorageSpec,
+  args: Vec<String>,
+  test: Option<TestSetup>,
+) -> Result<(), String> {
   forge::process::return_large_allocations();
   alloy::install_logger();
   install_panic_hook();
   log::info!("[srt] SolidRT version {VERSION}");
 
   let handle = rt.handle().clone();
+  // The frame rate of the modes whose time is frame / fps.
   let playback_fps = match &mode {
     alloy::Mode::Playback(playback) => Some(playback.fps),
-    _ => None,
+    alloy::Mode::Stepped(stepped) => Some(stepped.fps),
+    alloy::Mode::Run => None,
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
   let errors = strict.then(|| Arc::new(ErrorTally::default()));
+  let test_passed = Arc::new(AtomicBool::new(true));
   let opts = RunOptions {
     app: app_source,
     launch,
@@ -1536,6 +1658,8 @@ pub fn start(
     storage,
     args,
     errors: errors.clone(),
+    test,
+    test_passed: test_passed.clone(),
   };
   let resampler = app.resampler();
   let user_input_muted = app.user_input_mute();
@@ -1551,6 +1675,9 @@ pub fn start(
       let noun = if count == 1 { "error was" } else { "errors were" };
       return Err(format!("{count} {noun} logged during the capture; the first: {first}"));
     }
+  }
+  if !test_passed.load(Ordering::Relaxed) {
+    return Err("the test file did not pass".to_string());
   }
   result
 }

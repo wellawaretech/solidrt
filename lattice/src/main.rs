@@ -80,6 +80,12 @@ fn main() {
   // way an OS-routed link reaches a packaged app; `srt render --link` renders
   // a screen a link names.
   let mut link: Option<String> = None;
+  // `--test`: run the source as a test file (lattice test mode), with
+  // `--filter <text>` and `--seed <n>` for the run. What `srt test` starts
+  // for a file that needs the app runtime.
+  let mut test = false;
+  let mut filter: Option<String> = None;
+  let mut seed: Option<u64> = None;
   let mut source_path: Option<String> = None;
   let mut app_args: Vec<String> = Vec::new();
   while let Some(arg) = args.next() {
@@ -101,6 +107,18 @@ fn main() {
       script_path = Some(args.next().unwrap_or_else(|| usage("--script requires a file path")));
     } else if arg == "--link" {
       link = Some(args.next().unwrap_or_else(|| usage("--link requires a link")));
+    } else if arg == "--test" {
+      test = true;
+    } else if arg == "--filter" {
+      filter = Some(args.next().unwrap_or_else(|| usage("--filter requires a text")));
+    } else if arg == "--seed" {
+      seed = Some(
+        args
+          .next()
+          .unwrap_or_else(|| usage("--seed requires a number"))
+          .parse()
+          .unwrap_or_else(|_| usage("--seed value must be a non-negative integer")),
+      );
     } else if arg == "--stats" {
       stats = true;
     } else if arg == "--strict" {
@@ -202,6 +220,9 @@ fn main() {
     }
     forge::fs::set_assets_base(Some(forge::fs::AssetsBase::Dir(dir)));
   }
+  if test {
+    run_tests(app, filter, seed, size, fonts, data_root, client, app_id, app_args);
+  }
   let mode = if playback {
     alloy::Mode::Playback(alloy::PlaybackConfig {
       fps,
@@ -234,6 +255,49 @@ fn main() {
       }
     }
   }
+}
+
+// `--test`: run the source as a test file and exit with its outcome. Like
+// playback it exits hard, here in the binary (see the end of main).
+#[cfg(feature = "test")]
+#[allow(clippy::too_many_arguments)]
+fn run_tests(
+  app: Option<lattice::AppSource>,
+  filter: Option<String>,
+  seed: Option<u64>,
+  size: (u32, u32),
+  fonts: Vec<alloy::rendertree::FontPayload>,
+  data_root: Option<String>,
+  client: Option<u32>,
+  app_id: Option<String>,
+  app_args: Vec<String>,
+) -> ! {
+  let app = app.unwrap_or_else(|| usage("--test requires a test bundle path"));
+  let mut options = flux::test::RunOptions { filter, ..Default::default() };
+  if let Some(seed) = seed {
+    options.seed = seed;
+  }
+  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
+  let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
+  let run = lattice::TestRun { options };
+  let passed = lattice::start_tests(&rt, app, run, size, fonts, storage, app_args).is_ok();
+  std::process::exit(if passed { 0 } else { 1 })
+}
+
+#[cfg(not(feature = "test"))]
+#[allow(clippy::too_many_arguments)]
+fn run_tests(
+  _app: Option<lattice::AppSource>,
+  _filter: Option<String>,
+  _seed: Option<u64>,
+  _size: (u32, u32),
+  _fonts: Vec<alloy::rendertree::FontPayload>,
+  _data_root: Option<String>,
+  _client: Option<u32>,
+  _app_id: Option<String>,
+  _app_args: Vec<String>,
+) -> ! {
+  usage("--test requires a client built with the test feature (make client)")
 }
 
 // `--out` names where playback frames land: an existing directory (frames

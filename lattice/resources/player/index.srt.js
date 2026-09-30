@@ -8371,6 +8371,8 @@ var arena = {
 var VELOCITY_WINDOW_MS = 100;
 var VELOCITY_MAX = 8000;
 var VELOCITY_REST_MS = 50;
+var VELOCITY_STOP_GAP_MS = 40;
+var VELOCITY_MIN_TRAVEL = 8;
 var VELOCITY_MIN_STEP_MS = 1;
 var VELOCITY_SAMPLES = 20;
 var FLING_MIN_VELOCITY = 50;
@@ -8431,10 +8433,16 @@ function createVelocityTracker() {
       let y2 = 0;
       let times = 0;
       let prev = Infinity;
+      let later = ts[newest];
+      let farX = 0;
+      let farY = 0;
       for (let i = 0;i < count; i++) {
         let k = (head - 1 - i + VELOCITY_SAMPLES) % VELOCITY_SAMPLES;
         if (at - ts[k] > VELOCITY_WINDOW_MS)
           break;
+        if (later - ts[k] > VELOCITY_STOP_GAP_MS)
+          break;
+        later = ts[k];
         let t = ts[k] - ts[newest];
         if (prev - t >= VELOCITY_MIN_STEP_MS) {
           times++;
@@ -8442,6 +8450,8 @@ function createVelocityTracker() {
         }
         let x = xs[k] - xs[newest];
         let y = ys[k] - ys[newest];
+        farX = x;
+        farY = y;
         let tt = t * t;
         s0 += 1;
         s1 += t;
@@ -8456,6 +8466,8 @@ function createVelocityTracker() {
         y2 += tt * y;
       }
       if (times < 2)
+        return ZERO;
+      if (Math.hypot(farX, farY) < VELOCITY_MIN_TRAVEL)
         return ZERO;
       let det = s0 * (s2 * s4 - s3 * s3) - s1 * (s1 * s4 - s2 * s3) + s2 * (s1 * s3 - s2 * s2);
       let slope = (m0, m1, m2) => {

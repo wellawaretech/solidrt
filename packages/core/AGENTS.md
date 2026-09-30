@@ -320,10 +320,20 @@ that reads exactly like Solid fallout.
   input happened. Time anything about input with it (a press length, the
   gap between two taps, a speed from two positions), never with
   `performance.now()` in the handler: that is when the handler ran, and
-  it does not follow the dev clock, `srt render` or a test. The moves of
-  one frame share a stamp and consecutive frames are whole frame periods
-  apart; a down, up, wheel or key carries its arrival time. Compare
-  stamps only with each other.
+  it does not follow the dev clock, `srt render` or a test. The stamp is
+  the input's own time, not its delivery's: a move carries the time the
+  pointer was at the position it reports, however late the frame that
+  delivers it; a down, up, wheel or key the time the platform recorded.
+  Compare stamps only with each other.
+  A pointer move also carries `predicted` (false on every other event).
+  Touch arrives in batches, and a batch can miss the frame it belongs to;
+  the runtime then bridges the gap with one predicted step so a drag does
+  not stall and jump, and that move has `predicted: true`. DRAW with it,
+  like any move; do NOT MEASURE with it: leave it out of a velocity, a
+  path or a stroke you keep. If the finger had in fact stopped, the next
+  move reports where it really is with the time it got there, which is
+  EARLIER than the predicted move's `timeStamp` - the one case where
+  stamps go back. The recognizers below already do this.
 
 - Gesture recognizers, shared by every package: `createPan` (single-pointer
   drag, axis-aware slop, per-event dx/dy) and `createTransform` (merged
@@ -341,11 +351,15 @@ that reads exactly like Solid fallout.
   them apart).
   Both ends carry the lift velocity (`onPanEnd(velocity)`,
   `onTransformEnd(velocity)`: parent-frame px/s from `createVelocityTracker`
-  (`push(x, y, e.timeStamp)`, `velocity(up.timeStamp)`: it reads no clock),
+  (`push(x, y, e.timeStamp)`, `velocity(up.timeStamp)`: it reads no clock;
+  push real positions only, `if (!e.predicted)`),
   a least-squares fit over the last 100 ms of positions, never the last
   two samples - the final sample before a lift is often stationary and
-  frame batching makes the last delta a frame old; zero after a 50 ms
-  rest or under `FLING_MIN_VELOCITY`), the fling fact for whoever animates
+  frame batching makes the last delta a frame old; a pause over 40 ms
+  cuts the history, so only the motion after it counts; zero after a
+  50 ms rest, when that motion covers under 8 px (a finger leaving the
+  panel shifts a pixel or two, which is not a fling), or under
+  `FLING_MIN_VELOCITY`), the fling fact for whoever animates
   on. The discrete recognizers: `createSwipe({ directions?, onSwipe(direction,
   velocity), onSwipeMove?, onSwipeEnd? })` (a pan classified at the lift:
   24 px of travel at 300 px/s within 30 degrees of an axis, direction by

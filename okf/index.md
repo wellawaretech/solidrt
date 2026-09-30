@@ -93,11 +93,12 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 - **[Test harness - flux:test, srt:test and srt test](plans/test-harness.md)** [2026-08-17]
   Tests for flux programs, SolidRT apps and our own packages, run on our own
   runtime and deterministic by construction - a base layer on the flux binary
-  (flux:test - test, expect, run, a seeded Math.random; real time) and an app
-  layer on the headless SolidRT runtime (srt:test - mount, find, input,
-  frames, reading; stepped by frames, no wall time), behind one command, srt
-  test. Supersedes the JS test infrastructure backlog item; the ten bun test
-  files and the checks/ rigs are its first consumers.
+  (flux:test - test, expect, a seeded Math.random; real time) and an app layer
+  on the headless SolidRT runtime (@solidrt/core/test - mount, find, input,
+  frames, reading; stepped by frames, no wall time), every test in an engine
+  of its own, behind one command, srt test. Supersedes the JS test
+  infrastructure backlog item; the ten bun test files and the checks/ rigs are
+  its first consumers.
 - **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
   Client-initiated streaming - open(url) plays a WebM served over HTTP on the
   Android plane with buffering, seek by Range and a cancel-safe close, built
@@ -808,6 +809,12 @@ Shaped, not started.
   is the only honestly zero-copy shape. Its urgent consumer left on 2026-09-12
   when fullscreen video moved to punch-through; camera and the wasm/JS upload
   API remain.
+- **[A cancelled touch ends its pointer](backlog/touch-cancel.md)** [2026-09-30]
+  When the system takes a touch away from the app (a system gesture, a palm
+  rejection, a window losing the touch), the pointer stays down forever - the
+  cancel is never translated on any platform, so a press, a drag or a pinch
+  that was in flight never ends. Translate it and give the app a way to tell a
+  cancel from a lift, so a cancelled press fires no tap.
 - **[Decide the shape of the transform props against CSS, all at once](backlog/transform-props-css-shape.md)** [2026-08-14]
   scale/scaleX/scaleY, x/y, rotate and originX/originY each landed on their
   own; CSS gives per-axis tuples for scale and translate but nothing for

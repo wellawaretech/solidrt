@@ -1,170 +1,288 @@
-// flux:test driven through the engine: a script registers tests, iterates
-// `run` and logs what came out, and the assertions here read that log. The
-// module's JS half (test_plugins/test.js) has no other harness to stand on,
-// so its matchers are checked from outside, as plain pass/throw tables.
+// flux:test driven through its host: a file registers tests, the host
+// lists them and runs each in an engine of its own, and the assertions here
+// read the records. The module's JS half (test_plugins/test.js) has no
+// other harness to stand on, so its matchers are checked from outside, as
+// plain pass/throw tables inside one test.
 
-use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use crate::FluxEngine;
+use crate::test::{run_file, Record, RunOptions, TestResult};
+use crate::{FluxEngine, ModuleCode};
 
-/// Run `source` as the entry module to the end of its event loop and return
-/// every line it logged.
-fn run_script(source: &str) -> Vec<String> {
-  let lines = Arc::new(Mutex::new(Vec::new()));
-  let sink = lines.clone();
-  let engine = FluxEngine::builder()
-    .logger(move |_, msg| sink.lock().expect("log lock").push(msg.to_string()))
-    .build();
-  tokio::runtime::Builder::new_current_thread()
-    .enable_all()
-    .build()
-    .expect("tokio runtime")
-    .block_on(engine.eval_source(source));
-  let lines = lines.lock().expect("log lock").clone();
-  lines
+/// Run `source` as a test file and return every record of the host's.
+fn records_with(source: &str, options: RunOptions) -> Vec<Record> {
+  let mut records = Vec::new();
+  tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime").block_on(run_file(
+    ModuleCode::Source(source.to_string()),
+    options,
+    FluxEngine::builder,
+    |record| records.push(record),
+  ));
+  records
 }
 
-/// The one line a script logs through `report`, which these scripts end on.
-fn report_of(source: &str) -> String {
-  let lines = run_script(source);
-  assert_eq!(lines.len(), 1, "expected one report line, got {lines:?}");
-  lines.into_iter().next().expect("one line")
+fn results_with(source: &str, options: RunOptions) -> Vec<TestResult> {
+  records_with(source, options)
+    .into_iter()
+    .filter_map(|record| match record {
+      Record::Result(result) => Some(result),
+      _ => None,
+    })
+    .collect()
 }
 
-const COLLECT: &str = r#"
-  async function collect(options) {
-    let results = []
-    for await (let result of run(options)) results.push(result)
-    return results
-  }
-"#;
+fn results(source: &str) -> Vec<TestResult> {
+  results_with(source, RunOptions::default())
+}
+
+/// `name|ok|error message` of every result, one per line.
+fn rows(results: &[TestResult]) -> String {
+  results
+    .iter()
+    .map(|r| format!("{}|{}|{}", r.name, r.ok, r.error.as_ref().map(|e| e.message.as_str()).unwrap_or("")))
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+/// What the one test of `source` logged, as one text.
+fn logged(source: &str) -> String {
+  let results = results(source);
+  assert_eq!(results.len(), 1, "expected one test, got {results:?}");
+  assert!(results[0].ok, "the test failed: {:?}", results[0].error);
+  results[0].output.join("\n")
+}
 
 #[test]
 fn results_come_in_registration_order_with_their_errors() {
-  let report = report_of(&format!(
+  let results = results(
     r#"
-    import {{ test, expect, run }} from "flux:test"
-    {COLLECT}
-    test("passes", () => {{ expect(1 + 1).toBe(2) }})
-    test("fails an expectation", () => {{ expect(1 + 1).toBe(3) }})
-    test("throws", () => {{ throw new RangeError("out of range") }})
-    test("awaits", async () => {{ await Promise.resolve(); expect("a").toBe("a") }})
-    test("throws a non-error", () => {{ throw "plain" }})
-    let results = await collect()
-    console.log(results.map((r) => [r.name, r.ok, typeof r.durationMs, r.error?.message ?? null].join("|")).join("\n"))
-    "#
-  ));
-  let rows: Vec<&str> = report.split('\n').collect();
-  assert_eq!(rows[0], "passes|true|number|");
-  assert_eq!(rows[1], "fails an expectation|false|number|AssertionError: expect(received).toBe(expected)");
-  assert_eq!(rows[2], "Expected: 3");
-  assert_eq!(rows[3], "Received: 2");
-  assert_eq!(rows[4], "throws|false|number|RangeError: out of range");
-  assert_eq!(rows[5], "awaits|true|number|");
-  assert_eq!(rows[6], "throws a non-error|false|number|Thrown: \"plain\"");
-}
-
-#[test]
-fn a_failure_stack_cites_the_test_and_the_harness_by_name() {
-  let report = report_of(&format!(
-    r#"
-    import {{ test, expect, run }} from "flux:test"
-    {COLLECT}
-    test("fails", () => {{ expect(1).toBe(2) }})
-    let [result] = await collect()
-    console.log(JSON.stringify([result.error.stack.includes("(main:"), result.error.stack.includes("(flux:test:")]))
-    "#
-  ));
-  assert_eq!(report, "[true,true]");
-}
-
-#[test]
-fn the_filter_selects_tests_by_a_part_of_their_name() {
-  let report = report_of(&format!(
-    r#"
-    import {{ test, run }} from "flux:test"
-    {COLLECT}
-    test("matchPath: a literal", () => {{}})
-    test("formatPath: a param", () => {{}})
-    test("matchPath: a param", () => {{}})
-    let results = await collect({{ filter: "matchPath" }})
-    console.log(results.map((r) => r.name).join(","))
-    "#
-  ));
-  assert_eq!(report, "matchPath: a literal,matchPath: a param");
-}
-
-// A promise that never settles holds nothing in the engine, so without the
-// cap the process would end cleanly with the test unreported. The cap makes
-// it a failed result, and the run goes on to the next test.
-#[test]
-fn a_test_that_never_finishes_times_out_and_the_run_continues() {
-  let report = report_of(&format!(
-    r#"
-    import {{ test, run }} from "flux:test"
-    {COLLECT}
-    test("hangs", () => new Promise(() => {{}}))
-    test("after", () => {{}})
-    let results = await collect({{ timeoutMs: 20 }})
-    console.log(results.map((r) => [r.name, r.ok, r.error?.message ?? null].join("|")).join(","))
-    "#
-  ));
-  assert_eq!(report, "hangs|false|Timed out after 20 ms,after|true|");
-}
-
-#[test]
-fn registration_and_run_reject_bad_input() {
-  let report = report_of(
-    r#"
-    import { test, run } from "flux:test"
-    let thrown = (fn) => { try { fn() } catch (e) { return e.message } return "no throw" }
-    test("first", () => {})
-    let inside
-    test("registers inside", () => { inside = thrown(() => test("late", () => {})) })
-    let out = [
-      thrown(() => test("first", () => {})),
-      thrown(() => test("", () => {})),
-      thrown(() => test("no function")),
-      thrown(() => run({ filter: 1 })),
-      thrown(() => run({ timeoutMs: 0 })),
-      thrown(() => run(null)),
-    ]
-    for await (let result of run()) out.push(String(result.ok))
-    out.push(inside)
-    console.log(out.join("\n"))
+    import { test, expect } from "flux:test"
+    test("passes", () => { expect(1 + 1).toBe(2) })
+    test("fails an expectation", () => { expect(1 + 1).toBe(3) })
+    test("throws", () => { throw new RangeError("out of range") })
+    test("awaits", async () => { await Promise.resolve(); expect("a").toBe("a") })
+    test("throws a non-error", () => { throw "plain" })
     "#,
   );
   assert_eq!(
-    report,
+    rows(&results),
     [
-      "test: \"first\" is registered twice",
-      "test: the name must be a non-empty string",
-      "test: \"no function\" needs a function",
-      "run: filter must be a string",
-      "run: timeoutMs must be a positive number",
-      "run: the options must be an object",
-      "true",
-      "true",
-      "test: \"late\" is registered while tests run; register tests at the top level",
+      "passes|true|",
+      "fails an expectation|false|AssertionError: expect(received).toBe(expected)\nExpected: 3\nReceived: 2",
+      "throws|false|RangeError: out of range",
+      "awaits|true|",
+      "throws a non-error|false|Thrown: \"plain\"",
     ]
     .join("\n")
   );
 }
 
-/// Evaluate a table of `[label, () => expectation, holds]` rows and return
-/// the labels whose expectation did not behave as `holds` says.
-fn wrong_rows(rows: &str) -> String {
-  report_of(&format!(
+#[test]
+fn the_records_open_with_the_listing_and_close_with_done() {
+  let records = records_with(
     r#"
-    import {{ expect }} from "flux:test"
-    let rows = [{rows}]
-    let wrong = []
-    for (let [label, check, holds] of rows) {{
-      let held = true
-      try {{ check() }} catch (e) {{ held = false }}
-      if (held !== holds) wrong.push(label)
-    }}
-    console.log(wrong.join(", "))
+    import { test } from "flux:test"
+    console.log("loading")
+    test("one", () => { console.log("in one") })
+    test("two", () => {})
+    "#,
+    RunOptions::default(),
+  );
+  assert_eq!(records.len(), 4);
+  assert_eq!(records[0], Record::Loaded { tests: vec!["one".into(), "two".into()], output: vec!["loading".into()] });
+  // What the file logs while it loads is the listing's; a test's output is
+  // what its engine logged after that.
+  let Record::Result(one) = &records[1] else { panic!("expected a result, got {:?}", records[1]) };
+  assert_eq!(one.output, vec!["in one".to_string()]);
+  assert_eq!(records[3], Record::Done);
+  assert!(records[1].line().starts_with("\u{1e}srt-test {"));
+}
+
+#[test]
+fn a_failure_stack_cites_the_test_and_the_harness_by_name() {
+  let results = results(
+    r#"
+    import { test, expect } from "flux:test"
+    test("fails", () => { expect(1).toBe(2) })
+    "#,
+  );
+  let stack = &results[0].error.as_ref().expect("the test fails").stack;
+  assert!(stack.contains("(main:"), "no frame of the file in {stack}");
+  assert!(stack.contains("(flux:test:"), "no frame of the harness in {stack}");
+}
+
+#[test]
+fn the_filter_selects_tests_by_a_part_of_their_name() {
+  let results = results_with(
+    r#"
+    import { test } from "flux:test"
+    test("matchPath: a literal", () => {})
+    test("formatPath: a param", () => {})
+    test("matchPath: a param", () => {})
+    "#,
+    RunOptions { filter: Some("matchPath".into()), ..RunOptions::default() },
+  );
+  assert_eq!(rows(&results), "matchPath: a literal|true|\nmatchPath: a param|true|");
+}
+
+// Every test runs in an engine of its own, on the file evaluated afresh:
+// what a test did to the file's module state is not there for the next.
+#[test]
+fn every_test_starts_from_the_files_fresh_state() {
+  let results = results(
+    r#"
+    import { test, expect } from "flux:test"
+    let count = 0
+    test("first", () => { count++; expect(count).toBe(1) })
+    test("second", () => { count++; expect(count).toBe(1) })
+    "#,
+  );
+  assert_eq!(rows(&results), "first|true|\nsecond|true|");
+}
+
+// A promise that never settles holds nothing in the engine, which then runs
+// out of work: the host reports that at once instead of waiting for the cap.
+#[test]
+fn a_test_waiting_on_nothing_fails_and_the_run_continues() {
+  let results = results(
+    r#"
+    import { test } from "flux:test"
+    test("hangs", () => new Promise(() => {}))
+    test("after", () => {})
+    "#,
+  );
+  assert_eq!(
+    rows(&results),
+    "hangs|false|The test did not finish: it waits on a promise that nothing settles\nafter|true|"
+  );
+}
+
+// The cap ends a test that keeps the engine busy, a synchronous loop
+// included, and what it left running does not reach the test after it.
+#[test]
+fn a_test_past_the_cap_times_out_and_the_run_continues() {
+  let results = results_with(
+    r#"
+    import { test } from "flux:test"
+    test("waits on a timer", () => new Promise((resolve) => setTimeout(resolve, 60000)))
+    test("loops", () => { for (;;) {} })
+    test("leaks an interval", () => { setInterval(() => console.log("tick"), 1) })
+    test("after", () => new Promise((resolve) => setTimeout(resolve, 20)))
+    "#,
+    RunOptions { timeout: Duration::from_millis(100), ..RunOptions::default() },
+  );
+  assert_eq!(
+    rows(&results),
+    [
+      "waits on a timer|false|Timed out after 100 ms",
+      "loops|false|Timed out after 100 ms",
+      "leaks an interval|true|",
+      "after|true|",
+    ]
+    .join("\n")
+  );
+  assert_eq!(results[1].output, Vec::<String>::new());
+  assert_eq!(results[3].output, Vec::<String>::new());
+}
+
+// An uncaught error belongs to the test whose engine raised it.
+#[test]
+fn an_uncaught_error_fails_the_test_it_happened_in() {
+  let results = results(
+    r#"
+    import { test } from "flux:test"
+    test("throws in a timer", async () => {
+      setTimeout(() => { throw new Error("from the timer") }, 1)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    test("rejects unhandled", () => { Promise.reject(new Error("nobody handles this")) })
+    test("after", () => {})
+    "#,
+  );
+  assert_eq!(results.len(), 3);
+  let message = |i: usize| results[i].error.as_ref().map(|e| e.message.clone()).unwrap_or_default();
+  assert!(!results[0].ok && message(0).contains("from the timer"), "got {:?}", results[0]);
+  assert!(!results[1].ok && message(1).contains("nobody handles this"), "got {:?}", results[1]);
+  assert!(results[2].ok, "got {:?}", results[2]);
+}
+
+#[test]
+fn a_file_that_fails_to_load_runs_no_test() {
+  let records = records_with(
+    r#"
+    import { test } from "flux:test"
+    test("never runs", () => {})
+    throw new Error("at load")
+    "#,
+    RunOptions::default(),
+  );
+  assert_eq!(records.len(), 1);
+  let Record::Failed { message, output } = &records[0] else { panic!("expected a failure, got {:?}", records[0]) };
+  assert!(message.contains("at load"), "got {message}");
+  assert_eq!(output.len(), 1, "the error is reported once, got {output:?}");
+}
+
+// Registered tests only run under a host; elsewhere the file would end
+// cleanly with nothing run.
+#[test]
+fn the_module_refuses_to_load_without_a_host() {
+  let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+  let sink = lines.clone();
+  let engine = FluxEngine::builder().logger(move |_, msg| sink.lock().expect("log lock").push(msg.to_string())).build();
+  tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()
+    .expect("tokio runtime")
+    .block_on(engine.eval_source(r#"import { test } from "flux:test"; test("x", () => {})"#));
+  let lines = lines.lock().expect("log lock").join("\n");
+  assert!(lines.contains("a test file is run by a test host"), "got {lines}");
+}
+
+#[test]
+fn registration_rejects_bad_input() {
+  let report = logged(
+    r#"
+    import { test } from "flux:test"
+    let thrown = (fn) => { try { fn() } catch (e) { return e.message } return "no throw" }
+    let atLoad = [
+      thrown(() => test("", () => {})),
+      thrown(() => test("no function")),
+    ]
+    test("first", () => {
+      console.log([...atLoad, thrown(() => test("late", () => {}))].join("\n"))
+    })
+    atLoad.push(thrown(() => test("first", () => {})))
+    "#,
+  );
+  assert_eq!(
+    report,
+    [
+      "test: the name must be a non-empty string",
+      "test: \"no function\" needs a function",
+      "test: \"first\" is registered twice",
+      "test: \"late\" is registered while a test runs; register tests at the top level",
+    ]
+    .join("\n")
+  );
+}
+
+/// Evaluate a table of `[label, () => expectation, holds]` rows inside a
+/// test and return the labels whose expectation did not behave as `holds`
+/// says.
+fn wrong_rows(rows: &str) -> String {
+  logged(&format!(
+    r#"
+    import {{ test, expect }} from "flux:test"
+    test("rows", () => {{
+      let rows = [{rows}]
+      let wrong = []
+      for (let [label, check, holds] of rows) {{
+        let held = true
+        try {{ check() }} catch (e) {{ held = false }}
+        if (held !== holds) wrong.push(label)
+      }}
+      console.log(wrong.join(", "))
+    }})
     "#
   ))
 }
@@ -297,15 +415,17 @@ fn the_remaining_matchers() {
 
 #[test]
 fn a_failure_message_prints_both_values() {
-  let report = report_of(
+  let report = logged(
     r#"
-    import { expect } from "flux:test"
+    import { test, expect } from "flux:test"
     let message = (fn) => { try { fn() } catch (e) { return e.message } return "no throw" }
-    console.log([
-      message(() => expect({ a: [1, -0], b: "x" }).toEqual({ a: new Float32Array([1]) })),
-      message(() => expect(() => {}).toThrow("boom")),
-      message(() => expect(null).not.toBeNull()),
-    ].join("\n--\n"))
+    test("messages", () => {
+      console.log([
+        message(() => expect({ a: [1, -0], b: "x" }).toEqual({ a: new Float32Array([1]) })),
+        message(() => expect(() => {}).toThrow("boom")),
+        message(() => expect(null).not.toBeNull()),
+      ].join("\n--\n"))
+    })
     "#,
   );
   assert_eq!(
@@ -319,62 +439,41 @@ fn a_failure_message_prints_both_values() {
   );
 }
 
-// Math.random is seeded for a test file: from the import on, and restarted
-// for every test, so a test draws the same values whatever ran before it.
+/// What each test of `source` logged, one entry per test.
+fn logged_each(source: &str, options: RunOptions) -> Vec<String> {
+  results_with(source, options).into_iter().map(|result| result.output.join("\n")).collect()
+}
+
+const DRAWS: &str = r#"
+  import { test } from "flux:test"
+  let atLoad = Math.random()
+  test("first", () => { console.log([atLoad, Math.random()].join()) })
+  test("second", () => { console.log([atLoad, Math.random()].join()) })
+"#;
+
+// Math.random is seeded in every engine of a run, so a test draws the same
+// values whatever ran before it and whatever the filter leaves out, the
+// file's own draws at load included.
 #[test]
 fn every_test_draws_the_seeds_sequence_from_its_start() {
-  let report = report_of(&format!(
-    r#"
-    import {{ test, run }} from "flux:test"
-    {COLLECT}
-    let drawn = {{}}
-    let atLoad = Math.random()
-    test("first", () => {{ drawn.first = [Math.random(), Math.random()] }})
-    test("second", () => {{ drawn.second = [Math.random(), Math.random()] }})
-    await collect()
-    let full = drawn.second
-    await collect({{ filter: "second" }})
-    await collect({{ seed: 7, filter: "second" }})
-    let other = drawn.second
-    console.log(JSON.stringify([
-      drawn.first[0] === atLoad,
-      drawn.first.join() === full.join(),
-      drawn.first[0] !== drawn.first[1],
-      other.join() !== full.join(),
-    ]))
-    "#
-  ));
-  assert_eq!(report, "[true,true,true,true]");
+  let full = logged_each(DRAWS, RunOptions::default());
+  assert_eq!(full.len(), 2);
+  assert_eq!(full[0], full[1]);
+  let filtered = logged_each(DRAWS, RunOptions { filter: Some("second".into()), ..RunOptions::default() });
+  assert_eq!(filtered, vec![full[1].clone()]);
+  let other = logged_each(DRAWS, RunOptions { seed: 7, ..RunOptions::default() });
+  assert_ne!(other[0], full[0]);
 }
 
 // The default seed and an explicit one name the generator's pinned
 // sequences (tests/random.rs): what a test draws is the same on every run.
 #[test]
 fn the_seed_option_picks_the_sequence() {
-  let report = report_of(&format!(
-    r#"
-    import {{ test, run }} from "flux:test"
-    {COLLECT}
-    let drawn = []
-    test("draws", () => {{ drawn.push(Math.random()) }})
-    await collect()
-    await collect({{ seed: 12345 }})
-    await collect({{ seed: 0 }})
-    console.log(drawn.join())
-    "#
-  ));
-  assert_eq!(report, "0.4833481342839381,0.28097516969868397,0.4833481342839381");
-}
-
-#[test]
-fn run_rejects_a_seed_that_is_no_non_negative_integer() {
-  let report = report_of(
-    r#"
-    import { run } from "flux:test"
-    let thrown = (fn) => { try { fn() } catch (e) { return e.message } return "no throw" }
-    console.log([-1, 1.5, "7", NaN, 2 ** 53].map((seed) => thrown(() => run({ seed }))).join("|"))
-    "#,
-  );
-  let expected = "run: seed must be a non-negative integer";
-  assert_eq!(report, [expected; 5].join("|"));
+  let source = r#"
+    import { test } from "flux:test"
+    test("draws", () => { console.log(Math.random()) })
+  "#;
+  let draw = |seed: u64| logged_each(source, RunOptions { seed, ..RunOptions::default() }).join("");
+  assert_eq!(draw(0), "0.4833481342839381");
+  assert_eq!(draw(12345), "0.28097516969868397");
 }

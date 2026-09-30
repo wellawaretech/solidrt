@@ -98,6 +98,15 @@ bubble the same way, starting at the focused node - or at the window root
 when nothing is focused, so `onKeyDown` on the window is where app-global
 shortcuts live.
 
+Every input event carries `timeStamp`, in milliseconds: when the input
+happened, not when the handler ran. Time a press, the gap between two taps
+or a speed with it. A pointer move also carries `predicted`. Touch arrives
+in batches, and when one is late the runtime bridges the frame with a
+predicted position so a drag does not stall; that move has `predicted:
+true`. Draw with it, but leave it out of anything you measure or keep, such
+as a velocity or a stroke: if the finger had stopped, the next move reports
+where it really is, with an earlier `timeStamp`.
+
 Text entry goes to the focused node's `onTextInput`. Focusing a field never
 raises the on-screen keyboard by itself - a tap on the field (or an explicit
 `startTextInput()`) does, and never while a physical keyboard is attached.

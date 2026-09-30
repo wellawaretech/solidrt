@@ -469,6 +469,42 @@ fn init_performance(ctx: &Ctx<'_>) {
   ctx.globals().set("performance", performance).expect("set performance global");
 }
 
+// What replaces `Date` in a context without a wall (see `freeze_wall`): the
+// engine's own `Date` in everything but the current time, which `now`
+// supplies to `Date.now()`, `new Date()` and `Date()`. Instances are the
+// engine's, so `instanceof`, the prototype and every method are unchanged.
+const FROZEN_DATE_SOURCE: &str = r#"(now) => {
+  let RealDate = Date
+  function FrozenDate(...args) {
+    if (new.target === undefined) return new RealDate(now()).toString()
+    return Reflect.construct(RealDate, args.length === 0 ? [now()] : args, new.target)
+  }
+  Object.defineProperty(FrozenDate, "name", { value: "Date", configurable: true })
+  FrozenDate.prototype = RealDate.prototype
+  FrozenDate.now = now
+  FrozenDate.parse = RealDate.parse
+  FrozenDate.UTC = RealDate.UTC
+  Object.defineProperty(RealDate.prototype, "constructor", { value: FrozenDate, writable: true, configurable: true })
+  globalThis.Date = FrozenDate
+}"#;
+
+/// Take the wall clock out of this context: `performance.now()` reads 0 and
+/// the calendar reads `epoch_ms` plus the frame timeline (see `Timeline`),
+/// through `Date.now()`, `new Date()` and `Date()`. For a host whose app
+/// time is stepped by frames (a test, a headless render): what runs there
+/// then depends on nothing but the frames it was given, and logic that
+/// still measures with `performance.now()` fails the same way on every run
+/// instead of passing within a tolerance. Beside `install_virtual_time`
+/// (the timers) and `seed_random`: a host opts a context in.
+pub fn freeze_wall(ctx: &Ctx<'_>, epoch_ms: f64) -> rquickjs::Result<()> {
+  let performance: Object = ctx.globals().get("performance")?;
+  performance.set("now", Function::new(ctx.clone(), || 0.0)?)?;
+  performance.set("timeOrigin", epoch_ms)?;
+  let now = Function::new(ctx.clone(), move |ctx: Ctx<'_>| epoch_ms + timeline_now_ms(&ctx))?;
+  let install: Function = ctx.eval(FROZEN_DATE_SOURCE)?;
+  install.call::<_, ()>((now,))
+}
+
 pub(crate) fn init(ctx: &Ctx<'_>) {
   init_timers(ctx);
   init_performance(ctx);

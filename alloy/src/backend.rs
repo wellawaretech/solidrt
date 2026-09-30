@@ -105,7 +105,7 @@ impl DisplayContext {
     closure: impl FnOnce(Arc<Context>) + Send + 'static,
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Arc<dyn Fn() + Send + Sync>>,
-    capture_frames: bool,
+    sink: crate::raster::FrameSink,
     stats: Arc<crate::raster::RasterStats>,
   ) -> crate::raster::RasterSender {
     let (binding, surface_size): (Box<dyn GlBinding>, _) = match self {
@@ -116,6 +116,6 @@ impl DisplayContext {
         (Box::new(crate::egl_headless::HeadlessEglBinding(egl.clone())), surface_size.clone())
       }
     };
-    crate::threads::run_context(binding, surface_size, closure, tx, wake, capture_frames, stats)
+    crate::threads::run_context(binding, surface_size, closure, tx, wake, sink, stats)
   }
 }

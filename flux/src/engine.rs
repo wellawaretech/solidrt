@@ -528,6 +528,10 @@ fn flush_rejections(rejections: &plugins::RejectionLog, logger: &Logger, on_unca
 }
 
 /// Run `f` once `promise` fulfills (a rejection is somebody else's report).
+/// The rejection is observed here all the same, with a handler that does
+/// nothing: `then` derives a promise that rejects along with `promise`, and
+/// with no handler of its own that one would be reported as unhandled, the
+/// same error a second time.
 fn on_fulfilled<'js, F>(ctx: &Ctx<'js>, promise: rquickjs::Promise<'js>, f: F)
 where
   F: FnOnce(Ctx<'js>) + 'js,
@@ -535,15 +539,17 @@ where
   use rquickjs::function::{OnceFn, This};
   use rquickjs::Function;
 
-  let handler = match Function::new(ctx.clone(), OnceFn::from(move |ctx: Ctx<'js>| f(ctx))) {
-    Ok(f) => f,
+  let handlers = Function::new(ctx.clone(), OnceFn::from(move |ctx: Ctx<'js>| f(ctx)))
+    .and_then(|fulfilled| Function::new(ctx.clone(), || {}).map(|rejected| (fulfilled, rejected)));
+  let (fulfilled, rejected) = match handlers {
+    Ok(handlers) => handlers,
     Err(e) => return ctx.logger().error(&format!("failed to build fulfillment handler: {e}")),
   };
   let then = match promise.then() {
     Ok(then) => then,
     Err(e) => return ctx.logger().error(&format!("failed to attach fulfillment handler: {e}")),
   };
-  if let Err(e) = then.call::<_, ()>((This(promise), handler)) {
+  if let Err(e) = then.call::<_, ()>((This(promise), fulfilled, rejected)) {
     ctx.logger().error(&format!("failed to attach fulfillment handler: {e}"));
   }
 }

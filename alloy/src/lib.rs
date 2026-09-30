@@ -32,6 +32,7 @@ pub use raster::{DamageRect, PresentDamage, RasterCounters, TargetCounters};
 pub mod rendertree;
 pub mod resample;
 mod script;
+mod stepped;
 pub mod spatial;
 mod threads;
 #[cfg(target_os = "android")]
@@ -83,6 +84,7 @@ pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;
 pub use mode::Mode;
 pub use playback::PlaybackConfig;
+pub use stepped::SteppedConfig;
 pub use present::{CountTally, Counted, RefreshCounter, RefreshCounting, SignalLedger, SignalRecord};
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
 pub use cadence::CadenceHold;

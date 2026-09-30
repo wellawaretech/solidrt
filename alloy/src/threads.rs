@@ -31,7 +31,7 @@ pub(crate) fn run_context(
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
   tx: mpsc::Sender<FrameOutput>,
   wake: Option<Arc<dyn Fn() + Send + Sync>>,
-  capture_frames: bool,
+  sink: crate::raster::FrameSink,
   stats: Arc<crate::raster::RasterStats>,
 ) -> crate::raster::RasterSender {
   let (raster_tx, raster_rx) = mpsc::channel::<RasterCmd>();
@@ -72,7 +72,7 @@ pub(crate) fn run_context(
       crate::set_gpu_info(crate::GpuInfo { vendor, renderer, version, limits });
     }
 
-    let state = RasterState::new(gl, impeller_ctx, binding, surface_size, capture_frames, raster_stats, tx, wake);
+    let state = RasterState::new(gl, impeller_ctx, binding, surface_size, sink, raster_stats, tx, wake);
     // Map the window now rather than at the first frame, so a UI thread that
     // never submits one is still visible on Wayland (see prime_window).
     state.prime_window();

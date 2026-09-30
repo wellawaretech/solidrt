@@ -169,3 +169,44 @@ fn lagging_now_source_never_schedules_into_the_past() {
     assert_eq!(log(ctx), "a");
   });
 }
+
+// freeze_wall: performance.now() reads 0, and the calendar is the epoch
+// plus the frame timeline through every way of asking for the current
+// time; a Date built from arguments and the rest of Date are the engine's.
+#[test]
+fn a_frozen_wall_reads_zero_and_a_calendar_on_the_timeline() {
+  use std::sync::atomic::{AtomicU64, Ordering};
+  use std::sync::Arc;
+
+  use crate::standards_plugins::time::{freeze_wall, Timeline};
+
+  // 2000-01-01T00:00:00Z.
+  const EPOCH_MS: f64 = 946_684_800_000.0;
+  with_virtual_ctx(|ctx| {
+    let frame_ms = Arc::new(AtomicU64::new(0));
+    let reading = frame_ms.clone();
+    ctx.store_userdata(Timeline::new(move || reading.load(Ordering::Relaxed) as f64)).expect("store timeline");
+    freeze_wall(ctx, EPOCH_MS).expect("freeze the wall");
+    let read = |ctx: &Ctx<'_>| -> String {
+      ctx
+        .eval(
+          r#"[
+            performance.now(),
+            Date.now(),
+            new Date().toISOString(),
+            new Date().getTime() === Date.now(),
+            typeof Date(),
+            new Date(5).getTime(),
+            new Date(2020, 0, 1) instanceof Date,
+            new Date().constructor === Date,
+            Date.UTC(2000, 0, 1),
+            Date.parse("2000-01-01T00:00:00Z"),
+          ].join("|")"#,
+        )
+        .expect("read the clocks")
+    };
+    assert_eq!(read(ctx), "0|946684800000|2000-01-01T00:00:00.000Z|true|string|5|true|true|946684800000|946684800000");
+    frame_ms.store(1500, Ordering::Relaxed);
+    assert_eq!(read(ctx), "0|946684801500|2000-01-01T00:00:01.500Z|true|string|5|true|true|946684800000|946684800000");
+  });
+}

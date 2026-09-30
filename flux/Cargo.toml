@@ -35,11 +35,12 @@ video = ["forge/video"]
 # flux:image transcodeTexture / encodeTexture and the `ktx2` capability
 # (behind forge/ktx2): not a cargo default; see forge/Cargo.toml.
 ktx2 = ["forge/ktx2"]
-# flux:test (test, expect, run) and the `test` capability: what `srt test`
-# runs a test file with. It evaluates an embedded JS source, hence `compile`.
+# flux:test (test, expect), the test host (flux::test) and the `test`
+# capability: what `srt test` runs a test file with. The module evaluates
+# an embedded JS source, hence `compile`.
 # Not a cargo default: the Makefile turns it on for the `flux` binary only,
 # so no shipping runtime (fluxrt, the production solidrt) carries it.
-test = ["compile"]
+test = ["compile", "dep:serde_json"]
 
 [dependencies]
 forge = { workspace = true }
@@ -49,6 +50,8 @@ alloy = { workspace = true, optional = true }
 # across the crate boundary.
 taffy = { version = "=0.14.0", optional = true }
 log = { workspace = true }
+# The test host's records (flux:test), one JSON object per stdout line.
+serde_json = { version = "=1.0.151", optional = true }
 rquickjs = { version = "=0.14.0", features = ["rust-alloc", "futures", "macro", "loader"] }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
 # The capability cores and every transport crate (reqwest, hyper, iroh,

@@ -6,8 +6,9 @@
 //! `Instant` (`ns` converts it), so the two sides are one clock by
 //! construction, with no shared definition to keep in step.
 //!
-//! In headless playback the clock is the capture's virtual frame time:
-//! the playback loop sets it before each frame signal (`set_virtual_ns`),
+//! In the headless modes the clock is the virtual frame time: the playback
+//! loop (or, in stepped mode, the embedder) sets it before each frame
+//! (`set_virtual_ns`),
 //! `now_ns` reads it, and `stepped` says so, so a producer never sleeps
 //! against it (okf/plans/video-texture-off-frame-loop.md, section 8).
 
@@ -68,7 +69,8 @@ pub fn stepped() -> bool {
   VIRTUAL_NS.load(Ordering::Acquire) != NO_VIRTUAL
 }
 
-/// Step the virtual clock (the playback loop, before each frame signal).
-pub(crate) fn set_virtual_ns(virtual_ns: i64) {
+/// Step the virtual clock: the playback loop before each frame signal, the
+/// embedder before each frame it steps in stepped mode.
+pub fn set_virtual_ns(virtual_ns: i64) {
   VIRTUAL_NS.store(virtual_ns.max(0), Ordering::Release);
 }

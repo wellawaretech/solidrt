@@ -628,6 +628,9 @@ is never both a tap and a pan), was the only pointer down for its whole
 press (a pinch never taps), with `tapCount` counting repeats within 300
 ms and 20 px on the same target (a double tap is `tapCount === 2`).
 Wheel walks like a move with `deltaX/deltaY`. Every event carries
+`timeStamp` and `predicted` as the element event has them (time input
+with the first; a `predicted` move is one to draw with, not to measure
+with - core's AGENTS.md has both), and
 `native`, the leaf's element event, for core's recognizers (`createPan`
 to drag a sprite with slop, `createTransform` under the camera); a plain
 `onPointerMove` also fires on hover, so a sprite drag gates on its own

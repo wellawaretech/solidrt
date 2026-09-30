@@ -1083,7 +1083,9 @@ repeats within 300 ms and 20 px on the same target (a double tap is
 tap. Wheel walks like a move with `deltaX/deltaY` (a node stopping it
 keeps the zoom out). Every event carries `native`, the leaf's element
 event, for core's recognizers, and the element fields (pointerId,
-pointerType, button, modifiers) plus `x`/`y` in scene pixels
+pointerType, button, modifiers, `timeStamp`, and `predicted`: a move to
+draw with, not to measure with - core's AGENTS.md has both) plus `x`/`y`
+in scene pixels
 (screenRay's input - a drag plane is one intersection away). Root
 listeners all run, in registration order (the root is the last stop,
 nothing is left to claim). Wiring: the built-in `<Scene>` leaf carries
