@@ -48,7 +48,11 @@ staged and 4.4 sits unstaged on top of it:
   frame protocol records why it asked for the next frame, so a settle
   that fails says what is left.
 
-`bunx srt test` at the repo root: 334 tests in 34 files, 7 to 11 s
+- Step 4.3's rest (2026-10-01): `app.link`, `app.debug`, a synthetic
+  gamepad per engine, and the readers `tree()`, `pixel()`/`pixels()` and
+  `app.gpu()`.
+
+`bunx srt test` at the repo root: 341 tests in 35 files, 7 to 11 s
 depending on what else the machine does (the 310 flux tests took about
 5 s on one engine per file and 6.5 s on one per test). `cargo test -p
 flux --lib --features test`: 49 tests (99 with `gui`); alloy 638, lattice
@@ -62,9 +66,8 @@ Nothing is parked any more except the four GPU rigs under `checks/`
 
 To pick up, in this order:
 
-1. What step 4.3 left: see its "Not done" list (`link`, `debug`, the
-   gamepad, the pixel and GPU readers), and what step 4.4 left.
-2. Steps 4.5 and 4.6 as listed under Stage 4.
+1. Steps 4.5 and 4.6 as listed under Stage 4, and what steps 4.3 and
+   4.4 left (their "Not done" lists).
 3. The first run of the `test-js` job, which is also the first run of
    `srt test` on Windows and macOS: see
    [Stage 3](#stage-3---ci-written-2026-09-30-not-run).
@@ -872,22 +875,58 @@ How the pieces answer the decisions:
   for the next test (`sandbox.test.ts`), and a server left listening ends
   with its engine.
 
-Not done in this step:
+Not done in this step (the first three built on 2026-10-01, see "Step
+4.3, the rest" below):
 
-- `app.link(link)` and `app.debug(name, args)`; both exist behind the
-  control API in `go/connection.rs` and need the same sharing the input
-  plan got.
-- A synthetic gamepad in a test: the pads live in alloy's interactive
-  loop, which stepped mode does not run. `app.input` rejects a gamepad
-  event with a sentence that says so.
-- The readers past the tree: a textual tree snapshot, a pixel probe,
-  texture reads and the GPU inventory (D13); they go with the failure
-  output in step 4.5, which needs the tree dump anyway.
+- `app.link(link)` and `app.debug(name, args)`.
+- A synthetic gamepad in a test.
+- The readers past the tree.
 - Window size and display scale per test:
   [test-window-size-and-scale](../backlog/test-window-size-and-scale.md).
 - The MCP bridge's new arguments (`at`, `drag`) were exercised through the
   control API with curl, not through a re-spawned bridge; the website was
   not rebuilt.
+
+**Step 4.3, the rest (built 2026-10-01).** D13, D32, D37.
+
+| file | change |
+| --- | --- |
+| `alloy/src/gamepad.rs`, `lib.rs` | `Gamepads` is public and its SDL subsystems optional: `Gamepads::synthetic()` is the slot table with no devices, driven by the same commands, snapshot and back edge |
+| `flux/src/alloy_plugins/inspect.rs` | the GPU inventory record (`gpu_record`, `insert_label`), moved here from `lattice/src/go/connection.rs` like the node record |
+| `flux/src/alloy_plugins/mod.rs` | `request_frame(ctx)` for an embedder |
+| `flux/src/test_plugins/gui.rs` | `gpu(label, draw)` |
+| `lattice/src/plugins/dev.rs` | `call_debug`, the one call path of the control API and the test |
+| `lattice/src/test_host.rs`, `plugins/test.rs` | the stepper's plain `send`; `srt:test` gains `link`, `debug`, `capture` (a paint run now through `render_now`, the capture delivered when it ends: no frame, no app time), and a per-engine synthetic pad table behind `inputStep`'s gamepad steps |
+| `lattice/src/go/connection.rs` | `gpu_reply` and `debug_call_reply` over the shared code |
+| `packages/core/src/test.ts`, `runtime-modules.d.ts`, `packages/flux-types/gui/test.d.ts` | `app.link`, `app.debug`, `app.gpu`, `locator.tree({ props })`, `locator.pixels()`, `locator.pixel(x, y)`; `InputEvent` takes a gamepad event |
+| `packages/core/tests/readers.test.tsx` | 7 app tests: a link with and without a handler, a debug command and an unknown one, a pad seated, held, released and gone, a fresh table per engine, the tree text, a pixel read mid-transition, the inventory |
+| `packages/core/AGENTS.md`, `packages/cli/AGENTS.md`, `packages/cli/src/test/docs.md` | the verbs and the readers, with the order to reach for them |
+
+What was decided on the way:
+
+- `app.link` and `app.debug` run the frame their effect lands in and
+  return after it, as the input verbs do, so the tree is current; `link`
+  throws when the app has no handler (the control API answers
+  `delivered: false`), `debug` throws on an unknown name with the
+  registered ones listed, both the sentence the control API uses.
+- A test's gamepads are a table of its own, in the engine: the command
+  applies and the snapshot goes into the UI loop's channel in the same
+  call, ahead of the next frame, so a pad state is as deterministic as a
+  tap. The interactive loop's table is the same type with its SDL
+  subsystems present.
+- `tree()` folds a span that is all of its parent's text, as `find` does,
+  and prints no ids: two runs of the same test print the same text, and
+  a test can hold a layout as a string.
+- `pixels()` and `pixel()` draw the tree now instead of stepping frames,
+  the paused-clock path the control API's snapshot takes: a read mid-
+  transition passes no time. The pixels are premultiplied, at the display
+  scale; `pixel` maps a point in the node's logical box to them.
+- Texture reads need no test verb: `readTexture` from core is the
+  standard API and reads synchronously in a test as anywhere.
+
+Verified: the 7 tests, 341 JS tests in 35 files; alloy 638, lattice 66,
+flux 99 lib tests; `/gpu`, `/debug` and a gamepad `/input` on the
+interactive client after the moves.
 
 **Step 4.4 - `settle()`, a runtime facility (built 2026-09-30).** D11,
 D39, D40, D41.

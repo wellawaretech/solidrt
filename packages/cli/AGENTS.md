@@ -75,8 +75,9 @@ the work before starting it:
   falls in, `performance.now()` is 0 and the date starts at 2000-01-01 UTC
   and moves with the frames; `app.mount(ui)`, `find({ text | label |
   kind })`, `app.tap` / `drag` / `key` / `type` / `input` (the `send_input`
-  event shape, through the real pipeline) are described in core's AGENTS.md
-  ("Testing an app").
+  event shape, through the real pipeline), `app.link`, `app.debug`, and
+  the readers (`tree()`, `pixel()`, `app.gpu()`) are described in core's
+  AGENTS.md ("Testing an app").
 - `bunx srt bundle` - bundle the project into `dist/bundle/` (or
   `--output <dir>`): `<name>.srt.js` plus the app's isolate modules as
   `isolates/<id>.js`. With `--compile`, bytecode (`.srt.bin`/`.bin`)

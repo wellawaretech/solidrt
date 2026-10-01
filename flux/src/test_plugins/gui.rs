@@ -2,7 +2,8 @@
 // layer (`@solidrt/core/test`) builds locators and readers on. Thin FFI over
 // the rendertree's own inspection (find, visibility, the hit path) and the
 // shared node record (alloy_plugins/inspect.rs), so a test reads a node as
-// the control API's `/tree` reports it. Records cross as JSON text: the
+// the control API's `/tree` reports it, and the GPU inventory as `/gpu`
+// does. Records cross as JSON text: the
 // record is shaped as JSON once, for both readers.
 //
 // Compiled where flux has both the `test` and the `gui` feature, which is
@@ -12,7 +13,7 @@ use alloy::rendertree::{Match, NodeQuery, Point};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Exception, Function, Object, Value};
 
-use crate::alloy_plugins::inspect::node_record;
+use crate::alloy_plugins::inspect::{gpu_record, node_record};
 use crate::alloy_plugins::tree::with_tree;
 
 pub const MODULE_NAME: &str = "flux:test/gui";
@@ -105,6 +106,15 @@ fn hit(ctx: Ctx<'_>, x: f32, y: f32) -> rquickjs::Result<Vec<u64>> {
   with_tree(&ctx, |tree| tree.hit_path(Point::new(x, y))).ok_or_else(|| no_tree(&ctx, "hit"))
 }
 
+/// `gpu(label, draw)`: the GPU resource inventory as the control API's
+/// `/gpu` reports it, as JSON. `label` keeps the resources created with
+/// that label, `draw` names the draw entry reported in full.
+fn gpu(ctx: Ctx<'_>, label: Option<String>, draw: Option<u64>) -> rquickjs::Result<String> {
+  gpu_record(&ctx, label.as_deref(), draw)
+    .map(|record| record.to_string())
+    .map_err(|e| Exception::throw_message(&ctx, &format!("flux:test/gui gpu: {e}")))
+}
+
 pub struct GuiTestModule;
 
 impl ModuleDef for GuiTestModule {
@@ -114,6 +124,7 @@ impl ModuleDef for GuiTestModule {
     decl.declare("visible")?;
     decl.declare("path")?;
     decl.declare("hit")?;
+    decl.declare("gpu")?;
     Ok(())
   }
 
@@ -123,6 +134,7 @@ impl ModuleDef for GuiTestModule {
     exports.export("visible", Function::new(ctx.clone(), visible)?)?;
     exports.export("path", Function::new(ctx.clone(), path)?)?;
     exports.export("hit", Function::new(ctx.clone(), hit)?)?;
+    exports.export("gpu", Function::new(ctx.clone(), gpu)?)?;
     Ok(())
   }
 }

@@ -62,6 +62,14 @@ pub(crate) fn try_gui(ctx: &Ctx<'_>) -> Option<Rc<Gui>> {
 /// The alloy context for the runner's out-of-frame queries (a dev-server
 /// snapshot, the GPU inventory, a texture or buffer read), which run on the
 /// JS thread with a `Ctx` in hand. None before the GUI is installed.
+/// Ask for a frame on behalf of the embedder (the request latch, as a tree
+/// write sets it). No-op before the GUI is installed.
+pub fn request_frame(ctx: &Ctx<'_>) {
+  if let Some(gui) = try_gui(ctx) {
+    gui.platform.request_frame();
+  }
+}
+
 pub fn alloy_context(ctx: &Ctx<'_>) -> Option<Arc<alloy::Context>> {
   try_gui(ctx).map(|g| g.alloy.clone())
 }

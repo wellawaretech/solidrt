@@ -56,4 +56,13 @@ declare module "flux:test/gui" {
    * the node it lands on last; empty when nothing is hit.
    */
   export function hit(x: number, y: number): number[]
+
+  /**
+   * The GPU resource inventory as JSON, the record the control API's `/gpu`
+   * answers with: textures, buffers, pipelines, programs and each draw
+   * target's entries. `label` keeps the resources created with exactly
+   * that label; `draw` is the draw entry id whose params are reported in
+   * full (matrix-valued ones are elided elsewhere).
+   */
+  export function gpu(label: string | null, draw: number | null): string
 }

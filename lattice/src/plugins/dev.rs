@@ -56,9 +56,9 @@ pub fn install(ctx: &Ctx<'_>, control: DevControl) {
 #[derive(Clone, Default, JsLifetime)]
 pub struct DebugRegistry(#[qjs(skip_trace)] Rc<RefCell<HashMap<String, Persistent<Function<'static>>>>>);
 
-// The readers live in go::connection; see the struct doc - elsewhere the
-// registry is a write nothing reads.
-#[cfg_attr(not(feature = "go"), allow(dead_code))]
+// The readers are `call_debug` below and go::connection's listing; see the
+// struct doc - elsewhere the registry is a write nothing reads.
+#[cfg_attr(not(any(feature = "go", feature = "test")), allow(dead_code))]
 impl DebugRegistry {
   /// Registered command names, sorted.
   pub fn names(&self) -> Vec<String> {
@@ -70,6 +70,49 @@ impl DebugRegistry {
   /// The command's function, if registered.
   pub fn get(&self, name: &str) -> Option<Persistent<Function<'static>>> {
     self.0.borrow().get(name).cloned()
+  }
+}
+
+/// Call a registered debug command with JSON args and return what it
+/// returned, as JSON (undefined is null). An unknown name, a throw, a
+/// promise or a value JSON cannot carry is the error. One call path for the
+/// control API (`debug_call`) and for a test (`srt:test` `debug`).
+#[cfg_attr(not(any(feature = "go", feature = "test")), allow(dead_code))]
+pub fn call_debug(ctx: &Ctx<'_>, name: &str, args: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
+  let Some(registry) = ctx.userdata::<DebugRegistry>() else {
+    return Err(format!("no debug command '{name}' (none registered)"));
+  };
+  let Some(persistent) = registry.get(name) else {
+    let names = registry.names();
+    let hint =
+      if names.is_empty() { "none registered".to_string() } else { format!("registered: {}", names.join(", ")) };
+    return Err(format!("no debug command '{name}' ({hint})"));
+  };
+  let func = persistent.restore(ctx).map_err(|e| format!("restore failed: {e}"))?;
+
+  let result: Result<flux::rquickjs::Value, flux::rquickjs::Error> = match args {
+    Some(a) => match ctx.json_parse(a.to_string()) {
+      Ok(parsed) => func.call((parsed,)),
+      Err(e) => return Err(format!("args parse failed: {e}")),
+    },
+    None => func.call(()),
+  };
+  let value = result.map_err(|e| flux::rquickjs::CaughtError::from_error(ctx, e).to_string())?;
+  // An async command returns a Promise, which would stringify as {} and
+  // read as a silent success. The value is encoded right here - nothing
+  // awaits it - so reject loudly instead.
+  if value.as_promise().is_some() {
+    return Err(format!("debug command '{name}' returned a Promise; commands must return synchronously (not be async)"));
+  }
+  match ctx.json_stringify(value) {
+    Ok(Some(s)) => {
+      let text = s.to_string().unwrap_or_default();
+      Ok(serde_json::from_str(&text).unwrap_or(serde_json::Value::Null))
+    }
+    Ok(None) => Ok(serde_json::Value::Null),
+    Err(e) => {
+      Err(format!("return value is not JSON-serializable: {}", flux::rquickjs::CaughtError::from_error(ctx, e)))
+    }
   }
 }
 

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
-use flux::rquickjs::{Ctx, Exception, Function, JsLifetime, Persistent, Promise};
+use flux::rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Persistent, Promise};
 
 use crate::input_plan::{self, Injected};
 use crate::settle::Cap;
@@ -124,6 +124,12 @@ fn plan_input(ctx: Ctx<'_>, events: String) -> flux::rquickjs::Result<Vec<Vec<f6
   Ok(waits)
 }
 
+/// The synthetic pads of this engine: alloy's pad table without devices,
+/// which a test drives with the same commands the control API sends the
+/// interactive loop. Per engine, so a test starts with no pad seated.
+#[derive(Clone, JsLifetime)]
+struct Pads(#[qjs(skip_trace)] Rc<RefCell<alloy::Gamepads>>);
+
 /// `inputStep(index)`: send one step of the current plan.
 fn step_input(ctx: Ctx<'_>, index: usize) -> flux::rquickjs::Result<()> {
   let stepper = stepper(&ctx, "inputStep()")?;
@@ -132,7 +138,75 @@ fn step_input(ctx: Ctx<'_>, index: usize) -> flux::rquickjs::Result<()> {
   let Some(step) = step else {
     return Err(Exception::throw_message(&ctx, "srt:test inputStep(index): no such step left in the plan"));
   };
-  stepper.inject(step).map_err(|e| Exception::throw_message(&ctx, &format!("srt:test input: {e}")))
+  match step {
+    Injected::Event(event) => stepper.inject(event),
+    Injected::Gamepad(command) => {
+      let pads = ctx.userdata::<Pads>().expect("pads installed").clone();
+      let mut pads = pads.0.borrow_mut();
+      pads.apply(command).map_err(|e| Exception::throw_message(&ctx, &format!("srt:test input: gamepad: {e}")))?;
+      // What the interactive loop does after a command: the snapshot, and
+      // the back edge a synthetic "back" press is.
+      if let Some(snapshot) = pads.take_snapshot_if_dirty() {
+        stepper.send(snapshot);
+      }
+      if pads.take_back_edge() {
+        stepper.send(alloy::AlloyEvent::Back);
+      }
+    }
+  }
+  Ok(())
+}
+
+/// `link(link)`: deliver a link the way an OS-routed one arrives (the raw
+/// string, through the UI loop, on the `link` event); whether anything
+/// listens for one.
+fn link(ctx: Ctx<'_>, link: String) -> flux::rquickjs::Result<bool> {
+  let stepper = stepper(&ctx, "link()")?;
+  let listening = flux::has_listeners(&ctx, "link");
+  stepper.send(alloy::AlloyEvent::Link { link });
+  Ok(listening)
+}
+
+/// `debug(name, args)`: call a debug command the app registered
+/// (`registerDebug` of `srt:dev`), `args` and the result as JSON text
+/// (null for none).
+fn debug(ctx: Ctx<'_>, name: String, args: Option<String>) -> flux::rquickjs::Result<String> {
+  stepper(&ctx, "debug()")?;
+  let throw = |message: String| Exception::throw_message(&ctx, &format!("srt:test debug: {message}"));
+  let args = match args {
+    Some(text) => Some(serde_json::from_str(&text).map_err(|e| throw(format!("args: {e}")))?),
+    None => None,
+  };
+  crate::plugins::dev::call_debug(&ctx, &name, args).map(|value| value.to_string()).map_err(throw)
+}
+
+/// `capture(node)`: the pixels the node's subtree paints, as `{ width,
+/// height, data }` (RGBA8, premultiplied, rows top to bottom, at the
+/// display scale). Drawn now, with the tree as it is: no frame runs and no
+/// app time passes, so a running transition is read where it stands.
+fn capture<'js>(ctx: Ctx<'js>, node: u64) -> flux::rquickjs::Result<Object<'js>> {
+  stepper(&ctx, "capture()")?;
+  let throw = |message: &str| Exception::throw_message(&ctx, &format!("srt:test capture: {message}"));
+  let Some(alloy) = flux::gui::alloy_context(&ctx) else {
+    return Err(throw("no window in this test; mount the app first"));
+  };
+  let outcome = Rc::new(RefCell::new(None));
+  let slot = outcome.clone();
+  alloy.request_capture(node, Box::new(move |result| *slot.borrow_mut() = Some(result)));
+  // The capture is serviced by a paint and delivered when it ends: ask for
+  // one and run it here.
+  flux::gui::request_frame(&ctx);
+  crate::plugins::draw::render_now(&ctx);
+  let info = match outcome.borrow_mut().take() {
+    Some(Ok(info)) => info,
+    Some(Err(e)) => return Err(throw(&e)),
+    None => return Err(throw("the paint did not reach the node")),
+  };
+  let image = Object::new(ctx.clone())?;
+  image.set("width", info.width)?;
+  image.set("height", info.height)?;
+  image.set("data", flux::rquickjs::TypedArray::new(ctx.clone(), info.pixels)?)?;
+  Ok(image)
 }
 
 /// `settle(maxMs)`: run frames until the app is at rest (settle.rs):
@@ -200,6 +274,9 @@ impl ModuleDef for SrtTestModule {
     decl.declare("inputPlan")?;
     decl.declare("inputStep")?;
     decl.declare("settle")?;
+    decl.declare("link")?;
+    decl.declare("debug")?;
+    decl.declare("capture")?;
     Ok(())
   }
 
@@ -218,6 +295,12 @@ impl ModuleDef for SrtTestModule {
     exports.export("inputPlan", Function::new(ctx.clone(), plan_input)?)?;
     exports.export("inputStep", Function::new(ctx.clone(), step_input)?)?;
     exports.export("settle", Function::new(ctx.clone(), settle)?)?;
+    if ctx.userdata::<Pads>().is_none() {
+      ctx.store_userdata(Pads(Rc::new(RefCell::new(alloy::Gamepads::synthetic())))).expect("store pads");
+    }
+    exports.export("link", Function::new(ctx.clone(), link)?)?;
+    exports.export("debug", Function::new(ctx.clone(), debug)?)?;
+    exports.export("capture", Function::new(ctx.clone(), capture)?)?;
     Ok(())
   }
 }

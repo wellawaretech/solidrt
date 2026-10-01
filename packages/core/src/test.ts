@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { frame as stepFrame, frameRate, inputPlan, inputStep, setFrameRate, settle, time, windowReady } from "srt:test"
+import { capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, setFrameRate, settle, time, windowReady } from "srt:test"
 import { createElement, insert, render } from "./renderer"
 
 export { expect }
@@ -34,6 +34,10 @@ const FOUND_INSTEAD_MAX = 12
 // says otherwise: far past any transition an app runs, short enough that a
 // frame callback that never stops fails promptly.
 const SETTLE_MAX_MS = 5000
+// How deep `tree()` reads: every level a real tree has.
+const TREE_DEPTH = 1000
+// Bytes per pixel of a capture.
+const RGBA = 4
 
 /** A window point, in logical pixels. */
 export interface Point {
@@ -101,6 +105,41 @@ export interface Locator {
   readonly props: Record<string, unknown>
   /** The node's whole record. */
   readonly record: NodeRecord
+  /**
+   * The subtree as text, one node per line, indented by depth: kind, label,
+   * text and painted box (`view [save] 20,50 120x40`). No ids, so it reads
+   * the same on every run and diffs cleanly: compare it to a string the
+   * test holds to pin a whole layout, or print it to see what is there.
+   * `{ props: true }` adds each node's off-default props.
+   */
+  tree(options?: { props?: boolean }): string
+  /**
+   * The pixels the node paints, its subtree included. Drawn now, from the
+   * tree as it is: no frame runs and no app time passes, so a transition
+   * is read where it stands. The last resort of a test, for what only the
+   * picture shows (a shader, a gradient, a blend): a node's text, box and
+   * props say the rest, cheaper and on any GPU.
+   */
+  pixels(): Pixels
+  /**
+   * The color at a point of the node, in its own coordinates (0, 0 is the
+   * top left of its painted box): `[r, g, b, a]`, 0 to 255. See `pixels`.
+   *
+   * @example
+   * expect(swatch.pixel(10, 10)).toEqual([255, 0, 0, 255])
+   */
+  pixel(x: number, y: number): [r: number, g: number, b: number, a: number]
+}
+
+/**
+ * Pixels read back from the GPU: RGBA8, rows top to bottom, alpha
+ * premultiplied (a half-transparent red reads `[128, 0, 0, 128]`), at the
+ * display scale. The shape `captureSnapshot` and `readTexture` return.
+ */
+export interface Pixels {
+  width: number
+  height: number
+  data: Uint8Array
 }
 
 /** A locator that is also the `ref` of the node it names: `<view ref={it} />`. */
@@ -139,6 +178,29 @@ export interface TestApp {
    * let root = await app.load(() => import("../src/index.tsx"))
    */
   load(entry: () => Promise<unknown>): Promise<Locator>
+  /**
+   * Delivers a link to the app the way the OS delivers one (the raw string,
+   * on `onLink`) and runs the frame it lands in. Throws when the app does
+   * not listen for links. What the link opens may load or animate:
+   * `settle()` after it.
+   */
+  link(link: string): Promise<void>
+  /**
+   * Calls a debug command the app registered (`registerDebug` of
+   * `srt:dev`), runs a frame, and returns what the command returned. The
+   * way to put a loaded app into a state its UI reaches slowly or not at
+   * all: the same commands an agent calls over MCP. Throws on an unknown
+   * name, listing the registered ones.
+   */
+  debug(name: string, args?: unknown): Promise<unknown>
+  /**
+   * The GPU resource inventory, as the control API's `/gpu` reports it:
+   * textures, buffers, pipelines and every draw target's entries with
+   * their counts and uniforms. `label` keeps the resources created with
+   * that label; `draw` names the draw entry reported in full. "Does it
+   * draw, and with what" is read here, not off pixels.
+   */
+  gpu(options?: { label?: string; draw?: number }): Record<string, unknown>
   /** The node the query names, anywhere in the app. */
   find(query: Query): Locator
   /** Every node the query matches, as the tree is now. */
@@ -216,6 +278,22 @@ export interface TestOptions {
 }
 
 // -- Locators --
+
+// One line per node of a subtree, for `tree()`.
+function treeLines(node: NodeRecord, depth: number, props: boolean, out: string[]): void {
+  let line = "  ".repeat(depth) + node.kind
+  if (node.label !== undefined) line += ` [${node.label}]`
+  if (node.text !== undefined) line += ` ${JSON.stringify(node.text)}`
+  line += ` ${node.x},${node.y} ${node.width}x${node.height}`
+  if (props && node.props !== undefined) line += ` ${JSON.stringify(node.props)}`
+  out.push(line)
+  for (let child of node.children ?? []) {
+    // A span that is all of its parent's text is that text (as `find` sees
+    // it): one line, not two.
+    if (child.text !== undefined && child.text === node.text) continue
+    treeLines(child, depth + 1, props, out)
+  }
+}
 
 function describeQuery(query: Query): string {
   let parts = Object.entries(query).map(([name, value]) => `${name}: ${value instanceof RegExp ? value : JSON.stringify(value)}`)
@@ -300,6 +378,27 @@ function locatorFields(resolve: () => number[], what: string, scope: () => numbe
     },
     props: { get: () => record().props ?? {} },
     record: { get: record },
+    tree: {
+      value: (options: { props?: boolean } = {}) => {
+        let json = gui.node(one(), TREE_DEPTH)
+        if (json === null) throw new Error(`The node ${what} named is gone`)
+        let lines: string[] = []
+        treeLines(JSON.parse(json) as NodeRecord, 0, options.props === true, lines)
+        return lines.join("\n")
+      },
+    },
+    pixels: { value: () => capture(one()) },
+    pixel: {
+      value: (x: number, y: number) => {
+        let { width, height } = record()
+        if (!(x >= 0 && x < width && y >= 0 && y < height)) throw new RangeError(`pixel: ${x}, ${y} is outside ${what}, which is ${width} x ${height}`)
+        let image = capture(one())
+        let column = Math.min(image.width - 1, Math.floor((x * image.width) / width))
+        let row = Math.min(image.height - 1, Math.floor((y * image.height) / height))
+        let at = (row * image.width + column) * RGBA
+        return Array.from(image.data.subarray(at, at + RGBA))
+      },
+    },
   }
 }
 
@@ -386,6 +485,17 @@ let app: TestApp = {
     if (windows.length === 0) throw new Error("load: the entry rendered no window; its top level has to call render()")
     return fixed(windows[0]!.id, "the app's window")
   },
+  async link(target) {
+    if (typeof target !== "string" || target === "") throw new TypeError("link: pass the link as a non-empty string")
+    if (!link(target)) throw new Error(`link: the app does not listen for links (no onLink handler), so ${JSON.stringify(target)} went nowhere`)
+    await app.frame()
+  },
+  async debug(name, args) {
+    let result = debug(name, args === undefined ? null : JSON.stringify(args))
+    await app.frame()
+    return JSON.parse(result)
+  },
+  gpu: (options = {}) => JSON.parse(gui.gpu(options.label ?? null, options.draw ?? null)),
   find: query => findIn(() => null, query),
   findAll: query => search(null, query).map(found => fixed(found.id, `${describeQuery(query)} (${describeNode(found)})`)),
   ref() {

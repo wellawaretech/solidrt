@@ -167,6 +167,23 @@ looping animation, a playing video) fails the settle after 5000 ms of app
 time, `app.settle({ maxMs })` for another cap, and the error names what
 still wanted frames.
 
+Beside input, `app.link(link)` delivers a link the way the OS does and
+`app.debug(name, args)` calls a debug command the app registered
+(`registerDebug` from `srt:dev`) and returns its value: how a test puts a
+loaded app into a state its UI reaches slowly. A `gamepad` event in
+`app.input` drives a synthetic pad.
+
+Past a node's record there are three readers, in the order to reach for
+them: `locator.tree()` is the subtree as text, one node per line with its
+kind, label, text and box and no ids, to pin a whole layout against a
+string or to print what is there; `app.gpu({ label })` is the GPU
+inventory the control API's `/gpu` reports, where whether something draws
+is a count, not a picture; and `locator.pixel(x, y)` (one `[r, g, b, a]`)
+or `locator.pixels()` (the image) read what the node paints, drawn at
+once from the tree as it is, with no frame run and no time passed, so a
+transition is read where it stands. Pixels are the last resort, for what
+only the picture shows.
+
 Anything that imports the app runtime (`srt:` modules, or a module of the
 rendering layer such as `flux:rendertree`) makes a file an app test; a
 `.test.tsx` file always is one. The bundle and a data folder of the file's

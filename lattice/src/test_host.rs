@@ -14,7 +14,6 @@ use alloy::resample::SharedResampler;
 use alloy::AlloyEvent;
 use flux::rquickjs::JsLifetime;
 
-use crate::input_plan::Injected;
 use crate::runtime::EventSender;
 
 /// The frame rate a test steps at unless it sets another: what apps run at
@@ -96,22 +95,21 @@ impl Stepper {
     1000.0 / self.rate() as f64
   }
 
-  /// Send one step of an input plan into the real pipeline, the way the
-  /// control API does: a down, an up, a key or a wheel enters the UI
-  /// loop's channel and is dispatched on arrival, ahead of the next frame
-  /// the test asks for; a move feeds the resampler and is dispatched with
-  /// that frame.
-  pub(crate) fn inject(&self, step: Injected) -> Result<(), String> {
-    match step {
-      Injected::Event(event) => {
-        let events = self.events.clone();
-        let _ = self.resampler.feed(event, std::time::Instant::now(), |event, at| events.send_at(event, at));
-        Ok(())
-      }
-      // The pads live in alloy's interactive loop, which a test does not
-      // run (okf/plans/test-harness.md, step 4.3).
-      Injected::Gamepad(_) => Err("a synthetic gamepad is not available in a test yet".to_string()),
-    }
+  /// Send a pointer, key, wheel or text event into the real pipeline, the
+  /// way the control API does: a down, an up, a key or a wheel enters the
+  /// UI loop's channel and is dispatched on arrival, ahead of the next
+  /// frame the test asks for; a move feeds the resampler and is dispatched
+  /// with that frame.
+  pub(crate) fn inject(&self, event: AlloyEvent) {
+    let events = self.events.clone();
+    let _ = self.resampler.feed(event, std::time::Instant::now(), |event, at| events.send_at(event, at));
+  }
+
+  /// Send an event that is no pointer input (a pad snapshot, a link)
+  /// straight into the UI loop's channel: dispatched on arrival, ahead of
+  /// the next frame.
+  pub(crate) fn send(&self, event: AlloyEvent) {
+    let _ = self.events.send(event);
   }
 
   /// Ask for the next frame: the signal the UI loop turns into the frame

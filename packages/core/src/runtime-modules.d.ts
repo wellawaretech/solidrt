@@ -283,4 +283,22 @@ declare module "srt:test" {
    * with what is left in the message.
    */
   export function settle(maxMs: number): Promise<void>
+  /**
+   * Delivers a link the way an OS-routed one arrives (the raw string, on
+   * the `link` event, ahead of the next frame). Returns whether anything
+   * listens for links.
+   */
+  export function link(link: string): boolean
+  /**
+   * Calls a debug command the app registered with `registerDebug`. `args`
+   * and the result are JSON text (null for no args). Throws on an unknown
+   * name, a throwing command and a result JSON cannot carry.
+   */
+  export function debug(name: string, args: string | null): string
+  /**
+   * The pixels a node's subtree paints: RGBA8, premultiplied, rows top to
+   * bottom, at the display scale. Drawn at once from the tree as it is; no
+   * frame runs and no app time passes.
+   */
+  export function capture(node: number): { width: number; height: number; data: Uint8Array }
 }
