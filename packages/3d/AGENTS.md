@@ -555,19 +555,20 @@ binary, so a gui or `srt:` import creeping into any of them fails there
 (a headless `flux:` import would not); keep them that way.
 `src/splat-data.ts` is its own published entry the same way
 (`@solidrt/3d/splat`, guarded by `tests/splat-data.test.ts`).
-The tests under `tests/` run on the bare flux binary: `bunx srt test
-packages/3d` from the repo root, or one file, or `--filter <text>` for
-the tests whose name contains it. Run them after a change to the pure
-modules. The two rigs left under `checks/`, `raycast-check.tsx` and
-`collision-check.tsx`, need a GPU: they assert the documented
-picking contract (triangle accuracy, the box tier, pick/raycast
-parity, layer masks, the `{ meshes }` filter) and collision contract
-(exact sweep times, the surface rule, the slide filter, layers and
-meshes on overlap/sweep, moveAndSlide's landing) against a real scene,
-so they run on the playback client instead:
-`bunx srt render packages/3d/checks/<name>.tsx --project --duration 3
---size 128x128`. Run them whenever a doc edit touches picking or
-collision claims - two copies of this contract have drifted before.
+The tests under `tests/` run with `bunx srt test packages/3d` from the
+repo root, or one file, or `--filter <text>` for the tests whose name
+contains it: the pure modules on the bare flux binary, and the files
+that need a GPU (`.test.tsx`, importing `@solidrt/core/test`) on the
+headless dev client. Run them after a change. `raycast.test.tsx` and
+`collision.test.tsx` assert the documented picking contract (triangle
+accuracy, the box tier, pick/raycast parity, layer masks, the
+`{ meshes }` filter) and collision contract (exact sweep times, the
+surface rule, the slide filter, layers and meshes on overlap/sweep,
+moveAndSlide's landing) against a real scene; run them whenever a doc
+edit touches picking or collision claims - two copies of this contract
+have drifted before. `fog.test.tsx` reads the fog example's pixels
+through its debug commands, and `camera-components.test.tsx` drives
+`<OrbitCamera>` and `<FirstPersonCamera>` with a real drag and key.
 
 ## Components
 

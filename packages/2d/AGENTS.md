@@ -110,7 +110,7 @@ being shared with e.g. a 3d scene costs nothing in JS.
 
 ### Spatial queries
 
-Spatial queries (`checks/collision-check.tsx` pins the contract): the
+Spatial queries (`tests/collision.test.tsx` pins the contract): the
 3d scene's trio one dimension down, Godot's PhysicsDirectSpaceState2D
 and CharacterBody2D in their names. `layer.raycast(x, y, dx, dy,
 opts?)` is every shown sprite the ray strikes, nearest first, with

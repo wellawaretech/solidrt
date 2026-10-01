@@ -13,8 +13,10 @@ that have no window, and up to SolidRT apps an author wants to test.
 
 ## Where this stands (2026-10-01)
 
-Stages 1, 2, 2b and 3 are built and committed; the CI jobs have not had
-their first run. Stage 4 was redesigned on 2026-09-30 under the rule "the
+Every stage is built. Stages 1, 2, 2b and 3 are committed and the CI
+jobs are green on all four platforms (two rounds of fixes on 2026-10-01,
+under [Stage 3](#stage-3---ci-written-2026-09-30-first-run-2026-10-01));
+stage 5 landed the same day (uncommitted). Stage 4 was redesigned on 2026-09-30 under the rule "the
 best solution, not the least effort; no backwards compatibility" (D30 to
 D35, [Stage 4](#stage-4---the-app-layer-redesigned-2026-09-30)), and all
 six of its steps are built (4.5 and 4.6 on 2026-10-01, uncommitted):
@@ -71,20 +73,15 @@ router. Renders of `examples/hello-world`, `examples/spin` and an
 animating probe are byte-identical between the old lockstep loop and the
 render host.
 
-Nothing is parked any more except the four GPU rigs under `checks/`
-(stage 5).
+Stage 5 (2026-10-01): the four GPU rigs are app tests, the `checks/`
+folders are gone, the fog example has a capture test, and the camera
+components have tests on a real drag and key. `bunx srt test` at the
+repo root: 369 tests in 41 files, about 28 s. Everything under "Done
+looks like" holds.
 
-To pick up, in this order:
-
-1. The CI jobs had their first run on 2026-10-01: `test-app (linux)`
-   passed (the runner's Mesa gives the offscreen GLES context), `types`
-   and `test-js` failed on a type error and on the 5 s cap against a
-   debug binary. Both are fixed (see
-   [Stage 3](#stage-3---ci-written-2026-09-30-first-run-2026-10-01)); the
-   run that proves it is the next push.
-2. Stage 5, the migration of the four GPU rigs.
-3. Verification leftovers: the MCP bridge's `settle` tool and the `at` and
-   `drag` arguments through a re-spawned bridge.
+Left, not a stage: the MCP bridge's `settle` tool and the `at` and
+`drag` arguments through a re-spawned bridge, which were exercised as
+control API calls with curl and not through the bridge.
 
 ## Problem
 
@@ -1132,20 +1129,44 @@ its loaded state with it; `--strict` turning a contained error into exit
 an `onFrame` app failing, named; alloy 637, lattice 66, flux 101 lib
 tests; 341 JS tests.
 
-### Stage 5 - migration on the app layer
+### Stage 5 - migration on the app layer (built 2026-10-01)
 
-- The four GPU rigs move to `tests/`; the `checks/` folders are gone.
-- One capture-based test for `@solidrt/3d`, the tier the pure tests cannot
-  reach (GLSL plus a scene write): `packages/3d/examples/fog.tsx` is the
-  first candidate. Its `pan` and `fog` debug commands park the camera and
-  pick a mode deterministically, so a pixel probe at two coordinates (a
-  valley pine fogged, the `fog: false` sun not) is the whole test. Fog
-  shipped 2026-08-30 verified by eye only.
-- The 3d cameras (`createOrbitCamera`, `createFirstPersonCamera`) mix
-  their motion with glue that imports `srt:events`, which exists only
-  under lattice; under the app layer they get tests without a split.
-- A testing guide in `packages/cli/agents/`, and one pointer line in the
-  scaffold's AGENTS.md.
+- The four GPU rigs are app tests, their numbered claims one test each,
+  `fail()` turned into `expect`, the world a plain function the test
+  calls: `packages/core/tests/gpu-lease.test.tsx` (5), `packages/2d/
+  tests/collision.test.tsx` (5), `packages/3d/tests/collision.test.tsx`
+  (6) and `packages/3d/tests/raycast.test.tsx` (7). The `checks/` folders
+  are gone, with core's stale `checks/dist`; the pointers in the 2d and
+  3d AGENTS.md and in two core test headers follow.
+- The capture test for `@solidrt/3d`, `packages/3d/tests/fog.test.tsx`
+  (3): the fog example loaded with `app.load`, the camera parked and the
+  mode set through its `pan` and `fog` debug commands, a frame, then one
+  pixel on each sun through a new `suns` debug command that projects
+  them (the example gained a Scene `ref` for it). The probe is the
+  channel order: the sun is red above blue, the sky and a sun fogged
+  into it blue above red, so no color space is assumed. Fog shipped
+  2026-08-30 verified by eye only; this is its first test.
+- The camera components, `packages/3d/tests/camera-components.test.tsx`
+  (2): `<OrbitCamera>` orbited by a drag over the scene through the
+  pointer feed and the input map, `<FirstPersonCamera>` walked by a held
+  `w` through the keyboard device and the window's key handlers; the
+  motion itself stays tested on the flux binary. (The plan's note on
+  `srt:events` glue was stale: the components take an input map and
+  wire nothing themselves.)
+- The testing guide and the scaffold pointer landed with step 4.5.
+
+What the migration taught, for the guide's readers: anything that
+registers a cleanup (GPU buffers, a scene, a layer, a pointer feed, an
+input map) is created inside the `mount` callback, which is the
+component body of the test's app; outside it the feed's `onSettled`
+cleanup throws and the settle never ends. A query on a scene or a layer
+flushes the pending writes, so these tests run no frame after the mount;
+`updateVertices` is the exception, which needs the geometry on the GPU
+(a frame before) and the box's flush (a frame after). An example with a
+standing frame callback is stepped, not settled.
+
+Each new file was broken on purpose once (a number, a pixel channel, a
+sun's reading) and failed where it should.
 
 ## Later, additive
 

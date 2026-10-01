@@ -16,11 +16,11 @@
 // command sets the mode and its knobs (`{ mode: "linear" | "exp2" |
 // "height" | "off", near, far, density, height, falloff }`) and returns
 // the state; `pan` parks the camera (`{ t: seconds }`), so a capture
-// repeats.
+// repeats; `suns` is where the two suns are on screen, for a pixel probe.
 import { createSignal, flush, onFrame, pct, render } from "@solidrt/core"
 import { registerDebug } from "srt:dev"
 import { cone, cylinder, DirectionalLight, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit } from "@solidrt/3d"
-import type { FogOptions, Vec3 } from "@solidrt/3d"
+import type { FogOptions, SceneHandle, Vec3 } from "@solidrt/3d"
 
 const FAR = 400
 // The sky, shared by the clear and the fog so the horizon has no band.
@@ -36,6 +36,10 @@ const LINEAR_FAR = FAR
 const DENSITY = 0.006
 const HEIGHT = 10
 const HEIGHT_FALLOFF = 0.12
+// The two suns, side by side on the far ridge: the left one opts out of
+// the fog, the right one fogs like everything else.
+const SUN_LIT: Vec3 = [-30, 100, -220]
+const SUN_FOGGED: Vec3 = [30, 100, -220]
 
 type Mode = "linear" | "exp2" | "height" | "off"
 const MODES: Mode[] = ["linear", "exp2", "height", "off"]
@@ -48,6 +52,7 @@ let [height, setHeight] = createSignal(HEIGHT)
 let [falloff, setFalloff] = createSignal(HEIGHT_FALLOFF)
 let [time, setTime] = createSignal(0)
 let parked: number | null = null
+let scene: SceneHandle | null = null
 
 let num = (v: unknown, set: (n: number) => void) => {
   if (typeof v === "number") set(v)
@@ -72,6 +77,10 @@ registerDebug("pan", (args?: Record<string, unknown>) => {
   }
   flush()
   return { t: time(), parked: parked !== null }
+})
+registerDebug("suns", () => {
+  if (scene === null) throw new Error("suns: the scene is not mounted")
+  return { lit: scene.project(SUN_LIT), fogged: scene.project(SUN_FOGGED) }
 })
 
 function fog(): FogOptions | undefined {
@@ -148,7 +157,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)} onPointerDown={() => setMode(m => MODES[(MODES.indexOf(m) + 1) % MODES.length] ?? "linear")}>
-        <Scene clearColor={[SKY[0], SKY[1], SKY[2], 1]} fog={fog()} samples={4} label="fog">
+        <Scene ref={s => (scene = s)} clearColor={[SKY[0], SKY[1], SKY[2], 1]} fog={fog()} samples={4} label="fog">
           <PerspectiveCamera fov={55} near={0.5} far={FAR} position={EYE} lookAt={lookAt()} />
           <HemisphereLight sky={[0.55, 0.62, 0.75]} ground={[0.28, 0.24, 0.2]} />
           <DirectionalLight color={[0.9, 0.85, 0.75]} rotation={[-0.9, 0.6, 0]} />
@@ -162,8 +171,8 @@ function App() {
               <Mesh geometry={crown} material={needles} position={[p.position[0], p.position[1] + p.size * 0.3 + p.size * 0.5, p.position[2]]} scale={[p.size * 0.9, p.size, p.size * 0.9]} />
             </>
           ))}
-          <Mesh geometry={sun} material={sunLit} position={[-30, 100, -220]} />
-          <Mesh geometry={sun} material={sunFogged} position={[30, 100, -220]} />
+          <Mesh geometry={sun} material={sunLit} position={SUN_LIT} />
+          <Mesh geometry={sun} material={sunFogged} position={SUN_FOGGED} />
         </Scene>
       </view>
     </window>

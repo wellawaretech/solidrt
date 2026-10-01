@@ -8,8 +8,8 @@
 // `@solidrt/core/input` entry imports no runtime module), so it runs
 // headless on flux: `srt test packages/core`. The interactions take their
 // time from their source (tap, doubleTap, chord: stated here, no waiting);
-// `hold` keeps time with a timer, which is about time passing and waits
-// for the app layer in checks/input-map-hold.test.ts. The gamepad device
+// `hold` keeps time with a timer, which is about time passing and is an
+// app test, input-map-hold.test.ts. The gamepad device
 // and the pointer feed need the runtime and are exercised live by the
 // camera examples.
 
