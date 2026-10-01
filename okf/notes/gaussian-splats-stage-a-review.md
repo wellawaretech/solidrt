@@ -71,7 +71,7 @@ list. The what-was-built record is
   plan cites an artifact as its verification vehicle, verifying that
   artifact works belongs to the planning step; and the probes that prove
   core behavior should graduate into something CI builds and runs
-  ([../plans/test-harness.md](../plans/test-harness.md)
+  ([../done/test-harness.md](../done/test-harness.md)
   is exactly this gap). I kept the session honest by running everything
   myself, but nothing prevents the next regression from arriving
   silently.

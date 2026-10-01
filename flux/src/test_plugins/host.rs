@@ -1,4 +1,4 @@
-// The test host: what runs a test file (okf/plans/test-harness.md). Every
+// The test host: what runs a test file (okf/done/test-harness.md). Every
 // test gets an engine of its own. The file is evaluated once to list the
 // tests it registers, then once more for each test, in an engine that runs
 // that test and nothing else. A test therefore starts from the file's

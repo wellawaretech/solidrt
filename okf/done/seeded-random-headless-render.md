@@ -19,7 +19,7 @@ created.
 
 It matters where frames are compared: an image golden, the capture-based
 tests of the test harness's stage 5
-([test-harness](../plans/test-harness.md)), a recorded input played back
+([test-harness](test-harness.md)), a recorded input played back
 to reproduce a bug.
 
 ## What exists
@@ -54,7 +54,7 @@ seeds every test.
 
 ## Closed (2026-10-01)
 
-Closed by step 4.6 of [test-harness](../plans/test-harness.md) (D35):
+Closed by step 4.6 of [test-harness](test-harness.md) (D35):
 playback was rebuilt as a render host on alloy's stepped mode
 (`lattice/src/render_host.rs`), and the render engine is built like a
 test engine: `seed_random` with the harness's fixed seed (`srt render

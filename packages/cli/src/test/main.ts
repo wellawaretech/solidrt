@@ -7,7 +7,7 @@ import { fail, requireBinary } from "../lib/util"
 import { remapPositions } from "../server/remap"
 
 // srt test: run the test files of a project on the runtime the code ships
-// on (okf/plans/test-harness.md). Each `tests/*.test.ts` is bundled on its
+// on (okf/done/test-harness.md). Each `tests/*.test.ts` is bundled on its
 // own and handed to a fresh test host process, one file after another. The
 // binary is the host: it evaluates the file once to list the tests it
 // registers through flux:test and once more for each test, in an engine of

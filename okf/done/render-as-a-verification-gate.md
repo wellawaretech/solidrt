@@ -97,7 +97,7 @@ the flags.
 
 ## Closed (2026-10-01)
 
-Closed by step 4.6 of [test-harness](../plans/test-harness.md) (D35, D39).
+Closed by step 4.6 of [test-harness](test-harness.md) (D35, D39).
 `srt render` passes `--strict` and `--settle` through; the cli/AGENTS.md
 paragraph names the flags. The wall sleep is gone: `--settle` is now the
 condition the test harness settles on (nothing in flight, no timer due, no

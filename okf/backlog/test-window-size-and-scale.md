@@ -11,7 +11,7 @@ test of every file runs there. A layout that switches at a breakpoint, a
 phone-sized screen, a 2x display scale: none can be asserted.
 
 Wanted: `test(name, fn, { size: [width, height], scale })`, beside `fps`
-(okf/plans/test-harness.md, step 4.3, where this was split off). With an
+(okf/done/test-harness.md, step 4.3, where this was split off). With an
 engine per test (D30) the option is natural: the size is a fact of the
 engine's start, like the frame rate.
 

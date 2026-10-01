@@ -1,4 +1,4 @@
-// The render host (okf/plans/test-harness.md, D35 and D39): `srt render`
+// The render host (okf/done/test-harness.md, D35 and D39): `srt render`
 // as a host that steps alloy's stepped mode and reads every frame back. One
 // engine, built with the wall taken out (performance.now() at 0, the
 // calendar on the fixed epoch, Math.random seeded), so two renders of one

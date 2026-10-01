@@ -10,7 +10,7 @@
 // they are handed and no clock, so every test states its times and none
 // waits. What does wait on a timer (the long-press hold, the double-tap
 // window passing with no second tap) is about time passing and is an app
-// test, gesture-timers.test.ts (okf/plans/test-harness.md, D5).
+// test, gesture-timers.test.ts (okf/done/test-harness.md, D5).
 
 import { test } from "flux:test"
 import { createRoot } from "@solidjs/signals"

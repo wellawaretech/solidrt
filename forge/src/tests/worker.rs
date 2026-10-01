@@ -354,7 +354,8 @@ fn the_release_policy_waits_drops_and_reanchors_against_the_clock() {
   // the re-anchor, not discarded. A late host may still drop a frame or
   // two of its own in this stretch (the shared macOS runner has), so the
   // drops added are bounded by the lateness budget, which the jump's
-  // frames exceed by a clear margin.
+  // frames exceed by a clear margin; the exact threshold is pinned on
+  // `classify` itself in video.rs, with no host in the loop.
   let host_late_frames = ((HOST_WAKE_LATE_NS + SLACK_NS) / frame_ns) as usize;
   assert!((STALL_REANCHOR_NS * 2 / frame_ns) as usize > 2 * host_late_frames);
   let stall_drops = dropped() - dropped_before;

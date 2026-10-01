@@ -90,15 +90,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
-- **[Test harness - flux:test, srt:test and srt test](plans/test-harness.md)** [2026-08-17]
-  Tests for flux programs, SolidRT apps and our own packages, run on our own
-  runtime and deterministic by construction - a base layer on the flux binary
-  (flux:test - test, expect, a seeded Math.random; real time) and an app layer
-  on the headless SolidRT runtime (@solidrt/core/test - mount, find, input,
-  frames, reading; stepped by frames, no wall time), every test in an engine
-  of its own, behind one command, srt test. Supersedes the JS test
-  infrastructure backlog item; the ten bun test files and the checks/ rigs are
-  its first consumers.
 - **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
   Client-initiated streaming - open(url) plays a WebM served over HTTP on the
   Android plane with buffering, seek by Range and a cancel-safe close, built
@@ -687,6 +678,11 @@ Shaped, not started.
   file or line, so finding it in an app with a dozen effects is a manual hunt;
   the diagnostics are subscribable and the dev server already remaps stack
   frames, so a location is attachable on our side.
+- **[Move the app test layer into @solidrt/test](backlog/solidrt-test-package.md)** [2026-10-01]
+  The app test layer (mount, find, input, frames, readers) leaves core for a
+  package of its own, @solidrt/test, a devDependency of every app and a peer
+  of core like the router; core's surface and its auto-imported AGENTS.md go
+  back to being the app's alone. No runtime or Rust change.
 - **[Spatial audio - emitter and listener nodes on the spatial core](backlog/spatial-audio-emitters.md)** [2026-08-30]
   Every voice knob a positional sound needs exists (pan, gain, rate, all
   ramped) but nothing places a sound in the world, so an engine note or a
@@ -2245,6 +2241,15 @@ Finished, kept for the reasoning.
   target per move, the core deriving frustum, LOD view and sort view, with a
   per-target LOD bias and an LOD reference that makes shadow tiles measure by
   the scene camera.
+- **[Test harness - flux:test, srt:test and srt test](done/test-harness.md)** [2026-10-01]
+  Tests for flux programs, SolidRT apps and our own packages, run on our own
+  runtime and deterministic by construction - a base layer on the flux binary
+  (flux:test - test, expect, a seeded Math.random; real time) and an app layer
+  on the headless SolidRT runtime (@solidrt/core/test - mount, find, input,
+  frames, reading; stepped by frames, no wall time), every test in an engine
+  of its own, behind one command, srt test. Supersedes the JS test
+  infrastructure backlog item; the ten bun test files and the checks/ rigs are
+  its first consumers.
 - **[Inline styled runs in <text> via <span>](done/text-inline-spans.md)** [2026-08-16]
   A paragraph cannot mix styles, so a bold lead-in or inline code is laid out
   a word at a time in a wrapping row; Impeller shapes styled runs natively, so
@@ -2658,6 +2663,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   must be read on a plain OS thread rather than tokio's blocking pool, and a
   scripted pty test must not feed control bytes before the process has
   switched to raw mode.
+- **[What building the test harness found about the runtime](notes/test-harness-findings.md)** [2026-10-01]
+  Facts about flux, QuickJS, the engine loop and the packages that the test
+  harness work surfaced and that hold without it - where tests run, what a
+  never-settling promise does, Math.random, the fail() trap, the select! bias,
+  a fake backend's deadlock under settle.
 - **[Text shaping and layout costs, measured](notes/text-shaping-costs.md)** [2026-08-17]
   What one Impeller paragraph per wrap unit costs against one paragraph per
   width, and what the shared word cache changes; the numbers under the owned

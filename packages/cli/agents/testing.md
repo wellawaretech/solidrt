@@ -69,7 +69,13 @@ test("a tap increments", async app => {
 - Start: `app.mount(ui)` mounts a component (content is put in a window of
   its own) and returns a locator for the window; `app.load(() =>
   import("../src/index.tsx"))` starts the whole entry the way the runtime
-  does. Once per test: a test is one app.
+  does. Once per test: a test is one app. The `ui` callback is the
+  app's component body: anything that registers a cleanup (a pointer
+  feed, an input map, a GPU buffer, a scene, a sprite layer) is created
+  inside it, as an app creates it inside a component, and handed out
+  through a variable the test reads afterwards. Created at the top of
+  the test, outside any owner, its cleanup fires unowned and
+  `app.settle()` never ends.
 - Name nodes the way a user would: `find({ text: "Save" })`. Give a node
   with nothing visible to find it by a `label` prop (`<view
   label="sidebar">`), a stable name that does nothing else. For JSX the

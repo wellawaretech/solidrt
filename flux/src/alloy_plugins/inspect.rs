@@ -1,6 +1,6 @@
 // The record of a render-tree node, as JSON: what the control API's `/tree`
 // answers with and what a test reads a node as, shaped in one place so the
-// two never drift (okf/plans/test-harness.md, D8 and D32). The tree copy
+// two never drift (okf/done/test-harness.md, D8 and D32). The tree copy
 // itself is the rendertree's (`NodeSnapshot`); this adds what needs the
 // live tree and the JSX names (`props`, the painted quad, exits, slides).
 

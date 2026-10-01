@@ -10,12 +10,12 @@
 
 import { test, expect } from "@solidrt/core/test"
 import type { TestApp } from "@solidrt/core/test"
-import { decodeImage } from "@solidrt/core"
 import { addSprite, createAtlas, createSpriteLayer } from "../src/index.ts"
 import type { SpriteHandle } from "../src/index.ts"
-import logoBytes from "../examples/logo.png" with { type: "binary" }
 
 const SIZE = 128
+// The atlas: one opaque white texel, since the queries never read a pixel.
+const ATLAS = { width: 1, height: 1, data: new Uint8Array([255, 255, 255, 255]) }
 // Decimals a time, point or normal is compared to.
 const DIGITS = 3
 // The mover's default skin, what the landing gaps are measured in.
@@ -26,7 +26,7 @@ const SLOPE = -Math.PI / 6
 let rounded = (v: readonly number[]) => v.map(x => Number(x.toFixed(DIGITS)) + 0)
 
 function world() {
-  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let atlas = createAtlas(ATLAS, { label: "collision-atlas" })
   let layer = createSpriteLayer(atlas.texture, { capacity: 64, label: "collision" })
   let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0.07, 0.07, 0.1, 1], label: "collision" })
 

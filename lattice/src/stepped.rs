@@ -1,4 +1,4 @@
-// The stepping half of the headless hosts (okf/plans/test-harness.md, stage
+// The stepping half of the headless hosts (okf/done/test-harness.md, stage
 // 4): alloy's stepped mode emits no frame signal, so the host asks for every
 // frame, and app time is frame / fps and nothing else. Two hosts step: test
 // mode (test_host.rs, where a test asks through `srt:test`) and the render

@@ -2,7 +2,7 @@
 // are sent, in order, with what passes between them. Shared by the control
 // API (go/connection.rs, real time) and by tests (plugins/test.rs, frames),
 // so a gesture means the same thing to an agent driving a client and to a
-// test (okf/plans/test-harness.md, D8 and D37). The event shape itself is
+// test (okf/done/test-harness.md, D8 and D37). The event shape itself is
 // documented in packages/cli/agents/debugging.md.
 
 /// Reserved pointer id for injected pointer events: far outside anything SDL

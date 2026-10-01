@@ -45,7 +45,7 @@ The core architectural bet is right and unusually well executed: fine-grained si
 - Android: `extractAssets` copies the whole APK asset tree on every `onCreate`; no lifecycle hooks beyond visibility.
 
 **App surface**
-- **Zero JS tests** across ~29k TS lines: renderer glue, bundler, components, press state machine, scroll clamping, text buffer are all verified by hand. `okf/plans/test-harness.md` admits it.
+- **Zero JS tests** across ~29k TS lines: renderer glue, bundler, components, press state machine, scroll clamping, text buffer are all verified by hand. `okf/done/test-harness.md` admits it.
 - **Business-app blockers**, in the order a dev hits them: no text selection or clipboard anywhere (`grep clipboard` over the Rust tree is empty); no navigation stack / screen model; no list virtualization, no fling, no scrollbar, `Select` option list not scrollable; no form validation, `Option.value: unknown`; no `Intl` (QuickJS has no ICU); no accessibility of any kind (zero hits in the whole tree except one unrelated README line); no notifications, share, keychain, deep links, background execution.
 - Reactivity traps leak to users: two-arg `createEffect`, `REACTIVE_WRITE_IN_OWNED_SCOPE`, microtask-deferred reads, and the element-prop double-read that is a *native memory leak* with no analogue in web Solid. The scaffold `AGENTS.md` is honest about this, but a human developer reads that list as "three ways to shoot myself on day one".
 - Components are looser than core: `children?: any` throughout, doc drift (Button docs say content-sized, code says `width: "100%"`; `policy.ts` says no Tab, `focus-nav.ts` implements Tab). Portals/modals cannot mount on first render.

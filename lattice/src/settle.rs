@@ -1,4 +1,4 @@
-// Waiting for the app to come to rest (okf/plans/test-harness.md, D11): the
+// Waiting for the app to come to rest (okf/done/test-harness.md, D11): the
 // one condition behind `app.settle()` in a test and the control API's
 // `settle` query. An app is at rest when
 //

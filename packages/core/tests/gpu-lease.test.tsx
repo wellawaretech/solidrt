@@ -9,6 +9,7 @@
 import { test, expect } from "../src/test.ts"
 import type { TestApp } from "../src/test.ts"
 import { beginBufferWrite, createBuffer, createPipelineTexture, destroyBuffer, endBufferWrite, glsl, readTexture, setDraw } from "../src/gpu.ts"
+import type { TextureId } from "../src/gpu.ts"
 
 const SIZE = 64
 // Floats per record: center vec2, half-size f32, tint vec3.
@@ -37,8 +38,8 @@ let FRAGMENT = glsl`
 `
 
 /** The target's pixel at clip-space (cx, cy), as [r, g, b] 0..255. */
-function pixelAt(id: number, cx: number, cy: number): [number, number, number] {
-  let { width, height, data } = readTexture(id as never)
+function pixelAt(id: TextureId, cx: number, cy: number): [number, number, number] {
+  let { width, height, data } = readTexture(id)
   // Pipeline clip space is y-DOWN (gl_Position y = -1 is the top row, the
   // pixel contract in core gpu.ts), and rows read back top-to-bottom.
   let px = Math.round((cx * 0.5 + 0.5) * (width - 1))

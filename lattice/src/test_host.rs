@@ -1,4 +1,4 @@
-// Test mode (okf/plans/test-harness.md, stage 4): the dev client as a test
+// Test mode (okf/done/test-harness.md, stage 4): the dev client as a test
 // host. Headless on alloy's stepped mode (stepped.rs): a test asks for every
 // frame (`srt:test` `frame`), so app time is frame / fps and nothing else,
 // and a frame nobody demanded draws nothing. Every test runs in an engine of
@@ -46,7 +46,7 @@ pub(crate) fn empty_sandbox(store: &crate::storage::Storage, app_id: &str) {
 }
 
 /// The details a failed app test's record carries beside the host's own
-/// (okf/plans/test-harness.md, D14), read in the test's engine when the
+/// (okf/done/test-harness.md, D14), read in the test's engine when the
 /// failure is known: when it was (app time and frame), what still wanted
 /// frames, the tree as the test saw it, and a snapshot of the frame,
 /// written under `failures` and named in the record. A test with no window

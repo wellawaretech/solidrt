@@ -16,7 +16,8 @@
 // command sets the mode and its knobs (`{ mode: "linear" | "exp2" |
 // "height" | "off", near, far, density, height, falloff }`) and returns
 // the state; `pan` parks the camera (`{ t: seconds }`), so a capture
-// repeats; `suns` is where the two suns are on screen, for a pixel probe.
+// repeats; `suns` is the two suns' world positions and `project`
+// (`{ point }`) is where a world point is on screen, for a pixel probe.
 import { createSignal, flush, onFrame, pct, render } from "@solidrt/core"
 import { registerDebug } from "srt:dev"
 import { cone, cylinder, DirectionalLight, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit } from "@solidrt/3d"
@@ -78,9 +79,12 @@ registerDebug("pan", (args?: Record<string, unknown>) => {
   flush()
   return { t: time(), parked: parked !== null }
 })
-registerDebug("suns", () => {
-  if (scene === null) throw new Error("suns: the scene is not mounted")
-  return { lit: scene.project(SUN_LIT), fogged: scene.project(SUN_FOGGED) }
+registerDebug("suns", () => ({ lit: SUN_LIT, fogged: SUN_FOGGED }))
+registerDebug("project", (args?: Record<string, unknown>) => {
+  if (scene === null) throw new Error("project: the scene is not mounted")
+  let point = args?.point
+  if (!Array.isArray(point) || point.length !== 3 || !point.every(v => typeof v === "number")) throw new Error("project: pass { point: [x, y, z] }")
+  return scene.project(point as Vec3)
 })
 
 function fog(): FogOptions | undefined {

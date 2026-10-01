@@ -1,7 +1,7 @@
 // Tests for a SolidRT app: `test` registers one and hands it the app under
 // test, `expect` asserts. The base is flux:test (flat tests, every test in
 // an engine of its own, a seeded Math.random); what this adds is the app
-// layer, on the dev client's test mode (okf/plans/test-harness.md).
+// layer, on the dev client's test mode (okf/done/test-harness.md).
 //
 // An app test has no wall clock. Time is the frames the test asks for:
 // nothing runs between two frames, timers fire with the frame their time
@@ -165,6 +165,9 @@ export interface TestApp {
    * an app hands `render`: its `<window>`, or any content, which is then
    * put in a window of its own. Once per test (a test is one app). The
    * first frame is built when this returns; no app time has passed.
+   * `ui` runs as a component body, the owner of what it creates: a
+   * pointer feed, an input map, a GPU buffer or a scene is created inside
+   * it, never at the top of the test.
    */
   mount(ui: () => unknown): Promise<Locator>
   /**

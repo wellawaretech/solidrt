@@ -1,5 +1,5 @@
 // The `flux:test` module: `test` and `expect`, what a test file registers
-// and asserts with, and `settle` (okf/plans/test-harness.md). A fourth plugin layer beside
+// and asserts with, and `settle` (okf/done/test-harness.md). A fourth plugin layer beside
 // standards/forge/alloy: it is no web standard and marshals neither forge
 // nor alloy, but flux's own facilities. Behind the `test` feature, which
 // only the `flux` binary turns on, so no shipping runtime carries it.

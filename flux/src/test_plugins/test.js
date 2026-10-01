@@ -2,7 +2,7 @@
 // `expect` matchers. Evaluated once per context by the module definition
 // (mod.rs), which exports `test` and `expect` and keeps `names` and `runOne`
 // for the host that runs the file (host.rs). Plain JS on purpose: the flux
-// build has no bundling step (okf/plans/test-harness.md, D21).
+// build has no bundling step (okf/done/test-harness.md, D21).
 () => {
   // `toBeCloseTo` without `digits`: equal to two decimal places.
   const DEFAULT_CLOSE_DIGITS = 2

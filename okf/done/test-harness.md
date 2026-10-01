@@ -2,6 +2,7 @@
 title: Test harness - flux:test, srt:test and srt test
 description: Tests for flux programs, SolidRT apps and our own packages, run on our own runtime and deterministic by construction - a base layer on the flux binary (flux:test - test, expect, a seeded Math.random; real time) and an app layer on the headless SolidRT runtime (@solidrt/core/test - mount, find, input, frames, reading; stepped by frames, no wall time), every test in an engine of its own, behind one command, srt test. Supersedes the JS test infrastructure backlog item; the ten bun test files and the checks/ rigs are its first consumers.
 created: 2026-08-17
+completed: 2026-10-01
 ---
 
 # Test harness - flux:test, srt:test and srt test
@@ -11,12 +12,18 @@ asked for a runner and a file convention for the workspace's own JS. The
 shape below was decided 2026-09-29 and widens it twice: down to flux programs
 that have no window, and up to SolidRT apps an author wants to test.
 
-## Where this stands (2026-10-01)
+## Where this stands (closed 2026-10-01)
 
-Every stage is built. Stages 1, 2, 2b and 3 are committed and the CI
-jobs are green on all four platforms (two rounds of fixes on 2026-10-01,
-under [Stage 3](#stage-3---ci-written-2026-09-30-first-run-2026-10-01));
-stage 5 landed the same day (uncommitted). Stage 4 was redesigned on 2026-09-30 under the rule "the
+Every stage is built and everything under "Done looks like" holds: 369
+tests in 41 files behind `bunx srt test`, no `bun:test` import and no
+`checks/` folder left, a scaffolded app can carry a mounting, tapping,
+stepping test, and a failure says what was on screen and when. Stages
+1, 2, 2b and 3 are committed and the CI jobs are green on all four
+platforms (two rounds of fixes on 2026-10-01, under
+[Stage 3](#stage-3---ci-written-2026-09-30-first-run-2026-10-01));
+stage 5 landed the same day. What the work found that outlives it is in
+[test-harness-findings](../notes/test-harness-findings.md); what is
+still open went to [ideas](../ideas.md) and [tiny](../tiny.md). Stage 4 was redesigned on 2026-09-30 under the rule "the
 best solution, not the least effort; no backwards compatibility" (D30 to
 D35, [Stage 4](#stage-4---the-app-layer-redesigned-2026-09-30)), and all
 six of its steps are built (4.5 and 4.6 on 2026-10-01, uncommitted):
@@ -79,9 +86,10 @@ components have tests on a real drag and key. `bunx srt test` at the
 repo root: 369 tests in 41 files, about 28 s. Everything under "Done
 looks like" holds.
 
-Left, not a stage: the MCP bridge's `settle` tool and the `at` and
-`drag` arguments through a re-spawned bridge, which were exercised as
-control API calls with curl and not through the bridge.
+The MCP bridge's `settle` tool and the `at` and `drag` arguments were
+verified through a re-spawned bridge on 2026-10-01 (the fog example:
+`settle` names the standing `onFrame`, `at` returns the hit path, a
+`drag` cycles the mode).
 
 ## Problem
 
@@ -1290,70 +1298,19 @@ framework.
 
 ## Findings
 
-- QuickJS's `Math.random` is xorshift64* with 52 random bits a value, its
-  state private to the context and seeded from the clock in microseconds
-  when the context is created; nothing in its API seeds it. A
-  reproducible `Math.random` therefore has to be a function of our own
-  (D29).
-- Code under test draws random numbers too: `shake()` in
-  `packages/core/src/camera-control.ts` picks its direction and phase
-  with `Math.random()` when none is given, so the shake tests of core,
-  2d and 3d ran on other values every run until `Math.random` was seeded.
-  A test-only random source would not have reached it.
-- The node verbs are not SolidRT-specific. `flux:rendertree` and the text
-  query behind `/tree?query=` (`snapshot_matches`, reached through
-  `flux::gui::tree::with_tree`) are in flux's `gui` layer already; only
-  the `/tree` record shaping (`node_json` in
-  `lattice/src/go/connection.rs`) sits in lattice. The `flux` binary is
-  built without `gui`, and lattice is the only host that turns it on.
-  Whether the frame and input verbs can sit in flux too is unchecked:
-  lattice drives the loop and the dispatch into Solid.
-- A `fail()` that throws is caught by its own `try`. The rigs wrote a
-  must-throw check as `try { f(); fail("must throw") } catch (e) { ... }`,
-  which only worked while `fail()` counted. Fourteen such sites in eleven
-  rigs would have passed silently after the move; each now records
-  whether the call threw and checks it after the `try`. Anyone turning a
-  counting helper into a throwing one has this trap.
-- A `fail()` typed `never` narrows what follows it: after
-  `if (count !== 1) fail(...)` the compiler holds `count` to be 1 and
-  rejects a later `count !== 2`, though a callback changed it in between.
-  The helpers are typed `void`.
+What would be true had the plan never existed is in
+[test-harness-findings](../notes/test-harness-findings.md). What stays
+here is the plan's own history:
+
 - The stepped clock resolves to the millisecond: the long-press test
   asserts nothing fired at 499 ms and the press at 500, where the rig
   waited 400 and 600 ms of wall time with nothing in between. The
   double-tap, the pan and the swipe still wait on real timers, because
   they read `performance.now()`: event-timestamp removes that.
-- None of the core candidates in
-  [core-package-review](../notes/core-package-review.md) runs on the
-  bare flux binary: `parseColor` imports `flux:rendertree`,
-  `createTextBuffer` imports the window and layout bindings. They need
-  the app layer, or a split of the pure part from the binding.
 - The dispatch tests in 2d and 3d shared one fake layer across their
   tests and depended on running in order, as the rigs did. A listener
   one test added and never removed saw every event of the tests after
   it, which nothing noticed. Each test builds its own since 2026-09-30.
-- What is tested where (2026-09-30). forge's tests cover the capability
-  logic. `flux/tests/*.rs`, 172 cargo integration tests in 21 files, run
-  JS source through the real engine and assert on its log, which is the
-  marshalling path; they stay in cargo, since they test the runtime the
-  test runner stands on and some assert what a test inside the engine
-  cannot see (how the process exits). `srt test` is for code written in
-  JS: the packages, apps and flux programs, not the flux modules. The
-  first real-time I/O test under `srt test` is therefore a flux program,
-  and the one there is is the dev server (`packages/cli/src/server`,
-  the second tier in [cli-package-review](../notes/cli-package-review.md));
-  its own piece of work. subprocess, p2p and ffi have no file in
-  `flux/tests/`; they belong there. `flux/examples/*.js` are untracked
-  scratch from building each module, neither tests nor documentation,
-  and stay as they are; a maintained examples set is item 8 of
-  [flux-crate-review](../notes/flux-crate-review.md).
-- The "runtime-free entry" tests (`model-data`, `splat-data`, `textures`,
-  `joints`) proved under bun that no `flux:*` import had crept into an
-  entry a bake script loads under bun. On the `flux` binary the proof is
-  narrower: a gui or `srt:` import still fails to link, a headless
-  `flux:` import (`flux:fs`, `flux:image`) does not. Closing that gap
-  needs the bundle's import list, which `srt test` has and a test does
-  not; open.
 - Bringing `tests/` into the packages' typecheck programs (they were
   excluded while they ran under bun) surfaced one type error, in
   `packages/3d/tests/invert.test.ts`, fixed with the migration.
@@ -1362,35 +1319,3 @@ framework.
   condition. Step 4.4 split the two (D40).
 - `srt render --settle` was a wall-clock sleep after the mount frame
   (`PlaybackConfig::settle`) until step 4.6 made it the settle condition.
-- A fake backend with a delay in its handler deadlocks a settle: the
-  handler's `setTimeout` is an app timer, which fires only with a frame,
-  and the settle waits for the fetch (work in flight) with no frame
-  stepped. Found with the render probe (2026-10-01); the testing guide
-  says a fake backend answers at once and a delay is the test's
-  `advance`.
-- The engine loop's `select!` is unbiased between the exec channel and
-  `idle()`: an engine with no holds and a dry job queue can end with
-  closures still queued on its exec channel. The test host's relay turns
-  rode on that until 4.5 held the engine for them (2026-10-01).
-- Virtual timers are a flux facility, not a lattice one: lattice is one
-  host that drives `advance_virtual_time`, the test clock is another.
-- A flux module can be written in JS without touching the loader. Every
-  module registered today is a native definition (`ModuleDef`), and its
-  `evaluate` step receives the context, so it can evaluate an embedded
-  source and export the values that source returns. rquickjs 0.14 also
-  accepts a tuple of loaders, which would let a source loader sit beside
-  the native one; not needed.
-- The engine loop ends when the job queue is drained and no operation is
-  pending (`FluxEngine::run`). A promise that never settles holds nothing,
-  so a script waiting on one exits with status 0. A test runner on flux
-  must treat an unfinished run as a failure.
-- `fluxrt` is built without the `compile` feature and cannot evaluate
-  source (`eval_source` and `ModuleCode::Source` sit behind it), so a
-  module embedded as source cannot load there in any case.
-- The ten bun test files import pure modules only. `srt test` cannot run
-  code that calls Bun APIs, which covers parts of the CLI (the bundler,
-  process spawning); pure CLI logic is fine.
-- `packages/core/tests/textures.test.ts` doubles as the proof that
-  `@solidrt/core/textures` imports no runtime module. The proof holds on
-  the bare `flux` binary as it does on bun: a GUI or `srt:*` import would
-  fail to bundle or to link.
