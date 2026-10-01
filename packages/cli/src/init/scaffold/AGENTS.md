@@ -59,7 +59,7 @@ that matches the work; do not work from memory of what a web framework does.
   over a `flux:sqlite` database)
 - debug a running app, or drive it over MCP to verify a change ->
   node_modules/@solidrt/cli/agents/debugging.md
-- write or repair a test (`bunx srt test`) ->
+- write or repair a test (`bun run srt test`) ->
   node_modules/@solidrt/cli/agents/testing.md (the method) and
   node_modules/@solidrt/test/AGENTS.md (the API)
 - add an asset or font, set the app's identity, or build for distribution ->
@@ -119,6 +119,6 @@ platform-wide and bite in every app:
   before the first reload. The `.mcp.json` here is Claude Code's convention;
   if your client lists no `solidrt` tools, debugging.md has the entry to add
   to its own config.
-- Tests: `bunx srt test` or `bun run test` (not `bun test`, which is Bun's
+- Tests: `bun run srt test` or `bun run test` (not `bun test`, which is Bun's
   own runner and cannot load them). They live in tests/; to write one, see
   the test entry under "Read before you".

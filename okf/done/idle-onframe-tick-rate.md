@@ -22,7 +22,7 @@ frame (a camera moving) the same app ran at the refresh rate, and each
 control-API call produced one more tick.
 
 Repro (`probes/` is gitignored, so the whole probe is here): save this as
-`probes/onframe-probe.tsx`, `bunx srt run probes/onframe-probe.tsx --file
+`probes/onframe-probe.tsx`, `bun run srt run probes/onframe-probe.tsx --file
 --port 34902`, then `POST /__control__/debug?name=frames` twice a second
 apart.
 

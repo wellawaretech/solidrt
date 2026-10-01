@@ -555,7 +555,7 @@ binary, so a gui or `srt:` import creeping into any of them fails there
 (a headless `flux:` import would not); keep them that way.
 `src/splat-data.ts` is its own published entry the same way
 (`@solidrt/3d/splat`, guarded by `tests/splat-data.test.ts`).
-The tests under `tests/` run with `bunx srt test packages/3d` from the
+The tests under `tests/` run with `bun run srt test packages/3d` from the
 repo root, or one file, or `--filter <text>` for the tests whose name
 contains it: the pure modules on the bare flux binary, and the files
 that need a GPU (`.test.tsx`, importing `@solidrt/test`) on the
@@ -1664,7 +1664,7 @@ specular, `envIrradiance` - the fully rough sample along the normal, as
 Three's getIBLIrradiance and Godot read it - added to the hemisphere
 for the diffuse) and every `phong({ reflectivity })` material mirrors,
 typically the skybox's own cube turned with it. The cube to use is a
-BAKED one: `bunx srt tool 3d/environment sky.hdr -o assets/sky.srte`
+BAKED one: `bun run srt tool 3d/environment sky.hdr -o assets/sky.srte`
 turns an equirectangular Radiance .hdr (Poly Haven's are CC0) into the
 six faces plus the GGX-prefiltered mip chain in linear float, and
 `await loadEnvironment("assets/sky.srte")` uploads it as an explicit

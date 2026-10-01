@@ -18,13 +18,13 @@ preparing a build for distribution.
   `.frag`) are declared as text modules out of the box, so they typecheck
   without setup. Inlining trades update granularity for zero I/O - keep big or
   streamable files (audio, images) in `assets/`.
-- `bunx srt bundle` writes `dist/bundle/` (or `--output <dir>`):
+- `bun run srt bundle` writes `dist/bundle/` (or `--output <dir>`):
   `<name>.srt.js` plus the app's isolate modules as `isolates/<id>.js`; with
   `--compile`, bytecode (`.srt.bin`/`.bin`) instead. Move the dir, not the
   bare file - a bundle loaded without its isolates/ dir loses them
   (`--stdout` cannot carry them at all). Isolates (`"use isolate"` modules)
   exist in projects only, not for a file served on its own.
-- `bunx srt bundle --json` is the dev server's rebuild contract: one JSON
+- `bun run srt bundle --json` is the dev server's rebuild contract: one JSON
   object (code, sourcemap, manifest, isolates) on stdout. Not for humans.
 
 ## Fonts, identity and distribution
@@ -40,9 +40,9 @@ preparing a build for distribution.
   folder, defaults from the package name in dev, and `srt pack` warns
   while defaulted. `org` and `displayName` are optional display metadata
   (future player/window naming) with no storage meaning.
-- `bunx srt pack` builds a single-file executable (the runner with the
+- `bun run srt pack` builds a single-file executable (the runner with the
   bytecode, manifest, assets and fonts appended as a trailer);
-  `bunx srt pack --folder` writes the flat app folder
+  `bun run srt pack --folder` writes the flat app folder
   (runner + manifest.json + bundle + assets/, plus the runner's GL
   libraries on Windows and macOS) to `dist/pack/`.
 - A packed app contains the SolidRT runtime, and with it third-party

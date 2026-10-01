@@ -66,5 +66,5 @@ Working feed for the dev-server repl, from a project directory:
 
 ```
 (sleep 12; printf 'hel\t\r'; sleep 0.5; printf '\x1b[A\r'; sleep 0.5; printf '\x03'; sleep 4) \
-  | script -qec "bunx srt server" /dev/null
+  | script -qec "bun run srt server" /dev/null
 ```

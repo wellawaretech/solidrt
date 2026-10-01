@@ -139,11 +139,11 @@ Docs and comments naming the old import:
 
 ## Verification
 
-1. Before anything moves: the `bunx srt test` total, per layer.
+1. Before anything moves: the `bun run srt test` total, per layer.
 2. `bun install`; the `bun.lock` diff holds the new workspace member only.
 3. `bun packages/cli/bin/srt check` on `packages/test/src/index.ts` and on
    one test file each in core, 2d and 3d: "Types OK".
-4. `bunx srt test`: the same total, both layers green. The app layer runs
+4. `bun run srt test`: the same total, both layers green. The app layer runs
    on the dev client as built: no Rust change, so no rebuild.
 5. `git grep "core/test"` finds only the harness plan's history.
 6. `bun pm pack` in `packages/test`: the tarball holds `package.json`,

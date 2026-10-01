@@ -19,7 +19,7 @@ store the UI it never had.
 - `lattice/default-app/` holds `app.tsx` (connect screen: discover, QR
   pairing, recents, `launchAddress` auto-connect) + `logo.tsx`, and
   `bsod.tsx` (crash screen). Bundled by the lattice Makefile
-  (`default-app-bundle` target, `bunx srt bundle`) into checked-in
+  (`default-app-bundle` target, `bun run srt bundle`) into checked-in
   `.srt.js` files, embedded via `include_str!` in `lattice/src/lib.rs`.
   The connect screen and `EngineCmd::Stop` are `go`-gated (2026-07-21);
   the BSOD is embedded in every build.

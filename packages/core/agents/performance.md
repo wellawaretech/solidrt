@@ -149,7 +149,7 @@ Rules, in order of leverage:
    anything needing what is behind it does not - and is split from content
    invalidation, so a params-only change re-runs the pass against the cached
    snapshot instead of re-rasterizing. A window shader's output is invisible
-   to get_snapshot and every other MCP tool; `bunx srt render` is the only
+   to get_snapshot and every other MCP tool; `bun run srt render` is the only
    way to see it (see @solidrt/cli AGENTS.md).
 8. `flux:wasm` runs a pure interpreter (wasmi, no JIT), so temper browser
    expectations - but do not write it off for compute. A genuinely numeric

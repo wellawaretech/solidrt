@@ -138,11 +138,11 @@ BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_H
 
 $(PLAYER_JS): $(wildcard $(PLAYER_DIR)/src/*.ts*) $(wildcard $(PLAYER_DIR)/src/parts/*.ts*) $(BUNDLE_DEPS)
 	@echo "Bundling player (index.tsx -> resources/player/)..."
-	cd $(PLAYER_DIR) && bunx srt bundle $(PLAYER_SRC) --project -o $(dir $(PLAYER_JS))
+	cd $(PLAYER_DIR) && bun run srt bundle $(PLAYER_SRC) --project -o $(dir $(PLAYER_JS))
 
 $(BSOD_JS): $(BSOD_SRC) $(BUNDLE_DEPS)
 	@echo "Bundling BSOD screen (bsod.tsx -> resources/bsod/)..."
-	cd $(PLAYER_DIR) && bunx srt bundle $(BSOD_SRC) --project -o $(dir $(BSOD_JS))
+	cd $(PLAYER_DIR) && bun run srt bundle $(BSOD_SRC) --project -o $(dir $(BSOD_JS))
 
 help:
 	@echo "Host ($(HOST_TARGET)):"

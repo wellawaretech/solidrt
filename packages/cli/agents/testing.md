@@ -11,7 +11,7 @@ read a failure.
 ## The shape
 
 - A test file is `tests/<name>.test.ts` or `.test.tsx` in the package or
-  project it tests, never beside the sources. `bunx srt test` finds every
+  project it tests, never beside the sources. `bun run srt test` finds every
   `tests/` folder under the cwd; `srt check` typechecks them with the app.
 - Tests are flat: `test("<a sentence naming the subject>", fn)`, no
   `describe`, no hooks, no mocking framework. Shared setup is a plain
@@ -205,7 +205,7 @@ test, whether or not it mounts anything.
 
 ## Running
 
-- `bunx srt test` - everything under the cwd; `bunx srt test <dir|file>`
+- `bun run srt test` - everything under the cwd; `bun run srt test <dir|file>`
   narrows; `--filter <text>` by name; `--seed <n>` another random
   sequence; `--only flux` or `--only app` one layer (CI runs the flux
   tests on every platform and the app tests where the dev client builds).

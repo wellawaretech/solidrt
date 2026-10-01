@@ -18,7 +18,7 @@ ever started". Nothing in the output says why.
 The workaround was to hold stdin open artificially:
 
 ```
-(sleep 100000 | bunx srt run app.tsx > run.log 2>&1 &)
+(sleep 100000 | bun run srt run app.tsx > run.log 2>&1 &)
 ```
 
 which was documented in the root `CLAUDE.md` and carried its own trap - the

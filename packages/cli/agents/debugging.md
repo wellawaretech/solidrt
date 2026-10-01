@@ -7,7 +7,7 @@ shell or a CI step ("The control API without MCP" below).
 ## Driving the app over MCP
 
 The project ships an MCP server (`srt mcp`) that talks to the dev server
-`bunx srt run` starts. If your client lists no `solidrt` tools, it has not
+`bun run srt run` starts. If your client lists no `solidrt` tools, it has not
 been pointed at the server yet - see "Wiring up an agent client" below. Each
 tool documents its arguments in full - read the tool description rather than
 guessing at them; the records the tools return are the control API's, and
@@ -15,7 +15,7 @@ their fields are documented once, under "The control API without MCP" below.
 What the individual descriptions cannot tell you:
 
 - If `list_clients` is empty, no app is running: ask the user to start
-  `bunx srt run` rather than starting a second one yourself.
+  `bun run srt run` rather than starting a second one yourself.
   The bridge needs no port: it resolves the server currently serving this
   project, whatever `--port` it was started with, and re-resolves when
   that server goes away or a different project's server takes its port.
@@ -46,11 +46,11 @@ What the individual descriptions cannot tell you:
 - A `shader` on `<window>` runs on the finished frame past the point every
   capture reads: `get_snapshot` returns the UNSHADED content (window node
   included), `get_texture` has no id for the shaded layer, and
-  `get_gpu_resources` reports only that the pass exists. `bunx srt render` is
+  `get_gpu_resources` reports only that the pass exists. `bun run srt render` is
   the only programmatic view of what a window shader produces.
 - Permission prompts: agents typically ask approval per MCP tool. All of
   these tools only talk to the local dev server the user started with
-  `bunx srt run` - nothing leaves the machine - so approving the server as a
+  `bun run srt run` - nothing leaves the machine - so approving the server as a
   whole is a reasonable default. If repeated prompts get in the way, do not
   work around them; tell the user they can pre-approve the server in their
   agent's settings (most agents have a per-server trust or allowlist setting

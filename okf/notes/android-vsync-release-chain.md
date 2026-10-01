@@ -131,7 +131,7 @@ does not need to (see above).
 
 ## Recipe and traps
 
-- Serve the probe from the repo root (`bunx srt run
+- Serve the probe from the repo root (`bun run srt run
   probes/vsync-cadence-probe.tsx --project --port <N> --lan`), install the
   matching dev APK from `dist/android/<abi>/solidrt-go.apk` first, then
   `bun packages/cli/bin/srt android --port <N>`. A client from another

@@ -6,7 +6,7 @@ the authoring model (elements, props, reactivity), see @solidrt/core (its
 AGENTS.md).
 
 `srt` is the dev tool. Bun is a dev prerequisite only; SolidRT apps run on the
-bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
+bundled `flux` runtime, not on Bun. Invoke via `bun run srt <command>`.
 
 The dev loop against a running app is pause_watch -> edit -> reload ->
 resume_watch -> get_logs -> get_snapshot, with mute_user_input while you
@@ -14,7 +14,7 @@ measure or test and unmute_user_input after; agents/debugging.md has the
 why of each hold. Several clients may be attached at once: `reload` reaches
 all of them, while call_debug / send_input / get_snapshot are per client
 (debugging.md). `reload` surfaces build errors but not type errors:
-`bunx srt check` is for those.
+`bun run srt check` is for those.
 
 agents/ carries the depth this one leaves out; read the one that matches
 the work before starting it:
@@ -32,31 +32,31 @@ the work before starting it:
 
 ## Commands
 
-- `bunx srt init <dir>` - scaffold a new SolidRT project into a new (empty)
+- `bun run srt init <dir>` - scaffold a new SolidRT project into a new (empty)
   folder: package.json, tsconfig.json, AGENTS.md, a starter src/index.tsx, a
   starter tests/app.test.tsx, an empty assets/ (everything in it ships with
   the app), then installs deps. Greenfield shortcut (no install needed first):
   `bun create solidrt <dir>`.
-- `bunx srt run` - dev server + a local client window, from the project root
-  (entry `solidrt.entry` in package.json, default src/index.tsx); `bunx srt run
-  <file>` serves a single file outside a project. NEEDS A DISPLAY (opens a GUI
+- `bun run srt run` - dev server + a local client window, from the project root
+  (entry `solidrt.entry` in package.json, default src/index.tsx); `bun run srt
+  run <file>` serves a single file outside a project. NEEDS A DISPLAY (opens a GUI
   window). Not usable headless. Reloads on save (the bundle's inputs and
   `assets/`); an agent pauses that with `pause_watch` and pushes its edits
   with the MCP `reload` tool.
-- `bunx srt tool` - list the build-time tools the installed `@solidrt/*`
+- `bun run srt tool` - list the build-time tools the installed `@solidrt/*`
   packages ship (`<package>/tools/<name>.ts`, named `<package>/<name>`);
-  `bunx srt tool <package>/<name> [arguments]` runs one in the project,
+  `bun run srt tool <package>/<name> [arguments]` runs one in the project,
   everything after the name passed through as the tool's own arguments
   (each tool prints its own usage on `--help`). A tool runs under bun; one
   whose file is `<name>.flux.ts` runs under the flux runtime instead, for
   what only the runtime has, and is named and called the same way. What a tool does
   is the package's business (e.g. `3d/model` bakes a glTF into a model
   file); srt only finds and runs them.
-- `bunx srt check [file|dir]` - build in memory and typecheck, no output
+- `bun run srt check [file|dir]` - build in memory and typecheck, no output
   and no reload. With a folder it covers every entry under it (src/index.tsx
-  and examples/*), so `bunx srt check .` answers "did I break any example"
+  and examples/*), so `bun run srt check .` answers "did I break any example"
   in one call. The dev server runs it once at startup without gating on it.
-- `bunx srt test [file|dir]` - run the tests: every `tests/*.test.ts` under
+- `bun run srt test [file|dir]` - run the tests: every `tests/*.test.ts` under
   the folder (default: the cwd), each file bundled and run in its own `flux`
   process, not under Bun. A test file imports `test` and `expect` from
   `flux:test` (flat tests, no `describe`, no hooks; the matchers are in
@@ -85,19 +85,19 @@ the work before starting it:
   event shape, through the real pipeline), `app.link`, `app.debug`, and
   the readers (`outline()`, `pixel()`, `app.gpu()`) are described in core's
   AGENTS.md ("Testing an app").
-- `bunx srt bundle` - bundle the project into `dist/bundle/` (or
+- `bun run srt bundle` - bundle the project into `dist/bundle/` (or
   `--output <dir>`): `<name>.srt.js` plus the app's isolate modules as
   `isolates/<id>.js`. With `--compile`, bytecode (`.srt.bin`/`.bin`)
   instead. Move the dir, not the bare file - a bundle loaded without its
   isolates/ dir loses them (`--stdout` cannot carry them at all).
   `--minify`, `--dev` also available.
-- `bunx srt render [flags]` - render the project OFFSCREEN to PNG frames,
+- `bun run srt render [flags]` - render the project OFFSCREEN to PNG frames,
   optionally replaying a `--script` file recorded via `--capture`;
   `--settle` runs the app to rest first, `--strict` fails on a logged
   error, `--seed <n>` another Math.random sequence (see below).
-- `bunx srt server [file]` / `bunx srt client` - the two halves of `run`
+- `bun run srt server [file]` / `bun run srt client` - the two halves of `run`
   separately (server distributes code; clients on other devices connect to it).
-- `bunx srt run --capture out.script.json` - records keydown/keyup
+- `bun run srt run --capture out.script.json` - records keydown/keyup
   from every connected client into one script file (written on client
   disconnect), for replaying later with `render --script`. The file is JSON
   Lines and hand-authorable: one object per line,
@@ -110,8 +110,8 @@ the work before starting it:
 
 Two reliable checks that need no GUI:
 
-1. `bunx srt bundle` - exit 0 means the app compiles. Fast.
-2. `bunx srt render --settle --strict --size 480x640 --duration 1 --fps 2`
+1. `bun run srt bundle` - exit 0 means the app compiles. Fast.
+2. `bun run srt render --settle --strict --size 480x640 --duration 1 --fps 2`
    - renders offscreen via EGL and writes `frame-NNNNNN.png`. `--strict`
    makes exit 0 mean the frames were written AND the app logged no error
    (a scene whose build throws is contained per the error model and would
@@ -121,7 +121,7 @@ Two reliable checks that need no GUI:
    0. Combine with `--fps`/`--duration` (defaults 1280x720, 60fps, 1s). No
    display needed: rendering uses SDL's offscreen driver, or alloy's own
    EGL pbuffer where that driver cannot go headless (see the ANGLE gotcha
-   below). A test (`bunx srt test`, agents/testing.md) asserts on the tree
+   below). A test (`bun run srt test`, agents/testing.md) asserts on the tree
    instead of a picture and is the better gate for behavior.
 
 Also headless: the bundled flux runtime runs a plain `.js` file directly -

@@ -172,7 +172,7 @@ parses through the same function, so it does not change; the
 
 Done looks like: the check rig writes every format through the codec
 and proves the raw bytes, transforms and merges a packed geometry, and
-round-trips one through the model file; `bunx srt check packages/3d`
+round-trips one through the model file; `bun run srt check packages/3d`
 passes; the alloy tests cover `vertex_stride` over packed formats and
 the component-count match.
 

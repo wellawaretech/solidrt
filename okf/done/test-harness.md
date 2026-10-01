@@ -15,7 +15,7 @@ that have no window, and up to SolidRT apps an author wants to test.
 ## Where this stands (closed 2026-10-01)
 
 Every stage is built and everything under "Done looks like" holds: 369
-tests in 41 files behind `bunx srt test`, no `bun:test` import and no
+tests in 41 files behind `bun run srt test`, no `bun:test` import and no
 `checks/` folder left, a scaffolded app can carry a mounting, tapping,
 stepping test, and a failure says what was on screen and when. Stages
 1, 2, 2b and 3 are committed and the CI jobs are green on all four
@@ -72,7 +72,7 @@ six of its steps are built (4.5 and 4.6 on 2026-10-01, uncommitted):
   the window back, with the wall frozen and `Math.random` seeded,
   `--settle` the condition of D11, `--strict` and `--seed` passed through.
 
-`bunx srt test` at the repo root: 341 tests in 35 files, 7 to 12 s
+`bun run srt test` at the repo root: 341 tests in 35 files, 7 to 12 s
 depending on what else the machine does. `cargo test -p flux --lib
 --features test,gui`: 101 tests; alloy 637 (the `always_render` test went
 with the gate bypass), lattice 66. `srt check` passes for core, cli and
@@ -82,7 +82,7 @@ render host.
 
 Stage 5 (2026-10-01): the four GPU rigs are app tests, the `checks/`
 folders are gone, the fog example has a capture test, and the camera
-components have tests on a real drag and key. `bunx srt test` at the
+components have tests on a real drag and key. `bun run srt test` at the
 repo root: 369 tests in 41 files, about 28 s. Everything under "Done
 looks like" holds.
 
@@ -107,8 +107,8 @@ What exists, none of it structural:
 - The `checks/` rigs (`packages/core/checks` 6, `packages/2d/checks` 8,
   `packages/3d/checks` 9): self-reporting scripts with a `fail()` counter
   that throw at the end. Nineteen are pure and run by hand as
-  `bunx srt bundle -f --stdout <file> | target/release/flux -`; four need a
-  GPU and run as `bunx srt render <file> --duration <s> --size 128x128`
+  `bun run srt bundle -f --stdout <file> | target/release/flux -`; four need a
+  GPU and run as `bun run srt render <file> --duration <s> --size 128x128`
   (`gpu-lease-check.tsx` in core, `collision-check.tsx` in 2d and 3d,
   `raycast-check.tsx` in 3d). `srt check` does not typecheck `checks/`, so
   a broken rig is only found by running it.

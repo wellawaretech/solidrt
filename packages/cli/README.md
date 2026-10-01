@@ -7,7 +7,7 @@ ship. A GUI inspector, itself a SolidRT app, is in progress alongside it.
 > LLM agents: `AGENTS.md` in this package is a dense, self-contained quickstart.
 
 Bun is a dev prerequisite only; apps run on the bundled `flux` runtime.
-Invoke via `bunx srt <command>`. A scaffolded project wires the common
+Invoke via `bun run srt <command>`. A scaffolded project wires the common
 commands into scripts, so day-to-day work is `bun run dev`, `bun run
 android` (and `server`, `client`, `pack` for the rest).
 

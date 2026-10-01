@@ -3,7 +3,7 @@
 // bundle - the shape every app with real content ends up needing. Bake
 // the asset once and drop it in your app's assets tree:
 //
-//   bunx srt tool 3d/model examples/model.glb -o assets/model.srtm
+//   bun run srt tool 3d/model examples/model.glb -o assets/model.srtm
 //
 // (loadGltf("assets/model.glb") has the exact same async shape; the bake
 // just removes the runtime parse.)

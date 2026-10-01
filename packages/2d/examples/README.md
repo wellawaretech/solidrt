@@ -1,7 +1,7 @@
 # @solidrt/2d examples
 
 Single-concept sprite-layer patterns. Each file is a complete, runnable app
-(`bunx srt run <file>` from the repo root) demonstrating exactly one thing -
+(`bun run srt run <file>` from the repo root) demonstrating exactly one thing -
 copy one and adapt it.
 
 - `sprites.tsx` - the layer at its natural scale: 500 sprites bouncing at

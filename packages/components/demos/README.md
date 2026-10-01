@@ -1,7 +1,7 @@
 # @solidrt/components demos
 
 Demos to run, not snippets to copy - `examples/` next door is the one-feature
-set. List them with `bunx srt demo` and start one by its number.
+set. List them with `bun run srt demo` and start one by its number.
 
 This folder is ONE project: the demos share this package.json, this
 tsconfig.json and this `assets/` folder. It does not ship with the package:

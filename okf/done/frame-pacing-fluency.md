@@ -127,7 +127,7 @@ visible stutter. Do not redesign the clock for this.
 - Cross-version A/B: a current-CLI bundle loads fine into a runtime a
   few days old, but the 0.0.38-era runtime BSODs on a current-core
   bundle - run the era's own dev server from its worktree instead
-  (worktree + bun install + its bunx srt server; port is the same fixed
+  (worktree + bun install + its bun run srt server; port is the same fixed
   34884, so kill the current server first).
 
 ## Session 2026-08-13, part 2: direction 1 implemented, direction 2 proven

@@ -7,7 +7,7 @@ created: 2026-09-11
 # Headless verification traps
 
 Found while verifying the @solidrt/3d tiny items of 2026-09-11 with
-`probes/3d-scope-override-probe.tsx` (`bunx srt render <probe> --file
+`probes/3d-scope-override-probe.tsx` (`bun run srt render <probe> --file
 --duration 1`: no dev server, so no clash with whatever `srt run` the user
 has up). Each cost a rerun; none is specific to that probe.
 
