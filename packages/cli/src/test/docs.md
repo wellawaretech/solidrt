@@ -15,6 +15,7 @@ srt test tests/route.test.ts   # one file
 srt test tests/counter.test.tsx  # an app test, on the dev client
 srt test --filter matchPath    # only the tests whose name contains the text
 srt test --seed 12345          # the same tests on another Math.random sequence
+srt test --only app            # one layer: the app tests (or `flux`)
 ```
 
 A test file lives in a `tests/` folder of its package or project, never
@@ -52,12 +53,14 @@ the others. The file's top level runs once per test for that; keep it to
 registering tests and cheap setup.
 
 Nothing is retried. A failure prints the expected and the received value
-and the source line; what a test printed is shown under it. An uncaught
-error (a throw in a timer callback, a rejection nobody handles) fails the
-test it happened in. A test that does not finish within 5 seconds fails as
-timed out, a synchronous loop included, and one that waits on a promise
-nothing will settle fails at once, so a test cannot pass by never
-finishing. The command exits nonzero on any failure.
+and the source line, then what the host read in the test's engine at that
+moment (`In flight: 1 fetch` names work the test had started and not
+finished), then what the test printed. An uncaught error (a throw in a
+timer callback, a rejection nobody handles) fails the test it happened
+in. A test that does not finish within 5 seconds fails as timed out, a
+synchronous loop included, and one that waits on a promise nothing will
+settle fails at once, so a test cannot pass by never finishing. The
+command exits nonzero on any failure.
 
 `Math.random()` is seeded in every test's engine. A test that draws random
 inputs, and code under test that calls `Math.random()`, therefore does the
@@ -174,9 +177,9 @@ loaded app into a state its UI reaches slowly. A `gamepad` event in
 `app.input` drives a synthetic pad.
 
 Past a node's record there are three readers, in the order to reach for
-them: `locator.tree()` is the subtree as text, one node per line with its
-kind, label, text and box and no ids, to pin a whole layout against a
-string or to print what is there; `app.gpu({ label })` is the GPU
+them: `locator.outline()` is the subtree as an outline, one node per line
+with its kind, label, text and box and no ids, to pin a whole layout
+against a string or to print what is there; `app.gpu({ label })` is the GPU
 inventory the control API's `/gpu` reports, where whether something draws
 is a count, not a picture; and `locator.pixel(x, y)` (one `[r, g, b, a]`)
 or `locator.pixels()` (the image) read what the node paints, drawn at
@@ -184,9 +187,34 @@ once from the tree as it is, with no frame run and no time passed, so a
 transition is read where it stands. Pixels are the last resort, for what
 only the picture shows.
 
+When an app test fails, the report says what the test saw: the app time
+and frame it failed at, what still wanted frames (a transition on a named
+node, a frame callback), the whole app as `outline()` prints it, and the path
+of a snapshot of the frame, written under the project's `dist/test/`:
+
+```
+  FAILED: a tap increments
+    AssertionError: expect(received).toBe(expected)
+    Expected: true
+    Received: false
+        at <anonymous> (tests/counter.test.tsx:7:52)
+    At: 33.33 ms of app time, frame 2
+    Frames demanded by: a transition on view labelled "count"
+    Outline:
+      window 0,0 1280x720
+        view [count] 20,20 200x40
+          text "0" 20,20 200x40
+    Snapshot: dist/test/counter/failures/a-tap-increments.png
+```
+
 Anything that imports the app runtime (`srt:` modules, or a module of the
 rendering layer such as `flux:rendertree`) makes a file an app test; a
 `.test.tsx` file always is one. The bundle and a data folder of the file's
-own are staged under the project's `dist/test/`.
+own are staged under the project's `dist/test/`. `--only flux` and `--only
+app` run one layer, for a machine that has one of the two binaries.
+
+The method - what to test and at which layer, naming, the time model, how
+to read a failure - is in the testing guide of `@solidrt/cli`
+(`agents/testing.md`).
 
 `srt check` typechecks the test files along with the entries.

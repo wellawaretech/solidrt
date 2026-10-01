@@ -171,20 +171,20 @@ pub(crate) fn coalesce_frame_signals(older: AlloyEvent, newer: AlloyEvent) -> Al
 /// engine that does not exist.
 pub struct FluxRuntime {
   exec: Rc<RefCell<Option<ExecHandle>>>,
-  // Virtual present counter the playback-mode clock derives time from,
+  // Virtual present counter the stepped clock derives time from,
   // published by frame(). Unused in run mode.
   playback_frame: Arc<AtomicU64>,
   // Run-mode pacing for the animation timestamps (see paced_clock). None in
-  // playback mode, which uses the deterministic frame/fps clock.
+  // a stepped run, which uses the deterministic frame/fps clock.
   paced: Option<PacedClock>,
   // Dev-tool pause/step/scale state; permanently scale 1 outside a dev
-  // session (and in playback mode, which has no dev connection).
+  // session (and on a stepped run, which has no dev connection).
   clock_control: ClockControl,
   // Wall origin for the paced clock's correction target. tokio's Instant so
   // tokio's test clock can drive it.
   wall_start: tokio::time::Instant,
   // The frame timeline flux's native consumers read. Here it is the input
-  // time in playback mode, which has one clock for everything (frame / fps).
+  // time on a stepped run, which has one clock for everything (frame / fps).
   timeline: flux::Timeline,
   platform: Arc<PlatformContext>,
   // Sampling handle onto the resampler its producers feed (the alloy pump
@@ -305,7 +305,7 @@ impl FluxRuntime {
 impl FluxRuntime {
   // The `timeStamp` of an input event that happened at the wall reading
   // `raw_ms` (see the input reading in paced_clock.rs): its own time in run
-  // mode, the frame's time in playback, where no wall time passes between
+  // mode, the frame's time when stepped, where no wall time passes between
   // frames.
   fn stamp(&self, raw_ms: f64) -> f64 {
     match &self.paced {
@@ -335,11 +335,11 @@ impl UiRuntime for FluxRuntime {
     // engine got to it.
     let stamp = self.stamp(raw_ms);
     if flux::gui::events::forward(eh, event, stamp) {
-      // The window's size has reached the engine: a test's mount waits on
+      // The window's size has reached the engine: a stepped host waits on
       // it (queued behind the forward, so the size is there when it runs).
-      #[cfg(feature = "test")]
+      #[cfg(any(feature = "go", feature = "test"))]
       if matches!(event, AlloyEvent::Resize { .. }) {
-        eh.exec(|ctx| crate::plugins::test::window_ready(&ctx));
+        eh.exec(|ctx| crate::stepped::window_ready(&ctx));
       }
       return;
     }
@@ -440,7 +440,7 @@ impl UiRuntime for FluxRuntime {
     // Sampled at frame-signal time: the alloy loop feeds the vsync's input
     // into the resampler before emitting the signal, so this frame's touch
     // samples are already in the history. Touch is resampled against the
-    // signal's reference instant; playback has no such instant and takes
+    // signal's reference instant; a stepped run has no such instant and takes
     // each pointer's newest sample.
     let resample_frame =
       self.paced.as_ref().map(|pc| (reference, std::time::Duration::from_secs_f64(pc.period_ms() / 1000.0)));
@@ -453,11 +453,11 @@ impl UiRuntime for FluxRuntime {
     }
     let playback_frame = self.playback_frame.clone();
     let paced = self.paced.clone();
-    // The presentation model's period; None in playback mode, which has no
+    // The presentation model's period; None on a stepped run, which has no
     // presentation model.
     let paced_period_ms = self.paced.as_ref().map(|p| p.period_ms());
     // The refresh period a frame's cost is judged against (frame history):
-    // the presentation model's in run mode, the capture rate's in playback.
+    // the presentation model's in run mode, the stepped rate when stepped.
     let judge_period_ms = paced_period_ms.map(|p| p as f32).unwrap_or_else(|| 1000.0 / self.platform.fps().max(1) as f32);
     let clock_control = self.clock_control.clone();
     let wall_start = self.wall_start;
@@ -465,7 +465,7 @@ impl UiRuntime for FluxRuntime {
     let timing = self.timing.clone();
     eh.exec(move |ctx| {
       // Publish the present being computed before reading the clock, so in
-      // playback mode the clock reports this frame's virtual time.
+      // a stepped run the clock reports this frame's virtual time.
       playback_frame.store(next_frame, Ordering::Relaxed);
       // Dev-tool clock control: at scale 0 frame delivery to JS is gated (a
       // true pause: onFrame, rAF and the reactive flush all hang off the
@@ -479,11 +479,11 @@ impl UiRuntime for FluxRuntime {
       // rAF and the render event march on the frame timeline (which
       // flux::Timeline also reports): the paced clock in run mode, advancing
       // by the display refreshes alloy counted for this signal, the
-      // frame-derived virtual clock in playback. The virtual timers march on
+      // frame-derived virtual clock when stepped. The virtual timers march on
       // the paced clock's wall-anchored timer reading instead - same
       // pause/step/scale policy, deadlines wall-accurate whatever the frames
       // do (see paced_clock). Input events are stamped with its input
-      // reading. In playback all three are the deterministic frame clock.
+      // reading. When stepped all three are the deterministic frame clock.
       // performance.now() is on NONE of them - that stays real elapsed time.
       // Render event carries seconds; JS scales to ms. The clock ticks ahead
       // of the moves below, so their stamps are placed against this
@@ -509,7 +509,7 @@ impl UiRuntime for FluxRuntime {
       // Resampled moves run ahead of the frame work so the frame consumes
       // the state they dirty; timed as moves, not frame cost. Each is
       // stamped with the time of the position it carries (the frame's time
-      // in playback), and the batch's terminator with the latest of them.
+      // when stepped), and the batch's terminator with the latest of them.
       let has_moves = !moves.is_empty();
       let mut batch_ts = f64::NEG_INFINITY;
       for m in moves {
@@ -587,7 +587,8 @@ impl UiRuntime for FluxRuntime {
       // A frame a test asked for has run: its promise settles.
       #[cfg(feature = "test")]
       crate::plugins::test::frame_done(&ctx);
-      // And whoever waits for the app to come to rest looks again.
+      // And whoever waits for the next frame to have run (a settle, the
+      // render host) looks again.
       #[cfg(any(feature = "go", feature = "test"))]
       crate::settle::frame_ran(&ctx);
     });

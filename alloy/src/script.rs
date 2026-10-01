@@ -1,7 +1,8 @@
-// Scripted input: a timeline of synthetic events replayed by playback mode
-// (see `crate::playback`) or captured by a runner's live input recorder (see
-// lattice). Stage 1 covers only key transitions; more variants are expected to
-// join `ScriptEvent` as scripting grows beyond the keyboard.
+// Scripted input: a timeline of synthetic events replayed by a headless host
+// (lattice's render host steps it against its frame clock) or captured by a
+// runner's live input recorder (see lattice). Stage 1 covers only key
+// transitions; more variants are expected to join `ScriptEvent` as scripting
+// grows beyond the keyboard.
 
 use crate::event::{AlloyEvent, Modifiers};
 

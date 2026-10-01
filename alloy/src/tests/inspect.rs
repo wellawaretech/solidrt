@@ -143,3 +143,12 @@ fn the_path_and_the_hit_path_run_root_first() {
   assert_eq!(tree.hit_path(Point::new(20.0, 20.0)), vec![1, 2, 3]);
   assert_eq!(tree.hit_path(Point::new(500.0, 500.0)), Vec::<u64>::new());
 }
+
+#[test]
+fn describe_names_a_node_by_its_label_or_its_id() {
+  let tree = panel();
+  assert_eq!(tree.describe(3), "view labelled \"first\"");
+  assert_eq!(tree.describe(2), "view #2");
+  assert_eq!(tree.describe(99), "node #99");
+  assert_eq!(tree.running_transition(), None);
+}

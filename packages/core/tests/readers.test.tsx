@@ -58,7 +58,7 @@ test("every test starts with no pad seated", async app => {
   expect(app.find({ text: "0" }).exists).toBe(true)
 })
 
-test("tree() is the subtree as text, without ids", async app => {
+test("outline() is the subtree as text, without ids", async app => {
   let root = await app.mount(() => (
     <view label="card" width={200} height={80} flexDirection="column" opacity={0.5}>
       <text>Title</text>
@@ -66,12 +66,12 @@ test("tree() is the subtree as text, without ids", async app => {
     </view>
   ))
   let card = root.find({ label: "card" })
-  let lines = card.tree().split("\n")
+  let lines = card.outline().split("\n")
   expect(lines[0]).toBe("view [card] 0,0 200x80")
   expect(/^  text "Title" 0,0 \d+(\.\d+)?x\d+(\.\d+)?$/.test(lines[1]!)).toBe(true)
   expect(/^  view \[bar\] 0,\d+(\.\d+)? 50x10$/.test(lines[2]!)).toBe(true)
   expect(lines.length).toBe(3)
-  expect(card.tree({ props: true }).split("\n")[0]).toContain('"opacity":0.5')
+  expect(card.outline({ props: true }).split("\n")[0]).toContain('"opacity":0.5')
 })
 
 test("pixel reads what a node paints, where a transition stands", async app => {

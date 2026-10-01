@@ -229,4 +229,13 @@ impl Context {
   pub fn read_texture(&self, texture: &Texture, width: u32, height: u32) -> Result<Vec<u8>, String> {
     self.rpc(|reply| RasterCmd::ReadTexture { texture: texture.clone(), width, height, reply })?
   }
+
+  /// Read back the window as the last frame left it: its size in device
+  /// pixels and its RGBA8 pixels (top-to-bottom rows), the frame a display
+  /// would show, root effects and the overlay included. Answered in order
+  /// behind the frames queued before it, so a headless host that reads
+  /// after a step reads that step's frame.
+  pub fn read_window_pixels(&self) -> Result<(u32, u32, Vec<u8>), String> {
+    self.rpc(|reply| RasterCmd::ReadWindow { reply })?
+  }
 }

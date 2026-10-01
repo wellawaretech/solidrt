@@ -20,10 +20,20 @@ mod settle;
 #[cfg(feature = "speech")]
 pub mod speech;
 pub mod storage;
+#[cfg(any(feature = "go", feature = "test"))]
+mod stepped;
 #[cfg(feature = "test")]
 mod test_host;
+#[cfg(feature = "go")]
+mod render_host;
+#[cfg(any(feature = "go", feature = "test"))]
+mod png;
 #[cfg(feature = "test")]
 pub use test_host::TestRun;
+#[cfg(feature = "go")]
+pub use render_host::RenderRun;
+#[cfg(feature = "go")]
+pub use stepped::DEFAULT_SEED;
 
 #[cfg(test)]
 mod tests;
@@ -55,9 +65,9 @@ enum EngineCmd {
 // BSOD), Stop returns to the player, dropping the dev connection on the way
 // (see DevExitHandle); at the player root, and always in player-less runtime
 // builds, the client quits - process exit on desktop, on Android the
-// activity finishes so the next launch starts fresh. In playback mode it
-// ends the recording run instead: the frame budget is only an upper bound,
-// and there is no player to return to.
+// activity finishes so the next launch starts fresh. In a render it ends the
+// run instead: the frame budget is only an upper bound, and there is no
+// player to return to.
 //
 // background() leaves the app without ending it: under the player it is
 // the same return to the player (leaving a hosted app means the player);
@@ -68,9 +78,9 @@ enum EngineCmd {
 // through the event watch, and no quit hook does: the app is not ending.
 #[derive(Clone)]
 struct ExitPolicy {
-  playback: bool,
-  // Playback's exit fences the raster thread first (see exit).
-  alloy: Arc<alloy::Context>,
+  // A render's stop flag: exit() ends the run after the frame it is in, the
+  // frames so far kept (see render_host.rs); None outside a render.
+  render_stop: Option<Arc<AtomicBool>>,
   #[cfg(feature = "go")]
   player_active: Arc<std::sync::atomic::AtomicBool>,
   engine_tx: tokio::sync::mpsc::UnboundedSender<EngineCmd>,
@@ -81,8 +91,8 @@ struct ExitPolicy {
 
 impl ExitPolicy {
   fn background(&self) {
-    if self.playback {
-      // A recording has no background to go to; ending the run is the only
+    if self.render_stop.is_some() {
+      // A render has no background to go to; ending the run is the only
       // honest reading.
       self.exit();
       return;
@@ -99,14 +109,11 @@ impl ExitPolicy {
   }
 
   fn exit(&self) {
-    if self.playback {
-      // Nothing may be drawing when the process exits: the draw the last
-      // frame submitted may still be encoding on the raster thread, and the
-      // exit tears the driver down under it. This thread is the only
-      // display-list producer, so a fence answered in order proves the
-      // queue is empty.
-      self.alloy.drain();
-      std::process::exit(0);
+    if let Some(stop) = &self.render_stop {
+      // The render host ends the run in order (the writer finishes, the
+      // engine loop quits, alloy fences the raster thread).
+      stop.store(true, Ordering::Relaxed);
+      return;
     }
     #[cfg(feature = "go")]
     if !self.player_active.load(Ordering::Relaxed) {
@@ -223,20 +230,7 @@ pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   // No app argument channel either: the activity is launched by intent, not
   // from a command line.
   let storage = storage::StorageSpec { data_root: None, client: None, app_id: None };
-  start(
-    &rt,
-    None,
-    launch,
-    None,
-    alloy::Mode::Run,
-    false,
-    (1280, 720),
-    false,
-    dev_server,
-    embedded_fonts(),
-    storage,
-    Vec::new(),
-  );
+  start(&rt, None, launch, None, (1280, 720), false, dev_server, embedded_fonts(), storage, Vec::new());
   0
 }
 
@@ -268,20 +262,7 @@ pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   // root, keyed by the packed identity like every packed distribution. No
   // argument channel: the activity is launched by intent.
   let storage = storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
-  start(
-    &rt,
-    Some(payload.app),
-    launch,
-    payload.display_name,
-    alloy::Mode::Run,
-    false,
-    (1280, 720),
-    false,
-    None,
-    payload.fonts,
-    storage,
-    Vec::new(),
-  );
+  start(&rt, Some(payload.app), launch, payload.display_name, (1280, 720), false, None, payload.fonts, storage, Vec::new());
   0
 }
 
@@ -477,6 +458,11 @@ pub struct Launch {
 type TestSetup = test_host::TestRun;
 #[cfg(not(feature = "test"))]
 type TestSetup = std::convert::Infallible;
+// The render host's shared state; nothing in a build without the dev client.
+#[cfg(feature = "go")]
+type RenderSetup = render_host::RenderHost;
+#[cfg(not(feature = "go"))]
+type RenderSetup = std::convert::Infallible;
 
 struct RunOptions {
   app: Option<AppSource>,
@@ -485,7 +471,9 @@ struct RunOptions {
   // the app where the runtime registers it (links.rs); None for a dev run
   // and for the player, which register nothing.
   display_name: Option<String>,
-  playback_fps: Option<u32>,
+  // The frame rate of a headless (stepped) run, whose time is frame / fps;
+  // None on a display.
+  stepped_fps: Option<u32>,
   stats: bool,
   // Dev-server address to auto-connect on launch (go client only; see plugins::dev).
   dev_server: Option<String>,
@@ -504,6 +492,8 @@ struct RunOptions {
   // (false once the file failed to load or a test failed).
   test: Option<TestSetup>,
   test_passed: Arc<AtomicBool>,
+  // The render host (render_host.rs), on a stepped run that renders.
+  render: Option<RenderSetup>,
 }
 
 /// What `--strict` gates a capture on: the error-level lines the engine
@@ -715,7 +705,7 @@ fn ui_thread(
     app,
     launch,
     display_name,
-    playback_fps,
+    stepped_fps,
     stats,
     dev_server,
     fonts,
@@ -724,12 +714,12 @@ fn ui_thread(
     errors,
     test,
     test_passed,
+    render,
   } = opts;
   #[cfg(not(feature = "test"))]
   let _ = (&test, &test_passed);
-  // Test mode steps every frame itself (test_host.rs); playback is the
-  // lockstep capture.
-  let stepped = test.is_some();
+  #[cfg(not(feature = "go"))]
+  let _ = &render;
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
@@ -776,12 +766,6 @@ fn ui_thread(
   // AlloyCommand::SetUiBusyFlag).
   let ui_busy = Arc::new(AtomicBool::new(false));
   alloy_cmd_tx.send(alloy::AlloyCommand::SetUiBusyFlag(ui_busy.clone())).ok();
-  // Playback mode renders every frame unconditionally: the lockstep capture
-  // loop blocks waiting for each frame's display list, so a frame skipped by
-  // the demand-driven gate would deadlock it.
-  // Stepped mode keeps the gate: a frame nobody demanded draws nothing,
-  // which is what a test's settle reads.
-  platform.set_always_render(!stepped && matches!(playback_fps, Some(rfps) if rfps > 0));
   platform.set_stats_enabled(stats);
   let input_state = Arc::new(InputState::new());
   // The go client's boot rule: no app source means the player, always,
@@ -813,8 +797,8 @@ fn ui_thread(
   // the producer-side rule (see alloy's resample.rs).
   #[cfg(feature = "go")]
   let input_inject_tx = ev_tx.clone();
-  // Test mode's frame signals enter the same loop (see test_host::Stepper).
-  #[cfg(feature = "test")]
+  // A stepped host's frame signals enter the same loop (see stepped.rs).
+  #[cfg(any(feature = "go", feature = "test"))]
   let step_tx = ev_tx.clone();
   // A packed desktop app answers links for the second instance the OS starts
   // with one (links.rs). Not the dev client, which is no scheme handler, and
@@ -846,12 +830,12 @@ fn ui_thread(
 
     let platform_events = platform.clone();
     let input_state_events = input_state.clone();
-    // Virtual present counter the playback-mode clock derives time from (frame/fps),
+    // Virtual present counter the stepped clock derives time from (frame/fps),
     // published by the frame verb. Unused in run mode.
     let playback_frame = Arc::new(AtomicU64::new(0));
-    // Run-mode pacing for the animation timestamps (see paced_clock). None in
-    // playback mode, which uses the deterministic frame/fps clock.
-    let paced_clock = match playback_fps {
+    // Run-mode pacing for the animation timestamps (see paced_clock). None on
+    // a stepped run, which uses the deterministic frame/fps clock.
+    let paced_clock = match stepped_fps {
       Some(rfps) if rfps > 0 => None,
       _ => Some(paced_clock::PacedClock::new()),
     };
@@ -860,18 +844,18 @@ fn ui_thread(
     let clock_control = runtime::ClockControl::new();
     // flux::Timeline is the frame timeline the rAF/render timestamps march
     // on - frame-stepped, pausable by the dev clock control - for native
-    // consumers (video sync). The virtual timers march on it only in
-    // playback; in run mode they take the paced clock's wall-anchored timer
+    // consumers (video sync). The virtual timers march on it only when
+    // stepped; in run mode they take the paced clock's wall-anchored timer
     // reading (see the install below). Injected into each engine; persists
     // across reloads for continuous time. performance.now() is deliberately
     // NOT on it: that is real elapsed time, for measuring work; Date.now()
     // is calendar time.
-    // The rate of that clock: fixed for a capture, a test's to set before
-    // its first frame (see test_host::Stepper).
-    let frame_rate = Arc::new(AtomicU32::new(playback_fps.unwrap_or(0)));
-    let timeline = match playback_fps {
-      // Playback mode: derive time from the present counter (frame/fps) so
-      // the frame timeline is deterministic and recordings reproducible.
+    // The rate of that clock: fixed for a render, a test's to set before
+    // its first frame (see stepped::Stepper).
+    let frame_rate = Arc::new(AtomicU32::new(stepped_fps.unwrap_or(0)));
+    let timeline = match stepped_fps {
+      // Stepped: derive time from the present counter (frame/fps) so the
+      // frame timeline is deterministic and renders reproducible.
       Some(rfps) if rfps > 0 => {
         let playback_frame = playback_frame.clone();
         let frame_rate = frame_rate.clone();
@@ -960,9 +944,9 @@ fn ui_thread(
         // frames a browser skips too - but their refresh counts are not
         // dropped: the delivered signal carries the sum, so the app
         // timeline still advances by every refresh the display went
-        // through (see runtime::coalesce_frame_signals). Playback mode is
-        // lockstep (one FrameRendered in flight, no Ticks), so its captures
-        // never see a collapse. Pointer moves never appear here: their producers
+        // through (see runtime::coalesce_frame_signals). A stepped host
+        // asks for one frame at a time (no Ticks), so its frames never see
+        // a collapse. Pointer moves never appear here: their producers
         // consume them into the resampler (see alloy's resample.rs) and the
         // frame verb samples one position per pointer per signal, so a
         // stalled drain replays no stale positions either.
@@ -1070,7 +1054,7 @@ fn ui_thread(
             // FrameRendered reports the frame native just finished drawing. JS
             // uses the "render" event to compute the NEXT frame's state, so
             // shift the field by +1. The JS-side bootstrap owns frame 0;
-            // without the shift, playback mode re-runs frame 0 at tick 0 and
+            // without the shift, a render re-runs frame 0 at tick 0 and
             // duplicates a PNG.
             AlloyEvent::FrameRendered { frame, refreshes, present_at, reference, grid, .. } => {
               ui_runtime.frame(frame + 1, refreshes, runtime::FrameTimes { present_at, reference, grid })
@@ -1150,13 +1134,13 @@ fn ui_thread(
     #[cfg(feature = "go")]
     let player_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
     // The dev-server client: connection supervisor, recents, proxy state and the
-    // srt.dev surface. None in playback mode (and entirely absent without the
+    // srt.dev surface. None on a stepped run (and entirely absent without the
     // `go` feature). This is the runtime's only seam to the dev client.
     #[cfg(feature = "go")]
     let dev_session = go::DevSession::start(
       &handle,
       cmd_tx.clone(),
-      playback_fps,
+      stepped_fps,
       &local,
       current_exec.clone(),
       platform.stats_handles(),
@@ -1177,9 +1161,12 @@ fn ui_thread(
       },
       dev_server,
     );
+    #[cfg(feature = "go")]
+    let render_stop = render.as_ref().map(|host| host.stop.clone());
+    #[cfg(not(feature = "go"))]
+    let render_stop: Option<Arc<AtomicBool>> = None;
     let exit_policy = ExitPolicy {
-      playback: playback_fps.is_some(),
-      alloy: atx.clone(),
+      render_stop,
       #[cfg(feature = "go")]
       player_active: player_active.clone(),
       engine_tx: cmd_tx.clone(),
@@ -1197,14 +1184,24 @@ fn ui_thread(
     // reports (release_engine_textures).
     let mut texture_baseline: Option<usize> = None;
 
-    // Test mode: the file's run (which engine comes next, the records) and
-    // the stepper its engines step frames through.
+    // Test mode: the file's run (which engine comes next, the records).
     #[cfg(feature = "test")]
-    let mut test_run = test.map(|test| flux::test::FileRun::new(test.options));
-    #[cfg(feature = "test")]
-    let stepper = test_host::Stepper::new(step_tx, playback_frame.clone(), frame_rate.clone(), resampler.clone());
-    #[cfg(not(feature = "test"))]
+    let mut test_run = test.map(|test| {
+      // What a failed test's record says about the app (test_host.rs).
+      let failures = test.failures;
+      let details: flux::test::DetailsHook =
+        Arc::new(move |ctx, name| test_host::failure_details(ctx, name, failures.as_deref()));
+      flux::test::FileRun::new(flux::test::RunOptions { details: Some(details), ..test.options })
+    });
+    // The stepper a stepped host's engines step frames through (stepped.rs).
+    #[cfg(any(feature = "go", feature = "test"))]
+    let stepper = stepped::Stepper::new(step_tx, playback_frame.clone(), frame_rate.clone(), resampler.clone());
+    #[cfg(not(any(feature = "go", feature = "test")))]
     let _ = &frame_rate;
+    #[cfg(feature = "go")]
+    if let Some(host) = &render {
+      stepper.reset(host.fps());
+    }
 
     loop {
       // Re-anchor before anything in this spin touches the sandbox: the data
@@ -1222,7 +1219,7 @@ fn ui_thread(
       // reads the timeline (the virtual timers are seeded from it).
       #[cfg(feature = "test")]
       if test_run.is_some() {
-        stepper.reset();
+        stepper.reset(stepped::DEFAULT_FPS);
         if let (Some(store), Some(app_id)) = (storage::get(), &current_app_id) {
           test_host::empty_sandbox(store, app_id);
         }
@@ -1316,8 +1313,8 @@ fn ui_thread(
         .userdata(flux::ProcessArgs(current_args.clone()));
       // Timers join a frame-stepped timeline (see flux virtual time): the
       // frame verb advances them once per frame signal, so a dev-clock pause
-      // freezes setTimeout/setInterval too, and playback replays them
-      // deterministically. In run mode that is the paced clock's
+      // freezes setTimeout/setInterval too, and a stepped host replays
+      // them deterministically. In run mode that is the paced clock's
       // wall-anchored timer reading, NOT the smoothed animation reading rAF
       // gets - deadlines must not lag the wall clock under slow frames (see
       // paced_clock). Seeded with the current reading so a reload does not
@@ -1391,11 +1388,19 @@ fn ui_thread(
       let session = test_run.as_ref().map(|run| run.session());
       #[cfg(feature = "test")]
       let builder = match &session {
-        Some(session) => {
-          session.install(builder).userdata(stepper.clone()).plugin(|ctx| {
-            ctx.store_userdata(plugins::test::WindowReady::default()).expect("store window ready");
-            if let Err(e) = flux::freeze_wall(&ctx, test_host::EPOCH_MS) {
-              log::error!("[srt] test mode: failed to freeze the wall clock: {e}");
+        Some(session) => session.install(builder).userdata(stepper.clone()).plugin(|ctx| stepped_engine(&ctx)),
+        None => builder,
+      };
+      // A render engine: the stepper, the wall taken out and Math.random
+      // seeded, so two renders of one app write the same frames.
+      #[cfg(feature = "go")]
+      let builder = match &render {
+        Some(host) => {
+          let seed = host.seed();
+          builder.userdata(stepper.clone()).plugin(move |ctx| {
+            stepped_engine(&ctx);
+            if let Err(e) = flux::seed_random(&ctx, seed) {
+              log::error!("[srt] render: failed to seed Math.random: {e}");
             }
           })
         }
@@ -1465,10 +1470,38 @@ fn ui_thread(
       let mut next_app_id: Option<String> = None;
       let mut next_run_id: Option<String> = None;
       let mut quit = false;
+      // A render evaluates the entry as a module whose end it hears of: the
+      // driver starts once the top level has run (render_host.rs), and a
+      // failed load fails the render; either way the loop quits when the
+      // host is done.
+      #[cfg(feature = "go")]
+      let render_eval = render.as_ref().map(|host| {
+        let code = match &current_app {
+          AppSource::Text(source) => flux::ModuleCode::Source(source.clone()),
+          AppSource::Bytecode(bytes) => flux::ModuleCode::Bytecode(bytes.clone()),
+        };
+        let started = host.clone();
+        let failed = host.clone();
+        let quit_on_done = cmd_tx.clone();
+        let quit_on_failure = cmd_tx.clone();
+        let on_ready = move |ctx: flux::rquickjs::Ctx<'_>, _ns: flux::rquickjs::Object<'_>| {
+          started.start(&ctx, move || drop(quit_on_done.send(EngineCmd::Quit)));
+        };
+        let on_failed = move |_: flux::rquickjs::Ctx<'_>| {
+          *failed.outcome.lock().expect("render outcome lock poisoned") =
+            Some(Err("the app failed to load; see the error above".to_string()));
+          drop(quit_on_failure.send(EngineCmd::Quit));
+        };
+        (code, on_ready, on_failed)
+      });
       local
         .run_until(async {
           tokio::select! {
             _ = async {
+              #[cfg(feature = "go")]
+              if let Some((code, on_ready, on_failed)) = render_eval {
+                return engine.eval_module_or(render_host::ENTRY_MODULE.to_string(), code, on_ready, on_failed).await;
+              }
               match &current_app {
                 AppSource::Text(src) => engine.eval_source(src).await,
                 AppSource::Bytecode(bytes) => engine.eval(bytes.clone()).await,
@@ -1520,12 +1553,20 @@ fn ui_thread(
         run_id = next_run_id;
         next_link = reentry_link(&last_location, &run_id);
         showing_bsod = false;
-      } else if playback_fps.is_some() {
-        // A capture has nobody to fix the app for: an engine that exited
-        // before render() ran would capture the BSOD as if it were the app
-        // and pass the exit-code gate, so fail the run instead.
-        log::error!("[srt] app exited before rendering; capture failed");
-        std::process::exit(1);
+      } else if stepped_fps.is_some() {
+        // A render has nobody to fix the app for: an engine that ended
+        // before the host was done (render() never ran, or the app's work
+        // ran out) would otherwise show the BSOD as if it were the app and
+        // pass the exit-code gate, so the run fails instead.
+        #[cfg(feature = "go")]
+        if let Some(host) = &render {
+          let mut outcome = host.outcome.lock().expect("render outcome lock poisoned");
+          if outcome.is_none() {
+            *outcome = Some(Err("the app ended before the render was complete".to_string()));
+          }
+        }
+        log::error!("[srt] the app ended before the render was complete");
+        break;
       } else if !showing_bsod {
         // Engine exited on its own (a module/startup error means render() never
         // ran, so nothing kept it alive). Show the BSOD instead of a frozen
@@ -1586,23 +1627,50 @@ fn install_panic_hook() {
   }));
 }
 
-/// Err only comes out of playback mode (an incomplete capture, or errors
-/// logged under `strict`); the binary turns it into the process exit code.
+/// Run the app interactively, on a display. Returns when the app winds down.
+#[allow(clippy::too_many_arguments)]
 pub fn start(
   rt: &tokio::runtime::Runtime,
   app_source: Option<AppSource>,
   launch: Launch,
   display_name: Option<String>,
-  mode: alloy::Mode,
-  strict: bool,
   size: (u32, u32),
   stats: bool,
   dev_server: Option<String>,
   fonts: Vec<FontPayload>,
   storage: storage::StorageSpec,
   args: Vec<String>,
+) {
+  let hosts = Hosts { test: None, render: None, errors: None };
+  let _ = start_with(rt, app_source, launch, display_name, alloy::Mode::Run, size, stats, dev_server, fonts, storage, args, hosts);
+}
+
+/// Render `app` headless (render_host.rs): `run.frames` frames at `run.fps`
+/// written as PNGs, the app started at `launch.link`. Err names what went
+/// wrong: the app failed to load or rendered no window, did not come to
+/// rest for `--settle`, ended before the run was complete, or logged
+/// errors under `strict`; the binary turns it into the process exit code.
+#[cfg(feature = "go")]
+#[allow(clippy::too_many_arguments)]
+pub fn start_render(
+  rt: &tokio::runtime::Runtime,
+  app: AppSource,
+  run: RenderRun,
+  launch: Launch,
+  strict: bool,
+  size: (u32, u32),
+  stats: bool,
+  fonts: Vec<FontPayload>,
+  storage: storage::StorageSpec,
+  args: Vec<String>,
 ) -> Result<(), String> {
-  start_with(rt, app_source, launch, display_name, mode, strict, size, stats, dev_server, fonts, storage, args, None)
+  let mode = alloy::Mode::Stepped(alloy::SteppedConfig { fps: run.fps });
+  let host = render_host::RenderHost::new(run);
+  let outcome = host.outcome.clone();
+  let hosts = Hosts { test: None, render: Some(host), errors: strict.then(|| Arc::new(ErrorTally::default())) };
+  start_with(rt, Some(app), launch, None, mode, size, stats, None, fonts, storage, args, hosts)?;
+  let outcome = outcome.lock().expect("render outcome lock poisoned").take();
+  outcome.unwrap_or_else(|| Err("the render ended before it started".to_string()))
 }
 
 /// Run `app` as a test file (test_host.rs): headless, stepped by the
@@ -1618,9 +1686,17 @@ pub fn start_tests(
   storage: storage::StorageSpec,
   args: Vec<String>,
 ) -> Result<(), String> {
-  let mode = alloy::Mode::Stepped(alloy::SteppedConfig { fps: test_host::DEFAULT_FPS });
+  let mode = alloy::Mode::Stepped(alloy::SteppedConfig { fps: stepped::DEFAULT_FPS });
   let launch = Launch { restored: false, link: None };
-  start_with(rt, Some(app), launch, None, mode, false, size, false, None, fonts, storage, args, Some(run))
+  let hosts = Hosts { test: Some(run), render: None, errors: None };
+  start_with(rt, Some(app), launch, None, mode, size, false, None, fonts, storage, args, hosts)
+}
+
+/// The headless hosts a run may carry, and the error tally of `--strict`.
+struct Hosts {
+  test: Option<TestSetup>,
+  render: Option<RenderSetup>,
+  errors: Option<Arc<ErrorTally>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1630,14 +1706,13 @@ fn start_with(
   launch: Launch,
   display_name: Option<String>,
   mode: alloy::Mode,
-  strict: bool,
   size: (u32, u32),
   stats: bool,
   dev_server: Option<String>,
   fonts: Vec<FontPayload>,
   storage: storage::StorageSpec,
   args: Vec<String>,
-  test: Option<TestSetup>,
+  hosts: Hosts,
 ) -> Result<(), String> {
   forge::process::return_large_allocations();
   alloy::install_logger();
@@ -1645,21 +1720,20 @@ fn start_with(
   log::info!("[srt] SolidRT version {VERSION}");
 
   let handle = rt.handle().clone();
-  // The frame rate of the modes whose time is frame / fps.
-  let playback_fps = match &mode {
-    alloy::Mode::Playback(playback) => Some(playback.fps),
+  // The frame rate of the mode whose time is frame / fps.
+  let stepped_fps = match &mode {
     alloy::Mode::Stepped(stepped) => Some(stepped.fps),
     alloy::Mode::Run => None,
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
-  let errors = strict.then(|| Arc::new(ErrorTally::default()));
+  let Hosts { test, render, errors } = hosts;
   let test_passed = Arc::new(AtomicBool::new(true));
   let opts = RunOptions {
     app: app_source,
     launch,
     display_name,
-    playback_fps,
+    stepped_fps,
     stats,
     dev_server,
     fonts,
@@ -1668,24 +1742,36 @@ fn start_with(
     errors: errors.clone(),
     test,
     test_passed: test_passed.clone(),
+    render,
   };
   let resampler = app.resampler();
   let user_input_muted = app.user_input_mute();
-  let result = app.run(move |atx, alloy_cmd_tx, event_rx| {
+  app.run(move |atx, alloy_cmd_tx, event_rx| {
     ui_thread(handle, atx, alloy_cmd_tx, event_rx, resampler, user_input_muted, opts);
   });
-  // `--strict`: a capture that completed but logged errors fails too, named
+  // `--strict`: a render that completed but logged errors fails too, named
   // after its first error (the exit itself stays the binary's, see main.rs).
-  if let Some(tally) = errors.filter(|_| result.is_ok()) {
+  if let Some(tally) = errors {
     let count = tally.count.load(Ordering::Relaxed);
     if count > 0 {
       let first = tally.first.lock().expect("error tally lock poisoned").clone().unwrap_or_default();
       let noun = if count == 1 { "error was" } else { "errors were" };
-      return Err(format!("{count} {noun} logged during the capture; the first: {first}"));
+      return Err(format!("{count} {noun} logged during the render; the first: {first}"));
     }
   }
   if !test_passed.load(Ordering::Relaxed) {
     return Err("the test file did not pass".to_string());
   }
-  result
+  Ok(())
+}
+
+/// What every stepped engine gets beside the stepper: the window state a
+/// host waits on, and the wall taken out (performance.now() reads 0, the
+/// calendar is the fixed epoch plus frame time).
+#[cfg(any(feature = "go", feature = "test"))]
+fn stepped_engine(ctx: &flux::rquickjs::Ctx<'_>) {
+  ctx.store_userdata(stepped::WindowReady::default()).expect("store window ready");
+  if let Err(e) = flux::freeze_wall(ctx, stepped::EPOCH_MS) {
+    log::error!("[srt] stepped engine: failed to freeze the wall clock: {e}");
+  }
 }

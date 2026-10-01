@@ -25,7 +25,6 @@ mod logging;
 pub mod microphone;
 mod mode;
 pub mod motion;
-mod playback;
 mod present;
 mod raster;
 pub use raster::{DamageRect, PresentDamage, RasterCounters, TargetCounters};
@@ -68,7 +67,7 @@ pub use event::{
   AlloyCommand, AlloyEvent, Arrival, Cursor, CursorFrame, CursorImage, CursorShape, EventSender, GamepadState, Modifiers, Orientation, PointerType, SuspendHold,
   TextCapitalization, TextInputOptions, TextInputType,
 };
-pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand};
+pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand, Gamepads};
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferLayout, BufferUpdate, CullMode, DepthState,
   DepthStorage, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, InstanceOrder, NodeShader, INDEX_NONE,
@@ -83,7 +82,6 @@ pub use input::InputState;
 pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;
 pub use mode::Mode;
-pub use playback::PlaybackConfig;
 pub use stepped::SteppedConfig;
 pub use present::{CountTally, Counted, RefreshCounter, RefreshCounting, SignalLedger, SignalRecord};
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};

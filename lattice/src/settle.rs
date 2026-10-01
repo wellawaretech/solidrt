@@ -46,7 +46,7 @@ pub(crate) struct Unsettled {
 }
 
 impl Unsettled {
-  fn read(ctx: &Ctx<'_>) -> Self {
+  pub(crate) fn read(ctx: &Ctx<'_>) -> Self {
     Self { in_flight: flux::in_flight(ctx), demand: flux::gui::frame::demand(ctx), timer_due: flux::timer_due(ctx) }
   }
 
@@ -87,7 +87,8 @@ pub(crate) fn frame_ran(ctx: &Ctx<'_>) {
   }
 }
 
-fn next_frame(ctx: &Ctx<'_>) -> oneshot::Receiver<()> {
+/// Resolves once the next frame has run in this engine (`frame_ran`).
+pub(crate) fn next_frame(ctx: &Ctx<'_>) -> oneshot::Receiver<()> {
   if ctx.userdata::<FrameWaiters>().is_none() {
     // Already stored means another settle got there first; either is fine.
     let _ = ctx.store_userdata(FrameWaiters::default());

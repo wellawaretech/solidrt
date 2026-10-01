@@ -11,14 +11,13 @@ asked for a runner and a file convention for the workspace's own JS. The
 shape below was decided 2026-09-29 and widens it twice: down to flux programs
 that have no window, and up to SolidRT apps an author wants to test.
 
-## Where this stands (2026-09-30)
+## Where this stands (2026-10-01)
 
-Stages 1, 2, 2b and 3 are built and committed; the `test-js` CI job has
-not had its first run. Stage 4 was redesigned on 2026-09-30 under the rule
-"the best solution, not the least effort; no backwards compatibility"
-(D30 to D35, [Stage 4](#stage-4---the-app-layer-redesigned-2026-09-30)),
-and its first four steps are built; 4.1 and 4.2 are committed, 4.3 is
-staged and 4.4 sits unstaged on top of it:
+Stages 1, 2, 2b and 3 are built and committed; the CI jobs have not had
+their first run. Stage 4 was redesigned on 2026-09-30 under the rule "the
+best solution, not the least effort; no backwards compatibility" (D30 to
+D35, [Stage 4](#stage-4---the-app-layer-redesigned-2026-09-30)), and all
+six of its steps are built (4.5 and 4.6 on 2026-10-01, uncommitted):
 
 - Step 4.1, the test host: every test runs in an engine of its own (D30).
   `flux --test` is the host, `run` and the appended runner lines are gone
@@ -49,28 +48,42 @@ staged and 4.4 sits unstaged on top of it:
   that fails says what is left.
 
 - Step 4.3's rest (2026-10-01): `app.link`, `app.debug`, a synthetic
-  gamepad per engine, and the readers `tree()`, `pixel()`/`pixels()` and
-  `app.gpu()`.
+  gamepad per engine, and the readers `outline()` (named `tree()` until
+  2026-10-01), `pixel()`/`pixels()` and `app.gpu()`.
 
-`bunx srt test` at the repo root: 341 tests in 35 files, 7 to 11 s
-depending on what else the machine does (the 310 flux tests took about
-5 s on one engine per file and 6.5 s on one per test). `cargo test -p
-flux --lib --features test`: 49 tests (99 with `gui`); alloy 638, lattice
-66; the 21 `flux/tests/` binaries pass on the converted holds. `srt
-check` passes for core, cli and router. On the rebuilt interactive client
-`/settle` was driven through the control API: a running transition named
-by its node, a fetch in flight, a standing `onFrame`.
+- Step 4.5, failure output, docs, CI (2026-10-01): a failed test's record
+  carries details read in its engine (what is in flight; for an app test
+  the app time and frame, what still demanded frames, the whole outline
+  and a snapshot of the frame written under `dist/test/`), `srt test --only
+  flux|app`, the `test-app` CI job, the testing guide
+  (`packages/cli/agents/testing.md`).
+
+- Step 4.6, render on the stepped mode (2026-10-01): alloy has one
+  headless mode; `srt render` is a host in lattice that steps and reads
+  the window back, with the wall frozen and `Math.random` seeded,
+  `--settle` the condition of D11, `--strict` and `--seed` passed through.
+
+`bunx srt test` at the repo root: 341 tests in 35 files, 7 to 12 s
+depending on what else the machine does. `cargo test -p flux --lib
+--features test,gui`: 101 tests; alloy 637 (the `always_render` test went
+with the gate bypass), lattice 66. `srt check` passes for core, cli and
+router. Renders of `examples/hello-world`, `examples/spin` and an
+animating probe are byte-identical between the old lockstep loop and the
+render host.
 
 Nothing is parked any more except the four GPU rigs under `checks/`
 (stage 5).
 
 To pick up, in this order:
 
-1. Steps 4.5 and 4.6 as listed under Stage 4, and what steps 4.3 and
-   4.4 left (their "Not done" lists).
-3. The first run of the `test-js` job, which is also the first run of
-   `srt test` on Windows and macOS: see
-   [Stage 3](#stage-3---ci-written-2026-09-30-not-run).
+1. The first run of the CI jobs: `test-js` (`--only flux`, four
+   platforms, also the first run of `srt test` on Windows and macOS) and
+   `test-app` (Linux, the dev client built in the job; whether the
+   runner's Mesa gives the offscreen GLES context is unproven until then).
+   See [Stage 3](#stage-3---ci-written-2026-09-30-not-run).
+2. Stage 5, the migration of the four GPU rigs.
+3. Verification leftovers: the MCP bridge's `settle` tool and the `at` and
+   `drag` arguments through a re-spawned bridge.
 
 ## Problem
 
@@ -535,7 +548,7 @@ test("the server answers with the stored row", async () => {
   let server = serve({ port: 0, fetch: handler })
   let res = await fetch(`http://127.0.0.1:${server.port}/rows/1`)
   expect(res.status).toBe(200)
-  server.stop()
+  server.close()
 })
 ```
 
@@ -914,7 +927,7 @@ What was decided on the way:
   call, ahead of the next frame, so a pad state is as deterministic as a
   tap. The interactive loop's table is the same type with its SDL
   subsystems present.
-- `tree()` folds a span that is all of its parent's text, as `find` does,
+- `outline()` (then `tree()`) folds a span that is all of its parent's text, as `find` does,
   and prints no ids: two runs of the same test print the same text, and
   a test can hold a layout as a string.
 - `pixels()` and `pixel()` draw the tree now instead of stepping frames,
@@ -992,7 +1005,7 @@ after 553 ms, an 800 ms fetch reported `{ "fetch": 1 }` and settled after
 841 ms with its text in the tree, and a standing `onFrame` reported
 `onFrame` at a 500 ms cap.
 
-Not done in this step:
+Not done in this step (the first two built since: 4.6 and 4.5):
 
 - `srt render --settle`: step 4.6 (D39). The flag still is the wall
   sleep.
@@ -1007,12 +1020,73 @@ Not done in this step:
   server-sent event stream never finishes: such an app does not settle
   while it listens, and says "1 body read".
 
-**Step 4.5 - failure output, docs, CI.** D14; the types and the testing
-guide; the four parked files moved to `tests/`; a Linux CI job for app
-tests (what a GL context costs on the runner is unchecked).
+**Step 4.5 - failure output, docs, CI (built 2026-10-01).** D14. (The
+"four parked files moved to `tests/`" this step once listed was done by
+4.2.)
 
-**Step 4.6 - playback on the stepped mode.** D35, with the frozen wall
-and the seeded `Math.random` in `srt render`.
+| file | change |
+| --- | --- |
+| `flux/src/test_plugins/host.rs` | `RunOptions::details`, a `DetailsHook` the embedder installs; `TestResult::details` (`[label, text]` pairs) in the record; the host's own detail, `In flight: 1 fetch`; the engine held from a test's end until the relay turn has run |
+| `flux/src/alloy_plugins/inspect.rs`, `test_plugins/gui.rs` | `outline`, the one implementation of the subtree as an outline, exported as `flux:test/gui` `outline(id, props)`; `locator.outline()` calls it |
+| `alloy/src/raster/cmd.rs`, `mod.rs`, `gl/readback.rs`, `context/capture.rs` | `Context::read_window_pixels`: the window as the last frame left it, a raster RPC |
+| `lattice/src/test_host.rs`, `png.rs`, `main.rs` | the dev client's hook: `At` (app time, frame), `Frames demanded by`, `Outline` (cut after 200 lines), `Snapshot` (the frame, written under `--failures <dir>`); `image` is a lattice dependency now (go and test) |
+| `packages/core/src/test.ts`, `packages/flux-types/gui/test.d.ts` | the reader on the native outline, renamed from `tree()` to `outline()` the same day: a method named `tree` promised a structure and handed back a string (`expect(root.tree()).toBe("...")` read wrong); an outline is by definition the indented listing, so the string is what the name says |
+| `packages/cli/src/test/main.ts`, `lib/args.ts`, `lib/usage.ts` | the details printed under the error (a snapshot's path relative to the cwd), `--failures` passed as `<stage>/failures`, `--only flux|app` |
+| `.github/workflows/ci.yml` | `test-js` runs `--only flux`; `test-app (linux)` builds the client (`make client PROFILE=debug KTX2=0`) and runs `--only app` |
+| `packages/cli/agents/testing.md`, `src/test/docs.md`, `AGENTS.md`, `packages/core/AGENTS.md`, the scaffold's `AGENTS.md`, `flux/CLAUDE.md` | the testing guide (what to test at which layer, naming, time, seeding state, reading a failure) and the pointers to it; the failure output described |
+
+How the details are read. The host calls the hook inside the failed
+test's engine, where the tree and the stepper are: for a test that ended
+by itself, in the relay turn two engine turns after the end, where the
+uncaught errors are final too; for a timed-out test, through a closure on
+the engine's exec channel plus a bounded poll of the engine (1 s), with
+the interrupt flag left set, so a hook that runs JS gets an interruption
+and nothing can hang again (the tree read and the paint are native; the
+logger is cut by then, so what the paint's JS hooks say is dropped). The
+engine had to be held between the end and the relay turn: it would
+otherwise end as soon as the test's own work was done, with the queued
+turns unrun (the end was already reported through `ended`, so nothing
+noticed). The hold is taken only at the end, so a test that waits on
+nothing still fails when its engine runs out of work. The snapshot is the
+real frame (request a frame, `render_now`, read the window), not a node
+capture, so root effects and the overlay are in it.
+
+Verified: 51 flux host tests (two new: the details of a failure and of a
+timeout naming what was in flight); a scratch file of failing app tests
+read back with every detail (an assertion mid-transition names the
+transition's node, a fetch nobody answers times out with `In flight: 1
+fetch`, a component that throws shows the error window in the tree and
+the snapshot); `--only` on both layers; `srt check`.
+
+**Step 4.6 - render on the stepped mode (built 2026-10-01).** D35, D39.
+
+| file | change |
+| --- | --- |
+| `alloy/src/playback.rs` (deleted), `mode.rs`, `app.rs`, `raster/mod.rs`, `raster/frame.rs`, `backend.rs`, `rendertree/frame.rs`, `rendertree/platform.rs`, `event.rs`, `clock.rs` | `Mode::Playback`, `PlaybackConfig`, the lockstep loop, `FrameSink::Capture`, `FrameOutput::Captured` and the `always_render` gate bypass are gone; `Mode::Stepped` is the headless mode; `headless_init_events`; `App::run` returns nothing |
+| `lattice/src/stepped.rs` | the `Stepper` and `WindowReady` (a native waiter beside the JS promise), shared by test mode and the render host; `DEFAULT_FPS`, `EPOCH_MS`, `DEFAULT_SEED` |
+| `lattice/src/render_host.rs` | `RenderRun`, `RenderHost`, `start_render`: the entry evaluated with `eval_module_or`, the driver a task of the engine: wait for the window's size, fail on no window, `--settle` through `settle::settle` (app-time cap 5000 ms, wall bound 30 s on work in flight), then per frame the scripted input due, `request_frame`, step, wait for the frame, `read_window_pixels`, a writer thread encoding the PNGs; the app's `exit()` ends the run in order |
+| `lattice/src/lib.rs`, `main.rs` | `Hosts` (test, render, the strict tally) behind `start_with`; the render engine built with the stepper, the frozen wall and `seed_random`; `--render` replaces `--playback`, `--settle` is a flag, `--seed` is shared with `--test`; `start`'s mode and strict parameters are gone |
+| `packages/cli/src/render/main.ts`, `lib/args.ts`, `lib/usage.ts`, `src/render/docs.md`, `AGENTS.md` | `--settle`, `--strict`, `--seed <n>` passed through and documented; the "what exit 0 proves" paragraph names the flags |
+| `okf/done/render-as-a-verification-gate.md`, `okf/done/seeded-random-headless-render.md` | closed |
+
+Frame k stays the app's state after its (k + 1)th frame callback at
+(k + 1) / fps, so an existing render reproduces byte for byte (checked on
+three apps, the old loop against the host); with `--settle`, app time
+passes while the app comes to rest and the frames start from there. The
+render demands every frame itself (`request_frame` before the step, what
+the dev clock's step does), so the demand gate stays as it is for every
+host and the display-list reuse path is in force: a frame that reuses the
+retained list leaves the surface as it was, which the readback returns.
+A render that fails (no window, no rest, a frame not read back, the app
+ended early, errors under `--strict`) exits 1 with the reason logged.
+
+Verified: byte-identical frames on `examples/hello-world`, `examples/spin`
+and an animating probe; the probe's loading state without `--settle` and
+its loaded state with it; `--strict` turning a contained error into exit
+1; two default-seed renders of a `Math.random` color identical and `--seed
+7` another; a key script landing in the frame its time names; a settle on
+an `onFrame` app failing, named; alloy 637, lattice 66, flux 101 lib
+tests; 341 JS tests.
 
 ### Stage 5 - migration on the app layer
 
@@ -1141,7 +1215,8 @@ inventory of how the rigs call `fail()` belonged in the proposal.
 - No file imports `bun:test`, and no `checks/` folder is left.
 - A scaffolded app can carry a test that mounts a component, taps it,
   steps frames and asserts on the tree, with no wall-clock wait anywhere.
-- A failing test tells an agent what was on screen and when.
+- A failing test tells an agent what was on screen and when (4.5: the
+  app time and frame, the tree, a snapshot).
 
 ## Not this item
 
@@ -1220,9 +1295,18 @@ framework.
 - `PendingOps` counted what keeps the engine alive, standing holds beside
   work that completes by itself, so `is_idle()` was not the `settle()`
   condition. Step 4.4 split the two (D40).
-- `srt render --settle` is a wall-clock sleep after the mount frame
-  (`PlaybackConfig::settle`): the frame clock does not run meanwhile and
-  I/O completions land.
+- `srt render --settle` was a wall-clock sleep after the mount frame
+  (`PlaybackConfig::settle`) until step 4.6 made it the settle condition.
+- A fake backend with a delay in its handler deadlocks a settle: the
+  handler's `setTimeout` is an app timer, which fires only with a frame,
+  and the settle waits for the fetch (work in flight) with no frame
+  stepped. Found with the render probe (2026-10-01); the testing guide
+  says a fake backend answers at once and a delay is the test's
+  `advance`.
+- The engine loop's `select!` is unbiased between the exec channel and
+  `idle()`: an engine with no holds and a dry job queue can end with
+  closures still queued on its exec channel. The test host's relay turns
+  rode on that until 4.5 held the engine for them (2026-10-01).
 - Virtual timers are a flux facility, not a lattice one: lattice is one
   host that drives `advance_virtual_time`, the test clock is another.
 - A flux module can be written in JS without touching the loader. Every

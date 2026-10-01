@@ -1,5 +1,5 @@
 //! The frame path: draw the display list to the window and hand it on -
-//! present in interactive mode, read back in playback mode - plus the
+//! present in interactive mode, leave it for a readback headless - plus the
 //! present-side pacing policy that surrounds it: the present fence depth
 //! gate, missed-present (jank) accounting, the swap itself with its
 //! context-loss exit, and the window surface rebind.
@@ -60,10 +60,10 @@ impl RasterState {
   }
 
   /// Draw the frame's display list to the window backbuffer and hand it on:
-  /// present in interactive mode, read the pixels back in playback mode. Then
-  /// notify the main loop, which only does frame bookkeeping (fps,
-  /// FrameRendered) and playback encoding. Err means the main loop is gone
-  /// and this thread should exit.
+  /// present in interactive mode, leave it in the offscreen surface in the
+  /// headless mode. Then notify the main loop, which only does frame
+  /// bookkeeping (fps, FrameRendered). Err means the main loop is gone and
+  /// this thread should exit.
   pub(super) fn frame(&mut self, dl: DisplayList, present_at: std::time::Instant) -> Result<(), ()> {
     // The frame's GPU span starts here, ahead of the pass flush: on a tiler
     // the passes execute in the same submission as the window draw.
@@ -89,9 +89,9 @@ impl RasterState {
         height: ov.decl.height as i32,
       }));
     }
-    // A headless frame is read in full (every pixel of a capture, any node
-    // of a stepped frame) and the window shader redraws its whole layer;
-    // neither frame kind may be pruned to a patch.
+    // A headless frame is read in full (the window, any node of it) and the
+    // window shader redraws its whole layer; neither frame kind may be
+    // pruned to a patch.
     let fast_path = gl::window_fast_path(&self.gl);
     let patch_barred = self.sink.headless() || self.window_shader.is_some();
     let mut route = self.damage.route(own_damage, size, fast_path, patch_barred);
@@ -115,16 +115,13 @@ impl RasterState {
     let drawn = !backgrounded && self.draw_to_window(&dl, size, route);
     self.pass_timer.end(&self.gl, Timed::Frame);
     let draw_ms = draw_start.elapsed().as_secs_f32() * 1000.0;
-    // The overlay composites over the finished frame (shaded or not),
-    // before the capture readback so playback frames carry it too. Excluded
-    // from draw_ms: it is diagnostics, not the app's frame cost.
+    // The overlay composites over the finished frame (shaded or not), so a
+    // headless window readback carries it too. Excluded from draw_ms: it is
+    // diagnostics, not the app's frame cost.
     if drawn {
       self.draw_overlay(size);
     }
-    if self.sink == FrameSink::Capture {
-      let pixels = if drawn { gl::read_fbo0_pixels(&self.gl, size) } else { Vec::new() };
-      self.tx.send(FrameOutput::Captured(pixels)).map_err(|_| ())?;
-    } else if self.sink == FrameSink::Window {
+    if self.sink == FrameSink::Window {
       let present_start = std::time::Instant::now();
       let mut presented = false;
       if drawn {

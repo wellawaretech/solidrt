@@ -37,21 +37,26 @@ export async function main() {
   // The same client tree a dev client uses (--data-root, -c): with the
   // manifest's appId the render anchors into that app's sandbox, so it
   // renders the state dev shows.
-  let playbackArgs = ["--playback", ...clientStorageArgs()]
-  if (values.fps) playbackArgs.push("--fps", values.fps)
-  if (values.duration) playbackArgs.push("--duration", values.duration)
-  if (values.size) playbackArgs.push("--size", values.size)
-  if (values.script) playbackArgs.push("--script", resolve(values.script))
+  let renderArgs = ["--render", ...clientStorageArgs()]
+  if (values.fps) renderArgs.push("--fps", values.fps)
+  if (values.duration) renderArgs.push("--duration", values.duration)
+  if (values.size) renderArgs.push("--size", values.size)
+  if (values.script) renderArgs.push("--script", resolve(values.script))
   // The launch link (env.launchLink): a router renders the screen it names.
-  if (values.link) playbackArgs.push("--link", values.link)
+  if (values.link) renderArgs.push("--link", values.link)
+  // The app is run to rest before the first frame; errors logged fail the
+  // render; another Math.random sequence.
+  if (values.settle) renderArgs.push("--settle")
+  if (values.strict) renderArgs.push("--strict")
+  if (values.seed !== undefined) renderArgs.push("--seed", values.seed)
   // Always absolute: the runtime chdirs into the app's data sandbox before
   // frames are written, so a bare prefix would land the PNGs there.
-  playbackArgs.push("--out", resolve(values.output ?? "."))
-  playbackArgs.push("--assets", outDir)
-  playbackArgs.push(jsOutfile)
+  renderArgs.push("--out", resolve(values.output ?? "."))
+  renderArgs.push("--assets", outDir)
+  renderArgs.push(jsOutfile)
   // The runner takes everything after the source path verbatim as the app's
   // argument vector (flux:process argv).
-  playbackArgs.push(...appArgs)
-  let exit = await run(runner, playbackArgs)
+  renderArgs.push(...appArgs)
+  let exit = await run(runner, renderArgs)
   process.exit(exit)
 }

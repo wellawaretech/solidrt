@@ -6,7 +6,7 @@ use flux::rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Persistent, P
 
 use crate::input_plan::{self, Injected};
 use crate::settle::Cap;
-use crate::test_host::Stepper;
+use crate::stepped::{Stepper, WindowReady};
 
 // The `srt:test` module: the engine verbs of an app test, which
 // `@solidrt/core/test` builds the test surface on. Thin FFI over the
@@ -61,36 +61,6 @@ pub(crate) fn frame_done(ctx: &Ctx<'_>) {
   }
 }
 
-/// Whether the window's size has reached this engine (the first resize,
-/// which is what an app's first frame is built on), and who waits for it.
-/// Installed with the engine, ahead of any import: the resize can land
-/// before the file has evaluated.
-#[derive(Clone, Default, JsLifetime)]
-pub(crate) struct WindowReady(#[qjs(skip_trace)] Rc<RefCell<ReadyState>>);
-
-#[derive(Default)]
-struct ReadyState {
-  ready: bool,
-  waiting: Vec<(Persistent<Function<'static>>, flux::Hold)>,
-}
-
-/// The window's size reached this engine: whoever waited on it goes on.
-pub(crate) fn window_ready(ctx: &Ctx<'_>) {
-  let Some(state) = ctx.userdata::<WindowReady>() else {
-    return;
-  };
-  let waiting = {
-    let mut state = state.0.borrow_mut();
-    state.ready = true;
-    std::mem::take(&mut state.waiting)
-  };
-  for (resolve, _hold) in waiting {
-    if let Err(e) = resolve.restore(ctx).and_then(|resolve| resolve.call::<_, ()>(())) {
-      flux::report_uncaught(ctx, e, "srt:test windowReady()");
-    }
-  }
-}
-
 /// `windowReady()`: fulfills once the window's size has reached the
 /// engine, at once when it already has. No frame runs for it and no time
 /// passes: what a mount waits on before its first frame is there to read.
@@ -98,10 +68,10 @@ fn window_ready_promise<'js>(ctx: Ctx<'js>) -> flux::rquickjs::Result<Promise<'j
   stepper(&ctx, "windowReady()")?;
   let state = ctx.userdata::<WindowReady>().expect("window ready installed").clone();
   let (promise, resolve, _reject) = ctx.promise()?;
-  if state.0.borrow().ready {
+  if state.is_ready() {
     resolve.call::<_, ()>(())?;
   } else {
-    state.0.borrow_mut().waiting.push((Persistent::save(&ctx, resolve), flux::hold_engine(&ctx, "window")));
+    state.wait_promise(Persistent::save(&ctx, resolve), flux::hold_engine(&ctx, "window"));
   }
   Ok(promise)
 }

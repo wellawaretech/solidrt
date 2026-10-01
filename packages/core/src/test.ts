@@ -34,8 +34,6 @@ const FOUND_INSTEAD_MAX = 12
 // says otherwise: far past any transition an app runs, short enough that a
 // frame callback that never stops fails promptly.
 const SETTLE_MAX_MS = 5000
-// How deep `tree()` reads: every level a real tree has.
-const TREE_DEPTH = 1000
 // Bytes per pixel of a capture.
 const RGBA = 4
 
@@ -106,13 +104,14 @@ export interface Locator {
   /** The node's whole record. */
   readonly record: NodeRecord
   /**
-   * The subtree as text, one node per line, indented by depth: kind, label,
-   * text and painted box (`view [save] 20,50 120x40`). No ids, so it reads
-   * the same on every run and diffs cleanly: compare it to a string the
-   * test holds to pin a whole layout, or print it to see what is there.
-   * `{ props: true }` adds each node's off-default props.
+   * The subtree as an outline: one line per node, indented by depth, with
+   * its kind, label, text and painted box (`view [save] 20,50 120x40`). No
+   * ids, so it reads the same on every run and diffs cleanly: compare it
+   * to a string the test holds to pin a whole layout, or print it to see
+   * what is there. `{ props: true }` adds each node's off-default props. A
+   * failed test prints the whole app this way.
    */
-  tree(options?: { props?: boolean }): string
+  outline(options?: { props?: boolean }): string
   /**
    * The pixels the node paints, its subtree included. Drawn now, from the
    * tree as it is: no frame runs and no app time passes, so a transition
@@ -279,22 +278,6 @@ export interface TestOptions {
 
 // -- Locators --
 
-// One line per node of a subtree, for `tree()`.
-function treeLines(node: NodeRecord, depth: number, props: boolean, out: string[]): void {
-  let line = "  ".repeat(depth) + node.kind
-  if (node.label !== undefined) line += ` [${node.label}]`
-  if (node.text !== undefined) line += ` ${JSON.stringify(node.text)}`
-  line += ` ${node.x},${node.y} ${node.width}x${node.height}`
-  if (props && node.props !== undefined) line += ` ${JSON.stringify(node.props)}`
-  out.push(line)
-  for (let child of node.children ?? []) {
-    // A span that is all of its parent's text is that text (as `find` sees
-    // it): one line, not two.
-    if (child.text !== undefined && child.text === node.text) continue
-    treeLines(child, depth + 1, props, out)
-  }
-}
-
 function describeQuery(query: Query): string {
   let parts = Object.entries(query).map(([name, value]) => `${name}: ${value instanceof RegExp ? value : JSON.stringify(value)}`)
   return `{ ${parts.join(", ")} }`
@@ -378,13 +361,11 @@ function locatorFields(resolve: () => number[], what: string, scope: () => numbe
     },
     props: { get: () => record().props ?? {} },
     record: { get: record },
-    tree: {
+    outline: {
       value: (options: { props?: boolean } = {}) => {
-        let json = gui.node(one(), TREE_DEPTH)
-        if (json === null) throw new Error(`The node ${what} named is gone`)
-        let lines: string[] = []
-        treeLines(JSON.parse(json) as NodeRecord, 0, options.props === true, lines)
-        return lines.join("\n")
+        let text = gui.outline(one(), options.props === true)
+        if (text === null) throw new Error(`The node ${what} named is gone`)
+        return text
       },
     },
     pixels: { value: () => capture(one()) },

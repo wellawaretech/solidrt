@@ -30,13 +30,3 @@ fn extra_demand_passes_the_gate_and_still_consumes_the_latch() {
   assert!(driver.begin(&platform, true).is_some());
   assert!(driver.begin(&platform, false).is_none());
 }
-
-#[test]
-fn always_render_never_gates() {
-  let platform = PlatformContext::new(Vec::new());
-  platform.set_always_render(true);
-  let mut driver = FrameDriver::new();
-
-  assert!(driver.begin(&platform, false).is_some());
-  assert!(driver.begin(&platform, false).is_some());
-}

@@ -26,6 +26,9 @@ the work before starting it:
 - agents/assets.md - the assets/ folder, inlined imports and the bundle
   output; fonts, the `solidrt` package.json identity key, and distribution
   builds. Read before adding an asset or a font, or building to distribute.
+- agents/testing.md - writing tests for an app or a package with `srt
+  test`: what to test at which layer, naming nodes, the time model, how to
+  read a failure. Read before writing or repairing a test.
 
 ## Commands
 
@@ -64,10 +67,13 @@ the work before starting it:
   work the test set off without holding its promise. `Math.random()` is seeded
   in every test's engine, so random inputs are the same on every run;
   `--seed <n>` picks another sequence. `--filter <text>` runs the tests
-  whose name contains the text; everything after `--` reaches the test
-  files as `flux:process` argv. Exits
-  nonzero on any failure; a failure prints expected, received and the
-  source line. A file that imports `@solidrt/core/test` (or any app
+  whose name contains the text; `--only flux|app` runs one layer;
+  everything after `--` reaches the test files as `flux:process` argv.
+  Exits nonzero on any failure; a failure prints expected, received and
+  the source line, what was in flight, and for an app test the app time
+  and frame, what still demanded frames, the outline and the path of a
+  snapshot under `dist/test/` (agents/testing.md, "Reading a failure").
+  A file that imports `@solidrt/core/test` (or any app
   runtime module; always a `.test.tsx`) is an app test and runs on the dev
   client, headless: `test(name, async app => ...)`, time passes only by
   `app.frame(n)` / `app.advance(ms)` / `app.settle()` (until the app is at
@@ -76,7 +82,7 @@ the work before starting it:
   and moves with the frames; `app.mount(ui)`, `find({ text | label |
   kind })`, `app.tap` / `drag` / `key` / `type` / `input` (the `send_input`
   event shape, through the real pipeline), `app.link`, `app.debug`, and
-  the readers (`tree()`, `pixel()`, `app.gpu()`) are described in core's
+  the readers (`outline()`, `pixel()`, `app.gpu()`) are described in core's
   AGENTS.md ("Testing an app").
 - `bunx srt bundle` - bundle the project into `dist/bundle/` (or
   `--output <dir>`): `<name>.srt.js` plus the app's isolate modules as
@@ -85,7 +91,9 @@ the work before starting it:
   isolates/ dir loses them (`--stdout` cannot carry them at all).
   `--minify`, `--dev` also available.
 - `bunx srt render [flags]` - render the project OFFSCREEN to PNG frames,
-  optionally replaying a `--script` file recorded via `--capture`.
+  optionally replaying a `--script` file recorded via `--capture`;
+  `--settle` runs the app to rest first, `--strict` fails on a logged
+  error, `--seed <n>` another Math.random sequence (see below).
 - `bunx srt server [file]` / `bunx srt client` - the two halves of `run`
   separately (server distributes code; clients on other devices connect to it).
 - `bunx srt run --capture out.script.json` - records keydown/keyup
@@ -102,18 +110,18 @@ the work before starting it:
 Two reliable checks that need no GUI:
 
 1. `bunx srt bundle` - exit 0 means the app compiles. Fast.
-2. `bunx srt render --size 480x640 --duration 1 --fps 2` -
-   renders offscreen via EGL and writes `frame-NNNNNN.png`. It proves the
-   app draws: exit 0 means every frame was written (an app that calls
-   `exit()` ends the run early, also with 0). It is NOT a pass/fail gate
-   for what is IN the frames - a scene whose build throws is contained per
-   the error model, logs one `Contained error` and writes an empty frame,
-   still exiting 0 (okf/backlog/render-as-a-verification-gate.md). Read
-   the log, or look at a frame, before believing a run. Combine with
-   `--fps`/`--duration` (defaults
-   1280x720, 60fps, 1s). No display needed: rendering uses SDL's offscreen
-   driver, or alloy's own EGL pbuffer where that driver cannot go headless
-   (see the ANGLE gotcha below).
+2. `bunx srt render --settle --strict --size 480x640 --duration 1 --fps 2`
+   - renders offscreen via EGL and writes `frame-NNNNNN.png`. `--strict`
+   makes exit 0 mean the frames were written AND the app logged no error
+   (a scene whose build throws is contained per the error model and would
+   otherwise write an empty frame and exit 0); `--settle` makes frame 0
+   the app at rest (loads landed, mount transitions played out) instead of
+   its loading state. An app that calls `exit()` ends the run early, with
+   0. Combine with `--fps`/`--duration` (defaults 1280x720, 60fps, 1s). No
+   display needed: rendering uses SDL's offscreen driver, or alloy's own
+   EGL pbuffer where that driver cannot go headless (see the ANGLE gotcha
+   below). A test (`bunx srt test`, agents/testing.md) asserts on the tree
+   instead of a picture and is the better gate for behavior.
 
 Also headless: the bundled flux runtime runs a plain `.js` file directly -
 `node_modules/@solidrt/<platform>/flux script.js` (e.g.
@@ -131,11 +139,17 @@ behavior in isolation.
   callback) is drawn but never written. `onFrame`'s `rate` is the capture
   fps. A mount-time `windowSize()` read is 0x0, as on a live client (the
   first resize lands after the module has evaluated); read it reactively.
-- `--duration` is APP time, not wall clock: the capture is lockstep on the
-  virtual frame clock and waits for nothing, so 40 frames at `--fps 1` can
-  render in two real seconds. An app that fetches, reads files or builds in
-  an isolate will still be LOADING in every frame, however long a duration
-  is asked for. Verify async apps against a live client over MCP instead.
+- `--duration` is APP time, not wall clock: the render steps the frame
+  clock and waits for nothing, so 40 frames at `--fps 1` can render in two
+  real seconds. An app that fetches, reads files or builds in an isolate is
+  LOADING in every frame, however long a duration is asked for, unless
+  `--settle` is given: then the app is run to rest first and the frames
+  start from there (app time passes while it settles). An app that
+  animates forever cannot settle and fails with the flag, named.
+- There is no wall clock in a render: `performance.now()` reads 0, the
+  date starts at 2000-01-01 UTC and moves with the frames, `Math.random()`
+  is seeded (`--seed <n>` for another sequence). Two renders of one app
+  write identical frames.
 - `--fps` is a positive INTEGER (`--fps 0.5` is rejected); slow a scene down
   with fewer frames over a longer `--duration`, or with the app's own clock.
 - Run from the project directory. There is no `bunx --cwd` flag.

@@ -1,7 +1,8 @@
 ---
 title: srt render cannot fail, so it is not the gate the docs sell
-description: A scene whose build throws is contained, writes an empty frame and exits 0, and --duration is app time so an app that loads asynchronously is captured mid-load; both make a green headless check that proves nothing, and both want one flag (--strict, --settle/--wait-idle).
+description: A scene whose build throws is contained, writes an empty frame and exits 0, and --duration is app time so an app that loads asynchronously is captured mid-load; closed by srt render --strict (errors logged fail the render) and --settle (the app is run to rest before the first frame, the settle condition of the test harness, not a wall sleep).
 created: 2026-09-08
+completed: 2026-10-01
 ---
 
 # srt render cannot fail, so it is not the gate the docs sell
@@ -93,3 +94,17 @@ integer, decided.
 Left: the CLI half - `srt render --strict` / `--settle` passing the flags
 through, and the cli/AGENTS.md paragraph on what exit 0 proves shrinking to
 the flags.
+
+## Closed (2026-10-01)
+
+Closed by step 4.6 of [test-harness](../plans/test-harness.md) (D35, D39).
+`srt render` passes `--strict` and `--settle` through; the cli/AGENTS.md
+paragraph names the flags. The wall sleep is gone: `--settle` is now the
+condition the test harness settles on (nothing in flight, no timer due, no
+frame demanded), run by the render host on the stepped frame clock, with
+the 5000 ms app-time cap of a test and a 30 s wall bound on work in flight.
+App time passes while the app settles, and the written frames start from
+there. An app that animates forever cannot settle and fails the render with
+what still wanted frames, named; it renders without the flag. The third
+symptom (an asynchronously opened resource moving the start by a frame) is
+covered by the same flag: the open is work in flight.

@@ -26,6 +26,7 @@ use rquickjs::{Ctx, Function, JsLifetime, Value};
 
 use crate::engine::{ExecHandle, FluxEngine, FluxEngineBuilder, ModuleCode};
 use crate::logger::CtxLogger;
+use crate::pending::PendingOps;
 
 use super::Registry;
 
@@ -44,11 +45,30 @@ pub const DEFAULT_SEED: u64 = 0;
 /// The module name the file is evaluated under, which is what its stack
 /// frames cite and so what a sourcemap for it is keyed by.
 pub const ENTRY_MODULE: &str = "main";
+/// How long the host gives a timed-out test's engine to answer for the
+/// failure's details (what is in flight, the embedder's own) before the
+/// engine is dropped. The engine stays interrupted meanwhile, so the
+/// reading is native work only and this is a bound, not a wait.
+const DETAILS_GRACE: Duration = Duration::from_millis(1000);
 
 /// Context userdata of an engine a test host built. `flux:test` evaluates
 /// only where it is present (see `TestModule::evaluate`).
 #[derive(Clone, JsLifetime)]
 pub(crate) struct Hosted;
+
+/// What a failed test's record carries beside its error, as labelled text
+/// (`("In flight", "1 fetch")`, `("Outline", "window 0,0 1280x720\n  ...")`):
+/// read from the test's engine when the failure is known, so it says what
+/// the test saw. The host contributes what it knows (flux's work in
+/// flight); an embedder adds its own through `RunOptions::details`.
+pub type Details = Vec<(String, String)>;
+
+/// An embedder's failure details, read in the failed test's engine with
+/// the test's name: the app layer's time, tree and snapshot. Called once
+/// per failed test, after the test's own end or once its cap has passed;
+/// in the latter case the engine is interrupted, so a hook that runs JS
+/// gets an interruption, not a result (native reads are unaffected).
+pub type DetailsHook = Arc<dyn for<'js> Fn(&Ctx<'js>, &str) -> Details + Send + Sync>;
 
 #[derive(Clone)]
 pub struct RunOptions {
@@ -58,11 +78,13 @@ pub struct RunOptions {
   pub seed: u64,
   /// The cap on one engine (see `DEFAULT_TIMEOUT`).
   pub timeout: Duration,
+  /// The embedder's details of a failure (see `DetailsHook`).
+  pub details: Option<DetailsHook>,
 }
 
 impl Default for RunOptions {
   fn default() -> Self {
-    Self { filter: None, seed: DEFAULT_SEED, timeout: DEFAULT_TIMEOUT }
+    Self { filter: None, seed: DEFAULT_SEED, timeout: DEFAULT_TIMEOUT, details: None }
   }
 }
 
@@ -86,6 +108,9 @@ pub struct TestResult {
   /// What the engine logged while the test ran, the file's own output at
   /// load left out (it is the same in every engine and reported once).
   pub output: Vec<String>,
+  /// The failure's details (see `Details`); empty for a pass, and for a
+  /// test whose engine was gone when the failure was known.
+  pub details: Details,
 }
 
 /// What a host reports about a file, in order: `Loaded` or `Failed` first,
@@ -124,6 +149,9 @@ impl Record {
         });
         if let Some(error) = &result.error {
           record["error"] = serde_json::json!({ "message": error.message, "stack": error.stack });
+        }
+        if !result.details.is_empty() {
+          record["details"] = serde_json::json!(result.details);
         }
         serde_json::json!({ "type": "result", "result": record })
       }
@@ -173,6 +201,22 @@ struct Shared {
   started: Mutex<Option<Instant>>,
   /// The test's end: its duration and its error, None for a pass.
   ended: Mutex<Option<(f64, Option<TestError>)>>,
+  /// The failure's details, read in the engine once the failure was known.
+  details: Mutex<Option<Details>>,
+}
+
+/// The details of a failure, read in the test's engine: what flux has in
+/// flight, then the embedder's own.
+fn gather_details(ctx: &Ctx<'_>, name: &str, hook: &Option<DetailsHook>) -> Details {
+  let mut details = Vec::new();
+  let in_flight = crate::in_flight(ctx);
+  if !in_flight.is_empty() {
+    details.push(("In flight".to_string(), crate::describe_in_flight(&in_flight)));
+  }
+  if let Some(hook) = hook {
+    details.extend(hook(ctx, name));
+  }
+  details
 }
 
 fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -204,6 +248,7 @@ pub struct Session {
   task: Task,
   seed: u64,
   timeout: Duration,
+  details: Option<DetailsHook>,
   shared: Arc<Shared>,
   interrupt: Arc<AtomicBool>,
 }
@@ -222,6 +267,7 @@ impl Session {
       task,
       seed: options.seed,
       timeout: options.timeout,
+      details: options.details.clone(),
       shared: Arc::new(Shared::default()),
       interrupt: Arc::new(AtomicBool::new(false)),
     }
@@ -274,6 +320,8 @@ impl Session {
     let _watchdog = Watchdog::arm(self.interrupt.clone(), self.timeout);
     let failed = tx.clone();
     let on_failed = move |_: Ctx<'_>| drop(failed.send(Signal::LoadFailed));
+    let details = self.details.clone();
+    let late = (exec.clone(), name.clone(), details.clone(), shared.clone());
     let on_ready = move |ctx: Ctx<'_>, _namespace: rquickjs::Object<'_>| {
       let lines = locked(&shared.output).len();
       *locked(&shared.loaded_at) = Some(lines);
@@ -290,7 +338,7 @@ impl Session {
           };
           let _ = tx.send(Signal::Names(names));
         }
-        Some(name) => start(ctx, registry, &name, shared, exec, tx),
+        Some(name) => start(ctx, registry, &name, shared, details, exec, tx),
       }
     };
     let evaluation = engine.eval_module_or(ENTRY_MODULE.to_string(), code, on_ready, on_failed);
@@ -301,6 +349,14 @@ impl Session {
       _ = tokio::time::sleep(self.timeout) => End::TimedOut,
       _ = &mut evaluation => rx.try_recv().map(End::Signal).unwrap_or(End::Idle),
     };
+    // A test that ran out of time never reached the point where its
+    // failure's details are read, so they are read now, in the engine as
+    // it stands (interrupted, which keeps a hook from hanging again):
+    // queued on its exec channel and polled for a bounded grace.
+    if let (End::TimedOut, (exec, Some(name), hook, shared)) = (&end, late) {
+      exec.exec(move |ctx| *locked(&shared.details) = Some(gather_details(&ctx, &name, &hook)));
+      let _ = tokio::time::timeout(DETAILS_GRACE, &mut evaluation).await;
+    }
     // An engine the watchdog interrupted can end before the host's own
     // timer fires: it ran out of time all the same.
     match end {
@@ -330,6 +386,7 @@ impl Session {
     let loaded_at = *locked(&self.shared.loaded_at);
     let uncaught = locked(&self.shared.uncaught).first().cloned();
     let ended = locked(&self.shared.ended).clone();
+    let details = locked(&self.shared.details).take().unwrap_or_default();
     let (duration_ms, error) = match ended {
       // The test came to its own end. An uncaught error in its engine
       // fails it all the same; its own error is the one named.
@@ -353,7 +410,7 @@ impl Session {
     if let Some(error) = &error {
       output.retain(|line| *line != error.message);
     }
-    TestResult { name, ok: error.is_none(), duration_ms, error, output }
+    TestResult { name, ok: error.is_none(), duration_ms, error, output, details }
   }
 
   /// Why an engine gave no listing or result, for `subject` ("The file"
@@ -376,6 +433,7 @@ fn start<'js>(
   registry: Option<Registry>,
   name: &str,
   shared: Arc<Shared>,
+  details: Option<DetailsHook>,
   exec: ExecHandle,
   tx: tokio::sync::mpsc::UnboundedSender<Signal>,
 ) {
@@ -383,22 +441,39 @@ fn start<'js>(
   *locked(&shared.started) = Some(started);
   let finish = {
     let shared = shared.clone();
-    move |error: Option<TestError>| {
+    let name = name.to_string();
+    move |ctx: &Ctx<'_>, error: Option<TestError>| {
+      let failed = error.is_some();
       *locked(&shared.ended) = Some((started.elapsed().as_secs_f64() * 1000.0, error));
       // The host hears of the end two engine turns later: a rejection the
       // test left unhandled is reported at the checkpoint after the turn
       // that settled the test, and the host drops the engine on the signal.
+      // By then the uncaught errors are final too, so that is where a
+      // failure's details are read, with the engine still as the test
+      // left it. The engine is held until then: with the test's own work
+      // done it would otherwise end at once, its queued turns unrun (a
+      // hold taken only now, so a test that waits on nothing still fails
+      // when its engine runs out of work).
+      let held = PendingOps::of(ctx).standing("test end");
       let relay = exec.clone();
-      exec.exec(move |_| relay.exec(move |_| drop(tx.send(Signal::Finished))));
+      exec.exec(move |_| {
+        relay.exec(move |ctx| {
+          if failed || !locked(&shared.uncaught).is_empty() {
+            *locked(&shared.details) = Some(gather_details(&ctx, &name, &details));
+          }
+          drop(tx.send(Signal::Finished));
+          drop(held);
+        })
+      });
     }
   };
   let host_error = |message: String| Some(TestError { message, stack: String::new() });
   let Some(registry) = registry else {
-    return finish(host_error(format!("The test \"{name}\" is gone: the file did not import flux:test this time")));
+    return finish(&ctx, host_error(format!("The test \"{name}\" is gone: the file did not import flux:test this time")));
   };
   let promise = match registry.run_one(&ctx, name) {
     Ok(promise) => promise,
-    Err(e) => return finish(host_error(format!("Test host: failed to start the test: {e}"))),
+    Err(e) => return finish(&ctx, host_error(format!("Test host: failed to start the test: {e}"))),
   };
   let mut finish = Some(finish);
   let settled = MutFn::from(move |value: Value<'_>| {
@@ -407,7 +482,7 @@ fn start<'js>(
       stack: thrown.get::<_, String>("stack").unwrap_or_default(),
     });
     if let Some(finish) = finish.take() {
-      finish(error);
+      finish(value.ctx(), error);
     }
   });
   let attached = Function::new(ctx.clone(), settled)

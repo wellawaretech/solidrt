@@ -69,6 +69,9 @@ const OPTIONS = {
     seconds: { type: "string" },
     filter: { type: "string" },
     seed: { type: "string" },
+    only: { type: "string" },
+    settle: { type: "boolean", default: false },
+    strict: { type: "boolean", default: false },
 } as const
 
 export let { values, positionals } = parse()
@@ -224,9 +227,17 @@ export function validateArgs() {
   if (values.filter !== undefined && command !== "test") {
     usage("srt test --filter <text>  (--filter is only valid with the test command)")
   }
-  // --seed picks the sequence Math.random runs on in the tests.
-  if (values.seed !== undefined && command !== "test") {
-    usage("srt test --seed <n>  (--seed is only valid with the test command)")
+  // --seed picks the sequence Math.random runs on in the tests, or in a render.
+  if (values.seed !== undefined && command !== "test" && command !== "render") {
+    usage("srt <test|render> --seed <n>  (--seed is only valid with the test and render commands)")
+  }
+  // --settle and --strict shape a render.
+  if ((values.settle || values.strict) && command !== "render") {
+    usage("srt render [--settle] [--strict]  (--settle and --strict are only valid with the render command)")
+  }
+  // --only runs one layer of the tests.
+  if (values.only !== undefined && command !== "test") {
+    usage("srt test --only <flux|app>  (--only is only valid with the test command)")
   }
   // --port binds the dev server (`run`, `server`) or picks one (`client`,
   // `android`, `mcp`).

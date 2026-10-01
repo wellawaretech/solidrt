@@ -6,9 +6,8 @@
 //! `Instant` (`ns` converts it), so the two sides are one clock by
 //! construction, with no shared definition to keep in step.
 //!
-//! In the headless modes the clock is the virtual frame time: the playback
-//! loop (or, in stepped mode, the embedder) sets it before each frame
-//! (`set_virtual_ns`),
+//! In the headless mode the clock is the virtual frame time: the embedder
+//! sets it before each frame it steps (`set_virtual_ns`),
 //! `now_ns` reads it, and `stepped` says so, so a producer never sleeps
 //! against it (okf/plans/video-texture-off-frame-loop.md, section 8).
 
@@ -27,8 +26,8 @@ fn epoch() -> Instant {
   *EPOCH.get_or_init(Instant::now)
 }
 
-/// The clock's reading now, in nanoseconds: the virtual frame time in
-/// playback, real elapsed time otherwise.
+/// The clock's reading now, in nanoseconds: the virtual frame time headless,
+/// real elapsed time otherwise.
 pub fn now_ns() -> i64 {
   match VIRTUAL_NS.load(Ordering::Acquire) {
     NO_VIRTUAL => ns(Instant::now()),
@@ -59,18 +58,17 @@ pub fn at(ns: i64) -> Instant {
 
 /// The clock's reading now as an instant: the deadline for a frame drawn
 /// without a frame signal behind it (the mount frame, a direct render),
-/// which presents as soon as it can - at the virtual time in playback.
+/// which presents as soon as it can - at the virtual time headless.
 pub fn now() -> Instant {
   at(now_ns())
 }
 
-/// Whether the clock advances only when the playback loop steps it.
+/// Whether the clock advances only when the embedder steps it.
 pub fn stepped() -> bool {
   VIRTUAL_NS.load(Ordering::Acquire) != NO_VIRTUAL
 }
 
-/// Step the virtual clock: the playback loop before each frame signal, the
-/// embedder before each frame it steps in stepped mode.
+/// Step the virtual clock: the embedder, before each frame it steps.
 pub fn set_virtual_ns(virtual_ns: i64) {
   VIRTUAL_NS.store(virtual_ns.max(0), Ordering::Release);
 }

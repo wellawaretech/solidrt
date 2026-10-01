@@ -1,15 +1,13 @@
-use crate::playback::PlaybackConfig;
 use crate::stepped::SteppedConfig;
 
 // Operating mode of the app. Run is the normal interactive loop driven by the
-// display; Playback drives a deterministic lockstep capture loop (optionally
-// replaying a scripted input timeline) with its own config; Stepped is
-// headless like playback but emits no frame signal of its own: the embedder
-// steps every frame (a test host), and a frame nobody demanded is not drawn.
-// Prefer matching over assuming the cases.
+// display. Stepped is the headless mode: an offscreen surface at a fixed
+// size, no frame signal of its own - the embedder steps every frame (a test
+// host, a render host) and reads the pixels it wants (a node capture, the
+// window) - and a frame nobody demanded is not drawn. Prefer matching over
+// assuming the cases.
 pub enum Mode {
   Run,
-  Playback(PlaybackConfig),
   Stepped(SteppedConfig),
 }
 
@@ -17,14 +15,13 @@ impl Mode {
   /// No display: an offscreen surface at a fixed size, nothing presented,
   /// the process clock virtual (see clock.rs).
   pub fn is_headless(&self) -> bool {
-    matches!(self, Mode::Playback(_) | Mode::Stepped(_))
+    matches!(self, Mode::Stepped(_))
   }
 
   /// What the raster thread does with a drawn frame in this mode.
   pub(crate) fn frame_sink(&self) -> crate::raster::FrameSink {
     match self {
       Mode::Run => crate::raster::FrameSink::Window,
-      Mode::Playback(_) => crate::raster::FrameSink::Capture,
       Mode::Stepped(_) => crate::raster::FrameSink::Discard,
     }
   }

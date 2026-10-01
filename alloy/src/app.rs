@@ -7,12 +7,11 @@ use crate::backend::{DisplayContext, FrameOutput};
 use crate::context::Context;
 use crate::event::{
   current_input_devices_event, current_orientation_event, current_resize_event, current_system_theme_event,
-  playback_init_events, translate_event, AlloyCommand, AlloyEvent,
+  translate_event, AlloyCommand, AlloyEvent,
 };
 use crate::gl;
 use crate::liveness::SurfaceLiveness;
 use crate::mode::Mode;
-use crate::playback::run_playback_loop;
 use crate::stepped::run_stepped_loop;
 use crate::raster::RasterCmd;
 
@@ -44,12 +43,12 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // Image cursors follow the display scale where SDL does that itself
   // (Windows; macOS and Wayland always do). Must precede any cursor creation.
   sdl3::hint::set("SDL_MOUSE_DPI_SCALE_CURSORS", "1");
-  // For the playback fallback below, force 1:1 pixel mapping so the hidden
+  // For the headless fallback below, force 1:1 pixel mapping so the hidden
   // window is exactly the requested size in physical pixels regardless of
   // display scale.
   if mode.is_headless() {
     sdl3::hint::set("SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY", "1");
-    // The process clock is the capture's virtual frame time from before any
+    // The process clock is the host's virtual frame time from before any
     // app code runs (see clock.rs), so a producer opened at mount already
     // schedules on it.
     crate::clock::set_virtual_ns(0);
@@ -71,8 +70,8 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // the window: main keeps pumping events over a black surface until it is
   // killed. Let the default hook print its report, then exit, so a failed
   // assertion in a probe takes the process down at once. An embedder's own
-  // hook installed before this one is chained (it runs first). Playback
-  // keeps the default: its capture loop reports an incomplete run itself.
+  // hook installed before this one is chained (it runs first). The headless
+  // mode keeps the default: its host reports an incomplete run itself.
   if !mode.is_headless() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -87,14 +86,15 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   #[cfg(target_os = "android")]
   crate::sdl_utils::init_android_context();
 
-  // Playback wants no display at all: SDL's offscreen video driver backs the
-  // window with an EGL pbuffer, so `srt render` runs in CI, over SSH, on any
-  // headless box - and its fake display has no scale to inherit. Where the
-  // driver fails only because the GL stack lacks EGL device enumeration
-  // (ANGLE never implements it), the same pbuffer is built without SDL's video
-  // subsystem (egl_headless.rs) behind SDL's dummy driver, which still
-  // provides the Window the playback loop sizes from. Anything else falls
-  // back to the interactive path's hidden window on the real display. Each
+  // The headless mode wants no display at all: SDL's offscreen video driver
+  // backs the window with an EGL pbuffer, so `srt render` and `srt test` run
+  // in CI, over SSH, on any headless box - and its fake display has no scale
+  // to inherit. Where the driver fails only because the GL stack lacks EGL
+  // device enumeration (ANGLE never implements it), the same pbuffer is
+  // built without SDL's video subsystem (egl_headless.rs) behind SDL's dummy
+  // driver, which still provides the Window the surface is sized from.
+  // Anything else falls back to the interactive path's hidden window on the
+  // real display. Each
   // failed attempt dropped its video subsystem handles, so setting the hint
   // and re-entering setup re-initializes video on the next driver.
   let resampler = crate::resample::SharedResampler::new();
@@ -165,9 +165,9 @@ fn setup_video(
 
   let mut builder = video.window(title, width, height);
   builder.opengl().position_centered().high_pixel_density();
-  // A playback window is hidden and fixed-size: keeping it non-resizable stops
-  // the compositor from negotiating a different surface size on a scaled display,
-  // which would diverge from the requested capture dimensions.
+  // A headless window is hidden and fixed-size: keeping it non-resizable
+  // stops the compositor from negotiating a different surface size on a
+  // scaled display, which would diverge from the requested dimensions.
   if !mode.is_headless() {
     builder.resizable();
   }
@@ -180,9 +180,9 @@ fn setup_video(
   Ok((window, platform))
 }
 
-// Playback on SDL's dummy video driver: a windowless Window (no GL flag: the
-// dummy driver loads no GL library) sized like the capture, plus an EGL
-// pbuffer context created outside SDL. See egl_headless.rs.
+// The headless mode on SDL's dummy video driver: a windowless Window (no GL
+// flag: the dummy driver loads no GL library) at the requested size, plus an
+// EGL pbuffer context created outside SDL. See egl_headless.rs.
 fn setup_headless(
   sdl_context: &sdl3::Sdl,
   title: &str,
@@ -194,8 +194,8 @@ fn setup_headless(
   Ok((window, platform))
 }
 
-// Interactive loop only: playback's surface is fixed at the size captured in
-// setup, which is exactly what the frame readback assumes.
+// Interactive loop only: a headless surface is fixed at the size set up,
+// which is exactly what the window readback assumes.
 fn apply_main_thread_effects(event: &AlloyEvent, surface_size: &Arc<AtomicU64>) {
   if let AlloyEvent::Resize { size, display_scale, .. } = event {
     let (w, h) = ((size.width as f32 * display_scale) as u32, (size.height as f32 * display_scale) as u32);
@@ -320,13 +320,13 @@ impl App {
     self.user_input_muted.clone()
   }
 
-  /// Run the platform loop until the app winds down. `Err` only comes out of
-  /// playback mode (an incomplete capture); the embedder turns it into the
-  /// process exit code - alloy itself never exits the process here.
+  /// Run the platform loop until the app winds down: the interactive loop
+  /// until the window closes, the stepped loop until the embedder has
+  /// dropped its command sender. Alloy itself never exits the process here.
   pub fn run(
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<crate::Arrival>) + Send + 'static,
-  ) -> Result<(), String> {
+  ) {
     let App { sdl_context, mut window, platform, mode, resampler, user_input_muted } = self;
     let surface_size = platform.surface_size_handle();
 
@@ -340,7 +340,7 @@ impl App {
     let stats = Arc::new(crate::raster::RasterStats::new());
     // Frame wakeup for the interactive loop below: it sleeps on the SDL event
     // queue, so a presented frame must push an event to be noticed before the
-    // wait's timeout. Playback mode blocks on the frame channel directly.
+    // wait's timeout. The stepped loop presents nothing.
     let wake: Option<Arc<dyn Fn() + Send + Sync>> = if mode.is_headless() {
       None
     } else {
@@ -361,24 +361,13 @@ impl App {
     // AlloyCommand::SetFrameRequestLatch.
     let mut liveness = SurfaceLiveness::new();
 
-    if let Mode::Playback(playback) = mode {
-      // The capture loop never reads commands, so the init events the
-      // interactive loop answers EmitInitEvents with are sent up front
-      // instead; a capture runs exactly one engine, and it is not built yet,
-      // so the events wait in the channel until it is.
-      for event in playback_init_events(&window, playback.fps) {
-        if liveness.on_event(&event, Instant::now()) {
-          raster.send(RasterCmd::RebindWindowSurface).ok();
-        }
-        event_tx.send(event).ok();
-      }
-      return run_playback_loop(window, rx, event_tx, &raster, playback);
-    }
     if let Mode::Stepped(stepped) = mode {
       run_stepped_loop(window, cmd_rx, event_tx, stepped);
-      // As in playback: nothing may be drawing when the window drops.
+      // Nothing may be drawing when the window drops: dropping it unloads
+      // the EGL library, and the embedder exits the process right after,
+      // which would pull the driver out from under a draw still encoding.
       raster.drain();
-      return Ok(());
+      return;
     }
 
     let initial = current_resize_event(&window);
@@ -640,9 +629,6 @@ impl App {
               }
             }
           }
-          // Captured frames only exist in playback mode, which never reaches
-          // this loop.
-          Ok(FrameOutput::Captured(_)) => {}
           Err(mpsc::TryRecvError::Empty) => break,
           Err(mpsc::TryRecvError::Disconnected) => {
             disconnected = true;
@@ -1036,6 +1022,5 @@ impl App {
         event_tx.send(e).ok();
       }
     }
-    Ok(())
   }
 }

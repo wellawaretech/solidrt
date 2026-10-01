@@ -603,12 +603,12 @@ pub(crate) fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
   }
 }
 
-// Playback's one resize event. The mode exists for machine-independent
-// captures, so the host display's scale must not leak into layout: the scale
-// is pinned to 1.0 and the size is the capture buffer's physical size, making
-// a layout box map to output pixels 1:1 on every machine. An offscreen
-// capture has no insets, so the safe area is the full window.
-fn playback_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
+// The headless mode's one resize event. The mode exists for machine-
+// independent frames, so the host display's scale must not leak into layout:
+// the scale is pinned to 1.0 and the size is the surface's physical size,
+// making a layout box map to output pixels 1:1 on every machine. An
+// offscreen surface has no insets, so the safe area is the full window.
+fn headless_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
   let (w, h) = window.size_in_pixels();
   AlloyEvent::Resize {
     size: ISize::new(w as i64, h as i64),
@@ -617,16 +617,16 @@ fn playback_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
   }
 }
 
-// Playback's init bundle: what the interactive loop answers EmitInitEvents
-// with, for the one engine a capture ever runs, pinned to host-independent
-// values. The refresh rate is the capture rate, so a frame callback's `rate`
-// matches the virtual clock's step. The resize goes last: the app bootstraps
-// its first frame on the first resize it sees, so everything sent before it
-// is in place when that frame is built. Theme, input devices, orientation
-// and pointer lock are not sent: an offscreen capture has none, and the
-// embedder's defaults cover their absence.
-pub(crate) fn playback_init_events(window: &sdl3::video::Window, fps: u32) -> [AlloyEvent; 2] {
-  [AlloyEvent::DisplayRefreshRate { hz: fps as f32 }, playback_resize_event(window)]
+// The headless mode's init bundle: what the interactive loop answers
+// EmitInitEvents with, for every engine a headless host builds, pinned to
+// host-independent values. The refresh rate is the rate the host steps at,
+// so a frame callback's `rate` matches the virtual clock's step. The resize
+// goes last: the app bootstraps its first frame on the first resize it sees,
+// so everything sent before it is in place when that frame is built. Theme,
+// input devices, orientation and pointer lock are not sent: an offscreen
+// surface has none, and the embedder's defaults cover their absence.
+pub(crate) fn headless_init_events(window: &sdl3::video::Window, fps: u32) -> [AlloyEvent; 2] {
+  [AlloyEvent::DisplayRefreshRate { hz: fps as f32 }, headless_resize_event(window)]
 }
 
 // Maps SDL mouse buttons to web-standard MouseEvent.button codes:

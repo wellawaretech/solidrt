@@ -273,9 +273,14 @@ impl Pad {
 // events cover mapped and unmapped devices alike, and SDL emits Added events
 // for already-connected devices when the subsystem initializes, so
 // open-on-Added covers initial population too.
-pub(crate) struct Gamepads {
-  gamepad: GamepadSubsystem,
-  joystick: JoystickSubsystem,
+//
+// The slots do not need SDL to hold synthetic pads: a table made with
+// `synthetic` has no subsystems and seats those alone, which is what a host
+// with no device loop (a stepped test host) drives its pads through, with
+// the same commands, snapshot and back edge.
+pub struct Gamepads {
+  // SDL's pad and joystick subsystems; None on a table of synthetic pads.
+  sdl: Option<(GamepadSubsystem, JoystickSubsystem)>,
   slots: Vec<Option<Pad>>,
   dirty: bool,
   back_down: bool,
@@ -293,7 +298,19 @@ pub(crate) struct Gamepads {
 }
 
 impl Gamepads {
-  pub fn new(sdl: &sdl3::Sdl) -> Option<Gamepads> {
+  /// A table that seats synthetic pads only (see the struct).
+  pub fn synthetic() -> Gamepads {
+    Gamepads {
+      sdl: None,
+      slots: Vec::new(),
+      dirty: false,
+      back_down: false,
+      muted: false,
+      next_synthetic_id: SYNTHETIC_ID_BASE,
+    }
+  }
+
+  pub(crate) fn new(sdl: &sdl3::Sdl) -> Option<Gamepads> {
     let gamepad = match sdl.gamepad() {
       Ok(subsystem) => subsystem,
       Err(e) => {
@@ -309,8 +326,7 @@ impl Gamepads {
       }
     };
     Some(Gamepads {
-      gamepad,
-      joystick,
+      sdl: Some((gamepad, joystick)),
       slots: Vec::new(),
       dirty: false,
       back_down: false,
@@ -368,21 +384,23 @@ impl Gamepads {
   // Track connection changes and mark state dirty on any pad activity. The
   // per-event payloads are ignored: the snapshot re-reads current state from
   // the open handles, which cannot drift from SDL's view.
-  pub fn handle_event(&mut self, e: &SdlEvent) {
+  pub(crate) fn handle_event(&mut self, e: &SdlEvent) {
     match e {
       SdlEvent::JoyDeviceAdded { which, .. } => {
         if self.slot_of(*which).is_some() {
           return; // already open (SDL can re-announce)
         }
+        let Some((gamepad, joystick)) = &self.sdl else {
+          return;
+        };
         let id = JoystickId::new(*which);
-        let opened = if self.gamepad.is_gamepad(id) {
-          self
-            .gamepad
+        let opened = if gamepad.is_gamepad(id) {
+          gamepad
             .open(id)
-            .map(|pad| Pad::Mapped { pad, joystick: self.joystick.open(id).ok() })
+            .map(|pad| Pad::Mapped { pad, joystick: joystick.open(id).ok() })
             .map_err(|e| e.to_string())
         } else {
-          self.joystick.open(id).map(Pad::Raw).map_err(|e| e.to_string())
+          joystick.open(id).map(Pad::Raw).map_err(|e| e.to_string())
         };
         match opened {
           Ok(pad) => {
@@ -450,7 +468,7 @@ impl Gamepads {
   /// Apply the user-input mute (see `muted`). A change in either direction
   /// marks the state dirty: entering sends the neutral state, leaving the
   /// real one.
-  pub fn set_muted(&mut self, muted: bool) {
+  pub(crate) fn set_muted(&mut self, muted: bool) {
     if muted != self.muted {
       self.muted = muted;
       self.dirty = true;

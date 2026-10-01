@@ -1,5 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs"
-import { basename, dirname, join, relative, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { bundleWith, writeIsolates } from "../bundle/bundler"
 import { appArgs, source, values } from "../lib/args"
 import { collectAssets } from "../lib/project"
@@ -34,8 +34,14 @@ const HARNESS_FRAME = "(flux:test:"
 // dev client.
 const APP_MODULE = /^srt:|^flux:(rendertree|camera|microphone|audio|gpu|spatial|video|test\/gui)$/
 // Where an app test's staged bundle and its data root live, under the
-// project's build output.
+// project's build output, and the folder in it a failed test's snapshot
+// lands in.
 const STAGE_DIR = join("dist", "test")
+const FAILURES_DIR = "failures"
+// The layers `--only` selects: a flux test runs on the flux binary, an app
+// test on the dev client.
+const LAYERS = ["flux", "app"] as const
+type Layer = (typeof LAYERS)[number]
 // Marks a stdout line as a record of the test host's, not something a
 // native library printed. It starts with a control character (the ASCII
 // record separator) so that nothing prints it by accident.
@@ -45,13 +51,18 @@ const RECORD_PREFIX = "\x1esrt-test "
 // not a wait.
 const FILE_TIMEOUT_MS = 120_000
 
-/** One test's result, with what its engine logged while it ran. */
+/**
+ * One test's result, with what its engine logged while it ran and, for a
+ * failure, the details the host read in its engine (labelled text: what was
+ * in flight, and for an app test the time, the tree and a snapshot's path).
+ */
 type TestResult = {
   name: string
   ok: boolean
   durationMs: number
   error?: { message: string; stack: string }
   output: string[]
+  details?: [label: string, text: string][]
 }
 type RunRecord =
   | { type: "loaded"; tests: string[]; output: string[] }
@@ -65,6 +76,8 @@ type FileOutcome = {
   output: string[]
   /** Why the file as a whole failed, whatever its tests reported. */
   error: string | null
+  /** The file is of the other layer than `--only` asked for: nothing ran. */
+  skipped: boolean
 }
 
 // -- Discovery --
@@ -159,8 +172,8 @@ async function lines(stream: ReadableStream<Uint8Array>, onLine: (line: string) 
   if (rest !== "") onLine(rest)
 }
 
-async function runFile(file: string, filter: string | undefined, seed: number | undefined): Promise<FileOutcome> {
-  let outcome: FileOutcome = { tests: [], output: [], error: null }
+async function runFile(file: string, filter: string | undefined, seed: number | undefined, only: Layer | undefined): Promise<FileOutcome> {
+  let outcome: FileOutcome = { tests: [], output: [], error: null, skipped: false }
   let unbundled = (log: string) => {
     outcome.error = "The file failed to bundle"
     outcome.output = log.split("\n")
@@ -170,6 +183,10 @@ async function runFile(file: string, filter: string | undefined, seed: number | 
   // stands; a .ts file is one when its bundle imports the app runtime.
   let bundled: Bundled | string = file.endsWith(".tsx") ? { code: "", map: null, app: true } : await bundleFlux(file)
   if (typeof bundled === "string") return unbundled(bundled)
+  if (only !== undefined && (only === "app") !== bundled.app) {
+    outcome.skipped = true
+    return outcome
+  }
 
   // The host's flags come ahead of the script; everything after `--` on
   // the command line reaches the file as its flux:process argv.
@@ -182,9 +199,20 @@ async function runFile(file: string, filter: string | undefined, seed: number | 
     let staged = await stageApp(file)
     if (typeof staged === "string") return unbundled(staged)
     map = staged.map
-    // A data root of the file's own, empty at the start; the calendar's
-    // zone is fixed so that local-time methods read the same everywhere.
-    let client = [...hostArgs, "--data-root", join(staged.stage, "data"), "--assets", staged.stage, staged.path, ...appArgs]
+    // A data root of the file's own, empty at the start, and a folder for
+    // the snapshots of failed tests; the calendar's zone is fixed so that
+    // local-time methods read the same everywhere.
+    let client = [
+      ...hostArgs,
+      "--data-root",
+      join(staged.stage, "data"),
+      "--failures",
+      join(staged.stage, FAILURES_DIR),
+      "--assets",
+      staged.stage,
+      staged.path,
+      ...appArgs,
+    ]
     proc = Bun.spawn([await testHost("solidrt-go"), ...client], {
       cwd: workingDir(file),
       env: { ...process.env, TZ: "UTC" },
@@ -245,6 +273,9 @@ async function runFile(file: string, filter: string | undefined, seed: number | 
     if (!test.error) continue
     test.error.message = cited(test.error.message)
     test.error.stack = cited(test.error.stack)
+    // A snapshot's path as the host wrote it is absolute; here it reads
+    // from where the command runs.
+    test.details = test.details?.map(([label, text]) => [label, label === "Snapshot" && isAbsolute(text) ? relative(process.cwd(), text) : text])
   }
 
   let last = outcome.tests.at(-1)?.name
@@ -288,6 +319,13 @@ function report(name: string, outcome: FileOutcome) {
       console.log(indent(test.error.message.split("\n"), "    "))
       if (test.error.stack !== "") console.log(indent(test.error.stack.split("\n"), "    "))
     }
+    // The details under the error: a one-line text on the label's line, a
+    // longer one (the tree) indented below it.
+    for (let [label, text] of test.details ?? []) {
+      let lines = text.split("\n")
+      if (lines.length === 1) console.log(`    ${label}: ${text}`)
+      else console.log(`    ${label}:\n${indent(lines, "      ")}`)
+    }
     if (test.output.length > 0) console.log(`    Output:\n${indent(test.output, "      ")}`)
   }
   if (outcome.error) {
@@ -323,6 +361,16 @@ async function testHost(name: "flux" | "solidrt-go"): Promise<string> {
   return path
 }
 
+// --only flux|app: the layer to run; the files of the other layer are left
+// out without a word, as a filter leaves out a file none of whose tests
+// match.
+function onlyOption(): Layer | undefined {
+  let raw = values.only
+  if (raw === undefined) return undefined
+  if (!(LAYERS as readonly string[]).includes(raw)) fail(`Invalid --only value "${raw}": expected ${LAYERS.join(" or ")}`)
+  return raw as Layer
+}
+
 // --seed: the number Math.random starts from in every test. Without it the
 // tests run on flux:test's own fixed seed, so a run is the same either way.
 function seedOption(): number | undefined {
@@ -343,11 +391,15 @@ export async function main() {
 
   let filter = values.filter
   let seed = seedOption()
+  let only = onlyOption()
   let failed = 0
   let passed = 0
   let brokenFiles = 0
+  let ran = 0
   for (let file of files) {
-    let outcome = await runFile(file, filter, seed)
+    let outcome = await runFile(file, filter, seed, only)
+    if (outcome.skipped) continue
+    ran++
     // With a filter, a file none of whose tests match has nothing to say.
     if (filter !== undefined && outcome.tests.length === 0 && !outcome.error) continue
     report(relative(process.cwd(), file), outcome)
@@ -356,13 +408,16 @@ export async function main() {
     if (outcome.error) brokenFiles++
   }
 
+  if (ran === 0) fail(`No ${only} test file under ${target}`)
   if (failed + passed === 0 && brokenFiles === 0) {
     fail(filter === undefined ? "The test files register no tests" : `No test name contains "${filter}"`)
   }
   let parts = [failed > 0 ? count(failed, "failed") : "", count(passed, "passed")].filter(Boolean)
   if (brokenFiles > 0) parts.push(`${count(brokenFiles, brokenFiles === 1 ? "file" : "files")} did not complete`)
-  // A run on another seed says which, so a failure in it can be run again.
-  let notes = [count(files.length, files.length === 1 ? "file" : "files")]
+  // A run on another seed says which, so a failure in it can be run again;
+  // a run of one layer says so too.
+  let notes = [count(ran, ran === 1 ? "file" : "files")]
+  if (only !== undefined) notes.push(`${only} tests only`)
   if (seed !== undefined) notes.push(`seed ${seed}`)
   console.log(`Tests: ${parts.join(", ")} (${notes.join(", ")})`)
   process.exit(failed > 0 || brokenFiles > 0 ? 1 : 0)

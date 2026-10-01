@@ -749,14 +749,18 @@ that reads exactly like Solid fallout.
   app registered with `registerDebug` and returns its value: the way to
   put a loaded app into a state its UI reaches slowly. A `gamepad` event
   in `app.input` seats and drives a synthetic pad, as `send_input` does.
-- Past a node's record: `locator.tree()` is the subtree as text (kind,
-  label, text, box per line, no ids) to pin a layout or print it;
+- Past a node's record: `locator.outline()` is the subtree as an outline
+  (kind, label, text, box per line, no ids) to pin a layout or print it;
   `locator.pixel(x, y)` is `[r, g, b, a]` at a point of the node and
   `locator.pixels()` the whole image, drawn now with no time passing (the
   last resort, for what only the picture shows); `app.gpu({ label })` is
   the GPU inventory `/gpu` reports, where "does it draw" is a count.
 - The data folder and the fetch cache are empty at the start of every
   test, and no gamepad is seated.
+- A failure prints the app time and frame, what still demanded frames,
+  the whole outline and a snapshot's path under `dist/test/` beside the
+  error: read them before changing the test. The method (what to test at
+  which layer, when to `settle`) is @solidrt/cli agents/testing.md.
 
 ## Minimal app, core primitives only (verified to render)
 

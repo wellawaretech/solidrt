@@ -13,7 +13,7 @@ use alloy::rendertree::{Match, NodeQuery, Point};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Exception, Function, Object, Value};
 
-use crate::alloy_plugins::inspect::{gpu_record, node_record};
+use crate::alloy_plugins::inspect::{gpu_record, node_record, outline as outline_text};
 use crate::alloy_plugins::tree::with_tree;
 
 pub const MODULE_NAME: &str = "flux:test/gui";
@@ -88,6 +88,13 @@ fn node(ctx: Ctx<'_>, id: u64, depth: usize) -> rquickjs::Result<Option<String>>
   .ok_or_else(|| no_tree(&ctx, "node"))
 }
 
+/// `outline(id, props)`: the node's subtree as an outline, one line per
+/// node (see `inspect::outline`); null when `id` is no node.
+fn outline(ctx: Ctx<'_>, id: u64, props: bool) -> rquickjs::Result<Option<String>> {
+  with_tree(&ctx, |tree| tree.snapshot_from(Some(id), None).map(|node| outline_text(&node, Some(tree), props)))
+    .ok_or_else(|| no_tree(&ctx, "outline"))
+}
+
 /// `visible(id)`: whether the node is painted where a user could see it
 /// (see `RenderTree::is_visible`).
 fn visible(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<bool> {
@@ -121,6 +128,7 @@ impl ModuleDef for GuiTestModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("find")?;
     decl.declare("node")?;
+    decl.declare("outline")?;
     decl.declare("visible")?;
     decl.declare("path")?;
     decl.declare("hit")?;
@@ -131,6 +139,7 @@ impl ModuleDef for GuiTestModule {
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     exports.export("find", Function::new(ctx.clone(), find)?)?;
     exports.export("node", Function::new(ctx.clone(), node)?)?;
+    exports.export("outline", Function::new(ctx.clone(), outline)?)?;
     exports.export("visible", Function::new(ctx.clone(), visible)?)?;
     exports.export("path", Function::new(ctx.clone(), path)?)?;
     exports.export("hit", Function::new(ctx.clone(), hit)?)?;

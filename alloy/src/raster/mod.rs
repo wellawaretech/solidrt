@@ -584,17 +584,15 @@ impl FrameTiming {
 }
 
 /// What becomes of a frame the raster thread has drawn, fixed by the app's
-/// mode. The two headless sinks share a contract: every submitted frame is
-/// drawn, in order, and none is superseded; nothing is swapped, and video
-/// waits for the frame that is due.
+/// mode. The headless sink's contract: every submitted frame is drawn, in
+/// order, and none is superseded; nothing is swapped, and video waits for
+/// the frame that is due.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FrameSink {
   /// Interactive: presented to the window.
   Window,
-  /// Playback: read back and shipped to the capture loop, one per submit.
-  Capture,
   /// Stepped: left in the offscreen surface. Whoever wants pixels asks for
-  /// a capture of a node.
+  /// them (`RasterCmd::ReadWindow`, a node capture).
   Discard,
 }
 
@@ -992,6 +990,16 @@ impl RasterState {
             self.flush_dirty();
             let size = ISize::new(width as i64, height as i64);
             reply(tx, gl::read_texture_pixels(&self.gl, &texture, size));
+          }
+          RasterCmd::ReadWindow { reply: tx } => {
+            let (width, height) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
+            let size = ISize::new(width as i64, height as i64);
+            let result = if width == 0 || height == 0 {
+              Err("the window has no surface to read".to_string())
+            } else {
+              Ok((width, height, gl::flip_rows(gl::read_fbo0_pixels(&self.gl, size), size)))
+            };
+            reply(tx, result);
           }
           RasterCmd::Resources { reply: tx } => {
             reply(tx, self.resources());

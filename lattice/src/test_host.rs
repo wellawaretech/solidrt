@@ -1,129 +1,30 @@
 // Test mode (okf/plans/test-harness.md, stage 4): the dev client as a test
-// host. Headless on alloy's stepped mode, which emits no frame signal: a
-// test asks for every frame (`srt:test` `frame`), so app time is frame / fps
-// and nothing else, and a frame nobody demanded draws nothing. The wall is
-// out of the engine (`performance.now()` reads 0, the calendar is a fixed
-// epoch plus frame time, `Math.random` is seeded), and every test runs in an
-// engine of its own, built by the engine loop like any reload: the file is
-// evaluated once for the listing and once more per test (flux::test).
+// host. Headless on alloy's stepped mode (stepped.rs): a test asks for every
+// frame (`srt:test` `frame`), so app time is frame / fps and nothing else,
+// and a frame nobody demanded draws nothing. Every test runs in an engine of
+// its own, built by the engine loop like any reload: the file is evaluated
+// once for the listing and once more per test (flux::test), and a failed
+// test's record carries what the app looked like (`failure_details`).
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
-use alloy::resample::SharedResampler;
-use alloy::AlloyEvent;
-use flux::rquickjs::JsLifetime;
+use flux::rquickjs::Ctx;
 
-use crate::runtime::EventSender;
+use crate::stepped::Stepper;
 
-/// The frame rate a test steps at unless it sets another: what apps run at
-/// and what `srt render` defaults to. The frame is the time resolution of a
-/// test, so one that asserts a threshold to the millisecond sets 1000.
-pub const DEFAULT_FPS: u32 = 60;
-/// Where the calendar starts in every test engine: 2000-01-01T00:00:00Z.
-/// Any fixed instant does; what matters is that it is the same on every run.
-pub(crate) const EPOCH_MS: f64 = 946_684_800_000.0;
-
-const NS_PER_SECOND: u64 = 1_000_000_000;
+/// How many lines of the outline a failure prints before the rest is
+/// counted: a screen's worth, where a whole app would bury the error above
+/// it. The test reads any subtree in full with `locator.outline()`.
+const FAILURE_OUTLINE_LINES: usize = 200;
+/// How long a snapshot's file name may be before the test name is cut.
+const SNAPSHOT_NAME_MAX: usize = 60;
 
 /// What a test run is started with (see `start_tests`).
 pub struct TestRun {
   pub options: flux::test::RunOptions,
-}
-
-/// The stepping half of test mode: the frame signal alloy does not emit.
-/// Context userdata in a test engine, which is what `srt:test` steps through.
-#[derive(Clone, JsLifetime)]
-pub(crate) struct Stepper {
-  #[qjs(skip_trace)]
-  events: EventSender,
-  // The index of the last frame computed, shared with the frame verb (which
-  // publishes it) and the timeline (frame / fps).
-  #[qjs(skip_trace)]
-  frame: Arc<AtomicU64>,
-  #[qjs(skip_trace)]
-  rate: Arc<AtomicU32>,
-  // Where a synthetic pointer's moves go, as a real producer's do (see
-  // alloy's resample.rs): the frame verb samples them.
-  #[qjs(skip_trace)]
-  resampler: SharedResampler,
-}
-
-impl Stepper {
-  pub(crate) fn new(
-    events: EventSender,
-    frame: Arc<AtomicU64>,
-    rate: Arc<AtomicU32>,
-    resampler: SharedResampler,
-  ) -> Self {
-    Self { events, frame, rate, resampler }
-  }
-
-  /// A new engine starts at frame 0, time 0, on the default rate.
-  pub(crate) fn reset(&self) {
-    self.frame.store(0, Ordering::Relaxed);
-    self.rate.store(DEFAULT_FPS, Ordering::Relaxed);
-    alloy::clock::set_virtual_ns(0);
-  }
-
-  pub(crate) fn rate(&self) -> u32 {
-    self.rate.load(Ordering::Relaxed)
-  }
-
-  /// App time as of the last frame computed, in ms.
-  pub(crate) fn time_ms(&self) -> f64 {
-    self.frame.load(Ordering::Relaxed) as f64 * 1000.0 / self.rate() as f64
-  }
-
-  /// Another frame rate for this engine. Only before its first step: time
-  /// is frame / fps, so a change later would move the time already passed.
-  pub(crate) fn set_rate(&self, fps: u32) -> Result<(), String> {
-    if fps == 0 {
-      return Err("the frame rate must be a positive integer".to_string());
-    }
-    if self.frame.load(Ordering::Relaxed) != 0 {
-      return Err("the frame rate is set before the first frame of a test".to_string());
-    }
-    self.rate.store(fps, Ordering::Relaxed);
-    // The refresh rate is a fact the app reads (a frame callback's `rate`).
-    let _ = self.events.send(AlloyEvent::DisplayRefreshRate { hz: fps as f32 });
-    Ok(())
-  }
-
-  /// The frame interval, in ms.
-  pub(crate) fn frame_ms(&self) -> f64 {
-    1000.0 / self.rate() as f64
-  }
-
-  /// Send a pointer, key, wheel or text event into the real pipeline, the
-  /// way the control API does: a down, an up, a key or a wheel enters the
-  /// UI loop's channel and is dispatched on arrival, ahead of the next
-  /// frame the test asks for; a move feeds the resampler and is dispatched
-  /// with that frame.
-  pub(crate) fn inject(&self, event: AlloyEvent) {
-    let events = self.events.clone();
-    let _ = self.resampler.feed(event, std::time::Instant::now(), |event, at| events.send_at(event, at));
-  }
-
-  /// Send an event that is no pointer input (a pad snapshot, a link)
-  /// straight into the UI loop's channel: dispatched on arrival, ahead of
-  /// the next frame.
-  pub(crate) fn send(&self, event: AlloyEvent) {
-    let _ = self.events.send(event);
-  }
-
-  /// Ask for the next frame: the signal the UI loop turns into the frame
-  /// verb, at the next frame's virtual time, which is also the process
-  /// clock's reading from here (what video is latched against).
-  pub(crate) fn step(&self) {
-    let frame = self.frame.load(Ordering::Relaxed);
-    let fps = self.rate();
-    let virtual_ns = ((frame + 1) * NS_PER_SECOND / fps as u64) as i64;
-    alloy::clock::set_virtual_ns(virtual_ns);
-    let at = alloy::clock::at(virtual_ns);
-    let signal = AlloyEvent::FrameRendered { frame, fps, refreshes: 1, present_at: at, reference: at, grid: at };
-    let _ = self.events.send(signal);
-  }
+  /// Where a failed test's snapshot is written (`<test name>.png`); None
+  /// leaves no snapshot.
+  pub failures: Option<PathBuf>,
 }
 
 /// Empty the app's sandbox, ahead of every test engine: its data folder
@@ -142,4 +43,81 @@ pub(crate) fn empty_sandbox(store: &crate::storage::Storage, app_id: &str) {
       }
     }
   }
+}
+
+/// The details a failed app test's record carries beside the host's own
+/// (okf/plans/test-harness.md, D14), read in the test's engine when the
+/// failure is known: when it was (app time and frame), what still wanted
+/// frames, the tree as the test saw it, and a snapshot of the frame,
+/// written under `failures` and named in the record. A test with no window
+/// gets the time alone.
+pub(crate) fn failure_details(ctx: &Ctx<'_>, name: &str, failures: Option<&Path>) -> flux::test::Details {
+  let mut details = Vec::new();
+  if let Some(stepper) = ctx.userdata::<Stepper>() {
+    details.push((
+      "At".to_string(),
+      format!("{} ms of app time, frame {}", (stepper.time_ms() * 100.0).round() / 100.0, stepper.frame()),
+    ));
+  }
+  let demand = flux::gui::frame::demand(ctx);
+  if !demand.is_empty() {
+    details.push(("Frames demanded by".to_string(), demand.join(", ")));
+  }
+  let Some(tree) = flux::gui::tree::with_tree(ctx, |tree| {
+    tree.snapshot_from(None, None).map(|root| flux::gui::inspect::outline(&root, Some(tree), false))
+  })
+  .flatten() else {
+    return details;
+  };
+  details.push(("Outline".to_string(), cut_lines(&tree, FAILURE_OUTLINE_LINES)));
+  if let Some(dir) = failures {
+    match snapshot(ctx, &dir.join(format!("{}.png", snapshot_name(name)))) {
+      Ok(path) => details.push(("Snapshot".to_string(), path.display().to_string())),
+      Err(e) => details.push(("Snapshot".to_string(), format!("not written: {e}"))),
+    }
+  }
+  details
+}
+
+/// The first `max` lines of `text`, the rest counted.
+fn cut_lines(text: &str, max: usize) -> String {
+  let total = text.lines().count();
+  if total <= max {
+    return text.to_string();
+  }
+  let kept: Vec<&str> = text.lines().take(max).collect();
+  format!("{}\n... {} more lines (locator.outline() reads a subtree in full)", kept.join("\n"), total - max)
+}
+
+/// A test's name as a file name: letters and digits kept, everything else
+/// one dash, cut to `SNAPSHOT_NAME_MAX`.
+fn snapshot_name(name: &str) -> String {
+  let mut out = String::new();
+  for c in name.chars() {
+    if c.is_ascii_alphanumeric() {
+      out.push(c.to_ascii_lowercase());
+    } else if !out.ends_with('-') {
+      out.push('-');
+    }
+    if out.len() >= SNAPSHOT_NAME_MAX {
+      break;
+    }
+  }
+  let trimmed = out.trim_matches('-');
+  if trimmed.is_empty() {
+    "test".to_string()
+  } else {
+    trimmed.to_string()
+  }
+}
+
+/// Paint the tree as it stands (no frame runs, no app time passes, the way
+/// `locator.pixels()` reads) and write the window to `path`.
+fn snapshot(ctx: &Ctx<'_>, path: &Path) -> Result<PathBuf, String> {
+  let alloy = flux::gui::alloy_context(ctx).ok_or_else(|| "no window".to_string())?;
+  flux::gui::request_frame(ctx);
+  crate::plugins::draw::render_now(ctx);
+  let (width, height, pixels) = alloy.read_window_pixels()?;
+  crate::png::write(path, width, height, &pixels)?;
+  Ok(path.to_path_buf())
 }

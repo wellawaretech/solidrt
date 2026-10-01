@@ -59,6 +59,8 @@ that matches the work; do not work from memory of what a web framework does.
   over a `flux:sqlite` database)
 - debug a running app, or drive it over MCP to verify a change ->
   node_modules/@solidrt/cli/agents/debugging.md
+- write or repair a test (`bunx srt test`) ->
+  node_modules/@solidrt/cli/agents/testing.md
 - add an asset or font, set the app's identity, or build for distribution ->
   node_modules/@solidrt/cli/agents/assets.md
 - run, bundle, typecheck or render headlessly ->

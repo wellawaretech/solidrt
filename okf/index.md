@@ -621,11 +621,6 @@ Shaped, not started.
   whether alloy opened it as a joystick, and Android's auto-mapping can drop
   buttons it sends; a core remoteControl() device for createInputMap should
   hide both so an app binds select, navigate and back once.
-- **[srt render cannot fail, so it is not the gate the docs sell](backlog/render-as-a-verification-gate.md)** [2026-09-08]
-  A scene whose build throws is contained, writes an empty frame and exits 0,
-  and --duration is app time so an app that loads asynchronously is captured
-  mid-load; both make a green headless check that proves nothing, and both
-  want one flag (--strict, --settle/--wait-idle).
 - **[Node lifetime is a deferred sweep, not reference lifetime](backlog/renderer-node-lifetime.md)** [2026-08-14]
   removeNode detaches and a microtask sweep frees, so control-flow reuse
   inside one tick survives but a node re-inserted in a later async tick is
@@ -674,11 +669,6 @@ Shaped, not started.
   per-element writes with no cascade, so an app dropping to a raw <text>
   repeats the color and a component from elsewhere cannot pick up the app's
   text style.
-- **[A headless render is not reproducible when the app draws random numbers](backlog/seeded-random-headless-render.md)** [2026-09-30]
-  srt render and playback step time deterministically but leave Math.random on
-  the engine's clock-seeded generator, so an app with particles, a shake or a
-  shuffled list renders other frames on every run; seed the context with
-  flux's seed_random, fixed by default, with a --seed option.
 - **[SegmentedControl warns STRICT_READ_UNTRACKED per option](backlog/segmented-control-strict-read.md)** [2026-09-23]
   "Mounting a SegmentedControl logs Solid's STRICT_READ_UNTRACKED warning once
   per option (the player's settings screen shows three); the option row's For
@@ -2078,6 +2068,12 @@ Finished, kept for the reasoning.
   (dependencies included) and the assets tree, rebuilding through the one
   reload path; an MCP pause_watch/resume_watch pair holds it while an agent
   edits, restored when the bridge exits.
+- **[srt render cannot fail, so it is not the gate the docs sell](done/render-as-a-verification-gate.md)** [2026-10-01]
+  A scene whose build throws is contained, writes an empty frame and exits 0,
+  and --duration is app time so an app that loads asynchronously is captured
+  mid-load; closed by srt render --strict (errors logged fail the render) and
+  --settle (the app is run to rest before the first frame, the settle
+  condition of the test harness, not a wall sleep).
 - **[srt render should be headless, unscaled and able to choose its output folder](done/render-headless-determinism.md)** [2026-08-05]
   Playback mode opened a hidden SDL window on the real display, laid out at
   the host's display scale, and wrote frames into the data sandbox; closed by
@@ -2099,6 +2095,12 @@ Finished, kept for the reasoning.
   magnified inspection; a ~15-line viewBox-shrinking registerDebug("zoom")
   turns "look closely at X" into one call, worth shipping in the
   create-solidrt scaffold.
+- **[A headless render is not reproducible when the app draws random numbers](done/seeded-random-headless-render.md)** [2026-10-01]
+  srt render stepped time deterministically but left Math.random on the
+  engine's clock-seeded generator, so an app with particles, a shake or a
+  shuffled list rendered other frames on every run; closed by the render host
+  seeding the context with flux's seed_random (fixed by default, srt render
+  --seed <n>) and freezing the wall like a test.
 - **[Animate shadow as one value](done/shadow-transition.md)** [2026-09-27]
   `shadow` joins the native transitions - offset, blur, spread and color move
   together on one track, an unset shadow counts as none, so elevation changes

@@ -449,6 +449,12 @@ impl Transitions {
     self.tracks.is_empty() && self.pending.is_empty()
   }
 
+  /// A node a transition is running on (or waiting out its delay), for
+  /// whoever reports why the tree still wants frames.
+  pub fn running_node(&self) -> Option<u64> {
+    self.tracks.first().map(|track| track.node).or_else(|| self.pending.first().map(|write| write.node))
+  }
+
   /// The next stagger index for a lifecycle event under `group` this frame
   /// (post-incremented). Enters and exits count separately, so a swap that
   /// removes and mounts in one tick runs two clean cascades.

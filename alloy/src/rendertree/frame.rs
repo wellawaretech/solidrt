@@ -40,11 +40,10 @@ impl FrameDriver {
   /// draw call, where the call itself is the demand). `None` means nothing
   /// wanted a frame and nothing was drawn. On `Some`, push any pre-frame
   /// raster state (e.g. a stats overlay) before `commit`: the ordered raster
-  /// channel then applies it to exactly this frame. Playback
-  /// (`always_render`) never gates.
+  /// channel then applies it to exactly this frame.
   pub fn begin(&mut self, platform: &PlatformContext, extra_demand: bool) -> Option<PendingFrame<'_>> {
     let requested = platform.take_frame_requested();
-    if !requested && !extra_demand && !platform.always_render() {
+    if !requested && !extra_demand {
       return None;
     }
     Some(PendingFrame { driver: self })
@@ -73,10 +72,10 @@ impl<'d> PendingFrame<'d> {
   ///
   /// Then, when nothing that feeds the display list changed, resubmits the
   /// retained list instead of rebuilding (`Reused`): layout and paint are
-  /// skipped entirely. Bypassed in playback mode to keep captures identical
-  /// to a rebuild, and when captures are pending: they are serviced by the
-  /// paint walk, which reuse skips, so reusing would strand them. Otherwise
-  /// hands back the build handle. `Err` means the render thread is gone.
+  /// skipped entirely. Bypassed when captures are pending: they are
+  /// serviced by the paint walk, which reuse skips, so reusing would strand
+  /// them. Otherwise hands back the build handle. `Err` means the render
+  /// thread is gone.
   pub fn commit(
     self,
     tree: &mut RenderTree,
@@ -86,7 +85,7 @@ impl<'d> PendingFrame<'d> {
   ) -> Result<Commit<'d>, ()> {
     let content_changed = composite::apply_content_changes(tree, alloy);
 
-    if !platform.always_render() && !alloy.has_pending_captures() {
+    if !alloy.has_pending_captures() {
       if let Some(c) = self.driver.cache.as_ref() {
         if c.revision == tree.revision()
           && c.textures_generation == alloy.textures.generation()

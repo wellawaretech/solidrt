@@ -1,7 +1,8 @@
 ---
 title: A headless render is not reproducible when the app draws random numbers
-description: srt render and playback step time deterministically but leave Math.random on the engine's clock-seeded generator, so an app with particles, a shake or a shuffled list renders other frames on every run; seed the context with flux's seed_random, fixed by default, with a --seed option.
+description: srt render stepped time deterministically but left Math.random on the engine's clock-seeded generator, so an app with particles, a shake or a shuffled list rendered other frames on every run; closed by the render host seeding the context with flux's seed_random (fixed by default, srt render --seed <n>) and freezing the wall like a test.
 created: 2026-09-30
+completed: 2026-10-01
 ---
 
 # A headless render is not reproducible when the app draws random numbers
@@ -50,3 +51,16 @@ seeds every test.
   (`/clock?scale=0`) should be seedable over the control API as well;
   the app layer of the test harness seeds through `srt:test` and does
   not need it.
+
+## Closed (2026-10-01)
+
+Closed by step 4.6 of [test-harness](../plans/test-harness.md) (D35):
+playback was rebuilt as a render host on alloy's stepped mode
+(`lattice/src/render_host.rs`), and the render engine is built like a
+test engine: `seed_random` with the harness's fixed seed (`srt render
+--seed <n>` for another), the wall frozen (`performance.now()` 0, the
+calendar on the fixed epoch plus frame time). Verified with an app that
+colors a box by `Math.random()`: two renders byte-identical, `--seed 7`
+another color. The dev client in run mode is untouched. Not done, on
+purpose: seeding a dev-session reload over the control API (nothing asks
+for it; the test harness seeds through its own host).

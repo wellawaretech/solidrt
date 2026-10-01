@@ -40,34 +40,21 @@ fn main() {
     let launch = lattice::Launch { restored: false, link };
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
     let storage = lattice::storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
-    // Mode::Run never returns Err (only playback does); ignore rather than
-    // invent an exit path the interactive loop does not have.
-    let _ = lattice::start(
-      &rt,
-      Some(payload.app),
-      launch,
-      payload.display_name,
-      alloy::Mode::Run,
-      false,
-      (1280, 720),
-      false,
-      None,
-      payload.fonts,
-      storage,
-      app_args,
-    );
+    lattice::start(&rt, Some(payload.app), launch, payload.display_name, (1280, 720), false, None, payload.fonts, storage, app_args);
     return;
   }
 
   let mut args = std::env::args().skip(1);
-  let mut playback = false;
+  // `--render`: write frames headless instead of running on a display
+  // (lattice render host), with `--fps`, `--duration`, `--size`, `--out`,
+  // `--script`, `--seed` for the run; `--settle` runs the app to rest
+  // before the first frame; `--strict` fails the render on any error
+  // logged (lattice ErrorTally). What `srt render` starts.
+  let mut render = false;
   let mut script_path: Option<String> = None;
   let mut fps: u32 = 60;
   let mut duration: f64 = 1.0;
-  // `--settle <ms>`: wall time the app gets after its mount frame before the
-  // first written frame (alloy PlaybackConfig::settle); `--strict`: errors
-  // logged during the capture fail it (lattice ErrorTally).
-  let mut settle_ms: u64 = 0;
+  let mut settle = false;
   let mut strict = false;
   let mut size: (u32, u32) = (1280, 720);
   let mut stats = false;
@@ -81,16 +68,18 @@ fn main() {
   // a screen a link names.
   let mut link: Option<String> = None;
   // `--test`: run the source as a test file (lattice test mode), with
-  // `--filter <text>` and `--seed <n>` for the run. What `srt test` starts
-  // for a file that needs the app runtime.
+  // `--filter <text>` for the run and `--failures <dir>` for the snapshots
+  // of failed tests. What `srt test` starts for a file that needs the app
+  // runtime. `--seed <n>`: the Math.random sequence of a test or a render.
   let mut test = false;
   let mut filter: Option<String> = None;
   let mut seed: Option<u64> = None;
+  let mut failures: Option<String> = None;
   let mut source_path: Option<String> = None;
   let mut app_args: Vec<String> = Vec::new();
   while let Some(arg) = args.next() {
-    if arg == "--playback" {
-      playback = true;
+    if arg == "--render" {
+      render = true;
     } else if arg == "--data-root" {
       data_root = Some(args.next().unwrap_or_else(|| usage("--data-root requires a directory path")));
     } else if arg == "--client" {
@@ -111,6 +100,8 @@ fn main() {
       test = true;
     } else if arg == "--filter" {
       filter = Some(args.next().unwrap_or_else(|| usage("--filter requires a text")));
+    } else if arg == "--failures" {
+      failures = Some(args.next().unwrap_or_else(|| usage("--failures requires a directory path")));
     } else if arg == "--seed" {
       seed = Some(
         args
@@ -124,11 +115,7 @@ fn main() {
     } else if arg == "--strict" {
       strict = true;
     } else if arg == "--settle" {
-      settle_ms = args
-        .next()
-        .unwrap_or_else(|| usage("--settle requires a value"))
-        .parse()
-        .unwrap_or_else(|_| usage("--settle value must be a whole number of milliseconds"));
+      settle = true;
     } else if arg == "--out" {
       out = Some(args.next().unwrap_or_else(|| usage("--out requires a directory or path prefix")));
     } else if arg == "--dev-server" {
@@ -221,40 +208,89 @@ fn main() {
     forge::fs::set_assets_base(Some(forge::fs::AssetsBase::Dir(dir)));
   }
   if test {
-    run_tests(app, filter, seed, size, fonts, data_root, client, app_id, app_args);
+    run_tests(app, filter, seed, failures, size, fonts, data_root, client, app_id, app_args);
   }
-  let mode = if playback {
-    alloy::Mode::Playback(alloy::PlaybackConfig {
-      fps,
-      // Round to the nearest whole frame; any positive duration renders at
-      // least one.
-      frames: (duration * fps as f64).round().max(1.0) as u64,
-      output_prefix: out.map(frame_prefix).unwrap_or_else(|| "frame".to_string()),
-      script: script_path.map(load_script).unwrap_or_default(),
-      settle: std::time::Duration::from_millis(settle_ms),
-    })
-  } else {
-    alloy::Mode::Run
-  };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
   let launch = lattice::Launch { restored: false, link };
-  let result =
-    lattice::start(&rt, app, launch, display_name, mode, strict, size, stats, dev_server, fonts, storage, app_args);
-  // Playback exits hard, here in the binary: headless callers gate on the
-  // exit code (srt render verification), so an incomplete capture must read
-  // nonzero - and a plain return would run the runtime's drop, which can
-  // block on a lingering blocking task and hang the render at the finish
-  // line. Interactive mode returns Ok and winds down normally.
-  if playback {
-    match result {
-      Ok(()) => std::process::exit(0),
-      Err(e) => {
-        log::error!("[srt] {e}");
-        std::process::exit(1);
-      }
+  if render {
+    let run = RenderArgs {
+      fps,
+      duration,
+      out,
+      script_path,
+      settle,
+      seed,
+    };
+    run_render(app, run, launch, strict, size, stats, fonts, storage, app_args);
+  }
+  lattice::start(&rt, app, launch, display_name, size, stats, dev_server, fonts, storage, app_args);
+}
+
+/// The `--render` flags, gathered for `run_render`.
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
+struct RenderArgs {
+  fps: u32,
+  duration: f64,
+  out: Option<String>,
+  script_path: Option<String>,
+  settle: bool,
+  seed: Option<u64>,
+}
+
+// `--render`: render the app headless and exit with the outcome. It exits
+// hard, here in the binary: headless callers gate on the exit code (srt
+// render verification), so an incomplete render must read nonzero - and a
+// plain return would run the runtime's drop, which can block on a lingering
+// blocking task and hang the render at the finish line.
+#[cfg(feature = "go")]
+#[allow(clippy::too_many_arguments)]
+fn run_render(
+  app: Option<lattice::AppSource>,
+  args: RenderArgs,
+  launch: lattice::Launch,
+  strict: bool,
+  size: (u32, u32),
+  stats: bool,
+  fonts: Vec<alloy::rendertree::FontPayload>,
+  storage: lattice::storage::StorageSpec,
+  app_args: Vec<String>,
+) -> ! {
+  let app = app.unwrap_or_else(|| usage("--render requires a source path"));
+  let run = lattice::RenderRun {
+    fps: args.fps,
+    // Round to the nearest whole frame; any positive duration renders at
+    // least one.
+    frames: (args.duration * args.fps as f64).round().max(1.0) as u64,
+    output_prefix: args.out.map(frame_prefix).unwrap_or_else(|| "frame".to_string()),
+    script: args.script_path.map(load_script).unwrap_or_default(),
+    settle: args.settle,
+    seed: args.seed.unwrap_or(lattice::DEFAULT_SEED),
+  };
+  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
+  match lattice::start_render(&rt, app, run, launch, strict, size, stats, fonts, storage, app_args) {
+    Ok(()) => std::process::exit(0),
+    Err(e) => {
+      log::error!("[srt] {e}");
+      std::process::exit(1);
     }
   }
+}
+
+#[cfg(not(feature = "go"))]
+#[allow(clippy::too_many_arguments)]
+fn run_render(
+  _app: Option<lattice::AppSource>,
+  _args: RenderArgs,
+  _launch: lattice::Launch,
+  _strict: bool,
+  _size: (u32, u32),
+  _stats: bool,
+  _fonts: Vec<alloy::rendertree::FontPayload>,
+  _storage: lattice::storage::StorageSpec,
+  _app_args: Vec<String>,
+) -> ! {
+  usage("--render requires the dev client (solidrt-go)")
 }
 
 // `--test`: run the source as a test file and exit with its outcome. Like
@@ -265,6 +301,7 @@ fn run_tests(
   app: Option<lattice::AppSource>,
   filter: Option<String>,
   seed: Option<u64>,
+  failures: Option<String>,
   size: (u32, u32),
   fonts: Vec<alloy::rendertree::FontPayload>,
   data_root: Option<String>,
@@ -279,7 +316,11 @@ fn run_tests(
   }
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
-  let run = lattice::TestRun { options };
+  // Absolute, like `--out`: the runtime chdirs into the data sandbox.
+  let failures = failures.map(|dir| {
+    std::path::absolute(&dir).unwrap_or_else(|e| usage(&format!("--failures path '{dir}' is unusable: {e}")))
+  });
+  let run = lattice::TestRun { options, failures };
   let passed = lattice::start_tests(&rt, app, run, size, fonts, storage, app_args).is_ok();
   std::process::exit(if passed { 0 } else { 1 })
 }
@@ -290,6 +331,7 @@ fn run_tests(
   _app: Option<lattice::AppSource>,
   _filter: Option<String>,
   _seed: Option<u64>,
+  _failures: Option<String>,
   _size: (u32, u32),
   _fonts: Vec<alloy::rendertree::FontPayload>,
   _data_root: Option<String>,
@@ -300,8 +342,9 @@ fn run_tests(
   usage("--test requires a client built with the test feature (make client)")
 }
 
-// `--out` names where playback frames land: an existing directory (frames
-// appear inside it as frame-NNNNNN.png) or a path prefix (<out>-NNNNNN.png).
+// `--out` names where the frames land: an existing directory (frames appear
+// inside it as frame-NNNNNN.png) or a path prefix (<out>-NNNNNN.png).
+#[cfg(feature = "go")]
 // Absolutized here because the runtime chdirs into the app's data sandbox
 // before frames are written; a relative value therefore means relative to the
 // invoking directory, as a caller expects.
@@ -315,8 +358,7 @@ fn frame_prefix(out: String) -> String {
 // Parses a `--script` file (see `srt render --script`, written by `srt run
 // --capture`) into a ScriptPlayer. One JSON object per line (JSON Lines), not
 // a single JSON array -- matches dev-server.ts's streaming capture writer.
-// Needs serde_json, only pulled in by the `go` feature (the dev client); the
-// plain packed-app binary never replays a script.
+// Only the dev client renders, so only it replays a script.
 #[cfg(feature = "go")]
 fn load_script(path: String) -> alloy::ScriptPlayer {
   #[derive(serde::Deserialize)]
@@ -348,7 +390,3 @@ fn load_script(path: String) -> alloy::ScriptPlayer {
   alloy::ScriptPlayer::new(actions)
 }
 
-#[cfg(not(feature = "go"))]
-fn load_script(path: String) -> alloy::ScriptPlayer {
-  panic!("--script requires the go client build (path: {path})");
-}

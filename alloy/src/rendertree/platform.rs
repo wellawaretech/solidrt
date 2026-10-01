@@ -54,8 +54,6 @@ pub struct PlatformContext {
   // A frame request's caller declared it standing (see
   // declare_standing_demand); consumed by the draw gate after the request.
   standing_demand: AtomicBool,
-  // Bypass the demand-driven gate and render every frame (playback mode).
-  always_render: Cell<bool>,
   // Whether the debug stats overlay (HUD) is drawn. Arc'd so the dev-server
   // connection (a different thread, see go/connection.rs) can toggle it.
   stats_enabled: Arc<AtomicBool>,
@@ -82,7 +80,6 @@ impl PlatformContext {
       fps: Cell::new(0),
       frame_requested: Arc::new(AtomicBool::new(false)),
       standing_demand: AtomicBool::new(false),
-      always_render: Cell::new(false),
       stats_enabled: Arc::new(AtomicBool::new(false)),
     }
   }
@@ -115,14 +112,6 @@ impl PlatformContext {
     self.font_metrics.replace(font_metrics);
     self.words.borrow_mut().clear();
     self.request_frame();
-  }
-
-  pub fn set_always_render(&self, always: bool) {
-    self.always_render.set(always);
-  }
-
-  pub fn always_render(&self) -> bool {
-    self.always_render.get()
   }
 
   /// Toggle the debug stats overlay. Requests a frame so the change is drawn

@@ -98,6 +98,50 @@ pub fn node_record(
   obj
 }
 
+/// The subtree as an outline: one node per line indented by depth, with its
+/// kind, label, text and painted box (`view [save] 20,50 120x40`), and with
+/// `props` the off-default props as JSON after it. No ids, so two runs print
+/// the same text and a test can pin a layout against a string. A span that
+/// is all of its parent's text is that text (as `find` sees it): one line,
+/// not two. What `locator.outline()` reads and what a failed app test
+/// prints.
+pub fn outline(node: &alloy::rendertree::NodeSnapshot, tree: Option<&alloy::rendertree::RenderTree>, props: bool) -> String {
+  let mut lines = Vec::new();
+  outline_lines(node, tree, props, 0, &mut lines);
+  lines.join("\n")
+}
+
+fn outline_lines(
+  node: &alloy::rendertree::NodeSnapshot,
+  tree: Option<&alloy::rendertree::RenderTree>,
+  props: bool,
+  depth: usize,
+  out: &mut Vec<String>,
+) {
+  let mut line = format!("{}{}", "  ".repeat(depth), node.kind);
+  if let Some(label) = &node.label {
+    line.push_str(&format!(" [{label}]"));
+  }
+  if let Some(text) = &node.text {
+    line.push_str(&format!(" {}", serde_json::Value::from(text.as_str())));
+  }
+  line.push_str(&format!(" {},{} {}x{}", round2(node.x), round2(node.y), round2(node.width), round2(node.height)));
+  if props {
+    if let Some(values) = tree.and_then(|tree| tree.try_node(node.id)).map(super::read_jsx).filter(|v| !v.is_empty()) {
+      let map: serde_json::Map<String, serde_json::Value> =
+        values.into_iter().map(|(name, value)| (name.to_string(), read_value_json(value))).collect();
+      line.push_str(&format!(" {}", serde_json::Value::Object(map)));
+    }
+  }
+  out.push(line);
+  for child in &node.children {
+    if child.text.is_some() && child.text == node.text {
+      continue;
+    }
+    outline_lines(child, tree, props, depth + 1, out);
+  }
+}
+
 /// True when the painted quad is still the axis-aligned box the snapshot
 /// already reports (top-left, top-right, bottom-right, bottom-left of its own
 /// AABB) - the untransformed common case, where emitting it would be noise.

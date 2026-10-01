@@ -89,6 +89,28 @@ impl RenderTree {
     path.pop();
   }
 
+  /// A node a transition is running on, named the way `describe` names it.
+  /// None when no transition runs.
+  pub fn running_transition(&self) -> Option<String> {
+    self.transitions.running_node().map(|id| self.describe(id))
+  }
+
+  /// A node in a few words, for a message: its kind and the text it shows
+  /// or its label, its id otherwise.
+  pub fn describe(&self, id: u64) -> String {
+    let Some(node) = self.try_node(id) else {
+      return format!("node #{id}");
+    };
+    let kind = node.kind.name();
+    if let Some(text) = self.node_text(id) {
+      return format!("{kind} {text:?}");
+    }
+    match &node.label {
+      Some(label) => format!("{kind} labelled {label:?}"),
+      None => format!("{kind} #{id}"),
+    }
+  }
+
   /// The text a node shows, for the kinds that are text.
   fn node_text(&self, id: u64) -> Option<&str> {
     match &self.try_node(id)?.kind {

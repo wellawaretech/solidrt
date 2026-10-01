@@ -40,6 +40,16 @@ declare module "flux:test/gui" {
   export function node(id: number, depth: number): string | null
 
   /**
+   * The subtree of node `id` as an outline: one node per line indented by
+   * depth, with its kind, label, text and painted box (`view [save] 20,50
+   * 120x40`), and with `props` the off-default props as JSON after it. No
+   * ids, so two runs print the same text. A span that is all of its
+   * parent's text is folded into the parent's line, as `find` sees it.
+   * Null when `id` is no current node.
+   */
+  export function outline(id: number, props: boolean): string | null
+
+  /**
    * Whether the node is painted where a user could see it: mounted and not
    * exiting, its painted box still has area once every clipping ancestor
    * and the window have cut it, and the opacity multiplied up its ancestor

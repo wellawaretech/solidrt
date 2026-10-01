@@ -113,6 +113,7 @@ bundle options:
 test options:
       --filter <text>    Run only the tests whose name contains this text
       --seed <n>         Run the tests on another Math.random sequence (default: 0)
+      --only <flux|app>  Run one layer: the flux tests, or the app tests (the dev client)
       -- <args...>       Everything after -- reaches the test files (flux:process argv)
 
 console options:
@@ -137,6 +138,9 @@ render options:
       --fps <N>          Frames per second (default: 60)
       --duration <N>     Duration in seconds, fractions allowed (default: 1)
       --size <WxH>       Frame size in physical pixels (default: 1280x720)
+      --settle           Run the app to rest (loads landed, transitions played out) before the first frame
+      --strict           Fail the render when the app logs an error (a contained error included)
+      --seed <n>         Render on another Math.random sequence (default: 0)
   -o, --output <path>    Where frames land: a directory (frame-NNNNNN.png inside it)
                          or a path prefix (default: the current directory)
       --data-root <dir>  Client data root (default: ~/.solidrt/clients)

@@ -426,6 +426,9 @@ pub(crate) enum RasterCmd {
   RasterizeReadback { dl: DisplayList, width: u32, height: u32, reply: mpsc::Sender<Result<Vec<u8>, String>> },
   /// Read back a texture's RGBA8 pixels by handle.
   ReadTexture { texture: Texture, width: u32, height: u32, reply: mpsc::Sender<Result<Vec<u8>, String>> },
+  /// Read back the window's backbuffer (the surface as the last frame left
+  /// it) with its size: a headless host's way to the frame it stepped.
+  ReadWindow { reply: mpsc::Sender<Result<(u32, u32, Vec<u8>), String>> },
   /// Inventory textures, buffers, and shader/pipeline targets.
   Resources { reply: mpsc::Sender<GpuResources> },
   /// The device ceilings, queried once at thread startup (see `GpuLimits`).

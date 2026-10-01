@@ -170,7 +170,7 @@ one.
 | animation timeline | `PacedClock::now_ms` (lattice) | `onFrame` tick, `requestAnimationFrame`, the render event, element and node transitions, silent video streams |
 | timer timeline | `PacedClock::timer_now_ms` | `setTimeout`, `setInterval` in a GUI app |
 | input reading | `PacedClock::input_at_ms`, `input_frame_ms` | the `timeStamp` of input events (pointer, wheel, key, pad state) |
-| playback clock | frame / fps (lattice, `srt render`) | everything above, deterministically, when recording |
+| stepped clock | frame / fps (lattice, `srt render` and `srt test`) | everything above, deterministically, when a headless host steps the frames |
 | audio sink | forge audio position | video streams with audio (master clock; the picture follows) |
 
 Rules that follow, each learned the hard way:
@@ -214,9 +214,9 @@ Rules that follow, each learned the hard way:
   `srt render` plays at the wrong speed (Sponza feedback item 28 tried it).
 - The dev clock control (`/clock?scale=`, `?step=`) gates frame delivery
   at scale 0, advances both timelines `period * scale` otherwise, and a
-  step advances both exactly one period. Playback mode is the same idea
-  taken to determinism: frame `k` is at `k / fps`, whatever the machine
-  does.
+  step advances both exactly one period. The stepped mode (`srt render`,
+  `srt test`) is the same idea taken to determinism: frame `k` is at
+  `k / fps`, whatever the machine does.
 - Transitions are stamped once per frame from the animation timeline. A
   target written before the first frame starts its track at clock 0 and
   fast-forwards the startup latency; open ([transition-clock-startup-anchor]).
@@ -331,12 +331,14 @@ through; timers fire what came due. After D1 this threshold exists only in
 lattice: alloy reports the honest count and lattice decides what a count
 worth more than 500 ms means.
 
-### D6. Playback is deterministic
+### D6. A stepped host is deterministic
 
-`srt render` drives frame `k` at `k / fps`, delivers exactly one frame
-signal per captured frame, bypasses pacing, and puts both timelines on the
-same clock. Anything timing-related must keep a playback path that does not
-touch the wall.
+`srt render` and `srt test` drive frame `k` at `k / fps`, deliver exactly
+one frame signal per frame they step, bypass pacing, put both timelines on
+the same clock, and take the wall out of the engine (`performance.now()`
+reads 0, the calendar is a fixed epoch plus frame time, `Math.random` is
+seeded; test-harness D5, D34). Anything timing-related must keep a stepped
+path that does not touch the wall.
 
 ### D7. The present fence is two deep, unconditionally
 

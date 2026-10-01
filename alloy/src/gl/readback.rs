@@ -45,9 +45,24 @@ pub(crate) fn read_texture_pixels(gl: &glow::Context, texture: &Texture, size: I
   }
 }
 
-/// Read back the window backbuffer's RGBA8 pixels (FBO 0, bottom-up rows as GL
-/// stores them; the playback encoder flips when writing). Called on the raster
-/// thread right after the frame's draw, which glReadPixels implicitly waits on.
+/// Reorder a bottom-up RGBA8 readback (`read_fbo0_pixels`) into top-down
+/// rows, the layout every other pixel read of the crate hands out.
+pub(crate) fn flip_rows(pixels: Vec<u8>, size: ISize) -> Vec<u8> {
+  let row_bytes = size.width.max(0) as usize * 4;
+  let rows = size.height.max(0) as usize;
+  if pixels.len() != row_bytes * rows {
+    return pixels;
+  }
+  let mut flipped = Vec::with_capacity(pixels.len());
+  for y in (0..rows).rev() {
+    flipped.extend_from_slice(&pixels[y * row_bytes..(y + 1) * row_bytes]);
+  }
+  flipped
+}
+
+/// Read back the window backbuffer's RGBA8 pixels (FBO 0, bottom-up rows as
+/// GL stores them; `flip_rows` turns them top-down). Called on the raster
+/// thread after a frame's draw, which glReadPixels implicitly waits on.
 pub(crate) fn read_fbo0_pixels(gl: &glow::Context, size: ISize) -> Vec<u8> {
   let (width, height) = (size.width as i32, size.height as i32);
   let mut pixels = vec![0u8; (width.max(0) as usize) * (height.max(0) as usize) * 4];

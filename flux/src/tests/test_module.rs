@@ -547,3 +547,53 @@ fn settle_does_not_wait_for_what_stands() {
   );
   assert_eq!(rows(&results), "settles|true|");
 }
+
+// A failed test's record carries the details read in its engine when the
+// failure was known: what flux has in flight, then the embedder's own,
+// under labels. A pass carries none.
+#[test]
+fn a_failure_carries_the_details_read_in_its_engine() {
+  let hook: crate::test::DetailsHook =
+    std::sync::Arc::new(|_ctx, name| vec![("At".to_string(), format!("the end of {name:?}"))]);
+  let results = results_with(
+    r#"
+    import { test, expect } from "flux:test"
+    test("passes", () => {})
+    test("fails", () => { expect(1).toBe(2) })
+    test("rejects unhandled", () => { Promise.reject(new Error("nobody handles this")) })
+    "#,
+    RunOptions { details: Some(hook), ..RunOptions::default() },
+  );
+  assert_eq!(results.len(), 3);
+  assert_eq!(results[0].details, Vec::<(String, String)>::new());
+  assert_eq!(results[1].details, vec![("At".to_string(), "the end of \"fails\"".to_string())]);
+  assert_eq!(results[2].details, vec![("At".to_string(), "the end of \"rejects unhandled\"".to_string())]);
+}
+
+// A test that ran out of time has its details read all the same, in the
+// interrupted engine: here a fetch nobody answers, which is what kept it.
+#[test]
+fn a_timed_out_test_says_what_is_in_flight() {
+  let hook: crate::test::DetailsHook = std::sync::Arc::new(|_ctx, _name| vec![("At".to_string(), "the cap".to_string())]);
+  let port = {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+    listener.local_addr().expect("the bound address").port()
+  };
+  let source = r#"
+    import { test } from "flux:test"
+    import { serve } from "flux:http"
+    test("waits on a server that never answers", async () => {
+      serve({ port: PORT, fetch: () => new Promise(() => {}) })
+      await fetch("http://127.0.0.1:PORT/")
+    })
+    "#
+  .replace("PORT", &port.to_string());
+  let results = results_with(
+    &source,
+    RunOptions { timeout: Duration::from_millis(200), details: Some(hook), ..RunOptions::default() },
+  );
+  assert_eq!(rows(&results), "waits on a server that never answers|false|Timed out after 200 ms");
+  let in_flight = results[0].details.iter().find(|(label, _)| label == "In flight").map(|(_, text)| text.as_str());
+  assert!(matches!(in_flight, Some(text) if text.contains("fetch")), "got {:?}", results[0].details);
+  assert!(results[0].details.contains(&("At".to_string(), "the cap".to_string())), "got {:?}", results[0].details);
+}

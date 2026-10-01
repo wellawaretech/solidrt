@@ -6,9 +6,8 @@ use crate::Context;
 
 /// What the raster thread reports to the main loop after finishing a frame.
 /// The raster thread owns the process's single GL context and has already
-/// drawn (and, in interactive mode, presented) by the time this arrives; the
-/// main loop only does frame bookkeeping (fps, FrameRendered events) and
-/// playback encoding.
+/// drawn and presented by the time this arrives; the main loop only does
+/// frame bookkeeping (fps, FrameRendered events).
 pub enum FrameOutput {
   /// Interactive: the frame is on screen. `at` is the instant the swap
   /// returned on the raster thread - the reference the main loop counts
@@ -24,9 +23,6 @@ pub enum FrameOutput {
   /// late), None without timer queries. Both feed the cadence hold
   /// (cadence.rs).
   Presented { at: std::time::Instant, ready_at: std::time::Instant, gpu_micros: Option<u64>, demanded: bool },
-  /// Playback: the frame was drawn to the hidden window's backbuffer and read
-  /// back. RGBA8, bottom-up rows, at the fixed capture size.
-  Captured(Vec<u8>),
 }
 
 /// Physical framebuffer size packed for atomic hand-off from the main thread
