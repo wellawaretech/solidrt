@@ -796,6 +796,21 @@ findings, both fixed the same day:
   command is not statically reachable from `main.ts`; the CI job's `tsc`
   over `src` is the gate for that.
 
+**The second run (2026-10-01, "CI fixes")** turned 14 of 16 jobs green
+and showed, through the new durations, that the cap was the wrong lever:
+the tiles property test took 10.6 s on the Linux debug build and over
+30 s on the MSVC one, where the environment bakes took 26 s. A debug
+`flux` with QuickJS compiled optimized, through a per-package override
+(`[profile.dev.package.rquickjs-sys] opt-level = 3` in the workspace
+Cargo.toml, every other crate at the profile's level), runs the same
+test in 1.96 s, release speed: the whole slowdown was the engine's C,
+which nothing in CI debugs into. The override is in; the 30 s cap stays
+as the hang detector. The other red job was `test-forge (darwin)`, a
+one-frame host-lateness drop in the stall phase of the release-policy
+test (7 against 6; a misclassified stall would drop twelve), which now
+judges its drops against the test's lateness budget as the drop phase
+already did.
+
 So that a slow test is seen before CI sees it, the command prints time
 now: a file's line carries the time its tests took in their engines, the
 closing line the run's wall time, and `srt test --durations` lists every

@@ -27,6 +27,16 @@ tokio = { version = "=1.53.1", features = ["rt", "rt-multi-thread", "time", "syn
 [patch.crates-io]
 livekit-wakeword = { git = "https://github.com/antoinevanwel/rust-sdks", rev = "20f6ca2c1b5ce87ebb208f639beadcdf34afc464" }
 
+# QuickJS compiled optimized in the dev profile too, the Rust above it at
+# the profile's own level. Unoptimized, the engine runs JS 5x slower on
+# Linux and 15x under MSVC (the tiles property test of packages/2d: 1.9 s
+# on release, 10.6 s on a Linux debug build, over 30 s on a Windows one,
+# 1.96 s on a debug build with this override), and nothing debugs into the
+# engine's C; the debug assertions that a debug build is for are the
+# Rust's.
+[profile.dev.package.rquickjs-sys]
+opt-level = 3
+
 [profile.release]
 
 # Build scripts and proc-macros stay unstripped. With Xcode 27 the strip that

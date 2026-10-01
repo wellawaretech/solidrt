@@ -350,7 +350,18 @@ fn the_release_policy_waits_drops_and_reanchors_against_the_clock() {
     .map(|k| before + k)
     .unwrap_or_else(|| panic!("no frame was released for now after the stall: {:?}", &after[before..]));
   assert!(reanchored <= before + 1, "the re-anchor came {} frames after the jump", reanchored - before);
-  assert_eq!(dropped(), dropped_before, "a stall drops nothing");
+  // A stall drops nothing: the frames the jump passed over are skipped by
+  // the re-anchor, not discarded. A late host may still drop a frame or
+  // two of its own in this stretch (the shared macOS runner has), so the
+  // drops added are bounded by the lateness budget, which the jump's
+  // frames exceed by a clear margin.
+  let host_late_frames = ((HOST_WAKE_LATE_NS + SLACK_NS) / frame_ns) as usize;
+  assert!((STALL_REANCHOR_NS * 2 / frame_ns) as usize > 2 * host_late_frames);
+  let stall_drops = dropped() - dropped_before;
+  assert!(
+    stall_drops <= host_late_frames,
+    "a stall drops nothing, and a late host at most {host_late_frames} frames; {stall_drops} were dropped"
+  );
   let (_, release_ns, now_ns) = after[reanchored + 2];
   assert!(on_lead(release_ns - now_ns, lead), "after the re-anchor the lead holds again");
 }
