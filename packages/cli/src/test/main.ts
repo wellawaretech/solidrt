@@ -284,7 +284,7 @@ async function runFile(file: string, filter: string | undefined, seed: number | 
   else if (failed.length > 0) {
     // An uncaught error is in the output already; the host's own reason (a
     // file that timed out or never finished loading) is only here.
-    let reason = cited(failed[0])
+    let reason = cited(failed[0]!)
     let logged = outcome.output.join("\n").includes(reason)
     outcome.error = logged ? "The file failed before its tests ran" : `The file failed before its tests ran: ${reason}`
   }
@@ -307,11 +307,28 @@ function count(n: number, what: string): string {
   return `${n} ${what}`
 }
 
-function report(name: string, outcome: FileOutcome) {
+// A duration as a reader scans it: seconds past a second, whole
+// milliseconds past ten, a decimal below that.
+function duration(ms: number): string {
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)} s`
+  if (ms >= 10) return `${ms.toFixed(0)} ms`
+  return `${ms.toFixed(1)} ms`
+}
+
+// The file's line carries the time its tests took in their engines (not
+// the bundling or the process); with --durations every test follows with
+// its own, the times aligned on a column.
+function report(name: string, outcome: FileOutcome, durations: boolean) {
   let failed = outcome.tests.filter((t) => !t.ok).length
   let passed = outcome.tests.length - failed
   let counts = [failed > 0 ? count(failed, "failed") : "", count(passed, "passed")].filter(Boolean).join(", ")
-  console.log(`${name}: ${outcome.error ? "FAILED" : counts}`)
+  let took = outcome.tests.reduce((sum, t) => sum + t.durationMs, 0)
+  console.log(`${name}: ${outcome.error ? "FAILED" : `${counts}, ${duration(took)}`}`)
+  if (durations && outcome.tests.length > 0) {
+    let times = outcome.tests.map((t) => duration(t.durationMs))
+    let width = Math.max(...times.map((t) => t.length))
+    for (let [i, test] of outcome.tests.entries()) console.log(`  ${times[i]!.padStart(width)}  ${test.name}`)
+  }
   for (let test of outcome.tests) {
     if (test.ok && test.output.length === 0) continue
     console.log(`\n  ${test.ok ? "Passed" : "FAILED"}: ${test.name}`)
@@ -392,6 +409,7 @@ export async function main() {
   let filter = values.filter
   let seed = seedOption()
   let only = onlyOption()
+  let started = performance.now()
   let failed = 0
   let passed = 0
   let brokenFiles = 0
@@ -402,7 +420,7 @@ export async function main() {
     ran++
     // With a filter, a file none of whose tests match has nothing to say.
     if (filter !== undefined && outcome.tests.length === 0 && !outcome.error) continue
-    report(relative(process.cwd(), file), outcome)
+    report(relative(process.cwd(), file), outcome, values.durations)
     failed += outcome.tests.filter((t) => !t.ok).length
     passed += outcome.tests.filter((t) => t.ok).length
     if (outcome.error) brokenFiles++
@@ -416,7 +434,7 @@ export async function main() {
   if (brokenFiles > 0) parts.push(`${count(brokenFiles, brokenFiles === 1 ? "file" : "files")} did not complete`)
   // A run on another seed says which, so a failure in it can be run again;
   // a run of one layer says so too.
-  let notes = [count(ran, ran === 1 ? "file" : "files")]
+  let notes = [count(ran, ran === 1 ? "file" : "files"), duration(performance.now() - started)]
   if (only !== undefined) notes.push(`${only} tests only`)
   if (seed !== undefined) notes.push(`seed ${seed}`)
   console.log(`Tests: ${parts.join(", ")} (${notes.join(", ")})`)

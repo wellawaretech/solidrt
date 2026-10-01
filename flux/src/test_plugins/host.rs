@@ -38,8 +38,10 @@ pub const RECORD_PREFIX: &str = "\u{1e}srt-test ";
 /// How long one engine may take, from the start of the file's evaluation to
 /// the test's end, when the host is given no other cap. A safety cap
 /// against a test that never finishes, not a wait: a test that finishes is
-/// never held to it.
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(5000);
+/// never held to it. Sized for a compute-bound test on a debug binary on a
+/// slow CI runner, where the heaviest test (2 s on a release build here)
+/// blew a 5 s cap, and the cap only has to catch a hang.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(30_000);
 /// How long the host gives a timed-out test's engine to answer for the
 /// failure's details (what is in flight, the embedder's own) before the
 /// engine is dropped. The engine stays interrupted meanwhile, so the

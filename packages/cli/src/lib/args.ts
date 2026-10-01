@@ -70,6 +70,7 @@ const OPTIONS = {
     filter: { type: "string" },
     seed: { type: "string" },
     only: { type: "string" },
+    durations: { type: "boolean", default: false },
     settle: { type: "boolean", default: false },
     strict: { type: "boolean", default: false },
 } as const
@@ -238,6 +239,10 @@ export function validateArgs() {
   // --only runs one layer of the tests.
   if (values.only !== undefined && command !== "test") {
     usage("srt test --only <flux|app>  (--only is only valid with the test command)")
+  }
+  // --durations lists every test with its time.
+  if (values.durations && command !== "test") {
+    usage("srt test --durations  (--durations is only valid with the test command)")
   }
   // --port binds the dev server (`run`, `server`) or picks one (`client`,
   // `android`, `mcp`).

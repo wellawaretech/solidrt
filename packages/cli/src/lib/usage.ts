@@ -114,6 +114,7 @@ test options:
       --filter <text>    Run only the tests whose name contains this text
       --seed <n>         Run the tests on another Math.random sequence (default: 0)
       --only <flux|app>  Run one layer: the flux tests, or the app tests (the dev client)
+      --durations        List every test with the time it took
       -- <args...>       Everything after -- reaches the test files (flux:process argv)
 
 console options:

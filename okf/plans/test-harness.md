@@ -76,11 +76,12 @@ Nothing is parked any more except the four GPU rigs under `checks/`
 
 To pick up, in this order:
 
-1. The first run of the CI jobs: `test-js` (`--only flux`, four
-   platforms, also the first run of `srt test` on Windows and macOS) and
-   `test-app` (Linux, the dev client built in the job; whether the
-   runner's Mesa gives the offscreen GLES context is unproven until then).
-   See [Stage 3](#stage-3---ci-written-2026-09-30-not-run).
+1. The CI jobs had their first run on 2026-10-01: `test-app (linux)`
+   passed (the runner's Mesa gives the offscreen GLES context), `types`
+   and `test-js` failed on a type error and on the 5 s cap against a
+   debug binary. Both are fixed (see
+   [Stage 3](#stage-3---ci-written-2026-09-30-first-run-2026-10-01)); the
+   run that proves it is the next push.
 2. Stage 5, the migration of the four GPU rigs.
 3. Verification leftovers: the MCP bridge's `settle` tool and the `at` and
    `drag` arguments through a re-spawned bridge.
@@ -736,7 +737,7 @@ take their time from the events, so what was parked here is back in
 `packages/core/checks/gesture-timers.test.ts` and
 `input-map-hold.test.ts`. The two files named above are gone.
 
-### Stage 3 - CI (written 2026-09-30, not run)
+### Stage 3 - CI (written 2026-09-30, first run 2026-10-01)
 
 A job of its own, `test-js`, in `.github/workflows/ci.yml`: the JS tests
 are a suite, and a suite is one job with the same command on every
@@ -772,6 +773,34 @@ builders before the first push is offered and not decided.
 
 App tests join later as a second job where the dev client builds, Linux
 first.
+
+**The first run (2026-10-01, on the commit that landed steps 4.5 and
+4.6).** `test-app (linux)` passed: the 31 app tests ran on the client
+built in the job, so the runner's Mesa gives the offscreen GLES context.
+`srt test` ran on Windows and macOS and the record protocol held. Two
+findings, both fixed the same day:
+
+- The host's cap per engine (5000 ms) was sized on this machine's release
+  binary; CI runs a debug `flux`, and on it the heaviest test, the
+  `eachChunkSlice` property test of `packages/2d/tests/tiles.test.ts`
+  (1.9 s on release here), timed out on all four runners, and the two
+  `bake` tests of `packages/3d/tests/environment.test.ts` (0.5 s each on
+  release) on Windows too. The cap is a hang detector, so it is 30 s now
+  (`DEFAULT_TIMEOUT` in `flux/src/test_plugins/host.rs`); nothing was
+  added to set it, and no test was shrunk to fit a number. Rejected: a
+  release binary in CI (debug assertions are part of what the run
+  checks); a cap per test or per run (surface for a safety cap).
+- `cited(failed[0])` in `packages/cli/src/test/main.ts` failed the
+  `types` job under `noUncheckedIndexedAccess`. `srt check` on the cli
+  entry misses the file: it roots the program at the entry, and the test
+  command is not statically reachable from `main.ts`; the CI job's `tsc`
+  over `src` is the gate for that.
+
+So that a slow test is seen before CI sees it, the command prints time
+now: a file's line carries the time its tests took in their engines, the
+closing line the run's wall time, and `srt test --durations` lists every
+test with its own (the records carried `durationMs` from the start and
+the reporter never printed it).
 
 ### Stage 4 - the app layer (redesigned 2026-09-30)
 

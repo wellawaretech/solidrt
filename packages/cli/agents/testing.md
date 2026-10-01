@@ -165,7 +165,7 @@ the test logged.
   would have seen it, written under the project's build output. Open it.
 - `No node matches { text: "Goodbye" }; texts there: ...` - a `find` that
   matched nothing lists the texts and labels that were there instead.
-- `Timed out after 5000 ms` - the test never finished: a promise nothing
+- `Timed out after 30000 ms` - the test never finished: a promise nothing
   settles, a synchronous loop, or work in flight (see above). The cap is
   wall time and is not a wait; a test that finishes is never held to it.
 

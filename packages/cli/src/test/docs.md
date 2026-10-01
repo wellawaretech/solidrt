@@ -16,6 +16,7 @@ srt test tests/counter.test.tsx  # an app test, on the dev client
 srt test --filter matchPath    # only the tests whose name contains the text
 srt test --seed 12345          # the same tests on another Math.random sequence
 srt test --only app            # one layer: the app tests (or `flux`)
+srt test --durations           # every test with the time it took
 ```
 
 A test file lives in a `tests/` folder of its package or project, never
@@ -57,10 +58,14 @@ and the source line, then what the host read in the test's engine at that
 moment (`In flight: 1 fetch` names work the test had started and not
 finished), then what the test printed. An uncaught error (a throw in a
 timer callback, a rejection nobody handles) fails the test it happened
-in. A test that does not finish within 5 seconds fails as timed out, a
+in. A test that does not finish within 30 seconds fails as timed out, a
 synchronous loop included, and one that waits on a promise nothing will
 settle fails at once, so a test cannot pass by never finishing. The
 command exits nonzero on any failure.
+
+A file's line carries the time its tests took, and the closing line the
+run's; `--durations` lists every test with its own, to find the one that
+is slow or near the cap.
 
 `Math.random()` is seeded in every test's engine. A test that draws random
 inputs, and code under test that calls `Math.random()`, therefore does the
