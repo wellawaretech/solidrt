@@ -8,8 +8,8 @@
 // height fog, which the suns stand above. The example's frame callback
 // keeps the frames coming, so the test steps frames rather than settling.
 
-import { test, expect } from "@solidrt/core/test"
-import type { Locator, TestApp } from "@solidrt/core/test"
+import { test, expect } from "@solidrt/test"
+import type { Locator, TestApp } from "@solidrt/test"
 
 type Point = [number, number, number]
 type Screen = { x: number; y: number } | null

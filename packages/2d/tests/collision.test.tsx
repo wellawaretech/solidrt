@@ -8,8 +8,8 @@
 // slope. The layer is GPU state, so this is an app test. A query flushes
 // the pending writes, so no frame is run after the mount.
 
-import { test, expect } from "@solidrt/core/test"
-import type { TestApp } from "@solidrt/core/test"
+import { test, expect } from "@solidrt/test"
+import type { TestApp } from "@solidrt/test"
 import { addSprite, createAtlas, createSpriteLayer } from "../src/index.ts"
 import type { SpriteHandle } from "../src/index.ts"
 

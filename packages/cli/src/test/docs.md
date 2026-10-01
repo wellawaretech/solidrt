@@ -102,12 +102,12 @@ waited for: a listening server, an open socket, a running child, a timer.
 
 ## App tests
 
-A test that imports `@solidrt/core/test` is an app test. It runs on the dev
+A test that imports `@solidrt/test` is an app test. It runs on the dev
 client without a window, and it has no wall clock: time is the frames the
 test asks for.
 
 ```ts
-import { test, expect } from "@solidrt/core/test"
+import { test, expect } from "@solidrt/test"
 
 test("the hint shows after half a second", async app => {
   let shown = false
@@ -123,7 +123,7 @@ A test of UI mounts it, names nodes the way a user would and sends input
 through the real pipeline:
 
 ```tsx
-import { test, expect } from "@solidrt/core/test"
+import { test, expect } from "@solidrt/test"
 
 test("a tap increments", async app => {
   let counter = await app.mount(() => <Counter />)

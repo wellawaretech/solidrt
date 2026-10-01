@@ -2,6 +2,7 @@
 title: Move the app test layer into @solidrt/test
 description: The app test layer (mount, find, input, frames, readers) leaves core for a package of its own, @solidrt/test, a devDependency of every app and a peer of core like the router; core's surface and its auto-imported AGENTS.md go back to being the app's alone. No runtime or Rust change.
 created: 2026-10-01
+completed: 2026-10-01
 ---
 
 # Move the app test layer into @solidrt/test
@@ -157,3 +158,26 @@ are what it rests on.
 - A guard against two copies of core in one bundle (core throws when a
   second copy loads). It would protect every layer package, not this one in
   particular, so it is its own item if wanted.
+
+## Built (2026-10-01)
+
+As planned, with three deviations:
+
+- `srt test` did change after all. The classification bundle of a plain
+  `.ts` test (`bundleFlux`, Bun's own bundler) now reaches core's root
+  through `@solidrt/test`, and core's root exports `Logo` from `logo.tsx`:
+  Bun's JSX transform asked for `@solidrt/core/jsx-dev-runtime`, which core
+  does not ship, and the three `.ts` app tests failed to bundle. The runner
+  now takes a `.tsx` anywhere in the closure as what settles the layer
+  (`packages/cli/src/test/main.ts`, `bundleFlux`). A `.ts` app test that
+  imported core's root had the same exposure before this item.
+- CI's "Typecheck packages" step reads its list from the tree
+  (`packages/*/tsconfig.json`, `apps/*/tsconfig.json`, plus the cli's dev
+  server) and fails on a package with TypeScript sources but no
+  `tsconfig.json`: the router had been missing from the hand-kept list.
+  `packages/create-solidrt` got the tsconfig (bun-targeted, like the cli)
+  and the `@types/bun` devDependency that lets it typecheck.
+- The lockfile diff also carries the devDependency lists of core, 2d, 3d
+  and the root, not the new member alone; `fog.test.tsx` has 4 tests, not 3.
+
+Totals: 370 tests in 41 files before and after, every layer green.

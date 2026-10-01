@@ -1,5 +1,5 @@
 // The `flux:test/gui` module: the node verbs of a gui test, which the app
-// layer (`@solidrt/core/test`) builds locators and readers on. Thin FFI over
+// layer (`@solidrt/test`) builds locators and readers on. Thin FFI over
 // the rendertree's own inspection (find, visibility, the hit path) and the
 // shared node record (alloy_plugins/inspect.rs), so a test reads a node as
 // the control API's `/tree` reports it, and the GPU inventory as `/gpu`

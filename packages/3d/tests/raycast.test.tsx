@@ -9,8 +9,8 @@
 // query flushes the pending writes, so frames are run only around the
 // vertex update, which needs the geometry on the GPU and a flush after.
 
-import { test, expect } from "@solidrt/core/test"
-import type { TestApp } from "@solidrt/core/test"
+import { test, expect } from "@solidrt/test"
+import type { TestApp } from "@solidrt/test"
 import { glsl } from "@solidrt/core/gpu"
 import {
   add,

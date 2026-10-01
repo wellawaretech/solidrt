@@ -6,8 +6,8 @@
 // Three quads at fixed positions, colors chosen so a wrong pixel names
 // the wrong step.
 
-import { test, expect } from "../src/test.ts"
-import type { TestApp } from "../src/test.ts"
+import { test, expect } from "@solidrt/test"
+import type { TestApp } from "@solidrt/test"
 import { beginBufferWrite, createBuffer, createPipelineTexture, destroyBuffer, endBufferWrite, glsl, readTexture, setDraw } from "../src/gpu.ts"
 import type { TextureId } from "../src/gpu.ts"
 

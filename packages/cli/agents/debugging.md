@@ -164,7 +164,7 @@ when exactly one client is connected.
   what covers a node that does not respond to a tap. Node ids are
   per client and change on reload; re-query after `/reload`. The per-node
   record, documented here and nowhere else (an app test reads a node as
-  this same record, through `@solidrt/core/test`):
+  this same record, through `@solidrt/test`):
   - `id`, `kind`, `x`, `y`, `width`, `height`: the window-relative box of
     the node as painted, the axis-aligned bounds of its painted corners;
     zero before the first layout. `detached: true` marks a d-* node.

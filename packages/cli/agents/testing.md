@@ -3,7 +3,7 @@
 Read this before writing a test for a SolidRT app or package, or before
 repairing one that fails. The command reference is `srt test` in cli's
 AGENTS.md and src/test/docs.md; the verbs are typed and documented in
-`@solidrt/core/src/test.ts` (app tests) and `@solidrt/flux-types/modules/
+`@solidrt/test/src/index.ts` (app tests) and `@solidrt/flux-types/modules/
 test.d.ts` (`test`, `expect`, `settle`). This file is the method: what to
 test, how to name things, what the time model means for a test, and how to
 read a failure.
@@ -25,7 +25,7 @@ read a failure.
 - Two layers, and the file's imports pick one. A file that imports only
   headless modules (`flux:test`, `flux:fs`, `flux:http`, ...) is a flux
   test and runs on the `flux` binary, on real time. A file that imports
-  `@solidrt/core/test` (or any app runtime module; every `.tsx`) is an app
+  `@solidrt/test` (or any app runtime module; every `.tsx`) is an app
   test and runs on the dev client, headless, with no wall clock. Pure
   logic (a parser, a route matcher, a reducer) is a flux test; anything
   that mounts UI, sends input, or needs time to pass is an app test.
@@ -56,7 +56,7 @@ somewhere its UI reaches slowly (see "Seeding state").
 ## Writing an app test
 
 ```tsx
-import { test, expect } from "@solidrt/core/test"
+import { test, expect } from "@solidrt/test"
 import { Counter } from "../src/counter.tsx"
 
 test("a tap increments", async app => {

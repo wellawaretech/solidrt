@@ -3,8 +3,8 @@
 // node's record: the subtree as text, its pixels, the GPU inventory.
 
 import { registerDebug } from "srt:dev"
-import { test, expect } from "../src/test.ts"
-import { createSignal, gamepads, onLink } from "../src/index.ts"
+import { test, expect } from "../src/index.ts"
+import { createSignal, gamepads, onLink } from "@solidrt/core"
 
 // The error `run` rejects with; fails when it fulfills.
 async function failure(run: () => Promise<unknown>): Promise<string> {

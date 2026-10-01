@@ -19,7 +19,6 @@
     "./microphone": "./src/microphone.ts",
     "./speech-recognition": "./src/speech-recognition.ts",
     "./text-input": "./src/text-input.ts",
-    "./test": "./src/test.ts",
     "./textures": "./src/textures.ts",
     "./video": "./src/video.ts",
     "./jsx-runtime": "./jsx-runtime.d.ts",
@@ -34,7 +33,8 @@
     "AGENTS.md"
   ],
   "devDependencies": {
-    "@solidrt/flux-types": "workspace:*"
+    "@solidrt/flux-types": "workspace:*",
+    "@solidrt/test": "workspace:*"
   },
   "peerDependencies": {
     "@solidjs/signals": "2.0.0-rc.11",

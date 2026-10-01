@@ -13,6 +13,7 @@
         "@solidrt/core": "workspace:*",
         "@solidrt/flux-types": "workspace:*",
         "@solidrt/router": "workspace:*",
+        "@solidrt/test": "workspace:*",
         "solid-js": "2.0.0-rc.11",
         "typescript": "^7",
       },
@@ -45,6 +46,9 @@
     "packages/2d": {
       "name": "@solidrt/2d",
       "version": "0.0.0",
+      "devDependencies": {
+        "@solidrt/test": "workspace:*",
+      },
       "peerDependencies": {
         "@solidjs/signals": "2.0.0-rc.11",
         "@solidrt/core": "workspace:*",
@@ -53,6 +57,9 @@
     "packages/3d": {
       "name": "@solidrt/3d",
       "version": "0.0.0",
+      "devDependencies": {
+        "@solidrt/test": "workspace:*",
+      },
       "peerDependencies": {
         "@solidjs/signals": "2.0.0-rc.11",
         "@solidrt/core": "workspace:*",
@@ -120,6 +127,7 @@
       "version": "0.0.0",
       "devDependencies": {
         "@solidrt/flux-types": "workspace:*",
+        "@solidrt/test": "workspace:*",
       },
       "peerDependencies": {
         "@solidjs/signals": "2.0.0-rc.11",
@@ -132,6 +140,9 @@
       "version": "0.0.0",
       "bin": {
         "create-solidrt": "./bin/create-solidrt",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
       },
     },
     "packages/darwin-arm64": {
@@ -155,6 +166,16 @@
       "version": "0.0.0",
       "peerDependencies": {
         "@solidjs/signals": "2.0.0-rc.11",
+        "@solidrt/core": "workspace:*",
+      },
+    },
+    "packages/test": {
+      "name": "@solidrt/test",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@solidrt/flux-types": "workspace:*",
+      },
+      "peerDependencies": {
         "@solidrt/core": "workspace:*",
       },
     },
@@ -285,6 +306,8 @@
     "@solidrt/linux-x64-gnu": ["@solidrt/linux-x64-gnu@workspace:packages/linux-x64-gnu"],
 
     "@solidrt/router": ["@solidrt/router@workspace:packages/router"],
+
+    "@solidrt/test": ["@solidrt/test@workspace:packages/test"],
 
     "@solidrt/website": ["@solidrt/website@workspace:website"],
 

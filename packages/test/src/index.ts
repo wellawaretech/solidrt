@@ -17,7 +17,7 @@
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
 import { capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, setFrameRate, settle, time, windowReady } from "srt:test"
-import { createElement, insert, render } from "./renderer"
+import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
 

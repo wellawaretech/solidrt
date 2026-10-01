@@ -238,7 +238,7 @@ declare module "srt:render" {
 }
 
 // The engine verbs of an app test (lattice, dev client only), which
-// @solidrt/core/test builds its surface on; tests import that, not this.
+// @solidrt/test builds its surface on; tests import that, not this.
 // The verbs work only in an engine a test host built (`srt test`) and throw
 // anywhere else. App time there is frame / frameRate and nothing else: no
 // frame runs unless one is asked for.

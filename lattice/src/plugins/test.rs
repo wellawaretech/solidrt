@@ -9,7 +9,7 @@ use crate::settle::Cap;
 use crate::stepped::{Stepper, WindowReady};
 
 // The `srt:test` module: the engine verbs of an app test, which
-// `@solidrt/core/test` builds the test surface on. Thin FFI over the
+// `@solidrt/test` builds the test surface on. Thin FFI over the
 // stepper (test_host.rs). In the dev client only, and its verbs work only
 // in an engine a test host built.
 

@@ -1,0 +1,24 @@
+{
+  // Flux-targeted, like core and the router: the test layer runs on the dev
+  // client (the flux runtime with its gui and test modules) and nowhere
+  // else, and the tests under tests/ are app tests of the layer itself.
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "jsx": "preserve",
+    "jsxImportSource": "@solidrt/core",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "types": ["@solidrt/flux-types"]
+  },
+  "include": ["."]
+}

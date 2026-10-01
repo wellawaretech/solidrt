@@ -2,7 +2,7 @@
 // whatever the tests before it wrote or left open, and what a test file
 // opens at module level is opened after the wipe, in the test's own engine.
 
-import { test, expect } from "../src/test.ts"
+import { test, expect } from "../src/index.ts"
 import { file } from "flux:fs"
 import { Database } from "flux:sqlite"
 

@@ -678,11 +678,6 @@ Shaped, not started.
   file or line, so finding it in an app with a dozen effects is a manual hunt;
   the diagnostics are subscribable and the dev server already remaps stack
   frames, so a location is attachable on our side.
-- **[Move the app test layer into @solidrt/test](backlog/solidrt-test-package.md)** [2026-10-01]
-  The app test layer (mount, find, input, frames, readers) leaves core for a
-  package of its own, @solidrt/test, a devDependency of every app and a peer
-  of core like the router; core's surface and its auto-imported AGENTS.md go
-  back to being the app's alone. No runtime or Rust change.
 - **[Spatial audio - emitter and listener nodes on the spatial core](backlog/spatial-audio-emitters.md)** [2026-08-30]
   Every voice knob a positional sound needs exists (pan, gain, rate, all
   ramped) but nothing places a sound in the world, so an engine note or a
@@ -2137,6 +2132,11 @@ Finished, kept for the reasoning.
   get_stats' `textures` grows by one per reload. The old app instance's
   snapshot boundary (the demo's backdrop) is never freed when the next bundle
   is pushed.
+- **[Move the app test layer into @solidrt/test](done/solidrt-test-package.md)** [2026-10-01]
+  The app test layer (mount, find, input, frames, readers) leaves core for a
+  package of its own, @solidrt/test, a devDependency of every app and a peer
+  of core like the router; core's surface and its auto-imported AGENTS.md go
+  back to being the app's alone. No runtime or Rust change.
 - **[Collision queries on the spatial index - overlap, shape sweep, move-and-slide](done/spatial-collision-queries.md)** [2026-09-06]
   The only collision tool a game has is the raycast against an undrawn
   collider mesh, so a character walking into a wall, picking up an item or

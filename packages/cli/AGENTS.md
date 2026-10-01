@@ -73,7 +73,7 @@ the work before starting it:
   the source line, what was in flight, and for an app test the app time
   and frame, what still demanded frames, the outline and the path of a
   snapshot under `dist/test/` (agents/testing.md, "Reading a failure").
-  A file that imports `@solidrt/core/test` (or any app
+  A file that imports `@solidrt/test` (or any app
   runtime module; always a `.test.tsx`) is an app test and runs on the dev
   client, headless: `test(name, async app => ...)`, time passes only by
   `app.frame(n)` / `app.advance(ms)` / `app.settle()` (until the app is at

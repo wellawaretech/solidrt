@@ -254,12 +254,26 @@ jobs:
 
       - uses: ./.github/actions/js-install
 
+      # Every package and app with a tsconfig.json is typechecked. The list is
+      # read from the tree, not kept here: a hand-kept list misses the next
+      # package. A package with TypeScript sources but no tsconfig.json fails
+      # the step for the same reason (the binary packages have neither); the
+      # one nested program, the cli's flux dev server, is named explicitly.
       - name: Typecheck packages
         run: |
-          for config in packages/core packages/components packages/2d packages/3d packages/cli packages/cli/src/server apps/console apps/player; do
-            echo "== $config"
-            node_modules/.bin/tsc -p "$config/tsconfig.json" --noEmit --pretty false
+          status=0
+          for dir in packages/*/; do
+            dir="${dir%/}"
+            if [ ! -f "$dir/tsconfig.json" ] && find "$dir/src" -type f \( -name '*.ts' -o -name '*.tsx' \) 2>/dev/null | grep -q .; then
+              echo "::error::$dir has TypeScript sources but no tsconfig.json"
+              status=1
+            fi
           done
+          for config in packages/*/tsconfig.json apps/*/tsconfig.json packages/cli/src/server/tsconfig.json; do
+            echo "== $config"
+            node_modules/.bin/tsc -p "$config" --noEmit --pretty false || status=1
+          done
+          exit $status
 
       # Every example app must bundle and typecheck: examples are consumed by
       # the documentation generator, so a broken example is a broken docs page.

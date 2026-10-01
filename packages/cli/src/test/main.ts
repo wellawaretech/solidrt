@@ -109,7 +109,14 @@ function runtimeImports(code: string): string[] {
 }
 
 // A flux program's bundle: plain TypeScript, the runtime modules external.
+// JSX needs the Solid transform, which this bundle does not run (Bun's own
+// would import a jsx runtime core does not ship), so a .tsx anywhere in the
+// closure settles the layer by itself: the file is an app test and the app
+// bundler builds it again, whatever became of this bundle. Core's root
+// reaches one (the Logo), so a plain .ts test gets there through
+// @solidrt/test or @solidrt/core.
 async function bundleFlux(file: string): Promise<Bundled | string> {
+  let jsx = false
   let result
   try {
     result = await Bun.build({
@@ -119,10 +126,22 @@ async function bundleFlux(file: string): Promise<Bundled | string> {
       external: ["flux:*", "srt:*"],
       sourcemap: "external",
       throw: false,
+      plugins: [
+        {
+          name: "jsx settles the layer",
+          setup(build) {
+            build.onLoad({ filter: /\.tsx$/ }, () => {
+              jsx = true
+              return { contents: "", loader: "js" }
+            })
+          },
+        },
+      ],
     })
   } catch (e) {
     return String(e)
   }
+  if (jsx) return { code: "", map: null, app: true }
   if (!result.success) return result.logs.map(String).join("\n")
   let entry = result.outputs.find((o) => o.kind === "entry-point")
   if (!entry) return "The bundler produced no output"
@@ -180,7 +199,8 @@ async function runFile(file: string, filter: string | undefined, seed: number | 
     return outcome
   }
   // JSX needs the Solid transform, so a .tsx file is an app test as it
-  // stands; a .ts file is one when its bundle imports the app runtime.
+  // stands; a .ts file is one when its bundle imports the app runtime or
+  // reaches JSX.
   let bundled: Bundled | string = file.endsWith(".tsx") ? { code: "", map: null, app: true } : await bundleFlux(file)
   if (typeof bundled === "string") return unbundled(bundled)
   if (only !== undefined && (only === "app") !== bundled.app) {

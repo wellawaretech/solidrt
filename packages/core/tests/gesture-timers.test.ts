@@ -8,8 +8,8 @@
 // frame is one). Everything about the recognizers that takes its time from
 // the events alone is in gesture.test.ts, on the flux binary.
 
-import { test } from "../src/test.ts"
-import type { TestApp } from "../src/test.ts"
+import { test } from "@solidrt/test"
+import type { TestApp } from "@solidrt/test"
 import { createRoot } from "@solidjs/signals"
 import { arena } from "../src/arena.ts"
 import { createLongPress } from "../src/long-press.ts"

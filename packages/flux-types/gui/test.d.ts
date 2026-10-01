@@ -2,7 +2,7 @@
  * The node verbs of a gui test: finding and reading the nodes of the render
  * tree. A GUI build of Flux with the test module has them, which is the
  * SolidRT dev client; an app test reaches them through
- * `@solidrt/core/test`, whose locators are built on this module.
+ * `@solidrt/test`, whose locators are built on this module.
  *
  * A node reads as the control API's `/tree` reports it: records cross as
  * JSON text, shaped in one place for both readers.

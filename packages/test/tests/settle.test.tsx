@@ -3,8 +3,8 @@
 // and what never comes to rest fails at the cap with its name.
 
 import { serve } from "flux:http"
-import { test, expect } from "../src/test.ts"
-import { createSignal, onFrame } from "../src/index.ts"
+import { test, expect } from "../src/index.ts"
+import { createSignal, onFrame } from "@solidrt/core"
 
 // The error `run` rejects with; fails when it fulfills.
 async function failure(run: () => Promise<void>): Promise<string> {

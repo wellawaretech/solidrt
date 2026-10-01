@@ -6,8 +6,8 @@
 // is GPU state, so this is an app test. A query flushes the pending
 // writes, so no frame is run after the mount.
 
-import { test, expect } from "@solidrt/core/test"
-import type { TestApp } from "@solidrt/core/test"
+import { test, expect } from "@solidrt/test"
+import type { TestApp } from "@solidrt/test"
 import { glsl } from "@solidrt/core/gpu"
 import { add, box, createRecordMesh, createMesh, createScene, moveAndSlide, setLayers, setTransform, shaderMaterialClass, unlit } from "../src/index.ts"
 import type { Vec3 } from "../src/index.ts"

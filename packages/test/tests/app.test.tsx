@@ -1,10 +1,10 @@
 // The app layer of the test harness, tested with itself: mounting, naming
 // nodes (text, label, ref), reading them, and input through the real
-// pipeline. What is under test here is @solidrt/core/test and the runtime
+// pipeline. What is under test here is @solidrt/test and the runtime
 // verbs beneath it, on plain host elements.
 
-import { test, expect } from "../src/test.ts"
-import { createSignal, setFocus } from "../src/index.ts"
+import { test, expect } from "../src/index.ts"
+import { createSignal, setFocus } from "@solidrt/core"
 
 function Counter() {
   let [count, setCount] = createSignal(0)

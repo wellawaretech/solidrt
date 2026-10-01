@@ -1,0 +1,21 @@
+{
+  // Bun-targeted, like the cli: `bun create solidrt` runs under Bun, so bun
+  // types belong here and no flux-targeted file may share this program.
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "types": ["bun"]
+  },
+  "include": ["src"]
+}

@@ -1,19 +1,22 @@
 {
-  "name": "create-solidrt",
+  "name": "@solidrt/test",
   "version": "0.0.0",
   "license": "MIT",
   "funding": "https://github.com/sponsors/wellawaretech",
   "author": "Antoine van Wel",
   "type": "module",
-  "bin": {
-    "create-solidrt": "./bin/create-solidrt"
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
   },
   "files": [
-    "bin/",
     "src/",
-    "README.md"
+    "AGENTS.md"
   ],
   "devDependencies": {
-    "@types/bun": "latest"
+    "@solidrt/flux-types": "workspace:*"
+  },
+  "peerDependencies": {
+    "@solidrt/core": "workspace:*"
   }
 }

@@ -60,7 +60,8 @@ that matches the work; do not work from memory of what a web framework does.
 - debug a running app, or drive it over MCP to verify a change ->
   node_modules/@solidrt/cli/agents/debugging.md
 - write or repair a test (`bunx srt test`) ->
-  node_modules/@solidrt/cli/agents/testing.md
+  node_modules/@solidrt/cli/agents/testing.md (the method) and
+  node_modules/@solidrt/test/AGENTS.md (the API)
 - add an asset or font, set the app's identity, or build for distribution ->
   node_modules/@solidrt/cli/agents/assets.md
 - run, bundle, typecheck or render headlessly ->

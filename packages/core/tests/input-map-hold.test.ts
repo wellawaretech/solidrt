@@ -3,7 +3,7 @@
 // asks for. The interactions that take their time from their source (tap,
 // doubleTap, chord) are in input-map.test.ts, on the flux binary.
 
-import { test } from "../src/test.ts"
+import { test } from "@solidrt/test"
 import { createSignal, flush } from "@solidjs/signals"
 import { createInputMap, hold } from "../src/input.ts"
 import type { InputSource } from "../src/input.ts"

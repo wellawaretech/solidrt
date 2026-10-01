@@ -434,7 +434,9 @@ TypeScript in core, over a native `srt:test` that holds the engine verbs.
 The same pattern as the rest of core: native modules are the low level,
 apps import core. Rejected: `srt:test` as the import, resolved by the
 bundler to core's source (the first `srt:` name that is no native module);
-handing core's mount to the host through generated runner lines.
+handing core's mount to the host through generated runner lines. The
+TypeScript half left core on 2026-10-01: an app test imports
+`@solidrt/test` ([solidrt-test-package](solidrt-test-package.md)).
 
 **D32. The node verbs live in flux, under `test` + `gui`** (2026-09-30,
 D26's "later" done now). `find`, the readers and the `/tree` record

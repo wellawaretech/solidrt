@@ -558,7 +558,7 @@ binary, so a gui or `srt:` import creeping into any of them fails there
 The tests under `tests/` run with `bunx srt test packages/3d` from the
 repo root, or one file, or `--filter <text>` for the tests whose name
 contains it: the pure modules on the bare flux binary, and the files
-that need a GPU (`.test.tsx`, importing `@solidrt/core/test`) on the
+that need a GPU (`.test.tsx`, importing `@solidrt/test`) on the
 headless dev client. Run them after a change. `raycast.test.tsx` and
 `collision.test.tsx` assert the documented picking contract (triangle
 accuracy, the box tier, pick/raycast parity, layer masks, the
