@@ -1,4 +1,4 @@
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/error.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/error.js
 class NotReadyError extends Error {
   source;
   constructor(r) {
@@ -36,7 +36,7 @@ class ContextNotFoundError extends Error {
     super("");
   }
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/constants.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/constants.js
 var REACTIVE_NONE = 0;
 var REACTIVE_CHECK = 1 << 0;
 var REACTIVE_DIRTY = 1 << 1;
@@ -94,7 +94,7 @@ var SUPPORTS_PROXY = typeof Proxy === "function";
 var defaultContext = {};
 var $REFRESH = Symbol("refresh");
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/lanes.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/lanes.js
 var signalLanes = new WeakMap;
 var activeLanes = new Set;
 function findLane(n) {
@@ -160,7 +160,7 @@ function assignOrMergeLane(n, e) {
   n.C |= CONFIG_HAS_LANE;
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
 var transitions = new Set;
 var dirtyQueue = {
   eE: new Array(2000).fill(undefined),
@@ -943,7 +943,7 @@ function runInTransition(e, t) {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/heap.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/heap.js
 function queueFor(e) {
   return e.oe & REACTIVE_ZOMBIE ? zombieQueue : dirtyQueue;
 }
@@ -1070,7 +1070,7 @@ function adjustHeight(e, E) {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/owner.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/owner.js
 var PENDING_OWNER = {};
 function markDisposal(e) {
   let n = e.tn;
@@ -1238,7 +1238,7 @@ function createRoot(e, n) {
   return runWithOwner(t, () => e(() => t.dispose()));
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/graph.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/graph.js
 function unlinkSubs(e) {
   const n = e.Oe;
   const l = e.Ne;
@@ -1347,7 +1347,7 @@ function link(e, n, l = false) {
   bumpNotifyEpoch();
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/async.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/async.js
 function addPendingSource(e, n) {
   if (e.o?.ue?.has(n))
     return false;
@@ -1855,7 +1855,7 @@ function notifyStatus(e, n, t, r, i) {
   });
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/core.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/core.js
 GlobalQueue.Ke = (e) => {
   if (e.je === EFFECT_TRACKED) {
     deleteFromHeap(e, queueFor(e));
@@ -1929,7 +1929,7 @@ function recompute(e, n = false) {
       e.qe = null;
       e.tn = null;
       e.En = 0;
-      if (t && u) {
+      if (u) {
         e.C |= CONFIG_LANE_FRAME;
         findLane(u).dn[0].push(() => {
           e.C &= ~CONFIG_LANE_FRAME;
@@ -2759,7 +2759,7 @@ function staleValues(e, n = true) {
     stale = t;
   }
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/context.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/context.js
 function createContext(e, t) {
   return {
     id: Symbol(t),
@@ -2787,7 +2787,7 @@ function setContext(e, t, r = getOwner()) {
     [e.id]: t === undefined ? e.defaultValue : t
   };
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/effect.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/effect.js
 function effect(t, e, E, r) {
   const n = !!r?.user;
   const i = createEffectNode(t, e, E, n ? EFFECT_USER : EFFECT_RENDER, r);
@@ -2892,7 +2892,7 @@ function trackedEffect(t, e) {
 }
 setEffectStatusNotify(notifyEffectStatus);
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/error-hooks.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/error-hooks.js
 var ambientHook;
 var reported = new WeakSet;
 function hookFor(e) {
@@ -2936,7 +2936,7 @@ function reportClientError(e, n, o) {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/signals.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/signals.js
 function onCleanup(e) {
   return cleanup(e);
 }
@@ -2974,7 +2974,7 @@ function onSettled(e) {
     e();
   });
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/store/next/target.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/store/next/target.js
 var $OWNER = Symbol(0);
 var storeNextLookup = new WeakMap;
 function isOwned(e) {
@@ -2996,7 +2996,7 @@ function markDescendants(e) {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/store/store.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/store/store.js
 var $TRACK = Symbol(0);
 var $TARGET = Symbol(0);
 var $PROXY = Symbol(0);
@@ -3096,7 +3096,7 @@ function witnessAffectsMark(e, t) {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/store/next/store.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/store/next/store.js
 function TargetShape() {
   this.v = undefined;
   this.ch = undefined;
@@ -3199,20 +3199,22 @@ function getNode(e, t, n, r = -1) {
   let l = i[t];
   if (l === undefined) {
     const o = heldFoldTransition(e);
-    let f = heldAdoptionTransition(e);
-    if (f !== null)
+    let s = heldAdoptionTransition(e);
+    if (s !== null && !heldKey(e, t))
+      s = null;
+    if (s !== null)
       n = e.hv[t];
-    else if ((f = o) !== null)
+    else if ((s = o) !== null)
       n = e.v[t];
-    const s = l = slotSignal(n, slotNodeEquals, e, t, r === -1 ? isOwnAccessor(e.pb ?? e.v, t) : r === 1, e.fam?.node ?? undefined);
+    const f = l = slotSignal(n, slotNodeEquals, e, t, r === -1 ? isOwnAccessor(e.pb ?? e.v, t) : r === 1, e.fam?.node ?? undefined);
     if (e.fam?.opt) {
-      ext(s).Fe = NOT_PENDING;
-      s.C |= CONFIG_OPTIMISTIC;
+      ext(f).Fe = NOT_PENDING;
+      f.C |= CONFIG_OPTIMISTIC;
     }
     if (t !== $AFFECTS && affectsScopesLive())
-      inheritAffectsMarks(s, e.v, t);
-    if (f !== null)
-      stageHeldKey(s, o !== null ? e.del !== null && e.del.has(t) ? undefined : e.pb[t] : e.v[t], f);
+      inheritAffectsMarks(f, e.v, t);
+    if (s !== null)
+      stageHeldKey(f, o !== null ? e.del !== null && e.del.has(t) ? undefined : e.pb[t] : e.v[t], s);
     i[t] = l;
     e.nc++;
     markDescendants(e);
@@ -3248,6 +3250,26 @@ function holdVisible(e, t) {
   }
   enterStagedRead(null, e);
   return true;
+}
+var heldKeys = new WeakMap;
+function heldKey(e, t) {
+  let n = heldKeys.get(e);
+  if (Array.isArray(n))
+    heldKeys.set(e, n = adoptionChangedKeys(e, n[0]));
+  return n === WK_ALL || n.has(t);
+}
+function adoptionChangedKeys(e, t) {
+  const n = e.hv;
+  if (t[$TARGET] !== undefined || e.fam?.opt === true || n[$TARGET] !== undefined || Object.getPrototypeOf(n) !== Object.getPrototypeOf(t) || !plainProto(t))
+    return WK_ALL;
+  const r = new Set;
+  for (const i of Reflect.ownKeys(n))
+    if (!hasOwn.call(t, i) || isOwnAccessor(n, i) || isOwnAccessor(t, i) || propertyIsEnumerable.call(n, i) !== propertyIsEnumerable.call(t, i) || !(isEqual(n[i], t[i]) || sameLogicalSlot(e, n[i], t[i])))
+      r.add(i);
+  for (const e2 of Reflect.ownKeys(t))
+    if (!hasOwn.call(n, e2))
+      r.add(e2);
+  return r;
 }
 function stageHeldKey(e, t, n) {
   if (slotNodeEquals.call(e, e.ce, t))
@@ -3350,6 +3372,14 @@ function cloneRaw(e, t) {
   r[$OWNER] = t;
   return r;
 }
+function wideClone(e, t) {
+  const n = Object.create(null);
+  for (const t2 of Reflect.ownKeys(e))
+    n[t2] = e[t2];
+  Object.setPrototypeOf(n, Object.prototype);
+  n[$OWNER] = t;
+  return n;
+}
 function copyOwn(e, t, n) {
   const r = Object.getOwnPropertyDescriptor(t, n);
   if (r.get || r.set || !r.enumerable || !r.writable || !r.configurable)
@@ -3375,20 +3405,39 @@ function scanAccessorsOnce(e) {
   return !e.a;
 }
 var OVERLAY_MIN_KEYS = 32;
-function materializePB(e) {
-  if (!e.ovl)
-    return;
-  const t = e.pb;
-  const n = cloneRaw(e.v, e);
+var OVERLAY_REBUILD_MAX_KEYS = 1024;
+var OVERLAY_REBUILD_MIN_ADDS = 16;
+function overlayRebuilds(e, t) {
+  if (e.kc > OVERLAY_REBUILD_MAX_KEYS)
+    return false;
+  if (e.del !== null && e.del.size !== 0)
+    return true;
+  const n = e.wk;
+  if (n !== null && n !== WK_ALL && n.size <= OVERLAY_REBUILD_MIN_ADDS)
+    return false;
+  const r = e.v;
+  let i = 0;
   for (const e2 of Reflect.ownKeys(t))
-    copyOwn(n, t, e2);
+    if (!hasOwn.call(r, e2) && ++i > OVERLAY_REBUILD_MIN_ADDS)
+      return true;
+  return false;
+}
+function materializePB(e) {
+  const t = e.pb;
+  if (!e.ovl)
+    return t;
+  const n = e.sc === 2 ? wideClone(e.v, e) : cloneRaw(e.v, e);
   if (e.del !== null) {
     for (const t2 of e.del)
       delete n[t2];
+    e.kc -= e.del.size;
     e.del = null;
   }
+  for (const r of Reflect.ownKeys(t))
+    e.sc === 2 ? n[r] = t[r] : copyOwn(n, t, r);
   e.pb = n;
   e.ovl = false;
+  return n;
 }
 function ensurePB(e) {
   let t = e.pb;
@@ -3456,6 +3505,7 @@ function adoptPB(e, t, n = false) {
     e.ht = activeTransition ?? PLAIN_HOLD;
     if (!n && activeTransition !== null)
       heldAdoptions.add(e);
+    heldKeys.set(e, [t]);
   }
   e.pb = null;
   e.ovl = false;
@@ -3527,6 +3577,7 @@ function flattenOverlay(e, t) {
   if (e.del !== null) {
     for (const t2 of e.del)
       delete n[t2];
+    e.kc -= e.del.size;
     e.del = null;
   }
   e.pb = null;
@@ -3568,7 +3619,7 @@ function drainFolds() {
         foldOlds.set(t, n);
         continue;
       }
-      if (t.ovl) {
+      if (t.ovl && (t.v !== n || !overlayRebuilds(t, i))) {
         flattenOverlay(t, i);
       } else if (t.v !== n) {
         privatizeCommitted(t);
@@ -3597,7 +3648,7 @@ function drainFolds() {
         t.pb = null;
         t.wk = null;
       } else {
-        t.v = i;
+        t.v = t.ovl ? materializePB(t) : i;
         t.ch = false;
         t.pb = null;
         t.wk = null;
@@ -3712,8 +3763,11 @@ function notifyWrites(e) {
   if (e.fam !== null && e.pb !== null && getWriteOverride() && activeTransition === null) {
     if (e.ht !== null)
       e.ht = e.hv = null;
-    if (e.ovl)
-      return flattenOverlay(e, t);
+    if (e.ovl) {
+      if (!overlayRebuilds(e, t))
+        return flattenOverlay(e, t);
+      t = materializePB(e);
+    }
     const n2 = e.v;
     e.pb = null;
     e.v = t;
@@ -3766,9 +3820,9 @@ function notifyKeyDiff(e, t, n, r, i = true) {
       return;
     }
     const o = i2?.value;
-    const f = l?.value;
-    if (!isEqual(o, f) && !targetsEqual(o, f))
-      setSignal(e, typeof f === "function" ? () => f : f);
+    const s = l?.value;
+    if (!isEqual(o, s) && !targetsEqual(o, s))
+      setSignal(e, typeof s === "function" ? () => s : s);
   } else {
     const i2 = n[t];
     const l = r[t];
@@ -3883,33 +3937,39 @@ function foldHeld(e) {
   }
   return false;
 }
-function readSource(e) {
-  const t = e.ht;
-  if (t !== null && !latestReadActive && !inDraft(e) && !getWriteOverride()) {
-    const n = heldMaskView(e);
-    if (n !== null) {
+function readSource(e, t) {
+  const n = e.ht;
+  if (n !== null && !latestReadActive && !inDraft(e) && !getWriteOverride()) {
+    const r = heldMaskView(e);
+    if (r !== null && (t === undefined || heldKey(e, t))) {
       const e2 = readerContext();
-      if (e2 === null || e2.C & CONFIG_CHILDREN_FORBIDDEN || !holdVisible(t === PLAIN_HOLD ? null : currentTransition(t), e2))
-        return n;
+      if (e2 === null || e2.C & CONFIG_CHILDREN_FORBIDDEN || !holdVisible(n === PLAIN_HOLD ? null : currentTransition(n), e2))
+        return r;
     }
   }
-  return pendingBackingVisible(e, false) ? e.pb : e.v;
+  return pendingBackingVisible(e, false, t) ? e.pb : e.v;
 }
-function pendingBackingVisible(e, t) {
+function pendingBackingVisible(e, t, n) {
   if (e.pb === null)
     return false;
   if (inDraft(e) || getWriteOverride())
     return true;
   if (heldTruthMasked(e))
     return false;
-  const n = readerContext();
-  if (n === null || n.C & CONFIG_CHILDREN_FORBIDDEN) {
-    const r = liveFoldTransition(e);
+  const r = readerContext();
+  if (r === null || r.C & CONFIG_CHILDREN_FORBIDDEN) {
+    const n2 = liveFoldTransition(e);
     if (t)
-      return r === null || ownsHold(r);
-    return e.fam !== null && n === null && !foldHeld(e) && r === null;
+      return n2 === null || ownsHold(n2);
+    return e.fam !== null && r === null && !foldHeld(e) && n2 === null;
   }
-  return holdVisible(liveFoldTransition(e), n);
+  const i = liveFoldTransition(e);
+  if (i !== null && n !== undefined && !e.ch && e.fam?.opt !== true) {
+    const t2 = e.wk;
+    if (t2 != null && t2 !== WK_ALL && !t2.has(n))
+      return false;
+  }
+  return holdVisible(i, r);
 }
 function heldTruthMasked(e) {
   if (e.fam?.opt !== true || currentOptimisticLane === null || latestReadActive || authoritativeServe())
@@ -3959,7 +4019,7 @@ function resolveChainedRaw(e, t, n) {
 }
 function serveDataKey(e, t, n, r, i, l = -1) {
   const o = e.ch && r === e.v;
-  let f = n;
+  let s = n;
   if (t === "length" && e.fam?.opt === true && !o && Array.isArray(r)) {
     if (!inDraft(e)) {
       const i2 = e.n?.length;
@@ -3981,7 +4041,7 @@ function serveDataKey(e, t, n, r, i, l = -1) {
     if (e.fam?.opt && draftSeesOverrides(e) && !authoritativeServe()) {
       const n2 = e.n?.[t];
       if (n2 !== undefined && hasActiveOverride(n2))
-        f = unwrapOverride(n2.o?.Fe);
+        s = unwrapOverride(n2.o?.Fe);
     }
   } else {
     if (getObserver() !== null) {
@@ -3991,28 +4051,28 @@ function serveDataKey(e, t, n, r, i, l = -1) {
       if (r2 === READ_SLOW)
         r2 = read(i);
       if (!o || hasActiveOverride(i))
-        f = r2 === FORCE ? n : r2;
+        s = r2 === FORCE ? n : r2;
     } else if (i !== undefined && (!o || hasActiveOverride(i))) {
-      f = nodeValue(i, n);
+      s = nodeValue(i, n);
     }
   }
   if (e.s)
-    return serveShallow(e, t, f);
-  if (e.ch && !o && f !== null && typeof f === "object" && f[$TARGET] === undefined)
-    f = resolveChainedRaw(e, t, f);
+    return serveShallow(e, t, s);
+  if (e.ch && !o && s !== null && typeof s === "object" && s[$TARGET] === undefined)
+    s = resolveChainedRaw(e, t, s);
   if (i !== undefined) {
-    if (i.pxv === f && f !== undefined)
+    if (i.pxv === s && s !== undefined)
       return draftServe(e, i.px);
-    if (!isWrappable(f))
-      return f;
-    const n2 = wrapNext(f, e, t);
+    if (!isWrappable(s))
+      return s;
+    const n2 = wrapNext(s, e, t);
     i.px = n2;
-    i.pxv = f;
+    i.pxv = s;
     return draftServe(e, n2);
   }
-  if (!isWrappable(f))
-    return f;
-  return draftServe(e, wrapNext(f, e, t));
+  if (!isWrappable(s))
+    return s;
+  return draftServe(e, wrapNext(s, e, t));
 }
 function firewallGate(e) {
   if (projectionWriteActive || getWriteOverride())
@@ -4069,7 +4129,7 @@ var traps = {
       firewallGate(e);
     if (e.fam !== null && latestReadActive && !inDraft(e) && !getWriteOverride())
       pullProjectionForLatest(e);
-    const r = readSource(e);
+    const r = readSource(e, t);
     if (e.del !== null && r === e.pb && e.del.has(t)) {
       if (!inDraft(e) && getObserver() !== null)
         read(getNode(e, t, undefined));
@@ -4120,12 +4180,12 @@ var traps = {
     const o = e.ovl && r === e.pb;
     if ((t === "constructor" || t === "__proto__" || t === "prototype") && !hasOwn.call(r, t) && !(o && hasOwn.call(e.v, t)))
       return;
-    let f = r[t];
-    if (f === undefined ? !hasOwn.call(r, t) && !(o && hasOwn.call(e.v, t)) : false) {
-      f = Reflect.get(r, t, n);
-      if (typeof f === "function")
-        return f;
-      if (f === undefined && !inDraft(e)) {
+    let s = r[t];
+    if (s === undefined ? !hasOwn.call(r, t) && !(o && hasOwn.call(e.v, t)) : false) {
+      s = Reflect.get(r, t, n);
+      if (typeof s === "function")
+        return s;
+      if (s === undefined && !inDraft(e)) {
         if (getObserver() !== null)
           read(getNode(e, t, undefined, l));
         const n2 = e.n?.[t];
@@ -4135,18 +4195,18 @@ var traps = {
             return serveShallow(e, t, r2);
           return isWrappable(r2) ? draftServe(e, wrapNext(r2, e, t)) : r2;
         }
-      } else if (f === undefined && inDraft(e) && e.fam?.opt && draftSeesOverrides(e) && !authoritativeServe()) {
+      } else if (s === undefined && inDraft(e) && e.fam?.opt && draftSeesOverrides(e) && !authoritativeServe()) {
         const n2 = e.n?.[t];
         if (n2 !== undefined && hasActiveOverride(n2))
-          f = unwrapOverride(n2.o?.Fe);
+          s = unwrapOverride(n2.o?.Fe);
       }
       if (e.s)
-        return serveShallow(e, t, f);
-      return isWrappable(f) ? draftServe(e, wrapNext(f, e, t)) : f;
+        return serveShallow(e, t, s);
+      return isWrappable(s) ? draftServe(e, wrapNext(s, e, t)) : s;
     }
-    if (typeof f === "function" && !hasOwn.call(r, t) && !(o && hasOwn.call(e.v, t)))
-      return f;
-    return serveDataKey(e, t, f, r, i, l);
+    if (typeof s === "function" && !hasOwn.call(r, t) && !(o && hasOwn.call(e.v, t)))
+      return s;
+    return serveDataKey(e, t, s, r, i, l);
   },
   has(e, t) {
     if (t === $TARGET || t === $PROXY || t === $TRACK)
@@ -4157,7 +4217,7 @@ var traps = {
       witnessAffectsMark(e, t);
     if (e.fam !== null && getObserver() === null && !inDraft(e))
       firewallGate(e);
-    const n = readSource(e);
+    const n = readSource(e, t);
     let r = t in n;
     if (r && e.del !== null && n === e.pb && e.del.has(t))
       r = false;
@@ -4196,7 +4256,7 @@ var traps = {
     const n = getObserver();
     if (e.fam !== null && n === null && !inDraft(e))
       firewallGate(e);
-    const r = readSource(e);
+    const r = readSource(e, t);
     const i = visibleDescriptor(e, r, t);
     if (!inDraft(e) && n !== null && !observerHoldsKeySet(e, n)) {
       let n2 = t in r;
@@ -4424,7 +4484,7 @@ function visibleDescriptor(e, t, n) {
   return r;
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/map.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/map.js
 function mapArray(t, s, e) {
   const i = typeof e?.keyed === "function" ? e.keyed : undefined;
   const r = s.length > 1;
@@ -4750,7 +4810,7 @@ function updateKeyedMap() {
 function compare(t, s, e) {
   return t ? t(s) === t(e) : true;
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/store/next/reconcile.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/store/next/reconcile.js
 function reconcileNextState(e, t, n, o = false) {
   if (t == null)
     throw new Error("");
@@ -5003,7 +5063,7 @@ function descend(e, t, n, o, f = false) {
   applyAdopt(i, t, n, f);
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/store/next/projection.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/store/next/projection.js
 function wrapDraft(e, t, r, o, i) {
   const mutate = (e2) => {
     if (!t())
@@ -5151,13 +5211,13 @@ function runProjectionComputedNext(e, t, r, o, i) {
   return n;
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/store/index.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/store/index.js
 function createStore(e, t, r) {
   if (typeof e === "function")
     return createStoreDerivedNext(e, t, r);
   return createStoreNext(e, !!t?.shallow);
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/boundaries.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/boundaries.js
 function boundaryComputed(e, t) {
   const r = computed(e, {
     lazy: true
@@ -5612,7 +5672,7 @@ function flattenArray(e, t = [], r) {
     throw n;
   return i;
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/store/utils.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/store/utils.js
 function trueFn() {
   return true;
 }
@@ -6173,7 +6233,7 @@ function merge(...e) {
   }
   return s;
 }
-// ../../node_modules/.bun/solid-js@2.0.0-rc.11/node_modules/solid-js/dist/solid.js
+// ../../node_modules/.bun/solid-js@2.0.0-rc.13/node_modules/solid-js/dist/solid.js
 var IS_DEV = false;
 var $DEVCOMP = Symbol(0);
 function createContext2(defaultValue, options) {
@@ -6279,7 +6339,7 @@ function Show(props) {
     sync: true
   });
 }
-// ../../node_modules/.bun/@solidjs+universal@2.0.0-rc.11+a799f36c103da8ad/node_modules/@solidjs/universal/dist/universal.js
+// ../../node_modules/.bun/@solidjs+universal@2.0.0-rc.13+2ff9c3435a48139a/node_modules/@solidjs/universal/dist/universal.js
 var transparentOptions = {
   transparent: true,
   sync: true

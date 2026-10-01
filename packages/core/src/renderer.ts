@@ -1,6 +1,6 @@
 // createErrorBoundary comes from signals, not solid-js: solid-js marks it
 // @internal (an app writes <Errored>, a renderer reaches for the primitive)
-// and strips it from its .d.ts, so the solid-js re-export types as any.
+// and leaves it out of its public types.
 import { createErrorBoundary, createRoot, onCleanup, NotReadyError, untrack } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
 import type { Element } from "solid-js"

@@ -1,4 +1,4 @@
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/error.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/error.js
 class NotReadyError extends Error {
   source;
   constructor(r) {
@@ -37,7 +37,7 @@ class ContextNotFoundError extends Error {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/constants.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/constants.js
 var REACTIVE_NONE = 0;
 var REACTIVE_CHECK = 1 << 0;
 var REACTIVE_DIRTY = 1 << 1;
@@ -95,7 +95,7 @@ var SUPPORTS_PROXY = typeof Proxy === "function";
 var defaultContext = {};
 var $REFRESH = Symbol("refresh");
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/lanes.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/lanes.js
 var signalLanes = new WeakMap;
 var activeLanes = new Set;
 function findLane(n) {
@@ -161,7 +161,7 @@ function assignOrMergeLane(n, e) {
   n.C |= CONFIG_HAS_LANE;
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
 var transitions = new Set;
 var dirtyQueue = {
   eE: new Array(2000).fill(undefined),
@@ -929,7 +929,7 @@ function runInTransition(e, t) {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/heap.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/heap.js
 function queueFor(e) {
   return e.oe & REACTIVE_ZOMBIE ? zombieQueue : dirtyQueue;
 }
@@ -1056,7 +1056,7 @@ function adjustHeight(e, E) {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/owner.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/owner.js
 function markDisposal(e) {
   let n = e.tn;
   while (n) {
@@ -1215,7 +1215,7 @@ function createRoot(e, n) {
   return runWithOwner(t, () => e(() => t.dispose()));
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/graph.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/graph.js
 function unlinkSubs(e) {
   const n = e.Oe;
   const l = e.Ne;
@@ -1324,7 +1324,7 @@ function link(e, n, l = false) {
   bumpNotifyEpoch();
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/async.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/async.js
 function addPendingSource(e, n) {
   if (e.o?.ue?.has(n))
     return false;
@@ -1832,7 +1832,7 @@ function notifyStatus(e, n, t, r, i) {
   });
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/core.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/core.js
 GlobalQueue.Ke = (e) => {
   if (e.je === EFFECT_TRACKED) {
     deleteFromHeap(e, queueFor(e));
@@ -1903,7 +1903,7 @@ function recompute(e, n = false) {
       e.qe = null;
       e.tn = null;
       e.En = 0;
-      if (t && u) {
+      if (u) {
         e.C |= CONFIG_LANE_FRAME;
         findLane(u).dn[0].push(() => {
           e.C &= ~CONFIG_LANE_FRAME;
@@ -2674,7 +2674,7 @@ function staleValues(e, n = true) {
     stale = t;
   }
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/context.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/context.js
 function createContext(e, t) {
   return {
     id: Symbol(t),
@@ -2702,7 +2702,7 @@ function setContext(e, t, r = getOwner()) {
     [e.id]: t === undefined ? e.defaultValue : t
   };
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/effect.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/effect.js
 function effect(t, e, E, r) {
   const n = !!r?.user;
   const i = createEffectNode(t, e, E, n ? EFFECT_USER : EFFECT_RENDER, r);
@@ -2807,7 +2807,7 @@ function trackedEffect(t, e) {
 }
 setEffectStatusNotify(notifyEffectStatus);
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/core/error-hooks.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/core/error-hooks.js
 var ambientHook;
 var reported = new WeakSet;
 function hookFor(e) {
@@ -2851,7 +2851,7 @@ function reportClientError(e, n, o) {
   }
 }
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/signals.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/signals.js
 function onCleanup(e) {
   return cleanup(e);
 }
@@ -2889,7 +2889,7 @@ function onSettled(e) {
     e();
   });
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/store/store.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/store/store.js
 var $TRACK = Symbol(0);
 var $TARGET = Symbol(0);
 var $PROXY = Symbol(0);
@@ -2903,7 +2903,7 @@ function ownEnumerableKeys(e) {
 }
 var affectsScopes = new Map;
 
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/boundaries.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/boundaries.js
 function boundaryComputed(e, t) {
   const r = computed(e, {
     lazy: true
@@ -3358,7 +3358,7 @@ function flattenArray(e, t = [], r) {
     throw n;
   return i;
 }
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.11/node_modules/@solidjs/signals/dist/prod/store/utils.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.13/node_modules/@solidjs/signals/dist/prod/store/utils.js
 function trueFn() {
   return true;
 }
@@ -3919,7 +3919,7 @@ function merge(...e) {
   }
   return s;
 }
-// ../../node_modules/.bun/solid-js@2.0.0-rc.11/node_modules/solid-js/dist/solid.js
+// ../../node_modules/.bun/solid-js@2.0.0-rc.13/node_modules/solid-js/dist/solid.js
 var $DEVCOMP = Symbol(0);
 var NoHydrateContext = {
   id: Symbol("NoHydrateContext"),
@@ -3947,7 +3947,7 @@ var _truncationRejectors = new Map;
 function createComponent(Comp, props, name) {
   return untrack(() => Comp(props || {}));
 }
-// ../../node_modules/.bun/@solidjs+universal@2.0.0-rc.11+a799f36c103da8ad/node_modules/@solidjs/universal/dist/universal.js
+// ../../node_modules/.bun/@solidjs+universal@2.0.0-rc.13+2ff9c3435a48139a/node_modules/@solidjs/universal/dist/universal.js
 var transparentOptions = {
   transparent: true,
   sync: true
