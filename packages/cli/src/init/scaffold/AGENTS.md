@@ -119,3 +119,6 @@ platform-wide and bite in every app:
   before the first reload. The `.mcp.json` here is Claude Code's convention;
   if your client lists no `solidrt` tools, debugging.md has the entry to add
   to its own config.
+- Tests: `bunx srt test` or `bun run test` (not `bun test`, which is Bun's
+  own runner and cannot load them). They live in tests/; to write one, see
+  the test entry under "Read before you".

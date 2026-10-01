@@ -14,13 +14,16 @@ const TEMPLATES_DIR = join(SCAFFOLD_DIR, "templates")
 // Shared project files written for every template. Sources live in
 // cli/src/init/scaffold/. The .gitignore is stored there as `gitignore` because npm
 // strips files literally named `.gitignore` from published packages, so it is
-// renamed on the way out. The per-template src/ comes from scaffold/templates/.
+// renamed on the way out. The starter test sits outside a tests/ folder there,
+// where this repo's own `srt test` would pick it up and fail on its `@/`
+// import. The per-template src/ comes from scaffold/templates/.
 const TEMPLATE_FILES: Array<{ from: string; to: string }> = [
   { from: "package.json", to: "package.json" },
   { from: "tsconfig.json", to: "tsconfig.json" },
   { from: "gitignore", to: ".gitignore" },
   { from: "mcp.json", to: ".mcp.json" },
   { from: "AGENTS.md", to: "AGENTS.md" },
+  { from: "app.test.tsx", to: "tests/app.test.tsx" },
 ]
 
 // A valid npm package name derived from the target directory.

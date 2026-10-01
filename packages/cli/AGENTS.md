@@ -33,8 +33,9 @@ the work before starting it:
 ## Commands
 
 - `bunx srt init <dir>` - scaffold a new SolidRT project into a new (empty)
-  folder: package.json, tsconfig.json, AGENTS.md, a starter src/index.tsx, an
-  empty assets/ (everything in it ships with the app), then installs deps. Greenfield shortcut (no install needed first):
+  folder: package.json, tsconfig.json, AGENTS.md, a starter src/index.tsx, a
+  starter tests/app.test.tsx, an empty assets/ (everything in it ships with
+  the app), then installs deps. Greenfield shortcut (no install needed first):
   `bun create solidrt <dir>`.
 - `bunx srt run` - dev server + a local client window, from the project root
   (entry `solidrt.entry` in package.json, default src/index.tsx); `bunx srt run

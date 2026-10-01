@@ -29,7 +29,8 @@
     "pack": "srt pack",
     "server": "srt server",
     "client": "srt client",
-    "android": "srt android"
+    "android": "srt android",
+    "test": "srt test"
   },
   "dependencies": {
     "@solidrt/core": "0.0.0",

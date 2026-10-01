@@ -80,8 +80,9 @@ GO_FEATURES      := $(GO_FEATURES)$(KTX2_FEATURES)
 RUNTIME_FEATURES := $(RUNTIME_FEATURES)$(KTX2_FEATURES)
 
 # Test mode (the `--test` runner, srt:test, flux:test) is in the dev client,
-# which is what `srt test` runs app tests on, and never in the runtime. Off
-# for dist builds with the other dev-only pieces; TEST=0 leaves it out.
+# which is what `srt test` runs app tests on, and never in the runtime. On
+# in dist builds too: an installed project's `srt test` runs its app tests
+# on the shipped dev client. TEST=0 leaves it out.
 TEST ?= 1
 ifneq ($(TEST),0)
 GO_FEATURES := $(GO_FEATURES),test
