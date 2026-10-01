@@ -1,0 +1,11 @@
+{
+  "name": "solidrt",
+  "version": "0.0.0",
+  "description": "SolidRT: SolidJS apps on a native runtime. Start a project with bun create solidrt; the tooling is @solidrt/cli",
+  "license": "MIT",
+  "funding": "https://github.com/sponsors/wellawaretech",
+  "author": "Antoine van Wel",
+  "files": [
+    "README.md"
+  ]
+}

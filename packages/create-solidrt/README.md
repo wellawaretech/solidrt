@@ -1,6 +1,6 @@
 # create-solidrt
 
-Scaffold a new [SolidRT](https://github.com/antoinevanwel/solidrt) project:
+Scaffold a new [SolidRT](https://github.com/wellawaretech/solidrt) project:
 
 ```sh
 bun create solidrt my-app
