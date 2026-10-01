@@ -391,8 +391,9 @@ impl RasterState {
   /// at `present_at` (the newest due at or before the deadline plus the
   /// lookahead, see yuv.rs), upload it into the back plane set, flip the set
   /// and rebind the conversion target to it, so the dirty flush re-renders
-  /// the output and everything sampling it. In playback the take waits for
-  /// the frame that is due, never showing the one that happened to arrive.
+  /// the output and everything sampling it. Under a stepped clock the take
+  /// waits for the frame that is due, never showing the one that happened
+  /// to arrive.
   fn latch_video(&mut self, present_at: std::time::Instant) {
     if self.yuv_latches.is_empty() {
       return;

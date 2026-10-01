@@ -12,6 +12,11 @@ use crate::plugins::{self, ModuleOverrideFn, PluginFn, UserdataFn};
 type ShutdownFn = Box<dyn FnOnce(&Logger) + Send>;
 pub(crate) type ExecFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 
+/// The module name an entry is evaluated under (`eval_source`, and the
+/// hosts that evaluate an entry with `eval_module_or`): what its stack
+/// frames cite, and so what a sourcemap for it is keyed by.
+pub const ENTRY_MODULE: &str = "main";
+
 #[derive(Clone, JsLifetime)]
 pub struct ShutdownHooks {
   #[qjs(skip_trace)]
@@ -362,7 +367,7 @@ impl FluxEngine {
     self
       .run(move |ctx| {
         use rquickjs::{CatchResultExt, Module};
-        match Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
+        match Module::evaluate(ctx.clone(), ENTRY_MODULE, code).catch(&ctx) {
           Ok(promise) => report_rejection(&ctx, promise),
           Err(e) => report_error(&ctx, &format!("module error: {e:?}")),
         }

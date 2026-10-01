@@ -212,7 +212,7 @@ fn settle<'js>(ctx: Ctx<'js>, max_ms: f64) -> flux::rquickjs::Result<Promise<'js
 
 /// `frameRate()`: the frames per second this engine steps at.
 fn frame_rate(ctx: Ctx<'_>) -> flux::rquickjs::Result<u32> {
-  Ok(stepper(&ctx, "frameRate()")?.rate())
+  Ok(stepper(&ctx, "frameRate()")?.fps())
 }
 
 /// `setFrameRate(fps)`: another rate, before the first frame.
@@ -224,7 +224,7 @@ fn set_frame_rate(ctx: Ctx<'_>, fps: f64) -> flux::rquickjs::Result<()> {
       "srt:test setFrameRate(fps): the frame rate must be a positive integer",
     ));
   }
-  stepper.set_rate(fps as u32).map_err(|e| Exception::throw_message(&ctx, &format!("srt:test setFrameRate(fps): {e}")))
+  stepper.set_fps(fps as u32).map_err(|e| Exception::throw_message(&ctx, &format!("srt:test setFrameRate(fps): {e}")))
 }
 
 /// `time()`: app time as of the last frame, in ms.

@@ -486,8 +486,8 @@ pub(crate) struct RasterState {
   // protocol (see repaint.rs).
   damage: DamageTracker,
   tx: mpsc::Sender<FrameOutput>,
-  // Wakes the main thread's event wait after a present; None in playback
-  // mode, whose capture loop blocks on the channel directly.
+  // Wakes the main thread's event wait after a present; None headless,
+  // where nothing is presented.
   wake: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 

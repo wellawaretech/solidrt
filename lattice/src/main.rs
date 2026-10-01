@@ -207,35 +207,63 @@ fn main() {
     }
     forge::fs::set_assets_base(Some(forge::fs::AssetsBase::Dir(dir)));
   }
-  if test {
-    run_tests(app, filter, seed, failures, size, fonts, data_root, client, app_id, app_args);
-  }
-  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
+  if test {
+    run_tests(TestArgs { app, filter, seed, failures, size, fonts, storage, app_args });
+  }
   let launch = lattice::Launch { restored: false, link };
   if render {
-    let run = RenderArgs {
+    run_render(RenderArgs {
+      app,
       fps,
       duration,
       out,
       script_path,
       settle,
+      strict,
       seed,
-    };
-    run_render(app, run, launch, strict, size, stats, fonts, storage, app_args);
+      launch,
+      size,
+      stats,
+      fonts,
+      storage,
+      app_args,
+    });
   }
+  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   lattice::start(&rt, app, launch, display_name, size, stats, dev_server, fonts, storage, app_args);
 }
 
-/// The `--render` flags, gathered for `run_render`.
+/// What `--test` runs with (see `run_tests`).
+#[cfg_attr(not(feature = "test"), allow(dead_code))]
+struct TestArgs {
+  app: Option<lattice::AppSource>,
+  filter: Option<String>,
+  seed: Option<u64>,
+  failures: Option<String>,
+  size: (u32, u32),
+  fonts: Vec<alloy::rendertree::FontPayload>,
+  storage: lattice::storage::StorageSpec,
+  app_args: Vec<String>,
+}
+
+/// What `--render` runs with (see `run_render`).
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 struct RenderArgs {
+  app: Option<lattice::AppSource>,
   fps: u32,
   duration: f64,
   out: Option<String>,
   script_path: Option<String>,
   settle: bool,
+  strict: bool,
   seed: Option<u64>,
+  launch: lattice::Launch,
+  size: (u32, u32),
+  stats: bool,
+  fonts: Vec<alloy::rendertree::FontPayload>,
+  storage: lattice::storage::StorageSpec,
+  app_args: Vec<String>,
 }
 
 // `--render`: render the app headless and exit with the outcome. It exits
@@ -244,19 +272,8 @@ struct RenderArgs {
 // plain return would run the runtime's drop, which can block on a lingering
 // blocking task and hang the render at the finish line.
 #[cfg(feature = "go")]
-#[allow(clippy::too_many_arguments)]
-fn run_render(
-  app: Option<lattice::AppSource>,
-  args: RenderArgs,
-  launch: lattice::Launch,
-  strict: bool,
-  size: (u32, u32),
-  stats: bool,
-  fonts: Vec<alloy::rendertree::FontPayload>,
-  storage: lattice::storage::StorageSpec,
-  app_args: Vec<String>,
-) -> ! {
-  let app = app.unwrap_or_else(|| usage("--render requires a source path"));
+fn run_render(args: RenderArgs) -> ! {
+  let app = args.app.unwrap_or_else(|| usage("--render requires a source path"));
   let run = lattice::RenderRun {
     fps: args.fps,
     // Round to the nearest whole frame; any positive duration renders at
@@ -265,10 +282,22 @@ fn run_render(
     output_prefix: args.out.map(frame_prefix).unwrap_or_else(|| "frame".to_string()),
     script: args.script_path.map(load_script).unwrap_or_default(),
     settle: args.settle,
-    seed: args.seed.unwrap_or(lattice::DEFAULT_SEED),
+    seed: args.seed.unwrap_or(flux::DEFAULT_SEED),
   };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  match lattice::start_render(&rt, app, run, launch, strict, size, stats, fonts, storage, app_args) {
+  let outcome = lattice::start_render(
+    &rt,
+    app,
+    run,
+    args.launch,
+    args.strict,
+    args.size,
+    args.stats,
+    args.fonts,
+    args.storage,
+    args.app_args,
+  );
+  match outcome {
     Ok(()) => std::process::exit(0),
     Err(e) => {
       log::error!("[srt] {e}");
@@ -278,67 +307,31 @@ fn run_render(
 }
 
 #[cfg(not(feature = "go"))]
-#[allow(clippy::too_many_arguments)]
-fn run_render(
-  _app: Option<lattice::AppSource>,
-  _args: RenderArgs,
-  _launch: lattice::Launch,
-  _strict: bool,
-  _size: (u32, u32),
-  _stats: bool,
-  _fonts: Vec<alloy::rendertree::FontPayload>,
-  _storage: lattice::storage::StorageSpec,
-  _app_args: Vec<String>,
-) -> ! {
+fn run_render(_args: RenderArgs) -> ! {
   usage("--render requires the dev client (solidrt-go)")
 }
 
-// `--test`: run the source as a test file and exit with its outcome. Like
-// playback it exits hard, here in the binary (see the end of main).
+// `--test`: run the source as a test file and exit with its outcome, hard,
+// here in the binary, for the reason `run_render` gives.
 #[cfg(feature = "test")]
-#[allow(clippy::too_many_arguments)]
-fn run_tests(
-  app: Option<lattice::AppSource>,
-  filter: Option<String>,
-  seed: Option<u64>,
-  failures: Option<String>,
-  size: (u32, u32),
-  fonts: Vec<alloy::rendertree::FontPayload>,
-  data_root: Option<String>,
-  client: Option<u32>,
-  app_id: Option<String>,
-  app_args: Vec<String>,
-) -> ! {
-  let app = app.unwrap_or_else(|| usage("--test requires a test bundle path"));
-  let mut options = flux::test::RunOptions { filter, ..Default::default() };
-  if let Some(seed) = seed {
+fn run_tests(args: TestArgs) -> ! {
+  let app = args.app.unwrap_or_else(|| usage("--test requires a test bundle path"));
+  let mut options = flux::test::RunOptions { filter: args.filter, ..Default::default() };
+  if let Some(seed) = args.seed {
     options.seed = seed;
   }
-  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
   // Absolute, like `--out`: the runtime chdirs into the data sandbox.
-  let failures = failures.map(|dir| {
+  let failures = args.failures.map(|dir| {
     std::path::absolute(&dir).unwrap_or_else(|e| usage(&format!("--failures path '{dir}' is unusable: {e}")))
   });
   let run = lattice::TestRun { options, failures };
-  let passed = lattice::start_tests(&rt, app, run, size, fonts, storage, app_args).is_ok();
+  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
+  let passed = lattice::start_tests(&rt, app, run, args.size, args.fonts, args.storage, args.app_args).is_ok();
   std::process::exit(if passed { 0 } else { 1 })
 }
 
 #[cfg(not(feature = "test"))]
-#[allow(clippy::too_many_arguments)]
-fn run_tests(
-  _app: Option<lattice::AppSource>,
-  _filter: Option<String>,
-  _seed: Option<u64>,
-  _failures: Option<String>,
-  _size: (u32, u32),
-  _fonts: Vec<alloy::rendertree::FontPayload>,
-  _data_root: Option<String>,
-  _client: Option<u32>,
-  _app_id: Option<String>,
-  _app_args: Vec<String>,
-) -> ! {
+fn run_tests(_args: TestArgs) -> ! {
   usage("--test requires a client built with the test feature (make client)")
 }
 

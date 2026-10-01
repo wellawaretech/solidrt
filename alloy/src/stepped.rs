@@ -12,7 +12,7 @@ pub struct SteppedConfig {
 // The embedder steps every frame itself (it sets the virtual clock with
 // `clock::set_virtual_ns` and runs its frame work), so the demand gate stays
 // in force and a frame nobody demanded is not drawn; the pixels it wants it
-// asks for (`Context::read_window_pixels`, a node capture). What is left for
+// asks for (`Context::read_window`, a node capture). What is left for
 // this thread is the one command an engine start depends on: every engine
 // the embedder builds asks for the init events, and gets the ones a headless
 // surface has (see headless_init_events). Returns when the embedder is done

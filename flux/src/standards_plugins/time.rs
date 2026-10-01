@@ -454,7 +454,7 @@ impl Timeline {
 }
 
 /// The frame timeline reading for native consumers (video sync, the runner's
-/// playback clock): the injected Timeline when present, real elapsed time
+/// stepped clock): the injected Timeline when present, real elapsed time
 /// otherwise (headless flux has no frames to be in phase with).
 pub fn timeline_now_ms(ctx: &Ctx<'_>) -> f64 {
   match ctx.userdata::<Timeline>() {

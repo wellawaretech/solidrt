@@ -1,8 +1,8 @@
 use crate::rendertree::{FrameDriver, PlatformContext};
 
-// The gate's inputs are the one-shot request latch, the caller's own demand,
-// and playback mode; commit/finish need a live render thread and are covered
-// by the integration paths.
+// The gate's inputs are the one-shot request latch and the caller's own
+// demand; commit/finish need a live render thread and are covered by the
+// integration paths.
 
 #[test]
 fn gate_skips_without_demand() {

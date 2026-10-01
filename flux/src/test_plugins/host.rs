@@ -24,9 +24,10 @@ use std::time::{Duration, Instant};
 use rquickjs::function::{MutFn, This};
 use rquickjs::{Ctx, Function, JsLifetime, Value};
 
-use crate::engine::{ExecHandle, FluxEngine, FluxEngineBuilder, ModuleCode};
+use crate::engine::{ExecHandle, FluxEngine, FluxEngineBuilder, ModuleCode, ENTRY_MODULE};
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
+use crate::standards_plugins::random::DEFAULT_SEED;
 
 use super::Registry;
 
@@ -39,12 +40,6 @@ pub const RECORD_PREFIX: &str = "\u{1e}srt-test ";
 /// against a test that never finishes, not a wait: a test that finishes is
 /// never held to it.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(5000);
-/// The seed `Math.random` runs on when the host is given none. Any fixed
-/// number does: what matters is that it is the same on every run.
-pub const DEFAULT_SEED: u64 = 0;
-/// The module name the file is evaluated under, which is what its stack
-/// frames cite and so what a sourcemap for it is keyed by.
-pub const ENTRY_MODULE: &str = "main";
 /// How long the host gives a timed-out test's engine to answer for the
 /// failure's details (what is in flight, the embedder's own) before the
 /// engine is dropped. The engine stays interrupted meanwhile, so the
@@ -321,24 +316,27 @@ impl Session {
     let failed = tx.clone();
     let on_failed = move |_: Ctx<'_>| drop(failed.send(Signal::LoadFailed));
     let details = self.details.clone();
-    let late = (exec.clone(), name.clone(), details.clone(), shared.clone());
-    let on_ready = move |ctx: Ctx<'_>, _namespace: rquickjs::Object<'_>| {
-      let lines = locked(&shared.output).len();
-      *locked(&shared.loaded_at) = Some(lines);
-      let registry = ctx.userdata::<Registry>().map(|registry| (*registry).clone());
-      match name {
-        None => {
-          let names = match registry.map(|registry| registry.names(&ctx)) {
-            Some(Ok(names)) => names,
-            Some(Err(e)) => {
-              ctx.logger().error(&format!("Test host: failed to read the registered tests: {e}"));
-              Vec::new()
-            }
-            None => Vec::new(),
-          };
-          let _ = tx.send(Signal::Names(names));
+    // The closure takes copies; the originals serve the timed-out case below.
+    let on_ready = {
+      let (exec, shared, details, name) = (exec.clone(), shared.clone(), details.clone(), name.clone());
+      move |ctx: Ctx<'_>, _namespace: rquickjs::Object<'_>| {
+        let lines = locked(&shared.output).len();
+        *locked(&shared.loaded_at) = Some(lines);
+        let registry = ctx.userdata::<Registry>().map(|registry| (*registry).clone());
+        match name {
+          None => {
+            let names = match registry.map(|registry| registry.names(&ctx)) {
+              Some(Ok(names)) => names,
+              Some(Err(e)) => {
+                ctx.logger().error(&format!("Test host: failed to read the registered tests: {e}"));
+                Vec::new()
+              }
+              None => Vec::new(),
+            };
+            let _ = tx.send(Signal::Names(names));
+          }
+          Some(name) => start(ctx, registry, &name, shared, details, exec, tx),
         }
-        Some(name) => start(ctx, registry, &name, shared, details, exec, tx),
       }
     };
     let evaluation = engine.eval_module_or(ENTRY_MODULE.to_string(), code, on_ready, on_failed);
@@ -353,8 +351,8 @@ impl Session {
     // failure's details are read, so they are read now, in the engine as
     // it stands (interrupted, which keeps a hook from hanging again):
     // queued on its exec channel and polled for a bounded grace.
-    if let (End::TimedOut, (exec, Some(name), hook, shared)) = (&end, late) {
-      exec.exec(move |ctx| *locked(&shared.details) = Some(gather_details(&ctx, &name, &hook)));
+    if let (End::TimedOut, Some(name)) = (&end, name) {
+      exec.exec(move |ctx| *locked(&shared.details) = Some(gather_details(&ctx, &name, &details)));
       let _ = tokio::time::timeout(DETAILS_GRACE, &mut evaluation).await;
     }
     // An engine the watchdog interrupted can end before the host's own

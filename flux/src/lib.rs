@@ -19,7 +19,7 @@ pub use test_plugins::host as test;
 
 pub use engine::{
   on_shutdown, resolve_isolate_from_assets, EngineConfig, ExecHandle, FluxEngine, FluxEngineBuilder, IsolateResolver,
-  ModuleCode, ShutdownHooks,
+  ModuleCode, ShutdownHooks, ENTRY_MODULE,
 };
 pub use forge::fetch::{do_fetch, ResponseData};
 pub use forge::process::{arch, platform};
@@ -33,7 +33,7 @@ pub use plugins::seekable::{SeekableOpener, SeekableSource};
 pub use standards_plugins::body::{attach_body, JsBytes, JsonValue};
 pub use standards_plugins::fetch::{request_body_from_value, JsResponseData};
 pub use standards_plugins::headers::header_pairs_from_init;
-pub use standards_plugins::random::seed_random;
+pub use standards_plugins::random::{seed_random, DEFAULT_SEED};
 pub use standards_plugins::time::{
   advance_virtual_time, advance_virtual_time_to_now, freeze_wall, install_virtual_time, set_virtual_now_source,
   timeline_now_ms, timer_due, Timeline,

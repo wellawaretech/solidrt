@@ -424,7 +424,7 @@ pub enum AlloyEvent {
   // what a count worth a suspension means is the embedder's policy.
   // `present_at` is when the frame this signal asks for is expected to
   // reach the screen: the signal's reference instant plus the cadence
-  // hold's periods (the virtual frame time in playback), the deadline a
+  // hold's periods (the virtual frame time headless), the deadline a
   // frame's video content is latched against. `reference` is the instant
   // the refreshes were counted from (the vsync under vsync-locked pacing, a
   // swap's return otherwise), the frame time touch is resampled to (see

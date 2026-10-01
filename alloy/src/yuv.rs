@@ -156,8 +156,8 @@ pub const LATCH_QUEUE_FRAMES: usize = 4;
 // for that frame, in percent of the refresh period: half a period, so a
 // frame belongs to the present whose vsync is closest to its due time (the
 // nearest-vsync rule a plane's release snap implements, and the lookahead
-// the JS tick measured 2.8% -> 0.07% flips with). Zero in playback, where
-// the deadline is the frame's exact virtual time.
+// the JS tick measured 2.8% -> 0.07% flips with). Zero under a stepped
+// clock, where the deadline is the frame's exact virtual time.
 pub const LATCH_LOOKAHEAD_PERCENT: i64 = 50;
 
 /// One frame waiting in a latch: its due time on `crate::clock`, its
@@ -181,8 +181,8 @@ pub struct Taken {
 
 /// The frames waiting to be shown on one YUV texture, ordered by due time,
 /// and the take rule against a frame's deadline. Pure state: the sharing
-/// (a mutex, the playback waits) is `YuvLatchShared`, and this is what the
-/// unit tests exercise.
+/// (a mutex, the wait under a stepped clock) is `YuvLatchShared`, and this
+/// is what the unit tests exercise.
 pub struct YuvLatch {
   queue: VecDeque<LatchedFrame>,
   shown_pts_us: Option<i64>,
@@ -436,7 +436,7 @@ impl Default for YuvLatchShared {
 }
 
 /// The take rule's lookahead now: half the display's refresh period, zero
-/// under a stepped clock (playback) or before the rate is known.
+/// under a stepped clock (headless) or before the rate is known.
 pub fn lookahead_ns() -> i64 {
   if crate::clock::stepped() {
     return 0;
@@ -445,7 +445,7 @@ pub fn lookahead_ns() -> i64 {
 }
 
 /// The display's refresh period on the latch's clock, None under a stepped
-/// clock (playback has no presentation cadence) or before the rate is
+/// clock (headless has no presentation cadence) or before the rate is
 /// known.
 pub fn period_ns() -> Option<i64> {
   if crate::clock::stepped() {

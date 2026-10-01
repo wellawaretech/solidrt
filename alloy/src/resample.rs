@@ -34,7 +34,7 @@ use crate::{AlloyEvent, Modifiers, PointerType};
 /// frame, and a predicted step would fake an overshoot every time the
 /// device stops. They dispatch the newest buffered sample per frame, which
 /// also bounds a high-polling-rate mouse to one hit test and JS dispatch
-/// per frame. So does every pointer when the frame has no time (playback).
+/// per frame. So does every pointer when the frame has no time (headless).
 ///
 /// Moves feed the history on arrival and dispatch only through sample();
 /// down/up stay on arrival (ordering), with down re-seeding the history so a
@@ -317,7 +317,7 @@ impl Resampler {
 
   /// The moves to dispatch for one frame. `frame` is the frame signal's
   /// reference instant and the refresh period, which touch is resampled
-  /// against; None for a frame with no time of its own (playback), where
+  /// against; None for a frame with no time of its own (headless), where
   /// every pointer dispatches its newest sample.
   pub fn sample(&mut self, frame: Option<(Instant, Duration)>) -> Vec<Sample> {
     let mut out = Vec::new();

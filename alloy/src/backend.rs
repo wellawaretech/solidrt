@@ -38,7 +38,7 @@ pub fn unpack_size(packed: u64) -> (u32, u32) {
 
 /// The raster thread's handle onto the process's single GL context: how it
 /// binds it, presents through it, and resolves GL entry points. Interactive
-/// runs bind through SDL (window + GLContext); headless playback on a stack
+/// runs bind through SDL (window + GLContext); a headless run on a stack
 /// whose SDL offscreen driver cannot go headless binds a bare EGL pbuffer
 /// (see egl_headless.rs). Every method runs on the raster thread.
 pub(crate) trait GlBinding: Send {
@@ -69,9 +69,9 @@ pub enum DisplayContext {
     /// See `pack_size`.
     surface_size: Arc<AtomicU64>,
   },
-  /// Headless playback: an EGL pbuffer context created without SDL's video
-  /// subsystem. Shared with the raster thread, which binds and draws to it;
-  /// FBO 0 is the pbuffer, so capture reads back exactly as from a window.
+  /// Headless without SDL's video subsystem: an EGL pbuffer context. Shared
+  /// with the raster thread, which binds and draws to it; FBO 0 is the
+  /// pbuffer, so a window readback reads exactly as from a window.
   EglPbuffer { egl: Arc<crate::egl_headless::HeadlessEgl>, surface_size: Arc<AtomicU64> },
 }
 

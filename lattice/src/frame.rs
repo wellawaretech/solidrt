@@ -28,7 +28,7 @@ pub struct RenderFrame {
 
 impl Default for RenderFrame {
   // Before any frame signal (the mount frame): the frame presents as soon
-  // as it can, at the virtual time in playback.
+  // as it can, at the virtual time on a stepped run.
   fn default() -> Self {
     RenderFrame { start: None, frame: 0, period_ms: 0.0, present_at: alloy::clock::now(), input_ms: 0.0 }
   }

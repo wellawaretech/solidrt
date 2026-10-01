@@ -1,9 +1,10 @@
 //! Headless GL context without SDL's video subsystem: an EGL pbuffer on the
-//! default display, for playback on a stack whose SDL offscreen driver cannot
-//! go headless (ANGLE lacks EGL_EXT_device_enumeration, which that driver
-//! requires; see okf/backlog/playback-headless-angle.md). Playback draws to
-//! FBO 0 and reads it back, so a pbuffer keeps every downstream path (window
-//! draw, MSAA resolve, capture readback) unchanged. libEGL is loaded at
+//! default display, for the headless mode on a stack whose SDL offscreen
+//! driver cannot go headless (ANGLE lacks EGL_EXT_device_enumeration, which
+//! that driver requires; see okf/backlog/playback-headless-angle.md). A
+//! headless host draws to FBO 0 and reads it back, so a pbuffer keeps every
+//! downstream path (window draw, MSAA resolve, window readback) unchanged.
+//! libEGL is loaded at
 //! runtime by name; the crate compiles on every target and only ever runs
 //! after the offscreen driver failed.
 

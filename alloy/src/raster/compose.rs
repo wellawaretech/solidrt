@@ -17,8 +17,8 @@ use crate::gpu::WindowShader;
 impl RasterState {
   /// Draw the display list to the window backbuffer along `route`; true when
   /// a frame reached it. False skips the frame (a zero-sized minimized
-  /// window, or a failed draw) - the caller still notifies, so lockstep
-  /// consumers (playback) never stall.
+  /// window, or a failed draw); the caller notifies the main loop all the
+  /// same.
   pub(super) fn draw_to_window(&mut self, dl: &DisplayList, size: ISize, route: WindowRoute) -> bool {
     // Resize-race diagnostics: geometry transitions as this thread sees them,
     // once per size.

@@ -7,7 +7,7 @@ use std::rc::Rc;
 // The engine seeds its own `Math.random` from the clock when the context is
 // created and offers no way to seed it, so a run that must be reproducible
 // cannot use it. A host that needs one (flux:test for each test; a headless
-// render or a playback are the same kind of host) opts in per context with
+// render is the same kind of host) opts in per context with
 // `seed_random`: from then on `Math.random` is flux's generator, the same
 // algorithm and resolution as the engine's, started from the seed. A context
 // nobody seeded keeps the engine's builtin untouched, which is every
@@ -16,6 +16,11 @@ use std::rc::Rc;
 // A context spawned by a seeded one (flux:isolate) is seeded too, with a
 // seed derived from its parent's (`child_seed`), so a test's isolates are as
 // reproducible as the test.
+
+/// The seed a host runs on when it is given none. Any fixed number does;
+/// what matters is that every host picks this one, so a test and a render
+/// of one app draw the same numbers.
+pub const DEFAULT_SEED: u64 = 0;
 
 /// The generator is xorshift64*, the one the engine's `Math.random` runs:
 /// three shifts of the state, and the multiplier that scrambles the output.

@@ -26,14 +26,10 @@ mod stepped;
 mod test_host;
 #[cfg(feature = "go")]
 mod render_host;
-#[cfg(any(feature = "go", feature = "test"))]
-mod png;
 #[cfg(feature = "test")]
 pub use test_host::TestRun;
 #[cfg(feature = "go")]
 pub use render_host::RenderRun;
-#[cfg(feature = "go")]
-pub use stepped::DEFAULT_SEED;
 
 #[cfg(test)]
 mod tests;
@@ -832,7 +828,7 @@ fn ui_thread(
     let input_state_events = input_state.clone();
     // Virtual present counter the stepped clock derives time from (frame/fps),
     // published by the frame verb. Unused in run mode.
-    let playback_frame = Arc::new(AtomicU64::new(0));
+    let stepped_frame = Arc::new(AtomicU64::new(0));
     // Run-mode pacing for the animation timestamps (see paced_clock). None on
     // a stepped run, which uses the deterministic frame/fps clock.
     let paced_clock = match stepped_fps {
@@ -857,10 +853,10 @@ fn ui_thread(
       // Stepped: derive time from the present counter (frame/fps) so the
       // frame timeline is deterministic and renders reproducible.
       Some(rfps) if rfps > 0 => {
-        let playback_frame = playback_frame.clone();
+        let stepped_frame = stepped_frame.clone();
         let frame_rate = frame_rate.clone();
         flux::Timeline::new(move || {
-          playback_frame.load(Ordering::Relaxed) as f64 * 1000.0 / frame_rate.load(Ordering::Relaxed) as f64
+          stepped_frame.load(Ordering::Relaxed) as f64 * 1000.0 / frame_rate.load(Ordering::Relaxed) as f64
         })
       }
       // Run mode: the paced frame clock (see paced_clock; the frame verb ticks
@@ -872,7 +868,7 @@ fn ui_thread(
     };
     let mut ui_runtime = runtime::FluxRuntime::new(
       current_exec_events,
-      playback_frame.clone(),
+      stepped_frame.clone(),
       paced_clock.clone(),
       clock_control.clone(),
       wall_start,
@@ -1195,12 +1191,12 @@ fn ui_thread(
     });
     // The stepper a stepped host's engines step frames through (stepped.rs).
     #[cfg(any(feature = "go", feature = "test"))]
-    let stepper = stepped::Stepper::new(step_tx, playback_frame.clone(), frame_rate.clone(), resampler.clone());
+    let stepper = stepped::Stepper::new(step_tx, stepped_frame.clone(), frame_rate.clone(), resampler.clone());
     #[cfg(not(any(feature = "go", feature = "test")))]
     let _ = &frame_rate;
     #[cfg(feature = "go")]
     if let Some(host) = &render {
-      stepper.reset(host.fps());
+      stepper.reset(host.fps);
     }
 
     loop {
@@ -1329,9 +1325,9 @@ fn ui_thread(
       // Run mode: anchor schedule-time deadlines to a fresh timer-timeline
       // reading, so a timer registered mid-frame measures its delay from
       // registration rather than from the previous advance (which is up to
-      // one frame stale and would fire it that much early). Playback keeps
-      // last-advance anchoring: deterministic replay must not read a live
-      // clock.
+      // one frame stale and would fire it that much early). A stepped run
+      // keeps last-advance anchoring: a deterministic run must not read a
+      // live clock.
       let builder = match &paced_clock {
         Some(pc) => {
           let pc = pc.clone();
@@ -1396,7 +1392,7 @@ fn ui_thread(
       #[cfg(feature = "go")]
       let builder = match &render {
         Some(host) => {
-          let seed = host.seed();
+          let seed = host.seed;
           builder.userdata(stepper.clone()).plugin(move |ctx| {
             stepped_engine(&ctx);
             if let Err(e) = flux::seed_random(&ctx, seed) {
@@ -1500,7 +1496,7 @@ fn ui_thread(
             _ = async {
               #[cfg(feature = "go")]
               if let Some((code, on_ready, on_failed)) = render_eval {
-                return engine.eval_module_or(render_host::ENTRY_MODULE.to_string(), code, on_ready, on_failed).await;
+                return engine.eval_module_or(flux::ENTRY_MODULE.to_string(), code, on_ready, on_failed).await;
               }
               match &current_app {
                 AppSource::Text(src) => engine.eval_source(src).await,
@@ -1554,10 +1550,12 @@ fn ui_thread(
         next_link = reentry_link(&last_location, &run_id);
         showing_bsod = false;
       } else if stepped_fps.is_some() {
-        // A render has nobody to fix the app for: an engine that ended
-        // before the host was done (render() never ran, or the app's work
-        // ran out) would otherwise show the BSOD as if it were the app and
-        // pass the exit-code gate, so the run fails instead.
+        // Of the stepped hosts only a render gets here (test mode ends its
+        // engines in the session block above), and a render has nobody to
+        // fix the app for: an engine that ended before the host was done
+        // (render() never ran, or the app's work ran out) would otherwise
+        // show the BSOD as if it were the app and pass the exit-code gate,
+        // so the run fails instead.
         #[cfg(feature = "go")]
         if let Some(host) = &render {
           let mut outcome = host.outcome.lock().expect("render outcome lock poisoned");

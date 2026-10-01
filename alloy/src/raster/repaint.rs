@@ -99,7 +99,7 @@ impl DamageTracker {
   /// The frame's route to the window, and for the rig the region it must
   /// redraw: the frame's own delta unioned with the deltas of every frame
   /// the aged back buffer has not seen (EGL_EXT_buffer_age). Any
-  /// uncertainty - a patch-barred frame (playback, an active window
+  /// uncertainty - a patch-barred frame (headless, an active window
   /// shader), a resize, no buffer age, an age deeper than the ring -
   /// answers a whole-window redraw, so correctness never depends on the
   /// extension.

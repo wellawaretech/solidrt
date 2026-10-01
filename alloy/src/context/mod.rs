@@ -158,8 +158,8 @@ pub struct Context {
   yuv_groups: RefCell<HashMap<u64, YuvGroup>>,
   // Wakes the main loop's event wait so a pushed video frame gets its frame
   // built now rather than at the wait's timeout (the raster thread's own
-  // post-present wake); None in playback, whose loop blocks on the frame
-  // channel.
+  // post-present wake); None headless, where the host steps every frame
+  // itself.
   frame_wake: Option<Arc<dyn Fn() + Send + Sync>>,
   /// The spatial core (transform hierarchy + sinks); see `crate::spatial`.
   /// Its draw sinks resolve to this context's draw entries.
@@ -280,14 +280,14 @@ impl Context {
   }
 
   /// Hand the frame's display list to the raster thread, which draws and
-  /// presents it (or reads it back in playback mode) and then notifies the
+  /// presents it (headless: leaves it in the surface) and then notifies the
   /// main loop. Returns immediately; the UI thread is free to build the next
   /// frame while this one is on the GPU. `damage` is what this frame's
   /// content changed relative to the previous submit, in physical pixels
   /// (see PresentDamage); a caller without damage tracking passes
   /// `PresentDamage::Full`, which is always correct. `present_at` is the
   /// instant the frame is expected to reach the screen (the frame signal's
-  /// reference plus the cadence hold; the virtual frame time in playback):
+  /// reference plus the cadence hold; the virtual frame time headless):
   /// the deadline the raster thread latches video frames against (see
   /// yuv.rs). Err means the raster thread is gone and the engine should
   /// shut down.

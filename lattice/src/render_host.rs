@@ -20,9 +20,6 @@ use flux::rquickjs::Ctx;
 use crate::settle::{self, Cap, Unsettled};
 use crate::stepped::{Stepper, WindowReady};
 
-/// The module name the entry is evaluated under, as the interactive path
-/// evaluates it (`eval_source`): what its stack frames cite.
-pub(crate) const ENTRY_MODULE: &str = "main";
 /// How long a settle may wait on work in flight before the render gives up
 /// on it: the in-flight wait passes no app time, so the app-time cap of
 /// settle.rs does not bound it, and a render has no test cap above it.
@@ -50,11 +47,14 @@ pub struct RenderRun {
 /// has wound down. None: the engine ended before the driver did.
 pub(crate) type RenderOutcome = Arc<Mutex<Option<Result<(), String>>>>;
 
-/// What the driver shares with the runtime: the run, where to report, and
+/// What the driver shares with the runtime: the rate and the seed the
+/// engine is built with, the run (taken by `start`), where to report, and
 /// the stop the app's own `exit()` asks for (the frames so far are kept and
 /// the run ends in order).
 #[derive(Clone)]
 pub(crate) struct RenderHost {
+  pub(crate) fps: u32,
+  pub(crate) seed: u64,
   run: Arc<Mutex<Option<RenderRun>>>,
   pub(crate) outcome: RenderOutcome,
   pub(crate) stop: Arc<AtomicBool>,
@@ -63,24 +63,12 @@ pub(crate) struct RenderHost {
 impl RenderHost {
   pub(crate) fn new(run: RenderRun) -> Self {
     Self {
+      fps: run.fps,
+      seed: run.seed,
       run: Arc::new(Mutex::new(Some(run))),
       outcome: Arc::new(Mutex::new(None)),
       stop: Arc::new(AtomicBool::new(false)),
     }
-  }
-
-  pub(crate) fn fps(&self) -> u32 {
-    self
-      .run
-      .lock()
-      .expect("render run lock poisoned")
-      .as_ref()
-      .map(|run| run.fps)
-      .unwrap_or(crate::stepped::DEFAULT_FPS)
-  }
-
-  pub(crate) fn seed(&self) -> u64 {
-    self.run.lock().expect("render run lock poisoned").as_ref().map(|run| run.seed).unwrap_or(0)
   }
 
   /// Start the driver in a task of `ctx`'s engine (the entry has evaluated).
@@ -99,9 +87,9 @@ impl RenderHost {
   }
 }
 
-/// One frame for the writer: its index and pixels.
-struct Written {
-  frame: u64,
+/// One frame read back, for the writer: its index and pixels.
+struct Frame {
+  index: u64,
   width: u32,
   height: u32,
   pixels: Vec<u8>,
@@ -124,13 +112,14 @@ async fn drive(ctx: &Ctx<'_>, mut run: RenderRun, stop: &AtomicBool) -> Result<(
 
   // The PNGs are encoded off this thread, in order; the driver only hands
   // over pixels and waits for the writer at the end.
-  let (tx, rx) = mpsc::channel::<Written>();
+  let (tx, rx) = mpsc::channel::<Frame>();
   let prefix = run.output_prefix.clone();
   let writer = std::thread::spawn(move || -> Result<u64, String> {
     let mut written = 0;
     for frame in rx {
-      let path = PathBuf::from(format!("{}-{:06}.png", prefix, frame.frame));
-      crate::png::write(&path, frame.width, frame.height, &frame.pixels)?;
+      let path = PathBuf::from(format!("{}-{:06}.png", prefix, frame.index));
+      let png = forge::image::encode_png(&frame.pixels, frame.width, frame.height, false)?;
+      std::fs::write(&path, png).map_err(|e| format!("could not write {}: {e}", path.display()))?;
       written += 1;
     }
     Ok(written)
@@ -154,14 +143,14 @@ async fn drive(ctx: &Ctx<'_>, mut run: RenderRun, stop: &AtomicBool) -> Result<(
     let ran = settle::next_frame(ctx);
     stepper.step();
     let _ = ran.await;
-    let (width, height, pixels) = match alloy.read_window_pixels() {
+    let (width, height, pixels) = match alloy.read_window() {
       Ok(read) => read,
       Err(e) => {
         outcome = Err(format!("frame {frame} could not be read back: {e}"));
         break;
       }
     };
-    if tx.send(Written { frame, width, height, pixels }).is_err() {
+    if tx.send(Frame { index: frame, width, height, pixels }).is_err() {
       break;
     }
     asked += 1;

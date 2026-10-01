@@ -104,11 +104,11 @@ impl PresentDamage {
 }
 
 pub(crate) enum RasterCmd {
-  /// Draw and present (interactive) or read back (playback) a frame. In
-  /// interactive mode, when several frames are queued only the newest is
-  /// drawn (load shedding; a shed frame's `damage` is unioned into the one
-  /// that draws); in capture mode every frame draws, because playback's
-  /// contract is exactly one Captured per submit. `tree_clean` marks a
+  /// Draw a frame: presented (interactive) or left in the offscreen surface
+  /// for a readback (headless). In interactive mode, when several frames
+  /// are queued only the newest is drawn (load shedding; a shed frame's
+  /// `damage` is unioned into the one that draws); headless every frame
+  /// draws, in order (see `FrameSink`). `tree_clean` marks a
   /// present-only resubmit of the previous frame's unchanged display list
   /// (see `Context::submit_clean`). `present_at` is when the frame is
   /// expected to reach the screen: the deadline video frames are latched

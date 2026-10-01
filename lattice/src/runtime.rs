@@ -173,7 +173,7 @@ pub struct FluxRuntime {
   exec: Rc<RefCell<Option<ExecHandle>>>,
   // Virtual present counter the stepped clock derives time from,
   // published by frame(). Unused in run mode.
-  playback_frame: Arc<AtomicU64>,
+  stepped_frame: Arc<AtomicU64>,
   // Run-mode pacing for the animation timestamps (see paced_clock). None in
   // a stepped run, which uses the deterministic frame/fps clock.
   paced: Option<PacedClock>,
@@ -274,7 +274,7 @@ impl JsTiming {
 impl FluxRuntime {
   pub fn new(
     exec: Rc<RefCell<Option<ExecHandle>>>,
-    playback_frame: Arc<AtomicU64>,
+    stepped_frame: Arc<AtomicU64>,
     paced: Option<PacedClock>,
     clock_control: ClockControl,
     // Raw wall origin for the paced clock: the frame verb feeds ticks from
@@ -288,7 +288,7 @@ impl FluxRuntime {
   ) -> Self {
     Self {
       exec,
-      playback_frame,
+      stepped_frame,
       paced,
       clock_control,
       wall_start,
@@ -451,7 +451,7 @@ impl UiRuntime for FluxRuntime {
       self.input_state.set_pointer_pos((m.pointer_type, m.pointer_id), m.x, m.y);
       self.input_state.set_modifiers(m.modifiers);
     }
-    let playback_frame = self.playback_frame.clone();
+    let stepped_frame = self.stepped_frame.clone();
     let paced = self.paced.clone();
     // The presentation model's period; None on a stepped run, which has no
     // presentation model.
@@ -466,7 +466,7 @@ impl UiRuntime for FluxRuntime {
     eh.exec(move |ctx| {
       // Publish the present being computed before reading the clock, so in
       // a stepped run the clock reports this frame's virtual time.
-      playback_frame.store(next_frame, Ordering::Relaxed);
+      stepped_frame.store(next_frame, Ordering::Relaxed);
       // Dev-tool clock control: at scale 0 frame delivery to JS is gated (a
       // true pause: onFrame, rAF and the reactive flush all hang off the
       // render event), except that each queued step lets exactly one frame

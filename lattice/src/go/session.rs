@@ -63,7 +63,7 @@ impl DevExitHandle {
 
 impl DevSession {
   /// Start the connection supervisor and the state-forwarding task. Returns
-  /// None in playback mode (`playback_fps` set), which has no dev connection.
+  /// None on a stepped run (`stepped_fps` set), which has no dev connection.
   /// `current_exec` is the live engine's exec handle, used to push connection
   /// state into whichever engine is current. `outbound_rx` is the runtime's
   /// text traffic to the server (capture events, log lines, query replies);
@@ -71,7 +71,7 @@ impl DevSession {
   pub fn start(
     handle: &tokio::runtime::Handle,
     engine_cmd_tx: UnboundedSender<crate::EngineCmd>,
-    playback_fps: Option<u32>,
+    stepped_fps: Option<u32>,
     local: &LocalSet,
     current_exec: Rc<RefCell<Option<ExecHandle>>>,
     stats_handles: (Arc<AtomicBool>, Arc<AtomicBool>),
@@ -86,7 +86,7 @@ impl DevSession {
     queries: connection::QueryHandles,
     launch_address: Option<String>,
   ) -> Option<DevSession> {
-    if playback_fps.is_some() {
+    if stepped_fps.is_some() {
       return None;
     }
 
