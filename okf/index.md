@@ -373,6 +373,13 @@ Shaped, not started.
   stages reduce it - createNode with a props object, a one-call-per-flush
   drain, interned prop ids with table dispatch, and a command buffer whose
   props land in a shared buffer Rust reads directly.
+- **[The flux module tests are JavaScript inside Rust strings](backlog/flux-module-tests-on-flux-test.md)** [2026-10-01]
+  131 of the 173 cargo integration tests in flux/tests/ only run a JS program
+  and compare its console output, untyped and run on Linux only in CI; move
+  them to flux:test as flux/tests/*.test.ts, run by srt test on all four
+  platforms, and keep in cargo the 42 that observe what a test inside the
+  engine cannot (the logger, uncaught reporting, liveness, exit, the embedding
+  API, isolate spawning, the websocket wire).
 - **[fontStretch / width axis](backlog/font-stretch-axis.md)** [2026-07-27]
   The bundled Noto variables carry a wdth axis the text API cannot reach;
   whether to expose a CSS-style font-stretch, pending an Impeller
@@ -1454,6 +1461,12 @@ Finished, kept for the reasoning.
   nothing that drives it (a shell `&&`, a check rig, CI) can tell failure from
   success without parsing output. Surfaced 2026-08-17 by moving the
   @solidrt/3d check rigs from bun onto flux.
+- **[The flux event tests wait for the listener, not a sleep](done/flux-events-test-startup-race.md)** [2026-10-02]
+  The three tests in flux/tests/events.rs emit after a fixed 100 ms sleep, but
+  an exec closure queued before the engine is up runs before the entry module,
+  so on a slow startup the first event reaches no listener and the test hangs
+  for good. Wait until the listener is registered instead, and fail on a lost
+  event rather than hang.
 - **[Move the image codec to a forge core behind a flux:image module](done/flux-image-module.md)** [2026-08-05]
   decodeImage/encodeImage live inline in a lattice-registered global, so
   headless flux has no image codec; the logic belongs in a forge core
