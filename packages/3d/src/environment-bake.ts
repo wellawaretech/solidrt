@@ -1,10 +1,10 @@
-// Environment baking: the pure pipeline behind `srt tool 3d/environment`
+// Environment baking: the pure pipeline behind `sol tool 3d/environment`
 // and its tests. A Radiance .hdr panorama is decoded to linear float, laid
 // onto the six faces of a cube, convolved level by level with the GGX lobe
 // `standard`'s split sum samples (Karis's importance sampling, the source
 // lod picked from each sample's solid angle - the Filament and Unity
 // method; Godot and Three convolve the same way at runtime), and packed
-// into the .srte container loadEnvironment uploads as an explicit rgba16f
+// into the .sol3e container loadEnvironment uploads as an explicit rgba16f
 // chain. Runs under bun and on the runtime alike: no GPU, no flux imports.
 //
 // Cube faces hold what a GL lookup of a world direction returns (GL's own
@@ -428,15 +428,15 @@ export function prefilterCube(base: CubeFaces, size: number): CubeFaces[] {
   return levels
 }
 
-// The .srte container: "SRTE" u32 | version u32 | size u32 | levels u32,
+// The .sol3e container: "SOLE" u32 | version u32 | size u32 | levels u32,
 // then the faces as float32 rgba, level-major, face-major - the exact
 // buffers createCubeTexture's explicit chain takes, viewed in place.
-/** "SRTE" read as a little-endian u32. */
-const MAGIC = 0x45545253
+/** "SOLE" read as a little-endian u32. */
+const MAGIC = 0x454c4f53
 const VERSION = 1
 const HEADER_BYTES = 16
 
-/** Serialize a prefiltered chain (prefilterCube's result) into the .srte container. */
+/** Serialize a prefiltered chain (prefilterCube's result) into the .sol3e container. */
 export function encodeEnvironment(levels: CubeFaces[], size: number): Uint8Array {
   if (levels.length !== mipLevels(size)) {
     throw new Error("encodeEnvironment: a " + size + " chain has " + mipLevels(size) + " levels, got " + levels.length)
@@ -459,14 +459,14 @@ export function encodeEnvironment(levels: CubeFaces[], size: number): Uint8Array
   return out
 }
 
-/** Read a .srte container back into its size and chain, the faces viewing
+/** Read a .sol3e container back into its size and chain, the faces viewing
  * the bytes in place (copied only if the buffer is not float-aligned). */
 export function decodeEnvironment(bytes: Uint8Array): { size: number; levels: CubeFaces[] } {
   if (bytes.byteLength < HEADER_BYTES) throw new Error("decodeEnvironment: not an environment file (too short)")
   let view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   if (view.getUint32(0, true) !== MAGIC) throw new Error("decodeEnvironment: not an environment file (bad magic)")
   let version = view.getUint32(4, true)
-  if (version !== VERSION) throw new Error("decodeEnvironment: version " + version + ", expected " + VERSION + " - re-bake with srt tool 3d/environment")
+  if (version !== VERSION) throw new Error("decodeEnvironment: version " + version + ", expected " + VERSION + " - re-bake with sol tool 3d/environment")
   let size = view.getUint32(8, true)
   let count = view.getUint32(12, true)
   if (size < 1 || count !== mipLevels(size)) throw new Error("decodeEnvironment: a " + size + " chain has " + mipLevels(size) + " levels, file says " + count)

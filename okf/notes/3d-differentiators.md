@@ -29,7 +29,7 @@ wrappers over them (render-on-invalidate) only skip whole frames; they do
 not make a rendered frame cheaper.
 
 Ours is O(delta). The retained draw list lives in Rust; the bind-and-draw
-walk runs on srt-raster; JS pays for what moved. 10,000 static meshes with
+walk runs on sol-raster; JS pays for what moved. 10,000 static meshes with
 five animated ones costs five matrix chains and five param writes.
 
 Three consequences worth building toward:
@@ -134,7 +134,7 @@ cannot retrofit without breaking their users:
 
 ## 5. The asset pipeline can run at build time
 
-Browsers must parse and decompress at runtime. We have `srt` and a packer,
+Browsers must parse and decompress at runtime. We have `sol` and a packer,
 so models can ship pre-interleaved in the exact layout `addDraw` wants,
 pre-transcoded per platform, with bounds and LODs precomputed. Runtime
 loading becomes a buffer upload. This also resolves the glTF question in

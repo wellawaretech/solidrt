@@ -69,7 +69,7 @@ only fact once it completed.
 `onQuit` means "this app instance is ending". On Android the suspend hook has
 always run first - `onPause` precedes `onDestroy` - so the quit hook there is not
 a last chance, it is only for work that specifically needs a real close. `exit()`
-(the sole `srt:app` verb, `lattice/src/plugins/app.rs`, and the default action of
+(the sole `sol:app` verb, `lattice/src/plugins/app.rs`, and the default action of
 an unprevented `back`) resolves through `ExitPolicy::exit` in
 `lattice/src/lib.rs`, per host: an app running under the player ends with
 `EngineCmd::Stop` while the process lives on, and the player root or standalone
@@ -198,8 +198,8 @@ absence load-bearing rather than cosmetic.
 ## Decided
 
 - Names and homes: `onSuspend` and `onQuit` live in core next to `onBack`,
-  and core's `exit()` wraps the bare `srt:app` verb so the quit hooks run
-  first. The vocabulary split holds: the verb stays in `srt:app`, the launch
+  and core's `exit()` wraps the bare `sol:app` verb so the quit hooks run
+  first. The vocabulary split holds: the verb stays in `sol:app`, the launch
   fact is state and lives in `env`.
 - The launch fact is `env.launch`, `"fresh" | "restored"`, a plain value.
 - The iOS deadline is the port's to pick, inside what the background task
@@ -287,7 +287,7 @@ amount of dev-loop tidying removes.
   keeps a runtime marker at suspend. Both fit the value set and the doc
   wording, so the API holds; the choice is the port's.
 - Verified on the tablet (SM-T500, Android 12, 2026-09-10, the same probe
-  served over `--lan`): home press -> `[srt] suspend` in logcat, the
+  served over `--lan`): home press -> `[sol] suspend` in logcat, the
   handler's 300 ms wait and write landed (`suspend` line read back after
   resume, no deadline warning); `exit()` from the app under the player wrote
   its `quit` line and returned to the player; back at the player root ->
@@ -319,7 +319,7 @@ amount of dev-loop tidying removes.
   deviation, not the old backgrounding. Android 12+ backgrounds a root
   activity on back and keeps the process. Restored as a second verb:
   `AlloyCommand::Background` (SDL minimize, moveTaskToBack on Android) behind
-  `srt:app` `background()` and core's `background()`; `ExitPolicy` in
+  `sol:app` `background()` and core's `background()`; `ExitPolicy` in
   lattice/src/lib.rs has `background()` next to `exit()` (under the player
   both return to the player). Core's default back action (`backDefault` in
   packages/core/src/window.ts) reads `platform` from `flux:process`:

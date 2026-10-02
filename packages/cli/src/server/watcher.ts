@@ -34,7 +34,7 @@ function basename(path: string): string {
 }
 
 // A path with a dot component (below `root` when given) is never a source:
-// .srt-data in particular is this server's own output, and rebuilding on it
+// .solidrt-data in particular is this server's own output, and rebuilding on it
 // would rebuild forever. node_modules is the same in file mode, where the
 // source directory may be a project root.
 function isToolingPath(path: string, root: string): boolean {

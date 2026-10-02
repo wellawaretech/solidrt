@@ -106,7 +106,7 @@ here. The instanced form is `createInstancedLod(levels, opts)` /
 levels as data and `<Instance>` children.
 
 Not changed by the wider scope: mesh simplification stays a bake-tool job
-(a simplifier in Rust and an .srtm format change, its own item; a model
+(a simplifier in Rust and an .sol3m format change, its own item; a model
 part carrying levels should load as an LOD group without authoring),
 impostor baking and HLOD stay out, screen-space ERROR metrics (Godot's
 automatic mesh LOD) stay out - size is the input, not a projected edge

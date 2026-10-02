@@ -27,7 +27,7 @@ fn manifest_with_asset(code: &str, path: &str, asset: &[u8]) -> String {
 }
 
 fn temp_app_dir(tag: &str) -> PathBuf {
-  let dir = std::env::temp_dir().join(format!("srt-store-test-{}-{tag}", std::process::id()));
+  let dir = std::env::temp_dir().join(format!("sol-store-test-{}-{tag}", std::process::id()));
   let _ = std::fs::remove_dir_all(&dir);
   dir
 }

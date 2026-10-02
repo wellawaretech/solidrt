@@ -1,4 +1,4 @@
-# srt mcp
+# sol mcp
 
 {{ usage mcp }}
 
@@ -14,7 +14,7 @@ link names, `get_location` reads where the app is), and any debug commands
 the app itself registers.
 A scaffolded project ships an `.mcp.json`, so Claude Code attaches to your
 running app with no setup. Other agents keep their server list in their own
-file; point it at `bun node_modules/@solidrt/cli/bin/srt mcp`, run from the
+file; point it at `bun node_modules/@solidrt/cli/bin/sol mcp`, run from the
 project root (agents/debugging.md in this package lists the file per client).
 
 That connection is why SolidRT keeps the app inspectable from outside: an

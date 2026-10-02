@@ -33,12 +33,12 @@ visible in the open list.
 Split out of a two-item "headless render loose ends" file when okf was
 restructured; the other half is
 [playback-shutdown-sigabrt](playback-shutdown-sigabrt.md). Both surfaced while
-building `scripts/changelog/` on the now-headless `srt render`, and neither
+building `scripts/changelog/` on the now-headless `sol render`, and neither
 blocks it.
 
 ## Frame 0 is captured before the first frame callback (2026-08-17)
 
-`srt render --duration 0.2 --fps 6` records one frame, and that frame is
+`sol render --duration 0.2 --fps 6` records one frame, and that frame is
 the scene as the components MOUNTED it - initial camera props, untouched
 node transforms - not the simulated state. The lockstep loop
 (`alloy/src/playback.rs`) receives and writes each capture first and only
@@ -91,7 +91,7 @@ Landed:
   state after the app's (k+1)th frame callback at time (k+1)/fps, so every
   written frame is one a frame callback has shaped. A static app renders
   identical PNGs; a scripted event at time t lands in the PNG at time t.
-- `packages/cli/AGENTS.md` and the `srt render` docs state both.
+- `packages/cli/AGENTS.md` and the `sol render` docs state both.
 
 `probes/playback-first-frame-probe.tsx` shows all of the above per frame:
 a mount-time read, a reactive read, and the callback count with its last

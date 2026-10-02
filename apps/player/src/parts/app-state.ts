@@ -6,7 +6,7 @@
 // signals rather than props (see dev-connection.ts for the same reasoning);
 // route components take no props, so this is how the panels reach it.
 import { createSignal } from "@solidrt/core"
-import { available as appsAvailable, list, type InstalledApp } from "srt:apps"
+import { available as appsAvailable, list, type InstalledApp } from "sol:apps"
 import { connect } from "./dev-connection"
 import { home, router } from "../routes"
 import type { ThemeMode } from "./types"

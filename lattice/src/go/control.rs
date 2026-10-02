@@ -1,4 +1,4 @@
-// Thin FFI layer for the `srt:dev` and `srt:apps` modules: marshals JS calls
+// Thin FFI layer for the `sol:dev` and `sol:apps` modules: marshals JS calls
 // onto the connection supervisor's command channel and the version store. The
 // actual logic lives in connection.rs and store.rs; the JS-facing module
 // shapes live in plugins::dev and plugins::apps.
@@ -10,7 +10,7 @@ use super::connection::DevCmd;
 use crate::plugins::apps::{self, AppEntry, AppsControl, AppsControlInner};
 use crate::plugins::dev::{self, DevControl, DevControlInner};
 
-/// Install the dev control as context userdata, backing the `srt:dev` module
+/// Install the dev control as context userdata, backing the `sol:dev` module
 /// with connect/discover/stop that forward onto `cmd_tx`. `recents` is a
 /// snapshot of recently connected addresses (most-recent-first).
 pub fn install_dev_control(
@@ -47,7 +47,7 @@ pub fn install_dev_control(
   dev::install(&ctx, control);
 }
 
-/// Install the apps control as context userdata, backing the `srt:apps` module
+/// Install the apps control as context userdata, backing the `sol:apps` module
 /// with the version store's list/launch/remove. Launch boots the stored
 /// version through the same reload path as a dev push: the engine loop
 /// re-anchors the data sandbox, assets mount, and font set from the app id.

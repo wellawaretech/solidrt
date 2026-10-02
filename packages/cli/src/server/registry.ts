@@ -1,6 +1,6 @@
 // The dev server registry: ~/.solidrt/servers/<key hash>/live.json, one
 // folder per server key, written by the server itself once its port is
-// bound and removed when it exits, so `srt client`, `srt mcp` and the
+// bound and removed when it exits, so `sol client`, `sol mcp` and the
 // console resolve a server without any per-project config
 // (okf/backlog/cli-flux-migration.md). The process that owns the pid and the
 // port owns the record, so a record whose pid is dead is stale and nothing

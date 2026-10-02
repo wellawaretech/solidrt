@@ -8,7 +8,7 @@ created: 2026-08-24
 
 ## Symptom
 
-`srt run packages/2d/examples/pick.tsx` logged `[REACTIVITY_HALTED] ...
+`sol run packages/2d/examples/pick.tsx` logged `[REACTIVITY_HALTED] ...
 Error: Context must either be created with a default value or a value
 must be provided before accessing it` at mount, from `useContext(...)` at
 `packages/2d/src/components/sprite.tsx` inside `<Sprite>`; the window never

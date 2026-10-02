@@ -1,4 +1,4 @@
-// Lattice runner builtin modules (the "srt:*" surface). These are ambient
+// Lattice runner builtin modules (the "sol:*" surface). These are ambient
 // module declarations, so they live in this global-script .d.ts (no top-level
 // import/export) rather than in types.d.ts: an ambient `declare module` only
 // becomes globally visible to consumers from a non-module declaration file.
@@ -51,7 +51,7 @@ declare module "*.glb" {
   const bytes: Uint8Array
   export default bytes
 }
-declare module "*.srtm" {
+declare module "*.sol3m" {
   const bytes: Uint8Array
   export default bytes
 }
@@ -63,13 +63,13 @@ declare module "*.srtm" {
 // pointer moves have dispatched, every pointer the same age - multi-pointer
 // recognizers measure there; its `timeStamp` is theirs), and "render" (the
 // per-frame signal).
-declare module "srt:events" {
+declare module "sol:events" {
   export function on(event: string, callback: (data: any) => void): () => void
   export function once(event: string, callback: (data: any) => void): () => void
 }
 
 // The running application's own surface (lattice), present in every build.
-declare module "srt:app" {
+declare module "sol:app" {
   /**
    * End the current app now, without running the quit hooks: back to the
    * player in a dev client, quit when standalone or at the player root (on
@@ -100,7 +100,7 @@ declare module "srt:app" {
 
 // Dev-server control surface (lattice). Present only in dev/go builds; in other
 // builds `available` is false and the functions are no-ops.
-declare module "srt:dev" {
+declare module "sol:dev" {
   export const available: boolean
   export const canDiscover: boolean
   export const recents: string[]
@@ -139,7 +139,7 @@ declare module "srt:dev" {
 // Installed-app management (lattice), the player's surface over the client's
 // version store. Present only in go/dev client builds; elsewhere `available`
 // is false, `list` returns [], and launch/remove are no-ops.
-declare module "srt:apps" {
+declare module "sol:apps" {
   export const available: boolean
   /**
    * An installed app: id, display name (the installed manifest's displayName,
@@ -233,16 +233,16 @@ declare module "srt:apps" {
 // submits the display list. To schedule a future frame instead, use
 // requestFrame() from "flux:rendertree". The tree-building surface itself is
 // "flux:rendertree" (from @solidrt/flux-types).
-declare module "srt:render" {
+declare module "sol:render" {
   export function renderFrame(): void
 }
 
 // The engine verbs of an app test (lattice, dev client only), which
 // @solidrt/test builds its surface on; tests import that, not this.
-// The verbs work only in an engine a test host built (`srt test`) and throw
+// The verbs work only in an engine a test host built (`sol test`) and throw
 // anywhere else. App time there is frame / frameRate and nothing else: no
 // frame runs unless one is asked for.
-declare module "srt:test" {
+declare module "sol:test" {
   /**
    * Runs one frame: timers due by its time fire, then frame callbacks and
    * the flush, then the draw if anything demanded one. Fulfills once the

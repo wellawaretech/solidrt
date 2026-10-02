@@ -111,7 +111,7 @@ const QUERY_KINDS: &[&str] =
 #[cfg(not(target_os = "android"))]
 const SERVICE_TYPE: &str = "_solidrt._tcp.local.";
 
-/// Commands the JS `srt.dev` surface sends into the supervisor. The
+/// Commands the JS `sol.dev` surface sends into the supervisor. The
 /// connection is opt-in: nothing happens until one of these arrives.
 pub enum DevCmd {
   /// Connect to a known `host:port` and keep retrying/reconnecting. Covers the
@@ -958,7 +958,7 @@ async fn try_serve(
               }
               Some("location") => {
                 // The location the app reported through reportLocation
-                // (srt:dev), a plain value shared with the engine loop, so no
+                // (sol:dev), a plain value shared with the engine loop, so no
                 // JS-thread round trip; null when the app reported none.
                 let reply = serde_json::json!({"type": "result", "id": id, "data": {"location": queries.location.get()}})
                   .to_string();
@@ -1558,7 +1558,7 @@ fn link_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, link: String) -> String {
 fn debug_list_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
   let commands = match ctx.userdata::<crate::plugins::dev::DebugRegistry>() {
     Some(registry) => registry.names(),
-    // The registry is installed on first `srt:dev` import; an app that never
+    // The registry is installed on first `sol:dev` import; an app that never
     // imported it simply has no commands.
     None => Vec::new(),
   };

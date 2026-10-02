@@ -1,4 +1,4 @@
-//! The packed-executable section trailer: `srt pack` appends an app's payload
+//! The packed-executable section trailer: `sol pack` appends an app's payload
 //! to a runner image as sections plus a table, and the runner reads its own
 //! image back at startup. This is the parsing half of the packed-container
 //! contract whose reading half is `fs::AssetsBase::Packed`: [`Trailer::file_index`]
@@ -51,8 +51,8 @@ pub fn read(exe: PathBuf, magic: &[u8]) -> Option<Trailer> {
 }
 
 /// Parse a trailer that sits inside `exe` as the byte range `[base, base+len)`
-/// rather than being the whole file: a `.srtapp` stored at an offset in a
-/// container (an APK's `assets/app.srtapp` entry). Table offsets inside the
+/// rather than being the whole file: a `.solapp` stored at an offset in a
+/// container (an APK's `assets/app.solapp` entry). Table offsets inside the
 /// payload are relative to its start; the returned sections are rebased to
 /// absolute file offsets, so `file_index`/`read_range` (and the
 /// `fs::AssetsBase::Packed` mount they feed) work against the container

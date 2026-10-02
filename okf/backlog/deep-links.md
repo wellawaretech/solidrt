@@ -24,7 +24,7 @@ into a screen; this item is the primitive underneath and ships first.
 `/settings/theme` from a tool, and both are accepted everywhere a link is
 taken. The name matches every platform's own term (Android deep links and
 App Links, Apple Universal Links, Expo linking). So: `onLink`,
-`env.launchLink`, `srt render --link`, MCP `open_link`,
+`env.launchLink`, `sol render --link`, MCP `open_link`,
 `POST /__control__/link`. The router's internal state is a *location*;
 see the routing item.
 
@@ -46,7 +46,7 @@ precedent; on Android and desktop the link can ride argv next to
 event is the one uniform path.
 
 **The OS half is registration**, per platform, and it is packaging work
-rather than runtime work. `srt pack` (and the manifest it writes) grows a
+rather than runtime work. `sol pack` (and the manifest it writes) grows a
 field for the scheme the app answers to.
 
 ## Per-platform facts (verified 2026-09-23 against SDL 3.4.10)
@@ -54,7 +54,7 @@ field for the scheme the app answers to.
 | Platform | Registration | Already running | State (2026-09-23) |
 | --- | --- | --- | --- |
 | Android | VIEW intent filter with `<data android:scheme>` | `onNewIntent` (manifest is `singleInstance`) | DONE. The runner's prod manifest declares the filter with the scheme spelled as the package name, so the APK pack's package rewrite renames the scheme with it (one pool string). `SolidRTActivity` puts a cold intent's data on argv as `--link` and forwards a warm one through SDL's `onNativeDropFile`. Tablet-verified with implicit VIEW intents, cold and warm. |
-| macOS | `CFBundleURLTypes` in a `.app` Info.plist | Same Apple Event, sent to the running instance (LaunchServices keeps one) | Open. SDL delivers `kAEGetURL` as `SDL_EVENT_DROP_FILE` carrying the link string; alloy maps it. `srt pack` builds no `.app`; and a cold link arrives as an event after launch, so the runtime will have to treat a link before the first frame as the launch link. |
+| macOS | `CFBundleURLTypes` in a `.app` Info.plist | Same Apple Event, sent to the running instance (LaunchServices keeps one) | Open. SDL delivers `kAEGetURL` as `SDL_EVENT_DROP_FILE` carrying the link string; alloy maps it. `sol pack` builds no `.app`; and a cold link arrives as an event after launch, so the runtime will have to treat a link before the first frame as the launch link. |
 | iOS | `CFBundleURLTypes` | `openURLContexts` on the scene | SDL delivers it as a drop file with `absoluteString`; alloy maps it. No iOS target yet. |
 | Windows | HKCU `Software\Classes\<scheme>` with `URL Protocol` and `shell\open\command "%1"` | Starts a second process | DONE. `registerProtocolHandler()` writes the key (windows-registry crate); the packed binary takes a first argument of its own scheme as the launch link; a second instance hands the link to the first over a named pipe and exits. Box-verified through `start <scheme>://...`, cold and warm. The shell normalizes `scheme://word` to `scheme://word/` on the way; the router drops empty segments, so it matches, but the reported location keeps the slash. |
 | Linux | `.desktop` with `MimeType=x-scheme-handler/<scheme>`, `Exec ... %u`, `xdg-mime default` | Starts a second process | DONE. `registerProtocolHandler()` writes the desktop entry and the mimeapps.list default directly (what `xdg-mime default` writes, without depending on xdg-utils); hand-off over a Unix domain socket in the app's client dir. Verified through `xdg-open`, cold and warm. |
@@ -80,7 +80,7 @@ In order of difficulty, hardest first:
    raised (`AlloyCommand::RaiseWindow`). A second instance without a link
    keeps the recorded behavior (client-storage-updates: warn and run).
 2. DONE 2026-09-23: **desktop registration without an installer**, on the
-   explicit call `registerProtocolHandler()` (`srt:app`, re-exported by
+   explicit call `registerProtocolHandler()` (`sol:app`, re-exported by
    core; the web's name, no arguments since the scheme is fixed). Linux:
    `~/.local/share/applications/<appId>.desktop` (Exec quoted only where
    the Desktop Entry spec requires it, since xdg-open's generic path takes
@@ -93,7 +93,7 @@ In order of difficulty, hardest first:
    the app's argv. Android: the call succeeds and does nothing (the
    package declares the scheme); the dev client warns and does nothing,
    so app code registering at startup runs unchanged under the player.
-3. **macOS** needs `.app` bundling in `srt pack` before it can register a
+3. **macOS** needs `.app` bundling in `sol pack` before it can register a
    scheme at all; the delivery half is then free (SDL already forwards
    the Apple Event). Skipped for now (2026-09-23).
 4. DONE 2026-09-23: **Android.** The runner's prod manifest overlay
@@ -112,9 +112,9 @@ In order of difficulty, hardest first:
    any of this testable: `POST /__control__/link` and MCP `open_link`
    deliver a link to the running client exactly as the OS would (the
    analog of `adb shell am start -d` and `xcrun simctl openurl`), `GET`
-   and `get_location` read the published location, and `srt render
+   and `get_location` read the published location, and `sol render
    --link` starts a render at one. With it the app half: `onLink`,
-   `env.launchLink`, `reportLocation` in `srt:dev`; see
+   `env.launchLink`, `reportLocation` in `sol:dev`; see
    [app-routing](../plans/app-routing.md) for the consumer and the
    engine-ordering fix that made the launch facts readable at module
    scope.
@@ -122,7 +122,7 @@ In order of difficulty, hardest first:
 ## The dev client
 
 The player registers one scheme (`solidrt:`) and dispatches, the way Expo
-Go registers `exp:`: `solidrt://connect?...` from the QR code `srt run`
+Go registers `exp:`: `solidrt://connect?...` from the QR code `sol run`
 prints, so a phone's stock camera opens the player connected to the dev
 server (no in-app scanner needed; on iOS that is the expected flow), and
 `solidrt://app/<id>/...` launches an installed app with the rest as its

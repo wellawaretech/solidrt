@@ -65,7 +65,7 @@ wasm.rs no-free-callback pattern; detach-first on end/destroy), a
 `createBuffer(byteLength)` zeroed overload, and core wrappers. Verified by
 cargo tests (alloy/src/tests/gpu_lease.rs) and a pixel-level check on the
 playback client (packages/core/checks/gpu-lease-check.tsx - flux:gpu is
-behind the gui feature, so GPU checks run via `srt render`, not the headless
+behind the gui feature, so GPU checks run via `sol render`, not the headless
 flux binary).
 
 ## v1 scope (landed)

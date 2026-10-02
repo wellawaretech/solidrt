@@ -57,7 +57,7 @@ worker, so the decoder's stride-repack writes directly into GPU-visible
 staging and the raster side becomes unmap + upload.
 
 - alloy: a `Send` lease over the mapped range, with map/unmap staying on
-  srt-raster (the GL contract), plus the command shape that returns a
+  sol-raster (the GL contract), plus the command shape that returns a
   lease and the one that consumes it.
 - forge: `VideoDecoder` gains decode-into-borrowed-buffer, still
   engine-free - a plain `&mut [u8]` destination instead of a returned

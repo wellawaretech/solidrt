@@ -15,7 +15,7 @@ fn free_port() -> u16 {
 
 // The server's websocket wire, driven by an independent raw client: flux's
 // own WebSocket would test the codec against itself. The module tests of
-// flux:http (serve and fetch) are flux/tests/http.test.ts, run by srt test;
+// flux:http (serve and fetch) are flux/tests/http.test.ts, run by sol test;
 // what stays here is what a test inside the engine cannot observe.
 
 /// Minimal raw WebSocket client for driving the server's websocket path without

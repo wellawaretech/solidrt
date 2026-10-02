@@ -1,4 +1,4 @@
-# srt init
+# sol init
 
 {{ usage init }}
 

@@ -1,6 +1,6 @@
 ---
 title: A shipped app stores its data under its own vendor, not under solidrt
-description: Packed apps currently land in <pref>/SolidRT/<app-id>/, forcing the engine's name into an end user's filesystem - no shipped game files itself under unreal/. Proposed rule - <pref>/<org>/<app-id>/ when solidrt.org is declared, <pref>/<app-id>/ when it is not, never a forced vendor level - with the player taking the same rule as <pref>/solidrt-go/. The config key exists but is display metadata only: org reaches neither the manifest nor the pack payload, so the plumbing is the work. Independent of the dev-server session work, since dev clients move to ~/.srt/clients/.
+description: Packed apps currently land in <pref>/SolidRT/<app-id>/, forcing the engine's name into an end user's filesystem - no shipped game files itself under unreal/. Proposed rule - <pref>/<org>/<app-id>/ when solidrt.org is declared, <pref>/<app-id>/ when it is not, never a forced vendor level - with the player taking the same rule as <pref>/solidrt-go/. The config key exists but is display metadata only: org reaches neither the manifest nor the pack payload, so the plumbing is the work. Independent of the dev-server session work, since dev clients move to ~/.sol/clients/.
 created: 2026-08-13
 ---
 
@@ -88,4 +88,4 @@ Related: `okf/plans/client-storage-updates.md` (the plan that established
 the current layout and its Flatpak-style vendor grouping, which this
 partially reverses - the grouping stays available, it just stops being
 ours to impose), `okf/backlog/parallel-dev-servers.md` (dev clients move to
-`~/.srt/clients/`, which is why that work does not depend on this one).
+`~/.sol/clients/`, which is why that work does not depend on this one).

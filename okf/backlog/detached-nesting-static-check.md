@@ -14,7 +14,7 @@ one CoreElement), per-tag element types are not expressible, so a d-view's
 children prop can never reject a `<view>` at the type level.
 
 Where it IS decidable: the bundler compiles the JSX, and tags are static
-there. A check in the JSX transform (or an `srt check` companion pass) can
+there. A check in the JSX transform (or an `sol check` companion pass) can
 error on a layout intrinsic (`view`, `rect`, `text`, ...) directly nested
 under a `d-*` intrinsic - the common case, caught at compile time with a
 real file and line.

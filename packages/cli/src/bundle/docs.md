@@ -1,8 +1,8 @@
-# srt bundle
+# sol bundle
 
 {{ usage bundle }}
 
-Writes `dist/bundle/` (or `--output <dir>`): `<name>.srt.js` plus the app's
+Writes `dist/bundle/` (or `--output <dir>`): `<name>.sol.js` plus the app's
 isolate modules as `isolates/<id>.js`, or bytecode with `--compile`. Move
 the dir, not the bare file: a bundle loaded without its isolates/ dir loses
 them.

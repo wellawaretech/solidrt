@@ -6,7 +6,7 @@ created: 2026-08-18
 
 # Signable single-file packed executables
 
-`srt pack` (and `srt pack --flux` for fluxrt) produce a single-file
+`sol pack` (and `sol pack --flux` for fluxrt) produce a single-file
 executable by appending the pack as a trailer to the runner image:
 sections, section table, `[table offset][count][magic]`, located from EOF
 by the runner (`packages/cli/src/packer.ts`, `lattice/src/main.rs`
@@ -14,7 +14,7 @@ by the runner (`packages/cli/src/packer.ts`, `lattice/src/main.rs`
 single-file format on Linux, where nothing signs executables. On the two
 platforms with executable signing it breaks the signature by construction.
 
-The single-file executable is the point of `srt pack`; a bundle/folder
+The single-file executable is the point of `sol pack`; a bundle/folder
 shape is not an answer here (a non-single-file output is a separate,
 optional mode).
 
@@ -22,7 +22,7 @@ optional mode).
 
 macOS, verified 2026-08-17 on an arm64 mac mini (macOS 26.3.1, Xcode 26.4):
 
-- `srt pack examples/hello-world/src/index.tsx -o hello` writes a 57 MB
+- `sol pack examples/hello-world/src/index.tsx -o hello` writes a 57 MB
   Mach-O. It runs when launched locally: the kernel validates code
   signatures per page against the CodeDirectory, and the trailer lies
   beyond `codeLimit` (the end of the signed region, which is where the
@@ -59,7 +59,7 @@ Writer (CLI, runs on a mac since the runner is host-platform):
 1. Parse the runner's Mach-O header and load commands.
 2. Drop `LC_CODE_SIGNATURE` and its blob; the ad-hoc signature the
    Makefile applied is void after surgery anyway.
-3. Insert a new `LC_SEGMENT_64` (`__SRT`, one section `__pack`) holding
+3. Insert a new `LC_SEGMENT_64` (`__SOL`, one section `__pack`) holding
    the trailer bytes, placed before `__LINKEDIT` in both file and VM
    order; `codesign` requires `__LINKEDIT` to be last. Shift
    `__LINKEDIT`'s fileoff/vmaddr and patch every load command with
@@ -74,7 +74,7 @@ Writer (CLI, runs on a mac since the runner is host-platform):
 This is what Node's `postject`/LIEF and Deno's `sui` crate do. Roughly
 200-300 lines of TypeScript, no dependency.
 
-Reader (lattice + fluxrt, macOS): locate the `__SRT,__pack` section of
+Reader (lattice + fluxrt, macOS): locate the `__SOL,__pack` section of
 the running image instead of scanning from EOF. Prefer parsing
 `current_exe()` with the `object` crate if it is already in the tree, or
 the few structs by hand (header, `LC_SEGMENT_64`, section list): pure
@@ -84,9 +84,9 @@ Rust, keeps the plain-file-I/O model. `getsectiondata()` from
 ### Windows: PE resource (or section)
 
 Writer: embed the trailer bytes as an `RT_RCDATA` resource (or a dedicated
-section, `.srtpack`) in the runner PE, updating the section table, image
+section, `.solpack`) in the runner PE, updating the section table, image
 size, and checksum. Signing is then `signtool sign` after packing, or left
-to the user. Windows has no ad-hoc signing, so `srt pack` itself signs
+to the user. Windows has no ad-hoc signing, so `sol pack` itself signs
 nothing; the deliverable is that a signed output is *possible*. Reader:
 locate the resource/section from the module's own image
 (`FindResource`/`LoadResource` through the `windows-sys` crate, or parse
@@ -103,11 +103,11 @@ Same encoding, same runner-side section reader; only the locator differs.
 
 ## Done looks like
 
-- macOS: `srt pack` output passes `codesign --verify --strict` and
+- macOS: `sol pack` output passes `codesign --verify --strict` and
   `spctl --assess --type execute` after ad-hoc signing, launches from a
   quarantined copy, and runs (window up, `GPU ready`). Same for
-  `srt pack --flux` (fluxrt).
-- Windows: `srt pack` output can be `signtool sign`ed and then passes
+  `sol pack --flux` (fluxrt).
+- Windows: `sol pack` output can be `signtool sign`ed and then passes
   `signtool verify /pa`; the runner still finds its pack.
 - Linux unchanged; the trailer reader stays for it.
 - The `packer.ts` / `main.rs` / `fluxrt.rs` comments describe the

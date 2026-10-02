@@ -1,12 +1,12 @@
 ---
-title: Move the srt dev flow into flux and make ports an output
-description: Landed 2026-08-25/26: one flux process hosts the dev server (port remembered, else the first free from 34884, or --port; loopback by default, --lan), a registry keyed by project root or file with one server per key, --file/--project modes with no upward search, and bun kept only for bundling, typechecking and the MCP bridge. The self-pack (srt as a packed flux app) is an ideas.md line.
+title: Move the sol dev flow into flux and make ports an output
+description: Landed 2026-08-25/26: one flux process hosts the dev server (port remembered, else the first free from 34884, or --port; loopback by default, --lan), a registry keyed by project root or file with one server per key, --file/--project modes with no upward search, and bun kept only for bundling, typechecking and the MCP bridge. The self-pack (sol as a packed flux app) is an ideas.md line.
 tags: [cli, flux, dev-server, mcp, bundler, repl, ports, registry]
 created: 2026-07-13
 completed: 2026-08-26
 ---
 
-# Move the srt dev flow into flux and make ports an output
+# Move the sol dev flow into flux and make ports an output
 
 Reshaped 2026-08-25 from the earlier "collapse the repl/dev-server split"
 note. The direction is unchanged; the port-less server design is folded in
@@ -15,11 +15,11 @@ server's identity.
 
 # Today
 
-`srt` is a bun script. `srt run` is bun spawning two children and driving one
+`sol` is a bun script. `sol run` is bun spawning two children and driving one
 of them:
 
 ```
-bun (srt: args, Bun.build, fs.watch, repl, tsc, shutdown policy, live.json)
+bun (sol: args, Bun.build, fs.watch, repl, tsc, shutdown policy, live.json)
   -> flux  (server/main.ts: serve(), /__control__, /__proxy__, tunnel)
        -> bun bundle-cli.ts   (only on an MCP reload)
   -> solidrt-go --dev-server 127.0.0.1:<port>
@@ -30,12 +30,12 @@ and polls `/__internal__/clients` for startup and for shutdown-when-empty.
 
 Identity is the port everywhere: `-s N` is `34884 + N`, the registry folder
 is `~/.solidrt/servers/<port>/`, the tunnel key lives there, the MCP bridge
-and `srt client -s` dial by it.
+and `sol client -s` dial by it.
 
 ## What the split costs
 
 - The registry record is written by bun but describes flux's pid and port.
-  `srt server` on SIGTERM removes the record and orphans flux: a live server
+  `sol server` on SIGTERM removes the record and orphans flux: a live server
   becomes invisible while its port stays taken. A crash leaves the inverse.
 - `requireFreePort` probe-binds in bun, flux binds later: a TOCTOU, and the
   only reason a port clash needs a friendly message at all.
@@ -63,7 +63,7 @@ Everything else is generic and ports to flux modules: `fs`, `dir`, `path`,
 `process`, `subprocess`, `serve`, `p2p`.
 
 ```
-flux (srt: args, serve(), registry, watcher, repl, control API, tunnel)
+flux (sol: args, serve(), registry, watcher, repl, control API, tunnel)
   -> bun bundle-cli.ts     (every rebuild, one call site)
   -> bun typecheck-cli.ts  (check, startup typecheck)
   -> solidrt-go --dev-server 127.0.0.1:<bound port>
@@ -88,7 +88,7 @@ restarts, so tunnel tickets (UDP port pinned to the dev port) and client
 ## Bind address
 
 Default is loopback only (`host: 127.0.0.1`). `--lan` binds every interface
-as today, and is what prints the LAN address QR and what `srt client
+as today, and is what prints the LAN address QR and what `sol client
 --android` needs; without it the server prints no address, since there is
 none to reach. The p2p tunnel (`--tunnel`) is independent of this: it is an
 iroh endpoint, not the TCP listener, so ticket-paired devices work with the
@@ -113,7 +113,7 @@ yes                    file       error, unless --project <file> (project at cwd
 ```
 
 - **Project mode**: project root = cwd. Assets, the `/assets/` route, the
-  watch scope (`src/` + `assets/`), `.srt-data/`, appId and the manifest all
+  watch scope (`src/` + `assets/`), `.solidrt-data/`, appId and the manifest all
   hang off it. `projectDirFor`'s upward walk and the bridge's `findProjectDir`
   go away.
 - **File mode**: sourceDir = the file's directory, no assets, no `/assets/`
@@ -125,7 +125,7 @@ yes                    file       error, unless --project <file> (project at cwd
 ## One server per key
 
 Registry key = the canonical project root (project mode) or the canonical
-file path (file mode). Both kinds register. A second `srt run` on the same
+file path (file mode). Both kinds register. A second `sol run` on the same
 key refuses and prints the running server's port, so resolution never has
 more than one candidate and there is no `--name`.
 
@@ -140,8 +140,8 @@ Written and removed by the process that owns the pid and the port, so the
 orphan and crash cases collapse to one: a record whose pid is dead is stale,
 nothing else. The folder name is never parsed back; `live.json` is the record.
 
-Resolution is one function shared by `srt client` (no flags, from cwd) and
-`srt mcp`: the project server whose key is cwd; otherwise the file servers
+Resolution is one function shared by `sol client` (no flags, from cwd) and
+`sol mcp`: the project server whose key is cwd; otherwise the file servers
 whose file lies under cwd, if exactly one; otherwise an error listing them.
 The control response's `x-solidrt-project` header (now carrying the key)
 confirms the match, as `mcp.ts` does today. `-s` goes away; `--port` stays
@@ -149,21 +149,21 @@ as the explicit override on `run`/`server`/`mcp`.
 
 ## Commands under the same table
 
-`srt run` = `srt server` + one attached local client; both take the mode
-table above. `srt client` with no flags resolves from cwd exactly like
-`srt mcp`; `--server <host[:port]>` stays for remote servers. The local
+`sol run` = `sol server` + one attached local client; both take the mode
+table above. `sol client` with no flags resolves from cwd exactly like
+`sol mcp`; `--server <host[:port]>` stays for remote servers. The local
 client is spawned by the server process itself (it alone knows the bound
 port) as `solidrt-go --dev-server 127.0.0.1:<port> --data-root
 ~/.solidrt/clients --client <M>`; the exit policy (last client gone -> server
 exits) runs in-process against the ws client set, no polling. `-c` defaults
 to 0; storage is per appId under a client tree, so only two clients of the
-same app need distinct slots. `srt client --android` requires a server
+same app need distinct slots. `sol client --android` requires a server
 started with `--lan` (or `--tunnel`) and takes the address from the record.
 
 File-mode build outputs (isolate bundles, the proxy cache) live under the
-server folder `~/.solidrt/servers/<key hash>/`, not in a `.srt-data/` next
+server folder `~/.solidrt/servers/<key hash>/`, not in a `.solidrt-data/` next
 to the file: nothing owns that directory. Project mode keeps
-`<project>/.srt-data/`.
+`<project>/.solidrt-data/`.
 
 The repl `load <file>` command was dropped here (it moved the entry
 mid-session, which under one-server-per-key would change the key), then
@@ -174,20 +174,20 @@ moves, the key never does. It names what the server was started for, and
 
 ## Packaging
 
-`bin/srt` is a bun shim (`#!/usr/bin/env bun` importing `src/main.ts`) and
+`bin/sol` is a bun shim (`#!/usr/bin/env bun` importing `src/main.ts`) and
 stays one: resolving the platform package's binaries is node module
 resolution, which is bun's job, and the launcher already does nothing but
 resolve, build the config and spawn `flux`. The server bundle is prebuilt
 at release time (`scripts/build-server.ts` -> `dist/server.js`, shipped in
 the package; a checkout builds it per launch into a temp file when the
-prebuilt is absent), so an installed srt never bundles the server.
+prebuilt is absent), so an installed sol never bundles the server.
 
-The shim exec'ing `flux` directly, and `srt pack --flux` packing srt as a
+The shim exec'ing `flux` directly, and `sol pack --flux` packing sol as a
 flux app, wait for a flux-side story for finding `solidrt-go`, `bun` and
 the platform package; until then the extra move buys nothing.
 
 `bundle`, `pack` and `render` are one-shot bun commands under the same mode
-table as `run`: `srt bundle` builds the project at the cwd, `srt bundle
+table as `run`: `sol bundle` builds the project at the cwd, `sol bundle
 <file>` a file on its own, `--project`/`--file` resolve a file in a project
 root. The build root is the cwd (`dist/bundle`, `dist/render`, `dist/pack`
 under it). `check` is the one command that walks up from each entry: it
@@ -224,11 +224,11 @@ Checked 2026-08-25; each is its own small item and useful on its own:
    signal relay) plus the registry readers (`client`, `mcp`, `--android`)
    and the bundle-cli subprocess. `-s` removed, `--file`, `--project`,
    `--lan` added, `--port` kept; loopback bind by default; `/__internal__/`,
-   repl, watcher, `load` and `watch` gone. `srt mcp` stays bun for good: it
+   repl, watcher, `load` and `watch` gone. `sol mcp` stays bun for good: it
    is a stdio JSON-RPC server on the MCP SDK, and flux has no stdin.
    Verified: file mode on a root probe (OS port, record, reload, MCP
    resolution from the repo root, duplicate refused, SIGTERM drops the
-   record), project mode in examples/hello-world (assets route, `srt client`
+   record), project mode in examples/hello-world (assets route, `sol client`
    from the root, ambiguity error). Found and fixed on the way: `flux:process`
    `on()` unsubscribe never stopped the OS signal watcher, so a server that
    unsubscribed at shutdown never went idle (`flux/tests/process.rs`).
@@ -239,10 +239,10 @@ Checked 2026-08-25; each is its own small item and useful on its own:
    the server after the initial bundle, not awaited, prebuilt entries
    skipped); `bundle`/`pack`/`render` under the mode table, build root =
    cwd, `projectDirFor` and the upward walk gone except in `check`; file
-   mode bundles no isolates. Scaffold scripts follow (`srt run`, `srt pack
+   mode bundles no isolates. Scaffold scripts follow (`sol run`, `sol pack
    -o out`). The self-pack (see Packaging) is an ideas.md line. The shim exec'ing flux is
-   settled by [done/srt-command-folders.md](srt-command-folders.md):
-   `bin/srt` stays a bun launcher that spawns the flux server (one process,
+   settled by [done/sol-command-folders.md](sol-command-folders.md):
+   `bin/sol` stays a bun launcher that spawns the flux server (one process,
    complete on its own, that the console spawns directly), and the layout
    named under Related there has been regrouped into `src/<command>/`.
 

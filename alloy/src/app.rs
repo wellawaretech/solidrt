@@ -66,7 +66,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
     sdl3::hint::set("SDL_POLL_SENTINEL", "0");
   }
 
-  // A panic in the `run` closure (the srt-ui thread) would otherwise strand
+  // A panic in the `run` closure (the sol-ui thread) would otherwise strand
   // the window: main keeps pumping events over a black surface until it is
   // killed. Let the default hook print its report, then exit, so a failed
   // assertion in a probe takes the process down at once. An embedder's own
@@ -87,7 +87,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   crate::sdl_utils::init_android_context();
 
   // The headless mode wants no display at all: SDL's offscreen video driver
-  // backs the window with an EGL pbuffer, so `srt render` and `srt test` run
+  // backs the window with an EGL pbuffer, so `sol render` and `sol test` run
   // in CI, over SSH, on any headless box - and its fake display has no scale
   // to inherit. Where the driver fails only because the GL stack lacks EGL
   // device enumeration (ANGLE never implements it), the same pbuffer is
@@ -830,7 +830,7 @@ impl App {
             if timed_out {
               // Debug, not warn: a GPU-saturated device (Android TV) misses
               // vsyncs in steady state, one line per missed frame.
-              // SRT_LOG=debug surfaces them when diagnosing the vsync source
+              // SOLIDRT_LOG=debug surfaces them when diagnosing the vsync source
               // itself.
               log::debug!("[alloy] vsync signal missed; emitting frame signal after timeout");
             }

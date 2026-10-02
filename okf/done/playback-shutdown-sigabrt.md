@@ -33,7 +33,7 @@ restructured; the other half is
 
 ## Captured (2026-08-30)
 
-The stderr the note asked for. `srt render --file packages/core/examples/
+The stderr the note asked for. `sol render --file packages/core/examples/
 frame-animation.tsx --duration 0.2` (and `stagger.tsx`; any example that
 keeps requesting frames) prints, after `recording complete (12 of 12
 frames)`:
@@ -62,7 +62,7 @@ complete capture reads as a failed verification.
 
 ## Resolution (2026-09-03)
 
-Not intermittent by the time it was looked at: every `srt render` ended in
+Not intermittent by the time it was looked at: every `sol render` ended in
 a signal, 139 in most runs and 134 in some, static apps included, so the
 exit-code gate never read success. Two exit paths, one mechanism, both
 caught in backtraces:

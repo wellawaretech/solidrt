@@ -1,5 +1,5 @@
 // Matching, formatting and link normalization over a small tree.
-// `srt test packages/router`.
+// `sol test packages/router`.
 import { expect, test } from "flux:test"
 import { createRootRoute, createRoute, formatPath, linkToPath, matchPath, place } from "../src/route.ts"
 

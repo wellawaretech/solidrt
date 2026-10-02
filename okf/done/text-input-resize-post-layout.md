@@ -72,7 +72,7 @@ and back, the scroll follows the caret through both, typing past the box
 scrolls.
 
 Nine empty multiline fields in panes sliding between two sizes on the
-SM-T500 (`srt android --census` and `get_stats`): postLayout 24.1 ms, 41
+SM-T500 (`sol android --census` and `get_stats`): postLayout 24.1 ms, 41
 presents over 2.3 s at 50 ms p50, before; 8.3 ms after the memo alone; 1.6
 ms, 119 presents at 16.7 ms p50 (114 at one refresh) with the gates, the
 same as nine fixed-size fields. performance.md carries the rule.

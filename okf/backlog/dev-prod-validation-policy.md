@@ -42,7 +42,7 @@ the throw-vs-warn switch for this whole class is those two sites, not 70.
 
 Update 2026-07-25: core's `process.env.NODE_ENV` read (renderer leak
 sentinel) migrated to `import.meta.env.DEV`, a bundle-time constant the
-srt bundler defines - deliberately NOT this runtime signal, because that
+sol bundler defines - deliberately NOT this runtime signal, because that
 site wants dead-code elimination and a runtime value can never fold. The
 two stay separate concerns: `import.meta.env.DEV` = bundle flavor
 (compile-time, foldable), this item = deployment context (runtime,

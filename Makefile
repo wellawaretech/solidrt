@@ -14,7 +14,7 @@ flux:
 	$(MAKE) -C flux build
 
 # The apps in apps/, each built into whatever carries it: the console packed
-# for the CLI (`srt console` hands the .srtapp to the runner), the player and
+# for the CLI (`sol console` hands the .solapp to the runner), the player and
 # its BSOD screen bundled for the go client to embed. `make client` builds
 # the player bundles because it compiles them in; nothing but this builds the
 # console, so run it after a console, core or components change.

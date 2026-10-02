@@ -1,4 +1,4 @@
-// `srt android --census`: the SurfaceFlinger present census, engine-free.
+// `sol android --census`: the SurfaceFlinger present census, engine-free.
 // The compositor keeps a short per-layer history of frame timestamps
 // (`dumpsys SurfaceFlinger --latency <layer>`): for every buffer the app
 // queued, the time it was queued (the "desired present" column when the app

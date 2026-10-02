@@ -12,7 +12,7 @@
 import { Show, For } from "solid-js"
 import { View, Card, Text, TextInput, Button, space } from "@solidrt/components"
 import { useRouter } from "@solidrt/router"
-import { canDiscover, discover } from "srt:dev"
+import { canDiscover, discover } from "sol:dev"
 import { BackButton } from "./back-button"
 import { ScanButton } from "./scan-button"
 import { recentAddresses } from "./dev-connection"

@@ -217,7 +217,7 @@ displacement - and `cullMargin` (world units, Godot's
 `extra_cull_margin`) for bounded displacement such as wind. Sprites
 cull by their quad's reach at any facing. A SKINNED part is culled by
 the union of its joints' boxes (the bake computes each joint's
-influence box in joint space, `ModelSkin.jointBounds`, .srtm VERSION
+influence box in joint space, `ModelSkin.jointBounds`, .sol3m VERSION
 5; the joint nodes carry them as culling-only bounds, outside the
 picking index), so the box follows the pose with no per-frame JS -
 Unity's bone bounds, Godot's per-bone AABBs; no `updateWhenOffscreen`
@@ -409,7 +409,7 @@ that pop in and shrink away on tap, the shelf cascading out and back
 through `<Show>`. Each natural settle calls the node's `onTransitionEnd`
 (plain field like the pointer handlers) with `{ component }` - never on
 a cancel, snap, leave or exit; the raw "spatialTransitionEnd" engine
-event (srt:events, carrying the CORE node id `_node`) stays for
+event (sol:events, carrying the CORE node id `_node`) stays for
 flux:spatial consumers.
 
 ### Geometry layout, indices and topology
@@ -495,7 +495,7 @@ so the mesh picks and culls where it is now drawn (the box follows at
 the next flush, the triangle index is rebuilt by the next query - a
 deforming mesh needs no re-attach). transformGeometry and
 the edge builders share extra streams with their source; merge
-concatenates every stream; the `.srtm` container refuses streams (run
+concatenates every stream; the `.sol3m` container refuses streams (run
 time data). `setDrawRange(mesh, first, count?)` draws indices `[first,
 first + count)` of the mesh's geometry (Three's `setDrawRange`, on the
 mesh because the scene owns the entries), applied to every entry of the
@@ -550,12 +550,12 @@ are Solid-free and
 GPU-free BY DESIGN so they can be checked headless and run under bun:
 `src/model-data.ts` re-exports exactly this set as the published
 `@solidrt/3d/model` entry (the bake tool and app bake scripts), and
-`tests/model-data.test.ts` imports it under `srt test`, on the bare flux
-binary, so a gui or `srt:` import creeping into any of them fails there
+`tests/model-data.test.ts` imports it under `sol test`, on the bare flux
+binary, so a gui or `sol:` import creeping into any of them fails there
 (a headless `flux:` import would not); keep them that way.
 `src/splat-data.ts` is its own published entry the same way
 (`@solidrt/3d/splat`, guarded by `tests/splat-data.test.ts`).
-The tests under `tests/` run with `bun run srt test packages/3d` from the
+The tests under `tests/` run with `bun run sol test packages/3d` from the
 repo root, or one file, or `--filter <text>` for the tests whose name
 contains it: the pure modules on the bare flux binary, and the files
 that need a GPU (`.test.tsx`, importing `@solidrt/test`) on the
@@ -1664,10 +1664,10 @@ specular, `envIrradiance` - the fully rough sample along the normal, as
 Three's getIBLIrradiance and Godot read it - added to the hemisphere
 for the diffuse) and every `phong({ reflectivity })` material mirrors,
 typically the skybox's own cube turned with it. The cube to use is a
-BAKED one: `bun run srt tool 3d/environment sky.hdr -o assets/sky.srte`
+BAKED one: `bun run sol tool 3d/environment sky.hdr -o assets/sky.sol3e`
 turns an equirectangular Radiance .hdr (Poly Haven's are CC0) into the
 six faces plus the GGX-prefiltered mip chain in linear float, and
-`await loadEnvironment("assets/sky.srte")` uploads it as an explicit
+`await loadEnvironment("assets/sky.sol3e")` uploads it as an explicit
 "rgba16f" chain (createCubeTexture's array-of-levels form: no generated
 mipmaps, so no half-float render support needed - it works on every
 device; created after an await, so not auto-freed). Unity convolves at
@@ -1682,7 +1682,7 @@ is a coarse average - fine for a sky gradient, wrong for a photograph.
 A 128 environment (2 MiB, the default) lights any surface; for a
 mirror-finish showpiece bake at 256, and for a crisp backdrop pair it
 with a separate hi-res LDR skybox (a 2k panorama through equirectToCube)
-as `background` while the .srte stays the `environment`. Scene-level like Three's
+as `background` while the .sol3e stays the `environment`. Scene-level like Three's
 `scene.environment`, Unity's environment reflections and Godot's
 sky-lit reflections: ONE `uEnv` samplerCube bound on every target the
 scene draws into (a 1x1 black placeholder while unset) and one
@@ -1750,7 +1750,7 @@ one), then the PREFILTER: the faces convolved on the GPU into a second,
 `mipmap: true` cube target level by level (`renderTarget(chain, face,
 level)`, one small pass each - 48 at 128 - the bake tool's GGX
 importance sampling as a fragment, `createPrefilter` in environment.ts,
-with the same roughness-to-level rule as a .srte chain), so `standard`
+with the same roughness-to-level rule as a .sol3e chain), so `standard`
 blurs a probe by roughness exactly like a baked environment; `prefilter:
 false` skips it and hands out the sharp faces (Three's CubeCamera: a
 mirror at every roughness). COST: the chain's passes are tiny, but a
@@ -1808,7 +1808,7 @@ clamp (`repeat` also wraps vertically and bleeds the poles). An HDR
 panorama uploaded as rgba16f converts into a half-float cube (sharp:
 a skybox, or `mipmap: true` for the box chain); its PREFILTERED form is
 the bake tool above, whose CPU pipeline (`src/environment-bake.ts`:
-decodeHdr, panoramaToCube, prefilterCube, the .srte encode/decode) is
+decodeHdr, panoramaToCube, prefilterCube, the .sol3e encode/decode) is
 pure TypeScript and bun-tested - there is no runtime .hdr decoder.
 
 ### Fog
@@ -2324,8 +2324,8 @@ for the loaders that scope is the caller's at the call, captured before
 the await, so a model loaded inside a memo goes with the memo's rerun
 and one loaded in a component with its unmount. A load that settles
 after its scope is gone (unmounted mid-load) is freed on arrival and
-resolves already disposed - nothing owns it any more. `loadModel` reads the baked `.srtm` written by `srt tool
-3d/model <in.gltf|glb> -o assets/<name>.srtm`: the same parse run once
+resolves already disposed - nothing owns it any more. `loadModel` reads the baked `.sol3m` written by `sol tool
+3d/model <in.gltf|glb> -o assets/<name>.sol3m`: the same parse run once
 at build time, stored in the GPU layout, so loading is views onto the
 file's bytes plus the image decodes. Numbers from a 32k-vertex, 6-texture model
 on a release client: `parseGltf` 124 ms on flux (22 ms under bun) against
@@ -2336,7 +2336,7 @@ models and a binary import (`import bytes from "./x.glb" with { type:
 
 #### Compressed textures
 
-`srt tool 3d/model <in> -o assets/<name>.srtm` bakes the images
+`sol tool 3d/model <in> -o assets/<name>.sol3m` bakes the images
 too: each becomes a KTX2 compressed texture with its mip chain. The file is the
 same for every platform; at load each device turns the images into the
 block format its GPU samples (BC7 on desktops, ETC2 elsewhere), which
@@ -2456,12 +2456,12 @@ import type { ModelData } from "@solidrt/3d/model"
 // takes `placements`), materials as glTF-shaped records, app data in
 // `extras` (JSON) and `blobs` (named bytes, each an aligned block).
 let data: ModelData = { nodes, parts, skins: [], clips: [], materials, images: [], bounds, extras: { spawn }, blobs: { grid } }
-await Bun.write("assets/level.srtm", encodeModel(data))
+await Bun.write("assets/level.sol3m", encodeModel(data))
 ```
 
-`loadModel("assets/level.srtm")` then builds it like any authored model;
+`loadModel("assets/level.sol3m")` then builds it like any authored model;
 `model.extras` and `model.blobs` hand the app data back (blobs are views
-onto the loaded bytes). `srt tool 3d/model` is the same entry applied
+onto the loaded bytes). `sol tool 3d/model` is the same entry applied
 to a glTF, so the two bakes share one code path.
 
 ### Async loading
@@ -2479,7 +2479,7 @@ PENDING_ASYNC_UNTRACKED_READ, and any element the component builds before
 the suspending read is orphaned on the boundary's retry and never freed
 (the dev leak sentinel reports it) - so the suspending component creates
 no elements of its own. Async here means the file read: the parse and
-createModel run synchronously on main. Bake anything big to .srtm; when
+createModel run synchronously on main. Bake anything big to .sol3m; when
 a source glTF must be parsed at runtime, do the parse in an isolate
 (parseGltf's result is plain data and copies across) and keep
 createModel on main.
@@ -2552,10 +2552,10 @@ rigged one; linear and premultiplied as glTF stores it) and the default
 material takes `vertexColors: true` for such parts - the callback's
 fourth argument says so, and a material shared by painted and unpainted
 parts is made once per variant, like the skinned split.
-A `.srtm` baked before the material records carried the PBR fields
+A `.sol3m` baked before the material records carried the PBR fields
 (file version 3), or before the vertex formats took the WebGPU spelling
 and byte counts (file version 5), is rejected by loadModel - re-bake
-with `srt tool 3d/model`. A baked part keeps a quantized export's
+with `sol tool 3d/model`. A baked part keeps a quantized export's
 bytes: u8 colors, u8/u16 joints and normalized weights, u16 uvs land in
 their own formats, positions and normals as floats.
 
@@ -2695,10 +2695,10 @@ mesh (JS-written records, no nodes) cannot morph: rejected at add().
 
 Not in the subset, dropped: tangents and further UV sets; samplers are
 ignored (every texture repeats); additive blending draws as base color.
-The follow-ups are filed in okf/backlog/3d-model-loader.md. The `.srtm`
+The follow-ups are filed in okf/backlog/3d-model-loader.md. The `.sol3m`
 container is VERSION 11 (node table in the header, node-local vertices,
 skins, clips, packed morph targets, app data, images under their
-names); older bakes are rejected - re-bake with `srt tool 3d/model`.
+names); older bakes are rejected - re-bake with `sol tool 3d/model`.
 
 ## Splats
 
@@ -2715,12 +2715,12 @@ successors) as ordinary content, the model-loading split repeated:
   times opacity, so the first n are the scene at n), y-down captures
   (.ply, .splat) stood up to y-up (positions and covariances rotated
   together; `keepOrientation` opts out, `.spz` is y-up already), bounds
-  measured. `encodeSplat`/`decodeSplat` round-trip the `.srts` container
+  measured. `encodeSplat`/`decodeSplat` round-trip the `.sol3s` container
   (the record and SH blocks, next bullet); decode is a header parse
-  plus byte VIEWS, nothing per-splat. `srt tool 3d/splat <in> [-o
-  out.srts] [--sh 0..3] [--keep-orientation]` is the parse and bake
+  plus byte VIEWS, nothing per-splat. `sol tool 3d/splat <in> [-o
+  out.sol3s] [--sh 0..3] [--keep-orientation]` is the parse and bake
   under bun (tools/splat.ts); an app bake script uses the same entry.
-- The `.srts` record (version 2) is 32 bytes = two rgba32ui texels:
+- The `.sol3s` record (version 2) is 32 bytes = two rgba32ui texels:
   center float32x3 + sRGB color and opacity unorm8x4, then the
   covariance upper triangle as six float16 + a spare word
   (SPLAT_ATTRIBUTES as a byte layout, SPLAT_RECORD_TEXELS). `--sh 1..3`
@@ -2731,7 +2731,7 @@ successors) as ordinary content, the model-loading split repeated:
   rgb interleaved), 32/48/96 bytes per splat of texture, so the
   default is 0 and a bake opts in. The y-up flip negates the
   coefficients whose basis is odd in (y, z).
-- On the runtime, `loadSplat(path)` reads a `.srts` (fetch + decode,
+- On the runtime, `loadSplat(path)` reads a `.sol3s` (fetch + decode,
   the loadModel shape) and `createSplatMesh(data, { count?, material?,
   label? })` / `<SplatMesh>` shows it: a RecordMesh in the INDEXED form
   (see "Instance order") - the records handed to the engine as the
@@ -2828,7 +2828,7 @@ successors) as ordinary content, the model-loading split repeated:
   ambient probe, this does not). glTF's default metallic factor is 1,
   so an untextured asset is all metal, and createModel's default is
   `standard`: give a model scene an `environment` (loadEnvironment's
-  baked .srte, or the skybox's cube), or pass `phong` as the material.
+  baked .sol3e, or the skybox's cube), or pass `phong` as the material.
 - Light intensities are the same numbers for `phong` and `standard`: 1
   lights a white matte surface to 1 face-on. A Three scene's intensities
   are a factor pi larger for the same look; divide when porting.
@@ -2901,7 +2901,7 @@ successors) as ordinary content, the model-loading split repeated:
 - A generated cube chain (`mipmap: true` from six faces) is a box
   filter, not the GGX convolution the roughness-to-level rule assumes:
   rough reflections read too sharp and the diffuse `envIrradiance` is a
-  4x4 average. Bake with `srt tool 3d/environment` for anything
+  4x4 average. Bake with `sol tool 3d/environment` for anything
   photographed; the JS sky gradients in the examples get away with it.
 - The background covers the whole target with depth off, drawn first: it
   REPLACES the clearColor visually (the clear still runs; you just never

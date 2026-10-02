@@ -1,5 +1,5 @@
 // The cascade fit's pure pieces (math.ts), checked against the geometry
-// they claim: `srt test packages/3d`.
+// they claim: `sol test packages/3d`.
 import { expect, test } from "flux:test"
 import { cascadeBoundary, cascadeSplit, frustumSliceSphere, lookAt, mat4 } from "../src/math.ts"
 import { snapToGrid } from "../src/math.ts"

@@ -1,4 +1,4 @@
-// Models in a scene: ModelData (parsed glTF or a decoded .srtm) becomes a
+// Models in a scene: ModelData (parsed glTF or a decoded .sol3m) becomes a
 // Group carrying the file's node hierarchy - nested Groups with the file's
 // local TRS, each part's mesh under its node - with the images uploaded as
 // textures and a material per glTF material: Three's `gltf.scene`, an
@@ -13,7 +13,7 @@
 // them and detaches the group. loadGltf / loadModel are the
 // read-then-create conveniences over flux:fs; parseGltf / decodeModel +
 // createModel are the primitives under them, for bytes obtained any other
-// way (a binary import, a fetch). Compressed images (KTX2, what `srt tool
+// way (a binary import, a fetch). Compressed images (KTX2, what `sol tool
 // 3d/model` bakes) are turned into this device's block format by
 // transcodeModelImages, the one asynchronous step between the two.
 
@@ -439,7 +439,7 @@ function buildOwned(owner: Owner | null, opts: ModelOptions | undefined, build: 
  * Read a .glb or .gltf (with its external .bin and image files, resolved
  * next to it) and build the model. The parse runs on the runtime - fine
  * for models of tens of thousands of vertices; bake bigger ones with
- * `srt tool 3d/model` and use loadModel.
+ * `sol tool 3d/model` and use loadModel.
  */
 export async function loadGltf(path: string, opts?: ModelOptions): Promise<Model> {
   let owner = getOwner()
@@ -456,7 +456,7 @@ export async function loadGltf(path: string, opts?: ModelOptions): Promise<Model
   return buildOwned(owner, opts, () => createModel(data, opts))
 }
 
-/** Read a baked .srtm model (`srt tool 3d/model`) and build it: no parsing,
+/** Read a baked .sol3m model (`sol tool 3d/model`) and build it: no parsing,
  * the geometry views the file's bytes directly. */
 export async function loadModel(path: string, opts?: ModelOptions): Promise<Model> {
   let owner = getOwner()

@@ -20,7 +20,7 @@ unrelated work.
 Done looks like: a CI job that catches this class on the PR that introduces
 it. Two tiers, cheapest first:
 
-1. Bundle + import smoke, no runtime binary needed: run the `srt bundle`
+1. Bundle + import smoke, no runtime binary needed: run the `sol bundle`
    step (parse/resolve errors) and `bun -e 'import("./website/src/tokens.ts")'`
    (headless-import regressions of the components theme). Cheap enough for the
    existing js job.

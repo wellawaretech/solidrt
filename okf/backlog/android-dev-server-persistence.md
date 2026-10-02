@@ -9,7 +9,7 @@ created: 2026-07-27
 Split out of idle-tick-gpu-backlog-runaway.md.
 
 `spawnAndroidClient` (packages/cli/src/android.ts) hands the client the
-dev-server address as the `srt_dev_server` launch-intent extra, which
+dev-server address as the `sol_dev_server` launch-intent extra, which
 MainActivity forwards to native argv as `--dev-server`. Nothing persists it. So
 the address survives exactly as long as that process does.
 
@@ -20,7 +20,7 @@ connection and no path back from the couch. Recovery was:
 
 ```
 adb shell am start -n com.solidrt.player/com.solidrt.app.MainActivity \
-  --es srt_dev_server 192.168.2.69:34884
+  --es sol_dev_server 192.168.2.69:34884
 ```
 
 which requires knowing the host's LAN IP, that `DEV_PORT` is 0x8844, and that

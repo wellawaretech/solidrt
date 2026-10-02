@@ -1,7 +1,7 @@
 // The splat RUNTIME side: the stock splat material and createSplatMesh
 // over a baked SplatData (parse and bake live in ./splat-data.ts, the
-// runtime-free `@solidrt/3d/splat` entry; `srt tool 3d/splat` writes the
-// .srts this loads). A splat cloud here is an ordinary record mesh in the
+// runtime-free `@solidrt/3d/splat` entry; `sol tool 3d/splat` writes the
+// .sol3s this loads). A splat cloud here is an ordinary record mesh in the
 // INDEXED form - the records live in an rgba32ui data texture the vertex
 // stage fetches by id, SPLAT_GROUP splats share one drawn instance (a
 // merged-quad geometry; the instancing frontend was the measured wall),
@@ -393,7 +393,7 @@ export function createSplatMesh(data: SplatData, opts?: SplatMeshOptions): Splat
   return mesh
 }
 
-/** Read a baked .srts splat cloud (`srt tool 3d/splat`): no parsing, the
+/** Read a baked .sol3s splat cloud (`sol tool 3d/splat`): no parsing, the
  * records and the SH block view the file's bytes and upload as-is at
  * createSplatMesh. */
 export async function loadSplat(path: string): Promise<SplatData> {

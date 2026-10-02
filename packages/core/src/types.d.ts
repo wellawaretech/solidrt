@@ -9,14 +9,14 @@ import type { Element } from "solid-js"
 
 export type { TextInputHints }
 
-// The "srt:*" lattice runner modules are declared in ./runtime-modules.d.ts
+// The "sol:*" lattice runner modules are declared in ./runtime-modules.d.ts
 // (referenced above) - ambient `declare module` only reaches consumers from a
 // non-module declaration file, and this file is a module.
 
 declare global {
   interface ImportMeta {
     /**
-     * Build-mode constants, substituted textually by the srt bundler (Vite
+     * Build-mode constants, substituted textually by the sol bundler (Vite
      * vocabulary). `DEV` is true in dev bundles and false in production
      * bundles, where the substituted constant lets the minifier fold
      * dev-only code away entirely.
@@ -291,7 +291,7 @@ export interface PointerEvent {
    * pointer, so the real move after it can carry an earlier time. Use it
    * where you would reach for `performance.now()` in a handler: that one
    * measures when the handler ran, not when the input happened, and it does
-   * not follow the dev clock, `srt render` or a test. The origin is
+   * not follow the dev clock, `sol render` or a test. The origin is
    * arbitrary (compare stamps with each other, not with `performance.now()`,
    * a timer or the `onFrame` tick).
    */

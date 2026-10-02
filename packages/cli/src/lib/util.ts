@@ -31,9 +31,9 @@ export function requireBinary(name: string) {
   let hint = BUILD_HINTS[name]
   console.error(`Could not find ${name} binary.`)
   if (hint) {
-    console.error(`Build it from source: run ${hint}, with SRT_HOME pointing at your SolidRT checkout.`)
+    console.error(`Build it from source: run ${hint}, with SOLIDRT_HOME pointing at your SolidRT checkout.`)
   } else {
-    console.error("Build it from source, with SRT_HOME pointing at your SolidRT checkout.")
+    console.error("Build it from source, with SOLIDRT_HOME pointing at your SolidRT checkout.")
   }
   process.exit(1)
 }

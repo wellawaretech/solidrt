@@ -39,8 +39,8 @@ export function resolveMode(): Mode {
   let pkgPath = resolve(cwd, "package.json")
   let hasPkg = existsSync(pkgPath)
 
-  if (source !== undefined && !isSource && !(isPrebuilt && source.endsWith(".srt.js"))) {
-    fail(`Not an app entry: ${source} (expected .tsx, .jsx, .ts, .js or .srt.js)`)
+  if (source !== undefined && !isSource && !(isPrebuilt && source.endsWith(".sol.js"))) {
+    fail(`Not an app entry: ${source} (expected .tsx, .jsx, .ts, .js or .sol.js)`)
   }
   if (source !== undefined && !existsSync(source)) fail(`Entry not found: ${source}`)
   if (values.file && values.project) fail("--file and --project exclude each other")

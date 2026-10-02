@@ -19,7 +19,7 @@
 // repeats; `suns` is the two suns' world positions and `project`
 // (`{ point }`) is where a world point is on screen, for a pixel probe.
 import { createSignal, flush, onFrame, pct, render } from "@solidrt/core"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 import { cone, cylinder, DirectionalLight, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit } from "@solidrt/3d"
 import type { FogOptions, SceneHandle, Vec3 } from "@solidrt/3d"
 

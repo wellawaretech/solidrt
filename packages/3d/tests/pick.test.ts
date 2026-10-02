@@ -2,8 +2,8 @@
 // and the slab test's edge cases. (The index and the triangle narrowphase
 // live in the spatial core; alloy/src/tests/spatial.rs holds their
 // differential check.) Pure-module inputs only (math.ts imports no GUI), so
-// it runs headless on flux: `srt test packages/3d`. The random inputs come
-// from Math.random, which `srt test` seeds: the same on every run, and
+// it runs headless on flux: `sol test packages/3d`. The random inputs come
+// from Math.random, which `sol test` seeds: the same on every run, and
 // `--seed <n>` tries others.
 
 import { test } from "flux:test"

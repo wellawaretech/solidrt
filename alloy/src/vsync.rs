@@ -61,7 +61,7 @@ impl VsyncSource {
       let (req_tx, req_rx) = mpsc::channel::<(u64, Duration)>();
       let (signal_tx, signal_rx) = mpsc::channel::<(u64, std::time::Instant)>();
       std::thread::Builder::new()
-        .name("srt-vsync".into())
+        .name("sol-vsync".into())
         .spawn(move || android::run(req_rx, signal_tx, wake))
         .expect("Failed to spawn vsync thread");
       Some(VsyncSource { req_tx, signal_rx, generation: Cell::new(0) })

@@ -6,7 +6,7 @@ import type { BundleOutput } from "../types/bundle"
 
 // The single rebuild-and-push path: the initial bundle at start, every
 // MCP reload and every reload-on-save go through here. The bundle itself
-// runs in a bun subprocess (`srt bundle --json`, the one thing only bun can
+// runs in a bun subprocess (`sol bundle --json`, the one thing only bun can
 // do); this side latches the result for late-joining clients, broadcasts
 // it, and re-arms the watcher from the bundle's inputs (watcher.ts).
 
@@ -48,17 +48,17 @@ export function showBuildFailure() {
   latchAndSend(JSON.stringify(buildReload(BSOD_TRIGGER)))
 }
 
-// Rebuild from config.entry via `srt bundle --json` (a bun subprocess run
+// Rebuild from config.entry via `sol bundle --json` (a bun subprocess run
 // in config.cwd with config.entryArgs, so it resolves the mode this server
 // did), then latch (for late-joining clients) and broadcast the reload to
 // every connected client. Resolves with an error message on failure (a build
 // error), or null on success.
 export async function rebuildAndBroadcast(): Promise<string | null> {
   let config = state.config
-  let args = [...config.srt.slice(1), "bundle", "--json", "--dev", ...config.entryArgs]
+  let args = [...config.sol.slice(1), "bundle", "--json", "--dev", ...config.entryArgs]
   if (config.minify) args.push("--minify")
 
-  let result = await command(config.srt[0]!, args, { cwd: config.cwd }).output()
+  let result = await command(config.sol[0]!, args, { cwd: config.cwd }).output()
   if (!result.success) {
     let stderr = typeof result.stderr === "string" ? result.stderr : ""
     armWatcher(null)

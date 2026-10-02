@@ -73,7 +73,7 @@ What pack does with `tv: true`:
 
 - **The banner (TV-LB, TV-BN).** The runner's `android:banner` is
   `drawable-xhdpi/tv_banner.png`, the SolidRT logo with no name, and
-  `srt pack` patches the launcher icon's slots (`patchIcon` in
+  `sol pack` patches the launcher icon's slots (`patchIcon` in
   `packages/cli/src/pack/android/apk.ts`) but not the banner. Every packed
   app shows SolidRT's logo on the TV home screen, and TV-BN requires the
   app's name in its banner. The fix follows the icon: the prod overlay

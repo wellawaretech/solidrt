@@ -17,7 +17,7 @@ Sections, in this order. Omit none: a section with nothing in it says
   API                   New or changed public surface. A feature that also
                         adds surface appears twice: Features says what it
                         does, API names the surface.
-  Developer experience  What an app developer touches while building: srt
+  Developer experience  What an app developer touches while building: sol
                         commands and their output, dev server behavior,
                         launcher UI, error messages. Contributor-facing
                         build and CI work goes in Various instead.

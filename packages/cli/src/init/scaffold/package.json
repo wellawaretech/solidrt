@@ -25,12 +25,12 @@
     }
   },
   "scripts": {
-    "dev": "srt run --lan",
-    "pack": "srt pack",
-    "server": "srt server",
-    "client": "srt client",
-    "android": "srt android",
-    "test": "srt test"
+    "dev": "sol run --lan",
+    "pack": "sol pack",
+    "server": "sol server",
+    "client": "sol client",
+    "android": "sol android",
+    "test": "sol test"
   },
   "dependencies": {
     "@solidrt/core": "0.0.0",

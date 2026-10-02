@@ -23,9 +23,9 @@ fn engine_builder(base: &Path, argv: &[String], exit: bool) -> FluxEngineBuilder
   let base = base.to_path_buf();
   let builder = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv.to_vec())).isolate_resolver(move |id| {
     // Bytecode first, like the lattice resolver: a compiled bundle dir
-    // ships isolates/<id>.bin, a source layout isolates/<id>.js.
+    // ships isolates/<id>.fluxbc, a source layout isolates/<id>.js.
     let dir = base.join("isolates");
-    if let Ok(bytes) = std::fs::read(dir.join(format!("{id}.bin"))) {
+    if let Ok(bytes) = std::fs::read(dir.join(format!("{id}.fluxbc"))) {
       return Ok(ModuleCode::Bytecode(bytes));
     }
     let file = dir.join(format!("{id}.js"));

@@ -209,7 +209,7 @@ fn open_stub(
   let log = Arc::new(Mutex::new(Log::default()));
   let stub = StubPresenter { queue: VecDeque::new(), current: None, log: log.clone(), now, lead_ns, fail_after };
   let make = Box::new(move || Ok(Box::new(stub) as Box<dyn PresenterHost>));
-  let player = Player::open("srt-video-test", reader, make, clock, sink, lost).expect("open player");
+  let player = Player::open("sol-video-test", reader, make, clock, sink, lost).expect("open player");
   Rig { player, log }
 }
 
@@ -568,7 +568,7 @@ fn the_exit_follows_close_from_the_ended_failed_and_lost_states_and_a_drop() {
 #[test]
 fn a_presenter_that_cannot_be_built_ends_the_stream_and_exits() {
   let make = Box::new(|| Err("no decoder on this box".to_string()));
-  let player = Player::open("srt-video-test", open_reader(&kf_path()), make, Clock::monotonic(), None, never_lost())
+  let player = Player::open("sol-video-test", open_reader(&kf_path()), make, Clock::monotonic(), None, never_lost())
     .expect("open player");
   wait_until("the failure", || player.finished());
   let error = player.error().expect("the reason is published");

@@ -1,7 +1,7 @@
 // SQLite-backed HTTP response cache for the dev server's /__proxy__ endpoint.
 //
 // Project-local: stored at <dir>/http-cache.db, where <dir> is the project's
-// .srt-data. Entries live forever; delete the file to drop them.
+// .solidrt-data. Entries live forever; delete the file to drop them.
 //
 // Cached: GET (and HEAD) 2xx responses with no Authorization on the request
 // and no Cache-Control: no-store on either side. The cache key is
@@ -76,7 +76,7 @@ export function shouldConsider(method: string, reqHeaders: Headers): { skip: boo
 }
 
 export function isBypass(reqHeaders: Headers): boolean {
-  if (reqHeaders.get("x-srt-cache")?.toLowerCase() === "bypass") return true
+  if (reqHeaders.get("x-solidrt-cache")?.toLowerCase() === "bypass") return true
   if (hasNoCache(reqHeaders.get("cache-control"))) return true
   return false
 }

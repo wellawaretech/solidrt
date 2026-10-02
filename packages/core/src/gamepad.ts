@@ -1,5 +1,5 @@
 import { createSignal, runWithOwner } from "@solidjs/signals"
-import { on } from "srt:events"
+import { on } from "sol:events"
 
 // Gamepad State: a reactive mirror of the runtime's sticky "gamepads" event.
 //

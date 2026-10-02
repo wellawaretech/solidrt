@@ -36,7 +36,7 @@
     <!-- Audio recording support. Permissions are flavor-scoped, none here:
          the Player declares every one (src/player), a packed app declares
          what it keeps through package.json (src/runner is the runner
-         `srt pack` (APK output) patches). -->
+         `sol pack` (APK output) patches). -->
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />

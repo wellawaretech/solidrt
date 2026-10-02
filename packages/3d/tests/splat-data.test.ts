@@ -1,8 +1,8 @@
 // The runtime-free splat entry (src/splat-data.ts, published as
-// @solidrt/3d/splat) under srt test: the three capture parsers against
+// @solidrt/3d/splat) under sol test: the three capture parsers against
 // hand-built inputs, the covariance bake against the closed-form answers,
 // the y-up flip (covariance and SH), the SH texel packing, the importance
-// order and the .srts round trip - so a bake regression fails here rather
+// order and the .sol3s round trip - so a bake regression fails here rather
 // than as a wrong-looking cloud.
 import { expect, test } from "flux:test"
 import * as entry from "../src/splat-data.ts"
@@ -287,7 +287,7 @@ test("a .spz version 3 smallest-three rotation matches the version 2 bake", () =
   expect(v2.cov[1]!).toBeGreaterThan(0.5)
 })
 
-test("the .srts container round-trips and views its bytes", () => {
+test("the .sol3s container round-trips and views its bytes", () => {
   let data = parseSplat(dotSplat([
     { p: [1, 2, 3], s: [2, 3, 4], c: [10, 20, 30, 200], q: [1, 0, 0, 0] },
     { p: [-1, 0, 5], s: [1, 1, 1], c: [1, 2, 3, 40], q: [0.5, 0.5, 0.5, 0.5] },
@@ -303,7 +303,7 @@ test("the .srts container round-trips and views its bytes", () => {
   expect(back.records.buffer).toBe(file.buffer)
 })
 
-test("the .srts container carries the SH block and checks its size", () => {
+test("the .sol3s container carries the SH block and checks its size", () => {
   let sh = [0.25, -0.5, 0.75, 0.125, 0, -0.125, 0.5, 0.5, 0.5]
   let data = parseSplat(spz(2, [
     { p: [0, 0, 0], s: [1, 1, 1], a: 255, rot: [1, 0, 0, 0], sh },

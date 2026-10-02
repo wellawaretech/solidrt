@@ -212,7 +212,7 @@ jobs:
       - uses: ./.github/actions/js-install
 
       # Each dist goal builds both APKs for its ABI: the client
-      # (solidrt-go.apk) and the production runner `srt pack --apk` patches
+      # (solidrt-go.apk) and the production runner `sol pack --apk` patches
       # (solidrt.apk). Both are per-ABI by decision, no fat APK
       # (okf/backlog/standalone-android-apk.md). The Makefile stages them
       # into packages/android-<abi>/ itself.
@@ -233,23 +233,23 @@ jobs:
             exit 1
           fi
           echo "$PLAYER_KEYSTORE" | base64 -d > "$RUNNER_TEMP/player.p12"
-          echo "SRT_PLAYER_KEYSTORE=$RUNNER_TEMP/player.p12" >> "$GITHUB_ENV"
+          echo "SOLIDRT_PLAYER_KEYSTORE=$RUNNER_TEMP/player.p12" >> "$GITHUB_ENV"
 
       - name: Build APKs (arm64-v8a)
         env:
-          SRT_PLAYER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_PLAYER_KEYSTORE_PASSWORD }}
+          SOLIDRT_PLAYER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_PLAYER_KEYSTORE_PASSWORD }}
         run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}" PUBLISH=1
 
       - name: Build APKs (armeabi-v7a)
         env:
-          SRT_PLAYER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_PLAYER_KEYSTORE_PASSWORD }}
+          SOLIDRT_PLAYER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_PLAYER_KEYSTORE_PASSWORD }}
         run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist-armeabi-v7a PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}" PUBLISH=1
 
       # x86_64 is the emulator and Intel/AMD Chromebook ABI. No physical phone
       # ships it, but without it neither can run a SolidRT app from npm.
       - name: Build APKs (x86_64)
         env:
-          SRT_PLAYER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_PLAYER_KEYSTORE_PASSWORD }}
+          SOLIDRT_PLAYER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_PLAYER_KEYSTORE_PASSWORD }}
         run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist ANDROID_ABI=x86_64 PROFILE=release-opt VERSION="${GITHUB_REF_NAME#v}" PUBLISH=1
 
       - name: Upload arm64-v8a APK
@@ -425,12 +425,12 @@ jobs:
           done
 
       # The CLI package ships the dev server as one prebuilt bundle
-      # (dist/server.js, see packages/cli/Makefile), so an installed srt
+      # (dist/server.js, see packages/cli/Makefile), so an installed sol
       # runs it on the platform package's flux without bundling per launch.
       - name: Build the CLI dev server bundle
         run: make -C packages/cli dist/server.js
 
-      # The CLI package ships its own copy of the default fonts: `srt pack`
+      # The CLI package ships its own copy of the default fonts: `sol pack`
       # appends them to packed solidrt binaries (see packages/cli/src/fonts.ts).
       # They are platform-independent, so the CLI package is the channel, not
       # the per-platform binary packages.
@@ -442,11 +442,11 @@ jobs:
              packages/cli/fonts/
 
       # The CLI package also ships the dev console pre-compiled
-      # (dist/console.srtapp, see packages/cli/Makefile): `srt pack --app`
+      # (dist/console.solapp, see packages/cli/Makefile): `sol pack --app`
       # needs the platform fluxc and the staged fonts, so it runs after both.
-      # The package demos ride along pre-bundled (dist/demos/, `srt demo`).
+      # The package demos ride along pre-bundled (dist/demos/, `sol demo`).
       - name: Build the console app pack and the demos
-        run: make -C packages/cli dist/console.srtapp demos
+        run: make -C packages/cli dist/console.solapp demos
 
       # Pin every intra-monorepo (@solidrt/*) dependency specifier to the release
       # version before publishing. Source uses `workspace:*`; `bun publish` would

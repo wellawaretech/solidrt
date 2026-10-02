@@ -46,7 +46,7 @@ existed.
 - What is tested where (2026-09-30, revised 2026-10-02). forge's tests
   cover the capability logic. The flux module tests, the marshalling over
   the forge cores, are `flux/tests/*.test.ts`: typed against
-  `@solidrt/flux-types`, run by `srt test --only flux` on the four
+  `@solidrt/flux-types`, run by `sol test --only flux` on the four
   platforms, in a sandbox folder the host enters and empties before every
   engine (D38 holds for flux tests too, one folder per package under
   `dist/test/data`). They were 131 of the 173 cargo integration tests in
@@ -70,9 +70,9 @@ existed.
 - The "runtime-free entry" tests (`model-data`, `splat-data`, `textures`,
   `joints`) proved under bun that no `flux:*` import had crept into an
   entry a bake script loads under bun. On the `flux` binary the proof is
-  narrower: a gui or `srt:` import still fails to link, a headless
+  narrower: a gui or `sol:` import still fails to link, a headless
   `flux:` import (`flux:fs`, `flux:image`) does not. Closing that gap
-  needs the bundle's import list, which `srt test` has and a test does
+  needs the bundle's import list, which `sol test` has and a test does
   not; open.
 - A fake backend with a delay in its handler deadlocks a settle: the
   handler's `setTimeout` is an app timer, which fires only with a frame,
@@ -99,10 +99,10 @@ existed.
 - `fluxrt` is built without the `compile` feature and cannot evaluate
   source (`eval_source` and `ModuleCode::Source` sit behind it), so a
   module embedded as source cannot load there in any case.
-- The ten bun test files import pure modules only. `srt test` cannot run
+- The ten bun test files import pure modules only. `sol test` cannot run
   code that calls Bun APIs, which covers parts of the CLI (the bundler,
   process spawning); pure CLI logic is fine.
 - `packages/core/tests/textures.test.ts` doubles as the proof that
   `@solidrt/core/textures` imports no runtime module. The proof holds on
-  the bare `flux` binary as it does on bun: a GUI or `srt:*` import would
+  the bare `flux` binary as it does on bun: a GUI or `sol:*` import would
   fail to bundle or to link.

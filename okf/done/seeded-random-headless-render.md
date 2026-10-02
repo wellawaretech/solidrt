@@ -1,6 +1,6 @@
 ---
 title: A headless render is not reproducible when the app draws random numbers
-description: srt render stepped time deterministically but left Math.random on the engine's clock-seeded generator, so an app with particles, a shake or a shuffled list rendered other frames on every run; closed by the render host seeding the context with flux's seed_random (fixed by default, srt render --seed <n>) and freezing the wall like a test.
+description: sol render stepped time deterministically but left Math.random on the engine's clock-seeded generator, so an app with particles, a shake or a shuffled list rendered other frames on every run; closed by the render host seeding the context with flux's seed_random (fixed by default, sol render --seed <n>) and freezing the wall like a test.
 created: 2026-09-30
 completed: 2026-10-01
 ---
@@ -9,7 +9,7 @@ completed: 2026-10-01
 
 ## Symptom
 
-Two runs of `srt render` on the same app write different frames when the
+Two runs of `sol render` on the same app write different frames when the
 app calls `Math.random()`: a particle burst, a camera shake with no
 direction given, a shuffled list. Time is not the cause. Playback steps
 the frame clock and the virtual timers, so everything keyed on time is
@@ -34,7 +34,7 @@ seeds every test.
 - Playback mode seeds the app's context, with a fixed seed when nothing
   is said: the mode exists to be reproducible, so reproducible is what an
   app that says nothing gets.
-- `srt render --seed <n>` renders on another sequence.
+- `sol render --seed <n>` renders on another sequence.
 - Two runs of a render of an app that draws random numbers write the
   same frames; a test says so.
 - The dev client in run mode is untouched: an app a person looks at keeps
@@ -49,7 +49,7 @@ seeds every test.
   to the runner.
 - Decide whether a reload in a dev session under a frozen clock
   (`/clock?scale=0`) should be seedable over the control API as well;
-  the app layer of the test harness seeds through `srt:test` and does
+  the app layer of the test harness seeds through `sol:test` and does
   not need it.
 
 ## Closed (2026-10-01)
@@ -57,7 +57,7 @@ seeds every test.
 Closed by step 4.6 of [test-harness](test-harness.md) (D35):
 playback was rebuilt as a render host on alloy's stepped mode
 (`lattice/src/render_host.rs`), and the render engine is built like a
-test engine: `seed_random` with the harness's fixed seed (`srt render
+test engine: `seed_random` with the harness's fixed seed (`sol render
 --seed <n>` for another), the wall frozen (`performance.now()` 0, the
 calendar on the fixed epoch plus frame time). Verified with an app that
 colors a box by `Math.random()`: two renders byte-identical, `--seed 7`

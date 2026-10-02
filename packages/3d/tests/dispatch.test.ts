@@ -7,7 +7,7 @@
 // tap synthesis (slop, the alone rule, same-target release per instance,
 // the repeat count and its window), layout scaling, and a node that left
 // the scene mid-press. Pure-module input only (scene-pointer.ts imports
-// types), so it runs headless on flux: `srt test packages/3d`. The live
+// types), so it runs headless on flux: `sol test packages/3d`. The live
 // side (real element events off the leaf, the orbit control fed at the
 // root) is exercised by examples/pick.tsx. tests/dispatch.test.ts in
 // @solidrt/2d is the same test one dimension down.

@@ -1,4 +1,4 @@
-// The node surface the tools use, declared here so `srt check
+// The node surface the tools use, declared here so `sol check
 // packages/3d/tools/<name>.ts` typechecks them on the package's flux-typed
 // program (the nearest tsconfig is the repo root's). The tools run under
 // bun, but bun's own types cannot join this program: their globals

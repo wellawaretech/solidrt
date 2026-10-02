@@ -6,7 +6,7 @@ created: 2026-09-01
 
 # Rasterize icon SVGs with the runtime's own renderer
 
-`srt pack --apk` needs a raster PNG for the launcher icon, but the pack
+`sol pack --apk` needs a raster PNG for the launcher icon, but the pack
 pipeline is pure TypeScript and cannot rasterize `icon.svg`: `flux:svg`
 parses to draw data and `flux:image` encodes RGBA8, with no CPU path
 rasterizer between them - rasterization lives in the alloy stack. So today
@@ -33,7 +33,7 @@ Two landing shapes, additive:
 - **Repo script** (minimal first stage): `scripts/render-icon.tsx` renders
   a given SVG to a PNG sibling; its first job is keeping the scaffold logo
   pair (`packages/cli/src/init/scaffold/icon.{svg,png}`) in sync.
-- **Pack time**: `srt pack --apk` rasterizes `assets/icon.svg` itself, and
+- **Pack time**: `sol pack --apk` rasterizes `assets/icon.svg` itself, and
   the PNG convention, the checked-in scaffold `icon.png`, and the
   "add assets/icon.png" note in `resolveLauncherIcon`
   (`packages/cli/src/pack/main.ts`) all disappear. This needs the CLI to

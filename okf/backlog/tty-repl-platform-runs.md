@@ -1,6 +1,6 @@
 ---
 title: The dev-server repl has only run on Linux
-description: flux:tty raw mode and the srt repl are crossterm-backed and compile for Windows and Android, but neither has been run there - the Windows console ANSI path and Android termios from a terminal emulator are unverified.
+description: flux:tty raw mode and the sol repl are crossterm-backed and compile for Windows and Android, but neither has been run there - the Windows console ANSI path and Android termios from a terminal emulator are unverified.
 tags: [flux, tty, cli, windows, android]
 created: 2026-08-26
 ---
@@ -14,7 +14,7 @@ more.
 - **Windows.** crossterm's raw mode goes through the Console API; the
   editor's cursor and clear-line sequences are ANSI, enabled by asking
   `crossterm::ansi_support::supports_ansi()` once in `set_raw_mode`. To
-  check in a checkout on Windows: `srt run` in a project, type at the prompt in Windows Terminal
+  check in a checkout on Windows: `sol run` in a project, type at the prompt in Windows Terminal
   and in a plain conhost window, Tab and Up must work, Ctrl-C must end the
   server with the record dropped, and the terminal must be usable
   afterwards.

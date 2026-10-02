@@ -15,7 +15,7 @@ self-update), launcher UI, p2p update forwarding.
 
 ## Status quo (2026-07-20)
 
-- `srt pack` produces a self-contained executable: prebuilt runner +
+- `sol pack` produces a self-contained executable: prebuilt runner +
   sectioned trailer (bytecode + font sections), writer
   `packages/cli/src/packer.ts` (kinds: 1 = bytecode, 2 = font), reader
   `lattice/src/main.rs` (`load_embedded_payload`). fluxrt still uses the
@@ -30,7 +30,7 @@ self-update), launcher UI, p2p update forwarding.
   only (server latch `packages/cli/server/rebuild.ts`; client
   `lattice/src/go/connection.rs` -> `EngineCmd::Reload`). Nothing is
   persisted client-side; a client is useless without a live server.
-- Identity: dev server persists its tunnel key (`.srt-tunnel-key`,
+- Identity: dev server persists its tunnel key (`.sol-tunnel-key`,
   project-local); the go client binds an EPHEMERAL key per run
   (`lattice/src/go/tunnel.rs:40`, dial-only today).
 
@@ -78,7 +78,7 @@ levels deep under a doubled org/displayName pref path):
 explicit --data-root (opt-in; was the dev default until 2026-07-24):
   <data-root>/
     http-cache.db           dev server proxy cache (server-side,
-                            was ./.srt-cache.db; project-local .srt-data/,
+                            was ./.sol-cache.db; project-local .solidrt-data/,
                             not the client root, since 2026-07-24)
     client<N>/
       identity/             client identity (persisted iroh key)
@@ -120,8 +120,8 @@ ignored. No running-instance check or lock: multiple instances of one
 client (or one packed app) may run concurrently; not overwriting its own
 files is the app's responsibility. Caveat: instances of the same client
 share identity/p2p.key, so concurrent tunnel binds fight over one iroh
-identity - the answer is --client 1. `.srt-tunnel-key` stays at the
-project root. An old `./.srt-cache.db` is stale and can be deleted.
+identity - the answer is --client 1. `.sol-tunnel-key` stays at the
+project root. An old `./.sol-cache.db` is stale and can be deleted.
 
 Data is always local to the machine the client process runs on - the
 dev server never stores client data. An explicit `--data-root` only
@@ -134,13 +134,13 @@ sharing on a remote client persists until stage 2, as today.
 
 ## Pack output
 
-Canonical `srt pack` output is a flat folder per target:
+Canonical `sol pack` output is a flat folder per target:
 
 ```
 dist/<target>/
   solidrt(.exe)         runner binary
   manifest.json         the version manifest
-  bundle.bin            bytecode
+  bundle.fluxbc            bytecode
   assets/...
 ```
 
@@ -175,8 +175,8 @@ later stage its ground.
 - Migrate the three existing consumers: cwd anchor -> the app's
   `data/` sandbox dir; go-client `config.json` -> `clients/<name>/`;
   fetch cache -> `clients/<name>/cache/`.
-- Dev server spawns clients with `--data-root <project>/.srt-data`;
-  `.srt-data/` added to scaffold + repo gitignore.
+- Dev server spawns clients with `--data-root <project>/.solidrt-data`;
+  `.solidrt-data/` added to scaffold + repo gitignore.
 - Migration policy for existing `SolidRT/go` contents: none (dev-only
   data today; recents and caches regenerate).
 
@@ -195,7 +195,7 @@ Stage 1 DONE 2026-07-20. Implementation notes:
 - Identity config: `packages/cli/src/project.ts` (findProjectPackage +
   loadAppIdentity; fonts.ts now shares the package.json lookup).
   Explicit bad values fail the command; derived values are sanitized.
-  `srt pack` prints the identity and warns when appId is defaulted.
+  `sol pack` prints the identity and warns when appId is defaulted.
 - Resolution + tree: `lattice/src/storage.rs` (StorageSpec/resolve/
   OnceLock init+get), consumed by the cwd anchor and fetch cache in
   lib.rs and go/config.rs (config.json now at clients/<name>/).
@@ -204,16 +204,16 @@ Stage 1 DONE 2026-07-20. Implementation notes:
   the chdir.
 - Flags: --data-root and --client on the runner (all builds);
   `clientStorageArgs()` in packages/cli/src/args.ts injects
-  --data-root <cwd>/.srt-data for `srt run`/`srt client` spawns.
-  Scaffold gitignore covers .srt-data/ (repo root already did).
+  --data-root <cwd>/.solidrt-data for `sol run`/`sol client` spawns.
+  Scaffold gitignore covers .solidrt-data/ (repo root already did).
 - Verified: unit tests (decode + resolve + traversal rejection, 5 in
   lattice/src/tests/storage.rs); packed exe with explicit identity
   creates `<XDG>/Stage1Org/Stage One/clients/default/apps/
   com.example.stage1/data` and anchors cwd there; go client with
-  --client alpha/beta creates disjoint trees under project .srt-data;
-  end-to-end `srt run` spawns the client with the project data root
+  --client alpha/beta creates disjoint trees under project .solidrt-data;
+  end-to-end `sol run` spawns the client with the project data root
   (config.json reads confirmed from the client dir). Note for future
-  debugging: `srt run` with stdin at EOF (non-interactive) races REPL
+  debugging: `sol run` with stdin at EOF (non-interactive) races REPL
   shutdown against the client spawn - test it with a terminal.
 
 ### Stage 2: version store + dev-push-as-install
@@ -251,7 +251,7 @@ Stage 2 DONE 2026-07-20. Implementation notes:
   reload message's `manifest` string field (never re-serialized), and
   the version id is the sha256 of those bytes. The BSOD trigger and
   bytecode one-shots carry no manifest and are never installed. Both
-  producers emit it: srt (repl/watcher/initial latch) and the server's
+  producers emit it: sol (repl/watcher/initial latch) and the server's
   rebuild.ts via bundle-cli's {code, map, manifest}.
 - Store: lattice/src/go/store.rs, go-only for now - packed apps
   receive no installs until OTA (stage 4), so the packed runner stays
@@ -280,7 +280,7 @@ Stage 2 DONE 2026-07-20. Implementation notes:
   clients/<name>/identity/p2p.key (64 hex chars, 0600 on unix) and
   binds the tunnel endpoint with it.
 - Verified (debug builds): 6 new unit tests (install/state/prune/
-  dedupe/hash-mismatch + key decode); end-to-end `srt run` installed
+  dedupe/hash-mismatch + key decode); end-to-end `sol run` installed
   the initial push (version dir name == sha256 of manifest.json,
   bundle hash matches its manifest entry), a watcher edit produced v2
   with previous tracking, reverting the edit deduped back into v1
@@ -309,7 +309,7 @@ folder. All three implemented.
   manifest-annotated assets in the version store (per the
   packaged-fonts plan's forward pointer); factory fonts remain the
   fallback.
-- `srt pack` gains the canonical flat folder output (see Pack
+- `sol pack` gains the canonical flat folder output (see Pack
   output); the trailer exe is reimplemented as a wrapper over it.
   Factory-version reader handles both adjacent-folder and trailer.
   (3b/3c; re-opens the packed runner's serde-free question for
@@ -329,15 +329,15 @@ Stage 3b DONE 2026-07-20. Implementation notes:
 - Pack manifests (pack-folder.ts buildPackFolder): add top-level
   org + displayName (the folder has no trailer to carry identity;
   dev manifests still omit them, so dev version ids did not churn
-  from 3a), bundle = {path: "bundle.bin", sha256, size} over the
+  from 3a), bundle = {path: "bundle.fluxbc", sha256, size} over the
   bytecode, assets = collected tree PLUS default fonts materialized
   under assets/fonts/<Noto file> (a user file already at such a path
   must be byte-identical or pack fails), fonts = the FULL resolved
   set in role order. fonts.ts split into resolvePackFonts (paths +
   isDefault) and loadPackFonts (bytes, trailer path). RUNTIME_VERSION
   const shared by both manifest builders (project.ts).
-- `srt pack --folder [-o dir]` (default dist/) writes runner copy
-  (dereferenced!) + manifest.json + bundle.bin + assets/. An
+- `sol pack --folder [-o dir]` (default dist/) writes runner copy
+  (dereferenced!) + manifest.json + bundle.fluxbc + assets/. An
   existing non-empty output dir is only reused when it already
   holds a manifest.json (then the owned files are replaced); other
   dirs are refused. Single-file exe remains the default output and
@@ -352,7 +352,7 @@ Stage 3b DONE 2026-07-20. Implementation notes:
   (missing org/displayName default from appId); the assets mount
   points at the folder. No per-boot hash verification - same trust
   as the trailer; signing is stage 4.
-- Scaffold fold-in: `srt init` creates assets/ up front (the
+- Scaffold fold-in: `sol init` creates assets/ up front (the
   watcher only picks up a folder that exists at start), scaffold
   gitignore gains dist/, AGENTS.md gains an "Assets and app
   identity" section (assets/ convention, inline-import tradeoff,
@@ -360,9 +360,9 @@ Stage 3b DONE 2026-07-20. Implementation notes:
   appId deliberately NOT pre-filled: the name-derived default plus
   the pack warning is the nudge toward a real reverse-DNS id.
 - Verified (debug builds): both feature sets compile, 14 lattice
-  tests pass; `srt pack --folder` on the 3a scratch project wrote
+  tests pass; `sol pack --folder` on the 3a scratch project wrote
   the folder (custom sans + materialized serif/mono defaults, no
-  NotoSans since the role was replaced; identity + bundle.bin in
+  NotoSans since the role was replaced; identity + bundle.fluxbc in
   the manifest); the folder runner launched from an unrelated cwd
   anchored under its own pref-path identity and read assets via the
   mount; the default single-file pack still boots from its trailer
@@ -373,13 +373,13 @@ Stage 3c DONE 2026-07-20. Implementation notes:
 - Trailer format v2 (clean break, user-approved - nothing deployed
   needs compat): the solidrt trailer is now the pack folder in
   section form. Kinds: 1 = the canonical manifest JSON verbatim,
-  2 = a manifest-listed file named by its manifest path (bundle.bin
+  2 = a manifest-listed file named by its manifest path (bundle.fluxbc
   + every asset). The old bytecode/font/identity kinds are DELETED
   from writer and reader - bundle, fonts, identity all come from
   the manifest; storage.rs decode_app_identity and packer
   encodeIdentity are gone with them. Table entry name length
   widened u8 -> u16 (asset paths can exceed 255 bytes). Magic and
-  tail layout unchanged; a stale SRT_HOME runner meeting a v2
+  tail layout unchanged; a stale SOLIDRT_HOME runner meeting a v2
   trailer degrades to "no payload" via the existing bounds checks.
   fluxrt's single-payload trailer untouched (packer packFlux).
 - One factory reader (main.rs): trailer and adjacent folder both
@@ -395,7 +395,7 @@ Stage 3c DONE 2026-07-20. Implementation notes:
   errors) so audio streaming pulls ranges without unpacking.
   fs::open_seekable now returns SeekableReader directly (flux
   stops re-boxing).
-- Pack pipeline: the default `srt pack` path reuses buildPackFolder
+- Pack pipeline: the default `sol pack` path reuses buildPackFolder
   and appends its manifest + files as sections (packer packSolid) -
   single-file is literally the wrapper over the always-built
   canonical folder content. loadPackFonts deleted
@@ -481,7 +481,7 @@ Stage 3a DONE 2026-07-20. Implementation notes:
   marks healthy at first successful frame (explicit markHealthy() can
   come later); N crashes before healthy -> revert to previous,
   quarantine.
-- `srt publish`: build + manifest + sign + upload-ready output dir
+- `sol publish`: build + manifest + sign + upload-ready output dir
   (actual upload left to the user's static host tooling initially).
 
 ## Plan-level decisions
@@ -494,7 +494,7 @@ Stage 3a DONE 2026-07-20. Implementation notes:
   the research note's earlier imports-first direction).
 - Pack output: flat dist folder, no app/ subfolder - the manifest
   defines version membership, the runner is simply unlisted.
-- Single-file exe stays the DEFAULT `srt pack` output (the trailer
+- Single-file exe stays the DEFAULT `sol pack` output (the trailer
   wrapper runs over the always-built canonical folder unless a
   folder target is selected). Trailer assets keep range-read
   semantics (known section offsets in a disk file), so streaming
@@ -517,12 +517,12 @@ Stage 3a DONE 2026-07-20. Implementation notes:
   small-apps clutter case is everyone's, not one user's). AppIdentity
   is gone from the runner - StorageSpec carries only an optional app
   id; a packed app launched with --data-root gets the dev shape. The
-  proxy cache moved from ./.srt-cache.db to .srt-data/http-cache.db
+  proxy cache moved from ./.sol-cache.db to .solidrt-data/http-cache.db
   (dev-server config gained keyDir for the tunnel key, which stays at
   the project root).
 - Project-local dev default reverted (2026-07-24): the CLI no longer
-  injects `--data-root <project>/.srt-data` when spawning clients -
-  running from arbitrary folders scattered `.srt-data` trees across
+  injects `--data-root <project>/.solidrt-data` when spawning clients -
+  running from arbitrary folders scattered `.solidrt-data` trees across
   the filesystem. Dev clients now fall back to the `SolidRT/go` pref
   path like any other go client; `--data-root` remains as an explicit
   opt-in. Because dev now lives in the pref tree, the 2026-07-21
@@ -538,9 +538,9 @@ Stage 3a DONE 2026-07-20. Implementation notes:
   `--data-root`; only packed apps ignore it (one client by definition).
   Old flat `SolidRT/go/apps/*`, named `SolidRT/go/<name>/` and
   `clients/<name>/` trees are stale, no migration. The dev server's
-  project-local proxy cache (`.srt-data/http-cache.db`) is unchanged -
+  project-local proxy cache (`.solidrt-data/http-cache.db`) is unchanged -
   it is server-side state living where the server runs. The flux bins
-  likewise dropped the cwd `.srt-data/cache` fetch cache
+  likewise dropped the cwd `.solidrt-data/cache` fetch cache
   (`FluxEngineBuilder::dev_cache_dir` deleted): bare flux scripts now
   run without a disk store entirely - storage policy left the engine,
   and only embedders opt in via the plain `cache_dir` builder.
@@ -550,14 +550,14 @@ Stage 3a DONE 2026-07-20. Implementation notes:
   actively bypasses the storage semantics (sandbox anchor, assets
   mount). Removed: the flag, the reload-message proxyFiles field, the
   ProxyFsModule/streaming-reader half of go/proxy.rs (http fetch proxy
-  stays), and the server's PUT write + dir listing + X-SRT-Type (GET
+  stays), and the server's PUT write + dir listing + X-SolidRT-Type (GET
   with range support stays for /assets and bundle serving). The one
   lost niche - transparent reads of dev-machine files outside assets/
   - gets an explicit tool if it ever comes back.
 
 ## Open
 
-- `srt publish` command shape and host-side layout conventions.
+- `sol publish` command shape and host-side layout conventions.
 - markHealthy() JS surface (defer until a real app needs richer
   health than first-frame).
 - Whether fluxrt adopts the sectioned trailer (needed if flux scripts
@@ -569,5 +569,5 @@ Stage 3a DONE 2026-07-20. Implementation notes:
 
 Status: in progress. Stages 1 + 2 + 3 (a/b/c) done + verified
 2026-07-20 (debug builds; user run pending). Next: stage 4 (OTA
-pull + minisign trust + health/rollback + srt publish; includes
+pull + minisign trust + health/rollback + sol publish; includes
 factory-payload store seeding).

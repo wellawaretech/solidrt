@@ -19,10 +19,10 @@ Per-thread CPU over 5 s, from `/proc/<pid>/task/<tid>/schedstat`:
 
 | thread | CPU per 5 s | voluntary switches | nonvoluntary |
 |---|---|---|---|
-| srt-raster | 2.7 s (54%) | 758 | 674 |
+| sol-raster | 2.7 s (54%) | 758 | 674 |
 | SDLThread | 0.26 s (5%) | 754 | 56 |
-| srt-vsync | 0.28 s (6%) | 1103 | 40 |
-| srt-ui (x2) | 0.36 s + 0.07 s | 379 + 396 | 89 + 8 |
+| sol-vsync | 0.28 s (6%) | 1103 | 40 |
+| sol-ui (x2) | 0.36 s + 0.07 s | 379 + 396 | 89 + 8 |
 
 At 300 frames that is about 8 to 9 ms of raster-thread CPU per frame.
 

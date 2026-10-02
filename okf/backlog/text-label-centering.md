@@ -9,7 +9,7 @@ created: 2026-09-27
 In a 36px Button with a 15px base, the label's ink has 14px above and 11px
 below: 1.5px low, with the layout itself centered (a 22px text box, 7px of
 padding each side). The offset is inside the text box. Measured offscreen
-(`srt render`, scale 1) on a stock Button, varying only the theme's font
+(`sol render`, scale 1) on a stock Button, varying only the theme's font
 family and base size; the offset is (space above the ink - space below) / 2,
 positive is low:
 

@@ -1,6 +1,6 @@
 ---
 title: Dev-server typecheck
-description: Run the project's tsc once at dev-server startup, fire and forget, to catch the unbound identifiers Bun.build and the QuickJS compile accept silently; srt check stays the gate.
+description: Run the project's tsc once at dev-server startup, fire and forget, to catch the unbound identifiers Bun.build and the QuickJS compile accept silently; sol check stays the gate.
 created: 2026-07-25
 completed: 2026-07-25
 ---
@@ -35,7 +35,7 @@ for app authors.
 
 Both building blocks are already implemented, not net-new:
 
-- **On-demand check**: `srt check` (`packages/cli/src/commands/check.ts`)
+- **On-demand check**: `sol check` (`packages/cli/src/commands/check.ts`)
   already bundles in-memory (no side effects) and runs the project's own
   local `tsc --noEmit --pretty false` (`typecheck()`, check.ts:48-60),
   filtering out diagnostics whose file path is under `node_modules` (since
@@ -62,16 +62,16 @@ investigation needed.
   typecheck added there.
 - Typecheck runs exactly once per dev-server process lifetime, at startup.
   Known consequence: diagnostics go stale as soon as the first hot-reload
-  edit lands; `srt check` is the answer for a fresh verdict mid-session.
+  edit lands; `sol check` is the answer for a fresh verdict mid-session.
 
 ## Staging (bare minimum first)
 
 1. Export `typecheck()` (and `findProjectRoot()`) from `check.ts` instead of
-   keeping them private, so `server.ts` can reuse the same logic `srt check`
+   keeping them private, so `server.ts` can reuse the same logic `sol check`
    already uses - no duplicated tsc-spawning/diagnostic-parsing code.
 2. In `runServerCommand()` (`packages/cli/src/commands/server.ts:14-56`), call
    the typecheck once at startup, scoped to the `source && isSource` branch
-   only (server.ts:29): the prebuilt `.srt.js` branch has no checkable
+   only (server.ts:29): the prebuilt `.sol.js` branch has no checkable
    project - a sourcemap is a position-translation table for error display,
    not a program tsc can check (tsc needs the real source tree + tsconfig +
    dependency types, which for a prebuilt bundle may not exist on this
@@ -80,7 +80,7 @@ investigation needed.
    boot sequence in the file is `startServer()` -> initial bundle ->
    `startRepl()`/`startWatcher()`; where the typecheck slots in depends on
    the decision below (blocking before the REPL, or fired-and-forgotten).
-3. Print diagnostics the same way `srt check` does (errors to `console.error`,
+3. Print diagnostics the same way `sol check` does (errors to `console.error`,
    `hidden`-count summary line).
 
 ## Decision (resolved 2026-07-25: (a), fire-and-forget)
@@ -89,14 +89,14 @@ On a startup type error, does the dev server:
 
 - **(a) print and keep running** - the bundle already succeeded and the app
   already works at runtime; a type error is a heads-up, not a hard gate.
-  `srt check` already exists as the separate hard-gate command (CI,
+  `sol check` already exists as the separate hard-gate command (CI,
   pre-commit, explicit "am I clean" check). Consistency also points here:
   the dev server already keeps running on a failed *bundle* (server.ts:39-41
   `showBuildFailure()`, watcher.ts:23 "Build failed, waiting for changes...");
-  only the one-shot paths (`bundleTo`, `srt check`) hard-exit on build errors.
+  only the one-shot paths (`bundleTo`, `sol check`) hard-exit on build errors.
 - **(b) refuse to start** - treat type errors as boot-blocking. Note this
   would be *stricter than the existing bundle-error behavior* (see above),
-  not consistent with it - a new gate, and one `srt check` already provides
+  not consistent with it - a new gate, and one `sol check` already provides
   on demand.
 
 The choice determines the execution shape, not just the message:
@@ -115,19 +115,19 @@ Decided (a), fire-and-forget.
 ## Implemented + verified 2026-07-25
 
 - `check.ts` exports `findProjectRoot`, `typecheck`, and a new `reportTypes`
-  (shared diagnostic printer, takes optional printers; `srt check` uses the
+  (shared diagnostic printer, takes optional printers; `sol check` uses the
   console defaults, the server passes the repl-aware `print`/`printErr`).
 - `server.ts` fires `startupTypecheck(source)` un-awaited after
   `startRepl()`/`startWatcher()`, guarded by `source && isSource`.
 - End-to-end run against `examples/grid.tsx` (with the motivating typo in
-  place): boot is not delayed (welcome line, `srt>` prompt, watcher all up
+  place): boot is not delayed (welcome line, `sol>` prompt, watcher all up
   first), then `examples/grid.tsx(14,22): error TS2304: Cannot find name
   'brrrreak'.` prints over the prompt, followed by the `36 type errors in
   app code` summary.
 - Finding fixed along the way: the repo-root `tsconfig.json` had no
   `exclude`, so an in-repo run swept `lattice/target/**` where CMake emits
   fake-`.ts` dependency files (`compiler_depend.ts`), drowning output in
-  thousands of junk syntax errors. `srt check` from the repo root had the
+  thousands of junk syntax errors. `sol check` from the repo root had the
   same latent problem. Added `"exclude": ["**/node_modules", "**/target"]`
   (setting exclude replaces the node_modules default, so it must be listed).
 - The flux-types wiring concern above did not materialize in-repo (no

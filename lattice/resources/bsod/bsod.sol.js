@@ -4394,14 +4394,14 @@ import * as tree2 from "flux:rendertree";
 
 // ../../packages/core/src/window.ts
 import { requestFrame, setPointerLock } from "flux:rendertree";
-import { renderFrame } from "srt:render";
-import { on as on2, once } from "srt:events";
-import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "srt:app";
+import { renderFrame } from "sol:render";
+import { on as on2, once } from "sol:events";
+import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "sol:app";
 import { platform } from "flux:process";
 
 // ../../packages/core/src/core.ts
 import * as tree from "flux:rendertree";
-import { on } from "srt:events";
+import { on } from "sol:events";
 var handlers = new Map;
 var MOVE_BIT = 1;
 var POINTER_INTEREST = {
@@ -5121,9 +5121,9 @@ function errorWindow(err, reset) {
 // ../../packages/core/src/color.ts
 import * as tree3 from "flux:rendertree";
 // ../../packages/core/src/environment.ts
-import { on as on3 } from "srt:events";
+import { on as on3 } from "sol:events";
 // ../../packages/core/src/gamepad.ts
-import { on as on4 } from "srt:events";
+import { on as on4 } from "sol:events";
 var gamepadsAccessor;
 var buttonTimes = [];
 var lastPads = [];
@@ -5256,7 +5256,7 @@ var CYCLE = IN_DONE + LAST + FADE;
 var claims = new Map;
 var pending = new Map;
 // ../../packages/core/src/transform.ts
-import { on as on5 } from "srt:events";
+import { on as on5 } from "sol:events";
 // ../../packages/core/src/swipe.ts
 var SWIPE_ANGLE_TOLERANCE = 30;
 var OFF_AXIS_RATIO = Math.tan(SWIPE_ANGLE_TOLERANCE * Math.PI / 180);

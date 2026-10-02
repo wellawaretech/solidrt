@@ -25,10 +25,10 @@ Arguments belong to an app start, not the process. Who owns a command line:
   shape.
 - The dev runner shape (`solidrt-go [flags] source ...`): runner flags, then
   the source path, then the app's args verbatim (this also fixed the
-  stray-flag-becomes-source-path bug). `srt render app.tsx -- x y` forwards
+  stray-flag-becomes-source-path bug). `sol render app.tsx -- x y` forwards
   the tail this way.
 - The client owns its own line (`--dev-server`, `--data-root`, ...). Hosted
-  apps are guests: a dev push carries the session's args (`srt run/server
+  apps are guests: a dev push carries the session's args (`sol run/server
   app.tsx -- x y` puts the tail in the server config, so remote clients see
   the same argv as local ones); a launcher launch passes an empty vector;
   the launcher and connect screen see empty argv.
@@ -42,7 +42,7 @@ binaries both do it (`FluxEngine::builder().userdata(ProcessArgs(argv))`).
 Lattice's builder chain (`lattice/src/lib.rs`, around the `flux::gui::install`
 call) never does, so `argv` is an empty array in every solidrt app.
 
-Verified: a probe app run under `srt render` printed `argv=[] platform=linux`.
+Verified: a probe app run under `sol render` printed `argv=[] platform=linux`.
 `platform` and `arch` come through, only the argument vector is missing.
 
 ## Why it matters

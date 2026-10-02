@@ -238,7 +238,7 @@ async fn glob_without_a_match_is_empty_and_a_malformed_pattern_errs() {
 // index, and the pattern is matched against those.
 #[test]
 fn glob_of_a_packed_mount_matches_its_index() {
-  let index = ["assets/ui/icon.png", "assets/lion.png", "assets/model.srtm", "isolates/worker.bin"].map(String::from);
+  let index = ["assets/ui/icon.png", "assets/lion.png", "assets/model.sol3m", "isolates/worker.fluxbc"].map(String::from);
   let pattern = crate::path::glob_pattern("assets/**/*.png").expect("the pattern is well formed");
   assert_eq!(crate::fs::matching_paths(index.iter(), &pattern), ["assets/lion.png", "assets/ui/icon.png"]);
 }

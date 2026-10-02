@@ -48,15 +48,15 @@ an Electron zip (~140 MB) into `dist/win32-x64-msvc/` to extract the ANGLE DLLs.
 bun install
 ```
 
-## SRT_HOME
+## SOLIDRT_HOME
 
-Set `SRT_HOME` to the root of this repository so the CLI picks up locally built binaries instead of the published npm packages:
+Set `SOLIDRT_HOME` to the root of this repository so the CLI picks up locally built binaries instead of the published npm packages:
 
 ```sh
-export SRT_HOME=/path/to/solidrt
+export SOLIDRT_HOME=/path/to/solidrt
 ```
 
-With `SRT_HOME` set, `srt run` and similar commands will resolve binaries from `dist/<platform>/` - the output of the build steps below.
+With `SOLIDRT_HOME` set, `sol run` and similar commands will resolve binaries from `dist/<platform>/` - the output of the build steps below.
 
 ## Building
 

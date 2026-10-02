@@ -1,6 +1,6 @@
 ---
 title: Surface maps on lit - normal, emissive, specular and light maps, plus a UV transform
-description: lit took ONE map, the base color; every other pre-PBR slot (normal, emissive, specular mask, baked light, a UV transform) forced a hand-written shaderMaterial. Shipped as class-key options on lit with derivative-based normal mapping (no tangent layout), the glTF loader and .srtm v2 carrying normal and emissive, and the names settled against Three, Unity and Godot.
+description: lit took ONE map, the base color; every other pre-PBR slot (normal, emissive, specular mask, baked light, a UV transform) forced a hand-written shaderMaterial. Shipped as class-key options on lit with derivative-based normal mapping (no tangent layout), the glTF loader and .sol3m v2 carrying normal and emissive, and the names settled against Three, Unity and Godot.
 created: 2026-08-30
 completed: 2026-08-31
 ---
@@ -23,7 +23,7 @@ composable `/glsl` constants. The glTF parser reads `normalTexture`
 KHR_materials_emissive_strength folded into the factor; `createModel`
 wires them into the default material and its `material(m, maps)`
 callback now hands over every uploaded texture by lit() option name.
-`.srtm` went to VERSION 2 (version-1 bakes are rejected; re-bake).
+`.sol3m` went to VERSION 2 (version-1 bakes are rejected; re-bake).
 
 ## Decisions, checked against Three / Unity / Godot
 
@@ -74,7 +74,7 @@ is the 3d analog of 2d's setSprite-from-onFrame escape hatch.
 
 ## Verified
 
-`srt check` (15 entries), gltf-check (parse + encode/decode round-trip
+`sol check` (15 entries), gltf-check (parse + encode/decode round-trip
 of the new fields), geometry-check, and live snapshots of
 `examples/materials.tsx` (all five maps visible, 61 fps, missedPresents
 2/1747) and `examples/shadows.tsx` (cutout casters unchanged after the

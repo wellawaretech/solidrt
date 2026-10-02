@@ -8,7 +8,7 @@
 
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeMotionSpec, NodeTransition } from "flux:spatial"
-import { on } from "srt:events"
+import { on } from "sol:events"
 import { createMutableTexture, destroyTexture } from "@solidrt/core/gpu"
 import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
@@ -776,7 +776,7 @@ export type { TransformUpdate } from "./math.ts"
  * orchestrator is always an ancestor). Clearing cancels running tracks in
  * place (the node keeps its mid-flight transform) and later writes snap. Each natural settle calls the node's
  * `onTransitionEnd` with the component (the raw "spatialTransitionEnd"
- * engine event on srt:events stays for flux:spatial consumers; it carries
+ * engine event on sol:events stays for flux:spatial consumers; it carries
  * the core id, `_node`).
  */
 export function setTransition(node: SceneNode, transition: NodeTransition | string | null): void {

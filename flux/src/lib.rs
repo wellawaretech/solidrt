@@ -55,10 +55,10 @@ pub fn capabilities() -> Vec<&'static str> {
 use rquickjs::{CatchResultExt, Context, Module, Runtime, WriteOptions, WriteOptionsEndianness};
 
 // Bundles arrive here with every real source inlined; the only remaining
-// imports are the runtime-provided `flux:*` and `srt:*` capability modules that
+// imports are the runtime-provided `flux:*` and `sol:*` capability modules that
 // esbuild left external. Compilation only records each as an external reference
 // (named imports are resolved at runtime link, not here), so the compiler links
-// none of them and needs no per-module enumeration: any `flux:`/`srt:` specifier
+// none of them and needs no per-module enumeration: any `flux:`/`sol:` specifier
 // resolves to an empty placeholder module. The runner (lattice/fluxrt) is the
 // authority on which actually exist; a bogus name fails at startup, not here.
 #[cfg(feature = "compile")]
@@ -73,7 +73,7 @@ impl rquickjs::loader::Resolver for ExternResolver {
     name: &str,
     _attrs: Option<rquickjs::loader::ImportAttributes<'js>>,
   ) -> rquickjs::Result<String> {
-    if name.starts_with("flux:") || name.starts_with("srt:") {
+    if name.starts_with("flux:") || name.starts_with("sol:") {
       Ok(name.to_string())
     } else {
       Err(rquickjs::Error::new_resolving(base.to_string(), name.to_string()))

@@ -1,6 +1,6 @@
 /**
  * Tests for a flux program: `test` registers one and `expect` asserts
- * inside it. A test file is run by a test host, `srt test <file>` (the
+ * inside it. A test file is run by a test host, `sol test <file>` (the
  * `flux` binary's `--test` mode underneath); imported anywhere else the
  * module throws, since nothing would run the tests.
  *
@@ -28,7 +28,7 @@
  * `Math.random()`, are the same on every run and do not depend on the
  * tests that ran before. It is the engine's generator in kind and
  * resolution, only its start is fixed. An isolate the test spawns is
- * seeded too, with a seed derived from the test's. `srt test --seed <n>`
+ * seeded too, with a seed derived from the test's. `sol test --seed <n>`
  * runs the tests on another sequence.
  *
  * A test that does not finish within 5 seconds of real time fails as timed

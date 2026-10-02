@@ -3,7 +3,7 @@
 // and axis rule, and createDoubleTap's window, slop, bounce and steal.
 // Synthetic pointer events. The pan, swipe and double-tap recognizers
 // import no runtime module (createTransform does: the pointerFrame
-// terminator), so this runs on the bare flux binary: `srt test
+// terminator), so this runs on the bare flux binary: `sol test
 // packages/core`.
 //
 // Time is an input here: the recognizers read the timeStamp of the events

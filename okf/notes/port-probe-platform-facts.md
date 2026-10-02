@@ -6,7 +6,7 @@ created: 2026-08-28
 
 # Port probing and bind coexistence per platform
 
-Measured 2026-08-28 on the three desktop platforms, after `srt run` failed
+Measured 2026-08-28 on the three desktop platforms, after `sol run` failed
 with "No free port between 34884 and 34983" on Windows although nothing was
 listening (the search skipped every candidate that did not probe as
 `closed`, and none ever did).

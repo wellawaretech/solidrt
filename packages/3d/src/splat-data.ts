@@ -1,15 +1,15 @@
 // @solidrt/3d/splat - the splat DATA side of the package without the
 // runtime: the capture parsers (.ply, .splat, gunzipped .spz), the
-// covariance bake and the .srts container, for `srt tool 3d/splat` and any
+// covariance bake and the .sol3s container, for `sol tool 3d/splat` and any
 // app bake script under bun. The package root imports `flux:*` and so
 // loads only on the runtime; this entry imports nothing that does (the
 // model-data rule; tests/splat-data.test.ts imports it on the bare flux
-// binary and fails the moment a gui or srt: import creeps into the chain).
+// binary and fails the moment a gui or sol: import creeps into the chain).
 //
 //   import { encodeSplat, parseSplat } from "@solidrt/3d/splat"
-//   writeFileSync("assets/scan.srts", encodeSplat(parseSplat(bytes)))
+//   writeFileSync("assets/scan.sol3s", encodeSplat(parseSplat(bytes)))
 //
-// loadSplat / createSplatMesh on the runtime read what it writes: a .srts
+// loadSplat / createSplatMesh on the runtime read what it writes: a .sol3s
 // record IS the texel data the splat shader fetches (two rgba32ui texels
 // per splat, SPLAT_ATTRIBUTES as a byte layout) and the record the core
 // sorts by depth, so runtime loading is a header parse plus byte views -
@@ -113,8 +113,8 @@ const SPZ_COLOR_SCALE = 0.15
 const SPZ_SCALE_OFFSET = 10
 const SPZ_SCALE_STEP = 16
 
-/** "SRTS" read as a little-endian u32. */
-const MAGIC = 0x53545253
+/** "SOLS" read as a little-endian u32. */
+const MAGIC = 0x534c4f53
 // Version 2: the 32-byte two-texel record, importance-sorted, y-up unless
 // the bake kept orientation, plus the optional SH texel block; the header
 // carries count, shDegree, bounds and both block ranges. (Version 1 was
@@ -164,10 +164,10 @@ let colorByte = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 255)
  * Parse a captured splat cloud - a trainer's .ply, the de-facto .splat
  * interchange, or a gunzipped .spz (Niantic; the container is
  * gzip-compressed, and this entry stays decompression-free, so hand it
- * the inflated bytes - `srt tool 3d/splat` does) - into baked SplatData:
+ * the inflated bytes - `sol tool 3d/splat` does) - into baked SplatData:
  * covariance precomputed, y-up by default, importance-sorted (size times
  * opacity), bounds measured. Runs anywhere (bun, the runtime); for a
- * capture of real size run it at pack time and ship encodeSplat's .srts.
+ * capture of real size run it at pack time and ship encodeSplat's .sol3s.
  */
 export function parseSplat(bytes: Uint8Array, opts?: ParseSplatOptions): SplatData {
   let format = opts?.format ?? sniffFormat(bytes)
@@ -185,7 +185,7 @@ function sniffFormat(bytes: Uint8Array): SplatFormat {
     if (dv.getUint32(0, true) === SPZ_MAGIC) return "spz"
   }
   if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
-    throw new Error("parseSplat: gzip-compressed input (.spz files are); gunzip the bytes first - srt tool 3d/splat does")
+    throw new Error("parseSplat: gzip-compressed input (.spz files are); gunzip the bytes first - sol tool 3d/splat does")
   }
   if (bytes.length > 0 && bytes.length % SPLAT_IN_BYTES === 0) return "splat"
   throw new Error("parseSplat: unrecognized input - not a .ply, not a gunzipped .spz, and not whole 32-byte .splat records")
@@ -537,8 +537,8 @@ function shBytesOf(count: number, shDegree: number): number {
 }
 
 /**
- * Serialize a splat cloud into the .srts container, all little-endian:
- * "SRTS" u32 | version u32 | jsonLength u32 | json (padded to 4) |
+ * Serialize a splat cloud into the .sol3s container, all little-endian:
+ * "SOLS" u32 | version u32 | jsonLength u32 | json (padded to 4) |
  * payload. The JSON header carries count, shDegree, bounds and the byte
  * range of the record block and (above degree 0) the SH block; the
  * payload is both blocks verbatim.
@@ -574,7 +574,7 @@ export function encodeSplat(data: SplatData): Uint8Array {
 }
 
 /**
- * Read a .srts container back into SplatData. The records and the SH
+ * Read a .sol3s container back into SplatData. The records and the SH
  * block are VIEWS onto `bytes` (copied once only when the input is not
  * 4-aligned), so the bytes must outlive the data - which is the point:
  * loading a bake is a header parse, and the views upload as-is.
@@ -585,7 +585,7 @@ export function decodeSplat(bytes: Uint8Array): SplatData {
   let dv = new DataView(bytes.buffer, bytes.byteOffset, 12)
   if (dv.getUint32(0, true) !== MAGIC) throw new Error("decodeSplat: not a splat file (bad magic)")
   let version = dv.getUint32(4, true)
-  if (version !== VERSION) throw new Error("decodeSplat: version " + version + ", expected " + VERSION + " - re-bake with `srt tool 3d/splat`")
+  if (version !== VERSION) throw new Error("decodeSplat: version " + version + ", expected " + VERSION + " - re-bake with `sol tool 3d/splat`")
   let jsonLength = dv.getUint32(8, true)
   let header: Header = JSON.parse(new TextDecoder().decode(bytes.subarray(12, 12 + jsonLength)))
   let payload = 12 + jsonLength + ((4 - (jsonLength % 4)) % 4)

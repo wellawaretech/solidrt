@@ -6,7 +6,7 @@ use common::run_source;
 use std::time::Duration;
 
 // The liveness and signal tests of flux:process are flux/tests/process.test.ts,
-// run by srt test. What stays here is what a test inside the engine cannot
+// run by sol test. What stays here is what a test inside the engine cannot
 // observe: the engine going idle, a variable the test set in its own
 // environment, and the process ending.
 

@@ -14,8 +14,8 @@ bun run dev
 
 The packages:
 
-- `@solidrt/cli` - the `srt` command-line tool: scaffold, develop, test, ship
+- `@solidrt/cli` - the `sol` command-line tool: scaffold, develop, test, ship
 - `@solidrt/core` - the runtime surface an app is written against
 - `@solidrt/components`, `@solidrt/2d`, `@solidrt/3d`, `@solidrt/router` -
   extensions on top of core
-- `@solidrt/test` - tests for an app, run with `bun run srt test`
+- `@solidrt/test` - tests for an app, run with `bun run sol test`

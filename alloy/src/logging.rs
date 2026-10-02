@@ -14,7 +14,7 @@ impl log::Log for SdlLogger {
     } else {
       // Third-party crates (notably the iroh p2p stack: magicsock, quinn, relay,
       // net-report, portmapper) are very chatty at info; keep only their warnings.
-      // Raise with SRT_LOG=debug when diagnosing a specific subsystem.
+      // Raise with SOLIDRT_LOG=debug when diagnosing a specific subsystem.
       metadata.level() <= log::Level::Warn
     }
   }
@@ -30,6 +30,6 @@ static SDL_LOGGER: SdlLogger = SdlLogger;
 
 pub fn install_logger() {
   log::set_logger(&SDL_LOGGER).ok();
-  let level = std::env::var("SRT_LOG").ok().and_then(|s| s.parse().ok()).unwrap_or(log::LevelFilter::Info);
+  let level = std::env::var("SOLIDRT_LOG").ok().and_then(|s| s.parse().ok()).unwrap_or(log::LevelFilter::Info);
   log::set_max_level(level);
 }

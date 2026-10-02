@@ -7,7 +7,7 @@ completed: 2026-08-25
 
 # What
 
-- **`load`** returned (removed with the watcher in the srt rework):
+- **`load`** returned (removed with the watcher in the sol rework):
   `POST /__control__/load { entry }` and the MCP `load` tool. A project
   server only loads files under its project root (the bundle needs the
   project's dependencies and assets, and the registry key keeps naming the

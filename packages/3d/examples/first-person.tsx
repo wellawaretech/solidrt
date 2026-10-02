@@ -13,7 +13,7 @@ import { createInputMap, createPointerFeed, createSignal, gamepad, keyboard, loc
 import type { PointerEvent } from "@solidrt/core"
 import { box, cylinder, DirectionalLight, FirstPersonCamera, firstPersonActions, firstPersonBindings, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene } from "@solidrt/3d"
 import type { FirstPersonCameraHandle, Vec3 } from "@solidrt/3d"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 
 // Half extent of the walkable courtyard in world units; the walls stand
 // just outside it.

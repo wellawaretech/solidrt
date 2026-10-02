@@ -1,5 +1,5 @@
 # platform.mk - shared host-platform mapping, included by the flux, lattice,
-# and website Makefiles (include $(SRT_HOME)/platform.mk, after SRT_HOME is
+# and website Makefiles (include $(SOLIDRT_HOME)/platform.mk, after SOLIDRT_HOME is
 # set). The PLATFORM_* map is the single source of truth for which host
 # triples have a native platform package under packages/<platform>/.
 
@@ -15,7 +15,7 @@ HOST_PLATFORM := $(PLATFORM_$(HOST_TARGET))
 # Deferred (=, not :=) so an unmapped host aborts at the point of use with a
 # real message instead of silently staging into "dist//". Targets that never
 # expand HOST_DIST (e.g. Android cross builds) still work on unmapped hosts.
-HOST_DIST = $(if $(HOST_PLATFORM),$(SRT_HOME)/dist/$(HOST_PLATFORM),$(error Unsupported host target $(HOST_TARGET): add it to platform.mk))
+HOST_DIST = $(if $(HOST_PLATFORM),$(SOLIDRT_HOME)/dist/$(HOST_PLATFORM),$(error Unsupported host target $(HOST_TARGET): add it to platform.mk))
 
 HOST_EXT := $(if $(findstring windows,$(HOST_TARGET)),.exe,)
 

@@ -1,14 +1,14 @@
-# srt run and srt server
+# sol run and sol server
 
 `run` is the everyday command: it starts the dev server and a local client
 window together, and it is what `bun run dev` calls in a scaffolded project.
 The server outlives the client: closing (or killing) a wedged client keeps
-the server up, and `srt client` reattaches a new one.
+the server up, and `sol client` reattaches a new one.
 
 {{ usage run }}
 
 Run from the project root to serve the project (the entry is
-`solidrt.entry` in package.json, default `src/index.tsx`); `srt run <file>`
+`solidrt.entry` in package.json, default `src/index.tsx`); `sol run <file>`
 serves a single file outside a project. In a project root a file argument
 is ambiguous, so it takes `--project` (the project, with this entry) or
 `--file` (the file alone). Nothing searches upward for a package.json.
@@ -23,7 +23,7 @@ package it does import does. A coding agent pauses this while it edits
 (`pause_watch`) and pushes with the MCP `reload` tool instead.
 
 `server` is the same without the local client, for clients on other devices
-(see [srt client](../client/docs.md)):
+(see [sol client](../client/docs.md)):
 
 {{ usage server }}
 
@@ -33,7 +33,7 @@ by side without any numbering; `--port N` pins it. Loopback only unless
 `--lan`, which is what phones and other devices need; `--tunnel` accepts
 clients over a peer-to-peer connection instead, with no network setup.
 `--proxy-http` routes the app's `fetch` calls through the dev server, cached
-in `.srt-data/http-cache.db` in the project root (delete the file to
+in `.solidrt-data/http-cache.db` in the project root (delete the file to
 clear), for clients on other devices that need your machine's data.
 `-- <args>` hands the app its own arguments (`flux:process` argv) on every
 client.
@@ -43,7 +43,7 @@ registry record, remembered port and tunnel key; `clients/client<N>/` the
 data tree of a locally spawned client (`-c <N>` picks it, default 0;
 storage is per app inside a tree, so two projects share client 0).
 
-With a terminal on stdin, `run` and `server` take commands at the `srt>`
+With a terminal on stdin, `run` and `server` take commands at the `sol>`
 prompt: `reload` and `stop` (every client, or the ids `list` prints),
 `load <file>` (switch the entry, same rules as the MCP `load` tool),
 `whoami` (reprint the address and its QR, or the tunnel ticket),

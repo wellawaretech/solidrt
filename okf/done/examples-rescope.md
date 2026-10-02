@@ -39,10 +39,10 @@ Three audiences, three homes:
   `packages/components` should grow one under the same contract.
 - **Root `examples/` - human-facing.** Realistic apps where concepts mix
   naturally. Committed, curated, scaffold-shaped (one folder per app with
-  `package.json` + tsconfig + `src/` + assets, i.e. what `srt init`
+  `package.json` + tsconfig + `src/` + assets, i.e. what `sol init`
   produces). Consumed by the website examples generator and as
   documentation references. Because a broken example is a broken docs
-  page, `srt check` over the corpus is the docs-correctness gate (cheap:
+  page, `sol check` over the corpus is the docs-correctness gate (cheap:
   ~0.1s per app with the entry-scoped check).
 - **`sandbox/` - dev-facing, gitignored.** Probes, scratch apps, media,
   in-progress experiments: what most of today's root `examples/` content
@@ -90,7 +90,7 @@ the IDE's per-file view (nearest tsconfig wins).
 
 `typecheck()` stops checking the enclosing project and checks the entry's
 program instead: generate a transient config in the project-local
-`.srt-data/` (the established dev-artifact dir; the proxy cache db already
+`.solidrt-data/` (the established dev-artifact dir; the proxy cache db already
 lives there) with absolute paths -
 
     { "extends": "<nearest tsconfig>", "files": ["<entry>"] }
@@ -98,12 +98,12 @@ lives there) with absolute paths -
 - run `tsc -p` on it, delete it. tsc builds the program from the entry's
 import closure only: unrelated files are excluded by construction, not by
 filtering. Verified 2026-07-25: 0.09-0.18s vs tens of seconds for the
-sweep; `types` resolution works from `.srt-data/` (node_modules walk-up).
+sweep; `types` resolution works from `.solidrt-data/` (node_modules walk-up).
 Placement notes: absolute `extends`/`files` required; the watcher ignores
 `.json` so no reload fires. The tsc binary lookup must walk up past a
 node_modules-less project root (an `examples/<app>/` has a tsconfig but no
 own node_modules). Applies to both the dev-server startup check and
-`srt check`.
+`sol check`.
 
 The speed also reopens per-hot-reload checking (rejected earlier on
 full-sweep latency grounds) - a named future, not in scope.
@@ -117,7 +117,7 @@ module, deliberately no global). It typechecked by accident of the root
 sweep (bun-types' global `process` via cli). First fixed with a
 file-scoped `declare const process`, then replaced entirely the same day:
 core's vocabulary is now `import.meta.env.DEV` (Vite-shaped), defined by
-the srt bundler from `opts.dev` and typed once in core's `types.d.ts`
+the sol bundler from `opts.dev` and typed once in core's `types.d.ts`
 (`declare global { interface ImportMeta ... }`). Survey showed this was
 the ONLY fold site in the codebase - the solid deps select dev/prod at
 module-resolution time (export conditions) and contain zero NODE_ENV
@@ -132,7 +132,7 @@ value can never fold, so it was wrong for this site anyway.
 
 1. **tsconfig split + fixes**: per-package tsconfigs (core, components,
    cli), renderer.ts declare, entry-scoped `typecheck()`. This alone ends
-   the noise that started the thread. DONE 2026-07-25, verified: `srt
+   the noise that started the thread. DONE 2026-07-25, verified: `sol
    check examples/grid.tsx` and the dev-server startup check both print
    "Types OK" (entry-scoped, transient config cleaned up); per-package
    programs run in 0.1-0.3s each. Findings: `packages/cli/server/` is the
@@ -156,7 +156,7 @@ value can never fold, so it was wrong for this site anyway.
    binary-asset wildcard declarations in core's runtime-modules.d.ts
    (which already owned `*.png`/`*.jpg`/`*.svg` - the asset-typing
    owner question answered itself). All four programs report zero
-   errors; srt check green on hello, sound.tsx, and sandbox/gallery.
+   errors; sol check green on hello, sound.tsx, and sandbox/gallery.
 2. **Folder split**: create gitignored `sandbox/`, move the untracked
    scratch there (user's working files - coordinate, do not bulk-move
    unasked); re-home grid.tsx (agent example: single concept, visibility
@@ -180,12 +180,12 @@ value can never fold, so it was wrong for this site anyway.
 3. **First example apps**: REFRAMED 2026-07-25 - the corpus is built from
    scratch as documentation-first apps (the old terminal/gallery scratch
    was moved to sandbox/, not promoted; nothing in `examples/` is
-   inherited). Each app: scaffold-shaped folder, `srt check` green.
+   inherited). Each app: scaffold-shaped folder, `sol check` green.
    First app landed 2026-07-25: `examples/hello/` (core-only hello
    world, root view padded with all four reactive safeArea() insets;
-   srt check green). Naming rule: clean names, no layer suffixes - an
+   sol check green). Naming rule: clean names, no layer suffixes - an
    unsuffixed name is core by default, deps carry the real attribution.
-4. **Corpus growth + CI**: components agent-examples folder; `srt check`
+4. **Corpus growth + CI**: components agent-examples folder; `sol check`
    across `examples/*` as a CI gate; website generator stage 2 consumes
    the corpus (that work lives in website.md). CI half DONE 2026-07-25:
    ci.yml gained a `types` job (parallel to the Rust check, bun-only;
@@ -193,7 +193,7 @@ value can never fold, so it was wrong for this site anyway.
    direct-to-main is the working flow, so the push trigger is what makes
    the gate real; quick-check stays native-builds-only by decision) -
    tsc over the five per-target tsconfigs (core, components, cli,
-   cli/server, lattice/launcher) plus `srt check` on every
+   cli/server, lattice/launcher) plus `sol check` on every
    `examples/*/src/index.tsx` (the corpus entry convention). The
    lattice/launcher straggler got its flux-targeted tsconfig in the same
    pass (one TS2532 fixed: split()[0] non-null) and the root tsconfig now

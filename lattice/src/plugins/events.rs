@@ -2,16 +2,16 @@ use flux::report_uncaught;
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
 use flux::rquickjs::{function::MutFn, Ctx, Function};
 
-// The UI event surface: the `on` / `once` exports of the `srt:events` module.
+// The UI event surface: the `on` / `once` exports of the `sol:events` module.
 // This sits on top of flux's event bus, which owns the mechanisms (listener
 // registry, emit, the sticky cache); the surface's only policy is replaying a
 // sticky event's cached value to a new subscriber. Which events are sticky is
 // decided at the emit site (flux::emit_sticky vs flux::emit_event). A future
 // flux:process would expose its own surface the same way.
 
-pub struct SrtEventsModule;
+pub struct SolEventsModule;
 
-impl ModuleDef for SrtEventsModule {
+impl ModuleDef for SolEventsModule {
   fn declare<'js>(decl: &Declarations<'js>) -> flux::rquickjs::Result<()> {
     decl.declare("on")?;
     decl.declare("once")?;

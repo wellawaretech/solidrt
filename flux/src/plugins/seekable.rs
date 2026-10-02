@@ -28,7 +28,7 @@ pub type SeekableOpener = Arc<dyn Fn() -> Result<SeekableReader, String> + Send 
 
 /// The property key the source is stashed under on a `file()` object. Internal;
 /// not part of the public `file` surface.
-const KEY: &str = "__srtSeekable";
+const KEY: &str = "__solSeekable";
 
 /// An opaque handle wrapping a backend-specific opener, attached to a `file()`
 /// object so a native consumer can open a seekable reader without knowing

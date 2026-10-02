@@ -1,7 +1,7 @@
 # Testing an app
 
 Read this before writing a test for a SolidRT app or package, or before
-repairing one that fails. The command reference is `srt test` in cli's
+repairing one that fails. The command reference is `sol test` in cli's
 AGENTS.md and src/test/docs.md; the verbs are typed and documented in
 `@solidrt/test/src/index.ts` (app tests) and `@solidrt/flux-types/modules/
 test.d.ts` (`test`, `expect`, `settle`). This file is the method: what to
@@ -11,8 +11,8 @@ read a failure.
 ## The shape
 
 - A test file is `tests/<name>.test.ts` or `.test.tsx` in the package or
-  project it tests, never beside the sources. `bun run srt test` finds every
-  `tests/` folder under the cwd; `srt check` typechecks them with the app.
+  project it tests, never beside the sources. `bun run sol test` finds every
+  `tests/` folder under the cwd; `sol check` typechecks them with the app.
 - Tests are flat: `test("<a sentence naming the subject>", fn)`, no
   `describe`, no hooks, no mocking framework. Shared setup is a plain
   function a test calls. The file is the group; `--filter <text>` runs a
@@ -140,13 +140,13 @@ seats one).
 An app whose UI reaches a state slowly, or not at all headlessly, exposes
 the state another way, and the test uses it:
 
-- `registerDebug(name, fn)` from `srt:dev` in the app; `await
+- `registerDebug(name, fn)` from `sol:dev` in the app; `await
   app.debug(name, args)` in the test calls it, runs a frame and returns
   what it returned. The same commands an agent calls over MCP.
 - `await app.link("myapp://item/42")` delivers a link the way the OS does
   (throws when the app has no `onLink`); with a router, that renders the
   screen the link names.
-- Arguments after `--` on `srt test` reach the file as `flux:process`
+- Arguments after `--` on `sol test` reach the file as `flux:process`
   argv.
 
 ## Reading a failure
@@ -205,7 +205,7 @@ test, whether or not it mounts anything.
 
 ## Running
 
-- `bun run srt test` - everything under the cwd; `bun run srt test <dir|file>`
+- `bun run sol test` - everything under the cwd; `bun run sol test <dir|file>`
   narrows; `--filter <text>` by name; `--seed <n>` another random
   sequence; `--only flux` or `--only app` one layer (CI runs the flux
   tests on every platform and the app tests where the dev client builds).

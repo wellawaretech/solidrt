@@ -149,7 +149,7 @@ Rules, in order of leverage:
    anything needing what is behind it does not - and is split from content
    invalidation, so a params-only change re-runs the pass against the cached
    snapshot instead of re-rasterizing. A window shader's output is invisible
-   to get_snapshot and every other MCP tool; `bun run srt render` is the only
+   to get_snapshot and every other MCP tool; `bun run sol render` is the only
    way to see it (see @solidrt/cli AGENTS.md).
 8. `flux:wasm` runs a pure interpreter (wasmi, no JIT), so temper browser
    expectations - but do not write it off for compute. A genuinely numeric
@@ -208,7 +208,7 @@ let n = await worker.crunch(bytes)              // main keeps rendering meanwhil
 ```
 
 The bundler builds each such module as its own bundle and ships it with the
-app (dev pushes and `srt pack` alike). Rules: main may only `import type`
+app (dev pushes and `sol pack` alike). Rules: main may only `import type`
 from an isolate module (a value import is a build error); arguments and
 results are copies (numbers, strings, byte buffers, arrays, plain objects -
 no functions, no class instances); the child has the non-gui `flux:*`
@@ -248,7 +248,7 @@ not infer it from the desktop number.
 - **Some paints cost a frame each on a tiled mobile GPU.** Measured on a
   mid-range 2020 tablet (Adreno 610, Impeller GLES) with ten panes sliding
   and resizing on a layout transition, each row by subtraction from the
-  compositor's own present record (`srt android --census`), against a
+  compositor's own present record (`sol android --census`), against a
   frame that ran at 60 fps with a 13 ms GPU span:
   - a 3-stop linear-gradient fill per pane: +15 ms, 20 fps. A gradient is
     shaded per pixel per frame; the same tint as a flat `d-rect` costs

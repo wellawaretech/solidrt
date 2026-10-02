@@ -23,12 +23,12 @@ export function resolveBinary(name: string) {
   let key = `${process.platform}-${process.arch}`
   let ext = process.platform === "win32" ? ".exe" : ""
 
-  // 1. SRT_HOME: contributors pointing at their local solidrt checkout
-  let srtRoot = process.env.SRT_HOME
-  if (srtRoot) {
+  // 1. SOLIDRT_HOME: contributors pointing at their local solidrt checkout
+  let solRoot = process.env.SOLIDRT_HOME
+  if (solRoot) {
     let triple = TRIPLE_MAP[key]
     if (triple) {
-      let bin = resolve(srtRoot, "dist", triple, name + ext)
+      let bin = resolve(solRoot, "dist", triple, name + ext)
       if (existsSync(bin)) return bin
     }
   }
@@ -76,7 +76,7 @@ export function runnerGlLibs(runnerPath: string): Array<{ name: string; path: st
 // device, not the host), so they live under dist/android*/<abi>/ rather than
 // the host triple map. Each ABI ships a published npm package carrying its
 // Player (solidrt-go.apk) and its runner (solidrt.apk), both built for that
-// ABI alone; other ABIs (e.g. x86) only resolve via the SRT_HOME contributor
+// ABI alone; other ABIs (e.g. x86) only resolve via the SOLIDRT_HOME contributor
 // path.
 export let DEFAULT_ANDROID_ABI = "arm64-v8a"
 export let ANDROID_PKG_MAP: Record<string, string> = {
@@ -117,15 +117,15 @@ export function androidPackageVersion(abi: string): string | null {
   }
 }
 
-// The production runner APK `srt pack --apk` patches: staged per ABI by
+// The production runner APK `sol pack --apk` patches: staged per ABI by
 // `make android-runtime` in a checkout, or shipped inside the
 // @solidrt/android-<abi> platform package next to solidrt-go.apk. Runners
 // are per-ABI by decision - a shipped app carries one ABI, never a fat APK
 // (okf/backlog/standalone-android-apk.md).
 export function resolveRunnerApk(abi: string = DEFAULT_ANDROID_ABI): string | null {
-  let srtRoot = process.env.SRT_HOME
-  if (srtRoot) {
-    let apk = resolve(srtRoot, "dist/android-runtime", abi, "solidrt.apk")
+  let solRoot = process.env.SOLIDRT_HOME
+  if (solRoot) {
+    let apk = resolve(solRoot, "dist/android-runtime", abi, "solidrt.apk")
     if (existsSync(apk)) return apk
   }
   let pkgDir = androidPackageDir(abi)
@@ -137,11 +137,11 @@ export function resolveRunnerApk(abi: string = DEFAULT_ANDROID_ABI): string | nu
 }
 
 export function resolveApk(abi: string = DEFAULT_ANDROID_ABI) {
-  // 1. SRT_HOME: contributor checkout, where `make android-dist` stages the APK
+  // 1. SOLIDRT_HOME: contributor checkout, where `make android-dist` stages the APK
   //    under dist/android/<abi>/.
-  let srtRoot = process.env.SRT_HOME
-  if (srtRoot) {
-    let apk = resolve(srtRoot, "dist/android", abi, "solidrt-go.apk")
+  let solRoot = process.env.SOLIDRT_HOME
+  if (solRoot) {
+    let apk = resolve(solRoot, "dist/android", abi, "solidrt-go.apk")
     if (existsSync(apk)) return apk
   }
 

@@ -211,7 +211,7 @@ fn load_icon(version_dir: &Path, manifest: &Manifest) -> Option<String> {
   let file = version_dir.join(path);
   let len = std::fs::metadata(&file).ok()?.len();
   if len > ICON_MAX_BYTES {
-    log::warn!("[srt] Ignoring icon {path}: {len} bytes exceeds the {ICON_MAX_BYTES} byte cap");
+    log::warn!("[sol] Ignoring icon {path}: {len} bytes exceeds the {ICON_MAX_BYTES} byte cap");
     return None;
   }
   std::fs::read_to_string(&file).ok()

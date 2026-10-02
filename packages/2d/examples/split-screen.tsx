@@ -12,7 +12,7 @@
 import { createInputMap, createPointerFeed, decodeImage, gamepad, onFrame, render, windowSize, For } from "@solidrt/core"
 import { Camera2d, camera2dActions, camera2dBindings, createAtlas, grid, setSprite, Sprite, SpriteLayer, View2d } from "@solidrt/2d"
 import type { Camera2dHandle, Frame, SpriteHandle } from "@solidrt/2d"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
 
 const WORLD = { width: 2400, height: 1600 }

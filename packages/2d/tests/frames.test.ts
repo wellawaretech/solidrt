@@ -1,8 +1,8 @@
 // Tests for the atlas frame math (frames.ts): grid slicing against a
 // directly-computed oracle across random sheet shapes, spacing, and
 // margins, plus namedFrames and the validation throws. Pure-module input
-// only, so it runs headless on flux: `srt test packages/2d`. The random
-// inputs come from Math.random, which `srt test` seeds: the same on every
+// only, so it runs headless on flux: `sol test packages/2d`. The random
+// inputs come from Math.random, which `sol test` seeds: the same on every
 // run, and `--seed <n>` tries others.
 
 import { test } from "flux:test"

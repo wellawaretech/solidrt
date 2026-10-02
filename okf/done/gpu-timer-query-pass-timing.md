@@ -70,4 +70,4 @@ at each sample), as a share of the smoothed frame period like the phase
 lines above it. It is the one HUD figure that is not JS-thread work, so it
 does not sum with them; near 100% the GPU is the bottleneck whatever the
 phases say. Hidden when the context has no timer queries. Verified on Linux
-with frame-animation under `srt run --stats`: `GPU 3%` (0.54 of 16.7 ms).
+with frame-animation under `sol run --stats`: `GPU 3%` (0.54 of 16.7 ms).

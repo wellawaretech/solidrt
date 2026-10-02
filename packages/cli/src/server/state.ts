@@ -41,7 +41,7 @@ export let state = {
    */
   userInputMuted: false,
   /**
-   * Whether reload-on-save is paused (the /watch endpoint, srt mcp's
+   * Whether reload-on-save is paused (the /watch endpoint, sol mcp's
    * pause_watch), so an agent's half-finished saves are not pushed to the
    * user's screens while it edits; its explicit reload still is.
    */

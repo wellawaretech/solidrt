@@ -88,7 +88,7 @@ unwrapped in the crate) was rejected: sample-accurate for gain but unable to
 ramp rate (no resampling in a callback), real-time constraints on our code,
 and SDL_mixer-specific machinery the own-mixer replacement discards.
 
-Chosen: a control-rate ramp driver. A lazily-spawned `srt-audio-ramp` thread
+Chosen: a control-rate ramp driver. A lazily-spawned `sol-audio-ramp` thread
 steps every active ramp each 10 ms (100 Hz control rate - standard parameter
 automation practice, immune to app frame hitches) by calling the SDL setters,
 which SDL documents as safe from any thread; it condvar-parks while the ramp

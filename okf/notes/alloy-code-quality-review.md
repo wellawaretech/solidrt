@@ -183,7 +183,7 @@ keeps drawn and tracked regions provably identical.
 ColorFilter/ImageFilter/Paint (refcounted Impeller FFI allocations) on
 every composite draw, though FilterState changes only via
 `set_filter`/`set_backdrop_filter`. Roughly three native alloc/free
-pairs per filtered panel per frame at 60-120 Hz on srt-ui; the
+pairs per filtered panel per frame at 60-120 Hz on sol-ui; the
 color-only backdrop case allocates an identity-matrix ImageFilter each
 frame. Cache the fused matrix or finished handles on the View at set
 time; composite clones a handle.

@@ -24,19 +24,19 @@ pub fn provision(app_id: &str, libs: &[(String, Vec<u8>)]) {
   let dir = match alloy::sdl3::filesystem::get_pref_path("SolidRT", app_id) {
     Ok(dir) => dir.join("cache").join("gl"),
     Err(e) => {
-      log::warn!("[srt] no writable pref path for GL libraries: {e}");
+      log::warn!("[sol] no writable pref path for GL libraries: {e}");
       return;
     }
   };
   if let Err(e) = std::fs::create_dir_all(&dir) {
-    log::warn!("[srt] cannot create GL library dir {}: {e}", dir.display());
+    log::warn!("[sol] cannot create GL library dir {}: {e}", dir.display());
     return;
   }
   for (name, bytes) in libs {
     // The CLI only writes plain filenames, but the trailer is untrusted input:
     // never let a name traverse out of the tree.
     if !crate::storage::safe_component(name) {
-      log::warn!("[srt] ignoring GL library with unsafe name {name:?}");
+      log::warn!("[sol] ignoring GL library with unsafe name {name:?}");
       continue;
     }
     let path = dir.join(name);
@@ -44,7 +44,7 @@ pub fn provision(app_id: &str, libs: &[(String, Vec<u8>)]) {
     let stale = std::fs::read(&path).map(|current| current != *bytes).unwrap_or(true);
     if stale {
       if let Err(e) = std::fs::write(&path, bytes) {
-        log::warn!("[srt] cannot write GL library {}: {e}", path.display());
+        log::warn!("[sol] cannot write GL library {}: {e}", path.display());
         continue;
       }
     }
@@ -53,7 +53,7 @@ pub fn provision(app_id: &str, libs: &[(String, Vec<u8>)]) {
       // meaningful unload point for a GL driver.
       Ok(lib) => std::mem::forget(lib),
       Err(e) => {
-        log::warn!("[srt] cannot preload GL library {}: {e}", path.display());
+        log::warn!("[sol] cannot preload GL library {}: {e}", path.display());
         continue;
       }
     }

@@ -2,7 +2,7 @@
 <!-- Android 12+ (dataExtractionRules): nothing leaves the device, for cloud
      backup and for device-to-device transfer alike. A missing or empty
      section means "everything", so every domain is excluded at its root in
-     both. The data-only counterpart is extraction_data.xml; srt pack swaps
+     both. The data-only counterpart is extraction_data.xml; sol pack swaps
      this file's bytes for it when the app opts in. -->
 <data-extraction-rules>
     <cloud-backup>

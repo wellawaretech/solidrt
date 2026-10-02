@@ -9,24 +9,24 @@ completed: 2026-08-21
 
 ## Symptom
 
-A packed flux script (`srt pack --flux`) that calls `isolate()` has every
+A packed flux script (`sol pack --flux`) that calls `isolate()` has every
 call reject: `fluxrt` builds its engine without an isolate resolver. And
 `--flux --compile` output has no isolate form at all - the standalone `flux`
-resolver reads `isolates/<id>.js` source only, so `srt bundle --flux
+resolver reads `isolates/<id>.js` source only, so `sol bundle --flux
 --compile` ships isolate modules as source beside the bytecode main (and
 prints a note saying so).
 
 ## Done
 
-- The `flux` binary's resolver tries `isolates/<id>.bin` before
+- The `flux` binary's resolver tries `isolates/<id>.fluxbc` before
   `isolates/<id>.js` (the lattice resolver's shape); verified by running the
   isolate example with a bytecode-only isolates/ dir.
-- `srt bundle --flux --compile` compiles isolates to `isolates/<id>.bin`;
+- `sol bundle --flux --compile` compiles isolates to `isolates/<id>.fluxbc`;
   isolates follow the main bundle's form (source beside .flux.js, bytecode
-  beside .flux.bin).
+  beside .fluxbc).
 - The fluxrt trailer moved from the single-payload format to the same section
   trailer the solidrt runner uses (packSections; kind-2 file sections only:
-  "bundle.bin" + "isolates/<id>.bin"), and fluxrt resolves isolates from the
+  "bundle.fluxbc" + "isolates/<id>.fluxbc"), and fluxrt resolves isolates from the
   payload. Verified: the packed isolate example passes end to end.
 
 The resolver error message differs by host on purpose (file path from

@@ -4,7 +4,7 @@ mod common;
 
 use common::{run_source, TempDir};
 
-// The dir(), realpath and glob tests are flux/tests/dir.test.ts, run by srt
+// The dir(), realpath and glob tests are flux/tests/dir.test.ts, run by sol
 // test. What stays here is what a test inside the engine cannot observe:
 // the host drops a test's engine at the test's end, so whether the engine
 // went idle by itself is only visible from here.

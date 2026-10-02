@@ -1,4 +1,4 @@
-# srt pack
+# sol pack
 
 {{ usage pack }}
 
@@ -8,13 +8,13 @@ bundle + assets folder to `dist/pack/` instead. `--flux` packs a script for
 the bare [Flux runtime](/runtime/). Experimental.
 
 One output rule: every deliverable defaults into the gitignored `dist/`
-build root - the executable, `.srtapp` and `.apk` as `dist/<name>` files
+build root - the executable, `.solapp` and `.apk` as `dist/<name>` files
 named by the appId's last segment (an APK also by its ABI), flow folders (`pack/`, `render/`,
 `bundle/`) below it - never next to the sources. `--output` overrides.
 
-`--app` writes the app alone, without a runner: one `<name>.srtapp` holding
+`--app` writes the app alone, without a runner: one `<name>.solapp` holding
 the manifest, the bytecode and the assets, which any `solidrt` runner of the
-same version runs as `solidrt <file>.srtapp`. The runner is used in place,
+same version runs as `solidrt <file>.solapp`. The runner is used in place,
 so a signed runner stays signed; the file is platform-independent. This is
 how the CLI ships the [console](../console/docs.md).
 
@@ -23,12 +23,12 @@ machine: one per Android target the project has (its
 `@solidrt/android-<abi>` dev dependencies; the first time, a picker asks
 which to add), as `dist/<name>-<abi>.apk`. For each, a copy of the target's
 runner APK is patched in place - application id (from `appId`) and label
-rewritten, the `.srtapp` payload added - then re-aligned and re-signed with
+rewritten, the `.solapp` payload added - then re-aligned and re-signed with
 a fixed development key, so the result sideloads out of the box
 (publishing will need a real key). The runner boots the payload directly -
 no player, no dev server. Every `@solidrt/android-<abi>` package carries
 it; in a checkout, `make android-runtime` stages it, and a target with no
-runner staged is skipped with a note. `srt android --apk` packs and
+runner staged is skipped with a note. `sol android --apk` packs and
 installs in one step.
 
 Set a stable `appId` in the `solidrt` key of package.json before

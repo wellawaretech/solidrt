@@ -45,7 +45,7 @@ import { fail } from "./util"
 // otherwise silently ship a default.
 //
 // Everything defaults from the package name (or the entry filename when there
-// is no project) so a dev project needs zero config; `srt pack` warns
+// is no project) so a dev project needs zero config; `sol pack` warns
 // when appId is defaulted, since a distributed app should pin its identity.
 //
 // A null value means "unset": the scaffold ships the keys as visible nulls
@@ -59,7 +59,7 @@ import { fail } from "./util"
 // their fields from the result and only check what is specific to them.
 //
 // Which project an entry belongs to is the caller's decision (mode.ts: the
-// cwd, never a search); the one exception is `srt check`, which verifies
+// cwd, never a search); the one exception is `sol check`, which verifies
 // trees of entries from one cwd and walks up from each (findProject).
 
 /** The `solidrt` key: every field optional, every present field shape-checked. */
@@ -254,7 +254,7 @@ function checkField(value: string, what: string) {
 // derivation question is settled (see plan).
 export const RUNTIME_VERSION = 1
 
-// This CLI's version, the one value every "which srt is this" answer comes
+// This CLI's version, the one value every "which sol is this" answer comes
 // from (--version, the manifest stamp, the MCP server). A published CLI
 // carries the real version in its package.json; in-repo that is the 0.0.0
 // placeholder (see CLAUDE.md, "Versioning"), so a checkout reports the same

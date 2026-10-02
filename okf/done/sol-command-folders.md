@@ -1,20 +1,20 @@
 ---
-title: Give srt one folder per command, split by runtime
-description: Restructure packages/cli so every command is a top-level folder whose first line says its runtime (bun for node-ecosystem adapters, flux for the dev server), bin/srt only routes, and a server is one process the console can spawn or embed directly.
+title: Give sol one folder per command, split by runtime
+description: Restructure packages/cli so every command is a top-level folder whose first line says its runtime (bun for node-ecosystem adapters, flux for the dev server), bin/sol only routes, and a server is one process the console can spawn or embed directly.
 tags: [cli, flux, bun, dev-server, console, mcp, packaging]
 created: 2026-08-25
 ---
 
-# Give srt one folder per command, split by runtime
+# Give sol one folder per command, split by runtime
 
 Follows okf/done/cli-flux-migration.md, which moved the dev server into a
-flux process but left srt itself a bun program that launches it. This note
+flux process but left sol itself a bun program that launches it. This note
 records the shape decided on 2026-08-25 and how it was built the same day
 (see Staging for where the built shape departs from the diagram).
 
 ## The problem
 
-`packages/cli` is two programs (srt on bun in `src/`, the dev server on flux
+`packages/cli` is two programs (sol on bun in `src/`, the dev server on flux
 in `server/`) plus two bun helpers the server spawns (`src/entries/`), and
 the file names never say which is which: `bundler.ts` bundles the app,
 `server-bundle.ts` bundles the server script, `commands/server.ts` launches
@@ -22,9 +22,9 @@ the server, `entries/` are not entries but spawned subprocesses. Every
 "where is X" question needs the process tree explained first:
 
 ```
-bin/srt (bun) -> flux server/main.js -> bun entries/bundle-cli.ts    (per rebuild)
+bin/sol (bun) -> flux server/main.js -> bun entries/bundle-cli.ts    (per rebuild)
                                      -> bun entries/typecheck-cli.ts (at start)
-                                     -> solidrt-go                    (srt run)
+                                     -> solidrt-go                    (sol run)
 ```
 
 The console (a solidrt app, so flux) needs to spawn servers and clients and
@@ -52,13 +52,13 @@ bytecode and never mentions `fluxc`.
 ```
 packages/cli/
   Makefile            dist/server.js (release prebuild of the flux server), nothing else yet
-  README.md           the overview: what srt is, the command list, a link per command's docs.md
+  README.md           the overview: what sol is, the command list, a link per command's docs.md
   AGENTS.md           the agent quickstart, a link per file in agents/
   agents/             debugging.md (MCP, dev server, control API, lessons), assets.md
                       (assets, fonts, identity, distribution): agent depth stays in
                       agents/ as in the other packages
   package.json  tsconfig.json (the bun folders + src/types/)  src/server/tsconfig.json (server/ + types/)
-  bin/srt             bun. Parses the command word only:
+  bin/sol             bun. Parses the command word only:
                         init|mcp|check|bundle|pack|render|android|client -> import ../src/<cmd>/main.ts
                         server|run                                      -> exec flux src/server/main.ts
                                                                            (env: platform dir, bun, cli root)
@@ -93,11 +93,11 @@ lives at the package root.
 Process trees under this shape:
 
 ```
-srt run      bin/srt -> flux src/server (in-process) -> solidrt-go
+sol run      bin/sol -> flux src/server (in-process) -> solidrt-go
                                                      -> bun src/check/main.ts   (once)
                                                      -> bun src/bundle/main.ts  (per reload)
 console      flux server ...                      (one process; or imported and run in-process)
-srt pack     bin/srt -> pack (bun) -> fluxc
+sol pack     bin/sol -> pack (bun) -> fluxc
 ```
 
 ## Decisions taken with the shape
@@ -105,7 +105,7 @@ srt pack     bin/srt -> pack (bun) -> fluxc
 - **The server takes flags, not a config blob**: `flux src/server/main.ts
   [file] [--project|--file] [--port N] [--lan] [--client] [--size WxH]
   [--stats] [--capture f] [--tunnel] [--proxy-http] [-- args]`, resolving
-  mode and binaries itself (platform dir from the environment, SRT_HOME for
+  mode and binaries itself (platform dir from the environment, SOLIDRT_HOME for
   checkouts). That is the console's interface too. `shared/config.ts` and
   the JSON handoff go away.
 - **Mode resolution lives twice**: `src/lib/mode.ts` (bun) and `src/server/mode.ts`
@@ -141,7 +141,7 @@ and register itself without bun in front:
 - `alive(pid)` in `flux:process` (`kill(pid)` sends; the registry needs "is
   it alive"; a zombie counts as gone)
 - `env` in `flux:process`, a snapshot object: flux has no `import.meta`, so
-  the server learns where the platform binaries, bun and srt are from the
+  the server learns where the platform binaries, bun and sol are from the
   environment (below)
 - network interface listing: `flux:net` `interfaces()` already existed
 - tty stdin (okf/backlog/stdin-tty-support.md): not needed for this shape,
@@ -155,14 +155,14 @@ flux server.js [file] [--project|--file] [--port N] [--lan] [--proxy-http]
                [--client N [--data-root d] [--size WxH]] [-- args]
 ```
 
-`--client N` spawns the local client with data slot N (`srt run`, default
-0); without it the server runs alone (`srt server`). The environment names
-what it spawns: `SRT_PLATFORM_DIR` (the platform binaries), `SRT_CLI` (the
-@solidrt/cli root, so `bun <cli>/bin/srt bundle --json` and `srt check`
-run by command name) and `SRT_BUN`; srt sets all three, and a checkout
-needs only `SRT_HOME` (`dist/<triple>`, `packages/cli`, bun from PATH).
-`srt bundle --json [--server host:port]` is the rebuild contract (one
-`BundleOutput` on stdout); the startup typecheck is `srt check <entry>`,
+`--client N` spawns the local client with data slot N (`sol run`, default
+0); without it the server runs alone (`sol server`). The environment names
+what it spawns: `SOLIDRT_PLATFORM_DIR` (the platform binaries), `SOLIDRT_CLI` (the
+@solidrt/cli root, so `bun <cli>/bin/sol bundle --json` and `sol check`
+run by command name) and `SOLIDRT_BUN`; sol sets all three, and a checkout
+needs only `SOLIDRT_HOME` (`dist/<triple>`, `packages/cli`, bun from PATH).
+`sol bundle --json [--server host:port]` is the rebuild contract (one
+`BundleOutput` on stdout); the startup typecheck is `sol check <entry>`,
 which bundles in memory once more (cheap, not awaited; on a build failure
 its compile errors print a second time after the rebuild's, accepted). A
 usage error is an uncaught `Error` (flux has no exit): message and exit 1,
@@ -173,8 +173,8 @@ with two stack lines of noise, accepted (a thrown string prints worse).
 Done in `src/` before this shape was decided and still valid: the single
 `solidrt.*` loader (`loadProject`) and its validation, `CLI_VERSION` as the
 one version source (`--version`, the manifest stamp, the MCP server), `--help`
-and the version banner, the bundle prebuilt contract (`.srt.js` compiles,
-`--output` honored, `.srt.bin` rejected), `fail()` in one place, the exe
+and the version banner, the bundle prebuilt contract (`.sol.js` compiles,
+`--output` honored, `.fluxbc` rejected), `fail()` in one place, the exe
 trailer format and the pack layout as separate files, and the control API
 response types. `shared/config.ts` and `shared/registry.ts` are interim and
 go with the config blob. The `build/` + `dev-server/` rename considered on
@@ -186,21 +186,21 @@ the way is not done: it would tidy the interim shape only to discard it.
 2. `server/` on its own: flags instead of the config blob, mode resolved
    in-process (`server/mode.ts`), registry written in-process
    (`server/registry.ts`, sha256 via `crypto.subtle`), binaries from the
-   environment (`server/binaries.ts`), `srt bundle --json` and `srt check`
+   environment (`server/binaries.ts`), `sol bundle --json` and `sol check`
    spawned by command name; `src/entries/` and `shared/config.ts` gone;
    `commands/server.ts` only translates flags and spawns. Done, verified:
-   `srt server`/`srt run` in project mode, `flux server.js <file>` started
-   directly with `SRT_HOME` only, control-API reload, duplicate-key refusal,
+   `sol server`/`sol run` in project mode, `flux server.js <file>` started
+   directly with `SOLIDRT_HOME` only, control-API reload, duplicate-key refusal,
    record removed on exit. The console can spawn a server from here on.
 3. Regroup `src/` into `src/<command>/` folders and `src/lib/`, move
-   `server/` to `src/server/`; `bin/srt` becomes the router; `scaffold/`,
+   `server/` to `src/server/`; `bin/sol` becomes the router; `scaffold/`,
    `docs/`, `agents/`, `scripts/` dissolve as above;
-   website build, `files`, `CLAUDE.md` pointers follow. Done. `srt android`
-   is a command of its own (`src/android/`, replacing `srt client
+   website build, `files`, `CLAUDE.md` pointers follow. Done. `sol android`
+   is a command of its own (`src/android/`, replacing `sol client
    --android`: a device is a different thing from a local process; the
    scaffold's `android` script follows), and `run` is documented in
    `src/server/docs.md` (run = server --client). The
-   router is `src/main.ts` (bin/srt imports it, so it stays typechecked);
+   router is `src/main.ts` (bin/sol imports it, so it stays typechecked);
    command modules export `main()` and load on demand. The website composes
    `/tools` from `README.md` + `src/*/docs.md` (a `Mount` variant in
    `website/src/build.ts`, rewriting `<name>/docs.md` links to page URLs)
@@ -212,5 +212,5 @@ the way is not done: it would tidy the interim shape only to discard it.
    `src/lib/server-bundle.ts` stays for the per-launch build in a checkout.
 
 Done looks like: `packages/cli/src` has no folder whose runtime you have to
-ask about, `bin/srt` is a router, and `flux src/server/main.ts` started from
+ask about, `bin/sol` is a router, and `flux src/server/main.ts` started from
 any cwd is a complete dev server.

@@ -199,9 +199,9 @@ tears it down again - roughly 133 MB allocated and released per raster at
 
 ## Verified mechanics
 
-- `snapshot_node` (alloy/src/rendertree/composite.rs:295) runs on srt-ui and
+- `snapshot_node` (alloy/src/rendertree/composite.rs:295) runs on sol-ui and
   calls `ctx.alloy.render_display_list_to_texture`, a blocking RPC
-  (`RasterCmd::RasterizeDl`, alloy/src/raster.rs:113) into srt-raster, which
+  (`RasterCmd::RasterizeDl`, alloy/src/raster.rs:113) into sol-raster, which
   pre-flips and calls `gl::render_display_list_to_texture`
   (alloy/src/gl.rs:83). That function allocates a fresh 64px-aligned resolve
   texture and adopts it into Impeller; `draw_offscreen` (gl.rs:171) builds

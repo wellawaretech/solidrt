@@ -291,7 +291,7 @@ fn via_temp_file<T>(bytes: &[u8], load: impl FnOnce(&std::path::Path) -> Result<
   use std::sync::atomic::{AtomicU64, Ordering};
   static UNIQUE: AtomicU64 = AtomicU64::new(0);
   let path = std::env::temp_dir().join(format!(
-    "srt-model-{}-{}.bin",
+    "sol-model-{}-{}.bin",
     std::process::id(),
     UNIQUE.fetch_add(1, Ordering::Relaxed)
   ));

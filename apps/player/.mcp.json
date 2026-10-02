@@ -2,7 +2,7 @@
   "mcpServers": {
     "solidrt": {
       "command": "bun",
-      "args": ["node_modules/@solidrt/cli/bin/srt", "mcp"]
+      "args": ["node_modules/@solidrt/cli/bin/sol", "mcp"]
     }
   }
 }

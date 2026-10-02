@@ -6,7 +6,7 @@ test, `expect` asserts. A devDependency of every app and a peer of
 layer, when to `settle`, how to read a failure) is @solidrt/cli
 agents/testing.md.
 
-- A test file is `tests/<name>.test.tsx`, run with `bun run srt test`. It
+- A test file is `tests/<name>.test.tsx`, run with `bun run sol test`. It
   imports `test` and `expect` from `@solidrt/test`; every test gets
   the app under test and an engine of its own:
 

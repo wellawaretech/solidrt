@@ -232,7 +232,7 @@ the engine is in the way any more.
 | Radiance .hdr | addon | yes | yes | yes | |
 | EXR | addon | yes | yes | no | [3d-environment-additive](../backlog/3d-environment-additive.md) |
 | Six-face cube images | yes | yes | yes | no | 3d-environment-additive |
-| Build-time asset bake | no | yes: import pipeline | yes: import | yes: `srt tool` | |
+| Build-time asset bake | no | yes: import pipeline | yes: import | yes: `sol tool` | |
 
 ## Controls and camera
 

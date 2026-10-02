@@ -82,7 +82,7 @@ became 20).
 
 ## Landed (2026-09-11)
 
-Verified by `srt check` on the 3d package, probes/3d-packed-records-probe.tsx
+Verified by `sol check` on the 3d package, probes/3d-packed-records-probe.tsx
 (unorm8x4 + float16x2 style records through setInstanceStyle and by name,
 growth, the blank, a packed record mesh built through the accessor, a
 partial rewrite; mirrors checked in JS, GPU buffers read back byte for

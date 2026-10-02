@@ -34,7 +34,7 @@ use super::Registry;
 /// Marks a stdout line as a record of the host's, not something a test or
 /// a native library printed. It starts with a control character (the ASCII
 /// record separator) so that nothing prints it by accident.
-pub const RECORD_PREFIX: &str = "\u{1e}srt-test ";
+pub const RECORD_PREFIX: &str = "\u{1e}sol-test ";
 /// How long one engine may take, from the start of the file's evaluation to
 /// the test's end, when the host is given no other cap. A safety cap
 /// against a test that never finishes, not a wait: a test that finishes is

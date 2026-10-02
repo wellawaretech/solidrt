@@ -12,7 +12,7 @@ import { SettingsPanel } from "./parts/settings-panel"
 import { ConnectPanel } from "./parts/connect-panel"
 import { ScanScreen } from "./parts/scan-screen"
 
-// The shape of an installed app's id (srt:apps validates strictly on its
+// The shape of an installed app's id (sol:apps validates strictly on its
 // side); existence is the detail screen's to check, the store can change
 // under a link.
 const APP_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/

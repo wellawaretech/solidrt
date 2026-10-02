@@ -77,7 +77,7 @@ impl ModuleDef for TestModule {
     if ctx.userdata::<host::Hosted>().is_none() {
       return Err(Exception::throw_message(
         ctx,
-        "flux:test: a test file is run by a test host; use srt test <file> (or flux --test <file>)",
+        "flux:test: a test file is run by a test host; use sol test <file> (or flux --test <file>)",
       ));
     }
     let mut options = EvalOptions::default();

@@ -73,7 +73,7 @@ dist:
 	$(MAKE) client
 	cp $(HOST_DIST)/solidrt-go.exe $(PKG_WIN)/solidrt-go.exe
 	cp $(ANGLE_EGL) $(ANGLE_GLES) $(PKG_WIN)/
-	$(MAKE) -C $(SRT_HOME)/flux build
+	$(MAKE) -C $(SOLIDRT_HOME)/flux build
 	cp $(HOST_DIST)/flux.exe $(PKG_WIN)/flux.exe
 	cp $(HOST_DIST)/fluxc.exe $(PKG_WIN)/fluxc.exe
 	cp $(HOST_DIST)/fluxrt.exe $(PKG_WIN)/fluxrt.exe

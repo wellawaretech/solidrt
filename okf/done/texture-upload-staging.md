@@ -33,14 +33,14 @@ per-frame buffers are 10-40x larger.
 
 The demand arrived as [[video-playback]] staging item 5: 1080p decode keeps
 pace on the TV but presentation is raster-bound at 16-19/25 fps (~33ms/frame
-on srt-raster; the conversion pass is 1.3ms of it). That reordered this item:
+on sol-raster; the conversion pass is 1.3ms of it). That reordered this item:
 the measured bound is the RASTER side of the chain, not the JS-facing copy
 this note originally targeted, so the internal (Rust) video path goes first
 and the begin/end JS API rides the same machinery later.
 
 The three costs in the chain for a 1080p NV12 frame (~3.1 MB):
-decode copy-out (srt-video, mandatory - the codec buffer must be released),
-the per-plane `to_vec()` crossing the raster channel (srt-ui, pure waste),
+decode copy-out (sol-video, mandatory - the codec buffer must be released),
+the per-plane `to_vec()` crossing the raster channel (sol-ui, pure waste),
 and the raster-side `glTexSubImage2D` - a driver memcpy plus a potential
 stall/ghost because the plane textures were sampled by the previous frame's
 conversion pass, still in flight on a pipelined (tile-based) GPU.
@@ -48,7 +48,7 @@ conversion pass, still in flight on a pipelined (tile-based) GPU.
 1. DONE 2026-08-13: ownership transfer. `Context::update_yuv` takes the
    frame `Vec<u8>` by value; one `RasterCmd::UpdateYuv { planes, frame }`
    moves the whole buffer across the channel and the raster thread slices
-   each plane at its offset. Kills the srt-ui full-frame copy and the
+   each plane at its offset. Kills the sol-ui full-frame copy and the
    per-plane allocs. No GL changes.
 2. DONE 2026-08-13: double-buffered plane sets. A YUV texture owns TWO full
    plane sets (YuvGroup in alloy context.rs); update_yuv uploads into the
@@ -78,7 +78,7 @@ conversion pass, still in flight on a pipelined (tile-based) GPU.
    findings, the measurement rules, and the trace plan.
 3. Only if 1+2 measure insufficient on the TV: the actual staging-buffer
    pool. Raster-owned mapped PBOs (glMapBufferRange; map/unmap on
-   srt-raster only, a Send lease over the mapped memory), leases flowing
+   sol-raster only, a Send lease over the mapped memory), leases flowing
    caller -> player -> decode worker so the decoder's stride-repack writes
    directly into GPU-visible staging and the raster upload becomes
    unmap + glTexSubImage from the PBO (DMA, no driver memcpy). Needs the

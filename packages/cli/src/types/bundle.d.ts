@@ -1,4 +1,4 @@
-// What `srt bundle --json` (src/bundle/main.ts, a bun subprocess of the
+// What `sol bundle --json` (src/bundle/main.ts, a bun subprocess of the
 // dev server) writes to stdout as one JSON object and the dev server
 // (src/server/rebuild.ts) reads back. src/types/ holds the type-only contracts
 // between the two programs: each has its own tsconfig (bun types on one

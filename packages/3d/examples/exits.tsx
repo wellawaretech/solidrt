@@ -14,7 +14,7 @@
 import { createSignal, For, pct, render, Show } from "@solidrt/core"
 import { box, Group, Mesh, PerspectiveCamera, plane, Scene, unlit } from "@solidrt/3d"
 import type { NodeTransition, SceneHandle, SceneTapEvent, Vec3 } from "@solidrt/3d"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 
 const COUNT = 5
 // Crate spacing along x, and the pause before a tapped-away crate is

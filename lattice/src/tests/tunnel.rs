@@ -1,14 +1,14 @@
-//! Needs a live `srt server --tunnel`; pass its ticket (skipped otherwise):
+//! Needs a live `sol server --tunnel`; pass its ticket (skipped otherwise):
 //!
-//!   SRT_TUNNEL_TICKET='...' cargo test -p lattice --features go --lib tunnel -- --nocapture
+//!   SOLIDRT_TUNNEL_TICKET='...' cargo test -p lattice --features go --lib tunnel -- --nocapture
 
 use futures_util::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[test]
 fn forwards_dev_protocol() {
-  let Ok(ticket) = std::env::var("SRT_TUNNEL_TICKET") else {
-    println!("SRT_TUNNEL_TICKET not set; skipping");
+  let Ok(ticket) = std::env::var("SOLIDRT_TUNNEL_TICKET") else {
+    println!("SOLIDRT_TUNNEL_TICKET not set; skipping");
     return;
   };
   let rt = tokio::runtime::Runtime::new().expect("runtime");

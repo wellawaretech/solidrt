@@ -18,7 +18,7 @@
 import { createInputMap, createPointerFeed, createSignal, flush, For, gamepad, pct, render } from "@solidrt/core"
 import { box, DirectionalLight, HemisphereLight, Instance, InstancedMesh, phong, Mesh, OrbitCamera, orbitActions, orbitBindings, plane, Scene, worldPosition } from "@solidrt/3d"
 import type { InstanceNode, NodeTransition, SceneHandle, Vec3 } from "@solidrt/3d"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 
 type Tint = [number, number, number, number]
 

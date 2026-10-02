@@ -3,8 +3,8 @@ import { dirname, join, resolve } from "node:path"
 import { findIsolateModules } from "../bundle/bundler"
 
 // Typechecking an app entry with the project's own tsc, reporting only
-// diagnostics in app code. Used by `srt check` (the hard gate) and by the dev
-// server's startup check (it spawns `srt check <entry>`). @solidrt packages ship
+// diagnostics in app code. Used by `sol check` (the hard gate) and by the dev
+// server's startup check (it spawns `sol check <entry>`). @solidrt packages ship
 // raw .ts sources, so a strict consumer config surfaces their internal errors
 // too; those are counted and hidden, not the caller's problem to wade through.
 
@@ -62,7 +62,7 @@ export type TypecheckResult = { app: Diagnostic[]; hidden: number }
 // config extends the project's tsconfig and roots the program at the entry
 // alone (plus the project's ambient declarations), so tsc checks exactly the
 // entry's import closure - unrelated files are excluded by construction. The
-// config lives in the project-local .srt-data (the dev-artifact dir; absolute
+// config lives in the project-local .solidrt-data (the dev-artifact dir; absolute
 // paths inside, so its location only matters for type-package resolution,
 // which walks up to the project's node_modules from there).
 export async function typecheck(root: string, entry: string): Promise<TypecheckResult | null> {
@@ -76,7 +76,7 @@ export async function typecheck(root: string, entry: string): Promise<TypecheckR
     console.warn("Typecheck skipped: no tsc in the project (add the typescript devDependency)")
     return null
   }
-  let dataDir = join(root, ".srt-data")
+  let dataDir = join(root, ".solidrt-data")
   mkdirSync(dataDir, { recursive: true })
   let config = join(dataDir, `typecheck-${process.pid}.tsconfig.json`)
   // The include narrows the inherited one (files and include are unioned, so

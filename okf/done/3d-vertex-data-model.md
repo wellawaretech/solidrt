@@ -172,7 +172,7 @@ parses through the same function, so it does not change; the
 
 Done looks like: the check rig writes every format through the codec
 and proves the raw bytes, transforms and merges a packed geometry, and
-round-trips one through the model file; `bun run srt check packages/3d`
+round-trips one through the model file; `bun run sol check packages/3d`
 passes; the alloy tests cover `vertex_stride` over packed formats and
 the component-count match.
 
@@ -273,13 +273,13 @@ The geometry rig builds a two-stream geometry, reads across streams
 through the accessor, merges and transforms it, and rejects mismatched
 stream counts; the alloy tests cover per-slot vertex strides and the
 tightest-slot fetch bound; a core example draws a static stream beside
-a per-frame stream written through `updateVertices`; `srt check` passes
+a per-frame stream written through `updateVertices`; `sol check` passes
 on core, 2d and 3d.
 
 ## Stage 1 landed (2026-09-11)
 
 The vocabulary and the 3d package as written above, verified by the
-geometry, glTF, sweep and order rigs, `srt check` on core, 2d and 3d,
+geometry, glTF, sweep and order rigs, `sol check` on core, 2d and 3d,
 and the alloy and flux test suites. Not in this landing: instance
 attributes in the 3d package stay float32-family (the record and style
 buffers are Float32Arrays written in floats); the packed formats are
@@ -299,7 +299,7 @@ buffer by pipeline index. The 3d material's option is `instanceBuffers:
 refuses streams. Verified by the alloy and flux test suites, the two flux
 GPU examples on a window (split buffers, key-buffer orders, the fused
 create and its rejections), the geometry, glTF, sweep, order, pick,
-dispatch, orbit and first-person rigs, `srt check` on core, 2d and 3d,
+dispatch, orbit and first-person rigs, `sol check` on core, 2d and 3d,
 and `examples/streams.tsx` on a window. Point size and a stock points
 material stay a separate item.
 

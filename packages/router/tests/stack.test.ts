@@ -1,6 +1,6 @@
 // The navigation state over a tabbed tree: where paths land, push, replace,
 // reset, back, the blocker scopes a move touches, and the initial state.
-// `srt test packages/router`.
+// `sol test packages/router`.
 import { expect, test } from "flux:test"
 import { createRootRoute, createRoute } from "../src/route.ts"
 import { back, changed, currentPath, findTabs, initialState, push, replace, reset, resolve } from "../src/stack.ts"

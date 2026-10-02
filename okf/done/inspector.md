@@ -12,7 +12,7 @@ visually: the human-facing peer of the MCP bridge. Shaped 2026-08-13,
 implementation started at `apps/inspector/`.
 
 Closed unfinished 2026-08-25: superseded by the console (`apps/console`,
-started by `srt console` as a packed app), which took over the job and keeps
+started by `sol console` as a packed app), which took over the job and keeps
 this plan's invariant. `apps/inspector/` was never committed. The panels below
 were not built here, and the open list is not carried forward.
 
@@ -98,7 +98,7 @@ runtimes.
 4. **Debug commands** - `/debug` + `list_debug` turn `registerDebug`
    commands into generated forms.
 5. Later: `/gpu` resource table, `/buffer` vertex-decoding hexdump,
-   `/input` gesture record/replay next to `srt record`.
+   `/input` gesture record/replay next to `sol record`.
 
 Side value: the inspector leans hard on our weakest surfaces (tree widgets
 with disclosure, dense tables, virtualized lists, text-heavy layout). It is

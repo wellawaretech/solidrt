@@ -2,7 +2,7 @@
 
 `@solidrt/router` makes screens addressable. A route tree maps a path like
 `/settings/theme` to a screen, a stack holds where the app is, and the same
-path is what a link from the OS, an MCP tool, `srt render --link` or a saved
+path is what a link from the OS, an MCP tool, `sol render --link` or a saved
 session carries. It is a layer over core: core reports links (`onLink`,
 `env.launchLink`) and the back intent (`onBack`), the router decides what
 they mean. An app can route by hand without it.
@@ -104,7 +104,7 @@ export function SettingsRoutes() {
 </Route>
 ```
 
-`srt init` with the router selected starts a project in this shape.
+`sol init` with the router selected starts a project in this shape.
 
 ## Params are validated
 
@@ -286,9 +286,9 @@ is dropped. A link that matches nothing lands on the catch-all route, or is
 ignored with a warning.
 
 `<Router>` reports the current path through `reportLocation` from
-`srt:dev`, so `GET /__control__/link` and the `get_location` MCP tool read
+`sol:dev`, so `GET /__control__/link` and the `get_location` MCP tool read
 where the app is, and `POST /__control__/link` or `open_link` opens a
-screen directly. `srt render --link /settings` renders that screen. A hot
+screen directly. `sol render --link /settings` renders that screen. A hot
 reload starts the rebuilt app at the path it was on: the runtime hands the
 last reported path to the new run as `env.launchLink`.
 

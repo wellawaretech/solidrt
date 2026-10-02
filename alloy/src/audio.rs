@@ -140,7 +140,7 @@ struct RampState {
   pans: HashMap<u64, f32>,
 }
 
-/// Owns the shared ramp state and the lazily-spawned `srt-audio-ramp` thread.
+/// Owns the shared ramp state and the lazily-spawned `sol-audio-ramp` thread.
 /// The thread steps every active ramp each `RAMP_STEP` and parks on the
 /// condvar while the table is empty, so an app that never ramps never wakes.
 #[derive(Default)]
@@ -222,7 +222,7 @@ impl RampDriver {
   fn spawn_thread(&self) {
     self.thread_started.set(true);
     let shared = Arc::clone(&self.state);
-    let spawned = std::thread::Builder::new().name("srt-audio-ramp".into()).spawn(move || {
+    let spawned = std::thread::Builder::new().name("sol-audio-ramp".into()).spawn(move || {
       let (lock, cvar) = &*shared;
       loop {
         let mut state = lock.lock().expect("audio ramp lock poisoned");
@@ -257,7 +257,7 @@ impl RampDriver {
         std::thread::sleep(RAMP_STEP);
       }
     });
-    spawned.expect("failed to spawn srt-audio-ramp thread");
+    spawned.expect("failed to spawn sol-audio-ramp thread");
   }
 }
 
@@ -427,7 +427,7 @@ pub struct AudioRegistry {
   mixer: RefCell<Option<&'static Mixer>>,
   tracks: RefCell<HashMap<u64, Track<'static>>>,
   next_id: RefCell<u64>,
-  // Live parameter ramps, stepped by the srt-audio-ramp thread (see RampDriver).
+  // Live parameter ramps, stepped by the sol-audio-ramp thread (see RampDriver).
   ramps: RampDriver,
   // Decoded clips retained so a sound is decoded once and replayed cheaply.
   // Audio is independent of the mixer and ref-counted by the C library, so a

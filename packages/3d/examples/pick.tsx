@@ -24,7 +24,7 @@
 import { createInputMap, createPointerFeed, createSignal, displayScale, pct, render } from "@solidrt/core"
 import { box, cone, getRotation, Group, Mesh, OrbitCamera, orbitActions, orbitBindings, PerspectiveCamera, plane, Scene, setMeshParams, setTransform, sphere, torus, unlit, useScene } from "@solidrt/3d"
 import type { Geometry, MeshNode, NodePointerEvent, NodeTapEvent, NodeWheelEvent, OrbitCameraHandle, SceneHandle, Vec3 } from "@solidrt/3d"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 
 type Color = [number, number, number]
 

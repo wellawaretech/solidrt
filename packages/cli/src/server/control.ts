@@ -18,7 +18,7 @@ import type {
 } from "../types/control"
 
 // The control API under /__control__/: read-only introspection of connected
-// app clients, served next to the file routes. The MCP bridge (srt mcp) is the
+// app clients, served next to the file routes. The MCP bridge (sol mcp) is the
 // primary consumer. Two shapes: server-held data answered directly (clients,
 // logs) and queries forwarded to a client over its websocket and correlated
 // back by id (tree, stats).
@@ -277,7 +277,7 @@ function isUnder(path: string, root: string): boolean {
   return path.length > root.length && path.startsWith(root) && (path[root.length] === "/" || path[root.length] === "\\")
 }
 
-// Load (or switch) the app entry and push it: the /load route (srt mcp's
+// Load (or switch) the app entry and push it: the /load route (sol mcp's
 // load tool) and the repl's `load`. Moves the rebuild entry, then reuses the
 // reload path, so later reloads rebuild the new file. A project server stays
 // inside its project (the bundle resolves the project's dependencies and
@@ -288,7 +288,7 @@ function isUnder(path: string, root: string): boolean {
 // error maps to (400 for a bad request, 502 for a failed build).
 export async function loadEntry(requested: string): Promise<{ entry: string } | { error: string; status: number }> {
   if (!ENTRY_EXTENSIONS.some((ext) => requested.endsWith(ext))) {
-    return { error: `Not an app entry: ${requested} (expected .tsx, .jsx, .ts, .js or .srt.js)`, status: 400 }
+    return { error: `Not an app entry: ${requested} (expected .tsx, .jsx, .ts, .js or .sol.js)`, status: 400 }
   }
   let config = state.config
   let path = absolute(requested, config.projectDir ?? config.sourceDir)
@@ -296,7 +296,7 @@ export async function loadEntry(requested: string): Promise<{ entry: string } | 
   let entry = await realpath(path)
   if (config.projectDir && !isUnder(entry, config.projectDir)) {
     return {
-      error: `Entry is outside the project: ${entry} is not under ${config.projectDir}. A project server only bundles sources inside its project; start srt for that file on its own.`,
+      error: `Entry is outside the project: ${entry} is not under ${config.projectDir}. A project server only bundles sources inside its project; start sol for that file on its own.`,
       status: 400,
     }
   }
@@ -312,7 +312,7 @@ export async function loadEntry(requested: string): Promise<{ entry: string } | 
   return { entry }
 }
 
-// Mute or unmute the user's own input on every client (srt mcp's
+// Mute or unmute the user's own input on every client (sol mcp's
 // mute_user_input/unmute_user_input, the repl's `mute`): while muted, a
 // measurement or an interaction test is not disturbed by a stray click;
 // synthetic /input still goes through. Latched for clients joining while
@@ -327,7 +327,7 @@ export function setUserInputMuted(on: boolean) {
   for (let ws of state.clients.keys()) ws.send(text)
 }
 
-// Pause or resume reload-on-save (srt mcp's pause_watch/resume_watch, the
+// Pause or resume reload-on-save (sol mcp's pause_watch/resume_watch, the
 // repl's `watch`): paused, an agent's saves are not pushed while it edits;
 // its explicit /reload is. Changes made while paused are not replayed on
 // resume.
@@ -491,7 +491,7 @@ export async function handleControl(req: Request, path: string, query: Map<strin
     }
     case "/__control__/link": {
       // GET reads the location the app reported (reportLocation from
-      // srt:dev; null without one); POST ?link=<link> delivers a link to
+      // sol:dev; null without one); POST ?link=<link> delivers a link to
       // the app exactly as an OS-routed one arrives (the raw string on
       // onLink), and answers whether anything listened.
       if (req.method !== "POST") return handleQuery(query, "location")
@@ -620,7 +620,7 @@ export async function handleControl(req: Request, path: string, query: Map<strin
     }
     case "/__control__/reload": {
       // Explicit rebuild-and-push, the way a coding agent applies its edits
-      // (srt mcp's reload tool): a burst of edits collapses into one reload,
+      // (sol mcp's reload tool): a burst of edits collapses into one reload,
       // with reload-on-save paused meanwhile (/watch).
       if (req.method !== "POST") return Response.json({ error: "Reload requires POST" }, { status: 405 })
       let error = await rebuildAndBroadcast()

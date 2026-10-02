@@ -21,7 +21,7 @@ The input plumbing already existed end to end and had zero consumers:
   (`alloy/src/gamepad.rs`), snapshots coalesce to one sticky
   `gamepads` event per main-loop iteration, and core exposes the
   reactive `gamepads()` accessor (`packages/core/src/gamepad.ts`).
-- Key events reach JS (`keydown`/`keyup` on the `srt:events` bus) but
+- Key events reach JS (`keydown`/`keyup` on the `sol:events` bus) but
   core dispatches them only to the single focused node
   (`packages/core/src/window.ts`); there is no focus traversal, and
   `Pressable`/`Button` cannot be activated by key.
@@ -74,7 +74,7 @@ Deliberate stage-1 gaps:
 - Gamepad east is not mapped to back (remotes have a real Back key,
   which already works via the back event).
 
-Verified: `srt check` clean, bundle + Linux client rebuilt. NOT yet
+Verified: `sol check` clean, bundle + Linux client rebuilt. NOT yet
 verified on a device; desktop keyboard (arrows/Enter) exercises the
 same paths.
 
@@ -149,10 +149,10 @@ Also: log chatter on the TV drowned diagnosis. Two causes: (1) the
 steady-state pacing warns (slow frame, present fence timeout, vsync
 signal missed) were warn-level - demoted to debug (counters/stats
 remain); (2) the go MainActivity carried a TEMPORARY block from the
-swap-latency diagnosis forcing SRT_LOG=debug on every Android launch,
+swap-latency diagnosis forcing SOLIDRT_LOG=debug on every Android launch,
 which surfaced every debug trace (and masked the demotions) - now
-converted to an opt-in `srt_log` intent extra (`adb shell am start ...
--e srt_log debug`). alloy additionally logs one line per pad connect
+converted to an opt-in `sol_log` intent extra (`adb shell am start ...
+-e sol_log debug`). alloy additionally logs one line per pad connect
 with mapped/raw classification (permanent).
 
 ## Stage 2 - TV mouse clicks (open)

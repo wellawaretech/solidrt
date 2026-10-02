@@ -9,7 +9,7 @@ completed: 2026-09-21
 
 ## Symptom
 
-An app whose slide frames cost 7 ms of CPU (srt-ui 1, srt-raster 5, swap
+An app whose slide frames cost 7 ms of CPU (sol-ui 1, sol-raster 5, swap
 1.3, no throttle wait) and about 15 ms of GPU ran at 20 fps on the SM-T500
 (Adreno 610, VsyncLocked, hold Auto), with 43 ms of nothing between
 frames. `cadenceHold` read 3 and never stepped down. The controller's log

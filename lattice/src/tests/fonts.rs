@@ -13,7 +13,7 @@ fn aliases(fonts: &[FontPayload]) -> Vec<&str> {
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
-  let dir = std::env::temp_dir().join(format!("srt-fonts-test-{}-{tag}", std::process::id()));
+  let dir = std::env::temp_dir().join(format!("sol-fonts-test-{}-{tag}", std::process::id()));
   let _ = std::fs::remove_dir_all(&dir);
   std::fs::create_dir_all(dir.join("assets/fonts")).expect("create temp dir");
   dir

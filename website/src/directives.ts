@@ -42,7 +42,7 @@ let commands: Map<string, Command> | undefined;
 async function commandsOf(): Promise<Map<string, Command>> {
   if (commands) return commands;
   let source = await file(ROOT + "/" + CLI_ARGS).text();
-  let usage = source.match(/const USAGE = `Usage: srt[^`]*`/)?.[0].slice("const USAGE = `".length, -1) ?? "";
+  let usage = source.match(/const USAGE = `Usage: sol[^`]*`/)?.[0].slice("const USAGE = `".length, -1) ?? "";
   let [, commandsText = "", optionsText = ""] = usage.match(/Commands:\n([\s\S]*?)\n\n([\s\S]*)/) ?? [];
   let blocks = optionsText
     .split("\n\n")
@@ -98,7 +98,7 @@ let providers: Record<string, Provider> = {
     );
   },
 
-  // {{ usage <command> }} - one srt command: its synopsis, its summary, and
+  // {{ usage <command> }} - one sol command: its synopsis, its summary, and
   // every option block of the usage text that names it.
   async usage([name]) {
     if (!name) throw new Error("usage takes <command>");
@@ -106,7 +106,7 @@ let providers: Record<string, Provider> = {
     if (!command) throw new Error(`no command ${name} in ${CLI_ARGS}`);
     let pre = (text: string) => `<pre><code>${escapeHtml(text)}</code></pre>\n`;
     return (
-      pre(`srt ${command.name}${command.args ? " " + command.args : ""}`) +
+      pre(`sol ${command.name}${command.args ? " " + command.args : ""}`) +
       `<p>${escapeHtml(command.summary)}.</p>\n` +
       command.options.map((o) => `<p><small>${escapeHtml(o.heading)}</small></p>\n` + pre(o.text)).join("")
     );
@@ -154,7 +154,7 @@ export async function unpulled(path: string, bodies: string[]): Promise<string[]
   return [...all.values()].filter((d) => d.exported && !pulled.has(d.name)).map((d) => d.name);
 }
 
-/** Likewise for srt commands: one the CLI offers and no page shows. */
+/** Likewise for sol commands: one the CLI offers and no page shows. */
 export async function undocumentedCommands(bodies: string[]): Promise<string[]> {
   let pulled = pulledBy("usage", bodies);
   return [...(await commandsOf()).keys()].filter((name) => !pulled.has(name));

@@ -23,7 +23,7 @@
 import { createSignal, decodeImage, onFrame, pct, render, windowSize } from "@solidrt/core"
 import { createAtlas, grid, TileLayer } from "@solidrt/2d"
 import type { TileCamera, TileLayerHandle } from "@solidrt/2d"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
 
 const COLS = 128

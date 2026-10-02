@@ -115,7 +115,7 @@ texture), and per-push demand, which was not built, so the A/B of section
    comparable on alloy's raster thread by construction, not by two
    functions that happen to agree.
 8. **Headless playback is deterministic today because the clock is the
-   virtual frame timeline.** `srt render` steps frames on a virtual clock
+   virtual frame timeline.** `sol render` steps frames on a virtual clock
    (D6 in [[frame-timing]]), and the tick's silent-stream clock follows it,
    so `examples/video/src/probe/render.tsx` captures the same frames every
    run. A worker on a wall clock would not.
@@ -466,7 +466,7 @@ players, and the close cost becomes a measurement in Done.
 
 ### 8. Headless playback stays deterministic
 
-`srt render` (playback mode) steps frames on a virtual clock. The texture
+`sol render` (playback mode) steps frames on a virtual clock. The texture
 player's `Clock` there reads the virtual frame time (the `playback_frame`
 counter lattice already publishes before each clock read, times the
 capture period) and is `stepped`, which changes three things:
@@ -651,7 +651,7 @@ Step 4 can run beside 2 and 3; 5 needs all of them.
 - The texture player seeks, buffers and plays a URL: `projects/
   video-streaming`'s texture fallback plays the served clip on the desktop
   with the same stall and seek checks the plane passed on the tablet.
-- `srt render` of `examples/video/src/probe/render.tsx` produces identical
+- `sol render` of `examples/video/src/probe/render.tsx` produces identical
   frames on two runs, and the frame at a known time matches its
   expectation.
 - Lip sync on `avsync.webm` on the desktop by eye and ear, and on the TV
@@ -659,11 +659,11 @@ Step 4 can run beside 2 and 3; 5 needs all of them.
 
 ## Verification
 
-Desktop: `examples/video` under `srt run` for the smoke test; the pacing
+Desktop: `examples/video` under `sol run` for the smoke test; the pacing
 probe (`examples/video/src/probe/pacing.tsx`, its `cadence`, `clip` and
 `pump` debug commands) for the content steps and the demand A/B;
 `projects/video-streaming` with its `server/faults.ts` for URL, stall and
-seek on a texture; `avsync.webm` for sync; `srt render` on
+seek on a texture; `avsync.webm` for sync; `sol render` on
 `probe/render.tsx` for determinism, diffed against a second run and
 against the expected frame. Two debug commands are added to the pacing
 probe: one that sleeps the JS thread for the stall check, one that reports
@@ -747,7 +747,7 @@ read over a run, not a census.
   - clip720 (25 fps WITH audio, the case the tick dropped ~10% of): {40:
     372, 0: 527}, no 80s; skipped 0. Audio now corrects the anchor
     instead of selecting frames.
-  - `srt render` of `probe/render.tsx` (5 fps, 2 s): two runs identical
+  - `sol render` of `probe/render.tsx` (5 fps, 2 s): two runs identical
     frame for frame; frame 9 (virtual 2.0 s) shows the clip's burned-in
     00:00:02.000 / frame 50.
   - A 200 ms JS stall (the probe's `stall` command) while clip C plays:

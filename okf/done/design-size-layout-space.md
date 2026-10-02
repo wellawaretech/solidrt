@@ -125,8 +125,8 @@ to content, so stretch lands on the aspect height.
   fit 1.82 with side letterbox (tx 84.1); the row reads back at x 156.9 =
   84.1 + 40 * 1.82, y 662.48 = 364 * 1.82, width 1019.2 = 560 * 1.82, and
   the text measures 242.6 design px on both devices - one layout, no reflow
-  across form factors. Launched with the `srt android` intent extra only
-  (`am start ... --es srt_dev_server host:port` after `force-stop`), since
+  across form factors. Launched with the `sol android` intent extra only
+  (`am start ... --es sol_dev_server host:port` after `force-stop`), since
   the command's install step would replace a locally built APK with the
   published one.
 - Degenerate designSize values (zero, negative, NaN, infinite) used to leave

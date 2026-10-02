@@ -55,7 +55,7 @@ enum EngineCmd {
 }
 
 // What leaving the current app means, decided by host context (see
-// okf/done/exit-to-launcher.md), behind the two srt:app verbs.
+// okf/done/exit-to-launcher.md), behind the two sol:app verbs.
 //
 // exit() ends the app instance: with the player hosting an app (or the
 // BSOD), Stop returns to the player, dropping the dev connection on the way
@@ -194,7 +194,7 @@ async fn run_hook(exec: Option<ExecHandle>, name: &'static str, deadline: std::t
   match tokio::time::timeout(deadline, wait).await {
     Ok(()) => true,
     Err(_) => {
-      log::warn!("[srt] {name} handler did not finish within {} ms", deadline.as_millis());
+      log::warn!("[sol] {name} handler did not finish within {} ms", deadline.as_millis());
       false
     }
   }
@@ -230,12 +230,12 @@ pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   0
 }
 
-// Where `srt pack --apk` stores the payload in the APK, relative to assets/.
+// Where `sol pack --apk` stores the payload in the APK, relative to assets/.
 #[cfg(all(target_os = "android", not(feature = "go")))]
-const PACKED_PAYLOAD_ASSET: &str = "app.srtapp";
+const PACKED_PAYLOAD_ASSET: &str = "app.solapp";
 
-// The production Android runtime: boots the .srtapp packed into the APK
-// (`srt pack --apk`), read in place at its offset inside the APK - no dev
+// The production Android runtime: boots the .solapp packed into the APK
+// (`sol pack --apk`), read in place at its offset inside the APK - no dev
 // server, no player, no extraction. A runner APK without a payload is a
 // packaging error, so there is no fallback screen; the failure line lands in
 // logcat via SDL's stderr redirect when it does at all - primarily this exit
@@ -245,11 +245,11 @@ const PACKED_PAYLOAD_ASSET: &str = "app.srtapp";
 pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   let launch = launch_arg(&android_args(argc, argv));
   let Some((apk, offset, len)) = alloy::sdl_utils::packed_asset_location(PACKED_PAYLOAD_ASSET) else {
-    eprintln!("[srt] no {PACKED_PAYLOAD_ASSET} asset in this APK; nothing to run");
+    eprintln!("[sol] no {PACKED_PAYLOAD_ASSET} asset in this APK; nothing to run");
     return 1;
   };
   let Some(payload) = forge::trailer::read_at(apk, offset, len, payload::EMBED_MAGIC).and_then(payload::load) else {
-    eprintln!("[srt] {PACKED_PAYLOAD_ASSET} is not a SolidRT app pack; nothing to run");
+    eprintln!("[sol] {PACKED_PAYLOAD_ASSET} is not a SolidRT app pack; nothing to run");
     return 1;
   };
   forge::fs::set_assets_base(Some(payload.base));
@@ -385,12 +385,12 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeTouch(
 // The player is the go client's home; the production runtime never
 // shows it (it always boots a provided app source), so only go builds embed it.
 #[cfg(feature = "go")]
-const PLAYER_SOURCE: &str = include_str!("../resources/player/index.srt.js");
-const BSOD_SOURCE: &str = include_str!("../resources/bsod/bsod.srt.js");
+const PLAYER_SOURCE: &str = include_str!("../resources/player/index.sol.js");
+const BSOD_SOURCE: &str = include_str!("../resources/bsod/bsod.sol.js");
 
 /// The dev client's built-in fonts: the three Noto role defaults, matching what
 /// a default packed app carries in its trailer. The dev loop (player,
-/// BSOD, HUD, `srt render` golden frames) needs deterministic text without a
+/// BSOD, HUD, `sol render` golden frames) needs deterministic text without a
 /// packed payload, so these stay compiled in; the production runtime ships no
 /// font data and registers whatever the trailer carries.
 #[cfg(feature = "go")]
@@ -607,9 +607,9 @@ fn ensure_anchored(app_id: &str) {
   let Some(store) = storage::get() else { return };
   let data_dir = store.app_dir(app_id).join("data");
   match anchor_dir(&data_dir) {
-    Ok(true) => log::info!("[srt] working directory set to {}", data_dir.display()),
+    Ok(true) => log::info!("[sol] working directory set to {}", data_dir.display()),
     Ok(false) => {}
-    Err(e) => log::warn!("[srt] could not anchor working directory: {e}"),
+    Err(e) => log::warn!("[sol] could not anchor working directory: {e}"),
   }
 }
 
@@ -622,7 +622,7 @@ fn anchor_app(app_id: &str, current: &mut Option<String>) {
   *current = Some(app_id.to_string());
 }
 
-// srt:app registerProtocolHandler, by host: a packed desktop app registers
+// sol:app registerProtocolHandler, by host: a packed desktop app registers
 // this executable for its scheme (links.rs); on Android the package declares
 // the scheme, so there is nothing to do and the call succeeds; the dev client
 // is not a scheme handler and says so without failing, so app code that
@@ -632,7 +632,7 @@ fn register_protocol_handler(app_id: Option<&str>, display_name: Option<&str>) -
   #[cfg(feature = "go")]
   {
     let _ = (app_id, display_name);
-    log::warn!("[srt] registerProtocolHandler: nothing registered in the dev client; a packed app registers its own scheme");
+    log::warn!("[sol] registerProtocolHandler: nothing registered in the dev client; a packed app registers its own scheme");
     Ok(())
   }
   #[cfg(all(not(feature = "go"), target_os = "android"))]
@@ -666,18 +666,18 @@ const CADENCE_HOLD_MAX_MS: u32 = 50;
 // anyway, and remote-driven clients (no touch, no mouse) - and off where a
 // mouse is present, because a pointer-driven client pipelines under swap
 // pacing and pays more than the boundary rounding for a hold, and cursor
-// motion reads better at a higher uneven rate. `SRT_CADENCE_HOLD`
+// motion reads better at a higher uneven rate. `SOLIDRT_CADENCE_HOLD`
 // (`off`, `auto` or a whole number of refreshes) overrides it for probes and
 // censuses until the runtime policy registry gives apps the knob
 // (okf/backlog/runtime-policy-registry.md).
 fn cadence_hold_policy(mouse: bool) -> alloy::CadenceHold {
-  if let Ok(v) = std::env::var("SRT_CADENCE_HOLD") {
+  if let Ok(v) = std::env::var("SOLIDRT_CADENCE_HOLD") {
     match v.trim() {
       "off" => return alloy::CadenceHold::Off,
       "auto" => return alloy::CadenceHold::Auto { max_ms: CADENCE_HOLD_MAX_MS },
       s => match s.parse::<u32>() {
         Ok(k) if k >= 1 => return alloy::CadenceHold::Fixed(k),
-        _ => log::warn!("[srt] SRT_CADENCE_HOLD={v}: expected off, auto or a whole number of refreshes; ignored"),
+        _ => log::warn!("[sol] SOLIDRT_CADENCE_HOLD={v}: expected off, auto or a whole number of refreshes; ignored"),
       },
     }
   }
@@ -728,10 +728,10 @@ fn ui_thread(
   storage::init(&storage_spec);
   match storage::get() {
     Some(store) => match std::env::set_current_dir(&store.data_dir) {
-      Ok(()) => log::info!("[srt] working directory set to {}", store.data_dir.display()),
-      Err(e) => log::warn!("[srt] could not set working directory to {}: {e}", store.data_dir.display()),
+      Ok(()) => log::info!("[sol] working directory set to {}", store.data_dir.display()),
+      Err(e) => log::warn!("[sol] could not set working directory to {}: {e}", store.data_dir.display()),
     },
-    None => log::warn!("[srt] no writable storage, leaving working directory unchanged"),
+    None => log::warn!("[sol] no writable storage, leaving working directory unchanged"),
   }
   // The startup app id: the anchor before any named reload, and what Stop
   // re-anchors to so the player never squats in a stopped app's sandbox
@@ -766,7 +766,7 @@ fn ui_thread(
   let input_state = Arc::new(InputState::new());
   // The go client's boot rule: no app source means the player, always,
   // online or offline. Launched with a dev-server address, the player dials
-  // it (srt:dev launchAddress) and the server's latched push provides the app;
+  // it (sol:dev launchAddress) and the server's latched push provides the app;
   // installed apps are launched from the player's list, never auto-booted.
   #[cfg(feature = "go")]
   let mut current_app = app.unwrap_or_else(|| AppSource::Text(PLAYER_SOURCE.to_string()));
@@ -904,7 +904,7 @@ fn ui_thread(
     // build; the dev connection uses it to snapshot the render tree on the JS
     // thread for tree queries.
     let query_exec: Arc<std::sync::Mutex<Option<ExecHandle>>> = Arc::new(std::sync::Mutex::new(None));
-    // Where the app says it is (reportLocation in srt:dev); process-level so
+    // Where the app says it is (reportLocation in sol:dev); process-level so
     // it outlives the engine that reported it, see the reload re-entry below.
     let location_slot = plugins::dev::LocationSlot::default();
     // Reload re-entry. A run is identified by the app it belongs to: a
@@ -990,7 +990,7 @@ fn ui_thread(
               // waits for any suspend work still in flight on the JS side),
               // then end the process as before. Beside this task, not in it
               // (see run_hook): frames keep ticking until the exit.
-              log::info!("[srt] quit");
+              log::info!("[sol] quit");
               let exec = current_exec_hooks.borrow().clone();
               tokio::task::spawn_local(async move {
                 run_hook(exec, "quit", QUIT_HOOK_DEADLINE).await;
@@ -1039,7 +1039,7 @@ fn ui_thread(
               let pacing = if *touch { alloy::FramePacing::VsyncLocked } else { alloy::FramePacing::SwapPaced };
               let hold = cadence_hold_policy(*mouse);
               log::info!(
-                "[srt] input devices: keyboard={keyboard} mouse={mouse} touch={touch} screen_keyboard={screen_keyboard} -> pacing {pacing:?}, cadence hold {hold:?}"
+                "[sol] input devices: keyboard={keyboard} mouse={mouse} touch={touch} screen_keyboard={screen_keyboard} -> pacing {pacing:?}, cadence hold {hold:?}"
               );
               alloy_cmd_events.send(alloy::AlloyCommand::SetFramePacing(pacing)).ok();
               alloy_cmd_events.send(alloy::AlloyCommand::SetCadenceHold(hold)).ok();
@@ -1082,7 +1082,7 @@ fn ui_thread(
               tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 if !alive.load(Ordering::Relaxed) && generations.load(Ordering::Relaxed) == generation {
-                  log::warn!("[srt] app did not respond to back; exiting");
+                  log::warn!("[sol] app did not respond to back; exiting");
                   std::process::exit(1);
                 }
               });
@@ -1098,14 +1098,14 @@ fn ui_thread(
               // Rare lifecycle transitions; logged so device traces show
               // whether and when the platform reported them (the resume
               // repaint pipeline depends on it).
-              log::info!("[srt] visibility: {}", if visible { "visible" } else { "hidden" });
+              log::info!("[sol] visibility: {}", if visible { "visible" } else { "hidden" });
               // Forward to the engine as the sticky `visibility` event.
               // Same-state repeats are normal here (app + window paths, plus
               // the Android background watch); core's env signal dedupes.
               ui_runtime.event(&AlloyEvent::Visibility { visible }, raw_ms);
             }
             AlloyEvent::Suspend { hold } => {
-              log::info!("[srt] suspend");
+              log::info!("[sol] suspend");
               // The hook runs beside this task, not in it: events keep
               // flowing (the Quit that follows a finishing Android activity
               // must get through), and the hold releases when the hook
@@ -1130,7 +1130,7 @@ fn ui_thread(
     #[cfg(feature = "go")]
     let player_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
     // The dev-server client: connection supervisor, recents, proxy state and the
-    // srt.dev surface. None on a stepped run (and entirely absent without the
+    // sol.dev surface. None on a stepped run (and entirely absent without the
     // `go` feature). This is the runtime's only seam to the dev client.
     #[cfg(feature = "go")]
     let dev_session = go::DevSession::start(
@@ -1237,7 +1237,7 @@ fn ui_thread(
       let registered = release_engine_textures(&atx);
       if let Some(before) = texture_baseline {
         if registered > before {
-          log::warn!("[srt] reload left {} textures from the previous app alive ({registered} registered)", registered - before);
+          log::warn!("[sol] reload left {} textures from the previous app alive ({registered} registered)", registered - before);
         }
       }
       texture_baseline = Some(registered);
@@ -1271,7 +1271,7 @@ fn ui_thread(
         flux::LogLevel::Error => log::error!("{msg}"),
       }));
       // flux owns the gui plugin set, its registration order and the frame
-      // protocol the draw bridge (`srt:render`) draws through; lattice only
+      // protocol the draw bridge (`sol:render`) draws through; lattice only
       // supplies the host instances they bind.
       let builder = flux::gui::install(
         builder,
@@ -1299,11 +1299,11 @@ fn ui_thread(
             draw_muted,
           )
         })
-        .module_override("srt:render", plugins::draw::SrtRenderModule)
-        .module_override("srt:events", plugins::events::SrtEventsModule)
-        .module_override("srt:dev", plugins::dev::SrtDevModule)
-        .module_override("srt:apps", plugins::apps::SrtAppsModule)
-        .module_override("srt:app", plugins::app::SrtAppModule)
+        .module_override("sol:render", plugins::draw::SolRenderModule)
+        .module_override("sol:events", plugins::events::SolEventsModule)
+        .module_override("sol:dev", plugins::dev::SolDevModule)
+        .module_override("sol:apps", plugins::apps::SolAppsModule)
+        .module_override("sol:app", plugins::app::SolAppModule)
         .userdata(timeline.clone())
         .userdata(location_slot.clone())
         .userdata(flux::ProcessArgs(current_args.clone()));
@@ -1377,7 +1377,7 @@ fn ui_thread(
         None => builder,
       };
       #[cfg(feature = "test")]
-      let builder = builder.module_override("srt:test", plugins::test::SrtTestModule);
+      let builder = builder.module_override("sol:test", plugins::test::SolTestModule);
       // A test engine: the session's log sink, cap and seed, the stepper,
       // and the wall taken out (see test_host.rs).
       #[cfg(feature = "test")]
@@ -1396,7 +1396,7 @@ fn ui_thread(
           builder.userdata(stepper.clone()).plugin(move |ctx| {
             stepped_engine(&ctx);
             if let Err(e) = flux::seed_random(&ctx, seed) {
-              log::error!("[srt] render: failed to seed Math.random: {e}");
+              log::error!("[sol] render: failed to seed Math.random: {e}");
             }
           })
         }
@@ -1461,7 +1461,7 @@ fn ui_thread(
         continue;
       }
 
-      log::info!("[srt] flux engine start");
+      log::info!("[sol] flux engine start");
       let mut next_app: Option<AppSource> = None;
       let mut next_app_id: Option<String> = None;
       let mut next_run_id: Option<String> = None;
@@ -1534,7 +1534,7 @@ fn ui_thread(
         last_location = Some((run_id.clone(), location));
       }
       if quit {
-        log::info!("[srt] engine loop quit");
+        log::info!("[sol] engine loop quit");
         break;
       }
       if let Some(app) = next_app {
@@ -1563,7 +1563,7 @@ fn ui_thread(
             *outcome = Some(Err("the app ended before the render was complete".to_string()));
           }
         }
-        log::error!("[srt] the app ended before the render was complete");
+        log::error!("[sol] the app ended before the render was complete");
         break;
       } else if !showing_bsod {
         // Engine exited on its own (a module/startup error means render() never
@@ -1619,7 +1619,7 @@ fn install_panic_hook() {
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("<unnamed>");
     let location = info.location().map(|l| format!(" at {}:{}", l.file(), l.line())).unwrap_or_default();
-    log::error!("[srt] Panic in thread {name}{location}: {}", info.payload_as_str().unwrap_or("<non-string payload>"));
+    log::error!("[sol] Panic in thread {name}{location}: {}", info.payload_as_str().unwrap_or("<non-string payload>"));
     default_hook(info);
     std::process::exit(101);
   }));
@@ -1715,7 +1715,7 @@ fn start_with(
   forge::process::return_large_allocations();
   alloy::install_logger();
   install_panic_hook();
-  log::info!("[srt] SolidRT version {VERSION}");
+  log::info!("[sol] SolidRT version {VERSION}");
 
   let handle = rt.handle().clone();
   // The frame rate of the mode whose time is frame / fps.
@@ -1770,6 +1770,6 @@ fn start_with(
 fn stepped_engine(ctx: &flux::rquickjs::Ctx<'_>) {
   ctx.store_userdata(stepped::WindowReady::default()).expect("store window ready");
   if let Err(e) = flux::freeze_wall(ctx, stepped::EPOCH_MS) {
-    log::error!("[srt] stepped engine: failed to freeze the wall clock: {e}");
+    log::error!("[sol] stepped engine: failed to freeze the wall clock: {e}");
   }
 }

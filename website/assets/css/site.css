@@ -5,7 +5,7 @@
  * borderless surfaces (card fill on window fill; no rules, no underlines),
  * radius 12 / padding 20 / gap 16, one text color with muted for secondary
  * text, headings separated by size and weight rather than tone, flat accent
- * buttons. Every value reads a --srt-* token from tokens.css, which the site
+ * buttons. Every value reads a --sol-* token from tokens.css, which the site
  * build generates from the framework theme. Sits on modern-normalize
  * (vendored, MIT) for the cross-browser baseline; this file is look only.
  *
@@ -15,29 +15,29 @@
  */
 
 :root {
-  --srt-prose-scale: calc(16 / 14);
-  --srt-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
-  --srt-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Noto Sans Mono", monospace;
-  --srt-content-width: 46rem;
-  --srt-sidebar-width: 14rem;
-  --srt-column-gap: calc(var(--srt-spacing-xl) * 2);
+  --sol-prose-scale: calc(16 / 14);
+  --sol-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  --sol-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Noto Sans Mono", monospace;
+  --sol-content-width: 46rem;
+  --sol-sidebar-width: 14rem;
+  --sol-column-gap: calc(var(--sol-spacing-xl) * 2);
   /* The page is one centered block: sidebar, gutter, content column. */
-  --srt-page-width: calc(
-    var(--srt-content-width) + var(--srt-sidebar-width) + var(--srt-column-gap)
+  --sol-page-width: calc(
+    var(--sol-content-width) + var(--sol-sidebar-width) + var(--sol-column-gap)
   );
-  --srt-page-gradient-end: color-mix(in srgb, var(--srt-background) 75%, var(--srt-primary));
+  --sol-page-gradient-end: color-mix(in srgb, var(--sol-background) 75%, var(--sol-primary));
   /* Filled boxes carry the page's diagonal wash, run the other way: the accent
    * end sits top-left where the page fill is plainest, so a card reads as a
    * surface and not as a flat patch. */
-  --srt-surface-gradient: linear-gradient(
+  --sol-surface-gradient: linear-gradient(
     315deg,
-    var(--srt-surface),
-    color-mix(in srgb, var(--srt-surface) 82%, var(--srt-primary))
+    var(--sol-surface),
+    color-mix(in srgb, var(--sol-surface) 82%, var(--sol-primary))
   );
-  --srt-surface-alt-gradient: linear-gradient(
+  --sol-surface-alt-gradient: linear-gradient(
     315deg,
-    var(--srt-surface-alt),
-    color-mix(in srgb, var(--srt-surface-alt) 82%, var(--srt-primary))
+    var(--sol-surface-alt),
+    color-mix(in srgb, var(--sol-surface-alt) 82%, var(--sol-primary))
   );
   color-scheme: light dark;
 }
@@ -45,14 +45,14 @@
 /* -- Page --------------------------------------------------------------- */
 
 html {
-  font-family: var(--srt-font-sans);
-  font-size: calc(var(--srt-body-size) * var(--srt-prose-scale));
-  line-height: var(--srt-body-line-height);
-  font-weight: var(--srt-body-weight);
-  color: var(--srt-text);
+  font-family: var(--sol-font-sans);
+  font-size: calc(var(--sol-body-size) * var(--sol-prose-scale));
+  line-height: var(--sol-body-line-height);
+  font-weight: var(--sol-body-weight);
+  color: var(--sol-text);
   /* Diagonal wash from the page fill toward the accent, as on the changelog
    * card; fixed so it spans the viewport rather than the document. */
-  background: linear-gradient(135deg, var(--srt-background), var(--srt-page-gradient-end)) fixed;
+  background: linear-gradient(135deg, var(--sol-background), var(--sol-page-gradient-end)) fixed;
 }
 
 body {
@@ -64,18 +64,18 @@ body {
 header,
 main {
   width: 100%;
-  max-width: var(--srt-page-width);
+  max-width: var(--sol-page-width);
   margin: 0 auto;
-  padding: 0 var(--srt-spacing-xl);
+  padding: 0 var(--sol-spacing-xl);
 }
 
 main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--srt-column-gap);
-  padding-top: var(--srt-spacing-xl);
-  padding-bottom: calc(var(--srt-spacing-xl) * 3);
+  gap: var(--sol-column-gap);
+  padding-top: var(--sol-spacing-xl);
+  padding-bottom: calc(var(--sol-spacing-xl) * 3);
 }
 
 /* The content column keeps its reading width whatever the page block is, and
@@ -85,7 +85,7 @@ main {
 article {
   flex: 1;
   min-width: 0;
-  max-width: var(--srt-content-width);
+  max-width: var(--sol-content-width);
   margin-inline: auto;
 }
 
@@ -108,11 +108,11 @@ aside {
   }
 
   aside {
-    flex: 0 0 var(--srt-sidebar-width);
+    flex: 0 0 var(--sol-sidebar-width);
     width: auto;
     position: sticky;
-    top: var(--srt-spacing-xl);
-    max-height: calc(100vh - var(--srt-spacing-xl) * 2);
+    top: var(--sol-spacing-xl);
+    max-height: calc(100vh - var(--sol-spacing-xl) * 2);
     overflow-y: auto;
   }
 }
@@ -130,8 +130,8 @@ aside li {
 /* A group: its heading row, then its members indented one step. */
 aside li > ul,
 aside details > ul {
-  margin: var(--srt-spacing-sm) 0 var(--srt-spacing-md);
-  padding-left: var(--srt-spacing-lg);
+  margin: var(--sol-spacing-sm) 0 var(--sol-spacing-md);
+  padding-left: var(--sol-spacing-lg);
 }
 
 /* A group heading is a disclosure row: the title still navigates to the
@@ -140,7 +140,7 @@ aside details > ul {
 aside summary {
   display: flex;
   align-items: center;
-  border-radius: var(--srt-radius-sm);
+  border-radius: var(--sol-radius-sm);
   list-style: none;
   cursor: pointer;
 }
@@ -154,11 +154,11 @@ aside summary > a {
 }
 
 aside summary:hover {
-  background: var(--srt-overlay-hover);
+  background: var(--sol-overlay-hover);
 }
 
 aside summary:has(> a[aria-current="page"]) {
-  background: var(--srt-surface);
+  background: var(--sol-surface);
 }
 
 aside summary > a:hover,
@@ -172,9 +172,9 @@ aside summary::after {
   flex: none;
   width: 0.4em;
   height: 0.4em;
-  margin-right: var(--srt-spacing-md);
-  border-right: var(--srt-border-width-sm) solid var(--srt-text-muted);
-  border-bottom: var(--srt-border-width-sm) solid var(--srt-text-muted);
+  margin-right: var(--sol-spacing-md);
+  border-right: var(--sol-border-width-sm) solid var(--sol-text-muted);
+  border-bottom: var(--sol-border-width-sm) solid var(--sol-text-muted);
   transform: translateY(-0.1em) rotate(-45deg);
   transition: transform 120ms ease-out;
 }
@@ -185,21 +185,21 @@ aside details[open] > summary::after {
 
 aside a {
   display: block;
-  padding: var(--srt-spacing-sm) var(--srt-spacing-md);
-  border-radius: var(--srt-radius-sm);
-  color: var(--srt-text);
-  font-size: calc(var(--srt-label-size) * var(--srt-prose-scale));
-  font-weight: var(--srt-body-weight);
-  line-height: var(--srt-body-line-height);
+  padding: var(--sol-spacing-sm) var(--sol-spacing-md);
+  border-radius: var(--sol-radius-sm);
+  color: var(--sol-text);
+  font-size: calc(var(--sol-label-size) * var(--sol-prose-scale));
+  font-weight: var(--sol-body-weight);
+  line-height: var(--sol-body-line-height);
 }
 
 aside a:hover {
-  background: var(--srt-overlay-hover);
+  background: var(--sol-overlay-hover);
 }
 
 aside a[aria-current="page"] {
-  background: var(--srt-surface);
-  font-weight: var(--srt-label-weight);
+  background: var(--sol-surface);
+  font-weight: var(--sol-label-weight);
 }
 
 /* -- Header nav --------------------------------------------------------- */
@@ -208,14 +208,14 @@ header nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--srt-spacing-lg);
-  padding: var(--srt-spacing-lg) 0;
+  gap: var(--sol-spacing-lg);
+  padding: var(--sol-spacing-lg) 0;
 }
 
 header nav ul {
   display: flex;
   align-items: center;
-  gap: var(--srt-spacing-sm);
+  gap: var(--sol-spacing-sm);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -228,25 +228,25 @@ header nav li {
 /* Section links as ghost buttons: no fill until hover, like Button ghost. */
 header nav a {
   display: inline-block;
-  padding: var(--srt-spacing-md) var(--srt-spacing-lg);
-  border-radius: var(--srt-radius-md);
-  color: var(--srt-text);
-  font-size: calc(var(--srt-label-size) * var(--srt-prose-scale));
-  font-weight: var(--srt-label-weight);
-  line-height: var(--srt-label-line-height);
+  padding: var(--sol-spacing-md) var(--sol-spacing-lg);
+  border-radius: var(--sol-radius-md);
+  color: var(--sol-text);
+  font-size: calc(var(--sol-label-size) * var(--sol-prose-scale));
+  font-weight: var(--sol-label-weight);
+  line-height: var(--sol-label-line-height);
   text-decoration: none;
   text-transform: capitalize;
 }
 
 header nav a:hover {
-  background: var(--srt-overlay-hover);
+  background: var(--sol-overlay-hover);
 }
 
 /* The brand link: title-sized wordmark, no button treatment. */
 header nav > ul:first-child a {
   padding-left: 0;
-  font-size: calc(var(--srt-title-size) * var(--srt-prose-scale));
-  font-weight: var(--srt-title-weight);
+  font-size: calc(var(--sol-title-size) * var(--sol-prose-scale));
+  font-weight: var(--sol-title-weight);
   text-transform: none;
 }
 
@@ -262,40 +262,40 @@ h3,
 h4,
 h5,
 h6 {
-  margin: 0 0 var(--srt-spacing-lg);
-  color: var(--srt-text);
-  font-weight: var(--srt-heading-weight);
-  line-height: var(--srt-heading-line-height);
-  scroll-margin-top: var(--srt-spacing-xl);
+  margin: 0 0 var(--sol-spacing-lg);
+  color: var(--sol-text);
+  font-weight: var(--sol-heading-weight);
+  line-height: var(--sol-heading-line-height);
+  scroll-margin-top: var(--sol-spacing-xl);
 }
 
 h1 {
-  font-size: calc(var(--srt-heading-size) * var(--srt-prose-scale) * 1.4);
+  font-size: calc(var(--sol-heading-size) * var(--sol-prose-scale) * 1.4);
 }
 
 h2 {
-  font-size: calc(var(--srt-heading-size) * var(--srt-prose-scale));
-  margin-top: calc(var(--srt-spacing-xl) * 2);
+  font-size: calc(var(--sol-heading-size) * var(--sol-prose-scale));
+  margin-top: calc(var(--sol-spacing-xl) * 2);
 }
 
 h3 {
-  font-size: calc(var(--srt-title-size) * var(--srt-prose-scale));
-  font-weight: var(--srt-title-weight);
-  line-height: var(--srt-title-line-height);
-  margin-top: calc(var(--srt-spacing-xl) * 1.5);
+  font-size: calc(var(--sol-title-size) * var(--sol-prose-scale));
+  font-weight: var(--sol-title-weight);
+  line-height: var(--sol-title-line-height);
+  margin-top: calc(var(--sol-spacing-xl) * 1.5);
 }
 
 h4,
 h5,
 h6 {
-  font-size: calc(var(--srt-body-size) * var(--srt-prose-scale));
-  font-weight: var(--srt-label-weight);
-  margin-top: var(--srt-spacing-xl);
+  font-size: calc(var(--sol-body-size) * var(--sol-prose-scale));
+  font-weight: var(--sol-label-weight);
+  margin-top: var(--sol-spacing-xl);
 }
 
 /* Landing hero: title plus a muted subtitle, no gap between them. */
 hgroup {
-  margin-bottom: var(--srt-spacing-lg);
+  margin-bottom: var(--sol-spacing-lg);
 }
 
 hgroup > * {
@@ -303,8 +303,8 @@ hgroup > * {
 }
 
 hgroup > p {
-  color: var(--srt-text-muted);
-  font-size: calc(var(--srt-title-size) * var(--srt-prose-scale));
+  color: var(--sol-text-muted);
+  font-size: calc(var(--sol-title-size) * var(--sol-prose-scale));
 }
 
 p,
@@ -314,55 +314,55 @@ blockquote,
 pre,
 table,
 img {
-  margin: 0 0 var(--srt-spacing-lg);
+  margin: 0 0 var(--sol-spacing-lg);
 }
 
 ul,
 ol {
-  padding-left: calc(var(--srt-spacing-xl) + var(--srt-spacing-sm));
+  padding-left: calc(var(--sol-spacing-xl) + var(--sol-spacing-sm));
 }
 
 li {
-  margin-bottom: var(--srt-spacing-md);
+  margin-bottom: var(--sol-spacing-md);
 }
 
 small {
-  color: var(--srt-text-muted);
+  color: var(--sol-text-muted);
 }
 
 li > ul,
 li > ol {
-  margin-top: var(--srt-spacing-md);
+  margin-top: var(--sol-spacing-md);
   margin-bottom: 0;
 }
 
 strong {
-  font-weight: var(--srt-title-weight);
+  font-weight: var(--sol-title-weight);
 }
 
 /* -- Links and buttons -------------------------------------------------- */
 
 a {
-  color: var(--srt-primary);
+  color: var(--sol-primary);
   text-decoration: none;
 }
 
 a:hover {
-  color: var(--srt-text);
+  color: var(--sol-text);
 }
 
 /* Button primary: accent fill, on-primary label, hover tint, press scale. */
 a[role="button"],
 button {
   display: inline-block;
-  padding: var(--srt-spacing-md) var(--srt-spacing-lg);
+  padding: var(--sol-spacing-md) var(--sol-spacing-lg);
   border: 0;
-  border-radius: var(--srt-radius-md);
-  background: var(--srt-primary);
-  color: var(--srt-on-primary);
+  border-radius: var(--sol-radius-md);
+  background: var(--sol-primary);
+  color: var(--sol-on-primary);
   font: inherit;
-  font-weight: var(--srt-label-weight);
-  line-height: var(--srt-label-line-height);
+  font-weight: var(--sol-label-weight);
+  line-height: var(--sol-label-line-height);
   text-decoration: none;
   cursor: pointer;
   transition: transform 80ms ease-out;
@@ -371,8 +371,8 @@ button {
 a[role="button"]:hover,
 button:hover {
   /* The theme's overlay tint composited over the fill, like Button does. */
-  background-image: linear-gradient(var(--srt-overlay-hover), var(--srt-overlay-hover));
-  color: var(--srt-on-primary);
+  background-image: linear-gradient(var(--sol-overlay-hover), var(--sol-overlay-hover));
+  color: var(--sol-on-primary);
 }
 
 a[role="button"]:active,
@@ -381,7 +381,7 @@ button:active {
 }
 
 :focus-visible {
-  outline: var(--srt-border-width-sm) solid var(--srt-primary);
+  outline: var(--sol-border-width-sm) solid var(--sol-primary);
   outline-offset: 2px;
 }
 
@@ -389,10 +389,10 @@ button:active {
 
 /* Landing sections are cards: surface fill on the window fill. */
 article > section {
-  padding: var(--srt-spacing-xl);
-  border-radius: var(--srt-radius-lg);
-  background: var(--srt-surface-gradient);
-  margin-bottom: var(--srt-spacing-lg);
+  padding: var(--sol-spacing-xl);
+  border-radius: var(--sol-radius-lg);
+  background: var(--sol-surface-gradient);
+  margin-bottom: var(--sol-spacing-lg);
 }
 
 article > section > :last-child {
@@ -405,17 +405,17 @@ article > section > h2 {
 
 /* Code shares the card surface; a block inside a card steps to surfaceAlt. */
 code {
-  font-family: var(--srt-font-mono);
+  font-family: var(--sol-font-mono);
   font-size: 0.9em;
   padding: 0.1em 0.35em;
-  border-radius: var(--srt-radius-sm);
-  background: var(--srt-surface);
+  border-radius: var(--sol-radius-sm);
+  background: var(--sol-surface);
 }
 
 pre {
-  padding: var(--srt-spacing-lg);
-  border-radius: var(--srt-radius-md);
-  background: var(--srt-surface-gradient);
+  padding: var(--sol-spacing-lg);
+  border-radius: var(--sol-radius-md);
+  background: var(--sol-surface-gradient);
   overflow-x: auto;
 }
 
@@ -423,25 +423,25 @@ pre code,
 pre code.hljs {
   display: block;
   padding: 0;
-  font-size: calc(var(--srt-label-size) * var(--srt-prose-scale));
-  line-height: var(--srt-body-line-height);
+  font-size: calc(var(--sol-label-size) * var(--sol-prose-scale));
+  line-height: var(--sol-body-line-height);
   background: transparent;
-  color: var(--srt-text);
+  color: var(--sol-text);
 }
 
 section code {
-  background: var(--srt-surface-alt);
+  background: var(--sol-surface-alt);
 }
 
 section pre {
-  background: var(--srt-surface-alt-gradient);
+  background: var(--sol-surface-alt-gradient);
 }
 
 blockquote {
-  padding: var(--srt-spacing-lg) var(--srt-spacing-xl);
-  border-radius: var(--srt-radius-md);
-  background: var(--srt-surface-alt-gradient);
-  color: var(--srt-text-muted);
+  padding: var(--sol-spacing-lg) var(--sol-spacing-xl);
+  border-radius: var(--sol-radius-md);
+  background: var(--sol-surface-alt-gradient);
+  color: var(--sol-text-muted);
 }
 
 blockquote > :last-child {
@@ -451,7 +451,7 @@ blockquote > :last-child {
 /* No rules anywhere: a thematic break is spacing only. */
 hr {
   border: 0;
-  height: var(--srt-spacing-xl);
+  height: var(--sol-spacing-xl);
   margin: 0;
 }
 
@@ -461,23 +461,23 @@ table {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  border-radius: var(--srt-radius-md);
+  border-radius: var(--sol-radius-md);
   overflow: hidden;
-  background: var(--srt-surface-gradient);
+  background: var(--sol-surface-gradient);
 }
 
 th,
 td {
-  padding: var(--srt-spacing-md) var(--srt-spacing-lg);
+  padding: var(--sol-spacing-md) var(--sol-spacing-lg);
   text-align: left;
   vertical-align: top;
 }
 
 th {
-  font-size: calc(var(--srt-label-size) * var(--srt-prose-scale));
-  font-weight: var(--srt-label-weight);
-  color: var(--srt-text-muted);
-  background: var(--srt-surface-alt-gradient);
+  font-size: calc(var(--sol-label-size) * var(--sol-prose-scale));
+  font-weight: var(--sol-label-weight);
+  color: var(--sol-text-muted);
+  background: var(--sol-surface-alt-gradient);
 }
 
 /* -- Media -------------------------------------------------------------- */
@@ -486,11 +486,11 @@ img {
   display: block;
   max-width: 100%;
   height: auto;
-  border-radius: var(--srt-radius-md);
+  border-radius: var(--sol-radius-md);
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--srt-primary) 25%, transparent);
+  background: color-mix(in srgb, var(--sol-primary) 25%, transparent);
 }
 
 /* -- Small screens ------------------------------------------------------ */
@@ -498,8 +498,8 @@ img {
 @media (max-width: 40rem) {
   header,
   main {
-    padding-left: var(--srt-spacing-lg);
-    padding-right: var(--srt-spacing-lg);
+    padding-left: var(--sol-spacing-lg);
+    padding-right: var(--sol-spacing-lg);
   }
 
   header nav,

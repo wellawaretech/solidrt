@@ -29,13 +29,13 @@ bun run dev
 
 `bun run dev` starts the dev server and a local client in one go. The scaffold brings its own `@solidrt/cli`, so no global install is needed.
 
-To preview the same app on another machine or device, install the tooling there with `bun add -g @solidrt/cli@latest` - that pulls the runtime binary for the platform and gives you the `srt` command - then connect it to your dev server:
+To preview the same app on another machine or device, install the tooling there with `bun add -g @solidrt/cli@latest` - that pulls the runtime binary for the platform and gives you the `sol` command - then connect it to your dev server:
 
 ```sh
-srt client --server <host>
+sol client --server <host>
 ```
 
-For a connected Android device, `srt android` installs and launches the client for you. Run `srt` without arguments for the full command list.
+For a connected Android device, `sol android` installs and launches the client for you. Run `sol` without arguments for the full command list.
 
 ## How it works
 
@@ -73,7 +73,7 @@ markdown file per page.
 - `forge` - engine-independent capability cores (HTTP, sqlite, p2p, fs, events, ...) that Flux builds on
 - `flux` - JavaScript runtime (QuickJS-based): exposes Alloy and Forge through `flux:*` modules, embeddable and standalone
 - `lattice` - the runtime itself, one crate with two binaries:
-  - `solidrt` - what an application ships with: drives the window and the frame loop, loads and sandboxes the packed app, and adds the `srt:*` modules
+  - `solidrt` - what an application ships with: drives the window and the frame loop, loads and sandboxes the packed app, and adds the `sol:*` modules
   - `solidrt-go` - the development client: the same runtime, connected to a dev server, with the player and the debug tooling on top. Also built as an Android app, with iOS to follow
 
 **npm packages**

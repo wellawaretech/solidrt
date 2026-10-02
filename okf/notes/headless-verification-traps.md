@@ -1,14 +1,14 @@
 ---
 title: Headless verification traps
-description: What bites a probe that verifies GPU state under srt render - deferred texture destroys, sRGB has no readback, production bundling drops Solid's diagnostics, Geometry.vertices typing.
+description: What bites a probe that verifies GPU state under sol render - deferred texture destroys, sRGB has no readback, production bundling drops Solid's diagnostics, Geometry.vertices typing.
 created: 2026-09-11
 ---
 
 # Headless verification traps
 
 Found while verifying the @solidrt/3d tiny items of 2026-09-11 with
-`probes/3d-scope-override-probe.tsx` (`bun run srt render <probe> --file
---duration 1`: no dev server, so no clash with whatever `srt run` the user
+`probes/3d-scope-override-probe.tsx` (`bun run sol render <probe> --file
+--duration 1`: no dev server, so no clash with whatever `sol run` the user
 has up). Each cost a rerun; none is specific to that probe.
 
 - **A GPU destroy lands at the frame, never synchronously.** `destroyTexture`
@@ -23,7 +23,7 @@ has up). Each cost a rerun; none is specific to that probe.
   model upload is a data map - normal, metalness/roughness - which is plain
   rgba8. Same family as the float formats with no readback
   (notes/gpu-review.md).
-- **`srt render` bundles production.** `@solidjs/signals` resolves to its
+- **`sol render` bundles production.** `@solidjs/signals` resolves to its
   prod build there, which carries none of the owner diagnostics
   (RUN_WITH_DISPOSED_OWNER, NO_OWNER_CLEANUP, ...). A check on their
   absence passes vacuously; verify ownership through a side effect the
@@ -31,4 +31,4 @@ has up). Each cost a rerun; none is specific to that probe.
   through a console warning.
 - **`Geometry.vertices` is typed `ArrayBufferView`.** App code that slices
   it (`subarray`) has to narrow to `Float32Array` first; the package's own
-  builders know the concrete type, `srt check` on a probe does not.
+  builders know the concrete type, `sol check` on a probe does not.

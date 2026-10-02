@@ -803,7 +803,7 @@ pub fn has_touchscreen_feature() -> bool {
 /// Locate a stored (uncompressed) asset inside this app's own APK: the APK's
 /// absolute path (`ApplicationInfo.sourceDir`) plus the asset's byte offset
 /// and length within it. The production runtime uses this to read the packed
-/// `.srtapp` payload in place (ranged reads against the APK, no extraction;
+/// `.solapp` payload in place (ranged reads against the APK, no extraction;
 /// see forge `fs::AssetsBase::Packed`). The file descriptor Android opens to
 /// report the offset is closed again here; readers reopen the APK by path.
 /// None (with a warning) when the asset is absent or compressed - the caller

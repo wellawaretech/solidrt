@@ -1,7 +1,7 @@
 {
   // The flux module tests (tests/*.test.ts): plain TypeScript on the flux
   // runtime, no JSX, flux-types as the global surface. The crate has no
-  // package.json, so this is what `srt check` finds above a test file.
+  // package.json, so this is what `sol check` finds above a test file.
   "compilerOptions": {
     "lib": ["ESNext"],
     "target": "ESNext",

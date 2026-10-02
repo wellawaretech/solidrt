@@ -635,7 +635,7 @@ export type ReflectionProbeOptions = {
 export type ReflectionProbe = {
   /** The cube map: what `environment={{ cube }}` and `background={{
    * cube }}` take. The prefiltered chain (roughness 0 sharp at level 0,
-   * blurred below, the same rule as a baked .srte), or with `prefilter:
+   * blurred below, the same rule as a baked .sol3e), or with `prefilter:
    * false` the sharp faces alone - then `standard` reflects it at its
    * roughness 0 look whatever its roughness. */
   cube: TextureId

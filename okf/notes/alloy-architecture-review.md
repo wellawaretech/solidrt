@@ -97,7 +97,7 @@ gpu/texture.rs alone spans vocabulary (17-300), GL SamplerCache
 (304-390), and the UI-side registry (396+). Nothing but convention
 stops context/ from calling a GL-taking export like
 gpu::generate_mipmap. Splitting (file moves + re-export shuffling,
-start with texture.rs) makes the "srt-ui has zero GL" contract
+start with texture.rs) makes the "sol-ui has zero GL" contract
 structural instead of conventional, and makes the mirrored context/X
 vs gpu/X naming truthful.
 

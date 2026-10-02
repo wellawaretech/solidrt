@@ -57,8 +57,8 @@ The code this describes: `alloy/src/app.rs` (the main loop),
 ## The chain, per platform and pacing mode
 
 Three threads (alloy/CLAUDE.md): the main loop pumps SDL events and does
-frame bookkeeping, `srt-ui` runs JS, layout and paint into display lists,
-`srt-raster` owns the one GL context and presents. The main loop blocks on
+frame bookkeeping, `sol-ui` runs JS, layout and paint into display lists,
+`sol-raster` owns the one GL context and presents. The main loop blocks on
 the SDL queue plus a wake from the raster thread after each present and
 from the vsync thread after each signal; it never polls.
 
@@ -170,7 +170,7 @@ one.
 | animation timeline | `PacedClock::now_ms` (lattice) | `onFrame` tick, `requestAnimationFrame`, the render event, element and node transitions, silent video streams |
 | timer timeline | `PacedClock::timer_now_ms` | `setTimeout`, `setInterval` in a GUI app |
 | input reading | `PacedClock::input_at_ms`, `input_frame_ms` | the `timeStamp` of input events (pointer, wheel, key, pad state) |
-| stepped clock | frame / fps (lattice, `srt render` and `srt test`) | everything above, deterministically, when a headless host steps the frames |
+| stepped clock | frame / fps (lattice, `sol render` and `sol test`) | everything above, deterministically, when a headless host steps the frames |
 | audio sink | forge audio position | video streams with audio (master clock; the picture follows) |
 
 Rules that follow, each learned the hard way:
@@ -211,11 +211,11 @@ Rules that follow, each learned the hard way:
   takes input time from the event and never reads `performance.now()`.
 - `performance.now()` is on none of these: real elapsed time, advancing
   through a paused dev clock. An app that times its animation off it under
-  `srt render` plays at the wrong speed (Sponza feedback item 28 tried it).
+  `sol render` plays at the wrong speed (Sponza feedback item 28 tried it).
 - The dev clock control (`/clock?scale=`, `?step=`) gates frame delivery
   at scale 0, advances both timelines `period * scale` otherwise, and a
-  step advances both exactly one period. The stepped mode (`srt render`,
-  `srt test`) is the same idea taken to determinism: frame `k` is at
+  step advances both exactly one period. The stepped mode (`sol render`,
+  `sol test`) is the same idea taken to determinism: frame `k` is at
   `k / fps`, whatever the machine does.
 - Transitions are stamped once per frame from the animation timeline. A
   target written before the first frame starts its track at clock 0 and
@@ -333,7 +333,7 @@ worth more than 500 ms means.
 
 ### D6. A stepped host is deterministic
 
-`srt render` and `srt test` drive frame `k` at `k / fps`, deliver exactly
+`sol render` and `sol test` drive frame `k` at `k / fps`, deliver exactly
 one frame signal per frame they step, bypass pacing, put both timelines on
 the same clock, and take the wall out of the engine (`performance.now()`
 reads 0, the calendar is a fixed epoch plus frame time, `Math.random` is
@@ -429,7 +429,7 @@ costs it more than the boundary rounding. The maximum is 50 ms (no hold
 slower than 20 fps; a workload that needs more is held at the maximum
 and its longer intervals are misses, Swappy's rule; dropping to unheld
 beyond it flapped on a workload sitting on the maximum).
-`SRT_CADENCE_HOLD=off|auto|<k>` overrides it until the policy registry
+`SOLIDRT_CADENCE_HOLD=off|auto|<k>` overrides it until the policy registry
 exists ([runtime-policy-registry]). The expected interval for the miss
 accounting is the hold: a held interval is not a miss.
 

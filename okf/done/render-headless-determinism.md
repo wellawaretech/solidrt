@@ -1,14 +1,14 @@
 ---
-title: srt render should be headless, unscaled and able to choose its output folder
+title: sol render should be headless, unscaled and able to choose its output folder
 description: Playback mode opened a hidden SDL window on the real display, laid out at the host's display scale, and wrote frames into the data sandbox; closed by the offscreen video driver (hidden-window fallback), a pinned scale-1 playback resize event, and --out/-o.
 tags: [render, playback, capture, headless, cli, determinism]
 created: 2026-08-05
 completed: 2026-08-05
 ---
 
-# srt render should be headless, unscaled and able to choose its output folder
+# sol render should be headless, unscaled and able to choose its output folder
 
-`srt render` exists to produce reproducible offscreen PNGs: a virtual clock,
+`sol render` exists to produce reproducible offscreen PNGs: a virtual clock,
 lockstep readback, the embedded fonts. Three things undercut that, all found
 while building `scripts/changelog-shot` (a repo tool that renders the
 changelog to an image, and the first non-test consumer of this mode).
@@ -41,7 +41,7 @@ does; it should be deletable after this.
 
 `packages/cli/AGENTS.md` says renders happen "offscreen via EGL", but the
 implementation opens an SDL video window and hides it. It therefore needs a
-display: no `srt render` in CI, over a plain SSH session, or on a headless
+display: no `sol render` in CI, over a plain SSH session, or on a headless
 build box.
 
 SDL3's `offscreen` video driver is the cheap route - request it via the
@@ -81,7 +81,7 @@ All three landed, in that order:
 3. `--out <dir-or-prefix>` on the runtime (absolutized in `main.rs` before
    the sandbox chdir; a directory gets `frame-NNNNNN.png` inside it, anything
    else is a prefix). The CLI always forwards it from `-o/--output`,
-   defaulting to the invoking directory, so `srt render` now writes where it
+   defaulting to the invoking directory, so `sol render` now writes where it
    was run.
 1. Playback's one `Resize` event (`playback_resize_event`) reports
    `size_in_pixels` at `display_scale: 1.0` with a full-window safe area, so

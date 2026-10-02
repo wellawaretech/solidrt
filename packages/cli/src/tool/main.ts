@@ -5,12 +5,12 @@ import { source, toolArgs } from "../lib/args"
 import { buildFluxScript, fluxScriptEnv } from "../lib/flux-script"
 import { requireBinary } from "../lib/util"
 
-// srt tool: the tools the installed @solidrt packages ship - build-time
+// sol tool: the tools the installed @solidrt packages ship - build-time
 // helpers that belong to an extension, not to core (a model converter in
 // @solidrt/3d, say). Discovery is by convention, like demos: every
 // `<package>/tools/<name>.ts` is a tool named `<package>/<name>`, run in
 // the caller's cwd with the arguments after the tool name passed through
-// untouched. srt knows nothing about what a tool does; a tool prints its
+// untouched. sol knows nothing about what a tool does; a tool prints its
 // own usage.
 //
 // A tool runs under bun, unless its file is `<name>.flux.ts`: that one
@@ -66,7 +66,7 @@ export async function main(): Promise<void> {
 
   if (source === undefined) {
     list(tools)
-    console.log("\nRun one with: srt tool <pkg>/<name> [arguments]")
+    console.log("\nRun one with: sol tool <pkg>/<name> [arguments]")
     return
   }
 
@@ -91,7 +91,7 @@ async function runUnderBun(tool: Tool): Promise<number> {
 // binary with the environment the dev server gets, the file removed after.
 async function runUnderFlux(tool: Tool): Promise<number> {
   let flux = requireBinary("flux")
-  let script = resolve(tmpdir(), `srt-tool-${process.pid}.js`)
+  let script = resolve(tmpdir(), `sol-tool-${process.pid}.js`)
   await buildFluxScript(tool.script, script, `the tool ${tool.name}`)
   try {
     let proc = Bun.spawn([flux, script, ...toolArgs], {

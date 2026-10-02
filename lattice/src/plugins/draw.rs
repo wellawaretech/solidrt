@@ -24,7 +24,7 @@ const SLOW_WARN_INTERVAL: Duration = Duration::from_secs(1);
 // HUD refreshes once a second, so its figure covers the second just shown.
 const HUD_GPU_WINDOW_MS: f64 = 1000.0;
 
-// The host state the `srt:render` module binds, stashed in userdata by
+// The host state the `sol:render` module binds, stashed in userdata by
 // `store_state` before any import so the module's `evaluate` can build
 // `renderFrame`. Also holds the draw loop's own frame-to-frame state (stats,
 // overlay) so the body is callable both from the JS export and natively
@@ -86,7 +86,7 @@ impl Drop for RenderInner {
 }
 
 /// Stash the draw bridge's host state in userdata, before any import. The
-/// `srt:render` surface is registered separately via `module_override`.
+/// `sol:render` surface is registered separately via `module_override`.
 pub fn store_state(
   ctx: &QuickJsContext<'_>,
   platform: Arc<PlatformContext>,
@@ -127,13 +127,13 @@ pub fn render_now(ctx: &QuickJsContext<'_>) {
   }
 }
 
-/// The `srt:render` module: `renderFrame()`, the runner's per-frame draw. Not
+/// The `sol:render` module: `renderFrame()`, the runner's per-frame draw. Not
 /// part of `flux:rendertree` because it bundles lattice-only policy (the
 /// stats overlay and figures, the frame history, hover refresh, the
 /// postLayout hook) around flux's frame protocol.
-pub struct SrtRenderModule;
+pub struct SolRenderModule;
 
-impl ModuleDef for SrtRenderModule {
+impl ModuleDef for SolRenderModule {
   fn declare<'js>(decl: &Declarations<'js>) -> flux::rquickjs::Result<()> {
     decl.declare("renderFrame")?;
     Ok(())

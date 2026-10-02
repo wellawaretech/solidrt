@@ -1,4 +1,4 @@
-# srt android
+# sol android
 
 {{ usage android }}
 
@@ -17,7 +17,7 @@ launches on every device); `--device` picks one by serial or unique prefix
 A device without the client gets it installed first, from the project's
 Android target for the device's ABI: the `@solidrt/android-<abi>` dev
 dependency, which carries that ABI's client and its runner (the base of
-`srt pack --apk`). A project with no target yet gets a picker the first
+`sol pack --apk`). A project with no target yet gets a picker the first
 time (which devices it targets: arm64-v8a for current phones and tablets,
 armeabi-v7a for older phones and many Android TVs, x86_64 for emulators and
 Chromebooks); a device whose ABI is not among the targets is offered its
@@ -27,9 +27,9 @@ the one the project's package carries is updated after asking - a client
 you built and installed yourself stays unless you say so. `--install`
 reinstalls regardless.
 
-`--apk` works on the app instead of the client: it packs it (`srt pack
+`--apk` works on the app instead of the client: it packs it (`sol pack
 --apk`, one APK per target) and installs and launches on each device the
-APK built for its ABI, nothing dev-flavored. `srt android <file.apk>`
+APK built for its ABI, nothing dev-flavored. `sol android <file.apk>`
 installs and launches an APK you already have.
 
 `--census` does not launch anything: it reads the compositor's own record
@@ -39,7 +39,7 @@ p50/p90, and the per-frame GPU span (frameReady minus queue time, the
 frame's GPU work on a tiled GPU). These are the figures every Android
 pacing and paint-cost verdict is measured with, because no runtime counter
 can be wrong about them. `--clear` empties the history first and
-`--seconds <N>` waits that long before reading, so `srt android --census
+`--seconds <N>` waits that long before reading, so `sol android --census
 --clear --seconds 5` while you drive the app (by hand, or over the control
 API) measures exactly that interaction; without them the reading is
 whatever the compositor's short ring still holds. `--layer` picks a layer

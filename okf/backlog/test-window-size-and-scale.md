@@ -6,7 +6,7 @@ created: 2026-09-30
 
 # An app test cannot choose its window size or display scale
 
-Symptom: `srt test` starts the dev client headless at one size, and every
+Symptom: `sol test` starts the dev client headless at one size, and every
 test of every file runs there. A layout that switches at a breakpoint, a
 phone-sized screen, a 2x display scale: none can be asserted.
 

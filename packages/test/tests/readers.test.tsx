@@ -2,7 +2,7 @@
 // a link, a debug command, a synthetic gamepad, and the readers past a
 // node's record: the subtree as text, its pixels, the GPU inventory.
 
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 import { test, expect } from "../src/index.ts"
 import { createSignal, gamepads, onLink } from "@solidrt/core"
 

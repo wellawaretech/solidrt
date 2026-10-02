@@ -21,7 +21,7 @@ pub fn apply_app_icon(app_id: &str, cmd_tx: &std::sync::mpsc::Sender<alloy::Allo
     Some((width, height, rgba)) => {
       cmd_tx.send(alloy::AlloyCommand::SetIcon { width, height, rgba }).ok();
     }
-    None => log::warn!("[srt] Could not rasterize the window icon"),
+    None => log::warn!("[sol] Could not rasterize the window icon"),
   }
 }
 
@@ -31,7 +31,7 @@ fn rasterize(svg: &str, size: u32) -> Option<(u32, u32, Vec<u8>)> {
   let tree = match usvg::Tree::from_str(svg, &usvg::Options::default()) {
     Ok(tree) => tree,
     Err(e) => {
-      log::warn!("[srt] Window icon SVG parse failed: {e}");
+      log::warn!("[sol] Window icon SVG parse failed: {e}");
       return None;
     }
   };

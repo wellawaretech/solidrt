@@ -18,7 +18,7 @@ async fn main() {
   forge::process::return_large_allocations();
   // The same section trailer the solidrt runner uses (forge::trailer; written
   // by packages/cli/src/packer.ts). A fluxrt payload carries only kind-2 file
-  // sections: "bundle.bin" is the program, "isolates/<id>.bin" its isolate
+  // sections: "bundle.fluxbc" is the program, "isolates/<id>.fluxbc" its isolate
   // modules. The program is read once here; isolates stay in place and
   // resolve by ranged reads through the assets mount, exactly as in solidrt.
   let Some(trailer) = forge::trailer::read_own(MAGIC) else {
@@ -28,7 +28,7 @@ async fn main() {
   let main = trailer
     .sections
     .iter()
-    .find(|s| s.kind == forge::trailer::SECTION_FILE && s.name == "bundle.bin")
+    .find(|s| s.kind == forge::trailer::SECTION_FILE && s.name == "bundle.fluxbc")
     .and_then(|s| trailer.section_bytes(s).ok())
     .unwrap_or_else(|| {
       eprintln!("fluxrt: no embedded payload found");

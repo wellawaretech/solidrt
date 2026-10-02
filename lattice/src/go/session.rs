@@ -32,10 +32,10 @@ pub struct DevSession {
   // within a run and are snapshotted into each engine.
   dev_recents: Rc<RefCell<Vec<String>>>,
   // Control channel into the connection supervisor, exposed to JS via the
-  // srt.dev plugin.
+  // sol.dev plugin.
   dev_cmd_tx: UnboundedSender<DevCmd>,
-  // Dev-server address delivered at launch (srt client --android), exposed to JS
-  // as srt:dev launchAddress so the player can auto-connect. Consumed by a
+  // Dev-server address delivered at launch (sol client --android), exposed to JS
+  // as sol:dev launchAddress so the player can auto-connect. Consumed by a
   // user exit (see DevExitHandle), since the player re-dials it on every
   // mount.
   launch_address: Arc<Mutex<Option<String>>>,

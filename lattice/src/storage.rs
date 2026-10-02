@@ -8,7 +8,7 @@
 // apps/ level (everywhere except a packed app, which is exactly one app).
 // The fourth combination (one app, many clients) is meaningless.
 //
-// Dev client (--data-root; srt forwards one for every client it spawns,
+// Dev client (--data-root; sol forwards one for every client it spawns,
 // pointing at the dev dotdir's clients/ folder). Many numbered clients,
 // many apps:
 //
@@ -117,7 +117,7 @@ fn checked_component(name: Option<&str>, what: &str) -> String {
   match name {
     Some(name) if safe_component(name) => name.to_string(),
     Some(name) => {
-      log::warn!("[srt] invalid {what} {name:?}, using \"default\"");
+      log::warn!("[sol] invalid {what} {name:?}, using \"default\"");
       "default".to_string()
     }
     None => "default".to_string(),
@@ -133,7 +133,7 @@ pub(crate) fn pref_dir(app: &str) -> Option<PathBuf> {
   match alloy::sdl3::filesystem::get_pref_path("SolidRT", app) {
     Ok(dir) => Some(dir),
     Err(e) => {
-      log::warn!("[srt] no writable pref path: {e}");
+      log::warn!("[sol] no writable pref path: {e}");
       None
     }
   }
@@ -148,7 +148,7 @@ pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
     Some(path) => match std::path::absolute(path) {
       Ok(root) => (root.join(client()), false),
       Err(e) => {
-        log::warn!("[srt] cannot resolve data root {}: {e}", path.display());
+        log::warn!("[sol] cannot resolve data root {}: {e}", path.display());
         return None;
       }
     },
@@ -156,7 +156,7 @@ pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
       // Both pref-path layouts have exactly one client per install, so
       // --client is data-root-only.
       if spec.client.is_some() {
-        log::warn!("[srt] --client only applies with --data-root, ignoring");
+        log::warn!("[sol] --client only applies with --data-root, ignoring");
       }
       match &spec.app_id {
         Some(app_id) => (pref(&checked_component(Some(app_id), "app id"))?, true),
@@ -173,7 +173,7 @@ pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
   };
   for dir in [&data_dir, &client_dir.join("identity"), &client_dir.join("logs")] {
     if let Err(e) = std::fs::create_dir_all(dir) {
-      log::warn!("[srt] cannot create storage dir {}: {e}", dir.display());
+      log::warn!("[sol] cannot create storage dir {}: {e}", dir.display());
       return None;
     }
   }
@@ -197,7 +197,7 @@ fn claim_run_marker(client_dir: &PathBuf) -> Option<std::fs::File> {
   let mut file = match std::fs::OpenOptions::new().read(true).write(true).create(true).open(&path) {
     Ok(file) => file,
     Err(e) => {
-      log::warn!("[srt] cannot open run marker {}: {e}", path.display());
+      log::warn!("[sol] cannot open run marker {}: {e}", path.display());
       return None;
     }
   };
@@ -213,13 +213,13 @@ fn claim_run_marker(client_dir: &PathBuf) -> Option<std::fs::File> {
       let holder = holder.trim();
       let holder = if holder.is_empty() { String::new() } else { format!(" (pid {holder})") };
       log::warn!(
-        "[srt] another client{holder} is already using {}; two clients on one tree corrupt each other's data - give each its own --client number",
+        "[sol] another client{holder} is already using {}; two clients on one tree corrupt each other's data - give each its own --client number",
         client_dir.display()
       );
       None
     }
     Err(std::fs::TryLockError::Error(e)) => {
-      log::warn!("[srt] cannot lock run marker {}: {e}", path.display());
+      log::warn!("[sol] cannot lock run marker {}: {e}", path.display());
       None
     }
   }

@@ -147,7 +147,7 @@ Verification
    and hops. Against the new one: deltas that are whole multiples of the
    period, none beyond the frame time, the sum tracking wall time; at full
    rate every delta exactly one period.
-4. Sponza on the laptop with `SRT_HOME=<repo>`, its tour running, the same
+4. Sponza on the laptop with `SOLIDRT_HOME=<repo>`, its tour running, the same
    read; then the Pixel 7 with an APK from the repo runtime.
 5. The Sponza integration: `src/index.tsx` `startTour` steps by `dt` (kept
    clamped at 0.1 s), the `step` average and the WORKAROUND comment go.

@@ -70,7 +70,7 @@ Deliberate non-goals, to state in the docs as "what this is not":
 - Wired into the forge fetch core so every consumer benefits: headless flux,
   lattice, and everything above ("images only" restriction rejected).
 - Store: one file per entry keyed by URL hash, small metadata header (URL,
-  status, response headers), in the per-app data root (`.srt-data` in dev -
+  status, response headers), in the per-app data root (`.solidrt-data` in dev -
   which also fixes the postmortem's hot-reload refetch problem without
   `--proxy-http`; the prod org/app path once the update-mechanism data roots
   land). No sqlite, no index file.
@@ -88,13 +88,13 @@ tee-to-temp-file with commit on clean completion, mtime LRU + per-entry cap;
 `do_fetch_cached` in `forge/src/fetch.rs`); `cache` option threaded through
 the flux fetch plugin (unknown values throw per the dev/prod validation
 policy); `FluxEngineBuilder::cache_dir` + `dev_cache_dir()` (cwd
-`.srt-data/cache`, used by the flux/fluxrt bins); lattice passes SDL
+`.solidrt-data/cache`, used by the flux/fluxrt bins); lattice passes SDL
 `get_pref_path("SolidRT", "go")/cache`. flux-types + docs/flux.md updated;
 forge unit tests + e2e smoke (modes, throw, POST ignored, cross-restart
 disk hit) verified. Interim locations resolved this way until the
 update-mechanism data roots land; the literals are collected in
 okf/backlog/shared-config-constants.md. Update 2026-07-24: the cwd
-`.srt-data/cache` default scattered folders across the filesystem and put
+`.solidrt-data/cache` default scattered folders across the filesystem and put
 storage policy inside the engine; `dev_cache_dir()` is deleted and the
 bare flux/fluxrt bins configure no cache dir at all - a scripting runtime
 silently persisting responses to disk is hidden magic, and the documented
@@ -165,7 +165,7 @@ client-level shared cache could not be inspected or cleared per app.
 - **Cache management delivered** (was a named future): `cache::scan` in the
   forge core (sync; `read_header` unified sync, `lookup` converts the same
   handle via `File::from_std` for the streamed body) + `fetch::cached_meta`
-  (url + normalized content-type). `srt:apps` `info()` gained `cacheSize` +
+  (url + normalized content-type). `sol:apps` `info()` gained `cacheSize` +
   `cache: [{url, type?, size}]` and a `clearCache(id)`; the launcher detail
   view aggregates by content type and by domain with a clear button. The
   JS surface stays the flat per-entry primitive; grouping is view-side.

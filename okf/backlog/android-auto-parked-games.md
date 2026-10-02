@@ -1,6 +1,6 @@
 ---
 title: Android Auto parked games
-description: Since Android 15, Android Auto runs a parked game as an ordinary activity on the car display, drawing its own UI, so a solidrt game can reach car screens on the renderer it already has; what is missing is a per-app manifest opt-in through srt pack, a Play upload path, and a verification pass on the Desktop Head Unit for the second display, the density change and the driving block.
+description: Since Android 15, Android Auto runs a parked game as an ordinary activity on the car display, drawing its own UI, so a solidrt game can reach car screens on the renderer it already has; what is missing is a per-app manifest opt-in through sol pack, a Play upload path, and a verification pass on the Desktop Head Unit for the second display, the density change and the driving block.
 created: 2026-09-27
 ---
 
@@ -120,7 +120,7 @@ Each of these is a question for the running client, not a design:
   intervention touches our frame pacing, and if so ship a config with both
   off for packed games.
 
-### 3. Opt-in through package.json and srt pack
+### 3. Opt-in through package.json and sol pack
 
 Per the packaging rule (what the app is goes top level and platform-neutral;
 the `android` group holds only what Android alone needs), both facts are
@@ -140,7 +140,7 @@ puts a game in the Android TV launcher's Games row
 (`okf/backlog/android-tv-play-distribution.md`). `car` maps to
 `CAR_LAUNCHER` for Android Auto, and to the automotive `uses-feature` once
 Automotive OS is in scope. While games are the only category Android Auto
-opens, `srt pack` refuses `car` without `category: "game"`. As with `tv`
+opens, `sol pack` refuses `car` without `category: "game"`. As with `tv`
 (`okf/backlog/android-tv-play-distribution.md`), knowing the intent also
 lets pack print the Play Console steps after a `car: true` AAB: the
 Android Auto form-factor opt-in, an open testing track, the quality review.

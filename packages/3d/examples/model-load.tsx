@@ -3,7 +3,7 @@
 // bundle - the shape every app with real content ends up needing. Bake
 // the asset once and drop it in your app's assets tree:
 //
-//   bun run srt tool 3d/model examples/model.glb -o assets/model.srtm
+//   bun run sol tool 3d/model examples/model.glb -o assets/model.sol3m
 //
 // (loadGltf("assets/model.glb") has the exact same async shape; the bake
 // just removes the runtime parse.)
@@ -51,7 +51,7 @@ function Rover(props: { turn: () => number }) {
   // The async value: a memo returning a Promise. Its read below suspends
   // until the file is read and the model built, then resumes under the
   // <Loading> boundary in App.
-  let loaded = createMemo(() => loadModel("assets/model.srtm", { label: "rover" }))
+  let loaded = createMemo(() => loadModel("assets/model.sol3m", { label: "rover" }))
 
   // Everything derived from the model - framing, mounting - happens in
   // this memo, AFTER the suspending read, so nothing here runs or builds

@@ -29,12 +29,12 @@ function writeStdout(data: string): Promise<void> {
 // subdir of the build root, or an explicit --output dir. The build root is
 // the cwd: a project command runs in its root (mode.ts), and a file on its
 // own builds where it is run from. Only reused when it is empty or already a
-// bundle output (a *.srt.* or *.flux.* bundle at top level) - the
+// bundle output (a *.sol.* or *.flux.* bundle at top level) - the
 // writePackFolder rule - so it never writes into an unrelated directory.
 function ensureOutDir(defaultDir = join("dist", "bundle")): string {
   let outDir = values.output ?? defaultDir
   let existing = existsSync(outDir) ? readdirSync(outDir) : null
-  if (existing && existing.length > 0 && !existing.some((name) => /\.(srt|flux)\.(js|bin)$/.test(name))) {
+  if (existing && existing.length > 0 && !existing.some((name) => /\.(sol|flux)\.(js|bin)$/.test(name))) {
     console.error(`${resolve(outDir)} exists and is not a bundle output; choose another --output`)
     process.exit(1)
   }
@@ -44,18 +44,18 @@ function ensureOutDir(defaultDir = join("dist", "bundle")): string {
 
 // Clear one form's files from the output's isolates/ dir before rewriting it,
 // so removed modules cannot go stale. The dir is shared by a bundle's .js and
-// .bin forms, so only the form being rewritten is cleared - a --compile must
+// .fluxbc forms, so only the form being rewritten is cleared - a --compile must
 // not delete the .js set the .js bundle pairs with, nor the reverse.
-function clearIsolates(dir: string, ext: ".js" | ".bin") {
+function clearIsolates(dir: string, ext: ".js" | ".fluxbc") {
   walkFiles(dir, (abs) => {
     if (abs.endsWith(ext)) rmSync(abs)
   })
 }
 
-// Compile one isolate bundle to `<dir>/<id>.bin` (module name = its id, for
+// Compile one isolate bundle to `<dir>/<id>.fluxbc` (module name = its id, for
 // stack attribution).
 async function writeIsolateBytecode(dir: string, isolate: { id: string; code: string }) {
-  let outfile = join(dir, isolate.id + ".bin")
+  let outfile = join(dir, isolate.id + ".fluxbc")
   mkdirSync(dirname(outfile), { recursive: true })
   await Bun.write(outfile, await compileToBytecode(isolate.code, isolate.id))
 }
@@ -89,17 +89,17 @@ export async function main() {
     }
     let outDir = ensureOutDir()
     if (values.compile) {
-      await writeBytecode(jsCode, join(outDir, name + ".flux.bin"))
+      await writeBytecode(jsCode, join(outDir, name + ".fluxbc"))
     } else {
       let outfile = join(outDir, name + ".flux.js")
       await Bun.write(outfile, jsCode)
       console.log(`>> wrote ${jsCode.length} bytes to ${outfile}`)
     }
     // Isolates follow the main bundle's form: source beside a .flux.js,
-    // bytecode beside a .flux.bin (the flux resolver reads .bin first).
+    // bytecode beside a .fluxbc (the flux resolver reads .fluxbc first).
     let isolatesDir = join(outDir, "isolates")
     if (values.compile) {
-      clearIsolates(isolatesDir, ".bin")
+      clearIsolates(isolatesDir, ".fluxbc")
       for (let module of isolateModules) {
         await writeIsolateBytecode(isolatesDir, { id: module.id, code: await bundleFlux(module.path) })
       }
@@ -118,12 +118,12 @@ export async function main() {
   // project root or the entry's directory with the entry and --project or
   // --file, so the mode resolves the same). One BundleOutput object on
   // stdout (types/bundle.d.ts), diagnostics on stderr, exit 1 with an empty
-  // stdout on a build failure. A prebuilt .srt.js is read as-is with its
+  // stdout on a build failure. A prebuilt .sol.js is read as-is with its
   // sibling isolate bundles.
   if (values.json) {
     let mode = resolveMode()
     let result: BundleOutput | null
-    if (mode.entry.endsWith(".srt.js")) {
+    if (mode.entry.endsWith(".sol.js")) {
       let code = await Bun.file(mode.entry).text()
       let isolates = readPrebuiltIsolates(mode.entry).map((i) => ({ ...i, map: null }))
       result = {
@@ -146,7 +146,7 @@ export async function main() {
     process.exit()
   }
 
-  // A prebuilt .srt.js (validateArgs admits no other prebuilt form) is
+  // A prebuilt .sol.js (validateArgs admits no other prebuilt form) is
   // compiled to bytecode: the only step left, so --compile is implied. The
   // output lands in the bundle's own dir unless --output says otherwise; its
   // isolate bundles compile along into the output's isolates/ (the ids match,
@@ -158,9 +158,9 @@ export async function main() {
       process.exit(1)
     }
     let outDir = ensureOutDir(dirname(jsFile))
-    await writeBytecode(await Bun.file(jsFile).text(), join(outDir, basename(jsFile).replace(/\.js$/, ".bin")))
+    await writeBytecode(await Bun.file(jsFile).text(), join(outDir, basename(jsFile).replace(/\.sol\.js$/, ".fluxbc")))
     let isolatesDir = join(outDir, "isolates")
-    clearIsolates(isolatesDir, ".bin")
+    clearIsolates(isolatesDir, ".fluxbc")
     for (let isolate of readPrebuiltIsolates(jsFile)) {
       await writeIsolateBytecode(isolatesDir, isolate)
     }
@@ -185,8 +185,8 @@ export async function main() {
 
   if (values.compile) {
     let result = await bundleSolid(mode)
-    await writeBytecode(result.code, join(outDir, name + ".srt.bin"))
-    clearIsolates(isolatesDir, ".bin")
+    await writeBytecode(result.code, join(outDir, name + ".fluxbc"))
+    clearIsolates(isolatesDir, ".fluxbc")
     for (let isolate of result.isolates) {
       await writeIsolateBytecode(isolatesDir, isolate)
     }
@@ -194,7 +194,7 @@ export async function main() {
   }
 
   let result = await bundleSolid(mode)
-  let jsOutfile = join(outDir, name + ".srt.js")
+  let jsOutfile = join(outDir, name + ".sol.js")
   await Bun.write(jsOutfile, result.code)
   clearIsolates(isolatesDir, ".js")
   writeIsolates(isolatesDir, result.isolates)

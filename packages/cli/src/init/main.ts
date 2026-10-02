@@ -15,7 +15,7 @@ const TEMPLATES_DIR = join(SCAFFOLD_DIR, "templates")
 // cli/src/init/scaffold/. The .gitignore is stored there as `gitignore` because npm
 // strips files literally named `.gitignore` from published packages, so it is
 // renamed on the way out. The starter test sits outside a tests/ folder there,
-// where this repo's own `srt test` would pick it up and fail on its `@/`
+// where this repo's own `sol test` would pick it up and fail on its `@/`
 // import. The per-template src/ comes from scaffold/templates/.
 const TEMPLATE_FILES: Array<{ from: string; to: string }> = [
   { from: "package.json", to: "package.json" },
@@ -132,7 +132,7 @@ export async function main() {
   // exists when it starts. It starts with the SolidRT logo as the app icon,
   // for the author to replace: the .svg feeds the player tiles and desktop
   // window icon, the pre-rendered .png sibling the Android launcher icon
-  // (`srt pack --apk`; SVG cannot be rasterized at pack time).
+  // (`sol pack --apk`; SVG cannot be rasterized at pack time).
   await mkdir(join(dir, "assets"), { recursive: true })
   for (let icon of ["icon.svg", "icon.png"]) {
     await writeFile(join(dir, "assets", icon), await readFile(join(SCAFFOLD_DIR, icon)))

@@ -6,7 +6,7 @@
   "author": "Antoine van Wel",
   "type": "module",
   "bin": {
-    "srt": "./bin/srt"
+    "sol": "./bin/sol"
   },
   "files": [
     "bin/",

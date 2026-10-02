@@ -73,7 +73,7 @@ row, and it is what Three/WebGPU, Vulkan and Metal all do.
   are `uint8x4` (an exporter's common form; u16 joints land in list
   form); `SKIN_DECLS` declares `in uvec4 aJoints` and `boneAt(uint)`;
   the glTF loader keeps a file's u8/u16 joints and narrows an off-spec
-  float JOINTS_0 to uint16x4; `.srtm` is version 7 (a version-6 skinned
+  float JOINTS_0 to uint16x4; `.sol3m` is version 7 (a version-6 skinned
   part would decode at the wrong stride).
 - Verified live (probes/3d-integer-inputs-probe.tsx): a `uint32` id
   channel of odd values past 2^24 read through `in uint` renders the

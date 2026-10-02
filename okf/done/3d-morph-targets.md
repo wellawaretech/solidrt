@@ -32,7 +32,7 @@ skin, eyes and teeth parts takes one write and one clip channel.
 **1. Data model.** `Geometry.targets?: MorphTarget[]`, each `{ name,
 position: Float32Array, normal?: Float32Array }` of per-vertex deltas.
 The geometry's bounds grow by the union of the per-target delta boxes
-(a wide-open mouth is never frustum-culled). `.srtm` version 8: a
+(a wide-open mouth is never frustum-culled). `.sol3m` version 8: a
 targets block per part (names plus the sparse-by-vertex packing below,
 already packed so loading is a view), the mesh's default weights, and
 clip channels with a `weights` path. The bake tool writes them.

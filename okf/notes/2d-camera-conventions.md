@@ -91,7 +91,7 @@ derived from canvas apps alone misses the follow camera entirely.
 
 ## Verification traps
 
-- `srt:events` (the `pointerFrame` terminator the transform recognizer
+- `sol:events` (the `pointerFrame` terminator the transform recognizer
   measures on) exists only under lattice, so nothing importing core's
   recognizers runs headless on the bare flux binary. Keep the motion math
   in a pure module and check that headless; drive the input glue live.

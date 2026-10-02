@@ -6,7 +6,7 @@ ANGLE_STAMP_FILE   = .angle-version
 
 DARWIN_ARCH = arm64
 
-DARWIN_DIST      = $(SRT_HOME)/dist/$(HOST_PLATFORM)
+DARWIN_DIST      = $(SOLIDRT_HOME)/dist/$(HOST_PLATFORM)
 ANGLE_DARWIN_ZIP = $(DARWIN_DIST)/electron-darwin-$(DARWIN_ARCH).zip
 ANGLE_EGL        = $(DARWIN_DIST)/libEGL.dylib
 ANGLE_GLES       = $(DARWIN_DIST)/libGLESv2.dylib
@@ -67,7 +67,7 @@ dist:
 	$(MAKE) client
 	cp $(HOST_DIST)/solidrt-go $(PKG_DARWIN)/solidrt-go
 	cp $(HOST_DIST)/libEGL.dylib $(HOST_DIST)/libGLESv2.dylib $(PKG_DARWIN)/
-	$(MAKE) -C $(SRT_HOME)/flux build
+	$(MAKE) -C $(SOLIDRT_HOME)/flux build
 	cp $(HOST_DIST)/flux $(PKG_DARWIN)/flux
 	cp $(HOST_DIST)/fluxc $(PKG_DARWIN)/fluxc
 	cp $(HOST_DIST)/fluxrt $(PKG_DARWIN)/fluxrt

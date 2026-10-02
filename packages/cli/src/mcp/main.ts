@@ -76,7 +76,7 @@ async function control(path: string, method: "GET" | "POST" = "GET", payload?: u
       if (attempt === 0) continue
       return {
         ok: false,
-        message: `No dev server answers on port ${port}${key ? ` for ${key}` : ""}. Start one with srt run.`,
+        message: `No dev server answers on port ${port}${key ? ` for ${key}` : ""}. Start one with sol run.`,
       }
     }
     let served = resp.headers.get("x-solidrt-project")
@@ -85,7 +85,7 @@ async function control(path: string, method: "GET" | "POST" = "GET", payload?: u
       if (attempt === 0) continue
       return {
         ok: false,
-        message: `The server on port ${port} is not serving ${key}${served ? ` (it serves ${served})` : ""}. Start one with srt run, or pass --port <N> to srt mcp.`,
+        message: `The server on port ${port} is not serving ${key}${served ? ` (it serves ${served})` : ""}. Start one with sol run, or pass --port <N> to sol mcp.`,
       }
     }
     let note: string | undefined
@@ -416,14 +416,14 @@ let TOOLS: {
     name: "list_debug",
     annotations: READ_ONLY,
     description:
-      "List the debug commands the running app registered via registerDebug from srt:dev. Returns the command names; call one with call_debug. Empty when the app registered none.",
+      "List the debug commands the running app registered via registerDebug from sol:dev. Returns the command names; call one with call_debug. Empty when the app registered none.",
     inputSchema: { client: CLIENT_ARG },
   },
   {
     name: "call_debug",
     annotations: DRIVES_APP,
     description:
-      "Call a debug command the running app registered via registerDebug from srt:dev, by name (from list_debug). `args` is passed to the command's function as its single argument, as the value itself - the bridge serializes it, so do not JSON-encode it yourself: a string goes bare (`arcana`, not `\"arcana\"`, which arrives as a string with literal quote characters), a number as a number, structured input as an object; omit it for none. The command's return value comes back JSON-serialized (undefined as null). Commands run synchronously on the app's JS thread - use them to query app state (positions, counters, internal flags) or trigger app behavior (toggle a mode, open a door) without touching its real input handling.",
+      "Call a debug command the running app registered via registerDebug from sol:dev, by name (from list_debug). `args` is passed to the command's function as its single argument, as the value itself - the bridge serializes it, so do not JSON-encode it yourself: a string goes bare (`arcana`, not `\"arcana\"`, which arrives as a string with literal quote characters), a number as a number, structured input as an object; omit it for none. The command's return value comes back JSON-serialized (undefined as null). Commands run synchronously on the app's JS thread - use them to query app state (positions, counters, internal flags) or trigger app behavior (toggle a mode, open a door) without touching its real input handling.",
     inputSchema: {
       name: z.string().describe("Debug command name, from list_debug"),
       args: z.any().describe("Argument passed to the command, as the value itself, not JSON text: a bare string (arcana, not \"arcana\"), a number, a boolean, or an object/array (default: none)").optional(),
@@ -444,7 +444,7 @@ let TOOLS: {
     name: "get_location",
     annotations: READ_ONLY,
     description:
-      "Read where the app is: the location it reports through reportLocation from srt:dev (a router's current path). null when the app reports none. The cheap way to confirm a navigation or an open_link landed before taking a snapshot. A reload starts the app at this location again.",
+      "Read where the app is: the location it reports through reportLocation from sol:dev (a router's current path). null when the app reports none. The cheap way to confirm a navigation or an open_link landed before taking a snapshot. A reload starts the app at this location again.",
     inputSchema: { client: CLIENT_ARG },
   },
   {

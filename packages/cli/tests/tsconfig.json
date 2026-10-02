@@ -1,6 +1,6 @@
 {
   // Flux-targeted, like src/server/: the tests run on the flux binary
-  // (srt test), not under Bun, so they are no part of the cli's bun-typed
+  // (sol test), not under Bun, so they are no part of the cli's bun-typed
   // program and take their types from flux-types.
   "compilerOptions": {
     "target": "ESNext",

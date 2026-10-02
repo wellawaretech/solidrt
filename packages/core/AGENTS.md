@@ -92,7 +92,7 @@ real design decision, not an afterthought:
 
 ```sh
 bun add @solidrt/core        # the renderer
-bun add -d @solidrt/cli      # the `srt` tool (see its AGENTS.md)
+bun add -d @solidrt/cli      # the `sol` tool (see its AGENTS.md)
 ```
 
 Core primitives alone are enough to build a full app. The optional extensions
@@ -320,7 +320,7 @@ that reads exactly like Solid fallout.
   input happened. Time anything about input with it (a press length, the
   gap between two taps, a speed from two positions), never with
   `performance.now()` in the handler: that is when the handler ran, and
-  it does not follow the dev clock, `srt render` or a test. The stamp is
+  it does not follow the dev clock, `sol render` or a test. The stamp is
   the input's own time, not its delivery's: a move carries the time the
   pointer was at the position it reports, however late the frame that
   delivers it; a down, up, wheel or key the time the platform recorded.
@@ -616,7 +616,7 @@ that reads exactly like Solid fallout.
   seldom changes the picture. `frameTime()` is the current frame's `tick`
   read from anywhere (not reactive, requests nothing): the app's own
   clock for code with no tick in hand, where `performance.now()` would
-  ignore the dev clock, `srt render` and tests. A JS
+  ignore the dev clock, `sol render` and tests. A JS
   tween loop or an animation library pushing interpolated values through
   signals is the single most expensive mistake available here - read
   agents/performance.md before writing either.

@@ -43,7 +43,7 @@ the engine event are untouched.
   handles: `setSpriteTransition`/`setGroupTransition` register (a null
   config unregisters), remove/dispose unregister; `addSprite` is
   untouched, so an app that never declares pays nothing. One lazy
-  `on("spatialTransitionEnd")` subscription from `srt:events` (its ambient
+  `on("spatialTransitionEnd")` subscription from `sol:events` (its ambient
   declaration reaches the packages through core's `types.d.ts` reference)
   starts at the first declaration and is never torn down; misses for
   unregistered nodes are a map lookup. Handler errors are caught and
@@ -57,7 +57,7 @@ the engine event are untouched.
   vocabulary the engine event and the docs already use, not the element
   event's `property`.
 
-Verified live (release go client, srt run + control-API logs). 3d probe:
+Verified live (release go client, sol run + control-API logs). 3d probe:
 a mesh with a 300 ms position spring and a 200 ms rotation tween settled
 rotation then position with the landing exact (x = 1.000); clearing the
 declaration inside the handler and writing again snapped with no further

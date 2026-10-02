@@ -67,7 +67,7 @@ previous complete)`; the first command stays the floor only on a surface
 that does not report the queue instant (the probe logs which floor is in
 use). The third bullet above is met by construction rather than by a
 second field: the runtime's figure now is the compositor's queue-to-ready
-span, measured by `srt android --census` (the census tool landed in the
+span, measured by `sol android --census` (the census tool landed in the
 same batch).
 
 Measured on the SM-T500 with a sliding-panes probe (ten rounded panes,

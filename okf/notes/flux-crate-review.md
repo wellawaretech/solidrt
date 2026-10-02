@@ -136,7 +136,7 @@ reported surprise has come from an undocumented one. Found by this audit:
 - The fetch/Headers, `setTimeout`, and Headers-iteration deviations listed
   above are the same pattern on the network side.
 
-The event-bus dispatch model itself (srt:events + focused-node key delivery,
+The event-bus dispatch model itself (sol:events + focused-node key delivery,
 no DOM bubbling for keys) is a deliberate house design and not at issue; the
 problem is only field values that look web-standard but are not. The repo
 already has the right precedent: `gui/properties/` declares "every frontend

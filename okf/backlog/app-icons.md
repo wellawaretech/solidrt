@@ -6,7 +6,7 @@ created: 2026-07-27
 
 # App icons
 
-Originally: apps had no icon concept at all - nothing in `srt pack`, the
+Originally: apps had no icon concept at all - nothing in `sol pack`, the
 pack folder writer, the manifest, or the player knew what an app looked
 like, and a packed executable took whatever the OS gives an unadorned
 binary. Stages 1 and 2 below have since shipped (see Status); only the
@@ -37,7 +37,7 @@ the tooling knows.
 ## Staging
 
 1. **Declare and carry, player shows it.** package.json field ->
-   validation -> manifest -> `srt:apps` -> the player's app list and
+   validation -> manifest -> `sol:apps` -> the player's app list and
    detail view. Self-contained, no native work, and it is the stage the
    docs need.
 2. **Desktop window icon.** The running app's window and taskbar entry.

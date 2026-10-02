@@ -6,7 +6,7 @@ import { resolveFromCwd } from "../lib/registry"
 // attaches to the dev server of the project (or file) in the current
 // directory, resolved from the registry, and starts on its own (into the
 // player) when there is none; --port picks a local server by port and
-// --server names any address, and those must exist. A device is `srt android`.
+// --server names any address, and those must exist. A device is `sol android`.
 export async function main() {
   let runner = requireBinary("solidrt-go")
   let args: string[] = [...clientStorageArgs()]

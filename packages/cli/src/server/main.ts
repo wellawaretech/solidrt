@@ -1,12 +1,12 @@
-// The srt dev server as a flux script, complete on its own: started as
-// `flux server.js [flags]` from a project root (or with a file), by `srt run`
-// / `srt server` (bun launchers that only resolve the binaries and spawn it)
+// The sol dev server as a flux script, complete on its own: started as
+// `flux server.js [flags]` from a project root (or with a file), by `sol run`
+// / `sol server` (bun launchers that only resolve the binaries and spawn it)
 // or by the console. It resolves its mode (mode.ts), owns everything with a
 // lifetime - the port (bound here: remembered, given, or the first free one),
 // the registry record, the local client, the latched bundle, the control API -
-// and spawns the two things only bun can do, the bundle (`srt bundle --json`,
-// rebuild.ts) and the startup typecheck (`srt check`), by command name
-// (okf/done/srt-command-folders.md).
+// and spawns the two things only bun can do, the bundle (`sol bundle --json`,
+// rebuild.ts) and the startup typecheck (`sol check`), by command name
+// (okf/done/sol-command-folders.md).
 
 import { serve } from "flux:http"
 import type { FluxRequest, Server, ServerWebSocket } from "flux:http"
@@ -21,7 +21,7 @@ import { state } from "./state"
 import { fail, parseArgs } from "./args"
 import type { ServerConfig } from "./config"
 import { absolute, resolveMode, sourceDirOf } from "./mode"
-import { requireBinary, srtCommand } from "./binaries"
+import { requireBinary, solCommand } from "./binaries"
 import * as cache from "./cache"
 import { handleProxy } from "./proxy"
 import { appendLog, handleControl, onShutdownRequest, resolveQuery } from "./control"
@@ -42,10 +42,10 @@ await pruneDeadRecords()
 // file) points at the running one instead of racing it.
 let running = await runningFor(mode.key)
 if (running) {
-  fail(`A dev server already serves ${mode.key} on port ${running.port} (pid ${running.pid}). Stop it first, or attach a client with srt client.`)
+  fail(`A dev server already serves ${mode.key} on port ${running.port} (pid ${running.pid}). Stop it first, or attach a client with sol client.`)
 }
 
-let srt = srtCommand()
+let sol = solCommand()
 let runner = args.client !== null ? await requireBinary("solidrt-go") : null
 let serverDir = await serverDirFor(mode.key)
 
@@ -79,7 +79,7 @@ let config: ServerConfig = {
   projectDir: mode.projectDir,
   cwd: mode.projectDir ?? sourceDirOf(mode),
   entryArgs: [mode.entry, mode.mode === "project" ? "--project" : "--file"],
-  srt,
+  sol,
   port: args.port,
   lan: args.lan,
   address: lanAddress ?? "127.0.0.1",
@@ -87,9 +87,9 @@ let config: ServerConfig = {
   args: args.appArgs,
   minify: args.minify,
   cache: args.proxyHttp,
-  // Build outputs and the proxy cache: the project's .srt-data, or the
+  // Build outputs and the proxy cache: the project's .solidrt-data, or the
   // server folder for a file served on its own (nothing else owns it).
-  cacheDir: mode.projectDir ? join(mode.projectDir, ".srt-data") : join(serverDir, "data"),
+  cacheDir: mode.projectDir ? join(mode.projectDir, ".solidrt-data") : join(serverDir, "data"),
   capture: args.capture,
   stats: args.stats,
   tunnel: args.tunnel,
@@ -474,18 +474,18 @@ if (buildError) {
 console.log("[cli] Reload on save is on (pause it with the MCP pause_watch tool)")
 stopRepl = startRepl(shutdown)
 
-// Startup typecheck (`srt check <entry>`), deliberately not awaited: the
+// Startup typecheck (`sol check <entry>`), deliberately not awaited: the
 // report prints when tsc finishes, and a type error never gates the boot
-// (srt check is the hard gate). Once per server lifetime; reloads never
-// typecheck. A prebuilt .srt.js has no checkable program.
-if (!config.entry.endsWith(".srt.js")) {
-  let check = command(config.srt[0]!, [...config.srt.slice(1), "check", config.entry], { cwd: config.cwd }).spawn()
+// (sol check is the hard gate). Once per server lifetime; reloads never
+// typecheck. A prebuilt .sol.js has no checkable program.
+if (!config.entry.endsWith(".sol.js")) {
+  let check = command(config.sol[0]!, [...config.sol.slice(1), "check", config.entry], { cwd: config.cwd }).spawn()
   pump(check.stdout, (line) => console.log(line))
   pump(check.stderr, (line) => console.error(line))
 }
 
 if (config.client) {
-  // The local client dials the port bound above; srt could not know it.
+  // The local client dials the port bound above; sol could not know it.
   let child = command(config.client.cmd, [...config.client.args, "--dev-server", `127.0.0.1:${server.port}`]).spawn()
   localClient = child
   pump(child.stdout, (line) => console.log(line))
@@ -494,10 +494,10 @@ if (config.client) {
     forwardNativeStderr(line)
   })
   // The server outlives its client: a wedged or crashed client is restarted
-  // with `srt client` (it reattaches by cwd) without losing the server, its
+  // with `sol client` (it reattaches by cwd) without losing the server, its
   // bundle, the watcher or the MCP session. The server stops on quit/signal.
   child.status().then(() => {
     localClient = null
-    if (!shuttingDown) console.log("[cli] Local client exited; the server keeps running (srt client reattaches)")
+    if (!shuttingDown) console.log("[cli] Local client exited; the server keeps running (sol client reattaches)")
   })
 }

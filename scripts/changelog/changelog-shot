@@ -24,7 +24,7 @@ HEIGHT=4000
 FRAME_DIR="$(mktemp -d)"
 trap 'rm -rf "$FRAME_DIR"' EXIT
 
-out="$(bun "$HERE/../../packages/cli/bin/srt" render "$APP" --file \
+out="$(bun "$HERE/../../packages/cli/bin/sol" render "$APP" --file \
   --size "${WIDTH}x${HEIGHT}" --fps 4 --duration 5 -o "$FRAME_DIR" \
   -- "$(cd "$OUT_DIR" && pwd)" 2>&1)"
 

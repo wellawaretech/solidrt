@@ -53,7 +53,7 @@ function packSections(runnerBytes: Buffer, sections: Section[], magic: Buffer): 
 function appSections(folder: PackFolder, bytecode: Buffer): Section[] {
   return [
     { kind: SECTION_MANIFEST, bytes: Buffer.from(folder.manifest, "utf8") },
-    { kind: SECTION_FILE, bytes: bytecode, name: "bundle.bin" },
+    { kind: SECTION_FILE, bytes: bytecode, name: "bundle.fluxbc" },
     ...folder.copies.map((c) => ({ kind: SECTION_FILE, bytes: readFileSync(c.from), name: c.to })),
     ...folder.files.map((f) => ({ kind: SECTION_FILE, bytes: f.bytes, name: f.to })),
   ]
@@ -72,10 +72,10 @@ export function packSolid(folder: PackFolder, bytecode: Buffer): Buffer {
   return packSections(readFileSync(runnerPath), sections, MAGIC.solidrt)
 }
 
-// A standalone .srtapp: the app sections alone, no runner in front and no GL
+// A standalone .solapp: the app sections alone, no runner in front and no GL
 // libraries (the runner that loads it brings its own). The runner parses it
 // exactly as it parses its own image (lattice/src/main.rs, load_payload), so
-// `solidrt <file>.srtapp` runs it with the runner used in place - nothing is
+// `solidrt <file>.solapp` runs it with the runner used in place - nothing is
 // copied or appended to, and a signed runner stays signed. The extension is
 // a convention; the magic is the contract.
 export function packApp(folder: PackFolder, bytecode: Buffer): Buffer {
@@ -84,14 +84,14 @@ export function packApp(folder: PackFolder, bytecode: Buffer): Buffer {
 
 // The single-file flux executable: the fluxrt runner plus the program in the
 // same section trailer packSolid uses, kind-2 file sections only -
-// "bundle.bin" is the program, each isolate module "isolates/<id>.bin".
+// "bundle.fluxbc" is the program, each isolate module "isolates/<id>.fluxbc".
 // Like packSolid, this assembles precompiled bytecode; the pack command
 // compiles.
 export function packFlux(bytecode: Buffer, isolates: { id: string; bytecode: Buffer }[] = []): Buffer {
   let runnerBytes = readFileSync(requireBinary("fluxrt"))
   let sections: Section[] = [
-    { kind: SECTION_FILE, bytes: bytecode, name: "bundle.bin" },
-    ...isolates.map((i) => ({ kind: SECTION_FILE, bytes: i.bytecode, name: `isolates/${i.id}.bin` })),
+    { kind: SECTION_FILE, bytes: bytecode, name: "bundle.fluxbc" },
+    ...isolates.map((i) => ({ kind: SECTION_FILE, bytes: i.bytecode, name: `isolates/${i.id}.fluxbc` })),
   ]
   return packSections(runnerBytes, sections, MAGIC.fluxrt)
 }

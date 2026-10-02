@@ -1,6 +1,6 @@
 // Reading the server registry: every running dev server keeps a live.json in
 // ~/.solidrt/servers/<key hash>/ (written by the server itself, see
-// packages/cli/src/server/registry.ts). `srt client`, `srt mcp` and the player
+// packages/cli/src/server/registry.ts). `sol client`, `sol mcp` and the player
 // resolve a server from it by key: the canonical project root or file path
 // (see mode.ts). The record is a hint; the server is authoritative, so a
 // caller confirms with a control call (the x-solidrt-project header names
@@ -83,7 +83,7 @@ export async function confirmed(record: LiveRecord): Promise<boolean> {
 function stale(record: LiveRecord): string {
   return (
     `The registry names port ${record.port} (pid ${record.pid}) for ${record.key}, ` +
-    `but no dev server answers there: the record is stale. Start one with srt run.`
+    `but no dev server answers there: the record is stale. Start one with sol run.`
   )
 }
 
@@ -115,6 +115,6 @@ export async function resolveFromCwd(cwd: string): Promise<Resolution> {
       ? `Registry ${serversRoot()}: no running servers.`
       : `Registry ${serversRoot()}: ${records.length} running server(s).\n` +
         records.map((r) => `  port ${r.port}  ${r.mode} ${r.key}`).join("\n")
-  let hint = files.length > 1 ? `${files.length} file servers run under ${cwd}; pass --port <N> to pick one.` : "Start one with srt run."
+  let hint = files.length > 1 ? `${files.length} file servers run under ${cwd}; pass --port <N> to pick one.` : "Start one with sol run."
   return { ok: false, message: `No dev server for ${cwd}.\n${listing}\n${hint}` }
 }

@@ -1,4 +1,4 @@
-// The render host (okf/done/test-harness.md, D35 and D39): `srt render`
+// The render host (okf/done/test-harness.md, D35 and D39): `sol render`
 // as a host that steps alloy's stepped mode and reads every frame back. One
 // engine, built with the wall taken out (performance.now() at 0, the
 // calendar on the fixed epoch, Math.random seeded), so two renders of one
@@ -129,7 +129,7 @@ async fn drive(ctx: &Ctx<'_>, mut run: RenderRun, stop: &AtomicBool) -> Result<(
   let mut outcome = Ok(());
   for frame in 0..run.frames {
     if stop.load(Ordering::Relaxed) {
-      log::info!("[srt] the app ended the render after {frame} frames");
+      log::info!("[sol] the app ended the render after {frame} frames");
       break;
     }
     // Scripted input due for this frame reaches the UI loop ahead of the
@@ -155,13 +155,13 @@ async fn drive(ctx: &Ctx<'_>, mut run: RenderRun, stop: &AtomicBool) -> Result<(
     }
     asked += 1;
     if asked % run.fps as u64 == 0 {
-      log::info!("[srt] rendered {asked} frames");
+      log::info!("[sol] rendered {asked} frames");
     }
   }
   drop(tx);
   let written = writer.join().map_err(|_| "the frame writer panicked".to_string())??;
   outcome?;
-  log::info!("[srt] render complete ({written} of {} frames)", run.frames);
+  log::info!("[sol] render complete ({written} of {} frames)", run.frames);
   // An incomplete render means the app failed to produce some frame; the
   // exit code is what a headless caller gates on, so only a full render
   // reads as success. An app that ended the run itself is the exception:
@@ -181,7 +181,7 @@ async fn settle_first(ctx: &Ctx<'_>, stepper: &Stepper) -> Result<(), String> {
   let cap = Cap::AppTime { max_ms: settle::DEFAULT_MAX_MS, now_ms: &now_ms };
   match tokio::time::timeout(SETTLE_WALL_CAP, settle::settle(ctx, cap, Some(&step))).await {
     Ok(Ok(())) => {
-      log::info!("[srt] the app came to rest after {} ms of app time", stepper.time_ms());
+      log::info!("[sol] the app came to rest after {} ms of app time", stepper.time_ms());
       Ok(())
     }
     Ok(Err(left)) => {

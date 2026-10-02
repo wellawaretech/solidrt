@@ -1,7 +1,7 @@
 // The general inverse (math.ts invert) against the matrices it exists
 // for: a view-projection, whose bottom row invertAffine cannot handle,
 // and the world-space ray the background slot rebuilds from it.
-// `srt test packages/3d`.
+// `sol test packages/3d`.
 import { expect, test } from "flux:test"
 import { invert, lookAt, mat4, multiply, orthographic, perspective, transformPoint } from "../src/math.ts"
 import type { Mat4, Vec3, Vec4 } from "../src/math.ts"

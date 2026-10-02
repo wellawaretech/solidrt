@@ -1,15 +1,15 @@
 ---
-title: srt render is never headless on ANGLE
+title: sol render is never headless on ANGLE
 description: On Windows SDL's offscreen driver cannot meet ANGLE (no EGL_EXT_device_enumeration), so playback fell back to a hidden window; since 2026-08-17 it takes a headless EGL pbuffer context instead, verified in a desktop session. Open: the same run from a non-interactive session (service, Session 0, Windows OpenSSH), which decides whether the default display suffices or EGL_ANGLE_device_creation is needed; macOS untested.
 created: 2026-08-17
 ---
 
-# srt render is never headless on ANGLE
+# sol render is never headless on ANGLE
 
 Status 2026-09-23: stages 1 and 2 shipped; what is open is the
 non-interactive-session run described under stage 2.
 
-Symptom: every `srt render` on Windows prints
+Symptom: every `sol render` on Windows prints
 
 ```
 [alloy] offscreen video driver unavailable (window creation: SDL error:
@@ -98,7 +98,7 @@ Stage 2, IMPLEMENTED 2026-08-17, verified on Windows in a desktop session:
   only, `SDL_VIDEO_DRIVER=dummy` (a Window for the playback loop to size
   from, no GL flag) + `DisplayContext::new_egl_pbuffer`; if that fails too,
   the hidden window as before. Wayland never enters it.
-- Verified on Linux/Mesa by temporarily forcing the branch: `srt render`
+- Verified on Linux/Mesa by temporarily forcing the branch: `sol render`
   frames through the pbuffer path are byte-identical to the offscreen
   driver's. Windows (RTX 3070, ANGLE D3D11, shipped libEGL.dll): the branch
   is taken for real, `headless EGL 1.5 pbuffer context`, frames correct.

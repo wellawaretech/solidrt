@@ -46,7 +46,7 @@ Mapped onto what we store:
 | `clients/client<M>/apps/<id>/versions` | installed bundles, re-pushable | DATA (or CACHE) |
 | `clients/client<M>/config.json` | recent dev-server addresses | STATE |
 | `clients/client<M>/logs/` | logs | STATE |
-| `<project>/.srt-data/` | project-scoped | unchanged, stays in the project |
+| `<project>/.solidrt-data/` | project-scoped | unchanged, stays in the project |
 
 ## The tension
 
@@ -56,7 +56,7 @@ across four roots, and several things depend on it being one place:
 
 - `--data-root <dir>` is one directory by definition. It could no longer
   express a split tree, so it would need siblings (`--cache-root`, ...) or a
-  different shape entirely. srt passing one path per client is what makes
+  different shape entirely. sol passing one path per client is what makes
   the current dev layout free of Rust changes.
 - Uninstall currently removes `apps/<id>/` and takes the app's data, cache
   and versions with it (`lattice/src/go/store.rs`). Splitting cache out
@@ -92,7 +92,7 @@ control-port probe (which is the open lead in `parallel-dev-servers.md`).
   and fall back to `~/.solidrt/` otherwise. Linux users who care get correct
   behaviour, everyone else keeps one rule, and `devDir()` stays the single
   switch point.
-- **Does the runtime participate?** Today srt passes `--data-root` and the
+- **Does the runtime participate?** Today sol passes `--data-root` and the
   client needs no knowledge of any of this. A split layout probably ends
   that, which turns a CLI-only change into a Rust one. Worth weighting
   heavily: the current arrangement is the reason the dev layout costs

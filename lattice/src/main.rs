@@ -1,4 +1,4 @@
-// The payload a packed distribution boots (trailer, .srtapp, adjacent
+// The payload a packed distribution boots (trailer, .solapp, adjacent
 // folder) is loaded by lattice::payload, shared with the Android runtime's
 // SDL_main; this file owns only the desktop runner's command line.
 
@@ -49,7 +49,7 @@ fn main() {
   // (lattice render host), with `--fps`, `--duration`, `--size`, `--out`,
   // `--script`, `--seed` for the run; `--settle` runs the app to rest
   // before the first frame; `--strict` fails the render on any error
-  // logged (lattice ErrorTally). What `srt render` starts.
+  // logged (lattice ErrorTally). What `sol render` starts.
   let mut render = false;
   let mut script_path: Option<String> = None;
   let mut fps: u32 = 60;
@@ -64,12 +64,12 @@ fn main() {
   let mut client: Option<u32> = None;
   let mut assets: Option<String> = None;
   // `--link <link>`: the link the app is started with (env.launchLink), the
-  // way an OS-routed link reaches a packaged app; `srt render --link` renders
+  // way an OS-routed link reaches a packaged app; `sol render --link` renders
   // a screen a link names.
   let mut link: Option<String> = None;
   // `--test`: run the source as a test file (lattice test mode), with
   // `--filter <text>` for the run and `--failures <dir>` for the snapshots
-  // of failed tests. What `srt test` starts for a file that needs the app
+  // of failed tests. What `sol test` starts for a file that needs the app
   // runtime. `--seed <n>`: the Math.random sequence of a test or a render.
   let mut test = false;
   let mut filter: Option<String> = None;
@@ -156,9 +156,9 @@ fn main() {
     let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read '{path}': {e}"));
     lattice::AppSource::Text(src)
   };
-  // A source path ending in the pack magic is a .srtapp (the extension is a
+  // A source path ending in the pack magic is a .solapp (the extension is a
   // convention, the magic is the contract): identity, fonts and assets come
-  // from the file, and the flags above still apply, so `srt console` runs a
+  // from the file, and the flags above still apply, so `sol console` runs a
   // packed app under the dev runner's controls. Anything else is JS source on
   // the bare runtime: no fonts (text falls back to the platform font
   // manager), no identity.
@@ -171,7 +171,7 @@ fn main() {
         (Some(payload.app), payload.fonts, Some(payload.app_id))
       }
       None => {
-        if let Some(p) = source_path.as_deref().filter(|p| p.ends_with(".srtapp")) {
+        if let Some(p) = source_path.as_deref().filter(|p| p.ends_with(".solapp")) {
           usage(&format!("'{p}' is not a SolidRT app pack (no valid payload at its end)"));
         }
         (source_path.map(path_app), Vec::new(), None)
@@ -181,14 +181,14 @@ fn main() {
   // go-only); without an app there is nothing to run.
   #[cfg(not(feature = "go"))]
   if app.is_none() {
-    eprintln!("No app to run: expected a packed payload, an app folder, or a .srtapp or source path argument");
+    eprintln!("No app to run: expected a packed payload, an app folder, or a .solapp or source path argument");
     std::process::exit(2);
   }
   #[cfg(feature = "go")]
   let (app, mut fonts, mut app_id): (_, _, Option<String>) = (source_path.map(path_app), lattice::embedded_fonts(), None);
   // `--assets <dir>`: mount a directory holding an assets/ tree so
   // `assets/...` resolves through it instead of the data-sandbox cwd - what a
-  // packed app or a go-installed version gets from its payload. `srt render`
+  // packed app or a go-installed version gets from its payload. `sol render`
   // passes the dir it stages the build into.
   let mut display_name = None;
   if let Some(dir) = assets {
@@ -196,7 +196,7 @@ fn main() {
     if !dir.is_dir() {
       usage(&format!("--assets path '{}' is not a directory", dir.display()));
     }
-    // A manifest in the mount (the staged dir `srt render` builds has the
+    // A manifest in the mount (the staged dir `sol render` builds has the
     // installed-version shape) is the app's identity and font bindings, as
     // a version-store boot reads them: the app runs in its own sandbox with
     // its fonts registered over the base set.
@@ -267,7 +267,7 @@ struct RenderArgs {
 }
 
 // `--render`: render the app headless and exit with the outcome. It exits
-// hard, here in the binary: headless callers gate on the exit code (srt
+// hard, here in the binary: headless callers gate on the exit code (sol
 // render verification), so an incomplete render must read nonzero - and a
 // plain return would run the runtime's drop, which can block on a lingering
 // blocking task and hang the render at the finish line.
@@ -300,7 +300,7 @@ fn run_render(args: RenderArgs) -> ! {
   match outcome {
     Ok(()) => std::process::exit(0),
     Err(e) => {
-      log::error!("[srt] {e}");
+      log::error!("[sol] {e}");
       std::process::exit(1);
     }
   }
@@ -348,7 +348,7 @@ fn frame_prefix(out: String) -> String {
   abs.to_string_lossy().into_owned()
 }
 
-// Parses a `--script` file (see `srt render --script`, written by `srt run
+// Parses a `--script` file (see `sol render --script`, written by `sol run
 // --capture`) into a ScriptPlayer. One JSON object per line (JSON Lines), not
 // a single JSON array -- matches dev-server.ts's streaming capture writer.
 // Only the dev client renders, so only it replays a script.

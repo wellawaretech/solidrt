@@ -19,17 +19,17 @@ reach. Neither plan depends on the other.
 ## Status quo (2026-07-21)
 
 - Launching is a CLI-startup decision only:
-  - `srt run` = server + local desktop client (`spawnClient()` in
+  - `sol run` = server + local desktop client (`spawnClient()` in
     `packages/cli/src/dev-client.ts`, `--dev-server` loopback).
-  - `srt client --android` = install + launch on an adb device
+  - `sol client --android` = install + launch on an adb device
     (`spawnAndroidClient()` in `packages/cli/src/dev-android.ts`):
     device/ABI resolution with `--device` prefix disambiguation, APK
     from platform packages, dev-server address as a launch-intent extra
     (emulator via `10.0.2.2`, wireless adb via subnet matching).
-  - `srt client --server <addr>` = standalone desktop client.
-- The `srt run`/`srt server` foreground process owns the repl
+  - `sol client --server <addr>` = standalone desktop client.
+- The `sol run`/`sol server` foreground process owns the repl
   (`packages/cli/src/repl.ts`: load, stop, reload, list, stats, watch);
-  the server runs as a separate spawned process; repl and MCP (`srt
+  the server runs as a separate spawned process; repl and MCP (`sol
   mcp`) both talk to it via the `/__control__/` API
   (`packages/cli/server/control.ts`).
 - Gap: from a running session there is no way to bring up another
@@ -45,7 +45,7 @@ reach. Neither plan depends on the other.
   gain. Dogfooding deferred, not rejected.
 - Repl verb is `launch <target>`, listing verb is `targets`. `launch`
   reads well next to `run` ("run" = start the dev session; "launch" =
-  bring a client up on a target). `srt client --android` stays as the
+  bring a client up on a target). `sol client --android` stays as the
   startup-time equivalent.
 - Targets are names, resolved at launch time:
   - `local`: the desktop client on this machine.

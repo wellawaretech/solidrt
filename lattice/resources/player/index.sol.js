@@ -6786,14 +6786,14 @@ import * as tree2 from "flux:rendertree";
 
 // ../../packages/core/src/window.ts
 import { requestFrame, setPointerLock } from "flux:rendertree";
-import { renderFrame } from "srt:render";
-import { on as on2, once } from "srt:events";
-import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "srt:app";
+import { renderFrame } from "sol:render";
+import { on as on2, once } from "sol:events";
+import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "sol:app";
 import { platform } from "flux:process";
 
 // ../../packages/core/src/core.ts
 import * as tree from "flux:rendertree";
-import { on } from "srt:events";
+import { on } from "sol:events";
 var handlers = new Map;
 var MOVE_BIT = 1;
 var POINTER_INTEREST = {
@@ -7851,7 +7851,7 @@ function parseStops(stops) {
   }));
 }
 // ../../packages/core/src/environment.ts
-import { on as on3 } from "srt:events";
+import { on as on3 } from "sol:events";
 var devicesAccessor;
 function ensureDevicesState() {
   if (devicesAccessor)
@@ -8037,7 +8037,7 @@ var env = {
   }
 };
 // ../../packages/core/src/gamepad.ts
-import { on as on4 } from "srt:events";
+import { on as on4 } from "sol:events";
 var gamepadsAccessor;
 var buttonTimes = [];
 var lastPads = [];
@@ -8641,7 +8641,7 @@ function createPan(options) {
   };
 }
 // ../../packages/core/src/transform.ts
-import { on as on5 } from "srt:events";
+import { on as on5 } from "sol:events";
 // ../../packages/core/src/swipe.ts
 var SWIPE_ANGLE_TOLERANCE = 30;
 var OFF_AXIS_RATIO = Math.tan(SWIPE_ANGLE_TOLERANCE * Math.PI / 180);
@@ -10088,7 +10088,7 @@ function linkToPath(link2) {
   return rest.startsWith("/") ? rest : "/" + rest;
 }
 // ../../packages/router/src/router.tsx
-import { reportLocation } from "srt:dev";
+import { reportLocation } from "sol:dev";
 
 // ../../packages/router/src/stack.ts
 function findTabs(root) {
@@ -16378,15 +16378,15 @@ var createDataURL = function(width, height, getPixel) {
 };
 var stringToBytes = qrcode.stringToBytes;
 // src/parts/home-screen.tsx
-import { stop } from "srt:dev";
-import { launch, remove, info, clearCache } from "srt:apps";
+import { stop } from "sol:dev";
+import { launch, remove, info, clearCache } from "sol:apps";
 
 // src/parts/app-state.ts
-import { available as appsAvailable, list } from "srt:apps";
+import { available as appsAvailable, list } from "sol:apps";
 
 // src/parts/dev-connection.ts
-import { on as on6 } from "srt:events";
-import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
+import { on as on6 } from "sol:events";
+import { available as devAvailable, connect as devConnect, launchAddress } from "sol:dev";
 
 // src/parts/types.ts
 function focusRing(focused, radius) {
@@ -17585,7 +17585,7 @@ function HomeScreen() {
 }
 
 // src/parts/settings-panel.tsx
-import { version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
+import { version as buildVersion, profile as buildProfile, platform as buildPlatform } from "sol:apps";
 var MAXIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`;
 var MINIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>`;
 function CapabilityChip(props) {
@@ -17919,7 +17919,7 @@ function ConnectPanel() {
 
 // ../../packages/core/src/camera.ts
 import { listCameras, open } from "flux:camera";
-import { on as on7 } from "srt:events";
+import { on as on7 } from "sol:events";
 function createCamera(options = {}) {
   let [texture, setTexture] = createSignal(undefined);
   let [width, setWidth] = createSignal(undefined);

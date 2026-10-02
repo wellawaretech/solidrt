@@ -1,6 +1,6 @@
 // HTTP-backed fetch implementation that routes through the cli's dev server
 // (--proxy-http). Global fetch is rewritten to call the cli's /__proxy__
-// endpoint with the original URL in the X-SRT-Proxy-Url header; the cli
+// endpoint with the original URL in the X-SolidRT-Proxy-Url header; the cli
 // forwards the request and relays the response (with its sqlite cache in
 // front).
 //
@@ -53,7 +53,7 @@ pub fn install_proxy_state(ctx: Ctx<'_>, dev_server: String) {
           Some(val) => header_pairs_from_init(&val)?,
           None => Vec::new(),
         };
-        headers.push(("x-srt-proxy-url".to_string(), url));
+        headers.push(("x-solidrt-proxy-url".to_string(), url));
 
         let proxy_url = (*proxy_url).clone();
         let client = state.client.clone();

@@ -19,7 +19,7 @@ are the ones apps will hit first:
   Text-heavy apps want more; small devices want less.
 - `FETCH_CACHE_MAX_BYTES = 256 MiB` (flux/src/standards_plugins/fetch.rs),
   doc comment: "placeholder cap until a real default is decided".
-- Log level exists only as the `SRT_LOG` env var; a packed app cannot ship
+- Log level exists only as the `SOLIDRT_LOG` env var; a packed app cannot ship
   a level.
 
 There is no config file to put these in. The only app-author config
@@ -75,7 +75,7 @@ defaults for anything missing, so a manifest from an older CLI still loads.
      `rendertree::TextConfig`, set through the existing alloy command
      channel at activation. Rendertree stays engine-independent: it takes
      the struct, not the manifest.
-   - `logLevel` -> `alloy::logging` level, applied at activation; `SRT_LOG`
+   - `logLevel` -> `alloy::logging` level, applied at activation; `SOLIDRT_LOG`
      env var wins when set (developer override beats app default).
 4. Docs: `packages/cli/scaffold/AGENTS.md` (or wherever `solidrt.fonts` is
    documented) gets the key list with defaults.
@@ -128,7 +128,7 @@ cache cap is the one value on both lists.
 ## Done looks like
 
 An app sets `solidrt.runtime.jsStackSize` and `wordCacheSize` in
-`package.json`; `srt dev` push and `srt pack` both apply them, visible via
+`package.json`; `sol dev` push and `sol pack` both apply them, visible via
 the stats overlay / MCP `get_stats` (word cache capacity) and a deliberate
-deep-recursion probe (stack size). A wrong type fails `srt check` with a
+deep-recursion probe (stack size). A wrong type fails `sol check` with a
 sentence-case message naming the key.

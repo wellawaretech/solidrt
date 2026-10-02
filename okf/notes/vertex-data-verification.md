@@ -1,6 +1,6 @@
 ---
 title: Verifying engine and vertex-data changes - where the checks stop
-description: Four facts about the verification surface met while landing the vertex data model (2026-09-11) - the release client srt run launches, what srt check covers, where the engine matches a pipeline against its program, and half-float support in bun and flux.
+description: Four facts about the verification surface met while landing the vertex data model (2026-09-11) - the release client sol run launches, what sol check covers, where the engine matches a pipeline against its program, and half-float support in bun and flux.
 created: 2026-09-11
 ---
 
@@ -9,12 +9,12 @@ created: 2026-09-11
 - The dev server launches the RELEASE client binary. A rig run under
   `target/release/flux -` exercises only the JS side, and a window
   example under `cargo run --example` exercises a debug build, so an
-  engine change verified by both can still fail under `srt run` until
+  engine change verified by both can still fail under `sol run` until
   `make client` rebuilds the release binary. The symptom is the old
   vocabulary coming back from reflection (a `programAttributes` name the
   JS table does not know). lattice is its own cargo workspace: a root
   `cargo check -p lattice` does not compile it; `make client` does.
-- `srt check <package>` typechecks `examples/`, not `checks/`: a rig is
+- `sol check <package>` typechecks `examples/`, not `checks/`: a rig is
   runtime-only, and a type change that breaks a rig shows up as a failed
   run, not a failed check.
 - The engine matches a pipeline's layouts against the program's

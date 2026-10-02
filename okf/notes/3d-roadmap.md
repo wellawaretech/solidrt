@@ -77,9 +77,9 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    `renderOrder` ([gpu-alpha-translucency](../done/gpu-alpha-translucency.md)).
    Premultiplied settled by the pixel contract.
 7. [x] **Real models: a glTF subset loader.** Shipped 2026-08-26 as two
-   layers, both in the package (the CLI gained only the generic `srt tool`
+   layers, both in the package (the CLI gained only the generic `sol tool`
    runner): the runtime primitive `parseGltf` + `createModel`, and the bake
-   `srt tool 3d/model` writing the same parse as a `.srtm` for `loadModel`.
+   `sol tool 3d/model` writing the same parse as a `.sol3m` for `loadModel`.
    The bake exists because of a measurement, not a principle: 124 ms of
    interpreter time per 32k vertices against 40 ms for the whole baked load.
    Left, demand-gated, in [3d-model-loader](../backlog/3d-model-loader.md):
@@ -144,7 +144,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     the earlier deferral until a third-person game asks is withdrawn.
 14. [x] **Environment tier: skybox, reflection/environment maps.** The
     skybox and `vRay` background, `setEnvironment`, the HDR asset path
-    (`srt tool 3d/environment`, `loadEnvironment`), reflection probes,
+    (`sol tool 3d/environment`, `loadEnvironment`), reflection probes,
     the GPU GGX prefilter and `bakeBackground`, half float where the
     device renders it - all documented in `packages/3d/AGENTS.md`. Design
     and the Three/Godot/Unity comparison:
@@ -152,7 +152,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     [gpu-cube-maps](../done/gpu-cube-maps.md),
     [gpu-cube-render-targets](../done/gpu-cube-render-targets.md),
     [gpu-half-float-format](../done/gpu-half-float-format.md). What
-    remains is additive - SH9, `aoMap`, a packed .srte payload,
+    remains is additive - SH9, `aoMap`, a packed .sol3e payload,
     `loadCubeImages`. Two settled constraints outlive the work: the cube
     convention is "a cube holds what a lookup returns" (no shader flip),
     and a prefilter always writes a second cube, never in place.
@@ -202,7 +202,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     documented in `packages/3d/AGENTS.md` (Color). The runtime's pixel
     contract stays non-linear RGBA8 with the sRGB and half-float formats
     as the opt-in decode: the library resolves into it. Additive on
-    demand: SH9, `aoMap`, a packed .srte payload
+    demand: SH9, `aoMap`, a packed .sol3e payload
     ([3d-environment-additive](../backlog/3d-environment-additive.md));
     the stock bloom and the AgX/Neutral curves sit on the resolve
     already.

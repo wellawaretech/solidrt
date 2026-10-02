@@ -24,7 +24,7 @@ import {
   version as buildVersion,
   profile as buildProfile,
   platform as buildPlatform,
-} from "srt:apps"
+} from "sol:apps"
 import { useRouter } from "@solidrt/router"
 import { DetailCard, DetailRow } from "./detail-card"
 import { BackButton } from "./back-button"

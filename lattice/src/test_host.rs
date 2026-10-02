@@ -1,6 +1,6 @@
 // Test mode (okf/done/test-harness.md, stage 4): the dev client as a test
 // host. Headless on alloy's stepped mode (stepped.rs): a test asks for every
-// frame (`srt:test` `frame`), so app time is frame / fps and nothing else,
+// frame (`sol:test` `frame`), so app time is frame / fps and nothing else,
 // and a frame nobody demanded draws nothing. Every test runs in an engine of
 // its own, built by the engine loop like any reload: the file is evaluated
 // once for the listing and once more per test (flux::test), and a failed
@@ -39,7 +39,7 @@ pub(crate) fn empty_sandbox(store: &crate::storage::Storage, app_id: &str) {
       let path = entry.path();
       let removed = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
       if let Err(e) = removed {
-        log::warn!("[srt] test mode: could not remove {} from the sandbox: {e}", path.display());
+        log::warn!("[sol] test mode: could not remove {} from the sandbox: {e}", path.display());
       }
     }
   }

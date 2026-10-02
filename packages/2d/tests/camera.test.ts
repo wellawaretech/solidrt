@@ -5,8 +5,8 @@
 // the component's view props cannot drift; unprojectCamera as the exact
 // round-trip inverse; plus the documented conventions as hand-written
 // cases. Pure-module input only (camera.ts imports no GUI), so it runs
-// headless on flux: `srt test packages/2d`. The random inputs come from
-// Math.random, which `srt test` seeds: the same on every run, and `--seed
+// headless on flux: `sol test packages/2d`. The random inputs come from
+// Math.random, which `sol test` seeds: the same on every run, and `--seed
 // <n>` tries others.
 
 import { test } from "flux:test"

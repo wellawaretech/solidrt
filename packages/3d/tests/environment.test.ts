@@ -1,7 +1,7 @@
 // The environment bake's pure pieces (environment-bake.ts): the RGBE
 // decoder against a synthetic encoder, the cube direction table and its
 // inverse, the panorama-to-cube and GGX prefilter on maps whose answer is
-// known, and the .srte round trip. `srt test packages/3d`.
+// known, and the .sol3e round trip. `sol test packages/3d`.
 import { expect, test } from "flux:test"
 import {
   cubeDirection,
@@ -188,7 +188,7 @@ test("bake: the sky's hemisphere lands on the +Y face and the convolution keeps 
     expect(Math.abs(mean(faces) - mean(base))).toBeLessThan(0.05)
   }
 })
-test("bake: the .srte container round trips", () => {
+test("bake: the .sol3e container round trips", () => {
   let levels = prefilterCube(panoramaToCube(scene, 8), 8)
   let bytes = encodeEnvironment(levels, 8)
   let back = decodeEnvironment(bytes)

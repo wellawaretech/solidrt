@@ -23,16 +23,16 @@ export async function buildFluxScript(entry: string, outfile: string, what: stri
 }
 
 /**
- * The environment a flux script of srt runs in: the caller's, plus where
+ * The environment a flux script of sol runs in: the caller's, plus where
  * the script finds the platform binaries next to `flux` (the path of the
- * flux binary that runs it), the bun to run srt with, and srt itself
+ * flux binary that runs it), the bun to run sol with, and sol itself
  * (src/server/binaries.ts reads them).
  */
 export function fluxScriptEnv(flux: string): Record<string, string | undefined> {
   return {
     ...process.env,
-    SRT_PLATFORM_DIR: dirname(flux),
-    SRT_BUN: process.execPath,
-    SRT_CLI: fileURLToPath(new URL("../..", import.meta.url)),
+    SOLIDRT_PLATFORM_DIR: dirname(flux),
+    SOLIDRT_BUN: process.execPath,
+    SOLIDRT_CLI: fileURLToPath(new URL("../..", import.meta.url)),
   }
 }

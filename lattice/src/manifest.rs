@@ -100,7 +100,7 @@ impl Manifest {
     match Manifest::parse(&text) {
       Ok(manifest) => Some(manifest),
       Err(e) => {
-        log::warn!("[srt] {} in {}", e, dir.display());
+        log::warn!("[sol] {} in {}", e, dir.display());
         None
       }
     }
@@ -121,7 +121,7 @@ impl Manifest {
         Ok(bytes) => {
           app.fonts.push(FontPayload { alias: Some(font.alias.clone()), bytes: std::borrow::Cow::Owned(bytes) })
         }
-        Err(e) => log::warn!("[srt] Could not read font {path}: {e}"),
+        Err(e) => log::warn!("[sol] Could not read font {path}: {e}"),
       }
     }
     app

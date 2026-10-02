@@ -3,11 +3,11 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "srt run src/index.tsx",
-    "pack": "srt pack -o out src/index.tsx",
-    "server": "srt server",
-    "client": "srt client",
-    "android": "srt android"
+    "dev": "sol run src/index.tsx",
+    "pack": "sol pack -o out src/index.tsx",
+    "server": "sol server",
+    "client": "sol client",
+    "android": "sol android"
   },
   "dependencies": {
     "@solidrt/core": "workspace:*",

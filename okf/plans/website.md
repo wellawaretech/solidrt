@@ -40,7 +40,7 @@ output instead. Dynamic serving is not needed once source is markdown.
 
 **Nav:** `Start - Core - Extensions - Tools - Runtime - Architecture`
 (the section was "Frameworks" until 2026-08-18; renamed to match the
-scaffolder's `srt init --with` vocabulary; URLs are `/extensions/...`)
+scaffolder's `sol init --with` vocabulary; URLs are `/extensions/...`)
 
 (News is deferred: blog + changelog get added as a top-level section later,
 not in the initial site.)
@@ -83,7 +83,7 @@ extension in Start reads as an endorsement, and teaching the shared
 substrate keeps the fork honest; onboarding that works with Core alone
 demonstrates the "stable spine" story better than prose. Requires the
 five-minute Core experience to be good (signal + View + Text + animation
-is), and `srt create` scaffolding a bare-Core default template with
+is), and `sol create` scaffolding a bare-Core default template with
 framework templates as named options (check what it currently produces).
 
 **No landing switcher** (overturns the earlier two-button Core/Components
@@ -108,7 +108,7 @@ fifteen pages of prose). Generated:
   isolations and are NOT harvested for the site. Section attribution
   (Core vs a framework's section) is derived from each app's
   package.json dependencies, not from folder structure. Upgrade path:
-  `srt playback` deterministic frame capture + captureSnapshot can
+  `sol playback` deterministic frame capture + captureSnapshot can
   generate real screenshots/recordings of every example at build time.
 - CLI reference from command definitions / help output.
 - Changelog from releases (deferred with News).
@@ -151,7 +151,7 @@ paying `../../../` noise). An unresolved directive **fails the build** - the
 directive hard-codes a declaration name, and a rename in the source must not
 silently blank a page. Providers: `props` (a core prop interface), `decl` (any
 declaration from any TS source), `dts` (a whole flux-types declaration file),
-`usage` (one srt command), `source` (a file from `examples/`).
+`usage` (one sol command), `source` (a file from `examples/`).
 
 **Reference by topic, not by symbol.** Core Reference becomes Elements,
 Detached elements (one generic page: what detached means, the shared
@@ -167,7 +167,7 @@ each, visible and reorderable. Expected page count drops from 94 to ~45.
    (static output mode), the new nav, hand-written landing + Start, ported /
    rewritten section landing pages. DONE 2026-07-16: `make build` in
    `website/` (own Makefile, not the root one) renders `content/` to
-   `dist/` (7 pages + css) via `srt bundle --flux` + the host
+   `dist/` (7 pages + css) via `sol bundle --flux` + the host
    `dist/<triple>/flux` binary. Rules: `*.md`
    through the converter, `*.html` wrapped as pre-rendered fragments (the
    landing page), everything else copied. Titles from the first h1. Content
@@ -238,7 +238,7 @@ Content rework, staged on top (2026-08-18):
    check and build, render and agents) with a `{{ usage <command> }}` pull
    each. A command page was three lines of synopsis, so a page apiece was the
    `d-*` problem in miniature. `toolsPages()` deleted; a coverage check
-   reports any `srt` command no page pulls (verified).
+   reports any `sol` command no page pulls (verified).
    Runtime stayed generated, but grouped. Each page is 1:1 with a flux-types
    declaration file carrying JSDoc on every member, and those files total 2742
    lines (gpu.d.ts alone is 834), so per-module pages are right and converting
@@ -296,8 +296,8 @@ Decisions:
   as they are. Verified 2026-08-18: "one step up" is not the next framework
   step (title, 18px, is too big for prose); it means a 16px prose body with
   the ratios preserved (about 12.6/13.7/16/20.6/25). Express it as one
-  visible factor in the stylesheet (`--srt-prose-scale: calc(16 / 14)`)
-  applied over the emitted `--srt-*-size` tokens, so tokens.css stays
+  visible factor in the stylesheet (`--sol-prose-scale: calc(16 / 14)`)
+  applied over the emitted `--sol-*-size` tokens, so tokens.css stays
   identical to the framework. Decided 2026-08-18: 16px.
 - **Font parity costs something.** `NotoSans.ttf` is 2 MB, too heavy to
   serve raw. Preferred fix is a self-hosted woff2 subset, which needs
@@ -318,7 +318,7 @@ Stage 2 of this track (Pico replacement) is two things, kept separate:
   defaults for what the rules do not cover (ul/ol/li, table, hr) and the
   landing fragment (section, hgroup, header/nav/main). It sits on a vendored
   `modern-normalize` (3 KB, MIT) for the cross-browser baseline and reads
-  only `--srt-*` tokens; the prose factor is `--srt-prose-scale: calc(16 /
+  only `--sol-*` tokens; the prose factor is `--sol-prose-scale: calc(16 /
   14)`. Landing sections render as cards (surface fill, radius lg, padding
   xl), nav links as ghost buttons, `a[role=button]` as Button primary,
   tables and code on surface fills, hr is spacing only. tokens.css collapsed
@@ -387,15 +387,15 @@ Stage 2 of this track (Pico replacement) is two things, kept separate:
 
 ## Findings from stage 1
 
-- The scaffold command is `srt init` (not `srt create`); templates are
+- The scaffold command is `sol init` (not `sol create`); templates are
   `default` (uses @solidrt/components, animated logo), `gallery`, `minimal`
   (core-only: window + text). So a bare-Core onboarding template already
   exists as `minimal`; the open question is only whether `default` should
   stay Components-flavored. The Start stub scaffolds `minimal`.
   Superseded 2026-07-26 while writing the content: the public entry point is
-  `bun create solidrt <dir>` (create-solidrt forwards to `srt init`), which
+  `bun create solidrt <dir>` (create-solidrt forwards to `sol init`), which
   installs dependencies itself, and the run command is `bun run dev`
-  (`srt run <entry>`) - bare `srt` only prints usage. Templates are now
+  (`sol run <entry>`) - bare `sol` only prints usage. Templates are now
   `default` (core level, animated logo), `minimal` (core, blank),
   `components` (blank) and `gallery` (widget tour), so `default` already
   went core-first and that open question is closed.

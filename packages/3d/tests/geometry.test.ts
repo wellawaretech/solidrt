@@ -3,7 +3,7 @@
 // scale included), mergeGeometries offsets, uint32 widening and the
 // mixed-layout rejection, the exported bounds/ray helpers, and the debug
 // helper builders (counts, bounds, the color channel). Pure-module inputs
-// only, so it runs headless on flux: `srt test packages/3d`.
+// only, so it runs headless on flux: `sol test packages/3d`.
 
 import { test } from "flux:test"
 import { arrowHelper, axesHelper, box, box3Helper, capsule, capsuleHelper, cone, cylinder, dodecahedron, edgesGeometry, mergeVertices, normalsHelper, toNonIndexed, withMorphTargets, withNormals, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, geometryKey, geometrySlot, geometryStreams, geometryVertexCount, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, BASE_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"

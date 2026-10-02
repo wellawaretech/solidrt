@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /// <reference path="./node-env.d.ts" />
 
-// srt tool 3d/environment: bake a Radiance .hdr panorama into a .srte
+// sol tool 3d/environment: bake a Radiance .hdr panorama into a .sol3e
 // environment file - the six cube faces and their GGX-prefiltered mip
 // chain in linear float, the exact chain loadEnvironment uploads as an
 // explicit rgba16f cube (no runtime conversion, no generated mipmaps, no
@@ -10,7 +10,7 @@
 // at runtime every time the sky changes. Put the output under assets/ so
 // it ships with the app.
 //
-//   srt tool 3d/environment <in.hdr> [-o <out.srte>] [--size <edge>]
+//   sol tool 3d/environment <in.hdr> [-o <out.sol3e>] [--size <edge>]
 //
 // --size is the cube's face edge: 128 (default) is Unity's probe default
 // and enough for every surface short of a mirror; 256 (Godot's radiance
@@ -28,7 +28,7 @@ const MAX_SIZE = 1024
 
 function usage(error?: string): never {
   if (error) console.error(error)
-  console.log("Usage: srt tool 3d/environment <in.hdr> [-o <out.srte>] [--size <edge>]")
+  console.log("Usage: sol tool 3d/environment <in.hdr> [-o <out.sol3e>] [--size <edge>]")
   process.exit(error ? 1 : 0)
 }
 
@@ -54,7 +54,7 @@ for (let i = 0; i < args.length; i++) {
   else usage("Unexpected argument " + arg)
 }
 if (input === undefined) usage("Missing input file")
-if (output === undefined) output = basename(input, extname(input)) + ".srte"
+if (output === undefined) output = basename(input, extname(input)) + ".sol3e"
 
 let started = performance.now()
 let panorama = decodeHdr(new Uint8Array(readFileSync(input)))

@@ -12,7 +12,7 @@ completed: 2026-08-29
 A client connected to a dev server looks like any other client, yet the
 server owns it: it can be reloaded, driven through `/input`, snapshotted,
 and have the person's input muted. Muted (`/__control__/mute`, the repl
-`mute`, `srt mcp` mute_user_input) is the sharper case: taps and keys
+`mute`, `sol mcp` mute_user_input) is the sharper case: taps and keys
 silently do nothing and the person at the device cannot tell why. See
 [mcp-input-hold](mcp-input-hold.md) for the driving-session side.
 

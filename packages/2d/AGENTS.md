@@ -453,7 +453,7 @@ it: `createSpriteLayer(texture, { stagger })` / `layer.setStagger(ms)`.
 Each natural settle calls the handle's `onTransitionEnd` (plain field,
 or the `<Sprite>`/`<Group>` prop) with `{ component }` - target-only,
 never on a cancel, snap or exit; the raw "spatialTransitionEnd" engine
-event (srt:events, node = sprite.node) stays for flux:spatial consumers.
+event (sol:events, node = sprite.node) stays for flux:spatial consumers.
 See examples/springs.tsx (tap a sprite: it leaves through its `exit`).
 
 ### Frame-rate motion
@@ -469,7 +469,7 @@ re-runs an effect per sprite per frame for nothing.
 
 Frame animation (animation.ts): `createAnimation(frames, fps, { loop })`
 is a clip with a shared clock on the app's frame time (it freezes with
-the dev clock and plays at its own speed under `srt render`) stepping
+the dev clock and plays at its own speed under `sol render`) stepping
 every attached sprite
 (`anim.add(sprite)` / `remove`; `play`/`pause`; `frame()`/`playing()`
 read the clock, methods like the 3d mixer's `playing()`; `loop: false`

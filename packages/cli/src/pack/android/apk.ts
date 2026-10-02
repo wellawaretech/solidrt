@@ -5,7 +5,7 @@
 // AndroidManifest.xml), declare the app's permissions there and, when
 // the app opts in, turn backup on for its data/ folder; rewrite the launcher
 // label in the resource table (strings.ts), swap the adaptive-icon slot PNGs
-// (icon.ts), add the .srtapp payload as a stored asset, then re-align and
+// (icon.ts), add the .solapp payload as a stored asset, then re-align and
 // re-sign the zip (zip.ts, sign.ts). The dex, the native libs and every
 // other resource are carried byte-for-byte; the activity class name is
 // stored fully qualified in the manifest, so changing the id never touches
@@ -30,7 +30,7 @@ import { signApk } from "./sign"
 // Where the payload lands in the APK: under assets/ so the runtime can reach
 // it through AAssetManager (open_file_descriptor needs an asset, not just any
 // zip entry), stored so it is read in place with no extraction.
-const PAYLOAD_ENTRY = "assets/app.srtapp"
+const PAYLOAD_ENTRY = "assets/app.solapp"
 
 // The adaptive-icon slots the runner bakes (ic_launcher_runner.xml): the
 // foreground PNG sits behind a safe-zone inset, the background is a 1x1
@@ -160,7 +160,7 @@ export function patchApk(base: Buffer, patch: ApkPatch): Buffer {
 }
 
 // The application id an APK carries, read back from its compiled manifest.
-// The install side (srt android <file.apk>) needs it to address the launcher
+// The install side (sol android <file.apk>) needs it to address the launcher
 // activity, and the APK itself is the only place it lives.
 export function apkApplicationId(apk: Buffer): string {
   let entry = entryNamed(parseZip(apk), "AndroidManifest.xml")

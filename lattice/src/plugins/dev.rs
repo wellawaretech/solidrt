@@ -7,7 +7,7 @@ use flux::rquickjs::function::MutFn;
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
 use flux::rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Null, Object, Persistent, Value};
 
-// The `srt:dev` module: the dev-server control surface (connect / discover /
+// The `sol:dev` module: the dev-server control surface (connect / discover /
 // stop) used by the default app's connection UI. The actual command plumbing
 // lives in the go layer (connection.rs); here we only marshal it to JS.
 //
@@ -27,7 +27,7 @@ pub struct DevControlInner {
   pub stop: Box<dyn Fn()>,
   pub can_discover: bool,
   pub recents: Vec<String>,
-  // Dev-server address delivered at launch (srt client --android); the default
+  // Dev-server address delivered at launch (sol client --android); the default
   // app auto-connects to it. None when launched without one.
   pub launch_address: Option<String>,
 }
@@ -42,7 +42,7 @@ impl DevControl {
 }
 
 // Installs the dev control as userdata. Call from a go engine plugin before the
-// default app imports `srt:dev`.
+// default app imports `sol:dev`.
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 pub fn install(ctx: &Ctx<'_>, control: DevControl) {
   ctx.store_userdata(control).expect("store dev control");
@@ -76,7 +76,7 @@ impl DebugRegistry {
 /// Call a registered debug command with JSON args and return what it
 /// returned, as JSON (undefined is null). An unknown name, a throw, a
 /// promise or a value JSON cannot carry is the error. One call path for the
-/// control API (`debug_call`) and for a test (`srt:test` `debug`).
+/// control API (`debug_call`) and for a test (`sol:test` `debug`).
 #[cfg_attr(not(any(feature = "go", feature = "test")), allow(dead_code))]
 pub fn call_debug(ctx: &Ctx<'_>, name: &str, args: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
   let Some(registry) = ctx.userdata::<DebugRegistry>() else {
@@ -178,9 +178,9 @@ fn register_debug_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) ->
   Ok(())
 }
 
-pub struct SrtDevModule;
+pub struct SolDevModule;
 
-impl ModuleDef for SrtDevModule {
+impl ModuleDef for SolDevModule {
   fn declare<'js>(decl: &Declarations<'js>) -> flux::rquickjs::Result<()> {
     decl.declare("available")?;
     decl.declare("connect")?;

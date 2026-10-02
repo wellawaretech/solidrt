@@ -16,7 +16,7 @@
 // acknowledgement, and the second instance only exits once it has that
 // (a first instance on its way out would otherwise swallow the link).
 //
-// Registration is an explicit call (srt:app registerProtocolHandler, the
+// Registration is an explicit call (sol:app registerProtocolHandler, the
 // web's name), never an implicit first-run write: a packed app is a single
 // executable nothing installs, so the app itself makes this copy the
 // handler, and does it again after it moved. Linux writes the freedesktop
@@ -91,24 +91,24 @@ where
     Ok(Ok(n)) if n > 0 => {}
     Ok(Ok(_)) => return,
     Ok(Err(e)) => {
-      log::warn!("[srt] link hand-off read failed: {e}");
+      log::warn!("[sol] link hand-off read failed: {e}");
       return;
     }
     Err(_) => {
-      log::warn!("[srt] link hand-off timed out");
+      log::warn!("[sol] link hand-off timed out");
       return;
     }
   }
   let link = line.trim_end_matches(['\n', '\r']).to_string();
   // A local peer can send anything; only the app's own links are links.
   if !own_link(&app_id, &link) {
-    log::warn!("[srt] link hand-off ignored: not a {app_id}: link");
+    log::warn!("[sol] link hand-off ignored: not a {app_id}: link");
     return;
   }
   let _ = events.send(AlloyEvent::Link { link });
   let _ = commands.send(AlloyCommand::RaiseWindow);
   if let Err(e) = writer.write_all(ACK).await {
-    log::warn!("[srt] link hand-off acknowledgement failed: {e}");
+    log::warn!("[sol] link hand-off acknowledgement failed: {e}");
   }
 }
 
@@ -151,7 +151,7 @@ mod platform {
     // or stale is decided the way a second instance decides it: whether
     // anything answers. Nothing does, so the file is ours to replace.
     if UnixStream::connect(&path).is_ok() {
-      log::info!("[srt] another instance already answers links at {}", path.display());
+      log::info!("[sol] another instance already answers links at {}", path.display());
       return;
     }
     let _ = std::fs::remove_file(&path);
@@ -159,17 +159,17 @@ mod platform {
       let listener = match tokio::net::UnixListener::bind(&path) {
         Ok(listener) => listener,
         Err(e) => {
-          log::warn!("[srt] cannot listen for links at {}: {e}", path.display());
+          log::warn!("[sol] cannot listen for links at {}: {e}", path.display());
           return;
         }
       };
-      log::info!("[srt] answering {app_id}: links at {}", path.display());
+      log::info!("[sol] answering {app_id}: links at {}", path.display());
       loop {
         match listener.accept().await {
           Ok((stream, _)) => {
             tokio::spawn(serve(stream, app_id.clone(), events.clone(), commands.clone()));
           }
-          Err(e) => log::warn!("[srt] link hand-off accept failed: {e}"),
+          Err(e) => log::warn!("[sol] link hand-off accept failed: {e}"),
         }
       }
     });
@@ -366,25 +366,25 @@ mod platform {
       let mut server = match ServerOptions::new().first_pipe_instance(true).create(&name) {
         Ok(server) => server,
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-          log::info!("[srt] another instance already answers links at {name}");
+          log::info!("[sol] another instance already answers links at {name}");
           return;
         }
         Err(e) => {
-          log::warn!("[srt] cannot listen for links at {name}: {e}");
+          log::warn!("[sol] cannot listen for links at {name}: {e}");
           return;
         }
       };
-      log::info!("[srt] answering {app_id}: links at {name}");
+      log::info!("[sol] answering {app_id}: links at {name}");
       loop {
         if let Err(e) = server.connect().await {
-          log::warn!("[srt] link hand-off accept failed: {e}");
+          log::warn!("[sol] link hand-off accept failed: {e}");
           continue;
         }
         let connected = server;
         server = match ServerOptions::new().create(&name) {
           Ok(server) => server,
           Err(e) => {
-            log::warn!("[srt] cannot re-open the link endpoint {name}: {e}");
+            log::warn!("[sol] cannot re-open the link endpoint {name}: {e}");
             tokio::spawn(serve(connected, app_id.clone(), events.clone(), commands.clone()));
             return;
           }

@@ -1,6 +1,6 @@
 ---
 title: Model loader follow-ups
-description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3 container with retained hierarchy, skins and animation clips plus the JS mixer since 2026-08-31) covers rigged models end to end; still open, each something Three's and Unity's glTF loaders take today, are the compressed real-world meshes (Draco/meshopt), tangents and the second UV set, per-material samplers, merge-by-material and runtime decoding of fetched content (morph targets have their own item).
+description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the sol tool 3d/model bake; v3 container with retained hierarchy, skins and animation clips plus the JS mixer since 2026-08-31) covers rigged models end to end; still open, each something Three's and Unity's glTF loaders take today, are the compressed real-world meshes (Draco/meshopt), tangents and the second UV set, per-material samplers, merge-by-material and runtime decoding of fetched content (morph targets have their own item).
 created: 2026-08-26
 ---
 
@@ -19,8 +19,8 @@ one `lit` per material with a skinned variant per skinned part, textures
 uploaded, `dispose()`), `createMixer` (crossfading clip playback over
 the core evaluator of [animation-core](../done/animation-core.md); the
 uBones palettes are core-composed at the spatial flush since 2026-09-02), the read conveniences
-`loadGltf`/`loadModel`, and the bake: `srt tool 3d/model` writes the same
-parse as a `.srtm` container whose payload is the GPU layout.
+`loadGltf`/`loadModel`, and the bake: `sol tool 3d/model` writes the same
+parse as a `.sol3m` container whose payload is the GPU layout.
 
 The measurement that shaped the two-layer split, unimog (32k vertices, 21
 parts, 6 PNGs), release client on Linux: `parseGltf` on flux 124 ms
@@ -48,7 +48,7 @@ with its decoder plugins) and Unity (glTFast) take every one of them.
   tool under bun (wasm decoders, no runtime weight), which is the "mature
   loader" half of the direction in
   [3d-differentiators](../notes/3d-differentiators.md): decode there, emit
-  the same `.srtm`.
+  the same `.sol3m`.
 - **Merge by material.** One part per node keeps identity (picking,
   per-part hide/highlight) at one draw entry per part. Three's
   `mergeGeometries`, Unity's static batching, Godot's mesh merging. A `--merge` bake
@@ -76,6 +76,6 @@ with its decoder plugins) and Unity (glTFast) take every one of them.
   Three, Unity (glTFast) and Godot (GLTFDocument) all decode at runtime,
   so the parity answer is a runtime decode path for the common
   compressions (native, in the loader's Rust side - the interpreter
-  rules out a JS Draco). The publisher-side rule ("bake with `srt tool
-  3d/model` before upload", the `.srtm` as the exchange format) stays as
+  rules out a JS Draco). The publisher-side rule ("bake with `sol tool
+  3d/model` before upload", the `.sol3m` as the exchange format) stays as
   the fast path a publisher can take, not as the substitute.

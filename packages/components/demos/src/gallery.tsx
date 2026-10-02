@@ -210,11 +210,11 @@ function App() {
   // initial render.
   let [modalOpen, setModalOpen] = createSignal(false)
   let [rowDensity, setRowDensity] = createSignal<unknown>("comfortable")
-  let [currentIssue, setCurrentIssue] = createSignal("SRT-12")
+  let [currentIssue, setCurrentIssue] = createSignal("SOL-12")
   let issues = [
-    { id: "SRT-12", title: "Tooltip lingers after the anchor unmounts", assignee: "Antoine" },
-    { id: "SRT-15", title: "Select sheet ignores safe area on Android", assignee: "unassigned" },
-    { id: "SRT-19", title: "Slider thumb misses the first pixel", assignee: "Antoine" },
+    { id: "SOL-12", title: "Tooltip lingers after the anchor unmounts", assignee: "Antoine" },
+    { id: "SOL-15", title: "Select sheet ignores safe area on Android", assignee: "unassigned" },
+    { id: "SOL-19", title: "Slider thumb misses the first pixel", assignee: "Antoine" },
   ]
 
   // The QR code follows the name field debounced, not per keystroke: each data

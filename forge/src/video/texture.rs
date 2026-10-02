@@ -54,7 +54,7 @@ pub fn open(
   let info = reader.info().ok_or("stream not opened")?;
   let (width, height) = (info.width, info.height);
   let make: PresenterFactory = Box::new(move || make_presenter(width, height, sink));
-  Player::open("srt-video-texture", reader, make, clock, audio, Box::new(|| false))
+  Player::open("sol-video-texture", reader, make, clock, audio, Box::new(|| false))
 }
 
 #[cfg(not(target_os = "android"))]

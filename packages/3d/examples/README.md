@@ -1,6 +1,6 @@
 # @solidrt/3d examples
 
-One concept per file; run with `bun run srt run <file>` from an app that
+One concept per file; run with `bun run sol run <file>` from an app that
 depends on `@solidrt/3d` (or in-repo from the package directory).
 
 - `scene-basic.tsx` - the whole v1 surface: a `<Scene>` composited as a
@@ -57,8 +57,8 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   the environment as tinted reflections, the dielectric row the same
   sky as a faint face-on gloss. Drag to look around.
 - `environment.tsx` - a baked HDR environment lighting the scene ALONE
-  (no lights, no hemisphere): `loadEnvironment` reads the .srte that
-  `bun run srt tool 3d/environment <panorama>.hdr -o assets/environment.srte`
+  (no lights, no hemisphere): `loadEnvironment` reads the .sol3e that
+  `bun run sol tool 3d/environment <panorama>.hdr -o assets/environment.sol3e`
   bakes from any equirectangular .hdr (Poly Haven's are CC0; the asset
   is not committed, bake one first), used as background and environment
   with ACES tone mapping. A metal row and a red dielectric row, roughness
@@ -200,4 +200,4 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   stays above the boundary - the two rules that avoid
   PENDING_ASYNC_UNTRACKED_READ and the suspend-retry element leak. Needs
   the asset baked into the running app:
-  `bun run srt tool 3d/model examples/model.glb -o assets/model.srtm`.
+  `bun run sol tool 3d/model examples/model.glb -o assets/model.sol3m`.

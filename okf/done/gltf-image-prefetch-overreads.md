@@ -20,7 +20,7 @@ model that is most of the bytes: a scene authored with base color, normal and
 metallic-roughness maps names roughly three times as many images as the parser
 will open, at whatever resolution the source ships.
 
-The bake tool does not have the problem. `srt tool 3d/model` passes a lazy
+The bake tool does not have the problem. `sol tool 3d/model` passes a lazy
 `(uri) => readFileSync(...)` resolver, so it reads exactly what the parser
 asks for. Only the async path over-reads, and it over-reads because the
 prefetch has to guess the demand set in advance.

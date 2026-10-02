@@ -81,7 +81,7 @@
       "name": "@solidrt/cli",
       "version": "0.0.0",
       "bin": {
-        "srt": "./bin/srt",
+        "sol": "./bin/sol",
       },
       "dependencies": {
         "@babel/core": "^7.0.0",

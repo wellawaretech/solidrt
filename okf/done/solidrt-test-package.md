@@ -19,11 +19,11 @@ An app test imports `test` and `expect` from `@solidrt/core/test` (D31 in
   scaffold auto-imports that file into every agent session of every app,
   whether it writes a test or not.
 - Test APIs are usually packages of their own (`@playwright/test`,
-  `@testing-library/solid`), and the name lines up with `srt test`,
-  `flux:test` and `srt:test`.
+  `@testing-library/solid`), and the name lines up with `sol test`,
+  `flux:test` and `sol:test`.
 
 D31 settled the layering (the Solid half in TypeScript, over the native
-`srt:test`) and rejected `srt:test` as the import; a separate package was
+`sol:test`) and rejected `sol:test` as the import; a separate package was
 not weighed. This item changes only where that TypeScript lives.
 
 ## Done looks like
@@ -44,7 +44,7 @@ import { test, expect } from "@solidrt/test"
 Checked before writing this down:
 
 - `packages/core/src/test.ts` imports `flux:test`, `flux:test/gui`,
-  `srt:test` and `./renderer` (`createElement`, `insert`, `render`). Core
+  `sol:test` and `./renderer` (`createElement`, `insert`, `render`). Core
   already exports all three from its root (`export * from "./renderer"`),
   so the package imports them from `@solidrt/core` and core opens nothing
   new. Nothing in core imports `test.ts`.
@@ -56,28 +56,28 @@ Checked before writing this down:
   an install, the exact peer pin keeps one copy; a mismatched manual install
   could nest a second core, the same exposure router, 2d, 3d and components
   have today.
-- `srt test` needs no change: it finds every `tests/` folder by walking
+- `sol test` needs no change: it finds every `tests/` folder by walking
   (`packages/cli/src/test/main.ts`, `discover`), so `packages/test/tests/`
   is picked up; it classifies a file by the runtime modules its bundle
   imports (`APP_MODULE`, `runtimeImports`), so a `.ts` file importing
-  `@solidrt/test` is still an app test (its bundle imports `srt:test`).
+  `@solidrt/test` is still an app test (its bundle imports `sol:test`).
 - The release pin script rewrites every `@solidrt/*` specifier in all four
   dependency fields of every `PUBLISH_DIRS` package and of the scaffold's
   package.json, so adding the directory to `PUBLISH_DIRS` is the whole
   release change.
-- `srt init` prunes unchosen extensions from `dependencies` only;
-  `create-solidrt` forwards to `srt init`. Neither changes.
-- No Rust, no native surface, no `srt:test` change. The website takes
+- `sol init` prunes unchosen extensions from `dependencies` only;
+  `create-solidrt` forwards to `sol init`. Neither changes.
+- No Rust, no native surface, no `sol:test` change. The website takes
   `src/test/docs.md` as it is and lists no packages.
 
 ## Decided here
 
-- The `srt:test` declarations stay in core's `runtime-modules.d.ts`, with
-  the other `srt:*` modules: the native surface is declared in one place,
+- The `sol:test` declarations stay in core's `runtime-modules.d.ts`, with
+  the other `sol:*` modules: the native surface is declared in one place,
   only the TypeScript layer moves, and the package sees the declarations
   through its peer's types. (The other way: an ambient `.d.ts` in
   `packages/test` referenced from `src/index.ts`, so core holds no trace of
-  testing, at the price of `srt:*` declared in two packages.)
+  testing, at the price of `sol:*` declared in two packages.)
 - Core's "Testing an app" section moves out whole, with no pointer left
   behind: the scaffold's AGENTS.md index already routes test work to
   `@solidrt/cli/agents/testing.md`, and the API section becomes
@@ -139,11 +139,11 @@ Docs and comments naming the old import:
 
 ## Verification
 
-1. Before anything moves: the `bun run srt test` total, per layer.
+1. Before anything moves: the `bun run sol test` total, per layer.
 2. `bun install`; the `bun.lock` diff holds the new workspace member only.
-3. `bun packages/cli/bin/srt check` on `packages/test/src/index.ts` and on
+3. `bun packages/cli/bin/sol check` on `packages/test/src/index.ts` and on
    one test file each in core, 2d and 3d: "Types OK".
-4. `bun run srt test`: the same total, both layers green. The app layer runs
+4. `bun run sol test`: the same total, both layers green. The app layer runs
    on the dev client as built: no Rust change, so no rebuild.
 5. `git grep "core/test"` finds only the harness plan's history.
 6. `bun pm pack` in `packages/test`: the tarball holds `package.json`,
@@ -163,7 +163,7 @@ are what it rests on.
 
 As planned, with three deviations:
 
-- `srt test` did change after all. The classification bundle of a plain
+- `sol test` did change after all. The classification bundle of a plain
   `.ts` test (`bundleFlux`, Bun's own bundler) now reaches core's root
   through `@solidrt/test`, and core's root exports `Logo` from `logo.tsx`:
   Bun's JSX transform asked for `@solidrt/core/jsx-dev-runtime`, which core

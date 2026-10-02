@@ -32,7 +32,7 @@
 // microphone/gpu are flux:* modules like the rest; requestAnimationFrame stays a
 // global (web-standard name). flux:rendertree is the render-tree bridge the
 // renderer drives; displaying the built tree (renderFrame) is the runner's
-// concern (srt:render in lattice), not part of flux.
+// concern (sol:render in lattice), not part of flux.
 /// <reference path="./gui/rendertree.d.ts" />
 /// <reference path="./gui/camera.d.ts" />
 /// <reference path="./gui/microphone.d.ts" />

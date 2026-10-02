@@ -194,7 +194,7 @@ impl Reader {
     let (answer, opened) = oneshot::channel();
     let worker = shared.clone();
     let thread = thread::Builder::new()
-      .name("srt-video-reader".to_string())
+      .name("sol-video-reader".to_string())
       .spawn(move || run(worker, open, answer))
       .map_err(|e| log::warn!("[forge::video] spawn reader: {e}"))
       .ok();

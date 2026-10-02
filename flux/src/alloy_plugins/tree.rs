@@ -309,7 +309,7 @@ pub(crate) fn try_state(ctx: &Ctx<'_>) -> Option<Rc<RenderTreeInner>> {
 /// build and mutate the native tree (create/insert/delete nodes, write
 /// properties, query layout, measure text). Marshalling only - all domain logic
 /// lives in alloy's rendertree. Displaying the built tree is the runner's
-/// concern (`srt:render`), not part of this module.
+/// concern (`sol:render`), not part of this module.
 pub struct RenderTreeModule;
 
 impl ModuleDef for RenderTreeModule {

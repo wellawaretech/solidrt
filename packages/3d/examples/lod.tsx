@@ -21,7 +21,7 @@
 import { onFrame, pct, render } from "@solidrt/core"
 import { addInstance, cone, cylinder, DirectionalLight, HemisphereLight, icosahedron, InstancedLod, phong, Lod, Mesh, mergeGeometries, plane, Scene, transformGeometry, useScene } from "@solidrt/3d"
 import type { InstancedMeshNode } from "@solidrt/3d"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 
 const TREES = 1000
 // Half the side of the square field the trees scatter over.

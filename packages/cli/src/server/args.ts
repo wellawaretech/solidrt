@@ -1,14 +1,14 @@
-// The server's command line: the interface `srt run` / `srt server` (a bun
+// The server's command line: the interface `sol run` / `sol server` (a bun
 // player that spawns this process) and the console (a flux app that spawns
 // it or imports it) share, so it takes flags and never a config blob
-// (okf/done/srt-command-folders.md):
+// (okf/done/sol-command-folders.md):
 //
 //   flux server.js [file] [--project|--file] [--port N] [--lan] [--proxy-http]
 //                  [--capture f] [--tunnel] [--stats] [--minify]
 //                  [--client N [--data-root d] [--size WxH]] [-- args]
 //
-// --client N spawns the local solidrt-go client with data slot N (`srt run`);
-// without it the server runs alone (`srt server`). Everything after a bare
+// --client N spawns the local solidrt-go client with data slot N (`sol run`);
+// without it the server runs alone (`sol server`). Everything after a bare
 // "--" is the app's argument vector (flux:process argv on every client).
 // flux:process argv is the tail after the script, so a small parser covers
 // it: boolean flags, valued flags, one positional, the "--" tail.

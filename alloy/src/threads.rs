@@ -1,5 +1,5 @@
-//! Thread bootstrap: spawns srt-raster (sole owner of the GL and Impeller
-//! contexts, see raster/) and srt-ui (JS, layout, paint; zero GL) and wires
+//! Thread bootstrap: spawns sol-raster (sole owner of the GL and Impeller
+//! contexts, see raster/) and sol-ui (JS, layout, paint; zero GL) and wires
 //! the command channel between them.
 
 use crate::backend::{FrameOutput, GlBinding};
@@ -47,7 +47,7 @@ pub(crate) fn run_context(
   // Impeller context for the engine's lifetime. Impeller's GLES contract
   // requires exactly this: one context, used only on the thread it was
   // created on. Everything GL arrives over the command channel (raster.rs).
-  let spawn_raster = std::thread::Builder::new().name("srt-raster".into()).spawn(move || {
+  let spawn_raster = std::thread::Builder::new().name("sol-raster".into()).spawn(move || {
     // Display priority so background processes cannot preempt a frame
     // mid-flight; see sdl_utils::frame_thread_priority.
     crate::sdl_utils::frame_thread_priority(true);
@@ -82,7 +82,7 @@ pub(crate) fn run_context(
 
   // The UI thread: QuickJS, layout, hit-testing, DisplayList building. No GL
   // at all; the Context it gets marshals GPU work over the command channel.
-  let spawn_ui = std::thread::Builder::new().name("srt-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
+  let spawn_ui = std::thread::Builder::new().name("sol-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
     // Same display-priority rationale as the raster thread, one tier lower
     // (the raster thread owns the present deadline).
     crate::sdl_utils::frame_thread_priority(false);

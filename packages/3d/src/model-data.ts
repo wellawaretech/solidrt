@@ -1,5 +1,5 @@
 // @solidrt/3d/model - the model DATA side of the package without the
-// runtime: the glTF parser, the .srtm container and the pure geometry kit,
+// runtime: the glTF parser, the .sol3m container and the pure geometry kit,
 // for a script that bakes an app's own geometry under bun (or any host
 // with no flux). The package root imports `flux:*` and so loads only on
 // the runtime; this entry imports nothing that does. tools/model.flux.ts
@@ -7,11 +7,11 @@
 // app's bake script and the tool share one path:
 //
 //   import { box, encodeModel, transformGeometry } from "@solidrt/3d/model"
-//   writeFileSync("assets/terrain.srtm", encodeModel({ nodes, parts, ... }))
+//   writeFileSync("assets/terrain.sol3m", encodeModel({ nodes, parts, ... }))
 //
 // createModel / loadModel on the runtime read what it writes. Keep this
 // entry pure. tests/model-data.test.ts imports it on the bare flux binary
-// and fails the moment a gui or srt: import creeps into the chain; a
+// and fails the moment a gui or sol: import creeps into the chain; a
 // headless flux: import it would not notice, and a bake script under bun
 // would.
 

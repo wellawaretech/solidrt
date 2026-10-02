@@ -6,7 +6,7 @@ import { collectAssets } from "../lib/project"
 import { fail, requireBinary } from "../lib/util"
 import { remapPositions } from "../server/remap"
 
-// srt test: run the test files of a project on the runtime the code ships
+// sol test: run the test files of a project on the runtime the code ships
 // on (okf/done/test-harness.md). Each `tests/*.test.ts` is bundled on its
 // own and handed to a fresh test host process, one file after another. The
 // binary is the host: it evaluates the file once to list the tests it
@@ -32,7 +32,7 @@ const HARNESS_FRAME = "(flux:test:"
 // The runtime modules the `flux` binary does not have: lattice's builtins
 // and flux's gui layer. A test file whose bundle imports one runs on the
 // dev client.
-const APP_MODULE = /^srt:|^flux:(rendertree|camera|microphone|audio|gpu|spatial|video|test\/gui)$/
+const APP_MODULE = /^sol:|^flux:(rendertree|camera|microphone|audio|gpu|spatial|video|test\/gui)$/
 // Where an app test's staged bundle and its data root live, under the
 // project's build output, and the folder in it a failed test's snapshot
 // lands in.
@@ -45,7 +45,7 @@ type Layer = (typeof LAYERS)[number]
 // Marks a stdout line as a record of the test host's, not something a
 // native library printed. It starts with a control character (the ASCII
 // record separator) so that nothing prints it by accident.
-const RECORD_PREFIX = "\x1esrt-test "
+const RECORD_PREFIX = "\x1esol-test "
 // How long one file may run before its process is stopped. A safety cap
 // against a wedged process, which the host's own cap per test cannot see;
 // not a wait.
@@ -105,7 +105,7 @@ type Bundled = { code: string; map: string | null; app: boolean }
 
 // The runtime modules a bundle imports: what the bundler left external.
 function runtimeImports(code: string): string[] {
-  return [...code.matchAll(/^import\s(?:[^"']*?\sfrom\s*)?["']((?:flux|srt):[^"']+)["']/gm)].map((match) => match[1]!)
+  return [...code.matchAll(/^import\s(?:[^"']*?\sfrom\s*)?["']((?:flux|sol):[^"']+)["']/gm)].map((match) => match[1]!)
 }
 
 // A flux program's bundle: plain TypeScript, the runtime modules external.
@@ -123,7 +123,7 @@ async function bundleFlux(file: string): Promise<Bundled | string> {
       entrypoints: [file],
       target: "browser",
       format: "esm",
-      external: ["flux:*", "srt:*"],
+      external: ["flux:*", "sol:*"],
       sourcemap: "external",
       throw: false,
       plugins: [
@@ -159,7 +159,7 @@ async function stageApp(file: string): Promise<{ path: string; stage: string; ma
   if (!result) return "See the compile error above"
   let stage = join(dir, STAGE_DIR, basename(file).replace(/\.test\.tsx?$/, ""))
   rmSync(stage, { recursive: true, force: true })
-  let path = join(stage, "test.srt.js")
+  let path = join(stage, "test.sol.js")
   await Bun.write(path, result.code)
   writeIsolates(join(stage, "isolates"), result.isolates)
   await Bun.write(join(stage, "manifest.json"), result.manifest)
@@ -173,7 +173,7 @@ async function stageApp(file: string): Promise<{ path: string; stage: string; ma
 
 // The directory a test file runs in: the package or project that holds its
 // tests/ folder, so a relative path in a test means the same wherever
-// `srt test` was started.
+// `sol test` was started.
 function workingDir(file: string): string {
   let dir = dirname(file)
   return basename(dir) === TESTS_DIR ? dirname(dir) : dir

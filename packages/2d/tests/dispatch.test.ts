@@ -5,7 +5,7 @@
 // through the same walk, tap synthesis (slop, the alone rule, same-target
 // release, the repeat count and its window), layout scaling and the camera
 // undo. Pure-module input only (dispatch.ts imports no GUI), so it runs
-// headless on flux: `srt test packages/2d`. The live side (real element
+// headless on flux: `sol test packages/2d`. The live side (real element
 // events off the leaf, the camera attached at the root) is exercised by
 // examples/camera.tsx and examples/pick.tsx.
 //

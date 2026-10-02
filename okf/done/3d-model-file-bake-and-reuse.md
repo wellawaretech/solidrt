@@ -1,6 +1,6 @@
 ---
 title: Model file: bake from own geometry, extras, part reuse
-description: A procedural model cannot be written to .srtm without importing the runtime (the only export path pulls flux:*), the container has no slot for app data, and a part belongs to exactly one node so a variant placed hundreds of times cannot be expressed; three bounded changes to the model file and createModel, from a demo that baked its own geometry.
+description: A procedural model cannot be written to .sol3m without importing the runtime (the only export path pulls flux:*), the container has no slot for app data, and a part belongs to exactly one node so a variant placed hundreds of times cannot be expressed; three bounded changes to the model file and createModel, from a demo that baked its own geometry.
 created: 2026-09-22
 completed: 2026-09-22
 ---
@@ -8,8 +8,8 @@ completed: 2026-09-22
 # Model file: bake from own geometry, extras, part reuse
 
 Context: `packages/3d/src/model-file.ts` (`encodeModel`/`decodeModel`,
-the `.srtm` container), `gltf.ts` (`ModelData` and `parseGltf`),
-`tools/model.ts` (`srt tool 3d/model`, the glTF bake under bun) and
+the `.sol3m` container), `gltf.ts` (`ModelData` and `parseGltf`),
+`tools/model.ts` (`sol tool 3d/model`, the glTF bake under bun) and
 `model.ts` (`createModel`). Open loader work that is not this is in
 [3d-model-loader](3d-model-loader.md). The three items below came out of
 one app that generated hundreds of thousands of vertices at runtime,
@@ -17,7 +17,7 @@ found the startup cost, and baked them instead; each is what the bake
 path lacked. Do them in this order: the first two are small and the
 third builds on the container bump the second makes.
 
-## 1. A runtime-free entry point for writing .srtm
+## 1. A runtime-free entry point for writing .sol3m
 
 Symptom: `encodeModel` is exported from `@solidrt/3d`, whose entry
 imports the runtime (`flux:*`) and so does not load under bun. A bake
@@ -43,7 +43,7 @@ Done looks like:
 - AGENTS.md "Models": one paragraph, "bake your own geometry", with the
   import line.
 
-Not this: teaching `srt tool 3d/model` to run a JS module that returns
+Not this: teaching `sol tool 3d/model` to run a JS module that returns
 `ModelData`. The export gives an app the same thing in its own script.
 
 ## 2. An extras slot in the model data
@@ -71,7 +71,7 @@ shape to mirror:
 
 ## 3. One part under many nodes
 
-Symptom: `.srtm` ties a part to exactly one node, so placing a handful
+Symptom: `.sol3m` ties a part to exactly one node, so placing a handful
 of variants hundreds of times meant one named node per placement, then
 `decodeModel` in the app and hand-built meshes, because
 `createModel` cannot express the placement. glTF can: one mesh
@@ -98,7 +98,7 @@ Shape:
   material for static scenes) and stays in the loader item.
 
 Verify with a glTF that reuses a mesh (Blender's linked duplicates
-export that way) through `srt tool 3d/model`, then `createModel`: one
+export that way) through `sol tool 3d/model`, then `createModel`: one
 entry in `/gpu` for the shared part, `instanceCount` = placements + 1,
 and a pick on any copy names the part.
 
@@ -138,11 +138,11 @@ All three shipped, against the shape above with these decisions:
 - `ModelOptions.material` gained a sixth flag, `instanced`.
 - `bindSkeleton`'s graft skips instance children (slot-bound; they stay
   with their placement node).
-- `*.srtm` joined the binary-import module declarations in core.
+- `*.sol3m` joined the binary-import module declarations in core.
 
 Verified: `gltf-check.ts` (a reuse fixture with a mirrored copy, an
 instancing node, extras and blobs; bun and flux), `model-data.test.ts`,
-and live through `srt tool 3d/model` on a generated glb
+and live through `sol tool 3d/model` on a generated glb
 (`probes/model-reuse/`): one entry with `instanceCount` 6 in `/gpu`,
 the record buffer holding the composed placements, a placement move and
 a hide landing in the records, and taps naming the part and the

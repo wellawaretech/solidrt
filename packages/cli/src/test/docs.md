@@ -1,4 +1,4 @@
-# srt test
+# sol test
 
 {{ usage test }}
 
@@ -9,14 +9,14 @@ flux program, the dev client (headless) for a file that imports the app
 runtime. Every test runs in an engine of its own.
 
 ```sh
-srt test                       # every tests/*.test.ts under the current folder
-srt test packages/router       # the same, under that folder
-srt test tests/route.test.ts   # one file
-srt test tests/counter.test.tsx  # an app test, on the dev client
-srt test --filter matchPath    # only the tests whose name contains the text
-srt test --seed 12345          # the same tests on another Math.random sequence
-srt test --only app            # one layer: the app tests (or `flux`)
-srt test --durations           # every test with the time it took
+sol test                       # every tests/*.test.ts under the current folder
+sol test packages/router       # the same, under that folder
+sol test tests/route.test.ts   # one file
+sol test tests/counter.test.tsx  # an app test, on the dev client
+sol test --filter matchPath    # only the tests whose name contains the text
+sol test --seed 12345          # the same tests on another Math.random sequence
+sol test --only app            # one layer: the app tests (or `flux`)
+sol test --durations           # every test with the time it took
 ```
 
 A test file lives in a `tests/` folder of its package or project, never
@@ -73,7 +73,7 @@ same on every run, whatever tests ran before it. `--seed <n>` runs the tests on 
 inputs; a failure found that way comes back with the same number:
 
 ```sh
-srt test tests/pick.test.ts --seed 12345
+sol test tests/pick.test.ts --seed 12345
 ```
 
 Everything after `--` reaches the test file as its `flux:process` argv.
@@ -177,7 +177,7 @@ still wanted frames.
 
 Beside input, `app.link(link)` delivers a link the way the OS does and
 `app.debug(name, args)` calls a debug command the app registered
-(`registerDebug` from `srt:dev`) and returns its value: how a test puts a
+(`registerDebug` from `sol:dev`) and returns its value: how a test puts a
 loaded app into a state its UI reaches slowly. A `gamepad` event in
 `app.input` drives a synthetic pad.
 
@@ -212,7 +212,7 @@ of a snapshot of the frame, written under the project's `dist/test/`:
     Snapshot: dist/test/counter/failures/a-tap-increments.png
 ```
 
-Anything that imports the app runtime (`srt:` modules, or a module of the
+Anything that imports the app runtime (`sol:` modules, or a module of the
 rendering layer such as `flux:rendertree`) makes a file an app test; a
 `.test.tsx` file always is one. The bundle and a data folder of the file's
 own are staged under the project's `dist/test/`. `--only flux` and `--only
@@ -222,4 +222,4 @@ The method - what to test and at which layer, naming, the time model, how
 to read a failure - is in the testing guide of `@solidrt/cli`
 (`agents/testing.md`).
 
-`srt check` typechecks the test files along with the entries.
+`sol check` typechecks the test files along with the entries.

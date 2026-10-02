@@ -1,7 +1,7 @@
 use crate::storage::{resolve, Storage, StorageSpec};
 
 fn temp_root(tag: &str) -> std::path::PathBuf {
-  let dir = std::env::temp_dir().join(format!("srt-storage-test-{}-{tag}", std::process::id()));
+  let dir = std::env::temp_dir().join(format!("sol-storage-test-{}-{tag}", std::process::id()));
   let _ = std::fs::remove_dir_all(&dir);
   dir
 }

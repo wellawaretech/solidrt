@@ -17,7 +17,7 @@
 // `helpers` debug command ({ on?: boolean }) toggles them.
 
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 import { computeVertexNormals, cylinder, DirectionalLight, fillAttribute, geometryAttribute, geometryVertexCount, Group, HemisphereLight, phong, Mesh, normalsHelper, PerspectiveCamera, Scene, sphere, toNonIndexed, unlit, updateVertices, withNormals } from "@solidrt/3d"
 
 // The crease angles in degrees: flat, the default, everything smoothed.

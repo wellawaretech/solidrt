@@ -8,7 +8,7 @@ use crate::input_plan::{self, Injected};
 use crate::settle::Cap;
 use crate::stepped::{Stepper, WindowReady};
 
-// The `srt:test` module: the engine verbs of an app test, which
+// The `sol:test` module: the engine verbs of an app test, which
 // `@solidrt/test` builds the test surface on. Thin FFI over the
 // stepper (test_host.rs). In the dev client only, and its verbs work only
 // in an engine a test host built.
@@ -25,7 +25,7 @@ fn stepper(ctx: &Ctx<'_>, verb: &str) -> flux::rquickjs::Result<Stepper> {
     Some(stepper) => Ok((*stepper).clone()),
     None => Err(Exception::throw_message(
       ctx,
-      &format!("srt:test {verb}: an app test is run by a test host; use srt test <file>"),
+      &format!("sol:test {verb}: an app test is run by a test host; use sol test <file>"),
     )),
   }
 }
@@ -37,7 +37,7 @@ fn frame<'js>(ctx: Ctx<'js>) -> flux::rquickjs::Result<Promise<'js>> {
   if pending.0.borrow().is_some() {
     return Err(Exception::throw_message(
       &ctx,
-      "srt:test frame(): the previous frame has not finished; await it first",
+      "sol:test frame(): the previous frame has not finished; await it first",
     ));
   }
   let (promise, resolve, _reject) = ctx.promise()?;
@@ -57,7 +57,7 @@ pub(crate) fn frame_done(ctx: &Ctx<'_>) {
   };
   let settled = resolve.restore(ctx).and_then(|resolve| resolve.call::<_, ()>(()));
   if let Err(e) = settled {
-    flux::report_uncaught(ctx, e, "srt:test frame()");
+    flux::report_uncaught(ctx, e, "sol:test frame()");
   }
 }
 
@@ -85,7 +85,7 @@ struct InputPlan(#[qjs(skip_trace)] Rc<RefCell<Vec<Option<Injected>>>>);
 /// per step. The steps are then sent with `inputStep`, in order.
 fn plan_input(ctx: Ctx<'_>, events: String) -> flux::rquickjs::Result<Vec<Vec<f64>>> {
   let stepper = stepper(&ctx, "inputPlan()")?;
-  let throw = |message: String| Exception::throw_message(&ctx, &format!("srt:test input: {message}"));
+  let throw = |message: String| Exception::throw_message(&ctx, &format!("sol:test input: {message}"));
   let events: serde_json::Value = serde_json::from_str(&events).map_err(|e| throw(e.to_string()))?;
   let steps = input_plan::plan(Some(&events), stepper.frame_ms()).map_err(throw)?;
   let waits = steps.iter().map(|step| vec![step.wait.ms as f64, step.wait.frames as f64]).collect();
@@ -106,14 +106,14 @@ fn step_input(ctx: Ctx<'_>, index: usize) -> flux::rquickjs::Result<()> {
   let plan = ctx.userdata::<InputPlan>().expect("input plan installed").clone();
   let step = plan.0.borrow_mut().get_mut(index).and_then(Option::take);
   let Some(step) = step else {
-    return Err(Exception::throw_message(&ctx, "srt:test inputStep(index): no such step left in the plan"));
+    return Err(Exception::throw_message(&ctx, "sol:test inputStep(index): no such step left in the plan"));
   };
   match step {
     Injected::Event(event) => stepper.inject(event),
     Injected::Gamepad(command) => {
       let pads = ctx.userdata::<Pads>().expect("pads installed").clone();
       let mut pads = pads.0.borrow_mut();
-      pads.apply(command).map_err(|e| Exception::throw_message(&ctx, &format!("srt:test input: gamepad: {e}")))?;
+      pads.apply(command).map_err(|e| Exception::throw_message(&ctx, &format!("sol:test input: gamepad: {e}")))?;
       // What the interactive loop does after a command: the snapshot, and
       // the back edge a synthetic "back" press is.
       if let Some(snapshot) = pads.take_snapshot_if_dirty() {
@@ -138,11 +138,11 @@ fn link(ctx: Ctx<'_>, link: String) -> flux::rquickjs::Result<bool> {
 }
 
 /// `debug(name, args)`: call a debug command the app registered
-/// (`registerDebug` of `srt:dev`), `args` and the result as JSON text
+/// (`registerDebug` of `sol:dev`), `args` and the result as JSON text
 /// (null for none).
 fn debug(ctx: Ctx<'_>, name: String, args: Option<String>) -> flux::rquickjs::Result<String> {
   stepper(&ctx, "debug()")?;
-  let throw = |message: String| Exception::throw_message(&ctx, &format!("srt:test debug: {message}"));
+  let throw = |message: String| Exception::throw_message(&ctx, &format!("sol:test debug: {message}"));
   let args = match args {
     Some(text) => Some(serde_json::from_str(&text).map_err(|e| throw(format!("args: {e}")))?),
     None => None,
@@ -156,7 +156,7 @@ fn debug(ctx: Ctx<'_>, name: String, args: Option<String>) -> flux::rquickjs::Re
 /// app time passes, so a running transition is read where it stands.
 fn capture<'js>(ctx: Ctx<'js>, node: u64) -> flux::rquickjs::Result<Object<'js>> {
   stepper(&ctx, "capture()")?;
-  let throw = |message: &str| Exception::throw_message(&ctx, &format!("srt:test capture: {message}"));
+  let throw = |message: &str| Exception::throw_message(&ctx, &format!("sol:test capture: {message}"));
   let Some(alloy) = flux::gui::alloy_context(&ctx) else {
     return Err(throw("no window in this test; mount the app first"));
   };
@@ -187,7 +187,7 @@ fn settle<'js>(ctx: Ctx<'js>, max_ms: f64) -> flux::rquickjs::Result<Promise<'js
   if !max_ms.is_finite() || max_ms < 0.0 {
     return Err(Exception::throw_message(
       &ctx,
-      "srt:test settle(maxMs): the cap must be a non-negative number of milliseconds",
+      "sol:test settle(maxMs): the cap must be a non-negative number of milliseconds",
     ));
   }
   let (promise, resolve, reject) = ctx.promise()?;
@@ -204,7 +204,7 @@ fn settle<'js>(ctx: Ctx<'js>, max_ms: f64) -> flux::rquickjs::Result<Promise<'js
       }
     };
     if let Err(e) = settled {
-      flux::report_uncaught(&task_ctx, e, "srt:test settle()");
+      flux::report_uncaught(&task_ctx, e, "sol:test settle()");
     }
   });
   Ok(promise)
@@ -221,10 +221,10 @@ fn set_frame_rate(ctx: Ctx<'_>, fps: f64) -> flux::rquickjs::Result<()> {
   if !fps.is_finite() || fps < 1.0 || fps.fract() != 0.0 || fps > u32::MAX as f64 {
     return Err(Exception::throw_message(
       &ctx,
-      "srt:test setFrameRate(fps): the frame rate must be a positive integer",
+      "sol:test setFrameRate(fps): the frame rate must be a positive integer",
     ));
   }
-  stepper.set_fps(fps as u32).map_err(|e| Exception::throw_message(&ctx, &format!("srt:test setFrameRate(fps): {e}")))
+  stepper.set_fps(fps as u32).map_err(|e| Exception::throw_message(&ctx, &format!("sol:test setFrameRate(fps): {e}")))
 }
 
 /// `time()`: app time as of the last frame, in ms.
@@ -232,9 +232,9 @@ fn time(ctx: Ctx<'_>) -> flux::rquickjs::Result<f64> {
   Ok(stepper(&ctx, "time()")?.time_ms())
 }
 
-pub struct SrtTestModule;
+pub struct SolTestModule;
 
-impl ModuleDef for SrtTestModule {
+impl ModuleDef for SolTestModule {
   fn declare<'js>(decl: &Declarations<'js>) -> flux::rquickjs::Result<()> {
     decl.declare("frame")?;
     decl.declare("frameRate")?;

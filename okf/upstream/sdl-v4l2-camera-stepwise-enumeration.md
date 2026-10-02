@@ -13,7 +13,7 @@ created: 2026-08-26
 Found 2026-08-26 on a Raspberry Pi 4 (Raspberry Pi OS, Debian 13, kernel
 6.18.39, no camera attached). Every solidrt client on the box came up as a
 black 1280x720 window and stayed there: `[alloy] GPU ready` and
-`[srt] flux engine start` logged, the app's JS ran to completion (the demo's
+`[sol] flux engine start` logged, the app's JS ran to completion (the demo's
 scene built and uploaded its buffers), the control API answered `/tree` and
 `/stats`, and yet `frame: 0, fps: 0, gpuPasses: 0, idleTicks: 0,
 nodesPainted: 0` and every node in the tree, window included, measured 0x0.
@@ -76,7 +76,7 @@ never ends. Arguably the worse of the two, because nothing reports it.
 ## How the wedge escapes the init worker
 
 `alloy/src/camera.rs` deliberately runs `SDL_InitSubSystem(SDL_INIT_CAMERA)`
-on a dedicated `srt-camera-init` thread, on the assumption that a wedged
+on a dedicated `sol-camera-init` thread, on the assumption that a wedged
 backend then costs one parked thread and nothing else. On Linux that holds
 only conditionally. `SDL_UDEV_Scan` (`src/core/linux/SDL_udev.c`) matches three
 subsystems:
@@ -98,7 +98,7 @@ Thread 1 "solidrt-go":
         -> LINUX_JoystickInit -> SDL_InitJoysticks -> SDL_InitSubSystem
         -> alloy::gamepad::Gamepads::new -> alloy::app::App::run
 
-Thread 2 "srt-camera-init":
+Thread 2 "sol-camera-init":
   ioctl -> AddCameraFormat -> MaybeAddDevice -> SDL_UDEV_Scan
         -> SDL_CameraInit -> SDL_InitSubSystem
 ```
@@ -160,7 +160,7 @@ that renders first and calls `listCameras()` eight seconds later:
 
 ```
   PID USER   S  %CPU  TIME+   COMMAND
-60444 awel   R  99.9  0:15.28 srt-camera-init
+60444 awel   R  99.9  0:15.28 sol-camera-init
 60397 awel   S   0.0  0:00.57 solidrt-go      <- main loop, idle
 ... every other thread S
 frame: 17, idleTicks: 841 -> 1346 over 25s, timeMs advancing

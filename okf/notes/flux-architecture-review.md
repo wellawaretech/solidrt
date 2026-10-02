@@ -177,7 +177,7 @@ class per player, would change the JS shape for nothing. Verified: flux gui
 unit tests (two new: undefined entries skipped end to end through the
 marshaller, strict ids on both binding forms), the three headless gpu
 examples (`gpu_manual`'s stale `setShaderParams`/`setShaderTextures`
-imports fixed in passing), lattice check, clippy, `srt check` (only the
+imports fixed in passing), lattice check, clippy, `sol check` (only the
 pre-existing `@solidrt/core/video` resolve error remains), and
 `gpu-shared-params.tsx` plus 3d `lit.tsx` on the dev client: shared and
 per-entry params and bindings in the GPU inventory, no warnings, zero

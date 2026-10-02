@@ -4,8 +4,8 @@
 // with a full-turn camera sweep against an AABB oracle, so the class of bug
 // where a rotating camera re-bakes every chunk cannot come back silently.
 // Pure-module input only (oversample-math.ts imports nothing), so it runs
-// headless on flux: `srt test packages/2d`. The random inputs come from
-// Math.random, which `srt test` seeds: the same on every run, and `--seed
+// headless on flux: `sol test packages/2d`. The random inputs come from
+// Math.random, which `sol test` seeds: the same on every run, and `--seed
 // <n>` tries others.
 
 import { test } from "flux:test"

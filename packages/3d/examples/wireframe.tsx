@@ -18,7 +18,7 @@
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { createTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 import { add, axesHelper, box3Helper, createModel, DirectionalLight, edgesGeometry, equirectToCube, gridHelper, Group, Mesh, parseGltf, PerspectiveCamera, Scene, setGeometry, setMaterial, unlit, wireframeGeometry } from "@solidrt/3d"
 import type { SceneNode } from "@solidrt/3d"
 import modelBytes from "./model.glb" with { type: "binary" }

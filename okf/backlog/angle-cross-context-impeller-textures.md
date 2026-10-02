@@ -141,9 +141,9 @@ submission and the vsync wait inline on the JS thread; on GPU-bound scenes
 GPU pace. Implemented the Flutter-shaped split within the same contract:
 
 - main thread: SDL event pump, window management, frame bookkeeping.
-- srt-ui (JS) thread: QuickJS, layout, hit-testing, DisplayList building -
+- sol-ui (JS) thread: QuickJS, layout, hit-testing, DisplayList building -
   zero GL.
-- srt-raster thread (alloy/src/raster.rs): owns the process's single GL
+- sol-raster thread (alloy/src/raster.rs): owns the process's single GL
   context + ImpellerContext; executes all GL as `RasterCmd`s from one
   ordered mpsc channel; draws + presents with vsync (blocking this thread
   is the point); drops superseded frames in interactive mode (load

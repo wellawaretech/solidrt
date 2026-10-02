@@ -19,11 +19,11 @@ store the UI it never had.
 - `lattice/default-app/` holds `app.tsx` (connect screen: discover, QR
   pairing, recents, `launchAddress` auto-connect) + `logo.tsx`, and
   `bsod.tsx` (crash screen). Bundled by the lattice Makefile
-  (`default-app-bundle` target, `bun run srt bundle`) into checked-in
-  `.srt.js` files, embedded via `include_str!` in `lattice/src/lib.rs`.
+  (`default-app-bundle` target, `bun run sol bundle`) into checked-in
+  `.sol.js` files, embedded via `include_str!` in `lattice/src/lib.rs`.
   The connect screen and `EngineCmd::Stop` are `go`-gated (2026-07-21);
   the BSOD is embedded in every build.
-- The connect screen's only privileged surface is `srt:dev`
+- The connect screen's only privileged surface is `sol:dev`
   (`lattice/src/go/control.rs`): `connect`, `discover`, `stop`,
   `recents`, `launchAddress`, `available`, `canDiscover`.
 - The version store (`lattice/src/go/store.rs`) has
@@ -40,7 +40,7 @@ store the UI it never had.
 
 - The launcher stays compiled into the client binary and updates only
   with it. Rejected alternative: shipping it as a factory-seeded store
-  install. Rationale: `srt:dev`/`srt:apps` are private, unversioned
+  install. Rationale: `sol:dev`/`sol:apps` are private, unversioned
   APIs between the bundle and the binary that ships it; independent
   launcher updates would turn them into versioned contracts. The
   launcher is also the fallback when store state is broken, so it must
@@ -69,7 +69,7 @@ store the UI it never had.
 ### Stage 1: rename, no behavior change (done 2026-07-22)
 
 - `lattice/default-app/` -> `lattice/launcher/`; `app.tsx` ->
-  `launcher.tsx` (bundle `launcher.srt.js`); `bsod.tsx` stays alongside
+  `launcher.tsx` (bundle `launcher.sol.js`); `bsod.tsx` stays alongside
   as the other compiled-in screen.
 - `DEFAULT_SOURCE` -> `LAUNCHER_SOURCE`; `DEFAULT_APP_*` Makefile vars
   -> `LAUNCHER_*` and the `default-app-bundle` target ->
@@ -77,20 +77,20 @@ store the UI it never had.
   "default app" / "connect screen" comments in lib.rs, main.rs,
   go/session.rs, go/control.rs now say launcher.
 
-### Stage 2: srt:apps + launcher UI (done 2026-07-22)
+### Stage 2: sol:apps + launcher UI (done 2026-07-22)
 
-- New focused module `srt:apps` next to `srt:dev` (dev-connection
-  concerns stay in `srt:dev`):
+- New focused module `sol:apps` next to `sol:dev` (dev-connection
+  concerns stay in `sol:dev`):
   - `list()`: installed apps from the store; id, display name (installed
     manifest's `displayName`, defaulting from the id), current version.
   - `launch(id)`: boot the app's current version from the store.
   - `remove(id)`: full uninstall, as decided above.
-  - Module registered in every build like `srt:dev` (static imports must
+  - Module registered in every build like `sol:dev` (static imports must
     resolve); the control (`go/control.rs install_apps_control`) only in
     go builds - elsewhere `available` is false, `list` is empty,
     launch/remove no-op. Typed in core's `runtime-modules.d.ts`.
-  - `srt:apps` is launcher-intended, not launcher-enforced: any app in
-    the go client could import it, same as `srt:dev`. A real privilege
+  - `sol:apps` is launcher-intended, not launcher-enforced: any app in
+    the go client could import it, same as `sol:dev`. A real privilege
     boundary is out of scope.
 - Store growth in `go/store.rs`: `load(id)` generalizes `load_last()`
   (same `BootVersion` result); `remove_app(id)` deletes the app folder
@@ -127,7 +127,7 @@ store the UI it never had.
     bundle). Side effect worth having: an idle launcher stops running
     an `onFrame` animation, so it stops requesting frames.
   - Manual dev-server entry (text input for host:port; the pending
-    item from the connection-strategy work). `srt:dev`'s
+    item from the connection-strategy work). `sol:dev`'s
     `connect(addr)` already accepts an arbitrary address, so this is
     launcher UI only; entered addresses land in recents like any other
     connection.
@@ -196,7 +196,7 @@ destination - calm, static, and gone the moment an app opens.
 - Verified against a live pair: no address = launcher offline; address
   with no latched entry = launcher stays up connected, zero store
   boots; address with latched entry = the push boots it. Mid-session
-  `srt:apps launch()` verified end to end by a probe that launched a
+  `sol:apps launch()` verified end to end by a probe that launched a
   stored app (repeatedly - it launched itself). Full-screen scan
   screen verified with a real camera (cover-crop + brackets render
   over the live feed); QR decode is the same plumbing the old connect
@@ -242,7 +242,7 @@ WhatsApp-style master-detail driven by the components policy layer
   dropped by decision). Launch and Remove (confirm step) live in the
   detail view. The "Apps" heading and the scan screen's explanatory
   caption were removed.
-- `srt:apps` grew `info(id)`: storage usage split into installed
+- `sol:apps` grew `info(id)`: storage usage split into installed
   versions and data sandbox, the stored versions (current first,
   sizes; hardlink-shared assets count per version), and three file
   listings (claim vs truth, decided 2026-07-22): `assets` = the

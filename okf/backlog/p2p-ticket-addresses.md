@@ -33,7 +33,7 @@ Two costs:
   is about 165 characters, QR version 9 at level M (53x53 modules). The id plus
   one LAN IPv4 is at most 87, version 6 (41x41).
 
-`srt server --tunnel` prints a local ticket as its pairing QR code
+`sol server --tunnel` prints a local ticket as its pairing QR code
 (`packages/cli/src/server/tunnel.ts`), so the dev server has both costs.
 
 ## Shape
@@ -56,7 +56,7 @@ Two costs:
   hands out a gateway even when the router has no uplink.
 - **No relay wait on a local endpoint.** `ticket()` waits for `online()` with
   a 3 s timeout. With the relay disabled `online()` never resolves, so every
-  local ticket takes the full 3 s. `srt server --tunnel` awaits it before it
+  local ticket takes the full 3 s. `sol server --tunnel` awaits it before it
   starts listening (`packages/cli/src/server/main.ts`).
 
 Where the local rule picks wrong, accepted:
@@ -89,7 +89,7 @@ Where the local rule picks wrong, accepted:
   exactly the LAN IPv4 and returns without a delay.
 - A relay ticket carries no addresses; two endpoints on one LAN connect through
   it and `connInfo` reports a direct path shortly after.
-- `srt server --tunnel` starts without the 3 s wait, its QR code is smaller,
+- `sol server --tunnel` starts without the 3 s wait, its QR code is smaller,
   and a desktop and an Android client on the LAN still pair by it.
 
 Later: mDNS could take the address out of local tickets as well, since a

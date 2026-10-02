@@ -34,7 +34,7 @@ window: drops cluster (gaps between drops ranged 0.04 s to 11.5 s in one
 Also ruled out, each by direct measurement:
 - Dev server connection (same rate with server killed, probe standalone).
 - TV uptime/background state (same rate after fresh reboot).
-- Thread priorities (verified live: srt-raster -8, srt-vsync/SDLThread/
+- Thread priorities (verified live: sol-raster -8, sol-vsync/SDLThread/
   tokio -4 - the MSAA-era priority fix is intact and inherited).
 - The 1/s refresh-rate safety-net query (drop spacing is not periodic).
 - The platform itself: the TV launcher under the same key-driven
@@ -56,7 +56,7 @@ production cadence directly. Two regimes, visible in a single dump:
   swing exceeds the remaining slack -> one missed latch (40 ms hold),
   catch-up burst, repeat.
 
-The release chain on Android is: choreographer callback (srt-vsync)
+The release chain on Android is: choreographer callback (sol-vsync)
 -> sleep(delay from PacingBudget) -> SDL push -> main loop drains ->
 FrameRendered -> JS exec -> build -> raster -> queueBuffer. Measured from
 JS (probe's debug command): frame callbacks arrive in bursts - pairs ~1 ms
@@ -127,7 +127,7 @@ visible stutter. Do not redesign the clock for this.
 - Cross-version A/B: a current-CLI bundle loads fine into a runtime a
   few days old, but the 0.0.38-era runtime BSODs on a current-core
   bundle - run the era's own dev server from its worktree instead
-  (worktree + bun install + its bun run srt server; port is the same fixed
+  (worktree + bun install + its bun run sol server; port is the same fixed
   34884, so kill the current server first).
 
 ## Session 2026-08-13, part 2: direction 1 implemented, direction 2 proven

@@ -1,6 +1,6 @@
 ---
 title: Input events carry a timeStamp
-description: PointerEvent carries no timestamp, so the velocity tracker, double-tap and the 2d and 3d dispatchers stamp events with performance.now() at handler time - a wall read that inherits the handler's execution jitter and cannot be stepped by a test or by srt render. Give every input event a timeStamp on an input reading of the paced clock (counted refreshes like the animation timeline, no suspension skip, the arrival time for an event that lands between frames), move package logic off performance.now(), and keep performance.now() for measuring work only. Prerequisite of the test harness's app layer.
+description: PointerEvent carries no timestamp, so the velocity tracker, double-tap and the 2d and 3d dispatchers stamp events with performance.now() at handler time - a wall read that inherits the handler's execution jitter and cannot be stepped by a test or by sol render. Give every input event a timeStamp on an input reading of the paced clock (counted refreshes like the animation timeline, no suspension skip, the arrival time for an event that lands between frames), move package logic off performance.now(), and keep performance.now() for measuring work only. Prerequisite of the test harness's app layer.
 created: 2026-09-29
 ---
 
@@ -45,7 +45,7 @@ layer replaced that with the event's own time.
 - The velocity tracker, pan, swipe, transform, the pointer feed, the
   double-tap and the 2d and 3d dispatchers read the event's stamp;
   `tap` and `doubleTap` read their source's `changedAt`.
-- The tests: 308 in 29 files under `srt test`. Ten gesture tests and
+- The tests: 308 in 29 files under `sol test`. Ten gesture tests and
   three interaction tests came back from `checks/` on stated times, the
   double-tap window asserted to the millisecond (39, 40, 300, 301 ms).
   Four tests stay parked because they wait on a timer:
@@ -59,7 +59,7 @@ their arrival time; six moves of one drag read exactly 16.667 ms apart
 and the up 4.8 ms after the last; the lift velocity of 20 px per frame
 reads 1200.0 px/s; the double tap and the key tap fire. With the dev
 clock paused a down and an up 200 ms apart read the same stamp, and
-three steps move the reading 50.0 ms. `srt render` still writes its
+three steps move the reading 50.0 ms. `sol render` still writes its
 frames.
 
 On the two Android devices (Pixel 7 at 90 Hz, SM-T500 at 60 Hz), the
@@ -107,7 +107,7 @@ and after on one input:
 - Every input event carries `timeStamp`, the web name, in milliseconds.
 - The stamp is a reading of its own on the paced clock, the input
   reading (see the next section for why it is neither existing timeline).
-- Under `srt render` and under a test the stamp comes from the stepped
+- Under `sol render` and under a test the stamp comes from the stepped
   clock, with no test-mode special case in the recognizers.
 - `performance.now()` stays real elapsed time, for measuring work. Package
   logic does not read it.
@@ -206,7 +206,7 @@ In lattice and flux:
 - The third reading in `lattice/src/paced_clock.rs`, with tests beside the
   existing ones, the never-go-back rule among them (an arrival stamp past
   the next signal's reading holds the following stamp at the earlier
-  value): tests under `srt test` cannot see the arrival time, so this
+  value): tests under `sol test` cannot see the arrival time, so this
   part rests on the Rust tests and the device checks.
 - The clock tick moves ahead of the move dispatch inside the frame verb
   (`lattice/src/runtime.rs`; moves dispatch before `pc.tick` today), so a
@@ -262,7 +262,7 @@ app or an effect calls that. Two additions to core carry them:
   plays (under no owner: the clock is the clip's) and accumulates the
   tick's deltas, so it is on one clock, steps on the frame a boundary
   falls in (the timer landed up to half a clip frame late), freezes and
-  resumes with the dev clock and plays at its own speed under `srt
+  resumes with the dev clock and plays at its own speed under `sol
   render`.
 - `frameTime()`: the latest frame's tick, remembered by core, readable
   anywhere, not reactive, no demand. The sentinel counts its one-second

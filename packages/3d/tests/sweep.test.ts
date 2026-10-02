@@ -3,7 +3,7 @@
 // normals, cap orientation and placement, bevel clamping, lathe angle
 // rejection, the tube -> sweep pass-through - and the generator layout
 // option's byte identity with withColors. Pure-module inputs only, so it
-// runs headless on flux: `srt test packages/3d`.
+// runs headless on flux: `sol test packages/3d`.
 
 import { test } from "flux:test"
 import { extrude, lathe, pathFrames, polygon, sweep, tube } from "../src/sweep.ts"

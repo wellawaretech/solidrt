@@ -9,7 +9,7 @@
 import { createSignal, onCleanup } from "@solidjs/signals"
 import { listCameras, open } from "flux:camera"
 import type { TextureId } from "flux:gpu"
-import { on } from "srt:events"
+import { on } from "sol:events"
 
 export type CameraFacing = "front" | "back" | "unknown"
 

@@ -1,6 +1,6 @@
 import * as cache from "./cache"
 
-// The /__proxy__ endpoint: forward a request to the URL in X-SRT-Proxy-Url,
+// The /__proxy__ endpoint: forward a request to the URL in X-SolidRT-Proxy-Url,
 // buffering the upstream response, with the opt-in sqlite cache in front.
 
 function headersToObject(h: Headers): Record<string, string> {
@@ -12,15 +12,15 @@ function headersToObject(h: Headers): Record<string, string> {
 }
 
 export async function handleProxy(req: Request): Promise<Response> {
-  let target = req.headers.get("x-srt-proxy-url")
+  let target = req.headers.get("x-solidrt-proxy-url")
   if (!target) {
-    return new Response("Missing X-SRT-Proxy-Url", { status: 400 })
+    return new Response("Missing X-SolidRT-Proxy-Url", { status: 400 })
   }
 
   let forwardHeaders = new Headers(req.headers)
   forwardHeaders.delete("host")
-  forwardHeaders.delete("x-srt-proxy-url")
-  forwardHeaders.delete("x-srt-cache")
+  forwardHeaders.delete("x-solidrt-proxy-url")
+  forwardHeaders.delete("x-solidrt-cache")
   forwardHeaders.delete("content-length")
 
   let cacheStatus: cache.Decision = "skip"
@@ -32,7 +32,7 @@ export async function handleProxy(req: Request): Promise<Response> {
     if (hit) {
       console.log(`[cli] proxy ${req.method} ${target} [cache hit]`)
       let respHeaders = new Headers(hit.headers)
-      respHeaders.set("x-srt-cache", "hit")
+      respHeaders.set("x-solidrt-cache", "hit")
       return new Response(hit.body, { status: hit.status, headers: respHeaders })
     }
   }
@@ -58,7 +58,7 @@ export async function handleProxy(req: Request): Promise<Response> {
     let bodyBytes = await upstream.bytes()
     if (cacheable) {
       await cache.put(req.method, target, upstream.status, headersToObject(respHeaders), bodyBytes)
-      respHeaders.set("x-srt-cache", cacheStatus)
+      respHeaders.set("x-solidrt-cache", cacheStatus)
     }
     return new Response(bodyBytes, {
       status: upstream.status,

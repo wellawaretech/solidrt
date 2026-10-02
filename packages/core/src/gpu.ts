@@ -347,7 +347,7 @@ export function createMutableTexture(
  * `packed` as a keyword, so `vec4 packed = texture(...)` fails with a syntax
  * error that does not name the identifier - pick another name.
  *
- * A bad source is a runtime failure, not one `srt check` catches: the compile
+ * A bad source is a runtime failure, not one `sol check` catches: the compile
  * throws at this call, so a shader created in a component body takes the app
  * to the error window unless an `<Errored>` closer in the tree claims it.
  */

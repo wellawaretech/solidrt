@@ -1,6 +1,6 @@
 // The runtime-free entry (src/model-data.ts, published as
-// @solidrt/3d/model) under srt test: a bake script's whole surface. The
-// bare flux binary this runs on has no gui module, so a gui or srt: import
+// @solidrt/3d/model) under sol test: a bake script's whole surface. The
+// bare flux binary this runs on has no gui module, so a gui or sol: import
 // creeping into the chain fails here rather than in an app's next bake (a
 // headless flux: module would not: the binary has those). Builds a two-part ModelData from the
 // geometry kit (a shared part with a placement, a plain one), round-trips

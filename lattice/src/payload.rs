@@ -1,8 +1,8 @@
 // The factory payload a packed distribution boots: the single-file trailer
-// (the pack folder in section form, appended to the runner by `srt pack`), a
-// standalone .srtapp (the same sections on their own, `srt pack --app`, named
+// (the pack folder in section form, appended to the runner by `sol pack`), a
+// standalone .solapp (the same sections on their own, `sol pack --app`, named
 // on the command line or stored inside an APK), or a folder next to the
-// runner (`srt pack --folder`). One shape behind all
+// runner (`sol pack --folder`). One shape behind all
 // (okf/plans/client-storage-updates.md, stage 3): the manifest defines the
 // version's file set (the runner is deliberately unlisted) and carries the app
 // identity; a .js bundle is JS source, anything else QuickJS bytecode; fonts
@@ -16,8 +16,8 @@
 // preloaded before window setup, see gl_libs.rs).
 //
 // Shared by the desktop runner (src/main.rs, which reads its own image or a
-// .srtapp path) and the Android runtime (SDL_main in lib.rs, which reads the
-// .srtapp at its offset inside the APK): the caller parses the trailer for
+// .solapp path) and the Android runtime (SDL_main in lib.rs, which reads the
+// .solapp at its offset inside the APK): the caller parses the trailer for
 // its source, this module turns it into a bootable payload.
 
 pub const EMBED_MAGIC: &[u8; 9] = b"SOLIDRT\x88\x44";
@@ -44,7 +44,7 @@ pub struct FactoryPayload {
 // before lattice::start installs the logger.
 fn warn_version_mismatch(manifest: &crate::manifest::Manifest) {
   if manifest.solidrt_version != crate::VERSION {
-    eprintln!("[srt] app built by SolidRT {}, runner is {}", manifest.solidrt_version, crate::VERSION);
+    eprintln!("[sol] app built by SolidRT {}, runner is {}", manifest.solidrt_version, crate::VERSION);
   }
 }
 
@@ -105,7 +105,7 @@ pub fn load(trailer: forge::trailer::Trailer) -> Option<FactoryPayload> {
 }
 
 /// The trailer at the end of `path` (a packed executable's own image, or a
-/// standalone .srtapp file), loaded as a payload.
+/// standalone .solapp file), loaded as a payload.
 pub fn load_path(path: std::path::PathBuf) -> Option<FactoryPayload> {
   load(forge::trailer::read(path, EMBED_MAGIC)?)
 }

@@ -176,17 +176,17 @@ further Android hard-floor hardening beyond the watchdog
 
 All previously open details are decided 2026-07-24: the desktop
 chord is Ctrl/Cmd+Shift+Backspace, and `exit()` lives in a new
-`srt:app` lattice module ("the running app's own surface", the
-future home for lifecycle verbs; verified that `srt:apps` is
+`sol:app` lattice module ("the running app's own surface", the
+future home for lifecycle verbs; verified that `sol:apps` is
 imported only by the launcher, so the adjacent name is acceptable).
 Apps consume both through `@solidrt/core`: `onBack(fn)` and `exit`;
-the `back` event itself rides the srt:events bus internally.
+the `back` event itself rides the sol:events bus internally.
 
 ## What already exists
 
 - `EngineCmd::Stop` (`lattice/src/lib.rs`) is exactly "return to the
   launcher": it restarts the engine into `LAUNCHER_SOURCE`, the same
-  restart machinery dev pushes and `srt:apps` `launch()` use (that
+  restart machinery dev pushes and `sol:apps` `launch()` use (that
   mid-session path is verified working). Today only the dev session
   sends it (`go/connection.rs`, on a server stop).
 - The draft's "Stop does not re-anchor" wrinkle no longer exists:

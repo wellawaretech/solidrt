@@ -30,7 +30,7 @@ that presented ~120 (per `dumpsys SurfaceFlinger --latency`, and per the
 On the same tablet, with a probe sliding ten panes on a layout transition
 for 2 s, `get_stats` with `window_ms` 4000 read right after the slide
 answered 72-78 frames three times out of three, and 75 beside a
-`srt android --census` count of 76 presents over the same span. Two
+`sol android --census` count of 76 presents over the same span. Two
 things changed since the report: the cadence hold resets after idle
 (done/cadence-hold-sticky-android.md), and the GPU term no longer
 stretches frames. The stats query now logs, at debug level, what the

@@ -62,7 +62,7 @@ fit-then-user matrix in one call), so the box-sized rect `(0,0,w,h)` was
 interpreted in design units. Meanwhile `draw_cached_recording` - the
 Recording-boundary composite path - applied its hoisted clip BEFORE the
 cached fitted content, i.e. in box space, correctly. The two paths disagreed,
-which is the likely shape behind marble-fox's *"`srt render` clips correctly
+which is the likely shape behind marble-fox's *"`sol render` clips correctly
 while the client does not"* (boundary vs non-boundary recording, so
 environment- and version-dependent). The hit-side overflow gate mirrored the
 recorded (wrong) form and carried a comment calling the semantics unsettled.

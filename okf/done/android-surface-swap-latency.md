@@ -230,7 +230,7 @@ VSYNC-app ticks a clean 20.0ms (50 Hz healthy), SF wakes ~16/s, but
 latchBuffer runs only ~6.4/s - most SF wakeups latch nothing for this
 layer. The residual unknown is this MTK-modified SF build's latch policy
 (vendor sets `debug.sf.latch_unsignaled=1`; suspicion: acquire-fence or
-frame-pacing gating inside their fork). srt-raster blocks in
+frame-pacing gating inside their fork). sol-raster blocks in
 binder_thread_read 70% of samples (confirms the server-side wait).
 
 Cross-check that the platform CAN do better: the pre-3-thread engine ran
@@ -272,7 +272,7 @@ ANGLE-dependend builds)" -> 61ccbfe "GL on single thread" -> 6b4797b
 "Introduce raster thread", all 2026-07-19. Last pre-refactor commit:
 **2ed4c8f** ("Alloy GL logging"). A worktree at
 ~/solidrt/tmp/pre-refactor builds it for armeabi-v7a (needs `bun install`
-first for the bunx-srt default-app bundle step). Same applicationId, so
+first for the bunx-sol default-app bundle step). Same applicationId, so
 installing it replaces the go APK on the TV; reinstall the current build
 afterwards.
 
@@ -281,7 +281,7 @@ afterwards.
 The A/B ran, twice:
 
 - 2ed4c8f (2-thread-GL era, "v0.0.29"): connects to the current dev
-  server, but current-core bundles fail (`srt:app` module missing) - no
+  server, but current-core bundles fail (`sol:app` module missing) - no
   app measurement; not needed, because:
 - **v0.0.22 exactly** (heroes' pinned version, worktree ~/solidrt/tmp/v0022,
   its own launcher animation as the workload): **~7.3 fps** - the same
@@ -300,11 +300,11 @@ budget apps accordingly (the app-facing consequence tables above stand).
 
 Cross-version compatibility notes from the attempt, for the record: a
 0.0.22-era prebuilt bundle can be pushed by the current dev server (load
-accepts .srt.js), needs `"imageWidth"/"imageHeight"` -> `"w"/"h"` patching
+accepts .sol.js), needs `"imageWidth"/"imageHeight"` -> `"w"/"h"` patching
 (commit 0a315e8) on newer runtimes, and still dies on the window-root
 check against v0.0.29 native; era-correct serving works by bumping
 DEV_PORT in the era CLI's dev-server.ts and pointing the APK at that port
-via the srt_dev_server intent extra.
+via the sol_dev_server intent extra.
 
 Hard-won API notes for whoever picks this up:
 - `perform(NATIVE_WINDOW_SET_BUFFER_COUNT)` works pre-first-dequeue; the
@@ -315,7 +315,7 @@ Hard-won API notes for whoever picks this up:
   worth of lesson).
 - The go debug APK is debuggable: `run-as com.solidrt.go` + /proc wchan
   sampling works for "what syscall is this thread stuck in".
-- MainActivity temporarily exports SRT_LOG=debug (marked TEMPORARY) so the
+- MainActivity temporarily exports SOLIDRT_LOG=debug (marked TEMPORARY) so the
   raster phase log reaches logcat; remove when this closes.
 - atrace categories on this TV: gfx sched binder_driver (no `sync`).
 
@@ -361,9 +361,9 @@ eglSwapBuffers, GL on one thread, demand-driven bursts; us = choreographer
 async mode.
 
 Instrumentation for the next round (in tree, marked TEMPORARY):
-`SRT_SWAP_INTERVAL` env overrides the present path per launch, forwarded
-from the `srt_swap_interval` intent extra by MainActivity
-(`--es srt_swap_interval 1` = stock sync path, `0` = async experiment
+`SOLIDRT_SWAP_INTERVAL` env overrides the present path per launch, forwarded
+from the `sol_swap_interval` intent extra by MainActivity
+(`--es sol_swap_interval 1` = stock sync path, `0` = async experiment
 path). See sdl_utils::window_swap_interval.
 
 Measurement discipline from here on: SF `--latency` on the app's
@@ -372,19 +372,19 @@ also not evidence.
 
 ### 2026-07-28 evening, round 2: the stall is downstream of SF composition
 
-A/B via the new SRT_SWAP_INTERVAL toggle, tv-probe mode 0 (single moving
+A/B via the new SOLIDRT_SWAP_INTERVAL toggle, tv-probe mode 0 (single moving
 Box), SF --latency as the metric:
 - interval 0 + async mode: 160 ms-dominated latch pattern, ~7-9 fps.
 - interval 1 stock sync path: metronomic 20/80/160 ms cycle (3 frames per
   260 ms, ~11.5 fps). The async/buffer-count experiments were never the
   cause and barely matter; both paths hit the same wall.
 
-Engine self-timing (SRT_LOG=debug): jsMs 0.5, layoutMs 0.1, draw 3-6 ms,
+Engine self-timing (SOLIDRT_LOG=debug): jsMs 0.5, layoutMs 0.1, draw 3-6 ms,
 fence wait 0 - the entire frame cost is inside eglSwapBuffers
 (43-148 ms). atrace (gfx sched binder_driver, 4 s) shows the full chain,
 25 composition cycles in 4 s:
 
-  srt-raster eglSwapBuffersWithDamageKHR 142.8 ms
+  sol-raster eglSwapBuffersWithDamageKHR 142.8 ms
     -> surfaceflinger handleMessageRefresh/doComposition ~145 ms
        -> postFramebuffer -> presentAndGetReleaseFences ~145 ms  <- HWC2
           present blocks here, inside the MTK vendor blob
@@ -394,7 +394,7 @@ Meanwhile SF's own compositor swap stat during Kodi animation: 12-16 ms
 -buffered 100% and latches 20.0 ms. So SF GLES-composites BOTH apps; the
 HWC present is only slow when the content being presented is ours.
 
-Two live theories, discriminated by the SRT_GL_FINISH probe (timed
+Two live theories, discriminated by the SOLIDRT_GL_FINISH probe (timed
 glFinish between draw and present, in tree, TEMPORARY):
 1. GPU-slow: with debug.sf.latch_unsignaled=1 SF latches our unfinished
    buffer, composites against our still-running GPU work, and HWC present
@@ -409,7 +409,7 @@ glFinish between draw and present, in tree, TEMPORARY):
 ### 2026-07-28 evening, round 3: MECHANISM FOUND - cadence-sensitive display
 pipeline, and the fluent era was real
 
-The SRT_GL_FINISH probe (timed glFinish between draw and present) settles
+The SOLIDRT_GL_FINISH probe (timed glFinish between draw and present) settles
 it. tv-probe mode 0, both present paths:
 
   fence wait 0.0ms, draw ~2ms, finish 80.0-80.4ms, present ~1ms   (sync)
@@ -444,14 +444,14 @@ by blocking swap, so this is Android-specific plumbing, not a redesign.
 Open question: how many consecutive on-cadence presents flip the state
 (Kodi needs its queue pre-fed by only ~2 frames, suggesting few).
 
-Instrumentation left in tree (all marked TEMPORARY): SRT_SWAP_INTERVAL
-(srt_swap_interval extra), SRT_GL_FINISH (srt_gl_finish extra),
-SRT_LOG=debug in MainActivity. Measurement rule stands: SF --latency
+Instrumentation left in tree (all marked TEMPORARY): SOLIDRT_SWAP_INTERVAL
+(sol_swap_interval extra), SOLIDRT_GL_FINISH (sol_gl_finish extra),
+SOLIDRT_LOG=debug in MainActivity. Measurement rule stands: SF --latency
 only; screenrecord and the engine fps stat both lie on this TV.
 
 ## SOLVED 2026-07-28: it was the MSAA resolve, all along
 
-SRT_MSAA=0 (single-sample window rig) on the completely stock present
+SOLIDRT_MSAA=0 (single-sample window rig) on the completely stock present
 path - no feed-pipe, no fence-gate bypass, no buffer-count raise, no
 layer-config changes - gives a rock-solid 20.0 ms latch cadence (50 fps)
 on tv-probe mode 0, and the glFinish probe collapses from a flat ~80 ms
@@ -489,7 +489,7 @@ Fix directions, in order of value:
    standard on tiled GPUs): in-tile resolve makes 4x MSAA nearly free -
    the proper fix that keeps AA. Requires the impellers GLES backend to
    use it for the window rig.
-2. Until then: scale MSAA to the device (SRT_MSAA plumbing is in tree;
+2. Until then: scale MSAA to the device (SOLIDRT_MSAA plumbing is in tree;
    the old device-perf-model backlog item is the natural home - weak
    tiled GPU => samples=0/2).
 3. App-level: the flower's remaining 53 ms is points + glow passes;
@@ -499,8 +499,8 @@ Verdict on the experiment toggles this hunt produced: feed-pipe,
 no-fence-gate, buffer-count raise, translucent/alpha/on-top, hwui-pulse
 all proved unnecessary for the fix (the queue experiments reshaped
 patterns but could not beat an 80 ms GPU floor). They are all env-gated
-and marked EXPERIMENT/TEMPORARY; candidates for removal once SRT_MSAA
-handling is productized. SRT_GL_FINISH and SRT_LOG forwarding earned
+and marked EXPERIMENT/TEMPORARY; candidates for removal once SOLIDRT_MSAA
+handling is productized. SOLIDRT_GL_FINISH and SOLIDRT_LOG forwarding earned
 their keep as diagnosis tools.
 
 Measurement rules that made this solvable (keep for posterity):
@@ -526,7 +526,7 @@ hiccups counted as latch gaps >= 39 ms:
    **0 hiccups in 250 frames**, perfect 20.0 ms cadence. Flower: steady
    40/60 ms alternation (~20 fps), all remaining cost content-genuine.
 
-Landed state: Android window = multisampled backbuffer (SRT_MSAA
+Landed state: Android window = multisampled backbuffer (SOLIDRT_MSAA
 overrides the sample count, 0/1 = single-sample); plain window frames
 skip the rig; the rig keeps the EXT in-tile path for the window-layer
 (shader) target and falls back to the explicit resolve where the
@@ -535,8 +535,8 @@ bandwidth does not care). read_fbo0_pixels resolves through a temp FBO
 when the backbuffer is multisampled (glReadPixels cannot read MSAA).
 
 The swap-latency experiment code (feed-pipe, fence-gate bypass, buffer-
-count raise, translucent/alpha/on-top, hwui-pulse) is removed; SRT_MSAA,
-SRT_GL_FINISH, SRT_SWAP_INTERVAL, and srt_log forwarding remain as
+count raise, translucent/alpha/on-top, hwui-pulse) is removed; SOLIDRT_MSAA,
+SOLIDRT_GL_FINISH, SOLIDRT_SWAP_INTERVAL, and sol_log forwarding remain as
 diagnosis levers.
 
 ### Addendum: the last hiccups were CPU preemption, fixed with thread priority
@@ -548,7 +548,7 @@ own 50 fps stream shows the same rate). logcat over 12 s: cast_shell
 polls a Hue bridge over HTTP - the little cores are shared and a
 default-priority frame thread loses ~20 ms about once a second.
 
-Fix: srt-raster now runs at Android display priority -8 and the UI
+Fix: sol-raster now runs at Android display priority -8 and the UI
 thread at -4 (what HWUI's own threads use; children inherit it, so the
 JS/tokio workers land at -4 too). Census after: 750 steady-state frames,
 2 hiccups (0.27%, ~1 per 7.5 s) - the residue is other processes' own
@@ -556,10 +556,10 @@ noise, at parity with the TV's native apps.
 
 ### Post-fix pruning (user direction)
 
-All investigation toggles are gone: SRT_MSAA, SRT_SWAP_INTERVAL and the
-SRT_GL_FINISH probe (recipe stays in this doc), the ANativeWindow legacy-
-ABI module with the async-mode/timestamp experiments, and every srt_*
-intent-extra forward in MainActivity (including srt_log) - the Android
+All investigation toggles are gone: SOLIDRT_MSAA, SOLIDRT_SWAP_INTERVAL and the
+SOLIDRT_GL_FINISH probe (recipe stays in this doc), the ANativeWindow legacy-
+ABI module with the async-mode/timestamp experiments, and every sol_*
+intent-extra forward in MainActivity (including sol_log) - the Android
 app template is back to pristine. What ships: the 8-bit color request,
 the multisampled Android window backbuffer (4x, in-tile resolve at swap;
 plain frames wrap FBO 0 directly), the EXT_multisampled_render_to_texture

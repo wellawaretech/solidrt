@@ -65,7 +65,7 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   PointerEvent carries no timestamp, so the velocity tracker, double-tap and
   the 2d and 3d dispatchers stamp events with performance.now() at handler
   time - a wall read that inherits the handler's execution jitter and cannot
-  be stepped by a test or by srt render. Give every input event a timeStamp on
+  be stepped by a test or by sol render. Give every input event a timeStamp on
   an input reading of the paced clock (counted refreshes like the animation
   timeline, no suspension skip, the arrival time for an event that lands
   between frames), move package logic off performance.now(), and keep
@@ -82,7 +82,7 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   are compressed textures outside a model, after the build stage is designed,
   then the memory a load leaves behind.
 - **[Fonts as pack-time payload](plans/packaged-fonts.md)** [2026-07-20]
-  The solidrt runtime goes font-free and srt pack appends fonts as trailer
+  The solidrt runtime goes font-free and sol pack appends fonts as trailer
   sections, with the three Noto role defaults declared through the
   package.json solidrt fonts key.
 - **[Reactivity halt containment](plans/reactivity-halt-containment.md)** [2026-07-17]
@@ -166,7 +166,7 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
-- **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
+- **[Environment tier leftovers - SH9, aoMap, packed .sol3e, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes); what Three, Unity and Godot ship on top of the
   same tier and we do not yet - SH9 irradiance, ambient occlusion maps, EXR
@@ -201,7 +201,7 @@ Shaped, not started.
   sources and the stock materials.
 - **[Model loader follow-ups](backlog/3d-model-loader.md)** [2026-08-26]
   The glTF subset loader (roadmap item 7, shipped 2026-08-26 as
-  parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3
+  parseGltf/createModel at runtime plus the sol tool 3d/model bake; v3
   container with retained hierarchy, skins and animation clips plus the JS
   mixer since 2026-08-31) covers rigged models end to end; still open, each
   something Three's and Unity's glTF loaders take today, are the compressed
@@ -231,7 +231,7 @@ Shaped, not started.
   Since Android 15, Android Auto runs a parked game as an ordinary activity on
   the car display, drawing its own UI, so a solidrt game can reach car screens
   on the renderer it already has; what is missing is a per-app manifest opt-in
-  through srt pack, a Play upload path, and a verification pass on the Desktop
+  through sol pack, a Play upload path, and a verification pass on the Desktop
   Head Unit for the second display, the density change and the driving block.
 - **[Android client forgets its dev-server address](backlog/android-dev-server-persistence.md)** [2026-07-27]
   The dev-server address only reaches the client as a launch-intent extra, so
@@ -280,14 +280,14 @@ Shaped, not started.
   with the player taking the same rule as <pref>/solidrt-go/. The config key
   exists but is display metadata only: org reaches neither the manifest nor
   the pack payload, so the plumbing is the work. Independent of the dev-server
-  session work, since dev clients move to ~/.srt/clients/.
+  session work, since dev clients move to ~/.sol/clients/.
 - **[App-wide zoom](backlog/app-wide-zoom.md)** [2026-07-27]
   Browser-style whole-UI zoom (pinch, ctrl+wheel) as a root-level runtime
   affordance that re-lays out at scale instead of magnifying raster output,
   needing no app cooperation.
 - **[Assets are baked by hand, one tool run per file](backlog/asset-build-stage.md)** [2026-09-30]
   A compressed texture or a baked model exists only after the developer runs
-  `srt tool` on its source and puts the output under assets/, so sources and
+  `sol tool` on its source and puts the output under assets/, so sources and
   outputs drift and nothing rebakes when a setting changes; a build stage that
   bakes on the copy into dist/<flow>/assets/ (with a manifest that makes it
   incremental) removes the step, and must be designed before compressed
@@ -296,8 +296,8 @@ Shaped, not started.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
-- **[Make srt check honor solidrt.entry](backlog/check-honors-project-entry.md)** [2026-09-29]
-  Folder-mode srt check discovers the app entry from a hardcoded src/index.tsx
+- **[Make sol check honor solidrt.entry](backlog/check-honors-project-entry.md)** [2026-09-29]
+  Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
   either not found or checked against the wrong file.
 - **[Generate the docs/core.md props reference from the types](backlog/core-docs-generated-props.md)** [2026-08-06]
@@ -321,7 +321,7 @@ Shaped, not started.
   2026-09-23 for Android, Linux and Windows; what remains is macOS's .app
   bundle and the player's own scheme."
 - **[A demo shows up in the player under its project's name, not its own](backlog/demo-identity-per-demo.md)** [2026-08-26]
-  srt demo serves demos/ as one project, so the player entry, appId and
+  sol demo serves demos/ as one project, so the player entry, appId and
   storage are the project's; the gallery appeared as "SolidRT components
   demos". Renamed for now (one demo per package); a second demo in a package
   needs per-demo identity derived from the slug.
@@ -428,7 +428,7 @@ Shaped, not started.
   write lease
 - **[Whole-system GPU attribution, per platform](backlog/gpu-system-attribution.md)** [2026-08-13]
   Answering "who else is burning the GPU" needs a different mechanism on every
-  OS, so it wants a documented per-platform recipe or an srt doctor helper
+  OS, so it wants a documented per-platform recipe or an sol doctor helper
   rather than an engine feature.
 - **[Animate gradient colors](backlog/gradient-color-transition.md)** [2026-09-27]
   A gradient-valued `color` never animates (the color lane reads a gradient as
@@ -548,22 +548,22 @@ Shaped, not started.
   An app animating over a playing video plane runs at 16 fps because every
   window present waits for its GPU work while a plane exists; wait only for
   isolated presents, and not while the plane is paused.
-- **[Play Store publishing with srt pack --aab](backlog/play-store-aab.md)** [2026-09-21]
+- **[Play Store publishing with sol pack --aab](backlog/play-store-aab.md)** [2026-09-21]
   A packed app can be sideloaded as an APK but not uploaded to Google Play,
   which only accepts an Android App Bundle signed with an app-specific upload
   key; patch a runner AAB skeleton the way the runner APK is patched, with the
   native libs lifted from the per-ABI runner APKs and packaging config grouped
   per target in package.json.
-- **[srt render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
+- **[sol render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
   On Windows SDL's offscreen driver cannot meet ANGLE (no
   EGL_EXT_device_enumeration), so playback fell back to a hidden window; since
   2026-08-17 it takes a headless EGL pbuffer context instead, verified in a
   desktop session. Open: the same run from a non-interactive session (service,
   Session 0, Windows OpenSSH), which decides whether the default display
   suffices or EGL_ANGLE_device_creation is needed; macOS untested.
-- **[srt render of the player exits without frames](backlog/player-headless-render-exits.md)** [2026-09-23]
-  "`srt render apps/player/src/index.tsx --file` exits 0 after `flux engine
-  start` with no frame written and nothing logged, even at SRT_LOG=debug;
+- **[sol render of the player exits without frames](backlog/player-headless-render-exits.md)** [2026-09-23]
+  "`sol render apps/player/src/index.tsx --file` exits 0 after `flux engine
+  start` with no frame written and nothing logged, even at SOLIDRT_LOG=debug;
   playback ends before the first frame, and exit 0 with no message is the
   exit()-during-playback signature."
 - **[Per-node event-interest mask for pointer dispatch](backlog/pointer-event-interest-mask.md)** [2026-08-01]
@@ -599,7 +599,7 @@ Shaped, not started.
   the doc ships and the file does not; a release-time parity check would catch
   it.
 - **[Release readiness and pre-publish checks](backlog/release-readiness-checks.md)** [2026-07-27]
-  A pre-build readiness gate (types and runtime in lockstep, srt check, tests,
+  A pre-build readiness gate (types and runtime in lockstep, sol check, tests,
   version placeholders) plus post-build artifact checks before the
   irreversible npm publish.
 - **[Reload does not drain the raster queue](backlog/reload-drain-raster-queue.md)** [2026-07-27]
@@ -667,7 +667,7 @@ Shaped, not started.
   be naming a real stale read."
 - **[Home for cross-crate constants](backlog/shared-config-constants.md)** [2026-07-27]
   One defined home for cross-crate constants that today live as per-site
-  literals (.srt-data, http-cache.db, the SolidRT/go identity, size caps);
+  literals (.solidrt-data, http-cache.db, the SolidRT/go identity, size caps);
   collects sites until designed.
 - **[Snapshot diff helper](backlog/snapshot-diff-helper.md)** [2026-08-07]
   A numeric pixel-delta mode on get_snapshot against the previous capture of
@@ -707,7 +707,7 @@ Shaped, not started.
   small sizes and a fully opaque splat blocks everything behind it instead of
   leaking 1%.
 - **[A splat cloud is resident at 32 bytes per splat plus half-float SH where the field ships 8-16](backlog/splat-record-compression.md)** [2026-09-27]
-  The .srts record is 32 bytes and SH bands are uncompressed halves (32/48/96
+  The .sol3s record is 32 bytes and SH bands are uncompressed halves (32/48/96
   bytes per splat), so a 1M SH3 cloud is ~130 MB of textures and key copy on
   the phone; spz, sogs and ksplat store the same splat in 8-16 bytes with
   chunk-quantized positions and 8-bit SH, and a compressed record would also
@@ -808,7 +808,7 @@ Shaped, not started.
   rotation, so the set should be settled together rather than one prop at a
   time.
 - **[The dev-server repl has only run on Linux](backlog/tty-repl-platform-runs.md)** [2026-08-26]
-  flux:tty raw mode and the srt repl are crossterm-backed and compile for
+  flux:tty raw mode and the sol repl are crossterm-backed and compile for
   Windows and Android, but neither has been run there - the Windows console
   ANSI path and Android termios from a terminal emulator are unverified.
 - **[Video playback](backlog/video-playback.md)** [2026-08-12]
@@ -1083,7 +1083,7 @@ Finished, kept for the reasoning.
   billboards reconstruct it from uViewProj rows, and shaderMaterial cannot
   express one program with many parameterisations.
 - **[Model file: bake from own geometry, extras, part reuse](done/3d-model-file-bake-and-reuse.md)** [2026-09-22]
-  A procedural model cannot be written to .srtm without importing the runtime
+  A procedural model cannot be written to .sol3m without importing the runtime
   (the only export path pulls flux:*), the container has no slot for app data,
   and a part belongs to exactly one node so a variant placed hundreds of times
   cannot be expressed; three bounded changes to the model file and
@@ -1165,7 +1165,7 @@ Finished, kept for the reasoning.
   lit took ONE map, the base color; every other pre-PBR slot (normal,
   emissive, specular mask, baked light, a UV transform) forced a hand-written
   shaderMaterial. Shipped as class-key options on lit with derivative-based
-  normal mapping (no tangent layout), the glTF loader and .srtm v2 carrying
+  normal mapping (no tangent layout), the glTF loader and .sol3m v2 carrying
   normal and emissive, and the names settled against Three, Unity and Godot.
 - **[Every vertex attribute is a 32-bit float in one immutable interleaved buffer](done/3d-vertex-data-model.md)** [2026-09-11]
   The vertex vocabulary is f32/vec2/vec3/vec4 only and a geometry is one
@@ -1231,7 +1231,7 @@ Finished, kept for the reasoning.
 - **[Application routing](done/app-routing.md)** [2026-09-23]
   "@solidrt/router: a typed route tree with validated params, a memory stack
   run as Solid transitions, one back step, blocking, links in and location
-  out; the mapping that makes screens addressable by OS links, MCP, srt
+  out; the mapping that makes screens addressable by OS links, MCP, sol
   render, reload and restore alike. Own package on core only, headless core
   plus a thin Solid binding, no data layer. A consumer of the link primitive
   in deep-links.md, never inside core."
@@ -1306,12 +1306,12 @@ Finished, kept for the reasoning.
   because a Choreographer frame time is the app's target wake-up time and not
   the vsync it is waking for. Everything that snaps to the grid is off by that
   much.
-- **[Move the srt dev flow into flux and make ports an output](done/cli-flux-migration.md)** [2026-08-26]
+- **[Move the sol dev flow into flux and make ports an output](done/cli-flux-migration.md)** [2026-08-26]
   Landed 2026-08-25/26: one flux process hosts the dev server (port
   remembered, else the first free from 34884, or --port; loopback by default,
   --lan), a registry keyed by project root or file with one server per key,
   --file/--project modes with no upward search, and bun kept only for
-  bundling, typechecking and the MCP bridge. The self-pack (srt as a packed
+  bundling, typechecking and the MCP bridge. The self-pack (sol as a packed
   flux app) is an ideas.md line.
 - **[Client build info in list_clients](done/client-build-info.md)** [2026-07-27]
   Git hash, version and profile per connected client in list_clients, so "does
@@ -1375,7 +1375,7 @@ Finished, kept for the reasoning.
 - **[Dev-server typecheck](done/dev-server-typecheck.md)** [2026-07-25]
   Run the project's tsc once at dev-server startup, fire and forget, to catch
   the unbound identifiers Bun.build and the QuickJS compile accept silently;
-  srt check stays the gate.
+  sol check stays the gate.
 - **[The documented perf model is desktop-shaped](done/device-perf-model-docs.md)** [2026-07-28]
   "GPU work is nearly free, JS is the slow lane" holds on desktop and
   mid-range mobile but is wrong by ~8x on TV-class hardware, where the
@@ -1468,7 +1468,7 @@ Finished, kept for the reasoning.
 - **[The flux module tests are JavaScript inside Rust strings](done/flux-module-tests-on-flux-test.md)** [2026-10-02]
   131 of the 173 cargo integration tests in flux/tests/ only run a JS program
   and compare its console output, untyped and run on Linux only in CI; move
-  them to flux:test as flux/tests/*.test.ts, run by srt test on all four
+  them to flux:test as flux/tests/*.test.ts, run by sol test on all four
   platforms, and keep in cargo the 42 that observe what a test inside the
   engine cannot (the logger, uncaught reporting, liveness, exit, the embedding
   API, isolate spawning, the websocket wire).
@@ -1530,7 +1530,7 @@ Finished, kept for the reasoning.
   Captured 3DGS scenes (phone scans, photogrammetry successors) are a growing
   content class nothing here can display. The viewer is proven by a probe
   (300k splats in 19 ms at full resolution on a 2022 phone) and the shape
-  settled 2026-09-26 - a pack-time bake to a .srts record with the 3D
+  settled 2026-09-26 - a pack-time bake to a .sol3s record with the 3D
   covariance precomputed, a generic instanceOrder knob on the 3d meshes riding
   gpu-instance-order's retained projected key with the scene feeding
   direction, SplatMesh over createRecordMesh, and SH bands via an id-indexed
@@ -1879,7 +1879,7 @@ Finished, kept for the reasoning.
   own cwd or the single file server under it; the projectDir mismatch this
   item describes no longer occurs.
 - **[App-registered debug commands via MCP](done/mcp-debug-commands.md)** [2026-07-27]
-  The srt:dev registerDebug plus MCP list_debug/call_debug, replacing the
+  The sol:dev registerDebug plus MCP list_debug/call_debug, replacing the
   debug-keys and get_logs pattern for poking a running app; async commands
   still unsupported.
 - **[get_render_tree reports useless boxes for detached nodes](done/mcp-detached-node-bounds.md)** [2026-08-27]
@@ -1951,11 +1951,11 @@ Finished, kept for the reasoning.
   visible receives no pointer events.
 - **[Demos a user can run, shipped inside the packages](done/package-demos.md)** [2026-08-25]
   Done 2026-08-25 - a package's demos/ folder is one project (shared
-  package.json, tsconfig and assets/, one src/*.tsx per demo); srt demo lists
+  package.json, tsconfig and assets/, one src/*.tsx per demo); sol demo lists
   them numbered and runs one by number or qualified name, by starting the
   ordinary dev server with its cwd set to that project.
 - **[Keep a packed APK's data on the device, and let it declare permissions](done/packed-apk-data-on-device.md)** [2026-09-25]
-  Every APK from srt pack --apk was debuggable (the runner was a Gradle debug
+  Every APK from sol pack --apk was debuggable (the runner was a Gradle debug
   build, so adb run-as read the app's private files), backed up everything
   (allowBackup on, so Auto Backup copied data, fetch cache, logs and the p2p
   identity key to the cloud and to a new phone), and could not use the camera
@@ -1990,12 +1990,12 @@ Finished, kept for the reasoning.
   (defaulting to the session number) - plus a three-folder split by ownership
   - server state keyed by port in `~/.solidrt/servers/<port>/` (dev tooling, a
   single home dotdir on every platform), project state in the project's
-  .srt-data/, client state in ~/.solidrt/clients/client<M>/ - reached through
-  the --data-root flag that already exists, so the client runtime needs no
-  change and nothing dev-related is left under the SDL pref path. A server run
-  serves the project it started in (`load` outside the project root is
-  refused) while the server identity itself, keyed by port, is independent of
-  any project and outlives every one it serves. The MCP bridge resolves its
+  .solidrt-data/, client state in ~/.solidrt/clients/client<M>/ - reached
+  through the --data-root flag that already exists, so the client runtime
+  needs no change and nothing dev-related is left under the SDL pref path. A
+  server run serves the project it started in (`load` outside the project root
+  is refused) while the server identity itself, keyed by port, is independent
+  of any project and outlives every one it serves. The MCP bridge resolves its
   port per call from the global server registry by matching projectDir, so the
   scaffold's mcp.json never carries a port. Supersedes the 2026-08-08 scoping
   to one server per project folder and its project-local marker file.
@@ -2072,13 +2072,13 @@ Finished, kept for the reasoning.
   (dependencies included) and the assets tree, rebuilding through the one
   reload path; an MCP pause_watch/resume_watch pair holds it while an agent
   edits, restored when the bridge exits.
-- **[srt render cannot fail, so it is not the gate the docs sell](done/render-as-a-verification-gate.md)** [2026-10-01]
+- **[sol render cannot fail, so it is not the gate the docs sell](done/render-as-a-verification-gate.md)** [2026-10-01]
   A scene whose build throws is contained, writes an empty frame and exits 0,
   and --duration is app time so an app that loads asynchronously is captured
-  mid-load; closed by srt render --strict (errors logged fail the render) and
+  mid-load; closed by sol render --strict (errors logged fail the render) and
   --settle (the app is run to rest before the first frame, the settle
   condition of the test harness, not a wall sleep).
-- **[srt render should be headless, unscaled and able to choose its output folder](done/render-headless-determinism.md)** [2026-08-05]
+- **[sol render should be headless, unscaled and able to choose its output folder](done/render-headless-determinism.md)** [2026-08-05]
   Playback mode opened a hidden SDL window on the real display, laid out at
   the host's display scale, and wrote frames into the data sandbox; closed by
   the offscreen video driver (hidden-window fallback), a pinned scale-1
@@ -2100,10 +2100,10 @@ Finished, kept for the reasoning.
   turns "look closely at X" into one call, worth shipping in the
   create-solidrt scaffold.
 - **[A headless render is not reproducible when the app draws random numbers](done/seeded-random-headless-render.md)** [2026-10-01]
-  srt render stepped time deterministically but left Math.random on the
+  sol render stepped time deterministically but left Math.random on the
   engine's clock-seeded generator, so an app with particles, a shake or a
   shuffled list rendered other frames on every run; closed by the render host
-  seeding the context with flux's seed_random (fixed by default, srt render
+  seeding the context with flux's seed_random (fixed by default, sol render
   --seed <n>) and freezing the wall like a test.
 - **[Animate shadow as one value](done/shadow-transition.md)** [2026-09-27]
   `shadow` joins the native transitions - offset, blur, spread and color move
@@ -2145,6 +2145,16 @@ Finished, kept for the reasoning.
   get_stats' `textures` grows by one per reload. The old app instance's
   snapshot boundary (the demo's backdrop) is never freed when the next bundle
   is pushed.
+- **[Give sol one folder per command, split by runtime](done/sol-command-folders.md)** [2026-08-25]
+  Restructure packages/cli so every command is a top-level folder whose first
+  line says its runtime (bun for node-ecosystem adapters, flux for the dev
+  server), bin/sol only routes, and a server is one process the console can
+  spawn or embed directly.
+- **[sol run exits immediately when stdin is not a terminal](done/sol-run-exits-on-stdin-eof.md)** [2026-08-20]
+  The repl bound readline close to full shutdown, so any non-interactive
+  launch (background shell, supervisor, CI) tore down the server, the client
+  and the registry record within a second; startRepl now returns early when
+  stdin is not a tty, and the piped-sleep workaround is gone.
 - **[Move the app test layer into @solidrt/test](done/solidrt-test-package.md)** [2026-10-01]
   The app test layer (mount, find, input, frames, readers) leaves core for a
   package of its own, @solidrt/test, a devDependency of every app and a peer
@@ -2193,18 +2203,8 @@ Finished, kept for the reasoning.
   route settles to the target's onTransitionEnd handler; the packages should
   offer the same - an onTransitionEnd per sprite handle / SceneNode - the
   first thing anyone chaining animations will reach for.
-- **[Give srt one folder per command, split by runtime](done/srt-command-folders.md)** [2026-08-25]
-  Restructure packages/cli so every command is a top-level folder whose first
-  line says its runtime (bun for node-ecosystem adapters, flux for the dev
-  server), bin/srt only routes, and a server is one process the console can
-  spawn or embed directly.
-- **[srt run exits immediately when stdin is not a terminal](done/srt-run-exits-on-stdin-eof.md)** [2026-08-20]
-  The repl bound readline close to full shutdown, so any non-interactive
-  launch (background shell, supervisor, CI) tore down the server, the client
-  and the registry record within a second; startRepl now returns early when
-  stdin is not a tty, and the piped-sleep workaround is gone.
 - **[Standalone APK for a packed app](done/standalone-android-apk.md)** [2026-09-01]
-  Shipped 2026-09-01: srt pack --apk patches a per-ABI production runner APK
+  Shipped 2026-09-01: sol pack --apk patches a per-ABI production runner APK
   (no Android SDK at pack time) with the app's payload, id, label, versionCode
   and adaptive icon, and the runtime boots a packed payload on Android without
   the player or the dev server; implementation notes in
@@ -2233,7 +2233,7 @@ Finished, kept for the reasoning.
   the-third-dimension); the same stale figures are served over /stats.
 - **[stdin/tty support in flux](done/stdin-tty-support.md)** [2026-07-13]
   A flux:tty module (terminal check, cooked lines or raw-mode keys, stdout
-  write) bringing the srt dev-server repl back with history and Tab
+  write) bringing the sol dev-server repl back with history and Tab
   completion; both stages done, Windows and Android runs pending.
 - **[Shader effects on a subtree](done/subtree-effects.md)** [2026-08-04]
   A snapshot boundary already rasterizes a subtree into a texture; a shader
@@ -2254,13 +2254,13 @@ Finished, kept for the reasoning.
   target per move, the core deriving frustum, LOD view and sort view, with a
   per-target LOD bias and an LOD reference that makes shadow tiles measure by
   the scene camera.
-- **[Test harness - flux:test, srt:test and srt test](done/test-harness.md)** [2026-10-01]
+- **[Test harness - flux:test, sol:test and sol test](done/test-harness.md)** [2026-10-01]
   Tests for flux programs, SolidRT apps and our own packages, run on our own
   runtime and deterministic by construction - a base layer on the flux binary
   (flux:test - test, expect, a seeded Math.random; real time) and an app layer
   on the headless SolidRT runtime (@solidrt/core/test - mount, find, input,
   frames, reading; stepped by frames, no wall time), every test in an engine
-  of its own, behind one command, srt test. Supersedes the JS test
+  of its own, behind one command, sol test. Supersedes the JS test
   infrastructure backlog item; the ten bun test files and the checks/ rigs are
   its first consumers.
 - **[Inline styled runs in <text> via <span>](done/text-inline-spans.md)** [2026-08-16]
@@ -2574,7 +2574,7 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Vulkan rejected, Metal-native kept only as a mapped contingency; includes
   the Impeller texture-interop analysis and the ANGLE-sunset risk ledger.
 - **[Headless verification traps](notes/headless-verification-traps.md)** [2026-09-11]
-  What bites a probe that verifies GPU state under srt render - deferred
+  What bites a probe that verifies GPU state under sol render - deferred
   texture destroys, sRGB has no readback, production bundling drops Solid's
   diagnostics, Geometry.vertices typing.
 - **[Impeller text decoration, measured](notes/impeller-text-decoration.md)** [2026-08-18]
@@ -2662,7 +2662,7 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   measured dependency costs; conclusion is no action, demand-gated pointers
   only.
 - **[Standalone APK implementation notes](notes/standalone-apk-implementation.md)** [2026-09-01]
-  Working notes for the srt pack --apk pipeline
+  Working notes for the sol pack --apk pipeline
   (done/standalone-android-apk.md): what shipped in the first three stages,
   the traps future edits must know, and how it was verified on a device.
 - **[What "something like stylesheets" already means here](notes/style-reuse-without-stylesheets.md)** [2026-08-13]
@@ -2698,7 +2698,7 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   hardlinked per-app version store."
 - **[Verifying engine and vertex-data changes - where the checks stop](notes/vertex-data-verification.md)** [2026-09-11]
   Four facts about the verification surface met while landing the vertex data
-  model (2026-09-11) - the release client srt run launches, what srt check
+  model (2026-09-11) - the release client sol run launches, what sol check
   covers, where the engine matches a pipeline against its program, and
   half-float support in bun and flux.
 

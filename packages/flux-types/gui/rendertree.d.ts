@@ -1,7 +1,7 @@
 // The render-tree bridge (gui-enabled runtime only): the low-level surface the
 // renderer drives to build and mutate the native tree - create/insert/delete
 // nodes, write properties, query layout, measure text. Displaying the built
-// tree is the runner's concern ("srt:render" in lattice), not part of this
+// tree is the runner's concern ("sol:render" in lattice), not part of this
 // module; requestFrame here only schedules a future frame.
 
 declare module "flux:rendertree" {

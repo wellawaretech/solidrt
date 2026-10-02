@@ -24,7 +24,7 @@ import {
   policy,
 } from "@solidrt/components"
 import { useRouter, useLocation, useParams, Outlet } from "@solidrt/router"
-import { stop } from "srt:dev"
+import { stop } from "sol:dev"
 import {
   launch,
   remove,
@@ -32,7 +32,7 @@ import {
   clearCache,
   type AppCacheEntry,
   type InstalledApp,
-} from "srt:apps"
+} from "sol:apps"
 import * as routes from "../routes"
 import { installedApps, refreshApps, notice, setNotice } from "./app-state"
 import { AppIcon } from "./app-icon"

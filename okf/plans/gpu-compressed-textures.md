@@ -59,7 +59,7 @@ both 16 bytes per 4x4 block.
   choice of block format happens at load, on the device, from one shipped
   form.
 - The toolchain is ours. A texture bake is a core workflow, so its encoder
-  ships with `srt` and the developer installs nothing else. An external
+  ships with `sol` and the developer installs nothing else. An external
   `ktx` CLI was considered and rejected: a third-party install step in
   the build path is what the no-npx rule exists to avoid.
 
@@ -88,7 +88,7 @@ has none).
 KTX2 files holding Basis Universal texel data with a full mip chain and the
 sRGB flag: the container and codec that glTF's `KHR_texture_basisu`, Three's
 KTX2Loader, Unity and Godot use. One per image, embedded as the image
-blocks of a `.srtm` model file or standalone under `assets/`. Two codecs,
+blocks of a `.sol3m` model file or standalone under `assets/`. Two codecs,
 chosen per image by the bake:
 
 - ETC1S for color maps (base color, emissive): lossy, JPEG-class quality
@@ -204,13 +204,13 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
 
 ### 3. Tool hosting, bake and load (packages/cli, packages/3d) - built
 
-- **Tools under flux.** `srt tool` spawns bun for every
+- **Tools under flux.** `sol tool` spawns bun for every
   `<package>/tools/<name>.ts`. A tool named `tools/<name>.flux.ts` runs
-  under the flux binary instead, with the `SRT_*` environment the server
+  under the flux binary instead, with the `SOLIDRT_*` environment the server
   gets, listed under the same `<pkg>/<name>`. Opt-in by file name, no
   scanning of imports. flux runs one plain-JS file (no TypeScript, no
   module loaded from disk), so the tool is bundled into a temp file
-  first, the way `srt run` bundles the dev server; the shared step is
+  first, the way `sol run` bundles the dev server; the shared step is
   `packages/cli/src/lib/flux-script.ts`. The model tool moved
   (`tools/model.flux.ts`); `environment.ts` and `splat.ts` stay under
   bun (splat needs `node:zlib`'s gunzip for `.spz`, which flux does not
@@ -223,7 +223,7 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
   quit hooks, and in an isolate. Also
   `flux:path` has `basename`, `dirname`, `extname` with Node's
   semantics; the cores are in `forge::process` and `forge::path`.
-- **The bake.** `srt tool 3d/model` (as `tools/model.flux.ts`; the
+- **The bake.** `sol tool 3d/model` (as `tools/model.flux.ts`; the
   `--ktx2` flag it had is gone, see "Settings per file",
   `flux:fs` and `flux:process` in place of `node:fs` and `process.argv`)
   runs `parseGltf` as today, then for each sampled image `decodeImage`
@@ -252,7 +252,7 @@ Files: `forge/Cargo.toml`, `forge/build.rs`, `forge/src/lib.rs`,
   as is ONE rule, `modelImageUses` (sRGB or not, and its kind), used by
   `createModel` for the uploads and by the bake for the encodes, so a
   baked image samples as the same image unbaked: an image a color slot
-  and a normal slot share is sRGB and takes the accurate codec. The `.srtm` image block carries the
+  and a normal slot share is sRGB and takes the accurate codec. The `.sol3m` image block carries the
   KTX2 bytes as-is.
 - **Images are records** (2026-09-29). `ModelData.images` is a list of
   `ModelImage`: `bytes`, `name` (the document's name, else the uri of
@@ -379,7 +379,7 @@ As built:
   by kind, codec and quality, with the images it kept.
 - **The CLI rejected the key.** `parseProjectConfig` fails on any key
   of `solidrt` it does not know and `textures` was not one, so an app
-  that declared texture settings could not `srt run` or `srt pack`.
+  that declared texture settings could not `sol run` or `sol pack`.
   Present since the settings were built. The CLI now takes the key as
   an object and leaves its content to the reader (it does not depend
   on core).
@@ -396,7 +396,7 @@ Verified, 2026-09-30, Linux:
   compile,ktx2 --test path --test dir --test file --test process
   --test image` 14, 7, 8, 8, 7; `-p flux --lib --features gui,ktx2` 70.
 - packages/core `bun test tests` 16; packages/3d `bun test` 40;
-  `srt check` on the 3d package, the tool and the probes.
+  `sol check` on the 3d package, the tool and the probes.
 - A scratch project with Sponza and a .glb of three named embedded
   images: the entries raise one color map to UASTC at quality 1, keep
   the four PNGs and the embedded `lut_warm`, lower `face`; a
@@ -446,9 +446,9 @@ file. When the work starts the item moves to `plans/`.
 
 **For the user to do, none of it blocking:**
 
-- Every `.srtm` baked before 2026-09-29 is version 10 and is refused:
-  re-bake with `srt tool 3d/model`. The one in the repo
-  (`probes/model-reuse/reuse.srtm`) is done.
+- Every `.sol3m` baked before 2026-09-29 is version 10 and is refused:
+  re-bake with `sol tool 3d/model`. The one in the repo
+  (`probes/model-reuse/reuse.sol3m`) is done.
 - A bake now compresses by default and takes about a minute for
   Sponza; `--no-compress` is the quick one.
 - `make runtime`: the production runtime in `dist/` is older than the
@@ -457,8 +457,8 @@ file. When the work starts the item moves to `plans/`.
   added, the working tree has them deleted (they were staged by
   something other than this session, which never stages). Several
   other files of this work are staged in part the same way.
-- `make client` regenerated `lattice/resources/bsod/bsod.srt.js` and
-  `lattice/resources/player/index.srt.js`.
+- `make client` regenerated `lattice/resources/bsod/bsod.sol.js` and
+  `lattice/resources/player/index.sol.js`.
 - Windows and Android have not run step 4: `matchesGlob` treats "/"
   and "\\" alike on Windows by the crate's word, not by a run here.
 
@@ -488,7 +488,7 @@ Nothing here is decided. Each was put to the user on 2026-09-29 and not
 answered yet; ask before building.
 
 1. **Notices in a packed app.** The platform packages carry
-   `THIRD-PARTY-NOTICES.txt` (see "Attribution"); `srt pack` does not
+   `THIRD-PARTY-NOTICES.txt` (see "Attribution"); `sol pack` does not
    add it to what it writes, which leaves the developer to ship it.
    Suggested: next to the executable for the single-file and folder
    forms, inside the APK's assets for an APK. Where it goes per output
@@ -511,7 +511,7 @@ The order is a suggestion put to the user, not yet confirmed.
    primitives (`encodeTexture`, `transcodeTexture`, `createTexture`)
    and nothing above them: no tool that bakes it, no loader that takes
    it. The settings and `isKtx2` are already in core for this.
-2. **Tools of third-party extensions in `srt tool`.** Discovery looks
+2. **Tools of third-party extensions in `sol tool`.** Discovery looks
    under `node_modules/@solidrt/*` only (okf/ideas.md has the line).
    Suggested rule: the project's direct dependencies that depend on
    `@solidrt/core` and ship a `tools/` folder. Scanning every installed
@@ -723,7 +723,7 @@ weight live in [runtime-optimization](../backlog/runtime-optimization.md).
 - Image records, 2026-09-29: packages/3d `bun test` passes (40), the
   check rig covering the name rule (the document's name, the uri, the
   index), the uri of a file image, and names through the container
-  without uris; `srt check` passes on the package, the tool and the
+  without uris; `sol check` passes on the package, the tool and the
   probes. Release client, Linux: the Khronos Sponza baked by the tool
   (version 11, 69 images) loads in `probes/ktx2-model-probe.tsx` and
   the `/gpu` inventory lists its textures as
@@ -734,7 +734,7 @@ weight live in [runtime-optimization](../backlog/runtime-optimization.md).
 - packages/3d: `bun test` passes (40), with the check rig covering
   `KHR_texture_basisu` (the KTX2 source wins over the fallback, in the
   prefetch list and the parse) and the container round trip of KTX2
-  bytes; `srt check` passes on the package and on the tool.
+  bytes; `sol check` passes on the package and on the tool.
 - forge: `cargo test -p forge --lib --features ktx2 ktx2`, seven tests:
   each codec to each target, decoded color, the sRGB flag, byte-identical
   repeat encodes, refusals, a UASTC file smaller than its payload, and a
@@ -764,13 +764,13 @@ weight live in [runtime-optimization](../backlog/runtime-optimization.md).
 ### Sponza, baked (2026-09-29, Linux, release client)
 
 The Khronos Sponza sample: 25 materials, 69 sampled images, 1024^2 and
-2048^2. `srt tool 3d/model Sponza.gltf --ktx2`, quality 0.75 for ETC1S
+2048^2. `sol tool 3d/model Sponza.gltf --ktx2`, quality 0.75 for ETC1S
 and 0.9 for UASTC, loaded by `probes/ktx2-model-probe.tsx` on Mesa Intel
 (the device picked BC7).
 
 | | PNG/JPEG bake | `--ktx2` bake |
 |---|---|---|
-| `.srtm` | 49569 KiB | 46637 KiB |
+| `.sol3m` | 49569 KiB | 46637 KiB |
 | images in it | 41984 KiB | 39052 KiB |
 | of which color maps (25) | 17.4 MB | 4.8 MB |
 | of which data maps (44) | 23.6 MB | 33.4 MB |
@@ -800,7 +800,7 @@ asset:
 | color | 25 | 17828 KiB | 4882 KiB | 4882 KiB |
 | normal | 24 | 15827 KiB | 22110 KiB | 22110 KiB |
 | data | 20 | 8329 KiB | 2526 KiB | 12061 KiB |
-| `.srtm` | | 49569 KiB | 37102 KiB | 46637 KiB |
+| `.sol3m` | | 49569 KiB | 37102 KiB | 46637 KiB |
 
 Texture bytes are 90.7 MB either way. The two bakes against the
 uncompressed one, rendered in the Sponza demo's own scene
@@ -960,7 +960,7 @@ three.
   "the job panicked: <what it said>", for a literal and a formatted
   message alike.
 - **One environment for a flux script.** `fluxScriptEnv` in
-  `packages/cli/src/lib/flux-script.ts`, used by `srt run` and by a
+  `packages/cli/src/lib/flux-script.ts`, used by `sol run` and by a
   tool under flux. Both verified after the change.
 - **The settings entry takes no type from the runtime and its
   defaults are frozen**: done with the reader, see "Settings per

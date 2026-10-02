@@ -1,5 +1,5 @@
-// Environment helpers: the baked HDR environment loader (the .srte chain
-// `srt tool 3d/environment` writes), the equirectangular-to-cube
+// Environment helpers: the baked HDR environment loader (the .sol3e chain
+// `sol tool 3d/environment` writes), the equirectangular-to-cube
 // conversion a fetched LDR panorama needs at runtime, the GPU prefilter
 // that turns a rendered cube (a reflection probe's, a baked sky's) into
 // the roughness chain, and the placeholder cube a scene binds as uEnv
@@ -28,8 +28,8 @@ import type { CreateOptions, DrawId, ProgramId, RenderPipelineId, SamplerOptions
 import { decodeEnvironment, levelRoughness, mipLevels } from "./environment-bake.ts"
 
 /**
- * Read a baked environment (`srt tool 3d/environment sky.hdr -o
- * assets/sky.srte`) and upload it: the HDR cube with its GGX-prefiltered
+ * Read a baked environment (`sol tool 3d/environment sky.hdr -o
+ * assets/sky.sol3e`) and upload it: the HDR cube with its GGX-prefiltered
  * mip chain, as an explicit "rgba16f" chain - no generated mipmaps, so it
  * works on every device. The id is what `environment={{ cube }}` and
  * `background={{ cube }}` take (Three's `scene.environment` from an
@@ -147,7 +147,7 @@ const EQUIRECT_FACE = glsl`
  * photographed sky uploaded as such, "rgba8" (default) for data,
  * "rgba16f" for an HDR panorama (the cube keeps the range; renderable on
  * every device with half-float rendering, else it throws - the prefiltered
- * form of that panorama is `srt tool 3d/environment` plus
+ * form of that panorama is `sol tool 3d/environment` plus
  * loadEnvironment). The panorama's center column faces -Z and its top
  * row is +Y. Leave its wrap at the default clamp: `repeat` would also
  * wrap vertically and bleed the poles across the top and bottom rows,
@@ -280,7 +280,7 @@ export function bufferFormat(): BufferFormat {
  * `source`, a `mipmap: true` cube of the same size and format (a cube
  * draw target rendered sharp), one pass per face per level - 48 small
  * passes at 128. Three's PMREMGenerator, Unity's and Godot's probe
- * convolution, on the same roughness-to-level rule as the .srte chain
+ * convolution, on the same roughness-to-level rule as the .sol3e chain
  * (levelRoughness), so `standard` reads both alike.
  */
 export function createPrefilter(size: number, source: TextureId, format: BufferFormat, label: string): Prefilter {

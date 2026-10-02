@@ -30,7 +30,7 @@ import {
   sphere,
 } from "@solidrt/3d"
 import type { FirstPersonCameraHandle, MeshNode, MoveResult, SceneHandle, Vec3, Volume } from "@solidrt/3d"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 
 // Layer bit the level geometry adds to its drawn layer: what every
 // collision query selects, so pickups (drawn only) never block the walker.

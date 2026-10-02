@@ -6,7 +6,7 @@
 // window and the clamp hold, a frame-batched stream (same-age
 // sample pairs) reads as the unbatched one, a shift keeps the fit, and the
 // fling gate. Explicit timestamps, so it is deterministic and needs no
-// timers. Pure-module input only, so it runs headless on flux: `srt test
+// timers. Pure-module input only, so it runs headless on flux: `sol test
 // packages/core`.
 
 import { test } from "flux:test"

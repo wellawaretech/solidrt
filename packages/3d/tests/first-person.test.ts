@@ -3,7 +3,7 @@
 // vocabulary's units, the rates integrated by update(dt) with the unit
 // clamp on diagonals, walk vs fly, clampPosition, the pitch clamps, glideTo
 // (exact landing, clampPosition every frame, dropped by input and set())
-// and active(). Pure-module input only, headless on flux: `srt test
+// and active(). Pure-module input only, headless on flux: `sol test
 // packages/3d`. Deterministic.
 
 import { test } from "flux:test"

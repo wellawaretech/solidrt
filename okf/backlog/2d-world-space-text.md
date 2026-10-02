@@ -55,7 +55,7 @@ which is exactly what the sprite layer already draws.
 ## Open questions
 
 - Where does the bake run - createAtlas-style at app startup (simple,
-  costs startup ms), or `srt bundle` time as a packaged asset?
+  costs startup ms), or `sol bundle` time as a packaged asset?
 - One shared glyph atlas per font/size, or pack multiple sizes and let
   zoom pick (mip-like)?
 - Does the helper own updates (setText re-diffing glyph sprites) or stay

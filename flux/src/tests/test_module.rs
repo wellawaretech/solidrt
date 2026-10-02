@@ -95,7 +95,7 @@ fn the_records_open_with_the_listing_and_close_with_done() {
   let Record::Result(one) = &records[1] else { panic!("expected a result, got {:?}", records[1]) };
   assert_eq!(one.output, vec!["in one".to_string()]);
   assert_eq!(records[3], Record::Done);
-  assert!(records[1].line().starts_with("\u{1e}srt-test {"));
+  assert!(records[1].line().starts_with("\u{1e}sol-test {"));
 }
 
 #[test]

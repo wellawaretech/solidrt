@@ -1,4 +1,4 @@
-// The baked model container (.srtm): ModelData as one file whose payload IS
+// The baked model container (.sol3m): ModelData as one file whose payload IS
 // the GPU layout, so loading it is a header parse plus typed-array views -
 // no per-vertex work. Written by tools/model.flux.ts (from parseGltf),
 // read by loadModel on flux; both ends are this pure module. An image
@@ -6,7 +6,7 @@
 // the image's name.
 //
 // Layout, all little-endian:
-//   "SRTM" u32 | version u32 | jsonLength u32 | json (padded to 4) | payload
+//   "SOLM" u32 | version u32 | jsonLength u32 | json (padded to 4) | payload
 // The JSON header describes each block's byte range into the payload; every
 // block starts 4-aligned so Float32Array/Uint32Array views sit on it
 // directly. Images travel as their encoded files (PNG/JPEG bytes), app
@@ -23,14 +23,14 @@ import { layoutStride, vertexView, VERTEX_FORMATS } from "./geometry.ts"
 import type { VertexAttribute } from "@solidrt/core/gpu"
 import type { Geometry, VertexLayout } from "./geometry.ts"
 
-/** "SRTM" read as a little-endian u32. */
-const MAGIC = 0x4d545253
+/** "SOLM" read as a little-endian u32. */
+const MAGIC = 0x4d4c4f53
 // Version 3 retained the node hierarchy - a node table (name/parent/TRS)
 // in the header, parts referencing their node, vertices NODE-LOCAL
 // instead of world-baked - and carries skins (joints + inverse binds,
 // parts in the "skinned" layout) and animation clips (channel
 // times/values as payload blocks). Version-2 files world-baked and have
-// none of it, so they are rejected - re-bake with `srt tool 3d/model`.
+// none of it, so they are rejected - re-bake with `sol tool 3d/model`.
 // Version 4 adds the metalness/roughness fields to the material records
 // (metalness, roughness, metalnessRoughnessMap); a version-3 file lacks
 // them, so it is rejected the same way rather than read as all-metal.
@@ -39,7 +39,7 @@ const MAGIC = 0x4d545253
 // carry packed channels; a version-5 file's "vec3" words do not parse.
 // Version 7 changes the named "skinned" layout's joints from float32x4 to
 // uint8x4 (an integer shader input), so a version-6 skinned part would
-// decode at the wrong stride; it is rejected. Re-bake with `srt tool
+// decode at the wrong stride; it is rejected. Re-bake with `sol tool
 // 3d/model`.
 // Version 8 carries morph targets: a part's packed targets block (names,
 // the sparse-by-vertex texels, the extent - see packMorphTargets), the
@@ -55,7 +55,7 @@ const MAGIC = 0x4d545253
 // shared blocks, see the header). A version-9 file has none of these and is rejected like
 // every earlier version rather than read as a file without them, so a
 // stale bake never silently drops the data an app relies on. Re-bake
-// with `srt tool 3d/model`.
+// with `sol tool 3d/model`.
 // Version 11 names the images: an image record is its block and the
 // image's name (ModelImage.name), which labels its texture. A
 // version-10 file has blocks alone and is rejected the same way.
@@ -138,7 +138,7 @@ type Header = {
   blobs?: Record<string, Block>
 }
 
-/** Serialize a model into the .srtm container. */
+/** Serialize a model into the .sol3m container. */
 export function encodeModel(data: ModelData): Uint8Array {
   let blocks: Uint8Array[] = []
   let offset = 0
@@ -237,7 +237,7 @@ export function encodeModel(data: ModelData): Uint8Array {
 }
 
 /**
- * Read a .srtm container back into ModelData. The geometry arrays are
+ * Read a .sol3m container back into ModelData. The geometry arrays are
  * VIEWS onto `bytes` (copied once only when the input is not 4-aligned),
  * so the bytes must outlive the model.
  */

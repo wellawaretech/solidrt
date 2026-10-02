@@ -452,9 +452,9 @@ Every rung is real code; the measurements are checkpoints inside it.
 ## Verification, on device
 
 Build: `make -C lattice android-client VIDEO=1 ANDROID_ABI=<abi>`, gradle
-`assembleGoDebug -PsrtAbi=<abi>`, `adb -s <serial> install -r`. The TV is
+`assembleGoDebug -PsolAbi=<abi>`, `adb -s <serial> install -r`. The TV is
 armeabi-v7a, the tablet arm64-v8a. Run through the dev server with `--lan`
-and `srt android`; the user drives the device, and the numbers are read
+and `sol android`; the user drives the device, and the numbers are read
 off the device without touching it:
 
 - `adb shell dumpsys SurfaceFlinger --latency <video layer>`: the VIDEO

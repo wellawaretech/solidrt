@@ -1,7 +1,7 @@
 // The stepping half of the headless hosts (okf/done/test-harness.md, stage
 // 4): alloy's stepped mode emits no frame signal, so the host asks for every
 // frame, and app time is frame / fps and nothing else. Two hosts step: test
-// mode (test_host.rs, where a test asks through `srt:test`) and the render
+// mode (test_host.rs, where a test asks through `sol:test`) and the render
 // host (render_host.rs, which steps a fixed number of frames and reads each
 // back). Both take the wall out of the engine (`performance.now()` reads 0,
 // the calendar is a fixed epoch plus frame time, `Math.random` is seeded).
@@ -29,7 +29,7 @@ pub(crate) const EPOCH_MS: f64 = 946_684_800_000.0;
 const NS_PER_SECOND: u64 = 1_000_000_000;
 
 /// The frame signal alloy does not emit, and the frame rate. Context
-/// userdata in a stepped engine, which `srt:test` and the render host step
+/// userdata in a stepped engine, which `sol:test` and the render host step
 /// through.
 #[derive(Clone, JsLifetime)]
 pub(crate) struct Stepper {
@@ -134,7 +134,7 @@ impl Stepper {
 
 /// Whether the window's size has reached this engine (the first resize,
 /// which is what an app's first frame is built on), and who waits for it:
-/// a test's mount (`srt:test` `windowReady`, a JS promise) or the render
+/// a test's mount (`sol:test` `windowReady`, a JS promise) or the render
 /// host (a native waiter). Installed with the engine, ahead of any import:
 /// the resize can land before the file has evaluated.
 #[derive(Clone, Default, JsLifetime)]
@@ -189,7 +189,7 @@ pub(crate) fn window_ready(ctx: &Ctx<'_>) {
   };
   for (resolve, _hold) in promises {
     if let Err(e) = resolve.restore(ctx).and_then(|resolve| resolve.call::<_, ()>(())) {
-      flux::report_uncaught(ctx, e, "srt:test windowReady()");
+      flux::report_uncaught(ctx, e, "sol:test windowReady()");
     }
   }
   for waiter in waiters {

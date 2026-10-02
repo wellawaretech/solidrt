@@ -22,7 +22,7 @@
 // plane, so the far pillars sink into the horizon instead of clipping
 // (`examples/fog.tsx` is the fog tour).
 import { createSignal, flush, onFrame, pct, render } from "@solidrt/core"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 import { box, DirectionalLight, HemisphereLight, phong, Mesh, PerspectiveCamera, plane, Scene, sphere } from "@solidrt/3d"
 import type { Geometry, Vec3 } from "@solidrt/3d"
 

@@ -1,7 +1,7 @@
 import { CLI_VERSION } from "./project"
 
-// What srt says about itself: the version, the usage, and the short hint a
-// bare `srt`, an unknown command or a bad flag gets instead of the full usage
+// What sol says about itself: the version, the usage, and the short hint a
+// bare `sol`, an unknown command or a bad flag gets instead of the full usage
 // (so an error line stays on screen).
 
 export function printVersion() {
@@ -12,7 +12,7 @@ export function printVersion() {
 // stderr, and only an error fails the run.
 export function hint(error?: string): never {
   if (error) console.error(error)
-  console.log(`srt ${CLI_VERSION}\nRun srt --help for usage.`)
+  console.log(`sol ${CLI_VERSION}\nRun sol --help for usage.`)
   process.exit(error ? 1 : 0)
 }
 
@@ -20,7 +20,7 @@ export function printUsage() {
   console.log(USAGE)
 }
 
-const USAGE = `Usage: srt <command> [options] [file]
+const USAGE = `Usage: sol <command> [options] [file]
 
 Commands:
   init <dir>             Scaffold a new SolidRT project into a new (empty) folder
@@ -34,7 +34,7 @@ Commands:
   android [file.apk]     Launch the client on a connected Android device, installing it where missing
                          (--apk: pack the app and install that instead; a packed APK: install and launch it)
   bundle [file]          Transpile TS/JS/TSX/JSX to JS or bytecode
-                         (a prebuilt <name>.srt.js: compile it to bytecode)
+                         (a prebuilt <name>.sol.js: compile it to bytecode)
   check [file]           Verify the app builds and typechecks, without writing anything
                          (no file: every examples/*/src/index.tsx, packages/*/examples/*.tsx,
                          packages/*/demos/src/*.tsx and tests/*.test.ts)
@@ -46,14 +46,14 @@ Commands:
 
 Global options:
       --help             Print this usage and exit
-      --version          Print the srt version and exit
+      --version          Print the sol version and exit
 
 run/server/bundle/pack/render: what the command works on
-  srt run                In a project root (package.json): the project, entry from
+  sol run                In a project root (package.json): the project, entry from
                          "solidrt": { "entry" } (default src/index.tsx)
-  srt run <file>         Outside a project: the file on its own (no assets, no isolates)
-  srt run <file> --project   In a project root: the project, with this entry
-  srt run <file> --file      In a project root: the file on its own, ignoring the project
+  sol run <file>         Outside a project: the file on its own (no assets, no isolates)
+  sol run <file> --project   In a project root: the project, with this entry
+  sol run <file> --file      In a project root: the file on its own, ignoring the project
   Build outputs land under dist/ in the current directory.
   One server per project or file; each keeps the port it had last time,
   else the first free one from 34884 up (see the startup line). Loopback only unless --lan.
@@ -83,8 +83,8 @@ android options:
                          installed from the project's @solidrt/android-<abi> target where missing,
                          and offered as an update where the project's package carries another version
                          (the first time, a picker asks which Android targets the project adds)
-  <file.apk>             Install a packed APK (srt pack --apk) and launch it, nothing dev-flavored
-      --apk              Pack the app (srt pack --apk), then install and launch on each device the APK
+  <file.apk>             Install a packed APK (sol pack --apk) and launch it, nothing dev-flavored
+      --apk              Pack the app (sol pack --apk), then install and launch on each device the APK
                          built for its ABI
       --install          Reinstall the client first, even when it is current
       --port <N>         Point it at the local dev server on this port
@@ -105,7 +105,7 @@ bundle options:
   -m, --minify           Minify the output
       --compile          Compile to bytecode
   -o, --output <dir>     Output directory (default: dist/bundle; for a prebuilt
-                         .srt.js, its own directory)
+                         .sol.js, its own directory)
       --stdout           Write bundle to stdout
       --json             Write the bundle, its manifest and its isolates as one JSON object
                          to stdout (the dev server's rebuild; --server <host:port> names it)
@@ -123,8 +123,8 @@ console options:
 pack options:
       --folder           Write the flat app folder (runner + manifest + bundle + assets)
                          instead of the single-file executable
-      --app              Write the app alone as one <name>.srtapp (manifest + bundle + assets,
-                         no runner), for a runner to load: solidrt <file>.srtapp
+      --app              Write the app alone as one <name>.solapp (manifest + bundle + assets,
+                         no runner), for a runner to load: solidrt <file>.solapp
       --apk              Patch the app into installable Android APKs, one per installed target
                          (dist/<name>-<abi>.apk; id, label, icon, version, payload; no Android SDK
                          needed; base: the target's runner APK; the first time, a picker asks

@@ -2,7 +2,7 @@
 // never by searching upward. The rule and its table live in
 // packages/cli/src/lib/mode.ts (the bun copy the one-shot commands use); this is
 // the same table for the server, over flux:fs - two honest copies rather
-// than an fs shim (okf/done/srt-command-folders.md):
+// than an fs shim (okf/done/sol-command-folders.md):
 //
 //   cwd has package.json   argument   mode
 //   yes                    none       project (entry = solidrt.entry, default src/index.tsx)
@@ -23,7 +23,7 @@ export type Mode =
   | { mode: "file"; key: string; projectDir: null; entry: string }
 
 const DEFAULT_ENTRY = "src/index.tsx"
-// A prebuilt .srt.js ends with .js, so it is admitted by the same list.
+// A prebuilt .sol.js ends with .js, so it is admitted by the same list.
 export const ENTRY_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"]
 
 export async function resolveMode(args: { entry: string | undefined; project: boolean; file: boolean }): Promise<Mode> {
@@ -32,7 +32,7 @@ export async function resolveMode(args: { entry: string | undefined; project: bo
   let source = args.entry
 
   if (source !== undefined && !ENTRY_EXTENSIONS.some((ext) => source.endsWith(ext))) {
-    fail(`Not an app entry: ${source} (expected .tsx, .jsx, .ts, .js or .srt.js)`)
+    fail(`Not an app entry: ${source} (expected .tsx, .jsx, .ts, .js or .sol.js)`)
   }
   if (source !== undefined && !(await file(source).exists())) fail(`Entry not found: ${source}`)
   if (args.file && args.project) fail("--file and --project exclude each other")

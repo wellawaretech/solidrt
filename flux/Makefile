@@ -9,9 +9,9 @@ else
   CARGO_PROFILE_FLAG = --profile $(PROFILE)
 endif
 
-SRT_HOME ?= $(abspath $(CURDIR)/..)
+SOLIDRT_HOME ?= $(abspath $(CURDIR)/..)
 
-include $(SRT_HOME)/platform.mk
+include $(SOLIDRT_HOME)/platform.mk
 
 # $(1) = binary name (no extension)
 define stage-bin
@@ -30,7 +30,7 @@ build-opt:
 
 # The flux binary hosts the dev server and the bake tools, so it carries
 # the texture encoder (flux:image encodeTexture); KTX2=0 leaves it out. It
-# is also what `srt test` runs test files on, so it alone carries flux:test.
+# is also what `sol test` runs test files on, so it alone carries flux:test.
 KTX2 ?= 1
 ifeq ($(KTX2),0)
 FLUX_FEATURES = --features test

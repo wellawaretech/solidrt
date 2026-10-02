@@ -6,7 +6,7 @@ created: 2026-07-24
 
 # Move the fetch disk cache out of forge?
 
-Follow-up to the 2026-07-24 storage cleanup (project-local `.srt-data`
+Follow-up to the 2026-07-24 storage cleanup (project-local `.solidrt-data`
 reverted, `dev_cache_dir` deleted, bare flux/fluxrt bins cache-free).
 That change established that caching is embedder policy, not runtime
 behavior: after it, the only thing that ever configures a cache dir is

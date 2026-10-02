@@ -13,16 +13,16 @@ import { installPlatformTools, platformToolsAvailable } from "./platform-tools"
 import { resolveByPort, resolveFromCwd } from "../lib/registry"
 import type { LiveRecord } from "../types/registry"
 
-// `srt android`: the Android client flow, decoupled from `srt client` (a
+// `sol android`: the Android client flow, decoupled from `sol client` (a
 // local process) because a device is a different thing: find it over adb and
 // launch the client installed there pointed at the dev server, which is
-// resolved like `srt client` does (the project at the cwd, or --port). A
+// resolved like `sol client` does (the project at the cwd, or --port). A
 // device without the client gets it installed, from the project's
 // @solidrt/android-<abi> target for the device's ABI (android-targets.ts,
 // which asks for the targets the first time); an installed client whose
 // version is not the one that package carries is updated after asking, so a
 // client built and installed by hand stays unless you say so. --install
-// reinstalls regardless. --apk runs `srt pack --apk` and installs the
+// reinstalls regardless. --apk runs `sol pack --apk` and installs the
 // packed app instead.
 
 // The published Player's application id. Every build from a checkout
@@ -56,7 +56,7 @@ function resolveAdb() {
 }
 
 // Resolve adb, offering to download platform-tools when it is missing (on a
-// terminal; the default is yes because typing `srt android` already states
+// terminal; the default is yes because typing `sol android` already states
 // the intent). Non-interactive runs keep the print-and-exit behavior: CI
 // should install adb itself, and gets told how.
 async function requireAdb(): Promise<string> {
@@ -374,7 +374,7 @@ async function launch(adb: string, { target }: Device, player: string, server: L
   let launchArgs = [adb, "-s", target, "shell", "am", "start", "-S", "-n", `${player}/${MAIN_ACTIVITY}`]
   if (devServer) {
     console.log(`[cli] Client on ${target} will dial dev server at ${devServer}`)
-    launchArgs.push("--es", "srt_dev_server", devServer)
+    launchArgs.push("--es", "sol_dev_server", devServer)
   } else if (server) {
     console.log(`[cli] Could not resolve a host address for ${target}; client will need a manual/QR connect`)
   }
@@ -397,7 +397,7 @@ function apkAppId(path: string): string {
   }
 }
 
-// Install a packed APK (srt pack --apk) on `target` and launch it. Nothing
+// Install a packed APK (sol pack --apk) on `target` and launch it. Nothing
 // dev-flavored applies: a packed app carries its payload and never dials the
 // dev server.
 async function installPacked(adb: string, target: string, file: string, appId: string) {
@@ -414,7 +414,7 @@ async function installPacked(adb: string, target: string, file: string, appId: s
   console.log(`[cli] Launched ${appId} on ${target}`)
 }
 
-// `srt android <file.apk>`: install and launch that APK on the connected
+// `sol android <file.apk>`: install and launch that APK on the connected
 // devices.
 async function installApkFile(path: string) {
   let file = resolve(path)
@@ -427,7 +427,7 @@ async function installApkFile(path: string) {
   for (let { target } of await resolveTargets(adb)) await installPacked(adb, target, file, appId)
 }
 
-// `srt android --apk`: pack the app for every installed target (srt pack
+// `sol android --apk`: pack the app for every installed target (sol pack
 // --apk), then install and launch on each device the APK built for its ABI.
 // The devices are resolved first, so their ABIs are among the targets. Pack
 // loads the bundler, so it is imported only on this path.

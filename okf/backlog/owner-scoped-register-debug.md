@@ -10,7 +10,7 @@ Source: the animated-explainer demo feedback (2026-08-02). The demo's clock
 signal is a module-level createSignal purely so its seek/pause/play debug
 commands can reach it from module init.
 
-srt:dev's registerDebug documents "registrations reset on hot reload, so
+sol:dev's registerDebug documents "registrations reset on hot reload, so
 register at module init" - correct, but the constraint leaks into app
 structure. An owner-scoped registration (auto-cleaned on owner disposal
 like onFrame, re-registered naturally when the new instance mounts) would

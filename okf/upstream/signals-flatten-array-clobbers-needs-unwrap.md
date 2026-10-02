@@ -91,7 +91,7 @@ Found while verifying: `@solidjs/babel-plugin` (universal output) hoists a
 JSX element's `createElement` + `insert` calls to the top of the enclosing
 function, so `if (flag) return <view>{props.children}</view>` runs its
 insert (and reads the element-valued prop, building a subtree) even when
-`flag` is false. The `srt bundle` output shows `insert(_el$5, () =>
+`flag` is false. The `sol bundle` output shows `insert(_el$5, () =>
 props.children)` before the `if`. Not written up separately yet.
 
 Outcome 2026-08-31: fixed on `next` in ed2fb43c (#3149): needsUnwrap is ORed

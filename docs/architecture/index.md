@@ -24,8 +24,8 @@ forge     engine-free cores: fs, http, sqlite, subprocess, p2p, wasm, ffi, ...
   `flux:*` capability modules, and `alloy_plugins/` for the GUI bindings.
 - **lattice** combines alloy and flux into the runtime that actually hosts
   an app: window lifecycle, storage, the dev-server connection, and the
-  `srt:*` modules an app sees on top of Flux (`srt:render`, `srt:events`,
-  `srt:dev`, `srt:app`).
+  `sol:*` modules an app sees on top of Flux (`sol:render`, `sol:events`,
+  `sol:dev`, `sol:app`).
 
 Two rules keep the layering honest, and both are load-bearing rather than
 stylistic. Plugins only marshal: a plugin converts arguments and results

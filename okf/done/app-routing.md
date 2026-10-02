@@ -1,6 +1,6 @@
 ---
 title: Application routing
-description: "@solidrt/router: a typed route tree with validated params, a memory stack run as Solid transitions, one back step, blocking, links in and location out; the mapping that makes screens addressable by OS links, MCP, srt render, reload and restore alike. Own package on core only, headless core plus a thin Solid binding, no data layer. A consumer of the link primitive in deep-links.md, never inside core."
+description: "@solidrt/router: a typed route tree with validated params, a memory stack run as Solid transitions, one back step, blocking, links in and location out; the mapping that makes screens addressable by OS links, MCP, sol render, reload and restore alike. Own package on core only, headless core plus a thin Solid binding, no data layer. A consumer of the link primitive in deep-links.md, never inside core."
 created: 2026-09-23
 completed: 2026-09-23
 ---
@@ -12,7 +12,7 @@ signals of its own shape (`screen`, `panel`, `selectedId`), switches on
 them, and registers one `onBack` handler per level. That works, and stays
 the right answer for an app that wants nothing more. But it means no one
 outside the app can name a screen: not a deep link, not an MCP tool, not
-`srt render`, not the dev server after a reload, not the app itself when
+`sol render`, not the dev server after a reload, not the app itself when
 it restores after Android killed it. Each of those needs a string that
 means "the settings screen, theme section", and the app would have to
 write the parser and the serializer for it, twice, and keep them in step.
@@ -32,7 +32,7 @@ Two words for two things, kept apart everywhere (core, router, CLI, MCP):
   tool. Both forms are accepted wherever a link is taken; the scheme and
   host, when present, identify the app and are dropped before routing.
   Core's inbound surface is named after it: `onLink`, `env.launchLink`
-  (see [deep-links](../backlog/deep-links.md)); the tooling is `srt render --link`,
+  (see [deep-links](../backlog/deep-links.md)); the tooling is `sol render --link`,
   MCP `open_link`, `POST /__control__/link`.
 - **Location.** Where the app is: the router's state, a path plus parsed
   params, the top of the stack. Router API words are the web's
@@ -49,7 +49,7 @@ In order of value to this project:
 
 1. **Screens addressable by everyone, with one vocabulary.** A link opens
    the screen on every entry path: the OS (deep link, notification, app
-   shortcut, Android TV channel), `srt render --link /settings` for a
+   shortcut, Android TV channel), `sol render --link /settings` for a
    deterministic screenshot of any screen, MCP `open_link` so an agent
    verifies a screen without tapping through `/tree`, reload-on-save
    re-entering the location the developer was looking at, and restore
@@ -57,7 +57,7 @@ In order of value to this project:
    stack saved in `onSuspend`). Logs and crash reports carry the
    location. With the router, `myapp://settings/theme` *is*
    `/settings/theme`; there is no per-app mapping at all. Given how
-   central MCP, probes and `srt render` are to how this project is built
+   central MCP, probes and `sol render` are to how this project is built
    and verified, this item alone justifies the feature.
 2. **Compile-time links.** Routes are typed values, so `navigate` to a
    removed screen or with a wrong param is a build error. An app shipped
@@ -222,7 +222,7 @@ not-found screen, no separate option.
   `notFound` route when there is one, else is ignored with a warning and
   the app stays put: a link is external input, not API misuse, so it is
   not a throw-in-dev site.
-- `Router` calls `reportLocation(path)` from `srt:dev` (typed in core's
+- `Router` calls `reportLocation(path)` from `sol:dev` (typed in core's
   runtime-modules.d.ts) on every change of the current path, nothing
   more, and `reportLocation(null)` on unmount. A reported value, not a
   getter: the runtime keeps a plain string that outlives the engine, so
@@ -260,7 +260,7 @@ loaders, no loader cache, nothing to invalidate.
 
 ## Tooling that rides on it
 
-- `srt render --link <link>`: render at a location. Screenshots for docs,
+- `sol render --link <link>`: render at a location. Screenshots for docs,
   visual regression per screen.
 - MCP `open_link` and `POST /__control__/link`: open a screen in the
   running client. Also the way to test link handling on desktop and in
@@ -285,7 +285,7 @@ loaders, no loader cache, nothing to invalidate.
    Verified live on a file-mode dev server: links land on every player
    screen through `POST /__control__/link`, `GET` reads the location, a
    synthetic gamepad's back pops the stack, a bad id is refused with a
-   warning, and `srt render --link` renders a probe at a link.
+   warning, and `sol render --link` renders a probe at a link.
 2. DONE 2026-09-23: reload re-entry, in the client's engine loop (see
    Tooling). Done with it: `registerLocation(getter)` became
    `reportLocation(value)`, since a value the runtime holds can be read
@@ -375,6 +375,6 @@ and
 ## Depends on
 
 - [deep-links](../backlog/deep-links.md): core's `onLink` and `env.launchLink`, the
-  control API `link` endpoint, and later the OS registration in `srt
+  control API `link` endpoint, and later the OS registration in `sol
   pack`. The router is the main consumer but not a prerequisite for that
   item; the primitive is usable alone.

@@ -159,7 +159,7 @@ impl RasterState {
       // being stalled in the driver; log which step, rate-limited to one line
       // per second so a sustained stall stays readable. Debug, not warn: a
       // saturated tiled GPU (Android TV) lives here in steady state, and the
-      // timing stats carry the numbers - raise SRT_LOG=debug to see these.
+      // timing stats carry the numbers - raise SOLIDRT_LOG=debug to see these.
       if wait_ms + draw_ms + present_ms > 35.0 && self.slow_frame_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
         self.slow_frame_log = Some(std::time::Instant::now());
         log::debug!("[alloy] slow frame: fence wait {wait_ms:.1}ms, draw {draw_ms:.1}ms, present {present_ms:.1}ms");
@@ -216,7 +216,7 @@ impl RasterState {
   /// get_stats (fenceTimeouts) and logged at debug 1/s: a healthy discrete
   /// GPU never hits this while a saturated tiled one (Android TV) lives near
   /// it in steady state, so the counter is the observability and the log
-  /// line is SRT_LOG=debug diagnosis material (see
+  /// line is SOLIDRT_LOG=debug diagnosis material (see
   /// okf/backlog/idle-tick-gpu-backlog-runaway.md, present-fence finding).
   fn await_present_fence(&mut self) {
     while self.present_fences.len() >= PRESENT_FENCE_DEPTH {

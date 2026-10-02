@@ -3,8 +3,8 @@
 // every cell of the rect exactly once and nothing outside it, each slice
 // inside its own chunk, and the cell/rect validation throws. Pure-module
 // input only (tiles-math.ts imports nothing), so it runs headless on flux:
-// `srt test packages/2d`. The random inputs come from Math.random, which
-// `srt test` seeds: the same on every run, and `--seed <n>` tries others.
+// `sol test packages/2d`. The random inputs come from Math.random, which
+// `sol test` seeds: the same on every run, and `--seed <n>` tries others.
 
 import { test } from "flux:test"
 import { checkCell, checkRect, chunkOf, eachChunkSlice, slotOf } from "../src/tiles-math.ts"

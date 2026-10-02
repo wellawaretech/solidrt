@@ -9,16 +9,16 @@ completed: 2026-08-21
 
 ## Symptom
 
-`srt render` does not support isolates. The bundler builds one bundle per
+`sol render` does not support isolates. The bundler builds one bundle per
 "use isolate" module, but only the dev-server path writes them to disk
-(`.srt-data/isolates/`); render writes just the main bundle and passes the
+(`.solidrt-data/isolates/`); render writes just the main bundle and passes the
 project root as `--assets`, so the runtime's `isolates/<id>.js` lookup finds
 nothing and `isolate(id)` rejects with "no such isolate module in this app".
 
-Underneath it: build outputs are scattered. Render drops `<entry>.srt.js`
+Underneath it: build outputs are scattered. Render drops `<entry>.sol.js`
 next to the source, `pack --folder` dumps runner + manifest + assets straight
 into `dist/` root, the single-file exe lands next to the source, and dev
-isolate bundles live in `.srt-data/`. There is no place a flow can stage a
+isolate bundles live in `.solidrt-data/`. There is no place a flow can stage a
 complete app-shaped directory.
 
 ## Decision
@@ -29,7 +29,7 @@ one subdir per flow, and each flow owns - and may wipe - only its own subdir:
 
 ```
 dist/
-  render/    staged run dir: <name>.srt.js + isolates/<id>.js + assets/
+  render/    staged run dir: <name>.sol.js + isolates/<id>.js + assets/
   pack/      the canonical pack folder (current --folder output, moved down)
   <format>/  future pack formats, one subdir each (e.g. steam/)
 ```
@@ -38,18 +38,18 @@ dist/
   This is the same shape as an installed version dir (`assets/` plus
   `isolates/` under one root, what `AssetsBase::Dir` expects), so no runtime
   or forge changes - and it fixes both the isolate gap and the source-adjacent
-  `.srt.js` wart. Assets are copied in (reuse `collectAssets`, as pack does);
+  `.sol.js` wart. Assets are copied in (reuse `collectAssets`, as pack does);
   the subdir is wiped first so removed isolates and deleted assets cannot go
   stale.
 - **pack --folder** defaults to `dist/pack/` instead of `dist/`. Pack will
   grow more formats (a Steam depot layout, for instance); the root must not
   be any single format's output or the first new format collides.
-- **Single-file deliverables** (the packed executable, `.srtapp`, `.apk`,
+- **Single-file deliverables** (the packed executable, `.solapp`, `.apk`,
   and `--flux` exes) also default into `dist/`, as root-level files named
   by the appId's last segment (revised 2026-09-02 from "next to the
   source": deliverables in `src/` polluted the tree). Files in the root do
   not collide with the per-flow subdirs; `--output` overrides.
-- **dev stays in `.srt-data/`** for now. Its isolate bundles are dev-server
+- **dev stays in `.solidrt-data/`** for now. Its isolate bundles are dev-server
   serving state tied to a running server, closer to runtime data than build
   output. Revisit when asset pre-processing exists (below).
 
@@ -72,23 +72,23 @@ contract stays "a dir containing assets/". Consequences, deferred but known:
 
 ## State
 
-Landed 2026-08-21: `srt render` stages `dist/render/` (bundle + isolates/ +
+Landed 2026-08-21: `sol render` stages `dist/render/` (bundle + isolates/ +
 copied assets) and passes it as `--assets`; verified by
 probes/isolate-render-probe.tsx (frame and log show the isolate reply).
-`pack --folder` defaults to `dist/pack/`. Render no longer writes `.srt.js`
+`pack --folder` defaults to `dist/pack/`. Render no longer writes `.sol.js`
 next to sources.
 
-Also landed 2026-08-21: `srt bundle` no longer drops isolate bundles, and is
+Also landed 2026-08-21: `sol bundle` no longer drops isolate bundles, and is
 a directory flow like the others. Output goes to `dist/bundle/` (or
 `--output <dir>`, refused when the dir is non-empty and not a previous
 bundle output - the writePackFolder rule): the bundle plus `isolates/<id>.js`
 (`.bin` with --compile). The `.js` and `.bin` forms share the isolates/ dir,
-so a rebuild clears only the form it rewrites. Prebuilt `.srt.js` loads
+so a rebuild clears only the form it rewrites. Prebuilt `.sol.js` loads
 (server startup, repl `load`) read the sibling isolates/ dir back and
 republish through the dev flow; `--stdout` warns that it carries only the
 main bundle.
 
-`srt bundle --flux` carries isolate modules too. Standalone flux resolves by
+`sol bundle --flux` carries isolate modules too. Standalone flux resolves by
 location, not directive - the contract moved from `<entry dir>/<id>.js` to
 `<entry dir>/isolates/<id>.js` (flux.rs resolver; flux/examples/isolates/) -
 so bundling preserves the shape: everything under the entry's isolates/ dir
@@ -97,12 +97,12 @@ bundled flux script runs from dist/bundle/ unchanged. A worker may be .ts
 when bundling (built to .js), unlike running from source.
 
 Bugs fixed en route: `isSource` matched any `.js` so the server re-bundled a
-prebuilt `.srt.js` as source (prebuilt branch was dead code).
+prebuilt `.sol.js` as source (prebuilt branch was dead code).
 
 The flux bytecode/pack gaps are closed (okf/done/flux-packed-isolates.md):
 the flux resolver reads .bin first, `--flux --compile` emits isolate
 bytecode, and packed flux exes carry and resolve isolates via the shared
-section trailer. Known gap left: repl `load x.srt.bin` pushes bytecode
+section trailer. Known gap left: repl `load x.fluxbc` pushes bytecode
 without a manifest, so isolates cannot travel on that path.
 
 The asset pre-processing pipeline above (with its incrementality manifest)

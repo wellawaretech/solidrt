@@ -20,7 +20,7 @@
 // shadows morph too.
 
 import { createSignal, onCleanup, onFrame, pct, render } from "@solidrt/core"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 import { DirectionalLight, geometryAttribute, geometryVertexCount, getMorphNames, getMorphWeights, HemisphereLight, Instance, InstancedMesh, phong, Mesh, PerspectiveCamera, plane, Scene, setMorphWeights, sphere, withMorphTargets } from "@solidrt/3d"
 import type { InstanceNode, MeshNode } from "@solidrt/3d"
 

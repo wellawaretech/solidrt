@@ -86,7 +86,7 @@ function flushDestroy(): void {
 function removeNode(parent: ProxyNode, node: ProxyNode): void {
   if (!node || !parent) return
 
-  // console.debug("[srt] removeNode", parent.id, node.id)
+  // console.debug("[sol] removeNode", parent.id, node.id)
 
   // Update JS tree references
   let index = parent.children.indexOf(node)
@@ -113,7 +113,7 @@ function removeNode(parent: ProxyNode, node: ProxyNode): void {
 // bookkeeping on the hot create/insert paths, orphans are derived from the
 // proxy map itself: parentless, not the window root, and not awaiting the
 // destroy sweep. window.ts runs the scan on a rendered frame every few
-// seconds; dev bundles only (srt always defines import.meta.env.DEV, so a
+// seconds; dev bundles only (sol always defines import.meta.env.DEV, so a
 // production bundle folds the check into a constant early return).
 const SENTINEL_INTERVAL_MS = 5000
 let sentinelDue = 0
@@ -208,7 +208,7 @@ function routeFor(name: string): number {
 function applyProp<T>(node: ProxyNode, name: string, value: T): void {
   if (!node) return
 
-  // console.debug("[srt] applyProp", node.id, name, value)
+  // console.debug("[sol] applyProp", node.id, name, value)
 
   switch (routeFor(name)) {
     case ROUTE_EVENT:
@@ -234,7 +234,7 @@ let renderer = createRenderer<ProxyNode>({
   createElement: (elementType: string, props?: Record<string, any>): ProxyNode => {
     let proxy = createProxyNode(elementType)
 
-    // console.debug("[srt] createElement", proxy.id, elementType)
+    // console.debug("[sol] createElement", proxy.id, elementType)
 
     if (elementType === "window") tree.createRoot(proxy.id)
     else tree.createNode(proxy.id, elementType)
@@ -257,20 +257,20 @@ let renderer = createRenderer<ProxyNode>({
   // no element form of its own (the DOM's "#text" node name).
   createTextNode: (value: string): ProxyNode => {
     let proxy = createProxyNode("#text")
-    // console.debug("[srt] createTextNode", proxy.id, value)
+    // console.debug("[sol] createTextNode", proxy.id, value)
     tree.createNode(proxy.id, "#text")
     tree.setProperty(proxy.id, "text", "" + value)
     return proxy
   },
 
   replaceText: (node: ProxyNode, value: string): void => {
-    // console.debug("[srt] replaceText", node.id, value)
+    // console.debug("[sol] replaceText", node.id, value)
     tree.setProperty(node.id, "text", "" + value)
   },
 
   isTextNode: (node: ProxyNode): boolean => node?.elementType === "#text",
   setProperty: <T>(node: ProxyNode, name: string, value: T): void => {
-    // console.debug("[srt] setProperty", node.id, name, value)
+    // console.debug("[sol] setProperty", node.id, name, value)
     applyProp(node, name, value)
   },
 
@@ -294,7 +294,7 @@ let renderer = createRenderer<ProxyNode>({
     pendingDestroy.delete(node.id)
 
     if (parent) {
-      // console.debug("[srt] insertNode", parent.id, node.id, anchor?.id ?? "")
+      // console.debug("[sol] insertNode", parent.id, node.id, anchor?.id ?? "")
 
       // Native first: the tree refuses a laid-out element under a d-* parent
       // (it throws, naming both tags), and the mirror must not record a child

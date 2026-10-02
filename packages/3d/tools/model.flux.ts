@@ -1,4 +1,4 @@
-// srt tool 3d/model: bake a glTF into a .srtm model file - the parse
+// sol tool 3d/model: bake a glTF into a .sol3m model file - the parse
 // (src/gltf.ts) run once here, the result written in the exact layout
 // loadModel views without any per-vertex work at runtime. Same parser,
 // same subset, same result as loadGltf; this only moves the cost to build
@@ -20,7 +20,7 @@
 // `@solidrt/3d/model` entry (src/model-data.ts), the same surface an
 // app's own bake script uses under bun.
 //
-//   srt tool 3d/model <in.gltf|in.glb> [-o <out.srtm>] [--compress|--no-compress]
+//   sol tool 3d/model <in.gltf|in.glb> [-o <out.sol3m>] [--compress|--no-compress]
 
 import { file, glob } from "flux:fs"
 import { decodeImage, encodeTexture } from "flux:image"
@@ -42,7 +42,7 @@ const IMAGES_IN_FLIGHT = 4
 // of the texture settings are written from.
 const PROJECT_ROOT = "."
 
-const USAGE = "Usage: srt tool 3d/model <in.gltf|in.glb> [-o <out.srtm>] [--compress|--no-compress]"
+const USAGE = "Usage: sol tool 3d/model <in.gltf|in.glb> [-o <out.sol3m>] [--compress|--no-compress]"
 
 function usage(error?: string): never {
   if (error) console.error(error)
@@ -149,7 +149,7 @@ for (let i = 0; i < argv.length; i++) {
   else usage("Unexpected argument " + arg)
 }
 if (input === undefined) usage("Missing input file")
-if (output === undefined) output = basename(input, extname(input)) + ".srtm"
+if (output === undefined) output = basename(input, extname(input)) + ".sol3m"
 
 // The parse is synchronous, so the external files it will open are read
 // ahead of it (the same prefetch loadGltf does).

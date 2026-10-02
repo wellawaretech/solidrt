@@ -182,7 +182,7 @@ fn ensure_init() -> InitStatus {
   let mut state = INIT_STATE.lock().expect("camera init state poisoned");
   match &*state {
     InitState::NotStarted => {
-      let spawned = std::thread::Builder::new().name("srt-camera-init".into()).spawn(|| {
+      let spawned = std::thread::Builder::new().name("sol-camera-init".into()).spawn(|| {
         let result = if sdl_utils::camera_subsystem_init() {
           Ok(())
         } else {

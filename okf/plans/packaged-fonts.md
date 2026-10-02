@@ -1,13 +1,13 @@
 ---
 title: Fonts as pack-time payload
-description: The solidrt runtime goes font-free and srt pack appends fonts as trailer sections, with the three Noto role defaults declared through the package.json solidrt fonts key.
+description: The solidrt runtime goes font-free and sol pack appends fonts as trailer sections, with the three Noto role defaults declared through the package.json solidrt fonts key.
 created: 2026-07-20
 ---
 
 # Fonts as pack-time payload
 
 Decouple the default fonts from the runtime binary so a packed app can swap,
-add, or drop fonts without rebuilding: fonts are appended by `srt pack` the
+add, or drop fonts without rebuilding: fonts are appended by `sol pack` the
 same way the JS bytecode is. Draft under discussion 2026-07-20. Sequencing
 decided: fonts ship first, ahead of the client-storage/update work, with an
 interim in-memory registration path and a recorded migration.
@@ -16,7 +16,7 @@ interim in-memory registration path and a recorded migration.
 
 - The `solidrt` runtime binary ships no font data. The `include_bytes!`
   Notos leave alloy; the binary shrinks ~3.7 MB (38.5 -> ~34.8 MB).
-- `srt pack` appends fonts as trailer sections. By default it appends
+- `sol pack` appends fonts as trailer sections. By default it appends
   three Noto files (Sans, Serif, Sans Mono), so a default packed app
   renders identically on every platform (consistency is preserved by
   default, now via packaging).
@@ -25,8 +25,8 @@ interim in-memory registration path and a recorded migration.
   or renders no text.
 - Font declaration lives in project config (the `solidrt` key in
   package.json, per the update-mechanism design), NOT in CLI flags. Three
-  consumers need the same font set - dev server push, future `srt
-  publish`, and `srt pack` - and flags can only feed pack. One source of
+  consumers need the same font set - dev server push, future `sol
+  publish`, and `sol pack` - and flags can only feed pack. One source of
   truth; no `--font`/`--no-default-fonts` flags.
 - With no font registered, Impeller falls back to the platform font
   manager (fontconfig/DirectWrite/CoreText). Verified on Linux via
@@ -36,7 +36,7 @@ interim in-memory registration path and a recorded migration.
   resolve and fall back to the proportional default.
 - `solidrt-go` (dev client) keeps the Notos compiled in - all three,
   including the new Noto Serif (+1.9 MB): it is never packed, and the dev
-  loop (default screen, BSOD, HUD, `srt render` golden frames) needs
+  loop (default screen, BSOD, HUD, `sol render` golden frames) needs
   deterministic text matching a default packed app. The embed moves out
   of alloy into the go-client build. `make download-fonts` gains the Noto
   Serif file. Once fonts ride the dev push as assets (see Alignment),
@@ -99,7 +99,7 @@ each section's bytes, then a table of section entries, then entry count,
 then magic. The magic stays `SOLIDRT\x88\x44` unchanged: CLI and runners
 ship pinned together so no format versioning is needed, and the parser
 bounds-checks every table offset/length so a stale runner meeting a
-new-format trailer (contributor SRT_HOME mismatch) degrades to "no
+new-format trailer (contributor SOLIDRT_HOME mismatch) degrades to "no
 payload" instead of misparsing.
 
 Two section kinds, with per-section alias metadata instead of one kind
@@ -117,7 +117,7 @@ bytes (len 0 = no alias). Exact encoding settled at implementation time.
 ## Config surface
 
 The `solidrt` package.json key gains a `fonts` map: alias -> font file
-path, nothing else. `srt pack` reads it (dev push and publish read the
+path, nothing else. `sol pack` reads it (dev push and publish read the
 same key later).
 
 ```json
@@ -146,7 +146,7 @@ Anything finer (intrinsic-name registration without an alias, etc.) is
 deliberately not designed now; revisit when the client-storage plan
 executes and the manifest `fonts` array becomes the authoritative home.
 
-Default font resolution at pack time: `SRT_HOME/alloy/assets/fonts/` for
+Default font resolution at pack time: `SOLIDRT_HOME/alloy/assets/fonts/` for
 contributors; the published CLI package carries its own copy of the three
 Noto files (platform-independent, so the CLI package is the channel, not
 the per-platform binary packages; ~5.6 MB on the CLI package).
@@ -202,7 +202,7 @@ the per-platform binary packages; ~5.6 MB on the CLI package).
 - Dev/prod gap (interim only): dev shows the embedded Notos; a custom
   font only shows in the packed app. Closes automatically when fonts
   ride the dev push as manifest assets (see Alignment).
-- Android: not affected today (`srt pack` is desktop-only; the APK uses
+- Android: not affected today (`sol pack` is desktop-only; the APK uses
   the dev-client model). When Android production packaging happens,
   fonts ride as APK assets, no current_exe trick.
 - Size (measured 2026-07-20): the Notos are big because they are
@@ -237,7 +237,7 @@ the per-platform binary packages; ~5.6 MB on the CLI package).
       parser (section offsets/lengths/aliases, table consumed exactly)
 - [x] Config errors are loud: missing font file and non-string/false
       values exit 1 with the offending key
-- [ ] `srt render` golden diff against a pre-change frame (go client
+- [ ] `sol render` golden diff against a pre-change frame (go client
       embeds are the same files; default screen re-rendered fine, no
       stored golden to byte-diff)
 - [ ] System-font probe on Windows (winbox) before documenting the
@@ -253,7 +253,7 @@ Alignment migration - the version manifest carries font annotations
 the version store, and a store boot registers them over the embedded
 defaults (restart-visible; live registration still out). Custom
 fonts now must live under assets/. Stages 3b + 3c (same day)
-complete the Alignment migration: `srt pack --folder` materializes
+complete the Alignment migration: `sol pack --folder` materializes
 the full font set (defaults included) into the folder's
 assets/fonts/, the single-file trailer carries the same files as
 manifest-named sections (the font section kind and its alias field

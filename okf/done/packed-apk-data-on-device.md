@@ -1,6 +1,6 @@
 ---
 title: Keep a packed APK's data on the device, and let it declare permissions
-description: Every APK from srt pack --apk was debuggable (the runner was a Gradle debug build, so adb run-as read the app's private files), backed up everything (allowBackup on, so Auto Backup copied data, fetch cache, logs and the p2p identity key to the cloud and to a new phone), and could not use the camera (permissions were the runner's fixed set); the runner is now a release build with backup rules that keep everything on the device, and package.json switches capabilities and the backup intention at the top level in platform-neutral terms, with an android group for versionCode and extra permissions.
+description: Every APK from sol pack --apk was debuggable (the runner was a Gradle debug build, so adb run-as read the app's private files), backed up everything (allowBackup on, so Auto Backup copied data, fetch cache, logs and the p2p identity key to the cloud and to a new phone), and could not use the camera (permissions were the runner's fixed set); the runner is now a release build with backup rules that keep everything on the device, and package.json switches capabilities and the backup intention at the top level in platform-neutral terms, with an android group for versionCode and extra permissions.
 created: 2026-09-25
 completed: 2026-09-25
 ---

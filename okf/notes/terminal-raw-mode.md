@@ -36,7 +36,7 @@ job is stopped by job control the moment it changes terminal settings
 (SIGTTOU, `Stopped (tty output)` in `jobs`) or reads (SIGTTIN); a stopped
 process holds every signal but SIGKILL/SIGCONT, so `kill %1` does nothing
 until the shell exits and SIGHUPs it, without a clean shutdown. Reproduced
-2026-08-26 with `srt server &`. The check is `tcgetpgrp(stdin) == getpgrp()`
+2026-08-26 with `sol server &`. The check is `tcgetpgrp(stdin) == getpgrp()`
 (rustix, safe), folded into `forge::tty::is_terminal`: a terminal we would
 be stopped for touching counts as none, and the server runs without a repl
 as it does under a supervisor. Windows has no job control.
@@ -66,5 +66,5 @@ Working feed for the dev-server repl, from a project directory:
 
 ```
 (sleep 12; printf 'hel\t\r'; sleep 0.5; printf '\x1b[A\r'; sleep 0.5; printf '\x03'; sleep 4) \
-  | script -qec "bun run srt server" /dev/null
+  | script -qec "bun run sol server" /dev/null
 ```

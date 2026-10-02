@@ -2,8 +2,8 @@
 // rotated-rect containment test against a brute-force oracle that
 // transforms the rect's corners forward and half-plane-tests the point,
 // plus hand-written edge cases. Pure-module input only (pick.ts imports no
-// GUI), so it runs headless on flux: `srt test packages/2d`. The random
-// inputs come from Math.random, which `srt test` seeds: the same on every
+// GUI), so it runs headless on flux: `sol test packages/2d`. The random
+// inputs come from Math.random, which `sol test` seeds: the same on every
 // run, and `--seed <n>` tries others.
 
 import { test } from "flux:test"

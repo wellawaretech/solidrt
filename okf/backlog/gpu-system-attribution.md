@@ -1,6 +1,6 @@
 ---
 title: Whole-system GPU attribution, per platform
-description: Answering "who else is burning the GPU" needs a different mechanism on every OS, so it wants a documented per-platform recipe or an srt doctor helper rather than an engine feature.
+description: Answering "who else is burning the GPU" needs a different mechanism on every OS, so it wants a documented per-platform recipe or an sol doctor helper rather than an engine feature.
 created: 2026-08-13
 ---
 
@@ -15,7 +15,7 @@ Each platform needs its own mechanism, which is why this never became one
 feature: Linux `/proc` fdinfo, macOS IOKit or powermetrics, Windows DXGI
 `QueryVideoMemoryInfo` / ETW, Android gpuwork or atrace.
 
-Shape to decide: a documented per-platform recipe, or a small `srt doctor`-style
+Shape to decide: a documented per-platform recipe, or a small `sol doctor`-style
 helper that runs the right one. Probably not an engine feature either way -
 nothing here belongs in the runtime.
 

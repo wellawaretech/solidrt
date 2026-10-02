@@ -123,7 +123,7 @@ unsupported in both modes, documented as before.
   `docs/reference/elements.md`, `examples/README.md`; components
   `docs/icon.md` only where it names the flat shape (then
   `bun scripts/build-components-docs.ts`).
-- Verify: `cargo test -p forge -p alloy`, `bun run srt check`, run the example
+- Verify: `cargo test -p forge -p alloy`, `bun run sol check`, run the example
   under `--project --port 34899` and read the tree back.
 
 ## Related

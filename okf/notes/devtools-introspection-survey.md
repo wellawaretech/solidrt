@@ -93,7 +93,7 @@ context, dev-only. The chat shape is literally a REPL transcript. Open
 design question (ask before building): `registerDebug` is the sanctioned
 "commands, not eval" pattern, and an eval endpoint is a philosophical step
 past it - though the control API already lets any caller `/load` arbitrary
-entries, so it is not a new trust boundary, and `srt run` already has a flux
+entries, so it is not a new trust boundary, and `sol run` already has a flux
 repl to route.
 
 ### 6. Streaming

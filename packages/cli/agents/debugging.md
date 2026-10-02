@@ -6,8 +6,8 @@ shell or a CI step ("The control API without MCP" below).
 
 ## Driving the app over MCP
 
-The project ships an MCP server (`srt mcp`) that talks to the dev server
-`bun run srt run` starts. If your client lists no `solidrt` tools, it has not
+The project ships an MCP server (`sol mcp`) that talks to the dev server
+`bun run sol run` starts. If your client lists no `solidrt` tools, it has not
 been pointed at the server yet - see "Wiring up an agent client" below. Each
 tool documents its arguments in full - read the tool description rather than
 guessing at them; the records the tools return are the control API's, and
@@ -15,11 +15,11 @@ their fields are documented once, under "The control API without MCP" below.
 What the individual descriptions cannot tell you:
 
 - If `list_clients` is empty, no app is running: ask the user to start
-  `bun run srt run` rather than starting a second one yourself.
+  `bun run sol run` rather than starting a second one yourself.
   The bridge needs no port: it resolves the server currently serving this
   project, whatever `--port` it was started with, and re-resolves when
   that server goes away or a different project's server takes its port.
-  Passing the flag to `srt mcp` pins the bridge to that one server instead.
+  Passing the flag to `sol mcp` pins the bridge to that one server instead.
 - Several clients may be attached at once (desktop window, phone, tablet)
   with different sizes, display scales and safe areas. `reload` pushes to all
   of them, but `call_debug` / `send_input` / `get_snapshot` are per client
@@ -46,11 +46,11 @@ What the individual descriptions cannot tell you:
 - A `shader` on `<window>` runs on the finished frame past the point every
   capture reads: `get_snapshot` returns the UNSHADED content (window node
   included), `get_texture` has no id for the shaded layer, and
-  `get_gpu_resources` reports only that the pass exists. `bun run srt render` is
+  `get_gpu_resources` reports only that the pass exists. `bun run sol render` is
   the only programmatic view of what a window shader produces.
 - Permission prompts: agents typically ask approval per MCP tool. All of
   these tools only talk to the local dev server the user started with
-  `bun run srt run` - nothing leaves the machine - so approving the server as a
+  `bun run sol run` - nothing leaves the machine - so approving the server as a
   whole is a reasonable default. If repeated prompts get in the way, do not
   work around them; tell the user they can pre-approve the server in their
   agent's settings (most agents have a per-server trust or allowlist setting
@@ -66,7 +66,7 @@ servers, so every other client reads its own file. The entry is the same
 everywhere, in the client's syntax:
 
 ```json
-{ "command": "bun", "args": ["node_modules/@solidrt/cli/bin/srt", "mcp"] }
+{ "command": "bun", "args": ["node_modules/@solidrt/cli/bin/sol", "mcp"] }
 ```
 
 Where it goes (these locations move between client releases; check the
@@ -93,11 +93,11 @@ client itself was launched from the project root (or the client supports a
 
 ## The dev server
 
-What the dev server (`srt run` / `srt server`) is and what it serves.
+What the dev server (`sol run` / `sol server`) is and what it serves.
 
 - A dev server serves a project (started in its root: the cwd must hold the
-  package.json) or a single file (`srt run <file>` outside a project). Both
-  in one place is ambiguous, so `srt run <file>` in a project root needs
+  package.json) or a single file (`sol run <file>` outside a project). Both
+  in one place is ambiguous, so `sol run <file>` in a project root needs
   `--project` (the project, with this entry) or `--file` (the file alone).
   Nothing searches upward for a package.json.
 - One server per project or file. The server binds the port it had last
@@ -106,16 +106,16 @@ What the dev server (`srt run` / `srt server`) is and what it serves.
 - Dev state lives in `~/.solidrt/`: `servers/<key hash>/` holds each server's
   `live.json` (the registry record, written by the server and removed at
   exit), its remembered `port` and tunnel key; `clients/client<N>/` the
-  client trees. `srt client` and `srt mcp` resolve the server from the
+  client trees. `sol client` and `sol mcp` resolve the server from the
   registry by the project (or served file) at their cwd; `--port` pins one.
   A record whose process died is pruned when the next server starts, and
   resolution confirms a record against the server before using it.
 - The server is one flux process, complete on its own:
   `flux dist/server.js [file] [--project|--file] [--port N] [--lan]
   [--proxy-http] [--capture f] [--tunnel] [--stats] [--client N ...] [-- args]`
-  (src/server/args.ts). It finds the platform binaries, bun and srt through
-  `SRT_PLATFORM_DIR`, `SRT_BUN` and `SRT_CLI`, which `srt` sets; started by
-  hand in a checkout it needs only `SRT_HOME`.
+  (src/server/args.ts). It finds the platform binaries, bun and sol through
+  `SOLIDRT_PLATFORM_DIR`, `SOLIDRT_BUN` and `SOLIDRT_CLI`, which `sol` sets; started by
+  hand in a checkout it needs only `SOLIDRT_HOME`.
 - Reload-on-save watches the bundle's inputs (every file the running
   bundle was built from, dependencies included) and the `assets/` tree, not
   a directory: a file the app does not import never triggers a rebuild,
@@ -131,7 +131,7 @@ What the dev server (`srt run` / `srt server`) is and what it serves.
 Every MCP tool is a thin wrapper over the dev server's HTTP control API, so
 a shell script, a CI step, or an agent with no MCP bridge can drive the app
 the same way. Base: `http://127.0.0.1:<port>/__control__/`, where `<port>`
-is the one `srt run` printed at startup (also in the server's
+is the one `sol run` printed at startup (also in the server's
 `~/.solidrt/servers/*/live.json` record). GET unless noted;
 every endpoint answers JSON and an error is `{ "error": "..." }` with a
 4xx/5xx status, and every response carries `x-solidrt-project` (the key
@@ -232,7 +232,7 @@ when exactly one client is connected.
   the whole number of refreshes each frame interval is currently held to
   below the refresh rate (1 = no hold; a held interval is not a miss),
   which the client chooses from the app's frame work time where the
-  policy is on (touch and remote-driven clients) and `SRT_CADENCE_HOLD`
+  policy is on (touch and remote-driven clients) and `SOLIDRT_CADENCE_HOLD`
   (`off`, `auto`, or a number of refreshes) pins for a measurement;
   `frameWorkMeanMs` / `frameWorkMaxMs` are that work time over the last
   second (frame signal to swap call plus GPU time), what the hold's
@@ -283,7 +283,7 @@ when exactly one client is connected.
   queries) and `verticesPerFrame`, the vertices (indices on an indexed
   draw) submitted, which says a pass is vertex-bound before any timer is
   read; fill still needs subtraction. On Android the compositor's own
-  record of the presents is `srt android --census` (`--clear --seconds
+  record of the presents is `sol android --census` (`--clear --seconds
   <N>` around an interaction): present intervals in refreshes and the
   per-frame GPU span, the figures every pacing and paint-cost verdict is
   checked against.
@@ -365,7 +365,7 @@ The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
   you will want repeatedly (a pose, a mode, a counter), bind a debug key that
   logs it and read it back via get_logs.
 - Better than debug keys when driving the app over MCP: register debug
-  COMMANDS - `registerDebug(name, fn)` from `srt:dev`, invoked via the
+  COMMANDS - `registerDebug(name, fn)` from `sol:dev`, invoked via the
   list_debug/call_debug tools. Use them to SET UP state (jump to a level,
   force a mode, seed a scenario); then the runtime-level tools take over -
   set_time_scale 0 freezes the result for as many snapshots as you need,

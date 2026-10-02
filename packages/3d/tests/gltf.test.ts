@@ -1,4 +1,4 @@
-// Tests for the glTF parser (src/gltf.ts) and the .srtm container
+// Tests for the glTF parser (src/gltf.ts) and the .sol3m container
 // (src/model-file.ts): a glb built in memory from the box generator, split
 // back into planar accessors the way exporters write them, under a node
 // tree - a translated mesh under a translated parent (hierarchy retained,
@@ -6,7 +6,7 @@
 // normals on a matrix-form node (flat normals generated, TRS decomposed)
 // and a meshless empty (pruned). Then the container round trip and the
 // .gltf + external file path. Pure-module inputs only, so it runs headless
-// on flux: `srt test packages/3d`.
+// on flux: `sol test packages/3d`.
 
 import { test } from "flux:test"
 import { isKtx2 } from "@solidrt/core/textures"

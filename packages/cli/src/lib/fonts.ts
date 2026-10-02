@@ -3,7 +3,7 @@ import { resolve } from "node:path"
 import { loadProject } from "./project"
 import { fail } from "./util"
 
-// The fonts `srt pack` appends to a solidrt binary (see
+// The fonts `sol pack` appends to a solidrt binary (see
 // okf/plans/packaged-fonts.md). By default the three Noto role defaults;
 // the project's package.json can override them via the `solidrt.fonts` map
 // (alias -> font file path, false to drop a default, true to keep one - the
@@ -28,12 +28,12 @@ let DEFAULT_FONTS: Record<string, string> = {
   mono: "NotoSansMono.ttf",
 }
 
-// Where the default Noto files live: a contributor checkout via SRT_HOME, the
+// Where the default Noto files live: a contributor checkout via SOLIDRT_HOME, the
 // fonts/ copy shipped inside the published CLI package (staged at release
 // time), or the monorepo relative to this source file.
 function defaultFontsDir(): string | null {
   let candidates: string[] = []
-  if (process.env.SRT_HOME) candidates.push(resolve(process.env.SRT_HOME, "alloy/assets/fonts"))
+  if (process.env.SOLIDRT_HOME) candidates.push(resolve(process.env.SOLIDRT_HOME, "alloy/assets/fonts"))
   candidates.push(resolve(import.meta.dir, "../../fonts"))
   candidates.push(resolve(import.meta.dir, "../../../../alloy/assets/fonts"))
   for (let dir of candidates) {
@@ -72,7 +72,7 @@ export function resolvePackFonts(projectDir: string | null): ResolvedFont[] {
     if (path === null) {
       defaultsDir ??= defaultFontsDir() ?? fail(
         "Could not find the default fonts (NotoSans.ttf and friends).\n" +
-          "Point SRT_HOME at your SolidRT checkout (and run `make download-fonts` there if needed).",
+          "Point SOLIDRT_HOME at your SolidRT checkout (and run `make download-fonts` there if needed).",
       )
       path = resolve(defaultsDir, DEFAULT_FONTS[alias]!)
     }

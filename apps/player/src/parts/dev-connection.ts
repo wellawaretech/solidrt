@@ -6,8 +6,8 @@
 // signals, the launch-address auto-connect fires at load, and screens read the
 // exported accessors directly - each read subscribes the caller.
 import { createSignal } from "@solidrt/core"
-import { on } from "srt:events"
-import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev"
+import { on } from "sol:events"
+import { available as devAvailable, connect as devConnect, launchAddress } from "sol:dev"
 import { normalizeAddress, type DevState } from "./types"
 
 export let available = devAvailable

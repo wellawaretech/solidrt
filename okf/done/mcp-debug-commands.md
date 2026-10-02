@@ -1,13 +1,13 @@
 ---
 title: App-registered debug commands via MCP
-description: The srt:dev registerDebug plus MCP list_debug/call_debug, replacing the debug-keys and get_logs pattern for poking a running app; async commands still unsupported.
+description: The sol:dev registerDebug plus MCP list_debug/call_debug, replacing the debug-keys and get_logs pattern for poking a running app; async commands still unsupported.
 created: 2026-07-15
 completed: 2026-07-27
 ---
 
 Implemented 2026-07-15, with one deviation from the sketch below: the module
-is the existing `srt:dev` (lattice), not a new `flux:dev` - the dev-server
-connection is lattice/go's domain and `srt:dev` already had the right
+is the existing `sol:dev` (lattice), not a new `flux:dev` - the dev-server
+connection is lattice/go's domain and `sol:dev` already had the right
 availability story (registered in every build, no-op outside go). registerDebug
 stores Persistent functions in a DebugRegistry ctx userdata (resets on hot
 reload as proposed); MCP list_debug/call_debug -> /__control__/debug (GET

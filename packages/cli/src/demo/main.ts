@@ -3,11 +3,11 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { source } from "../lib/args"
 
-// srt demo: the package demos the CLI ships pre-bundled (dist/demos/, built
+// sol demo: the package demos the CLI ships pre-bundled (dist/demos/, built
 // by `make -C packages/cli demos`: the release workflow before publishing, a
 // checkout after editing a demo or its package). dist/demos/<pkg>/ is the
 // package's demos project as the dev server serves it - package.json,
-// assets/, and <slug>/<slug>.srt.js per demo - so a demo runs as the project
+// assets/, and <slug>/<slug>.sol.js per demo - so a demo runs as the project
 // it lives in: this file only lists and resolves, and main.ts starts the
 // ordinary dev server with its cwd set to that project. Nothing downstream
 // knows about demos, and a demo shows up in the console like any app.
@@ -22,8 +22,8 @@ function discover(): Demo[] {
   for (let pkg of names(DEMOS)) {
     let cwd = join(DEMOS, pkg)
     for (let slug of names(cwd)) {
-      let entry = join(slug, `${slug}.srt.js`)
-      if (names(join(cwd, slug)).includes(`${slug}.srt.js`)) demos.push({ name: `${pkg}/${slug}`, cwd, entry })
+      let entry = join(slug, `${slug}.sol.js`)
+      if (names(join(cwd, slug)).includes(`${slug}.sol.js`)) demos.push({ name: `${pkg}/${slug}`, cwd, entry })
     }
   }
   return demos
@@ -53,7 +53,7 @@ export async function main(): Promise<{ cwd: string; entry: string } | undefined
 
   if (source === undefined) {
     list(demos)
-    console.log("\nRun one with: srt demo <number>")
+    console.log("\nRun one with: sol demo <number>")
     return undefined
   }
 

@@ -13,7 +13,7 @@
 // the occlusion constraint (in at once, out eased), the pan plane and the
 // focus axis. Pure-module input only (orbit.ts imports
 // `@solidrt/core/input`, no runtime module), so it runs headless on flux:
-// `srt test packages/3d`. Deterministic.
+// `sol test packages/3d`. Deterministic.
 
 import { test } from "flux:test"
 import { flush } from "@solidjs/signals"

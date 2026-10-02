@@ -67,7 +67,7 @@ multisample resolve at the format, then the tone-map resolve - the
 standard order; the depth-"texture"-with-samples rule is unchanged.
 
 A probe is a buffer WITHOUT a resolve: `LINEAR_OUTPUT` and its ownNames
-claim are deleted, the prefilter, `bakeBackground` and the .srte path
+claim are deleted, the prefilter, `bakeBackground` and the .sol3e path
 are unchanged. A tiled view (`into`) renders linear into the app's atlas
 and the app resolves the atlas once with the exported resolve source
 (below); one rule instead of an exception.

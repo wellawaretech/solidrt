@@ -1,14 +1,14 @@
 ---
 title: Several dev servers on one machine, each with its own clients and MCP route
-description: Design decided 2026-08-13. Two numbers - `--session`/`-s N` picks the dev-server port (34884 + N) and `--client`/`-c M` picks the client data tree (defaulting to the session number) - plus a three-folder split by ownership - server state keyed by port in `~/.solidrt/servers/<port>/` (dev tooling, a single home dotdir on every platform), project state in the project's .srt-data/, client state in ~/.solidrt/clients/client<M>/ - reached through the --data-root flag that already exists, so the client runtime needs no change and nothing dev-related is left under the SDL pref path. A server run serves the project it started in (`load` outside the project root is refused) while the server identity itself, keyed by port, is independent of any project and outlives every one it serves. The MCP bridge resolves its port per call from the global server registry by matching projectDir, so the scaffold's mcp.json never carries a port. Supersedes the 2026-08-08 scoping to one server per project folder and its project-local marker file.
+description: Design decided 2026-08-13. Two numbers - `--session`/`-s N` picks the dev-server port (34884 + N) and `--client`/`-c M` picks the client data tree (defaulting to the session number) - plus a three-folder split by ownership - server state keyed by port in `~/.solidrt/servers/<port>/` (dev tooling, a single home dotdir on every platform), project state in the project's .solidrt-data/, client state in ~/.solidrt/clients/client<M>/ - reached through the --data-root flag that already exists, so the client runtime needs no change and nothing dev-related is left under the SDL pref path. A server run serves the project it started in (`load` outside the project root is refused) while the server identity itself, keyed by port, is independent of any project and outlives every one it serves. The MCP bridge resolves its port per call from the global server registry by matching projectDir, so the scaffold's mcp.json never carries a port. Supersedes the 2026-08-08 scoping to one server per project folder and its project-local marker file.
 created: 2026-08-08
 completed: 2026-08-13
 ---
 
 # Several dev servers on one machine, each with its own clients and MCP route
 
-Goal shape: `srt run -s1` is the whole story. It starts a dev server on its
-own port with its own client and its own data folder, `srt client -s1 -c2`
+Goal shape: `sol run -s1` is the whole story. It starts a dev server on its
+own port with its own client and its own data folder, `sol client -s1 -c2`
 attaches a second client to it, and a coding agent's MCP tools reach the
 server for the project it is working in without hand-editing config per
 port.
@@ -49,7 +49,7 @@ spellings (`-s1`, `-s 1`, `--session 1`, `--session=1`) parse correctly with
   tunnel.key      iroh secret for the p2p tunnel
   live.json       { pid, port, projectDir, entry, started }
 
-<project>/.srt-data/                    the source tree
+<project>/.solidrt-data/                    the source tree
   http-cache.db                   proxy cache (--proxy-http only)
   typecheck-<pid>.tsconfig.json   transient
 
@@ -64,8 +64,8 @@ able to drift apart. Keying by port also makes a restart on the same port
 reuse the same key, which is what lets a paired client re-dial an old
 ticket after the server is restarted from a different project folder.
 
-**All dev state lives in one home dotdir** (decided 2026-08-13). srt is a
-CLI tool on a dev machine, so `~/.solidrt/` (`%USERPROFILE%\.srt\` on Windows)
+**All dev state lives in one home dotdir** (decided 2026-08-13). sol is a
+CLI tool on a dev machine, so `~/.solidrt/` (`%USERPROFILE%\.sol\` on Windows)
 holds both halves, resolved with `os.homedir()` and one rule on every
 platform. `rm -rf ~/.solidrt` resets every bit of dev state at once.
 
@@ -73,17 +73,17 @@ platform. `rm -rf ~/.solidrt` resets every bit of dev state at once.
 exists** - no new mechanism and no Rust change. `--data-root <dir>` already
 resolves to `<dir>/client<N>/{identity,config.json,logs,apps/<id>/{data,cache}}`,
 which is the identical shape to today's dev tree minus the vendor levels,
-and `clientStorageArgs()` already forwards it. srt simply always passes
+and `clientStorageArgs()` already forwards it. sol simply always passes
 `--data-root ~/.solidrt/clients` for the clients it spawns locally. The client
 keeps exactly one default rule (`SDL_GetPrefPath`) and gains no
-platform-conditional branch; srt just does not hand a host path to an
+platform-conditional branch; sol just does not hand a host path to an
 Android device, which is a choice about what to forward, not a special case
 in the runtime.
 
 The seam this creates, worth knowing about: a go client launched **directly**
-(bare `solidrt-go`, no srt) still resolves pref path, so it sees a
-different, empty store than the same binary launched through `srt client`.
-On desktop the client is essentially always started through srt, and on
+(bare `solidrt-go`, no sol) still resolves pref path, so it sees a
+different, empty store than the same binary launched through `sol client`.
+On desktop the client is essentially always started through sol, and on
 Android and the TV it is started by the OS and never gets a data root, so
 this is invisible in practice - but it is real, and someone will hit it
 while debugging.
@@ -102,7 +102,7 @@ moved to `~/.solidrt/clients/`, that collapses the layouts in
 
 | layout | when | shape |
 |---|---|---|
-| dev | `--data-root` (srt always passes it) | `<root>/client<N>/` + `apps/<id>/` - many clients, many apps |
+| dev | `--data-root` (sol always passes it) | `<root>/client<N>/` + `apps/<id>/` - many clients, many apps |
 | packed app | app id from the pack manifest | flat - one client, one app |
 | launcher | neither | one client, **many** apps - no client level |
 
@@ -114,19 +114,19 @@ clients) is meaningless.
 That also makes **`--client` a data-root-only flag**, which is a rule that
 already exists in this exact shape - storage.rs already warns and ignores it
 for a packed app ("--client does not apply to a packed app, ignoring") and
-now does the same whenever there is no explicit root. Since srt always
+now does the same whenever there is no explicit root. Since sol always
 forwards `--data-root` for dev clients, `-c` keeps working everywhere it is
 meant to.
 
-**Project state is resolved against `state.projectDir`, not srt's cwd.**
-Today `cacheDir: resolve(".srt-data")` and `keyDir: process.cwd()` in
+**Project state is resolved against `state.projectDir`, not sol's cwd.**
+Today `cacheDir: resolve(".solidrt-data")` and `keyDir: process.cwd()` in
 `packages/cli/src/dev-server.ts` resolve against the invoking directory, so
-`srt run` from a subfolder scatters them.
+`sol run` from a subfolder scatters them.
 
-**The tunnel key moves** from `<project>/.srt-tunnel-key` to
+**The tunnel key moves** from `<project>/.sol-tunnel-key` to
 `servers/<port>/tunnel.key`. Existing project-root key files go stale: the
 ticket changes once on the first run after the move, then stays stable.
-Old `.srt-data/http-cache.db` files are caches and can be deleted.
+Old `.solidrt-data/http-cache.db` files are caches and can be deleted.
 
 ### A server run serves the project it started in
 
@@ -189,7 +189,7 @@ restarted itself.
    - several: error listing them, e.g. "2 dev servers are serving this
      project (ports 34884, 34885); pass -s N".
    - none: error naming what was searched for, e.g. "No dev server for
-     /path/to/project. Start one with srt run, or pass -s N."
+     /path/to/project. Start one with sol run, or pass -s N."
 3. Probe `/__control__/clients` on the resolved port before use - it already
    returns `projectDir` - and reject on disagreement. `live.json` is a hint;
    the probe is authoritative, which is also how a stale record left by a
@@ -212,7 +212,7 @@ searched from and `-s N` is the escape hatch.
 
 Stages 1 and 2 implemented 2026-08-13 and verified live: a session-1 server
 bound 34885 with tunnel.key and live.json in `~/.solidrt/servers/34885/` and the
-proxy cache in the project's `.srt-data/`; the MCP bridge resolved the server
+proxy cache in the project's `.solidrt-data/`; the MCP bridge resolved the server
 from the project dir (and refused from a different project), followed the
 explicit `-s` escape hatch, and the registry record disappeared on SIGTERM.
 Two deltas from the text below, both consistency-tightening: the repl `load`
@@ -236,7 +236,7 @@ name isolated in one constant for a later rename or config.
 `-s`/`--session` and `-c`/`--client`; port from the session; client slot
 defaulting to the session; the tunnel key moved to
 `~/.solidrt/servers/<port>/`; `--data-root ~/.solidrt/clients` forwarded for every
-locally spawned client; `.srt-data` resolved against the project root; the
+locally spawned client; `.solidrt-data` resolved against the project root; the
 repl's `load` bound to the project root; help text and docs updated.
 
 Files: `packages/cli/src/args.ts` (options, `validateArgs`, `printUsage`,
@@ -249,11 +249,11 @@ Files: `packages/cli/src/args.ts` (options, `validateArgs`, `printUsage`,
 
 **Stage 2 - the registry and MCP routing.** CLI only. Write and remove
 `servers/<port>/live.json` around the server's lifetime; implement the
-per-call resolution above in `packages/cli/src/commands/mcp.ts`. An `srt
+per-call resolution above in `packages/cli/src/commands/mcp.ts`. An `sol
 servers` listing command falls out of the registry for free if wanted.
 
 **Stage 3 - the Rust half.** Independent of the other two and optional.
-Stages 1 and 2 work without it, because srt always passes `--data-root` and
+Stages 1 and 2 work without it, because sol always passes `--data-root` and
 that branch of `storage.rs` is already correct.
 
 - Drop the `client<N>` level from the launcher layout and make `--client`
@@ -277,7 +277,7 @@ apps) is **not** part of this item - see
   client's address, and the MCP bridge's control base. A standalone client
   carries the port in `--server <host:port>` instead.
 - **Port clash is already diagnosed.** `requireFreePort()` claims the port
-  in srt before spawning the flux server, turning a bare non-zero exit into
+  in sol before spawning the flux server, turning a bare non-zero exit into
   "Port N is already in use; start on another port with --port <N>".
 - **Many clients per server.** The server keeps a client map with ids,
   reload broadcasts to all of them, and every control endpoint takes a
@@ -288,7 +288,7 @@ apps) is **not** part of this item - see
   `apps/<app-id>/{data,cache}` and `logs/` (`lattice/src/storage.rs`),
   forwarded by `clientStorageArgs()`. The mechanism for "its own data
   folder" is in place; only the choosing of the number was not, and stage 1
-  chooses it in srt, so storage's "never auto-allocated" contract is
+  chooses it in sol, so storage's "never auto-allocated" contract is
   untouched - the number still arrives as an explicit flag.
 - **The MCP bridge is stateless glue.** Every tool call is one HTTP request
   to `http://127.0.0.1:<DEV_PORT>/__control__/...`, so any number of
@@ -303,7 +303,7 @@ apps) is **not** part of this item - see
 - **Session ordinal as the server folder key.** Breaks the moment `--port`
   is used: the same server would get two identities, and the tunnel ticket
   pins the port.
-- **A project-local server marker (`.srt-data/server.json`).** The
+- **A project-local server marker (`.solidrt-data/server.json`).** The
   2026-08-08 leading candidate. Redundant with the registry once server
   state lives in one place, and it puts a stale file inside the project
   after a crash instead of in one central place where pid liveness handles
@@ -317,7 +317,7 @@ apps) is **not** part of this item - see
 - **Auto-allocated client slots** (claim the first free). Deferred, and the
   reason for deferring got weaker: the original objection was that it must
   live in the client, since only the client knew the pref path. With dev
-  trees in `~/.solidrt/clients/`, srt knows the path too and could scan for a
+  trees in `~/.solidrt/clients/`, sol knows the path too and could scan for a
   free slot before spawning, leaving storage's "never auto-allocated"
   contract intact because the number still arrives as an explicit flag. It
   still needs a liveness signal to know which slots are taken, which is
@@ -325,8 +325,8 @@ apps) is **not** part of this item - see
   explicit number chafes.
 - **Scanning a port band** (2026-08-08). Breaks when someone picks 9000 and
   still has to match `projectDir` to disambiguate.
-- **XDG dirs for the server state**, i.e. `~/.local/share/srt/servers/` for
-  the key plus `$XDG_RUNTIME_DIR/srt/` for the registry. More correct on
+- **XDG dirs for the server state**, i.e. `~/.local/share/sol/servers/` for
+  the key plus `$XDG_RUNTIME_DIR/sol/` for the registry. More correct on
   Linux, and `XDG_RUNTIME_DIR` would have cleared stale registry records at
   logout for free. Deferred, not dismissed: it needs a second and third rule
   for Windows and macOS (`%LOCALAPPDATA%` + `%TEMP%`,

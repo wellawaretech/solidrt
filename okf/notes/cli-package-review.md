@@ -6,7 +6,7 @@ created: 2026-07-15
 
 # CLI package review
 
-Full review of `packages/cli` (~2.8k lines of TypeScript: 1.9k in the srt/Bun
+Full review of `packages/cli` (~2.8k lines of TypeScript: 1.9k in the sol/Bun
 process incl. 8 commands, 0.9k in the spawned flux dev server, plus scaffold
 templates and the bin stub) as of 2026-07-15. Every source file read; the
 `--help` crash verified by running the binary. Companion to the forge, alloy,
@@ -17,7 +17,7 @@ on.
 ## Summary
 
 The package is small, coherent, and unusually well-commented for CLI glue: the
-three-process architecture (srt/Bun owns bundling + repl + watcher, a spawned
+three-process architecture (sol/Bun owns bundling + repl + watcher, a spawned
 flux script owns HTTP/WS/proxy/tunnel, solidrt-go is the client) is deliberate,
 documented at every seam, and dogfoods flux as its own dev server. The pure
 core (`bundleWith`, `remapPositions`, the cache decision logic, `packRunner`)
@@ -25,7 +25,7 @@ is cleanly separated from ambient state, and error messages are consistently
 actionable (build hints per binary, adb install instructions per OS).
 
 The gaps are of the "tooling for the tooling" kind rather than architectural:
-there are zero tests of any form, `srt --help` crashes with a raw TypeError
+there are zero tests of any form, `sol --help` crashes with a raw TypeError
 stack trace instead of printing usage, the README documents flags that do not
 exist, and the repl's `reload`/`load` commands only handle `.tsx` while every
 other path accepts `.tsx/.jsx/.ts/.js`. Nothing found rises to
@@ -41,12 +41,12 @@ playback, and an 11-tool MCP bridge. Boundaries and holes:
 
 - **No `--help`/`-h` and no `--version`.** Worse, any unknown flag escapes
   `parseArgs` (strict mode) as an uncaught TypeError with a Bun stack trace -
-  verified: `srt --help` dumps `ERR_PARSE_ARGS_UNKNOWN_OPTION` pointing at
-  args.ts:3. Bare `srt` prints good usage; the crash path just needs a
+  verified: `sol --help` dumps `ERR_PARSE_ARGS_UNKNOWN_OPTION` pointing at
+  args.ts:3. Bare `sol` prints good usage; the crash path just needs a
   try/catch around `parseArgs` plus a help option.
-- **README.md is stale and thin.** It documents `srt run --server [file]` and
-  `srt run --client`, neither of which exists (both would hit the TypeError
-  above); the real spelling is `srt server` / `srt client`. It also omits
+- **README.md is stale and thin.** It documents `sol run --server [file]` and
+  `sol run --client`, neither of which exists (both would hit the TypeError
+  above); the real spelling is `sol server` / `sol client`. It also omits
   init, bundle, render, pack, mcp, --tunnel, and --capture entirely. AGENTS.md
   by contrast is accurate, current, and the best doc in the package; the
   README could largely defer to it.
@@ -54,16 +54,16 @@ playback, and an 11-tool MCP bridge. Boundaries and holes:
   per machine; a second instance dies as "[cli] Dev server exited unexpectedly
   (1)" rather than a clear port-in-use message. (Fixed 2026-07-28: `--port` on
   run/server/mcp, plus a port-in-use preflight before the server is spawned.)
-- **`srt client` cannot be pointed at a server** - the `--dev-server`
+- **`sol client` cannot be pointed at a server** - the `--dev-server`
   pass-through is a live TODO (commands/client.ts:18). Standalone clients rely
   on QR/recents only; manual entry is a known pending item.
 - **Host coverage**: binary resolution knows linux-x64, darwin-arm64,
   win32-x64 only. linux-arm64 and darwin-x64 hosts get "build it from source"
-  with no triple mapping even for the SRT_HOME path (artifacts.ts TRIPLE_MAP).
+  with no triple mapping even for the SOLIDRT_HOME path (artifacts.ts TRIPLE_MAP).
 - **`--output` is a basename, not a filename**, despite the help text saying
-  "Output filename": `-o app.js` writes `app.js.srt.js`. Either honor an
+  "Output filename": `-o app.js` writes `app.js.sol.js`. Either honor an
   extension when given or rename the help text.
-- **`render` leaves its intermediate `<entry>.srt.js` behind** next to the
+- **`render` leaves its intermediate `<entry>.sol.js` behind** next to the
   source, every run.
 - **init edge cases**: the folder-must-not-exist check does `readdir(dir)` and
   treats any failure as "does not exist", so a plain *file* at the target path
@@ -77,7 +77,7 @@ playback, and an 11-tool MCP bridge. Boundaries and holes:
 Production-level in the ways that matter for a dev tool, with a handful of
 genuine defects:
 
-- **Repl extension inconsistency (defect).** `srt server app.jsx` bundles fine
+- **Repl extension inconsistency (defect).** `sol server app.jsx` bundles fine
   (isSource covers 4 extensions) and the watcher rebuilds on all 4, but the
   repl's `reload` only rebuilds when the source ends in `.tsx` (repl.ts:44) -
   for a `.jsx`/`.ts` entry it silently re-sends the stale latched bundle. And
@@ -156,7 +156,7 @@ process spawning needed:
 - `binaryImport` (bundler.ts) via `transformAsync` on fixture strings.
 - `hostIpFor`/`ipToInt` (dev-android.ts): pure subnet math.
 - `packRunner` trailer layout (packer.ts) against a fixture buffer.
-- `packageName`, `resolveBinary`/`resolveApk` with a temp SRT_HOME.
+- `packageName`, `resolveBinary`/`resolveApk` with a temp SOLIDRT_HOME.
 
 A second tier (still cheap, one spawned process): boot server/main.ts with a
 synthetic config, assert `/__internal__/clients` answers, non-loopback 403s
@@ -180,5 +180,5 @@ which is an argument for starting there.
 8. `--port` flag (or at least a clear port-in-use message).
 9. Drop `bonjour-service` from dependencies; read MCP version from
    package.json; honor or re-document `-o`.
-10. Small hygiene: stale tsconfig include, render's leftover `.srt.js`,
+10. Small hygiene: stale tsconfig include, render's leftover `.sol.js`,
     init's exists-as-file check.

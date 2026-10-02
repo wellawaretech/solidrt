@@ -37,7 +37,7 @@ shared layer, deliberately bone-free:
 What is genuinely 2d-package work: a skinned mesh primitive in the layer
 vocabulary (vertices with joints/weights against the sprite shaders - the
 one new pipeline), a rig asset path (likely a bake tool from a Spine/
-DragonBones export to buffers + clips, the `srt tool 3d/model` pattern),
+DragonBones export to buffers + clips, the `sol tool 3d/model` pattern),
 and where it sits relative to SpriteLayer draw order. A compact 3x2-row
 palette projection on the sink is an OPTIONAL later add (additive, the
 `InstanceProjection` pattern); full mat4 rows work from day one.

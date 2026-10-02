@@ -121,7 +121,7 @@ fn exit_impl(ctx: Ctx<'_>, code: OptArg<f64>) -> rquickjs::Result<()> {
 // flux:process also exposes the environment:
 //
 //   import { env } from "flux:process"
-//   env.SRT_HOME  // the value, or undefined
+//   env.SOLIDRT_HOME  // the value, or undefined
 //
 // A plain object snapshotted when the module is evaluated (Node's process.env
 // is live and writable; a dev tool reads its environment once at startup, so

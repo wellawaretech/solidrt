@@ -40,7 +40,7 @@ the IBL source everywhere. Verdict: both forms, with equirect as the
 common interchange and six faces as the GPU form. Equirect-to-cube is a
 conversion, not a shader-time sampling mode: Unity does it at import,
 Godot bakes the panorama into its radiance cube, Three converts on
-upload. Ours belongs in the `srt` asset pipeline (build time, like fonts
+upload. Ours belongs in the `sol` asset pipeline (build time, like fonts
 and icons), with a runtime fallback for a fetched panorama.
 
 **Reflection representation.** Godot: a radiance cube map with
@@ -138,7 +138,7 @@ forever (a rendered cube samples natively). 2-vs-1 for no shader flip:
 `CUBE_LOOKUP` is gone, a cube map holds what a lookup returns, every
 bake writes GL's own table (the compensating x negation left the tool,
 `equirectToCube` and the JS skies together with the flip, so baked
-pixels are unchanged; .srte files re-bake), and a Three-style face set
+pixels are unchanged; .sol3e files re-bake), and a Three-style face set
 mirrors each image at load (a `loadCubeImages` helper is the additive
 home for that when a face set arrives).
 
@@ -174,7 +174,7 @@ ships with 3d. Not offered: Three's per-material `envMapIntensity`
 Where the different internal model helps, beyond parity:
 
 - **Build-time prefiltering.** Unity convolves at import, Godot and Three
-  at runtime every time the sky changes. The `srt` pipeline can emit the
+  at runtime every time the sky changes. The `sol` pipeline can emit the
   six faces AND the roughness-convolved levels from a `.hdr` at build time,
   so a static environment costs one upload and zero shader passes at
   startup, on every device class. That needs the primitive's upload to
@@ -249,7 +249,7 @@ Where the different internal model helps, beyond parity:
      `litFragment` and the new `standardFragment`; the `PBR` set is
      exported beside the others. glTF: `ModelMaterial` carries
      `metalness`, `roughness` and `metalnessRoughnessMap` (model file
-     VERSION 4 - version-3 .srtm files are rejected, re-bake), createModel
+     VERSION 4 - version-3 .sol3m files are rejected, re-bake), createModel
      hands the packed map to `material` as both `maps.metalnessMap` and
      `maps.roughnessMap`; its DEFAULT STAYS `lit` until 3d ships a real
      environment asset (decided 2026-09-03: a glTF metal in a scene with
@@ -261,12 +261,12 @@ Where the different internal model helps, beyond parity:
      down to 1x1, the FULL chain so no MAX_LEVEL state exists; levels
      imply `mipmap: true`; uploaded level by level, so no generated
      chain and no half-float renderability gate - an rgba16f chain works
-     on every device); `srt tool 3d/environment <in.hdr> [-o out.srte]
+     on every device); `sol tool 3d/environment <in.hdr> [-o out.sol3e]
      [--size 128]` (packages/3d/tools/environment.ts over the pure
      `src/environment-bake.ts`: a Radiance RGBE decoder, CPU
      equirect-to-cube with supersampling, GGX prefiltering per level by
      importance sampling with the source lod from each sample's solid
-     angle, the .srte container - float32 rgba faces after a 16-byte
+     angle, the .sol3e container - float32 rgba faces after a 16-byte
      header, 2 MiB at 128); `loadEnvironment(path)` uploads it;
      `ENVIRONMENT` maps roughness onto the chain by the fixed rule
      `r * (log2(size) - 2)` (roughness 1 = the 4x4 level, the last one
@@ -281,7 +281,7 @@ Where the different internal model helps, beyond parity:
      Additive, tracked in
      [3d-environment-additive](../backlog/3d-environment-additive.md):
      SH9 (Three's LightProbe form), `aoMap`, RGBE or half packing in the
-     .srte (a 4x smaller file), EXR input.
+     .sol3e (a 4x smaller file), EXR input.
 4. **Dynamic probes.**
    - 4a, landed 2026-09-05: render-to-face and sharp probes. Engine:
      `createCubeDrawTarget(size, params?, opts?)` - one entry list over a
@@ -312,7 +312,7 @@ Where the different internal model helps, beyond parity:
      pass per face per level running prefilterCube's importance sampling
      as a fragment - 64 Hammersley samples, each read from the sharp
      source's generated chain at the lod of its solid angle, N = V = R;
-     level 0 a copy; the same levelRoughness rule as the .srte chain);
+     level 0 a copy; the same levelRoughness rule as the .sol3e chain);
      probes prefilter by default (`prefilter: false` keeps Three's sharp
      CubeCamera), `probe.cube` is the chain, and the probe's own faces
      still bind the placeholder when that chain is the environment;
@@ -431,7 +431,7 @@ Where the different internal model helps, beyond parity:
   Godot blends by `ambient_light_sky_contribution`, Unity picks one
   ambient source). Drop the hemisphere when the environment should
   light alone.
-- Prefiltering an HDR asset is a build step (`srt tool 3d/environment`,
+- Prefiltering an HDR asset is a build step (`sol tool 3d/environment`,
   Unity's import-time convolution); the runtime convolution exists for
   rendered cubes only - probes and `bakeBackground` (Godot's sky-change
   reconvolution, on demand rather than automatic) - so there is no

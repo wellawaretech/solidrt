@@ -8,7 +8,7 @@ import { fail } from "../lib/util"
 import { isolateAssetPath } from "../bundle/bundler"
 
 // The canonical flat pack folder (okf/plans/client-storage-updates.md, Pack
-// output): runner + manifest.json + bundle.bin + assets/. The manifest
+// output): runner + manifest.json + bundle.fluxbc + assets/. The manifest
 // enumerates exactly the files belonging to the version - the runner is
 // deliberately unlisted - and, unlike dev manifests, carries the full app
 // identity (org, displayName) and the complete font set with the default
@@ -28,7 +28,7 @@ export type PackFolder = {
 }
 
 // `isolates` are the app's isolate bundles compiled to bytecode; they ship as
-// the manifest assets isolates/<id>.bin (the production runtime has no
+// the manifest assets isolates/<id>.fluxbc (the production runtime has no
 // compiler, so pack never ships isolate source).
 export function buildPackFolder(mode: Mode, bytecode: Buffer, isolates: { id: string; bytecode: Buffer }[]): PackFolder {
   let identity = loadAppIdentity(mode.entry, mode.projectDir)
@@ -73,7 +73,7 @@ export function buildPackFolder(mode: Mode, bytecode: Buffer, isolates: { id: st
     ...(icon ? { icon } : {}),
     runtimeVersion: RUNTIME_VERSION,
     solidrtVersion: SOLIDRT_VERSION,
-    bundle: { path: "bundle.bin", sha256: hashHex(bytecode), size: bytecode.length },
+    bundle: { path: "bundle.fluxbc", sha256: hashHex(bytecode), size: bytecode.length },
     ...(assets.length ? { assets } : {}),
     ...(fonts.length ? { fonts } : {}),
   })
@@ -97,7 +97,7 @@ export function writePackFolder(outDir: string, runnerPath: string, bytecode: Bu
   mkdirSync(outDir, { recursive: true })
   rmSync(join(outDir, "assets"), { recursive: true, force: true })
   rmSync(join(outDir, "isolates"), { recursive: true, force: true })
-  for (let name of ["manifest.json", "bundle.bin", runnerName, ...glLibs.map((lib) => lib.name)]) {
+  for (let name of ["manifest.json", "bundle.fluxbc", runnerName, ...glLibs.map((lib) => lib.name)]) {
     rmSync(join(outDir, name), { force: true })
   }
 
@@ -112,7 +112,7 @@ export function writePackFolder(outDir: string, runnerPath: string, bytecode: Bu
   for (let lib of glLibs) {
     cpSync(lib.path, join(outDir, lib.name), { dereference: true })
   }
-  writeFileSync(join(outDir, "bundle.bin"), bytecode)
+  writeFileSync(join(outDir, "bundle.fluxbc"), bytecode)
   writeFileSync(join(outDir, "manifest.json"), folder.manifest)
   for (let { from, to } of folder.copies) {
     let dest = join(outDir, to)

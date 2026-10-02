@@ -5,7 +5,7 @@
 // generates 8 publishes and 8 presents a second and a paused clip costs
 // nothing - the demand-gate story unchanged. The clock is the app's frame
 // time: the clip freezes and resumes with the dev tools' clock, plays at
-// its own speed under `srt render`, and a step lands on the frame it is
+// its own speed under `sol render`, and a step lands on the frame it is
 // due in. The clip
 // does not own its sprites (destroySprite prunes lazily on the next step),
 // and a sprite belongs to at most one animation. Plain JS over setSprite,

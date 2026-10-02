@@ -6,7 +6,7 @@
 // composites and modifier specs over synthetic key events, and
 // enable/disable contexts. Pure-module input only (the
 // `@solidrt/core/input` entry imports no runtime module), so it runs
-// headless on flux: `srt test packages/core`. The interactions take their
+// headless on flux: `sol test packages/core`. The interactions take their
 // time from their source (tap, doubleTap, chord: stated here, no waiting);
 // `hold` keeps time with a timer, which is about time passing and is an
 // app test, input-map-hold.test.ts. The gamepad device

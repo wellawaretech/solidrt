@@ -176,7 +176,7 @@ animation and audio, not the persistence moment.
 A link from outside (a custom scheme link the OS routed to the app, or one
 a dev tool sent) arrives raw: `env.launchLink` is the one this run of the
 app was started with (null without; a hot reload starts at the location
-the app last reported, see `reportLocation` in `srt:dev`), `onLink` fires
+the app last reported, see `reportLocation` in `sol:dev`), `onLink` fires
 for one arriving while the app runs. What a link names is the app's to decide, and it is untrusted input:
 validate before acting on any part of it. A router turns links into screens
 for you; without one, parse it yourself. The scheme a packed app answers to

@@ -49,7 +49,7 @@ pub fn open(
     let codec = create_with_retry(|| open_codec(Some(&window), width, height))?;
     Ok(Box::new(SurfaceHost { codec, _window: window, _plane: plane, vsync }) as Box<dyn PresenterHost>)
   });
-  Player::open("srt-video-plane", reader, make, Clock::monotonic(), sink, lost)
+  Player::open("sol-video-plane", reader, make, Clock::monotonic(), sink, lost)
 }
 
 struct SurfaceHost {

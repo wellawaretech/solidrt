@@ -16,35 +16,35 @@ import java.util.Arrays;
 // dev-server address forwarded from the launch intent.
 public class MainActivity extends SolidRTActivity {
 
-    // The dev CLI (`srt client --android`) passes the dev-server address to dial
+    // The dev CLI (`sol client --android`) passes the dev-server address to dial
     // as an intent extra. Forward it to native as argv (SDL hands getArguments()
     // to SDL_main), after the shared launch fact, where the Player reads
     // --dev-server and auto-connects. Avoids adb reverse, which does not work
     // over wireless adb.
-    // A second dev extra, `srt_env`: "NAME=value" pairs separated by ';',
+    // A second dev extra, `sol_env`: "NAME=value" pairs separated by ';',
     // set into the process environment here, before SDL_main, so the
-    // runtime's env knobs (SRT_CADENCE_HOLD for a measurement) reach a
+    // runtime's env knobs (SOLIDRT_CADENCE_HOLD for a measurement) reach a
     // launched client the way a shell export does on desktop.
     @Override
     protected String[] getArguments() {
         String[] base = super.getArguments();
         Intent intent = getIntent();
-        String env = intent != null ? intent.getStringExtra("srt_env") : null;
+        String env = intent != null ? intent.getStringExtra("sol_env") : null;
         if (env != null && !env.isEmpty()) {
             for (String pair : env.split(";")) {
                 int eq = pair.indexOf('=');
                 if (eq <= 0) {
-                    Log.w(TAG, "srt_env: ignoring '" + pair + "' (expected NAME=value)");
+                    Log.w(TAG, "sol_env: ignoring '" + pair + "' (expected NAME=value)");
                     continue;
                 }
                 try {
                     Os.setenv(pair.substring(0, eq), pair.substring(eq + 1), true);
                 } catch (Exception e) {
-                    Log.w(TAG, "srt_env: failed to set '" + pair + "'", e);
+                    Log.w(TAG, "sol_env: failed to set '" + pair + "'", e);
                 }
             }
         }
-        String addr = intent != null ? intent.getStringExtra("srt_dev_server") : null;
+        String addr = intent != null ? intent.getStringExtra("sol_dev_server") : null;
         if (addr == null || addr.isEmpty()) {
             return base;
         }

@@ -130,7 +130,7 @@ delay/from/exit) and `writeTransform(node, transform)` (the target-write
 sibling of setTransform; requests a frame when a track starts or a snap
 moves the node - without that a fresh track would stall, since nothing
 else demands the first frame). Settles emit one "spatialTransitionEnd"
-engine event each (srt:events), payload `{ node, component }` - the same
+engine event each (sol:events), payload `{ node, component }` - the same
 bus the element "transitionEnd" rides, no Persistent handler storage.
 Lattice: runtime.rs stamps the spatial clock beside the tree's
 (`flux::gui::spatial::stamp_clock`), and the draw path runs

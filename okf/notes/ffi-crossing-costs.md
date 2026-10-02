@@ -8,7 +8,7 @@ created: 2026-08-18
 
 Measured 2026-08-18 on the release linux client (QuickJS, Intel RPL-P
 laptop), against `ac230d1`. Two harnesses, both throwaway apps run under
-`srt run` with the numbers read from `/__control__/logs`:
+`sol run` with the numbers read from `/__control__/logs`:
 
 - a microbench that imports `flux:rendertree` directly and times raw
   `createNode`/`setProperty` loops with `performance.now()`, best of 5;

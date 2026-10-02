@@ -2,7 +2,7 @@
 // ease, the framing zones (dead zone, the soft band, hard limits, per-axis
 // damping, the settle), the lookahead filter, the lanes (offset plus summed
 // shakes, decay to zero, never in a pose) and the validation throws.
-// Pure-module input only, so it runs headless on flux: `srt test
+// Pure-module input only, so it runs headless on flux: `sol test
 // packages/core`. Deterministic.
 
 import { test } from "flux:test"

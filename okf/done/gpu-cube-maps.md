@@ -83,7 +83,7 @@ shape above:
 
 - **Explicit mip levels, reserved.** Prefiltered radiance (Godot's
   radiance cube, Unity's convolved probe) has roughness-convolved levels
-  that `glGenerateMipmap` cannot produce; the `srt` pipeline will emit
+  that `glGenerateMipmap` cannot produce; the `sol` pipeline will emit
   them at build time. Stage 1 takes `faces: Buffer[6]` with the
   generated chain; the widening to `Buffer[6][]` (level 0 first, each
   level six faces, sizes halving) is additive and must not need any other

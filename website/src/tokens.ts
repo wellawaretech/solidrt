@@ -4,8 +4,8 @@
 // OS preference, and data-theme on the root forces either; site.css consumes
 // the tokens.
 //
-// Naming: --srt-<category>-<kebab-token>; color tokens drop the category
-// (--srt-primary, --srt-text-muted). Numbers are logical px except line
+// Naming: --sol-<category>-<kebab-token>; color tokens drop the category
+// (--sol-primary, --sol-text-muted). Numbers are logical px except line
 // heights and font weights, which are unitless as in the theme. The font
 // family is a core stack name ("sans"), not a CSS family, so it is not emitted.
 import { darkTheme, lightTheme, type Theme } from "@solidrt/components/theme";
@@ -23,20 +23,20 @@ function block(selector: string, lines: string[]): string {
 function colorLines(theme: Theme): string[] {
   return Object.entries(theme.color)
     .filter(([, v]) => v != null)
-    .map(([k, v]) => `--srt-${kebab(k)}: ${v}`);
+    .map(([k, v]) => `--sol-${kebab(k)}: ${v}`);
 }
 
 // Scheme-independent tokens; both presets share them, so read from one.
 function sharedLines(theme: Theme): string[] {
   let out: string[] = [];
-  for (let [k, v] of Object.entries(theme.spacing)) out.push(`--srt-spacing-${k}: ${v}px`);
-  for (let [k, v] of Object.entries(theme.radius)) out.push(`--srt-radius-${k}: ${v}px`);
-  for (let [k, v] of Object.entries(theme.borderWidth)) out.push(`--srt-border-width-${k}: ${v}px`);
+  for (let [k, v] of Object.entries(theme.spacing)) out.push(`--sol-spacing-${k}: ${v}px`);
+  for (let [k, v] of Object.entries(theme.radius)) out.push(`--sol-radius-${k}: ${v}px`);
+  for (let [k, v] of Object.entries(theme.borderWidth)) out.push(`--sol-border-width-${k}: ${v}px`);
   for (let role of ["caption", "label", "body", "title", "heading"] as const) {
     let t = theme.text[role];
-    out.push(`--srt-${role}-size: ${t.size}px`);
-    out.push(`--srt-${role}-line-height: ${t.lineHeight}`);
-    out.push(`--srt-${role}-weight: ${t.weight}`);
+    out.push(`--sol-${role}-size: ${t.size}px`);
+    out.push(`--sol-${role}-line-height: ${t.lineHeight}`);
+    out.push(`--sol-${role}-weight: ${t.weight}`);
   }
   return out;
 }

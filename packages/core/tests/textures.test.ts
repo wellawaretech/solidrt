@@ -1,4 +1,4 @@
-// @solidrt/core/textures under srt test: the entry imports no gui or srt:
+// @solidrt/core/textures under sol test: the entry imports no gui or sol:
 // module (this import is the proof: the bare flux binary has neither),
 // isKtx2 sniffs the file, and the texture settings an app
 // declares in package.json (solidrt.textures) read as defaults where

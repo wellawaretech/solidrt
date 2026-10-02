@@ -71,7 +71,7 @@ Open questions, none of them settled:
 
 A video or camera app on the TV shows `partialPresents` climbing and a
 window draw whose cost tracks the changed region, not the window. The same
-measurement that found this (raster phase trace at SRT_LOG=debug, plus
+measurement that found this (raster phase trace at SOLIDRT_LOG=debug, plus
 `damagePx`/`partialPresents` in get_stats) is the check.
 
 Related: [[video-playback]], [[partial-repaint]], [[content-damage-perf]],

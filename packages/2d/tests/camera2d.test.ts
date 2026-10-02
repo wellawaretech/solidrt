@@ -9,8 +9,8 @@
 // unbracketed zoom delta, rates integrated by update) and the validation
 // throws - hand-written cases plus a seeded sweep. Pure-module input only
 // (camera2d.ts imports no GUI or runtime module), so it runs headless on
-// flux: `srt test packages/2d`. The random inputs come from Math.random,
-// which `srt test` seeds: the same on every run, and `--seed <n>` tries
+// flux: `sol test packages/2d`. The random inputs come from Math.random,
+// which `sol test` seeds: the same on every run, and `--seed <n>` tries
 // others. The device side (the pointer feed's recognizer over core's
 // transform recognizer) needs the runtime's event bus and is exercised live
 // by examples/camera.tsx.

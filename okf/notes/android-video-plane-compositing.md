@@ -157,7 +157,7 @@ The Choreographer phase bug found on the way was fixed by
   always pays about one a second for the connection badge, which is where
   the residual 6% comes from and is the same residual the stock player has.
 
-- 2026-09-12, the floor, measured: a PACKED app (`srt pack --apk` on
+- 2026-09-12, the floor, measured: a PACKED app (`sol pack --apk` on
   `examples/video/src/probe/plane_clean.tsx`, which renders `<window
   fullscreen />` over the plane and presents nothing after startup, so there
   is no dev badge either) gives 76 two-period and 48 three-period intervals

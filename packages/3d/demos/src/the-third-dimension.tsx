@@ -55,7 +55,7 @@ import {
 } from "@solidrt/3d"
 import type { CameraUpdate, OrbitCameraHandle, OrbitPoseState, SceneNode, SpotShadowOptions, Vec3 } from "@solidrt/3d"
 import { FRESNEL, LIT_VERTEX, SCENE } from "@solidrt/3d/glsl"
-import { registerDebug } from "srt:dev"
+import { registerDebug } from "sol:dev"
 
 const KNOT_P = 2
 const KNOT_Q = 3

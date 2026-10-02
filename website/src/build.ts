@@ -31,7 +31,7 @@ const DOCS_DIR = "../docs";
 // Sections whose pages live with the package they document, mounted into
 // the tree at the given section path: a docs/ folder shipped as is, or a
 // composed section whose index is the package README and whose pages are
-// the `docs.md` of each folder under `pages` (one per srt command), with
+// the `docs.md` of each folder under `pages` (one per sol command), with
 // their relative `<name>/docs.md` links rewritten to section URLs.
 type Mount = { dir: string } | { index: string; pages: string; label: string };
 const MOUNTS: Record<string, Mount> = {
@@ -229,4 +229,4 @@ console.log(
 let missing = await unpulled(COVERED, authored);
 if (missing.length > 0) console.log(`Not shown anywhere, from ${COVERED}: ${missing.join(", ")}`);
 let missingCommands = await undocumentedCommands(authored);
-if (missingCommands.length > 0) console.log(`Not shown anywhere, srt commands: ${missingCommands.join(", ")}`);
+if (missingCommands.length > 0) console.log(`Not shown anywhere, sol commands: ${missingCommands.join(", ")}`);

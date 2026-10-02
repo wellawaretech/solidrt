@@ -1,11 +1,11 @@
 ---
-title: Test harness - flux:test, srt:test and srt test
-description: Tests for flux programs, SolidRT apps and our own packages, run on our own runtime and deterministic by construction - a base layer on the flux binary (flux:test - test, expect, a seeded Math.random; real time) and an app layer on the headless SolidRT runtime (@solidrt/core/test - mount, find, input, frames, reading; stepped by frames, no wall time), every test in an engine of its own, behind one command, srt test. Supersedes the JS test infrastructure backlog item; the ten bun test files and the checks/ rigs are its first consumers.
+title: Test harness - flux:test, sol:test and sol test
+description: Tests for flux programs, SolidRT apps and our own packages, run on our own runtime and deterministic by construction - a base layer on the flux binary (flux:test - test, expect, a seeded Math.random; real time) and an app layer on the headless SolidRT runtime (@solidrt/core/test - mount, find, input, frames, reading; stepped by frames, no wall time), every test in an engine of its own, behind one command, sol test. Supersedes the JS test infrastructure backlog item; the ten bun test files and the checks/ rigs are its first consumers.
 created: 2026-08-17
 completed: 2026-10-01
 ---
 
-# Test harness - flux:test, srt:test and srt test
+# Test harness - flux:test, sol:test and sol test
 
 Grown out of the backlog item "JS test infrastructure" (2026-08-17), which
 asked for a runner and a file convention for the workspace's own JS. The
@@ -15,7 +15,7 @@ that have no window, and up to SolidRT apps an author wants to test.
 ## Where this stands (closed 2026-10-01)
 
 Every stage is built and everything under "Done looks like" holds: 369
-tests in 41 files behind `bun run srt test`, no `bun:test` import and no
+tests in 41 files behind `bun run sol test`, no `bun:test` import and no
 `checks/` folder left, a scaffolded app can carry a mounting, tapping,
 stepping test, and a failure says what was on screen and when. Stages
 1, 2, 2b and 3 are committed and the CI jobs are green on all four
@@ -34,7 +34,7 @@ six of its steps are built (4.5 and 4.6 on 2026-10-01, uncommitted):
   amended), and an uncaught error fails the test it happened in.
 - Step 4.2, test mode in the runtime: alloy's stepped mode, the step in
   lattice, the frozen wall, `solidrt-go --test`, `@solidrt/core/test`
-  with `app.frame`, `app.advance` and `app.time`, and `srt test` choosing
+  with `app.frame`, `app.advance` and `app.time`, and `sol test` choosing
   the binary by the bundle's imports. The four parked timer tests are
   back in `packages/core/tests/` as app tests, their thresholds asserted
   to the millisecond.
@@ -63,26 +63,26 @@ six of its steps are built (4.5 and 4.6 on 2026-10-01, uncommitted):
 - Step 4.5, failure output, docs, CI (2026-10-01): a failed test's record
   carries details read in its engine (what is in flight; for an app test
   the app time and frame, what still demanded frames, the whole outline
-  and a snapshot of the frame written under `dist/test/`), `srt test --only
+  and a snapshot of the frame written under `dist/test/`), `sol test --only
   flux|app`, the `test-app` CI job, the testing guide
   (`packages/cli/agents/testing.md`).
 
 - Step 4.6, render on the stepped mode (2026-10-01): alloy has one
-  headless mode; `srt render` is a host in lattice that steps and reads
+  headless mode; `sol render` is a host in lattice that steps and reads
   the window back, with the wall frozen and `Math.random` seeded,
   `--settle` the condition of D11, `--strict` and `--seed` passed through.
 
-`bun run srt test` at the repo root: 341 tests in 35 files, 7 to 12 s
+`bun run sol test` at the repo root: 341 tests in 35 files, 7 to 12 s
 depending on what else the machine does. `cargo test -p flux --lib
 --features test,gui`: 101 tests; alloy 637 (the `always_render` test went
-with the gate bypass), lattice 66. `srt check` passes for core, cli and
+with the gate bypass), lattice 66. `sol check` passes for core, cli and
 router. Renders of `examples/hello-world`, `examples/spin` and an
 animating probe are byte-identical between the old lockstep loop and the
 render host.
 
 Stage 5 (2026-10-01): the four GPU rigs are app tests, the `checks/`
 folders are gone, the fog example has a capture test, and the camera
-components have tests on a real drag and key. `bun run srt test` at the
+components have tests on a real drag and key. `bun run sol test` at the
 repo root: 369 tests in 41 files, about 28 s. Everything under "Done
 looks like" holds.
 
@@ -107,10 +107,10 @@ What exists, none of it structural:
 - The `checks/` rigs (`packages/core/checks` 6, `packages/2d/checks` 8,
   `packages/3d/checks` 9): self-reporting scripts with a `fail()` counter
   that throw at the end. Nineteen are pure and run by hand as
-  `bun run srt bundle -f --stdout <file> | target/release/flux -`; four need a
-  GPU and run as `bun run srt render <file> --duration <s> --size 128x128`
+  `bun run sol bundle -f --stdout <file> | target/release/flux -`; four need a
+  GPU and run as `bun run sol render <file> --duration <s> --size 128x128`
   (`gpu-lease-check.tsx` in core, `collision-check.tsx` in 2d and 3d,
-  `raycast-check.tsx` in 3d). `srt check` does not typecheck `checks/`, so
+  `raycast-check.tsx` in 3d). `sol check` does not typecheck `checks/`, so
   a broken rig is only found by running it.
 - `flux/examples/*_test.js`: manual smoke scripts from building the flux
   modules, untracked (see Findings on what is tested where).
@@ -127,10 +127,10 @@ The candidate lists for first tests are in
 | layer | module | runs on | adds |
 | --- | --- | --- | --- |
 | base | `flux:test` | the `flux` binary | `test`, `expect`, a seeded `Math.random` |
-| app | `@solidrt/core/test`, over the native `srt:test` | the dev client, headless | `mount`, `find`, input, frames, reading |
+| app | `@solidrt/core/test`, over the native `sol:test` | the dev client, headless | `mount`, `find`, input, frames, reading |
 
 `@solidrt/core/test` re-exports the base, so an app test has one import
-(D31). `srt test`
+(D31). `sol test`
 is the command for both. Neither module is in a shipping runtime (D20).
 
 ## Decisions
@@ -146,14 +146,14 @@ a window. Rejected: one SolidRT-only harness; one runtime for every test
 (a flux program must be tested on the binary it ships on).
 
 **D3. The binary follows from the imports.** A file that imports only
-`flux:test` runs on the flux binary; one that imports `srt:test` runs on
+`flux:test` runs on the flux binary; one that imports `sol:test` runs on
 the SolidRT runtime. Nothing is guessed and nothing is configured. The
 rule underneath is wider: a file that imports any gui-backed module
 (`flux:gpu`, `flux:rendertree`, ...) needs the dev client, whatever test
-module it uses; `srt test` applies that once such a test exists.
+module it uses; `sol test` applies that once such a test exists.
 
-**D4. The command is `srt test`.** Discovery, TypeScript bundling and
-reporting live in the CLI, which already bundles for flux (`srt bundle
+**D4. The command is `sol test`.** Discovery, TypeScript bundling and
+reporting live in the CLI, which already bundles for flux (`sol bundle
 -f`). Amended 2026-09-30 (D30): the binary has a `--test` mode after all,
 since the engine loop of a test file is native; it rejected "a `flux test`
 subcommand on a binary whose one job is to run a script".
@@ -162,7 +162,7 @@ subcommand on a binary whose one job is to run a script".
 (reworded 2026-09-30; the date row changed by D34). The line follows the module a test imports, as the
 binary does (D3).
 
-| | flux test (`flux:test`) | app test (`srt:test`) |
+| | flux test (`flux:test`) | app test (`sol:test`) |
 | --- | --- | --- |
 | what drives time | the wall | frames, which the test requests |
 | timers | real | stepped with the frames |
@@ -173,7 +173,7 @@ binary does (D3).
 In a flux program time matters: a monotonic clock is a legitimate input
 of a server (a latency, a rate limit, a deadline), and the other side of
 a socket lives on wall time. In an app the frame is the only clock, and a
-test that reads the wall cannot be repeated. `srt render` and playback
+test that reads the wall cannot be repeated. `sol render` and playback
 are in the right-hand column by the same reasoning, and do not yet
 freeze anything. A test of SolidRT logic that needs time to pass is an
 app test, whether or not it needs a window; a pure package test stays a
@@ -232,7 +232,7 @@ checked once and fails deterministically.
 
 **D11. `settle()` is a condition.** It ends when no frame is demanded and
 nothing is in flight, and fails past a cap, which catches a runaway
-`onFrame`. Rejected: a wall-clock wait, which is what `srt render
+`onFrame`. Rejected: a wall-clock wait, which is what `sol render
 --settle` is today. Made precise by D39 to D41.
 
 **D12. An action runs the frame it lands in and no more.** Input is
@@ -254,7 +254,7 @@ there instead. Agents write and repair most tests.
 
 **D15. Isolation.** A fresh runtime process per file; per test a fresh
 mount, the clock at 0 and empty storage. An app test runs at a fixed size,
-display scale and font set, as `srt render` already does.
+display scale and font set, as `sol render` already does.
 
 **D16. No retries, no sleeps.** Flakiness is a bug in the test or the
 harness, not a rate to manage.
@@ -272,7 +272,7 @@ name is a sentence that names its subject
 does three jobs elsewhere and none is needed here: a scope for shared
 setup hooks (there are no hooks; setup is a plain function the test
 calls), a name prefix in the report (the file name is one), and running a
-subset (a name filter on `srt test`). The six bun files that use it, 22
+subset (a name filter on `sol test`). The six bun files that use it, 22
 groups, use it one level deep with no hooks, as a label for the function
 under test. Rejected: `describe` for familiarity (nesting plus hooks hides
 what a test depends on; pytest, Go, Rust, `Deno.test` and ava are flat,
@@ -287,12 +287,12 @@ sources, excluded from `files` in `package.json`.
 **D20. The test modules are not in a shipping runtime.** `flux:test` sits
 behind a `test` cargo feature in flux, which requires `compile`; the flux
 Makefile turns it on for the `flux` binary only, and `test` joins the
-capabilities list so `srt test` can name a binary built without it.
+capabilities list so `sol test` can name a binary built without it.
 `fluxrt` and `fluxc` do not carry it (`fluxrt` is built without `compile`
 and cannot evaluate source at all). Lattice passes the feature through as
-it does `video` and `ktx2`: `srt:test` exists in the dev client
+it does `video` and `ktx2`: `sol:test` exists in the dev client
 (`solidrt-go`), not in the production runtime (`solidrt`). Rejected: a
-no-op stub in the shipping runtimes, the way `srt:dev` is registered in
+no-op stub in the shipping runtimes, the way `sol:dev` is registered in
 both today (a packed app has no reason to import a test module, so
 leaving it out is cleaner than stubbing it).
 
@@ -310,11 +310,11 @@ standard and marshals neither forge nor alloy, but flux's own facilities
 `flux/CLAUDE.md` each gain a line for the layer when it is built.
 
 **D23. Test files run one after another** (2026-09-30). Running them in
-parallel is additive later, as an option on `srt test`.
+parallel is additive later, as an option on `sol test`.
 
 **D24. Reversed 2026-09-30 by D30: there is no `run`.** The text below is
 what was decided and built first. *The tests are run by a public
-`run(options?)`, an async iterable of results* (2026-09-30). `srt test` appends a few lines to a test
+`run(options?)`, an async iterable of results* (2026-09-30). `sol test` appends a few lines to a test
 file's bundle that iterate it:
 `for await (let result of run({ filter })) ...`. Tests run as the
 consumer pulls, in registration order, so each result leaves before the
@@ -348,7 +348,7 @@ tests is lost, and a crash leaves it partial); the child as the reporter
 deliberately unbuilt); TAP (clumsy for expected and received values and a
 stack, and still a parser).
 
-**D26. Two modules today: `flux:test` and `srt:test`** (2026-09-30). The
+**D26. Two modules today: `flux:test` and `sol:test`** (2026-09-30). The
 node verbs (`find`, reading) are not SolidRT-specific (see Findings), so
 a gui test part inside flux is the layering they point at; it is left
 for later and is additive (see Later). Rejected: the `gui` feature on the
@@ -375,10 +375,10 @@ and every test draws the seed's sequence from its start, so random inputs
 do not depend on the tests before or on a filter. It is the standard
 function and no test API: a test writes `Math.random()`, and code under
 test that calls it (the camera shake does) is reproducible with it. The
-seed is a fixed constant of the harness; `srt test --seed <n>` runs the
+seed is a fixed constant of the harness; `sol test --seed <n>` runs the
 same tests on another sequence and says so in its last line. A random
 seed per run is never the default. Everything after `--` still reaches
-the test as `flux:process` argv, as it does under `srt run`. Rejected: an
+the test as `flux:process` argv, as it does under `sol run`. Rejected: an
 imported `random` (a second source of randomness that the code under
 test never sees); a generator and a seed constant per test file (what
 the rigs had: seven copies of the arithmetic).
@@ -399,9 +399,9 @@ The sequence of a seed is pinned by a test against an independent
 implementation, since a seed somebody noted down has to mean the same
 inputs later and elsewhere. Rejected: replacing `Math.random` in JS
 inside `flux:test` (a 32-bit generator where the engine has 52 bits, and
-out of reach for isolates, `srt render` and the app layer); flux's
+out of reach for isolates, `sol render` and the app layer); flux's
 function in every context (a native call per `Math.random()` in shipping
-apps, for a test feature). `srt render` and playback are hosts that do
+apps, for a test feature). `sol render` and playback are hosts that do
 not seed yet:
 [seeded-random-headless-render](../backlog/seeded-random-headless-render.md).
 
@@ -430,10 +430,10 @@ dev client's GL setup per test).
 **D31. An app test imports `@solidrt/core/test`** (2026-09-30). `mount`
 has to run the UI in a Solid root of the test bundle's own copy of Solid
 and core, which a native module cannot reach, so the Solid half is
-TypeScript in core, over a native `srt:test` that holds the engine verbs.
+TypeScript in core, over a native `sol:test` that holds the engine verbs.
 The same pattern as the rest of core: native modules are the low level,
-apps import core. Rejected: `srt:test` as the import, resolved by the
-bundler to core's source (the first `srt:` name that is no native module);
+apps import core. Rejected: `sol:test` as the import, resolved by the
+bundler to core's source (the first `sol:` name that is no native module);
 handing core's mount to the host through generated runner lines. The
 TypeScript half left core on 2026-10-01: an app test imports
 `@solidrt/test` ([solidrt-test-package](solidrt-test-package.md)).
@@ -460,7 +460,7 @@ on every machine. `performance.now()` stays 0 (D6). The network stays
 real: `serve` plus `fetch` over loopback is the way to fake a backend, and
 `settle()` waits for what is in flight.
 
-**D35. `srt render` joins the same footing** (2026-09-30). Playback
+**D35. `sol render` joins the same footing** (2026-09-30). Playback
 freezes the wall and seeds `Math.random`
 ([seeded-random-headless-render](../backlog/seeded-random-headless-render.md)),
 `--settle` becomes the condition of D11 instead of a wall sleep, and the
@@ -505,7 +505,7 @@ files today. Window size and display scale per test are split off:
 (2026-09-30). One condition, one loop (`lattice/src/settle.rs`), three
 hosts: a test (`app.settle()`; `settle()` from `flux:test` is its flux
 half), the control API (`/settle`, the MCP `settle` tool: what an agent
-waits on in place of a sleep, on the interactive client) and `srt render`
+waits on in place of a sleep, on the interactive client) and `sol render`
 once playback is on the stepped mode (step 4.6, where the `--settle <ms>`
 wall sleep is deleted, not kept beside it). The loop is native and owns no
 frame source: a stepped host hands it the step, a client on a display
@@ -633,7 +633,7 @@ properties that are `undefined` and tells `0` from `-0`;
 `toThrow` takes a message part, a pattern, an error class or nothing).
 `run(options?)` runs them (D24).
 
-**Step 2 - `srt test [path]`**, a command folder in
+**Step 2 - `sol test [path]`**, a command folder in
 `packages/cli/src/test/`.
 
 | part | design |
@@ -661,13 +661,13 @@ A `flux` binary built without the feature fails at the import of
 `flux:test`; the command turns that into a message that says so and names
 the build command.
 
-`srt check` gains the `tests/` folders in its globs
+`sol check` gains the `tests/` folders in its globs
 (`packages/cli/src/check/main.ts`).
 
 **Step 3 - the ten bun test files.** `bun:test` becomes `flux:test`. The
 six that use `describe` also lose the wrapper, and each test name takes
 the group's label as its prefix (D19). Mechanical. Verification: all ten
-pass under `srt test`; then one assertion is broken on purpose to confirm
+pass under `sol test`; then one assertion is broken on purpose to confirm
 that the failure names the right file and line, and restored.
 
 ### Stage 2 - the clock and the rigs (built 2026-09-30; the clock is removed again by stage 2b)
@@ -690,7 +690,7 @@ that the failure names the right file and line, and restored.
   `performance.now()` keep their real waits and
   tolerances until [event-timestamp](event-timestamp.md)
   lands. The four GPU rigs stay in `checks/` until stage 5.
-- `srt test <file> -- <args>`: the arguments after `--` reach the test as
+- `sol test <file> -- <args>`: the arguments after `--` reach the test as
   `flux:process` argv.
 - A first test from the review notes' candidate lists:
   `remapPositions` in the cli. The core candidates all import a runtime
@@ -719,7 +719,7 @@ D27. What goes:
   back in stage 4, and it is in git (commit "Test harness (1)").
 
 What is parked, beside the four GPU rigs under `checks/`, until
-`srt:test` exists (stage 4), because these tests are about time passing
+`sol:test` exists (stage 4), because these tests are about time passing
 in SolidRT logic (D5):
 
 - all of `gesture.test.ts` (11 tests), now
@@ -731,9 +731,9 @@ in SolidRT logic (D5):
   `packages/core/checks/input-map-interactions.test.ts`; the other twelve
   stay.
 
-Nothing is skipped or retried: they are not flux tests. `srt test` finds
+Nothing is skipped or retried: they are not flux tests. `sol test` finds
 only `tests/` folders, so a parked file runs when it is named
-(`srt test packages/core/checks/gesture.test.ts`; all twelve pass), and
+(`sol test packages/core/checks/gesture.test.ts`; all twelve pass), and
 the package's typecheck still covers it. After this the flux suite holds
 no test that depends on how much time passed, which is what lets CI gate
 on it.
@@ -755,14 +755,14 @@ platform. The same four runners as `test-flux`.
   `windows-msys2-tools` on Windows (for `make`), `setup-bun`,
   `js-install`;
 - `make -C flux flux PROFILE=debug KTX2=0`, which builds and stages the
-  binary where `srt` looks for it;
-- `bun packages/cli/src/main.ts test`, with `SRT_HOME` set to the
+  binary where `sol` looks for it;
+- `bun packages/cli/src/main.ts test`, with `SOLIDRT_HOME` set to the
   workspace, on that step only: the flux Makefile derives its own, and a
   Windows path from the environment would not survive its `include`.
 
 Every step runs in bash, as the Windows release build does. Checked
 here: the workflow parses, and the test command passes on Linux x64 with
-`SRT_HOME` set, against the release binary. The debug build was not
+`SOLIDRT_HOME` set, against the release binary. The debug build was not
 repeated after stage 2b.
 
 The binary is built in the job, in the debug profile: the suite is
@@ -774,7 +774,7 @@ release too. Rejected: a step in `test-flux` (a red job would mean
 either suite, and a failing cargo test would hide the JS result; the
 argument for it was the shared compile).
 
-This is also the first run of `srt test` on Windows and macOS (the bundle
+This is also the first run of `sol test` on Windows and macOS (the bundle
 on stdin, the record prefix). A run on the winbox and the Mac through the
 builders before the first push is offered and not decided.
 
@@ -784,7 +784,7 @@ first.
 **The first run (2026-10-01, on the commit that landed steps 4.5 and
 4.6).** `test-app (linux)` passed: the 31 app tests ran on the client
 built in the job, so the runner's Mesa gives the offscreen GLES context.
-`srt test` ran on Windows and macOS and the record protocol held. Two
+`sol test` ran on Windows and macOS and the record protocol held. Two
 findings, both fixed the same day:
 
 - The host's cap per engine (5000 ms) was sized on this machine's release
@@ -798,7 +798,7 @@ findings, both fixed the same day:
   release binary in CI (debug assertions are part of what the run
   checks); a cap per test or per run (surface for a safety cap).
 - `cited(failed[0])` in `packages/cli/src/test/main.ts` failed the
-  `types` job under `noUncheckedIndexedAccess`. `srt check` on the cli
+  `types` job under `noUncheckedIndexedAccess`. `sol check` on the cli
   entry misses the file: it roots the program at the entry, and the test
   command is not statically reachable from `main.ts`; the CI job's `tsc`
   over `src` is the gate for that.
@@ -820,7 +820,7 @@ already did.
 
 So that a slow test is seen before CI sees it, the command prints time
 now: a file's line carries the time its tests took in their engines, the
-closing line the run's wall time, and `srt test --durations` lists every
+closing line the run's wall time, and `sol test --durations` lists every
 test with its own (the records carried `durationMs` from the start and
 the reporter never printed it).
 
@@ -828,7 +828,7 @@ the reporter never printed it).
 
 Decisions D30 to D35. Prerequisite done:
 [event-timestamp](event-timestamp.md). What the code said against the
-first shape of this stage: `srt:test` cannot hold `mount` as a native
+first shape of this stage: `sol:test` cannot hold `mount` as a native
 module (D31); core has no unmount and an entry's top level runs once per
 engine (D30 removes both problems); the playback loop renders
 unconditionally and reads back every frame (D33); and the per-test cap
@@ -871,10 +871,10 @@ so.
 | `flux/src/pending.rs` | `hold_engine`: an embedder's hold on the engine while its own work for it is in flight (a stepped frame travels through the runner's loop) |
 | `flux/src/test_plugins/host.rs` | `FileRun`: the per-file state machine, for a host that builds its engines in a loop of its own |
 | `lattice/src/test_host.rs` | the `Stepper` (the frame signal alloy does not emit, the rate, the reset per engine) and the epoch |
-| `lattice/src/plugins/test.rs` | native `srt:test`: `frame`, `frameRate`, `setFrameRate`, `time` |
+| `lattice/src/plugins/test.rs` | native `sol:test`: `frame`, `frameRate`, `setFrameRate`, `time` |
 | `lattice/src/lib.rs`, `runtime.rs`, `main.rs`, `Cargo.toml`, `Makefile` | the `test` feature (on for the dev client, `TEST=0` leaves it out), `start_tests`, the engine loop driving a `FileRun`, the frame verb settling the pending frame, `--test`, `--filter`, `--seed` |
 | `packages/core/src/test.ts`, `runtime-modules.d.ts`, `package.json` | `@solidrt/core/test`: `test(name, async app => ..., { fps })`, `app.frame(n)`, `app.advance(ms)`, `app.time` |
-| `packages/cli/src/test/main.ts` | the binary by the bundle's imports (any `srt:` module or gui `flux:` module, or a `.tsx` file, is an app test); an app test is bundled with the Solid transform and staged under `dist/test/<name>/` with a data root of its own; `TZ=UTC`; the host's stderr is shown only when the file as a whole failed |
+| `packages/cli/src/test/main.ts` | the binary by the bundle's imports (any `sol:` module or gui `flux:` module, or a `.tsx` file, is an app test); an app test is bundled with the Solid transform and staged under `dist/test/<name>/` with a data root of its own; `TZ=UTC`; the host's stderr is shown only when the file as a whole failed |
 
 The frame is the time resolution of a test: at 60 fps nothing happens
 between 483 and 500 ms, so a test that asserts a threshold to the
@@ -909,7 +909,7 @@ searches them under the entry's folder, which is `tests/`).
 | `flux/src/engine.rs`, `test_plugins/host.rs` | `eval_module_or`: the host hears of a failed evaluation at once, instead of when the cap passes (what the file left pending keeps its engine alive) |
 | `lattice/src/input_plan.rs` | the input plan, moved out of `go/connection.rs`: `plan(events, frame_ms)` with a `Wait { ms, frames }` per step; the tap, mouse-move and `drag` rules of D37 |
 | `lattice/src/go/connection.rs` | the control API runs the shared plan (a frame is one 60 Hz interval there); `/tree` takes `at` |
-| `lattice/src/plugins/test.rs`, `test_host.rs`, `runtime.rs`, `lib.rs` | `srt:test` gains `windowReady`, `inputPlan`, `inputStep`; the stepper injects a plan's steps as the control API does; the sandbox is emptied before every engine |
+| `lattice/src/plugins/test.rs`, `test_host.rs`, `runtime.rs`, `lib.rs` | `sol:test` gains `windowReady`, `inputPlan`, `inputStep`; the stepper injects a plan's steps as the control API does; the sandbox is emptied before every engine |
 | `packages/core/src/test.ts`, `types.d.ts`, `runtime-modules.d.ts` | the surface: `mount`, `load`, `find`, `findAll`, `ref`, the locator readers, `tap`, `drag`, `key`, `type`, `input`; `label` on `NodeProps`, which every element's props extend |
 | `packages/flux-types/gui/test.d.ts` | the types of `flux:test/gui` |
 | `packages/cli/src/server/control.ts`, `mcp/main.ts`, `agents/debugging.md` | `at` on `/tree` and `get_render_tree`, `drag` on `send_input`, the gesture rules and the label documented |
@@ -960,7 +960,7 @@ Not done in this step (the first three built on 2026-10-01, see "Step
 | `flux/src/alloy_plugins/mod.rs` | `request_frame(ctx)` for an embedder |
 | `flux/src/test_plugins/gui.rs` | `gpu(label, draw)` |
 | `lattice/src/plugins/dev.rs` | `call_debug`, the one call path of the control API and the test |
-| `lattice/src/test_host.rs`, `plugins/test.rs` | the stepper's plain `send`; `srt:test` gains `link`, `debug`, `capture` (a paint run now through `render_now`, the capture delivered when it ends: no frame, no app time), and a per-engine synthetic pad table behind `inputStep`'s gamepad steps |
+| `lattice/src/test_host.rs`, `plugins/test.rs` | the stepper's plain `send`; `sol:test` gains `link`, `debug`, `capture` (a paint run now through `render_now`, the capture delivered when it ends: no frame, no app time), and a per-engine synthetic pad table behind `inputStep`'s gamepad steps |
 | `lattice/src/go/connection.rs` | `gpu_reply` and `debug_call_reply` over the shared code |
 | `packages/core/src/test.ts`, `runtime-modules.d.ts`, `packages/flux-types/gui/test.d.ts` | `app.link`, `app.debug`, `app.gpu`, `locator.tree({ props })`, `locator.pixels()`, `locator.pixel(x, y)`; `InputEvent` takes a gamepad event |
 | `packages/core/tests/readers.test.tsx` | 7 app tests: a link with and without a handler, a debug command and an unknown one, a pad seated, held, released and gone, a fresh table per engine, the tree text, a pixel read mid-transition, the inventory |
@@ -1007,7 +1007,7 @@ D39, D40, D41.
 | `flux/src/test_plugins/mod.rs` | `settle` exported from `flux:test` (native, beside the JS surface) |
 | `lattice/src/settle.rs` | the loop: wait for what is in flight, run a frame while a timer is due or a frame is demanded, until all three hold at once; `Cap::AppTime` or `Cap::Wall`; `Unsettled` says what is left |
 | `lattice/src/runtime.rs` | the frame verb tells the waiters a frame ran |
-| `lattice/src/plugins/test.rs` | `srt:test` `settle(maxMs)`, stepping through the stepper |
+| `lattice/src/plugins/test.rs` | `sol:test` `settle(maxMs)`, stepping through the stepper |
 | `lattice/src/go/connection.rs` | the `settle` query of the control API, on the display's frames and a wall cap |
 | `packages/core/src/test.ts`, `runtime-modules.d.ts` | `app.settle({ maxMs })` |
 | `packages/cli/src/server/control.ts`, `mcp/main.ts` | `/settle?max=`, the `settle` tool |
@@ -1058,7 +1058,7 @@ after 553 ms, an 800 ms fetch reported `{ "fetch": 1 }` and settled after
 
 Not done in this step (the first two built since: 4.6 and 4.5):
 
-- `srt render --settle`: step 4.6 (D39). The flag still is the wall
+- `sol render --settle`: step 4.6 (D39). The flag still is the wall
   sleep.
 - A test that times out while work is in flight says "Timed out after
   5000 ms" and not what was in flight; the kinds are one call away
@@ -1107,7 +1107,7 @@ timeout naming what was in flight); a scratch file of failing app tests
 read back with every detail (an assertion mid-transition names the
 transition's node, a fetch nobody answers times out with `In flight: 1
 fetch`, a component that throws shows the error window in the tree and
-the snapshot); `--only` on both layers; `srt check`.
+the snapshot); `--only` on both layers; `sol check`.
 
 **Step 4.6 - render on the stepped mode (built 2026-10-01).** D35, D39.
 
@@ -1161,7 +1161,7 @@ tests; 341 JS tests.
   pointer feed and the input map, `<FirstPersonCamera>` walked by a held
   `w` through the keyboard device and the window's key handlers; the
   motion itself stays tested on the flux binary. (The plan's note on
-  `srt:events` glue was stale: the components take an input map and
+  `sol:events` glue was stale: the components take an input map and
   wire nothing themselves.)
 - The testing guide and the scaffold pointer landed with step 4.5.
 
@@ -1182,11 +1182,11 @@ sun's reading) and failed where it should.
 
 | feature | the shape it takes |
 | --- | --- |
-| the same tests on a real device | a `--client` option on `srt test`; stepping maps to the dev clock control |
+| the same tests on a real device | a `--client` option on `sol test`; stepping maps to the dev clock control |
 | queries by role and name | `find({ role, name })`, once a semantics layer exists |
 | image goldens | a `toMatchImage` matcher with a tolerance |
 | recorded input as a test | a generator over `--capture` output |
-| a gui test part in flux | the node verbs (`find`, `findAll`, reading, snapshots) compiled under `test` + `gui` in flux; `srt:test` re-exports it and keeps what is Solid (`mount`, `load`, `link`, `debug`) (D26) |
+| a gui test part in flux | the node verbs (`find`, `findAll`, reading, snapshots) compiled under `test` + `gui` in flux; `sol:test` re-exports it and keeps what is Solid (`mount`, `load`, `link`, `debug`) (D26) |
 
 ## Owed after stage 2
 
@@ -1264,7 +1264,7 @@ Not verified:
 
 - The `test-flux` CI step now passes `--features test`, and the
   `test-js` job is new; the workflow has not run.
-- `srt test` has only run on Linux x64. The bundle on stdin and the
+- `sol test` has only run on Linux x64. The bundle on stdin and the
   record prefix (a control character) are untested on Windows and macOS.
 
 Lessons of the scope widening, for the next stage's proposal: count and
@@ -1284,7 +1284,7 @@ inventory of how the rigs call `fail()` belonged in the proposal.
 
 ## Done looks like
 
-- `srt test` runs every `tests/*.test.ts` and `*.test.tsx` of the
+- `sol test` runs every `tests/*.test.ts` and `*.test.tsx` of the
   workspace, each on the binary its imports name, and fails CI on any
   failure.
 - No file imports `bun:test`, and no `checks/` folder is left.
@@ -1319,5 +1319,5 @@ here is the plan's own history:
 - `PendingOps` counted what keeps the engine alive, standing holds beside
   work that completes by itself, so `is_idle()` was not the `settle()`
   condition. Step 4.4 split the two (D40).
-- `srt render --settle` was a wall-clock sleep after the mount frame
+- `sol render --settle` was a wall-clock sleep after the mount frame
   (`PlaybackConfig::settle`) until step 4.6 made it the settle condition.

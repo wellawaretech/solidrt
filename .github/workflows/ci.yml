@@ -147,14 +147,14 @@ jobs:
 
   # The flux tests (`tests/*.test.ts` of the packages that import only
   # headless modules, and the flux module tests in `flux/tests/`), run by
-  # `srt test --only flux` on a `flux` binary built here, on the same four
+  # `sol test --only flux` on a `flux` binary built here, on the same four
   # platforms: the suite runs on the runtime the code ships on, so it is
   # tested wherever that runtime is. A job of its own,
   # not a step of test-flux, so a red job names one suite; the app tests
   # need the dev client and run in test-app below. The binary is a debug
   # build (the suite is functional verification) and without ktx2, whose
   # C++ encoder the tests do not use. The make target stages it under
-  # dist/, where SRT_HOME makes `srt` look. SRT_HOME is set on the test
+  # dist/, where SOLIDRT_HOME makes `sol` look. SOLIDRT_HOME is set on the test
   # step only: the Makefile derives its own, and a Windows path from the
   # environment would not survive its include.
   test-js:
@@ -202,11 +202,11 @@ jobs:
 
       - name: Test JS
         env:
-          SRT_HOME: ${{ github.workspace }}
+          SOLIDRT_HOME: ${{ github.workspace }}
         run: bun packages/cli/src/main.ts test --only flux
 
   # The app tests (`tests/*.test.tsx`, and every file that imports the app
-  # runtime), run by `srt test --only app` on the dev client built here, in
+  # runtime), run by `sol test --only app` on the dev client built here, in
   # its headless test mode: Linux only, where the client builds in the same
   # job and SDL's offscreen driver gives the GLES context over Mesa. Same
   # recipe as the release build of the client (system deps, bun for the
@@ -242,7 +242,7 @@ jobs:
 
       - name: Test apps
         env:
-          SRT_HOME: ${{ github.workspace }}
+          SOLIDRT_HOME: ${{ github.workspace }}
         run: bun packages/cli/src/main.ts test --only app
 
   types:

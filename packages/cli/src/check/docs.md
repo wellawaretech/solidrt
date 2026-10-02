@@ -1,4 +1,4 @@
-# srt check
+# sol check
 
 {{ usage check }}
 

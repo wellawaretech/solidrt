@@ -1,6 +1,6 @@
 ---
 title: Home for cross-crate constants
-description: One defined home for cross-crate constants that today live as per-site literals (.srt-data, http-cache.db, the SolidRT/go identity, size caps); collects sites until designed.
+description: One defined home for cross-crate constants that today live as per-site literals (.solidrt-data, http-cache.db, the SolidRT/go identity, size caps); collects sites until designed.
 created: 2026-07-27
 ---
 
@@ -10,7 +10,7 @@ SolidRT-wide names and knobs are currently per-site literals with no shared
 definition, and some exist twice across the Rust/TypeScript boundary. A few
 that exist today:
 
-- `.srt-data/http-cache.db` - the dev server proxy cache file
+- `.solidrt-data/http-cache.db` - the dev server proxy cache file
   (`packages/cli`).
 - `SolidRT` / `go` - the generic client's pref-path identity (lattice).
 - The fetch cache size cap (flux, placeholder 256 MB).

@@ -175,7 +175,7 @@ avoids `export *` from solid-js.
 
 **There are none** - no test files, no test script in any package.json in the
 workspace. Core is the best place in the JS side to start: unlike cli, much
-of it is pure logic with no process to spawn. The flux:*/srt:* builtin
+of it is pure logic with no process to spawn. The flux:*/sol:* builtin
 imports are the only obstacle, and `bun test` module mocking (mock.module)
 covers them. Candidates in value order:
 
@@ -189,7 +189,7 @@ covers them. Candidates in value order:
 - `parseColor`/gradient stop parsing (color.ts): the packed u32 layout, alpha
   scaling, the black fallback (pin current behavior, whatever is decided).
 - `capabilities.windowSizeClass` thresholds and the inputDevices-vs-seen
-  fallback logic, with a stubbed srt:events.
+  fallback logic, with a stubbed sol:events.
 - `createScroll`/`createCaretScroll` clamp-and-follow math with stubbed
   getBoundingBox/measureText.
 - onFrame re-registration + dispatch (window.ts) with a stubbed event bus -

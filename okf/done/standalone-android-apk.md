@@ -1,19 +1,19 @@
 ---
 title: Standalone APK for a packed app
-description: Shipped 2026-09-01: srt pack --apk patches a per-ABI production runner APK (no Android SDK at pack time) with the app's payload, id, label, versionCode and adaptive icon, and the runtime boots a packed payload on Android without the player or the dev server; implementation notes in notes/standalone-apk-implementation.md.
+description: Shipped 2026-09-01: sol pack --apk patches a per-ABI production runner APK (no Android SDK at pack time) with the app's payload, id, label, versionCode and adaptive icon, and the runtime boots a packed payload on Android without the player or the dev server; implementation notes in notes/standalone-apk-implementation.md.
 created: 2026-09-01
 completed: 2026-09-01
 ---
 
 # Standalone APK for a packed app
 
-`srt pack` produces a standalone executable for the platform it runs on.
+`sol pack` produces a standalone executable for the platform it runs on.
 Android has no equivalent: the only Android artifact is `solidrt-go.apk`, the
 dev client, which hosts apps behind its player and dev-server connection. An
 app cannot be handed to someone as an installable Android app.
 
 Two independent halves, and only the second one is about zip files. Both
-shipped 2026-09-01 as `srt pack --apk`, verified on an arm64 device; what
+shipped 2026-09-01 as `sol pack --apk`, verified on an arm64 device; what
 shipped and the traps are in
 [standalone-apk-implementation](../notes/standalone-apk-implementation.md).
 The paragraph above describes the state before it.
@@ -46,17 +46,17 @@ The pieces this lands on:
   APK with no extraction, and `MainActivity.extractAssets()` (which copies
   every asset into `filesDir` on every launch) never runs in this flavor.
 - `forge::trailer::read` needs a `read_at(path, base, len, magic)` variant that
-  rebases section offsets, since the `.srtapp` sits at an offset inside the APK.
+  rebases section offsets, since the `.solapp` sits at an offset inside the APK.
 - alloy already carries `ndk 0.9`, `ndk-context` and `jni`, and already makes
   this kind of JNI call (`sdl_utils.rs`, the touchscreen-feature probe), so the
   platform call belongs there and adds no dependency. For the asset fd path the
-  `.srtapp` must live under `assets/` in the APK; an arbitrary zip entry is not
+  `.solapp` must live under `assets/` in the APK; an arbitrary zip entry is not
   visible to `AAssetManager`.
 - `MainActivity.java` lives in `src/go` only. The prod flavor compiles but has
   no activity class, so it crashes at launch: the shared manifest declares
   `.MainActivity`. The activity splits: the shared parts (SDLActivity wiring,
   the keyboard-inset JNI) move to `src/main`, the go-only parts
-  (`extractAssets`, the `srt_dev_server` intent extra) into a `src/go`
+  (`extractAssets`, the `sol_dev_server` intent extra) into a `src/go`
   subclass.
 - `lattice/Makefile.android` needs a `android-runtime` target, and the `prod`
   flavor in `lattice/android/app/build.gradle` (declared, with an empty
@@ -73,7 +73,7 @@ background the activity instead of returning to a player.
 An APK cannot be synthesized from a folder: `AndroidManifest.xml` is compiled
 binary XML, resources are compiled, and Java must be dex. That stays a Gradle
 job. But it only has to happen once: CI publishes a runner APK per ABI
-alongside `solidrt-go.apk`, and `srt pack --apk` patches a copy of it in
+alongside `solidrt-go.apk`, and `sol pack --apk` patches a copy of it in
 pure TypeScript with no dependencies.
 
 What the patch has to do, measured against the shipped
@@ -82,7 +82,7 @@ What the patch has to do, measured against the shipped
 - **Application id.** The AXML string pool has `com.solidrt.go` as a single
   entry (index 52). The activity is stored fully qualified
   (`com.solidrt.app.MainActivity`), so changing the id leaves the dex alone -
-  the same reason `srt android` can `am start -n
+  the same reason `sol android` can `am start -n
   com.solidrt.go/com.solidrt.app.MainActivity` today. Source: `solidrt.appId`
   from package.json, which is already reverse-DNS and already keys storage.
   Android also wants an integer `versionCode` (and a display `versionName`),
@@ -111,7 +111,7 @@ What the patch has to do, measured against the shipped
   `node:crypto` reads natively - not a JKS/PKCS12 keystore, which would
   need an ASN.1 parser), never a flag; meanwhile pack prints a note that
   the shared dev key signed the APK.
-- **Payload.** The `.srtapp` added as a STORED entry, which is what makes half
+- **Payload.** The `.solapp` added as a STORED entry, which is what makes half
   1's file-descriptor path work at all.
 
 This half is testable before the runner APK exists: patch today's

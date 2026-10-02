@@ -1,8 +1,8 @@
 import { createSignal, getOwner, onCleanup, onSettled, runWithOwner, flush } from "@solidjs/signals"
 import { requestFrame, setPointerLock } from "flux:rendertree"
-import { renderFrame } from "srt:render"
-import { on, once } from "srt:events"
-import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "srt:app"
+import { renderFrame } from "sol:render"
+import { on, once } from "sol:events"
+import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "sol:app"
 import { platform } from "flux:process"
 import { getEventHandler, focusedNode, setFocus, activateTextInput, setInterestRoot } from "./core"
 import { scanForOrphans, getNodePath } from "./renderer"
@@ -269,7 +269,7 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void,
  * between frames (an event handler, a timer) it is the latest frame's. It
  * is 0 before the first frame. Not reactive, and reading it requests no
  * frame. Use it to time things against the app's own clock from code that
- * has no tick in hand: it follows the dev tools' clock control, `srt
+ * has no tick in hand: it follows the dev tools' clock control, `sol
  * render` and a test, where performance.now() does not.
  */
 export function frameTime(): number {

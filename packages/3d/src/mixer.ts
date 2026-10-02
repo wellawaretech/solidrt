@@ -44,7 +44,7 @@
 
 import * as spatial from "flux:spatial"
 import type { NodeId } from "flux:spatial"
-import { on } from "srt:events"
+import { on } from "sol:events"
 import type { ModelChannel, ModelClip } from "./gltf.ts"
 import { channelElements, sampleChannel } from "./clip.ts"
 import type { Vec3 } from "./math.ts"

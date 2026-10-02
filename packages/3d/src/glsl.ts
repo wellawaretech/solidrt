@@ -815,7 +815,7 @@ export function resolveFragment(source: string = DEFAULT_RESOLVE): string {
  * roughness - 0 the sharp base level, 1 the level whose faces are
  * ENV_ROUGH_FACE (4) texels wide, linear between (Godot's
  * `roughness * MAX_ROUGHNESS_LOD`; Unity's six LOD steps; Three maps
- * onto a 16-texel floor): the level a baked chain (`srt tool
+ * onto a 16-texel floor): the level a baked chain (`sol tool
  * 3d/environment`, loadEnvironment) convolves at that roughness, and a
  * generated chain merely box-filters - scaled by the intensity: the
  * prefiltered radiance of the split sum (`standard` multiplies it by PBR's

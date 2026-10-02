@@ -21,7 +21,7 @@ close; each bullet is dated by the work it came out of.
   context routes to `set_instance_order_direction` +
   `rematerialize_retained_order`. Verified: `cargo test -p alloy --lib`
   (608, three new feed tests), `cargo test -p flux --lib --features
-  gui`, `srt check` on the 3d package, and `probes/order-3d-probe.tsx`
+  gui`, `sol check` on the 3d package, and `probes/order-3d-probe.tsx`
   end to end on a fresh release client - `/buffer` reads the gathered
   records back far-to-near for the front camera and exactly reversed
   after a `view` flip to behind, with no record publish from JS between
@@ -61,13 +61,13 @@ close; each bullet is dated by the work it came out of.
   (.ply / .splat / gunzipped .spz v2-v3), the covariance bake
   (importance sort, y-up flip by conjugation - negate the xy and xz
   entries - fp16 clamped at 65504), `encodeSplat`/`decodeSplat` for the
-  .srts container ("SRTS" u32 | version | jsonLength | json | records,
-  version 1); `srt tool 3d/splat` (tools/splat.ts, gunzips .spz
+  .sol3s container ("SOLS" u32 | version | jsonLength | json | records,
+  version 1); `sol tool 3d/splat` (tools/splat.ts, gunzips .spz
   itself); runtime-side `loadSplat` + `createSplatMesh`/`<SplatMesh>`
   over the stock material (SPLAT_VERTEX/SPLAT_FRAGMENT exported for
   forks, one shared instance + quad). Verified: 10 new bun tests
   (parsers against hand-built inputs incl. spz smallest-three,
-  closed-form covariances, flip signs, container round trip), `srt
+  closed-form covariances, flip signs, container round trip), `sol
   check`, and probes/splat-mesh-probe.tsx on the train capture -
   loadSplat 1,026,508 splats in 24 ms, photoreal from both sides,
   /buffer windowed readbacks (head + tail, 64 KiB cap paged by offset)
@@ -86,7 +86,7 @@ close; each bullet is dated by the work it came out of.
   name.
 - flux:fs resolves a relative path to per-app storage; only `assets/`
   reaches the project tree, so the probe's bake lives at
-  assets/train.srts (untracked, ~27 MiB) - a bake shipped with an app
+  assets/train.sol3s (untracked, ~27 MiB) - a bake shipped with an app
   goes under assets/ for the same reason.
 - uViewport became a STANDARD shared param written with the camera
   (cameraParams now takes the target size; scene target, views and
@@ -102,7 +102,7 @@ close; each bullet is dated by the work it came out of.
   orbit speed folds ~9 re-sorts+republishes per second at 1M into these
   numbers already.
 - Pixel 7 leg, same day (fresh release client, this build): loadSplat
-  reads the 1M .srts in 45 ms on device, photoreal through
+  reads the 1M .sol3s in 45 ms on device, photoreal through
   <SplatMesh>. GPU ms/frame (gpuFrameExecMsPerFrame, orbiting, order
   LIVE - the core re-sorts and republishes the 28 MB per ~2 deg):
   full res 21.8 / 35.3 / 52.2 at 100k / 300k / 1M, half res 13.1 /
@@ -133,7 +133,7 @@ close; each bullet is dated by the work it came out of.
   (~115 MB for the cloud alone with the fetched bytes still viewed).
   Real-world backing for the hand-off record form the stage A review
   recommends.
-- The .splat and .srts probes cannot share a capture cache: the old
+- The .splat and .sol3s probes cannot share a capture cache: the old
   probe fetched over HTTP with force-cache, the new one reads the baked
   file - re-baking after a splat-data change is `curl` + one tool run
   (the header comment carries both commands).
@@ -391,9 +391,9 @@ close; each bullet is dated by the work it came out of.
   hold of 3-4 refreshes leaves the GPU idle most of the frame, the
   governor drops to 250-370 MHz and the reading inflates (quads K=16
   read 13.1 ms at 301 MHz, 7.1 at 597) - pinned off through a new
-  `srt_env` intent extra on the go client (MainActivity.java:
+  `sol_env` intent extra on the go client (MainActivity.java:
   "NAME=value;..." set into the process environment before SDL_main,
-  so `--es srt_env SRT_CADENCE_HOLD=off` reaches lattice like a shell
+  so `--es sol_env SOLIDRT_CADENCE_HOLD=off` reaches lattice like a shell
   export; APK rebuilt, the .so unchanged). And THERMAL DRIFT inside a
   block below status 1: the second and later rungs of a block run at
   762 MHz with the skin above ~36 C (the status-1 threshold is 39 C)
@@ -422,7 +422,7 @@ close; each bullet is dated by the work it came out of.
   the published prefix is instanceCount x K records, and the hand-off
   size rule moved from transferRecords to attach, where the form is
   known (gathered records must fit the buffer, an index stream must
-  hold their ids). (c) `.srts` version 2: the 32-byte two-texel record
+  hold their ids). (c) `.sol3s` version 2: the 32-byte two-texel record
   (center + packed rgba8 | six covariance halves + a spare word) and an
   optional SH block (2/3/6 texels per splat at degree 1/2/3, halves
   packed pairwise, coefficient-major with rgb interleaved; a ply's
@@ -442,7 +442,7 @@ close; each bullet is dated by the work it came out of.
   3.10 built-in (Mesa refused it), so the packed color unpacks by hand.
 - Step 2 verification: 611 alloy lib tests (index parse and
   materialization, the format, the sampler rules), 69 flux gui tests,
-  13 bun tests (the SH parse, packing, flip signs and container), `srt
+  13 bun tests (the SH parse, packing, flip signs and container), `sol
   check`. Desktop release client: the 1M train renders solid under the
   engine's order; the id stream read back through /buffer runs
   far-to-near after four view flips and a layers off/on (the largest

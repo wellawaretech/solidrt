@@ -3,7 +3,7 @@ plugins {
 }
 
 // The published Player is built only by `make android-dist PUBLISH=1`
-// (-PsrtPublish), which the release workflow runs: its release build is
+// (-PsolPublish), which the release workflow runs: its release build is
 // com.solidrt.player, labelled Player and signed with the Player key - the
 // Player's permanent identity, the only build that can update an installed
 // published Player. Every other player build is the dev Player,
@@ -12,10 +12,10 @@ plugins {
 // the environment (the workflow decodes it from a secret) as a PKCS12
 // keystore with one password for store and key; publishing without it fails
 // here rather than signing a published Player with the debug key.
-def publish = project.hasProperty('srtPublish')
-def playerKeystore = System.getenv('SRT_PLAYER_KEYSTORE')
+def publish = project.hasProperty('solPublish')
+def playerKeystore = System.getenv('SOLIDRT_PLAYER_KEYSTORE')
 if (publish && !playerKeystore) {
-    throw new GradleException('PUBLISH=1 (-PsrtPublish) needs the Player key: set SRT_PLAYER_KEYSTORE and SRT_PLAYER_KEYSTORE_PASSWORD')
+    throw new GradleException('PUBLISH=1 (-PsolPublish) needs the Player key: set SOLIDRT_PLAYER_KEYSTORE and SOLIDRT_PLAYER_KEYSTORE_PASSWORD')
 }
 
 android {
@@ -28,21 +28,21 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-        // Restrict the packaged native libs to one ABI when -PsrtAbi is passed
+        // Restrict the packaged native libs to one ABI when -PsolAbi is passed
         // (e.g. the 32-bit single-ABI dist target). Absent, every ABI staged
         // under dist/android is bundled, which is the fat-APK default.
-        if (project.hasProperty('srtAbi')) {
+        if (project.hasProperty('solAbi')) {
             ndk {
-                abiFilters.addAll(project.property('srtAbi').split(',').toList())
+                abiFilters.addAll(project.property('solAbi').split(',').toList())
             }
         }
-        // The build's version (-PsrtVersion, make's VERSION): versionName is
-        // what `srt android` compares against the project's
+        // The build's version (-PsolVersion, make's VERSION): versionName is
+        // what `sol android` compares against the project's
         // @solidrt/android-<abi> package, versionCode orders updates. A
         // version without a leading x.y.z (a branch name, in a dry-run
         // release) keeps versionCode 1.
-        if (project.hasProperty('srtVersion')) {
-            def version = project.property('srtVersion').toString()
+        if (project.hasProperty('solVersion')) {
+            def version = project.property('solVersion').toString()
             versionName = version
             def release = version =~ /^(\d+)\.(\d+)\.(\d+)/
             if (release.find()) {
@@ -55,7 +55,7 @@ android {
     // one checkout cannot reinstall over another's. A fixed key (standard
     // debug alias/password, not sensitive) keeps local builds interchangeable.
     // It signs every build but the published Player, the runner included
-    // (which `srt pack --apk` re-signs anyway).
+    // (which `sol pack --apk` re-signs anyway).
     signingConfigs {
         debug {
             storeFile = file('debug.keystore')
@@ -67,9 +67,9 @@ android {
             player {
                 storeFile = file(playerKeystore)
                 storeType = 'pkcs12'
-                storePassword = System.getenv('SRT_PLAYER_KEYSTORE_PASSWORD')
-                keyAlias = System.getenv('SRT_PLAYER_KEY_ALIAS') ?: 'solidrt-player'
-                keyPassword = System.getenv('SRT_PLAYER_KEYSTORE_PASSWORD')
+                storePassword = System.getenv('SOLIDRT_PLAYER_KEYSTORE_PASSWORD')
+                keyAlias = System.getenv('SOLIDRT_PLAYER_KEY_ALIAS') ?: 'solidrt-player'
+                keyPassword = System.getenv('SOLIDRT_PLAYER_KEYSTORE_PASSWORD')
             }
         }
     }
@@ -88,7 +88,7 @@ android {
         }
         runner {
             dimension = "variant"
-            // The runner: a placeholder id (and label, "Runner") that `srt
+            // The runner: a placeholder id (and label, "Runner") that `sol
             // pack --apk` rewrites to the app's own. Its link scheme in
             // src/runner/AndroidManifest.xml is spelled the same, so the
             // rewrite renames both.
@@ -106,7 +106,7 @@ android {
     // add to main's, so anything staged here for the Player would also land
     // in the runner APK. The Player carries the player assets (extracted at
     // launch by its MainActivity); the runner APK carries no assets of its
-    // own - `srt pack --apk` injects the app payload into a copy.
+    // own - `sol pack --apk` injects the app payload into a copy.
     sourceSets {
         player {
             jniLibs.srcDir '../../../dist/android'
@@ -128,7 +128,7 @@ android {
 // libs: it is delivered by tooling, and in-place mmap loads faster.
 //
 // The published Player (see the top of this file) is the player release
-// build under -PsrtPublish; a debug build stays the dev Player even then.
+// build under -PsolPublish; a debug build stays the dev Player even then.
 androidComponents {
     onVariants(selector().all()) { variant ->
         if (variant.flavorName == 'runner') {

@@ -122,7 +122,7 @@ function solidPlugin(inputs: Set<string>, babelMaps?: Map<string, object>, isola
 // statement is the "use isolate" directive is the entry of its own bundle,
 // run by flux:isolate in a second runtime. Its id is its path relative to
 // the source root (the entry's directory) without extension; the bundle
-// travels as the manifest asset isolates/<id>.js (dev) or .bin (pack). The
+// travels as the manifest asset isolates/<id>.js (dev) or .fluxbc (pack). The
 // main build never loads such a module (only `import type` reaches it), so
 // the set is found by scanning the tree rather than by following imports.
 
@@ -183,7 +183,7 @@ export function isolateAssetPath(id: string, ext: "js" | "bin"): string {
 // modules (isolates are a project feature).
 export type BundleOptions = { entry: string; dev: boolean; minify: boolean; project: string | null }
 
-// The `srt bundle --json` stdout contract doubles as the in-process result.
+// The `sol bundle --json` stdout contract doubles as the in-process result.
 export type BundleResult = BundleOutput
 
 /**
@@ -198,8 +198,8 @@ export function bundleMaps(result: BundleResult): Record<string, string> | null 
   return Object.keys(maps).length ? maps : null
 }
 
-// The pure bundle: every input is explicit, so it runs identically in the srt
-// (Bun) process and in the `srt bundle --json` subprocess the dev server
+// The pure bundle: every input is explicit, so it runs identically in the sol
+// (Bun) process and in the `sol bundle --json` subprocess the dev server
 // spawns. It never touches the ambient args/state singletons and never prints
 // progress (callers own that), so its stdout stays clean for subprocess use.
 export async function bundleWith(opts: BundleOptions): Promise<BundleResult | null> {
@@ -230,7 +230,7 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
         target: "browser",
         format: "esm",
         minify: opts.minify,
-        external: ["flux:*", "srt:*"],
+        external: ["flux:*", "sol:*"],
         define,
         loader: { ".svg": "text" },
         sourcemap: babelMaps ? "external" : "none",
@@ -345,7 +345,7 @@ export async function bundle(mode: Mode) {
 // A flux entry's isolate modules: everything under its isolates/ dir, id =
 // the path relative to that dir without extension. Standalone flux resolves
 // isolates by location, not directive - module <id> is
-// <entry dir>/isolates/<id>.bin or .js - so this is the discovery for
+// <entry dir>/isolates/<id>.fluxbc or .js - so this is the discovery for
 // bundling and packing flux scripts (which also lets a worker be .ts, unlike
 // running from source).
 export function findFluxIsolates(entryDir: string): IsolateModule[] {
@@ -360,7 +360,7 @@ export function findFluxIsolates(entryDir: string): IsolateModule[] {
 }
 
 // A bundle cannot carry its isolate bundles inside itself, so they travel in
-// the isolates/ dir next to it: `<dir>/isolates/<id>.js` (or `.bin`,
+// the isolates/ dir next to it: `<dir>/isolates/<id>.js` (or `.fluxbc`,
 // compiled) beside the bundle file - the shape the flux runtime and an
 // installed version dir resolve. Writes are confined to bundle-owned output
 // dirs (the ensureOutDir rule in the bundle command); loads read the dir

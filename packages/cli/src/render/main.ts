@@ -18,7 +18,7 @@ export async function main() {
   // and nothing else under dist/.
   let outDir = resolve("dist", "render")
   rmSync(outDir, { recursive: true, force: true })
-  let jsOutfile = join(outDir, basename(entry).replace(/\.[jt]sx?$/, "") + ".srt.js")
+  let jsOutfile = join(outDir, basename(entry).replace(/\.[jt]sx?$/, "") + ".sol.js")
   await Bun.write(jsOutfile, result.code)
   writeIsolates(join(outDir, "isolates"), result.isolates)
   // The manifest's font annotations are what the runtime registers the

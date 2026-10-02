@@ -1,4 +1,4 @@
-// The fixed development signing identity for `srt pack --apk`: a checked-in
+// The fixed development signing identity for `sol pack --apk`: a checked-in
 // RSA-2048 key and self-signed certificate (same posture as the checked-in
 // debug.keystore in lattice/android). It makes a patched APK installable by
 // sideloading out of the box - and by the same token, anyone holding this key

@@ -9,10 +9,10 @@ completed: 2026-08-25
 
 ## Symptom
 
-`srt mcp` resolves "which dev server do I talk to" by projectDir: the
+`sol mcp` resolves "which dev server do I talk to" by projectDir: the
 nearest package.json above the bridge's cwd, compared with `sameDir`
 against each record in `~/.solidrt/servers/*/live.json` (mcp.ts, the
-`matches` filter and the probe's authoritative re-check). `srt run`
+`matches` filter and the probe's authoritative re-check). `sol run`
 derives a server's projectDir the same way from the ENTRY - so in this
 repo, running `packages/3d/examples/pick.tsx` registers `packages/3d`
 while the bridge at the repo root looks for the root. Result: "No dev
@@ -46,7 +46,7 @@ Path comparison must reuse `sameDir`'s normalization (the two sides come
 from different processes); a prefix check on raw strings is the known
 trap (trailing separators, symlinked tmp).
 
-Alternative considered and rejected: an `srt run --project <dir>` flag
+Alternative considered and rejected: an `sol run --project <dir>` flag
 pinning the registered projectDir. It fixes the same mismatch but adds
 user-visible surface for a workspace-only problem, and every future
 session has to remember to pass it; the bridge-side match fixes it for
@@ -70,5 +70,5 @@ file, never a directory found by walking up from the entry, and the bridge
 resolves the project server keyed by its own cwd, else the single file
 server whose file lies under it (`resolveFromCwd` in
 `packages/cli/src/lib/registry.ts`). A package example served from the repo
-root is `srt run <file> --project`, which keys the root, so the mismatch
+root is `sol run <file> --project`, which keys the root, so the mismatch
 above cannot arise. Subdirectory matching was not built.

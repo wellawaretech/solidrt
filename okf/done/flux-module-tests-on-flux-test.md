@@ -1,6 +1,6 @@
 ---
 title: The flux module tests are JavaScript inside Rust strings
-description: 131 of the 173 cargo integration tests in flux/tests/ only run a JS program and compare its console output, untyped and run on Linux only in CI; move them to flux:test as flux/tests/*.test.ts, run by srt test on all four platforms, and keep in cargo the 42 that observe what a test inside the engine cannot (the logger, uncaught reporting, liveness, exit, the embedding API, isolate spawning, the websocket wire).
+description: 131 of the 173 cargo integration tests in flux/tests/ only run a JS program and compare its console output, untyped and run on Linux only in CI; move them to flux:test as flux/tests/*.test.ts, run by sol test on all four platforms, and keep in cargo the 42 that observe what a test inside the engine cannot (the logger, uncaught reporting, liveness, exit, the embedding API, isolate spawning, the websocket wire).
 created: 2026-10-01
 completed: 2026-10-02
 ---
@@ -23,7 +23,7 @@ joined `console.log` output compared in Rust:
 
 Since the test harness ([test-harness](test-harness.md)) flux has
 `flux:test` on the `flux` binary: an engine per test, a cap per engine,
-`expect`, and `srt test --only flux` in the `test-js` job on all four
+`expect`, and `sol test --only flux` in the `test-js` job on all four
 platforms.
 
 This revises a recorded finding. "What is tested where" in
@@ -48,7 +48,7 @@ the marshalling over forge cores that carry their own tests.
 | `ExecHandle` emitting into the engine from outside | 3 | `events.rs` |
 | what reaches the logger, at which level, in which format | 11 | `console.rs` |
 | an uncaught error is reported (under `flux:test` it fails the test instead, so the report itself is not visible) | 5 | `promises.rs` 4, `time.rs` `queue_microtask_throw_is_reported` |
-| a resolver injected by the host, the spawn count, a parent seeded with two different seeds | 8 | `isolate.rs` (`srt test` also stages no isolates for a flux test) |
+| a resolver injected by the host, the spawn count, a parent seeded with two different seeds | 8 | `isolate.rs` (`sol test` also stages no isolates for a flux test) |
 | process exit: three run the binary and read its status, one needs a host without `ProcessExit` | 4 | `process.rs` |
 | the env snapshot of a variable the test sets (`std::env::set_var`) | 1 | `process.rs` |
 | an unsubscribe lets the engine go idle (the host drops a test's engine at its end, so idleness cannot be seen from inside) | 2 | `process.rs` `signal_unsubscribe_lets_engine_idle`, `dir.rs` `watch_reports_changes_and_unsubscribe_lets_engine_idle` |
@@ -114,8 +114,8 @@ Twelve files go entirely, so 21 test binaries become 9.
    test-harness-findings), so the lean is to `rejects`.
 
 3. **Placement and typecheck.** `flux/tests/*.test.ts` beside the `.rs`
-   files: cargo compiles only `tests/*.rs`, and `srt test` finds
-   `*.test.ts` in any `tests/` folder and runs it in `flux/`. `srt check`
+   files: cargo compiles only `tests/*.rs`, and `sol test` finds
+   `*.test.ts` in any `tests/` folder and runs it in `flux/`. `sol check`
    does not reach them. Its globs cover `tests/` and `packages/*/tests/`
    at the root (`packages/cli/src/check/main.ts`), `flux/` has no
    `package.json` or `tsconfig.json`, and the root `tsconfig.json` names no
@@ -128,8 +128,8 @@ Twelve files go entirely, so 21 test binaries become 9.
 
 - `flux/tests/*.rs` holds the 42 tests above, and no test there only
   compares the console output of a module call.
-- The 131 run under `srt test --only flux` in `test-js` on all four
-  platforms, and `srt check` covers them. Windows and macOS see these
+- The 131 run under `sol test --only flux` in `test-js` on all four
+  platforms, and `sol check` covers them. Windows and macOS see these
   tests for the first time; what they find there is part of the work.
 - Each moved test asserts what its Rust version asserted, compared file by
   file: no check dropped or loosened in the move.
@@ -164,7 +164,7 @@ Built as shaped, with the three decisions taken as follows.
    No `resolves`: an awaited value goes into a plain `expect`.
 3. **Placement**: `flux/tests/*.test.ts` with a `flux/tsconfig.json`
    (plain TypeScript, `@solidrt/flux-types` as the global surface) and
-   the explicit glob `flux/tests/*.test.ts` in `srt check`. The crate dir
+   the explicit glob `flux/tests/*.test.ts` in `sol check`. The crate dir
    has no package.json, so the typecheck's project-root walk stops at that
    tsconfig; without it the walk reached the root tsconfig, which names
    no flux types, and every `flux:*` import failed.

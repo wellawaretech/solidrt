@@ -1,7 +1,7 @@
 import * as tree from "flux:rendertree"
 import type { TextureId } from "flux:gpu"
 import { createSignal, getOwner, onCleanup } from "@solidjs/signals"
-import { on } from "srt:events"
+import { on } from "sol:events"
 
 let handlers = new Map<number, Map<string, Function>>()
 

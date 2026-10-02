@@ -1,6 +1,6 @@
 ---
 title: Standalone APK implementation notes
-description: Working notes for the srt pack --apk pipeline (done/standalone-android-apk.md): what shipped in the first three stages, the traps future edits must know, and how it was verified on a device.
+description: Working notes for the sol pack --apk pipeline (done/standalone-android-apk.md): what shipped in the first three stages, the traps future edits must know, and how it was verified on a device.
 created: 2026-09-01
 ---
 
@@ -22,7 +22,7 @@ Everything below shipped 2026-09-01 and was verified on a real arm64 device
   (checked-in dev key), icon.ts (hand-assembled 1x1 background PNG),
   apk.ts (`patchApk` orchestrator).
 - Runtime: `not(go)` SDL_main split in lattice/src/lib.rs boots
-  `assets/app.srtapp` in place via `alloy::sdl_utils::packed_asset_location`
+  `assets/app.solapp` in place via `alloy::sdl_utils::packed_asset_location`
   (JNI `sourceDir` + AAssetManager fd for offset/len) and
   `forge::trailer::read_at`; shared loader in lattice/src/payload.rs.
 - Android: SolidRTActivity (src/main) + per-flavor MainActivity subclasses;
@@ -52,7 +52,7 @@ Everything below shipped 2026-09-01 and was verified on a real arm64 device
   (jni-sys 0.3) name the same ABI types in different crates; the pointer
   casts at the `AAssetManager_fromJava` boundary are deliberate.
 - Android XML resource comments must not contain `--` (aapt2 rejects the
-  file), so `srt pack --apk` cannot be written literally there.
+  file), so `sol pack --apk` cannot be written literally there.
 
 ## Verified on device
 

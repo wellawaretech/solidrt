@@ -35,8 +35,8 @@ fn write_image(tag: &str, bytes: &[u8]) -> std::path::PathBuf {
 fn round_trip() {
   let bytes = image(&[
     (SECTION_MANIFEST, "", b"{\"app\":true}"),
-    (SECTION_FILE, "bundle.bin", b"MAIN"),
-    (SECTION_FILE, "isolates/worker.bin", b"WORKER"),
+    (SECTION_FILE, "bundle.fluxbc", b"MAIN"),
+    (SECTION_FILE, "isolates/worker.fluxbc", b"WORKER"),
   ]);
   let path = write_image("roundtrip", &bytes);
   let trailer = trailer::read(path, MAGIC).expect("parse trailer");
@@ -46,7 +46,7 @@ fn round_trip() {
   assert_eq!(trailer.section_bytes(manifest).expect("read manifest"), b"{\"app\":true}");
   let index = trailer.file_index();
   assert_eq!(index.len(), 2);
-  let &(offset, len) = index.get("isolates/worker.bin").expect("indexed isolate");
+  let &(offset, len) = index.get("isolates/worker.fluxbc").expect("indexed isolate");
   assert_eq!(trailer.read_range(offset, len).expect("read isolate"), b"WORKER");
 }
 
@@ -56,12 +56,12 @@ fn rejects_bad_images() {
   let plain = write_image("plain", b"RUNNER ONLY");
   assert!(trailer::read(plain, MAGIC).is_none());
   // Wrong magic.
-  let bytes = image(&[(SECTION_FILE, "bundle.bin", b"MAIN")]);
+  let bytes = image(&[(SECTION_FILE, "bundle.fluxbc", b"MAIN")]);
   let wrong = write_image("wrong-magic", &bytes);
   assert!(trailer::read(wrong, b"OTHER\x88\x44").is_none());
   // A section reaching past the table start.
-  let mut overrun = image(&[(SECTION_FILE, "bundle.bin", b"MAIN")]);
-  let entry_len_at = overrun.len() - MAGIC.len() - 12 - ("bundle.bin".len() + 2) - 8;
+  let mut overrun = image(&[(SECTION_FILE, "bundle.fluxbc", b"MAIN")]);
+  let entry_len_at = overrun.len() - MAGIC.len() - 12 - ("bundle.fluxbc".len() + 2) - 8;
   overrun[entry_len_at..entry_len_at + 8].copy_from_slice(&u64::MAX.to_le_bytes());
   let overrun = write_image("overrun", &overrun);
   assert!(trailer::read(overrun, MAGIC).is_none());

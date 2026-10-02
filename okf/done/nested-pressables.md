@@ -31,7 +31,7 @@ its own session.
 - The launcher's old inline-confirm flow stacked guards on top
   (`confirming()` signal checks in the card's onPress) - both handlers
   still ran, with signal-read ordering deciding the outcome.
-- The native remove path is NOT the problem: `srt:apps` `remove()`
+- The native remove path is NOT the problem: `sol:apps` `remove()`
   verified working via probe during launcher stage 2.
 
 ## What is not yet established

@@ -1,4 +1,4 @@
-# srt render
+# sol render
 
 {{ usage render }}
 
@@ -8,9 +8,9 @@ rendering uses SDL's offscreen driver, or alloy's own EGL pbuffer where that
 driver cannot go headless.
 
 ```sh
-srt run --capture session.json
-srt render --script session.json --fps 60 --duration 5
-srt render --settle --strict --size 480x640 --duration 1 --fps 2
+sol run --capture session.json
+sol render --script session.json --fps 60 --duration 5
+sol render --settle --strict --size 480x640 --duration 1 --fps 2
 ```
 
 A render has no wall clock, like an app test: time is the frames, timers
@@ -42,5 +42,5 @@ drawn but never written. Frames land in the directory the command runs from;
 A project's fonts (`solidrt.fonts` in package.json) register over the
 runtime's built-in defaults, so text renders with the same fonts as under
 the dev server. The app runs in the same sandbox as under a dev client
-(`--data-root`, `-c`, the same defaults as `srt run`), so the state a dev
+(`--data-root`, `-c`, the same defaults as `sol run`), so the state a dev
 session built is what the frames show.

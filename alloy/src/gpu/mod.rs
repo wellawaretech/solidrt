@@ -6,7 +6,7 @@
 //! vocabulary plus the UI-side registry (`texture`).
 //!
 //! No GL here, by design: nothing in this module takes a `glow::Context`,
-//! so the "srt-ui has zero GL" thread contract is visible in the module
+//! so the "sol-ui has zero GL" thread contract is visible in the module
 //! graph. The GL executors these shapes drive - programs, passes, targets,
 //! buffers, the sampler cache - live in `gl/`, raster-thread-only.
 

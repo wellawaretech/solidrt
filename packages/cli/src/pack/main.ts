@@ -101,9 +101,9 @@ function packTarget() {
   return { mode, identity, distRoot, baseName }
 }
 
-// All solidrt outputs are the same canonical pack: manifest + bundle.bin +
+// All solidrt outputs are the same canonical pack: manifest + bundle.fluxbc +
 // assets (fonts included). --folder writes it as a flat folder next to a
-// bare runner; --app writes it alone as one .srtapp for a runner to load;
+// bare runner; --app writes it alone as one .solapp for a runner to load;
 // --apk patches it into APKs; the default single-file exe carries it as
 // trailer sections.
 async function buildApp(mode: Mode) {
@@ -119,7 +119,7 @@ async function buildApp(mode: Mode) {
 
 // --apk patches the app into one installable Android APK per installed
 // target (android-targets.ts; the picker runs when there is none):
-// application id and label rewritten, permissions declared, the .srtapp
+// application id and label rewritten, permissions declared, the .solapp
 // payload added as a stored asset, re-aligned and re-signed - pure
 // TypeScript, no Android SDK (okf/done/standalone-android-apk.md). A
 // target's base is its runner APK, which boots the payload. Every
@@ -192,11 +192,11 @@ export async function packApks(): Promise<Map<string, string>> {
 export async function main() {
   if (values.flux) {
     if (values.folder || values.app || values.apk) {
-      console.error("--folder, --app and --apk are for app packs; flux scripts have no folder, .srtapp or APK output")
+      console.error("--folder, --app and --apk are for app packs; flux scripts have no folder, .solapp or APK output")
       process.exit(1)
     }
     let outfile = exeName(values.output ?? join(dirname(resolve(source!)), "dist", basename(source!).replace(/\.[jt]s$/, "")))
-    // The entry's isolate modules ride along as isolates/<id>.bin sections
+    // The entry's isolate modules ride along as isolates/<id>.fluxbc sections
     // (module name = id, for stack attribution).
     let isolates = []
     for (let module of findFluxIsolates(dirname(resolve(source!)))) {
@@ -223,7 +223,7 @@ export async function main() {
   }
 
   if (values.app) {
-    let outfile = values.output ?? join(distRoot, baseName + ".srtapp")
+    let outfile = values.output ?? join(distRoot, baseName + ".solapp")
     let packed = packApp(folder, bytecode)
     await Bun.write(outfile, packed)
     console.log(`>> wrote ${packed.length} bytes to ${outfile}`)

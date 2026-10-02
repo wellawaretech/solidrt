@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, setFrameRate, settle, time, windowReady } from "srt:test"
+import { capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, setFrameRate, settle, time, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -189,7 +189,7 @@ export interface TestApp {
   link(link: string): Promise<void>
   /**
    * Calls a debug command the app registered (`registerDebug` of
-   * `srt:dev`), runs a frame, and returns what the command returned. The
+   * `sol:dev`), runs a frame, and returns what the command returned. The
    * way to put a loaded app into a state its UI reaches slowly or not at
    * all: the same commands an agent calls over MCP. Throws on an unknown
    * name, listing the registered ones.

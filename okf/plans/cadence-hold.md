@@ -179,7 +179,7 @@ one match arm in lattice, and it is the first thing the policy registry
 app-overridable. This decision is the user's; see Open questions.
 
 Until the registry exists, the developer override is an environment
-variable read by lattice at startup, `SRT_CADENCE_HOLD=off|auto|<k>`, dev
+variable read by lattice at startup, `SOLIDRT_CADENCE_HOLD=off|auto|<k>`, dev
 only, so the probe and a census can pin the policy on any device.
 
 The current hold is exposed in `/stats` as `cadenceHold` next to
@@ -245,13 +245,13 @@ and the Pixel.
 ## Stage 3: the policy
 
 - Lattice selects the default from `InputDevices` as tabled, logs it on
-  the same line as the pacing choice, honors `SRT_CADENCE_HOLD`.
+  the same line as the pacing choice, honors `SOLIDRT_CADENCE_HOLD`.
 - `/stats` exposes `cadenceHold`; `packages/cli/agents/debugging.md` says
   what it means and how to pin it.
 
 ## Stage 4: verification
 
-On each device the probe is run unheld (`SRT_CADENCE_HOLD=off`) and held,
+On each device the probe is run unheld (`SOLIDRT_CADENCE_HOLD=off`) and held,
 at `busy` settings that sit on and between boundaries, and Sponza's tour
 is judged by eye by the user, held against unheld:
 
@@ -288,12 +288,12 @@ Each run's numbers go into Findings as they are taken.
    makes it the better answer later.
 2. Stage 0 first: yes; every measurement on the Pixel depended on it.
 3. The dev override as an environment variable until the policy registry
-   exists: yes; the same placeholder shape `SRT_LOG` uses.
+   exists: yes; the same placeholder shape `SOLIDRT_LOG` uses.
 
 ## Still open before this plan is done
 
 - The user's eye test of Sponza's tour on the Pixel and the desktop with
-  the hold in force (the desktop with `SRT_CADENCE_HOLD=auto`).
+  the hold in force (the desktop with `SOLIDRT_CADENCE_HOLD=auto`).
 - The TV box run (50 Hz, SwapPaced, the client class the hold is most
   for): a 90 s census before and after, when the box is connected.
 

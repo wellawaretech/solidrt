@@ -1,5 +1,5 @@
 import { onSettled } from "@solidjs/signals"
-import { on } from "srt:events"
+import { on } from "sol:events"
 import type { PointerEvent } from "./types"
 import { arena, type ArenaOwner } from "./arena"
 import { createVelocityTracker, flingVelocity } from "./velocity"

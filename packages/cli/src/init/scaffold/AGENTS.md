@@ -59,7 +59,7 @@ that matches the work; do not work from memory of what a web framework does.
   over a `flux:sqlite` database)
 - debug a running app, or drive it over MCP to verify a change ->
   node_modules/@solidrt/cli/agents/debugging.md
-- write or repair a test (`bun run srt test`) ->
+- write or repair a test (`bun run sol test`) ->
   node_modules/@solidrt/cli/agents/testing.md (the method) and
   node_modules/@solidrt/test/AGENTS.md (the API)
 - add an asset or font, set the app's identity, or build for distribution ->
@@ -110,7 +110,7 @@ platform-wide and bite in every app:
 ## Run / verify
 
 - FIRST check whether a dev server and its clients (possibly several) are
-  already running and build against those; do not start a second `srt run`
+  already running and build against those; do not start a second `sol run`
   when one is up. `reload` reaches every connected client; the per-client
   tools are listed in debugging.md.
 - The dev loop (reload, logs, snapshots, the holds on reload-on-save and on
@@ -119,6 +119,6 @@ platform-wide and bite in every app:
   before the first reload. The `.mcp.json` here is Claude Code's convention;
   if your client lists no `solidrt` tools, debugging.md has the entry to add
   to its own config.
-- Tests: `bun run srt test` or `bun run test` (not `bun test`, which is Bun's
+- Tests: `bun run sol test` or `bun run test` (not `bun test`, which is Bun's
   own runner and cannot load them). They live in tests/; to write one, see
   the test entry under "Read before you".

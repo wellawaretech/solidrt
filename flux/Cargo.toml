@@ -36,7 +36,7 @@ video = ["forge/video"]
 # (behind forge/ktx2): not a cargo default; see forge/Cargo.toml.
 ktx2 = ["forge/ktx2"]
 # flux:test (test, expect), the test host (flux::test) and the `test`
-# capability: what `srt test` runs a test file with. The module evaluates
+# capability: what `sol test` runs a test file with. The module evaluates
 # an embedded JS source, hence `compile`.
 # Not a cargo default: the Makefile turns it on for the `flux` binary only,
 # so no shipping runtime (fluxrt, the production solidrt) carries it.

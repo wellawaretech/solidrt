@@ -39,7 +39,7 @@ file keeps the archaeology (what was decided, flipped, or deferred).
   linear-override-on-depth rejection) silently misses them. Any binding
   rule must be applied at both places, or the creates routed through the
   shared validator (a small refactor waiting for a second rule).
-- An alloy example panicking inside `app.run`'s closure (the srt-ui
+- An alloy example panicking inside `app.run`'s closure (the sol-ui
   thread) leaves the main thread pumping the SDL window: a black window
   that never closes. `depth_texture.rs` installs a panic hook that exits;
   the other examples do not.

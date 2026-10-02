@@ -6,13 +6,13 @@ created: 2026-09-01
 
 # Go client crashes at launch on the x86_64 emulator
 
-Found while verifying `srt pack --apk` (2026-09-01): every launch of the
+Found while verifying `sol pack --apk` (2026-09-01): every launch of the
 staged fat release APK (`dist/android/arm64-v8a/solidrt-go.apk`, arm64 +
 x86_64) on the `srt_pixel6` emulator (API 36, x86_64, `-gpu host`) dies
 within ~1 s of `am start`, before any window content. Reproduced 7/7 across
 fresh installs; the APK that was already installed on the AVD (a ~June
 build) launched fine in the same emulator boot, so the regression is in the
-artifact somewhere between then and now. Patched (`srt pack --apk`) and
+artifact somewhere between then and now. Patched (`sol pack --apk`) and
 byte-original APKs crash identically, which is how it surfaced.
 
 The abort:
@@ -42,7 +42,7 @@ Next steps when picking this up:
   the June-to-now range (candidate areas: frame pacing, demand-driven
   rendering, raster-thread changes - all touched the startup path).
 - CONFIRMED emulator-only (2026-09-01): the same artifact (as the
-  `srt pack --apk`-patched console APK, byte-equivalent modulo id/label/
+  `sol pack --apk`-patched console APK, byte-equivalent modulo id/label/
   payload) installs, launches and stays resumed on an arm64 device
   (SM-T500, Android 12) - SDL_main runs, alloy reports a frame size, no
   aborts. The crash is confined to the emulator's x86_64 GLES translator

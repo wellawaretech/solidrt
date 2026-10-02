@@ -36,6 +36,6 @@ Both additions from the write-up, in packages/core/src/gpu.ts:
 No texture analog was added on purpose: data textures change id-stably via
 uploadTexture/resizeTexture, so there is no rebuild-and-swap to manage.
 
-Not live-verified yet: typechecked (srt check against the linux project) but
+Not live-verified yet: typechecked (sol check against the linux project) but
 no app currently calls createShaderMemo or { manual: true }; the linux
 terminal no longer needs either since resize became id-stable.

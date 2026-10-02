@@ -70,7 +70,7 @@ DIST_PROFILE ?= release-opt
 
 dist:
 	$(MAKE) client PROFILE=$(DIST_PROFILE)
-	$(MAKE) -C $(SRT_HOME)/flux build PROFILE=$(DIST_PROFILE)
+	$(MAKE) -C $(SOLIDRT_HOME)/flux build PROFILE=$(DIST_PROFILE)
 	$(MAKE) runtime PROFILE=$(DIST_PROFILE)
 	cp ...
 ```

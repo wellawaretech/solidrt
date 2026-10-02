@@ -40,7 +40,7 @@ import type {
   NodeTransitionSpec,
   QueryFilter,
 } from "flux:spatial"
-import { on } from "srt:events"
+import { on } from "sol:events"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"

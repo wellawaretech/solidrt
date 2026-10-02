@@ -153,7 +153,7 @@ list. The what-was-built record is
 - Probes cannot self-assert on GPU buffer contents: `readBuffer` is
   Rust-only by design, so order-3d-probe.tsx is verified externally via
   `/buffer` curls instead of printing OK/FAIL like retain-probe does via
-  pixels. Worked fine, but a dev-only buffer readback in `srt:dev` would
+  pixels. Worked fine, but a dev-only buffer readback in `sol:dev` would
   make ordered-population probes self-contained. Low priority: the
   control API flow costs two curls.
 - `/buffer` reads cap at 64 KiB: fine for three quads, useless against a

@@ -9,7 +9,7 @@ completed: 2026-09-03
 
 ## Symptom
 
-A debug command registered with `registerDebug` from `srt:dev` and called
+A debug command registered with `registerDebug` from `sol:dev` and called
 with a bare string:
 
 ```
@@ -77,7 +77,7 @@ form still working.
 Reproduced 2026-09-03 with `probes/debug-args-probe.tsx`, an `echo` command
 returning `typeof` and `JSON.stringify` of its argument, served in file mode
 on port 34896 and called two ways: a direct control-API POST, and the bridge
-(`srt mcp --port 34896`) driven over stdio with the same `tools/call`
+(`sol mcp --port 34896`) driven over stdio with the same `tools/call`
 message an agent client sends.
 
 | caller | sent | handler received |

@@ -23,9 +23,9 @@ export type ServerConfig = {
    * entry's directory), so they resolve the same mode this server did. */
   cwd: string
   entryArgs: string[]
-  /** The srt command prefix (binaries.ts) the bundle and the startup
+  /** The sol command prefix (binaries.ts) the bundle and the startup
    * typecheck run through. */
-  srt: string[]
+  sol: string[]
   /** An explicit --port; otherwise the remembered port is tried, then the
    * first free one. */
   port?: number
@@ -41,7 +41,7 @@ export type ServerConfig = {
   minify: boolean
   /** Enable the sqlite-backed proxy cache. */
   cache: boolean
-  /** Build outputs and the proxy cache: the project's .srt-data, or the
+  /** Build outputs and the proxy cache: the project's .solidrt-data, or the
    * server folder in file mode. */
   cacheDir: string
   /** Destination for captured key events, or unset when off. */

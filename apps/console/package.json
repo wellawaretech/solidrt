@@ -9,11 +9,11 @@
     "fonts": { "serif": false }
   },
   "scripts": {
-    "dev": "srt run",
-    "pack": "srt pack",
-    "server": "srt server",
-    "client": "srt client",
-    "android": "srt android"
+    "dev": "sol run",
+    "pack": "sol pack",
+    "server": "sol server",
+    "client": "sol client",
+    "android": "sol android"
   },
   "dependencies": {
     "@solidrt/core": "workspace:*",

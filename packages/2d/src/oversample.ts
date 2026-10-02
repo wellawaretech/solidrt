@@ -39,7 +39,7 @@ export function fitOversample(scale: number, targetW: number, targetH: number, b
 const THRASH_CHANGES = 4
 /** The window those changes must land in, ms of the app's frame time: a
  * warning about what happens per frame counts on the clock frames run on,
- * so it means the same under `srt render` and a paused dev clock. */
+ * so it means the same under `sol render` and a paused dev clock. */
 const THRASH_WINDOW_MS = 1000
 
 /**

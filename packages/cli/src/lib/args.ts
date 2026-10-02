@@ -6,13 +6,13 @@ import { hint } from "./usage"
 
 // Everything after a bare "--" is the app's argument vector, kept out of
 // parseArgs (which would fold it into positionals) and forwarded verbatim to
-// the runner, where it becomes flux:process argv. srt's own flags may follow
+// the runner, where it becomes flux:process argv. sol's own flags may follow
 // the source file, so the separator is required.
 let rawArgs = process.argv.slice(2)
 let appArgsSep = rawArgs.indexOf("--")
 export let appArgs = appArgsSep === -1 ? [] : rawArgs.slice(appArgsSep + 1)
 
-// `srt tool <package>/<name> ...`: everything after the tool name belongs to
+// `sol tool <package>/<name> ...`: everything after the tool name belongs to
 // the tool (its own flags, its own usage), so only the command and the tool
 // name go through parseArgs and the rest is forwarded verbatim (tool/main.ts).
 let isTool = rawArgs[0] === "tool"
@@ -115,8 +115,8 @@ export function clientStorageArgs(): string[] {
 export let command = positionals[0]
 export let source = positionals[1]
 export let isTsx = source?.endsWith(".tsx") || source?.endsWith(".jsx")
-export let isPrebuilt = source?.endsWith(".srt.js") || source?.endsWith(".srt.bin")
-// A .srt.js also ends with .js: prebuilt wins, or the server would re-bundle
+export let isPrebuilt = source?.endsWith(".sol.js") || source?.endsWith(".fluxbc")
+// A .sol.js also ends with .js: prebuilt wins, or the server would re-bundle
 // a prebuilt bundle as source and skip the prebuilt load path.
 export let isTs = (source?.endsWith(".ts") || source?.endsWith(".js")) && !isPrebuilt
 export let isSource = isTsx || isTs
@@ -132,52 +132,52 @@ function usage(line: string): never {
 export function validateArgs() {
   switch (command) {
     case "bundle":
-      // A prebuilt .srt.js compiles to bytecode (bundle.ts); a .srt.bin
+      // A prebuilt .sol.js compiles to bytecode (bundle.ts); a .fluxbc
       // already is bytecode, so there is nothing to do with it.
       if (values.flux) {
-        if (!source || !isTs) usage("srt bundle --flux [options] <entry.[ts|js]>")
-      } else if (source && !isSource && !source.endsWith(".srt.js")) {
-        usage("srt bundle [options] [entry.[tsx|jsx|ts|js|srt.js]]")
+        if (!source || !isTs) usage("sol bundle --flux [options] <entry.[ts|js]>")
+      } else if (source && !isSource && !source.endsWith(".sol.js")) {
+        usage("sol bundle [options] [entry.[tsx|jsx|ts|js|sol.js]]")
       }
       break
     case "android":
       // A packed APK to install and launch, or --apk to pack one first;
       // flagless/--install/--census drive the dev client, so mixing the two
       // is a contradiction.
-      if (source && !source.endsWith(".apk")) usage("srt android [<file.apk>]")
+      if (source && !source.endsWith(".apk")) usage("sol android [<file.apk>]")
       if (source && (values.install || values.apk)) {
-        usage("srt android <file.apk>  (--install and --apk install what they build; a given APK installs as it is)")
+        usage("sol android <file.apk>  (--install and --apk install what they build; a given APK installs as it is)")
       }
       if (values.apk && (values.install || values.census)) {
-        usage("srt android --apk  (--apk installs the packed app; --install and --census are for the dev client)")
+        usage("sol android --apk  (--apk installs the packed app; --install and --census are for the dev client)")
       }
       break
     case "check":
       // An entry file, or a folder whose entries are discovered (check.ts).
       if (source && !isSource && !(existsSync(source) && statSync(source).isDirectory())) {
-        usage("srt check [entry.[tsx|jsx|ts|js] | folder]")
+        usage("sol check [entry.[tsx|jsx|ts|js] | folder]")
       }
       break
     case "test":
       // A test file, or a folder whose tests/ folders are searched (test/main.ts).
       if (source && !/\.test\.tsx?$/.test(source) && !(existsSync(source) && statSync(source).isDirectory())) {
-        usage("srt test [file.test.[ts|tsx] | folder]")
+        usage("sol test [file.test.[ts|tsx] | folder]")
       }
       break
     case "demo":
       // A number from the printed list, or the qualified name beside it.
       if (source && !/^\d+$/.test(source) && !/^[\w.-]+\/[\w.-]+$/.test(source)) {
-        usage("srt demo [<number> | <package>/<demo>]")
+        usage("sol demo [<number> | <package>/<demo>]")
       }
       break
     case "render":
-      if (source && !isTsx) usage("srt render [entry.[tsx|jsx]]")
+      if (source && !isTsx) usage("sol render [entry.[tsx|jsx]]")
       break
     case "pack":
       if (values.flux) {
-        if (!source || !isTs) usage("srt pack --flux [options] <entry.[ts|js]>")
+        if (!source || !isTs) usage("sol pack --flux [options] <entry.[ts|js]>")
       } else if (source && !isSource) {
-        usage("srt pack [options] [entry.[tsx|jsx|ts|js]]")
+        usage("sol pack [options] [entry.[tsx|jsx|ts|js]]")
       }
       break
   }
@@ -189,72 +189,72 @@ export function validateArgs() {
   // --folder, --app and --apk pick a pack output shape; `android --apk`
   // packs and installs the APKs.
   if ((values.folder || values.app) && command !== "pack") {
-    usage("srt pack --folder|--app  (--folder and --app are only valid with the pack command)")
+    usage("sol pack --folder|--app  (--folder and --app are only valid with the pack command)")
   }
   if (values.apk && command !== "pack" && command !== "android") {
-    usage("srt <pack|android> --apk  (--apk is only valid with the pack and android commands)")
+    usage("sol <pack|android> --apk  (--apk is only valid with the pack and android commands)")
   }
   if ([values.folder, values.app, values.apk].filter(Boolean).length > 1) {
-    usage("srt pack --folder|--app|--apk  (--folder, --app and --apk exclude each other)")
+    usage("sol pack --folder|--app|--apk  (--folder, --app and --apk exclude each other)")
   }
   // --install is the android command's APK install step.
   if (values.install && command !== "android") {
-    usage("srt android --install  (--install is only valid with the android command)")
+    usage("sol android --install  (--install is only valid with the android command)")
   }
   // --device picks the adb device `android` installs on.
   if (values.device && command !== "android") {
-    usage("srt android --device <serial>  (--device is only valid with the android command)")
+    usage("sol android --device <serial>  (--device is only valid with the android command)")
   }
   // --server points a standalone client at a dev server; `run` and `server`
   // own their server side, so it is valid nowhere else.
   if (values.server && command !== "client") {
-    usage("srt client --server <host:port>  (--server is only valid with the client command)")
+    usage("sol client --server <host:port>  (--server is only valid with the client command)")
   }
   // --json is the dev server's rebuild contract (bundle.ts), and the census
   // summary's machine-readable form.
   let census = command === "android" && values.census
   if (values.json && command !== "bundle" && !census) {
-    usage("srt <bundle|android --census> --json  (--json is only valid with the bundle command and android --census)")
+    usage("sol <bundle|android --census> --json  (--json is only valid with the bundle command and android --census)")
   }
   // --census reads the compositor's record of the client's presents; its
   // options mean nothing without it.
   if (values.census && command !== "android") {
-    usage("srt android --census  (--census is only valid with the android command)")
+    usage("sol android --census  (--census is only valid with the android command)")
   }
   if ((values.clear || values.seconds !== undefined || values.layer !== undefined) && !census) {
-    usage("srt android --census [--clear] [--seconds <N>] [--layer <name>]  (only valid with android --census)")
+    usage("sol android --census [--clear] [--seconds <N>] [--layer <name>]  (only valid with android --census)")
   }
   // --filter picks tests by name.
   if (values.filter !== undefined && command !== "test") {
-    usage("srt test --filter <text>  (--filter is only valid with the test command)")
+    usage("sol test --filter <text>  (--filter is only valid with the test command)")
   }
   // --seed picks the sequence Math.random runs on in the tests, or in a render.
   if (values.seed !== undefined && command !== "test" && command !== "render") {
-    usage("srt <test|render> --seed <n>  (--seed is only valid with the test and render commands)")
+    usage("sol <test|render> --seed <n>  (--seed is only valid with the test and render commands)")
   }
   // --settle and --strict shape a render.
   if ((values.settle || values.strict) && command !== "render") {
-    usage("srt render [--settle] [--strict]  (--settle and --strict are only valid with the render command)")
+    usage("sol render [--settle] [--strict]  (--settle and --strict are only valid with the render command)")
   }
   // --only runs one layer of the tests.
   if (values.only !== undefined && command !== "test") {
-    usage("srt test --only <flux|app>  (--only is only valid with the test command)")
+    usage("sol test --only <flux|app>  (--only is only valid with the test command)")
   }
   // --durations lists every test with its time.
   if (values.durations && command !== "test") {
-    usage("srt test --durations  (--durations is only valid with the test command)")
+    usage("sol test --durations  (--durations is only valid with the test command)")
   }
   // --port binds the dev server (`run`, `server`) or picks one (`client`,
   // `android`, `mcp`).
   if (port !== undefined && !serves && command !== "client" && command !== "android" && command !== "mcp") {
-    usage("srt <run|server|demo|client|android|mcp> --port <N>  (--port is only valid with the run, server, demo, client, android and mcp commands)")
+    usage("sol <run|server|demo|client|android|mcp> --port <N>  (--port is only valid with the run, server, demo, client, android and mcp commands)")
   }
   // --file/--project resolve a file argument in a project directory.
   if ((values.file || values.project) && !onApp) {
-    usage("srt <run|server|bundle|pack|render> <file> [--file|--project]  (only valid with the run, server, bundle, pack and render commands)")
+    usage("sol <run|server|bundle|pack|render> <file> [--file|--project]  (only valid with the run, server, bundle, pack and render commands)")
   }
   // --lan binds every interface of a server being started.
   if (values.lan && !serves) {
-    usage("srt <run|server|demo> --lan  (--lan is only valid with the run, server and demo commands)")
+    usage("sol <run|server|demo> --lan  (--lan is only valid with the run, server and demo commands)")
   }
 }

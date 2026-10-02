@@ -96,7 +96,7 @@ root for its parent to insert. Two ways to land late follow:
 The second one costs an afternoon to find. Factoring a shared spec into a
 helper is the ordinary refactor - two mirrored cards want the same shape
 written once - and it silently turns a working enter into no enter, with no
-error, no warning and `srt check` passing. The bisect that finds it is
+error, no warning and `sol check` passing. The bisect that finds it is
 three views with identical specs in one row, two inline and one from the
 helper; only the helper one fails, and moving the helper moves the failure.
 

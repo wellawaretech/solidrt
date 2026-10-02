@@ -104,7 +104,7 @@ it names); `onSuspend` restore is unchanged in principle.
 
 `location()` and the reported path stay one path: the top of the parent
 stack, or the active tab's top when the parent stack is just the tabs
-entry. Tooling (`get_location`, `open_link`, `srt render --link`) and hot
+entry. Tooling (`get_location`, `open_link`, `sol render --link`) and hot
 reload re-entry need no change.
 
 ### Behaviour

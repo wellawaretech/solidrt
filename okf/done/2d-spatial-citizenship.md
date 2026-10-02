@@ -207,7 +207,7 @@ one buffer per slot (WebGPU's vertex-buffer-layout model):
   (split fetch, tightest-slot derivation, slot-1 write re-renders, full
   swap, density + missing-slot errors) - all pass on real GL; flux
   gpu_split.rs likewise (slot render + both-keys / gap throws),
-  GPU-SPLIT-OK; alloy tests 271 green; srt check green.
+  GPU-SPLIT-OK; alloy tests 271 green; sol check green.
 - Traps: `SDL_VIDEO_DRIVER=offscreen` runs the alloy/flux examples with
   NO window (Mesa EGL pbuffer) - always use it, a bare run opens a
   window on the user's desktop. Both example files were STALE from
@@ -248,7 +248,7 @@ Overlap queries (item 4) and the package re-founding landed 2026-08-24
   mirror owns the pose buffer and republishes gap slots as zeros. One
   sprite-function surface (addSprite/setSprite/getSprite/removeSprite)
   dispatches over both layer kinds via internal layer methods.
-- Verified live (examples/parity.tsx, srt run + release go client): the
+- Verified live (examples/parity.tsx, sol run + release go client): the
   same 200-sprite population through both layers is PIXEL-IDENTICAL
   (0/129600 off after the pose round-trips the core decomposition), pick
   agrees at 200 random points, pickRect exact on the left-half marquee,
@@ -259,7 +259,7 @@ Overlap queries (item 4) and the package re-founding landed 2026-08-24
 - Traps: the dev client is dist/linux-x64-gnu/solidrt-go and STALE dist
   binaries fail with pre-slot errors ("declares instanceAttributes but
   no instance buffer") - `make client` after alloy/flux GPU-surface
-  changes before srt-run verification. The node layer must
+  changes before sol-run verification. The node layer must
   `spatial.flush()` in dispose BEFORE destroying its pose buffer, or the
   core's final slot-zeroing writes land on a dead buffer id and warn.
   readTexture-comparing the two layer outputs in-app is the strongest

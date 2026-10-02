@@ -1,19 +1,19 @@
 ---
-title: Play Store publishing with srt pack --aab
+title: Play Store publishing with sol pack --aab
 description: A packed app can be sideloaded as an APK but not uploaded to Google Play, which only accepts an Android App Bundle signed with an app-specific upload key; patch a runner AAB skeleton the way the runner APK is patched, with the native libs lifted from the per-ABI runner APKs and packaging config grouped per target in package.json.
 created: 2026-09-21
 ---
 
-# Play Store publishing with srt pack --aab
+# Play Store publishing with sol pack --aab
 
-`srt pack --apk` (`done`: `done/standalone-android-apk.md`, notes in
+`sol pack --apk` (`done`: `done/standalone-android-apk.md`, notes in
 `notes/standalone-apk-implementation.md`) produces an installable APK for
 handing around. Google Play refuses it twice over: new apps must be uploaded
 as an Android App Bundle, and every APK today is signed with the shared
 development key checked into `packages/cli/src/pack/android/key.ts`, which
 must never become an app's upload key.
 
-Done looks like: `srt pack --aab` writes `dist/<name>.aab` from the same
+Done looks like: `sol pack --aab` writes `dist/<name>.aab` from the same
 pack folder `--apk` uses, signed with the project's upload key, carrying the
 ABIs the project lists, and Play Console accepts it for an internal-testing
 track with no Android SDK on the developer's machine. The patch approach
@@ -24,7 +24,7 @@ stays: nothing at pack time runs Gradle, bundletool or Java.
 An AAB is a zip with a fixed layout that Play feeds to bundletool, which
 splits it into per-device APKs and signs those with the app signing key Play
 holds. Play does not care how the bundle was built. So, as for the APK, CI
-builds a runner bundle once with Gradle (`bundleProdRelease`) and `srt pack
+builds a runner bundle once with Gradle (`bundleProdRelease`) and `sol pack
 --aab` patches a copy. What is patched is mostly new, because the bundle
 stores its metadata as aapt2 protobuf, not binary XML:
 
@@ -33,7 +33,7 @@ stores its metadata as aapt2 protobuf, not binary XML:
 | `AndroidManifest.xml` (AXML)   | `base/manifest/AndroidManifest.xml` (proto)  |
 | `resources.arsc`               | `base/resources.pb` (proto)                  |
 | `lib/<abi>/*.so`               | `base/lib/<abi>/*.so` + `base/native.pb`     |
-| `assets/app.srtapp`            | `base/assets/app.srtapp`                     |
+| `assets/app.solapp`            | `base/assets/app.solapp`                     |
 | entry alignment (16 KB pages)  | not needed: bundletool builds the APKs       |
 | Signature Scheme v2 block      | JAR (v1) signature: `META-INF/*.SF`, `*.RSA` |
 | -                              | `BundleConfig.pb` (compression rules)        |
@@ -164,10 +164,10 @@ reads.
     `base/native.pb` with one directory entry per ABI;
   - `BundleConfig.pb`: uncompressed native libs on (right for Play delivery:
     the store compresses the transfer, stored libs save the extracted copy),
-    and `assets/app.srtapp` added to the uncompressed globs. Without that
+    and `assets/app.solapp` added to the uncompressed globs. Without that
     glob bundletool deflates the payload and the in-place fd boot
     (`packed_asset_location`) fails on the device;
-  - `base/assets/app.srtapp`;
+  - `base/assets/app.solapp`;
   - drop `META-INF/`, JAR-sign.
 - `pack/main.ts`: the Android-specific parts (`ANDROID_APP_ID` check, icon
   resolution, versionCode/versionName) move into one helper shared by
@@ -181,7 +181,7 @@ reads.
    tool only, never a pack-time dependency.
 2. `bundletool build-apks --connected-device` then `install-apks` on the
    arm64 device: the same split-and-install path Play takes. Confirm the
-   base split stores `assets/app.srtapp` uncompressed and the app boots its
+   base split stores `assets/app.solapp` uncompressed and the app boots its
    payload. The emulator is not a signal until
    `backlog/go-client-emulator-launch-crash.md` is fixed.
 3. Upload to a Play Console internal-testing track. Upload-key validation on

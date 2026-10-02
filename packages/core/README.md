@@ -35,7 +35,7 @@ render(() => <App />)
 Run the app:
 
 ```sh
-bun run srt run src/index.tsx
+bun run sol run src/index.tsx
 ```
 
 Optionally, create a `tsconfig.json` to enable type recognition for SolidRT elements:

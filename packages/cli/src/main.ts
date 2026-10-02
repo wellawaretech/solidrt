@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
-// bin/srt lands here. This file routes the command word and nothing else:
+// bin/sol lands here. This file routes the command word and nothing else:
 // the bun commands live one folder each (src/<command>/main.ts) and load on
 // demand, and `run`/`server` launch the flux dev server (src/server/), a
 // process complete on its own that this launcher only resolves the binaries
-// for (okf/done/srt-command-folders.md).
+// for (okf/done/sol-command-folders.md).
 
 import { fileURLToPath } from "node:url"
 import { existsSync, unlinkSync } from "node:fs"
@@ -40,7 +40,7 @@ validateArgs()
 // default fallback - no "production" key - so adding conditions does nothing; the
 // only way to reach the default (smaller, no extra invariants) build is to stop
 // the auto-activation by setting NODE_ENV=production. Since that is read at startup,
-// we re-exec rather than mutate process.env. Assumes srt runs via bun (argv is
+// we re-exec rather than mutate process.env. Assumes sol runs via bun (argv is
 // [bun, script, ...]); would need rework if ever shipped as a compiled binary.
 // `android --apk` packs too.
 let packs = command === "pack" || (command === "android" && values.apk)
@@ -64,7 +64,7 @@ if (isProdBuild && process.env.NODE_ENV !== "production") {
 async function serverScript(): Promise<{ path: string; temp: boolean }> {
   let prebuilt = fileURLToPath(new URL("../dist/server.js", import.meta.url))
   if (existsSync(prebuilt)) return { path: prebuilt, temp: false }
-  let outfile = resolve(tmpdir(), `srt-dev-server-${process.pid}.js`)
+  let outfile = resolve(tmpdir(), `sol-dev-server-${process.pid}.js`)
   await buildServerBundle(outfile)
   return { path: outfile, temp: true }
 }

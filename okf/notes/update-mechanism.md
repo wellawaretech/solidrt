@@ -203,7 +203,7 @@ per platform (org included when non-empty):
 Resolution rule (decided), one knob, no second code path:
 
 1. explicit `--data-root` (dev, tests) - the dev server passes
-   `--data-root <project>/.srt-data` when spawning clients;
+   `--data-root <project>/.solidrt-data` when spawning clients;
 2. pinned production app: pref path from the app manifest's org/app -
    an app lives under ITS OWN identity (e.g. `MyOrg/MyApp`),
    never under the runtime's namespace (Discord does not store under
@@ -213,10 +213,10 @@ Resolution rule (decided), one knob, no second code path:
    unpinned Expo-Go-style client); rename only if that becomes a
    user-facing player product (a dev-cache migration, not user data).
 
-Dev default `.srt-data/` in the project root (decided; gitignored,
+Dev default `.solidrt-data/` in the project root (decided; gitignored,
 precedent `.expo/` / `target/`): project self-contained, delete =
 factory reset, test fleet lives next to the code, no cross-project
-state. Composes with `srt record`/`playback` (deterministic runs pin a
+state. Composes with `sol record`/`playback` (deterministic runs pin a
 fresh or fixture data root).
 
 ### Client storage model
@@ -301,7 +301,7 @@ other (the version manifest is derived output).
 **Project config** (hand-written, source-side): a `solidrt` key in
 package.json, not a separate file (decided; Electron precedent -
 package.json already carries `name` and Bun already reads it).
-Graduate to `srt.config.ts` only if it grows (signing config,
+Graduate to `sol.config.ts` only if it grows (signing config,
 per-channel settings); starting there now is a file tax.
 
 ```json
@@ -381,7 +381,7 @@ no-app-loaded fallback.
   flux-types surface (ties into flux-types parity / surface.json).
 - Signing scheme: minisign/ed25519 like Tauri is simple and likely
   sufficient; TUF is the paranoid option, probably overkill.
-- Publishing: `srt publish`(?) produces bundle + version manifest onto
+- Publishing: `sol publish`(?) produces bundle + version manifest onto
   plain static hosting; command shape undecided.
 - Player UI for multi-app clients (the storage supports it; whether
   to surface it is separate).
@@ -391,7 +391,7 @@ no-app-loaded fallback.
 Status: open. Agreed 2026-07-16: two tiers, dev/prod convergence with
 trust boundary, stable client names, multi-app clients,
 dev-push-as-install, per-app sandbox, content-hash versions, no
-cross-app dedup, data-root resolution (.srt-data dev default, manifest
+cross-app dedup, data-root resolution (.solidrt-data dev default, manifest
 org/app for pinned apps, SolidRT/go kept), identical tree under every
 root, package.json `solidrt` key + generated signed version manifest
 (version id = manifest hash) + static URL update endpoint.

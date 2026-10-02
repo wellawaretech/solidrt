@@ -79,29 +79,29 @@ endif
 GO_FEATURES      := $(GO_FEATURES)$(KTX2_FEATURES)
 RUNTIME_FEATURES := $(RUNTIME_FEATURES)$(KTX2_FEATURES)
 
-# Test mode (the `--test` runner, srt:test, flux:test) is in the dev client,
-# which is what `srt test` runs app tests on, and never in the runtime. On
-# in dist builds too: an installed project's `srt test` runs its app tests
+# Test mode (the `--test` runner, sol:test, flux:test) is in the dev client,
+# which is what `sol test` runs app tests on, and never in the runtime. On
+# in dist builds too: an installed project's `sol test` runs its app tests
 # on the shipped dev client. TEST=0 leaves it out.
 TEST ?= 1
 ifneq ($(TEST),0)
 GO_FEATURES := $(GO_FEATURES),test
 endif
 
-SRT_HOME ?= $(abspath $(CURDIR)/..)
+SOLIDRT_HOME ?= $(abspath $(CURDIR)/..)
 
 # The player app sources live in apps/player like any regular app; the
 # generated bundles land here in resources/ because lattice is what embeds
 # them (include_str! in src/lib.rs).
-PLAYER_DIR = $(SRT_HOME)/apps/player
+PLAYER_DIR = $(SOLIDRT_HOME)/apps/player
 PLAYER_SRC = $(PLAYER_DIR)/src/index.tsx
-PLAYER_JS  = $(CURDIR)/resources/player/index.srt.js
+PLAYER_JS  = $(CURDIR)/resources/player/index.sol.js
 
 # The BSOD screen shown when an app fails to start.
 BSOD_SRC = $(PLAYER_DIR)/src/bsod.tsx
-BSOD_JS  = $(CURDIR)/resources/bsod/bsod.srt.js
+BSOD_JS  = $(CURDIR)/resources/bsod/bsod.sol.js
 
-include $(SRT_HOME)/platform.mk
+include $(SOLIDRT_HOME)/platform.mk
 
 # The notices a distributed binary owes (the license texts of everything in
 # it that is not ours), generated for the build they ship with and written
@@ -109,7 +109,7 @@ include $(SRT_HOME)/platform.mk
 # $(1) = rust target triple, $(2) = the package folder
 NOTICES = THIRD-PARTY-NOTICES.txt
 define stage-notices
-	bun $(SRT_HOME)/scripts/build-third-party-notices.ts --target $(1) --out $(2)/$(NOTICES)
+	bun $(SOLIDRT_HOME)/scripts/build-third-party-notices.ts --target $(1) --out $(2)/$(NOTICES)
 endef
 
 include Makefile.android
@@ -134,15 +134,15 @@ lattice: client runtime
 # export that no longer exists, failing at module link on engine start. The
 # root bun.lock stands in for the inlined third-party deps (solid-js): a
 # version bump rewrites it, so both bundles pick up the new runtime.
-BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_HOME)/packages/components/src/*.ts*) $(wildcard $(SRT_HOME)/bun.lock)
+BUNDLE_DEPS = $(wildcard $(SOLIDRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SOLIDRT_HOME)/packages/components/src/*.ts*) $(wildcard $(SOLIDRT_HOME)/bun.lock)
 
 $(PLAYER_JS): $(wildcard $(PLAYER_DIR)/src/*.ts*) $(wildcard $(PLAYER_DIR)/src/parts/*.ts*) $(BUNDLE_DEPS)
 	@echo "Bundling player (index.tsx -> resources/player/)..."
-	cd $(PLAYER_DIR) && bun run srt bundle $(PLAYER_SRC) --project -o $(dir $(PLAYER_JS))
+	cd $(PLAYER_DIR) && bun run sol bundle $(PLAYER_SRC) --project -o $(dir $(PLAYER_JS))
 
 $(BSOD_JS): $(BSOD_SRC) $(BUNDLE_DEPS)
 	@echo "Bundling BSOD screen (bsod.tsx -> resources/bsod/)..."
-	cd $(PLAYER_DIR) && bun run srt bundle $(BSOD_SRC) --project -o $(dir $(BSOD_JS))
+	cd $(PLAYER_DIR) && bun run sol bundle $(BSOD_SRC) --project -o $(dir $(BSOD_JS))
 
 help:
 	@echo "Host ($(HOST_TARGET)):"
@@ -155,7 +155,7 @@ help:
 	@echo "  android-client       Build the client .so"
 	@echo "  android-run          Build, install, launch, tail logcat"
 	@echo "  android-run-armeabi-v7a  Same, for the 32-bit ABI"
-	@echo "  android-runtime      Build the production runner APK (the srt pack --apk base)"
+	@echo "  android-runtime      Build the production runner APK (the sol pack --apk base)"
 	@echo ""
 	@echo "  The launched client auto-connects to DEV_SERVER=$(DEV_SERVER)."
 	@echo "  Override it (10.0.2.2:$(DEV_PORT) for an emulator), or DEV_SERVER= for none."
@@ -165,7 +165,7 @@ help:
 	@echo "  android-dist-armeabi-v7a  The same, for the 32-bit ABI"
 	@echo ""
 	@echo "  ANDROID_ABI=x86_64 builds for the emulator; it has no platform"
-	@echo "  package, so the APKs stay in dist/android/ where srt android finds them."
+	@echo "  package, so the APKs stay in dist/android/ where sol android finds them."
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo "Pass PROFILE=release-opt for the publish build: fat LTO and stripped, for"
@@ -184,7 +184,7 @@ help:
 
 # -- Player -----------------------------------------
 #
-# The go client embeds resources/player/index.srt.js at compile time via
+# The go client embeds resources/player/index.sol.js at compile time via
 # include_str!. The file target rebuilds it when any .tsx source in
 # apps/player changes. Run `make player-bundle` to force a rebuild.
 
@@ -194,7 +194,7 @@ player-bundle: $(PLAYER_JS) $(BSOD_JS)
 
 # The three Noto role defaults (sans/serif/mono). The go client embeds them
 # (lattice lib.rs embedded_fonts); the production runtime ships no fonts, and
-# `srt pack` appends these as trailer sections by default (see
+# `sol pack` appends these as trailer sections by default (see
 # okf/plans/packaged-fonts.md).
 FONTS_DIR = $(CURDIR)/../alloy/assets/fonts
 
@@ -209,8 +209,8 @@ download-fonts:
 # -- Clean --------------------------------------------
 
 dist-clean:
-	rm -rf $(SRT_HOME)/dist
+	rm -rf $(SOLIDRT_HOME)/dist
 
 clean:
-	rm -rf target $(SRT_HOME)/dist
+	rm -rf target $(SOLIDRT_HOME)/dist
 	rm -rf android/app/build android/build android/.gradle

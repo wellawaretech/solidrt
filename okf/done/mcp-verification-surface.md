@@ -10,7 +10,7 @@ completed: 2026-08-08
 Source: five external agent-built app reports (2026-08-04 to 2026-08-06,
 issues extracted in okf/feedback/: [[cedar-lock]], [[velvet-acre]],
 [[marble-fox]], [[tin-orchard]], [[willow-stamp]]). Core-only apps, all five
-built end to end by an agent driving the app over `srt mcp`, on
+built end to end by an agent driving the app over `sol mcp`, on
 0.0.44/0.0.45.
 
 All five shipped. All five reported the same four gaps, independently. This
@@ -247,7 +247,7 @@ decisions that differ from the proposal above:
 - Tests: alloy `painted_quad_*` (tree.rs), flux `tests/time.rs` (7 cases:
   deadline order, interval collapse, cancel-inside-callback, no rewind,
   one-turn-per-advance).
-- Not touched: `srt mcp` and the dev server need a restart, and clients a
+- Not touched: `sol mcp` and the dev server need a restart, and clients a
   rebuild, before any of this is visible end to end.
 
 ## Relation to existing items

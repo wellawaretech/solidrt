@@ -130,7 +130,7 @@ identical knob, and the packages keep one vocabulary.
   KEY-ORDER-OK - scrambled keys beat insertion order, then a raise flips
   the topmost through the style-slot key with the core republishing the
   pose buffer); stats clean (fps 60, missedPresents 2 incl. reloads);
-  alloy 360 tests + 27 draw_ordered assertions; srt check green. The
+  alloy 360 tests + 27 draw_ordered assertions; sol check green. The
   flux:gpu surface has its own headless pin, flux/examples/gpu_order.rs
   (SDL_VIDEO_DRIVER=offscreen cargo run -p flux --example gpu_order
   --features gui, GPU-ORDER-OK): field/projected/slot keys through the JS

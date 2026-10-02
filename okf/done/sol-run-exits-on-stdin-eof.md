@@ -1,15 +1,15 @@
 ---
-title: srt run exits immediately when stdin is not a terminal
+title: sol run exits immediately when stdin is not a terminal
 description: The repl bound readline close to full shutdown, so any non-interactive launch (background shell, supervisor, CI) tore down the server, the client and the registry record within a second; startRepl now returns early when stdin is not a tty, and the piped-sleep workaround is gone.
 created: 2026-08-20
 completed: 2026-08-20
 ---
 
-# srt run exits immediately when stdin is not a terminal
+# sol run exits immediately when stdin is not a terminal
 
 ## Symptom
 
-`srt run app.tsx &` - or any launch where stdin is a closed pipe rather than
+`sol run app.tsx &` - or any launch where stdin is a closed pipe rather than
 a terminal - brings up the dev server, prints the usual banner, and is gone
 about a second later. `~/.solidrt/servers/34884/live.json` is removed on the
 way out, so a moment later nothing distinguishes this from "no server was
@@ -18,7 +18,7 @@ ever started". Nothing in the output says why.
 The workaround was to hold stdin open artificially:
 
 ```
-(sleep 100000 | bun run srt run app.tsx > run.log 2>&1 &)
+(sleep 100000 | bun run sol run app.tsx > run.log 2>&1 &)
 ```
 
 which was documented in the root `CLAUDE.md` and carried its own trap - the
@@ -59,14 +59,14 @@ needed: the spawned server process, its piped stdout reader and the fs
 watchers keep the event loop alive on their own, `print`/`printErr` and
 `pipeAbovePrompt` already guarded the prompt redraw with `state.rl?.`, and
 SIGINT/SIGTERM were already wired to `shutdown()`. Interactive behaviour is
-untouched - ctrl-d at an `srt>` prompt still quits.
+untouched - ctrl-d at an `sol>` prompt still quits.
 
-Verified 2026-08-20 on Linux: `srt server -s 9` and
-`srt run examples/hello-world/src/index.tsx -s 9`, both backgrounded with
+Verified 2026-08-20 on Linux: `sol server -s 9` and
+`sol run examples/hello-world/src/index.tsx -s 9`, both backgrounded with
 stdin on /dev/null and no sleep, come up, keep their live record, answer
 `/__control__/clients` (client attached in the `run` case) and are still
 serving well past the one-second mark that used to kill them. `kill` on the
-srt pid tears down server and client and removes the live record.
+sol pid tears down server and client and removes the live record.
 
 The `CLAUDE.md` run recipe lost its `sleep 100000` holder.
 
@@ -75,7 +75,7 @@ The `CLAUDE.md` run recipe lost its `sleep 100000` holder.
 - **A `--no-repl` flag** for a supervisor that does have a terminal. No
   consumer asked for it; `isTTY` covers every case that was actually
   hurting.
-- **Detached mode** - srt starting a server and exiting, leaving it for the
+- **Detached mode** - sol starting a server and exiting, leaving it for the
   registry to rediscover. A separate feature, and it costs something:
   rebuild is server-owned (`packages/cli/server/rebuild.ts`, reachable over
   `/__control__/reload`), but the file watcher and the bundle-on-change path

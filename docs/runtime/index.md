@@ -57,7 +57,7 @@ serve({
 | `flux:isolate` | Run a module on its own thread and call it like an object. |
 | `flux:image` | Decode and encode images; transcode and encode compressed textures (KTX2). |
 | `flux:svg` | Parse an SVG document into draw data. |
-| `flux:test` | Tests for a flux program: `test`, `expect`. On the `flux` binary only, which runs a test file with `--test`, every test in an engine of its own; what `srt test` runs on. |
+| `flux:test` | Tests for a flux program: `test`, `expect`. On the `flux` binary only, which runs a test file with `--test`, every test in an engine of its own; what `sol test` runs on. |
 
 A GUI build of Flux, which is what SolidRT runs on, adds the device and
 rendering modules: `flux:rendertree` (the native tree `@solidrt/core` drives),
@@ -89,8 +89,8 @@ The Flux binary runs a JavaScript file directly. To go from TypeScript
 sources to something it can run, bundle for the bare runtime:
 
 ```sh
-srt bundle --flux src/main.ts   # -> dist/bundle/main.flux.js
-srt pack --flux src/main.ts     # standalone executable
+sol bundle --flux src/main.ts   # -> dist/bundle/main.flux.js
+sol pack --flux src/main.ts     # standalone executable
 ```
 
 Both are described in [Tools](/tools/).

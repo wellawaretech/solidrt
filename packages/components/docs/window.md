@@ -14,4 +14,4 @@ function App() {
 }
 ```
 
-The window takes the theme's finish (see Theming) whenever the theme has one; a theme without a finish declares no shader at all. `shader` is the window's own finish, a core window shader declaration forwarded as-is; set, it replaces the theme's, and `shader={null}` opts out of it. A window shader runs past the point snapshots read, so a finish is checked with `srt render`, not `get_snapshot`.
+The window takes the theme's finish (see Theming) whenever the theme has one; a theme without a finish declares no shader at all. `shader` is the window's own finish, a core window shader declaration forwarded as-is; set, it replaces the theme's, and `shader={null}` opts out of it. A window shader runs past the point snapshots read, so a finish is checked with `sol render`, not `get_snapshot`.

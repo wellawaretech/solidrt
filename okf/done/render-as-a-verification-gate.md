@@ -1,11 +1,11 @@
 ---
-title: srt render cannot fail, so it is not the gate the docs sell
-description: A scene whose build throws is contained, writes an empty frame and exits 0, and --duration is app time so an app that loads asynchronously is captured mid-load; closed by srt render --strict (errors logged fail the render) and --settle (the app is run to rest before the first frame, the settle condition of the test harness, not a wall sleep).
+title: sol render cannot fail, so it is not the gate the docs sell
+description: A scene whose build throws is contained, writes an empty frame and exits 0, and --duration is app time so an app that loads asynchronously is captured mid-load; closed by sol render --strict (errors logged fail the render) and --settle (the app is run to rest before the first frame, the settle condition of the test harness, not a wall sleep).
 created: 2026-09-08
 completed: 2026-10-01
 ---
 
-# srt render cannot fail, so it is not the gate the docs sell
+# sol render cannot fail, so it is not the gate the docs sell
 
 ## Symptom
 
@@ -15,7 +15,7 @@ nothing worth seeing.
 **Contained errors do not reach the exit code.** Give a material a bogus
 attribute format, or throw anywhere in a scene build, and the run logs
 one `Contained error`, writes a frame with nothing in it, and exits 0.
-The natural shell idiom hides it twice over: `srt render ... | tail -25;
+The natural shell idiom hides it twice over: `sol render ... | tail -25;
 echo $?` reports `tail`'s status.
 
 **`--duration` is app time.** The capture is lockstep on the virtual
@@ -91,14 +91,14 @@ the frame clock), I/O completions land. Verified with a throwing build
 LOADING plain, the body with `--settle 1000`). `--fps` stays a positive
 integer, decided.
 
-Left: the CLI half - `srt render --strict` / `--settle` passing the flags
+Left: the CLI half - `sol render --strict` / `--settle` passing the flags
 through, and the cli/AGENTS.md paragraph on what exit 0 proves shrinking to
 the flags.
 
 ## Closed (2026-10-01)
 
 Closed by step 4.6 of [test-harness](test-harness.md) (D35, D39).
-`srt render` passes `--strict` and `--settle` through; the cli/AGENTS.md
+`sol render` passes `--strict` and `--settle` through; the cli/AGENTS.md
 paragraph names the flags. The wall sleep is gone: `--settle` is now the
 condition the test harness settles on (nothing in flight, no timer due, no
 frame demanded), run by the render host on the stepped frame clock, with

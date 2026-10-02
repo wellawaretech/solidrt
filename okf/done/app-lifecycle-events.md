@@ -105,7 +105,7 @@ black, identical failure 5ms after nativeResume. SDL source read
 - SDL's own backup/restore (`android_egl_context_backup/restore`,
   SDL_androidevents.c) runs on the event-pump thread and backs up
   `SDL_GL_GetCurrentContext()` THERE - NULL for us, since GL lives
-  on srt-raster. SDL's restore is a no-op for any app doing GL off
+  on sol-raster. SDL's restore is a no-op for any app doing GL off
   the main thread; the rebind is fully our job.
 
 Conclusion: the failing frame reached the raster thread BEFORE the
@@ -128,7 +128,7 @@ reset by the successful present. `rebind_window_surface()` itself no
 longer touches the counter; only the event-driven command resets it
 (stale pre-resume evidence). This closes the general race: ANY frame
 latched between surface recreation and the rebind command (resize,
-expose, timer) self-heals. Diagnostic info logs added: "[srt]
+expose, timer) self-heals. Diagnostic info logs added: "[sol]
 visibility: visible|hidden" (lattice events task) and "[alloy]
 window surface rebound" (raster).
 
@@ -209,7 +209,7 @@ frame, no present failure, screen restored. Stages 1+2 done.
   correct it; self-converging, and EmitInitEvents can carry
   visibility later if it ever matters.
 - Device-verified (2026-07-25, second device, Adreno 610):
-  "[srt] visibility: hidden" logged 1ms after nativePause - the
+  "[sol] visibility: hidden" logged 1ms after nativePause - the
   watch delivers the transition at background time. Also observed:
   one "window surface rebound" at startup (the launch-time
   Shown/foreground event maps to Visibility{true}); redundant but
@@ -218,9 +218,9 @@ frame, no present failure, screen restored. Stages 1+2 done.
   example of the pattern: split createEffect on env.visibility):
   app logged hidden at background time and exactly one "visible" at
   resume - the raw stream's resume-time duplicate hidden (visible
-  in the "[srt]" diagnostic lines) never reached the effect, the
+  in the "[sol]" diagnostic lines) never reached the effect, the
   signal equality-dedupe working as designed. When reading device
-  traces: "[srt] visibility:" = native raw stream (repeats
+  traces: "[sol] visibility:" = native raw stream (repeats
   legitimate), unprefixed = app-side deduped stream.
 
 ## Remaining follow-ups
@@ -229,7 +229,7 @@ frame, no present failure, screen restored. Stages 1+2 done.
   and a new env section with env.visibility (the persistence
   contract spelled out with a createEffect example; env itself had
   no section before, the other properties got a one-line index).
-- Joint JS vocabulary review (back/exit verbs in srt:app vs
+- Joint JS vocabulary review (back/exit verbs in sol:app vs
   visibility state in env) before the public API freeze - shared
   item with okf/plans/exit-to-launcher.md. Still open: a user
   decision, not a code task.
@@ -240,9 +240,9 @@ frame, no present failure, screen restored. Stages 1+2 done.
 already stops ticks/renders; timers keep running); a pre-Stop
 "hidden" emit when exiting to launcher; desktop occlusion.
 
-Vocabulary note: back/exit are input/verbs (`srt:app`, see
+Vocabulary note: back/exit are input/verbs (`sol:app`, see
 `okf/plans/exit-to-launcher.md`); lifecycle is state the OS informs
-the app about (`env.visibility`). Verbs in `srt:app`, state in `env` -
+the app about (`env.visibility`). Verbs in `sol:app`, state in `env` -
 that split is the design line.
 
 ## Stage 1+2 implementation notes (2026-07-25)

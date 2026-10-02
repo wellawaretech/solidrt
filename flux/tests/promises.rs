@@ -4,7 +4,7 @@ mod common;
 
 use common::run_source;
 
-// The promise tests are flux/tests/promises.test.ts, run by srt test. What
+// The promise tests are flux/tests/promises.test.ts, run by sol test. What
 // stays here is what a test inside the engine cannot observe: under
 // flux:test an uncaught rejection fails the test, so whether and when the
 // host is told is only visible from here.

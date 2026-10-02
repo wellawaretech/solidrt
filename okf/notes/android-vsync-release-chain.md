@@ -18,8 +18,8 @@ the raster thread's swap in one clock.
 ## The chain, per frame
 
 Thread names in the client process: `SDLThread` is the alloy main loop,
-`srt-ui` the UI side (two threads), `srt-raster` the raster thread,
-`srt-vsync` the Choreographer backend. Per frame the vsync thread runs three
+`sol-ui` the UI side (two threads), `sol-raster` the raster thread,
+`sol-vsync` the Choreographer backend. Per frame the vsync thread runs three
 times: woken by SurfaceFlinger's `app` thread (the callback), woken by its
 own sleep end (the signal, after the pacing delay), and woken by SDLThread
 (the next request, sent as the frame signal is emitted).
@@ -131,10 +131,10 @@ does not need to (see above).
 
 ## Recipe and traps
 
-- Serve the probe from the repo root (`bun run srt run
+- Serve the probe from the repo root (`bun run sol run
   probes/vsync-cadence-probe.tsx --project --port <N> --lan`), install the
   matching dev APK from `dist/android/<abi>/solidrt-go.apk` first, then
-  `bun packages/cli/bin/srt android --port <N>`. A client from another
+  `bun packages/cli/bin/sol android --port <N>`. A client from another
   release runs the bundle at 1 fps and reads like a cap.
 - Census: `dumpsys SurfaceFlinger --latency-clear`, wait, `--latency
   '<layer>'`; round present deltas to refresh periods. Use `adb shell ...

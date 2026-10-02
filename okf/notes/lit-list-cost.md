@@ -10,7 +10,7 @@ The lit components model ([lit-components](../design/lit-components.md))
 gives every raised surface two blurred shadows. Before the model moves into
 the package, the question was what that costs where a screen holds dozens
 of them: a long list. Measured with probes/lit-list-probe.tsx on a release
-client with the cadence hold off (`SRT_CADENCE_HOLD=off`), 300 rows, each a
+client with the cadence hold off (`SOLIDRT_CADENCE_HOLD=off`), 300 rows, each a
 repaint boundary as the stock Item is, scrolled down and up at 900 px/s by
 a frame loop for 12 s; the figures are the last 10 s (`/stats?window=10000`).
 `frames` is the count of presented frames in that window, so 600 is 60 fps.

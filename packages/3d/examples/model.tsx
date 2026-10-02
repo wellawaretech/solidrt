@@ -4,7 +4,7 @@
 // with parseGltf and turned into a Group of meshes by createModel. The
 // glb rides in the bundle as a binary import; a model under assets/ goes
 // through loadGltf (same parser, read with flux:fs) or, baked once with
-// `srt tool 3d/model`, through loadModel (no parsing at all). Every part
+// `sol tool 3d/model`, through loadModel (no parsing at all). Every part
 // keeps its node name and is an ordinary mesh: pointer events, transforms
 // and materials work per part. The materials are createModel's default
 // `standard` from the file's PBR factors, so the scene carries an

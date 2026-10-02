@@ -141,5 +141,5 @@ All four renamed on 2026-09-11, no compat shims:
 4. The `"standard"` vertex layout is `"base"` (`VERTEX_LAYOUTS.base`,
    `BASE_FLOATS`): `"colored"` and `"skinned"` are literally the base list
    plus channels, and "base" carries no material meaning in any engine
-   (unlike "basic", Three's unlit). The name is serialized in `.srtm`, so
-   the container is version 9; no `.srtm` is checked in.
+   (unlike "basic", Three's unlit). The name is serialized in `.sol3m`, so
+   the container is version 9; no `.sol3m` is checked in.

@@ -128,7 +128,7 @@ direction or the other.
   measured over the same window).
 - `alloy/examples/timer_attribution_probe.rs` boots the raster thread with
   the logger installed and prints whether the timers survived; per-run
-  shares at `SRT_LOG=debug`.
+  shares at `SOLIDRT_LOG=debug`.
 
 True per-pass attribution via `GL_TIMESTAMP` around a forced `glFlush` per
 pass was deliberately not pursued: the flush changes what is being

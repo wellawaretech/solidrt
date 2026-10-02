@@ -2,10 +2,10 @@
 // navigation, the back step, blocking, links in and the location out, the
 // JSX tree (`<Route>`) and the components that render the matched routes.
 // Everything here is built on what core offers every app (onBack, onLink,
-// env.launchLink, reportLocation from srt:dev); core knows nothing of routes.
+// env.launchLink, reportLocation from sol:dev); core knows nothing of routes.
 import { createSignal, createMemo, createContext, createEffect, useContext, untrack, onCleanup, children, Show, For } from "@solidrt/core"
 import { env, onBack, onLink } from "@solidrt/core"
-import { reportLocation } from "srt:dev"
+import { reportLocation } from "sol:dev"
 import { createRootRoute, createRoute, formatPath, linkToPath, matchPath, place } from "./route"
 import type { AnyRoute, Match, ParamsOf, RawParams, Route as RouteValue } from "./route"
 import { back as stepBack, changed, currentPath, findTabs, initialState, push, replace, reset, resolve } from "./stack"

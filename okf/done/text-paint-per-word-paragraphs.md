@@ -77,7 +77,7 @@ as LTR-only as the breaker, and bidi becomes an input to both.
 
 Measured on the SM-T500 with `probes`-style panes (ten rounded panes
 sliding between two sizes over 2 s, five holding the 230-character
-paragraph), by `srt android --census` and `get_stats`:
+paragraph), by `sol android --census` and `get_stats`:
 
 | | before | after |
 |---|---|---|

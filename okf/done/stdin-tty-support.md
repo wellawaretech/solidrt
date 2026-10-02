@@ -1,13 +1,13 @@
 ---
 title: stdin/tty support in flux
-description: A flux:tty module (terminal check, cooked lines or raw-mode keys, stdout write) bringing the srt dev-server repl back with history and Tab completion; both stages done, Windows and Android runs pending.
+description: A flux:tty module (terminal check, cooked lines or raw-mode keys, stdout write) bringing the sol dev-server repl back with history and Tab completion; both stages done, Windows and Android runs pending.
 tags: [flux, tty, stdin, terminal, cli, repl]
 created: 2026-07-13
 ---
 
 # stdin/tty support in flux
 
-The `srt run` / `srt server` repl went away with the
+The `sol run` / `sol server` repl went away with the
 [CLI/flux migration](cli-flux-migration.md): the dev server became
 a flux script and flux had no stdin (the launcher even spawned it with stdin
 ignored). This brings it back, as a capability of its own: anything that
@@ -83,7 +83,7 @@ so the plugin drops every tty listener itself.
      former stage 3, pulled in because raw mode has no echo). A refused raw
      mode falls back to the stage-1 cooked path.
    - `isTTY` is false for a job backgrounded from an interactive shell
-     (`srt run &`), which job control would otherwise stop on the first
+     (`sol run &`), which job control would otherwise stop on the first
      terminal write: [notes/terminal-raw-mode](../notes/terminal-raw-mode.md).
    - Verified under a pty (`script`): keys, `\r\n` breaks, completion,
      history, Ctrl-U, Ctrl-C shutdown with the record dropped. Windows and

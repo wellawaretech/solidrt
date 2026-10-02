@@ -1,5 +1,5 @@
 import { createSignal, runWithOwner } from "@solidjs/signals"
-import { on } from "srt:events"
+import { on } from "sol:events"
 import { onPointerMove } from "./core"
 import { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } from "./window"
 
@@ -16,7 +16,7 @@ import { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } fro
 // runs, which is usually inside a component or a computation (a memo's first
 // read of env.inputDevices, a HUD effect's first read of pointerLocked()).
 // Created there, the fact would belong to that reader: sticky events replay
-// their cached value synchronously on subscribe (srt:events' on()), so the
+// their cached value synchronously on subscribe (sol:events' on()), so the
 // on() call writes the signal it just created inside the reader's owned
 // scope - a render-time write, which the guard rejects - and a root or a
 // subscription created there is disposed with the reader. The facts are
@@ -274,7 +274,7 @@ export let env = {
   },
   /**
    * The link this process was started with, or null: a custom scheme link
-   * the OS routed to the app (Android intent data; `srt render --link`),
+   * the OS routed to the app (Android intent data; `sol render --link`),
    * raw, exactly as it arrived. What it names is the app's to decide, and
    * it is untrusted input: validate before acting on any part of it. A link
    * arriving while the app runs is an event instead: `onLink`. Fixed for the

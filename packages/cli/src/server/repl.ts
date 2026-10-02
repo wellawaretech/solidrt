@@ -17,7 +17,7 @@ import type { Completion } from "./line-editor"
 // supervisor, the console or a background `&` has none, runs without a
 // prompt, and stops on a signal.
 
-const PROMPT = "srt> "
+const PROMPT = "sol> "
 const HELP = "Commands: load <file>, reload [id...], stop [id...], list, whoami, stats [on|off], watch on|off, mute on|off, quit, help"
 const COMMANDS = ["load ", "reload", "stop", "list", "whoami", "stats", "watch ", "mute ", "quit", "exit", "help"]
 

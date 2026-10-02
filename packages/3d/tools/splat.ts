@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /// <reference path="./node-env.d.ts" />
 
-// srt tool 3d/splat: bake a captured splat cloud into a .srts file - the
+// sol tool 3d/splat: bake a captured splat cloud into a .sol3s file - the
 // parse, covariance bake and SH packing (src/splat-data.ts) run once here
 // under bun, the result written in the exact texel layout createSplatMesh
 // uploads and the engine sorts, without any per-splat work at runtime.
@@ -9,7 +9,7 @@
 // Everything here comes from the runtime-free `@solidrt/3d/splat` entry,
 // the same surface an app's own bake script uses.
 //
-//   srt tool 3d/splat <in.ply|in.splat|in.spz> [-o <out.srts>] [--sh <0..3>] [--keep-orientation]
+//   sol tool 3d/splat <in.ply|in.splat|in.spz> [-o <out.sol3s>] [--sh <0..3>] [--keep-orientation]
 //
 // Inputs: a trainer's .ply, the de-facto .splat interchange, or Niantic's
 // .spz (gunzipped here; version 2 or 3). A y-down capture (.ply, .splat)
@@ -25,7 +25,7 @@ import { encodeSplat, parseSplat } from "../src/splat-data.ts"
 
 function usage(error?: string): never {
   if (error) console.error(error)
-  console.log("Usage: srt tool 3d/splat <in.ply|in.splat|in.spz> [-o <out.srts>] [--sh <0..3>] [--keep-orientation]")
+  console.log("Usage: sol tool 3d/splat <in.ply|in.splat|in.spz> [-o <out.sol3s>] [--sh <0..3>] [--keep-orientation]")
   process.exit(error ? 1 : 0)
 }
 
@@ -51,7 +51,7 @@ for (let i = 0; i < args.length; i++) {
   else usage("Unexpected argument " + arg)
 }
 if (input === undefined) usage("Missing input file")
-if (output === undefined) output = basename(input, extname(input)) + ".srts"
+if (output === undefined) output = basename(input, extname(input)) + ".sol3s"
 
 let bytes = new Uint8Array(readFileSync(input))
 // .spz is gzip-compressed; the parser takes the inflated bytes.

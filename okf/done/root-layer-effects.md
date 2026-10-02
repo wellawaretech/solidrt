@@ -662,7 +662,7 @@ shader still live (dirty bit path).
   GLSL is unsupported, and Impeller does not compile shaders at runtime.
   Adopting that would mean shipping impellerc in the toolchain and turning
   shaders from runtime strings into build artifacts, which lands on the whole
-  dev chain (srt build, dev-server hot reload, the `createShader` contract).
+  dev chain (sol build, dev-server hot reload, the `createShader` contract).
   Decided out of scope 2026-07-27. Impeller's *built-in* filters are a
   different matter and do not need impellerc: see
   okf/backlog/impeller-backdrop-filters.md, which is independent of this plan
@@ -684,7 +684,7 @@ shader still live (dirty bit path).
   stop asking for, and the tiler where an extra pass would show.
 - Resize, minimize/restore, and Android background/resume all exercise the
   removed `window_surface` re-wrap and must be walked explicitly.
-- Playback capture (`srt record` / `srt playback`) must still produce
+- Playback capture (`sol record` / `sol playback`) must still produce
   byte-identical frames.
 - Stage 2: an example app with a warp over an ordinary UI. An identity
   effect (`texture(uSource, vUV)`) must be indistinguishable from no effect

@@ -1,14 +1,14 @@
 ---
 title: A demo shows up in the player under its project's name, not its own
-description: srt demo serves demos/ as one project, so the player entry, appId and storage are the project's; the gallery appeared as "SolidRT components demos". Renamed for now (one demo per package); a second demo in a package needs per-demo identity derived from the slug.
+description: sol demo serves demos/ as one project, so the player entry, appId and storage are the project's; the gallery appeared as "SolidRT components demos". Renamed for now (one demo per package); a second demo in a package needs per-demo identity derived from the slug.
 created: 2026-08-26
 ---
 
 # A demo shows up in the player under its project's name
 
-What it looks like: run `srt demo components/gallery` and the player lists
+What it looks like: run `sol demo components/gallery` and the player lists
 the app as the demos project's `displayName` ("SolidRT components demos" at
-the time), because `srt demo` serves `demos/` as one project and every bit
+the time), because `sol demo` serves `demos/` as one project and every bit
 of identity - appId, displayName, icon, storage dir - is per project
 (`lib/project.ts`). Nothing per demo reaches the player.
 

@@ -49,7 +49,7 @@ root->leaf id chain, the pointer can be projected into every node's frame by
 replaying `hit_recursive`'s descent math along that chain.
 
 This is a core/runtime change only. Pointer events are emitted via
-`emit_event` / `srt:events` and typed in `packages/core/src/types.d.ts`; they are
+`emit_event` / `sol:events` and typed in `packages/core/src/types.d.ts`; they are
 not part of the `flux-types` / `docs/flux.md` surface (grep is clean), so there
 is no flux-parity doc to mirror.
 

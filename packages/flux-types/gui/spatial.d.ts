@@ -155,7 +155,7 @@ declare module "flux:spatial" {
    * left alone, so rewriting the whole array to move one component never
    * restarts the others (a held write's target counts, so re-sending it
    * does not restart its delay). Each settled component fires one
-   * "spatialTransitionEnd" engine event (srt:events), payload
+   * "spatialTransitionEnd" engine event (sol:events), payload
    * `{ node, component: NodeComponent }` - on a live node; a leaving
    * node's settles feed its free instead (exitNode).
    */
@@ -646,7 +646,7 @@ declare module "flux:spatial" {
    * positive fades in, negative out; past 0 the player is removed).
    * When a player finishes or is removed without finishing (faded out,
    * clip or target destroyed), the "spatialClipEnd" engine event
-   * (srt:events) fires with payload { player, reason: "finished" |
+   * (sol:events) fires with payload { player, reason: "finished" |
    * "dropped" }, before the same frame's handlers.
    */
   export function createPlayer(clip: ClipId, targets: NodeId[], speed: number, loop: boolean, weight: number, fade: number): PlayerId
@@ -661,7 +661,7 @@ declare module "flux:spatial" {
    * the player's time each advance, and its travel since the previous
    * advance (continuous across a loop wrap, weighted by the player's
    * weight) is reported as one "spatialRootMotion" engine event
-   * (srt:events) per advance, payload { player, x, y, z, yaw }, before
+   * (sol:events) per advance, payload { player, x, y, z, yaw }, before
    * the frame's handlers. The translation is given in the root's CURRENT
    * facing (the clip's own turn so far undone), i.e. the character's
    * local frame. `rotation`, a rotation channel of the same clip (the

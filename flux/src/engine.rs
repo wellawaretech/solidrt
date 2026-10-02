@@ -95,14 +95,14 @@ pub type IsolateResolver = Arc<dyn Fn(&str) -> Result<ModuleCode, String> + Send
 
 /// Resolve an isolate id through the forge assets mount: an app's isolate
 /// modules travel as manifest assets under `isolates/` - packed as bytecode
-/// (`isolates/<id>.bin`), pushed in dev as source (`isolates/<id>.js`). Both
+/// (`isolates/<id>.fluxbc`), pushed in dev as source (`isolates/<id>.js`). Both
 /// read through the mount, so an installed version dir, a pack folder, and a
 /// packed executable resolve alike; nothing mounted means no isolates.
 pub fn resolve_isolate_from_assets(id: &str) -> Result<ModuleCode, String> {
   if id.is_empty() || id.starts_with('/') || id.split('/').any(|c| c.is_empty() || c == "." || c == "..") {
     return Err(format!("isolate '{id}': not a module id"));
   }
-  if let Ok(bytes) = forge::fs::read_sync(&format!("isolates/{id}.bin")) {
+  if let Ok(bytes) = forge::fs::read_sync(&format!("isolates/{id}.fluxbc")) {
     return Ok(ModuleCode::Bytecode(bytes));
   }
   match forge::fs::read_sync(&format!("isolates/{id}.js")) {

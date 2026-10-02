@@ -3,7 +3,7 @@
 // devices' sources (sticks with the dead zone, dpad, triggers, shoulders,
 // buttons), and the join device (createGamepadJoin: a pad joins on its
 // first button press, one device per pad, disposal frees the slot).
-// Runtime-free, so it runs headless on flux: `srt test packages/core`.
+// Runtime-free, so it runs headless on flux: `sol test packages/core`.
 // Deterministic.
 
 import { test } from "flux:test"

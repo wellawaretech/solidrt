@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Runner overlay: the runner APK `srt pack` (APK output) patches.
+<!-- Runner overlay: the runner APK `sol pack` (APK output) patches.
 
      Icon: the patchable adaptive icon instead of the SolidRT client icon
      (the label is already flavor-scoped via res/values/strings.xml).

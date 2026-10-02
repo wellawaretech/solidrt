@@ -1,6 +1,6 @@
 ---
 title: Gaussian splat rendering
-description: Captured 3DGS scenes (phone scans, photogrammetry successors) are a growing content class nothing here can display. The viewer is proven by a probe (300k splats in 19 ms at full resolution on a 2022 phone) and the shape settled 2026-09-26 - a pack-time bake to a .srts record with the 3D covariance precomputed, a generic instanceOrder knob on the 3d meshes riding gpu-instance-order's retained projected key with the scene feeding direction, SplatMesh over createRecordMesh, and SH bands via an id-indexed data texture.
+description: Captured 3DGS scenes (phone scans, photogrammetry successors) are a growing content class nothing here can display. The viewer is proven by a probe (300k splats in 19 ms at full resolution on a 2022 phone) and the shape settled 2026-09-26 - a pack-time bake to a .sol3s record with the 3D covariance precomputed, a generic instanceOrder knob on the 3d meshes riding gpu-instance-order's retained projected key with the scene feeding direction, SplatMesh over createRecordMesh, and SH bands via an id-indexed data texture.
 created: 2026-08-24
 completed: 2026-09-27
 ---
@@ -85,7 +85,7 @@ already flags it as uncompared).
 
 ## The container and bake tool
 
-`srt tool 3d/splat <in.ply|in.splat|in.spz> [-o out.srts] [--sh 0..3]
+`sol tool 3d/splat <in.ply|in.splat|in.spz> [-o out.sol3s] [--sh 0..3]
 [--keep-orientation]`, mirroring `3d/model`: the parser lives in a
 runtime-free `@solidrt/3d/splat` entry (the `model-data.ts` shape), shared
 by the tool and any app bake script.
@@ -94,7 +94,7 @@ by the tool and any app bake script.
   interchange), `.spz` (Niantic's compressed format, what phone scanning
   apps export; gunzip + fixed-point decode). Not `.ksplat` - one viewer's
   private cache format.
-- The `.srts` record, 28 bytes: position `float32x3` (12) + 3D covariance
+- The `.sol3s` record, 28 bytes: position `float32x3` (12) + 3D covariance
   upper triangle as six `float16` (12) + sRGB color + opacity `unorm8x4`
   (4). Positions stay float32 deliberately - half positions are Babylon's
   known precision mistake on large scenes; covariance quantizes to fp16
@@ -119,7 +119,7 @@ by the tool and any app bake script.
   streams would republish 90 B/splat (SH3) on every camera move. Default
   degree 0; SH1 is +18 MB at 1M splats, SH3 +90 MB.
 
-`.srts` is ours; no compatibility constraints while this lands.
+`.sol3s` is ours; no compatibility constraints while this lands.
 
 ## The ordering knob (generic, splats are the first consumer)
 
@@ -155,8 +155,8 @@ projected-key + gather, per the settled core design). What it takes:
 ## The viewer surface
 
 - `@solidrt/3d/splat` (runtime-free): `SplatData`, `parseSplat` (the
-  three input formats), `encodeSplat` (`.srts` out), `loadSplat` (a
-  zero-copy `SplatData` view over fetched `.srts` bytes, the `loadModel`
+  three input formats), `encodeSplat` (`.sol3s` out), `loadSplat` (a
+  zero-copy `SplatData` view over fetched `.sol3s` bytes, the `loadModel`
   shape).
 - `createSplatMesh(data, opts): SplatMesh` - a `RecordMesh`
   specialization: the stock splat material (the probe's, minus the
@@ -212,7 +212,7 @@ Each stage has standalone value.
   steps (Findings): the per-vertex fetch priced first on the phone
   (the estimator's 5-8 ms/M confirmed at 7.4-8.0), then the build - the
   `rgba32ui` data-texture format, the core's index materialization of
-  an instance order, `.srts` version 2 with `--sh` at bake, and the
+  an instance order, `.sol3s` version 2 with `--sh` at bake, and the
   splat runtime over them (16 splats per instance, the record and SH
   textures fetched by id, SH evaluated per corner from the shared
   camera position). What remains at 1M full res on the phone is fill:

@@ -5,9 +5,9 @@ import { runQuiet } from "./util"
 
 // Android targets: the ABIs a project runs and ships on. Each is an
 // @solidrt/android-<abi> dev dependency carrying that ABI's Player (what
-// `srt android` installs) and runner (the base `srt pack --apk` patches), so
+// `sol android` installs) and runner (the base `sol pack --apk` patches), so
 // the project's dependencies are the record of what it targets; a
-// checkout's staged builds (SRT_HOME) count too.
+// checkout's staged builds (SOLIDRT_HOME) count too.
 
 // What each target means in devices, for the picker.
 const TARGET_HINTS: Record<string, string> = {

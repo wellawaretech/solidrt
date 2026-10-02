@@ -18,13 +18,13 @@ preparing a build for distribution.
   `.frag`) are declared as text modules out of the box, so they typecheck
   without setup. Inlining trades update granularity for zero I/O - keep big or
   streamable files (audio, images) in `assets/`.
-- `bun run srt bundle` writes `dist/bundle/` (or `--output <dir>`):
-  `<name>.srt.js` plus the app's isolate modules as `isolates/<id>.js`; with
-  `--compile`, bytecode (`.srt.bin`/`.bin`) instead. Move the dir, not the
+- `bun run sol bundle` writes `dist/bundle/` (or `--output <dir>`):
+  `<name>.sol.js` plus the app's isolate modules as `isolates/<id>.js`; with
+  `--compile`, bytecode (`.fluxbc`) instead. Move the dir, not the
   bare file - a bundle loaded without its isolates/ dir loses them
   (`--stdout` cannot carry them at all). Isolates (`"use isolate"` modules)
   exist in projects only, not for a file served on its own.
-- `bun run srt bundle --json` is the dev server's rebuild contract: one JSON
+- `bun run sol bundle --json` is the dev server's rebuild contract: one JSON
   object (code, sourcemap, manifest, isolates) on stdout. Not for humans.
 
 ## Fonts, identity and distribution
@@ -33,16 +33,16 @@ preparing a build for distribution.
   map in package.json (alias -> file path; role aliases `sans`/`serif`/`mono`
   replace the built-in defaults, `false` drops one so that role falls back
   to the system font, other keys add fonts selectable via fontFamily). The
-  dev client, `srt render` and a pack all apply the same map: a newly added
+  dev client, `sol render` and a pack all apply the same map: a newly added
   or changed font registers on the next reload.
 - The `solidrt` key in package.json is the app's identity: set a stable
   reverse-DNS `appId` before distributing - it keys the app's storage
-  folder, defaults from the package name in dev, and `srt pack` warns
+  folder, defaults from the package name in dev, and `sol pack` warns
   while defaulted. `org` and `displayName` are optional display metadata
   (future player/window naming) with no storage meaning.
-- `bun run srt pack` builds a single-file executable (the runner with the
+- `bun run sol pack` builds a single-file executable (the runner with the
   bytecode, manifest, assets and fonts appended as a trailer);
-  `bun run srt pack --folder` writes the flat app folder
+  `bun run sol pack --folder` writes the flat app folder
   (runner + manifest.json + bundle + assets/, plus the runner's GL
   libraries on Windows and macOS) to `dist/pack/`.
 - A packed app contains the SolidRT runtime, and with it third-party
@@ -52,4 +52,4 @@ preparing a build for distribution.
   platform package, generated for the binaries beside it). Ship that file
   with the app you distribute - next to the executable, or wherever the
   app shows its licenses - together with the notices of whatever npm
-  packages the app itself bundles. `srt pack` does not add it for you.
+  packages the app itself bundles. `sol pack` does not add it for you.

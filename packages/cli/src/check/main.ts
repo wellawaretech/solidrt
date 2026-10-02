@@ -6,7 +6,7 @@ import { bundleWith } from "../bundle/bundler"
 import { findProject } from "../lib/project"
 import { findProjectRoot, reportTypes, typecheck } from "./typecheck"
 
-// srt check: verify the app without side effects. Bundles in memory (nothing
+// sol check: verify the app without side effects. Bundles in memory (nothing
 // written, so no dev-server reload fires and no build outputs land in the
 // project) and typechecks with the project's own tsc (typecheck.ts).
 
@@ -30,8 +30,8 @@ async function checkEntry(entry: string): Promise<boolean> {
   return !failed
 }
 
-// The entries `srt check <folder>` covers, relative to the folder (a bare
-// `srt check` is `srt check .`): the app itself, its own examples and test
+// The entries `sol check <folder>` covers, relative to the folder (a bare
+// `sol check` is `sol check .`): the app itself, its own examples and test
 // files, and in a monorepo every example app, package example, package demo
 // and package test file, and the flux module tests under flux/tests/. The
 // same set CI gates, so one call at the repo root answers "did I break any

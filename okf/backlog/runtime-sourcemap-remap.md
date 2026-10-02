@@ -15,7 +15,7 @@ because the item is here.
 
 # Current state (what already works)
 
-Dev bundles carry a composed sourcemap (bundle -> original .tsx). srt sends
+Dev bundles carry a composed sourcemap (bundle -> original .tsx). sol sends
 it alongside every reload; the dev server latches it (`state.currentMap`)
 and rewrites `main:LINE:COL` frames in forwarded client logs before
 buffering (`packages/cli/server/remap.ts`, wired into `appendLog` in
@@ -28,7 +28,7 @@ The runtime itself (QuickJS) knows nothing about sourcemaps, so surfaces
 that print without going through the server show raw bundle positions:
 
 - the local client's own stdout (the terminal a developer watches during
-  `srt run`)
+  `sol run`)
 - Android logcat
 
 # Sketch
@@ -44,9 +44,9 @@ that print without going through the server show raw bundle positions:
   sourcemap columns are 0-based (col-1 on lookup, col+1 on print). The
   server-side `remap.ts` is the reference implementation.
 
-# Why not the cheaper srt-side pipe trick
+# Why not the cheaper sol-side pipe trick
 
-Considered and rejected: srt holds the map and spawns the local client, so
+Considered and rejected: sol holds the map and spawns the local client, so
 it could line-buffer the child's stdout and rewrite frames in the pipe. But
 that requires switching the child from `stdio: inherit` to a pipe (the
 client loses its TTY, changing color/formatting behavior), needs line
