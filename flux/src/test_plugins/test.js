@@ -283,13 +283,19 @@
       return new Expectation(this.#received, !this.#negated)
     }
 
+    // The matchers on the rejection reason of a promise.
+    get rejects() {
+      return new Rejection(this.#received, this.#negated)
+    }
+
     static check(expectation, name, args) {
-      let received = expectation.#received
-      let negated = expectation.#negated
-      let outcome = MATCHERS[name](received, ...args)
+      Expectation.verdict(MATCHERS[name](expectation.#received, ...args), expectation.#received, expectation.#negated, "expect(received)", name, args)
+    }
+
+    static verdict(outcome, received, negated, chain, name, args) {
       if (outcome.pass !== negated) return
       throw new AssertionError(
-        `expect(received)${negated ? ".not" : ""}.${name}(${args.length > 0 ? "expected" : ""})\n` +
+        `${chain}${negated ? ".not" : ""}.${name}(${args.length > 0 ? "expected" : ""})\n` +
           `Expected: ${negated ? "not " : ""}${outcome.expected}\n` +
           `Received: ${outcome.received ?? format(received)}`,
       )
@@ -299,6 +305,56 @@
   for (let name of Object.keys(MATCHERS)) {
     Expectation.prototype[name] = function (...args) {
       Expectation.check(this, name, args)
+    }
+  }
+
+  // `expect(promise).rejects`: each matcher awaits the promise and applies
+  // to its rejection reason. A promise that fulfills fails the matcher,
+  // `not` or no `not`: the negation is of the matcher, not of the
+  // rejecting. `toThrow` sees the reason as the thrown value, so a
+  // rejection reads like a throw: `await expect(p).rejects.toThrow("...")`.
+  class Rejection {
+    #promise
+    #negated
+
+    constructor(promise, negated) {
+      if (promise === null || typeof promise !== "object" || typeof promise.then !== "function") {
+        throw new TypeError(`rejects: the received value must be a promise, got ${format(promise)}`)
+      }
+      this.#promise = promise
+      this.#negated = negated
+    }
+
+    get not() {
+      return new Rejection(this.#promise, !this.#negated)
+    }
+
+    static async check(rejection, name, args) {
+      let chain = "expect(received).rejects"
+      let reason
+      let value
+      let rejected = false
+      try {
+        value = await rejection.#promise
+      } catch (thrown) {
+        reason = thrown
+        rejected = true
+      }
+      if (!rejected) {
+        throw new AssertionError(
+          `${chain}${rejection.#negated ? ".not" : ""}.${name}(${args.length > 0 ? "expected" : ""})\n` +
+            `Expected: a rejected promise\n` +
+            `Received: a promise fulfilled with ${format(value)}`,
+        )
+      }
+      let received = name === "toThrow" ? () => { throw reason } : reason
+      Expectation.verdict(MATCHERS[name](received, ...args), reason, rejection.#negated, chain, name, args)
+    }
+  }
+
+  for (let name of Object.keys(MATCHERS)) {
+    Rejection.prototype[name] = function (...args) {
+      return Rejection.check(this, name, args)
     }
   }
 

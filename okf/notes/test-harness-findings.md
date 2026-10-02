@@ -43,20 +43,29 @@ existed.
   bare flux binary: `parseColor` imports `flux:rendertree`,
   `createTextBuffer` imports the window and layout bindings. They need
   the app layer, or a split of the pure part from the binding.
-- What is tested where (2026-09-30). forge's tests cover the capability
-  logic. `flux/tests/*.rs`, 172 cargo integration tests in 21 files, run
-  JS source through the real engine and assert on its log, which is the
-  marshalling path; they stay in cargo, since they test the runtime the
-  test runner stands on and some assert what a test inside the engine
-  cannot see (how the process exits). `srt test` is for code written in
-  JS: the packages, apps and flux programs, not the flux modules. The
-  first real-time I/O test under `srt test` is therefore a flux program,
-  and the one there is is the dev server (`packages/cli/src/server`,
-  the second tier in [cli-package-review](../notes/cli-package-review.md));
-  its own piece of work. subprocess, p2p and ffi have no file in
-  `flux/tests/`; they belong there. `flux/examples/*.js` are untracked
-  scratch from building each module, neither tests nor documentation,
-  and stay as they are; a maintained examples set is item 8 of
+- What is tested where (2026-09-30, revised 2026-10-02). forge's tests
+  cover the capability logic. The flux module tests, the marshalling over
+  the forge cores, are `flux/tests/*.test.ts`: typed against
+  `@solidrt/flux-types`, run by `srt test --only flux` on the four
+  platforms, in a sandbox folder the host enters and empties before every
+  engine (D38 holds for flux tests too, one folder per package under
+  `dist/test/data`). They were 131 of the 173 cargo integration tests in
+  `flux/tests/*.rs`, JS in Rust strings compared by their console output
+  and run on Linux only
+  ([flux-module-tests-on-flux-test](../done/flux-module-tests-on-flux-test.md)).
+  The 42 that stay in cargo observe what a test inside the engine cannot:
+  the logger, uncaught reporting (under `flux:test` an uncaught error
+  fails the test, so the report is not visible), the engine going idle
+  (the host drops a test's engine at its end), process exit, the
+  embedding API, isolate spawning, and the server's websocket wire
+  against a raw client. Added for the move: `expect(promise).rejects`,
+  the matchers on a rejection reason (`toThrow` sees the reason as the
+  thrown value), an addition to D17; and the `flux` binary builds its
+  test engines without `ProcessExit`, as a windowed app's engine and the
+  isolates are. subprocess, p2p and ffi have no test file; they belong
+  beside these. `flux/examples/*.js` are untracked scratch from building
+  each module, neither tests nor documentation, and stay as they are; a
+  maintained examples set is item 8 of
   [flux-crate-review](../notes/flux-crate-review.md).
 - The "runtime-free entry" tests (`model-data`, `splat-data`, `textures`,
   `joints`) proved under bun that no `flux:*` import had crept into an

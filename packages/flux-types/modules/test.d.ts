@@ -88,6 +88,15 @@ declare module "flux:test" {
     /** The same matchers, inverted: each throws when it does hold. */
     not: Matchers
 
+    /**
+     * For a promise: the same matchers on its rejection reason, each
+     * awaiting the promise first and returning a promise to await in turn.
+     * A promise that fulfills fails the matcher, with or without `not`.
+     * `toThrow` sees the reason as the thrown value, so a rejection reads
+     * like a throw: `await expect(p).rejects.toThrow("no such file")`.
+     */
+    rejects: RejectionMatchers
+
     /** The same value, as `Object.is` sees it: `NaN` is `NaN`, `0` is not `-0`, and two equal objects are not the same. */
     toBe(expected: unknown): void
 
@@ -138,5 +147,12 @@ declare module "flux:test" {
     toBeLessThanOrEqual(expected: number | bigint): void
     toBeGreaterThan(expected: number | bigint): void
     toBeGreaterThanOrEqual(expected: number | bigint): void
+  }
+
+  /** The matchers of `expect(promise).rejects`: `Matchers`, each returning a promise. */
+  export type RejectionMatchers = {
+    [K in Exclude<keyof Matchers, "rejects">]: Matchers[K] extends (...args: infer A) => void
+      ? (...args: A) => Promise<void>
+      : RejectionMatchers
   }
 }

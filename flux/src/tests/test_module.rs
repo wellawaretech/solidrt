@@ -401,6 +401,66 @@ fn to_throw_takes_a_message_part_a_pattern_a_class_or_nothing() {
 }
 
 #[test]
+fn rejects_applies_the_matchers_to_the_rejection_reason() {
+  // `expect(promise).rejects`: the matcher runs on the reason once the
+  // promise rejected; a promise that fulfills fails it, `not` or no `not`;
+  // `toThrow` sees the reason as the thrown value.
+  assert_eq!(
+    logged(
+      r#"
+    import { test, expect } from "flux:test"
+    test("rows", async () => {
+      let rows = [
+        ["reason", () => expect(Promise.reject(new Error("boom"))).rejects.toThrow("boom"), true],
+        ["other reason", () => expect(Promise.reject(new Error("boom"))).rejects.toThrow("bang"), false],
+        ["class", () => expect(Promise.reject(new TypeError("t"))).rejects.toThrow(TypeError), true],
+        ["plain reason", () => expect(Promise.reject(7)).rejects.toBe(7), true],
+        ["object reason", () => expect(Promise.reject({ code: 4 })).rejects.toMatchObject({ code: 4 }), true],
+        ["fulfilled", () => expect(Promise.resolve(1)).rejects.toThrow(), false],
+        ["fulfilled with not", () => expect(Promise.resolve(1)).rejects.not.toThrow(), false],
+        ["not", () => expect(Promise.reject(new Error("boom"))).rejects.not.toThrow("bang"), true],
+        ["not before rejects", () => expect(Promise.reject(7)).not.rejects.toBe(8), true],
+        ["not a promise", () => expect(1).rejects.toThrow(), false],
+      ]
+      let wrong = []
+      for (let [label, check, holds] of rows) {
+        let held = true
+        try { await check() } catch (e) { held = false }
+        if (held !== holds) wrong.push(label)
+      }
+      console.log(wrong.join(", "))
+    })
+    "#
+    ),
+    ""
+  );
+}
+
+#[test]
+fn a_rejects_failure_names_the_chain_and_the_promise_outcome() {
+  let report = logged(
+    r#"
+    import { test, expect } from "flux:test"
+    let message = async (fn) => { try { await fn() } catch (e) { return e.message } return "no throw" }
+    test("messages", async () => {
+      console.log([
+        await message(() => expect(Promise.resolve(1)).rejects.toThrow()),
+        await message(() => expect(Promise.reject(7)).rejects.toBe(8)),
+      ].join("\n--\n"))
+    })
+    "#,
+  );
+  assert_eq!(
+    report,
+    [
+      "expect(received).rejects.toThrow()\nExpected: a rejected promise\nReceived: a promise fulfilled with 1",
+      "expect(received).rejects.toBe(expected)\nExpected: 8\nReceived: 7",
+    ]
+    .join("\n--\n")
+  );
+}
+
+#[test]
 fn the_remaining_matchers() {
   assert_eq!(
     wrong_rows(
@@ -574,7 +634,8 @@ fn a_failure_carries_the_details_read_in_its_engine() {
 // interrupted engine: here a fetch nobody answers, which is what kept it.
 #[test]
 fn a_timed_out_test_says_what_is_in_flight() {
-  let hook: crate::test::DetailsHook = std::sync::Arc::new(|_ctx, _name| vec![("At".to_string(), "the cap".to_string())]);
+  let hook: crate::test::DetailsHook =
+    std::sync::Arc::new(|_ctx, _name| vec![("At".to_string(), "the cap".to_string())]);
   let port = {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
     listener.local_addr().expect("the bound address").port()

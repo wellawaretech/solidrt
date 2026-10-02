@@ -2,6 +2,7 @@
 title: The flux module tests are JavaScript inside Rust strings
 description: 131 of the 173 cargo integration tests in flux/tests/ only run a JS program and compare its console output, untyped and run on Linux only in CI; move them to flux:test as flux/tests/*.test.ts, run by srt test on all four platforms, and keep in cargo the 42 that observe what a test inside the engine cannot (the logger, uncaught reporting, liveness, exit, the embedding API, isolate spawning, the websocket wire).
 created: 2026-10-01
+completed: 2026-10-02
 ---
 
 # The flux module tests are JavaScript inside Rust strings
@@ -20,7 +21,7 @@ joined `console.log` output compared in Rust:
 - CI runs them once, on Linux, in the `check` job (`cargo test
   --workspace`). `test-flux`, on the four platforms, runs only `--lib`.
 
-Since the test harness ([test-harness](../done/test-harness.md)) flux has
+Since the test harness ([test-harness](test-harness.md)) flux has
 `flux:test` on the `flux` binary: an engine per test, a cap per engine,
 `expect`, and `srt test --only flux` in the `test-js` job on all four
 platforms.
@@ -143,3 +144,43 @@ Twelve files go entirely, so 21 test binaries become 9.
   rather than a failed test. The test host should hold `ProcessExit` back,
   as a windowed app's engine and isolates do. This is independent of the
   move.
+
+## Outcome (2026-10-02)
+
+Built as shaped, with the three decisions taken as follows.
+
+1. **Sandbox**: the first shape, one folder per package rather than per
+   file. The CLI makes `dist/test/data` under the test file's package and
+   passes it as `--data-root`; the `flux` binary enters it for the run and
+   empties it before every engine (the listing included). Files run one
+   after another and the wipe is per engine, so one folder per package is
+   isolated per test; a per-file folder would only have mirrored the app
+   layer's stage, which carries a bundle and failure snapshots a flux test
+   does not have.
+2. **Rejections**: `expect(promise).rejects`, additive to D17. Each
+   matcher awaits the promise, fails if it fulfills (with or without
+   `not`: the negation is of the matcher, not of the rejecting) and
+   applies to the reason; `toThrow` sees the reason as the thrown value.
+   No `resolves`: an awaited value goes into a plain `expect`.
+3. **Placement**: `flux/tests/*.test.ts` with a `flux/tsconfig.json`
+   (plain TypeScript, `@solidrt/flux-types` as the global surface) and
+   the explicit glob `flux/tests/*.test.ts` in `srt check`. The crate dir
+   has no package.json, so the typecheck's project-root walk stops at that
+   tsconfig; without it the walk reached the root tsconfig, which names
+   no flux types, and every `flux:*` import failed.
+
+The `flux` binary now builds its test engines without `ProcessExit` (the
+finding above), so an `exit()` in a test throws and fails that test.
+
+Three Rust files held tests of both kinds and were trimmed, not regrouped:
+`process.rs` keeps six, `promises.rs` four, `time.rs`, `dir.rs` and
+`http.rs` one, one and three. The counts came out as inventoried: 131
+moved in 17 files, 42 stay in 9.
+
+Translation found two module behaviours the Rust tests had tolerated
+through `try { await ... } catch`: a second body read (`Response.text()`
+on a consumed body) throws on the call, not as a rejection, with the
+message as a bare string rather than an Error; and `file().write()`
+with data of the wrong type throws on the call rather than rejecting.
+The moved tests assert what the module does; whether either should
+change is not part of this move.

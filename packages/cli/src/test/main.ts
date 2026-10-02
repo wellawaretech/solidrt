@@ -240,8 +240,14 @@ async function runFile(file: string, filter: string | undefined, seed: number | 
       stderr: "pipe",
     })
   } else {
+    // The sandbox: a folder under the package's build output that the host
+    // enters and empties before every engine, so a test writes relative
+    // paths and starts from no stored state. One per package: files run
+    // one after another, and the wipe is per engine.
+    let sandbox = join(workingDir(file), STAGE_DIR, "data")
+    mkdirSync(sandbox, { recursive: true })
     // "-": the bundle on stdin.
-    proc = Bun.spawn([await testHost("flux"), ...hostArgs, "-", ...appArgs], {
+    proc = Bun.spawn([await testHost("flux"), ...hostArgs, "--data-root", sandbox, "-", ...appArgs], {
       cwd: workingDir(file),
       stdin: new Blob([bundled.code]),
       stdout: "pipe",

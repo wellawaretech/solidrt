@@ -146,9 +146,10 @@ jobs:
         run: cargo test -p flux --lib --features test
 
   # The flux tests (`tests/*.test.ts` of the packages that import only
-  # headless modules), run by `srt test --only flux` on a `flux` binary built
-  # here, on the same four platforms: the suite runs on the runtime the code
-  # ships on, so it is tested wherever that runtime is. A job of its own,
+  # headless modules, and the flux module tests in `flux/tests/`), run by
+  # `srt test --only flux` on a `flux` binary built here, on the same four
+  # platforms: the suite runs on the runtime the code ships on, so it is
+  # tested wherever that runtime is. A job of its own,
   # not a step of test-flux, so a red job names one suite; the app tests
   # need the dev client and run in test-app below. The binary is a debug
   # build (the suite is functional verification) and without ktx2, whose

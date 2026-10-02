@@ -373,13 +373,6 @@ Shaped, not started.
   stages reduce it - createNode with a props object, a one-call-per-flush
   drain, interned prop ids with table dispatch, and a command buffer whose
   props land in a shared buffer Rust reads directly.
-- **[The flux module tests are JavaScript inside Rust strings](backlog/flux-module-tests-on-flux-test.md)** [2026-10-01]
-  131 of the 173 cargo integration tests in flux/tests/ only run a JS program
-  and compare its console output, untyped and run on Linux only in CI; move
-  them to flux:test as flux/tests/*.test.ts, run by srt test on all four
-  platforms, and keep in cargo the 42 that observe what a test inside the
-  engine cannot (the logger, uncaught reporting, liveness, exit, the embedding
-  API, isolate spawning, the websocket wire).
 - **[fontStretch / width axis](backlog/font-stretch-axis.md)** [2026-07-27]
   The bundled Noto variables carry a wdth axis the text API cannot reach;
   whether to expose a CSS-style font-stretch, pending an Impeller
@@ -1472,6 +1465,13 @@ Finished, kept for the reasoning.
   headless flux has no image codec; the logic belongs in a forge core
   marshalled by a thin flux:image module, with core re-exporting like
   flux:gpu.
+- **[The flux module tests are JavaScript inside Rust strings](done/flux-module-tests-on-flux-test.md)** [2026-10-02]
+  131 of the 173 cargo integration tests in flux/tests/ only run a JS program
+  and compare its console output, untyped and run on Linux only in CI; move
+  them to flux:test as flux/tests/*.test.ts, run by srt test on all four
+  platforms, and keep in cargo the 42 that observe what a test inside the
+  engine cannot (the logger, uncaught reporting, liveness, exit, the embedding
+  API, isolate spawning, the websocket wire).
 - **[flux:net socket gaps](done/flux-net-socket-gaps.md)** [2026-07-27]
   "Three flux:net gaps surfaced by the linux VM's NAT gateway: Udp.close, TCP
   half-close, and raw ICMP; closed by one cancellation token per socket."
