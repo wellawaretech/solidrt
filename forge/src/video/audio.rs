@@ -131,6 +131,12 @@ impl AudioTrack {
     self.sink.queued_us()
   }
 
+  /// The track has ended: the stream's audio is over, or the sink refused
+  /// a push. Nothing more will be queued until a seek.
+  pub fn ended(&self) -> bool {
+    self.done
+  }
+
   /// Microseconds of audio the sink has consumed: it moves once the device
   /// pulls, which the plane player waits for before anchoring the picture.
   #[cfg_attr(not(target_os = "android"), allow(dead_code))]

@@ -359,6 +359,13 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
+- **[Sequential engine swap, and plugins that own what they open](backlog/engine-swap-sequential-plugin-ownership.md)** [2026-10-03]
+  A reload (dev push, app update, app switch) builds the new engine while the
+  old engine's plane player is still releasing its surface, so the new
+  engine's plane open is refused every other time and the app shows no video.
+  Phase 1 makes the swap sequential (old engine torn down, bounded, before the
+  new one is built); phase 2 gives each alloy plugin ownership of what it
+  opens so the engine loop's hand-maintained release list goes.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
@@ -2384,6 +2391,12 @@ Finished, kept for the reasoning.
   Element-valued props built a native subtree on every read, so typeof probes
   orphaned unmounted builds forever; fixed by resolving once through
   children(), with orphan stats.
+- **[Wait for audio before anchoring the first video frame](done/video-first-frame-audio-anchor.md)** [2026-10-02]
+  When play follows open closely, the first frame can reach start_audio before
+  the reader has queued any audio; the empty sink makes it anchor the picture
+  on itself, so the picture starts ahead of the sound until the clock
+  correction catches up, and the forge test asserting the audio anchor fails
+  intermittently on CI.
 - **[A JS-bound app under VsyncLocked gets two frame signals per present](done/vsync-locked-js-bound-double-signal.md)** [2026-09-21]
   When the JS thread builds a frame for longer than the fallback deadline
   (~1.6 periods), FrameRelease gives the in-flight window up, idle Ticks

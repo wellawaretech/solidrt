@@ -7,8 +7,8 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::thread::{self, ThreadId};
+use std::sync::{mpsc, Arc, Mutex, PoisonError};
+use std::thread::{self, JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
 use tokio::sync::Notify;
@@ -17,10 +17,12 @@ use super::reader::stalling;
 use super::source::serve;
 use super::video::{FakeSink, FakeSinkState};
 use crate::source::Source;
-use crate::video::audio::AUDIO_OUTPUT_LATENCY_US;
+use crate::video::audio::{AudioTrack, AUDIO_OUTPUT_LATENCY_US};
 use crate::video::reader::{Next, Reader};
-use crate::video::transport::{monotonic_ns, AudioSink, Clock, DROP_LATE_NS, RELEASE_LEAD_NS, STALL_REANCHOR_NS};
-use crate::video::worker::{Feed, LostSampler, Picture, Player, Presenter, PresenterHost};
+use crate::video::transport::{
+  monotonic_ns, Anchor, AudioSink, Clock, Command, DROP_LATE_NS, RELEASE_LEAD_NS, STALL_REANCHOR_NS,
+};
+use crate::video::worker::{start_audio, Feed, LostSampler, Picture, Player, Presenter, PresenterHost};
 use crate::video::StreamError;
 
 /// How long to wait for the worker to reach a state.
@@ -47,6 +49,12 @@ const STUB_QUEUE: usize = 2;
 const STUB_DECODE: Duration = Duration::from_millis(1);
 /// The fixtures' frame interval (25 fps).
 const FRAME_US: i64 = 40_000;
+/// The fixtures' audio rate, and what the stand-in device consumes per
+/// millisecond.
+const AUDIO_RATE: usize = 48_000;
+/// How long the stand-in reader holds the first audio packet back from the
+/// audio start: longer than a worker pass, well within the start timeout.
+const PACKET_HOLD: Duration = Duration::from_millis(50);
 
 // 4 s of ffmpeg testsrc2 160x120 at 25 fps, no audio, a keyframe every
 // second: 100 frames, seekable.
@@ -237,6 +245,37 @@ fn released(rig: &Rig) -> Vec<(i64, i64, i64)> {
   lock(&rig.log).released.clone()
 }
 
+/// A device on the fake sink: consumes at the track's rate while the sink
+/// is not paused, until dropped.
+struct Consumer {
+  stop: Arc<AtomicBool>,
+  thread: Option<JoinHandle<()>>,
+}
+
+fn consuming(state: Arc<Mutex<FakeSinkState>>) -> Consumer {
+  let stop = Arc::new(AtomicBool::new(false));
+  let stopped = stop.clone();
+  let thread = thread::spawn(move || {
+    while !stopped.load(Ordering::Relaxed) {
+      thread::sleep(Duration::from_millis(1));
+      let mut s = lock(&state);
+      if !s.paused {
+        s.consume(AUDIO_RATE / 1000);
+      }
+    }
+  });
+  Consumer { stop, thread: Some(thread) }
+}
+
+impl Drop for Consumer {
+  fn drop(&mut self) {
+    self.stop.store(true, Ordering::Relaxed);
+    if let Some(thread) = self.thread.take() {
+      thread.join().expect("consumer");
+    }
+  }
+}
+
 /// Whether a frame handed over `early` ns before its release time was
 /// released on the given lead: never further ahead than the lead (plus
 /// slack), and late only by what the host's wake-up may miss
@@ -408,18 +447,7 @@ fn the_first_frame_anchors_on_the_sound_when_a_sink_consumes() {
   let sink: Box<dyn AudioSink> = Box::new(FakeSink(state.clone()));
   let rig = open_stub(open_reader(&av_path()), clock, now, RELEASE_LEAD_NS, Some(sink), never_lost(), None);
   // A device that consumes at the track's rate once the track is playing.
-  let device = state.clone();
-  let stop = Arc::new(AtomicBool::new(false));
-  let stopped = stop.clone();
-  let consumer = thread::spawn(move || {
-    while !stopped.load(Ordering::Relaxed) {
-      thread::sleep(Duration::from_millis(1));
-      let mut s = lock(&device);
-      if !s.paused {
-        s.consume(48);
-      }
-    }
-  });
+  let consumer = consuming(state.clone());
   let play_ns = monotonic_ns();
   rig.player.play();
   wait_until("two releases", || released(&rig).len() >= 2);
@@ -438,8 +466,7 @@ fn the_first_frame_anchors_on_the_sound_when_a_sink_consumes() {
   assert!(held_ns < latency_ns + PROMPT.as_nanos() as i64, "first frame due {held_ns}ns after play");
   assert_eq!(released_now[1].1 - first_ns, FRAME_US * 1000, "the second frame follows the anchor");
   assert!(lock(&state).pushed_frames > 0, "the track was fed");
-  stop.store(true, Ordering::Relaxed);
-  consumer.join().expect("consumer");
+  drop(consumer);
 
   // Without a sink the first frame anchors on itself: due at once.
   let offset = Arc::new(AtomicI64::new(0));
@@ -451,6 +478,58 @@ fn the_first_frame_anchors_on_the_sound_when_a_sink_consumes() {
   let (_, first_ns, _) = released(&silent)[0];
   // "At once" is the worker's own now, which the host may wake late.
   assert!(first_ns - play_ns < HOST_WAKE_LATE_NS, "first frame due {}ns after play", first_ns - play_ns);
+}
+
+#[test]
+fn the_first_frame_waits_for_an_audio_packet_still_on_its_way() {
+  // Play right after open: the reader hands the keyframe out one pass
+  // before the first audio packet, so the first frame can reach the audio
+  // start with the sink empty. Driven on start_audio itself, with a reader
+  // stand-in that holds the packets back, since the two packets are
+  // already in the reader's memory and no source can widen that window.
+  let reader = open_reader(&av_path());
+  let info = reader.info().expect("opened").audio.expect("an audio track");
+  let state = Arc::new(Mutex::new(FakeSinkState::default()));
+  let sink: Box<dyn AudioSink> = Box::new(FakeSink(state.clone()));
+  let mut audio = Some(AudioTrack::new(&info, 0, sink).expect("audio track"));
+  let consumer = consuming(state.clone());
+  let (clock, now) = shifted_clock(Arc::new(AtomicI64::new(0)));
+  let (_tx, rx) = mpsc::channel::<Command>();
+  let mut pending = VecDeque::new();
+  let mut anchor = Anchor::new();
+  let started = Instant::now();
+  start_audio(&mut audio, &mut anchor, &clock, &rx, &mut pending, || {
+    if started.elapsed() < PACKET_HOLD {
+      Next::Waiting
+    } else {
+      reader.next_audio()
+    }
+  });
+  let waited = started.elapsed();
+  assert!(waited >= PACKET_HOLD, "anchored after {waited:?}, before the packet arrived");
+  assert!(pending.is_empty());
+  // Anchored on the sound: the content time the anchor puts at now is the
+  // track's own, read moments apart.
+  let now_ns = now();
+  let track = audio.as_ref().expect("the track");
+  let expected = track.content_time_us().expect("the sound has a clock");
+  let content = anchor.content_at(now_ns).expect("the frame anchored on the sound");
+  assert!((content - expected).abs() * 1000 <= SLACK_NS, "anchor at {content}us, the sound at {expected}us");
+  assert!(lock(&state).pushed_frames > 0, "the track was fed");
+  drop(consumer);
+
+  // A track that has ended with nothing queued anchors the frame on itself,
+  // at once.
+  let reader = open_reader(&av_path());
+  let info = reader.info().expect("opened").audio.expect("an audio track");
+  let sink: Box<dyn AudioSink> = Box::new(FakeSink(Arc::new(Mutex::new(FakeSinkState::default()))));
+  let mut audio = Some(AudioTrack::new(&info, 0, sink).expect("audio track"));
+  let mut anchor = Anchor::new();
+  let started = Instant::now();
+  start_audio(&mut audio, &mut anchor, &clock, &rx, &mut pending, || Next::End);
+  assert!(started.elapsed() < PACKET_HOLD, "an ended track does not wait");
+  assert!(!anchor.anchored(), "nothing to anchor on");
+  assert!(audio.as_ref().expect("the track").ended());
 }
 
 #[test]

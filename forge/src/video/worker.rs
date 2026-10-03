@@ -33,11 +33,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::audio::AudioTrack;
-use super::reader::{Reader, ReaderHandle};
+use super::reader::{Next, Reader, ReaderHandle};
 use super::transport::{
   classify, Anchor, AudioSink, AudioSupply, AudioSync, Buffering, Clock, Command, Controls, Release, Shared, Supply,
 };
-use super::{MediaInfo, StreamError};
+use super::{AudioPacket, MediaInfo, StreamError};
 
 // How long one `next` waits when the presenter has nothing ready: the
 // worker's idle granularity while playing (commands are drained between
@@ -53,8 +53,9 @@ const IDLE_POLL: Duration = Duration::from_millis(250);
 const INPUT_STALL: Duration = Duration::from_millis(2000);
 // How long the first frame after play, a seek or buffering waits for the
 // sink to start consuming before it anchors on itself instead (a device
-// that does not resume). Well above a paused device's resume delay, which
-// is tens of milliseconds.
+// that does not resume). The wait covers the first audio packet too, when
+// the reader has not queued it yet. Well above a paused device's resume
+// delay, which is tens of milliseconds.
 const AUDIO_START_TIMEOUT: Duration = Duration::from_millis(300);
 // How often that wait looks at the sink's position.
 const AUDIO_START_POLL: Duration = Duration::from_millis(2);
@@ -425,7 +426,12 @@ impl Worker<'_> {
       if self.idle() {
         continue;
       }
-      self.feed();
+      // Nothing of a new epoch is consumed before its resume position is
+      // known (the top of the next pass takes it): the first picture after
+      // a seek must find the audio discard point already set.
+      if !self.resume_pending {
+        self.feed();
+      }
       if self.buffering.active() {
         // Releases hold; the presenter keeps what it decoded. Pace the pass.
         wait_for_release(&self.rx, &mut self.pending, OUTPUT_WAIT.as_nanos() as i64);
@@ -648,7 +654,10 @@ impl Worker<'_> {
         // pushed ahead until its time).
         if !self.audio_running {
           self.audio_running = true;
-          start_audio(&mut self.audio, &mut self.anchor, &self.clock, &self.rx, &mut self.pending);
+          let reader = &self.reader;
+          start_audio(&mut self.audio, &mut self.anchor, &self.clock, &self.rx, &mut self.pending, || {
+            reader.next_audio()
+          });
         }
         let now_ns = self.clock.now();
         if !self.clock.stepped {
@@ -708,29 +717,41 @@ impl Worker<'_> {
 // released: start the sink, and once it consumes (its position moves)
 // anchor the picture on the sound's content time, which is net of the
 // output latency, so the two start together however long the device takes
-// to resume. With nothing queued, no consumption within
+// to resume. An empty sink is fed from `next` meanwhile: right after open
+// (or a seek) the reader may not have queued the first audio packet yet,
+// and the picture waits for it like it waits for the device. With the
+// track ended and nothing queued, no consumption within
 // AUDIO_START_TIMEOUT, or a command arriving (queued for the next
 // iteration), the frame anchors on itself instead and the sync corrects
 // what is left. Against a stepped clock the track only starts: the anchor
 // is the timeline's, not the sound's. (A free function: the caller holds
 // the presenter's picture, so only these fields may be borrowed.)
-fn start_audio(
+pub(crate) fn start_audio(
   audio: &mut Option<AudioTrack>,
   anchor: &mut Anchor,
   clock: &Clock,
   rx: &Receiver<Command>,
   pending: &mut VecDeque<Command>,
+  mut next: impl FnMut() -> Next<AudioPacket>,
 ) {
   let Some(audio) = audio.as_mut() else {
     return;
   };
   let from_us = audio.sink_position_us();
   audio.set_playing(true);
-  if clock.stepped || audio.queued_us() == 0 {
+  if clock.stepped {
     return;
   }
   let deadline = Instant::now() + AUDIO_START_TIMEOUT;
-  while audio.sink_position_us() <= from_us {
+  loop {
+    if audio.queued_us() == 0 {
+      audio.feed(&mut next);
+      if audio.queued_us() == 0 && audio.ended() {
+        return;
+      }
+    } else if audio.sink_position_us() > from_us {
+      break;
+    }
     let left = deadline.saturating_duration_since(Instant::now());
     if left.is_zero() {
       let waited_ms = AUDIO_START_TIMEOUT.as_millis();
@@ -750,6 +771,8 @@ fn start_audio(
     }
   }
   if let Some(content_us) = audio.content_time_us() {
+    let jump_us = audio.sink_position_us() - from_us;
+    log::info!("[forge::video] audio start: sink position jumped {jump_us}us, anchored at content {content_us}us");
     anchor.set(clock.now(), content_us);
   }
 }
