@@ -527,19 +527,21 @@ fn counting_errors(
   }
 }
 
-/// Between engines: what the finished engine still holds in alloy's texture
-/// registry is released, and every destroy its teardown deferred is
-/// reclaimed, so the next engine starts from the registry the finished one
-/// found. The runtime-owned (borrowed) ids left at this point are the
-/// snapshot textures its render tree vended: a reload drops the tree whole,
-/// so no node destroy ever queued them, and each boundary's window-sized
-/// texture outlived its app, one more per reload
-/// (okf/done/snapshot-texture-leak-reload.md); the other borrowers (camera
-/// sessions, video textures) close with the engine. Nothing paints between
-/// engines, so the reclaim runs against no references. Returns the registry
-/// count afterwards, the caller's baseline for the leftover check.
-fn release_engine_textures(atx: &alloy::Context) -> usize {
-  atx.release_all_borrowed();
+// How long the loop waits, between engines, for what the finished engine's
+// teardown left in flight (its video workers releasing their codecs and the
+// plane's surface) before it builds the next engine anyway, with a warning.
+// The slowest release seen is a plane player's on the TV, 250 to 700 ms
+// (okf/done/engine-swap-sequential-plugin-ownership.md).
+const ENGINE_TEARDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Between engines, once the finished engine's teardown is complete: every
+/// destroy it deferred is reclaimed (nothing paints between engines, so the
+/// reclaim runs against no references), so the next engine starts from the
+/// registry the finished one found. Returns the registry count, the
+/// caller's baseline for the leftover check: the gui plugins release what
+/// they opened in their drops, so growth across a handover is a plugin
+/// whose drop did not, never something to clean up after here.
+fn reclaim_engine_textures(atx: &alloy::Context) -> usize {
   atx.reclaim_destroyed(&HashSet::new());
   atx.textures.len()
 }
@@ -1177,8 +1179,11 @@ fn ui_thread(
 
     // The registry count each engine started from: growth across a
     // handover is textures the previous app left alive, which the dev log
-    // reports (release_engine_textures).
+    // reports (reclaim_engine_textures).
     let mut texture_baseline: Option<usize> = None;
+    // The previous engine's teardown handle (flux::gui::Teardown): what its
+    // plugins' drops left in flight, awaited before the next engine exists.
+    let mut teardown: Option<flux::gui::Teardown> = None;
 
     // Test mode: the file's run (which engine comes next, the records).
     #[cfg(feature = "test")]
@@ -1223,18 +1228,27 @@ fn ui_thread(
       let render_tree = RenderTree::new();
       let platform = platform.clone();
       let atx = atx.clone();
-      // A reloaded app must not inherit (or leak) the previous app's open
-      // capture devices, playing sounds or spatial nodes; their JS handles
-      // died with the old engine, so nothing else will ever stop them. The
-      // spatial core in particular: its GPU targets died with the engine,
-      // and a looping clip player left behind would animate into nothing at
-      // full frame rate, forever.
-      atx.close_all_cameras();
-      atx.close_all_microphones();
-      atx.close_all_audio();
-      atx.reset_spatial();
-      // Its textures go with it too (release_engine_textures).
-      let registered = release_engine_textures(&atx);
+      // The swap is sequential: the previous engine was dropped at the end
+      // of its spin, each gui plugin's drop releasing what its app opened
+      // (capture sessions, voices, the spatial scene, the render tree's
+      // textures, the video players), and what those drops could only start
+      // (a video worker stopping its codec and releasing the plane's
+      // surface, 250 to 700 ms on a TV) is awaited here, bounded, before
+      // anything of the next engine exists. Nothing overlaps: a plane open
+      // in the new engine finds no plane and none being released
+      // (okf/done/engine-swap-sequential-plugin-ownership.md).
+      if let Some(previous) = teardown.take() {
+        let left = local.run_until(previous.wait(ENGINE_TEARDOWN_DEADLINE)).await;
+        if left > 0 {
+          log::warn!(
+            "[sol] engine teardown: {left} worker(s) still releasing after {} ms; building the next engine anyway",
+            ENGINE_TEARDOWN_DEADLINE.as_millis()
+          );
+        }
+      }
+      let engine_teardown = flux::gui::Teardown::default();
+      teardown = Some(engine_teardown.clone());
+      let registered = reclaim_engine_textures(&atx);
       if let Some(before) = texture_baseline {
         if registered > before {
           log::warn!("[sol] reload left {} textures from the previous app alive ({registered} registered)", registered - before);
@@ -1280,6 +1294,7 @@ fn ui_thread(
           alloy: atx.clone(),
           render_tree,
           alloy_cmd_tx: alloy_cmd_tx.clone(),
+          teardown: engine_teardown,
         },
       );
       let draw_stats = stats_snapshot.clone();

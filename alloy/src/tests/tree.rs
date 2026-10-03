@@ -740,6 +740,32 @@ fn own_snapshot_texture_change_does_not_invalidate_boundary() {
 }
 
 #[test]
+fn drain_snapshot_textures_takes_queued_and_live_ids() {
+  // A tree dropped whole (an engine teardown) destroys no node, so the
+  // live boundaries' vended ids would never reach the release queue: the
+  // drain takes them beside the queued ones, once.
+  let mut tree = RenderTree::new();
+  snapshot_over_texture(&mut tree, 7);
+  tree.edit(1, |el| {
+    el.snapshot_texture_id.set(Some(7));
+    Damage::None
+  });
+  tree.create_node(3, attached());
+  tree.edit(3, |el| {
+    el.repaint_boundary = BoundaryMode::Snapshot;
+    el.snapshot_texture_id.set(Some(9));
+    Damage::None
+  });
+  tree.destroy_node(3);
+
+  let mut drained = tree.drain_snapshot_textures();
+  drained.sort_unstable();
+  assert_eq!(drained, vec![7, 9]);
+  assert_eq!(tree.try_node(1).expect("boundary").snapshot_texture_id.get(), None);
+  assert!(tree.drain_snapshot_textures().is_empty());
+}
+
+#[test]
 fn content_change_without_snapshot_is_ignored() {
   // The fast-path guarantee: a plain displayed texture (no baked pixels
   // anywhere above it) must not bump the revision, or pure-GPU animation

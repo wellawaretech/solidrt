@@ -597,6 +597,16 @@ impl RenderTree {
     std::mem::take(&mut *self.released_snapshot_textures.borrow_mut())
   }
 
+  /// Drain every snapshot texture id the tree still holds: the queued
+  /// releases plus the live boundaries' own, which leave their elements. For
+  /// whoever drops the tree whole (an engine teardown), which destroys no
+  /// node and so queues nothing; the ids go the same release path.
+  pub fn drain_snapshot_textures(&mut self) -> Vec<u64> {
+    let mut ids = self.take_released_snapshot_textures();
+    ids.extend(self.nodes.values().filter_map(|element| element.snapshot_texture_id.take()));
+    ids
+  }
+
   /// Rebuild a Text's computed_text and styled runs from its Span subtree.
   /// `id` may be the Text or any span inside it: spans nest, so the owning
   /// Text is found by walking up. No-op for other kinds. Detached text never

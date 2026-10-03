@@ -212,13 +212,6 @@ impl RampDriver {
     state.pans.clear();
   }
 
-  /// Drop everything, master included (between-runs close).
-  fn purge_everything(&self) {
-    let mut state = self.lock();
-    state.ramps.clear();
-    state.pans.clear();
-  }
-
   fn spawn_thread(&self) {
     self.thread_started.set(true);
     let shared = Arc::clone(&self.state);
@@ -764,24 +757,6 @@ impl crate::context::Context {
   pub fn stop_bus_audio(&self, bus: &str, fade_out_ms: f64) {
     if let Some(mixer) = *self.audio.mixer.borrow() {
       let _ = mixer.stop_tag(bus, fade_out_ms.max(0.0) as i64);
-    }
-  }
-
-  /// Release every track and loaded sound. Called between engine runs so a
-  /// reloaded app never inherits (or leaks) a sound left playing or a decoded
-  /// clip. The device itself stays open. PCM sinks close too (their streams
-  /// are per-consumer, nothing to share across runs).
-  pub fn close_all_audio(&self) {
-    self.audio.ramps.purge_everything();
-    self.audio.tracks.borrow_mut().clear();
-    self.audio.sounds.borrow_mut().clear();
-    for sink in self.audio.sinks.borrow_mut().drain().map(|(_, sink)| sink) {
-      silence(&sink);
-    }
-    // The device (and its master gain) outlives runs; reset so a reloaded app
-    // does not inherit a mute from the previous one.
-    if let Some(mixer) = *self.audio.mixer.borrow() {
-      let _ = mixer.set_gain(1.0);
     }
   }
 

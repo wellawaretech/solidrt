@@ -141,10 +141,11 @@ impl Context {
     self.spatial.borrow_mut()
   }
 
-  /// Drop the whole spatial core: every node, sink, clip and player. Called
-  /// between engine runs, beside the camera/microphone/audio closes: the
-  /// dying app's GPU resources go with its engine, and a sink or looping
-  /// player left behind would write into nothing every frame, forever.
+  /// Drop the whole spatial core: every node, sink, clip and player. The
+  /// core is one engine's scene, emptied by the owner that filled it (the
+  /// spatial plugin, when its engine is torn down): the dying app's GPU
+  /// resources go with its engine, and a sink or looping player left behind
+  /// would write into nothing every frame, forever.
   pub fn reset_spatial(&self) {
     *self.spatial.borrow_mut() = Spatial::new();
   }

@@ -4,8 +4,10 @@
 //! scale xyz) so a hot-path write is one argument, and node ids are plain
 //! numbers (generation-tagged, never reused).
 
+use std::rc::Rc;
+
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Array, Ctx, FromJs, Function, Object, TypedArray, Value};
+use rquickjs::{Array, Ctx, FromJs, Function, JsLifetime, Object, TypedArray, Value};
 
 use crate::alloy_plugins::properties::transition::{
   decode_node_entry, decode_node_motion, decode_stagger, LaneRule, NodeEntryDecoded,
@@ -39,6 +41,35 @@ fn transform(ctx: &Ctx<'_>, data: &TypedArray<'_, f32>, api: &str) -> rquickjs::
 }
 
 pub struct SpatialModule;
+
+// The engine's hold on alloy's spatial core, whose scene its app builds:
+// nodes, shapes, sinks, clips and players. One engine at a time fills the
+// core, so the hold's drop empties it whole (`reset_spatial`) rather than
+// retracing ids: the app's GPU targets die with its engine, and a sink or
+// looping player left behind would write into nothing every frame.
+struct Inner {
+  gui: Rc<super::Gui>,
+}
+
+impl Drop for Inner {
+  fn drop(&mut self) {
+    self.gui.alloy.reset_spatial();
+  }
+}
+
+// Held for its drop alone, so never read.
+#[derive(Clone, JsLifetime)]
+struct SpatialPluginState(
+  #[qjs(skip_trace)]
+  #[allow(dead_code)]
+  Rc<Inner>,
+);
+
+/// Take the engine's hold on the spatial core (see `Inner`). Runs at engine
+/// init, before any module import.
+pub(crate) fn store_state(ctx: &Ctx<'_>) {
+  ctx.store_userdata(SpatialPluginState(Rc::new(Inner { gui: super::gui(ctx) }))).expect("store spatial state");
+}
 
 impl ModuleDef for SpatialModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {

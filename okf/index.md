@@ -359,13 +359,6 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
-- **[Sequential engine swap, and plugins that own what they open](backlog/engine-swap-sequential-plugin-ownership.md)** [2026-10-03]
-  A reload (dev push, app update, app switch) builds the new engine while the
-  old engine's plane player is still releasing its surface, so the new
-  engine's plane open is refused every other time and the app shows no video.
-  Phase 1 makes the swap sequential (old engine torn down, bounded, before the
-  new one is built); phase 2 gives each alloy plugin ownership of what it
-  opens so the engine loop's hand-maintained release list goes.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
@@ -1408,6 +1401,13 @@ Finished, kept for the reasoning.
   Explicit opt-in disk cache in the forge fetch layer, needed by a production
   app doing many image fetches; designed and shipped as
   okf/plans/fetch-cache.md.
+- **[Sequential engine swap, and plugins that own what they open](done/engine-swap-sequential-plugin-ownership.md)** [2026-10-03]
+  A reload (dev push, app update, app switch) builds the new engine while the
+  old engine's plane player is still releasing its surface, so the new
+  engine's plane open is refused every other time and the app shows no video.
+  Phase 1 makes the swap sequential (old engine torn down, bounded, before the
+  new one is built); phase 2 gives each alloy plugin ownership of what it
+  opens so the engine loop's hand-maintained release list goes.
 - **[Enter animations (from) are lost whenever the transition config lands after the insert](done/enter-from-template-children.md)** [2026-09-07]
   A transition entry's `from` runs at insert, and `entered` is set before the
   config is even looked at, so any element whose config arrives a step later

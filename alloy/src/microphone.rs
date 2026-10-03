@@ -99,12 +99,4 @@ impl crate::context::Context {
       sdl_utils::audio_stream_destroy(session.stream);
     }
   }
-
-  /// Release every open microphone. Called between engine runs so a reloaded
-  /// app never inherits (or leaks) a live capture device.
-  pub fn close_all_microphones(&self) {
-    for (_, session) in self.microphones.sessions.borrow_mut().drain() {
-      sdl_utils::audio_stream_destroy(session.stream);
-    }
-  }
 }

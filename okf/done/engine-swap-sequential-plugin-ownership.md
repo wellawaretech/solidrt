@@ -2,6 +2,7 @@
 title: Sequential engine swap, and plugins that own what they open
 description: A reload (dev push, app update, app switch) builds the new engine while the old engine's plane player is still releasing its surface, so the new engine's plane open is refused every other time and the app shows no video. Phase 1 makes the swap sequential (old engine torn down, bounded, before the new one is built); phase 2 gives each alloy plugin ownership of what it opens so the engine loop's hand-maintained release list goes.
 created: 2026-10-03
+completed: 2026-10-03
 ---
 
 # Wait for the previous video plane before refusing a new one
@@ -110,3 +111,40 @@ released before the next engine exists once the swap is sequential.
   and a plane video leaves the registries at their baseline, read from
   the textures count and the equivalent counts the other registries
   expose for the check.
+
+## Done (2026-10-03)
+
+Both phases built and verified on the TV (Philips TPM171E, armeabi-v7a):
+ten reloads of a plane probe with autoplay (avsync.webm, a scratch probe
+since deleted) all played, no "Video plane not created" in logcat; the
+old plane's removal now precedes each "flux engine start" by 5 to 7 ms
+(on the build before, 5 of the 10 failed, alternating, the removal 250
+to 740 ms after the start). No teardown deadline warning and no textures
+leftover warning over the ten. The reload grows by the old worker's
+release, the 250 to 700 ms the overlap used to hide; accepted.
+
+- `flux::gui::Teardown` (flux/src/alloy_plugins/mod.rs): the handle the
+  host creates per engine and lends through `GuiHost`; a plugin whose
+  release outlives its drop hands the host a future to await (`defer`).
+  The engine loop awaits the previous engine's handle, bounded by
+  `ENGINE_TEARDOWN_DEADLINE` (1.5 s, logged when hit), before anything of
+  the next engine exists. The engine itself was already dropped before
+  the next was built (it dies with its spin); the wait was the missing
+  piece, not the order.
+- Not compiled here: the Android cfg paths of video.rs were built only
+  through the TV client build (`make android-client ANDROID_ABI=armeabi-v7a`),
+  which is also what the TV ran.
+- The video plugin keeps every closed player's worker in `closing` until
+  it has exited (not only the last plane's), awaits them all before a
+  plane open, and defers the ones still exiting at its drop.
+- Camera, microphone and audio plugins hold what they opened (sessions,
+  tracks, clips, whether the master gain was set) and release it in
+  `Drop`; the spatial plugin holds the engine's hold on the spatial core
+  and empties it whole (`reset_spatial`) in its drop, since one engine at
+  a time fills it and its per-target state has no per-id release; the
+  render tree plugin drains the tree's vended snapshot textures
+  (`RenderTree::drain_snapshot_textures`) and releases them.
+- Gone from alloy: `close_all_cameras`, `close_all_microphones`,
+  `close_all_audio`, `release_all_borrowed`. The loop's preamble is the
+  teardown wait plus the textures baseline check (deferred destroys
+  reclaimed, count compared), which now asserts the drops did their job.

@@ -3,8 +3,12 @@
 //! for audio recording); the JS wrapper in @solidrt/core makes it async to
 //! leave room for platforms that need a runtime permission flow.
 
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::rc::Rc;
+
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Array, Ctx, Function, Object, TypedArray};
+use rquickjs::{Array, Ctx, Function, JsLifetime, Object, TypedArray};
 
 use crate::plugins::marshal::OptArg;
 
@@ -12,8 +16,40 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
 }
 
-// The microphone bindings keep no state of their own: every call forwards
-// to the shared alloy context (`super::gui`).
+struct Inner {
+  gui: Rc<super::Gui>,
+  /// The sessions this engine opened and has not closed: what its end
+  /// releases (the capture stream).
+  sessions: RefCell<HashSet<u64>>,
+}
+
+impl Drop for Inner {
+  // Engine teardown: the app's handles died with it, so nothing else will
+  // ever close its sessions.
+  fn drop(&mut self) {
+    for session in self.sessions.get_mut().drain() {
+      self.gui.alloy.close_microphone(session);
+    }
+  }
+}
+
+#[derive(Clone, JsLifetime)]
+struct MicrophonePluginState(#[qjs(skip_trace)] Rc<Inner>);
+
+/// Store the microphone plugin state in userdata. Runs at engine init,
+/// before any module import; the `flux:microphone` module surface reads it.
+pub(crate) fn store_state(ctx: &Ctx<'_>) {
+  ctx
+    .store_userdata(MicrophonePluginState(Rc::new(Inner {
+      gui: super::gui(ctx),
+      sessions: RefCell::new(HashSet::new()),
+    })))
+    .expect("store microphone state");
+}
+
+fn state(ctx: &Ctx<'_>) -> Rc<Inner> {
+  ctx.userdata::<MicrophonePluginState>().expect("microphone state").0.clone()
+}
 
 /// The `flux:microphone` module. `open` returns a bound session object
 /// (`{ sampleRate, read, close }`) so the raw handle stays in Rust.
@@ -53,9 +89,13 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
   }
   let sample_rate = sample_rate.unwrap_or(16000);
 
-  let gui = super::gui(&ctx);
-  let session =
-    gui.alloy.open_microphone(device, sample_rate).map_err(|e| throw_str(&ctx, &format!("openMicrophone: {e}")))?;
+  let state = state(&ctx);
+  let session = state
+    .gui
+    .alloy
+    .open_microphone(device, sample_rate)
+    .map_err(|e| throw_str(&ctx, &format!("openMicrophone: {e}")))?;
+  state.sessions.borrow_mut().insert(session);
 
   let obj = Object::new(ctx.clone())?;
   obj.set("sampleRate", sample_rate)?;
@@ -81,12 +121,12 @@ where
 
 /// Drain the mono f32 samples captured since the last read.
 fn read_impl(ctx: Ctx<'_>, session: u64) -> rquickjs::Result<TypedArray<'_, f32>> {
-  let gui = super::gui(&ctx);
-  let samples = gui.alloy.read_microphone(session).map_err(|e| throw_str(&ctx, &format!("read: {e}")))?;
+  let samples = state(&ctx).gui.alloy.read_microphone(session).map_err(|e| throw_str(&ctx, &format!("read: {e}")))?;
   TypedArray::new(ctx.clone(), samples)
 }
 
 fn close_impl(ctx: Ctx<'_>, session: u64) {
-  let gui = super::gui(&ctx);
-  gui.alloy.close_microphone(session);
+  let state = state(&ctx);
+  state.gui.alloy.close_microphone(session);
+  state.sessions.borrow_mut().remove(&session);
 }

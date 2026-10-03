@@ -7,7 +7,7 @@
 //! permission request; there is no separate permission API (SDL semantics).
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use alloy::camera::{CameraFacing, CameraStatus};
@@ -32,8 +32,21 @@ struct PendingOpen {
 struct Inner {
   gui: Rc<super::Gui>,
   pending: RefCell<Vec<PendingOpen>>,
+  /// The sessions this engine opened and has not closed: what its end
+  /// releases (the device and the session's texture).
+  sessions: RefCell<HashSet<u64>>,
   /// Per-session JS barcode callback (sessions opened with scan).
   barcode_handlers: RefCell<HashMap<u64, Persistent<Function<'static>>>>,
+}
+
+impl Drop for Inner {
+  // Engine teardown: the app's handles died with it, so nothing else will
+  // ever close its sessions.
+  fn drop(&mut self) {
+    for session in self.sessions.get_mut().drain() {
+      self.gui.alloy.close_camera(session);
+    }
+  }
 }
 
 #[derive(Clone, JsLifetime)]
@@ -48,6 +61,7 @@ pub(crate) fn store_state(ctx: &Ctx<'_>) {
     .store_userdata(CameraPluginState(Rc::new(Inner {
       gui: super::gui(ctx),
       pending: RefCell::new(Vec::new()),
+      sessions: RefCell::new(HashSet::new()),
       barcode_handlers: RefCell::new(HashMap::new()),
     })))
     .expect("store camera state");
@@ -135,6 +149,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
   let (promise, resolve, reject) = Promise::new(&ctx)?;
   match state.0.gui.alloy.open_camera(device, facing, size, scan_qr) {
     Ok(session) => {
+      state.0.sessions.borrow_mut().insert(session);
       state.0.pending.borrow_mut().push(PendingOpen {
         session,
         _hold: crate::pending::PendingOps::of(&ctx).in_flight("camera open"),
@@ -153,6 +168,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
 fn close_impl(ctx: Ctx<'_>, session: u64) {
   let state = ctx.userdata::<CameraPluginState>().expect("camera state");
   state.0.gui.alloy.close_camera(session);
+  state.0.sessions.borrow_mut().remove(&session);
   state.0.barcode_handlers.borrow_mut().remove(&session);
 }
 

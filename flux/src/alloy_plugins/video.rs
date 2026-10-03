@@ -18,9 +18,11 @@
 //! whose worker owns it from then on and drops it after the codec has
 //! released the surface; a texture open creates the texture and hands the
 //! worker a sink on its latch. Close sends the worker its close and
-//! returns; nothing joins. The next plane open awaits the closing worker's
-//! exit before it creates its own plane, so the platform's one-plane check
-//! holds.
+//! returns; nothing joins. The next plane open awaits the closing workers'
+//! exits before it creates its own plane, so the platform's one-plane check
+//! holds, and the engine's teardown hands every worker still exiting to the
+//! host, which awaits them before the next engine exists (a plane open
+//! there must find no plane and none being released).
 //!
 //! Both players stream: the source (a path, an http(s) URL, a `file()`) is
 //! read by forge's reader thread, and `open` is asynchronous - the header
@@ -158,21 +160,28 @@ struct Inner {
   // concurrent opens cannot both pass.
   #[cfg(target_os = "android")]
   plane_pending: Cell<bool>,
-  // The last closed plane player's worker, still releasing its surface: a
-  // new plane open awaits its exit before creating its plane, so the old
-  // view's removal is posted before the new one's creation and the
-  // platform's one-plane check holds.
-  #[cfg(target_os = "android")]
-  closing: RefCell<Option<Arc<Shared>>>,
+  // Closed players whose workers are still releasing what they held (the
+  // codec; a plane's surface), pruned as they exit. A plane open awaits
+  // them before creating its plane, so the old view's removal is posted
+  // before the new one's creation and the platform's one-plane check
+  // holds; the engine's teardown hands them to the host.
+  closing: RefCell<Vec<Arc<Shared>>>,
   next_id: Cell<u64>,
 }
 
 impl Drop for Inner {
-  // Engine teardown: release what the players hold in alloy; their
-  // workers exit on the close each player's drop sends, nothing waits.
+  // Engine teardown: release what the players hold in alloy and send each
+  // worker its close; the workers' exits go to the host, which awaits them
+  // before the next engine is built (nothing waits here, on the JS thread).
   fn drop(&mut self) {
+    let closing = self.closing.get_mut();
     for (_, entry) in self.players.borrow_mut().drain() {
-      close_entry(&self.gui, entry);
+      closing.push(close_entry(&self.gui, entry));
+    }
+    for shared in closing.drain(..) {
+      if !shared.has_exited() {
+        self.gui.teardown.defer(async move { shared.exited().await });
+      }
     }
   }
 }
@@ -208,8 +217,7 @@ pub(crate) fn store_state(ctx: &Ctx<'_>) {
       players: RefCell::new(HashMap::new()),
       #[cfg(target_os = "android")]
       plane_pending: Cell::new(false),
-      #[cfg(target_os = "android")]
-      closing: RefCell::new(None),
+      closing: RefCell::new(Vec::new()),
       next_id: Cell::new(0),
     })))
     .expect("store video state");
@@ -389,12 +397,13 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
     };
     // A predecessor still closing holds the platform's one plane until its
     // worker has dropped the view; its removal must be posted before this
-    // open's creation is.
+    // open's creation is. The list is read, not taken: the entries stay
+    // the teardown's to hand over should the engine end mid-wait.
     #[cfg(target_os = "android")]
     if plane {
-      let closing = state.0.closing.borrow_mut().take();
-      if let Some(closing) = closing {
-        closing.exited().await;
+      let closing: Vec<Arc<Shared>> = state.0.closing.borrow().clone();
+      for shared in closing {
+        shared.exited().await;
       }
       state.0.plane_pending.set(false);
     }
@@ -709,14 +718,9 @@ fn close_impl(ctx: Ctx<'_>, id: u64) {
   // Take it out first, then tear down outside the borrow.
   let entry = state.0.players.borrow_mut().remove(&id);
   if let Some(entry) = entry {
-    #[cfg(target_os = "android")]
-    let plane = matches!(entry.kind, Kind::Plane);
-    let closing = close_entry(&state.0.gui, entry);
-    #[cfg(target_os = "android")]
-    if plane {
-      *state.0.closing.borrow_mut() = Some(closing);
-    }
-    #[cfg(not(target_os = "android"))]
-    drop(closing);
+    let shared = close_entry(&state.0.gui, entry);
+    let mut closing = state.0.closing.borrow_mut();
+    closing.retain(|worker| !worker.has_exited());
+    closing.push(shared);
   }
 }

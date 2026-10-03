@@ -3,10 +3,13 @@
 //! (or the fire-and-forget `play`) yields a playback handle with live controls.
 //! Raw sound/track ids stay in Rust.
 
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
+use std::rc::Rc;
 
 use alloy::audio::PcmFormat;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Ctx, FromJs, Function, Object, TypedArray, Value};
+use rquickjs::{Ctx, FromJs, Function, JsLifetime, Object, TypedArray, Value};
 
 use crate::plugins::marshal::{bytes_of, OptArg};
 use crate::plugins::seekable::SeekableSource;
@@ -15,8 +18,71 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
 }
 
-// The audio bindings keep no state of their own: every call forwards to the
-// shared alloy context (`super::gui`).
+// The master gain the output device starts with, restored at the end of an
+// engine that changed it: the device outlives apps, and the next must not
+// inherit a mute.
+const DEFAULT_MASTER_GAIN: f32 = 1.0;
+
+struct Inner {
+  gui: Rc<super::Gui>,
+  /// The tracks this engine started and may still be playing: what its
+  /// end stops. Pruned of finished ones at each start (alloy sweeps them
+  /// from its registry; a stale id here would only hit a no-op).
+  tracks: RefCell<HashSet<u64>>,
+  /// The clips this engine loaded and has not unloaded: what its end frees.
+  sounds: RefCell<HashSet<u64>>,
+  /// Whether the app set the device's master gain, which its end restores.
+  master_gain_set: Cell<bool>,
+}
+
+impl Drop for Inner {
+  // Engine teardown: the app's handles died with it, so nothing else will
+  // ever stop its voices, free its clips or undo its master gain. The
+  // device itself stays open. (PCM sinks are the video plugin's.)
+  fn drop(&mut self) {
+    let alloy = &self.gui.alloy;
+    for track in self.tracks.get_mut().drain() {
+      alloy.stop_audio(track, 0.0);
+    }
+    for sound in self.sounds.get_mut().drain() {
+      alloy.unload_sound(sound);
+    }
+    if self.master_gain_set.get() {
+      if let Err(e) = alloy.set_master_gain(DEFAULT_MASTER_GAIN, 0.0) {
+        log::warn!("[audio] restore master gain: {e}");
+      }
+    }
+  }
+}
+
+impl Inner {
+  // Note a started track, letting go of the ones that finished since.
+  fn track_started(&self, id: u64) {
+    let mut tracks = self.tracks.borrow_mut();
+    tracks.retain(|track| !self.gui.alloy.audio_ended(*track));
+    tracks.insert(id);
+  }
+}
+
+#[derive(Clone, JsLifetime)]
+struct AudioPluginState(#[qjs(skip_trace)] Rc<Inner>);
+
+/// Store the audio plugin state in userdata. Runs at engine init, before any
+/// module import; the `flux:audio` module surface reads it.
+pub(crate) fn store_state(ctx: &Ctx<'_>) {
+  ctx
+    .store_userdata(AudioPluginState(Rc::new(Inner {
+      gui: super::gui(ctx),
+      tracks: RefCell::new(HashSet::new()),
+      sounds: RefCell::new(HashSet::new()),
+      master_gain_set: Cell::new(false),
+    })))
+    .expect("store audio state");
+}
+
+fn state(ctx: &Ctx<'_>) -> Rc<Inner> {
+  ctx.userdata::<AudioPluginState>().expect("audio state").0.clone()
+}
 
 /// The `flux:audio` module. Handles are bound objects (playback: `{ stop,
 /// setGain, setPan, setRate, ended }`; clip: `{ play, unload }`) so raw ids
@@ -185,8 +251,9 @@ fn play_impl<'js>(
 ) -> rquickjs::Result<Object<'js>> {
   let play_options = read_options(&ctx, &options)?;
   let bytes = bytes_of(&ctx, &data, "play")?;
-  let gui = super::gui(&ctx);
-  let id = gui.alloy.play_audio(bytes, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
+  let state = state(&ctx);
+  let id = state.gui.alloy.play_audio(bytes, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
+  state.track_started(id);
   playback_handle(&ctx, id)
 }
 
@@ -206,8 +273,9 @@ fn clip_handle<'js>(ctx: &Ctx<'js>, sound_id: u64) -> rquickjs::Result<Object<'j
 /// overlapping playback with no decode.
 fn load_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> rquickjs::Result<Object<'js>> {
   let bytes = bytes_of(&ctx, &data, "load")?;
-  let gui = super::gui(&ctx);
-  let sound_id = gui.alloy.load_sound(bytes).map_err(|e| throw_str(&ctx, &format!("load: {e}")))?;
+  let state = state(&ctx);
+  let sound_id = state.gui.alloy.load_sound(bytes).map_err(|e| throw_str(&ctx, &format!("load: {e}")))?;
+  state.sounds.borrow_mut().insert(sound_id);
   clip_handle(&ctx, sound_id)
 }
 
@@ -252,11 +320,13 @@ fn load_pcm_impl<'js>(
     PcmData::S16(a) => (bytes_of(&ctx, a, "loadPcm")?, PcmFormat::S16),
     PcmData::F32(a) => (bytes_of(&ctx, a, "loadPcm")?, PcmFormat::F32),
   };
-  let gui = super::gui(&ctx);
-  let sound_id = gui
+  let state = state(&ctx);
+  let sound_id = state
+    .gui
     .alloy
     .load_pcm_sound(bytes, sample_rate as i32, channels, format)
     .map_err(|e| throw_str(&ctx, &format!("loadPcm: {e}")))?;
+  state.sounds.borrow_mut().insert(sound_id);
   clip_handle(&ctx, sound_id)
 }
 
@@ -268,15 +338,17 @@ fn load_pcm_impl<'js>(
 /// file. Play it as a single voice; do not overlap a stream with itself.
 fn stream_impl<'js>(ctx: Ctx<'js>, source: Object<'js>) -> rquickjs::Result<Object<'js>> {
   let reader = SeekableSource::open_from(&source).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
-  let gui = super::gui(&ctx);
-  let sound_id = gui.alloy.stream_sound_io(reader).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
+  let state = state(&ctx);
+  let sound_id = state.gui.alloy.stream_sound_io(reader).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
+  state.sounds.borrow_mut().insert(sound_id);
   clip_handle(&ctx, sound_id)
 }
 
 fn play_sound_impl<'js>(ctx: Ctx<'js>, sound_id: u64, options: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
   let play_options = read_options(&ctx, &options)?;
-  let gui = super::gui(&ctx);
-  let id = gui.alloy.play_sound(sound_id, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
+  let state = state(&ctx);
+  let id = state.gui.alloy.play_sound(sound_id, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
+  state.track_started(id);
   playback_handle(&ctx, id)
 }
 
@@ -304,8 +376,9 @@ fn set_rate_impl<'js>(ctx: Ctx<'js>, id: u64, rate: f32, options: OptArg<Object<
 fn set_master_gain_impl<'js>(ctx: Ctx<'js>, gain: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   check_gain(&ctx, "setMasterGain", gain)?;
   let ramp_ms = read_ramp_ms(&ctx, "setMasterGain", &options)?;
-  let gui = super::gui(&ctx);
-  gui.alloy.set_master_gain(gain, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setMasterGain: {e}")))
+  let state = state(&ctx);
+  state.master_gain_set.set(true);
+  state.gui.alloy.set_master_gain(gain, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setMasterGain: {e}")))
 }
 
 /// Declared contract, not yet implemented (lands with the own-mixer
@@ -328,14 +401,19 @@ fn ended_impl(ctx: Ctx<'_>, id: u64) -> bool {
 }
 
 fn unload_impl(ctx: Ctx<'_>, sound_id: u64) {
-  let gui = super::gui(&ctx);
-  gui.alloy.unload_sound(sound_id);
+  let state = state(&ctx);
+  state.gui.alloy.unload_sound(sound_id);
+  state.sounds.borrow_mut().remove(&sound_id);
 }
 
 fn stop_impl<'js>(ctx: Ctx<'js>, id: u64, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   let fade_out_ms = read_fade_out_ms(&ctx, "stop", &options)?;
-  let gui = super::gui(&ctx);
-  gui.alloy.stop_audio(id, fade_out_ms);
+  let state = state(&ctx);
+  state.gui.alloy.stop_audio(id, fade_out_ms);
+  // A fading track plays on until the fade ends; the next start prunes it.
+  if fade_out_ms == 0.0 {
+    state.tracks.borrow_mut().remove(&id);
+  }
   Ok(())
 }
 
@@ -345,13 +423,18 @@ fn stop_all_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::
     Some(opts) => opts.get::<_, Option<String>>("bus")?,
     None => None,
   };
-  let gui = super::gui(&ctx);
+  let state = state(&ctx);
   match bus {
     Some(bus) => {
       check_bus(&ctx, "stop", &bus)?;
-      gui.alloy.stop_bus_audio(&bus, fade_out_ms);
+      state.gui.alloy.stop_bus_audio(&bus, fade_out_ms);
     }
-    None => gui.alloy.stop_all_audio(fade_out_ms),
+    None => {
+      state.gui.alloy.stop_all_audio(fade_out_ms);
+      if fade_out_ms == 0.0 {
+        state.tracks.borrow_mut().clear();
+      }
+    }
   }
   Ok(())
 }

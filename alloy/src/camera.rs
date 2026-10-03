@@ -361,15 +361,6 @@ impl crate::context::Context {
     }
   }
 
-  /// Release every open camera. Called between engine runs so a reloaded app
-  /// never inherits (or leaks) a live capture device.
-  pub fn close_all_cameras(&self) {
-    for (_, session) in self.cameras.sessions.borrow_mut().drain() {
-      session.close_device();
-      self.release_borrowed(session.texture_id);
-    }
-  }
-
   /// Advance all sessions: resolve pending permission prompts and upload the
   /// latest frame of each ready session into its texture. Run once per frame
   /// on the UI thread; does nothing when no sessions are open. Returns true

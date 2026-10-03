@@ -26,9 +26,12 @@ pub mod video;
 pub use properties::transition::anim_prop_name;
 pub use properties::{read_jsx, ReadValue};
 
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use rquickjs::{Array, Ctx, JsLifetime, Object};
 
@@ -39,12 +42,56 @@ use crate::engine::FluxEngineBuilder;
 
 /// The host instances every gui plugin shares, stored once by `install`
 /// before any plugin runs: the alloy context (rendering, textures, capture,
-/// spatial, media) and the platform handle (frame requests, window facts).
-/// A plugin with data of its own holds this by pointer in its state (`gui`);
-/// one without reads it through `gui(&ctx)`.
+/// spatial, media), the platform handle (frame requests, window facts) and
+/// the engine's teardown handle. A plugin with data of its own holds this
+/// by pointer in its state (`gui`); one without reads it through `gui(&ctx)`.
+///
+/// Every plugin owns what it opens: its state holds the sessions, tracks,
+/// players and ids it handed the app and releases them in `Drop`, so an
+/// engine's end releases everything its app held and the host maintains no
+/// list of what to clean up after one. A release that outlives the drop (a
+/// worker still stopping its codec) is handed to the host through
+/// `teardown`, which awaits it before the next engine exists.
 pub(crate) struct Gui {
   pub(crate) alloy: Arc<alloy::Context>,
   pub(crate) platform: Arc<PlatformContext>,
+  // Read by the plugins whose release outlives their drop (video so far).
+  #[cfg_attr(not(feature = "video"), allow(dead_code))]
+  pub(crate) teardown: Teardown,
+}
+
+/// What an engine's teardown leaves in flight: the exits the gui plugins'
+/// drops hand over (a video worker still releasing its codec and the
+/// plane's surface) for the host to await, bounded, before it builds the
+/// next engine. The host creates one per engine and lends it through
+/// `GuiHost`; the swap is sequential, so a resource the old engine held is
+/// free by the time the new one asks for it.
+#[derive(Clone, Default)]
+pub struct Teardown(Arc<Mutex<Vec<Exit>>>);
+
+type Exit = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+impl Teardown {
+  /// Hand the host one more exit to await.
+  pub fn defer(&self, exit: impl Future<Output = ()> + Send + 'static) {
+    self.0.lock().unwrap_or_else(PoisonError::into_inner).push(Box::pin(exit));
+  }
+
+  /// Await every exit handed over, within `deadline` in all. Returns how
+  /// many had not exited when the deadline hit (0: a clean teardown).
+  pub async fn wait(&self, deadline: Duration) -> usize {
+    let exits = std::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner));
+    let started = Instant::now();
+    let mut left = exits.len();
+    for exit in exits {
+      let remaining = deadline.saturating_sub(started.elapsed());
+      if tokio::time::timeout(remaining, exit).await.is_err() {
+        break;
+      }
+      left -= 1;
+    }
+    left
+  }
 }
 
 #[derive(Clone, JsLifetime)]
@@ -87,6 +134,9 @@ pub struct GuiHost {
   pub render_tree: RenderTree,
   /// Channel to the render thread for tree-driven alloy commands (text input).
   pub alloy_cmd_tx: Sender<AlloyCommand>,
+  /// The handle the host awaits after this engine is dropped (see
+  /// `Teardown`); one per engine.
+  pub teardown: Teardown,
 }
 
 /// Register the GUI plugin set onto the engine builder. The single seam the
@@ -95,7 +145,7 @@ pub struct GuiHost {
 /// (`advance`, `deliver`, `draw`) rather than the plugins' own hooks or the
 /// tree itself.
 pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
-  let GuiHost { platform, alloy, render_tree, alloy_cmd_tx } = host;
+  let GuiHost { platform, alloy, render_tree, alloy_cmd_tx, teardown } = host;
   // navigator.clipboard is a web-standard surface (standards_plugins) that
   // marshals alloy commands, so it installs here at the gui seam.
   let clipboard_cmd_tx = alloy_cmd_tx.clone();
@@ -106,13 +156,16 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   // `evaluate`.
   let builder = builder
     .plugin(move |ctx| {
-      ctx.store_userdata(GuiState(Rc::new(Gui { alloy, platform }))).expect("store gui state");
+      ctx.store_userdata(GuiState(Rc::new(Gui { alloy, platform, teardown }))).expect("store gui state");
     })
     .plugin(move |ctx| tree::store_state(&ctx, render_tree, alloy_cmd_tx))
     .plugin(|ctx| input::store_state(&ctx))
     .plugin(|ctx| raf::init(&ctx))
     .plugin(|ctx| gpu::store_state(&ctx))
     .plugin(|ctx| camera::store_state(&ctx))
+    .plugin(|ctx| microphone::store_state(&ctx))
+    .plugin(|ctx| audio::store_state(&ctx))
+    .plugin(|ctx| spatial::store_state(&ctx))
     .plugin(move |ctx| crate::standards_plugins::clipboard::init_clipboard(&ctx, clipboard_cmd_tx))
     .plugin(register_capabilities)
     .module_override("flux:rendertree", tree::RenderTreeModule)

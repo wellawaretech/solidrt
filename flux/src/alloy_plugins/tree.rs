@@ -272,7 +272,14 @@ pub(crate) struct RenderTreeInner {
 }
 
 impl Drop for RenderTreeInner {
+  // Engine teardown: the tree goes whole, destroying no node, so what a
+  // node destroy would have queued is released here: the snapshot textures
+  // its boundaries vended (okf/done/snapshot-texture-leak-reload.md), and
+  // the cursors.
   fn drop(&mut self) {
+    for id in self.tree.borrow_mut().drain_snapshot_textures() {
+      self.gui.alloy.release_borrowed(id);
+    }
     for id in self.live_cursors.get_mut().drain(..) {
       self.alloy_cmd_tx.send(AlloyCommand::DropCursor(id)).ok();
     }
