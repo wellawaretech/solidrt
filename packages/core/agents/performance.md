@@ -164,14 +164,12 @@ Rules, in order of leverage:
    buffer, not a call per element. It is also the way to ship one compiled
    module across every target with no native toolchain, and it pairs with
    an isolate when a call runs long enough to block.
-9. `flux:ffi` (dlopen of a native library) is a binding tool, not a
-   performance tool. It needs a shared library compiled per platform and
-   architecture and shipped under each target's packing rules (Android
-   loads only what arrives inside the APK as a lib*.so), so reaching for
-   it "to make something fast" buys a build-and-packaging problem on every
-   platform the app targets. Use it when the app must call a native
-   library that already exists and already ships for those targets; for
-   speed, everything above comes first.
+9. There is no native-library route from app code. A shared library is
+   compiled per platform, so it cannot travel in a portable app payload,
+   and Android loads only what arrived inside the APK. Binding one is a
+   custom runtime build: the runtime crates with the library registered
+   beside the built-in modules. For speed, everything above comes first;
+   for a proven library that has a wasm build, rule 8.
 10. Text costs shaping, once per word per style, through a shared word cache;
    line breaking is arithmetic over the shaped words. So re-breaking text
    every frame with prepareText + layoutNextLine (a shape that breathes, an
@@ -188,7 +186,7 @@ Rules, in order of leverage:
 ## Isolates: heavy work off the JS thread
 
 A long synchronous computation (a big parse, a simulation step, a blocking
-`flux:ffi`/`flux:wasm` call) freezes rendering and input for its duration.
+`flux:wasm` call) freezes rendering and input for its duration.
 Move it into an isolate module: a file whose first statement is the
 `"use isolate"` directive runs in a second runtime on its own thread, and
 main calls its exports as async functions.

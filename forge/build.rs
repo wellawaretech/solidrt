@@ -1,14 +1,15 @@
 // Two target-dependent link jobs.
 //
 // Android: link clang's compiler-rt builtins archive into the final artifact.
-// The bundled libffi calls __clear_cache (the aarch64/arm instruction-cache
-// flush), which lives in libclang_rt.builtins-<arch>-android.a. The NDK clang
-// driver links that archive implicitly for C code, but rustc links with
-// -nodefaultlibs and Rust's compiler-builtins does not provide the symbol, so
-// without this the cdylib carries an undefined __clear_cache that only
-// surfaces as a dlopen failure on device. Ask the target C compiler (the NDK
-// clang wrapper cargo-ndk points CC_<target> at) where its builtins archive
-// is and link it explicitly.
+// The NDK clang driver links libclang_rt.builtins-<arch>-android.a implicitly
+// for C code, but rustc links with -nodefaultlibs, so a builtin the vendored
+// C and C++ below call and Rust's compiler-builtins does not provide comes
+// out as an undefined symbol that only surfaces as a dlopen failure on
+// device (the bundled libffi's __clear_cache was the first case; libffi is
+// gone, and whether opus or Basis need a builtin is unverified, so the link
+// stays until an Android build without it proves otherwise: okf/tiny.md).
+// Ask the target C compiler (the NDK clang wrapper cargo-ndk points
+// CC_<target> at) where its builtins archive is and link it explicitly.
 //
 // Everywhere, with the `video` feature: build the vendored libopus
 // (forge/vendor/opus, a submodule pinned to a release tag) through its own

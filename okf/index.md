@@ -35,6 +35,14 @@ The architecture of an area and the decisions behind it, kept current. Read befo
   (no 3D-rendered controls, hover lift over tilt, press sink over press scale,
   an app-owned light at event rate) and the open items. Read before moving the
   model into the package.
+- **[WebAssembly](design/wasm.md)** [2026-10-03]
+  The route for app code that needs more than the JavaScript interpreter,
+  front to back - what a module is written in and how it reaches a project,
+  when it runs on the JS thread and when it runs in an isolate, the flux:wasm
+  contract and why it stays narrow, which workloads this enables and which it
+  cannot touch, and the engine underneath with the on-device compilation model
+  and its measured cost. Read before touching flux:wasm, forge::wasm, or
+  anything that compiles or runs a wasm module.
 
 ## Plans
 
@@ -363,10 +371,6 @@ Shaped, not started.
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
   itself?
-- **[APK packaging for flux:ffi libraries](backlog/ffi-android-apk-packaging.md)** [2026-07-15]
-  Ship an app's ffi libraries in an asset folder, packaged into the APK's
-  native-lib dir and opened by path automatically, since byte-loading is
-  blocked by Android W^X policy.
 - **["FFI write batching: batched creation, one-call drain, interned keys, command buffer"](backlog/ffi-write-batching.md)** [2026-08-05]
   Every property write is one string-keyed FFI call (mount fans a props object
   into per-prop calls; update bursts pay per-call overhead N times); four
@@ -637,6 +641,13 @@ Shaped, not started.
   "Back to a list screen remounts it, so its scroll offset and focused row are
   lost; each stack entry should own a keyed store that lives while the entry
   is on the stack, with ScrollView opting in and focus restored on pop."
+- **[Register app-specific native modules without forking the runtime](backlog/runtime-extension-modules.md)** [2026-10-03]
+  The route for native code is a custom runtime build, but lattice builds its
+  FluxEngine inside start_with and registers the built-in modules in a fixed
+  list, so a developer who needs one more module has to fork; take extra flux
+  plugins and per-frame hooks on the entry points and document the cargo
+  project that depends on lattice instead of cloning it; speech recognition is
+  the worked example.
 - **[Runtime optimization - what the binary weighs and how to shrink it](backlog/runtime-optimization.md)** [2026-09-29]
   The runtime is 61 MB at release (about 40 MB at release-opt) and size
   already decides what ships - speech recognition is compiled out of every
@@ -827,6 +838,11 @@ Shaped, not started.
   livekit-wakeword predict, ~35-40ms a check whether or not anyone is
   speaking; VAD gating cuts idle cost ~30x for ten lines, a streaming detector
   fixes it properly but needs upstream surgery.
+- **[Compile wasm to native on the device](backlog/wasm-native-execution.md)** [2026-10-03]
+  flux:wasm runs on an interpreter, so it is a portability tool and not a
+  speed tool; swap wasmi for wasmtime and compile the shipped wasm to native
+  code on the device at install, which costs a measured 7.8 MB of runtime and
+  is gated on whether that is affordable.
 - **[Measure flux:wasm throughput against JavaScript](backlog/wasm-vs-js-throughput.md)** [2026-08-17]
   flux:wasm runs on the wasmi interpreter and the docs now say "a small
   constant factor over JavaScript on tight compute", but nobody has measured
@@ -1441,6 +1457,12 @@ Finished, kept for the reasoning.
   parameter, so every out-parameter or buffer call first loads libc as a
   second Library for malloc/free plus writeMemory/readMemory; accept
   Uint8Array/ArrayBuffer for ptr args, pinned for the call.
+- **[Remove the flux:ffi module](done/ffi-module-removal.md)** [2026-10-03]
+  flux:ffi is the only unsandboxed app-facing surface, needs a prebuilt shared
+  library for all seven targets against the one-payload rule, cannot byte-load
+  on Android at all, and has no consumer in the tree, so once wasm modules
+  compile to native on the device it has no remaining job that a custom
+  runtime build does not do better.
 - **["flux:ffi polish: typed memory reads, optional symbols"](done/ffi-typed-reads-optional-symbols.md)** [2026-08-15]
   readMemory returns raw bytes so every numeric result goes through
   hand-rolled DataView reinterpretation, and every declared symbol must

@@ -146,9 +146,6 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:wasm");
   loader.add_module("flux:wasm", crate::forge_plugins::wasm::WasmModuleDef);
 
-  resolver.add_module("flux:ffi");
-  loader.add_module("flux:ffi", crate::forge_plugins::ffi::FfiModuleDef);
-
   resolver.add_module("flux:isolate");
   loader.add_module("flux:isolate", crate::forge_plugins::isolate::IsolateModule);
 
@@ -246,7 +243,6 @@ pub const BASE_CAPABILITIES: &[&str] = &[
   "svg",
   "image",
   "wasm",
-  "ffi",
   "isolate",
   "tty",
   #[cfg(feature = "ktx2")]

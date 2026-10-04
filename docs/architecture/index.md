@@ -7,7 +7,7 @@ each usable without the ones above it.
 lattice   application shell: hosts a SolidRT app on desktop and mobile
 flux      JavaScript runtime: QuickJS, plus plugins that marshal to the cores
 alloy     platform and rendering: SDL, Impeller, GL, the rendertree, devices
-forge     engine-free cores: fs, http, sqlite, subprocess, p2p, wasm, ffi, ...
+forge     engine-free cores: fs, http, sqlite, subprocess, p2p, wasm, ...
 ```
 
 - **forge** holds domain logic with no scripting engine anywhere in it:

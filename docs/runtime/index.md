@@ -53,7 +53,6 @@ serve({
 | `flux:subprocess` | Spawn and drive processes. |
 | `flux:process` | Arguments, environment, platform, executable path, memory usage, signal handlers, process liveness, `exit`. |
 | `flux:wasm` | Run WebAssembly modules, interpreted. Portable across every target; a small constant factor over JavaScript on tight compute, nowhere near browser wasm speed. |
-| `flux:ffi` | Call into native libraries. |
 | `flux:isolate` | Run a module on its own thread and call it like an object. |
 | `flux:image` | Decode and encode images; transcode and encode compressed textures (KTX2). |
 | `flux:svg` | Parse an SVG document into draw data. |
@@ -72,6 +71,26 @@ imperative layer underneath.
 Where a standard exists, Flux keeps its vocabulary and simplifies the
 semantics to what a single known application needs, rather than what the
 whole web needs. The simplifications are documented rather than hidden.
+
+## Native code
+
+Two routes exist for code that needs more than the JavaScript interpreter,
+and the sandbox decides between them:
+
+- `flux:wasm` for portable compute: one `.wasm` module, the same bytes on
+  every target, sandboxed. A proven C, C++ or Rust library with a wasm build
+  runs here without porting.
+- A custom runtime build for anything that reaches a native library, a
+  platform SDK or engine state. The runtime is a set of Rust crates, and the
+  `solidrt` binary is a thin program over them; a custom build is your own
+  binary over the same crates with your module registered beside the built-in
+  ones, built for each target the app ships on. The app stays a plain
+  portable `.solapp`; what differs is the runtime it runs on.
+
+There is deliberately no route that loads a shared library from app code. A
+shared library is per platform, so it would make the app payload per
+platform, and on Android the only native code that may run is what arrived
+inside the APK, so it would be part of a build anyway.
 
 ## Capabilities, not platforms
 

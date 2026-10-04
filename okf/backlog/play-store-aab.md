@@ -201,3 +201,13 @@ reads.
   that needs it.
 - Store listing, data-safety form, closed-testing requirement: Play Console
   paperwork, not tooling.
+- Precompiled wasm in the bundle: once wasm modules compile to native on the
+  device ([wasm-native-execution](wasm-native-execution.md)), the per-ABI
+  compiled artifact can ship in `base/lib/<abi>/`, so bundletool serves each
+  device its own and the first launch after a store install skips the
+  compile. The `lib*.so` naming the Android subprocess binaries already use
+  carries it, since the loader reads the bytes into anonymous executable
+  memory rather than dlopen-ing the file. Only the arm64 split would get one
+  (Cranelift has no 32-bit ARM backend), and it only helps the first launch,
+  because the first OTA update invalidates the shipped artifact. Wait for the
+  device-side flow to exist.

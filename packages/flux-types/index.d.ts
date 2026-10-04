@@ -11,7 +11,6 @@
 /// <reference path="./modules/net.d.ts" />
 /// <reference path="./modules/mdns.d.ts" />
 /// <reference path="./modules/wasm.d.ts" />
-/// <reference path="./modules/ffi.d.ts" />
 /// <reference path="./modules/isolate.d.ts" />
 /// <reference path="./modules/test.d.ts" />
 

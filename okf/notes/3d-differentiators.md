@@ -244,7 +244,7 @@ JS library, because for a JS library it is the end of the road. It is not
 the end of ours: solidrt is not restricted to JavaScript, and the honest
 statement is that costly work is a **routing decision**, not a ceiling.
 
-Four rungs, each with a different cost:
+Three rungs, each with a different cost:
 
 1. **JavaScript.** Structure, policy, app logic - anything O(changes).
    Fastest to write and to change, and the only rung an app author owns
@@ -257,15 +257,15 @@ Four rungs, each with a different cost:
    proven library still beats a slow hand-written one. It also carries a
    free future: swapping wasmi for a JIT/AOT engine on capable platforms
    would speed up everything built on this rung without an API change.
-3. **flux:ffi.** Native speed via dlopen, for an app with a specific native
-   dependency. Costs per-platform binaries and packaging (Android needs them
-   shipped as `lib*.so`), and gives up the sandbox.
-4. **Into core.** The rung nothing in the browser has. Work that is
+3. **Into core.** The rung nothing in the browser has. Work that is
    *platform* work rather than *app* work moves into Rust and stops being
    anybody's per-app problem: the scene walk, culling, BVH construction and
    query, glTF parsing, skinning. The draw-list design was deliberately
    chosen so the scene walk in particular can make this move **without an
-   app-facing API change**.
+   app-facing API change**. An app with a native dependency of its own
+   reaches this rung through a custom runtime build: the runtime crates with
+   that library registered beside the built-in modules, per-platform
+   binaries and no sandbox, which is why there is no app-side dlopen route.
 
 The asymmetry worth naming: the browser ladder tops out at rung 2 - wasm in
 a sandbox, with JS glue and a copy at every boundary. Ours tops out at
@@ -289,7 +289,7 @@ deliberately. A workable rule of thumb:
 Applied to the losses above: the interpreter group is mostly a core
 question, and even the camera-motion regression has two answers on the
 ladder - shared uniforms (a small GPU-layer addition, rung 1 stays) or
-moving the scene walk itself into core (rung 4). The native group and the
+moving the scene walk itself into core (rung 3). The native group and the
 no-URL problem are genuinely inherent to the bet and no rung fixes them.
 
 ## Implications for staging

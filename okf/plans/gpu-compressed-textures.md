@@ -984,7 +984,7 @@ alone:
   links (from `cargo tree` over normal edges at the dist features; 391
   to 399 by target), the native libraries and assets from a table in
   the script (SDL, SDL_mixer, Impeller, ANGLE on Windows and macOS,
-  QuickJS, libffi, Basis Universal with its NOTICE, Zstandard, libvpx
+  QuickJS, Basis Universal with its NOTICE, Zstandard, libvpx
   off Android, Opus, libc++ on Android, the Noto fonts), and the
   JavaScript libraries the built-in apps bundle. Identical texts print
   once. About 2.1 MB, of which 1.3 MB is the Flutter engine's license

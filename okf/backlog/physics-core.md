@@ -61,9 +61,8 @@ bodies.
 
 ## Staging
 
-Stage 0 - shape discovery at rung 2/3. Run Rapier via `flux:wasm` (or
-`flux:ffi` on desktop) inside a real game project and let the game's needs
-write the API surface. This is how instancing got its shape right (the
+Stage 0 - shape discovery at rung 2. Run Rapier via `flux:wasm` inside a
+real game project and let the game's needs write the API surface. This is how instancing got its shape right (the
 racing demo's shim); the sync-into-scene-graph code written here IS the
 draft of the core binding contract. Cheap, disposable, no platform
 commitment.
@@ -71,7 +70,7 @@ commitment.
 Stage 1 - the core module. World create/step, rigid bodies (dynamic,
 kinematic, fixed), primitive colliders (box, sphere, capsule), node
 bindings, impulses/velocities, collision events, gravity. Done looks like:
-the stage-0 game runs on it with its wasm/ffi shim deleted, poses arrive
+the stage-0 game runs on it with its wasm shim deleted, poses arrive
 with zero per-frame JS, and a determinism check replays a recorded run
 bit-identically.
 

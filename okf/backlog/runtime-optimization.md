@@ -17,8 +17,11 @@ deciding what ships:
   stack (whisper.cpp, tract, the ONNX models the wake-word crate embeds)
   is about 12 MB of code. `SPEECH ?= 0` in lattice/Makefile for every
   goal, dist builds force it off even against `SPEECH=1`, and nothing
-  that ships can use `@solidrt/core/speech`. The feature works; it is out
-  for size alone.
+  that ships can use `@solidrt/core/speech`. The feature works, and size is
+  one reason it is out rather than the only one: the stack puts two
+  inference engines in one build, which model ships by default was never
+  settled, and the wake-word path needs a livekit fork. So the 12 MB is not
+  a size threshold anything else can be judged against.
 - **Video ships a decoder only.** libvpx's VP9 encoder is 1.28 MB of
   linked binary (1732 KiB with it, 448 KiB without) and is configured out
   in forge/build.rs.
@@ -35,8 +38,26 @@ from a one-off investigation. The first step is an audit of the
 `release-opt` runtime by crate and by section, kept as a note and re-run
 when a dependency lands, so the rest of this list is ranked by measured
 weight instead of by what was looked at last. Candidates the audit should
-settle, none measured yet: the TLS and HTTP stack, the p2p stack, the
-wasm engine, sqlite, the image formats, SVG, Impeller.
+settle, none measured yet: the TLS and HTTP stack, the p2p stack, sqlite,
+the image formats, SVG, Impeller.
+
+The wasm engine is measured (2026-10-03, linux-x64-gnu builder,
+`release-opt`, four builds of `make runtime` on one working-tree base):
+
+| what | size |
+|---|---|
+| wasmi 2.0.0 as linked today, exclusive of shared `wasmparser` | 1.39 MB |
+| wasmi's `simd` feature, not enabled today | +0.61 MB |
+| swapping wasmi for wasmtime 48.0.5 with Cranelift | +7.80 MB |
+
+The swap figure is the one that matters for
+[wasm-native-execution](wasm-native-execution.md), which carries the full
+table and the caveats. Two method notes worth keeping: an isolated probe
+crate predicted the in-tree swap to within half a megabyte, because
+Cranelift's bulk is ISLE-generated code that is all reachable and so
+survives fat LTO; and the delta compresses better than the binary average
+(zstd-19 0.247 against 0.333), so it is +1.93 MB on the wire and the full
++7.80 MB on disk.
 
 Two results from earlier audits are worth keeping in mind as method:
 a default feature of one crate (rxing pulling `image` with every format)

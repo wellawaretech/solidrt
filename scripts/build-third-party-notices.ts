@@ -81,7 +81,6 @@ const NATIVE: Native[] = [
   },
   { name: "ANGLE", what: "OpenGL ES over the platform's graphics API; prebuilt libEGL and libGLESv2 shipped beside the binary", files: ["third-party-licenses/angle/LICENSE"], only: angle },
   { name: "QuickJS", what: "the JavaScript engine; built from source", crate: "rquickjs-sys", linkedBy: "rquickjs-sys", files: ["quickjs/LICENSE"] },
-  { name: "libffi", what: "foreign function calls; built from source", crate: "libffi-sys", linkedBy: "libffi-sys", files: ["libffi/LICENSE"] },
   { name: "Basis Universal", what: "compressed texture transcoder and encoder; built from source", files: ["forge/vendor/basis_universal/LICENSE", "forge/vendor/basis_universal/NOTICE"] },
   { name: "Zstandard", what: "decompression inside Basis Universal; built from source", files: ["forge/vendor/basis_universal/zstd/LICENSE"] },
   { name: "libvpx", what: "VP9 video decoder; built from source", files: ["forge/vendor/libvpx/LICENSE", "forge/vendor/libvpx/PATENTS"], only: desktop },

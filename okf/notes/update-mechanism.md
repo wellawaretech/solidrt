@@ -59,7 +59,8 @@ Native / whole-app updaters:
 - **Stores / package managers** (Play Store, App Store, MS Store, apt,
   Flatpak): the platform owns the pipeline. On Android effectively
   mandatory for native code (W^X: an app cannot exec a downloaded
-  binary; same constraint as flux:ffi open_bytes).
+  binary; the same wall that ruled out loading a native library
+  from app code, okf/done/ffi-module-removal.md).
 
 App-layer (OTA bundle) updaters:
 
