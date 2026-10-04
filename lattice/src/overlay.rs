@@ -13,12 +13,15 @@ const MIB: f32 = 1024.0 * 1024.0;
 const PARA_WIDTH: f32 = 300.0;
 
 /// The dev-session fact shown on the overlay's first line: the client is
-/// connected to a dev server (which controls it), or its user input is muted
-/// by that server (a mute implies the connection: it clears on disconnect).
+/// connected to a dev server (which controls it), its user input is muted by
+/// that server (a mute implies the connection: it clears on disconnect), or
+/// a pushed version is being installed, which can take seconds when it
+/// precompiles wasm modules and would otherwise read as a hang.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Badge {
   Connected,
   Muted,
+  Installing,
 }
 
 /// Build the overlay declaration the raster thread composites over every
@@ -62,6 +65,7 @@ pub fn build(
   match badge {
     Some(Badge::Connected) => text.push_str("CONN "),
     Some(Badge::Muted) => text.push_str("MUTED "),
+    Some(Badge::Installing) => text.push_str("INSTALLING "),
     None => {}
   }
   if hud {

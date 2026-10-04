@@ -122,11 +122,11 @@ module. No backlog item yet.
 
 Three things that would be real extensions:
 
-- **SIMD** is a cargo feature, measured at +0.61 MB. It is **off today**:
-  wasmi supports `simd` and `relaxed-simd` but neither is in its default
-  features and `forge/Cargo.toml` enables none, so SIMD modules are rejected
-  right now. One line to change, and SIMD is most of what makes wasm
-  competitive for inference and physics.
+- **SIMD** is on since 2026-10-04, measured at +0.61 MB: wasmi's `simd`
+  cargo feature in `forge/Cargo.toml`, which the engine config turns into
+  the `simd` and `relaxed-simd` proposals once compiled in. v128 still never
+  crosses the host boundary. SIMD is most of what makes wasm competitive for
+  inference and physics, so the engine swap keeps it on in both modes.
 - **Async with zero copy** is the one extension with a real motivation behind
   it: the engine runs the instance on its own thread while the host keeps a
   view into its linear memory, with explicit fencing so the app cannot read
@@ -164,6 +164,12 @@ module would have to call back out through host imports to create a node.
 So this changes the equation for apps with a compute core and changes nothing
 for apps whose cost is UI churn.
 
+How much the first half gains is measured in
+[wasm-vs-js-throughput](../notes/wasm-vs-js-throughput.md): compute in a
+module runs 18x to 960x faster than the same loop in QuickJS on the native
+lane and 4x to 88x on the interpreted lane, while a host call out of the
+module costs 3x to 7x a plain JavaScript call.
+
 **Not enabled: engine state.** Camera frames reach JS only as a texture id,
 scene writes go through the transform path with its damage marking and frame
 latch, and a sandboxed module has no route to a GPU API. Vulkan-backed
@@ -175,43 +181,80 @@ coarse call per frame handing over a buffer, never N calls per entity.
 
 ## 5. Backend
 
-**Today**: wasmi 2.0.0, a register-based interpreter with no JIT, which is why
-`flux:wasm` is documented as a portability tool and not a speed tool. 1.39 MB
-of the runtime.
+**Until 2026-10-04**: wasmi 2.0.0 alone, a register-based interpreter with no
+JIT, which is why `flux:wasm` was documented as a portability tool and not a
+speed tool; 1.39 MB of the runtime. The wording was wrong, not the engine:
+measured against QuickJS, even that lane runs compute 4x to 88x faster
+([wasm-vs-js-throughput](../notes/wasm-vs-js-throughput.md)).
 
-**Proposed** ([wasm-native-execution](../backlog/wasm-native-execution.md)):
-wasmtime, which is one engine in two modes rather than two engines. The
-pipeline, with the target chosen at selection deciding what the last step
-means:
+**Decided 2026-10-04** ([wasm-native-execution](../done/wasm-native-execution.md)):
+two engines behind the one `forge::wasm` API, exactly one per build.
+wasmtime with Cranelift wherever a native backend exists and runtime codegen
+is allowed; wasmi, with SIMD, everywhere else. The Cranelift pipeline:
 
 ```
 .wasm -> parse/validate -> CLIF -> optimize -> select for target
       -> emit -> place in memory -> run
 ```
 
-A native target emits machine code and running is a jump. **Pulley** is a
-Cranelift target whose machine is a software VM, so running is an interpreter
-loop. Everything above instruction selection is shared, which gives one
-implementation of wasm semantics instead of two. Alongside the pipeline sits
-the runtime proper: memories, tables, traps, host trampolines, store
-lifecycle.
+Alongside it sits wasmtime's runtime proper: memories, tables, traps, host
+trampolines, store lifecycle. The two engines are kept to one proposal set,
+the one wasmi validates (SIMD and relaxed SIMD on; no exceptions, GC, threads
+or stack switching), so a module that validates on one lane validates on
+every lane and the lanes differ in speed only.
+
+**Rejected: Pulley as the interpreted lane.** Pulley is a Cranelift target
+whose machine is a software VM, so one engine could in principle cover both
+lanes with one implementation of wasm semantics. Two facts killed it. Pulley
+bytecode is the output of a Cranelift compile, so an interpreting device
+still carries the compiler (roughly the desktop cost, not nothing; wasmtime
+without Cranelift is a 0.43 MB loader that runs only artifacts compiled
+elsewhere, and shipping those is a non-goal below) and still compiles at
+install: 3.3 s for a 287 KB module on the armeabi-v7a TV, where wasmi
+translates it in 79 ms. And it is not faster: on that TV it beats wasmi by 12
+to 29 percent on integer and memory loops and loses by 1.4x to 2.1x on float,
+host calls and SIMD, while on x86_64 (relevant only to a desktop dev switch)
+it is 2 to 6x slower than wasmi, because its fast dispatch loop needs tail
+calls stable Rust does not guarantee. Numbers and method in
+[wasm-interpreter-throughput](../notes/wasm-interpreter-throughput.md). The
+price of the decision is two engines' worth of bugs. A build carries one of
+them, never both: a desktop exercises the interpreted lane by building with
+the feature off, the same engine the small targets run.
 
 **Compilation happens on the device, at install.** The payload stays one
 portable `.solapp` carrying the `.wasm`; pack never compiles and never
 cross-compiles. The compiled form is a cache, the same relationship a shader
-cache has to a shader, keyed by module hash plus engine version, living in the
-version store or the app cache dir and fail-soft like
-`lattice/src/gl_libs.rs`: on any failure, interpret and carry on. Because one
-client hosts many apps, the compiler is a shared cost per machine rather than
-per app.
+cache has to a shader: `<app cache dir>/wasm/<engine hash>/<module
+sha256>.cwasm`, the module hash being the one the manifest already stores per
+asset and the engine hash a sha256 digest of wasmtime's compatibility hash
+(version, target, tunables, features). It lives in the app's cache dir as an
+embedder opt-in like every other disk cache, so bare `flux` never writes, and
+it is fail-soft like `lattice/src/gl_libs.rs`: a cache that cannot be read or
+written means compiling in memory each launch. A compile failure on a valid
+module is an error, as a parse failure is today; the interpreter is a lane
+for a target, not a fallback for a module. The store pre-warms every `.wasm`
+asset of a version right after its hashes are verified and its dir committed,
+and prunes the artifacts no held version references alongside its own
+version prune; with artifacts at 2.5x to 3x the wasm and deduped by hash,
+the cache is bounded by the store's retention and has none of its own.
+Because one client hosts many apps, the compiler is a shared cost per
+machine rather than per app.
 
 Lanes per target:
 
 | target | lane |
 |---|---|
-| desktop x64 and arm64, android-arm64 | Cranelift-compiled native |
-| iOS | Pulley |
-| android-armeabi-v7a | Pulley (no 32-bit ARM backend exists) |
+| desktop x64 and arm64, android-arm64 | wasmtime, Cranelift-compiled native |
+| iOS | wasmi (store policy forbids runtime codegen) |
+| android-armeabi-v7a | wasmi (no 32-bit ARM backend exists) |
+
+The lane is a build fact: the `wasm-native` cargo feature on forge, set per
+target by the `WASM_NATIVE` knob in `lattice/Makefile`, and off by target
+where there is no backend. The feature selects the engine the build carries;
+the other is compiled out. `Flux.capabilities` lists `wasm-native` on the
+native lane. The engine is one shared handle per process, made by the
+embedder and handed to the flux engine builder and to the store's install;
+the plugin reads it off the engine config next to the cache dir.
 
 **iOS has no in-process wasm at all through any system framework.** JIT has
 never been enabled for JavaScriptCore API clients, and JSC's wasm
@@ -229,12 +272,15 @@ runs a module everywhere and only the speed differs.
 ### Measured cost
 
 Four `release-opt` builds of the `solidrt` runtime on the linux-x64-gnu
-builder, one working-tree base, fat LTO with one codegen unit, stripped:
+builder, one working-tree base, fat LTO with one codegen unit, stripped.
+wasmtime 48.0.5 with `default-features = false` and the features `runtime`,
+`std`, `pulley`, `cranelift`: no component model, async, GC, backtrace
+symbolication or parallel compilation, so these are the lean numbers:
 
 | configuration | size | vs today |
 |---|---|---|
-| wasmi, no simd (today) | 41.90 MB | - |
-| wasmi + `simd` | 42.51 MB | +0.61 MB |
+| wasmi, no simd (the base at the time) | 41.90 MB | - |
+| wasmi + `simd` (today) | 42.51 MB | +0.61 MB |
 | wasmi **and** wasmtime/Cranelift | 51.13 MB | +9.23 MB |
 | wasmtime/Cranelift, no wasmi | 49.73 MB | **+7.8 MB** |
 
@@ -251,11 +297,12 @@ mid-end rewrites, and it is all genuinely reachable because any module can
 contain any IR pattern. There is no dead code to prune and no duplication to
 fold.
 
-**Not measured: Winch**, wasmtime's baseline compiler. It uses no ISLE, no
-egraph optimizer and no separate register allocator, so it should be a
-fraction of Cranelift's footprint while still emitting native code. Worse
-codegen, which is the wrong trade for compile-once-at-install, but a different
-league from a 10x interpreter. It makes the engine choice three-way.
+**Rejected: Winch**, wasmtime's baseline compiler. It uses no ISLE, no
+egraph optimizer and no separate register allocator, so it would be a
+fraction of Cranelift's footprint while still emitting native code, but it
+exists for hosts where compiling fast matters more than running fast. This
+route is about running fast, and with compile-once-at-install compile speed
+buys nothing, so its size was not measured and the compiler is Cranelift.
 
 ### Deliberate non-goals
 
@@ -274,10 +321,8 @@ league from a 10x interpreter. It makes the engine choice three-way.
 
 | limit | item |
 |---|---|
-| engine swap and on-device compilation | [wasm-native-execution](../backlog/wasm-native-execution.md) |
-| Pulley against wasmi throughput, unmeasured | [wasm-vs-js-throughput](../backlog/wasm-vs-js-throughput.md) |
+| packed and OTA apps compile a module at first use, not at install | [client-storage-updates](../plans/client-storage-updates.md) stage 4 |
 | precompiled wasm in an AAB | [play-store-aab](../backlog/play-store-aab.md) |
 | runtime size budget this competes for | [runtime-optimization](../backlog/runtime-optimization.md) |
 | no glue generator | no item yet (section 3) |
 | no async-with-zero-copy execution | no item yet (section 3) |
-| SIMD not enabled | one line in `forge/Cargo.toml` (section 3) |

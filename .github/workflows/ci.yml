@@ -45,14 +45,14 @@ jobs:
       # included; flux stays because its headless half is what test-flux runs
       # elsewhere and the gui half has no other home.
       - name: Test
-        run: cargo test --workspace --exclude forge --features flux/video,lattice/video
+        run: cargo test --workspace --exclude forge --features flux/video,lattice/video,flux/wasm-native,lattice/wasm-native
 
       # `go` is not a default feature, so the step above compiles none of the
       # client-only code - including lattice's app-store and dev-server-tunnel
-      # tests. That is the code that actually ships (as go + video), so test
-      # it explicitly.
+      # tests. That is the code that actually ships (as go + video +
+      # wasm-native), so test it explicitly.
       - name: Test go client
-        run: cargo test -p lattice --features go,video
+        run: cargo test -p lattice --features go,video,wasm-native
 
   # The engine-free cores, one job, the same command on every platform we
   # ship to (Linux x64 included, so forge is tested exactly once per
@@ -103,7 +103,12 @@ jobs:
       # One test at a time: the worker tests measure real sleeps against the
       # clock, and on a shared 3-core macOS runner 132 parallel tests made
       # the worker wake 58 ms late. The whole suite takes ~9 s serially.
+      # Twice for forge::wasm: with `wasm-native` the tests run on wasmtime
+      # (the native lane), without it on wasmi (the lane the 32-bit and iOS
+      # builds ship), so both engines meet the same contract on every platform.
       - name: Test forge
+        run: cargo test -p forge --features video,wasm-native -- --test-threads=1
+      - name: Test forge, interpreted wasm lane
         run: cargo test -p forge --features video -- --test-threads=1
 
   # The headless flux runtime (QuickJS + the forge marshalling: value, time,

@@ -2,11 +2,21 @@
 title: Measure flux:wasm throughput against JavaScript
 description: flux:wasm runs on the wasmi interpreter and the docs now say "a small constant factor over JavaScript on tight compute", but nobody has measured wasmi against QuickJS in flux; a small benchmark would back that claim with a number.
 created: 2026-08-17
+completed: 2026-10-04
 ---
 
 # Measure flux:wasm throughput against JavaScript
 
-Low priority. Only worth doing when one of the triggers below fires.
+Measured 2026-10-04: numbers and method in
+[wasm-vs-js-throughput](../notes/wasm-vs-js-throughput.md). The docs wording
+followed (`wasm.d.ts`, sections 4 and 5 of [design/wasm](../design/wasm.md)).
+
+The engine-against-engine half (wasmi against wasmtime, Pulley and
+Cranelift) is measured in
+[wasm-interpreter-throughput](../notes/wasm-interpreter-throughput.md); this
+item is the JavaScript half, wanted by
+[wasm-native-execution](../done/wasm-native-execution.md) for the docs
+wording.
 
 ## Symptom
 
@@ -23,8 +33,7 @@ shrug.
 ## Trigger
 
 We want to print a ratio in the docs, or a user asks whether moving a hot
-loop to wasm is worth it and we want a real answer. There is no engine
-decision behind this: both QuickJS and wasmi stay interpreters.
+loop to wasm is worth it and we want a real answer.
 
 ## Done looks like
 

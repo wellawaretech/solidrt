@@ -37,6 +37,13 @@ FLUX_FEATURES = --features test
 else
 FLUX_FEATURES = --features ktx2,test
 endif
+# The native wasm lane (wasmtime with Cranelift behind forge::wasm), on by
+# default like the runtime builds; WASM_NATIVE=0 runs wasmi alone. See
+# lattice/Makefile for the knob's full story.
+WASM_NATIVE ?= 1
+ifneq ($(WASM_NATIVE),0)
+FLUX_FEATURES := $(FLUX_FEATURES),wasm-native
+endif
 
 flux:
 	cargo build $(CARGO_PROFILE_FLAG) $(FLUX_FEATURES) --bin flux

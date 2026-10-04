@@ -79,6 +79,27 @@ endif
 GO_FEATURES      := $(GO_FEATURES)$(KTX2_FEATURES)
 RUNTIME_FEATURES := $(RUNTIME_FEATURES)$(KTX2_FEATURES)
 
+# The native wasm lane (forge::wasm on wasmtime with Cranelift, the
+# `wasm-native` capability): flux:wasm modules compile to machine code on the
+# device instead of running on the wasmi interpreter. On for every goal where
+# a Cranelift backend exists; WASM_NATIVE=0 leaves it out and the build runs
+# wasmi alone, which is what the 32-bit Android ABIs (no 32-bit backend) get
+# regardless, and which is how a desktop exercises the interpreted lane: one
+# engine per build, never both. Measured at +7.8 MB of runtime. See
+# okf/design/wasm.md.
+ifeq ($(filter armeabi-v7a x86,$(ANDROID_ABI)),)
+WASM_NATIVE ?= 1
+else
+WASM_NATIVE ?= 0
+endif
+ifeq ($(WASM_NATIVE),0)
+WASM_NATIVE_FEATURES =
+else
+WASM_NATIVE_FEATURES = ,wasm-native
+endif
+GO_FEATURES      := $(GO_FEATURES)$(WASM_NATIVE_FEATURES)
+RUNTIME_FEATURES := $(RUNTIME_FEATURES)$(WASM_NATIVE_FEATURES)
+
 # Test mode (the `--test` runner, sol:test, flux:test) is in the dev client,
 # which is what `sol test` runs app tests on, and never in the runtime. On
 # in dist builds too: an installed project's `sol test` runs its app tests
@@ -173,6 +194,7 @@ help:
 	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
 	@echo "Pass VIDEO=0 to build without video playback (default: on)."
 	@echo "Pass KTX2=0 to build without compressed textures (default: on)."
+	@echo "Pass WASM_NATIVE=0 to build without the native wasm engine (default: on; always off on 32-bit Android ABIs)."
 	@echo "dist targets always build speech-free."
 	@echo ""
 	@echo "Player:"

@@ -72,6 +72,9 @@ pub struct Storage {
   pub(crate) run_marker: Option<std::fs::File>,
 }
 
+/// The cache subdirectory of an app dir (see `Storage::cache_dir`).
+pub(crate) const CACHE_DIR: &str = "cache";
+
 impl Storage {
   /// The app dir for an app named at runtime (a dev push's manifest appId,
   /// unlike the startup id baked into `data_dir`): `apps/<app-id>` under the
@@ -84,11 +87,11 @@ impl Storage {
     self.client_dir.join("apps").join(checked_component(Some(app_id), "app id"))
   }
 
-  /// The app's cache dir (fetch disk cache): `<app_dir>/cache`, so cached
-  /// assets are browsable and clearable per app, and die with the app on
-  /// remove. Created lazily by the cache on first write.
+  /// The app's cache dir (fetch disk cache, compiled wasm): `<app_dir>/cache`,
+  /// so cached assets are browsable and clearable per app, and die with the
+  /// app on remove. Created lazily by a cache on first write.
   pub fn cache_dir(&self, app_id: &str) -> PathBuf {
-    self.app_dir(app_id).join("cache")
+    self.app_dir(app_id).join(CACHE_DIR)
   }
 
   /// `<client_dir>/identity` - persisted client identity (p2p key).

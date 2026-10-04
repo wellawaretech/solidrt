@@ -31,6 +31,14 @@ pub struct DevFlags {
   /// True while a dev-server connection is up. Gates senders that would
   /// otherwise queue unboundedly while offline (log forwarding).
   pub connected: Arc<AtomicBool>,
+  /// True while a pushed version installs (verify, write, precompile its
+  /// wasm). Drawn as the overlay badge, with a frame requested on both edges,
+  /// so a multi-second install shows as such instead of as a hang.
+  pub installing: Arc<AtomicBool>,
+  /// The process's wasm engine, the one every app engine is built with, so an
+  /// install precompiles a version's modules into exactly the cache slots
+  /// those engines read. None when the host has no usable engine.
+  pub wasm: Option<forge::wasm::WasmEngine>,
   /// Dev-tool pause/step/scale state, applied by the frame verb (see
   /// runtime::ClockControl); written from `clock` queries, reset on
   /// reload/stop so no app starts under a stale pause.
@@ -440,7 +448,12 @@ fn service_addr(info: &mdns_sd::ResolvedService) -> Option<String> {
 /// already hold from the dev server's /assets/ route (the same origin the
 /// WebSocket rides on). Runs inline in the connection task: a push is not
 /// applied until its install settles, and dev asset sets are small.
-async fn install_push(addr: &str, manifest: &str, code: &str) -> Result<String, String> {
+async fn install_push(
+  addr: &str,
+  manifest: &str,
+  code: &str,
+  wasm: Option<&forge::wasm::WasmEngine>,
+) -> Result<String, String> {
   let (_, missing) = super::store::missing_assets(manifest)?;
   let mut fetched = std::collections::HashMap::new();
   if !missing.is_empty() {
@@ -460,7 +473,7 @@ async fn install_push(addr: &str, manifest: &str, code: &str) -> Result<String, 
     }
     log::info!("[sgo] Fetched {} asset(s) from the dev server", fetched.len());
   }
-  super::store::install(manifest, code, &fetched)
+  super::store::install(manifest, code, &fetched, wasm)
 }
 
 /// Connect to a dev server at `addr` and serve until the connection drops.
@@ -608,10 +621,14 @@ async fn try_serve(
               // failed install degrades to an ephemeral push.
               let mut app_id = None;
               if let Some(manifest) = json.get("manifest").and_then(|m| m.as_str()) {
-                match install_push(addr, manifest, code).await {
+                flags.installing.store(true, Ordering::Relaxed);
+                flags.frame_requested.store(true, Ordering::Relaxed);
+                match install_push(addr, manifest, code, flags.wasm.as_ref()).await {
                   Ok(id) => app_id = Some(id),
                   Err(e) => log::warn!("[sgo] Version install failed: {e}"),
                 }
+                flags.installing.store(false, Ordering::Relaxed);
+                flags.frame_requested.store(true, Ordering::Relaxed);
               }
               // The session's app arguments ride each push (flux:process
               // argv), so every client - local or remote - sees the same

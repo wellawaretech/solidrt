@@ -47,11 +47,11 @@ The wasm engine is measured (2026-10-03, linux-x64-gnu builder,
 | what | size |
 |---|---|
 | wasmi 2.0.0 as linked today, exclusive of shared `wasmparser` | 1.39 MB |
-| wasmi's `simd` feature, not enabled today | +0.61 MB |
+| wasmi's `simd` feature, on since 2026-10-04 | +0.61 MB |
 | swapping wasmi for wasmtime 48.0.5 with Cranelift | +7.80 MB |
 
 The swap figure is the one that matters for
-[wasm-native-execution](wasm-native-execution.md), which carries the full
+[wasm-native-execution](../done/wasm-native-execution.md), which carries the full
 table and the caveats. Two method notes worth keeping: an isolated probe
 crate predicted the in-tree swap to within half a megabyte, because
 Cranelift's bulk is ISLE-generated code that is all reachable and so

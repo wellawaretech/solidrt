@@ -25,6 +25,14 @@ video = ["dep:ndk", "dep:ndk-sys"]
 # a cargo default, like video: a plain build needs no submodule. See
 # okf/plans/gpu-compressed-textures.md.
 ktx2 = []
+# forge::wasm native lane: wasmtime with Cranelift compiles a module to machine
+# code for the host (okf/design/wasm.md, section 5). Off where no backend
+# exists or runtime codegen is forbidden (armeabi-v7a, iOS); there wasmi is
+# the lane. Exactly one engine is compiled in: with the feature the wasmi
+# module is cfg'd out (the crate stays a dependency so the manifest needs no
+# second feature, and nothing references it, so the linker drops it). The
+# lattice Makefile sets it per target.
+wasm-native = ["dep:wasmtime"]
 
 [dependencies]
 log = { workspace = true }
@@ -81,11 +89,17 @@ hickory-proto = "=0.26.3"
 # flux:net interfaces() - the no-subprocess replacement for parsing `ip addr`.
 # Already in the tree (iroh depends on it).
 netdev = "=0.46.3"
-# Pure-Rust, no-JIT wasm interpreter behind forge::wasm (flux:wasm). No
-# per-platform native build or signing story: one .wasm runs on every target.
-# The default `wat` feature also accepts text-format sources, handy for tests
-# and small inline modules.
-wasmi = "=2.0.0"
+# Pure-Rust, no-JIT wasm interpreter behind forge::wasm (flux:wasm) on the
+# targets that cannot run generated code (`wasm-native` off). No per-platform
+# native build or signing story: one .wasm runs on every target. The default
+# `wat` feature also accepts text-format sources, handy for tests and small
+# inline modules. `simd` (also relaxed-simd) so modules compiled with SIMD
+# validate; v128 still never crosses the host boundary.
+wasmi = { version = "=2.0.0", features = ["simd"] }
+# The native wasm engine behind `wasm-native`. Lean feature set: no component
+# model, async, GC, backtrace symbolication or parallel compilation; `wat` so
+# text sources parse on this lane too. Measured at +7.8 MB of runtime.
+wasmtime = { version = "=48.0.5", default-features = false, features = ["runtime", "std", "cranelift", "wat"], optional = true }
 # Full SVG document parsing/normalization for forge::svg / parseSvg (resolves
 # CSS, transforms, use/defs, gradients into a flat path tree). default-features
 # off drops the text/font stack (fontdb, rustybuzz, unicode-*); we only emit

@@ -202,7 +202,7 @@ reads.
 - Store listing, data-safety form, closed-testing requirement: Play Console
   paperwork, not tooling.
 - Precompiled wasm in the bundle: once wasm modules compile to native on the
-  device ([wasm-native-execution](wasm-native-execution.md)), the per-ABI
+  device ([wasm-native-execution](../done/wasm-native-execution.md)), the per-ABI
   compiled artifact can ship in `base/lib/<abi>/`, so bundletool serves each
   device its own and the first launch after a store install skips the
   compile. The `lib*.so` naming the Android subprocess binaries already use

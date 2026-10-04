@@ -23,8 +23,9 @@
 use crate::manifest::{safe_asset_path, unknown_version, AppFonts, AssetEntry, Manifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 const STATE_VERSION: u32 = 1;
 // Dev retention: versions kept per app after an install (current and previous
@@ -75,10 +76,15 @@ pub fn missing_assets(manifest: &str) -> Result<(String, Vec<AssetEntry>), Strin
 /// Install a pushed version into the client store: the bundle from the push,
 /// assets from `fetched` (keyed by manifest path) or hardlinked from the
 /// versions already held. Returns the app id the version was installed under.
-pub fn install(manifest: &str, code: &str, fetched: &HashMap<String, Vec<u8>>) -> Result<String, String> {
+pub fn install(
+  manifest: &str,
+  code: &str,
+  fetched: &HashMap<String, Vec<u8>>,
+  wasm: Option<&forge::wasm::WasmEngine>,
+) -> Result<String, String> {
   let store = crate::storage::get().ok_or("no writable storage")?;
   let parsed = Manifest::parse(manifest)?;
-  install_at(&store.app_dir(&parsed.app_id), manifest, code, fetched)?;
+  install_at(&store.app_dir(&parsed.app_id), manifest, code, fetched, wasm)?;
   Ok(parsed.app_id)
 }
 
@@ -451,12 +457,15 @@ fn held_assets(app_dir: &Path) -> HashMap<String, (String, PathBuf)> {
 }
 
 /// Verify + write one version and point state.json at it. Pure with respect to
-/// globals (tests drive it against a temp dir). Returns the version id.
+/// globals (tests drive it against a temp dir). `wasm` is the engine the
+/// app will run on, for precompiling the version's modules into its cache;
+/// None skips that. Returns the version id.
 pub(crate) fn install_at(
   app_dir: &Path,
   manifest: &str,
   code: &str,
   fetched: &HashMap<String, Vec<u8>>,
+  wasm: Option<&forge::wasm::WasmEngine>,
 ) -> Result<String, String> {
   let parsed = Manifest::parse(manifest)?;
   if !parsed.bundle.sha256.eq_ignore_ascii_case(&sha256_hex(code.as_bytes())) {
@@ -507,6 +516,10 @@ pub(crate) fn install_at(
       }
     }
     std::fs::rename(&tmp, &version_dir).map_err(|e| format!("commit version dir: {e}"))?;
+    // Only now: every hash above has been checked and the dir is committed.
+    if let Some(wasm) = wasm {
+      prewarm_wasm(app_dir, &version_dir, &parsed, wasm);
+    }
   }
 
   let previous = match load_state(app_dir) {
@@ -518,7 +531,57 @@ pub(crate) fn install_at(
   let state = State { version: STATE_VERSION, current: version.clone(), previous, healthy: true, launches: 0 };
   save_state(app_dir, &state)?;
   prune(app_dir, &state);
+  if let Some(wasm) = wasm {
+    prune_wasm_cache(app_dir, wasm);
+  }
   Ok(version)
+}
+
+/// Compile the version's `.wasm` assets into the app's cache ahead of first
+/// use, so a launch does not pay for it (okf/design/wasm.md, section 5). Runs
+/// only after the version dir is committed, that is after every hash check:
+/// the manifest's integrity is what makes compiling pushed content sound.
+/// Per module fail-soft: one that does not compile is reported here and left
+/// to fail at `new Module` with the same error. A no-op on the interpreter
+/// lane, which has nothing to precompile.
+fn prewarm_wasm(app_dir: &Path, version_dir: &Path, manifest: &Manifest, engine: &forge::wasm::WasmEngine) {
+  if engine.lane() != forge::wasm::Lane::Native {
+    return;
+  }
+  let cache_dir = app_dir.join(crate::storage::CACHE_DIR);
+  for asset in manifest.assets.iter().filter(|a| a.path.ends_with(".wasm")) {
+    let bytes = match std::fs::read(version_dir.join(&asset.path)) {
+      Ok(bytes) => bytes,
+      Err(e) => {
+        log::warn!("[sgo] cannot read wasm asset {} for precompilation: {e}", asset.path);
+        continue;
+      }
+    };
+    let start = Instant::now();
+    match engine.precompile(&bytes, &cache_dir) {
+      Ok(()) => log::info!(
+        "[sgo] compiled wasm asset {} ({} bytes) in {} ms",
+        asset.path,
+        bytes.len(),
+        start.elapsed().as_millis()
+      ),
+      Err(e) => log::warn!("[sgo] wasm asset {} does not compile: {e}", asset.path),
+    }
+  }
+}
+
+/// Drop the compiled wasm artifacts no held version references. Held means
+/// the version dirs `prune` left standing, read from their manifests, so the
+/// cache follows the store's own retention and never outgrows it.
+pub(crate) fn prune_wasm_cache(app_dir: &Path, engine: &forge::wasm::WasmEngine) {
+  let mut keep: HashSet<String> = HashSet::new();
+  if let Ok(entries) = std::fs::read_dir(app_dir.join("versions")) {
+    for entry in entries.flatten() {
+      let Some(manifest) = Manifest::load(&entry.path()) else { continue };
+      keep.extend(manifest.assets.iter().filter(|a| a.path.ends_with(".wasm")).map(|a| a.sha256.to_ascii_lowercase()));
+    }
+  }
+  engine.prune_cache(&app_dir.join(crate::storage::CACHE_DIR), &keep);
 }
 
 /// The current installed bundle's code, or None when the store is empty or

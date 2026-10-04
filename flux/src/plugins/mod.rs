@@ -231,7 +231,9 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
 /// rather than on the OS. A conditionally-compiled feature sits under its
 /// own cfg, so it only appears when actually present: `ktx2` says
 /// flux:image's transcodeTexture and encodeTexture work here (they throw on
-/// a build without it), `test` that flux:test can be imported.
+/// a build without it), `test` that flux:test can be imported, `wasm-native`
+/// that flux:wasm compiles modules to machine code here (the wasmtime lane)
+/// instead of interpreting them, so a module runs at the native lane's speed.
 pub const BASE_CAPABILITIES: &[&str] = &[
   "sqlite",
   "fs",
@@ -247,6 +249,8 @@ pub const BASE_CAPABILITIES: &[&str] = &[
   "tty",
   #[cfg(feature = "ktx2")]
   "ktx2",
+  #[cfg(feature = "wasm-native")]
+  "wasm-native",
   #[cfg(feature = "test")]
   "test",
 ];

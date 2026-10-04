@@ -838,16 +838,6 @@ Shaped, not started.
   livekit-wakeword predict, ~35-40ms a check whether or not anyone is
   speaking; VAD gating cuts idle cost ~30x for ten lines, a streaming detector
   fixes it properly but needs upstream surgery.
-- **[Compile wasm to native on the device](backlog/wasm-native-execution.md)** [2026-10-03]
-  flux:wasm runs on an interpreter, so it is a portability tool and not a
-  speed tool; swap wasmi for wasmtime and compile the shipped wasm to native
-  code on the device at install, which costs a measured 7.8 MB of runtime and
-  is gated on whether that is affordable.
-- **[Measure flux:wasm throughput against JavaScript](backlog/wasm-vs-js-throughput.md)** [2026-08-17]
-  flux:wasm runs on the wasmi interpreter and the docs now say "a small
-  constant factor over JavaScript on tight compute", but nobody has measured
-  wasmi against QuickJS in flux; a small benchmark would back that claim with
-  a number.
 - **[An asset-generating script reloads the app on every write](backlog/watch-settle-asset-write-bursts.md)** [2026-09-08]
   The dev server watches the assets/ tree with a 100 ms debounce, so a
   data-prep script writing hundreds of MB over two minutes rebuilds and pushes
@@ -2426,6 +2416,17 @@ Finished, kept for the reasoning.
   vsync-released signal - so a 25 fps app on the Pixel 7 runs two JS frames
   per present, with honest but ragged tick deltas (1 and 6 periods alongside
   the compositor's 3 and 4).
+- **[Compile wasm to native on the device](done/wasm-native-execution.md)** [2026-10-04]
+  flux:wasm runs on an interpreter, so it is a portability tool and not a
+  speed tool; put wasmtime with Cranelift behind the forge API wherever the
+  device allows native code and compile the shipped wasm on the device at
+  install, with wasmi (SIMD on) as the one engine of the iOS and armeabi-v7a
+  builds, at a decided +7.8 MB of runtime on the native targets.
+- **[Measure flux:wasm throughput against JavaScript](done/wasm-vs-js-throughput.md)** [2026-10-04]
+  flux:wasm runs on the wasmi interpreter and the docs now say "a small
+  constant factor over JavaScript on tight compute", but nobody has measured
+  wasmi against QuickJS in flux; a small benchmark would back that claim with
+  a number.
 
 ## Notes
 
@@ -2736,6 +2737,20 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   model (2026-09-11) - the release client sol run launches, what sol check
   covers, where the engine matches a pipeline against its program, and
   half-float support in bun and flux.
+- **[wasmi against wasmtime's Pulley - throughput and compile time](notes/wasm-interpreter-throughput.md)** [2026-10-04]
+  Measured 2026-10-04 on an x86_64 desktop and the armeabi-v7a TV with the
+  same wat workloads; Pulley on stable Rust runs 2-6x slower than wasmi on
+  x86_64, trades blows on the TV (faster on integer and memory loops, 1.4-2.1x
+  slower on float, host calls and SIMD), and compiles a 287 KB module in 3.3 s
+  on the TV where wasmi translates it in 79 ms. Cranelift native on x86_64 is
+  1.4-20x faster than wasmi.
+- **[QuickJS against flux:wasm - throughput on both lanes](notes/wasm-vs-js-throughput.md)** [2026-10-04]
+  Measured 2026-10-04 in flux itself on the six wat workloads of the engine
+  note, on x86_64, the arm64 tablet and the armeabi-v7a TV; on compute the
+  native lane runs 18-960x faster than the same loop in QuickJS and the
+  interpreted lane 4-88x, so "a small constant factor" and "portability tool,
+  not a speed tool" were both wrong; the one inversion is a host call out of
+  the module, 3-7x the cost of a plain JavaScript call.
 
 ## Upstream
 

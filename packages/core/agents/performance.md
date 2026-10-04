@@ -151,19 +151,23 @@ Rules, in order of leverage:
    snapshot instead of re-rasterizing. A window shader's output is invisible
    to get_snapshot and every other MCP tool; `bun run sol render` is the only
    way to see it (see @solidrt/cli AGENTS.md).
-8. `flux:wasm` runs a pure interpreter (wasmi, no JIT), so temper browser
-   expectations - but do not write it off for compute. A genuinely numeric
-   kernel (typed-array math, tight inner loops, no host calls inside the
-   loop) compiled from a systems language can come out a real multiple
-   faster than the same loop in interpreted JavaScript, and when profiling
-   shows such a kernel is what the app is spending its time on, that
-   multiple is worth having: measure the JS loop, port the kernel, measure
-   again, keep whichever wins. What wasm does not do is speed up
-   render-path work (rules 1-3 are that leverage), and every host call
-   costs marshalling, so batch at the boundary - one call over a byte
-   buffer, not a call per element. It is also the way to ship one compiled
-   module across every target with no native toolchain, and it pairs with
-   an isolate when a call runs long enough to block.
+8. `flux:wasm` compiles a module to machine code on devices that allow it
+   (`Flux.capabilities` lists `wasm-native`: desktop, 64-bit Android) and
+   interprets it elsewhere (iOS, 32-bit Android). Both lanes are the fast
+   lane for compute: measured on a desktop, an arm64 tablet and a 32-bit
+   TV, a numeric kernel (typed-array math, tight inner loops, no host calls
+   inside the loop) runs 18x to 960x faster than the same loop in
+   JavaScript when compiled and 4x to 88x when interpreted, float at the low
+   end, integer and SIMD-shaped loops at the high end. So when profiling
+   shows such a kernel is where the app spends its time, port it: measure
+   the JS loop, port the kernel, measure again, keep whichever wins. The
+   boundary is the cost, not the code: a host call out of the module costs
+   3x to 7x a plain JavaScript call, two to three hundred iterations of a
+   tight loop, so batch at the boundary - one call per frame over a byte
+   buffer, never a call per element. What wasm does not do is speed up
+   render-path work (rules 1-3 are that leverage). It is also the way to
+   ship one compiled module across every target with no native toolchain,
+   and it pairs with an isolate when a call runs long enough to block.
 9. There is no native-library route from app code. A shared library is
    compiled per platform, so it cannot travel in a portable app payload,
    and Android loads only what arrived inside the APK. Binding one is a

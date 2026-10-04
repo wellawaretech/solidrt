@@ -1,116 +1,28 @@
-//! Engine-free WebAssembly hosting core, built on the wasmi interpreter.
-//!
-//! Hosts precompiled `.wasm` modules (or, with wasmi's `wat` feature, text
-//! format sources): parse and validate a module, resolve its function imports
-//! to host-provided handlers, instantiate it, call its exports (by name, or by
-//! index through its exported function table), and access its exported linear
-//! memory. Pure Rust, no JIT, so one `.wasm` artifact runs unmodified on every
-//! target.
+//! The interpreter backend: wasmi, a register-based interpreter with no JIT.
+//! Pure Rust, so one `.wasm` runs unmodified on every target; the lane for
+//! targets that cannot run generated code (the `wasm-native` feature off).
 //!
 //! Host imports are bridged with wasmi's resumable calls: every function
 //! import is registered as a stub that records its arguments and suspends
-//! execution with a sentinel host error. `WasmInstance::call` then invokes the
+//! execution with a sentinel host error. `Instance::call` then invokes the
 //! caller-supplied handler OUTSIDE any borrow of the wasmi store and resumes
 //! the wasm frame with the handler's results. Because no borrow is held while
 //! the handler runs, a handler may re-enter the instance (call another export,
 //! read or write memory) freely.
-//!
-//! Scope (deliberate, current):
-//! - Function imports only; a module that imports memories, tables, or
-//!   globals is rejected at parse.
-//! - Scalar values only (i32/i64/f32/f64) in bridged signatures; v128 and
-//!   reference types are rejected where they would cross the host boundary.
-//! - A start function must not call a host import (instantiation runs it
-//!   non-resumably); none of the common toolchains emit one that does.
-//! - The wasm exception-handling proposal is not supported (wasmi does not
-//!   implement it yet); such modules fail validation.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fmt;
+use std::path::Path;
 
 use wasmi::errors::HostError;
-use wasmi::{
-  Engine, ExternType, Func, FuncType, Instance, Linker, Memory, Module, ResumableCall, Store, Table, TrapCode, Val,
-  ValType,
+use wasmi::{ExternType, Func, FuncType, Linker, Memory, ResumableCall, Store, Table, TrapCode, Val, ValType};
+
+use super::{
+  memory_window, ExportInfo, FuncSig, HostHandler, ImportInfo, Lane, WasmType, WasmValue, BAD_SIGNATURE_HINT,
 };
 
-/// A scalar wasm value crossing the host boundary.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum WasmValue {
-  I32(i32),
-  I64(i64),
-  F32(f32),
-  F64(f64),
-}
-
-/// A scalar wasm value type in a bridged function signature.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WasmType {
-  I32,
-  I64,
-  F32,
-  F64,
-}
-
-impl WasmType {
-  /// The type's canonical wasm name ("i32", "i64", "f32", "f64").
-  pub fn name(self) -> &'static str {
-    match self {
-      WasmType::I32 => "i32",
-      WasmType::I64 => "i64",
-      WasmType::F32 => "f32",
-      WasmType::F64 => "f64",
-    }
-  }
-}
-
-/// A bridged function signature: scalar parameter and result types.
-#[derive(Debug, Clone)]
-pub struct FuncSig {
-  pub params: Vec<WasmType>,
-  pub results: Vec<WasmType>,
-}
-
-/// Renders as `(i32, i32) -> i32`; the arrow is omitted for no results and the
-/// result list parenthesized when there are several.
-impl fmt::Display for FuncSig {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let join = |types: &[WasmType]| types.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ");
-    write!(f, "({})", join(&self.params))?;
-    match self.results.len() {
-      0 => Ok(()),
-      1 => write!(f, " -> {}", self.results[0].name()),
-      _ => write!(f, " -> ({})", join(&self.results)),
-    }
-  }
-}
-
-/// One function import a module requires from the host. `index` is the handler
-/// index passed back to the host handler on every call of this import.
-#[derive(Debug, Clone)]
-pub struct ImportInfo {
-  pub module: String,
-  pub name: String,
-  pub sig: FuncSig,
-}
-
-/// What an export is, as far as the host boundary cares.
-#[derive(Debug, Clone)]
-pub enum ExportInfo {
-  /// A callable function with an all-scalar signature.
-  Func(FuncSig),
-  /// A linear memory (the first one becomes the instance's memory).
-  Memory,
-  /// Anything not bridged (globals, tables, functions with non-scalar types).
-  /// The first exported table still backs `call_indirect`.
-  Other,
-}
-
-/// Handler for host calls out of wasm: receives the import's index (position
-/// in `WasmModule::imports`) and its arguments, returns the result values
-/// (matching the import's declared result types) or an error message that
-/// aborts the wasm call.
-pub type HostHandler<'a> = &'a mut dyn FnMut(usize, Vec<WasmValue>) -> Result<Vec<WasmValue>, String>;
+pub const LANE: Lane = Lane::Interpreter;
 
 /// Sentinel host error a stubbed import raises to suspend execution; never
 /// surfaces to callers.
@@ -132,20 +44,26 @@ struct HostState {
   pending: Option<(usize, Vec<WasmValue>)>,
 }
 
-/// A parsed, validated module plus its resolved import list. Instantiate it
-/// once the host has a handler for every listed import.
-pub struct WasmModule {
-  engine: Engine,
-  module: Module,
-  imports: Vec<ImportInfo>,
+/// One wasmi engine, shared by every module parsed through it.
+#[derive(Clone)]
+pub struct Engine {
+  inner: wasmi::Engine,
 }
 
-impl WasmModule {
+impl Engine {
+  pub fn new() -> Result<Engine, String> {
+    // The default config enables wasmi's whole proposal set, SIMD and relaxed
+    // SIMD included once the cargo feature is on; the native backend mirrors it.
+    Ok(Engine { inner: wasmi::Engine::default() })
+  }
+
   /// Parse and validate a wasm binary (or wat text). Rejects modules with
-  /// non-function imports or imports with non-scalar signatures.
-  pub fn parse(bytes: &[u8]) -> Result<WasmModule, String> {
-    let engine = Engine::default();
-    let module = Module::new(&engine, bytes).map_err(|e| format!("invalid wasm module: {e}"))?;
+  /// non-function imports or imports with non-scalar signatures. There is no
+  /// compiled form, so the cache dir is unused: translation is lazy and takes
+  /// milliseconds for a large module.
+  pub fn parse(&self, bytes: &[u8], _cache_dir: Option<&Path>) -> Result<Module, String> {
+    let engine = self.inner.clone();
+    let module = wasmi::Module::new(&engine, bytes).map_err(|e| format!("invalid wasm module: {e}"))?;
     let mut imports: Vec<ImportInfo> = Vec::new();
     for imp in module.imports() {
       match imp.ty() {
@@ -170,10 +88,26 @@ impl WasmModule {
         }
       }
     }
-    Ok(WasmModule { engine, module, imports })
+    Ok(Module { engine, module, imports })
   }
 
-  /// The function imports the module requires, in handler-index order.
+  /// Nothing to precompile: see `parse`.
+  pub fn precompile(&self, _bytes: &[u8], _cache_dir: &Path) -> Result<(), String> {
+    Ok(())
+  }
+
+  /// Nothing cached, nothing to prune.
+  pub fn prune_cache(&self, _cache_dir: &Path, _keep: &HashSet<String>) {}
+}
+
+/// A parsed, validated module plus its resolved import list.
+pub struct Module {
+  engine: wasmi::Engine,
+  module: wasmi::Module,
+  imports: Vec<ImportInfo>,
+}
+
+impl Module {
   pub fn imports(&self) -> &[ImportInfo] {
     &self.imports
   }
@@ -181,7 +115,7 @@ impl WasmModule {
   /// Instantiate: register a suspending stub for every import, link, and run
   /// the start function (which must not call a host import). Takes `&self`, so
   /// one parsed module can back several independent instances.
-  pub fn instantiate(&self) -> Result<WasmInstance, String> {
+  pub fn instantiate(&self) -> Result<Instance, String> {
     let mut store = Store::new(&self.engine, HostState { pending: None });
     let mut linker = Linker::<HostState>::new(&self.engine);
     for (index, info) in self.imports.iter().enumerate() {
@@ -230,37 +164,25 @@ impl WasmModule {
       exports.push((exp.name().to_string(), info));
     }
 
-    Ok(WasmInstance { store: RefCell::new(store), instance, memory, table, exports })
+    Ok(Instance { store: RefCell::new(store), instance, memory, table, exports })
   }
 }
 
-/// A live instance. Not `Send`: it lives on (and re-enters) the host's calling
-/// thread. All entry points take `&self`; the store is borrowed only while
-/// wasm actually executes, never across a host handler invocation, so handlers
-/// may re-enter the instance.
-pub struct WasmInstance {
+/// A live instance. The store is borrowed only while wasm actually executes,
+/// never across a host handler invocation, so handlers may re-enter.
+pub struct Instance {
   store: RefCell<Store<HostState>>,
-  instance: Instance,
+  instance: wasmi::Instance,
   memory: Option<Memory>,
   table: Option<Table>,
   exports: Vec<(String, ExportInfo)>,
 }
 
-impl WasmInstance {
-  /// The module's exports (name, kind), in declaration order.
+impl Instance {
   pub fn exports(&self) -> &[(String, ExportInfo)] {
     &self.exports
   }
 
-  /// The scalar signature of an exported function, for argument coercion.
-  pub fn export_sig(&self, name: &str) -> Option<&FuncSig> {
-    self.exports.iter().find_map(|(n, info)| match info {
-      ExportInfo::Func(sig) if n == name => Some(sig),
-      _ => None,
-    })
-  }
-
-  /// Whether the module exports a linear memory.
   pub fn has_memory(&self) -> bool {
     self.memory.is_some()
   }
@@ -366,12 +288,7 @@ impl WasmInstance {
           // A bad-signature trap comes from a call_indirect INSIDE the guest;
           // wasmi does not expose which table index was called, so the best we
           // can name is the outer call and the likely cause.
-          let hint = if e.as_trap_code() == Some(TrapCode::BadSignature) {
-            " (an indirect call inside the guest hit a table entry whose signature does not match the call site; \
-             a stale function pointer, e.g. one taken before a re-instantiation, fails this way)"
-          } else {
-            ""
-          };
+          let hint = if e.as_trap_code() == Some(TrapCode::BadSignature) { BAD_SIGNATURE_HINT } else { "" };
           return Err(format!("wasm call to {what} failed: {e}{hint}"));
         }
       }
@@ -401,11 +318,7 @@ impl WasmInstance {
     };
     let store = self.store.borrow();
     let data = mem.data(&*store);
-    let end = ptr.checked_add(len).filter(|end| *end <= data.len());
-    let Some(end) = end else {
-      return Err(format!("memory read out of bounds: {ptr}+{len} exceeds size {}", data.len()));
-    };
-    Ok(data[ptr..end].to_vec())
+    Ok(data[memory_window("read", ptr, len, data.len())?].to_vec())
   }
 
   /// Copy `bytes` into the exported memory at `ptr`.
@@ -415,11 +328,8 @@ impl WasmInstance {
     };
     let mut store = self.store.borrow_mut();
     let data = mem.data_mut(&mut *store);
-    let end = ptr.checked_add(bytes.len()).filter(|end| *end <= data.len());
-    let Some(end) = end else {
-      return Err(format!("memory write out of bounds: {ptr}+{} exceeds size {}", bytes.len(), data.len()));
-    };
-    data[ptr..end].copy_from_slice(bytes);
+    let window = memory_window("write", ptr, bytes.len(), data.len())?;
+    data[window].copy_from_slice(bytes);
     Ok(())
   }
 }

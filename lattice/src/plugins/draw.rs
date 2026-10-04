@@ -48,6 +48,7 @@ struct RenderInner {
   // written by the dev connection (go/connection.rs), which latches a frame
   // request on every edge so the change is drawn on an idle app.
   dev_connected: Arc<AtomicBool>,
+  dev_installing: Arc<AtomicBool>,
   user_input_muted: Arc<AtomicBool>,
   // Whether an overlay display list is currently installed on the raster
   // thread (see Context::set_overlay): drives the enable/disable edges
@@ -95,6 +96,7 @@ pub fn store_state(
   stats_snapshot: Arc<Mutex<stats::StatsSnapshot>>,
   history: Arc<Mutex<FrameHistory>>,
   dev_connected: Arc<AtomicBool>,
+  dev_installing: Arc<AtomicBool>,
   user_input_muted: Arc<AtomicBool>,
 ) {
   ctx
@@ -106,6 +108,7 @@ pub fn store_state(
       stats: RefCell::new(stats::Stats::new()),
       history,
       dev_connected,
+      dev_installing,
       user_input_muted,
       overlay_installed: Cell::new(false),
       last_slow_warn: Cell::new(None),
@@ -165,7 +168,9 @@ impl RenderInner {
     // before record_js below: its refresh() resets the same once-per-second
     // timer, so a read after it would never see a due overlay.
     let stats_on = platform.stats_enabled();
-    let badge = if self.user_input_muted.load(Ordering::Relaxed) {
+    let badge = if self.dev_installing.load(Ordering::Relaxed) {
+      Some(overlay::Badge::Installing)
+    } else if self.user_input_muted.load(Ordering::Relaxed) {
       Some(overlay::Badge::Muted)
     } else if self.dev_connected.load(Ordering::Relaxed) {
       Some(overlay::Badge::Connected)

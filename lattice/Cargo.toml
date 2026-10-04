@@ -34,6 +34,8 @@ test = ["flux/test"]
 video = ["flux/video"]
 # Passthrough: compressed textures (see flux).
 ktx2 = ["flux/ktx2"]
+# Passthrough: the native wasm lane, wasmtime with Cranelift (see forge).
+wasm-native = ["flux/wasm-native"]
 
 [dependencies]
 alloy = { workspace = true }

@@ -26,7 +26,8 @@ declare module "*.frag" {
 
 // Binary asset imports: `import data from "./pic.png" with { type: "binary" }`.
 // The bundler inlines the file's bytes as a Uint8Array (see packages/cli
-// bundler `inlineImport`); feed it straight into createImage/decodeImage.
+// bundler `inlineImport`); feed it straight into createImage/decodeImage, or a
+// `.wasm` into `new Module` from flux:wasm.
 declare module "*.png" {
   const bytes: Uint8Array
   export default bytes
@@ -52,6 +53,10 @@ declare module "*.glb" {
   export default bytes
 }
 declare module "*.sol3m" {
+  const bytes: Uint8Array
+  export default bytes
+}
+declare module "*.wasm" {
   const bytes: Uint8Array
   export default bytes
 }

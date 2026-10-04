@@ -37,7 +37,7 @@ fn install_writes_version_and_state() {
   let app_dir = temp_app_dir("install");
   let code = "let a = 1";
   let manifest = manifest_for(code);
-  let version = install_at(&app_dir, &manifest, code, &HashMap::new()).expect("installs");
+  let version = install_at(&app_dir, &manifest, code, &HashMap::new(), None).expect("installs");
   assert_eq!(version, sha_hex(manifest.as_bytes()));
 
   let version_dir = app_dir.join("versions").join(&version);
@@ -53,7 +53,7 @@ fn install_rejects_mismatched_bundle() {
   let app_dir = temp_app_dir("mismatch");
   let manifest = manifest_for("let a = 1");
   // Different code than the manifest hashes: nothing may be written.
-  assert!(install_at(&app_dir, &manifest, "let a = 2", &HashMap::new()).is_err());
+  assert!(install_at(&app_dir, &manifest, "let a = 2", &HashMap::new(), None).is_err());
   assert!(load_current_at(&app_dir).is_none());
   assert!(!app_dir.join("state.json").exists());
   let _ = std::fs::remove_dir_all(&app_dir);
@@ -63,15 +63,15 @@ fn install_rejects_mismatched_bundle() {
 fn reinstall_and_update_track_previous() {
   let app_dir = temp_app_dir("previous");
   let (code1, code2) = ("let v = 1", "let v = 2");
-  let v1 = install_at(&app_dir, &manifest_for(code1), code1, &HashMap::new()).expect("installs v1");
+  let v1 = install_at(&app_dir, &manifest_for(code1), code1, &HashMap::new(), None).expect("installs v1");
   // Repush of the same version: current stays, no previous appears.
-  install_at(&app_dir, &manifest_for(code1), code1, &HashMap::new()).expect("repush ok");
+  install_at(&app_dir, &manifest_for(code1), code1, &HashMap::new(), None).expect("repush ok");
   let state: serde_json::Value =
     serde_json::from_slice(&std::fs::read(app_dir.join("state.json")).expect("state")).expect("state json");
   assert_eq!(state["current"], v1.as_str());
   assert!(state.get("previous").is_none());
 
-  let v2 = install_at(&app_dir, &manifest_for(code2), code2, &HashMap::new()).expect("installs v2");
+  let v2 = install_at(&app_dir, &manifest_for(code2), code2, &HashMap::new(), None).expect("installs v2");
   let state: serde_json::Value =
     serde_json::from_slice(&std::fs::read(app_dir.join("state.json")).expect("state")).expect("state json");
   assert_eq!(state["current"], v2.as_str());
@@ -86,7 +86,7 @@ fn prune_keeps_five_versions() {
   let mut versions = Vec::new();
   for i in 0..7 {
     let code = format!("let v = {i}");
-    versions.push(install_at(&app_dir, &manifest_for(&code), &code, &HashMap::new()).expect("installs"));
+    versions.push(install_at(&app_dir, &manifest_for(&code), &code, &HashMap::new(), None).expect("installs"));
   }
   let remaining: Vec<String> = std::fs::read_dir(app_dir.join("versions"))
     .expect("versions dir")
@@ -109,15 +109,15 @@ fn install_writes_fetched_assets_and_verifies() {
 
   // Nothing held, nothing fetched: the install must refuse, not write a
   // version missing its files.
-  assert!(install_at(&app_dir, &manifest, code, &HashMap::new()).is_err());
+  assert!(install_at(&app_dir, &manifest, code, &HashMap::new(), None).is_err());
   assert!(!app_dir.join("state.json").exists());
 
   // Fetched bytes that do not match the manifest entry are refused too.
   let bad = HashMap::from([("assets/sounds/boing.ogg".to_string(), b"tampered".to_vec())]);
-  assert!(install_at(&app_dir, &manifest, code, &bad).is_err());
+  assert!(install_at(&app_dir, &manifest, code, &bad, None).is_err());
 
   let fetched = HashMap::from([("assets/sounds/boing.ogg".to_string(), asset.to_vec())]);
-  let version = install_at(&app_dir, &manifest, code, &fetched).expect("installs");
+  let version = install_at(&app_dir, &manifest, code, &fetched, None).expect("installs");
   let written = app_dir.join("versions").join(&version).join("assets/sounds/boing.ogg");
   assert_eq!(std::fs::read(written).expect("asset written"), asset);
   let _ = std::fs::remove_dir_all(&app_dir);
@@ -130,11 +130,11 @@ fn update_reuses_held_assets() {
   let (code1, code2) = ("let v = 1", "let v = 2");
   let fetched = HashMap::from([("assets/data.bin".to_string(), asset.to_vec())]);
   let v1 =
-    install_at(&app_dir, &manifest_with_asset(code1, "assets/data.bin", asset), code1, &fetched).expect("installs v1");
+    install_at(&app_dir, &manifest_with_asset(code1, "assets/data.bin", asset), code1, &fetched, None).expect("installs v1");
 
   // Same asset in the next version: nothing fetched, the store links it from
   // the held version.
-  let v2 = install_at(&app_dir, &manifest_with_asset(code2, "assets/data.bin", asset), code2, &HashMap::new())
+  let v2 = install_at(&app_dir, &manifest_with_asset(code2, "assets/data.bin", asset), code2, &HashMap::new(), None)
     .expect("installs v2 from held assets");
   let file1 = app_dir.join("versions").join(&v1).join("assets/data.bin");
   let file2 = app_dir.join("versions").join(&v2).join("assets/data.bin");
@@ -149,7 +149,7 @@ fn update_reuses_held_assets() {
   // A changed asset (same path, new hash) is NOT reused: without its bytes the
   // install refuses.
   let changed = manifest_with_asset("let v = 3", "assets/data.bin", b"different bytes");
-  assert!(install_at(&app_dir, &changed, "let v = 3", &HashMap::new()).is_err());
+  assert!(install_at(&app_dir, &changed, "let v = 3", &HashMap::new(), None).is_err());
   let _ = std::fs::remove_dir_all(&app_dir);
 }
 
@@ -159,13 +159,13 @@ fn list_skips_anchor_only_dirs_and_reads_display_names() {
   let code = "let a = 1";
   // One plain install (no displayName), one with a displayName, and one dir
   // that is only a data sandbox (anchored, never installed).
-  install_at(&apps.join("com.example.app"), &manifest_for(code), code, &HashMap::new()).expect("installs");
+  install_at(&apps.join("com.example.app"), &manifest_for(code), code, &HashMap::new(), None).expect("installs");
   let named = format!(
     r#"{{"appId":"com.example.named","displayName":"Named App","runtimeVersion":1,"bundle":{{"path":"bundle.js","sha256":"{}","size":{}}}}}"#,
     sha_hex(code.as_bytes()),
     code.len()
   );
-  install_at(&apps.join("com.example.named"), &named, code, &HashMap::new()).expect("installs named");
+  install_at(&apps.join("com.example.named"), &named, code, &HashMap::new(), None).expect("installs named");
   std::fs::create_dir_all(apps.join("com.example.sandbox").join("data")).expect("sandbox dir");
 
   let listed = list_installed_at(&apps);
@@ -189,7 +189,7 @@ fn remove_deletes_only_valid_installed_ids() {
   let apps = temp_app_dir("remove");
   let code = "let a = 1";
   let app_dir = apps.join("com.example.app");
-  install_at(&app_dir, &manifest_for(code), code, &HashMap::new()).expect("installs");
+  install_at(&app_dir, &manifest_for(code), code, &HashMap::new(), None).expect("installs");
 
   // Traversal and unknown ids are refused without touching anything.
   assert!(remove_app_at(&apps, "../com.example.app").is_err());
@@ -208,10 +208,10 @@ fn app_info_reports_versions_files_and_data_usage() {
   let (code1, code2) = ("let v = 1", "let v = 22");
   let asset = b"jpg bytes";
   let app_dir = apps.join("com.example.app");
-  install_at(&app_dir, &manifest_for(code1), code1, &HashMap::new()).expect("installs v1");
+  install_at(&app_dir, &manifest_for(code1), code1, &HashMap::new(), None).expect("installs v1");
   let fetched = HashMap::from([("assets/hero.jpg".to_string(), asset.to_vec())]);
   let v2 =
-    install_at(&app_dir, &manifest_with_asset(code2, "assets/hero.jpg", asset), code2, &fetched).expect("installs v2");
+    install_at(&app_dir, &manifest_with_asset(code2, "assets/hero.jpg", asset), code2, &fetched, None).expect("installs v2");
   // A data sandbox with one file and one subdir holding another file.
   std::fs::create_dir_all(app_dir.join("data/nested")).expect("data dirs");
   std::fs::write(app_dir.join("data/top.txt"), b"12345").expect("data file");
@@ -264,7 +264,7 @@ fn app_info_reports_solidrt_version() {
     sha_hex(code.as_bytes()),
     code.len()
   );
-  install_at(&apps.join("com.example.app"), &manifest, code, &HashMap::new()).expect("installs");
+  install_at(&apps.join("com.example.app"), &manifest, code, &HashMap::new(), None).expect("installs");
   let info = app_info_at(&apps, "com.example.app").expect("info");
   assert_eq!(info.versions.len(), 1);
   assert_eq!(info.versions[0].solidrt_version, "1.2.3");
@@ -279,8 +279,45 @@ fn install_rejects_unsafe_asset_paths() {
     let asset = b"bytes";
     let manifest = manifest_with_asset(code, path, asset);
     let fetched = HashMap::from([(path.to_string(), asset.to_vec())]);
-    assert!(install_at(&app_dir, &manifest, code, &fetched).is_err(), "accepted {path}");
+    assert!(install_at(&app_dir, &manifest, code, &fetched, None).is_err(), "accepted {path}");
   }
   assert!(!app_dir.join("state.json").exists());
+  let _ = std::fs::remove_dir_all(&app_dir);
+}
+
+/// The native wasm lane precompiles a version's `.wasm` assets into the app
+/// cache at install, after verification, and the cache follows the store's
+/// retention. Needs the lane compiled in (`--features wasm-native`).
+#[cfg(feature = "wasm-native")]
+#[test]
+fn install_precompiles_wasm_assets_and_prunes_them() {
+  use crate::go::store::prune_wasm_cache;
+
+  let app_dir = temp_app_dir("wasm-cache");
+  let code = "let w = 1";
+  let wasm = br#"(module (func (export "one") (result i32) i32.const 1))"#;
+  let manifest = manifest_with_asset(code, "assets/mod.wasm", wasm);
+  let mut fetched = HashMap::new();
+  fetched.insert("assets/mod.wasm".to_string(), wasm.to_vec());
+  let engine = forge::wasm::WasmEngine::new().expect("wasm engine");
+  install_at(&app_dir, &manifest, code, &fetched, Some(&engine)).expect("installs");
+
+  let artifacts = || -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    if let Ok(engines) = std::fs::read_dir(app_dir.join("cache").join("wasm")) {
+      for engine in engines.flatten() {
+        if let Ok(files) = std::fs::read_dir(engine.path()) {
+          found.extend(files.flatten().map(|f| f.path()).filter(|p| p.extension().is_some_and(|e| e == "cwasm")));
+        }
+      }
+    }
+    found
+  };
+  assert_eq!(artifacts().len(), 1, "install precompiled the wasm asset");
+
+  // Once no held version references the module, the next prune drops it.
+  std::fs::remove_dir_all(app_dir.join("versions")).expect("drop versions");
+  prune_wasm_cache(&app_dir, &engine);
+  assert!(artifacts().is_empty(), "unreferenced artifact pruned");
   let _ = std::fs::remove_dir_all(&app_dir);
 }

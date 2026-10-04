@@ -35,6 +35,9 @@ video = ["forge/video"]
 # flux:image transcodeTexture / encodeTexture and the `ktx2` capability
 # (behind forge/ktx2): not a cargo default; see forge/Cargo.toml.
 ktx2 = ["forge/ktx2"]
+# flux:wasm native lane (behind forge/wasm-native): not a cargo default; see
+# forge/Cargo.toml.
+wasm-native = ["forge/wasm-native"]
 # flux:test (test, expect), the test host (flux::test) and the `test`
 # capability: what `sol test` runs a test file with. The module evaluates
 # an embedded JS source, hence `compile`.

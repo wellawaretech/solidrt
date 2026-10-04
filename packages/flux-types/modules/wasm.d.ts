@@ -1,10 +1,16 @@
 // There is no `WebAssembly` global in flux; this module is the entire wasm
-// surface. Modules run in a pure interpreter (wasmi, no JIT), so this is a
-// portability tool - one compiled module runs on every flux target with no
-// native binaries or dlopen - not a speed tool. Tight typed compute runs
-// somewhat faster than the same loop in JavaScript (a small constant
-// factor, nowhere near browser wasm speed), and every host call costs
-// extra marshalling, so call-heavy code can end up slower.
+// surface. One compiled module runs on every flux target with no native
+// binaries or dlopen, and it is the route for app code that needs more than
+// the JavaScript interpreter. Where the device allows generated code
+// (desktop, 64-bit Android) a module is compiled to machine code on the
+// device the first time it is seen - at install for a `.wasm` under
+// `assets/`, otherwise at `new Module` - and `Flux.capabilities` lists
+// `wasm-native`; a tight typed kernel then runs 18x to 960x faster than the
+// same loop in JavaScript. Where it does not (iOS, 32-bit Android) the
+// module is interpreted and still runs compute 4x to 88x faster than
+// JavaScript. The boundary is the cost on both lanes: a host call out of
+// the module costs 3x to 7x a plain JavaScript call, so keep calls coarse:
+// one call per frame handing over a buffer, never one per entity.
 // Imports must be scalar-signature functions only (no imported
 // memory, globals or tables), which constrains the toolchain on the other
 // side: default emscripten output imports its memory and is rejected, while

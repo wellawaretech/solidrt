@@ -895,6 +895,18 @@ fn ui_thread(
     // True while a dev-server connection is up; gates log forwarding so an
     // offline app never queues log lines (see go::dev_logger).
     let dev_connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // True while a pushed version installs; the overlay badge says so.
+    let dev_installing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // One wasm engine for the process: every app engine runs modules on it,
+    // and the store precompiles pushed modules with it, so an install fills
+    // exactly the cache slots the app will read.
+    let wasm_engine = match forge::wasm::WasmEngine::new() {
+      Ok(engine) => Some(engine),
+      Err(e) => {
+        log::warn!("[sol] wasm engine unavailable, flux:wasm will throw: {e}");
+        None
+      }
+    };
     // Latest stats figures, published by the draw loop every frame; the dev
     // connection answers stats queries from here without touching this thread.
     let stats_snapshot = Arc::new(std::sync::Mutex::new(stats::StatsSnapshot::default()));
@@ -1144,6 +1156,8 @@ fn ui_thread(
       platform.stats_handles(),
       capture_enabled,
       dev_connected.clone(),
+      dev_installing.clone(),
+      wasm_engine.clone(),
       clock_control.clone(),
       input_inject_tx,
       alloy_cmd_tx.clone(),
@@ -1272,6 +1286,10 @@ fn ui_thread(
         Some(dir) => builder.cache_dir(dir.clone()),
         None => builder,
       };
+      let builder = match &wasm_engine {
+        Some(engine) => builder.wasm_engine(engine.clone()),
+        None => builder,
+      };
       // The go client's logger also forwards lines to a connected dev server;
       // other builds log locally only.
       #[cfg(feature = "go")]
@@ -1300,6 +1318,7 @@ fn ui_thread(
       let draw_stats = stats_snapshot.clone();
       let draw_history = frame_history.clone();
       let draw_connected = dev_connected.clone();
+      let draw_installing = dev_installing.clone();
       let draw_muted = user_input_muted.clone();
       let builder = builder
         .plugin(move |ctx| {
@@ -1311,6 +1330,7 @@ fn ui_thread(
             draw_stats,
             draw_history,
             draw_connected,
+            draw_installing,
             draw_muted,
           )
         })

@@ -1,20 +1,20 @@
 //! The `flux:wasm` module: a generic WebAssembly host for flux.
 //!
 //! Marshalling only: decode JS args into the native types of the engine-free
-//! `forge::wasm` core (a wasmi interpreter), drive its `WasmModule` /
-//! `WasmInstance` methods, and encode the results back to JS. All module
-//! parsing, linking, execution, and the resumable-call host-import bridge live
-//! in `forge::wasm`.
+//! `forge::wasm` core (wasmi, or wasmtime where the build compiles to native
+//! code), drive its `WasmModule` / `WasmInstance` methods, and encode the
+//! results back to JS. All module parsing, linking, execution, and the
+//! host-import bridge live in `forge::wasm`.
 //!
 //! This is a GENERIC wasm host, not tailored to any one module. It exposes the
 //! primitives - parse a module, inspect its imports, instantiate it with host
 //! functions, call exports, read/write its linear memory - and nothing about
 //! any particular guest.
 //!
-//! Everything here is synchronous: wasmi is a pure interpreter with no I/O, and
-//! it runs on the JS thread, so there is no `Promised`/async plumbing. A host
-//! import calls straight back into the supplied JS function during the export
-//! call; a throw from that function aborts the wasm call and propagates.
+//! Everything here is synchronous: the engine runs on the JS thread with no
+//! I/O of its own, so there is no `Promised`/async plumbing. A host import
+//! calls straight back into the supplied JS function during the export call; a
+//! throw from that function aborts the wasm call and propagates.
 //!
 //! JS surface:
 //! ```js
@@ -86,7 +86,7 @@ struct InstanceEntry {
 
 /// A minted `instance.memory` ArrayBuffer plus the storage location it was
 /// minted over, so guest growth (which moves the storage) can be detected and
-/// the stale buffer detached. The instance `Rc` pins the wasmi store: QuickJS
+/// the stale buffer detached. The instance `Rc` pins the engine store: QuickJS
 /// holds no ownership of the buffer's bytes (see `array_buffer_over`), so the
 /// registry keeps the memory alive for as long as the buffer can be reached -
 /// even if the `Instance` object itself is collected first.
@@ -143,11 +143,22 @@ pub struct Module {
 #[rquickjs::methods]
 impl Module {
   /// Parse and validate a wasm binary (or wat text). Throws on invalid input
-  /// or on an unsupported import (non-function, or non-scalar signature).
+  /// or on an unsupported import (non-function, or non-scalar signature). The
+  /// engine and the cache dir come off the stored engine config
+  /// (`FluxEngineBuilder::wasm_engine` / `cache_dir`), as fetch reads its
+  /// cache; on the native lane the compiled form is cached under that dir,
+  /// and without one every parse compiles in memory.
   #[qjs(constructor)]
   pub fn new<'js>(ctx: Ctx<'js>, bytes: Value<'js>) -> rquickjs::Result<Module> {
     let bytes = value_to_bytes(&ctx, &bytes)?;
-    let module = forge::wasm::WasmModule::parse(&bytes).map_err(|m| Exception::throw_message(&ctx, &m))?;
+    let (engine, cache_dir) = match ctx.userdata::<crate::engine::EngineConfig>() {
+      Some(config) => (config.wasm.clone(), config.cache_dir.clone()),
+      None => (None, None),
+    };
+    let Some(engine) = engine else {
+      return Err(Exception::throw_message(&ctx, "wasm engine unavailable in this runtime"));
+    };
+    let module = engine.parse_cached(&bytes, cache_dir.as_deref()).map_err(|m| Exception::throw_message(&ctx, &m))?;
     Ok(Module { inner: Rc::new(module) })
   }
 

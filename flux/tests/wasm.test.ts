@@ -85,3 +85,22 @@ test("call errors name the target and its signature", () => {
   expect(() => instance.call("bad")).toThrow("wasm call to bad failed")
   expect(() => instance.call("bad")).toThrow("stale function pointer")
 })
+
+// A precompiled binary rather than wat: the 41-byte module of
+// examples/wasm-call (one export, add(i32, i32) -> i32), section by section.
+const ADD_WASM = new Uint8Array([
+  0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic, version 1
+  0x01, 0x07, 0x01, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f, // type 0: (i32, i32) -> i32
+  0x03, 0x02, 0x01, 0x00, // one function, of type 0
+  0x07, 0x07, 0x01, 0x03, 0x61, 0x64, 0x64, 0x00, 0x00, // export "add" = function 0
+  0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x0b, // body: local.get 0, local.get 1, i32.add
+])
+
+test("loads a precompiled binary and calls its export", () => {
+  let mod = new Module(ADD_WASM)
+  expect(mod.imports).toEqual([])
+  let instance = mod.instantiate({})
+  expect(instance.exports).toEqual([{ name: "add", kind: "function", params: ["i32", "i32"], results: ["i32"] }])
+  expect(instance.call("add", 2, 3)).toBe(5)
+  expect(instance.call("add", 0x7fffffff, 1)).toBe(-2147483648)
+})
