@@ -54,7 +54,7 @@ percent-encoding = "=2.3.2"
 # Raw terminal mode and key events for forge::tty (a safe binding crate:
 # termios on unix, the Console API on Windows). No event-stream: keys are
 # read blocking on the stdin reader thread.
-crossterm = { version = "=0.27.0", default-features = false, features = ["windows", "events"] }
+crossterm = { version = "=0.29.0", default-features = false, features = ["windows", "events"] }
 rusqlite = { version = "=0.40.2", features = ["bundled", "hooks"] }
 path-clean = "=1.0.1"
 # Glob patterns for forge::path::matches_glob and the forge::fs::glob scan
