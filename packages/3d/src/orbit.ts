@@ -101,7 +101,9 @@
 // at once (the next paint carries the new camera, no frame loop needed
 // for a drag), and update(dt) integrates the rates, the auto-orbit, the
 // motion, the follow, the lanes and the occlusion return from the app's
-// own onFrame - the control registers no frame loop of its own. Only
+// own onFrame (onBeforeRender when it follows something the frame moves,
+// so it sees the frame's final pose) - the control registers no frame
+// loop of its own. Only
 // `orbiting` and `active` are reactive: slow UI state a HUD reads, and
 // the frame-loop gate. update() returns whether the camera changed since
 // the previous update (pushes included), so per-frame dependents
@@ -303,8 +305,10 @@ export type OrbitCamera = {
   active(): boolean
   /** Integrate the axis rates, the auto-orbit, the motion, the follow,
    * the lanes and the occlusion return over dt seconds and push any
-   * camera change. Call from onFrame; returns whether the camera changed
-   * since the previous update (nudges and verbs included). */
+   * camera change. Call from onFrame - or from onBeforeRender when the
+   * control follows something the frame moves, so it reads that frame's
+   * final pose; returns whether the camera changed since the previous
+   * update (nudges and verbs included). */
   update(dt: number): boolean
   /** The input abstraction: `rotate` (vec2, element heights of drag /
    * turns per second), `zoom` (axis, octaves, positive in), `pan` (vec2,

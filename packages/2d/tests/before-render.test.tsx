@@ -2,15 +2,14 @@
 // publishes its pending batch in the publish pass of onBeforeRender, ahead
 // of renderFrame(), so a sprite added, a record written or a tile set from
 // onFrame is drawn in the same frame, never the next. The layers are GPU
-// state, so this is an app test, and the probe is the frame itself: a
-// capture of the leaf showing the layer, requested from inside the frame
-// after the write, is serviced by that frame's own paint (a readback would
-// re-render a view first and see the write wherever it landed).
+// state, so this is an app test, and the probe is the frame itself:
+// `app.painted` reads the leaf showing the layer as that frame's own paint
+// drew it (a readback would re-render a view first and see the write
+// wherever it landed).
 
 import { test, expect } from "@solidrt/test"
 import type { Pixels, RefLocator, TestApp } from "@solidrt/test"
 import { onFrame } from "@solidrt/core"
-import { captureSnapshot } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
 import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, fullFrame } from "../src/index.ts"
 
@@ -36,21 +35,13 @@ async function mounted<T extends { texture: TextureId }>(app: TestApp, build: ()
   return { ...built, leaf }
 }
 
-/**
- * Runs `write` among the next frame's callbacks and captures `leaf` from
- * inside that frame: what that frame's own paint drew. The capture's
- * promise settles with the frame after, so two frames run.
- */
-async function painted(app: TestApp, leaf: RefLocator, write: () => void): Promise<Pixels> {
-  let shot!: Promise<Pixels>
+/** Runs `write` among the next frame's callbacks; what that frame drew of `leaf`. */
+function painted(app: TestApp, leaf: RefLocator, write: () => void): Promise<Pixels> {
   let stop = onFrame(() => {
     stop()
     write()
-    shot = captureSnapshot(leaf.record.id)
   })
-  await app.frame()
-  await app.frame()
-  return shot
+  return app.painted(leaf)
 }
 
 /** The pixel at a fraction of the way across and down `pixels`. */

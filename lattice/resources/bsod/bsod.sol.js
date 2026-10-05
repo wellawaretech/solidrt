@@ -4600,8 +4600,14 @@ function runHandlers(handlers2) {
   }
 }
 function runBeforeRender(bootstrap) {
-  if (!bootstrap)
+  if (!bootstrap) {
     runHandlers(lateHandlers);
+    try {
+      flush();
+    } catch (err) {
+      console.error("Error in reactive flush:", err);
+    }
+  }
   runHandlers(publishHandlers);
 }
 var backHandlers = [];

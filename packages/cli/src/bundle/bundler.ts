@@ -181,7 +181,11 @@ export function isolateAssetPath(id: string, ext: "js" | "bin"): string {
 // `project` is the project root (mode.ts decides it, never a search), or
 // null for a file on its own: no assets in the manifest and no isolate
 // modules (isolates are a project feature).
-export type BundleOptions = { entry: string; dev: boolean; minify: boolean; project: string | null }
+// `target` is the platform the bundle resolves builtins for: "browser" (the
+// default) for app code and flux scripts, whose builtins are the flux: and
+// sol: externals; "bun" for a bun program (the CLI's own commands, which
+// `sol check` covers), whose node: imports are bun's.
+export type BundleOptions = { entry: string; dev: boolean; minify: boolean; project: string | null; target?: "browser" | "bun" }
 
 // The `sol bundle --json` stdout contract doubles as the in-process result.
 export type BundleResult = BundleOutput
@@ -227,7 +231,7 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
     try {
       result = await Bun.build({
         entrypoints: [entry],
-        target: "browser",
+        target: opts.target ?? "browser",
         format: "esm",
         minify: opts.minify,
         external: ["flux:*", "sol:*"],

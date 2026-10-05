@@ -493,9 +493,19 @@ function runHandlers(handlers: (() => void)[]) {
 }
 
 // Before renderFrame(): the late pass (skipped on the bootstrap frame, which
-// runs no frame callbacks either), then the publish pass.
+// runs no frame callbacks either), its signal writes flushed, then the
+// publish pass - the same handlers-then-flush shape as the post-layout
+// entry, so a late handler's reactive write reaches its node in this frame
+// and the publish pass sees it. An empty flush is a flag check.
 function runBeforeRender(bootstrap: boolean) {
-  if (!bootstrap) runHandlers(lateHandlers)
+  if (!bootstrap) {
+    runHandlers(lateHandlers)
+    try {
+      flush()
+    } catch (err) {
+      console.error("Error in reactive flush:", err)
+    }
+  }
   runHandlers(publishHandlers)
 }
 
@@ -518,9 +528,8 @@ export interface BeforeRenderOptions {
  * callbacks and the reactive flush, when the frame's state is final. The
  * frame's late update: a camera follow, a fit to a measured box, anything
  * that must see what every frame callback wrote and write once more.
- * Signal writes made here are flushed with the NEXT frame, not this one -
- * write the engine directly (a transform, a camera, a param), or decide in
- * onFrame and only publish here.
+ * Writes made here, to the engine or through signals, are in this frame:
+ * the pending reactive writes are flushed once every handler has run.
  *
  * `{ publish: true }` registers for the publish pass instead: after every
  * plain handler, and once more after the `onLayout` handlers of a frame

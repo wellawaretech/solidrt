@@ -13,12 +13,25 @@ use crate::stepped::{Stepper, WindowReady};
 // stepper (test_host.rs). In the dev client only, and its verbs work only
 // in an engine a test host built.
 
-/// The frame a test asked for and is waiting on: the resolver of its
-/// promise, called once the frame verb has run the frame, and the hold
-/// that keeps the engine alive until then (the frame's signal travels
-/// through the runner's loop, outside the engine).
+/// Where a capture queued ahead of a `painted()` frame lands its outcome
+/// during that frame's paint.
+type CaptureSlot = Rc<RefCell<Option<Result<alloy::CaptureInfo, String>>>>;
+
+/// The frame a test asked for and is waiting on: what settles its promise
+/// once the frame verb has run the frame, and the hold that keeps the
+/// engine alive until then (the frame's signal travels through the
+/// runner's loop, outside the engine).
+struct Waiting {
+  resolve: Persistent<Function<'static>>,
+  reject: Persistent<Function<'static>>,
+  _hold: flux::Hold,
+  /// A `painted()` frame: the promise fulfills with the capture's pixels
+  /// (or rejects with its error) instead of with nothing.
+  capture: Option<CaptureSlot>,
+}
+
 #[derive(Clone, Default, JsLifetime)]
-struct PendingFrame(#[qjs(skip_trace)] Rc<RefCell<Option<(Persistent<Function<'static>>, flux::Hold)>>>);
+struct PendingFrame(#[qjs(skip_trace)] Rc<RefCell<Option<Waiting>>>);
 
 fn stepper(ctx: &Ctx<'_>, verb: &str) -> flux::rquickjs::Result<Stepper> {
   match ctx.userdata::<Stepper>() {
@@ -30,20 +43,63 @@ fn stepper(ctx: &Ctx<'_>, verb: &str) -> flux::rquickjs::Result<Stepper> {
   }
 }
 
-/// `frame()`: run one frame; the promise fulfills once it has run.
-fn frame<'js>(ctx: Ctx<'js>) -> flux::rquickjs::Result<Promise<'js>> {
-  let stepper = stepper(&ctx, "frame()")?;
+/// The stepper and the frame slot, the slot free: a test runs one frame at
+/// a time.
+fn free_frame(ctx: &Ctx<'_>, verb: &str) -> flux::rquickjs::Result<(Stepper, PendingFrame)> {
+  let stepper = stepper(ctx, verb)?;
   let pending = ctx.userdata::<PendingFrame>().expect("pending frame installed").clone();
   if pending.0.borrow().is_some() {
     return Err(Exception::throw_message(
-      &ctx,
-      "sol:test frame(): the previous frame has not finished; await it first",
+      ctx,
+      &format!("sol:test {verb}: the previous frame has not finished; await it first"),
     ));
   }
-  let (promise, resolve, _reject) = ctx.promise()?;
-  *pending.0.borrow_mut() = Some((Persistent::save(&ctx, resolve), flux::hold_engine(&ctx, "frame")));
+  Ok((stepper, pending))
+}
+
+/// Run one frame; its promise settles once it has run (`frame_done`).
+fn run_frame<'js>(
+  ctx: &Ctx<'js>,
+  stepper: Stepper,
+  pending: PendingFrame,
+  capture: Option<CaptureSlot>,
+) -> flux::rquickjs::Result<Promise<'js>> {
+  let (promise, resolve, reject) = ctx.promise()?;
+  *pending.0.borrow_mut() = Some(Waiting {
+    resolve: Persistent::save(ctx, resolve),
+    reject: Persistent::save(ctx, reject),
+    _hold: flux::hold_engine(ctx, "frame"),
+    capture,
+  });
   stepper.step();
   Ok(promise)
+}
+
+/// `frame()`: run one frame; the promise fulfills once it has run.
+fn frame<'js>(ctx: Ctx<'js>) -> flux::rquickjs::Result<Promise<'js>> {
+  let (stepper, pending) = free_frame(&ctx, "frame()")?;
+  run_frame(&ctx, stepper, pending, None)
+}
+
+/// `painted(node)`: run one frame with a capture of `node` queued ahead
+/// of it, so the frame's own paint services the capture; the promise
+/// fulfills with the pixels once the frame has run - what that frame drew
+/// of the node, written and painted in one frame, where `capture()`
+/// paints the tree afresh after the fact. The capture is queued only once
+/// the frame slot is known to be free, so a refused call leaves nothing
+/// behind for a later paint to service.
+fn painted<'js>(ctx: Ctx<'js>, node: u64) -> flux::rquickjs::Result<Promise<'js>> {
+  let (stepper, pending) = free_frame(&ctx, "painted()")?;
+  let Some(alloy) = flux::gui::alloy_context(&ctx) else {
+    return Err(Exception::throw_message(&ctx, "sol:test painted: no window in this test; mount the app first"));
+  };
+  let outcome: CaptureSlot = Rc::new(RefCell::new(None));
+  let slot = outcome.clone();
+  alloy.request_capture(node, Box::new(move |result| *slot.borrow_mut() = Some(result)));
+  // The frame must paint for the capture to be serviced, whatever the app
+  // demands: the capture first, then the request (captureSnapshot's order).
+  flux::gui::request_frame(&ctx);
+  run_frame(&ctx, stepper, pending, Some(outcome))
 }
 
 /// The frame verb ran a frame: settle the promise of the test that asked
@@ -52,13 +108,38 @@ pub(crate) fn frame_done(ctx: &Ctx<'_>) {
   let Some(pending) = ctx.userdata::<PendingFrame>() else {
     return;
   };
-  let Some((resolve, _hold)) = pending.0.borrow_mut().take() else {
+  let Some(waiting) = pending.0.borrow_mut().take() else {
     return;
   };
-  let settled = resolve.restore(ctx).and_then(|resolve| resolve.call::<_, ()>(()));
+  let Waiting { resolve, reject, _hold, capture } = waiting;
+  let settled = match capture {
+    None => resolve.restore(ctx).and_then(|resolve| resolve.call::<_, ()>(())),
+    Some(outcome) => match outcome.borrow_mut().take() {
+      Some(Ok(info)) => pixels_object(ctx, info)
+        .and_then(|image| resolve.restore(ctx).and_then(|resolve| resolve.call::<_, ()>((image,)))),
+      Some(Err(e)) => reject_with(ctx, reject, &format!("sol:test painted: {e}")),
+      None => reject_with(ctx, reject, "sol:test painted: the frame's paint did not reach the node"),
+    },
+  };
   if let Err(e) = settled {
     flux::report_uncaught(ctx, e, "sol:test frame()");
   }
+}
+
+/// Reject a frame's promise with an Error carrying `message`.
+fn reject_with(ctx: &Ctx<'_>, reject: Persistent<Function<'static>>, message: &str) -> flux::rquickjs::Result<()> {
+  let error = Exception::from_message(ctx.clone(), message)?;
+  reject.restore(ctx)?.call::<_, ()>((error,))
+}
+
+/// A capture's pixels as the `{ width, height, data }` object `capture()`
+/// and `painted()` hand a test.
+fn pixels_object<'js>(ctx: &Ctx<'js>, info: alloy::CaptureInfo) -> flux::rquickjs::Result<Object<'js>> {
+  let image = Object::new(ctx.clone())?;
+  image.set("width", info.width)?;
+  image.set("height", info.height)?;
+  image.set("data", flux::rquickjs::TypedArray::new(ctx.clone(), info.pixels)?)?;
+  Ok(image)
 }
 
 /// `windowReady()`: fulfills once the window's size has reached the
@@ -172,11 +253,7 @@ fn capture<'js>(ctx: Ctx<'js>, node: u64) -> flux::rquickjs::Result<Object<'js>>
     Some(Err(e)) => return Err(throw(&e)),
     None => return Err(throw("the paint did not reach the node")),
   };
-  let image = Object::new(ctx.clone())?;
-  image.set("width", info.width)?;
-  image.set("height", info.height)?;
-  image.set("data", flux::rquickjs::TypedArray::new(ctx.clone(), info.pixels)?)?;
-  Ok(image)
+  pixels_object(&ctx, info)
 }
 
 /// `settle(maxMs)`: run frames until the app is at rest (settle.rs):
@@ -199,7 +276,8 @@ fn settle<'js>(ctx: Ctx<'js>, max_ms: f64) -> flux::rquickjs::Result<Promise<'js
     let settled = match outcome {
       Ok(()) => resolve.call::<_, ()>(()),
       Err(left) => {
-        let message = format!("settle: the app did not come to rest within {max_ms} ms of app time: {}", left.describe());
+        let message =
+          format!("settle: the app did not come to rest within {max_ms} ms of app time: {}", left.describe());
         Exception::from_message(task_ctx.clone(), &message).and_then(|error| reject.call::<_, ()>((error,)))
       }
     };
@@ -247,6 +325,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("link")?;
     decl.declare("debug")?;
     decl.declare("capture")?;
+    decl.declare("painted")?;
     Ok(())
   }
 
@@ -271,6 +350,7 @@ impl ModuleDef for SolTestModule {
     exports.export("link", Function::new(ctx.clone(), link)?)?;
     exports.export("debug", Function::new(ctx.clone(), debug)?)?;
     exports.export("capture", Function::new(ctx.clone(), capture)?)?;
+    exports.export("painted", Function::new(ctx.clone(), painted)?)?;
     Ok(())
   }
 }

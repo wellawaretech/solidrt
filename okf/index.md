@@ -503,6 +503,12 @@ Shaped, not started.
   frame while the app keeps presenting partial frames, so on screen it reads
   as a logic bug (entities drawn after the throwing line vanish) and the only
   trace is a log line the reader has to think to look for.
+- **[Coalesce the per-event syncs of writes made outside a frame](backlog/outside-frame-sync-coalescing.md)** [2026-10-06]
+  A pointer move handler that moves a sprite or a mesh flushes its layer or
+  scene once per dispatched move, because every event is its own JS entry with
+  its own microtask checkpoint; the frame's publish pass coalesces only what
+  the frame's JS writes, so a drag at a high event rate publishes many times
+  per frame.
 - **[Owner-scoped registerDebug](backlog/owner-scoped-register-debug.md)** [2026-08-02]
   Registrations reset on hot reload, so commands must register at module init
   - which forces any app state a command touches up to module scope; an

@@ -5,16 +5,16 @@
 // over the previous bytes (stale records in the slots past the old count,
 // after a shrink), never a grown population from its still-empty
 // replacement buffers, never a frame late. The scene is GPU state, so this
-// is an app test, and the probe is the frame itself: a capture of the leaf
-// showing the scene, requested from inside the frame after the write, is
-// serviced by that frame's own paint (a readback would re-render the scene
-// first and see the write wherever it landed). A display-space scene, so
-// the buffer is the displayable rgba8 texture and a white box reads 255.
+// is an app test, and the probe is the frame itself: `app.painted` reads
+// the leaf showing the scene as that frame's own paint drew it (a readback
+// would re-render the scene first and see the write wherever it landed).
+// A display-space scene, so the buffer is the displayable rgba8 texture
+// and a white box reads 255.
 
 import { test, expect } from "@solidrt/test"
 import type { Pixels, RefLocator, TestApp } from "@solidrt/test"
 import { onFrame } from "@solidrt/core"
-import { captureSnapshot, glsl } from "@solidrt/core/gpu"
+import { glsl } from "@solidrt/core/gpu"
 import { add, box, createRecordMesh, createScene, setRecords, shaderMaterialClass } from "../src/index.ts"
 
 const SIZE = 64
@@ -80,21 +80,13 @@ async function mounted(app: TestApp, initial: Float32Array, count: number) {
   return { ...w, leaf }
 }
 
-/**
- * Runs `write` among the next frame's callbacks and captures `leaf` from
- * inside that frame: what that frame's own paint drew. The capture's
- * promise settles with the frame after, so two frames run.
- */
-async function painted(app: TestApp, leaf: RefLocator, write: () => void): Promise<Pixels> {
-  let shot!: Promise<Pixels>
+/** Runs `write` among the next frame's callbacks; what that frame drew of `leaf`. */
+function painted(app: TestApp, leaf: RefLocator, write: () => void): Promise<Pixels> {
   let stop = onFrame(() => {
     stop()
     write()
-    shot = captureSnapshot(leaf.record.id)
   })
-  await app.frame()
-  await app.frame()
-  return shot
+  return app.painted(leaf)
 }
 
 /** The pixel at a fraction of the way across and down `pixels`. */

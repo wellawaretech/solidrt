@@ -37,7 +37,7 @@ Commands:
                          (a prebuilt <name>.sol.js: compile it to bytecode)
   check [file]           Verify the app builds and typechecks, without writing anything
                          (no file: every examples/*/src/index.tsx, packages/*/examples/*.tsx,
-                         packages/*/demos/src/*.tsx and tests/*.test.ts)
+                         packages/*/demos/src/*.tsx, tests/*.test.ts and the CLI's own commands)
   test [file]            Run the tests: every tests/*.test.ts under the current folder,
                          or under the given one, or the one given file
   render [file]          Replay a script (optional) and render frames for video generation

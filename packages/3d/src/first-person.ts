@@ -29,7 +29,9 @@
 //
 // Pose is plain mutable state; a nudge or a verb pushes it at once (a
 // mouse move under lock needs no frame loop), and update(dt) integrates
-// the rates and the glide from the app's own onFrame. Only `active` is
+// the rates and the glide from the app's own onFrame (onBeforeRender when
+// the camera rides something the frame moves, so it sees the frame's
+// final pose). Only `active` is
 // reactive: the frame-loop gate, true while any rate reads non-zero (a
 // held key, a deflected stick) or a glide is in flight, so a still scene
 // renders nothing new. update() returns whether the pose changed since

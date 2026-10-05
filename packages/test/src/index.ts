@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, setFrameRate, settle, time, windowReady } from "sol:test"
+import { capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, painted as paintFrame, setFrameRate, settle, time, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -218,6 +218,19 @@ export interface TestApp {
    * draws if anything demanded a draw.
    */
   frame(count?: number): Promise<void>
+  /**
+   * Runs one frame and returns what its paint drew of the node: the
+   * capture is queued ahead of the frame, so the frame's own paint
+   * services it, and the image is that frame exactly as its callbacks,
+   * effects and the extensions' publishes drew it. The probe for "what a
+   * frame writes is in that frame", where `pixels()` paints the tree
+   * afresh after the fact. One frame of app time passes.
+   *
+   * @example
+   * let frame = await app.painted(leaf)
+   * expect(frame.data[0]).toBe(255)
+   */
+  painted(target: Locator): Promise<Pixels>
   /**
    * Runs frames until `ms` of app time have passed: as many as it takes to
    * cover it, so at 60 fps `advance(100)` is 6 frames. The frame is the
@@ -496,6 +509,12 @@ let app: TestApp = {
   async frame(count = 1) {
     if (!Number.isInteger(count) || count < 0) throw new TypeError(`frame: the count must be a non-negative integer, got ${count}`)
     for (let i = 0; i < count; i++) await stepFrame()
+  },
+  painted(target) {
+    // A locator is an object, a ref locator the ref function itself.
+    let locator = target !== null && (typeof target === "object" || typeof target === "function") && "record" in target
+    if (!locator) throw new TypeError("painted: give it a locator, the node whose paint to read")
+    return paintFrame(target.record.id)
   },
   advance(ms) {
     if (typeof ms !== "number" || !(ms >= 0) || !Number.isFinite(ms)) throw new TypeError(`advance: the time must be a non-negative number of milliseconds, got ${ms}`)

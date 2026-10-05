@@ -306,4 +306,12 @@ declare module "sol:test" {
    * frame runs and no app time passes.
    */
   export function capture(node: number): { width: number; height: number; data: Uint8Array }
+  /**
+   * Run one frame with a capture of `node` queued ahead of it, so the
+   * frame's own paint services it: fulfills, once the frame has run, with
+   * what that frame drew of the node (the shape of `capture`). Written
+   * and painted in one frame, where `capture` paints the tree afresh
+   * after the fact. One frame at a time, as `frame`.
+   */
+  export function painted(node: number): Promise<{ width: number; height: number; data: Uint8Array }>
 }

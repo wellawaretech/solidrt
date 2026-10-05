@@ -53,7 +53,9 @@
 // Pose is plain mutable state; a nudge or a verb pushes it at once (the
 // next paint carries the new camera, no frame loop needed for a drag),
 // and update(dt) advances glides, follow, inertia, the lanes and the axis
-// rates from the app's own onFrame. `active()` is the reactive frame-loop
+// rates from the app's own onFrame (onBeforeRender when it follows
+// something the frame moves, so it sees the frame's final position).
+// `active()` is the reactive frame-loop
 // gate (a glide, fling, fit, follow, shake or damped bound in flight, or
 // a rate driving); a resting camera costs nothing. update() pushes the
 // pose to the layers only when it changed (one setCamera per driven
@@ -201,8 +203,10 @@ export type Camera2d = {
   viewRect(): Rect2d
   /** Advance glides, follow, inertia, the lanes and the axis rates, then
    * push the camera to the layers if it changed. Call from onFrame with
-   * the frame's dt in seconds; returns whether the camera changed since
-   * the previous update (nudges and verbs included). */
+   * the frame's dt in seconds - or from onBeforeRender when the camera
+   * follows something the frame moves, so it reads that frame's final
+   * position; returns whether the camera changed since the previous
+   * update (nudges and verbs included). */
   update(dt: number): boolean
   /**
    * Reactive: whether update() still has work - a glide, fling or

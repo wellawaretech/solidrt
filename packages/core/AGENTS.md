@@ -617,8 +617,8 @@ that reads exactly like Solid fallout.
   update: it runs after every onFrame callback and the reactive flush,
   when the frame's state is final, for what must see everything the frame
   wrote and write once more (a camera follow, a fit to a measured box;
-  Unity's LateUpdate) - write the engine directly there, since a signal
-  written there flushes with the next frame. `onBeforeRender(fn, {
+  Unity's LateUpdate); its signal writes are flushed before the paint
+  too, the way onLayout's are. `onBeforeRender(fn, {
   publish: true })` runs after those, and again after a frame's onLayout
   handlers: the pass where an extension hands the engine what the frame
   wrote into its mirrors (a scene its record buffers and lights, a sprite

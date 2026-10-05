@@ -62,8 +62,12 @@ agents/testing.md.
   (kind, label, text, box per line, no ids) to pin a layout or print it;
   `locator.pixel(x, y)` is `[r, g, b, a]` at a point of the node and
   `locator.pixels()` the whole image, drawn now with no time passing (the
-  last resort, for what only the picture shows); `app.gpu({ label })` is
-  the GPU inventory `/gpu` reports, where "does it draw" is a count.
+  last resort, for what only the picture shows); `await
+  app.painted(locator)` runs one frame and returns what its paint drew of
+  the node, the capture riding the frame - the probe for a write made in
+  a frame being in that frame, where `pixels()` paints afresh after the
+  fact; `app.gpu({ label })` is the GPU inventory `/gpu` reports, where
+  "does it draw" is a count.
 - The data folder and the fetch cache are empty at the start of every
   test, and no gamepad is seated.
 - A failure prints the app time and frame, what still demanded frames,
