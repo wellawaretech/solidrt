@@ -443,6 +443,28 @@ the frame-request latch after `onFrame` had re-registered, so at present
 time the latch read false for exactly the apps that animate (the earlier
 miss counts had come out right only because the stray Ticks re-set it).
 
+### D10. A frame's JS publishes to the engine before the paint, not at the microtask after it
+
+The frame's JS is one task: timers, rAF, the `onFrame` callbacks, the
+reactive flush and `renderFrame()`, whose paint and submit happen inside
+the call; the engine's microtask checkpoint comes after the whole task.
+Anything an extension staged for a microtask (a scene's record bytes and
+lights, a sprite layer's style and count, a tile bake) therefore landed
+one frame after the paint that should have shown it, while the engine's
+own spatial flush already ran ahead of the paint - so a record mesh
+written in `onFrame` painted its new count over its old bytes. Core's
+`onBeforeRender` is the frame's late update (Unity's LateUpdate), and
+its publish pass (`{ publish: true }`) runs after it and again after the
+post-layout handlers: extensions sync there, and the microtask remains
+for writes made outside a frame. Rejected: applying a record mesh's
+count inside its sync (ends the count-ahead flash, keeps the lag); a
+pre-paint event emitted from the draw (it runs past the demand gate, so
+a first write after idle still slips a frame); a sync with no microtask
+at all (a paused clock paints through `render_now` without JS, so a
+write made while paused would never publish). Three's `render()` and
+Unity's `Application.onBeforeRender` are the models. Record:
+[before-render-phase].
+
 ## Known limits and open items
 
 - Presentation timestamps are modeled, not measured: [presentation-feedback].
@@ -517,3 +539,4 @@ Open: listed above.
 [frame-signal-refresh-count]: ../done/frame-signal-refresh-count.md
 [cadence-hold]: ../plans/cadence-hold.md
 [vsync-locked-js-bound-double-signal]: ../done/vsync-locked-js-bound-double-signal.md
+[before-render-phase]: ../done/before-render-phase.md

@@ -13,15 +13,17 @@
 // coverage (stored and skipped until a declaring material arrives), so no
 // bookkeeping tracks who reads them. scene.setParams merges app-owned
 // names into the same set.
-// Mutations batch to a microtask, so a burst of writes (a whole subtree
-// moved, many effects in one flush) syncs once.
+// Mutations batch, so a burst of writes (a whole subtree moved, many
+// effects in one flush) syncs once: in the publish pass of core's
+// onBeforeRender, ahead of the frame's paint, or at a microtask for a
+// write made outside a frame.
 //
 // Rendering itself belongs to the runtime: the target is an ordinary
 // `render: "auto"` draw target that re-renders when its entries change, so
 // a static scene costs zero passes and this module registers no frame
 // loop. Continuous animation is the app's onFrame writing transforms -
-// each write lands in the core, the microtask flushes it, and the frame
-// renders once.
+// each write lands in the core, the sync ahead of the paint flushes it,
+// and the frame renders once.
 //
 // Still in JS this stage (see okf/backlog/spatial-core.md): the picking
 // broadphase and its leaves, the transparent sort's centers and the light
@@ -40,7 +42,7 @@ import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyP
 import * as spatial from "flux:spatial"
 import type { BindDrawOptions, Impact as CoreImpact, NodeId, QueryFilter } from "flux:spatial"
 import type { BufferId, DrawId, FilterMode, InstanceOrder, ProgramId, RenderPipelineId, ShaderParams, TextureBindings, TextureId, WrapMode } from "@solidrt/core/gpu"
-import { getOwner, onCleanup } from "@solidrt/core"
+import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import { copy, mat4, transformPoint } from "./math.ts"
 import { linearColor, premultipliedColor } from "./color.ts"
@@ -482,7 +484,8 @@ export type SceneOptions = {
   /** Where a per-scene budget error goes: the light cap and the
    * shadow-slot budget are checked over the settled set at the sync and
    * reported once per change of the set, the scene rendering on with
-   * what fits. Without a handler the sync throws it, uncaught (a
+   * what fits. Without a handler the sync throws it, and it is only
+   * reported (logged by the frame's publish pass, or uncaught from the
    * microtask): the `<Scene>` component hands one in and rethrows inside
    * the tree, so the app's error boundary shows it. */
   onError?: (error: Error) => void
@@ -1583,8 +1586,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let inst = mesh._instances
     let bufs = mesh._buffers!
     // The entry starts switched off: it has no world matrix yet - the walk
-    // in sync() computes one - and _schedule() defers that to a microtask,
-    // so added live it would draw at the seeded identity until then. The
+    // in sync() computes one - and _schedule() defers that to the sync
+    // (the frame's publish pass, or a microtask), so added live it would
+    // draw at the seeded identity until then. The
     // mismatch branch in sync() turns it on in the same pass that writes
     // uModel.
     let morph = morphEntry(mesh.material, mesh)
@@ -2270,6 +2274,21 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // first frame.
   lightsDirty = true
   hooks._schedule()
+  // The publish pass of every frame runs the pending sync ahead of the
+  // paint, so a write made anywhere in the frame's JS is in that frame's
+  // picture: the count, the buffers and the bytes of a record write land
+  // together, and nothing shows a frame late. The microtask stays for
+  // writes made outside a frame. Registered outside any owner: the scene's
+  // own dispose unhooks it (an autoFree: false scene outlives the owner it
+  // was created in).
+  let unhook = runWithOwner(null, () =>
+    onBeforeRender(
+      () => {
+        if (scheduled) sync()
+      },
+      { publish: true },
+    ),
+  )
 
   // The scene's root listeners (scene.listen): the last stop of the
   // pointer walk scene-pointer.ts runs behind scene.handlers.
@@ -2751,6 +2770,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     dispose() {
       if (disposed) return
       disposed = true
+      unhook()
       listeners.clear()
       // Full tree-side teardown, not just the target: every node leaves
       // the scene (entries' geometry-buffer references and pick leaves

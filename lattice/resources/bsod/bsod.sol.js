@@ -4588,6 +4588,22 @@ function backDefault() {
 var animationFrames = new Map;
 var refreshRate = 60;
 var latestTick = 0;
+var lateHandlers = [];
+var publishHandlers = [];
+function runHandlers(handlers2) {
+  for (let fn of [...handlers2]) {
+    try {
+      fn();
+    } catch (err) {
+      console.error("Error in onBeforeRender callback:", err);
+    }
+  }
+}
+function runBeforeRender(bootstrap) {
+  if (!bootstrap)
+    runHandlers(lateHandlers);
+  runHandlers(publishHandlers);
+}
 var backHandlers = [];
 var windowRootId = 0;
 function setWindowRoot(nodeId) {
@@ -4626,6 +4642,7 @@ function attachWindow(nodeId) {
     } catch (err) {
       console.error("Error in reactive flush:", err);
     }
+    runBeforeRender(bootstrap);
     scanForOrphans(t);
     renderFrame();
   }
@@ -5172,8 +5189,22 @@ import { copyTexture, destroyBuffer as destroyBuffer2, renderTarget, setDraw } f
 import { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu";
 import { limits } from "flux:gpu";
 import { compileShader, createRenderPipeline, destroyProgram, destroyRenderPipeline, destroyShader, linkProgram, programAttributes } from "flux:gpu";
-import { captureSnapshot, readTexture } from "flux:gpu";
+
+// ../../packages/core/src/shaders.ts
 var glsl = String.raw;
+var SCREEN_SIZE_GLSL = glsl`
+  float screenSizeScale(vec2 size, float pxPerUnit, vec2 screenPx) {
+    float smallest = min(abs(size.x), abs(size.y)) * pxPerUnit;
+    if (smallest <= 0.0) return 1.0;
+    float target = smallest;
+    if (screenPx.x > 0.0) target = max(target, screenPx.x);
+    if (screenPx.y > 0.0) target = min(target, screenPx.y);
+    return target / smallest;
+  }
+`;
+
+// ../../packages/core/src/gpu.ts
+import { captureSnapshot, readTexture } from "flux:gpu";
 // ../../packages/core/src/image.ts
 import { decodeImage } from "flux:image";
 import { decodeImage as decodeImage2, encodeImage, encodeTexture, transcodeTexture } from "flux:image";

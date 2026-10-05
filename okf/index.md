@@ -491,6 +491,13 @@ Shaped, not started.
   dropped, so Discover searches forever; restoring it means a forge::mdns
   responder (advertise) exposed as a flux capability, and its feasibility next
   to system responders is unproven.
+- **[Put every optional flux module behind a cargo feature](backlog/module-feature-flags.md)** [2026-10-06]
+  A custom runtime build can only leave out what is a cargo feature all the
+  way down, and today that is video, ktx2, wasm-native, speech and test; p2p
+  (iroh), wasm, sqlite, subprocess and mdns are unconditional in forge, flux
+  and the capability list, so a custom player carries them whether it wants
+  them or not; give each optional module the video pattern, with the stock
+  binaries turning them all on.
 - **[Move JSX compilation to the native Oxc compiler](backlog/native-jsx-compiler.md)** [2026-08-28]
   Solid 2.0 ships @solidjs/compiler (native, ~30x faster than Babel) alongside
   the Babel plugin, but it only lowers JSX, so adopting it means finding new
@@ -638,11 +645,12 @@ Shaped, not started.
   is on the stack, with ScrollView opting in and focus restored on pop."
 - **[Register app-specific native modules without forking the runtime](backlog/runtime-extension-modules.md)** [2026-10-03]
   The route for native code is a custom runtime build, but lattice builds its
-  FluxEngine inside start_with and registers the built-in modules in a fixed
-  list, so a developer who needs one more module has to fork; take extra flux
-  plugins and per-frame hooks on the entry points and document the cargo
-  project that depends on lattice instead of cloning it; speech recognition is
-  the worked example.
+  FluxEngine inside start_with, the stock main is not reusable and sol only
+  knows the stock binaries, so a developer who needs one more module has to
+  fork; take extra flux plugins and per-frame hooks on the entry points,
+  expose the stock main as a function, and let sol pick up a project's own
+  runtime binaries, so a custom player is a cargo project beside the app
+  depending on a tagged lattice; speech recognition is the worked example.
 - **[Runtime optimization - what the binary weighs and how to shrink it](backlog/runtime-optimization.md)** [2026-09-29]
   The runtime is 61 MB at release (about 40 MB at release-opt) and size
   already decides what ships - speech recognition is compiled out of every
@@ -1251,6 +1259,12 @@ Finished, kept for the reasoning.
   fade and snaps to full frost when it ends, because the group-opacity layer
   becomes the backdrop's root; done means either the blur survives the fade or
   the containment is documented and warned about in dev.
+- **[Publish extension writes before the frame paints, not at the microtask after it](done/before-render-phase.md)** [2026-10-06]
+  A record mesh written from onFrame painted its new count over its old bytes,
+  and every record, light, style and tile write made in a frame showed a frame
+  late, because extensions published at a microtask that only runs after the
+  frame's paint; core now has a before-render phase whose publish pass the
+  scene and the 2d layers sync in.
 - **[Bindings reject an explicitly passed undefined for an optional argument](done/binding-optional-arg-undefined.md)** [2026-08-13]
   An omitted option object arrives at the binding as an explicit undefined,
   which Opt<Object> refuses - so createTexture without opts throws and every
@@ -2152,6 +2166,12 @@ Finished, kept for the reasoning.
   captureSnapshot and get_snapshot latch a frame request but do not wake the
   render loop, so a truly idle client never services the capture and the query
   times out.
+- **[Snapshot of a stepped frame as it was drawn](done/snapshot-stepped-frame.md)** [2026-10-06]
+  A snapshot captured a paint it requested itself, after the pending
+  microtasks, so a glitch confined to one frame could not be captured even
+  under a paused clock with step_frames; /snapshot?step=1 (get_snapshot step
+  true) queues the capture and one step together so the stepped frame's own
+  paint services it.
 - **[Snapshot boundary textures leak across dev reloads](done/snapshot-texture-leak-reload.md)** [2026-09-24]
   get_gpu_resources on the SM-T500 listed 51 window-sized rgba8 "snapshot"
   textures (2000x1092, ~8.7 MB each, ~440 MB) after a session of reloads;
@@ -2570,6 +2590,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Engine-free layering upheld, docs excellent, clippy clean; gaps are untested
   subprocess/p2p/ffi, stale docs, an implicit single-thread contract and
   IPv4-only skew.
+- **[How to observe a frame exactly as it was drawn](notes/frame-as-drawn-probe.md)** [2026-10-06]
+  A texture readback renders a dirty target before reading and a test's
+  pixels() paints afresh, so neither sees a frame as its own paint drew it; a
+  capture requested from inside the frame does, and so does /snapshot?step=1
+  under a paused clock.
 - **[The splat viewer against the field](notes/gaussian-splats-against-the-field.md)** [2026-09-27]
   Where the shipped splat viewer stands against the WebGL viewers
   (antimatter15, GaussianSplats3D, PlayCanvas, Babylon) and the compute

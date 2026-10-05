@@ -113,8 +113,21 @@ pub struct QueryHandles {
 /// message so dev tools can plan against a client's actual surface before
 /// calling (mixed-version fleets are normal). Keep in sync with the query
 /// match in `try_serve`.
-const QUERY_KINDS: &[&str] =
-  &["clock", "input", "settle", "stats", "tree", "snapshot", "gpu", "texture", "buffer", "debug_list", "debug_call", "link", "location"];
+const QUERY_KINDS: &[&str] = &[
+  "clock",
+  "input",
+  "settle",
+  "stats",
+  "tree",
+  "snapshot",
+  "gpu",
+  "texture",
+  "buffer",
+  "debug_list",
+  "debug_call",
+  "link",
+  "location",
+];
 
 #[cfg(not(target_os = "android"))]
 const SERVICE_TYPE: &str = "_solidrt._tcp.local.";
@@ -883,12 +896,14 @@ async fn try_serve(
                 let rect = query_rect(&json);
                 let scale = query_scale(&json);
                 let raw = query_raw(&json);
+                let step = json.get("step").and_then(|s| s.as_bool()).unwrap_or(false);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     let frame_requested = flags.frame_requested.clone();
-                    eh.exec(move |ctx| request_snapshot(&ctx, node_id, id, rect, scale, raw, reply_tx, frame_requested));
+                    let clock = flags.clock.clone();
+                    eh.exec(move |ctx| request_snapshot(&ctx, node_id, id, rect, scale, raw, step, clock, reply_tx, frame_requested));
                   }
                   None => {
                     let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
@@ -1235,7 +1250,10 @@ fn window_json(
         });
         flux::gui::inspect::insert_label(&mut obj, &t.label);
         if let Some(exec) = t.exec_ms_per_frame {
-          obj.as_object_mut().expect("target json is an object").insert("gpuPassExecMsPerFrame".into(), round2(exec).into());
+          obj
+            .as_object_mut()
+            .expect("target json is an object")
+            .insert("gpuPassExecMsPerFrame".into(), round2(exec).into());
         }
         obj
       })
@@ -1313,7 +1331,10 @@ fn tree_reply(
       };
     }
     match tree.snapshot_from(root, depth) {
-      Some(node) => serde_json::json!({"type": "result", "id": id, "data": flux::gui::inspect::node_record(&node, props_tree)}).to_string(),
+      Some(node) => {
+        serde_json::json!({"type": "result", "id": id, "data": flux::gui::inspect::node_record(&node, props_tree)})
+          .to_string()
+      }
       None => match root {
         Some(r) => error_reply(id, &format!("no node with id {r}")),
         None => error_reply(id, "no render tree (the app has not rendered)"),
@@ -1416,6 +1437,8 @@ fn request_snapshot(
   rect: Option<(u32, u32, u32, u32)>,
   scale: u32,
   raw: bool,
+  step: bool,
+  clock: crate::runtime::ClockControl,
   reply_tx: UnboundedSender<String>,
   frame_requested: Arc<AtomicBool>,
 ) {
@@ -1423,6 +1446,19 @@ fn request_snapshot(
     let _ = reply_tx.send(error_reply(id, "no alloy context"));
     return;
   };
+  // A stepped capture is the picture of one frame as its own code drew
+  // it: the capture is queued first, then one step, both on the JS thread
+  // between two frame signals, so the stepped frame's paint services the
+  // capture - before anything that frame left to a microtask lands. A
+  // plain capture is serviced by a paint it requests itself, which comes
+  // after the request's own microtask checkpoint and so never shows a
+  // glitch confined to one frame. Only a paused clock steps: with it
+  // running the next frame flows anyway, and a queued step would fire at
+  // the next pause instead.
+  if step && clock.scale() != 0.0 {
+    let _ = reply_tx.send(error_reply(id, "snapshot step: the clock is running; pause it first (clock scale 0)"));
+    return;
+  }
   alloy.request_capture(
     node_id,
     Box::new(move |result| {
@@ -1436,6 +1472,9 @@ fn request_snapshot(
       let _ = reply_tx.send(reply);
     }),
   );
+  if step {
+    clock.add_steps(1);
+  }
   // Latch a frame only after the capture is queued (matching captureSnapshot's
   // order), so a Tick-driven draw cannot consume the latch before the request
   // is registered and leave the capture stranded. The app may be idle; the idle

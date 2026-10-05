@@ -335,7 +335,7 @@ let TOOLS: {
     name: "get_snapshot",
     annotations: READ_ONLY,
     description:
-      "Capture a PNG image of any node in a running app client's render tree, by node id (get ids from get_render_tree). Returns the rendered pixels of that node's subtree, so you can see what the app actually drew. Capture the smallest node that contains what you are checking (e.g. the <texture> leaf itself) - that is exactly the content at its own pixel size; the window root is mostly empty layout around it and orders of magnitude more pixels. Reserve root captures for when layout/positioning itself is the question. The node must be currently mounted and paint a non-zero box. Detached (`d-*`) nodes capture their painted box: their own `w`/`h` when set, else the box inherited from the nearest laid-out ancestor (the same box get_render_tree reports for them). A capture renders only that node's subtree, with no ancestor paint: pixels nothing in the subtree draws come back transparent, not the background an ancestor draws behind the node - capture the window root when the background matters. Pass x/y/width/height to crop and `scale` to magnify: captures may be downscaled before you see them, so verify small hand-authored geometry (sprites, path data, icons) with a tight crop at 4x-8x rather than squinting at a full capture. Crop coordinates are in captured-image pixels (the width x height a capture of that node reports - device pixels), not the logical units get_render_tree reports. Works on an idle client (the capture requests its own frame); a timeout means the client's JS thread is busy or wedged, not that the app is idle. If you are MEASURING rather than looking - reading positions or sizes out of the image, comparing captures, deciding whether the app placed something correctly - call mute_user_input first: the human's own dragging and clicking is otherwise in your result, and a capture of their pose looks exactly like a capture of yours, so the numbers disagree with the code and send you debugging code that was never wrong. This tool always returns the PNG; for pixel assertions in a script, the dev server's control API answers /snapshot?node=<id>&format=raw with the RGBA8 bytes instead (agents/debugging.md).",
+      "Capture a PNG image of any node in a running app client's render tree, by node id (get ids from get_render_tree). Returns the rendered pixels of that node's subtree, so you can see what the app actually drew. Capture the smallest node that contains what you are checking (e.g. the <texture> leaf itself) - that is exactly the content at its own pixel size; the window root is mostly empty layout around it and orders of magnitude more pixels. Reserve root captures for when layout/positioning itself is the question. The node must be currently mounted and paint a non-zero box. Detached (`d-*`) nodes capture their painted box: their own `w`/`h` when set, else the box inherited from the nearest laid-out ancestor (the same box get_render_tree reports for them). A capture renders only that node's subtree, with no ancestor paint: pixels nothing in the subtree draws come back transparent, not the background an ancestor draws behind the node - capture the window root when the background matters. Pass x/y/width/height to crop and `scale` to magnify: captures may be downscaled before you see them, so verify small hand-authored geometry (sprites, path data, icons) with a tight crop at 4x-8x rather than squinting at a full capture. Crop coordinates are in captured-image pixels (the width x height a capture of that node reports - device pixels), not the logical units get_render_tree reports. Works on an idle client (the capture requests its own frame); a timeout means the client's JS thread is busy or wedged, not that the app is idle. The capture paints the current state afresh, after every pending microtask, so a glitch confined to one frame never shows in it: with the clock paused, pass `step: true` to advance one frame and capture inside it, the picture exactly as that frame's own code drew it. If you are MEASURING rather than looking - reading positions or sizes out of the image, comparing captures, deciding whether the app placed something correctly - call mute_user_input first: the human's own dragging and clicking is otherwise in your result, and a capture of their pose looks exactly like a capture of yours, so the numbers disagree with the code and send you debugging code that was never wrong. This tool always returns the PNG; for pixel assertions in a script, the dev server's control API answers /snapshot?node=<id>&format=raw with the RGBA8 bytes instead (agents/debugging.md).",
     inputSchema: {
       nodeId: z
         .number()
@@ -357,6 +357,15 @@ let TOOLS: {
         .describe(
           "Integer magnification, 1-8: each captured pixel becomes an NxN block (nearest-neighbour), so you see " +
             "the actual rendered pixels enlarged. Combine with a crop; the scaled output is capped at 8192 px per side",
+        )
+        .optional(),
+      step: z
+        .boolean()
+        .describe(
+          "With the clock paused (set_time_scale 0): advance one frame and capture inside it, so the image is that " +
+            "frame exactly as its own code drew it, before anything the frame left to a microtask or a promise lands " +
+            "- the only way to see a glitch confined to one frame. Without it the capture paints the current state " +
+            "afresh, after every pending microtask. Refused while the clock runs: pause first",
         )
         .optional(),
       save_to: SAVE_TO_ARG,
@@ -506,7 +515,7 @@ let TOOLS: {
     name: "step_frames",
     annotations: DRIVES_APP,
     description:
-      "While paused (set_time_scale 0), advance a running app client by exactly n frames: each frame moves app time forward one refresh period (~16.7 ms at 60 Hz), runs onFrame/requestAnimationFrame and any timers that come due, and presents the result. Deterministic single-stepping for animations and game logic: pause, snapshot, step, snapshot again to see exactly what changed in n frames. With the clock running this is a no-op (frames already flow). Steps are applied at the client's frame rate, so n frames take about n refresh periods of wall time before a following snapshot shows the result.",
+      "While paused (set_time_scale 0), advance a running app client by exactly n frames: each frame moves app time forward one refresh period (~16.7 ms at 60 Hz), runs onFrame/requestAnimationFrame and any timers that come due, and presents the result. Deterministic single-stepping for animations and game logic: pause, snapshot, step, snapshot again to see exactly what changed in n frames. A snapshot after a step paints the settled state afresh; to see a stepped frame exactly as its own code drew it, call get_snapshot with step: true instead, which advances that one frame and captures inside it. With the clock running this is a no-op (frames already flow). Steps are applied at the client's frame rate, so n frames take about n refresh periods of wall time before a following snapshot shows the result.",
     inputSchema: {
       n: z.number().int().min(1).max(1000).describe("Number of frames to advance (1-1000)"),
       client: CLIENT_ARG,
@@ -629,6 +638,7 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       for (let key of ["x", "y", "width", "height", "scale"]) {
         if (typeof args?.[key] === "number") params.set(key, String(args[key]))
       }
+      if (args?.step === true) params.set("step", "1")
       if (typeof args?.client === "number") params.set("client", String(args.client))
       return control(`/snapshot?${params.toString()}`)
     }

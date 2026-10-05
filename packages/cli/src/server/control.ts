@@ -464,6 +464,14 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let format = parseFormat(query)
       if (format instanceof Response) return format
       if (format) extra.format = format
+      // step=1: advance one frame of a paused clock and capture inside it -
+      // the frame as its own code drew it (the client refuses it while the
+      // clock runs).
+      let step = query.get("step")
+      if (step !== undefined) {
+        if (step !== "1" && step !== "true") return Response.json({ error: 'Step must be "1" or "true"' }, { status: 400 })
+        extra.step = true
+      }
       return handleQuery(query, "snapshot", extra)
     }
     case "/__control__/gpu": {

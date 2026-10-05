@@ -3,9 +3,9 @@
 // populations). Sprites are 15 JS-owned floats in one canonical
 // Float32Array ordered by draw order (insertion order - painter's
 // algorithm, later over earlier; `orderBy` swaps that for a core-produced
-// key order at publish, records untouched); mutations batch to a microtask
-// whose flush publishes the live prefix through the zero-copy buffer write
-// lease.
+// key order at publish, records untouched); mutations batch, and the flush
+// (ahead of the frame's paint, or at a microtask outside a frame)
+// publishes the live prefix through the zero-copy buffer write lease.
 // A moved sprite is 15 float stores plus one bulk memcpy per dirty frame; a
 // static layer publishes nothing and therefore costs nothing.
 //
@@ -19,7 +19,7 @@
 // Layer space, camera, pointer dispatch and the sprite functions
 // (addSprite/setSprite/...) are shared with the node layer; picking here is
 // the JS reverse walk (pointInSprite), since records have no nodes.
-import { getOwner, onCleanup } from "@solidrt/core"
+import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
 import { beginBufferWrite, checkScreenSize, createBuffer, destroyBuffer, endBufferWrite, screenSizeScale } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
@@ -115,6 +115,19 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
   let dirty = false
   let scheduled = false
   let published = 0
+  // The publish pass of every frame runs the pending flush ahead of the
+  // paint, so a write made anywhere in the frame's JS is in that frame's
+  // picture; the microtask stays for writes made outside a frame.
+  // Registered outside any owner: dispose unhooks it (an autoFree: false
+  // layer outlives the owner it was created in).
+  let unhook = runWithOwner(null, () =>
+    onBeforeRender(
+      () => {
+        if (scheduled) flush()
+      },
+      { publish: true },
+    ),
+  )
 
   // The GPU buffer's record capacity; the canonical array grows ahead of it
   // (addSprite) and the publish catches the buffer up: a larger buffer is
@@ -248,6 +261,7 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
     dispose() {
       if (disposed) return
       disposed = true
+      unhook()
       for (let sprite of layer._order) sprite.layer = null
       layer._order.length = 0
       views.dispose()

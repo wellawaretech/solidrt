@@ -25,7 +25,7 @@
 // CameraUpdate in camera.ts) is a shared-params write (uCamera +
 // uCameraRot) on that view's target, never per-sprite; pointer dispatch
 // (dispatch.ts) undoes it with unprojectCamera.
-import { getOwner, onCleanup } from "@solidrt/core"
+import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import { beginBufferWrite, checkScreenSize, createBuffer, destroyBuffer, endBufferWrite, screenSizeScale } from "@solidrt/core/gpu"
 import type { BlendMode, BufferId, TextureId } from "@solidrt/core/gpu"
@@ -817,6 +817,19 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
   let scheduled = false
   let styleDirty = false
   let published = 0
+  // The publish pass of every frame runs the pending flush ahead of the
+  // paint, so a write made anywhere in the frame's JS is in that frame's
+  // picture; the microtask stays for writes made outside a frame.
+  // Registered outside any owner: dispose unhooks it (an autoFree: false
+  // layer outlives the owner it was created in).
+  let unhook = runWithOwner(null, () =>
+    onBeforeRender(
+      () => {
+        if (scheduled) flush()
+      },
+      { publish: true },
+    ),
+  )
 
   // Slot allocation: freed slots recycle, the high-water mark is the
   // published instance count (a freed slot's pose zeroes - zero scale
@@ -1107,6 +1120,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
     dispose() {
       if (disposed) return
       disposed = true
+      unhook()
       for (let sprite of byNode.values()) {
         sprite.layer = null
         declared.delete(sprite.node!)

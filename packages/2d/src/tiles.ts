@@ -15,12 +15,13 @@
 // Chunks allocate lazily on the first setTile that gives them content: an
 // empty chunk costs nothing - no records, no buffer, no texture - so a
 // sparse world is bounded by its content, and world size is bounded by
-// memory, not maxTextureSize. setTile and setTiles batch to a microtask;
-// the flush publishes and re-bakes ONLY dirty chunks. A layer nobody edits
+// memory, not maxTextureSize. setTile and setTiles batch; the flush (ahead
+// of the frame's paint, or at a microtask outside a frame) publishes and
+// re-bakes ONLY dirty chunks. A layer nobody edits
 // publishes nothing, renders nothing, and costs nothing per frame.
 // Camera-driven residency (bake far chunks on approach, evict them) is
 // deliberately not here yet - see okf/backlog/2d-baked-layers.md.
-import { getOwner, onCleanup } from "@solidrt/core"
+import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
 import {
   beginBufferWrite,
   createBuffer,
@@ -151,8 +152,9 @@ export type TileLayer = {
    * an absent cell has no tint, it draws nothing). `tint` multiplies the
    * cell's sampled texels like a sprite's tint; absent it keeps the cell's
    * current tint (a cell being set from empty starts at [1, 1, 1, 1]).
-   * Batched; the microtask flush publishes and re-bakes ONLY the chunks
-   * that changed, however many tiles did.
+   * Batched; the flush ahead of the frame's paint (the microtask, outside
+   * a frame) publishes and re-bakes ONLY the chunks that changed, however
+   * many tiles did.
    */
   setTile(col: number, row: number, frame: Frame | null, opts?: { tint?: Tint }): void
   /**
@@ -265,6 +267,19 @@ export function createTileLayer(
 
   let disposed = false
   let scheduled = false
+  // The publish pass of every frame runs the pending flush ahead of the
+  // paint, so a tile set anywhere in the frame's JS is baked for that
+  // frame's picture; the microtask stays for writes made outside a frame.
+  // Registered outside any owner: dispose unhooks it (an autoFree: false
+  // layer outlives the owner it was created in).
+  let unhook = runWithOwner(null, () =>
+    onBeforeRender(
+      () => {
+        if (scheduled) flush()
+      },
+      { publish: true },
+    ),
+  )
   // Chunk index (chunkRow * chunkCols + chunkCol) -> resident chunk.
   let resident = new Map<number, Chunk>()
   let dirtyChunks: Chunk[] = []
@@ -508,6 +523,7 @@ export function createTileLayer(
     dispose() {
       if (disposed) return
       disposed = true
+      unhook()
       for (let chunk of resident.values()) {
         destroyTexture(chunk.texture)
         destroyBuffer(chunk.buffer)

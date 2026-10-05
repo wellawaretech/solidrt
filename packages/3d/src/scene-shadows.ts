@@ -99,7 +99,7 @@ export type ShadowSystemDeps<V extends ShadowView> = {
   disposeView(view: V): void
   /** The light set changed shape: the scene owes a writeLights. */
   markLightsDirty(): void
-  /** Schedule the scene's sync microtask. */
+  /** Schedule the scene's sync. */
   schedule(): void
 }
 

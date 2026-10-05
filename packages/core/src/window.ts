@@ -422,7 +422,9 @@ export function keyboardHeight(): number {
 // write made by a handler would otherwise reach its node a frame late. The
 // drain lives here, the way runFrame drains before renderFrame, so that no
 // handler has to flush for itself. A throwing handler skips neither the
-// handlers after it nor the flush.
+// handlers after it nor the flush. The publish pass (onBeforeRender) runs
+// once more after the flush, for the same reason: what a handler hands an
+// extension lands in this frame's paint too.
 let layoutHandlers: (() => void)[] = []
 let layoutSubscribed = false
 
@@ -439,6 +441,7 @@ function runLayoutHandlers() {
   } catch (err) {
     console.error("Error in reactive flush:", err)
   }
+  runPublish()
 }
 
 /**
@@ -457,6 +460,84 @@ export function onLayout(fn: () => void) {
   let unsubscribe = () => {
     let i = layoutHandlers.indexOf(fn)
     if (i >= 0) layoutHandlers.splice(i, 1)
+  }
+  if (getOwner()) onCleanup(unsubscribe)
+  return unsubscribe
+}
+
+// ------ Before render ----------------
+
+// The last JS of a frame, in two passes. The plain handlers are the app's
+// late update: they run once per frame after every onFrame callback and
+// the reactive flush, so a follow or a fit reads the finished state of the
+// frame (Unity's LateUpdate). The publish handlers run after them, and
+// once more after the post-layout handlers' flush (the one other JS entry
+// ahead of the paint): an extension hands its pending writes to the engine
+// there - a scene's record bytes and lights, a layer's style and pose
+// publish - so they are in the frame they were made in, the way the
+// engine's own transform flush ahead of the paint is. Without this pass
+// those writes land at the microtask after the whole frame closure, one
+// frame after the paint that should have shown them. Each handler is its
+// own boundary, listener style: a throw is logged and the rest still run.
+let lateHandlers: (() => void)[] = []
+let publishHandlers: (() => void)[] = []
+
+function runHandlers(handlers: (() => void)[]) {
+  for (let fn of [...handlers]) {
+    try {
+      fn()
+    } catch (err) {
+      console.error("Error in onBeforeRender callback:", err)
+    }
+  }
+}
+
+// Before renderFrame(): the late pass (skipped on the bootstrap frame, which
+// runs no frame callbacks either), then the publish pass.
+function runBeforeRender(bootstrap: boolean) {
+  if (!bootstrap) runHandlers(lateHandlers)
+  runHandlers(publishHandlers)
+}
+
+// After the post-layout handlers' flush: the publish pass alone.
+function runPublish() {
+  runHandlers(publishHandlers)
+}
+
+export interface BeforeRenderOptions {
+  /**
+   * Run in the publish pass: after every plain handler, and again after
+   * the `onLayout` handlers of a frame that has any. For handing pending
+   * state to the engine, never for deciding it.
+   */
+  publish?: boolean
+}
+
+/**
+ * Calls `fn` right before every frame renders: after the frame's `onFrame`
+ * callbacks and the reactive flush, when the frame's state is final. The
+ * frame's late update: a camera follow, a fit to a measured box, anything
+ * that must see what every frame callback wrote and write once more.
+ * Signal writes made here are flushed with the NEXT frame, not this one -
+ * write the engine directly (a transform, a camera, a param), or decide in
+ * onFrame and only publish here.
+ *
+ * `{ publish: true }` registers for the publish pass instead: after every
+ * plain handler, and once more after the `onLayout` handlers of a frame
+ * that has any. It is where an extension hands the engine what the frame
+ * wrote into its mirrors (a scene syncs its record buffers and lights, a
+ * sprite layer its style and pose publish), so a write made anywhere in
+ * the frame's JS is in that frame's paint. A publish handler must be
+ * idempotent (it may run twice per frame) and must not write app state.
+ *
+ * Returns a cleanup function; also auto-cleans within an owned scope.
+ */
+export function onBeforeRender(fn: () => void, options?: BeforeRenderOptions) {
+  let handlers = options?.publish ? publishHandlers : lateHandlers
+  handlers.push(fn)
+  let unsubscribe = () => {
+    let i = handlers.indexOf(fn)
+    if (i >= 0) handlers.splice(i, 1)
   }
   if (getOwner()) onCleanup(unsubscribe)
   return unsubscribe
@@ -589,6 +670,7 @@ export function attachWindow(nodeId: number) {
     } catch (err) {
       console.error("Error in reactive flush:", err)
     }
+    runBeforeRender(bootstrap)
     scanForOrphans(t)
     renderFrame()
   }

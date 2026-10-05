@@ -91,7 +91,9 @@ Two layers. The imperative core is Solid-free: `createScene`,
 over the spatial core (`flux:spatial`, `alloy/src/spatial/`): every node
 in a scene has a core node, JS keeps the LOCAL position/quaternion/scale
 as the readable truth and forwards each write, and the core's flush
-(one call per microtask) recomputes only the moved subtrees and writes
+(one call per frame, in the publish pass of core's `onBeforeRender`
+ahead of the paint; at the microtask for a write made outside a frame)
+recomputes only the moved subtrees and writes
 each entry's uModel (plus uNormal for materials declaring it) and its
 visibility switch itself - a move costs its subtree, never the scene.
 ONE `setTargetParams` (the shared uViewProj + uCamPos) per camera
@@ -3036,8 +3038,9 @@ successors) as ordinary content, the model-loading split repeated:
   meshes skip uModel writes; the fresh matrix is
   written on unhide. A freshly attached entry starts off the same way and
   the core's flush turns it on when it writes uModel - never add one
-  live: it has no world matrix yet, and drawn before the sync microtask it
-  flashes at the world origin for a frame.
+  live: it has no world matrix yet, and drawn before the sync (which runs
+  ahead of the paint for a write made in a frame, at the microtask
+  otherwise) it would flash at the world origin for a frame.
 - Instancing pairs strictly at add(), like layout: an instanced material
   needs a createInstancedMesh or createRecordMesh mesh and vice versa,
   and every instance buffer the material declares must be a layout the
@@ -3061,7 +3064,12 @@ successors) as ordinary content, the model-loading split repeated:
   `data` and the scene's sync publishes the `dirty` range (`updateRecords`
   marks it for accessor writes) - so a write on a mesh outside any scene
   shows once it is added (the dirty range waits), and reading the GPU
-  buffer back mid-frame can lag the mirror by one sync. Growth replaces
+  buffer back between the write and the sync lags the mirror. The sync
+  runs in the publish pass of core's `onBeforeRender`, ahead of the
+  frame's paint (at the microtask for a write made outside a frame), so
+  a `setRecords` made in onFrame is in that frame's picture with its
+  count, its buffers and its bytes together - the count alone
+  (`setRecordCount`) reaches the engine at once. Growth replaces
   `data`: hold the accessor, not the view.
 - The sugar is for FEW records, the mirror is for MANY. `setInstanceStyle`
   over an all-float layout is indexed stores; over a packed layout (the

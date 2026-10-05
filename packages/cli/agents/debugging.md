@@ -194,7 +194,12 @@ when exactly one client is connected.
   add `&format=raw` for `rgbaBase64` (RGBA8 bytes, no decoder needed for
   pixel assertions), `&x=&y=&width=&height=` (all four) to crop,
   `&scale=<1-8>`. Snapshot the smallest node that shows the change, not the
-  window root.
+  window root. A snapshot paints the current state afresh, after every
+  pending microtask, so a glitch confined to one frame never shows in it:
+  `&step=1`, with the clock paused, advances one frame and captures inside
+  it instead - the picture exactly as that frame's own code drew it, before
+  anything the frame left to a microtask or a promise lands. With the
+  clock running it is refused: pause first.
 - `/texture?id=<textureId>` - same shape and options as `/snapshot`, at the
   texture's native size (a scene or shader target behind a `<texture>` leaf).
 - `/gpu?label=<text>&draw=<id>` - the GPU resource inventory; `label` keeps
@@ -373,7 +378,11 @@ The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
   force a mode, seed a scenario); then the runtime-level tools take over -
   set_time_scale 0 freezes the result for as many snapshots as you need,
   and step_frames walks it forward deterministically. Set state, pause,
-  snapshot. Registrations reset on hot reload, so register at module init;
+  snapshot. To see one frame exactly as its own code drew it (a flash, a
+  one-frame stale draw), pause and call get_snapshot with `step: true`: it
+  advances that one frame and captures inside it, where a plain snapshot
+  after step_frames paints afresh and shows the settled state.
+  Registrations reset on hot reload, so register at module init;
   sync return values only - and note a signal you just wrote flushes on a
   microtask, so returning a signal read straight after setting it returns
   the OLD value.

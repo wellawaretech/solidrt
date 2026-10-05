@@ -138,9 +138,9 @@ that reads exactly like Solid fallout.
   window (message, stack, a Reset button that retries the failed
   computations) and logs `Uncaught error`. `<Errored>` gives a subtree its
   own in-place fallback.
-  An `onFrame` callback is its own boundary, event-listener style: a throw
-  is caught and logged (`Error in onFrame callback`, repeating every
-  frame), the subscription stays, and THE REST OF THAT CALLBACK IS
+  An `onFrame` (or `onBeforeRender`) callback is its own boundary,
+  event-listener style: a throw is caught and logged (`Error in onFrame
+  callback`, repeating every frame), the subscription stays, and THE REST OF THAT CALLBACK IS
   ABANDONED - what it wrote before the throw lands, what came after never
   does, frame after frame while the app keeps presenting. A partial frame
   is therefore a live possibility: every sprite drawn after the throwing
@@ -613,7 +613,17 @@ that reads exactly like Solid fallout.
   `onFrame(fn, { demand: false })` is the same hook without the standing
   frame request: it runs on every frame the runtime delivers and the app
   presents only when the body writes, for a loop that follows time but
-  seldom changes the picture. `frameTime()` is the current frame's `tick`
+  seldom changes the picture. `onBeforeRender(fn)` is the frame's late
+  update: it runs after every onFrame callback and the reactive flush,
+  when the frame's state is final, for what must see everything the frame
+  wrote and write once more (a camera follow, a fit to a measured box;
+  Unity's LateUpdate) - write the engine directly there, since a signal
+  written there flushes with the next frame. `onBeforeRender(fn, {
+  publish: true })` runs after those, and again after a frame's onLayout
+  handlers: the pass where an extension hands the engine what the frame
+  wrote into its mirrors (a scene its record buffers and lights, a sprite
+  layer its style and count), so a write made anywhere in the frame's JS
+  is in that frame's picture, never the next. `frameTime()` is the current frame's `tick`
   read from anywhere (not reactive, requests nothing): the app's own
   clock for code with no tick in hand, where `performance.now()` would
   ignore the dev clock, `sol render` and tests. A JS

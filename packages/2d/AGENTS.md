@@ -23,7 +23,7 @@ Contents:
   - [Groups](#groups)
   - [Visibility](#visibility)
   - [Flips](#flips)
-  - [Mutations batch to a microtask](#mutations-batch-to-a-microtask)
+  - [Mutations batch to the frame](#mutations-batch-to-the-frame)
   - [The records layer](#the-records-layer)
   - [Layer space](#layer-space)
   - [The camera](#the-camera)
@@ -197,11 +197,15 @@ flip). The flags live on the Sprite and re-apply to every later frame
 write; `getSprite` returns the frame un-mirrored plus the flags. Raw
 `records` writers swap u0/u1 themselves.
 
-### Mutations batch to a microtask
+### Mutations batch to the frame
 
-Mutations batch to a microtask: style lease publish + count setDraw +
-`spatial.flush()`. No mutation, no publish, no frame: a static layer
-costs zero, the same demand-gate story as the rest of the platform.
+Mutations batch: style lease publish + count setDraw + `spatial.flush()`
+go out once, in the publish pass of core's `onBeforeRender` ahead of the
+frame's paint, so a write made anywhere in the frame's JS (onFrame, an
+effect, an onLayout handler) is in that frame's picture, never the next;
+a write made outside a frame (an event handler, a timer) publishes at
+the microtask. No mutation, no publish, no frame: a static layer costs
+zero, the same demand-gate story as the rest of the platform.
 
 ### The records layer
 
@@ -535,8 +539,9 @@ pixel coordinates; each chunk target's `uCamera` is its pixel origin, so
 the shared vertex stage does the chunk-local mapping. Chunks allocate on
 the first `setTile` that reaches them - an empty chunk costs nothing, a
 sparse world is bounded by its content, and world size is bounded by
-memory, not `maxTextureSize`. `setTile` batches to a microtask whose flush
-publishes and re-bakes ONLY dirty chunks. After that the layer is static
+memory, not `maxTextureSize`. `setTile` batches to the frame's publish
+pass (the microtask, outside a frame), whose flush publishes and re-bakes
+ONLY dirty chunks. After that the layer is static
 textures: zero per-frame cost however many tiles exist.
 
 ### Scrolling and the camera
