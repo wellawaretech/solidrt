@@ -8,6 +8,15 @@ copy one and adapt it.
   frame rate, moved imperatively with `setSprite` from `onFrame` while the
   tree holds one texture leaf. Atlas from PNG bytes (`createAtlas`) sliced
   2x2 with `grid()`.
+- `atlases.tsx` - several atlases in ONE layer: the logo sheet and a
+  tileset built in code, declared together as the layer's `atlases`, its
+  sprites drawing from either and interleaved by `orderBy: "y"` across
+  both sheets in the one draw. The tileset is uploaded with `mipmap` for
+  the far zoom, so it goes through `extrudeGrid` first (a 4-texel gutter
+  of replicated edge pixels per cell, the returned options slicing the
+  repacked sheet): zoom out and the cells' rims stay crisp instead of
+  smearing the neighbour in. Wheel/pinch zooms, drag pans. Debug
+  commands `zoom` and `atlases` drive it headless.
 - `tiles.tsx` - the baked tile layer: a 128x128 world (6144px - bigger than
   one texture may be) baked into lazily-allocated chunks, flown over by a
   ship-style camera (fixed screen pivot, the world panning and ROTATING

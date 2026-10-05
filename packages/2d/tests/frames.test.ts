@@ -1,12 +1,14 @@
 // Tests for the atlas frame math (frames.ts): grid slicing against a
 // directly-computed oracle across random sheet shapes, spacing, and
-// margins, plus namedFrames and the validation throws. Pure-module input
-// only, so it runs headless on flux: `sol test packages/2d`. The random
-// inputs come from Math.random, which `sol test` seeds: the same on every
-// run, and `--seed <n>` tries others.
+// margins, every frame stamped with its atlas's texture, plus namedFrames,
+// fullFrame, isFrame and the validation throws. Pure-module input only, so
+// it runs headless on flux: `sol test packages/2d`. The random inputs come
+// from Math.random, which `sol test` seeds: the same on every run, and
+// `--seed <n>` tries others.
 
 import { test } from "flux:test"
-import { grid, namedFrames, writeFrame, FULL_FRAME } from "../src/frames.ts"
+import type { TextureId } from "@solidrt/core/gpu"
+import { fullFrame, grid, isFrame, namedFrames, writeFrame } from "../src/frames.ts"
 
 function int(lo: number, hi: number): number {
   return lo + Math.floor(Math.random() * (hi - lo + 1))
@@ -31,9 +33,13 @@ function assertThrows(what: string, fn: () => void) {
   if (!threw) fail(`${what}: expected a throw`)
 }
 
+// An atlas record for the slicers: the texture id is a plain number at
+// runtime, branded for the checker.
+let atlas = (texture: number, width: number, height: number) => ({ texture: texture as unknown as TextureId, width, height })
+
 // Hand-written: a 2x2 grid over a 32x32 sheet is quarters.
 test("grid: a 2x2 grid over a 32x32 sheet is quarters", () => {
-  let frames = grid({ width: 32, height: 32 }, 2, 2)
+  let frames = grid(atlas(7, 32, 32), 2, 2)
   if (frames.length !== 4) fail(`2x2 grid has ${frames.length} frames`)
   let f = frames[3]!
   if (!(close(f.u0, 0.5) && close(f.v0, 0.5) && close(f.u1, 1) && close(f.v1, 1))) {
@@ -42,53 +48,54 @@ test("grid: a 2x2 grid over a 32x32 sheet is quarters", () => {
 })
 // Row-major order: frame[cols] starts the second row.
 test("grid: row-major order", () => {
-  let frames = grid({ width: 48, height: 32 }, 3, 2)
+  let frames = grid(atlas(7, 48, 32), 3, 2)
   let second = frames[3]!
   if (!(close(second.u0, 0) && close(second.v0, 0.5))) fail("grid is not row-major")
 })
-// An Atlas record (texture plus size) slices as it is: the slicers read
-// only width and height, so extra fields pass.
-test("grid: an atlas record slices as it is", () => {
-  let atlas = { texture: 1, width: 64, height: 64 }
-  let f = grid(atlas, 4, 4)[5]!
-  if (!(close(f.u0, 0.25) && close(f.v0, 0.25))) fail("grid over an atlas record")
-})
-test("FULL_FRAME is the unit rect", () => {
-  // FULL_FRAME is the unit rect.
-  if (!(FULL_FRAME.u0 === 0 && FULL_FRAME.v0 === 0 && FULL_FRAME.u1 === 1 && FULL_FRAME.v1 === 1)) {
-    fail("FULL_FRAME is not the unit rect")
+// Every frame carries the atlas's texture: the slicers stamp it, so a
+// frame knows which sheet it is cut from and a layer can tell a frame from
+// an undeclared sheet apart.
+test("grid, namedFrames and fullFrame stamp the atlas's texture on every frame", () => {
+  let a = atlas(42, 64, 64)
+  for (let f of grid(a, 4, 4)) if ((f.texture as number) !== 42) fail(`grid frame carries texture ${f.texture}`)
+  let named = namedFrames(a, { hero: [0, 0, 16, 16], tree: [16, 0, 32, 32] })
+  if ((named.hero.texture as number) !== 42 || (named.tree.texture as number) !== 42) fail("namedFrames frame carries another texture")
+  let full = fullFrame(a)
+  if (!((full.texture as number) === 42 && full.u0 === 0 && full.v0 === 0 && full.u1 === 1 && full.v1 === 1)) {
+    fail(`fullFrame is ${JSON.stringify(full)}, expected the unit rect over texture 42`)
   }
 })
-
-test("grid and namedFrames: validation throws", () => {
-  // Validation throws.
-  assertThrows("zero cols", () => grid({ width: 32, height: 32 }, 0, 2))
-  assertThrows("fractional rows", () => grid({ width: 32, height: 32 }, 2, 1.5))
-  assertThrows("non-positive sheet", () => grid({ width: 0, height: 32 }, 2, 2))
-  assertThrows("cells eaten by spacing", () => grid({ width: 8, height: 8 }, 8, 1, { spacing: 4 }))
-  assertThrows("named non-positive frame", () => namedFrames({ width: 32, height: 32 }, { bad: [0, 0, 0, 4] }))
-  assertThrows("named non-positive atlas", () => namedFrames({ width: 0, height: 32 }, { a: [0, 0, 4, 4] }))
-  assertThrows("grid inset inverts the cell", () => grid({ width: 32, height: 32 }, 4, 4, { inset: 4 }))
-  assertThrows("named inset inverts the rect", () => namedFrames({ width: 32, height: 32 }, { a: [0, 0, 8, 2] }, { inset: 1 }))
-  assertThrows("negative inset", () => grid({ width: 32, height: 32 }, 2, 2, { inset: -0.5 }))
+// A render target used as an atlas is the literal record: any extra
+// fields pass through the slicers.
+test("grid: an atlas literal with extra fields slices as it is", () => {
+  let f = grid({ texture: 1 as unknown as TextureId, width: 64, height: 64, label: "target" } as never, 4, 4)[5]!
+  if (!(close(f.u0, 0.25) && close(f.v0, 0.25))) fail("grid over an atlas literal")
 })
 
-// inset shaves every side: a 16x16 cell at (16, 0) of a 32x16 sheet with a
-// half-texel inset spans pixels 16.5..31.5 by 0.5..15.5.
-test("inset shaves every side", () => {
-  let f = grid({ width: 32, height: 16 }, 2, 1, { inset: 0.5 })[1]!
-  if (!(close(f.u0 * 32, 16.5) && close(f.v0 * 16, 0.5) && close(f.u1 * 32, 31.5) && close(f.v1 * 16, 15.5))) {
-    fail(`grid inset frame is (${f.u0 * 32}, ${f.v0 * 16})-(${f.u1 * 32}, ${f.v1 * 16}) px`)
-  }
-  let g = namedFrames({ width: 64, height: 32 }, { hero: [16, 8, 32, 16] }, { inset: 1 }).hero
-  if (!(close(g.u0 * 64, 17) && close(g.v0 * 32, 9) && close(g.u1 * 64, 47) && close(g.v1 * 32, 23))) {
-    fail(`namedFrames inset hero is (${g.u0 * 64}, ${g.v0 * 32})-(${g.u1 * 64}, ${g.v1 * 32}) px`)
-  }
+test("isFrame: a texture id and four numeric UVs, nothing less", () => {
+  if (!isFrame({ texture: 3, u0: 0, v0: 0, u1: 1, v1: 1 })) fail("a frame is not a frame")
+  if (isFrame({ u0: 0, v0: 0, u1: 1, v1: 1 })) fail("a frame without a texture passed")
+  if (isFrame({ texture: -1, u0: 0, v0: 0, u1: 1, v1: 1 })) fail("a negative texture id passed")
+  if (isFrame({ texture: 1.5, u0: 0, v0: 0, u1: 1, v1: 1 })) fail("a fractional texture id passed")
+  if (isFrame({ texture: 3, u0: 0, v0: 0, u1: 1 })) fail("three UVs passed")
+  if (isFrame(null) || isFrame(undefined) || isFrame(4)) fail("a non-object passed")
+})
+
+test("grid, namedFrames and fullFrame: validation throws", () => {
+  assertThrows("zero cols", () => grid(atlas(1, 32, 32), 0, 2))
+  assertThrows("fractional rows", () => grid(atlas(1, 32, 32), 2, 1.5))
+  assertThrows("non-positive sheet", () => grid(atlas(1, 0, 32), 2, 2))
+  assertThrows("cells eaten by spacing", () => grid(atlas(1, 8, 8), 8, 1, { spacing: 4 }))
+  assertThrows("named non-positive frame", () => namedFrames(atlas(1, 32, 32), { bad: [0, 0, 0, 4] }))
+  assertThrows("named non-positive atlas", () => namedFrames(atlas(1, 0, 32), { a: [0, 0, 4, 4] }))
+  assertThrows("grid without a texture", () => grid({ width: 32, height: 32 } as never, 2, 2))
+  assertThrows("fullFrame without a texture", () => fullFrame({ width: 32, height: 32 } as never))
+  assertThrows("fullFrame over an empty sheet", () => fullFrame(atlas(1, 32, 0)))
 })
 
 // namedFrames maps pixel rects to UVs.
 test("namedFrames maps pixel rects to UVs", () => {
-  let frames = namedFrames({ width: 64, height: 32 }, { hero: [16, 8, 32, 16] })
+  let frames = namedFrames(atlas(1, 64, 32), { hero: [16, 8, 32, 16] })
   let f = frames.hero
   if (!(close(f.u0, 0.25) && close(f.v0, 0.25) && close(f.u1, 0.75) && close(f.v1, 0.75))) {
     fail(`namedFrames hero is (${f.u0}, ${f.v0})-(${f.u1}, ${f.v1})`)
@@ -109,13 +116,14 @@ test("grid: every frame lands where the oracle places the cell, over random shee
     let marginY = int(0, 6)
     let width = marginX * 2 + cols * cellW + (cols - 1) * spacing
     let height = marginY * 2 + rows * cellH + (rows - 1) * spacing
-    let frames = grid({ width, height }, cols, rows, { cellW, cellH, spacing, marginX, marginY })
+    let frames = grid(atlas(i, width, height), cols, rows, { cellW, cellH, spacing, marginX, marginY })
     if (frames.length !== cols * rows) fail(`grid(${cols}, ${rows}) returned ${frames.length} frames`)
     let col = int(0, cols - 1)
     let row = int(0, rows - 1)
     let f = frames[row * cols + col]!
     let x = marginX + col * (cellW + spacing)
     let y = marginY + row * (cellH + spacing)
+    if ((f.texture as number) !== i) fail(`grid frame carries texture ${f.texture}, expected ${i}`)
     if (
       !(
         close(f.u0 * width, x) &&

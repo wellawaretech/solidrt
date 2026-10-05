@@ -13,10 +13,18 @@
 // Two instance-buffer slots split ownership: slot 0 is the pose buffer,
 // written ONLY by the core (one coalesced write per flush however many
 // nodes moved); slot 1 is the style buffer [u0, v0, u1, v1, tint rgba,
-// renderOrder], JS-owned and published through the zero-copy write lease. Never write
-// the pose buffer from JS - the core's staging mirror is the owner and
-// will overwrite. For motion only JS can compute at large populations, the
-// records layer (records.ts) is the escape hatch.
+// renderOrder, minScreenPx, maxScreenPx, atlas], JS-owned and published
+// through the zero-copy write lease. Never write the pose buffer from JS -
+// the core's staging mirror is the owner and will overwrite. For motion
+// only JS can compute at large populations, the records layer (records.ts)
+// is the escape hatch.
+//
+// A layer draws from the ATLASES it declares at creation, bound together
+// as one draw: every frame carries its texture, the style record stores
+// that texture's index in the list, and the generated fragment stage
+// (shaders.ts) picks the sampler per instance - so sprites from several
+// sheets interleave freely in one draw, key order included, and a frame
+// from a sheet the layer did not declare throws at the write.
 //
 // Sprites hold FIXED instance slots (freed slots recycle): draw order is
 // slot order, so removal never shifts records and pose sinks never rebind.
@@ -41,9 +49,11 @@ import type {
   QueryFilter,
 } from "flux:spatial"
 import { on } from "sol:events"
+import { checkAtlases, frameIndex } from "./atlas.ts"
+import type { Atlas } from "./atlas.ts"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import type { Frame } from "./frames.ts"
-import { FULL_FRAME, writeFrame } from "./frames.ts"
+import { fullFrame, isFrame, writeFrame } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
 import { floorReach, pointInSprite } from "./pick.ts"
 import { createSpritePipeline, INSTANCE_LAYOUTS_SPLIT, VERTEX_SPLIT } from "./shaders.ts"
@@ -57,8 +67,8 @@ export const POSE_FLOATS = 5
 const POSE_Y_FIELD = 1
 /** Floats per style record:
  * [u0, v0, u1, v1, tintR, tintG, tintB, tintA, renderOrder, minScreenPx,
- * maxScreenPx]. */
-export const STYLE_FLOATS = 11
+ * maxScreenPx, atlas]. */
+export const STYLE_FLOATS = 12
 
 // Float offset of renderOrder in a style record - what `orderBy: "renderOrder"`
 // keys on.
@@ -66,6 +76,9 @@ const STYLE_KEY_FIELD = 8
 // Float offsets of the screen-size clamp in a style record.
 const STYLE_MIN_PX_FIELD = 9
 const STYLE_MAX_PX_FIELD = 10
+// Float offset of the atlas sampler index (the frame's texture's position
+// in the layer's atlas list).
+const STYLE_ATLAS_FIELD = 11
 
 const RESOLVED = Promise.resolve()
 
@@ -224,7 +237,9 @@ export type SpriteOptions = {
   /** Drawn size in layer pixels. */
   w?: number
   h?: number
-  /** Atlas frame (normalized UVs); default the whole atlas. */
+  /** Atlas frame (a texture plus normalized UVs, from grid/namedFrames/
+   * fullFrame); default the whole first atlas of the layer. Its texture
+   * must be one of the layer's `atlases`, else the write throws. */
   frame?: Frame
   /** Mirror the frame horizontally / vertically about the sprite's center.
    * A UV-side mirror: w/h stay the drawn size, a scale transition never
@@ -523,6 +538,15 @@ export type GroupOptions = {
  * and a Godot World2D only through Viewports.
  */
 export type LayerBase = {
+  /**
+   * The atlases the layer draws from, as declared at creation: every
+   * frame written to the layer names one of their textures, and a
+   * record's `atlas` field is the texture's index in this list (what a
+   * raw record writer stores). Bound together as one draw per view -
+   * the multi-texture batch, so sprites from different sheets interleave
+   * in draw order.
+   */
+  readonly atlases: readonly Atlas[]
   /** Live sprite count. */
   readonly count: number
   /**
@@ -697,13 +721,14 @@ export type SpriteLayer = LayerBase & {
   _destroyGroup(group: GroupState): void
 }
 
-/** The stored UVs at `at` un-mirrored by the sprite's flags: the frame as
- * the caller gave it. Internal - records.ts reads through it too. */
-export function readFrame(data: Float32Array, at: number, sprite: Sprite): Frame {
+/** The stored UVs at `at` un-mirrored by the sprite's flags, over the
+ * texture the record's atlas index resolved to: the frame as the caller
+ * gave it. Internal - records.ts reads through it too. */
+export function readFrame(data: Float32Array, at: number, sprite: Sprite, texture: TextureId): Frame {
   let u0 = data[at]!, v0 = data[at + 1]!, u1 = data[at + 2]!, v1 = data[at + 3]!
   return sprite._flipX || sprite._flipY
-    ? { u0: sprite._flipX ? u1 : u0, v0: sprite._flipY ? v1 : v0, u1: sprite._flipX ? u0 : u1, v1: sprite._flipY ? v0 : v1 }
-    : { u0, v0, u1, v1 }
+    ? { texture, u0: sprite._flipX ? u1 : u0, v0: sprite._flipY ? v1 : v0, u1: sprite._flipX ? u0 : u1, v1: sprite._flipY ? v0 : v1 }
+    : { texture, u0, v0, u1, v1 }
 }
 
 /** Fill the shared transform scratch: xy translation, z rotation, xy scale
@@ -773,14 +798,19 @@ function writeTransform(sprite: Sprite): void {
 }
 
 /**
- * Create a sprite layer over one atlas texture. It renders nothing by
- * itself: `layer.createView({ width, height })` (or a `<SpriteLayer>` /
- * `<View2d>`) is where it shows, once or many times. Disposed
- * automatically with the owning reactive scope (opt out with
- * `{ autoFree: false }`); the atlas is NOT owned - dispose it yourself
- * (it commonly outlives layers).
+ * Create a sprite layer over its atlases: the list of sheets (createAtlas
+ * records, or `{ texture, width, height }` literals) every frame written
+ * to it must come from, bound together as ONE draw - up to
+ * `limits.maxTextureUnits` of them (16 on every GLES 3.0 device), of any
+ * sizes and sampler states, interleaving freely in draw order. It
+ * renders nothing by itself: `layer.createView({ width, height })` (or a
+ * `<SpriteLayer>` / `<View2d>`) is where it shows, once or many times.
+ * Disposed automatically with the owning reactive scope (opt out with
+ * `{ autoFree: false }`); the atlases are NOT owned - dispose them
+ * yourself (they commonly outlive layers).
  */
-export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): SpriteLayer {
+export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): SpriteLayer {
+  let atlasIndex = checkAtlases("createSpriteLayer", atlases)
   let capacity = opts?.capacity ?? 1024
   if (!(capacity > 0 && Number.isInteger(capacity))) {
     throw new Error(`createSpriteLayer: capacity must be a positive integer, got ${capacity}`)
@@ -790,7 +820,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
   checkTint("createSpriteLayer", tint)
   let pose: BufferId = createBuffer(capacity * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
   let style: BufferId = createBuffer(capacity * STYLE_FLOATS * 4, { label: `${label}-style`, autoFree: false })
-  let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_LAYOUTS_SPLIT, opts?.blend ?? "alpha")
+  let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_LAYOUTS_SPLIT, opts?.blend ?? "alpha", atlases.length)
   // The sprites with a screen-size clamp (either bound on), and the
   // furthest any of them reaches from its center at its floor (floorReach,
   // view pixels): the candidate box a pick searches around the pointer. A
@@ -907,7 +937,16 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
     styleDirty = true
   }
 
-  let writeStyle = (sprite: SpriteState, opts: SpriteOptions) => {
+  // A frame's atlas index, or a throw: run before ANY field of a write
+  // lands (pose included), so a frame from an undeclared sheet leaves the
+  // sprite as it was.
+  let frameAtlas = (verb: string, opts: SpriteOptions): number => {
+    if (opts.frame === undefined) return -1
+    if (!isFrame(opts.frame)) throw new Error(`${verb}: not a frame, got ${JSON.stringify(opts.frame)}`)
+    return frameIndex(verb, atlasIndex, opts.frame)
+  }
+
+  let writeStyle = (sprite: SpriteState, opts: SpriteOptions, atlas: number) => {
     let at = sprite._slot * STYLE_FLOATS
     let flipX = opts.flipX !== undefined && opts.flipX !== sprite._flipX
     let flipY = opts.flipY !== undefined && opts.flipY !== sprite._flipY
@@ -916,6 +955,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
     if (opts.frame !== undefined) {
       let f = opts.frame
       writeFrame(styleData, at, f.u0, f.v0, f.u1, f.v1, sprite._flipX, sprite._flipY)
+      styleData[at + STYLE_ATLAS_FIELD] = atlas
       styleDirty = true
     } else if (flipX || flipY) {
       // No new frame: toggle the changed axes on the stored UVs.
@@ -956,7 +996,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
     label,
     pipeline: gpu.pipeline,
     quad: gpu.quad,
-    atlas,
+    atlases: atlases.map(a => a.texture),
     buffers: () => [pose, style],
     count: () => published,
     tint: () => tint,
@@ -975,6 +1015,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
   })
 
   let layer: SpriteLayer = {
+    atlases,
     get count() {
       return byNode.size
     },
@@ -1151,6 +1192,13 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
     },
     _add(opts) {
       if (disposed) throw new Error("addSprite: layer is disposed")
+      // The style bag with its defaults - renderOrder and the clamp at 0
+      // explicitly, since a recycled slot holds the previous occupant's
+      // values otherwise - resolved before a slot or node is taken, so a
+      // bad frame allocates nothing.
+      let style: SpriteOptions = { frame: fullFrame(atlases[0]!), tint: [1, 1, 1, 1], renderOrder: 0, minScreenPx: 0, maxScreenPx: 0, ...opts }
+      let atlas = frameAtlas("addSprite", style)
+      if (opts?.parent && opts.parent.layer !== layer) throw new Error("addSprite: parent group belongs to another layer")
       let slot = freeSlots.pop() ?? highWater++
       if (slot >= gpuCapacity) grow(gpuCapacity * 2)
       let sprite: SpriteState = {
@@ -1171,7 +1219,6 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       let node = spatial.createNode(TRANSFORM, sprite._visible)
       sprite.node = node
       if (opts?.parent) {
-        if (opts.parent.layer !== layer) throw new Error("addSprite: parent group belongs to another layer")
         spatial.setParent(node, opts.parent.node)
         opts.parent._children.add(sprite)
       } else {
@@ -1180,14 +1227,13 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       spatial.setBounds(node, COLUMN_BOUNDS)
       spatial.bindPoseRecord(node, pose, slot)
       byNode.set(node, sprite)
-      // renderOrder and the clamp default to 0 explicitly: a recycled slot
-      // holds the previous occupant's values otherwise.
-      writeStyle(sprite, { frame: FULL_FRAME, tint: [1, 1, 1, 1], renderOrder: 0, minScreenPx: 0, maxScreenPx: 0, ...opts })
+      writeStyle(sprite, style, atlas)
       layer._schedule()
       return sprite
     },
     _write(sprite, opts) {
       checkClamp("setSprite", sprite, opts)
+      let atlas = frameAtlas("setSprite", opts)
       let moved = false
       if (opts.x !== undefined && opts.x !== sprite._x) (sprite._x = opts.x), (moved = true)
       if (opts.y !== undefined && opts.y !== sprite._y) (sprite._y = opts.y), (moved = true)
@@ -1210,7 +1256,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
         opts.maxScreenPx !== undefined ||
         (moved && clamped.has(sprite))
       ) {
-        writeStyle(sprite, opts)
+        writeStyle(sprite, opts, atlas)
       }
       if (moved || styleDirty) layer._schedule()
     },
@@ -1221,7 +1267,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
         y: sprite._y,
         w: sprite._w,
         h: sprite._h,
-        frame: readFrame(styleData, at, sprite),
+        frame: readFrame(styleData, at, sprite, atlases[styleData[at + STYLE_ATLAS_FIELD]!]!.texture),
         flipX: sprite._flipX,
         flipY: sprite._flipY,
         rotation: sprite._rot,

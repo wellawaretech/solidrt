@@ -73,7 +73,7 @@ function App() {
   }
   return (
     <window>
-      <SpriteLayer atlas={atlas.texture} capacity={COUNT + 2} output={false}>
+      <SpriteLayer atlases={[atlas]} capacity={COUNT + 2} output={false}>
         <view flexDirection="row" width="100%" height="100%">
           {paneView(0)}
           {paneView(1)}

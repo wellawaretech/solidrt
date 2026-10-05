@@ -1,6 +1,7 @@
 import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import type { BlendMode } from "@solidrt/core/gpu"
+import type { Atlas } from "../atlas.ts"
 import { createSpriteLayer } from "../layer.ts"
 import { feedPointer } from "../views.ts"
 import type { LayerPointerEvent, LayerTapEvent, LayerWheelEvent, SpriteLayer as LayerHandle } from "../layer.ts"
@@ -40,8 +41,10 @@ export type SpriteLayerProps = LayerPointerProps & {
    */
   width?: number
   height?: number
-  /** The atlas texture every sprite samples (create with createAtlas). */
-  atlas: TextureId
+  /** The atlases the sprites draw from (createAtlas records), bound as
+   * one draw; every `<Sprite frame>` comes from one of them. Fixed at
+   * mount. */
+  atlases: Atlas[]
   /** Initial record reservation (grows on demand); default 1024. */
   capacity?: number
   /** How the sprites blend into the layer's views (see
@@ -166,7 +169,7 @@ const VIEW_PROPS = [
  */
 export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   let layer = untrack(() =>
-    createSpriteLayer(props.atlas, {
+    createSpriteLayer(props.atlases, {
       capacity: props.capacity,
       blend: props.blend,
       tint: props.tint,

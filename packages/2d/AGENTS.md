@@ -1,7 +1,8 @@
 # @solidrt/2d - agent notes
 
-An instanced sprite layer above `@solidrt/core/gpu`: one atlas texture, N
-quads in ONE draw call, composited into the app as an ordinary `<texture>`
+An instanced sprite layer above `@solidrt/core/gpu`: a layer's atlases
+bound together, N quads from any of them in ONE draw call, composited into
+the app as an ordinary `<texture>`
 leaf. The live layer backs every sprite with a SPATIAL ARENA node (never a
 rendertree element - `d-texture` sprites are the right tool up to the low
 thousands; measured ~0.65us paint and ~15KB memory per NODE, and every
@@ -15,6 +16,7 @@ Contents:
 - [The model](#the-model)
   - [Three faces](#three-faces)
   - [A layer renders through its views](#a-layer-renders-through-its-views)
+  - [Atlases and frames](#atlases-and-frames)
   - [Pose and style slots](#pose-and-style-slots)
   - [Fixed instance slots](#fixed-instance-slots)
   - [Growth](#growth)
@@ -73,6 +75,31 @@ Godot World2D only through Viewports, and there is no privileged first
 one. The window view, the minimap, two split-screen panes are the same
 `ViewHandle`. Details under Views below.
 
+### Atlases and frames
+
+A layer draws from the ATLASES it declares at creation
+(`createSpriteLayer([a, b], ...)`, `<SpriteLayer atlases={[a, b]}>`, the
+record and tile layers alike): `createAtlas` records, or
+`{ texture, width, height }` literals for a render target or a camera
+frame, up to `limits.maxTextureUnits` of them (16 on every GLES 3.0
+device), of any sizes and sampler states. They bind together as ONE
+draw per view - the multi-texture batch of PixiJS and Phaser, where
+Unity and Godot break the batch on every texture change - so sprites
+from several sheets interleave freely in draw order, key order
+included, and a tile world bakes from several tilesets in one pass. A
+`Frame` carries its texture (`{ texture, u0, v0, u1, v1 }`, stamped by
+`grid`/`namedFrames`/`fullFrame`; PixiJS's Texture, Phaser's Frame,
+Unity's Sprite and Godot's AtlasTexture pair the texture with the rect
+the same way), the record stores that texture's index in the layer's
+list (`layer.atlases`, what a raw record writer stores), and the
+fragment stage is GENERATED per layer with one sampler per atlas, the
+flat per-instance index picking it: derivatives are taken from the
+unclamped uv before the branch and the tap is `textureGrad`, so mip
+selection is the quad's own and well defined inside the branch. A frame
+whose texture the layer did not declare THROWS at the write (the
+wrong-sheet bug, caught instead of drawn); the frame left out of
+`addSprite` is the whole FIRST atlas.
+
 ### Pose and style slots
 
 Node layer ownership split, two instance-buffer slots on one pipeline
@@ -81,10 +108,10 @@ Node layer ownership split, two instance-buffer slots on one pipeline
 layers): slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY
 by the core (each sprite node's Pose2D record sink; one coalesced buffer
 write per flush however many nodes moved), slot 1 the STYLE buffer
-`[u0, v0, u1, v1, tint rgba, renderOrder, minScreenPx, maxScreenPx]`,
-JS-owned, published through the zero-copy write lease. NEVER write the
-pose buffer from JS - the core's staging mirror owns it and will
-overwrite.
+`[u0, v0, u1, v1, tint rgba, renderOrder, minScreenPx, maxScreenPx,
+atlas]`, JS-owned, published through the zero-copy write lease. NEVER
+write the pose buffer from JS - the core's staging mirror owns it and
+will overwrite.
 
 ### Fixed instance slots
 
@@ -209,9 +236,10 @@ zero, the same demand-gate story as the rest of the platform.
 
 ### The records layer
 
-The records layer (`createRecordLayer`) keeps the old model whole: 15
+The records layer (`createRecordLayer`) keeps the old model whole: 16
 JS-owned floats per sprite `[cx, cy, w, h, u0, v0, u1, v1, rot, tint
-rgba, minScreenPx, maxScreenPx]` (`FLOATS_PER_SPRITE`), draw order =
+rgba, minScreenPx, maxScreenPx, atlas]` (`FLOATS_PER_SPRITE`; `atlas`
+is the frame's texture as its index in `layer.atlases`), draw order =
 insertion order (or key
 order with `orderBy` - see below), remove
 shifts, `layer.records` + `touch()` raw writes, JS pick walk. It is the
@@ -519,10 +547,11 @@ keeps, so other props stay reactive).
 
 ### Pure pieces
 
-frames.ts, pick.ts, camera.ts, camera-motion.ts, dispatch.ts,
-oversample-math.ts and tiles-math.ts (the tile grid's chunk and slot
-math, tests/tiles.test.ts) are pure (no GPU imports) BY DESIGN so they
-can be checked headless; keep them that way.
+frames.ts, extrude.ts (the mip-gutter repack, tests/extrude.test.ts),
+pack.ts (the shelf packer, tests/pack.test.ts), pick.ts, camera.ts,
+camera-motion.ts, dispatch.ts, oversample-math.ts and tiles-math.ts (the
+tile grid's chunk and slot math, tests/tiles.test.ts) are pure (no GPU
+imports) BY DESIGN so they can be checked headless; keep them that way.
 
 ## The baked tile layer (tiles.ts)
 
@@ -530,10 +559,11 @@ can be checked headless; keep them that way.
 
 Static 2D bulk as a few quads: on tiled GPUs the budget is primitive count
 (core agents/performance.md), so a 100x100 tile world must not be 10,000
-quads per frame. `createTileLayer(cols, rows, tileW, tileH, atlas)` bakes
-the world into CHUNKED `render: "manual"` targets (default ~512px of tiles
-per chunk, `chunkTiles` to tune), each chunk a small copy of the sprite
-pipeline (shaders.ts) with FIXED record slots - an empty tile is a
+quads per frame. `createTileLayer(cols, rows, tileW, tileH, atlases)`
+bakes the world into CHUNKED `render: "manual"` targets (default ~512px
+of tiles per chunk, `chunkTiles` to tune), each chunk a manual target
+over the layer's ONE sprite pipeline (shaders.ts, compiled once per
+layer for its atlases) with FIXED record slots - an empty tile is a
 zero-size quad, instance count is constant per chunk. Records hold WORLD
 pixel coordinates; each chunk target's `uCamera` is its pixel origin, so
 the shared vertex stage does the chunk-local mapping. Chunks allocate on
@@ -601,12 +631,12 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | atlas (TextureId), capacity?, blend? (core gpu BlendMode, "alpha" default, "add" for glows; mount-fixed), tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
+| `SpriteLayer` | atlases (Atlas[], the sheets bound as one draw; mount-fixed), capacity?, blend? (core gpu BlendMode, "alpha" default, "add" for glows; mount-fixed), tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), minScreenPx?, maxScreenPx? (the screen-size clamp on the smaller axis, view pixels; 0 = off; equal = constant size), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
 | `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, follow?, offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?, zoom?, rotation?), viewport? (`() => { width, height }`, default: the driven viewport's size), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
 | `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width, height (view pixels, live; fixed-size only for now), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture) (else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
-| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), frames? (the tileset `setTiles` indices name), chunkClearColor?, blend? (the bake's blend mode, "alpha" default; mount-fixed), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
+| `TileLayer` | cols, rows, tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed), frames? (the tileset `setTiles` indices name), chunkClearColor?, blend? (the bake's blend mode, "alpha" default; mount-fixed), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 ### SpriteLayer and useSpriteLayer
 
@@ -679,23 +709,45 @@ hover, wheel and tap rules headless.
 
 ### Atlases and sampling
 
-- The atlas is NOT owned by the layer: layers come and go, atlases usually
-  live app-long. Dispose atlases yourself (or let the reactive owner do it -
-  createAtlas registers with the owning scope like every core texture).
+- The atlases are NOT owned by the layer: layers come and go, atlases
+  usually live app-long. Dispose atlases yourself (or let the reactive
+  owner do it - createAtlas registers with the owning scope like every
+  core texture).
 - `createImage` is the wrong loader for pixel-art atlases: it never forwards
   sampler options, so it is always `filter: "linear"`. `createAtlas` takes
   decoded pixels (`createAtlas(decodeImage(bytes), { filter: "nearest" })`,
   or pixels built in code) and passes the full sampler through (`filter`,
-  `wrap`, `mipmap`, `anisotropy`); the record it returns is what `grid` and
-  `namedFrames` slice.
+  `wrap`, `mipmap`, `anisotropy`); the record it returns is what `grid`,
+  `namedFrames` and `fullFrame` slice, and what a layer's `atlases` list
+  holds.
+- A frame from a sheet the layer did not declare THROWS at the write
+  (addSprite, setSprite, setTile, setTiles, a tile layer's `frames`
+  table), naming the layer's atlases: a sprite never silently draws from
+  the wrong sheet. The same frames serve every layer that declares their
+  atlas (a scene layer and its additive glow layer over the same art).
+  Raw record writers store the texture's index in `layer.atlases`.
+- The sampler cap: a layer binds at most `limits.maxTextureUnits` atlases
+  (16 on every GLES 3.0 device, the whole pass's budget - a layer's
+  targets bind nothing else). Past it, pack sheets together; runtime
+  images need the packer (okf/backlog/2d-atlas-runtime-packing.md).
 - Frames that share an edge do not bleed: the fragment stage clamps every
   sample into its frame, so a sprite at a fractional position (a scrolling
   backdrop, an easing camera) never paints a line of the neighbouring cell,
-  and an edge-to-edge sheet needs no gutter and no shaved rect table. The
-  one case left is a `mipmap` atlas, whose mip texels average across cell
-  edges before sampling: pass `inset` to `grid`/`namedFrames` (2^k texels
-  keeps mip level k clean, losing that border) or pack a gutter as
-  `spacing`, until extrusion lands (okf/backlog/2d-atlas-extrude.md).
+  and an edge-to-edge sheet needs no gutter and no shaved rect table. A
+  `mipmap` atlas is different: its mip texels average across cell edges
+  BEFORE sampling, and no UV-side trick undoes that. Extrude the sheet
+  before `createAtlas` - `extrudeGrid(image, cols, rows, gutter)` for a
+  uniform sheet, `extrudeRects(image, rects, gutter)` for a hand-packed
+  one: every cell is copied into a gutter of its own replicated edge
+  pixels, the result slices with the returned `options`/`rects`, and mip
+  levels 0 through log2(gutter) sample clean (TexturePacker's "Extrude",
+  Unity's "Extrude Edges"). The rules: `gutter` a power of two and every
+  cell size a multiple of it, so cell edges land on mip texel edges (the
+  calls throw otherwise, naming the fix); the sheet grows by 2 x gutter
+  per cell per axis; deeper levels mix again, so size the gutter to the
+  smallest scale the sheet is drawn at (gutter 4 covers down to a
+  quarter). Load-time CPU work, a few milliseconds for a 1024-square
+  sheet.
 - The colour contract: tint multiplies the atlas texel as stored -
   premultiplied sRGB, no decode - and the layer tint multiplies over
   that, so a tint of `[0.5, 0.5, 0.5, 1]` halves the ENCODED value (about
@@ -761,7 +813,7 @@ hover, wheel and tap rules headless.
 - Records layer: record order is draw order: `destroySprite` shifts every
   later sprite down one slot (copyWithin + index fixup, O(later
   sprites)). Its flush publishes the WHOLE live prefix, not a dirty
-  range: one moved sprite re-publishes count x 52 bytes - a single
+  range: one moved sprite re-publishes count x 64 bytes - a single
   memcpy, microseconds at 10k; the node layer's style publish is the same
   whole-prefix shape. Dirty ranges were deliberately not built until a
   measurement asks.
@@ -770,7 +822,7 @@ hover, wheel and tap rules headless.
   so a y-sorted crowd costs the same flush as an unsorted one. Records
   and slots stay stably addressed; ties keep slot order; `pick()` still
   resolves overlap by slot/record order. Records layer keys: "y" or a raw
-  `{ field, descending? }` offset into the 15-float record. Node layer
+  `{ field, descending? }` offset into the 16-float record. Node layer
   keys: `"y"` - WORLD y from the core-written pose buffer, so sprites
   moved by native transitions (or any core producer) re-sort with zero JS
   per frame - or `"renderOrder"` - the app-owned per-sprite `renderOrder`
@@ -781,7 +833,7 @@ hover, wheel and tap rules headless.
   pose AND style under ONE permutation and republishes the sibling buffer
   itself when the key buffer re-orders (the multi-buffer stage of
   okf/backlog/gpu-instance-order.md). `renderOrder` on a record-layer
-  sprite throws - its 15-float record has no key field.
+  sprite throws - its 16-float record has no key field.
 - The node layer's STYLE slots are not compacted: a removed sprite leaves
   its style floats in place (invisible - the pose is zeroed) until the
   slot recycles. Do not read style truth from the buffer; getSprite reads

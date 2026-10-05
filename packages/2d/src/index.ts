@@ -1,8 +1,10 @@
 // @solidrt/2d - an instanced sprite layer above @solidrt/core/gpu.
-// One atlas, N quads in one draw per VIEW: a layer holds the sprites and
-// shows only through its views (layer.createView / <View2d>, each a target
-// with a camera of its own - a Unity scene renders only through Cameras,
-// a Godot World2D only through Viewports). The live layer
+// A layer's atlases bound together, N quads in one draw per VIEW: a layer
+// holds the sprites and shows only through its views (layer.createView /
+// <View2d>, each a target with a camera of its own - a Unity scene renders
+// only through Cameras, a Godot World2D only through Viewports); every
+// frame names its texture, so sprites from several sheets interleave in
+// the one draw (the PixiJS/Phaser multi-texture batch). The live layer
 // (createSpriteLayer/addSprite) backs every sprite with a SPATIAL ARENA
 // node whose Pose2D record sink writes the pose instance buffer at the
 // core flush, so core producers reach sprites and picking walks the core
@@ -13,7 +15,10 @@
 // world rendered once into textures and composited as a few quads,
 // re-baked on change. Two faces throughout: the imperative core (usable
 // without Solid components) and the components (SpriteLayer/Sprite/Group/
-// View2d/TileLayer) on top. See AGENTS.md for the model and the traps.
+// View2d/TileLayer) on top. Sheets reach the GPU through createAtlas,
+// sliced by grid/namedFrames/fullFrame, and a mipmapped sheet is extruded
+// first (extrudeGrid/extrudeRects). See AGENTS.md for the model and the
+// traps.
 
 export { addGroup, addSprite, createSpriteLayer, getSprite, destroyGroup, destroySprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, worldPosition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
 export { createRecordLayer, FLOATS_PER_SPRITE } from "./records.ts"
@@ -64,12 +69,16 @@ export { createTileLayer } from "./tiles.ts"
 export type { TileChunk, TileLayer as TileLayerHandle, TileLayerOptions } from "./tiles.ts"
 
 export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"
-export { grid, namedFrames, FULL_FRAME } from "./frames.ts"
-export type { AtlasSize, Frame, GridOptions, NamedFramesOptions } from "./frames.ts"
+export { fullFrame, grid, isFrame, namedFrames } from "./frames.ts"
+export type { Frame, GridOptions } from "./frames.ts"
+export { extrudeGrid, extrudeRects } from "./extrude.ts"
+export type { ExtrudedGrid, ExtrudedRects, Rects } from "./extrude.ts"
+export { packRects, packWidth } from "./pack.ts"
+export type { Packing, Placement, Size } from "./pack.ts"
 export { createAnimation } from "./animation.ts"
 export type { AnimationOptions, SpriteAnimation } from "./animation.ts"
 export { fitOversample } from "./oversample.ts"
-export { createAtlas } from "./atlas.ts"
+export { createAtlas, isAtlas } from "./atlas.ts"
 export type { Atlas, AtlasOptions } from "./atlas.ts"
 export { Camera2d, Group, Sprite, SpriteLayer, TileLayer, View2d, useSpriteLayer, Shot, Shots } from "./components/index.ts"
 export type { Camera2dProps, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps, ShotProps, ShotsProps } from "./components/index.ts"

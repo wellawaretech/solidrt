@@ -5,12 +5,15 @@
 // chunk textures, and scrolling is a transform on the composited world
 // (see <TileLayer> in components/tile-layer.tsx), never a repaint.
 //
-// Each chunk is a small copy of the sprite pipeline (shaders.ts) with fixed
-// record slots - record localRow * chunkTiles + localCol IS that tile, an
-// empty tile is a zero-size quad, instance count is constant per chunk.
-// Records hold WORLD pixel coordinates; the chunk target's uCamera is its
-// pixel origin, so the shared vertex stage does the chunk-local mapping
-// (the same mechanism a camera pass uses, pointed at a chunk rect).
+// Each chunk is a manual target over the layer's ONE sprite pipeline
+// (shaders.ts, compiled once per layer for its atlases) with fixed record
+// slots - record localRow * chunkTiles + localCol IS that tile, an empty
+// tile is a zero-size quad, instance count is constant per chunk. Records
+// hold WORLD pixel coordinates; the chunk target's uCamera is its pixel
+// origin, so the shared vertex stage does the chunk-local mapping (the
+// same mechanism a camera pass uses, pointed at a chunk rect). A cell's
+// frame names its atlas like a sprite's (the record's atlas index), so a
+// tile world draws from several tilesets in one bake.
 //
 // Chunks allocate lazily on the first setTile that gives them content: an
 // empty chunk costs nothing - no records, no buffer, no texture - so a
@@ -25,7 +28,7 @@ import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core
 import {
   beginBufferWrite,
   createBuffer,
-  createPipelineTexture,
+  createShaderTarget,
   destroyBuffer,
   destroyTexture,
   endBufferWrite,
@@ -35,11 +38,14 @@ import {
   setTargetSize,
 } from "@solidrt/core/gpu"
 import type { BlendMode, BufferId, FilterMode, TextureId } from "@solidrt/core/gpu"
+import { checkAtlases, frameIndex } from "./atlas.ts"
+import type { Atlas } from "./atlas.ts"
+import { isFrame } from "./frames.ts"
 import type { Frame } from "./frames.ts"
 import { checkTint } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import { FLOATS_PER_SPRITE } from "./records.ts"
-import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
+import { atlasBindings, createSpritePipeline, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 import { checkCell, checkRect, chunkOf, eachChunkSlice, slotOf } from "./tiles-math.ts"
 
 const RESOLVED = Promise.resolve()
@@ -53,12 +59,10 @@ const CLEAR_INDEX = 0xffff
 
 export type Tint = [number, number, number, number]
 
-// Whether a value is a frame: four numeric UVs (the validation both write
-// paths run before touching a record).
-let isFrame = (f: unknown): f is Frame => {
-  let o = f as Frame | null
-  return typeof o === "object" && o !== null && typeof o.u0 === "number" && typeof o.v0 === "number" && typeof o.u1 === "number" && typeof o.v1 === "number"
-}
+// Floats per frames-table entry: the four UVs plus the atlas index.
+const TABLE_FLOATS = 5
+// Float offset of the atlas sampler index in a record (records.ts layout).
+const ATLAS_FIELD_OFFSET = 15
 
 export type TileLayerOptions = {
   /** Per-chunk clear color (the name says the scope: chunks that never
@@ -95,9 +99,10 @@ export type TileLayerOptions = {
   tint?: [number, number, number, number]
   /**
    * The frames table setTiles' index cells name - a tileset: `grid()`'s
-   * array, or any Frame[] (up to 65535 entries), so a generated world is
-   * a Uint16Array of indices and never an array of frame objects. Fixed
-   * at creation; setTile takes frames directly either way.
+   * array, or any Frame[] (up to 65535 entries, from any of the layer's
+   * atlases), so a generated world is a Uint16Array of indices and never
+   * an array of frame objects. Fixed at creation; setTile takes frames
+   * directly either way.
    */
   frames?: Frame[]
   label?: string
@@ -116,6 +121,9 @@ export type TileChunk = {
 }
 
 export type TileLayer = {
+  /** The atlases the layer bakes from, as declared at creation: every
+   * frame set names one of their textures (see LayerBase.atlases). */
+  readonly atlases: readonly Atlas[]
   /** Grid shape, fixed at creation. */
   cols: number
   rows: number
@@ -202,18 +210,21 @@ type Chunk = TileChunk & {
  * sized at creation - that is the contract, not a provisional limit:
  * recreate the layer to resize, and for a huge sparse world just pick big
  * numbers, since a chunk nobody writes costs nothing (no records, no
- * texture) and the grid bound is bookkeeping, not allocation. Disposed
- * automatically with the owning reactive scope (opt out with `{ autoFree:
- * false }`); the atlas is NOT owned - dispose it yourself.
+ * texture) and the grid bound is bookkeeping, not allocation. `atlases`
+ * is the list of tilesets the cells draw from, bound together in every
+ * chunk bake (see createSpriteLayer). Disposed automatically with the
+ * owning reactive scope (opt out with `{ autoFree: false }`); the atlases
+ * are NOT owned - dispose them yourself.
  */
 export function createTileLayer(
   cols: number,
   rows: number,
   tileW: number,
   tileH: number,
-  atlas: TextureId,
+  atlases: Atlas[],
   opts?: TileLayerOptions,
 ): TileLayer {
+  let atlasIndex = checkAtlases("createTileLayer", atlases)
   if (!(cols > 0 && rows > 0 && Number.isInteger(cols) && Number.isInteger(rows))) {
     throw new Error(`createTileLayer: cols and rows must be positive integers, got ${cols} x ${rows}`)
   }
@@ -236,22 +247,24 @@ export function createTileLayer(
   let tint: Tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createTileLayer", tint)
   // The frames table, copied (the caller's array may move on) and checked
-  // once, plus its UVs as four floats per entry: an index write copies by
-  // offset instead of reading a frame object per cell.
+  // once, plus its UVs and atlas index as five floats per entry: an index
+  // write copies by offset instead of reading a frame object per cell.
   let frames: Frame[] | null = opts?.frames ? opts.frames.slice() : null
-  let tableUv: Float32Array | null = null
+  let table: Float32Array | null = null
   if (frames !== null) {
     if (frames.length >= CLEAR_INDEX) {
       throw new Error(`createTileLayer: a frames table holds at most ${CLEAR_INDEX - 1} frames, got ${frames.length}`)
     }
-    tableUv = new Float32Array(frames.length * 4)
+    table = new Float32Array(frames.length * TABLE_FLOATS)
     for (let i = 0; i < frames.length; i++) {
       let f = frames[i]!
       if (!isFrame(f)) throw new Error(`createTileLayer: frames[${i}] is not a frame, got ${JSON.stringify(f)}`)
-      tableUv[i * 4] = f.u0
-      tableUv[i * 4 + 1] = f.v0
-      tableUv[i * 4 + 2] = f.u1
-      tableUv[i * 4 + 3] = f.v1
+      let at = i * TABLE_FLOATS
+      table[at] = f.u0
+      table[at + 1] = f.v0
+      table[at + 2] = f.u1
+      table[at + 3] = f.v1
+      table[at + 4] = frameIndex(`createTileLayer: frames[${i}]`, atlasIndex, f)
     }
   }
   let oversample = opts?.oversample ?? 1
@@ -259,11 +272,10 @@ export function createTileLayer(
   let thrash = thrashSentinel(`tile layer "${label}"`)
   let chunkCols = Math.ceil(cols / chunkTiles)
   let perChunk = chunkTiles * chunkTiles
-  // One unit quad (triangle strip), shared by every chunk's pipeline.
-  let quad = createBuffer(new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), {
-    label: `${label}-quad`,
-    autoFree: false,
-  })
+  // The one pipeline (and unit quad) every chunk target draws with:
+  // compiled once per layer, however many chunks allocate.
+  let gpu = createSpritePipeline(label, VERTEX, [INSTANCE_ATTRIBUTES], blend, atlases.length)
+  let textures = atlasBindings(atlases.map(a => a.texture))
 
   let disposed = false
   let scheduled = false
@@ -316,9 +328,8 @@ export function createTileLayer(
     let y = Math.floor(index / chunkCols) * chunkH
     let records = new Float32Array(perChunk * FLOATS_PER_SPRITE)
     let buffer = createBuffer(records.byteLength, { label: `${label}-chunk-records`, autoFree: false })
-    let texture = createPipelineTexture(
-      VERTEX,
-      FRAGMENT,
+    let texture = createShaderTarget(
+      gpu.pipeline,
       chunkW * oversample,
       chunkH * oversample,
       // Bake targets pin the camera rotation to identity: the tile camera
@@ -326,15 +337,10 @@ export function createTileLayer(
       { uViewport: [chunkW, chunkH], uCamera: [x, y, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: tint },
       {
         label: `${label}-chunk`,
-        topology: "triangle-strip",
+        buffers: [gpu.quad, buffer],
         vertexCount: 4,
-        buffers: [
-          { attributes: [{ name: "aPos", format: "float32x2" }], buffer: quad },
-          { stepMode: "instance", attributes: INSTANCE_ATTRIBUTES, buffer },
-        ],
         instanceCount: perChunk,
-        blend,
-        textures: { uAtlas: atlas },
+        textures,
         clearColor: opts?.chunkClearColor ?? [0, 0, 0, 0],
         filter: opts?.filter,
         render: "manual",
@@ -352,11 +358,11 @@ export function createTileLayer(
   // (tiles-math.ts, bound to this layer's grid).
   let chunkAt = (col: number, row: number): number => chunkOf(col, row, chunkTiles, chunkCols)
   let slot = (col: number, row: number): number => slotOf(col, row, chunkTiles, FLOATS_PER_SPRITE)
-  // Write one cell's record: the quad at the cell, the frame's UVs, and
-  // the tint - the one given, else the default when the cell comes up from
-  // empty (a re-set keeps its tint: absent keys keep their values, like
-  // every options object here).
-  let writeCell = (r: Float32Array, at: number, col: number, row: number, u0: number, v0: number, u1: number, v1: number, cellTint: Tint | undefined): void => {
+  // Write one cell's record: the quad at the cell, the frame's UVs and
+  // atlas index, and the tint - the one given, else the default when the
+  // cell comes up from empty (a re-set keeps its tint: absent keys keep
+  // their values, like every options object here).
+  let writeCell = (r: Float32Array, at: number, col: number, row: number, u0: number, v0: number, u1: number, v1: number, atlas: number, cellTint: Tint | undefined): void => {
     let fresh = r[at + 2] === 0
     r[at] = (col + 0.5) * tileW
     r[at + 1] = (row + 0.5) * tileH
@@ -366,6 +372,7 @@ export function createTileLayer(
     r[at + 5] = v0
     r[at + 6] = u1
     r[at + 7] = v1
+    r[at + ATLAS_FIELD_OFFSET] = atlas
     if (cellTint !== undefined) {
       r[at + 9] = cellTint[0]
       r[at + 10] = cellTint[1]
@@ -386,6 +393,7 @@ export function createTileLayer(
   }
 
   let layer: TileLayer = {
+    atlases,
     cols,
     rows,
     tileW,
@@ -424,8 +432,9 @@ export function createTileLayer(
       } else {
         if (!isFrame(frame)) throw new Error(`setTile: not a frame, got ${JSON.stringify(frame)}`)
         if (opts?.tint !== undefined) checkTint("setTile", opts.tint)
+        let atlas = frameIndex("setTile", atlasIndex, frame)
         chunk ??= allocate(index)
-        writeCell(chunk.records, at, col, row, frame.u0, frame.v0, frame.u1, frame.v1, opts?.tint)
+        writeCell(chunk.records, at, col, row, frame.u0, frame.v0, frame.u1, frame.v1, atlas, opts?.tint)
       }
       touch(chunk)
     },
@@ -436,9 +445,11 @@ export function createTileLayer(
       if (opts?.tint !== undefined) checkTint("setTiles", opts.tint)
       let cellTint = opts?.tint
       // The two forms: indices into the table, or frames. Every entry is
-      // checked before the first write, so a bad one changes nothing.
+      // checked (and a frame resolved to its atlas) before the first write,
+      // so a bad one changes nothing.
       let idx = typeof cells[0] === "number" ? (cells as ArrayLike<number>) : null
       let objs = idx === null ? (cells as ArrayLike<Frame | null>) : null
+      let objAtlas: Float32Array | null = null
       if (idx !== null) {
         if (frames === null) throw new Error("setTiles: index cells need a frames table (createTileLayer's frames option)")
         let count = frames.length
@@ -448,12 +459,14 @@ export function createTileLayer(
           if (!(Number.isInteger(k) && k >= 0 && k < count)) throw new Error(`setTiles: index ${k} at cell ${i} outside the ${count}-frame table`)
         }
       } else {
+        objAtlas = new Float32Array(objs!.length)
         for (let i = 0; i < objs!.length; i++) {
           let f = objs![i]
-          if (f !== null && f !== undefined && !isFrame(f)) throw new Error(`setTiles: cell ${i} is neither a frame nor null, got ${JSON.stringify(f)}`)
+          if (f === null || f === undefined) continue
+          if (!isFrame(f)) throw new Error(`setTiles: cell ${i} is neither a frame nor null, got ${JSON.stringify(f)}`)
+          objAtlas[i] = frameIndex(`setTiles: cell ${i}`, atlasIndex, f)
         }
       }
-      let uv = tableUv
       // Chunk by chunk over the rect: each chunk's slice of the rect is a
       // sub-rect walked row by row with the record offset advancing, one
       // dirty mark at the end. A chunk the slice only clears is never
@@ -469,17 +482,19 @@ export function createTileLayer(
             let v0: number
             let u1: number
             let v1: number
+            let atlas: number
             if (idx !== null) {
               let k = idx[i]!
               if (k === -1 || k === CLEAR_INDEX) {
                 if (r !== null) clearCell(r, at)
                 continue
               }
-              let b = k * 4
-              u0 = uv![b]!
-              v0 = uv![b + 1]!
-              u1 = uv![b + 2]!
-              v1 = uv![b + 3]!
+              let b = k * TABLE_FLOATS
+              u0 = table![b]!
+              v0 = table![b + 1]!
+              u1 = table![b + 2]!
+              v1 = table![b + 3]!
+              atlas = table![b + 4]!
             } else {
               let f = objs![i]
               if (f === null || f === undefined) {
@@ -490,12 +505,13 @@ export function createTileLayer(
               v0 = f.v0
               u1 = f.u1
               v1 = f.v1
+              atlas = objAtlas![i]!
             }
             if (r === null) {
               chunk = allocate(index)
               r = chunk.records
             }
-            writeCell(r, at, x, y, u0, v0, u1, v1, cellTint)
+            writeCell(r, at, x, y, u0, v0, u1, v1, atlas, cellTint)
           }
         }
         if (chunk) touch(chunk)
@@ -507,7 +523,7 @@ export function createTileLayer(
       let at = slot(col, row)
       if (!chunk || chunk.records[at + 2] === 0) return null
       let r = chunk.records
-      return { u0: r[at + 4]!, v0: r[at + 5]!, u1: r[at + 6]!, v1: r[at + 7]! }
+      return { texture: atlases[r[at + ATLAS_FIELD_OFFSET]!]!.texture, u0: r[at + 4]!, v0: r[at + 5]!, u1: r[at + 6]!, v1: r[at + 7]! }
     },
     frames,
     setTint(next) {
@@ -530,7 +546,7 @@ export function createTileLayer(
       }
       resident.clear()
       layer.chunks.length = 0
-      destroyBuffer(quad)
+      gpu.dispose()
     },
   }
 

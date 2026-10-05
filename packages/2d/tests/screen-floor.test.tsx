@@ -14,7 +14,7 @@ import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
 import { readTexture } from "@solidrt/core/gpu"
 import type { BlendMode, TextureId } from "@solidrt/core/gpu"
-import { addGroup, addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, destroySprite, getSprite, setSprite } from "../src/index.ts"
+import { addGroup, addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, destroySprite, fullFrame, getSprite, setSprite } from "../src/index.ts"
 
 const SIZE = 64
 // The atlas: one opaque white texel, tinted per sprite.
@@ -67,7 +67,7 @@ function expectPixel(got: number[], want: number[]): void {
 test("a floored sprite draws at the floor when zoom would shrink it below, and releases past it", async app => {
   let { view } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "floor-atlas" })
-    let layer = createSpriteLayer(atlas.texture, { capacity: 8, label: "floor" })
+    let layer = createSpriteLayer([atlas], { capacity: 8, label: "floor" })
     let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: "floor" })
     addSprite(layer, { x: 32, y: 32, w: SPRITE, h: SPRITE, minScreenPx: FLOOR })
     return { layer, view, texture: view.texture }
@@ -88,7 +88,7 @@ test("a floored sprite draws at the floor when zoom would shrink it below, and r
 test("pick hits the drawn rect at the zoom it is asked for, through group scale, and view.pick passes its camera's", async app => {
   let { layer, view, ring, pin, plain } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "floor-pick-atlas" })
-    let layer = createSpriteLayer(atlas.texture, { capacity: 8, label: "floor-pick" })
+    let layer = createSpriteLayer([atlas], { capacity: 8, label: "floor-pick" })
     let view = layer.createView({ width: SIZE, height: SIZE, label: "floor-pick" })
     let ring = addSprite(layer, { x: 32, y: 32, w: SPRITE, h: SPRITE, minScreenPx: FLOOR })
     // A 2:1 pin under a group scaled 2x: world 8 x 4, floored to 32 x 16
@@ -125,7 +125,7 @@ test("pick hits the drawn rect at the zoom it is asked for, through group scale,
 test("the record layer floors and picks the same way", async app => {
   let { layer, view, dot } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "floor-records-atlas" })
-    let layer = createRecordLayer(atlas.texture, { capacity: 8, label: "floor-records" })
+    let layer = createRecordLayer([atlas], { capacity: 8, label: "floor-records" })
     let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: "floor-records" })
     let dot = addSprite(layer, { x: 32, y: 32, w: SPRITE, h: SPRITE, minScreenPx: FLOOR })
     addSprite(layer, { x: 200, y: 200, w: SPRITE, h: SPRITE })
@@ -148,7 +148,7 @@ test("the record layer floors and picks the same way", async app => {
 async function overlapped(app: TestApp, blend: BlendMode): Promise<number[]> {
   let { view } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: `${blend}-atlas` })
-    let layer = createSpriteLayer(atlas.texture, { capacity: 8, blend, label: blend })
+    let layer = createSpriteLayer([atlas], { capacity: 8, blend, label: blend })
     let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: blend })
     addSprite(layer, { x: 32, y: 32, w: 16, h: 16, tint: HALF })
     addSprite(layer, { x: 32, y: 32, w: 16, h: 16, tint: HALF })
@@ -169,8 +169,8 @@ test("blend: \"add\" accumulates overlapping sprites to opaque white", async app
 test("a tile layer takes the blend too, baking its cells with it", async app => {
   let { layer } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "tiles-add-atlas" })
-    let layer = createTileLayer(2, 2, 8, 8, atlas.texture, { blend: "add", label: "tiles-add" })
-    layer.setTile(0, 0, { u0: 0, v0: 0, u1: 1, v1: 1 }, { tint: HALF })
+    let layer = createTileLayer(2, 2, 8, 8, [atlas], { blend: "add", label: "tiles-add" })
+    layer.setTile(0, 0, fullFrame(atlas), { tint: HALF })
     return { layer, texture: layer.chunks[0]!.texture }
   })
   await app.frame()
@@ -182,7 +182,7 @@ test("a tile layer takes the blend too, baking its cells with it", async app => 
 test("a floored sprite destroyed, or its floor cleared, lets the search bound shrink back", async app => {
   let { layer } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "floor-bound-atlas" })
-    let layer = createSpriteLayer(atlas.texture, { capacity: 8, label: "floor-bound" })
+    let layer = createSpriteLayer([atlas], { capacity: 8, label: "floor-bound" })
     let view = layer.createView({ width: SIZE, height: SIZE, label: "floor-bound" })
     return { layer, texture: view.texture }
   })
@@ -205,7 +205,7 @@ test("a floored sprite destroyed, or its floor cleared, lets the search bound sh
 test("a capped sprite draws at the ceiling when zoom would grow it past, equal bounds hold a constant size, and pick agrees", async app => {
   let { layer, view, label, gizmo } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "ceiling-atlas" })
-    let layer = createSpriteLayer(atlas.texture, { capacity: 8, label: "ceiling" })
+    let layer = createSpriteLayer([atlas], { capacity: 8, label: "ceiling" })
     let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: "ceiling" })
     let label = addSprite(layer, { x: 32, y: 32, w: BIG, h: BIG, maxScreenPx: FLOOR })
     let gizmo = addSprite(layer, { x: 200, y: 200, w: 1, h: 2, minScreenPx: FLOOR, maxScreenPx: FLOOR })
@@ -246,8 +246,8 @@ test("a capped sprite draws at the ceiling when zoom would grow it past, equal b
 test("the clamp pair is validated against the stored bounds before any write, on both layers", async app => {
   let { nodes, records } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "clamp-check-atlas" })
-    let nodes = createSpriteLayer(atlas.texture, { capacity: 8, label: "clamp-check" })
-    let records = createRecordLayer(atlas.texture, { capacity: 8, label: "clamp-check-records" })
+    let nodes = createSpriteLayer([atlas], { capacity: 8, label: "clamp-check" })
+    let records = createRecordLayer([atlas], { capacity: 8, label: "clamp-check-records" })
     let view = nodes.createView({ width: SIZE, height: SIZE, label: "clamp-check" })
     return { nodes, records, texture: view.texture }
   })

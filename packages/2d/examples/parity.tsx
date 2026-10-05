@@ -44,8 +44,8 @@ function rng(seed: number): () => number {
 function App() {
   let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
   let frames = grid(atlas, 2, 2)
-  let nodes = createSpriteLayer(atlas.texture, { capacity: 64, label: "nodes" })
-  let records = createRecordLayer(atlas.texture, { capacity: 64, label: "records" })
+  let nodes = createSpriteLayer([atlas], { capacity: 64, label: "nodes" })
+  let records = createRecordLayer([atlas], { capacity: 64, label: "records" })
   let nodeView = nodes.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1], label: "nodes" })
   let recordView = records.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1], label: "records" })
 

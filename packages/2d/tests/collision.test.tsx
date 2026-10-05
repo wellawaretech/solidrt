@@ -27,7 +27,7 @@ let rounded = (v: readonly number[]) => v.map(x => Number(x.toFixed(DIGITS)) + 0
 
 function world() {
   let atlas = createAtlas(ATLAS, { label: "collision-atlas" })
-  let layer = createSpriteLayer(atlas.texture, { capacity: 64, label: "collision" })
+  let layer = createSpriteLayer([atlas], { capacity: 64, label: "collision" })
   let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0.07, 0.07, 0.1, 1], label: "collision" })
 
   // A floor of 32 px tiles whose top edge is y = 100 (y down), x 0..256.

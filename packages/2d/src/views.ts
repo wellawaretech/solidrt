@@ -25,6 +25,7 @@ import { spriteDispatch } from "./dispatch.ts"
 import type { PointerFeed } from "@solidrt/core"
 import type { LayerPointerListener, Sprite, LayerHandlers } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
+import { atlasBindings } from "./shaders.ts"
 
 export type ViewOptions = {
   /** View pixels: the viewport its camera maps the world onto. */
@@ -104,13 +105,15 @@ export type ViewHandle = {
 }
 
 // What a layer hands its views: the pipeline and quad every entry draws
-// with, the atlas, the key order one entry declares, and live reads of
+// with, the atlases, the key order one entry declares, and live reads of
 // the state the layer fans out.
 export type ViewDeps = {
   label: string
   pipeline: RenderPipelineId
   quad: BufferId
-  atlas: TextureId
+  /** The layer's atlas textures in sampler order (the pipeline was
+   * compiled for exactly this many). */
+  atlases: readonly TextureId[]
   /** The layer's current instance buffers, in the pipeline's layout order
    * after the quad (the pose and style pair on the node layer, the one
    * record buffer on records). */
@@ -178,7 +181,7 @@ export function createViews(deps: ViewDeps): Views {
         width * oversample,
         height * oversample,
         { uViewport: [width, height], ...cameraParams(cam), uTint: deps.tint() },
-        { textures: { uAtlas: deps.atlas }, clearColor: opts.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
+        { textures: atlasBindings(deps.atlases), clearColor: opts.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
       )
       let order = ordered === null ? deps.order : undefined
       let entry = entryFor(texture, order)

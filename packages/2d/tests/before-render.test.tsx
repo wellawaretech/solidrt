@@ -12,7 +12,7 @@ import type { Pixels, RefLocator, TestApp } from "@solidrt/test"
 import { onFrame } from "@solidrt/core"
 import { captureSnapshot } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
-import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, FULL_FRAME } from "../src/index.ts"
+import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, fullFrame } from "../src/index.ts"
 
 const SIZE = 64
 // The atlas: one opaque white texel.
@@ -64,7 +64,7 @@ function at(pixels: Pixels, fx: number, fy: number): number[] {
 test("a sprite added from onFrame is drawn in that frame", async app => {
   let { layer, leaf } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "before-render-sprites-atlas" })
-    let layer = createSpriteLayer(atlas.texture, { capacity: 8, label: "before-render-sprites" })
+    let layer = createSpriteLayer([atlas], { capacity: 8, label: "before-render-sprites" })
     let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 1], label: "before-render-sprites" })
     return { layer, texture: view.texture }
   })
@@ -77,7 +77,7 @@ test("a sprite added from onFrame is drawn in that frame", async app => {
 test("a record sprite added from onFrame is drawn in that frame", async app => {
   let { layer, leaf } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "before-render-records-atlas" })
-    let layer = createRecordLayer(atlas.texture, { capacity: 8, label: "before-render-records" })
+    let layer = createRecordLayer([atlas], { capacity: 8, label: "before-render-records" })
     let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 1], label: "before-render-records" })
     return { layer, texture: view.texture }
   })
@@ -90,16 +90,16 @@ test("a record sprite added from onFrame is drawn in that frame", async app => {
 test("a tile set from onFrame is baked for that frame's paint", async app => {
   let { layer, leaf } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "before-render-tiles-atlas" })
-    let layer = createTileLayer(TILES, TILES, TILE, TILE, atlas.texture, { chunkTiles: TILES, label: "before-render-tiles" })
+    let layer = createTileLayer(TILES, TILES, TILE, TILE, [atlas], { chunkTiles: TILES, label: "before-render-tiles" })
     // The chunk exists once a cell in it is set; setting then clearing one
     // leaves an allocated, empty chunk for the leaf to show.
-    layer.setTile(0, 0, FULL_FRAME)
+    layer.setTile(0, 0, fullFrame(layer.atlases[0]!))
     layer.setTile(0, 0, null)
     return { layer, texture: layer.chunks[0]!.texture }
   })
   let before = await painted(app, leaf, () => {})
   expect(at(before, 0.25, 0.25)).toEqual(TRANSPARENT)
-  let frame = await painted(app, leaf, () => layer.setTile(0, 0, FULL_FRAME))
+  let frame = await painted(app, leaf, () => layer.setTile(0, 0, fullFrame(layer.atlases[0]!)))
   expect(at(frame, 0.25, 0.25)).toEqual(WHITE)
   expect(at(frame, 0.75, 0.75)).toEqual(TRANSPARENT)
 })

@@ -123,17 +123,12 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
-- **[Extrude atlas cells into gutters so a mipmapped sheet does not bleed](backlog/2d-atlas-extrude.md)** [2026-09-07]
-  The layer shaders clamp samples into their frame, which stops edge bleed at
-  mip level 0, but a mip chain averages blocks that straddle cell edges before
-  any sampling decision; the fix is a load-time repack that copies each cell
-  into a gutter of replicated edge pixels, the thing Unity's packer and
-  TexturePacker call extrude.
-- **[A sprite layer draws one pre-packed atlas, fixed at creation](backlog/2d-atlas-limits.md)** [2026-08-22]
-  Every sprite in a layer samples one texture chosen at creation, and
-  createAtlas only decodes an already-packed sheet, so a second sheet costs a
-  second full-size render target and runtime-supplied images have no way in at
-  all.
+- **[Images that arrive while the app runs have no way into a sprite layer](backlog/2d-atlas-runtime-packing.md)** [2026-10-06]
+  A layer draws from the atlases it declares and createAtlas uploads one
+  finished sheet, so an image downloaded, user-supplied or generated at
+  runtime cannot become a frame without its own atlas, and sixteen atlases is
+  the layer's whole budget; a packer that allocates runtime images into a few
+  pages needs a sub-rect texture upload in core first.
 - **[Baked layers and tilemaps for @solidrt/2d](backlog/2d-baked-layers.md)** [2026-08-19]
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
@@ -866,11 +861,22 @@ Finished, kept for the reasoning.
   camera control is camera() against pose(), and "is it playing" is a boolean
   field against a method returning names; each landed separately after the
   08-31 and 09-06 unison reviews.
+- **[Extrude atlas cells into gutters so a mipmapped sheet does not bleed](done/2d-atlas-extrude.md)** [2026-10-06]
+  The layer shaders clamp samples into their frame, which stops edge bleed at
+  mip level 0, but a mip chain averages blocks that straddle cell edges before
+  any sampling decision; the fix is a load-time repack that copies each cell
+  into a gutter of replicated edge pixels, the thing Unity's packer and
+  TexturePacker call extrude.
 - **[An inset option on grid and namedFrames for hand-packed atlases without gutters](done/2d-atlas-frame-inset.md)** [2026-09-07]
   Frames addressed as whole-pixel rects that share an edge bleed a one-texel
   line of the neighbouring cell on the odd frame of any fractional motion; the
   fix is a half-texel inset or a gutter, and both slicers are the place to
   apply it once instead of in every app's rect table.
+- **[A sprite layer draws one pre-packed atlas, fixed at creation](done/2d-atlas-limits.md)** [2026-10-06]
+  Every sprite in a layer samples one texture chosen at creation, and
+  createAtlas only decodes an already-packed sheet, so a second sheet costs a
+  second full-size render target and runtime-supplied images have no way in at
+  all.
 - **[A 2d camera controller - fit, clamp, zoom-at-cursor, pinch, glide](done/2d-camera-controller.md)** [2026-09-02]
   Every pannable/zoomable app re-derived the same hundred lines of camera math
   (fit-to-world min zoom, pan clamping, wheel zoom anchored under the cursor

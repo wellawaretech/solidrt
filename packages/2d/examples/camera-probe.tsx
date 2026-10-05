@@ -24,7 +24,7 @@ import {
   createRecordLayer,
   createSpriteLayer,
   createTileLayer,
-  FULL_FRAME,
+  fullFrame,
   grid,
   projectCamera,
 } from "@solidrt/2d"
@@ -55,8 +55,8 @@ function rng(seed: number): () => number {
 function App() {
   let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
   let frames = grid(atlas, 2, 2)
-  let nodes = createSpriteLayer(atlas.texture, { label: "cam-nodes" })
-  let records = createRecordLayer(atlas.texture, { label: "cam-records" })
+  let nodes = createSpriteLayer([atlas], { label: "cam-nodes" })
+  let records = createRecordLayer([atlas], { label: "cam-records" })
   let nodeView = nodes.createView({ width: W, height: H, label: "cam-nodes" })
   let recordView = records.createView({ width: W, height: H, label: "cam-records" })
   nodeView.setCamera(CAM)
@@ -82,13 +82,13 @@ function App() {
   // The probe sprite: the FULL logo frame (its central 10% is fully
   // opaque, so the projected center samples opaque), isolated from the
   // population.
-  let probe: SpriteHandle = addSprite(nodes, { x: 320, y: 320, w: 40, h: 40, frame: FULL_FRAME })
-  addSprite(records, { x: 320, y: 320, w: 40, h: 40, frame: FULL_FRAME })
+  let probe: SpriteHandle = addSprite(nodes, { x: 320, y: 320, w: 40, h: 40, frame: fullFrame(atlas) })
+  addSprite(records, { x: 320, y: 320, w: 40, h: 40, frame: fullFrame(atlas) })
 
   // A small tile layer: the bake path with the pinned identity rotation.
   // The checked tile (2, 2) gets the full frame (opaque center texel).
-  let tiles = createTileLayer(8, 8, 16, 16, atlas.texture, { label: "cam-tiles" })
-  for (let i = 0; i < 8; i++) tiles.setTile(i, i, i === 2 ? FULL_FRAME : frames[i % 4]!)
+  let tiles = createTileLayer(8, 8, 16, 16, [atlas], { label: "cam-tiles" })
+  for (let i = 0; i < 8; i++) tiles.setTile(i, i, i === 2 ? fullFrame(atlas) : frames[i % 4]!)
 
   let failures: string[] = []
   let check = (ok: boolean, what: string) => {

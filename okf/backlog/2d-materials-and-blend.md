@@ -55,8 +55,8 @@ model exists to avoid.
 
 ## What makes this awkward here
 
-The layer is the batch. One atlas, N quads, one draw per view, and the
-instance buffers are the layer's. A material per SPRITE would mean a
+The layer is the batch. Its atlases bound together, N quads, one draw per
+view, and the instance buffers are the layer's. A material per SPRITE would mean a
 draw per material, which is the thing the package is built not to do.
 So the shape question to settle first is where a material attaches, and
 the candidates are not equal:

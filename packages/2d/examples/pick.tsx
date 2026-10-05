@@ -66,7 +66,7 @@ function App() {
   return (
     <window>
       <SpriteLayer
-        atlas={atlas.texture}
+        atlases={[atlas]}
         capacity={64}
         clearColor={[0.05, 0.05, 0.09, 1]}
         pointer={pointer}

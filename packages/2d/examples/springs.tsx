@@ -44,7 +44,7 @@ const TRANSITION: SpriteTransition = {
 function App() {
   let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
   let frames = grid(atlas, 2, 2)
-  let layer = createSpriteLayer(atlas.texture, { capacity: COUNT, label: "springs" })
+  let layer = createSpriteLayer([atlas], { capacity: COUNT, label: "springs" })
   let view = layer.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1] })
 
   let slotX = (slot: number) => ((slot % COLS) + 0.5) * (W / COLS)

@@ -86,7 +86,7 @@ markdown file per page.
 **npm extension packages**
 
 - `@solidrt/components` - higher-level components built on the core primitives
-- `@solidrt/2d` - instanced sprite layer: one atlas, thousands of sprites in a single draw call
+- `@solidrt/2d` - instanced sprite layer: your atlases bound together, thousands of sprites in a single draw call
 - `@solidrt/3d` - retained 3D scene graph: meshes, materials and a camera as Solid components
 
 **Platform packages**

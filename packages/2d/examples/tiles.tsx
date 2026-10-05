@@ -112,7 +112,7 @@ function App() {
           rows={ROWS}
           tileW={TILE}
           tileH={TILE}
-          atlas={atlas.texture}
+          atlases={[atlas]}
           frames={frames}
           camera={camera()}
           label="tile-world"

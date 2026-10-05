@@ -1,6 +1,7 @@
 import { createEffect, createSignal, displayScale, For, getBoundingBoxViewport, onLayout, untrack } from "@solidrt/core"
-import type { TextureId, VoidComponent } from "@solidrt/core"
+import type { VoidComponent } from "@solidrt/core"
 import type { BlendMode, FilterMode } from "@solidrt/core/gpu"
+import type { Atlas } from "../atlas.ts"
 import type { CameraUpdate } from "../camera.ts"
 import type { Frame } from "../frames.ts"
 import { tileWorldScale } from "../oversample-math.ts"
@@ -24,8 +25,9 @@ export type TileLayerProps = {
   rows: number
   tileW: number
   tileH: number
-  /** The atlas texture every tile samples (create with createAtlas). */
-  atlas: TextureId
+  /** The tilesets the cells draw from (createAtlas records), bound as one
+   * bake; every frame set names one of them. Fixed at mount. */
+  atlases: Atlas[]
   /** The frames table `setTiles`' index cells name (a tileset, `grid()`'s
    * array); see TileLayerOptions. Fixed at creation. */
   frames?: Frame[]
@@ -84,7 +86,7 @@ export type TileLayerProps = {
  */
 export let TileLayer: VoidComponent<TileLayerProps> = props => {
   let layer = untrack(() =>
-    createTileLayer(props.cols, props.rows, props.tileW, props.tileH, props.atlas, {
+    createTileLayer(props.cols, props.rows, props.tileW, props.tileH, props.atlases, {
       chunkClearColor: props.chunkClearColor,
       blend: props.blend,
       filter: props.filter,

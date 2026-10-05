@@ -49,7 +49,7 @@ function App() {
   let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
   let frames = grid(atlas, 2, 2)
   let win = { width: 1, height: 1 }
-  let layer = createSpriteLayer(atlas.texture, { capacity: COUNT + 1, label: "world" })
+  let layer = createSpriteLayer([atlas], { capacity: COUNT + 1, label: "world" })
   // The main view: the window, under the pannable camera.
   let main = layer.createView({ width: win.width, height: win.height, clearColor: [0.05, 0.05, 0.09, 1], label: "world" })
   let select = (sprite: SpriteHandle | null) => {

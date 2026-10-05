@@ -73,7 +73,7 @@ function App() {
   let frames = grid(atlas, 2, 2)
   // The window's logical size, mirrored for the layer and the camera.
   let win = { width: 1, height: 1 }
-  let layer = createSpriteLayer(atlas.texture, { capacity: COUNT + 1, label: "camera" })
+  let layer = createSpriteLayer([atlas], { capacity: COUNT + 1, label: "camera" })
   // The layer's one view here: the window. The camera drives it and
   // listens at its root.
   let view = layer.createView({ width: win.width, height: win.height, clearColor: [0.05, 0.05, 0.09, 1] })

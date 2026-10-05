@@ -60,5 +60,8 @@ which is exactly what the sprite layer already draws.
   zoom pick (mip-like)?
 - Does the helper own updates (setText re-diffing glyph sprites) or stay
   build-once, replace-on-change (labels rarely mutate)?
-- Interaction with 2d-atlas-limits.md: glyphs are the second atlas a
-  layer wants alongside its art - the multi-atlas answer may gate this.
+- The glyph atlas is the second atlas a layer wants alongside its art;
+  since [2d-atlas-limits](../done/2d-atlas-limits.md) a layer declares
+  several atlases and draws them in one batch, so a glyph sheet is one
+  more entry in the layer's `atlases` and text sprites are ordinary
+  sprites of the same layer.

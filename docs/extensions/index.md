@@ -75,19 +75,24 @@ ordinary texture. Moving ten thousand sprites is ten thousand float stores
 and one publish, not twenty thousand property writes.
 
 ```tsx
+import { decodeImage } from "@solidrt/core"
 import { createAtlas, grid, Sprite, SpriteLayer } from "@solidrt/2d"
 import sheet from "./sheet.png" with { type: "binary" }
 
-let atlas = createAtlas(sheet, { filter: "nearest" })
-let frames = grid(4, 4, { width: atlas.width, height: atlas.height })
+let atlas = createAtlas(decodeImage(sheet), { filter: "nearest" })
+let frames = grid(atlas, 4, 4)
 
 <window>
-  <SpriteLayer width={720} height={480} atlas={atlas.texture}>
+  <SpriteLayer width={720} height={480} atlases={[atlas]}>
     <Sprite x={100} y={120} w={32} h={32} frame={frames[0]} />
     <Sprite x={200} y={160} w={32} h={32} frame={frames[5]} rotation={0.4} />
   </SpriteLayer>
 </window>
 ```
+
+A layer declares the atlases it draws from and binds them as one draw, so
+sprites from several sheets interleave freely; every frame carries the
+sheet it was cut from.
 
 Pick it in the scaffolder or `bun add @solidrt/2d`. Overview and the export
 surface are under [@solidrt/2d](/extensions/2d/).

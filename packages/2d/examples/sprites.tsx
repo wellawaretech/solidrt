@@ -23,7 +23,7 @@ const SPRITE = 48
 function App() {
   let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
   let frames = grid(atlas, 2, 2)
-  let layer = createSpriteLayer(atlas.texture, { capacity: COUNT, label: "bounce" })
+  let layer = createSpriteLayer([atlas], { capacity: COUNT, label: "bounce" })
   let view = layer.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1] })
 
   // Simulation state lives in plain arrays; the layer holds the published
