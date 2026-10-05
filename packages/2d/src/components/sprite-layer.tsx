@@ -1,5 +1,6 @@
 import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
+import type { BlendMode } from "@solidrt/core/gpu"
 import { createSpriteLayer } from "../layer.ts"
 import { feedPointer } from "../views.ts"
 import type { LayerPointerEvent, LayerTapEvent, LayerWheelEvent, SpriteLayer as LayerHandle } from "../layer.ts"
@@ -43,6 +44,10 @@ export type SpriteLayerProps = LayerPointerProps & {
   atlas: TextureId
   /** Initial record reservation (grows on demand); default 1024. */
   capacity?: number
+  /** How the sprites blend into the layer's views (see
+   * SpriteLayerOptions.blend); default "alpha", "add" for glows and
+   * additive particles. Fixed at mount. */
+  blend?: BlendMode
   /** The own view's clear color. */
   clearColor?: [number, number, number, number]
   /** Pan/zoom/rotate the own view over the world (in-shader); a
@@ -163,6 +168,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   let layer = untrack(() =>
     createSpriteLayer(props.atlas, {
       capacity: props.capacity,
+      blend: props.blend,
       tint: props.tint,
       orderBy: props.orderBy,
       stagger: props.stagger,

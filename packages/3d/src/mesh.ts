@@ -287,7 +287,33 @@ export function createSprite(material: Material): Mesh {
   if (spriteQuad === undefined) spriteQuad = plane({ label: "sprite" })
   let mesh = createMesh(spriteQuad, material)
   mesh._sprite = true
+  uncullFlooredSprite(mesh)
   return mesh
+}
+
+/**
+ * The screen-size clamp a sprite mesh draws with, `[minPx, maxPx]` (0 =
+ * off): the mesh's own `uScreenPx` param over its material's (a sprite
+ * material always carries one). null when neither bound is on, or the
+ * material is not a sprite material.
+ */
+export function spriteScreenPx(mesh: Mesh): [number, number] | null {
+  let px = mesh._params?.uScreenPx ?? mesh.material.params.uScreenPx
+  if (px === undefined || typeof px === "number") return null
+  let min = px[0] ?? 0
+  let max = px[1] ?? 0
+  return min > 0 || max > 0 ? [min, max] : null
+}
+
+// A floored sprite draws larger than its unit box far from the camera,
+// so the frustum test would hide it while its quad is on screen: a floor
+// coming on (at creation, a material swap, a params override) switches
+// the mesh's culling off. Only ever off - an app that wants it back says
+// so with setCulling.
+function uncullFlooredSprite(mesh: Mesh): void {
+  if (!mesh._sprite || !mesh.frustumCulled) return
+  let px = spriteScreenPx(mesh)
+  if (px !== null && px[0] > 0) setCulling(mesh, { frustumCulled: false })
 }
 
 /** The local box picking and sorting work from: explicit instance bounds
@@ -1336,6 +1362,7 @@ export function setDrawRange(mesh: Mesh, first: number, count?: number): void {
 export function setMaterial(mesh: Mesh, material: Material): void {
   if (mesh.material === material) return
   mesh.material = material
+  uncullFlooredSprite(mesh)
   rebuildEntry(mesh)
 }
 
@@ -1359,5 +1386,6 @@ function rebuildEntry(mesh: Mesh): void {
 export function setMeshParams(mesh: Mesh, params: ShaderParams): void {
   if (mesh._params === null) mesh._params = {}
   Object.assign(mesh._params, params)
+  if (params.uScreenPx !== undefined) uncullFlooredSprite(mesh)
   mesh._scene?._setParams(mesh, params)
 }

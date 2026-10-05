@@ -39,13 +39,10 @@ still lacks, each a separate additive step on that contract:
   explicit sizes). Exactly the `<View3d>` half of
   [3d-scene-views-additive](3d-scene-views-additive.md), and the fill
   branch is shared code in both packages.
-- `view.pick(x, y)`. The 3d view handle picks through ITS camera and
-  size; the 2d one has `project`/`unproject` but no pick, so a view picks
-  by composing `layer.pick(...view.unproject(x, y))` by hand. That
-  composition is correct and one line, which is why this is last: the
-  reason to add it is that the pointer walk already does exactly this
-  internally, and the pair reads better with both halves on both
-  handles.
+- `view.pick(x, y)` landed 2026-10-05 with
+  [2d-screen-space-sprite-size](../done/2d-screen-space-sprite-size.md):
+  the view pixel unprojected and the layer's pick at this camera's zoom,
+  which the screen-size floor made necessary rather than merely tidy.
 
 ## The goal these serve: a viewport over several layers
 

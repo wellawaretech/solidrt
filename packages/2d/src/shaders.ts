@@ -5,23 +5,30 @@
 // spelled in GLSL; the two must agree. World and clip space are both
 // y-down (core gpu.ts pixel contract), so the mapping carries NO flip
 // anywhere - do not add one. Two record layouts share the fragment stage:
-// - VERTEX + INSTANCE_ATTRIBUTES: the 13-float interleaved record
-//   [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA],
-//   used by the records layer (records.ts) and the tile layer (tiles.ts).
+// - VERTEX + INSTANCE_ATTRIBUTES: the 15-float interleaved record
+//   [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA,
+//   minScreenPx, maxScreenPx], used by the records layer (records.ts)
+//   and the tile layer (tiles.ts).
 // - VERTEX_SPLIT + INSTANCE_ATTRIBUTES_SPLIT: the node-backed live layer
 //   (layer.ts), pose and style in separate instance-buffer slots - slot 0
 //   is the core-written Pose2D record [x, y, angle, sx, sy], slot 1 the
 //   JS-written style record [u0, v0, u1, v1, tintR, tintG, tintB, tintA,
-//   renderOrder]. The shader never reads iRenderOrder - it exists for the
-//   core's instanceOrder (orderBy: "renderOrder"); declared attributes without an
-//   active program attribute are skipped, their bytes pad the stride.
+//   renderOrder, minScreenPx, maxScreenPx]. The shader never reads
+//   iRenderOrder - it exists for the core's instanceOrder (orderBy:
+//   "renderOrder"); declared attributes without an active program
+//   attribute are skipped, their bytes pad the stride.
+// Both vertex stages apply the screen-size clamp (SpriteOptions.
+// minScreenPx/maxScreenPx) through core's screenSizeScale: the quad
+// scales uniformly so its smaller axis stays within the bounds at the
+// camera's zoom (the pixels per world unit), and picking applies the JS
+// twin to the rect it tests.
 // The rotations here (clockwise, y-down) and their JS partners must
 // agree: iRot with pointInSprite in pick.ts, uCameraRot with
 // projectCamera in camera.ts. The differential checks guard the JS side
 // against oracles but NOT against these shaders - if you touch one
 // rotation, touch all.
-import { compileShader, createBuffer, createRenderPipeline, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyShader, glsl, linkProgram } from "@solidrt/core/gpu"
-import type { BufferId, RenderPipelineId, VertexAttribute } from "@solidrt/core/gpu"
+import { compileShader, createBuffer, createRenderPipeline, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyShader, glsl, linkProgram, SCREEN_SIZE_GLSL } from "@solidrt/core/gpu"
+import type { BlendMode, BufferId, RenderPipelineId, VertexAttribute } from "@solidrt/core/gpu"
 
 export let VERTEX = glsl`
   in vec2 aPos;
@@ -30,15 +37,16 @@ export let VERTEX = glsl`
   in vec4 iUv;
   in float iRot;
   in vec4 iTint;
+  in vec2 iScreenPx;
   out vec2 vUv;
   flat out vec4 vFrame;
   out vec4 vTint;
   uniform vec2 uViewport;
   uniform vec4 uCamera;
   uniform vec4 uCameraRot;
-
+  ${SCREEN_SIZE_GLSL}
   void main() {
-    vec2 corner = aPos * iSize;
+    vec2 corner = aPos * iSize * screenSizeScale(iSize, uCamera.z, iScreenPx);
     float c = cos(iRot), s = sin(iRot);
     vec2 world = iCenter + vec2(corner.x * c - corner.y * s, corner.x * s + corner.y * c);
     vec2 view = (world - uCamera.xy) * uCamera.zw;
@@ -82,13 +90,14 @@ export let FRAGMENT = glsl`
   }
 `
 
-/** The instance attribute list matching the 13-float record layout. */
+/** The instance attribute list matching the 15-float record layout. */
 export const INSTANCE_ATTRIBUTES: VertexAttribute[] = [
   { name: "iCenter", format: "float32x2" },
   { name: "iSize", format: "float32x2" },
   { name: "iUv", format: "float32x4" },
   { name: "iRot", format: "float32" },
   { name: "iTint", format: "float32x4" },
+  { name: "iScreenPx", format: "float32x2" },
 ]
 
 export let VERTEX_SPLIT = glsl`
@@ -98,15 +107,16 @@ export let VERTEX_SPLIT = glsl`
   in vec2 iScale;
   in vec4 iUv;
   in vec4 iTint;
+  in vec2 iScreenPx;
   out vec2 vUv;
   flat out vec4 vFrame;
   out vec4 vTint;
   uniform vec2 uViewport;
   uniform vec4 uCamera;
   uniform vec4 uCameraRot;
-
+  ${SCREEN_SIZE_GLSL}
   void main() {
-    vec2 corner = aPos * iScale;
+    vec2 corner = aPos * iScale * screenSizeScale(iScale, uCamera.z, iScreenPx);
     float c = cos(iRot), s = sin(iRot);
     vec2 world = iPos + vec2(corner.x * c - corner.y * s, corner.x * s + corner.y * c);
     vec2 view = (world - uCamera.xy) * uCamera.zw;
@@ -132,6 +142,7 @@ export const INSTANCE_LAYOUTS_SPLIT: VertexAttribute[][] = [
     { name: "iUv", format: "float32x4" },
     { name: "iTint", format: "float32x4" },
     { name: "iRenderOrder", format: "float32" },
+    { name: "iScreenPx", format: "float32x2" },
   ],
 ]
 
@@ -142,12 +153,13 @@ export type SpritePipeline = { quad: BufferId; pipeline: RenderPipelineId; dispo
 /**
  * Compile one sprite pipeline: `vertex` with its matching attribute list
  * (VERTEX + INSTANCE_ATTRIBUTES, or the split pair) over the shared
- * fragment stage, alpha-blended triangle strips. Spelled out (not the
- * fused createPipelineTexture) so a layer's targets - its own and every
- * view - add entries over the one pipeline. The program lives as long as
- * the pipeline; `dispose` frees both and the quad.
+ * fragment stage, triangle strips blended with `blend` (the layer's
+ * `blend` option, "alpha" by default). Spelled out (not the fused
+ * createPipelineTexture) so a layer's targets - its own and every view -
+ * add entries over the one pipeline. The program lives as long as the
+ * pipeline; `dispose` frees both and the quad.
  */
-export function createSpritePipeline(label: string, vertex: string, instanceLayouts: VertexAttribute[][]): SpritePipeline {
+export function createSpritePipeline(label: string, vertex: string, instanceLayouts: VertexAttribute[][], blend: BlendMode): SpritePipeline {
   // One unit quad (triangle strip), reused by every instance.
   let quad = createBuffer(new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), {
     label: `${label}-quad`,
@@ -162,7 +174,7 @@ export function createSpritePipeline(label: string, vertex: string, instanceLayo
     label,
     topology: "triangle-strip",
     buffers: [{ attributes: [{ name: "aPos", format: "float32x2" }] }, ...instanceLayouts.map(attributes => ({ stepMode: "instance" as const, attributes }))],
-    blend: "alpha",
+    blend,
   })
   return {
     quad,

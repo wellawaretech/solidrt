@@ -20,6 +20,7 @@
 // @solidrt/core/gpu) stays first-class beneath both.
 
 import {
+  checkScreenSize,
   compileShader,
   createRenderPipeline,
   destroyProgram,
@@ -28,6 +29,7 @@ import {
   glsl,
   linkProgram,
   programAttributes,
+  SCREEN_SIZE_GLSL,
 } from "@solidrt/core/gpu"
 import type {
   BlendMode,
@@ -97,6 +99,10 @@ export type Material = {
    * like them, so the solids fill the depth before the fragments that
    * cannot early-z. */
   cutout?: boolean
+  /** How a `sprite()` material's quad faces the camera (set by sprite()):
+   * what the scene's pick rebuilds to test a screen-size-clamped sprite
+   * at its drawn size. Absent on every other material. */
+  billboard?: "full" | "fixed-y"
   /** The instance buffers, when the material's pipeline declares them
    * (shaderMaterialClass's `instanceBuffers`; the stock materials'
    * `instanced`), one layout per buffer after the geometry's. Such a
@@ -945,6 +951,27 @@ export type SpriteOptions = Omit<UnlitOptions, "instanced" | "instanceColors" | 
    * soft puff, 0.5 a hard-edged disc), the per-entry `uFalloff`. Needs
    * `shape`. */
   falloff?: number
+  /**
+   * The screen-size clamp's floor, pixels (default 0: off): however far
+   * the camera is, the quad draws at least this big on its smaller axis,
+   * scaled uniformly about its center so its aspect holds - a marker or
+   * handle that stays findable at distance. The vertex stage scales by
+   * the pixels one world unit covers at the quad's depth (the depth
+   * alone, no foreshortening), so it is right under perspective and
+   * orthographic cameras alike, and `pick` tests the drawn quad. The
+   * per-entry `uScreenPx.x`; a per-mesh `params` may override the pair.
+   * A floored sprite's mesh turns its frustum culling off (its quad can
+   * exceed its box far away). Finite, >= 0.
+   */
+  minScreenPx?: number
+  /**
+   * The clamp's ceiling, pixels (default 0: off): the quad draws at most
+   * this big on its smaller axis however close the camera comes. Equal
+   * to `minScreenPx` it is a constant screen size, Three's
+   * `sizeAttenuation: false`, and `scale` then carries the aspect alone.
+   * The per-entry `uScreenPx.y`. Never below a floor that is on.
+   */
+  maxScreenPx?: number
 }
 
 // The radial shape as a tier-2 surface on the unlit fragment: the
@@ -962,11 +989,29 @@ const RADIAL_SURFACE = glsl`
 
 // The billboard vertex stages: the unit quad's corners placed along the
 // camera axes at the mesh's world position, with the quad's size read
-// off uModel's column lengths so `scale` sizes the sprite like any mesh.
-// The rotation part of uModel is otherwise ignored (the camera decides
-// the facing). Fixed-y takes the yaw from the camera-to-center direction
-// flattened onto XZ; straight above or below there is no yaw to take, so
-// the quad falls back to facing +z rather than dividing by zero.
+// off uModel's column lengths so `scale` sizes the sprite like any mesh,
+// then clamped on screen (core's screenSizeScale over uScreenPx, the
+// material's minScreenPx/maxScreenPx; identity at [0, 0]). The rotation
+// part of uModel is otherwise ignored (the camera decides the facing).
+// Fixed-y takes the yaw from the camera-to-center direction flattened
+// onto XZ; straight above or below there is no yaw to take, so the quad
+// falls back to facing +z rather than dividing by zero. The scene's pick
+// rebuilds exactly this quad for a clamped sprite (scene.ts
+// clampedSpriteHit); the two must agree.
+//
+// The pixels one world unit covers at the quad's depth: the center and
+// the center one camera-up unit away, projected, are half a viewport
+// height apart per NDC unit. Depth alone, no foreshortening, from the
+// shared uniforms only, and the same under an orthographic camera (clip
+// w is 1 there).
+const SPRITE_PX_PER_UNIT = glsl`
+  float spritePxPerUnit(vec3 center) {
+    vec4 c = uViewProj * vec4(center, 1.0);
+    vec4 u = uViewProj * vec4(center + uCamUp, 1.0);
+    return abs(u.y / u.w - c.y / c.w) * 0.5 * uViewport.y;
+  }
+`
+
 const SPRITE_VERTEX_SRC = glsl`
   in vec3 aPos;
   in vec2 aUV;
@@ -976,10 +1021,15 @@ const SPRITE_VERTEX_SRC = glsl`
   uniform mat4 uViewProj;
   uniform vec3 uCamRight;
   uniform vec3 uCamUp;
+  uniform vec2 uViewport;
+  uniform vec2 uScreenPx;
+  ${SCREEN_SIZE_GLSL}
+  ${SPRITE_PX_PER_UNIT}
 
   void main() {
     vec3 center = uModel[3].xyz;
     vec2 size = vec2(length(uModel[0].xyz), length(uModel[1].xyz));
+    size *= screenSizeScale(size, spritePxPerUnit(center), uScreenPx);
     vec3 world = center + uCamRight * (aPos.x * size.x) + uCamUp * (aPos.y * size.y);
     vWorldPos = world;
     gl_Position = uViewProj * vec4(world, 1.0);
@@ -995,10 +1045,16 @@ const SPRITE_FIXED_Y_VERTEX_SRC = glsl`
   uniform mat4 uModel;
   uniform mat4 uViewProj;
   uniform vec3 uCamPos;
+  uniform vec3 uCamUp;
+  uniform vec2 uViewport;
+  uniform vec2 uScreenPx;
+  ${SCREEN_SIZE_GLSL}
+  ${SPRITE_PX_PER_UNIT}
 
   void main() {
     vec3 center = uModel[3].xyz;
     vec2 size = vec2(length(uModel[0].xyz), length(uModel[1].xyz));
+    size *= screenSizeScale(size, spritePxPerUnit(center), uScreenPx);
     vec3 toCam = uCamPos - center;
     toCam.y = 0.0;
     float len = length(toCam);
@@ -1021,6 +1077,11 @@ let spriteClasses = new Map<string, ShaderMaterialClass>()
  * plane. Unlike unlit, `transparent` defaults to TRUE - sprites are cutouts
  * far more often than not (Three's SpriteMaterial default) - pass false
  * for an opaque one. Culling is off: a camera-facing quad has no back.
+ * `minScreenPx`/`maxScreenPx` clamp the quad's size on screen (the
+ * per-entry uScreenPx, so sprites sharing the material share the clamp
+ * and one draw; a per-mesh `params` override takes a mesh its own); the
+ * scene's pick tests the drawn quad, and a floored sprite's mesh is never
+ * frustum-culled.
  */
 export function sprite(opts: SpriteOptions = {}): Material {
   // Excluded by the type and checked for a JS caller: the billboard stage
@@ -1039,6 +1100,9 @@ export function sprite(opts: SpriteOptions = {}): Material {
   if (opts.shape !== undefined && !radial) throw new Error('sprite: shape must be "radial", got ' + opts.shape)
   if (opts.falloff !== undefined && !radial) throw new Error("sprite: falloff needs shape")
   if (opts.falloff !== undefined && !(Number.isFinite(opts.falloff) && opts.falloff > 0)) throw new Error("sprite: falloff must be a positive number, got " + opts.falloff)
+  let minScreenPx = opts.minScreenPx ?? 0
+  let maxScreenPx = opts.maxScreenPx ?? 0
+  checkScreenSize("sprite", minScreenPx, maxScreenPx)
   let key = [map, transparent, blend, fixedY, fog, radial].join("|")
   let cls = spriteClasses.get(key)
   if (cls === undefined) {
@@ -1058,9 +1122,11 @@ export function sprite(opts: SpriteOptions = {}): Material {
     })
     spriteClasses.set(key, cls)
   }
-  let params: ShaderParams = { uColor }
+  let params: ShaderParams = { uColor, uScreenPx: [minScreenPx, maxScreenPx] }
   if (radial) params.uFalloff = opts.falloff ?? 1
-  return cls.instance({ params, textures: map ? { uMap: opts.map! } : undefined })
+  let material = cls.instance({ params, textures: map ? { uMap: opts.map! } : undefined })
+  material.billboard = fixedY ? "fixed-y" : "full"
+  return material
 }
 
 /** The attributes `material` reads that `layout` does not carry (name and

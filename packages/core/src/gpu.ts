@@ -196,22 +196,11 @@ export {
   programAttributes,
 } from "flux:gpu"
 
-/**
- * Tags an inline GLSL source, returning it unchanged. Shaders small enough to
- * belong beside the code that uses them stay in the file; the tag is what makes
- * them legible there, because editors highlight GLSL inside a template literal
- * only when a known tag marks it (the name matters - `glsl` is the one the
- * grammars look for).
- *
- * Interpolated values are stringified verbatim, with no GLSL-aware formatting:
- * `${2}` splices in the int literal `2`, which will not assign to a float. Pass
- * anything that varies as a uniform instead of building it into the source.
- *
- * Raw semantics, so backslashes reach the compiler as written: the GLSL
- * preprocessor continues a line with a trailing `\`, which a cooked template
- * would reject as an invalid escape and silently pass through as `undefined`.
- */
-export let glsl = String.raw
+// The tag, and the screen-size clamp both sprite renderers share: the
+// GLSL function a vertex stage pastes in, its JS twin for the picker, and
+// the validation of a [minScreenPx, maxScreenPx] pair. Both live in the
+// pure shaders.ts so headless tests and pure modules can reach them.
+export { checkScreenSize, glsl, SCREEN_SIZE_GLSL, screenSizeScale } from "./shaders.ts"
 
 // captureSnapshot renders a node to pixels and readTexture reads any
 // texture's bytes back; both resolve the same { width, height, data } shape.

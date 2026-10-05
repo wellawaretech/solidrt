@@ -89,6 +89,10 @@ export type ViewHandle = {
   /** View pixels -> world (layer) pixels, the inverse: what pointer
    * dispatch applies to every event. */
   unproject(x: number, y: number): [number, number]
+  /** The layer's pick through this view: the view pixel unprojected, the
+   * sprites' screen-size floors measured at this camera's zoom - what
+   * the pointer walk hits. */
+  pick(x: number, y: number): Sprite[]
   /**
    * handlers for a leaf whose LAYOUT size differs from the view size
    * (events scale by view/layout; a leaf laid out AT view size just uses
@@ -114,7 +118,8 @@ export type ViewDeps = {
   /** The instance count as last published. */
   count: () => number
   tint: () => [number, number, number, number]
-  pick: (x: number, y: number) => Sprite[]
+  /** The layer's pick, `zoom` the camera zoom its floors are measured at. */
+  pick: (x: number, y: number, zoom: number) => Sprite[]
   /** The layer's key order (`orderBy`), declared by ONE live entry. */
   order?: InstanceOrder
 }
@@ -244,6 +249,10 @@ export function createViews(deps: ViewDeps): Views {
         },
         unproject(x, y) {
           return unprojectCamera(cam, x, y)
+        },
+        pick(x, y) {
+          let [wx, wy] = unprojectCamera(cam, x, y)
+          return deps.pick(wx, wy, cam.zoom)
         },
         handlersFor(layout) {
           return dispatch(layout)

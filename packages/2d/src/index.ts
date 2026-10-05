@@ -7,7 +7,7 @@
 // node whose Pose2D record sink writes the pose instance buffer at the
 // core flush, so core producers reach sprites and picking walks the core
 // BVH; style stays a JS-written second instance buffer. The records layer (createRecordLayer)
-// is the raw escape hatch for motion only JS can compute: 13 JS-owned
+// is the raw escape hatch for motion only JS can compute: 15 JS-owned
 // floats per sprite published through the zero-copy write lease. The baked
 // tile layer (createTileLayer/TileLayer) is the static sibling: a tile
 // world rendered once into textures and composited as a few quads,
@@ -18,7 +18,7 @@
 export { addGroup, addSprite, createSpriteLayer, getSprite, destroyGroup, destroySprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, worldPosition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
 export { createRecordLayer, FLOATS_PER_SPRITE } from "./records.ts"
 export type { RecordLayer as RecordLayerHandle, RecordLayerOptions } from "./records.ts"
-export { pointInSprite } from "./pick.ts"
+export { floorReach, pointInSprite } from "./pick.ts"
 export { projectCamera, unprojectCamera } from "./camera.ts"
 export type { CameraState, CameraUpdate } from "./camera.ts"
 export { createCamera2d } from "./camera2d.ts"

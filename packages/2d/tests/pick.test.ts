@@ -1,13 +1,17 @@
 // Differential check for pointInSprite (the picking narrowphase): the
 // rotated-rect containment test against a brute-force oracle that
 // transforms the rect's corners forward and half-plane-tests the point,
-// plus hand-written edge cases. Pure-module input only (pick.ts imports no
-// GUI), so it runs headless on flux: `sol test packages/2d`. The random
-// inputs come from Math.random, which `sol test` seeds: the same on every
-// run, and `--seed <n>` tries others.
+// plus hand-written edge cases; and floorReach, the bound the live
+// layer's candidate search relies on, against pointInSprite over random
+// floored sprites drawn through core's screenSizeScale (whose own test is
+// core's). Pure-module input only (pick.ts imports no GUI), so it runs
+// headless on flux: `sol test packages/2d`. The random inputs come from
+// Math.random, which `sol test` seeds: the same on every run, and `--seed
+// <n>` tries others.
 
 import { test } from "flux:test"
-import { pointInSprite } from "../src/pick.ts"
+import { floorReach, pointInSprite } from "../src/pick.ts"
+import { screenSizeScale } from "../../core/src/shaders.ts"
 
 function range(lo: number, hi: number): number {
   return lo + Math.random() * (hi - lo)
@@ -79,6 +83,42 @@ test("pointInSprite matches the corner-transform oracle, over random rects", () 
       if (pointInSprite(nx, ny, cx, cy, w, h, rot) !== oracle(nx, ny, cx, cy, w, h, rot)) {
         fail(`mismatch at p=(${px}, ${py}) rect=(${cx}, ${cy}, ${w}x${h}, rot ${rot}): got ${got}, oracle ${want}`)
       }
+    }
+  }
+})
+
+test("floorReach: zero when off or collapsed, the aspect alone decides it, and it bounds every floored hit", () => {
+  if (floorReach(4, 2, 0) !== 0) fail("floor 0 reaches nothing")
+  if (floorReach(0, 2, 12) !== 0) fail("a collapsed sprite reaches nothing")
+  // A square at the floor is minPx square: half its diagonal.
+  if (Math.abs(floorReach(4, 4, 10) - (10 * Math.SQRT2) / 2) > 1e-9) fail("square reach is half the floored diagonal")
+  if (floorReach(4, 4, 10) !== floorReach(400, 400, 10)) fail("reach depends on the aspect, not the size")
+  if (floorReach(8, 2, 10) !== floorReach(2, 8, 10)) fail("reach is symmetric in the axes")
+  // The bound the live layer's pick relies on: a point inside a floored
+  // sprite's drawn rect is never further from its center than the reach
+  // (in view pixels, so divided by the zoom in world units).
+  const SWEEPS = 20000
+  for (let i = 0; i < SWEEPS; i++) {
+    let w = range(0.1, 60)
+    let h = range(0.1, 60)
+    let minPx = range(0.1, 40)
+    let zoom = range(0.05, 4)
+    let rot = range(-7, 7)
+    let scale = screenSizeScale(w, h, zoom, minPx, 0)
+    if (scale === 1) continue
+    let reach = floorReach(w, h, minPx) / zoom
+    // Sample the drawn rect's far corner, the furthest point it holds,
+    // nudged inside so the containment check is not a float coin toss on
+    // the boundary.
+    let c = Math.cos(rot)
+    let sn = Math.sin(rot)
+    let ox = ((w * scale) / 2) * (1 - 1e-9)
+    let oy = ((h * scale) / 2) * (1 - 1e-9)
+    let px = ox * c - oy * sn
+    let py = ox * sn + oy * c
+    if (!pointInSprite(px, py, 0, 0, w * scale, h * scale, rot)) fail("the far corner lies in the drawn rect")
+    if (Math.hypot(px, py) > reach * (1 + 1e-9)) {
+      fail(`corner at ${Math.hypot(px, py)} beyond reach ${reach} for ${w}x${h} floor ${minPx} zoom ${zoom}`)
     }
   }
 })

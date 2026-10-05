@@ -143,20 +143,15 @@ Shaped, not started.
   cannot be shown twice, a minimap cannot admit marker sprites only, several
   views cannot share one atlas target, and a view cannot tint itself apart
   from the layer. Each is an additive step on the landed view contract.
-- **[A sprite layer has one hardwired pipeline, so there is no additive blend and no custom fragment](backlog/2d-materials-and-blend.md)** [2026-09-11]
-  Every 2d draw goes through one alpha-blended pipeline with tint as the only
-  knob, so explosions, glows, palette swaps, dissolves and outlines have no
-  path at all, while @solidrt/3d ships four stock materials, a custom shader
-  class and a per-material blend mode.
+- **[A sprite layer has one hardwired fragment and vertex stage, so there is no custom shader](backlog/2d-materials-and-blend.md)** [2026-09-11]
+  Every 2d draw goes through one fixed shader pair with tint and the layer
+  blend as the only knobs, so palette swaps, dissolves, outlines and scrolling
+  UVs have no path at all, while @solidrt/3d ships four stock materials and a
+  custom shader class.
 - **[Retro presets for @solidrt/2d](backlog/2d-retro-presets.md)** [2026-08-19]
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what
   already exists
-- **[Screen-space sizing for sprites (min-px floors, constant-size markers)](backlog/2d-screen-space-sprite-size.md)** [2026-09-02]
-  Markers that must stay legible at any zoom (selection rings, map pins,
-  traffic dots) have no shader-side answer, so apps rewrite w/h from JS on
-  every camera change - per frame for record sprites - even though the camera
-  is already a uniform in the vertex stage.
 - **[2d skeletal sprites - skinned deformation over the spatial palette sink](backlog/2d-skeletal-sprites.md)** [2026-09-02]
   The 2d package has flipbook animation only; Spine/DragonBones-class skeletal
   characters (bone hierarchies deforming a textured mesh) have no path, even
@@ -908,6 +903,11 @@ Finished, kept for the reasoning.
   scene.createView contract on the sprite and tile layers - same world, its
   own camera and size - with the layers bitmask from the 3d view work when the
   second view needs a different mesh set (markers only).
+- **[Screen-space sizing for sprites (min-px floors, constant-size markers)](done/2d-screen-space-sprite-size.md)** [2026-10-05]
+  Markers that must stay legible at any zoom (selection rings, map pins,
+  traffic dots) have no shader-side answer, so apps rewrite w/h from JS on
+  every camera change - per frame for record sprites - even though the camera
+  is already a uniform in the vertex stage.
 - **[Sprites as spatial-core citizens](done/2d-spatial-citizenship.md)** [2026-08-31]
   Sprite poses are JS-owned floats, so no core producer (native transitions,
   animation clips, physics) can ever move a sprite and picking is an O(n) JS

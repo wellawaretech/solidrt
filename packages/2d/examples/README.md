@@ -52,6 +52,15 @@ copy one and adapt it.
   sprite in the minimap selects it as in the main view (the same sprite
   handlers, the walk ending at the view). Debug commands `state`,
   `camera`, `selected` and `first` drive it headless.
+- `markers.tsx` - screen-size markers and an additive glow layer: two
+  layers under ONE `createCamera2d` (both views as targets), the world
+  layer carrying a constant-size pin per sprite (`minScreenPx` =
+  `maxScreenPx`), a label bar that never grows past 24 px (`maxScreenPx`)
+  and a selection ring that never shrinks under 48 px (`minScreenPx`,
+  gliding to the tapped sprite through a position transition), the glow
+  layer the same atlas on `blend: "add"` with haloes that add up to white
+  where they overlap. Picking follows the drawn size. Debug commands
+  `zoom`, `select` and `pick` drive it headless.
 - `split-screen.tsx` - one `<SpriteLayer output={false}>` (sprites, no
   leaf of its own) shown through two `<View2d>` panes filling the window
   side by side, each with a `<Camera2d>` of its own following one of two

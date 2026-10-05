@@ -33,7 +33,7 @@ import {
   setTargetParams,
   setTargetSize,
 } from "@solidrt/core/gpu"
-import type { BufferId, FilterMode, TextureId } from "@solidrt/core/gpu"
+import type { BlendMode, BufferId, FilterMode, TextureId } from "@solidrt/core/gpu"
 import type { Frame } from "./frames.ts"
 import { checkTint } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
@@ -71,6 +71,13 @@ export type TileLayerOptions = {
    * widths at a fractional scale.
    */
   filter?: FilterMode
+  /**
+   * How the cells blend into their chunk bakes, core gpu's BlendMode;
+   * default "alpha". "add" for a glow or light map baked over the
+   * transparent chunk clear, "multiply" to darken. Pipeline state, fixed
+   * at creation.
+   */
+  blend?: BlendMode
   /**
    * Target texels per world pixel in the baked chunks (positive integer,
    * default 1); see TileLayer.setOversample. `<TileLayer>` picks it from
@@ -223,6 +230,7 @@ export function createTileLayer(
     )
   }
   let label = opts?.label ?? "tiles"
+  let blend: BlendMode = opts?.blend ?? "alpha"
   let tint: Tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createTileLayer", tint)
   // The frames table, copied (the caller's array may move on) and checked
@@ -310,7 +318,7 @@ export function createTileLayer(
           { stepMode: "instance", attributes: INSTANCE_ATTRIBUTES, buffer },
         ],
         instanceCount: perChunk,
-        blend: "alpha",
+        blend,
         textures: { uAtlas: atlas },
         clearColor: opts?.chunkClearColor ?? [0, 0, 0, 0],
         filter: opts?.filter,

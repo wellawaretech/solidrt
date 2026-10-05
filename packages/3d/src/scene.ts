@@ -36,7 +36,7 @@
 // and pointer subsystems are scene-shadows.ts / scene-pointer.ts,
 // built here with the scene's seams as their deps.
 
-import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, setDrawBuffers, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
+import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, screenSizeScale, setDrawBuffers, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { BindDrawOptions, Impact as CoreImpact, NodeId, QueryFilter } from "flux:spatial"
 import type { BufferId, DrawId, FilterMode, InstanceOrder, ProgramId, RenderPipelineId, ShaderParams, TextureBindings, TextureId, WrapMode } from "@solidrt/core/gpu"
@@ -61,9 +61,9 @@ import type { EnvironmentOptions, Prefilter } from "./environment.ts"
 
 export type { EnvironmentOptions } from "./environment.ts"
 import type { Material } from "./material.ts"
-import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTransition } from "./node.ts"
+import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTransition, worldInto } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
-import { checkInstancePairing, checkMask, checkOrderPairing, drawCount, instanceBinding, localBounds, markLiveRecords, publishRecords } from "./mesh.ts"
+import { checkInstancePairing, checkMask, checkOrderPairing, drawCount, instanceBinding, localBounds, markLiveRecords, publishRecords, spriteScreenPx } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh, MeshInstances, ResolvedInstanceOrder } from "./mesh.ts"
 import type { CastingLight, Light } from "./light.ts"
 
@@ -2303,6 +2303,101 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     return hits
   }
 
+  // Sprites under a screen-size clamp (the sprite material's
+  // minScreenPx/maxScreenPx) draw at a size the index does not know: the
+  // vertex stage scales the quad by the pixels one unit covers at its
+  // depth under THE CAMERA DRAWING IT. So a pick - which has a camera -
+  // replaces the ray's hits on them with an exact ray-quad test at the
+  // drawn size: the quad's basis as the stage builds it (camera right and
+  // up, or a fixed-y sprite's yaw basis), the scale from core's
+  // screenSizeScale over the stage's own pixels-per-unit derivation. The
+  // world-space raycast keeps the index's answer. Reads pickOrigin/pickDir
+  // as pixelRayOf left them; `th` is the target's pixel height the stage
+  // sees as uViewport.y.
+  let spriteWorld = mat4()
+  let spriteClip: Vec4 = [0, 0, 0, 0]
+  let spriteProbe: Vec3 = [0, 0, 0]
+  let shown = (node: SceneNode | null): boolean => {
+    for (; node !== null; node = node.parent) if (!node.visible) return false
+    return true
+  }
+  let clampedSpriteHit = (mesh: Mesh, px: [number, number], cam: Camera, th: number): Hit | null => {
+    let m = worldInto(spriteWorld, mesh)
+    let cx = m[12], cy = m[13], cz = m[14]
+    let w = Math.hypot(m[0], m[1], m[2])
+    let h = Math.hypot(m[4], m[5], m[6])
+    let v = cam.view
+    let upX = v[1], upY = v[5], upZ = v[9]
+    spriteProbe[0] = cx
+    spriteProbe[1] = cy
+    spriteProbe[2] = cz
+    transformPoint(spriteClip, cam.viewProj, spriteProbe)
+    let cw = spriteClip[3]
+    if (!(cw > 1e-6)) return null
+    let centerNdcY = spriteClip[1] / cw
+    spriteProbe[0] = cx + upX
+    spriteProbe[1] = cy + upY
+    spriteProbe[2] = cz + upZ
+    transformPoint(spriteClip, cam.viewProj, spriteProbe)
+    let pxPerUnit = Math.abs(spriteClip[1] / spriteClip[3] - centerNdcY) * 0.5 * th
+    let s = screenSizeScale(w, h, pxPerUnit, px[0], px[1])
+    let halfW = (w * s) / 2
+    let halfH = (h * s) / 2
+    let rx: number, ry: number, rz: number
+    if (mesh.material.billboard === "fixed-y") {
+      let tx = cam.eye[0] - cx
+      let tz = cam.eye[2] - cz
+      let len = Math.hypot(tx, tz)
+      if (len > 1e-6) {
+        rx = tz / len
+        ry = 0
+        rz = -tx / len
+      } else {
+        rx = 1
+        ry = 0
+        rz = 0
+      }
+      upX = 0
+      upY = 1
+      upZ = 0
+    } else {
+      rx = v[0]
+      ry = v[4]
+      rz = v[8]
+    }
+    // The quad's normal, right x up; the ray meets the plane at t.
+    let nx = ry * upZ - rz * upY
+    let ny = rz * upX - rx * upZ
+    let nz = rx * upY - ry * upX
+    let ox = pickOrigin[0], oy = pickOrigin[1], oz = pickOrigin[2]
+    let dx = pickDir[0], dy = pickDir[1], dz = pickDir[2]
+    let denom = dx * nx + dy * ny + dz * nz
+    if (Math.abs(denom) < 1e-12) return null
+    let t = ((cx - ox) * nx + (cy - oy) * ny + (cz - oz) * nz) / denom
+    if (t <= 0) return null
+    let hx = ox + t * dx, hy = oy + t * dy, hz = oz + t * dz
+    let lx = (hx - cx) * rx + (hy - cy) * ry + (hz - cz) * rz
+    let ly = (hx - cx) * upX + (hy - cy) * upY + (hz - cz) * upZ
+    if (Math.abs(lx) > halfW || Math.abs(ly) > halfH) return null
+    // Facing the ray, like every core hit; distance along the normalized ray.
+    let flip = denom > 0 ? -1 : 1
+    return { mesh, distance: t * Math.hypot(dx, dy, dz), point: [hx, hy, hz], normal: [nx * flip, ny * flip, nz * flip] }
+  }
+  let clampSpriteHits = (hits: Hit[], cam: Camera, th: number): Hit[] => {
+    let out: Hit[] | null = null
+    for (let mesh of meshes) {
+      if (!mesh._sprite) continue
+      let px = spriteScreenPx(mesh)
+      if (px === null) continue
+      if (out === null) out = hits.filter(hit => !(hit.mesh._sprite && spriteScreenPx(hit.mesh) !== null))
+      if ((mesh.layers & sceneMask) === 0 || !shown(mesh)) continue
+      let hit = clampedSpriteHit(mesh, px, cam, th)
+      if (hit !== null) out.push(hit)
+    }
+    if (out === null) return hits
+    return out.sort((a, b) => a.distance - b.distance)
+  }
+
   let scene: Scene = {
     texture: resolve === null ? texture : resolve.target,
     hdrTexture: texture,
@@ -2443,7 +2538,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     pick(x, y) {
       pixelRay(x, y)
-      return raycastAs(texture, pickOrigin, pickDir, undefined)
+      return clampSpriteHits(raycastAs(texture, pickOrigin, pickDir, undefined), camera, height)
     },
     unproject(x, y, w, out = [0, 0, 0]) {
       pixelRay(x, y)
@@ -2590,7 +2685,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         pick(x, y) {
           if (v.disposed) return []
           pixelRayOf(v.camera, v.width, v.height, x, y)
-          return raycastAs(v.texture, pickOrigin, pickDir, undefined)
+          return clampSpriteHits(raycastAs(v.texture, pickOrigin, pickDir, undefined), v.camera, v.height)
         },
         project(point) {
           return projectWith(v.camera, v.width, v.height, point)

@@ -215,7 +215,10 @@ mesh: `frustumCulled: false` (Three's name; `setCulling`) for geometry
 a vertex stage moves beyond its box - a fullscreen quad, a custom
 displacement - and `cullMargin` (world units, Godot's
 `extra_cull_margin`) for bounded displacement such as wind. Sprites
-cull by their quad's reach at any facing. A SKINNED part is culled by
+cull by their quad's reach at any facing; a sprite whose material (or
+`params`) floors its screen size exceeds that reach far away, so the
+floor coming on switches the mesh's culling off, one way. A SKINNED
+part is culled by
 the union of its joints' boxes (the bake computes each joint's
 influence box in joint space, `ModelSkin.jointBounds`, .sol3m VERSION
 5; the joint nodes carry them as culling-only bounds, outside the
@@ -987,7 +990,15 @@ box's twelve triangles, so its hits carry the struck face's `normal` and
 no `face`/`uv` - and a ray from inside it meets the far side, the
 surface contract overlap/sweep share. Both methods
 flush pending writes first (the lookAt/project immediacy contract), and
-both skip invisible meshes.
+both skip invisible meshes. A sprite under a screen-size clamp
+(`sprite({ minScreenPx, maxScreenPx })`) draws at a size the index does
+not know - the vertex stage scales it by the pixels per unit at its
+depth under the camera drawing it - so `pick` (which has a camera; a
+view's pick its own) replaces the ray's hits on clamped sprites with an
+exact ray-quad test at the drawn size, the quad rebuilt as the stage
+builds it (camera right/up, or a fixed-y sprite's yaw basis), hits
+carrying the plane distance and a normal facing the ray. `raycast` is a
+world query and keeps the index's unit-box answer.
 
 ### Collision
 
@@ -1312,7 +1323,7 @@ opts out of the scene's fog (all four library materials take it).
 #### sprite
 
 `sprite({ color?, map?, transparent?, blend?, billboard?, shape?,
-falloff? })` - unlit on a quad
+falloff?, minScreenPx?, maxScreenPx? })` - unlit on a quad
 that turns to face the camera IN THE VERTEX STAGE (off the shared
 uCamRight/uCamUp, or uCamPos for `billboard: "fixed-y"`, which yaws
 only and stays upright on world y - Godot's BILLBOARD_FIXED_Y, the
@@ -1326,7 +1337,18 @@ facing), so hits carry no normal/face/uv. `shape: "radial"` is a
 procedural falloff over the quad's inscribed disc, `(1 - 2|uv -
 0.5|)^falloff` (default 1; 2 a soft puff) multiplying color and alpha,
 so a glow, flare or puff needs no texture; it composes with a `map`
-and with `blend: "add"`. `examples/sprites.tsx`.
+and with `blend: "add"`. `minScreenPx`/`maxScreenPx` clamp the quad's
+smaller axis on SCREEN (pixels; 0 = off), scaled uniformly about its
+center in the vertex stage by the pixels one world unit covers at the
+quad's depth (depth alone, from the shared uniforms, so perspective
+and orthographic alike): a floor is the marker that stays findable at
+distance, a ceiling the label that must not balloon, equal bounds a
+constant screen size (Three's `sizeAttenuation: false`, `scale` then
+the aspect alone). The clamp is core's `screenSizeScale`, shared with
+@solidrt/2d's sprites; the per-entry `uScreenPx`, so a per-mesh
+`params` can override it. `scene.pick`/`view.pick` test the drawn
+quad (below), and a floored sprite's mesh turns its frustum culling
+off (one way; `setCulling` turns it back on). `examples/sprites.tsx`.
 
 #### shaderMaterial
 

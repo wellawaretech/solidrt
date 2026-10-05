@@ -42,7 +42,8 @@ const TAP_REPEAT_SLOP = 20
 export type DispatchDeps = {
   size: () => [number, number]
   camera: () => CameraUpdate
-  pick: (x: number, y: number) => Sprite[]
+  /** The layer's pick, `zoom` the camera zoom its floors are measured at. */
+  pick: (x: number, y: number, zoom: number) => Sprite[]
   /** The view: the walk's root and the listeners' currentTarget. */
   root: ViewHandle
   /** The root's listeners, in registration order. */
@@ -151,7 +152,7 @@ export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: num
       }
       return event
     }
-    let topmost = (x: number, y: number): Sprite | null => deps.pick(x, y)[0] ?? null
+    let topmost = (x: number, y: number): Sprite | null => deps.pick(x, y, deps.camera().zoom ?? 1)[0] ?? null
     // Enter/leave go to one sprite directly, outside the walk: the event
     // in its sprite view.
     let hoverEvent = (sprite: Sprite, x: number, y: number, e: ElementPointerEvent): SpritePointerEvent =>

@@ -1,12 +1,12 @@
 // The records layer: the raw escape hatch for motion only JS can compute
 // (bespoke flocking, per-frame gameplay logic over every entity at large
-// populations). Sprites are 13 JS-owned floats in one canonical
+// populations). Sprites are 15 JS-owned floats in one canonical
 // Float32Array ordered by draw order (insertion order - painter's
 // algorithm, later over earlier; `orderBy` swaps that for a core-produced
 // key order at publish, records untouched); mutations batch to a microtask
 // whose flush publishes the live prefix through the zero-copy buffer write
 // lease.
-// A moved sprite is 13 float stores plus one bulk memcpy per dirty frame; a
+// A moved sprite is 15 float stores plus one bulk memcpy per dirty frame; a
 // static layer publishes nothing and therefore costs nothing.
 //
 // This is NOT the default live layer - that is layer.ts, where sprites are
@@ -20,7 +20,7 @@
 // (addSprite/setSprite/...) are shared with the node layer; picking here is
 // the JS reverse walk (pointInSprite), since records have no nodes.
 import { getOwner, onCleanup } from "@solidrt/core"
-import { beginBufferWrite, createBuffer, destroyBuffer, endBufferWrite } from "@solidrt/core/gpu"
+import { beginBufferWrite, checkScreenSize, createBuffer, destroyBuffer, endBufferWrite, screenSizeScale } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import { checkTint, readFrame } from "./layer.ts"
@@ -30,11 +30,15 @@ import { createSpritePipeline, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 import { createViews } from "./views.ts"
 
 // Floats per instance record:
-// [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA]
-export const FLOATS_PER_SPRITE = 13
+// [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA,
+//  minScreenPx, maxScreenPx]
+export const FLOATS_PER_SPRITE = 15
 
 // Float offset of cy in a record - what `orderBy: "y"` keys on.
 const Y_FIELD_OFFSET = 1
+// Float offsets of the screen-size clamp in a record.
+const MIN_PX_FIELD_OFFSET = 13
+const MAX_PX_FIELD_OFFSET = 14
 
 const RESOLVED = Promise.resolve()
 
@@ -59,7 +63,8 @@ export type RecordLayer = LayerBase & {
   /**
    * The canonical record array - the raw power path. Layout per sprite is
    * FLOATS_PER_SPRITE floats: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR,
-   * tintG, tintB, tintA], record i at i * FLOATS_PER_SPRITE. Record order
+   * tintG, tintB, tintA, minScreenPx, maxScreenPx], record i at
+   * i * FLOATS_PER_SPRITE. Record order
    * is draw order - unless the layer was created with `orderBy`, which
    * draws in key order while record i keeps meaning sprite i. Write fields
    * directly for large per-frame populations, then call touch() once. Do
@@ -104,7 +109,7 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
       : orderBy === "y"
         ? { field: Y_FIELD_OFFSET }
         : { field: orderBy.field, descending: orderBy.descending }
-  let gpu = createSpritePipeline(label, VERTEX, [INSTANCE_ATTRIBUTES])
+  let gpu = createSpritePipeline(label, VERTEX, [INSTANCE_ATTRIBUTES], opts?.blend ?? "alpha")
 
   let disposed = false
   let dirty = false
@@ -153,7 +158,8 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
     }
   }
 
-  // Record layout: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA]
+  // Record layout: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB,
+  // tintA, minScreenPx, maxScreenPx]
   let writeRecord = (sprite: SpriteState, opts: SpriteOptions) => {
     if (opts.renderOrder !== undefined) {
       throw new Error("setSprite: record layers have no renderOrder field; order by a record field with orderBy { field }")
@@ -185,6 +191,15 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
       r[at + 11] = opts.tint[2]
       r[at + 12] = opts.tint[3]
     }
+    if (opts.minScreenPx !== undefined) r[at + MIN_PX_FIELD_OFFSET] = opts.minScreenPx
+    if (opts.maxScreenPx !== undefined) r[at + MAX_PX_FIELD_OFFSET] = opts.maxScreenPx
+  }
+  // The clamp pair against the STORED bounds, before any write lands.
+  let checkClamp = (verb: string, sprite: SpriteState, opts: SpriteOptions): void => {
+    if (opts.minScreenPx === undefined && opts.maxScreenPx === undefined) return
+    let at = sprite._slot * FLOATS_PER_SPRITE
+    let r = layer.records
+    checkScreenSize(verb, opts.minScreenPx ?? r[at + MIN_PX_FIELD_OFFSET]!, opts.maxScreenPx ?? r[at + MAX_PX_FIELD_OFFSET]!)
   }
 
   let views = createViews({
@@ -195,7 +210,7 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
     buffers: () => [records],
     count: () => published,
     tint: () => tint,
-    pick: (x, y) => layer.pick(x, y),
+    pick: (x, y, zoom) => layer.pick(x, y, zoom),
     order: instanceOrder,
   })
 
@@ -213,13 +228,18 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
       if (disposed) throw new Error("createView: layer is disposed")
       return views.create(vopts)
     },
-    pick(x, y) {
-      // Topmost first: reverse draw order, exact rotated-rect containment.
+    pick(x, y, zoom = 1) {
+      // Topmost first: reverse draw order, exact rotated-rect containment
+      // of the drawn rect (the record's size under its clamp at this zoom).
+      if (!(zoom > 0)) throw new Error(`pick: zoom must be positive, got ${zoom}`)
       let out: Sprite[] = []
       let r = layer.records
       for (let i = layer._order.length - 1; i >= 0; i--) {
         let at = i * FLOATS_PER_SPRITE
-        if (pointInSprite(x, y, r[at]!, r[at + 1]!, r[at + 2]!, r[at + 3]!, r[at + 8]!)) {
+        let w = r[at + 2]!
+        let h = r[at + 3]!
+        let scale = screenSizeScale(w, h, zoom, r[at + MIN_PX_FIELD_OFFSET]!, r[at + MAX_PX_FIELD_OFFSET]!)
+        if (pointInSprite(x, y, r[at]!, r[at + 1]!, w * scale, h * scale, r[at + 8]!)) {
           out.push(layer._order[i]!)
         }
       }
@@ -254,12 +274,15 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
         frame: FULL_FRAME,
         rotation: 0,
         tint: [1, 1, 1, 1],
+        minScreenPx: 0,
+        maxScreenPx: 0,
         ...opts,
       })
       layer._schedule()
       return sprite
     },
     _write(sprite, opts) {
+      checkClamp("setSprite", sprite, opts)
       writeRecord(sprite, opts)
       layer._schedule()
     },
@@ -276,6 +299,8 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
         flipY: sprite._flipY,
         rotation: r[at + 8]!,
         tint: [r[at + 9]!, r[at + 10]!, r[at + 11]!, r[at + 12]!],
+        minScreenPx: r[at + MIN_PX_FIELD_OFFSET]!,
+        maxScreenPx: r[at + MAX_PX_FIELD_OFFSET]!,
         // Record sprites have no key field and no visibility (see
         // writeRecord's throws).
         renderOrder: 0,

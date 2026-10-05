@@ -1,6 +1,6 @@
 import { createEffect, createSignal, displayScale, For, getBoundingBoxViewport, onLayout, untrack } from "@solidrt/core"
 import type { TextureId, VoidComponent } from "@solidrt/core"
-import type { FilterMode } from "@solidrt/core/gpu"
+import type { BlendMode, FilterMode } from "@solidrt/core/gpu"
 import type { CameraUpdate } from "../camera.ts"
 import type { Frame } from "../frames.ts"
 import { tileWorldScale } from "../oversample-math.ts"
@@ -33,6 +33,9 @@ export type TileLayerProps = {
    * have no chunk and render nothing, so a full-bleed ground color belongs
    * on the container behind the layer). */
   chunkClearColor?: [number, number, number, number]
+  /** How the cells blend into their chunk bakes (see
+   * TileLayerOptions.blend); default "alpha". Fixed at mount. */
+  blend?: BlendMode
   /** Sampler filter for the baked chunk textures at composite time; default
    * "linear" (hard pixels belong to the atlas sampler, see TileLayerOptions). */
   filter?: FilterMode
@@ -83,6 +86,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
   let layer = untrack(() =>
     createTileLayer(props.cols, props.rows, props.tileW, props.tileH, props.atlas, {
       chunkClearColor: props.chunkClearColor,
+      blend: props.blend,
       filter: props.filter,
       chunkTiles: props.chunkTiles,
       tint: props.tint,

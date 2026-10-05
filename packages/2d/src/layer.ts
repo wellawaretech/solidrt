@@ -27,8 +27,8 @@
 // (dispatch.ts) undoes it with unprojectCamera.
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
-import { beginBufferWrite, createBuffer, destroyBuffer, endBufferWrite } from "@solidrt/core/gpu"
-import type { BufferId, TextureId } from "@solidrt/core/gpu"
+import { beginBufferWrite, checkScreenSize, createBuffer, destroyBuffer, endBufferWrite, screenSizeScale } from "@solidrt/core/gpu"
+import type { BlendMode, BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type {
   Impact as CoreImpact,
@@ -45,6 +45,7 @@ import type { CameraState, CameraUpdate } from "./camera.ts"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
+import { floorReach, pointInSprite } from "./pick.ts"
 import { createSpritePipeline, INSTANCE_LAYOUTS_SPLIT, VERTEX_SPLIT } from "./shaders.ts"
 import { createViews } from "./views.ts"
 import type { ViewHandle, ViewOptions } from "./views.ts"
@@ -55,12 +56,16 @@ export const POSE_FLOATS = 5
 // Float offset of world y in a pose record - what `orderBy: "y"` keys on.
 const POSE_Y_FIELD = 1
 /** Floats per style record:
- * [u0, v0, u1, v1, tintR, tintG, tintB, tintA, renderOrder]. */
-export const STYLE_FLOATS = 9
+ * [u0, v0, u1, v1, tintR, tintG, tintB, tintA, renderOrder, minScreenPx,
+ * maxScreenPx]. */
+export const STYLE_FLOATS = 11
 
 // Float offset of renderOrder in a style record - what `orderBy: "renderOrder"`
 // keys on.
 const STYLE_KEY_FIELD = 8
+// Float offsets of the screen-size clamp in a style record.
+const STYLE_MIN_PX_FIELD = 9
+const STYLE_MAX_PX_FIELD = 10
 
 const RESOLVED = Promise.resolve()
 
@@ -231,11 +236,32 @@ export type SpriteOptions = {
   /** RGBA multiplier 0..1 each; default opaque white (the texture as-is). */
   tint?: [number, number, number, number]
   /**
+   * The screen-size clamp's floor, view pixels (default 0: off). Whatever
+   * the camera's zoom, the sprite draws at least this big on its smaller
+   * axis, scaled uniformly so its aspect holds - a selection ring that
+   * stays findable at the overview, a map pin, a traffic dot that never
+   * falls under two device pixels. A floored sprite is world-sized until
+   * zoom shrinks it to the floor, then holds there. Applied in the vertex
+   * stage over the pose the core writes (core's screenSizeScale), so it
+   * comes after group scale and a size transition, and rotation stays
+   * world-space; `pick` honours it at the zoom it is asked for. A
+   * collapsed sprite (zero w or h) stays collapsed. Finite, >= 0.
+   */
+  minScreenPx?: number
+  /**
+   * The clamp's ceiling, view pixels (default 0: off): the sprite draws
+   * at most this big on its smaller axis however far the camera zooms in
+   * - a label marker that must not balloon. Equal to `minScreenPx` it is
+   * a constant screen size, Three's `sizeAttenuation: false`, and `w`/`h`
+   * then carry the aspect alone. Never below a floor that is on.
+   */
+  maxScreenPx?: number
+  /**
    * Explicit draw-order key, read only by a layer created with `orderBy:
    * "renderOrder"` (default 0; ties keep slot order, so untouched sprites draw
    * as without one). The raise idiom: `setSprite(hit, { renderOrder: ++top })`
    * on interaction, back to 0 to restore. Node layer only - a record
-   * layer's 13-float record has no key field (order it by one of its own
+   * layer's 15-float record has no key field (order it by one of its own
    * fields with `orderBy: { field }`); setting this there throws.
    */
   renderOrder?: number
@@ -381,6 +407,14 @@ export type SpriteLayerOptions = {
    * tint in every view; default opaque white (sprites as-is). See
    * setTint. */
   tint?: [number, number, number, number]
+  /**
+   * How the sprites blend into the layer's targets, core gpu's BlendMode;
+   * default "alpha" (premultiplied source-over in draw order). "add" for
+   * glows, explosions and additive particles, "multiply" to darken, "none"
+   * to overwrite. Pipeline state, fixed at creation: an additive layer is
+   * a second layer over the same atlas.
+   */
+  blend?: BlendMode
   /** Names the GPU resources (buffers, pipeline; views default to
    * `<label>-view`); default "sprites". */
   label?: string
@@ -506,8 +540,11 @@ export type LayerBase = {
    * Topmost means draw order (highest slot on the node layer, last added
    * on a record layer); an `orderBy` key is not consulted (see
    * SpriteLayerOptions.orderBy's known limitation). World space: a view
-   * undoes its camera before asking. */
-  pick(x: number, y: number): Sprite[]
+   * undoes its camera before asking, and passes its camera's `zoom` so a
+   * sprite's screen-size floor (SpriteOptions.minScreenPx) is hit at the
+   * size it draws; default 1 (the unzoomed world). The pointer walk and
+   * `view.pick` do both. */
+  pick(x: number, y: number, zoom?: number): Sprite[]
   /**
    * A rendering of the layer's world from a camera of its own - the main
    * view, a minimap, a zoomed inset, one split-screen pane -
@@ -601,7 +638,8 @@ export type SpriteLayer = LayerBase & {
    * Every shown sprite whose rotated rect overlaps the layer-pixel rect
    * (the core BVH overlap query, exact for rotated sprites), unordered -
    * the marquee query: `overlap` over an unrotated rect, sprites only.
-   * Node layer only.
+   * Node layer only. A world-space query like overlap and sweep: the
+   * sprites' world rects, never a screen-size floor (that is `pick`'s).
    */
   pickRect(x: number, y: number, width: number, height: number): Sprite[]
   /**
@@ -752,7 +790,28 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
   checkTint("createSpriteLayer", tint)
   let pose: BufferId = createBuffer(capacity * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
   let style: BufferId = createBuffer(capacity * STYLE_FLOATS * 4, { label: `${label}-style`, autoFree: false })
-  let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_LAYOUTS_SPLIT)
+  let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_LAYOUTS_SPLIT, opts?.blend ?? "alpha")
+  // The sprites with a screen-size clamp (either bound on), and the
+  // furthest any of them reaches from its center at its floor (floorReach,
+  // view pixels): the candidate box a pick searches around the pointer. A
+  // write that could only widen the reach raises it in place; one that may
+  // have shrunk it (a clamped sprite leaving, its floor or aspect dropping)
+  // marks it dirty and the next pick recomputes over the set - exact, and
+  // no cost while the clamps are untouched. Empty set: the raycast fast
+  // path, and no exact test at all.
+  let clamped = new Set<SpriteState>()
+  let reach = 0
+  let reachDirty = false
+  let dropClamp = (sprite: SpriteState): void => {
+    if (clamped.delete(sprite)) reachDirty = true
+  }
+  // The pair check against the STORED bounds, before any write lands: a
+  // ceiling set alone must not drop below the floor already there.
+  let checkClamp = (verb: string, sprite: SpriteState, opts: SpriteOptions): void => {
+    if (opts.minScreenPx === undefined && opts.maxScreenPx === undefined) return
+    let at = sprite._slot * STYLE_FLOATS
+    checkScreenSize(verb, opts.minScreenPx ?? styleData[at + STYLE_MIN_PX_FIELD]!, opts.maxScreenPx ?? styleData[at + STYLE_MAX_PX_FIELD]!)
+  }
 
   let disposed = false
   let scheduled = false
@@ -861,6 +920,23 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       styleData[at + STYLE_KEY_FIELD] = opts.renderOrder
       styleDirty = true
     }
+    if (opts.minScreenPx !== undefined) {
+      styleData[at + STYLE_MIN_PX_FIELD] = opts.minScreenPx
+      styleDirty = true
+    }
+    if (opts.maxScreenPx !== undefined) {
+      styleData[at + STYLE_MAX_PX_FIELD] = opts.maxScreenPx
+      styleDirty = true
+    }
+    let min = styleData[at + STYLE_MIN_PX_FIELD]!
+    if (min > 0 || styleData[at + STYLE_MAX_PX_FIELD]! > 0) {
+      clamped.add(sprite)
+      let r = floorReach(sprite._w, sprite._h, min)
+      if (r >= reach) reach = r
+      else reachDirty = true
+    } else {
+      dropClamp(sprite)
+    }
   }
 
   let views = createViews({
@@ -871,7 +947,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
     buffers: () => [pose, style],
     count: () => published,
     tint: () => tint,
-    pick: (x, y) => layer.pick(x, y),
+    pick: (x, y, zoom) => layer.pick(x, y, zoom),
     // The order key one view entry declares: "y" on world y in the pose
     // record (slot 0), "renderOrder" on the app-owned key in the style
     // record (slot 1); either way the core gathers BOTH buffers under the
@@ -899,21 +975,57 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       if (disposed) throw new Error("createView: layer is disposed")
       return views.create(vopts)
     },
-    pick(x, y) {
+    pick(x, y, zoom = 1) {
       // The index reads as of the last core flush; run any pending batch
       // first so a write followed by a pick sees the write.
       if (scheduled) flush()
+      filter.nodes = undefined
+      if (!(zoom > 0)) throw new Error(`pick: zoom must be positive, got ${zoom}`)
+      let out: Sprite[] = []
       RAY_ORIGIN[0] = x
       RAY_ORIGIN[1] = y
       RAY_ORIGIN[2] = PICK_RAY_START
       RAY_DIR[0] = 0
       RAY_DIR[1] = 0
       RAY_DIR[2] = 1
-      filter.nodes = undefined
-      let out: Sprite[] = []
-      for (let hit of spatial.raycast(RAY_ORIGIN, RAY_DIR, filter)) {
-        let sprite = byNode.get(hit.node)
-        if (sprite) out.push(sprite)
+      if (clamped.size === 0) {
+        for (let hit of spatial.raycast(RAY_ORIGIN, RAY_DIR, filter)) {
+          let sprite = byNode.get(hit.node)
+          if (sprite) out.push(sprite)
+        }
+      } else {
+        // A clamped sprite draws at another size than its index column:
+        // larger under a floor, smaller under a ceiling. The candidates
+        // are every column containing the point (the ray) plus, when a
+        // floor is on, every column within the widest floor's reach of it
+        // (a box overlap - a SURFACE contact in the core, so a box lying
+        // inside a big column reports nothing, which is why the ray stays
+        // in the union), each then tested exactly against its drawn rect:
+        // the world pose from the node's world matrix (the in-flight pose,
+        // group scale composed), scaled by its clamp at this zoom - what
+        // the vertex stage draws.
+        if (reachDirty) {
+          reach = 0
+          for (let s of clamped) reach = Math.max(reach, floorReach(s._w, s._h, styleData[s._slot * STYLE_FLOATS + STYLE_MIN_PX_FIELD]!))
+          reachDirty = false
+        }
+        let candidates = new Set<NodeId>()
+        for (let hit of spatial.raycast(RAY_ORIGIN, RAY_DIR, filter)) candidates.add(hit.node)
+        if (reach > 0) {
+          let half = reach / zoom
+          packVolume({ x: x - half, y: y - half, width: 2 * half, height: 2 * half }, "pick")
+          for (let hit of spatial.overlap("box", BOX, filter)) candidates.add(hit.node)
+        }
+        for (let node of candidates) {
+          let sprite = byNode.get(node)
+          if (!sprite) continue
+          spatial.worldMatrix(sprite.node!, WORLD)
+          let w = Math.hypot(WORLD[0]!, WORLD[1]!)
+          let h = Math.hypot(WORLD[4]!, WORLD[5]!)
+          let at = sprite._slot * STYLE_FLOATS
+          let scale = screenSizeScale(w, h, zoom, styleData[at + STYLE_MIN_PX_FIELD]!, styleData[at + STYLE_MAX_PX_FIELD]!)
+          if (pointInSprite(x, y, WORLD[12]!, WORLD[13]!, w * scale, h * scale, Math.atan2(WORLD[1]!, WORLD[0]!))) out.push(sprite)
+        }
       }
       // Topmost first: higher slot = drawn later = on top.
       return out.sort((a, b) => b._slot - a._slot)
@@ -1007,6 +1119,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
         spatial.destroyNode(group.node)
       }
       layer._groups.clear()
+      clamped.clear()
       // Corpses mid-exit go now: their slots must not outlive the buffer.
       for (let node of leaving) {
         freeing.delete(node)
@@ -1053,13 +1166,14 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       spatial.setBounds(node, COLUMN_BOUNDS)
       spatial.bindPoseRecord(node, pose, slot)
       byNode.set(node, sprite)
-      // renderOrder defaults to 0 explicitly: a recycled slot holds the
-      // previous occupant's key otherwise.
-      writeStyle(sprite, { frame: FULL_FRAME, tint: [1, 1, 1, 1], renderOrder: 0, ...opts })
+      // renderOrder and the clamp default to 0 explicitly: a recycled slot
+      // holds the previous occupant's values otherwise.
+      writeStyle(sprite, { frame: FULL_FRAME, tint: [1, 1, 1, 1], renderOrder: 0, minScreenPx: 0, maxScreenPx: 0, ...opts })
       layer._schedule()
       return sprite
     },
     _write(sprite, opts) {
+      checkClamp("setSprite", sprite, opts)
       let moved = false
       if (opts.x !== undefined && opts.x !== sprite._x) (sprite._x = opts.x), (moved = true)
       if (opts.y !== undefined && opts.y !== sprite._y) (sprite._y = opts.y), (moved = true)
@@ -1077,7 +1191,10 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
         opts.tint !== undefined ||
         opts.flipX !== undefined ||
         opts.flipY !== undefined ||
-        opts.renderOrder !== undefined
+        opts.renderOrder !== undefined ||
+        opts.minScreenPx !== undefined ||
+        opts.maxScreenPx !== undefined ||
+        (moved && clamped.has(sprite))
       ) {
         writeStyle(sprite, opts)
       }
@@ -1095,12 +1212,15 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
         flipY: sprite._flipY,
         rotation: sprite._rot,
         tint: [styleData[at + 4]!, styleData[at + 5]!, styleData[at + 6]!, styleData[at + 7]!],
+        minScreenPx: styleData[at + STYLE_MIN_PX_FIELD]!,
+        maxScreenPx: styleData[at + STYLE_MAX_PX_FIELD]!,
         renderOrder: styleData[at + STYLE_KEY_FIELD]!,
         visible: sprite._visible,
       }
     },
     _destroy(sprite) {
       sprite.layer = null
+      dropClamp(sprite)
       if (sprite._parent) {
         sprite._parent._children.delete(sprite)
         sprite._parent = null
@@ -1161,12 +1281,23 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
  * core retarget); reserve with `capacity` to avoid the copies.
  */
 export function addSprite(layer: SpriteLayer | RecordLayer, opts?: AddSpriteOptions): Sprite {
+  if (opts) checkSpriteOptions("addSprite", opts)
   return layer._add(opts)
 }
 
 /** The one write path: absent keys keep their values (the params rule). */
 export function setSprite(sprite: Sprite, opts: SpriteOptions): void {
+  checkSpriteOptions("setSprite", opts)
   sprite.layer?._write(sprite, opts)
+}
+
+/** The validated sprite fields (throws - the dev validation policy),
+ * checked before any state changes: a NaN tint channel or clamp bound
+ * would otherwise blank the sprite with no error. The clamp pair is also
+ * checked against the stored bounds by the layer's write. */
+function checkSpriteOptions(verb: string, opts: SpriteOptions): void {
+  if (opts.tint !== undefined) checkTint(verb, opts.tint)
+  if (opts.minScreenPx !== undefined || opts.maxScreenPx !== undefined) checkScreenSize(verb, opts.minScreenPx ?? 0, opts.maxScreenPx ?? 0)
 }
 
 /** Read a sprite's current fields (a fresh object; mutating it does nothing). */

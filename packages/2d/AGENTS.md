@@ -75,13 +75,16 @@ one. The window view, the minimap, two split-screen panes are the same
 
 ### Pose and style slots
 
-Node layer ownership split, two instance-buffer slots on one pipeline:
-slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY by the
-core (each sprite node's Pose2D record sink; one coalesced buffer write
-per flush however many nodes moved), slot 1 the STYLE buffer
-`[u0, v0, u1, v1, tint rgba, renderOrder]`, JS-owned, published through the
-zero-copy write lease. NEVER write the pose buffer from JS - the core's
-staging mirror owns it and will overwrite.
+Node layer ownership split, two instance-buffer slots on one pipeline
+(the layer's, blended with its `blend` option, "alpha" unless it says
+"add", "multiply" or "none" at creation - two blend modes are two
+layers): slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY
+by the core (each sprite node's Pose2D record sink; one coalesced buffer
+write per flush however many nodes moved), slot 1 the STYLE buffer
+`[u0, v0, u1, v1, tint rgba, renderOrder, minScreenPx, maxScreenPx]`,
+JS-owned, published through the zero-copy write lease. NEVER write the
+pose buffer from JS - the core's staging mirror owns it and will
+overwrite.
 
 ### Fixed instance slots
 
@@ -107,6 +110,30 @@ unrotated rect, sprites only (exact for rotated sprites, the marquee),
 unordered. Every query passes the core a filter with the layer's root
 node (sprites and groups without a parent hang off it), so the arena
 being shared with e.g. a 3d scene costs nothing in JS.
+
+The screen-size clamp bends this one way. A sprite with `minScreenPx`
+and/or `maxScreenPx` draws its smaller axis within those VIEW pixels
+(scaled uniformly, in the vertex stage over the core-written pose, so
+after group scale and mid-transition; core's `screenSizeScale`, the
+same function @solidrt/3d's sprite material uses), which differs from
+its index column once the zoom carries it past a bound - larger under
+a floor, smaller under a ceiling; equal bounds hold a constant screen
+size. So `pick(x, y, zoom)` takes the camera zoom the clamps are
+measured at (default 1): while no sprite on the layer is clamped it is
+the raycast above; once one is, the candidates are the columns
+containing the point (the ray) plus, when a floor is on, those within
+the widest floor's reach of it (`floorReach` in pick.ts over the
+clamped sprites, recomputed on the next pick after one leaves or
+shrinks; the box overlap is a SURFACE contact in the core, so a box
+inside a big column finds nothing, which is why the ray stays in the
+union), and each is tested exactly against its drawn rect from the
+node's world matrix (`screenSizeScale` + `pointInSprite`). The pointer
+walk and `view.pick(x, y)` pass the view camera's zoom; a bare
+`layer.pick(x, y)` is the unzoomed world. `pickRect`, overlap, sweep and
+the mover stay world-space body queries and never see a clamp. The
+record layer's JS walk applies the same scale per record. The pair is
+validated against the STORED bounds before any write (a ceiling set
+alone may not drop below the floor already there).
 
 ### Spatial queries
 
@@ -178,9 +205,10 @@ costs zero, the same demand-gate story as the rest of the platform.
 
 ### The records layer
 
-The records layer (`createRecordLayer`) keeps the old model whole: 13
+The records layer (`createRecordLayer`) keeps the old model whole: 15
 JS-owned floats per sprite `[cx, cy, w, h, u0, v0, u1, v1, rot, tint
-rgba]` (`FLOATS_PER_SPRITE`), draw order = insertion order (or key
+rgba, minScreenPx, maxScreenPx]` (`FLOATS_PER_SPRITE`), draw order =
+insertion order (or key
 order with `orderBy` - see below), remove
 shifts, `layer.records` + `touch()` raw writes, JS pick walk. It is the
 escape hatch for motion only JS can compute at scale (measured 30k
@@ -393,8 +421,9 @@ instance count and the layer tint fan out to every view; the camera
 and the viewport are the view's own params, so a view costs no
 per-frame JS beyond its camera writes. The `ViewHandle` is the
 viewport contract (texture, width/height/setSize,
-oversample/setOversample, setCamera/camera/project/unproject,
-listen/handlers/handlersFor, dispose - views also die with the layer);
+oversample/setOversample, setCamera/camera/project/unproject, pick (the
+layer's, through this camera), listen/handlers/handlersFor, dispose -
+views also die with the layer);
 the sprites stay the layer's (`addSprite`, `pick`, `setTint`,
 `createView`, `dispose`). Pointer events on a view leaf run the
 dispatch with the VIEW's camera undone over the layer's pick, the view
@@ -567,12 +596,12 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | atlas (TextureId), capacity?, tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
-| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
+| `SpriteLayer` | atlas (TextureId), capacity?, blend? (core gpu BlendMode, "alpha" default, "add" for glows; mount-fixed), tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
+| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), minScreenPx?, maxScreenPx? (the screen-size clamp on the smaller axis, view pixels; 0 = off; equal = constant size), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
 | `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, follow?, offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?, zoom?, rotation?), viewport? (`() => { width, height }`, default: the driven viewport's size), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
 | `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width, height (view pixels, live; fixed-size only for now), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture) (else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
-| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), frames? (the tileset `setTiles` indices name), chunkClearColor?, filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
+| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), frames? (the tileset `setTiles` indices name), chunkClearColor?, blend? (the bake's blend mode, "alpha" default; mount-fixed), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 ### SpriteLayer and useSpriteLayer
 
@@ -671,7 +700,11 @@ hover, wheel and tap rules headless.
   shading: the same tint triple is a different brightness in the two
   packages, so a palette shared across them needs its own conversion.
 - Tint multiplies the sampled texel (`texture * tint`) and the pipeline
-  blends with `blend: "alpha"` in record order, the premultiplied composite.
+  blends with the layer's `blend` in record order - "alpha" by default,
+  the premultiplied composite; "add" accumulates (glows, sparks, light
+  cones: two half-alpha whites make opaque white), "multiply" darkens,
+  "none" overwrites. Pipeline state, so it is per layer and fixed at
+  creation; an additive effect layer draws over the scene layer.
   The atlas is premultiplied because `decodeImage` premultiplies by default;
   an atlas uploaded from straight-alpha pixels (`decodeImage(bytes, { alpha:
   "straight" })` into `createAtlas`) draws color under transparent texels
@@ -732,7 +765,7 @@ hover, wheel and tap rules headless.
   so a y-sorted crowd costs the same flush as an unsorted one. Records
   and slots stay stably addressed; ties keep slot order; `pick()` still
   resolves overlap by slot/record order. Records layer keys: "y" or a raw
-  `{ field, descending? }` offset into the 13-float record. Node layer
+  `{ field, descending? }` offset into the 15-float record. Node layer
   keys: `"y"` - WORLD y from the core-written pose buffer, so sprites
   moved by native transitions (or any core producer) re-sort with zero JS
   per frame - or `"renderOrder"` - the app-owned per-sprite `renderOrder`
@@ -743,7 +776,7 @@ hover, wheel and tap rules headless.
   pose AND style under ONE permutation and republishes the sibling buffer
   itself when the key buffer re-orders (the multi-buffer stage of
   okf/backlog/gpu-instance-order.md). `renderOrder` on a record-layer
-  sprite throws - its 13-float record has no key field.
+  sprite throws - its 15-float record has no key field.
 - The node layer's STYLE slots are not compacted: a removed sprite leaves
   its style floats in place (invisible - the pose is zeroed) until the
   slot recycles. Do not read style truth from the buffer; getSprite reads
