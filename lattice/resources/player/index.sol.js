@@ -6802,7 +6802,8 @@ var POINTER_INTEREST = {
   onPointerUp: 4,
   onPointerEnter: 8,
   onPointerLeave: 16,
-  onWheel: 32
+  onWheel: 32,
+  onPointerCancel: 64
 };
 var interests = new Map;
 function syncInterest(nodeId) {
@@ -7241,6 +7242,7 @@ function attachWindow(nodeId) {
   let unsubscribe = null;
   let unsubDown = null;
   let unsubUp = null;
+  let unsubCancel = null;
   let unsubMove = null;
   let unsubEnter = null;
   let unsubLeave = null;
@@ -7327,6 +7329,9 @@ function attachWindow(nodeId) {
     unsubUp = on2("pointerUp", (raw) => {
       bubble(raw, "onPointerUp");
     });
+    unsubCancel = on2("pointerCancel", (raw) => {
+      bubble(raw, "onPointerCancel");
+    });
     unsubMove = on2("pointerMove", (raw) => {
       bubble(raw, "onPointerMove");
     });
@@ -7405,6 +7410,8 @@ function attachWindow(nodeId) {
       unsubDown();
     if (unsubUp)
       unsubUp();
+    if (unsubCancel)
+      unsubCancel();
     if (unsubMove)
       unsubMove();
     if (unsubEnter)
@@ -8580,7 +8587,12 @@ function createPan(options) {
     armed = null;
     origin2 = null;
   };
-  let cancel = reset;
+  let cancel = () => {
+    let started = active != null;
+    reset();
+    if (started)
+      options.onPanCancel?.();
+  };
   let owner = {
     cancel
   };
@@ -8633,6 +8645,12 @@ function createPan(options) {
       } else if (armed === e.pointerId) {
         reset();
       }
+    },
+    onPointerCancel: (e) => {
+      if (active === e.pointerId)
+        cancel();
+      else if (armed === e.pointerId)
+        reset();
     }
   };
   return {
@@ -10977,6 +10995,9 @@ function Window(props) {
     get onPointerUp() {
       return props.onPointerUp;
     },
+    get onPointerCancel() {
+      return props.onPointerCancel;
+    },
     get onPointerMove() {
       return props.onPointerMove;
     },
@@ -11211,6 +11232,9 @@ function View(props) {
     get onPointerUp() {
       return props.onPointerUp;
     },
+    get onPointerCancel() {
+      return props.onPointerCancel;
+    },
     get onPointerMove() {
       return props.onPointerMove;
     },
@@ -11382,6 +11406,9 @@ function Text(props) {
     },
     get onPointerUp() {
       return props.onPointerUp;
+    },
+    get onPointerCancel() {
+      return props.onPointerCancel;
     },
     get onPointerMove() {
       return props.onPointerMove;
@@ -12813,7 +12840,7 @@ function EditorField(props) {
       restartBlink();
     }
   };
-  let handleViewportPointerUp = (e) => {
+  let handleViewportPointerEnd = (e) => {
     if (dragArmed === e.pointerId)
       dragArmed = null;
     if (dragActive === e.pointerId) {
@@ -12976,7 +13003,8 @@ function EditorField(props) {
     overflow: "hidden",
     onPointerDown: handleViewportPointerDown,
     onPointerMove: handleViewportPointerMove,
-    onPointerUp: handleViewportPointerUp
+    onPointerUp: handleViewportPointerEnd,
+    onPointerCancel: handleViewportPointerEnd
   });
   insertNode2(_el$, _el$2);
   ref(() => (n) => {
@@ -13301,7 +13329,8 @@ function ScrollView(props) {
       } : {
         y: dest
       });
-    }
+    },
+    onPanCancel: () => setDragging(false)
   });
   let hold2 = (e) => {
     setFling(false);
@@ -13455,6 +13484,9 @@ function ScrollView(props) {
     get onPointerUp() {
       return props.onPointerUp;
     },
+    get onPointerCancel() {
+      return props.onPointerCancel;
+    },
     get onPointerMove() {
       return props.onPointerMove;
     },
@@ -13528,7 +13560,8 @@ function ScrollView(props) {
     i: scroll.offset().y,
     n: pan.handlers.onPointerMove,
     s: pan.handlers.onPointerUp,
-    h: direction()
+    h: pan.handlers.onPointerCancel,
+    r: direction()
   }), ({
     e,
     t,
@@ -13537,7 +13570,8 @@ function ScrollView(props) {
     i,
     n,
     s,
-    h
+    h,
+    r
   }, _p$) => {
     e !== _p$?.e && setProp(_el$2, "clipRadius", e, _p$?.e);
     t !== _p$?.t && setProp(_el$2, "flexDirection", t, _p$?.t);
@@ -13546,7 +13580,8 @@ function ScrollView(props) {
     i !== _p$?.i && setProp(_el$2, "scrollY", i, _p$?.i);
     n !== _p$?.n && setProp(_el$2, "onPointerMove", n, _p$?.n);
     s !== _p$?.s && setProp(_el$2, "onPointerUp", s, _p$?.s);
-    h !== _p$?.h && setProp(_el$3, "flexDirection", h, _p$?.h);
+    h !== _p$?.h && setProp(_el$2, "onPointerCancel", h, _p$?.h);
+    r !== _p$?.r && setProp(_el$3, "flexDirection", r, _p$?.r);
   });
   return _el$;
 }
@@ -13653,6 +13688,11 @@ function createPress(options) {
       }
       options.onPointerUp?.(e);
     },
+    onPointerCancel: (e) => {
+      if (active === e.pointerId)
+        cancel();
+      options.onPointerCancel?.(e);
+    },
     onPointerEnter: (e) => {
       setHovered(true);
       options.onPointerEnter?.(e);
@@ -13735,6 +13775,9 @@ function Pressable(props) {
     },
     get onPointerUp() {
       return press.handlers.onPointerUp;
+    },
+    get onPointerCancel() {
+      return press.handlers.onPointerCancel;
     },
     get onPointerMove() {
       return press.handlers.onPointerMove;
@@ -14630,7 +14673,8 @@ function SegmentedControl(props) {
       let press = createPress({
         onPress: () => select(opt.value),
         onPointerDown: () => setPressedValue(() => opt.value),
-        onPointerUp: () => setPressedValue(undefined)
+        onPointerUp: () => setPressedValue(undefined),
+        onPointerCancel: () => setPressedValue(undefined)
       });
       onCleanup(() => segs.delete(opt.value));
       var _el$6 = createElement("view"), _el$8 = createElement("text");

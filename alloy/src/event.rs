@@ -490,6 +490,17 @@ pub enum AlloyEvent {
     y: f32,
     modifiers: Modifiers,
   },
+  // The pointer's other end: the system took the touch away (a system
+  // gesture, a palm rejection, the window losing the gesture). The last
+  // event for its pointer, carrying where the platform last saw it and no
+  // button; it routes like an up, and nothing of the pointer survives it.
+  PointerCancel {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    x: f32,
+    y: f32,
+    modifiers: Modifiers,
+  },
   TextInput {
     text: String,
   },
@@ -884,6 +895,21 @@ pub(crate) fn link_from_drop(payload: &str) -> Option<String> {
   }
 }
 
+// The finger cancel, which the sdl3 crate has no Event variant for (its
+// from_ll drops the payload into Unknown), translated from the raw payload
+// the pump reads beside the crate's events (sdl_utils::finger_cancel); see
+// okf/upstream/sdl3-no-finger-cancelled-variant.md.
+pub(crate) fn translate_finger_cancel(cancel: &sdl_utils::FingerCancel, window: &sdl3::video::Window) -> AlloyEvent {
+  let (lw, lh) = touch_window_logical_size(window);
+  AlloyEvent::PointerCancel {
+    pointer_id: cancel.finger_id,
+    pointer_type: PointerType::Touch,
+    x: cancel.x * lw,
+    y: cancel.y * lh,
+    modifiers: sdl_utils::mod_state().into(),
+  }
+}
+
 // A finger sample of Android's own touch path (see touch.rs) as the event
 // SDL's finger events translate to above, which is where every other
 // platform's touch comes from.
@@ -898,6 +924,7 @@ pub(crate) fn translate_touch(sample: &crate::touch::TouchSample, window: &sdl3:
     TouchKind::Down => AlloyEvent::PointerDown { pointer_id, pointer_type, button: 0, x, y, modifiers },
     TouchKind::Move => AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, rel: None, modifiers },
     TouchKind::Up => AlloyEvent::PointerUp { pointer_id, pointer_type, button: 0, x, y, modifiers },
+    TouchKind::Cancel => AlloyEvent::PointerCancel { pointer_id, pointer_type, x, y, modifiers },
   }
 }
 

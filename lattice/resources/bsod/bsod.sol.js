@@ -4410,7 +4410,8 @@ var POINTER_INTEREST = {
   onPointerUp: 4,
   onPointerEnter: 8,
   onPointerLeave: 16,
-  onWheel: 32
+  onWheel: 32,
+  onPointerCancel: 64
 };
 var interests = new Map;
 function syncInterest(nodeId) {
@@ -4598,6 +4599,7 @@ function attachWindow(nodeId) {
   let unsubscribe = null;
   let unsubDown = null;
   let unsubUp = null;
+  let unsubCancel = null;
   let unsubMove = null;
   let unsubEnter = null;
   let unsubLeave = null;
@@ -4684,6 +4686,9 @@ function attachWindow(nodeId) {
     unsubUp = on2("pointerUp", (raw) => {
       bubble(raw, "onPointerUp");
     });
+    unsubCancel = on2("pointerCancel", (raw) => {
+      bubble(raw, "onPointerCancel");
+    });
     unsubMove = on2("pointerMove", (raw) => {
       bubble(raw, "onPointerMove");
     });
@@ -4762,6 +4767,8 @@ function attachWindow(nodeId) {
       unsubDown();
     if (unsubUp)
       unsubUp();
+    if (unsubCancel)
+      unsubCancel();
     if (unsubMove)
       unsubMove();
     if (unsubEnter)

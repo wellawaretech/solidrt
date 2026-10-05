@@ -391,6 +391,7 @@ fn fed(r: &SharedResampler, event: AlloyEvent, ms: u64) -> Vec<(&'static str, u6
       AlloyEvent::PointerMove { .. } => "move",
       AlloyEvent::PointerDown { .. } => "down",
       AlloyEvent::PointerUp { .. } => "up",
+      AlloyEvent::PointerCancel { .. } => "cancel",
       _ => "other",
     };
     sent.push((kind, when.duration_since(origin()).as_millis() as u64));
@@ -405,6 +406,7 @@ fn pointer(kind: &str, x: f32) -> AlloyEvent {
   match kind {
     "down" => AlloyEvent::PointerDown { pointer_id, pointer_type, button: 0, x, y, modifiers },
     "up" => AlloyEvent::PointerUp { pointer_id, pointer_type, button: 0, x, y, modifiers },
+    "cancel" => AlloyEvent::PointerCancel { pointer_id, pointer_type, x, y, modifiers },
     _ => AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, rel: None, modifiers },
   }
 }
@@ -418,4 +420,16 @@ fn feed_consumes_moves_and_flushes_the_last_ahead_of_the_up() {
   // No frame ran: the lift is read against the last sample, at its time.
   assert_eq!(fed(&r, pointer("up", 20.0), 90), vec![("move", 20), ("up", 90)]);
   assert_eq!(fed(&r, AlloyEvent::Back, 95), vec![("other", 95)]);
+}
+
+#[test]
+fn feed_drops_a_cancelled_history_without_a_flush() {
+  let r = SharedResampler::new();
+  assert_eq!(fed(&r, pointer("down", 0.0), 0), vec![("down", 0)]);
+  assert_eq!(fed(&r, pointer("move", 10.0), 10), vec![]);
+  assert_eq!(fed(&r, pointer("move", 20.0), 20), vec![]);
+  // The samples no frame dispatched go with the history: nothing of a
+  // cancelled pointer is worth reading.
+  assert_eq!(fed(&r, pointer("cancel", 20.0), 90), vec![("cancel", 90)]);
+  assert!(r.sample(None).is_empty(), "the history is gone");
 }

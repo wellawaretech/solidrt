@@ -807,12 +807,6 @@ Shaped, not started.
   is the only honestly zero-copy shape. Its urgent consumer left on 2026-09-12
   when fullscreen video moved to punch-through; camera and the wasm/JS upload
   API remain.
-- **[A cancelled touch ends its pointer](backlog/touch-cancel.md)** [2026-09-30]
-  When the system takes a touch away from the app (a system gesture, a palm
-  rejection, a window losing the touch), the pointer stays down forever - the
-  cancel is never translated on any platform, so a press, a drag or a pinch
-  that was in flight never ends. Translate it and give the app a way to tell a
-  cancel from a lift, so a cancelled press fires no tap.
 - **[Decide the shape of the transform props against CSS, all at once](backlog/transform-props-css-shape.md)** [2026-08-14]
   scale/scaleX/scaleY, x/y, rotate and originX/originY each landed on their
   own; CSS gives per-axis tuples for scale and translate but nothing for
@@ -2368,6 +2362,13 @@ Finished, kept for the reasoning.
   gated or slow frames a 1.5 s timer observably fires ~0.5-1 s late - async UI
   (pending buttons, toasts, polls) feels laggy while the app idles or animates
   lightly.
+- **[A cancelled touch ends its pointer](done/touch-cancel.md)** [2026-09-30]
+  When the system takes a touch away from the app (a system gesture, a palm
+  rejection, a window losing the touch), the pointer stays down forever - the
+  cancel is never translated on any platform, so a press, a drag or a pinch
+  that was in flight never ends. Translate it, give the app a way to tell a
+  cancel from a lift so a cancelled press fires no tap, and give the
+  recognizers one cause-agnostic cancel with a consumer callback.
 - **[Transition writes before the first frame anchor at clock 0](done/transition-clock-startup-anchor.md)** [2026-09-24]
   The animation clock is stamped once per frame, so a transition target
   written at module-eval time (before any frame ran) starts its track at clock
@@ -2643,6 +2644,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Offscreen MSAA exists for one case - gradient emoji drawn through the svg
   path into a snapshot boundary - so that case is the regression test for any
   sample-count change, not a corner case.
+- **[What cancels a pointer, and what only looks like it does](notes/pointer-cancel-sources.md)** [2026-10-05]
+  The platform touch cancels are the only producers of a pointer cancel; a
+  desktop focus loss and the dev-tool input mute both deliver the up, so
+  neither strands a pointer and neither needs a synthesized cancel.
 - **[What must not be collapsed when pointer input is coalesced](notes/pointer-coalescing-traps.md)** [2026-08-13]
   Positions collapse to the latest sample safely; deltas do not, ordering
   around down/up does not, and hit testing must consume the batch's final
@@ -2814,6 +2819,10 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   shown, but the wrapper's Drop calls SDL_DestroyCursor, and SDL reverts to
   the default cursor when the current one is destroyed; the enum also lacks
   the eight directional resize shapes SDL 3.2 added.
+- **[sdl3 crate has no Event variant for SDL_EVENT_FINGER_CANCELED](upstream/sdl3-no-finger-cancelled-variant.md)** [2026-10-05]
+  The sdl3 crate maps SDL_EVENT_FINGER_DOWN/UP/MOTION to Event variants but
+  not SDL_EVENT_FINGER_CANCELED, which arrives as Event::Unknown { type_ }
+  with the finger id and position dropped.
 - **[flattenArray drops needsUnwrap when a fragment follows an accessor](upstream/signals-flatten-array-clobbers-needs-unwrap.md)** [2026-08-30]
   In @solidjs/signals flattenArray assigns the nested call's result to
   needsUnwrap instead of OR-ing it, so an accessor followed by a function-free

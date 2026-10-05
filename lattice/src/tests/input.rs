@@ -213,7 +213,7 @@ fn invalid_events_reject_the_whole_sequence() {
   assert!(bad(json!([{ "type": "key", "action": "tap", "key": "w" }, { "type": "warp" }])).contains("events[1]"));
   assert!(bad(json!([{ "type": "key", "action": "press", "key": "w" }])).contains("down, up or tap"));
   assert!(
-    bad(json!([{ "type": "pointer", "action": "press", "x": 1, "y": 1 }])).contains("down, up, move, tap or drag")
+    bad(json!([{ "type": "pointer", "action": "press", "x": 1, "y": 1 }])).contains("down, up, cancel, move, tap or drag")
   );
   assert!(bad(json!([{ "type": "key", "action": "down", "key": "" }])).contains("non-empty key"));
   assert!(bad(json!([{ "type": "pointer", "action": "tap", "x": 1 }])).contains("y must be"));
@@ -230,4 +230,23 @@ fn total_duration_is_capped() {
   // 7 x 5000 ms of delays crosses the 30 s sequence cap.
   let events: Vec<_> = (0..7).map(|_| json!({ "type": "key", "action": "tap", "key": "w", "holdMs": 5000 })).collect();
   assert!(parse(serde_json::Value::Array(events)).err().expect("must reject").contains("Sequence too long"));
+}
+
+// A cancel is the one way to end a synthetic press without a lift: the
+// system taking the pointer away, as a platform touch cancel does.
+#[test]
+fn a_cancel_ends_a_synthetic_press_without_a_lift() {
+  let seq = parse(json!([
+    { "type": "pointer", "action": "down", "x": 10.0, "y": 20.0, "pointerType": "touch" },
+    { "type": "pointer", "action": "cancel", "x": 30.0, "y": 40.0, "pointerType": "touch", "delayMs": 50 }
+  ]))
+  .expect("valid cancel parses");
+  assert_eq!(seq.len(), 2);
+  assert!(matches!(event(&seq[0]).1, AlloyEvent::PointerDown { .. }));
+  let (ms, AlloyEvent::PointerCancel { pointer_type, x, y, .. }) = event(&seq[1]) else {
+    panic!("second event must be a PointerCancel");
+  };
+  assert_eq!(ms, 50);
+  assert_eq!(*pointer_type, PointerType::Touch);
+  assert_eq!((*x, *y), (30.0, 40.0));
 }

@@ -13,6 +13,9 @@ pub enum InputEvent {
   PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, dx: f32, dy: f32, modifiers: Modifiers },
   PointerDown { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
   PointerUp { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
+  // The pointer's other end (AlloyEvent::PointerCancel): routed like an up,
+  // with no button.
+  PointerCancel { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, modifiers: Modifiers },
   Wheel { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, delta_x: f32, delta_y: f32, modifiers: Modifiers },
 }
 
@@ -22,6 +25,7 @@ pub enum RoutedKind {
   Move { dx: f32, dy: f32 },
   Down { button: u8 },
   Up { button: u8 },
+  Cancel,
   Enter,
   Leave,
   Wheel { delta_x: f32, delta_y: f32 },
@@ -156,8 +160,8 @@ impl PointerRouter {
   /// between deliveries cannot skew the geometry of later ones.
   ///
   /// Move, Wheel, Enter and Leave deliveries that would reach no listener
-  /// (per the path's EventInterest bits) are not built. Down and Up always
-  /// deliver - consumer side effects (focus, gestures) hang off them
+  /// (per the path's EventInterest bits) are not built. Down, Up and Cancel
+  /// always deliver - consumer side effects (focus, gestures) hang off them
   /// regardless of handlers - and hover state updates whether or not its
   /// enter/leave deliveries are gated.
   pub fn dispatch(&mut self, tree: &RenderTree, event: InputEvent) -> Vec<RoutedPointer> {
@@ -192,30 +196,10 @@ impl PointerRouter {
         vec![delivery(RoutedKind::Down { button }, key, point, modifiers, ids, locals, parents, target)]
       }
       InputEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
-        let key = (pointer_type, pointer_id);
-        let point = Point::new(x, y);
-        let (ids, locals) = match self.down.remove(&key) {
-          Some(frozen) => routed(tree, frozen, point),
-          None => split_path(DefaultHitTester.hit_test(tree, point)),
-        };
-        let parents = parent_locals(point, &locals);
-        let target = ids.last().copied().unwrap_or(0);
-        let mut events = vec![delivery(RoutedKind::Up { button }, key, point, modifiers, ids, locals, parents, target)];
-
-        // For touch, the pointer ends here. Deliver a final Leave for
-        // anything still in its hovered path so the consumer can clean up,
-        // and drop the hover entry to prevent it from leaking across future
-        // touches.
-        if pointer_type == PointerType::Touch {
-          let old_ids = self.hovered.remove(&key).unwrap_or_default();
-          if wants(tree, &old_ids, EventInterest::LEAVE) {
-            let leave: Vec<u64> = old_ids.iter().rev().copied().collect();
-            let (leave_locals, leave_parents) = pick_locals(tree, &old_ids, &leave, point);
-            let target = old_ids.last().copied().unwrap_or(0);
-            events.push(delivery(RoutedKind::Leave, key, point, modifiers, leave, leave_locals, leave_parents, target));
-          }
-        }
-        events
+        self.end_press(tree, RoutedKind::Up { button }, (pointer_type, pointer_id), Point::new(x, y), modifiers)
+      }
+      InputEvent::PointerCancel { pointer_id, pointer_type, x, y, modifiers } => {
+        self.end_press(tree, RoutedKind::Cancel, (pointer_type, pointer_id), Point::new(x, y), modifiers)
       }
       InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
         let key = (pointer_type, pointer_id);
@@ -229,6 +213,40 @@ impl PointerRouter {
         vec![delivery(RoutedKind::Wheel { delta_x, delta_y }, key, point, modifiers, ids, locals, parents, target)]
       }
     }
+  }
+
+  // The press ends, by a lift or a cancel: the delivery routes along the
+  // frozen down path (live hit test when there is none) and releases it.
+  fn end_press(
+    &mut self,
+    tree: &RenderTree,
+    kind: RoutedKind,
+    key: PointerKey,
+    point: Point,
+    modifiers: Modifiers,
+  ) -> Vec<RoutedPointer> {
+    let (ids, locals) = match self.down.remove(&key) {
+      Some(frozen) => routed(tree, frozen, point),
+      None => split_path(DefaultHitTester.hit_test(tree, point)),
+    };
+    let parents = parent_locals(point, &locals);
+    let target = ids.last().copied().unwrap_or(0);
+    let mut events = vec![delivery(kind, key, point, modifiers, ids, locals, parents, target)];
+
+    // For touch, the pointer ends here. Deliver a final Leave for
+    // anything still in its hovered path so the consumer can clean up,
+    // and drop the hover entry to prevent it from leaking across future
+    // touches.
+    if key.0 == PointerType::Touch {
+      let old_ids = self.hovered.remove(&key).unwrap_or_default();
+      if wants(tree, &old_ids, EventInterest::LEAVE) {
+        let leave: Vec<u64> = old_ids.iter().rev().copied().collect();
+        let (leave_locals, leave_parents) = pick_locals(tree, &old_ids, &leave, point);
+        let target = old_ids.last().copied().unwrap_or(0);
+        events.push(delivery(RoutedKind::Leave, key, point, modifiers, leave, leave_locals, leave_parents, target));
+      }
+    }
+    events
   }
 
   /// Re-run the hover diff for every live pointer, e.g. after each produced

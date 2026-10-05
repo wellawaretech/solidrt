@@ -553,6 +553,7 @@ export function attachWindow(nodeId: number) {
   let unsubscribe: () => void = null!
   let unsubDown: () => void = null!
   let unsubUp: () => void = null!
+  let unsubCancel: () => void = null!
   let unsubMove: () => void = null!
   let unsubEnter: () => void = null!
   let unsubLeave: () => void = null!
@@ -664,6 +665,10 @@ export function attachWindow(nodeId: number) {
       bubble(raw, "onPointerUp")
     })
 
+    unsubCancel = on("pointerCancel", (raw: RawPointer) => {
+      bubble(raw, "onPointerCancel")
+    })
+
     unsubMove = on("pointerMove", (raw: RawPointer) => {
       bubble(raw, "onPointerMove")
     })
@@ -761,6 +766,7 @@ export function attachWindow(nodeId: number) {
     if (unsubscribe) unsubscribe()
     if (unsubDown) unsubDown()
     if (unsubUp) unsubUp()
+    if (unsubCancel) unsubCancel()
     if (unsubMove) unsubMove()
     if (unsubEnter) unsubEnter()
     if (unsubLeave) unsubLeave()

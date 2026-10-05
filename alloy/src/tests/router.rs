@@ -185,6 +185,79 @@ fn touch_up_synthesizes_leave_and_clears_hover() {
 }
 
 #[test]
+fn touch_cancel_releases_the_press_path_and_clears_hover() {
+  let mut tree = scene();
+  listen_all(&mut tree);
+  let mut router = PointerRouter::default();
+  let m = Modifiers::default();
+  let touch_move = |x, y| InputEvent::PointerMove {
+    pointer_id: 7,
+    pointer_type: PointerType::Touch,
+    x,
+    y,
+    dx: 0.0,
+    dy: 0.0,
+    modifiers: m,
+  };
+
+  router.dispatch(&tree, touch_move(50.0, 50.0));
+  let events = router.dispatch(
+    &tree,
+    InputEvent::PointerDown {
+      pointer_id: 7,
+      pointer_type: PointerType::Touch,
+      button: 0,
+      x: 50.0,
+      y: 50.0,
+      modifiers: m,
+    },
+  );
+  assert_eq!(events[0].targets, vec![1, 2]);
+
+  // The cancel arrives off the node: it routes along the frozen down path
+  // like an up, then the final leave covers the hovered path.
+  let events = router.dispatch(
+    &tree,
+    InputEvent::PointerCancel { pointer_id: 7, pointer_type: PointerType::Touch, x: 150.0, y: 50.0, modifiers: m },
+  );
+  assert_eq!(events.len(), 2);
+  assert!(matches!(events[0].kind, RoutedKind::Cancel));
+  assert_eq!(events[0].targets, vec![1, 2]);
+  assert_xy(events[0].locals[1], 140.0, 30.0);
+  assert!(matches!(events[1].kind, RoutedKind::Leave));
+  assert_eq!(events[1].targets, vec![2, 1]);
+
+  // Nothing of the pointer survives: the next move hit-tests live and
+  // enters afresh.
+  let events = router.dispatch(&tree, touch_move(150.0, 50.0));
+  assert_eq!(events.len(), 2);
+  assert!(matches!(events[0].kind, RoutedKind::Move { .. }));
+  assert_eq!(events[0].targets, vec![1, 3]);
+  assert!(matches!(events[1].kind, RoutedKind::Enter));
+  assert_eq!(events[1].targets, vec![1, 3]);
+}
+
+#[test]
+fn cancel_without_a_press_routes_live() {
+  let mut tree = scene();
+  listen_all(&mut tree);
+  let mut router = PointerRouter::default();
+  let events = router.dispatch(
+    &tree,
+    InputEvent::PointerCancel {
+      pointer_id: 0,
+      pointer_type: PointerType::Mouse,
+      x: 150.0,
+      y: 50.0,
+      modifiers: Modifiers::default(),
+    },
+  );
+  assert_eq!(events.len(), 1);
+  assert!(matches!(events[0].kind, RoutedKind::Cancel));
+  assert_eq!(events[0].targets, vec![1, 3]);
+}
+
+#[test]
 fn gated_deliveries_still_update_hover() {
   let mut tree = scene();
   let mut router = PointerRouter::default();

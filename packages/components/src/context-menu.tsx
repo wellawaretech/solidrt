@@ -184,6 +184,7 @@ export function ContextMenu(props: ContextMenuProps) {
       onPointerDown={handleDown}
       onPointerMove={longPress.handlers.onPointerMove}
       onPointerUp={longPress.handlers.onPointerUp}
+      onPointerCancel={longPress.handlers.onPointerCancel}
       {...props.layout}
     >
       {props.children}

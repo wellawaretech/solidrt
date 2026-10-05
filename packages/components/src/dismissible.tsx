@@ -69,6 +69,10 @@ export function Dismissible(props: DismissibleProps) {
       setDragging(false)
       if (!leave) setOffset(0)
     },
+    onSwipeCancel: () => {
+      setDragging(false)
+      setOffset(0)
+    },
   })
 
   let settled = (e: TransitionEndEvent) => {

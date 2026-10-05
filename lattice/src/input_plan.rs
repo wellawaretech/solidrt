@@ -154,6 +154,15 @@ pub(crate) fn plan(events: Option<&serde_json::Value>, frame_ms: f64) -> Result<
           y,
           modifiers,
         };
+        // The system taking the pointer away, as a platform touch cancel
+        // does: the one way to end a synthetic press without a lift.
+        let cancel = |x: f32, y: f32| AlloyEvent::PointerCancel {
+          pointer_id: SYNTHETIC_POINTER_ID,
+          pointer_type,
+          x,
+          y,
+          modifiers,
+        };
         // No hardware delta for synthetic moves: movement derives from the
         // position diff, the honest synthetic delta.
         let mv = |x: f32, y: f32| AlloyEvent::PointerMove {
@@ -178,6 +187,7 @@ pub(crate) fn plan(events: Option<&serde_json::Value>, frame_ms: f64) -> Result<
           Some("move") => push(Wait::ms(delay), mv(x, y)),
           Some("down") => push(Wait::ms(delay), down()),
           Some("up") => push(Wait::ms(delay), up(x, y)),
+          Some("cancel") => push(Wait::ms(delay), cancel(x, y)),
           Some("tap") => {
             press(&mut push);
             push(Wait::frame(hold), up(x, y));
@@ -203,7 +213,7 @@ pub(crate) fn plan(events: Option<&serde_json::Value>, frame_ms: f64) -> Result<
             push(Wait::frame(0), up(to_x, to_y));
             total += duration;
           }
-          _ => return Err(format!("events[{i}]: pointer action must be down, up, move, tap or drag")),
+          _ => return Err(format!("events[{i}]: pointer action must be down, up, cancel, move, tap or drag")),
         }
       }
       "wheel" => {

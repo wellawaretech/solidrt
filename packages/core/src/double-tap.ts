@@ -48,8 +48,8 @@ export interface TapSequenceOptions {
 }
 
 /** The tap bookkeeping under a double-tap: one first tap at a time,
- * decided by the second down, by travel, by a long hold, by the window
- * timer or by cancel(). */
+ * decided by the second down, by travel, by a long hold, by a cancelled
+ * pointer, by the window timer or by cancel(). */
 export function createTapSequence(options: TapSequenceOptions) {
   let first: { id: number; at: PointerPoint; downAt: number; upAt: number | null } | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -99,6 +99,9 @@ export function createTapSequence(options: TapSequenceOptions) {
         settle(false)
       }, DOUBLE_TAP_MS)
     },
+    cancelled(e: PointerEvent) {
+      if (first && first.id === e.pointerId) settle(false)
+    },
     cancel: () => settle(false),
   }
 }
@@ -144,6 +147,10 @@ export function createDoubleTap(options: DoubleTapOptions) {
     onPointerUp: (e: PointerEvent) => {
       if (second === e.pointerId) release()
       taps.up(e)
+    },
+    onPointerCancel: (e: PointerEvent) => {
+      if (second === e.pointerId) release()
+      taps.cancelled(e)
     },
   }
   return { handlers, cancel }

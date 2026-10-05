@@ -8,8 +8,9 @@ let handlers = new Map<number, Map<string, Function>>()
 // Pointer-handler presence mirrored into the render tree, so the runtime can
 // skip building deliveries that would reach nobody (moves over static content
 // are the flood case). Bits match alloy's EventInterest (rendertree/hit.rs);
-// keep the two in sync. Down/up are recorded but the runtime never gates
-// them: focus and gesture side effects hang off them regardless of handlers.
+// keep the two in sync. Down, up and cancel are recorded but the runtime
+// never gates them: focus and gesture side effects hang off them regardless
+// of handlers.
 const MOVE_BIT = 1
 const POINTER_INTEREST: Record<string, number> = {
   onPointerMove: MOVE_BIT,
@@ -18,6 +19,7 @@ const POINTER_INTEREST: Record<string, number> = {
   onPointerEnter: 8,
   onPointerLeave: 16,
   onWheel: 32,
+  onPointerCancel: 64,
 }
 
 let interests = new Map<number, number>()

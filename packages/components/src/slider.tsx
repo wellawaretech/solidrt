@@ -122,7 +122,8 @@ export function Slider(props: SliderProps) {
     if (active !== e.pointerId) return
     setFromLocalX(e.localX)
   }
-  let handleUp = (e: PointerEvent) => {
+  // A lift or a cancel: the drag ends where the thumb is.
+  let handleEnd = (e: PointerEvent) => {
     if (active === e.pointerId) endDrag()
   }
 
@@ -161,7 +162,8 @@ export function Slider(props: SliderProps) {
       focusable={!props.disabled}
       onPointerDown={handleDown}
       onPointerMove={handleMove}
-      onPointerUp={handleUp}
+      onPointerUp={handleEnd}
+      onPointerCancel={handleEnd}
       onKeyDown={handleKeyDown}
     >
       {/* Colors fade with the theme; the fill's w and the thumb's x never

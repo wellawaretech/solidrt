@@ -289,6 +289,7 @@ export function feedPointer(view: ViewHandle, feed: PointerFeed): () => void {
     onPointerDown: e => feed.handlers.onPointerDown(e.native),
     onPointerMove: e => feed.handlers.onPointerMove(e.native),
     onPointerUp: e => feed.handlers.onPointerUp(e.native),
+    onPointerCancel: e => feed.handlers.onPointerCancel(e.native),
     onWheel: e => feed.handlers.onWheel(e.native),
   })
 }

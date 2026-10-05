@@ -308,7 +308,10 @@ when exactly one client is connected.
   `durationMs`, default 300) is a down, one move per frame along the line
   and an up at the end point; a mouse tap or drag first moves the pointer
   to the point, a frame ahead of the down, so hover is what a real mouse
-  leaves. A frame here is one 60 Hz interval.
+  leaves. A frame here is one 60 Hz interval. A pointer `cancel` ends a
+  pressed pointer the way the system does when it takes a touch away (a
+  back swipe, palm rejection): the app sees `onPointerCancel` and never
+  an up, so a press fires nothing and a drag ends without a fling.
   A wheel event's `deltaX`/`deltaY` reach the app unscaled, in the units
   a physical wheel reports: one mouse notch is 100, and a positive
   `deltaY` scrolls content down.

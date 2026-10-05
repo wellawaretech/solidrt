@@ -183,6 +183,9 @@ export type Sprite = {
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
+  /** The pointer's other end: the system took it away (see core's
+   * onPointerCancel); bubbles like up, and the press it ends never taps. */
+  onPointerCancel?: (event: SpritePointerEvent) => void
   onPointerEnter?: (event: SpritePointerEvent) => void
   onPointerLeave?: (event: SpritePointerEvent) => void
   /** A wheel notch over the sprite; bubbles like down/move/up. */
@@ -343,6 +346,7 @@ export type LayerPointerListener = {
   onPointerDown?: (event: LayerPointerEvent) => void
   onPointerMove?: (event: LayerPointerEvent) => void
   onPointerUp?: (event: LayerPointerEvent) => void
+  onPointerCancel?: (event: LayerPointerEvent) => void
   onWheel?: (event: LayerWheelEvent) => void
   onTap?: (event: LayerTapEvent) => void
 }
@@ -353,6 +357,7 @@ export type LayerHandlers = {
   onPointerDown: (event: ElementPointerEvent) => void
   onPointerMove: (event: ElementPointerEvent) => void
   onPointerUp: (event: ElementPointerEvent) => void
+  onPointerCancel: (event: ElementPointerEvent) => void
   onPointerLeave: (event: ElementPointerEvent) => void
   onWheel: (event: ElementWheelEvent) => void
 }
@@ -447,6 +452,7 @@ export type SpriteGroup = {
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
+  onPointerCancel?: (event: SpritePointerEvent) => void
   onWheel?: (event: SpriteWheelEvent) => void
   onTap?: (event: SpriteTapEvent) => void
   /** See Sprite.onTransitionEnd. */

@@ -35,6 +35,13 @@ export interface PanOptions {
    * finger rested before lifting or moved under FLING_MIN_VELOCITY.
    */
   onPanEnd?: (velocity: Velocity) => void
+  /**
+   * The pan ended without its result: the system cancelled the pointer
+   * (onPointerCancel), or another recognizer took it in the arena. Fired
+   * instead of onPanEnd, only after onPanStart; whoever animates on
+   * settles here, nothing flings.
+   */
+  onPanCancel?: () => void
 }
 
 // The pan recognizer: turns a drag into a movement-delta stream. On a down it
@@ -49,8 +56,9 @@ export interface PanOptions {
 // fling minimum) for momentum. Moves and the up arrive on the frozen down
 // path, so an active pan keeps streaming when the pointer leaves the node
 // or the window.
-// cancel() is the external-cancel hook; it ends an active pan without
-// onPanEnd. Options are read at event time. Single-pointer by design; for
+// cancel() is the external-cancel hook, the arena's; it and a pointer cancel
+// end an active pan with onPanCancel instead of onPanEnd. Options are read
+// at event time. Single-pointer by design; for
 // multi-pointer pinch/rotate compose createTransform instead.
 //
 // Frames: the slop is finger travel, so it is measured in window pixels
@@ -87,7 +95,13 @@ export function createPan(options: PanOptions) {
     armed = null
     origin = null
   }
-  let cancel = reset
+  // The pan ends without its result, whatever took the pointer: the arena
+  // (cancel) or the system (onPointerCancel). An unmount resets alone.
+  let cancel = () => {
+    let started = active != null
+    reset()
+    if (started) options.onPanCancel?.()
+  }
   let owner = { cancel }
 
   // An unmount mid-drag must not leave a resolved claim behind.
@@ -133,6 +147,10 @@ export function createPan(options: PanOptions) {
       } else if (armed === e.pointerId) {
         reset()
       }
+    },
+    onPointerCancel: (e: PointerEvent) => {
+      if (active === e.pointerId) cancel()
+      else if (armed === e.pointerId) reset()
     },
   }
 

@@ -59,6 +59,10 @@ export interface TransformOptions {
    * parent-frame pixels per second (velocity.ts; zero after a rest or
    * under the fling minimum). */
   onTransformEnd?: (velocity: Velocity) => void
+  /** The gesture ended without its result: the system cancelled a finger
+   * (onPointerCancel), or another recognizer took the pointers in the
+   * arena. Fired instead of onTransformEnd, only after onTransformStart. */
+  onTransformCancel?: () => void
 }
 
 // The merged transform recognizer: pan + pinch + rotate as ONE gesture over
@@ -116,7 +120,8 @@ export interface TransformOptions {
 // configuration, so the change itself never emits a jump delta. The gesture
 // ends when the last finger lifts. Moves and ups arrive on the frozen down
 // path, so an active transform survives leaving the node or the window.
-// cancel() is the external-cancel hook; it ends an active gesture without
+// cancel() is the external-cancel hook, the arena's; it and a cancelled
+// finger end an active gesture with onTransformCancel instead of
 // onTransformEnd. Options are read at event time.
 //
 // Frames: the slop, the span filter and its rate gates are finger-travel
@@ -206,7 +211,11 @@ export function createTransform(options: TransformOptions) {
     rebase = false
     tracker.reset()
   }
-  let cancel = reset
+  let cancel = () => {
+    let started = active
+    reset()
+    if (started) options.onTransformCancel?.()
+  }
   let owner: ArenaOwner = { cancel }
 
   // The per-frame measure point: runs at the pointerFrame terminator, when
@@ -350,6 +359,17 @@ export function createTransform(options: TransformOptions) {
           pinch = pinch && pointers.size >= 2
           spanRate = 1
         }
+        return
+      }
+      pointers.delete(e.pointerId)
+      ref = pointers.size > 0 ? measure() : null
+    },
+    onPointerCancel: (e: PointerEvent) => {
+      if (!pointers.has(e.pointerId)) return
+      // The system cancels the gesture, not a finger: every platform
+      // cancels all of them together, so the whole gesture ends.
+      if (active) {
+        cancel()
         return
       }
       pointers.delete(e.pointerId)

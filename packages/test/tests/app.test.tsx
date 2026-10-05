@@ -187,6 +187,26 @@ test("load starts an entry the way the runtime does", async app => {
   expect(failure).toContain("a test is one app")
 })
 
+test("a cancel is the pointer's end: onPointerCancel, no up, and the press under it fires nothing", async app => {
+  let seen: string[] = []
+  await app.mount(() => (
+    <view
+      width={200}
+      height={200}
+      onPointerDown={() => seen.push("down")}
+      onPointerUp={() => seen.push("up")}
+      onPointerCancel={e => seen.push(`cancel ${e.clientX},${e.clientY} ${e.pointerType}`)}
+      onPointerLeave={() => seen.push("leave")}
+    />
+  ))
+  await app.input([
+    { type: "pointer", action: "down", x: 5, y: 5, pointerType: "touch" },
+    { type: "pointer", action: "move", x: 50, y: 50, pointerType: "touch", delayMs: 20 },
+    { type: "pointer", action: "cancel", x: 60, y: 60, pointerType: "touch", delayMs: 20 },
+  ])
+  expect(seen).toEqual(["down", "cancel 60,60 touch", "leave"])
+})
+
 test("raw events in the control API's shape, with app time between them", async app => {
   let seen: string[] = []
   await app.mount(() => (
@@ -203,5 +223,5 @@ test("raw events in the control API's shape, with app time between them", async 
   } catch (e) {
     failure = (e as Error).message
   }
-  expect(failure).toContain("pointer action must be down, up, move, tap or drag")
+  expect(failure).toContain("pointer action must be down, up, cancel, move, tap or drag")
 }, { fps: 1000 })

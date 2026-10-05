@@ -36,7 +36,8 @@ export interface HoldTimerOptions {
 }
 
 /** The arm / slop / timer machine under a long-press: one pointer at a
- * time, disarmed by travel, by a lift, by a second pointer or by cancel(). */
+ * time, disarmed by travel, by a lift, by a cancelled pointer, by a second
+ * pointer or by cancel(). */
 export function createHoldTimer(options: HoldTimerOptions) {
   let armed: { id: number; at: PointerPoint; mods: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean; button?: number } } | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
@@ -69,6 +70,9 @@ export function createHoldTimer(options: HoldTimerOptions) {
     up(e: PointerEvent) {
       if (armed && armed.id === e.pointerId) disarm()
     },
+    cancelled(e: PointerEvent) {
+      if (armed && armed.id === e.pointerId) disarm()
+    },
     cancel: disarm,
   }
 }
@@ -84,6 +88,10 @@ export interface LongPressOptions {
   onLongPressMove?: (dx: number, dy: number) => void
   /** The lift after a fire. */
   onLongPressEnd?: () => void
+  /** A fired long press ended without its lift: the system cancelled the
+   * pointer (onPointerCancel), or another recognizer took it in the
+   * arena. Fired instead of onLongPressEnd. */
+  onLongPressCancel?: () => void
 }
 
 export function createLongPress(options: LongPressOptions) {
@@ -99,16 +107,26 @@ export function createLongPress(options: LongPressOptions) {
       options.onLongPress?.(at)
     },
   })
-  let cancel = () => {
-    hold.cancel()
+  let release = () => {
     if (fired !== null) {
       arena.release(fired, owner)
       fired = null
       last = null
     }
   }
+  // The press ends without its lift, whatever took the pointer: the arena
+  // (cancel) or the system (onPointerCancel). An unmount releases alone.
+  let cancel = () => {
+    hold.cancel()
+    let won = fired !== null
+    release()
+    if (won) options.onLongPressCancel?.()
+  }
   let owner: ArenaOwner = { cancel }
-  onSettled(() => cancel)
+  onSettled(() => () => {
+    hold.cancel()
+    release()
+  })
 
   let handlers = {
     onPointerDown: (e: PointerEvent) => {
@@ -126,11 +144,15 @@ export function createLongPress(options: LongPressOptions) {
     },
     onPointerUp: (e: PointerEvent) => {
       if (fired === e.pointerId) {
-        cancel()
+        release()
         options.onLongPressEnd?.()
         return
       }
       hold.up(e)
+    },
+    onPointerCancel: (e: PointerEvent) => {
+      if (fired === e.pointerId) cancel()
+      else hold.cancelled(e)
     },
   }
   return { handlers, cancel }

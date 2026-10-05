@@ -203,6 +203,7 @@ export type SceneNode = {
   onPointerDown?: (event: NodePointerEvent) => void
   onPointerMove?: (event: NodePointerEvent) => void
   onPointerUp?: (event: NodePointerEvent) => void
+  onPointerCancel?: (event: NodePointerEvent) => void
   onPointerEnter?: (event: NodePointerEvent) => void
   onPointerLeave?: (event: NodePointerEvent) => void
   /** The wheel over the node (NodeWheelEvent: `deltaX`/`deltaY`), bubbling
@@ -352,6 +353,7 @@ export type ScenePointerListener = {
   onPointerDown?: (event: ScenePointerEvent) => void
   onPointerMove?: (event: ScenePointerEvent) => void
   onPointerUp?: (event: ScenePointerEvent) => void
+  onPointerCancel?: (event: ScenePointerEvent) => void
   onWheel?: (event: SceneWheelEvent) => void
   onTap?: (event: SceneTapEvent) => void
 }

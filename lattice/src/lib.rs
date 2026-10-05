@@ -1029,10 +1029,11 @@ fn ui_thread(
               input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
               input_state_events.set_modifiers(*modifiers);
             }
-            AlloyEvent::PointerUp { pointer_id, pointer_type, x, y, modifiers, .. } => {
+            AlloyEvent::PointerUp { pointer_id, pointer_type, x, y, modifiers, .. }
+            | AlloyEvent::PointerCancel { pointer_id, pointer_type, x, y, modifiers } => {
               input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
               input_state_events.set_modifiers(*modifiers);
-              // Touch pointers end at release; mouse pointers persist.
+              // Touch pointers end at release or cancel; mouse pointers persist.
               if *pointer_type == alloy::PointerType::Touch {
                 input_state_events.remove_pointer((*pointer_type, *pointer_id));
               }

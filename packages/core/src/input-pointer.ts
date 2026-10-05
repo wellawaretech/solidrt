@@ -133,6 +133,7 @@ export interface PointerFeed extends InputDevice {
     onPointerDown(event: PointerEvent): void
     onPointerMove(event: PointerEvent): void
     onPointerUp(event: PointerEvent): void
+    onPointerCancel(event: PointerEvent): void
     onPointerLeave(event: PointerEvent): void
     onWheel(event: WheelEvent): void
   }
@@ -480,6 +481,17 @@ export function createPointerFeed(options: PointerFeedOptions = {}): PointerFeed
           }
           opening = null
         }
+      },
+      onPointerCancel(e) {
+        if (!downs.has(e.pointerId)) return
+        // The brackets close with no velocity and no swipe: the pointer
+        // ended without its lift.
+        transform.handlers.onPointerCancel(e)
+        released = null
+        lifted(e)
+        hold.cancelled(e)
+        taps.cancelled(e)
+        if (opening && opening.id === e.pointerId) opening = null
       },
       onPointerLeave() {},
       onWheel(e) {

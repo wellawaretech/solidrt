@@ -19,8 +19,8 @@ pub enum PointerEvents {
 /// consumer's per-node handler registry mirrored into the tree, so the router
 /// can skip building deliveries that would reach nobody (see router.rs).
 /// Per-node presence, not inherited - a handler either exists on a node or it
-/// does not. Down and Up are recorded but never gated (focus and gesture side
-/// effects hang off them regardless of handlers).
+/// does not. Down, Up and Cancel are recorded but never gated (focus and
+/// gesture side effects hang off them regardless of handlers).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EventInterest(pub u32);
 
@@ -31,8 +31,9 @@ impl EventInterest {
   pub const ENTER: u32 = 1 << 3;
   pub const LEAVE: u32 = 1 << 4;
   pub const WHEEL: u32 = 1 << 5;
+  pub const CANCEL: u32 = 1 << 6;
   /// Every bit with a defined meaning; decode sites reject anything outside.
-  pub const KNOWN: u32 = Self::MOVE | Self::DOWN | Self::UP | Self::ENTER | Self::LEAVE | Self::WHEEL;
+  pub const KNOWN: u32 = Self::MOVE | Self::DOWN | Self::UP | Self::ENTER | Self::LEAVE | Self::WHEEL | Self::CANCEL;
 
   pub fn has(self, bit: u32) -> bool {
     self.0 & bit != 0

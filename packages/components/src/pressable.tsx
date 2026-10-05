@@ -80,6 +80,7 @@ export function Pressable(props: PressableProps) {
       onPointerLeave={press.handlers.onPointerLeave}
       onPointerDown={press.handlers.onPointerDown}
       onPointerUp={press.handlers.onPointerUp}
+      onPointerCancel={press.handlers.onPointerCancel}
       onPointerMove={press.handlers.onPointerMove}
       onWheel={props.onWheel}
       onFocus={press.handlers.onFocus}

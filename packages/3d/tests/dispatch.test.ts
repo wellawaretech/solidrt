@@ -65,6 +65,9 @@ function world() {
     onPointerUp(e: { mesh: Mesh | null; instance: InstanceNode | null }) {
       log.push(`${name}:up(${tag(e)})`)
     },
+    onPointerCancel(e: { mesh: Mesh | null; instance: InstanceNode | null }) {
+      log.push(`${name}:cancel(${tag(e)})`)
+    },
     onWheel(e: { mesh: Mesh | null; instance: InstanceNode | null; deltaY: number; stopPropagation(): void }) {
       log.push(`${name}:wheel(${tag(e)},${e.deltaY})`)
       if (stop.has("wheel")) e.stopPropagation()
@@ -383,6 +386,28 @@ test("a node that left the scene mid-press drops out of the chain", () => {
   leaf.onPointerMove(ev(102, 102))
   leaf.onPointerUp(ev(102, 102))
   expect("left mid-press", logged(), ["M:down(M)", "G:down(M)", "root:down(M)", "root:move(M)", "root:up(M)"])
+})
+
+test("a cancel ends the press on its target, never taps, and frees the pointer", () => {
+  let { leaf, logged } = world()
+  leaf.onPointerDown(ev(100, 100))
+  leaf.onPointerCancel(ev(100, 100))
+  expect("cancel on S", logged(), ["S:down(S)", "G:down(S)", "root:down(S)", "S:cancel(S)", "G:cancel(S)", "root:cancel(S)"])
+  // The press is gone: an up on the same pointer is one this root never
+  // saw go down, and the next press taps as a first tap.
+  leaf.onPointerUp(ev(300, 100))
+  expect("orphan up after cancel", logged(), ["T:up(T)", "root:up(T)"])
+  leaf.onPointerDown(ev(100, 100))
+  leaf.onPointerUp(ev(100, 100))
+  expect("tap after cancel", logged(), ["S:down(S)", "G:down(S)", "root:down(S)", "S:up(S)", "G:up(S)", "root:up(S)", "S:tap(S#1)@100,100", "G:tap(S#1)@100,100", "root:tap(S#1)@100,100"])
+})
+
+test("a stopped down keeps the root out of the cancel too", () => {
+  let { leaf, logged, mesh } = world()
+  mesh("C", 200, 100, 40, 40, null, new Set(["down"]))
+  leaf.onPointerDown(ev(200, 100))
+  leaf.onPointerCancel(ev(250, 100))
+  expect("claimed cancel", logged(), ["C:down(C)", "C:cancel(C)"])
 })
 
 test("an up this root never saw go down delivers to what is under it", () => {

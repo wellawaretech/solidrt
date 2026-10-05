@@ -50,6 +50,9 @@ export type BubblingPointerEventProps = {
   onPointerDown?: (event: NodePointerEvent) => void
   onPointerMove?: (event: NodePointerEvent) => void
   onPointerUp?: (event: NodePointerEvent) => void
+  /** The pointer's other end: the system took it away (see core's
+   * onPointerCancel); bubbles like up, and the press it ends never taps. */
+  onPointerCancel?: (event: NodePointerEvent) => void
   /** The wheel over the node: `deltaX`/`deltaY`. */
   onWheel?: (event: NodeWheelEvent) => void
   /** A press released on the node within the slop, alone for its whole
@@ -73,18 +76,20 @@ export function syncNode(node: SceneNode, props: TransformProps & PointerEventPr
         props.onPointerDown,
         props.onPointerMove,
         props.onPointerUp,
+        props.onPointerCancel,
         props.onPointerEnter,
         props.onPointerLeave,
         props.onWheel,
         props.onTap,
         props.onTransitionEnd,
       ] as const,
-    ([position, rotation, quaternion, scale, visible, down, move, up, enter, leave, wheel, tap, end]) => {
+    ([position, rotation, quaternion, scale, visible, down, move, up, cancel, enter, leave, wheel, tap, end]) => {
       setTransform(node, { position, rotation, quaternion, scale })
       setVisible(node, visible !== false)
       node.onPointerDown = down
       node.onPointerMove = move
       node.onPointerUp = up
+      node.onPointerCancel = cancel
       node.onPointerEnter = enter
       node.onPointerLeave = leave
       node.onWheel = wheel

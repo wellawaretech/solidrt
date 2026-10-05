@@ -66,6 +66,11 @@ export function Carousel(props: CarouselProps) {
       setDrag(0)
       setDragging(false)
     },
+    // The page in view stays: the drag snaps back.
+    onSwipeCancel: () => {
+      setDrag(0)
+      setDragging(false)
+    },
   })
 
   let split = () => splitTransition(props.transition)

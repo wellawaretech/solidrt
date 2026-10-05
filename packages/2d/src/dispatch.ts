@@ -1,6 +1,6 @@
 // Pointer dispatch behind view.handlers, shared by both layer kinds: the
 // element event model one tree deeper, with the VIEW as the root of the
-// walk. Down, move, up and wheel dispatch on the topmost hit sprite,
+// walk. Down, move, up, cancel and wheel dispatch on the topmost hit sprite,
 // bubble through its enclosing groups and end at the layer's listeners;
 // over empty space the walk is the layer alone (`sprite` null). Claiming
 // is stopPropagation: a handler that stops an event keeps every later
@@ -49,7 +49,7 @@ export type DispatchDeps = {
   listeners: Set<LayerPointerListener>
 }
 
-type HandlerName = "onPointerDown" | "onPointerMove" | "onPointerUp" | "onWheel" | "onTap"
+type HandlerName = "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onWheel" | "onTap"
 
 // One runtime event object serves every view (SpritePointerEvent for the
 // sprite chain, LayerPointerEvent at the root, plus the wheel and tap
@@ -211,6 +211,17 @@ export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: num
         let tap = makeEvent(press.target, x, y, e)
         tap.tapCount = count
         walk("onTap", tap, !press.claimed)
+      },
+      onPointerCancel(e) {
+        let [x, y] = toLayer(e)
+        let press = presses.get(e.pointerId)
+        if (!press) {
+          walk("onPointerCancel", makeEvent(topmost(x, y), x, y, e), true)
+          return
+        }
+        // The press ends where it was: the walk it captured, never a tap.
+        presses.delete(e.pointerId)
+        walk("onPointerCancel", makeEvent(press.target, x, y, e), !press.claimed)
       },
       onWheel(e) {
         let [x, y] = toLayer(e)

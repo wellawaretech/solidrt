@@ -210,6 +210,7 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent, time_stamp_ms: f64) -> boo
     AlloyEvent::PointerMove { .. }
     | AlloyEvent::PointerDown { .. }
     | AlloyEvent::PointerUp { .. }
+    | AlloyEvent::PointerCancel { .. }
     | AlloyEvent::Wheel { .. }
     | AlloyEvent::FrameRendered { .. }
     | AlloyEvent::Tick { .. }

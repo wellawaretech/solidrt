@@ -91,9 +91,13 @@ ancestor with `position="relative"`.
 ## Input
 
 Pointer, wheel, and key events are props on any element:
-`onPointerDown`, `onPointerMove`, `onPointerUp`, `onPointerEnter`,
-`onPointerLeave`, `onWheel`, `onKeyDown`, `onKeyUp`. Events travel from the
-hit leaf up to the root, and `stopPropagation()` ends the walk. Key events
+`onPointerDown`, `onPointerMove`, `onPointerUp`, `onPointerCancel`,
+`onPointerEnter`, `onPointerLeave`, `onWheel`, `onKeyDown`, `onKeyUp`.
+Events travel from the hit leaf up to the root, and `stopPropagation()`
+ends the walk. A pointer ends with an up or a cancel, never both: the
+cancel is the system taking the touch away (a back swipe, palm rejection),
+delivered along the pressed path with the pointer's last position, so a
+press ends without firing and a drag ends without a fling. Key events
 bubble the same way, starting at the focused node - or at the window root
 when nothing is focused, so `onKeyDown` on the window is where app-global
 shortcuts live.

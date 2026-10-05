@@ -384,6 +384,19 @@ impl UiRuntime for FluxRuntime {
           stamp,
         )
       }
+      // A cancel ends the pointer like an up, with nothing flushed ahead of
+      // it: its history went with it at the producer.
+      AlloyEvent::PointerCancel { pointer_id, pointer_type, x, y, modifiers } => dispatch(
+        eh,
+        InputEvent::PointerCancel {
+          pointer_id: *pointer_id,
+          pointer_type: *pointer_type,
+          x: *x,
+          y: *y,
+          modifiers: *modifiers,
+        },
+        stamp,
+      ),
       // The resampler's flush ahead of an up: the pointer's last position
       // and its time, which the lift is read against. A batch of one, so
       // it gets its terminator like a frame's moves.

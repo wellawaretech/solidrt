@@ -311,6 +311,12 @@ impl Resampler {
     Some(h.dispatch(key, settled))
   }
 
+  /// The system cancelled the pointer: its history goes, undispatched
+  /// samples included. Nothing of a cancelled pointer is worth reading.
+  pub fn cancel(&mut self, key: (PointerType, u64)) {
+    self.pointers.remove(&key);
+  }
+
   pub fn clear(&mut self) {
     self.pointers.clear();
   }
@@ -364,8 +370,10 @@ impl SharedResampler {
   /// travels. A move does not: it is consumed here, and the frame consumer
   /// samples and dispatches it. A down seeds its pointer's history and
   /// travels. An up ends it and travels behind the pointer's last move when
-  /// no frame dispatched that yet (see `Resampler::up`). Everything else
-  /// passes through. The result is `send`'s, Ok when nothing was sent.
+  /// no frame dispatched that yet (see `Resampler::up`). A cancel ends it
+  /// and travels alone: no flush, a cancelled pointer has no last position
+  /// worth reading. Everything else passes through. The result is `send`'s,
+  /// Ok when nothing was sent.
   pub fn feed<E>(&self, event: AlloyEvent, at: Instant, mut send: impl FnMut(AlloyEvent, Instant) -> Result<(), E>) -> Result<(), E> {
     match &event {
       AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, rel, modifiers } => {
@@ -390,6 +398,9 @@ impl SharedResampler {
           // on Android); the move never follows its up in time.
           send(flush, m.at.min(at))?;
         }
+      }
+      AlloyEvent::PointerCancel { pointer_id, pointer_type, .. } => {
+        self.lock().cancel((*pointer_type, *pointer_id));
       }
       _ => {}
     }

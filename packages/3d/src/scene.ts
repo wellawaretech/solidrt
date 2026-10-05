@@ -227,6 +227,7 @@ export type SceneHandlers = {
   onPointerDown(event: ElementPointerEvent): void
   onPointerMove(event: ElementPointerEvent): void
   onPointerUp(event: ElementPointerEvent): void
+  onPointerCancel(event: ElementPointerEvent): void
   onPointerLeave(event: ElementPointerEvent): void
   onWheel(event: ElementWheelEvent): void
 }

@@ -21,6 +21,7 @@ export type GroupProps = {
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
+  onPointerCancel?: (event: SpritePointerEvent) => void
   onWheel?: (event: SpriteWheelEvent) => void
   onTap?: (event: SpriteTapEvent) => void
   /** How pose-prop changes animate (see setGroupTransition). The mount
@@ -52,11 +53,12 @@ export let Group: ParentComponent<GroupProps> = props => {
     transition => setGroupTransition(group, transition ?? null),
   )
   createEffect(
-    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onWheel, props.onTap, props.onTransitionEnd] as const,
-    ([down, move, up, wheel, tap, end]) => {
+    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerCancel, props.onWheel, props.onTap, props.onTransitionEnd] as const,
+    ([down, move, up, cancel, wheel, tap, end]) => {
       group.onPointerDown = down
       group.onPointerMove = move
       group.onPointerUp = up
+      group.onPointerCancel = cancel
       group.onWheel = wheel
       group.onTap = tap
       group.onTransitionEnd = end

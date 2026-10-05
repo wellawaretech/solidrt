@@ -40,6 +40,7 @@ export function View(props: ViewProps) {
       onPointerLeave={props.onPointerLeave}
       onPointerDown={props.onPointerDown}
       onPointerUp={props.onPointerUp}
+      onPointerCancel={props.onPointerCancel}
       onPointerMove={props.onPointerMove}
       onWheel={props.onWheel}
       onFocus={props.onFocus}

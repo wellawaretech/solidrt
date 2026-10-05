@@ -19,6 +19,7 @@ export interface PressOptions {
   disabled?: boolean
   onPointerDown?: (e: PointerEvent) => void
   onPointerUp?: (e: PointerEvent) => void
+  onPointerCancel?: (e: PointerEvent) => void
   onPointerMove?: (e: PointerEvent) => void
   onPointerEnter?: (e: PointerEvent) => void
   onPointerLeave?: (e: PointerEvent) => void
@@ -43,7 +44,8 @@ export interface PressOptions {
 // when the firing waits for that recognizer to fail (the double-tap
 // window passing) and is dropped when it wins. Enter/leave drive hover
 // alone. Non-primary buttons (right/middle) do not start a press. cancel() is
-// the external-cancel hook; it ends the press without firing. Options are read
+// the external-cancel hook; it and a pointer cancel (the system taking the
+// touch away) end the press without firing. Options are read
 // at event time, so passing a component's reactive props object keeps handler
 // changes live. The host view must attach `ref` for retention bounds; without
 // it every position counts as inside (the up always fires).
@@ -189,6 +191,10 @@ export function createPress(options: PressOptions) {
         if (fire && !arena.defer(e.pointerId, fireDeferred)) activate()
       }
       options.onPointerUp?.(e)
+    },
+    onPointerCancel: (e: PointerEvent) => {
+      if (active === e.pointerId) cancel()
+      options.onPointerCancel?.(e)
     },
     onPointerEnter: (e: PointerEvent) => {
       setHovered(true)

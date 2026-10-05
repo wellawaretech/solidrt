@@ -82,6 +82,7 @@ fn emit_routed(ctx: &Ctx<'_>, events: Vec<RoutedPointer>, time_stamp_ms: f64, pr
       RoutedKind::Move { .. } => "pointerMove",
       RoutedKind::Down { .. } => "pointerDown",
       RoutedKind::Up { .. } => "pointerUp",
+      RoutedKind::Cancel => "pointerCancel",
       RoutedKind::Enter => "pointerEnter",
       RoutedKind::Leave => "pointerLeave",
       RoutedKind::Wheel { .. } => "wheel",

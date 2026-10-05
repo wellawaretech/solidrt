@@ -312,6 +312,48 @@ pub fn event_instant(epoch: std::time::Instant, timestamp_ns: u64) -> std::time:
   (epoch + std::time::Duration::from_nanos(timestamp_ns)).min(std::time::Instant::now())
 }
 
+/// The next raw event off SDL's queue, or None when it is empty. The pump
+/// polls raw beside the sdl3 crate's EventPump (main thread, one pump)
+/// because the crate has no variant for every event it can hold: what it
+/// does know converts with `sdl3::event::Event::from_ll`, the rest is read
+/// here (see `finger_cancel`).
+pub fn poll_raw_event() -> Option<sdl3::sys::events::SDL_Event> {
+  let mut raw = std::mem::MaybeUninit::<sdl3::sys::events::SDL_Event>::uninit();
+  // SDL fills the event exactly when it returns true.
+  let filled = unsafe { sdl3::sys::events::SDL_PollEvent(raw.as_mut_ptr()) };
+  filled.then(|| unsafe { raw.assume_init() })
+}
+
+/// `poll_raw_event` that waits up to `timeout_ms` for one.
+pub fn wait_raw_event_timeout(timeout_ms: u32) -> Option<sdl3::sys::events::SDL_Event> {
+  let mut raw = std::mem::MaybeUninit::<sdl3::sys::events::SDL_Event>::uninit();
+  let filled = unsafe { sdl3::sys::events::SDL_WaitEventTimeout(raw.as_mut_ptr(), timeout_ms as i32) };
+  filled.then(|| unsafe { raw.assume_init() })
+}
+
+/// A finger the system cancelled: SDL_EVENT_FINGER_CANCELED's payload.
+/// `x`/`y` are normalized to the window, as SDL's finger events are.
+pub struct FingerCancel {
+  pub timestamp_ns: u64,
+  pub finger_id: u64,
+  pub x: f32,
+  pub y: f32,
+}
+
+/// The raw event's finger cancel, or None for any other event. The sdl3
+/// crate maps this event to `Event::Unknown` with the payload dropped
+/// (okf/upstream/sdl3-no-finger-cancelled-variant.md), so it is read here.
+pub fn finger_cancel(raw: &sdl3::sys::events::SDL_Event) -> Option<FingerCancel> {
+  // Every member of the union starts with the type field, so it reads
+  // validly for any event; the finger payload only once the type says so.
+  let type_ = unsafe { raw.r#type };
+  if type_ != sdl3::sys::events::SDL_EVENT_FINGER_CANCELED.0 {
+    return None;
+  }
+  let finger = unsafe { raw.tfinger };
+  Some(FingerCancel { timestamp_ns: finger.timestamp, finger_id: finger.fingerID.into(), x: finger.x, y: finger.y })
+}
+
 /// SDL's tick base as an Instant: the instant SDL_GetTicksNS counts from.
 pub fn ticks_epoch() -> std::time::Instant {
   let now = std::time::Instant::now();

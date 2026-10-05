@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 const ACTION_DOWN: i32 = 0;
 const ACTION_UP: i32 = 1;
 const ACTION_MOVE: i32 = 2;
+const ACTION_CANCEL: i32 = 3;
 const ACTION_POINTER_DOWN: i32 = 5;
 const ACTION_POINTER_UP: i32 = 6;
 
@@ -20,6 +21,7 @@ pub(crate) enum TouchKind {
   Down,
   Move,
   Up,
+  Cancel,
 }
 
 /// One finger sample: `x`/`y` normalized to the surface (0 to 1), `at` when
@@ -43,12 +45,15 @@ pub(crate) fn set_wake(wake: Option<Arc<dyn Fn() + Send + Sync>>) {
 
 /// Queue one finger sample. Called on the Android UI thread (the surface's
 /// native); `time_ns` is the sample's MotionEvent time, CLOCK_MONOTONIC
-/// nanoseconds. A cancel is not passed on, as SDL's was not.
+/// nanoseconds. A cancel (the system taking the gesture: a back swipe, the
+/// notification shade, palm rejection) arrives with every pointer's last
+/// position, as the surface passes it on.
 pub fn push(pointer_id: i32, action: i32, x: f32, y: f32, time_ns: i64) {
   let kind = match action {
     ACTION_DOWN | ACTION_POINTER_DOWN => TouchKind::Down,
     ACTION_MOVE => TouchKind::Move,
     ACTION_UP | ACTION_POINTER_UP => TouchKind::Up,
+    ACTION_CANCEL => TouchKind::Cancel,
     _ => return,
   };
   // Finger ids start at 1, as SDL's did.

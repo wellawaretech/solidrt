@@ -67,6 +67,10 @@ export interface SwipeOptions {
   onSwipe?: (direction: SwipeDirection, velocity: Velocity) => void
   /** Every lift of an active swipe, qualified or not. */
   onSwipeEnd?: (velocity: Velocity) => void
+  /** An active swipe ended without its lift: the system cancelled the
+   * pointer (onPointerCancel), or another recognizer took it in the
+   * arena. Fired instead of onSwipe and onSwipeEnd. */
+  onSwipeCancel?: () => void
 }
 
 export function createSwipe(options: SwipeOptions) {
@@ -97,6 +101,11 @@ export function createSwipe(options: SwipeOptions) {
       if (direction) options.onSwipe?.(direction, velocity)
       options.onSwipeEnd?.(velocity)
     },
+    onPanCancel: () => {
+      down = null
+      lift = null
+      options.onSwipeCancel?.()
+    },
   })
 
   let handlers = {
@@ -115,6 +124,13 @@ export function createSwipe(options: SwipeOptions) {
     onPointerUp: (e: PointerEvent) => {
       if (down && down.id === e.pointerId) lift = { x: e.clientX, y: e.clientY, at: e.timeStamp }
       pan.handlers.onPointerUp(e)
+      if (down && down.id === e.pointerId) {
+        down = null
+        lift = null
+      }
+    },
+    onPointerCancel: (e: PointerEvent) => {
+      pan.handlers.onPointerCancel(e)
       if (down && down.id === e.pointerId) {
         down = null
         lift = null

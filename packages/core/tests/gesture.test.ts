@@ -30,7 +30,7 @@ let fail = (msg: string): void => {
 let ev = (pointerId: number, x: number, y: number, at: number, button = 0): PointerEvent =>
   ({ timeStamp: at, predicted: false, clientX: x, clientY: y, localX: x, localY: y, parentX: x, parentY: y, movementX: 0, movementY: 0, currentTarget: 1, target: 1, pointerId, pointerType: "touch", button, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, stopPropagation() {} }) as PointerEvent
 
-type Handlers = { onPointerDown(e: PointerEvent): void; onPointerMove(e: PointerEvent): void; onPointerUp(e: PointerEvent): void }
+type Handlers = { onPointerDown(e: PointerEvent): void; onPointerMove(e: PointerEvent): void; onPointerUp(e: PointerEvent): void; onPointerCancel(e: PointerEvent): void }
 
 // A drag starting at time `at`: down at (x, y), `steps` moves of (dx, dy)
 // every `every` ms, then the up `pause` ms after the last move.
@@ -111,6 +111,37 @@ test("createPan: a predicted move moves the pan and stays out of its velocity", 
   if (!v || v.vx !== 0 || v.vy !== 0) fail(`the rest is read from the real position, got ${JSON.stringify(v)}`)
 })
 
+test("createPan: a cancel ends the pan with onPanCancel, never onPanEnd", () => {
+  let log: string[] = []
+  let pan = inRoot(() =>
+    createPan({
+      onPanStart: () => log.push("start"),
+      onPanMove: (dx, dy) => log.push(`move ${dx},${dy}`),
+      onPanEnd: v => log.push(`end ${v.vx}`),
+      onPanCancel: () => log.push("cancel"),
+    }),
+  )
+  pan.handlers.onPointerDown(ev(60, 0, 0, 1000))
+  pan.handlers.onPointerMove(ev(60, 10, 0, 1016))
+  pan.handlers.onPointerMove(ev(60, 20, 0, 1032))
+  pan.handlers.onPointerCancel(ev(60, 20, 0, 1040))
+  // The pointer ended with the cancel: a lift after it is nobody's.
+  pan.handlers.onPointerUp(ev(60, 20, 0, 1050))
+  if (log.join("|") !== "start|move 10,0|cancel") fail(`an active pan cancels with onPanCancel alone, got ${log.join("|")}`)
+  log.length = 0
+  // A cancel while armed disarms: the travel after it starts nothing.
+  pan.handlers.onPointerDown(ev(61, 0, 0, 2000))
+  pan.handlers.onPointerCancel(ev(61, 0, 0, 2010))
+  pan.handlers.onPointerMove(ev(61, 30, 0, 2020))
+  if (log.length !== 0) fail(`a cancelled arm never activates, got ${log.join("|")}`)
+  // The arena's cancel is the same path.
+  pan.handlers.onPointerDown(ev(62, 0, 0, 3000))
+  pan.handlers.onPointerMove(ev(62, 10, 0, 3016))
+  pan.cancel()
+  pan.handlers.onPointerUp(ev(62, 10, 0, 3030))
+  if (log.join("|") !== "start|cancel") fail(`cancel() ends an active pan with onPanCancel, got ${log.join("|")}`)
+})
+
 test("classifySwipe", () => {
   let far = { dx: 100, dy: 0 }
   if (classifySwipe({ vx: 500, vy: 0 }, far) !== "Right") fail("a fast rightward lift swipes Right")
@@ -148,6 +179,26 @@ test("createSwipe: fast, slow, off-axis, axis rule", () => {
   if (log.join("|") !== "start|end") fail(`a diagonal drag ends without a swipe, got ${log.join("|")}`)
 })
 
+test("createSwipe: a cancel is onSwipeCancel alone, and the next press starts afresh", () => {
+  let log: string[] = []
+  let swipe = inRoot(() =>
+    createSwipe({
+      directions: ["Left", "Right"],
+      onSwipeStart: () => log.push("start"),
+      onSwipe: d => log.push(`swipe ${d}`),
+      onSwipeEnd: () => log.push("end"),
+      onSwipeCancel: () => log.push("cancel"),
+    }),
+  )
+  swipe.handlers.onPointerDown(ev(63, 100, 100, 1000))
+  swipe.handlers.onPointerMove(ev(63, 70, 100, 1016))
+  swipe.handlers.onPointerCancel(ev(63, 70, 100, 1020))
+  if (log.join("|") !== "start|cancel") fail(`an active swipe cancels with onSwipeCancel alone, got ${log.join("|")}`)
+  log.length = 0
+  drag(swipe.handlers, 63, 2000, 100, 100, -12, 0, 10, 16)
+  if (log.join("|") !== "start|swipe Left|end") fail(`the same pointer swipes again after its cancel, got ${log.join("|")}`)
+})
+
 // A double-tap recognizer, and a tap through it: down at `at`, up 30 ms
 // later.
 function doubleTapRig() {
@@ -166,6 +217,18 @@ test("createDoubleTap: a second down 100 ms after the first up double-taps, on t
   dt.handlers.onPointerDown(ev(41, 12, 0, 1130))
   if (taps.join("|") !== "double 12") fail(`tap-tap at 100 ms double-taps on the second down, got ${taps.join("|")}`)
   dt.handlers.onPointerUp(ev(41, 12, 0, 1160))
+})
+
+test("createDoubleTap: a cancelled first tap is no first tap", () => {
+  let { dt, taps, tap } = doubleTapRig()
+  dt.handlers.onPointerDown(ev(64, 10, 0, 1000))
+  dt.handlers.onPointerCancel(ev(64, 10, 0, 1020))
+  // 100 ms after a lift this down would double-tap; after a cancel it is a
+  // fresh first tap, which the next one doubles.
+  tap(64, 10, 1120)
+  if (taps.length !== 0) fail(`a tap after a cancelled tap is a first tap, got ${taps.join("|")}`)
+  dt.handlers.onPointerDown(ev(64, 12, 0, 1250))
+  if (taps.join("|") !== "double 12") fail(`the tap after it doubles, got ${taps.join("|")}`)
 })
 
 test("createDoubleTap: the window's edges, to the millisecond", () => {

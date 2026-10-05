@@ -129,6 +129,7 @@ export let View3d: ParentComponent<View3dProps> = props => {
       onPointerDown: e => props.onPointerDown?.(e),
       onPointerMove: e => props.onPointerMove?.(e),
       onPointerUp: e => props.onPointerUp?.(e),
+      onPointerCancel: e => props.onPointerCancel?.(e),
       onWheel: e => props.onWheel?.(e),
       onTap: e => props.onTap?.(e),
     }),
@@ -159,6 +160,7 @@ export let View3d: ParentComponent<View3dProps> = props => {
           onPointerDown={events ? view.handlers.onPointerDown : undefined}
           onPointerMove={events ? view.handlers.onPointerMove : undefined}
           onPointerUp={events ? view.handlers.onPointerUp : undefined}
+          onPointerCancel={events ? view.handlers.onPointerCancel : undefined}
           onPointerLeave={events ? view.handlers.onPointerLeave : undefined}
           onWheel={events ? view.handlers.onWheel : undefined}
         />

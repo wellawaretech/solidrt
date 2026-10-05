@@ -278,7 +278,8 @@ export interface TransformProps {
 
 // Window-relative pointer coordinates are reported as clientX/clientY (matching
 // the DOM MouseEvent). pointerType distinguishes mouse from touch; button is the
-// pressed button on down/up (0 = primary); the modifier flags mirror the DOM.
+// pressed button on down/up (0 = primary) and absent on a cancel; the modifier
+// flags mirror the DOM.
 export interface PointerEvent {
   /**
    * When the event happened, in milliseconds. Every input event carries one,
@@ -408,6 +409,15 @@ export interface NodeProps {
 export interface PointerProps extends NodeProps {
   onPointerDown?: (event: PointerEvent) => void
   onPointerUp?: (event: PointerEvent) => void
+  /**
+   * The system took the pointer away: a system gesture (the back swipe,
+   * the notification shade), palm rejection, the window losing the touch.
+   * The last event for that pointer, and no up follows it, so a press
+   * ends without firing and a drag ends without a fling. Routed along the
+   * pressed path like an up, with the pointer's last known position and
+   * no `button`.
+   */
+  onPointerCancel?: (event: PointerEvent) => void
   onPointerMove?: (event: PointerEvent) => void
   onPointerEnter?: (event: PointerEvent) => void
   onPointerLeave?: (event: PointerEvent) => void

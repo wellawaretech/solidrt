@@ -97,6 +97,8 @@ export function ScrollView(props: ScrollViewProps) {
       setFling(true)
       scroll.scrollTo(props.horizontal ? { x: dest } : { y: dest })
     },
+    // The content stays where the finger left it: nothing flings.
+    onPanCancel: () => setDragging(false),
   })
   // A finger landing (any down, a tap included) holds a moving list where
   // it is: the animated offset, read back from the boxes (window-relative,
@@ -193,6 +195,7 @@ export function ScrollView(props: ScrollViewProps) {
       onPointerLeave={props.onPointerLeave}
       onPointerDown={props.onPointerDown}
       onPointerUp={props.onPointerUp}
+      onPointerCancel={props.onPointerCancel}
       onPointerMove={props.onPointerMove}
       onWheel={props.onWheel}
       pointerEvents={props.pointerEvents}
@@ -221,6 +224,7 @@ export function ScrollView(props: ScrollViewProps) {
         onPointerDown={hold}
         onPointerMove={pan.handlers.onPointerMove}
         onPointerUp={pan.handlers.onPointerUp}
+        onPointerCancel={pan.handlers.onPointerCancel}
         onWheel={onWheel}
       >
         <view ref={(n: { id: number }) => (content = n)} flexShrink={0} flexDirection={direction()}>

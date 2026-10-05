@@ -41,7 +41,7 @@ const TAP_INTERVAL_MS = 300
 // neighbouring meshes.
 const TAP_REPEAT_SLOP = 20
 
-type HandlerName = "onPointerDown" | "onPointerMove" | "onPointerUp" | "onWheel" | "onTap"
+type HandlerName = "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onWheel" | "onTap"
 
 // What a press captures, a hover tracks and a tap compares: the struck
 // mesh, and the instance when the mesh is instanced.
@@ -254,6 +254,18 @@ export function makePointerInput(deps: PointerInputDeps): PointerInput {
         tap.tapCount = count
         walk("onTap", tap, !press.claimed)
       },
+      onPointerCancel(e) {
+        let [x, y] = toScene(e)
+        let press = presses.get(e.pointerId)
+        if (!press) {
+          let hit = nearest(x, y)
+          walk("onPointerCancel", makeEvent(e, hit === null ? null : targetOf(hit), x, y, hit), true)
+          return
+        }
+        // The press ends where it was: the walk it captured, never a tap.
+        presses.delete(e.pointerId)
+        walk("onPointerCancel", makeEvent(e, press.target, x, y, hitOn(press.target, x, y)), !press.claimed)
+      },
       onWheel(e) {
         let [x, y] = toScene(e)
         let hit = nearest(x, y)
@@ -290,6 +302,7 @@ export function feedPointer(root: { listen(listener: ScenePointerListener): () =
     onPointerDown: e => feed.handlers.onPointerDown(e.native),
     onPointerMove: e => feed.handlers.onPointerMove(e.native),
     onPointerUp: e => feed.handlers.onPointerUp(e.native),
+    onPointerCancel: e => feed.handlers.onPointerCancel(e.native),
     onWheel: e => feed.handlers.onWheel(e.native),
   })
 }

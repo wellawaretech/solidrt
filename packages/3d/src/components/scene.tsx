@@ -18,6 +18,7 @@ export type ScenePointerProps = {
   onPointerDown?: (event: ScenePointerEvent) => void
   onPointerMove?: (event: ScenePointerEvent) => void
   onPointerUp?: (event: ScenePointerEvent) => void
+  onPointerCancel?: (event: ScenePointerEvent) => void
   onWheel?: (event: SceneWheelEvent) => void
   onTap?: (event: SceneTapEvent) => void
 }
@@ -268,6 +269,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
       onPointerDown: e => props.onPointerDown?.(e),
       onPointerMove: e => props.onPointerMove?.(e),
       onPointerUp: e => props.onPointerUp?.(e),
+      onPointerCancel: e => props.onPointerCancel?.(e),
       onWheel: e => props.onWheel?.(e),
       onTap: e => props.onTap?.(e),
     }),
@@ -331,6 +333,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
           onPointerDown={events ? sceneHandlers.onPointerDown : undefined}
           onPointerMove={events ? sceneHandlers.onPointerMove : undefined}
           onPointerUp={events ? sceneHandlers.onPointerUp : undefined}
+          onPointerCancel={events ? sceneHandlers.onPointerCancel : undefined}
           onPointerLeave={events ? sceneHandlers.onPointerLeave : undefined}
           onWheel={events ? sceneHandlers.onWheel : undefined}
         />

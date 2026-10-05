@@ -37,6 +37,7 @@ test("createLongPress: timer, slop, steal", async app => {
       onLongPress: at => log.push(`press ${at.clientX},${at.clientY}`),
       onLongPressMove: (dx, dy) => log.push(`move ${dx},${dy}`),
       onLongPressEnd: () => log.push("end"),
+      onLongPressCancel: () => log.push("cancel"),
     }),
   )
   lp.handlers.onPointerDown(ev(app.time, 30, 50, 60))
@@ -79,6 +80,20 @@ test("createLongPress: timer, slop, steal", async app => {
   if (log.length !== 0) fail("a pan that won the finger keeps the long-press out")
   arena.release(34, pan)
   lp.handlers.onPointerUp(ev(app.time, 34, 0, 0))
+  // A fired press whose pointer the system cancels ends with
+  // onLongPressCancel, never onLongPressEnd; a cancel before the timer
+  // disarms it.
+  lp.handlers.onPointerDown(ev(app.time, 35, 0, 0))
+  await app.advance(500)
+  lp.handlers.onPointerCancel(ev(app.time, 35, 0, 0))
+  lp.handlers.onPointerUp(ev(app.time, 35, 0, 0))
+  if (log.join("|") !== "press 0,0|cancel") fail(`a cancelled fired press ends with onLongPressCancel, got ${log.join("|")}`)
+  log.length = 0
+  lp.handlers.onPointerDown(ev(app.time, 36, 0, 0))
+  await app.advance(100)
+  lp.handlers.onPointerCancel(ev(app.time, 36, 0, 0))
+  await app.advance(550)
+  if (log.length !== 0) fail(`a cancel before the timer fires nothing, got ${log.join("|")}`)
 }, MS_FRAMES)
 
 // A double-tap recognizer with a press on the same node, as createPress

@@ -18,6 +18,7 @@ export type SpritePointerProps = {
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
+  onPointerCancel?: (event: SpritePointerEvent) => void
   /** Sprites only: a Group never receives enter/leave. */
   onPointerEnter?: (event: SpritePointerEvent) => void
   onPointerLeave?: (event: SpritePointerEvent) => void
@@ -54,11 +55,12 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
     transition => setSpriteTransition(sprite, transition ?? null),
   )
   createEffect(
-    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerEnter, props.onPointerLeave, props.onWheel, props.onTap, props.onTransitionEnd] as const,
-    ([down, move, up, enter, leave, wheel, tap, end]) => {
+    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerCancel, props.onPointerEnter, props.onPointerLeave, props.onWheel, props.onTap, props.onTransitionEnd] as const,
+    ([down, move, up, cancel, enter, leave, wheel, tap, end]) => {
       sprite.onPointerDown = down
       sprite.onPointerMove = move
       sprite.onPointerUp = up
+      sprite.onPointerCancel = cancel
       sprite.onPointerEnter = enter
       sprite.onPointerLeave = leave
       sprite.onWheel = wheel

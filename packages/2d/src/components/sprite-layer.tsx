@@ -19,6 +19,7 @@ export type LayerPointerProps = {
   onPointerDown?: (event: LayerPointerEvent) => void
   onPointerMove?: (event: LayerPointerEvent) => void
   onPointerUp?: (event: LayerPointerEvent) => void
+  onPointerCancel?: (event: LayerPointerEvent) => void
   onWheel?: (event: LayerWheelEvent) => void
   onTap?: (event: LayerTapEvent) => void
 }
@@ -143,6 +144,7 @@ const VIEW_PROPS = [
   "onPointerDown",
   "onPointerMove",
   "onPointerUp",
+  "onPointerCancel",
   "onWheel",
   "onTap",
 ] as const
@@ -249,6 +251,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
       onPointerDown: e => props.onPointerDown?.(e),
       onPointerMove: e => props.onPointerMove?.(e),
       onPointerUp: e => props.onPointerUp?.(e),
+      onPointerCancel: e => props.onPointerCancel?.(e),
       onWheel: e => props.onWheel?.(e),
       onTap: e => props.onTap?.(e),
     }),
@@ -321,6 +324,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
               onPointerDown={events ? viewHandlers.onPointerDown : undefined}
               onPointerMove={events ? viewHandlers.onPointerMove : undefined}
               onPointerUp={events ? viewHandlers.onPointerUp : undefined}
+              onPointerCancel={events ? viewHandlers.onPointerCancel : undefined}
               onPointerLeave={events ? viewHandlers.onPointerLeave : undefined}
               onWheel={events ? viewHandlers.onWheel : undefined}
             />

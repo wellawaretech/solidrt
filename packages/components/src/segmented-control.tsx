@@ -208,6 +208,7 @@ export function SegmentedControl<T>(props: SegmentedControlProps<T>) {
             onPress: () => select(opt.value),
             onPointerDown: () => setPressedValue(() => opt.value),
             onPointerUp: () => setPressedValue(undefined),
+            onPointerCancel: () => setPressedValue(undefined),
           })
           onCleanup(() => segs.delete(opt.value))
           return (

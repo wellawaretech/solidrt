@@ -431,7 +431,9 @@ impl App {
     // vsync::FrameRelease.
     let mut release = crate::vsync::FrameRelease::new(vsync.is_some(), Instant::now());
 
-    let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
+    // Held for the crate's one-pump invariant; the loop polls raw beside it
+    // (sdl_utils::poll_raw_event) for the events the crate has no variant for.
+    let _event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
     // None when SDL has no gamepad support on this platform; pads already
     // plugged in surface through the Added events SDL emits on subsystem init.
     let mut gamepads = crate::gamepad::Gamepads::new(&sdl_context);
@@ -574,7 +576,7 @@ impl App {
         // SDL waits in whole milliseconds; round up so a sub-millisecond
         // remainder does not degrade into a spin on zero-length waits.
         let ms = remaining.as_millis() as u32 + (remaining.as_micros() % 1000 != 0) as u32;
-        event_pump.wait_event_timeout_ms(ms)
+        crate::sdl_utils::wait_raw_event_timeout(ms)
       };
 
       // Drain the raster thread's frame notifications. Drawing and presenting
@@ -774,7 +776,15 @@ impl App {
           // before the event travels.
           resampler.feed(e, at, |e, at| event_tx.send_at(e, at)).is_ok()
         };
-        for sdl_event in first_event.into_iter().chain(event_pump.poll_iter()) {
+        for raw in first_event.into_iter().chain(std::iter::from_fn(crate::sdl_utils::poll_raw_event)) {
+          if let Some(cancel) = crate::sdl_utils::finger_cancel(&raw) {
+            let at = crate::sdl_utils::event_instant(sdl_epoch, cancel.timestamp_ns);
+            if !deliver(crate::event::translate_finger_cancel(&cancel, &window), at) {
+              break 'run;
+            }
+            continue;
+          }
+          let sdl_event = sdl3::event::Event::from_ll(raw);
           if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
             use sdl3::event::DisplayEvent;
             if matches!(display_event, DisplayEvent::CurrentModeChanged | DisplayEvent::DesktopModeChanged) {

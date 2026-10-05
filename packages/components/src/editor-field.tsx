@@ -235,7 +235,8 @@ export function EditorField(props: EditorFieldProps) {
     }
   }
 
-  let handleViewportPointerUp = (e: PointerEvent) => {
+  // A lift or a cancel: the selection drag ends where it is.
+  let handleViewportPointerEnd = (e: PointerEvent) => {
     if (dragArmed === e.pointerId) dragArmed = null
     if (dragActive === e.pointerId) {
       arena.release(e.pointerId, dragOwner)
@@ -523,7 +524,8 @@ export function EditorField(props: EditorFieldProps) {
         scrollY={editor.scrollY()}
         onPointerDown={handleViewportPointerDown}
         onPointerMove={handleViewportPointerMove}
-        onPointerUp={handleViewportPointerUp}
+        onPointerUp={handleViewportPointerEnd}
+        onPointerCancel={handleViewportPointerEnd}
       >
         {showPlaceholder() ? (
           <d-text w={PLACEHOLDER_SHAPE_WIDTH} {...font()} color={theme.color.textMuted} maxLines={1}>
