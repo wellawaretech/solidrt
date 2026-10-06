@@ -7,6 +7,7 @@
 
 import { test, expect } from "@solidrt/test"
 import { createMutableTexture, readTexture, uploadTexture } from "@solidrt/core/gpu"
+import type { TextureId } from "@solidrt/core/gpu"
 
 const SIDE = 4
 // The rect written into the texture: a 2x2 at (1, 1).
@@ -18,14 +19,14 @@ function solid(width: number, height: number, rgba: number[]): Uint8Array {
   return data
 }
 
-function pixel(texture: number, x: number, y: number): number[] {
+function pixel(texture: TextureId, x: number, y: number): number[] {
   let { width, data } = readTexture(texture)
   let at = (y * width + x) * 4
   return [data[at]!, data[at + 1]!, data[at + 2]!, data[at + 3]!]
 }
 
 test("a rect upload writes its region in place and leaves the rest", async app => {
-  let texture = 0
+  let texture!: TextureId
   await app.mount(() => {
     texture = createMutableTexture(solid(SIDE, SIDE, [0, 0, 255, 255]), SIDE, SIDE, { label: "upload-rect" })
     return <texture src={texture} width={SIDE} height={SIDE} />
@@ -47,7 +48,7 @@ test("a rect upload writes its region in place and leaves the rest", async app =
 })
 
 test("a rect outside the texture or of the wrong size throws and changes nothing", async app => {
-  let texture = 0
+  let texture!: TextureId
   await app.mount(() => {
     texture = createMutableTexture(solid(SIDE, SIDE, [0, 0, 255, 255]), SIDE, SIDE, { label: "upload-rect-bad" })
     return <texture src={texture} width={SIDE} height={SIDE} />

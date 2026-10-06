@@ -196,3 +196,94 @@ fn packer_grows_by_repacking_and_then_fills() {
   assert_eq!(packer.size(), (1024, 1024));
   assert!(packer.placement(big).is_none());
 }
+
+// The distance-field cell checks: "H" at 48 texels per em with 8 texels of
+// range, the sprite font's defaults.
+const MSDF_PPEM: f32 = 48.0;
+const MSDF_RANGE: f32 = 8.0;
+// The field's byte value at an edge; inside reads above it.
+const EDGE: u8 = 128;
+// A stem's centre reads at least a texel of distance past the edge
+// (255 / range above it, with room for the quantization).
+const STEM_CENTRE_MIN: u8 = 160;
+// The outermost texel of a cell is at least range / 2 - 1 texels from any
+// ink, so at most 16 up the field, plus slack for the error correction.
+const OUTSIDE_MAX: u8 = 24;
+// The true field (alpha) against the median at an edge texel: both are
+// 8-bit roundings of the same distance along a straight edge.
+const FIELD_SLACK: i32 = 4;
+
+/// The consumer's decode: the median of the three channels.
+fn median(texel: &[u8]) -> u8 {
+  let (r, g, b) = (texel[0], texel[1], texel[2]);
+  r.max(g).min(r.min(g).max(b))
+}
+
+#[test]
+fn msdf_cell_holds_the_glyph_as_a_field() {
+  let fonts = FontSet::from_payloads(&[noto()]);
+  let face = fonts.face(0).expect("face");
+  let shaped = ShapedGlyphs::shape(face, 400, "H", MSDF_PPEM, 0.0).expect("shaped");
+  let request = CellRequest {
+    kind: CellKind::Msdf { ppem: MSDF_PPEM, range: MSDF_RANGE },
+    weight: face.weight_setting(400),
+    synthetic_bold: false,
+    synthetic_italic: false,
+    glyphs: vec![shaped.glyphs[0].id],
+  };
+  let cells = Rasterizer::default().rasterize(NOTO_SANS, &request).expect("a font");
+  assert_eq!(cells.len(), 1);
+  let cell = &cells[0];
+  let (w, h) = (cell.width as usize, cell.height as usize);
+  assert!(w > 0 && h > 0);
+  assert_eq!(cell.pixels.len(), w * h * BYTES_PER_TEXEL);
+  // The baseline runs through the cell: the box is padded below it.
+  assert!(cell.top > 0 && (cell.top as usize) < h, "top {} in {h}", cell.top);
+  let texel = |x: usize, y: usize| &cell.pixels[(y * w + x) * BYTES_PER_TEXEL..][..BYTES_PER_TEXEL];
+  // The rim of the box is outside: the padding is half the range.
+  for x in 0..w {
+    assert!(median(texel(x, 0)) <= OUTSIDE_MAX && median(texel(x, h - 1)) <= OUTSIDE_MAX, "rim at x {x}");
+  }
+  for y in 0..h {
+    assert!(median(texel(0, y)) <= OUTSIDE_MAX && median(texel(w - 1, y)) <= OUTSIDE_MAX, "rim at y {y}");
+  }
+  // A row above the crossbar crosses the two stems and nothing else: the
+  // median rises through the edge twice, and along those straight edges the
+  // true field agrees with it.
+  let row = h / 4;
+  let inside: Vec<bool> = (0..w).map(|x| median(texel(x, row)) > EDGE).collect();
+  let stems = inside.windows(2).filter(|pair| !pair[0] && pair[1]).count();
+  assert_eq!(stems, 2, "row {row}: {inside:?}");
+  for x in 1..w {
+    if inside[x] != inside[x - 1] {
+      for t in [texel(x - 1, row), texel(x, row)] {
+        assert!((t[3] as i32 - median(t) as i32).abs() <= FIELD_SLACK, "edge at x {x}: {t:?}");
+      }
+    }
+  }
+  let peak = (0..w).map(|x| median(texel(x, row))).max().expect("a row");
+  assert!(peak >= STEM_CENTRE_MIN, "stem centre reads {peak}");
+}
+
+#[test]
+fn blank_glyphs_are_empty_cells_that_take_no_atlas_space() {
+  let fonts = FontSet::from_payloads(&[noto()]);
+  let face = fonts.face(0).expect("face");
+  let space = ShapedGlyphs::shape(face, 400, " ", SIZE, 0.0).expect("shaped").glyphs[0].id;
+  for kind in [CellKind::Mask { ppem: SIZE }, CellKind::Msdf { ppem: MSDF_PPEM, range: MSDF_RANGE }] {
+    let request = CellRequest {
+      kind,
+      weight: face.weight_setting(400),
+      synthetic_bold: false,
+      synthetic_italic: false,
+      glyphs: vec![space],
+    };
+    let cells = Rasterizer::default().rasterize(NOTO_SANS, &request).expect("a font");
+    assert_eq!(cells.len(), 1, "{kind:?}: a space is a cell, not a failure");
+    assert_eq!((cells[0].width, cells[0].height), (0, 0), "{kind:?}");
+    let mut packer = AtlasPacker::new(kind, 1024);
+    assert_eq!(packer.insert(cells[0].clone()), InsertOutcome::Placed);
+    assert_eq!(packer.placement(space).map(|p| (p.width, p.height)), Some((0, 0)));
+    assert!(packer.take_dirty().is_none(), "{kind:?}: nothing to upload for a blank cell");
+  }
+}

@@ -251,3 +251,57 @@ test("addText refuses a layer that does not declare the font's atlas", async app
     return { texture: view.texture }
   })
 })
+
+// The msdf run draws the face at this multiple of its size, where a mask
+// would resample.
+const MSDF_SCALE = 2
+// The msdf font's outline width in layer pixels, within the half-range of
+// room the default cells carry (4 texels at 48 per em, 5.3 layer pixels at
+// the run's size).
+const TEXT_OUTLINE_PX = 4
+// Pixels a decoded edge may spread over: a one-pixel anti-aliasing ramp,
+// straddling a pixel boundary.
+const EDGE_SPREAD = 2
+// flux:font's msdf defaults: texels per em and the range.
+const MSDF_SIZE = 48
+const MSDF_RANGE = 8
+
+test("a text run over msdf cells is sharp at twice the face size and wears its outline", async app => {
+  let { view, run, font } = await mounted(app, () => {
+    let font = createSpriteFont({ fontFamily: "sans", fontSize: FONT_PX, fontWeight: 700 }, { cells: "msdf", chars: false, label: "text-msdf" })
+    let layer = createSpriteLayer([font.atlas], { capacity: 32, label: "text-msdf" })
+    let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: "text-msdf" })
+    let run = addText(layer, { font, text: "H", x: 8, y: 8, fontSize: FONT_PX * MSDF_SCALE, tint: [1, 0, 0, 1], outline: { color: [0, 0, 1], width: TEXT_OUTLINE_PX } })
+    return { font, layer, view, run, texture: view.texture }
+  })
+  expect(font.atlas.sdf).toEqual({ range: MSDF_RANGE })
+  expect(font.size).toBe(MSDF_SIZE)
+  await app.settle()
+  await app.frame()
+  let stem = run.sprites[0]!
+  expect(stem._visible).toBe(true)
+  let [sx, sy] = worldPosition(stem)!
+  // A row through the upper half of the H, above the crossbar: from the
+  // left, nothing, the outline, the left stem's fill, the outline, the
+  // counter, then the right stem the same way. Each pixel is the fill, the
+  // outline, neither, or a blend at an edge.
+  let y = sy - stem._h / 4
+  let classes: string[] = []
+  for (let x = Math.floor(sx - stem._w / 2); x <= Math.ceil(sx + stem._w / 2); x++) {
+    let p = pixel(view.texture, x, y)
+    let opaque = p[3]! >= 255 - CHANNEL_SLACK
+    let fill = opaque && p[0]! >= 255 - CHANNEL_SLACK && p[2]! <= CHANNEL_SLACK
+    let outline = opaque && p[2]! >= 255 - CHANNEL_SLACK && p[0]! <= CHANNEL_SLACK
+    classes.push(p[3]! <= CHANNEL_SLACK ? "none" : fill ? "fill" : outline ? "outline" : "edge")
+  }
+  let runs = classes.filter(c => c !== "edge").filter((c, i, all) => c !== all[i - 1])
+  expect(runs).toEqual(["none", "outline", "fill", "outline", "none", "outline", "fill", "outline", "none"])
+  // The decode is sharp: an edge is one pixel's ramp, not a resampled cell's.
+  let longest = 0
+  let streak = 0
+  for (let c of classes) {
+    streak = c === "edge" ? streak + 1 : 0
+    longest = Math.max(longest, streak)
+  }
+  expect(longest).toBeLessThanOrEqual(EDGE_SPREAD)
+})

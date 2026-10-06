@@ -171,6 +171,14 @@ impl AtlasPacker {
 
   // Allocate and blit `cell` at the current size.
   fn place(&mut self, cell: &Cell) -> bool {
+    // A blank glyph (a space) has no texels: it is in the atlas at a
+    // zero-sized spot, drawn as nothing at its advance.
+    if cell.width == 0 || cell.height == 0 {
+      let placement =
+        CellPlacement { glyph: cell.glyph, x: 0, y: 0, width: 0, height: 0, left: cell.left, top: cell.top };
+      self.cells.insert(cell.glyph, placement);
+      return true;
+    }
     let padding = match self.kind {
       CellKind::Mask { .. } => MASK_PADDING,
       CellKind::Msdf { .. } => 0,

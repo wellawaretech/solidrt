@@ -12,10 +12,9 @@
 // imperative layer (the example's own view shows it), the same run under
 // props. Wheel or pinch to zoom, drag to pan.
 //
-// The cells are coverage masks at the face's size for now (the engine's
-// distance-field generator is pending, see okf/plans/text-own-rasterizer.md),
-// so the labels are exact at 1x and resample under zoom; with "msdf" cells
-// one atlas stays sharp across the range, and the `outline` draws.
+// The cells are distance fields (the sprite font's default), so one atlas
+// keeps every label sharp across the zoom range and the `outline` draws;
+// "mask" cells would be exact at 1x and resample under zoom.
 //
 // Debug commands: `zoom` ({ value, x?, y? }) parks the camera and returns
 // the pose; `state` returns the counter's text and box, the first label's
@@ -30,8 +29,7 @@ const WORLD = { width: 1600, height: 1000 }
 const COLUMNS = 5
 const ROWS = 3
 const SPRITE = 72
-// The label font: the face's size is the mask cells' size, so labels at
-// this size are exact at zoom 1.
+// The label font's size: what a run shapes at when it names none.
 const LABEL_PX = 18
 // The gap between a sprite's bottom and its label's top.
 const LABEL_GAP = 6
@@ -106,9 +104,9 @@ function App() {
     <window>
       <texture src={world.texture} position="absolute" left={0} top={0} width={windowSize().width} height={windowSize().height} {...world.handlers} />
       {/* The title, bottom center, bigger than the face: its glyphs scale
-          their cells (a mask font resamples; an msdf font stays sharp). The
-          component face over the imperative layer: no view of its own, the
-          texture above shows it. */}
+          their distance-field cells and stay sharp. The component face over
+          the imperative layer: no view of its own, the texture above shows
+          it. */}
       <SpriteLayer layer={layer} output={false}>
         <Text2d font={font} text="World-space text" x={WORLD.width / 2} y={WORLD.height - LABEL_PX} fontSize={LABEL_PX * 2} anchor="middle" anchorY="bottom" tint={LABEL_TINT} outline={OUTLINE} />
       </SpriteLayer>

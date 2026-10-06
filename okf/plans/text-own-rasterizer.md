@@ -88,12 +88,12 @@ The trait; a glyph atlas (texture upload path exists: `flux:gpu` textures,
 |---|---|
 | 1. Fonts | built (`glyphs/fonts.rs`): harfrust + swash over the registered bytes, the wght axis per weight |
 | 2. Shaping | built (`glyphs/shape.rs`): metrics match Impeller within a texel, carets in one pass |
-| 3. Cells | mask kind built (`glyphs/cells.rs`); the MTSDF kind waits for the msdfgen shim (reading the vendored headers was refused by the session's code-integration guard; the submodule is in place at v1.13) |
+| 3. Cells | both kinds built: masks in `glyphs/cells.rs`, MTSDF cells in `glyphs/msdf.rs` over the C shim (`alloy/csrc/msdf_shim.cpp`, bound by `glyphs/ffi.rs`) that `alloy/build.rs` compiles with the vendored msdfgen v1.13 core |
 | 4. Atlas | built (`glyphs/atlas.rs`), the sub-rect upload in alloy and as `uploadTexture(id, data, rect)` |
 | 5. Worker | built (`glyphs/worker.rs`), completion ends the hold and wakes the loop |
 | 6. The seam | built (`Shaper`, `Shaped`, `ShaperKind`, `PreparedUnit.glyphs`); `prepareText`'s default stays Impeller |
 | 7. `flux:font` | built, with types and docs; consumed by `@solidrt/2d`'s sprite font |
-| Tests | `alloy/src/tests/glyphs.rs` (7), `packages/core/tests/gpu-upload.test.tsx`, the 2d text tests |
+| Tests | `alloy/src/tests/glyphs.rs` (9: the seam, carets, both cell kinds, blank glyphs, the packer), `packages/core/tests/gpu-upload.test.tsx`, the 2d text tests (an msdf run at twice the face size with its outline among them) |
 
 ## Plan: stage 1, the glyph engine behind the seam (started 2026-10-06)
 
@@ -122,11 +122,9 @@ independent: no `impellers` import anywhere under it):
    vendored at `alloy/vendor/msdfgen` and reached through a thin C shim
    compiled by `alloy/build.rs`), and `Mask` (an exact-size coverage
    mask at a subpixel phase, what the draw half and a terminal will use).
-   The mask kind is built first: reading the vendored msdfgen headers
-   was refused by the session's code-integration guard, so the shim
-   waits for that permission; the atlas, worker and plugin are built and
-   tested against masks, and the MTSDF kind slots in behind the same
-   `Cell` type.
+   The mask kind was built first (that session could not read the
+   vendored headers); the MTSDF kind followed the same day behind the
+   same `Cell` type.
 4. **Atlas.** An etagere shelf allocator over a mutable rgba8 texture the
    engine registers in `alloy::Context`, grown in place through the
    id-stable resize, cells written by a new sub-rect upload
@@ -187,64 +185,47 @@ emoji, the hinting and gamma policy per DPI the spike explored.
   uses), and the frame that follows lands the cells and settles the
   promise. A camera open settles from its tick too and would deadlock the
   same way under settle; not changed here.
+- 2026-10-06, the MTSDF cells: msdfgen's inside is the right-hand side
+  of travel, so an outline wound clockwise with y up (TrueType) is
+  positive inside and a counter-clockwise one (CFF) is inverted; the
+  engine tells the font's sense from its largest contour's signed area
+  and reverses the whole shape when it is counter-clockwise. The outline
+  stays y up all the way: flipping y would mirror the winding and invert
+  the field. The rows come out top first by declaring the output bitmap
+  `Y_DOWNWARD` (v1.13's `BitmapSection` orientation; the generator
+  reorders the rows itself). The shim keeps msdfgen's own importer rules
+  for degenerate commands (a line or quadratic ending on the pen is
+  dropped, a cubic too unless its controls span area) and closes every
+  contour back to its start, which `Shape::validate` requires.
+- etagere refuses an empty allocation, so a blank glyph (a space) is
+  placed at a zero-sized spot without one, for either cell kind; before
+  that a mask space took a 2x2 padding ring and an msdf space would have
+  grown the atlas to its cap and come out missing.
 
-## Where to pick up (written 2026-10-06 for the next session)
+## Where to pick up (updated 2026-10-06, after the MTSDF kind landed)
 
-Precondition: reading under `alloy/vendor/msdfgen` must be allowed (a
-permission rule for the session, or the shim written by hand). The
-submodule is checked out at v1.13; nothing is built from it yet.
+Steps 1-5 of the earlier list are done, the same day, once the vendored
+headers could be read: `alloy/build.rs` compiles the msdfgen core and
+`alloy/csrc/msdf_shim.cpp` through cc (`[build-dependencies] cc`,
+forge's pin); `glyphs/ffi.rs` binds the shim and `glyphs/msdf.rs` turns a
+swash outline into an MTSDF cell, wired as `CellKind::Msdf` in
+`cells.rs`; `alloy/src/tests/glyphs.rs` pins the H field and blank
+glyphs, `packages/2d/tests/text.test.tsx` an msdf run at twice the face
+size with its outline; the sprite font and `flux:font` default to "msdf"
+cells.
 
-1. **Build.** `alloy/build.rs` (new; alloy has none) compiling the
-   msdfgen core through cc as C++: every `core/*.cpp` except the
-   `save-*.cpp` and `export-svg.cpp` writers and `shape-description.cpp`
-   (the text format), plus the shim. `[build-dependencies] cc = "=1.5.1"`
-   (forge's pin). No `ext/` (FreeType, Skia): the outline comes from
-   swash. Portable C++11, the same path on every target as Basis.
-2. **The shim**, `alloy/csrc/msdf_shim.cpp` with a C ABI: shape new/free,
-   contour add, three edge adders (linear, quadratic, cubic, points in
-   em units), `shape.normalize()`, `edgeColoringSimple(shape, angle)`,
-   `generateMTSDF(bitmap, shape, transformation, config)` into a
-   caller-owned float rgba buffer of `w` x `h` with a scale and
-   translation (em units to texels) and the range in texels, and the
-   shape's bounds. Read the exact signatures in `msdfgen.h`,
-   `core/Shape.h`, `core/edge-segments.h`, `core/SDFTransformation.h`,
-   `core/Range.hpp`, `core/generator-config.h`; v1.13's `Range` is a
-   class and the transformation carries the projection and the distance
-   mapping. Bindings in `glyphs/ffi.rs` (one `unsafe` block, hand
-   declared like `forge/src/ktx2/ffi.rs`), a safe `glyphs/msdf.rs` over
-   it.
-3. **The cell.** In `msdf.rs`: `swash::Scaler::scale_outline(gid)` at
-   `ppem` (the kind's texels per em, variations and synthetic slant as
-   `cells.rs` does for masks; emboldening through `Outline::embolden`),
-   its `path().commands()` (zeno MoveTo/LineTo/QuadTo/CurveTo/Close,
-   y up) into the shim's contours with y flipped to texels down; cell
-   box = the outline bounds padded by `range / 2` on every side, rounded
-   out to whole texels; the transformation maps the padded box onto the
-   bitmap; the float field (0.5 at the edge, range texels across) to
-   rgba8 by `clamp(v * 255)`; `left` = padded box left, `top` = padded
-   box top above the baseline, as a mask cell reports them. Wire
-   `CellKind::Msdf` in `cells.rs` (atlas padding stays 0: the range is
-   the padding).
-4. **Tests.** `alloy/src/tests/glyphs.rs`: an msdf cell of "H" at 48 per
-   em, range 8, whose median crosses 0.5 along a row inside the stem
-   (the field is above 0.5 at the stem's centre, below 0.5 outside the
-   glyph box, and the alpha channel agrees with the median at the edge
-   within the quantization). `packages/2d/tests/text.test.tsx`: a run on
-   an msdf font drawn at twice the face size with an outline, the stem
-   probe and the outline colour beside it (the mask test is the model).
-5. **Flip the default.** `packages/2d/src/font.ts`: `cells: "msdf"`, its
-   module comment and the `SpriteFontOptions` doc; `flux-types
-   gui/font.d.ts` `cells` doc; the "Text runs" section and trap in
-   `packages/2d/AGENTS.md`; the header of `packages/2d/examples/text.tsx`
-   (and run it: `bun run sol run packages/2d/examples/text.tsx --project
-   --port 34899`, zoom with the `zoom` debug command, snapshot the
-   labels); the State tables of both plans; the memory note.
-6. **Then, in this item's scope and gated by the seam test**: switch
-   TextInput's caret stops to the engine shaper (`words.rs`
-   `caret_stops` re-shapes every grapheme prefix on Impeller; the engine
-   reads them off the cluster map), per consumer first, by giving
-   `prepareText`/`measureText` callers a way to ask for the engine
-   (`ShaperKind::Engine`) where the drawn text is not Impeller's.
+Open, this item's scope, and the user's call before it starts:
+
+1. **Carets on the engine shaper**, gated by the seam test: switch
+   TextInput's caret stops to the engine (`words.rs` `caret_stops`
+   re-shapes every grapheme prefix on Impeller; the engine reads them off
+   the cluster map), per consumer first, by giving `prepareText`/
+   `measureText` callers a way to ask for the engine
+   (`ShaperKind::Engine`) where the drawn text is not Impeller's. The
+   catch: TextInput's drawn text IS Impeller's, so engine carets would sit
+   within a texel of the glyphs (the seam tolerance) rather than on them.
+   Whether that is acceptable before the draw half, or waits for stage 2,
+   decides the step.
 
 Stage 2 (the draw half) stays its own plan, as written above. The
 glyph-atlas eviction a terminal would need is

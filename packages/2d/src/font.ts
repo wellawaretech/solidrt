@@ -9,12 +9,10 @@
 // unbaked glyphs drawing as nothing at the right advance until then.
 //
 // XNA's SpriteFont, PixiJS's BitmapFont: a font asset drawn as quads. Two
-// cell kinds: "msdf", one atlas sharp at every zoom with the layer's
-// fragment stage decoding the field (`Atlas.sdf`), and "mask", coverage at
-// the face's exact size for drawing 1:1. The default is "mask" until the
-// engine's distance-field generator lands (okf/plans/text-own-rasterizer.md,
-// the msdfgen shim); it becomes "msdf" then, which is what a zooming label
-// wants.
+// cell kinds: "msdf" (the default, what a zooming label wants), one atlas
+// sharp at every zoom with the layer's fragment stage decoding the field
+// (`Atlas.sdf`), and "mask", coverage at the face's exact size for drawing
+// 1:1.
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PreparedText } from "@solidrt/core"
 import { createFont, destroyFont, fontAtlas, glyphCells, prepareText, requestGlyphs } from "flux:font"
@@ -96,7 +94,7 @@ export type SpriteFont = {
  */
 export function createSpriteFont(face: FontFace, opts?: SpriteFontOptions): SpriteFont {
   let { chars, autoFree, ...atlasOptions } = opts ?? {}
-  let id = createFont(face, { cells: "mask", ...atlasOptions })
+  let id = createFont(face, { cells: "msdf", ...atlasOptions })
   let info = fontAtlas(id)
   let atlas: Atlas = { texture: info.texture, width: info.width, height: info.height }
   if (info.cells === "msdf") atlas.sdf = { range: info.range }

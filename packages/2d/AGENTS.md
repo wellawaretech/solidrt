@@ -590,10 +590,10 @@ atlas is one more entry in the layer's list - `createSpriteLayer([art,
 font.atlas])` - so labels draw in the one draw with the sprites they
 belong to and pan, zoom, sort (`orderBy`), pick and transition as
 sprites; a run's pose is its group's (`run.group`), where glyph pointer
-events bubble. Two cell kinds: "mask" (coverage at the face's exact
-size, for 1:1 drawing; the default until the engine's distance-field
-generator lands) and "msdf" (one atlas sharp at every zoom, the fragment
-stage decoding `Atlas.sdf`; the per-run `outline` draws only here). Text
+events bubble. Two cell kinds: "msdf" (the default: one atlas sharp at
+every zoom, the fragment stage decoding `Atlas.sdf`; the per-run
+`outline` draws only here) and "mask" (coverage at the face's exact size,
+for 1:1 drawing). Text
 as elements is still the right tool up to hundreds of labels: `d-text`
 under a `<view>` carrying the camera transform (what `<TileLayer>` does
 for its chunks) costs no JS per label on a camera move and is rasterized
@@ -971,10 +971,9 @@ hover, wheel and tap rules headless.
 - The atlas grows by doubling and EVERY cell moves when it does:
   `font.atlas.width`/`height` change in place and every run over the
   font is re-framed. Never cache a glyph's frame outside the font.
-- A sprite font over "mask" cells is exact at the face's size and
-  resamples under zoom like any texture; "msdf" cells are the zoom
-  answer, pending the generator (okf/plans/text-own-rasterizer.md).
-  `outline` is silently ignored on a mask font.
+- A sprite font over "msdf" cells (the default) is sharp at every zoom;
+  one over "mask" cells is exact at the face's size, resamples under zoom
+  like any texture, and silently ignores `outline`.
 - A run is node-layer only (it is a group); `addText` on a layer that
   does not declare `font.atlas` throws. Dispose runs before the font
   (`font.dispose`, or the owner's cleanup).

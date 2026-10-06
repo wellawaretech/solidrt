@@ -7,13 +7,13 @@
 //   texture draws white text to tint.
 // - `Msdf`: a multi-channel signed distance field at a fixed size per em
 //   with a distance range in texels, generated from the outline by msdfgen
-//   (the shim behind `msdf.rs`, pending the permission to read the vendored
-//   headers - see okf/plans/text-own-rasterizer.md). One cell serves every
-//   zoom; a consumer decodes the field in its shader.
+//   (msdf.rs, over the shim build.rs compiles with the vendored core). One
+//   cell serves every zoom; a consumer decodes the field in its shader.
 //
 // Rasterization is CPU work (a few hundred microseconds per glyph) and runs
 // on the worker thread; a `Rasterizer` owns the swash context that thread
 // keeps, since swash scales through per-thread caches by design.
+use super::msdf::msdf_cell;
 use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::{Angle, Format, Transform, Vector};
 use swash::{FontRef, GlyphId};
@@ -112,10 +112,16 @@ impl Rasterizer {
           }
           render.render(&mut scaler, glyph as GlyphId).map(|image| mask_cell(glyph, &image))
         }
-        // The distance-field generator lands with the msdfgen shim; until
-        // then an Msdf atlas rasterizes nothing (its request fails per
-        // glyph, which the worker reports).
-        CellKind::Msdf { .. } => None,
+        CellKind::Msdf { ppem, range } => scaler.scale_outline(glyph as GlyphId).and_then(|mut outline| {
+          if request.synthetic_bold {
+            let strength = ppem * SYNTHETIC_BOLD_STRENGTH;
+            outline.embolden(strength, strength);
+          }
+          if request.synthetic_italic {
+            outline.transform(&Transform::skew(Angle::from_degrees(SYNTHETIC_ITALIC_DEGREES), Angle::ZERO));
+          }
+          msdf_cell(glyph, &outline, range)
+        }),
       };
       if let Some(cell) = cell {
         cells.push(cell);

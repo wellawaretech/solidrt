@@ -123,3 +123,8 @@ half = "=2.7.1"
 # client library fallback.
 khronos-egl = { version = "=6.0.0", default-features = false, features = ["dynamic", "1_5"] }
 libloading = "=0.8.9"
+
+[build-dependencies]
+# Compiles the vendored msdfgen core and the C shim over it (build.rs), the
+# glyph engine's distance-field generator; forge's pin.
+cc = "=1.5.1"

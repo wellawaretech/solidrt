@@ -19,6 +19,8 @@
 //   a multi-channel distance field at a fixed size per em (what a zoomed
 //   consumer wants). Generated on the worker thread (worker.rs), never on
 //   the frame.
+// - msdf.rs: the distance-field kind, a glyph outline through the vendored
+//   msdfgen (ffi.rs binds the C shim build.rs compiles with its core).
 // - atlas.rs: cells packed into one growing texture (etagere's shelf
 //   allocator, the one behind WebRender's texture cache), with the CPU
 //   mirror growth repacks from and the dirty rects a flush uploads.
@@ -30,7 +32,9 @@
 
 mod atlas;
 mod cells;
+mod ffi;
 mod fonts;
+mod msdf;
 mod shape;
 mod worker;
 

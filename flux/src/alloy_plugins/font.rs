@@ -154,7 +154,7 @@ fn run_style<'js>(ctx: &Ctx<'js>, options: Option<&Object<'js>>) -> rquickjs::Re
 
 fn create_font<'js>(ctx: Ctx<'js>, face: OptArg<Object<'js>>, options: OptArg<Object<'js>>) -> rquickjs::Result<u64> {
   let style = run_style(&ctx, face.0.as_ref())?;
-  let mut cells = "mask".to_string();
+  let mut cells = "msdf".to_string();
   let mut size: Option<f32> = None;
   let mut range: Option<f32> = None;
   let mut mipmap: Option<bool> = None;

@@ -95,9 +95,9 @@ when text rendering is replaced.
 | Step | State |
 |---|---|
 | 1. Shader and records | built: `Atlas.sdf`, per-atlas field decode with outline, style 16 floats, raw record 20; `tests/text.test.tsx` pins a disc field's edge at 2x and the outline ring |
-| 2. `createSpriteFont` | built over `flux:font`; default cells "mask" until the generator lands (then "msdf") |
+| 2. `createSpriteFont` | built over `flux:font`; default cells "msdf" since the generator landed (2026-10-06), "mask" by option |
 | 3. Layout | built, `text-layout.ts`, `tests/text-layout.test.ts` (9) |
-| 4. Runs and `<Text2d>` | built; `tests/text.test.tsx` (5) on the headless client |
+| 4. Runs and `<Text2d>` | built; `tests/text.test.tsx` (7, an msdf run at twice the face size with its outline among them) on the headless client |
 | 5. Example, docs | built: `examples/text.tsx`, AGENTS.md section and traps, READMEs |
 | The relay demo's labels | not migrated (the demos are untracked; on the user's go) |
 

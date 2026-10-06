@@ -39,12 +39,11 @@ declare module "flux:font" {
   /** Options for {@link createFont}. */
   type FontAtlasOptions = {
     /**
-     * What the atlas holds. "mask" (default): coverage masks at the face's
-     * pixel size, premultiplied white, drawn 1:1 as a plain texture - a
-     * terminal, a HUD at a fixed size. "msdf": multi-channel signed
-     * distance fields at `size` texels per em, one cell for every zoom;
-     * the consumer decodes the field in its shader (the sprite layer's
-     * text does).
+     * What the atlas holds. "msdf" (default): multi-channel signed distance
+     * fields at `size` texels per em, one cell for every zoom; the consumer
+     * decodes the field in its shader (the sprite layer's text does).
+     * "mask": coverage masks at the face's pixel size, premultiplied white,
+     * drawn 1:1 as a plain texture - a terminal, a HUD at a fixed size.
      */
     cells?: "mask" | "msdf"
     /** Texels per em of the cells: the face's `fontSize` for a mask atlas, 48 for an msdf one. */
