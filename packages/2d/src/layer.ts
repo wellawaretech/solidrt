@@ -67,8 +67,8 @@ export const POSE_FLOATS = 5
 const POSE_Y_FIELD = 1
 /** Floats per style record:
  * [u0, v0, u1, v1, tintR, tintG, tintB, tintA, renderOrder, minScreenPx,
- * maxScreenPx, atlas]. */
-export const STYLE_FLOATS = 12
+ * maxScreenPx, atlas, outlineR, outlineG, outlineB, outlineWidth]. */
+export const STYLE_FLOATS = 16
 
 // Float offset of renderOrder in a style record - what `orderBy: "renderOrder"`
 // keys on.
@@ -76,6 +76,10 @@ const STYLE_KEY_FIELD = 8
 // Float offsets of the screen-size clamp in a style record.
 const STYLE_MIN_PX_FIELD = 9
 const STYLE_MAX_PX_FIELD = 10
+// Float offset of the outline (rgb plus width in world pixels) a
+// distance-field atlas draws under the sprite; text runs write it, a
+// colour atlas ignores it.
+const STYLE_OUTLINE_FIELD = 12
 // Float offset of the atlas sampler index (the frame's texture's position
 // in the layer's atlas list).
 const STYLE_ATLAS_FIELD = 11
@@ -719,6 +723,10 @@ export type SpriteLayer = LayerBase & {
    * scopes the layer's queries in the arena shared with 3d scenes. */
   _root: NodeId
   _destroyGroup(group: GroupState): void
+  /** Write a sprite's outline (rgb 0..1 and a width in world pixels)
+   * for a distance-field atlas to draw under it; internal, the text
+   * runs' write (text.ts). A colour atlas ignores the field. */
+  _outline(sprite: Sprite, r: number, g: number, b: number, width: number): void
 }
 
 /** The stored UVs at `at` un-mirrored by the sprite's flags, over the
@@ -820,7 +828,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   checkTint("createSpriteLayer", tint)
   let pose: BufferId = createBuffer(capacity * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
   let style: BufferId = createBuffer(capacity * STYLE_FLOATS * 4, { label: `${label}-style`, autoFree: false })
-  let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_LAYOUTS_SPLIT, opts?.blend ?? "alpha", atlases.length)
+  let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_LAYOUTS_SPLIT, opts?.blend ?? "alpha", atlases)
   // The sprites with a screen-size clamp (either bound on), and the
   // furthest any of them reaches from its center at its floor (floorReach,
   // view pixels): the candidate box a pick searches around the pointer. A
@@ -1237,8 +1245,20 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       spatial.bindPoseRecord(node, pose, slot)
       byNode.set(node, sprite)
       writeStyle(sprite, style, atlas)
+      // No outline until a text run sets one: a recycled slot would
+      // otherwise leak the previous occupant's.
+      styleData.fill(0, slot * STYLE_FLOATS + STYLE_OUTLINE_FIELD, slot * STYLE_FLOATS + STYLE_OUTLINE_FIELD + 4)
       layer._schedule()
       return sprite
+    },
+    _outline(sprite, r, g, b, width) {
+      let at = sprite._slot * STYLE_FLOATS + STYLE_OUTLINE_FIELD
+      styleData[at] = r
+      styleData[at + 1] = g
+      styleData[at + 2] = b
+      styleData[at + 3] = width
+      styleDirty = true
+      layer._schedule()
     },
     _write(sprite, opts) {
       checkClamp("setSprite", sprite, opts)

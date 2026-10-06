@@ -256,6 +256,14 @@ impl Context {
   /// time in practice, when the queue is empty - then a plain read on every
   /// validation site. After the raster thread exits (engine shutdown) the ES
   /// 3.0 floors come back.
+  /// The main loop's wake, for a producer on another thread that latched
+  /// a frame request (`PlatformContext::frame_request_handle`) and needs
+  /// the loop to notice before its next event: what a YUV sink and the
+  /// glyph worker call after their work lands. None before the loop runs.
+  pub fn frame_wake(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+    self.frame_wake.clone()
+  }
+
   pub fn gpu_limits(&self) -> GpuLimits {
     if let Some(limits) = self.limits.get() {
       return limits;

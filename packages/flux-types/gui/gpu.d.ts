@@ -358,13 +358,20 @@ declare module "flux:gpu" {
    * for byte formats, Float32Array for float formats).
    */
   export function createMutableTexture(data: Uint8Array | Float32Array | Uint32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  /** A rect of a texture, in texels from its top-left: the third argument of {@link uploadTexture}. */
+  export type TextureRect = { x: number, y: number, width: number, height: number }
   /**
    * Replace a mutable texture's pixels; the frame size and required view
    * type (Uint8Array for byte formats, Float32Array for float formats)
    * follow the format the id was created with. `data` may hold several
-   * frames; `offset` (default 0) selects which frame to upload.
+   * frames; a numeric `at` (default 0) selects which frame to upload. A
+   * rect `at` uploads `data` as exactly that rect of the texture instead -
+   * `data` then holds `width * height` pixels - and the rect must lie
+   * inside the texture (GL's texSubImage2D with an offset): how a runtime
+   * atlas writes one cell without re-sending the sheet. A mip chain
+   * regenerates after either form.
    */
-  export function uploadTexture(id: TextureId, data: Uint8Array | Float32Array | Uint32Array, offset?: number): void
+  export function uploadTexture(id: TextureId, data: Uint8Array | Float32Array | Uint32Array, at?: number | TextureRect): void
   /**
    * Replace a texture's storage with a new size at the same id (an id-stable
    * resize): `<texture src>` references and shader sampler bindings keep

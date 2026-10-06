@@ -108,6 +108,14 @@ unicode-linebreak = "=0.1.5"
 unicode-segmentation = "=1.13.3"
 # Bounded LRU for the shared shaped-word cache (rendertree/text/words.rs).
 lru = "=0.18.5"
+# The glyph engine (rendertree/text/glyphs): harfrust shapes a run (the
+# HarfBuzz team's Rust port; rustybuzz was archived in its favour), swash
+# scales glyph outlines and rasterizes coverage masks (proven in the
+# swash-text spike, okf/notes/replacing-impeller.md), etagere allocates the
+# glyph atlas (the shelf allocator behind WebRender's texture cache).
+harfrust = "=0.14.0"
+swash = "=0.2.10"
+etagere = "=0.3.0"
 # f32 -> f16 packing for rgba16f uploads (gpu/texture.rs `f16_bytes`).
 half = "=2.7.1"
 # Headless playback context (src/egl_headless.rs): a bare EGL pbuffer on a

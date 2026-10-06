@@ -24,6 +24,17 @@ export type Atlas = {
   /** Pixel size, the space the slicers measure rects and gaps in. */
   width: number
   height: number
+  /**
+   * The sheet is a distance field, not colour: a multi-channel signed
+   * distance field in rgb (the edge is the median at 0.5) with the true
+   * field in alpha, `range` texels wide (what `flux:font`'s msdf atlas
+   * holds, see createSpriteFont). A layer declaring it decodes the field
+   * in its fragment stage - sharp edges at any zoom from one sheet, and
+   * the per-sprite outline - instead of sampling colour; the sprite's
+   * tint is the fill colour. Fixed at the layer's creation like the list
+   * itself: the fragment stage is generated per layer.
+   */
+  sdf?: { range: number }
 }
 
 /**

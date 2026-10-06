@@ -3,7 +3,9 @@
 // derived from them per width. The breaking itself is text::layout.
 use super::{OverflowWrap, Text, TextAnchor, TextOverflow, TextRun, ATOM_CHAR, MAX_CACHED_WIDTHS};
 use crate::impellers::{FontStyle, FontWeight, Size, TextAlignment};
+use crate::rendertree::text::glyphs::ShapedGlyphs;
 use crate::rendertree::text::layout::{self, Align, Layout, LineCursor, LineExtent, Run, RunMetrics, Wrap};
+use crate::rendertree::text::words::{Shaped, Shaper};
 use crate::rendertree::text::CaretStop;
 use crate::rendertree::text::RunStyle;
 use crate::rendertree::{PaintState, PlatformContext};
@@ -170,6 +172,19 @@ pub struct PreparedUnit {
   /// Caret stops within the unit's text (offsets relative to the unit's
   /// start, in UTF-16), when asked for.
   pub carets: Option<Rc<[CaretStop]>>,
+  /// The unit's glyphs and positions, when shaped on the glyph engine
+  /// (`ShaperKind::Engine`); None on Impeller, which exposes none.
+  pub glyphs: Option<Rc<ShapedGlyphs>>,
+}
+
+/// Which shaper `prepare_units` shapes on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShaperKind {
+  /// Impeller's paragraph builder: metrics match what a `<text>` draws.
+  Impeller,
+  /// The glyph engine: metrics plus every unit's glyphs, for a consumer
+  /// that draws them itself from a glyph atlas.
+  Engine,
 }
 
 /// A styled range of a prepared text: a byte range and the style its text
@@ -183,19 +198,26 @@ pub struct PreparedRun {
 }
 
 /// The wrap units of `text` in `style` (and `runs` overriding it per range),
-/// shaped through the shared word cache: the power-user counterpart of what
-/// a `<text>` does for itself in `prepare_owned` (no atoms). A wrap unit that
-/// crosses a run boundary comes back as one piece per run, the pieces after
-/// the first glued. With `carets`, each unit also carries its grapheme caret
-/// stops (for editing). Stops at the first unit the paragraph builder
-/// refuses.
+/// shaped through the shared word cache on `shaper`: the power-user
+/// counterpart of what a `<text>` does for itself in `prepare_owned` (no
+/// atoms). A wrap unit that crosses a run boundary comes back as one piece
+/// per run, the pieces after the first glued. With `carets`, each unit also
+/// carries its grapheme caret stops (for editing). Stops at the first unit
+/// the shaper refuses.
 pub fn prepare_units(
   platform: &PlatformContext,
+  shaper: ShaperKind,
   text: &str,
   style: &RunStyle,
   runs: &[PreparedRun],
   carets: bool,
 ) -> Vec<PreparedUnit> {
+  let typography = platform.typography();
+  let fonts = platform.glyphs();
+  let shaper = match shaper {
+    ShaperKind::Impeller => Shaper::Impeller(&typography),
+    ShaperKind::Engine => Shaper::Engine(&fonts),
+  };
   let mut units: Vec<PreparedUnit> = Vec::new();
   let mut run_index = 0;
   for segment in layout::segments(text) {
@@ -223,10 +245,14 @@ pub fn prepare_units(
       }
       let style = piece.region.map_or(style, |i| &runs[i].style);
       let mut words = platform.words();
-      let Some(word) = words.get_or_shape(&platform.typography(), word_text, style) else {
+      let Some(word) = words.get_or_shape(shaper, word_text, style) else {
         return units;
       };
-      let stops = if carets { words.carets(&platform.typography(), word_text, style) } else { None };
+      let stops = if carets { words.carets(shaper, word_text, style) } else { None };
+      let glyphs = match &word.shaped {
+        Shaped::Glyphs(glyphs) => Some(glyphs.clone()),
+        Shaped::Paragraph(_) => None,
+      };
       units.push(PreparedUnit {
         text: word_text.to_string(),
         start: piece.start,
@@ -236,6 +262,7 @@ pub fn prepare_units(
         glue: !piece.first,
         run: piece.region,
         carets: stops,
+        glyphs,
       });
     }
   }
@@ -310,7 +337,7 @@ impl Text {
     hard_break: bool,
     glue: bool,
   ) -> Option<ShapedRun> {
-    let word = platform.words().get_or_shape(&platform.typography(), text, &styles[style])?;
+    let word = platform.words().get_or_shape(Shaper::Impeller(&platform.typography()), text, &styles[style])?;
     Some(ShapedRun {
       atom: false,
       run: Run { metrics: word.metrics, hard_break, glue, float: None, clear: None },

@@ -7,11 +7,11 @@ use taffy::prelude::*;
 
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::{bytes_of, elements, OptArg};
-use alloy::{AlloyCommand, CursorFrame, CursorImage};
-use alloy::rendertree::text::{prepare_units, PreparedRun};
+use alloy::rendertree::text::{prepare_units, PreparedRun, PreparedUnit, ShaperKind};
 use alloy::rendertree::{
   AnimValue, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, Rect, RenderTree, Text, Window,
 };
+use alloy::{AlloyCommand, CursorFrame, CursorImage};
 
 thread_local! {
   // setProperty (FFI prop write) calls since the last frame. Bumped in the
@@ -97,7 +97,7 @@ fn float_array_items(value: &Value<'_>) -> Option<Vec<PropValue>> {
 // The font options measureText and prepareText share, onto a Text, through
 // the JSX property decoders (one parser for fontWeight and friends). Throws
 // on a value that does not decode.
-fn apply_font_options<'js>(ctx: &Ctx<'js>, node: &mut Text, opts: &Object<'js>) -> rquickjs::Result<()> {
+pub(crate) fn apply_font_options<'js>(ctx: &Ctx<'js>, node: &mut Text, opts: &Object<'js>) -> rquickjs::Result<()> {
   for name in ["fontFamily", "fontSize", "fontStyle", "fontWeight", "lineHeight", "maxLines"] {
     let value: Value<'js> = opts.get(name)?;
     if value.is_undefined() {
@@ -656,7 +656,18 @@ fn prepare_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) 
     }
   }
   let s = state(&ctx);
-  let units = prepare_units(&s.gui.platform, &text, &node.run_style(), &runs, carets);
+  let units = prepare_units(&s.gui.platform, ShaperKind::Impeller, &text, &node.run_style(), &runs, carets);
+  prepared_to_js(&ctx, text, units)
+}
+
+/// A prepared text as its JS shape (`PreparedText`): the units with their
+/// metrics, caret stops when asked for, and their glyphs when shaped on the
+/// engine. Shared with the font module, whose prepareText shapes there.
+pub(crate) fn prepared_to_js<'js>(
+  ctx: &Ctx<'js>,
+  text: String,
+  units: Vec<PreparedUnit>,
+) -> rquickjs::Result<Object<'js>> {
   let array = rquickjs::Array::new(ctx.clone())?;
   // Byte offsets to UTF-16 (JS string) offsets, incrementally: units tile
   // the text in order.
@@ -680,6 +691,18 @@ fn prepare_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) 
         array.set(j, o)?;
       }
       obj.set("carets", array)?;
+    }
+    if let Some(glyphs) = &unit.glyphs {
+      let array = rquickjs::Array::new(ctx.clone())?;
+      for (j, glyph) in glyphs.glyphs.iter().enumerate() {
+        let o = Object::new(ctx.clone())?;
+        o.set("id", glyph.id as u32)?;
+        o.set("x", glyph.x)?;
+        o.set("y", glyph.y)?;
+        o.set("advance", glyph.advance)?;
+        array.set(j, o)?;
+      }
+      obj.set("glyphs", array)?;
     }
     obj.set("text", unit.text)?;
     obj.set("advance", unit.metrics.advance)?;

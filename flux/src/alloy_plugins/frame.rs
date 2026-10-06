@@ -14,7 +14,7 @@ use rquickjs::{Ctx, Object};
 use alloy::rendertree::composite::PaintStats;
 use alloy::rendertree::{self, FrameBuilder, PendingFrame, PlatformContext, RenderTree};
 
-use super::{camera, gpu, raf, spatial, tree};
+use super::{camera, font, gpu, raf, spatial, tree};
 
 /// The pre-delivery half of a frame, run once per frame signal before the
 /// frame's JS: stamp both animation clocks with the frame's app time
@@ -44,6 +44,12 @@ pub fn advance(ctx: &Ctx<'_>, now_ms: f64) {
   if camera::tick(ctx) {
     demand = true;
     reasons.push("a camera".to_string());
+  }
+  // Glyph cells landed in a font atlas: a label drawing from it changes
+  // without any tree mutation.
+  if font::tick(ctx) {
+    demand = true;
+    reasons.push("a glyph atlas".to_string());
   }
   *s.demand.borrow_mut() = reasons;
   // Settle any captureSnapshot promises whose captures alloy rendered on the

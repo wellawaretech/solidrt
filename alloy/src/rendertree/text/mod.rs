@@ -1,4 +1,5 @@
 mod decoration;
+pub mod glyphs;
 pub mod layout;
 mod runs;
 mod shape;
@@ -6,8 +7,8 @@ mod words;
 
 pub use decoration::{FontMetricsTable, Underline, UnderlineMetrics};
 pub use runs::{RunOverrides, RunStyle, Span, TextRun, ATOM_CHAR};
-pub use shape::{prepare_units, PreparedRun, PreparedUnit};
-pub use words::{CaretStop, WordCache};
+pub use shape::{prepare_units, PreparedRun, PreparedUnit, ShaperKind};
+pub use words::{CaretStop, Shaped, Shaper, WordCache};
 
 use crate::impellers::{DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment};
 use crate::rendertree::text::layout::{PlacedRun, Run, Wrap};
@@ -205,9 +206,13 @@ impl Buildable for Text {
       let typography = ctx.platform.typography();
       let mut words = ctx.platform.words();
       let mut draw = |text: &str, style: usize, x: f32, y: f32| {
-        if let Some(word) = words.get_or_shape(&typography, text, &styles[style]) {
-          crate::rendertree::counters::note_paragraph();
-          builder.draw_paragraph(&word.paragraph, Point::new(origin.x + x, origin.y + y));
+        if let Some(word) = words.get_or_shape(Shaper::Impeller(&typography), text, &styles[style]) {
+          // Every `<text>` shapes on Impeller, so the word is a paragraph;
+          // an engine-shaped word has no draw here by design.
+          if let Shaped::Paragraph(paragraph) = &word.shaped {
+            crate::rendertree::counters::note_paragraph();
+            builder.draw_paragraph(paragraph, Point::new(origin.x + x, origin.y + y));
+          }
         }
       };
       let joinable = owned.layouts[index].runs.is_none();

@@ -9,6 +9,7 @@ mod effects;
 mod fonts;
 mod frame;
 mod frame_timestamps;
+mod glyphs;
 mod gpu_graph;
 mod gpu_lease;
 mod gpu_order;

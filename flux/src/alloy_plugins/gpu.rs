@@ -9,7 +9,7 @@ use rquickjs::{Array, ArrayBuffer, Ctx, Exception, Function, JsLifetime, Object,
 use super::properties::{decode_params, decode_texture_bindings};
 use super::tree::to_prop_value;
 use crate::plugins::marshal::{array_buffer_over, bytes_of, OptArg};
-use alloy::CaptureInfo;
+use alloy::{CaptureInfo, TextureRect};
 
 // Per-engine texture bookkeeping, held in context userdata so engine teardown
 // (which clears userdata while the runtime is still alive) destroys the GPU
@@ -467,7 +467,12 @@ fn collect_instance_order(
     None => None,
     Some(i) => match i.get::<_, Option<f64>>("stride")? {
       Some(stride) => Some(stride),
-      None => return Err(throw_str(ctx, &format!("{api}: instanceOrder indices needs a stride (bytes per handed-off record)"))),
+      None => {
+        return Err(throw_str(
+          ctx,
+          &format!("{api}: instanceOrder indices needs a stride (bytes per handed-off record)"),
+        ))
+      }
     },
   };
   alloy::InstanceOrder::parse(field, position, direction, descending, buffer, retain, indices)
@@ -490,7 +495,11 @@ fn collect_direction(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> r
 // An entry's `buffers` list at create or swap: one buffer id per pipeline
 // layout, in declaration order (the pairing is alloy's check). A layout
 // object where an id belongs is the split-object mistake worth naming.
-fn collect_buffer_ids(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<[u64; alloy::MAX_BUFFERS]> {
+fn collect_buffer_ids(
+  ctx: &Ctx<'_>,
+  opts: &Option<Object<'_>>,
+  api: &str,
+) -> rquickjs::Result<[u64; alloy::MAX_BUFFERS]> {
   let list = match opts {
     Some(o) => o.get::<_, Option<Array>>("buffers")?,
     None => None,
@@ -500,12 +509,18 @@ fn collect_buffer_ids(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rq
     return Ok(ids);
   };
   if list.len() > alloy::MAX_BUFFERS {
-    return Err(throw_str(ctx, &format!("{api}: buffers holds {} ids; a pipeline declares at most {}", list.len(), alloy::MAX_BUFFERS)));
+    return Err(throw_str(
+      ctx,
+      &format!("{api}: buffers holds {} ids; a pipeline declares at most {}", list.len(), alloy::MAX_BUFFERS),
+    ));
   }
   for (i, item) in list.iter::<rquickjs::Value>().enumerate() {
     let item = item?;
     if item.is_object() {
-      return Err(throw_str(ctx, &format!("{api}: buffers lists buffer ids here; layouts belong to createRenderPipeline")));
+      return Err(throw_str(
+        ctx,
+        &format!("{api}: buffers lists buffer ids here; layouts belong to createRenderPipeline"),
+      ));
     }
     let id = match item.as_number() {
       Some(n) if n.fract() == 0.0 && n >= 1.0 => n as u64,
@@ -692,7 +707,10 @@ fn collect_pipeline_desc(
       for (i, item) in arr.iter::<rquickjs::Value>().enumerate() {
         let item = item?;
         let Some(layout) = item.as_object() else {
-          return Err(throw_str(ctx, &format!("{api}: buffers[{i}] is not a layout object ({{ attributes, stepMode?, arrayStride? }})")));
+          return Err(throw_str(
+            ctx,
+            &format!("{api}: buffers[{i}] is not a layout object ({{ attributes, stepMode?, arrayStride? }})"),
+          ));
         };
         let step = match layout.get::<_, Option<String>>("stepMode")? {
           Some(s) => alloy::StepMode::parse(&s).map_err(|e| throw_str(ctx, &format!("{api}: buffers[{i}]: {e}")))?,
@@ -725,9 +743,14 @@ fn collect_pipeline_desc(
               ids[i] = id;
             }
           }
-          (true, None) => return Err(throw_str(ctx, &format!("{api}: buffers[{i}] names no buffer (the id its layout reads)"))),
+          (true, None) => {
+            return Err(throw_str(ctx, &format!("{api}: buffers[{i}] names no buffer (the id its layout reads)")))
+          }
           (false, Some(_)) => {
-            return Err(throw_str(ctx, &format!("{api}: buffers[{i}].buffer is entry state; bind ids through the entry's buffers list")))
+            return Err(throw_str(
+              ctx,
+              &format!("{api}: buffers[{i}].buffer is entry state; bind ids through the entry's buffers list"),
+            ))
           }
           (false, None) => {}
         }
@@ -781,7 +804,10 @@ fn reject_layout_buffers(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) ->
     if let Some(arr) = o.get::<_, Option<Array>>("buffers")? {
       if let Some(first) = arr.iter::<rquickjs::Value>().next() {
         if first?.is_object() {
-          return Err(throw_str(ctx, &format!("{api}: buffers lists buffer ids here; layouts belong to createRenderPipeline")));
+          return Err(throw_str(
+            ctx,
+            &format!("{api}: buffers lists buffer ids here; layouts belong to createRenderPipeline"),
+          ));
         }
       }
     }
@@ -1078,7 +1104,10 @@ fn create_mutable_texture(
   if format.is_compressed() {
     return Err(throw_str(
       &ctx,
-      &format!("createMutableTexture: {} is create-once (no uploadTexture into compressed storage); use createTexture", format.name()),
+      &format!(
+        "createMutableTexture: {} is create-once (no uploadTexture into compressed storage); use createTexture",
+        format.name()
+      ),
     ));
   }
   let data = PixelData::collect(&ctx, data, format, "createMutableTexture")?;
@@ -1105,16 +1134,56 @@ fn create_mutable_texture(
 
 // The caller passes the pixel buffer on every upload (it already holds it),
 // so nothing is pinned on the Rust side. `data` may hold multiple frames;
-// `offset` selects the one to upload. Reading the buffer is zero-copy.
-fn upload_texture(ctx: Ctx<'_>, id: u64, data: Value<'_>, offset: OptArg<usize>) -> rquickjs::Result<()> {
+// a numeric `at` selects the one to upload by offset. A rect `at` (`{ x,
+// y, width, height }`) uploads `data` as exactly that rect of the texture
+// instead (GL's texSubImage2D with an offset): what a runtime atlas packer
+// writes a cell with. Reading the buffer is zero-copy.
+fn upload_texture<'js>(ctx: Ctx<'js>, id: u64, data: Value<'js>, at: OptArg<Value<'js>>) -> rquickjs::Result<()> {
   let st = state(&ctx);
   let format = st.gui.alloy.texture_format(id).map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
   let data = PixelData::collect(&ctx, data, format, "uploadTexture")?;
   let pixels = data.bytes(&ctx, "uploadTexture")?;
-  st.gui
-    .alloy
-    .update_texture(id, pixels, offset.0.unwrap_or(0))
-    .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
+  let rect = match at.0 {
+    Some(value) if value.is_object() => {
+      let obj = value.into_object().expect("checked is_object");
+      let field = |name: &str| -> rquickjs::Result<u32> {
+        let v: f64 =
+          obj.get(name).map_err(|_| throw_str(&ctx, &format!("uploadTexture: the rect needs a numeric {name}")))?;
+        if v.fract() != 0.0 || v < 0.0 || v > u32::MAX as f64 {
+          return Err(throw_str(&ctx, &format!("uploadTexture: rect {name} must be a non-negative integer, got {v}")));
+        }
+        Ok(v as u32)
+      };
+      Some((field("x")?, field("y")?, field("width")?, field("height")?))
+    }
+    Some(value) if value.is_undefined() => None,
+    Some(value) => {
+      let offset: f64 = value.as_number().ok_or_else(|| {
+        throw_str(
+          &ctx,
+          "uploadTexture: the third argument is a frame offset (number) or a rect ({ x, y, width, height })",
+        )
+      })?;
+      if offset.fract() != 0.0 || offset < 0.0 {
+        return Err(throw_str(&ctx, &format!("uploadTexture: offset must be a non-negative integer, got {offset}")));
+      }
+      st.gui
+        .alloy
+        .update_texture(id, pixels, offset as usize)
+        .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
+      st.gui.platform.request_frame();
+      return Ok(());
+    }
+    None => None,
+  };
+  match rect {
+    Some((x, y, width, height)) => st
+      .gui
+      .alloy
+      .update_texture_rects(id, vec![TextureRect { x, y, width, height, pixels: pixels.to_vec() }])
+      .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?,
+    None => st.gui.alloy.update_texture(id, pixels, 0).map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?,
+  }
   // New texture content changes the screen without any tree mutation.
   st.gui.platform.request_frame();
   Ok(())
@@ -1399,10 +1468,7 @@ fn write_buffer(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: OptArg<
 fn transfer_records(ctx: Ctx<'_>, id: u64, records: TypedArray<'_, u8>) -> rquickjs::Result<()> {
   let bytes = bytes_of(&ctx, &records, "transferRecords")?;
   let st = state(&ctx);
-  st.gui
-    .alloy
-    .instance_order_records(id, bytes)
-    .map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?;
+  st.gui.alloy.instance_order_records(id, bytes).map_err(|e| throw_str(&ctx, &format!("transferRecords: {e}")))?;
   Ok(())
 }
 

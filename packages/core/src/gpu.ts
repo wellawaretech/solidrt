@@ -97,7 +97,7 @@ export type { TextureFormat } from "flux:gpu"
 // runtime, distinct types to the checker, so a cross-space slip like
 // destroyBuffer(textureId) fails to compile. Exported so apps can annotate
 // storage (`let ids: TextureId[]`).
-export type { BufferId, DrawId, ProgramId, RenderPipelineId, ShaderStageId, TextureId } from "flux:gpu"
+export type { BufferId, DrawId, ProgramId, RenderPipelineId, ShaderStageId, TextureId, TextureRect } from "flux:gpu"
 
 // Re-exported so callers that depend on @solidrt/core -- like @solidrt/components
 // -- need not import flux directly: destroyTexture for the manual-cleanup path
@@ -282,7 +282,9 @@ export function createCubeTexture(
 
 /**
  * Creates a GPU texture you intend to update over time: seed it with `data`,
- * then call `uploadTexture(id, data)` (from flux:gpu) to push new pixels.
+ * then call `uploadTexture(id, data)` (from flux:gpu) to push new pixels, or
+ * `uploadTexture(id, cell, { x, y, width, height })` to write one rect of it
+ * (a runtime atlas placing a cell without re-sending the sheet).
  * `data` must hold at least `width * height` pixels at the declared format's
  * size, in the view type matching the format (Uint8Array for "rgba8"/
  * "rgba8-srgb"/"r8", Float32Array for "r32f"/"rgba32f"/"rgba16f"); it may

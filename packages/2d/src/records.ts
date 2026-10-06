@@ -1,6 +1,6 @@
 // The records layer: the raw escape hatch for motion only JS can compute
 // (bespoke flocking, per-frame gameplay logic over every entity at large
-// populations). Sprites are 16 JS-owned floats in one canonical
+// populations). Sprites are 20 JS-owned floats in one canonical
 // Float32Array ordered by draw order (insertion order - painter's
 // algorithm, later over earlier; `orderBy` swaps that for a core-produced
 // key order at publish, records untouched); mutations batch, and the flush
@@ -8,7 +8,7 @@
 // publishes what changed: the dirty record range as one buffer write, or
 // under `orderBy` the drawn prefix whole through the zero-copy write lease
 // (the core gathers it into key order during the copy, and a byte range
-// has no stable position under a permutation). A moved sprite is 16 float
+// has no stable position under a permutation). A moved sprite is 20 float
 // stores plus its share of one memcpy per dirty frame; a static layer
 // publishes nothing and therefore costs nothing.
 //
@@ -45,8 +45,9 @@ import { createViews } from "./views.ts"
 
 // Floats per instance record:
 // [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA,
-//  minScreenPx, maxScreenPx, atlas]
-export const INSTANCE_FLOATS = 16
+//  minScreenPx, maxScreenPx, atlas, outlineR, outlineG, outlineB,
+//  outlineWidth]
+export const INSTANCE_FLOATS = 20
 // Bytes per record: the stride of the GPU buffer and the mirror alike.
 const RECORD_BYTES = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT
 
@@ -58,6 +59,10 @@ const MAX_PX_FIELD_OFFSET = 14
 // Float offset of the atlas sampler index (the frame's texture's position
 // in the layer's atlas list).
 const ATLAS_FIELD_OFFSET = 15
+// Float offset of the outline (rgb plus a width in world pixels) a
+// distance-field atlas draws under the sprite; zero on a colour atlas and
+// on every sprite the raw writer leaves alone.
+const OUTLINE_FIELD_OFFSET = 16
 const RESOLVED = Promise.resolve()
 
 export type RecordLayerOptions = Omit<SpriteLayerOptions, "orderBy"> & {
@@ -96,9 +101,11 @@ export type UpdateRecordsOptions = { first?: number; count?: number }
 /**
  * The layer's record mirror - the raw power path. Layout per sprite is
  * INSTANCE_FLOATS floats: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR,
- * tintG, tintB, tintA, minScreenPx, maxScreenPx, atlas], record i at
- * i * INSTANCE_FLOATS; `atlas` is the frame's texture as its index in
- * the layer's `atlases` list. Record order is draw order - unless the
+ * tintG, tintB, tintA, minScreenPx, maxScreenPx, atlas, outlineR,
+ * outlineG, outlineB, outlineWidth], record i at i * INSTANCE_FLOATS;
+ * `atlas` is the frame's texture as its index in the layer's `atlases`
+ * list, and the outline is read only by a distance-field atlas (see
+ * `Atlas.sdf`): rgb in 0..1 and a width in world pixels, zero for none. Record order is draw order - unless the
  * layer was created with `orderBy`, which draws in key order while record
  * i keeps meaning sprite i. Write fields directly for large per-frame
  * populations, then updateRecords the range. Read it AT USE TIME: addSprite
@@ -186,7 +193,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
         ? { field: Y_FIELD_OFFSET }
         : { field: orderBy.field, descending: orderBy.descending }
   let ordered = instanceOrder !== undefined
-  let gpu = createSpritePipeline(label, VERTEX, [INSTANCE_ATTRIBUTES], opts?.blend ?? "alpha", atlases.length)
+  let gpu = createSpritePipeline(label, VERTEX, [INSTANCE_ATTRIBUTES], opts?.blend ?? "alpha", atlases)
 
   let disposed = false
   let scheduled = false
@@ -285,7 +292,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     return frameIndex(verb, atlasIndex, opts.frame)
   }
   // Record layout: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB,
-  // tintA, minScreenPx, maxScreenPx, atlas]
+  // tintA, minScreenPx, maxScreenPx, atlas, outline rgb + width]
   let writeRecord = (sprite: SpriteState, opts: SpriteOptions, atlas: number) => {
     let at = sprite._slot * INSTANCE_FLOATS
     let r = layer._records
@@ -410,6 +417,9 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       let sprite: SpriteState = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0, _flipX: false, _flipY: false, _visible: true, _parent: null }
       layer._order.push(sprite)
       writeRecord(sprite, record, atlas)
+      // No outline until a raw writer sets one: the slot may hold a
+      // shifted-out sprite's record otherwise.
+      layer._records.fill(0, index * INSTANCE_FLOATS + OUTLINE_FIELD_OFFSET, index * INSTANCE_FLOATS + OUTLINE_FIELD_OFFSET + 4)
       markRecords(layer, index, index + 1)
       return sprite
     },

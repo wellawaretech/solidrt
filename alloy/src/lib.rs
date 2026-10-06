@@ -76,7 +76,8 @@ pub use gpu::{
 };
 pub use gpu::{
   check_cube_faces, mip_levels, mip_size, GpuBufferLayoutInfo, SamplerFilter, SamplerOptions, SamplerOverride,
-  SamplerState, TextureEntry, TextureFormat, TextureRegistry, TextureShape, CUBE_FACES,
+  SamplerState, SamplerWrap, TextureEntry, TextureFormat, TextureRect, TextureRegistry, TextureShape, CUBE_FACES,
+  MIN_ANISOTROPY,
 };
 pub use input::InputState;
 pub use keymap::w3c_code_for_key;

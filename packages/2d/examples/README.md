@@ -79,3 +79,12 @@ copy one and adapt it.
   Each pane's map binds `gamepad.next()`: the first pad to press any
   button drives pane 0, the next pane 1. The `cameras` debug command
   reads both poses back.
+- `text.tsx` - world-space text: a sprite font (`createSpriteFont`, the
+  runtime's glyph engine behind `flux:font`) declared as one more atlas of
+  the layer, each sprite carrying a name below it as a text run
+  (`addText`: a group of glyph sprites in the one draw, anchored on its
+  middle, an `outline` for the msdf kind), a counter re-set every half
+  second (`setText` reuses the run's sprite pool) and a title at twice
+  the face's size. Wheel/pinch zooms, drag pans; the labels ride the
+  camera with no JS per label. Debug commands `zoom` and `state` drive
+  it headless.

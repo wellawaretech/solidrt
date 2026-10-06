@@ -21,7 +21,7 @@ pub struct TargetHandles {
   pub color: Option<Texture>,
   pub depth: Option<Texture>,
 }
-use crate::gpu::{SamplerState, TextureFormat};
+use crate::gpu::{SamplerState, TextureFormat, TextureRect};
 
 // Outset applied when converting logical damage to physical pixels: absorbs
 // the logical->physical scale rounding at the patch edges.
@@ -158,6 +158,9 @@ pub(crate) enum RasterCmd {
   /// Re-upload pixels into an existing texture; `pixels` is exactly one frame
   /// (the UI side slices multi-frame buffers before sending).
   UpdateTexture { id: u64, pixels: Vec<u8> },
+  /// Upload rects into an existing texture (validated UI-side), the mip
+  /// chain regenerated once after the lot.
+  UpdateTextureRects { id: u64, rects: Vec<TextureRect> },
   /// Give a YUV output `id` its latch (see yuv.rs) and its two plane sets,
   /// each plane as (uniform name, texture id, byte offset in a packed frame
   /// of `frame_size` bytes). From here the raster thread takes the due frame

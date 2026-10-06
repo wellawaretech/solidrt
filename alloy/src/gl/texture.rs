@@ -349,6 +349,56 @@ impl GpuTexture {
     self.upload_inner(gl, None, size);
   }
 
+  /// Upload `data` from client memory into the `width` x `height` rect at
+  /// (`x`, `y`) of level 0, leaving the mip chain alone: a caller writing
+  /// several rects (a glyph atlas flush) regenerates it once after, with
+  /// `regenerate_mipmaps`. No pixel-unpack buffer may be bound.
+  pub fn upload_rect(&self, gl: &glow::Context, data: &[u8], x: u32, y: u32, width: u32, height: u32) {
+    if self.shape == TextureShape::Cube {
+      log::warn!("[alloy] rect upload into a cube map ignored: cube maps are create-once");
+      return;
+    }
+    let Some((gl_format, ty, alignment)) = upload_layout(self.format) else {
+      log::warn!("[alloy] rect upload into a {} texture ignored: it is not an upload format", self.format.name());
+      return;
+    };
+    unsafe {
+      let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
+      gl.bind_texture(glow::TEXTURE_2D, Some(self.gl_texture));
+      gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, alignment);
+      gl.tex_sub_image_2d(
+        glow::TEXTURE_2D,
+        0,
+        x as i32,
+        y as i32,
+        width as i32,
+        height as i32,
+        gl_format,
+        ty,
+        glow::PixelUnpackData::Slice(Some(data)),
+      );
+      // Shared context state (see upload_inner): back to the GL default.
+      if alignment != 4 {
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+      }
+      gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+    }
+  }
+
+  /// Rebuild the mip chain from level 0, when the id keeps one; a no-op
+  /// otherwise. The whole-frame uploads do this themselves.
+  pub fn regenerate_mipmaps(&self, gl: &glow::Context) {
+    if !self.sampler.mipmap || self.shape == TextureShape::Cube {
+      return;
+    }
+    unsafe {
+      let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
+      gl.bind_texture(glow::TEXTURE_2D, Some(self.gl_texture));
+      gl.generate_mipmap(glow::TEXTURE_2D);
+      gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+    }
+  }
+
   fn upload_inner(&self, gl: &glow::Context, data: Option<&[u8]>, size: ISize) {
     if self.shape == TextureShape::Cube {
       // Gated UI-side (a cube map is create-once); backstop.

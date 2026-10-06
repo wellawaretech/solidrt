@@ -42,6 +42,18 @@ pub const MAX_ANISOTROPY: u8 = 16;
 /// sampler cache enumerates one object per level.
 pub const ANISOTROPY_LEVELS: usize = 5;
 
+/// One rect of an upload into an existing texture (`update_texture_rects`):
+/// where it lands in level 0, in texels, and exactly its `width` x `height`
+/// pixels at the texture's format.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextureRect {
+  pub x: u32,
+  pub y: u32,
+  pub width: u32,
+  pub height: u32,
+  pub pixels: Vec<u8>,
+}
+
 impl SamplerState {
   /// The fixed sampling of a depth texture id: NEAREST (the only complete
   /// filter without a comparison mode), clamped, no chain. Overrides on a
@@ -213,7 +225,10 @@ impl TextureFormat {
       TextureFormat::Rgba16f => 8,
       TextureFormat::Rgba32ui => 16,
       TextureFormat::Rgba8Srgb => 4,
-      TextureFormat::Etc2Rgba8 | TextureFormat::Etc2Rgba8Srgb | TextureFormat::Bc7Rgba8 | TextureFormat::Bc7Rgba8Srgb => {
+      TextureFormat::Etc2Rgba8
+      | TextureFormat::Etc2Rgba8Srgb
+      | TextureFormat::Bc7Rgba8
+      | TextureFormat::Bc7Rgba8Srgb => {
         unreachable!("compressed formats size by block")
       }
     };
@@ -233,7 +248,10 @@ impl TextureFormat {
   /// docs): sized by `byte_len` per block, uploaded with
   /// glCompressedTexImage2D level by level, create-once.
   pub fn is_compressed(self) -> bool {
-    matches!(self, TextureFormat::Etc2Rgba8 | TextureFormat::Etc2Rgba8Srgb | TextureFormat::Bc7Rgba8 | TextureFormat::Bc7Rgba8Srgb)
+    matches!(
+      self,
+      TextureFormat::Etc2Rgba8 | TextureFormat::Etc2Rgba8Srgb | TextureFormat::Bc7Rgba8 | TextureFormat::Bc7Rgba8Srgb
+    )
   }
 
   /// Whether the payload is unsigned 32-bit integers (a Uint32Array in JS),

@@ -274,7 +274,7 @@ export function createTileLayer(
   let perChunk = chunkTiles * chunkTiles
   // The one pipeline (and unit quad) every chunk target draws with:
   // compiled once per layer, however many chunks allocate.
-  let gpu = createSpritePipeline(label, VERTEX, [INSTANCE_ATTRIBUTES], blend, atlases.length)
+  let gpu = createSpritePipeline(label, VERTEX, [INSTANCE_ATTRIBUTES], blend, atlases)
   let textures = atlasBindings(atlases.map(a => a.texture))
 
   let disposed = false

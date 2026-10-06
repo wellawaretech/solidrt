@@ -7,3 +7,6 @@
 [submodule "forge/vendor/basis_universal"]
 	path = forge/vendor/basis_universal
 	url = https://github.com/BinomialLLC/basis_universal.git
+[submodule "alloy/vendor/msdfgen"]
+	path = alloy/vendor/msdfgen
+	url = https://github.com/Chlumsky/msdfgen.git

@@ -48,6 +48,11 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
+- **[World-space text for 2d layers (labels that ride the camera)](plans/2d-world-space-text.md)** [2026-09-02]
+  Text living IN a layer's world - node labels, cluster names, damage numbers
+  - has no path: apps re-project laid-out <text> elements per camera change,
+  which works for tens of labels and not at all for thousands; give the layer
+  an atlas-text answer.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -98,6 +103,13 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
+- **[Own glyph rasterizer behind the shaper seam](plans/text-own-rasterizer.md)** [2026-08-17]
+  Text quality and shaping semantics are capped by Impeller's paragraph engine
+  (grayscale AA only, no gamma or stem darkening, no glyph positions so carets
+  re-shape every prefix, shaping cut at word boundaries, fallback not ours);
+  the owned layout reduced the engine's job to shape-one-run and draw-one-run,
+  so a second implementation with its own glyph atlas can replace it where
+  quality matters.
 - **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
   Client-initiated streaming - open(url) plays a WebM served over HTTP on the
   Android plane with buffering, seek by Range and a cancel-safe close, built
@@ -153,11 +165,6 @@ Shaped, not started.
   though the core machinery - arena bones, the TextureSlot palette sink, the
   coming native clip evaluator - already exists or is planned with zero
   2d-specific core work.
-- **[World-space text for 2d layers (labels that ride the camera)](backlog/2d-world-space-text.md)** [2026-09-02]
-  Text living IN a layer's world - node labels, cluster names, damage numbers
-  - has no path: apps re-project laid-out <text> elements per camera change,
-  which works for tens of labels and not at all for thousands; give the layer
-  an atlas-text answer.
 - **[Wrap-around worlds in 2d - recipes exist but live nowhere, and a wrapping tile world has no seam answer](backlog/2d-wrap-around.md)** [2026-08-31]
   A toroidal world (Asteroids screen wrap, an endlessly repeating tile map) is
   expressible today only by app-side recipes nothing documents - position
@@ -786,13 +793,6 @@ Shaped, not started.
   Updating one interpolation in a multi-child <text> was observed to replace
   the entire text node rather than the changed part; unverified since the
   Solid 2.0 bump, so the first step is a repro.
-- **[Own glyph rasterizer behind the shaper seam](backlog/text-own-rasterizer.md)** [2026-08-17]
-  Text quality and shaping semantics are capped by Impeller's paragraph engine
-  (grayscale AA only, no gamma or stem darkening, no glyph positions so carets
-  re-shape every prefix, shaping cut at word boundaries, fallback not ours);
-  the owned layout reduced the engine's job to shape-one-run and draw-one-run,
-  so a second implementation with its own glyph atlas can replace it where
-  quality matters.
 - **[Touch and word text selection](backlog/text-selection-touch-word.md)** [2026-09-02]
   Text selection exists (keys, mouse drag, highlight) but a touch user cannot
   make one at all - a finger drag deliberately scrolls - and no pointer

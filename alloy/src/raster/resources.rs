@@ -10,8 +10,9 @@ use super::RasterState;
 use crate::gl;
 use crate::gl::{GpuTexture, RenderPipeline, ShaderProgram, Timed};
 use crate::gpu::{
-  AttributeTable, BufferLayout, GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources,
-  GpuTextureInfo, GpuWindowShaderInfo, PipelineDesc, SamplerState, TextureFormat, TextureShape, UniformTable, CUBE_FACES,
+  AttributeTable, BufferLayout, GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo,
+  GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, PipelineDesc, SamplerState, TextureFormat,
+  TextureRect, TextureShape, UniformTable, CUBE_FACES,
 };
 use std::rc::Rc;
 
@@ -118,6 +119,44 @@ impl RasterState {
     }
     // Shader targets sampling this texture re-render at the next flush, so
     // data-texture changes are visible without a params change.
+    dirty.insert(id);
+    Ok(())
+  }
+
+  /// Upload `rects` into a texture, each from client memory into its own
+  /// place in level 0, and regenerate the mip chain once after the lot. The
+  /// UI side validated bounds and sizes; this rejects what it cannot
+  /// upload so a mismatch is a warning, never a GL error.
+  pub(super) fn update_texture_rects(&mut self, id: u64, rects: &[TextureRect]) -> Result<(), String> {
+    let Self { gl, textures, dirty, .. } = self;
+    let gpu = textures.get(&id).ok_or_else(|| format!("texture {id} not found"))?;
+    for rect in rects {
+      let inside = rect.x.checked_add(rect.width).is_some_and(|right| right <= gpu.width)
+        && rect.y.checked_add(rect.height).is_some_and(|bottom| bottom <= gpu.height);
+      if !inside {
+        return Err(format!(
+          "texture {} rect {}x{} at ({}, {}) is outside its {}x{}",
+          describe(id, &gpu.label),
+          rect.width,
+          rect.height,
+          rect.x,
+          rect.y,
+          gpu.width,
+          gpu.height
+        ));
+      }
+      let expected = gpu.format.byte_len(rect.width, rect.height);
+      if rect.pixels.len() != expected {
+        return Err(format!(
+          "texture {} rect update is {} bytes, expected {expected} ({})",
+          describe(id, &gpu.label),
+          rect.pixels.len(),
+          gpu.format.name()
+        ));
+      }
+      gpu.upload_rect(gl, &rect.pixels, rect.x, rect.y, rect.width, rect.height);
+    }
+    gpu.regenerate_mipmaps(gl);
     dirty.insert(id);
     Ok(())
   }

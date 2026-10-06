@@ -55,7 +55,10 @@ hit-test exact rotated rects, topmost first, with pointer capture.
 In the package: atlas creation, slicing and extrusion (`createAtlas`,
 `grid`, `namedFrames`, `fullFrame`, `extrudeGrid`, `extrudeRects`), the
 sprite layer with its views and cameras, sprite pointer events, the baked
-tile layer, frame animation, key ordering, and the component face. Staged
+tile layer, frame animation, key ordering, world-space text (a sprite
+font over the runtime's glyph engine is one more atlas, a run of text a
+group of glyph sprites: `createSpriteFont`, `addText`, `<Text2d>`), and
+the component face. Staged
 next: streaming tile worlds and the retro presets (pixel canvas, palette
 and scanline passes) - see `okf/backlog/`.
 

@@ -736,6 +736,11 @@ impl RasterState {
               log::warn!("[alloy] texture update failed: {e}");
             }
           }
+          RasterCmd::UpdateTextureRects { id, rects } => {
+            if let Err(e) = self.update_texture_rects(id, &rects) {
+              log::warn!("[alloy] texture rect update failed: {e}");
+            }
+          }
           RasterCmd::AttachYuvLatch { id, latch, sets, frame_size } => {
             self.yuv_latches.insert(id, YuvLatchEntry { latch, sets, front: 0, frame_size });
           }

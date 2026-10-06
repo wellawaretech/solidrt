@@ -1,4 +1,5 @@
 use crate::impellers::{Point, Rect, Size, TypographyContext};
+use crate::rendertree::text::glyphs::FontSet;
 use crate::rendertree::text::{FontMetricsTable, WordCache};
 use std::borrow::Cow;
 use std::cell::{Cell, Ref, RefCell, RefMut};
@@ -41,6 +42,10 @@ pub struct PlatformContext {
   // Shaped words shared by every text (rendertree/text/words.rs); valid for
   // the fonts in `typography`, so a reset clears it.
   words: RefCell<WordCache>,
+  // The glyph engine's view of the same fonts (rendertree/text/glyphs):
+  // the second shaper behind the seam and the cell source. Replaced with
+  // `typography` on a reset.
+  glyphs: RefCell<FontSet>,
   window_size: Cell<(f32, f32)>,
   window_size_dirty: Cell<bool>,
   display_scale: Cell<f32>,
@@ -67,12 +72,14 @@ impl PlatformContext {
   pub fn new(fonts: Vec<FontPayload>) -> Self {
     // Startup fonts are the client's own (embedded Notos, a packed trailer);
     // one failing to parse is a build defect, so this keeps panicking.
+    let glyphs = FontSet::from_payloads(&fonts);
     let (typography, font_metrics) =
       build_typography(fonts, |alias, e| panic!("Failed to register font '{alias}': {e}"));
     Self {
       typography: RefCell::new(typography),
       font_metrics: RefCell::new(font_metrics),
       words: RefCell::new(WordCache::default()),
+      glyphs: RefCell::new(glyphs),
       window_size: Cell::new((0.0, 0.0)),
       window_size_dirty: Cell::new(false),
       display_scale: Cell::new(1.0),
@@ -100,16 +107,24 @@ impl PlatformContext {
     self.font_metrics.borrow()
   }
 
+  /// The glyph engine's faces over the registered fonts. UI thread only,
+  /// like `typography`; the borrow must not be held across a `reset_fonts`.
+  pub fn glyphs(&self) -> Ref<'_, FontSet> {
+    self.glyphs.borrow()
+  }
+
   /// Replace the registered font set (an app switch): a fresh context built
   /// from `fonts` alone, dropping everything previously registered. A font
   /// that fails to register is skipped with a warning - its role falls back,
   /// same as a missing font file; mid-session this must never panic. Requests
   /// a frame so text reshapes against the new set.
   pub fn reset_fonts(&self, fonts: Vec<FontPayload>) {
+    let glyphs = FontSet::from_payloads(&fonts);
     let (typography, font_metrics) =
       build_typography(fonts, |alias, e| log::warn!("Could not register font '{alias}': {e}"));
     self.typography.replace(typography);
     self.font_metrics.replace(font_metrics);
+    self.glyphs.replace(glyphs);
     self.words.borrow_mut().clear();
     self.request_frame();
   }

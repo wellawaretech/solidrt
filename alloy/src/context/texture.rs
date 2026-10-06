@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::gpu::{check_cube_faces, SamplerState, TextureBinding, TextureEntry, TextureFormat, TextureShape};
+use crate::gpu::{
+  check_cube_faces, SamplerState, TextureBinding, TextureEntry, TextureFormat, TextureRect, TextureShape,
+};
 use crate::raster::RasterCmd;
 use crate::yuv::{self, LatchedFrame, YuvLatchShared, YuvLayout, YuvMatrix, YuvRange};
 
@@ -297,6 +299,49 @@ impl Context {
       ));
     }
     self.send(RasterCmd::UpdateTexture { id, pixels: pixels[offset..end].to_vec() });
+    self.note_content(id);
+    Ok(())
+  }
+
+  /// Upload pixels into rects of an existing texture (GL's
+  /// `texSubImage2D` with an offset; WebGPU's `writeTexture` origin): each
+  /// rect's `pixels` hold exactly its `width` x `height` at the id's
+  /// format, and every rect lies inside the texture. One raster command
+  /// for the lot, so a mip chain regenerates once. What a glyph atlas and
+  /// a runtime sprite packer write with: a cell lands in its place without
+  /// re-sending the sheet.
+  pub fn update_texture_rects(&self, id: u64, rects: Vec<TextureRect>) -> Result<(), String> {
+    if let Some(owner) = self.depth_owner(id) {
+      return Err(format!("texture {id} is target {owner}'s depth texture: render-written, not uploadable"));
+    }
+    self.reject_cube(id, "a cube map is create-once, there is no upload into it")?;
+    let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
+    let (width, height, format) = (entry.width(), entry.height(), entry.format);
+    self.reject_compressed(id, format, "there is no upload into it")?;
+    for rect in &rects {
+      let inside = rect.x.checked_add(rect.width).is_some_and(|right| right <= width)
+        && rect.y.checked_add(rect.height).is_some_and(|bottom| bottom <= height);
+      if !inside {
+        return Err(format!(
+          "rect {}x{} at ({}, {}) is outside the {width}x{height} texture",
+          rect.width, rect.height, rect.x, rect.y
+        ));
+      }
+      let expected = format.byte_len(rect.width, rect.height);
+      if rect.pixels.len() != expected {
+        return Err(format!(
+          "need {expected} bytes for a {}x{} {} rect, got {}",
+          rect.width,
+          rect.height,
+          format.name(),
+          rect.pixels.len()
+        ));
+      }
+    }
+    if rects.is_empty() {
+      return Ok(());
+    }
+    self.send(RasterCmd::UpdateTextureRects { id, rects });
     self.note_content(id);
     Ok(())
   }

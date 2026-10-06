@@ -35,6 +35,7 @@ Contents:
   - [Retargeted motion](#retargeted-motion)
   - [Frame-rate motion](#frame-rate-motion)
   - [Frame animation](#frame-animation)
+  - [Text runs](#text-runs)
   - [Pure pieces](#pure-pieces)
 - [The baked tile layer (tiles.ts)](#the-baked-tile-layer-tilests)
   - [Chunks](#chunks)
@@ -50,6 +51,7 @@ Contents:
   - [Slots, capacity and order](#slots-capacity-and-order)
   - [Nodes, transitions and queries](#nodes-transitions-and-queries)
   - [Cameras and rotation](#cameras-and-rotation)
+  - [Text runs](#text-runs-1)
   - [Tile layer](#tile-layer)
 
 ## The model
@@ -98,7 +100,12 @@ unclamped uv before the branch and the tap is `textureGrad`, so mip
 selection is the quad's own and well defined inside the branch. A frame
 whose texture the layer did not declare THROWS at the write (the
 wrong-sheet bug, caught instead of drawn); the frame left out of
-`addSprite` is the whole FIRST atlas.
+`addSprite` is the whole FIRST atlas. An atlas declared `sdf: { range }`
+(a sprite font's msdf atlas, or any distance field you upload) is
+decoded in its branch instead of sampled as colour: the median of rgb is
+the edge, anti-aliased over one screen pixel at whatever zoom, the true
+field in alpha grows a per-sprite outline (text runs set it; a colour
+atlas ignores the field). Fixed at creation like the list itself.
 
 ### Pose and style slots
 
@@ -109,7 +116,8 @@ layers): slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY
 by the core (each sprite node's Pose2D record sink; one coalesced buffer
 write per flush however many nodes moved), slot 1 the STYLE buffer
 `[u0, v0, u1, v1, tint rgba, renderOrder, minScreenPx, maxScreenPx,
-atlas]`, JS-owned, published through the zero-copy write lease. NEVER
+atlas, outline rgb, outlineWidth]` (16 floats), JS-owned, published
+through the zero-copy write lease. NEVER
 write the pose buffer from JS - the core's staging mirror owns it and
 will overwrite.
 
@@ -237,10 +245,11 @@ zero, the same demand-gate story as the rest of the platform.
 
 ### The records layer
 
-The records layer (`createRecordLayer`) keeps the old model whole: 16
+The records layer (`createRecordLayer`) keeps the old model whole: 20
 JS-owned floats per sprite `[cx, cy, w, h, u0, v0, u1, v1, rot, tint
-rgba, minScreenPx, maxScreenPx, atlas]` (`INSTANCE_FLOATS`; `atlas`
-is the frame's texture as its index in `layer.atlases`), draw order =
+rgba, minScreenPx, maxScreenPx, atlas, outline rgb, outlineWidth]`
+(`INSTANCE_FLOATS`; `atlas` is the frame's texture as its index in
+`layer.atlases`; the outline is read by a distance-field atlas only), draw order =
 insertion order (or key order with `orderBy` - see below), remove
 shifts, raw writes, JS pick walk. The raw path speaks @solidrt/3d's
 record-mesh verbs, one dimension down: `records(layer)` is the mirror
@@ -568,13 +577,46 @@ attach via `ref` and leave the `frame` prop off - the clip owns that
 field (the prop effect passes absent props as undefined, which setSprite
 keeps, so other props stay reactive).
 
+### Text runs
+
+Text IN the layer's world - a label under a sprite, a name on a map, a
+damage number - is a text run: a group of glyph sprites drawn from a
+SPRITE FONT's atlas (`createSpriteFont`, `addText`/`setText`/
+`destroyText`, `<Text2d>`; `examples/text.tsx`). The font is the
+runtime's own glyph engine (`flux:font`): it shapes the text (kerning is
+the engine's, carets are one pass), makes glyph cells on a worker thread
+and packs them into one atlas texture that grows as glyphs arrive. The
+atlas is one more entry in the layer's list - `createSpriteLayer([art,
+font.atlas])` - so labels draw in the one draw with the sprites they
+belong to and pan, zoom, sort (`orderBy`), pick and transition as
+sprites; a run's pose is its group's (`run.group`), where glyph pointer
+events bubble. Two cell kinds: "mask" (coverage at the face's exact
+size, for 1:1 drawing; the default until the engine's distance-field
+generator lands) and "msdf" (one atlas sharp at every zoom, the fragment
+stage decoding `Atlas.sdf`; the per-run `outline` draws only here). Text
+as elements is still the right tool up to hundreds of labels: `d-text`
+under a `<view>` carrying the camera transform (what `<TileLayer>` does
+for its chunks) costs no JS per label on a camera move and is rasterized
+at the real scale; runs are for thousands, for in-layer draw order, and
+for a zoom animation that would re-rasterize every label per frame.
+
+Layout is `layoutText` (text-layout.ts, pure): `\n` breaks, `maxWidth`
+wraps with core's greedy rule, `align` per line, `anchor`
+(start/middle/end, as d-text) and `anchorY` (top/middle/baseline/bottom)
+place the run's point, `letterSpacing` and `lineHeight` as named. The
+run reports `width`, `height`, `ascent` and `lines`. A run's `fontSize`
+defaults to the face's; glyphs scale their cells by `fontSize /
+font.size`.
+
 ### Pure pieces
 
 frames.ts, extrude.ts (the mip-gutter repack, tests/extrude.test.ts),
 pack.ts (the shelf packer, tests/pack.test.ts), pick.ts, camera.ts,
-camera-motion.ts, dispatch.ts, oversample-math.ts and tiles-math.ts (the
-tile grid's chunk and slot math, tests/tiles.test.ts) are pure (no GPU
-imports) BY DESIGN so they can be checked headless; keep them that way.
+camera-motion.ts, dispatch.ts, oversample-math.ts, tiles-math.ts (the
+tile grid's chunk and slot math, tests/tiles.test.ts) and text-layout.ts
+(glyph placement over prepared units, tests/text-layout.test.ts) are pure
+(no GPU imports) BY DESIGN so they can be checked headless; keep them
+that way.
 
 ## The baked tile layer (tiles.ts)
 
@@ -837,8 +879,8 @@ hover, wheel and tap rules headless.
   sprites)) and marks the shifted records dirty. The flush publishes the
   DIRTY record range (one buffer write at its byte offset, clipped to
   the live sprites), or under `orderBy` the drawn prefix whole through
-  the lease - so a moved sprite costs its 64 bytes on a plain layer and
-  count x 64 bytes on an ordered one. The node layer's style publish is
+  the lease - so a moved sprite costs its 80 bytes on a plain layer and
+  count x 80 bytes on an ordered one. The node layer's style publish is
   still the whole-prefix shape (a boolean dirty flag over the high-water
   mark), the one place a range is not yet tracked.
 - `orderBy` on BOTH layers: the core gathers publishes into key order
@@ -917,6 +959,27 @@ hover, wheel and tap rules headless.
   spins the cropped viewport and the corners cut. The tile layer gets
   away with the transform-on-the-leaf camera only because its composited
   view is the WORLD, not a viewport of it.
+
+### Text runs
+
+- A run draws nothing for a glyph whose cell is not in the atlas yet:
+  the sprite is there, hidden, at its place, and the font re-frames the
+  run when the cell lands a frame or two later (`font.ready()` awaits
+  that; `settle` does in a test). Printable ASCII is made at font
+  creation so a run of it never waits; `chars: false` skips that.
+- The atlas grows by doubling and EVERY cell moves when it does:
+  `font.atlas.width`/`height` change in place and every run over the
+  font is re-framed. Never cache a glyph's frame outside the font.
+- A sprite font over "mask" cells is exact at the face's size and
+  resamples under zoom like any texture; "msdf" cells are the zoom
+  answer, pending the generator (okf/plans/text-own-rasterizer.md).
+  `outline` is silently ignored on a mask font.
+- A run is node-layer only (it is a group); `addText` on a layer that
+  does not declare `font.atlas` throws. Dispose runs before the font
+  (`font.dispose`, or the owner's cleanup).
+- The style record is 16 floats and the raw record 20: a raw record
+  writer (`records(layer)`) that assumed 16 is off by the outline field
+  per sprite.
 
 ### Tile layer
 

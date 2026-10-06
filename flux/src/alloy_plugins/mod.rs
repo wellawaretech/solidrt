@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod camera;
 pub mod events;
+pub mod font;
 pub mod frame;
 pub mod input;
 pub mod inspect;
@@ -166,6 +167,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .plugin(|ctx| microphone::store_state(&ctx))
     .plugin(|ctx| audio::store_state(&ctx))
     .plugin(|ctx| spatial::store_state(&ctx))
+    .plugin(|ctx| font::store_state(&ctx))
     .plugin(move |ctx| crate::standards_plugins::clipboard::init_clipboard(&ctx, clipboard_cmd_tx))
     .plugin(register_capabilities)
     .module_override("flux:rendertree", tree::RenderTreeModule)
@@ -173,7 +175,8 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .module_override("flux:microphone", microphone::MicrophoneModule)
     .module_override("flux:audio", audio::AudioModule)
     .module_override("flux:gpu", gpu::GpuModule)
-    .module_override("flux:spatial", spatial::SpatialModule);
+    .module_override("flux:spatial", spatial::SpatialModule)
+    .module_override("flux:font", font::FontModule);
   #[cfg(feature = "video")]
   let builder = builder.plugin(|ctx| video::store_state(&ctx)).module_override("flux:video", video::VideoModule);
   builder
@@ -181,9 +184,9 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
 
 /// Capability names the gui feature adds on top of `BASE_CAPABILITIES`.
 #[cfg(feature = "video")]
-pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial", "video"];
+pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial", "font", "video"];
 #[cfg(not(feature = "video"))]
-pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial"];
+pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial", "font"];
 
 /// Append the gui capability names to `Flux.capabilities` so availability checks
 /// are uniform with the other modules (`Flux.capabilities.includes("camera")`).
