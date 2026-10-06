@@ -16,7 +16,7 @@
 
 export { useScene } from "./context.tsx"
 export type { CameraTarget } from "./context.tsx"
-export type { BubblingPointerEventProps, PointerEventProps, TransformProps } from "./node-props.ts"
+export type { BubblingNodePointerProps, NodePointerProps, TransformProps } from "./node-props.ts"
 export { Scene } from "./scene.tsx"
 export type { ScenePointerProps, SceneProps } from "./scene.tsx"
 export { View3d } from "./view3d.tsx"

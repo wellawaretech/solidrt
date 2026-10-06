@@ -17,7 +17,7 @@ const INITIAL: CameraState = { x: 0, y: 0, zoom: 1, rotation: 0, pivotX: 0, pivo
 let lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
 /** Interpolate two 2d cameras: everything linear, the zoom in log space. */
-export let mixCamera2d = (a: CameraState, b: CameraState, t: number): CameraState => ({
+export let mixCamera = (a: CameraState, b: CameraState, t: number): CameraState => ({
   x: lerp(a.x, b.x, t),
   y: lerp(a.y, b.y, t),
   zoom: a.zoom * Math.pow(b.zoom / a.zoom, t),
@@ -26,25 +26,39 @@ export let mixCamera2d = (a: CameraState, b: CameraState, t: number): CameraStat
   pivotY: lerp(a.pivotY, b.pivotY, t),
 })
 
-export type ShotsHandle = ShotBlend<CameraState>
+/** A shot's target: the recording half plus the first view's size, so a
+ * createCamera2d drives it exactly like the view. */
 export type ShotTarget = RecordingTarget<CameraState> & Camera2dTarget
+
+export type ShotsHandle = Omit<ShotBlend<CameraState>, "shot"> & { shot(name: string, opts?: { priority?: number }): ShotTarget }
 
 /**
  * Shots over a view (or several: one output over a scene's layers):
- * `shot(name, { priority? })` returns the target a `createCamera2d` (or
- * a `<Camera2d>` through a custom viewport) drives; `activate(name, {
- * blend? })` makes it live when its priority wins, blending from the
- * current output; `update(dt)` from a frame loop while `active()`.
+ * `shot(name, { priority? })` returns the target a `createCamera2d`
+ * drives (its `camera()` is the shot's own, its `size()` the first
+ * view's); `activate(name, { blend? })` makes it live when its priority
+ * wins, blending from the current output; `update(dt)` from a frame
+ * loop while `active()`.
  */
 export function createShots(target: Camera2dTarget | Camera2dTarget[], options: ShotBlendOptions = {}): ShotsHandle {
   let targets = Array.isArray(target) ? target : [target]
-  for (let t of targets) if (!t || typeof t.setCamera !== "function") throw new Error("createShots: every target needs setCamera() (a view)")
-  return createShotBlend<CameraState>(
+  for (let t of targets) {
+    if (!t || typeof t.setCamera !== "function" || typeof t.size !== "function") throw new Error("createShots: every target needs setCamera() and size() (a view)")
+  }
+  let first = targets[0]!
+  let blend = createShotBlend<CameraState>(
     camera => {
       for (let t of targets) t.setCamera(camera)
     },
-    mixCamera2d,
+    mixCamera,
     INITIAL,
     options,
   )
+  return {
+    ...blend,
+    shot(name, opts) {
+      let rec = blend.shot(name, opts)
+      return { setCamera: rec.setCamera, camera: rec.camera, size: () => first.size() }
+    },
+  }
 }

@@ -87,24 +87,22 @@ const PAN_RATE = 1
 const ZOOM_RATE = 1
 const ROLL_RATE = 0.5
 
-/** What a 2d camera drives: anything with the layers' `setCamera`. */
-export type Camera2dTarget = { setCamera(update: CameraUpdate): void }
+/** What a 2d camera drives: anything with the layers' `setCamera` and a
+ * `size()` (the viewport in layer pixels, read whenever the camera needs
+ * it - a resize re-clamps at the next update; zeros while unknown, and
+ * clamping and fitting wait for a real size). A view is one. */
+export type Camera2dTarget = { setCamera(update: CameraUpdate): void; size(): { width: number; height: number } }
 
-/** The control's parameters: what set() takes and pose() returns filled. */
-export type Camera2dPose = {
-  x?: number
-  y?: number
-  zoom?: number
-  rotation?: number
-}
+/** The control's parameters, filled: what pose() returns (the 3d
+ * controls' OrbitPoseState and FirstPersonPoseState). */
+export type Camera2dPoseState = { x: number; y: number; zoom: number; rotation: number }
+
+/** The parameters, each optional: what set() and glideTo() take. */
+export type Camera2dPose = Partial<Camera2dPoseState>
 
 export type Rect2d = { x: number; y: number; width: number; height: number }
 
 export type Camera2dOptions = Camera2dPose & {
-  /** Viewport size in layer pixels, read whenever the camera needs it (a
-   * resize re-clamps at the next update). Return zeros while unknown -
-   * clamping and fitting wait for a real size. */
-  viewport: () => { width: number; height: number }
   /** World bounds (origin 0,0) the view is kept inside: an axis whose view
    * is wider than the world centers. Absent = unbounded. `damping` eases
    * a MOTION (a follow, a glide, a fling) into the bounds instead of
@@ -120,7 +118,10 @@ export type Camera2dOptions = Camera2dPose & {
   maxZoom?: number
   /** Where in the viewport the camera's world point sits, as fractions of
    * its size; default the center. glideTo and follow land their point
-   * here and rotation turns about it. */
+   * here and rotation and zoom turn about it: the pivot is the 3d orbit
+   * control's target - the point the camera turns about - which that
+   * control holds at the view centre and re-seats in WORLD space
+   * (`setPivot`), where this one places it on screen. */
   pivot?: { x: number; y: number }
   /** How follow(x, y) chases its point (the framing stage): damping per
    * axis, the dead zone and hard limits as fractions of the viewport
@@ -153,9 +154,9 @@ export type Camera2d = {
    * call, every field set): the pose plus the lanes - the argument for
    * projectCamera/unprojectCamera. */
   camera(): CameraState
-  /** Pose snapshot - the control's own four values, the shape set() takes
-   * (the 3d controls' pose()); no lane in it. */
-  pose(): Required<Camera2dPose>
+  /** Pose snapshot - the control's own four values, filled, the shape
+   * set() and glideTo() take (the 3d controls' pose()); no lane in it. */
+  pose(): Camera2dPoseState
   /** Merge a pose in (clamps apply) and push it. A snap: an x/y/zoom
    * write drops a glide or fling in flight and ends the follow; a
    * rotation write leaves them running. */
@@ -174,11 +175,13 @@ export type Camera2d = {
   zoomAt(sx: number, sy: number, factor: number, opts?: { glide?: boolean }): void
   /** Turn the world about the pivot by radians (clockwise, y-down) and push. */
   rollBy(angle: number): void
-  /** Ease the pose to put world (x, y) at the pivot, at `zoom` (default
-   * the current, or a pending wheel or double-tap zoom's target) and
-   * `rotation` (default the current), landing exactly; a fling or a
-   * follow yields. */
-  glideTo(x: number, y: number, zoom?: number, rotation?: number): void
+  /** Ease to a pose (the fields given, the rest as they are: `x`/`y` put
+   * that world point at the pivot, `zoom` defaults to the current or a
+   * pending wheel or double-tap zoom's target, `rotation` to the current;
+   * clamps apply) inside update(dt), landing exactly; a new glideTo
+   * retargets, and a fling or a follow yields. The 3d controls'
+   * glideTo(pose). */
+  glideTo(pose: Camera2dPose): void
   /** Frame a world rect (default the whole world): centered in the view
    * at the zoom that fits it, clamped. A snap unless `glide`. Waits for
    * the viewport when its size is not known yet. */
@@ -269,8 +272,9 @@ function checkOptions(options: Camera2dOptions): void {
 /**
  * Create a 2d camera driving `target`'s camera, where `target` is a sprite
  * or record layer's view (or several: a view and its overlay layer's
- * share one camera), or anything else with the layers' `setCamera`, such
- * as a signal setter feeding `<TileLayer camera>`. The initial pose
+ * share one camera, the FIRST one's `size()` the viewport), or anything
+ * else with the layers' `setCamera` and a `size()`, such as a signal
+ * setter feeding `<TileLayer camera>` beside its size. The initial pose
  * applies immediately: the world fitted when `world` is given and no
  * `zoom`. The pose options are initial values; every other option is read
  * where it applies, so a caller holding the options object (or a props
@@ -281,7 +285,11 @@ function checkOptions(options: Camera2dOptions): void {
  */
 export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], options: Camera2dOptions): Camera2d {
   let targets = Array.isArray(target) ? target : [target]
-  if (typeof options.viewport !== "function") throw new Error("createCamera2d: viewport must be a function returning { width, height }")
+  for (let t of targets) {
+    if (!t || typeof t.setCamera !== "function" || typeof t.size !== "function") throw new Error("createCamera2d: every target needs setCamera() and size() (a view)")
+  }
+  let first = targets[0]
+  if (first === undefined) throw new Error("createCamera2d: at least one target")
   checkOptions(options)
   checkPose("", options)
   // Everything below the pose is read from `options` where it applies
@@ -305,15 +313,15 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
   let zoom = options.zoom ?? 1
   let rotation = options.rotation ?? 0
 
-  // The viewport as last read; zeros mean unknown (nothing clamps or fits
-  // until a real size arrives).
+  // The viewport (the first target's size) as last read; zeros mean
+  // unknown (nothing clamps or fits until a real size arrives).
   let vw = 0
   let vh = 0
   let known = () => vw > 0 && vh > 0
   let readViewport = () => {
-    let v = options.viewport()
+    let v = first.size()
     if (!(Number.isFinite(v.width) && Number.isFinite(v.height) && v.width >= 0 && v.height >= 0)) {
-      throw new Error(`createCamera2d: viewport() must return non-negative finite width/height, got ${v.width}x${v.height}`)
+      throw new Error(`createCamera2d: the target's size() must return non-negative finite width/height, got ${v.width}x${v.height}`)
     }
     vw = v.width
     vh = v.height
@@ -655,8 +663,9 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
       rollBy(angle)
       flush()
     },
-    glideTo(tx, ty, tz, tr) {
-      glideTo(tx, ty, tz, tr)
+    glideTo(pose) {
+      checkPose("glideTo", pose)
+      glideTo(pose.x ?? x, pose.y ?? y, pose.zoom, pose.rotation)
       notify()
     },
     fit(rect, opts) {

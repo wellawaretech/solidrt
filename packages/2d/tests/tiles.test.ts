@@ -31,7 +31,7 @@ let throws = (what: string, f: () => void) => {
 const GRIDS = 200
 const RECTS = 20
 // The record width the slot oracle assumes (any positive integer works;
-// the layer's own is FLOATS_PER_SPRITE).
+// the layer's own is INSTANCE_FLOATS).
 const FLOATS = 13
 
 // --- chunkOf and slotOf against the oracle: the chunk holding a cell is

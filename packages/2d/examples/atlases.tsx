@@ -94,7 +94,7 @@ function App() {
     addSprite(layer, { x, y, w: SPRITE, h: SPRITE, frame })
   }
 
-  cam = createCamera2d([world], { viewport: () => win, world: WORLD, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM })
+  cam = createCamera2d(world, { world: WORLD, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM })
   let pointer = createPointerFeed()
   feedPointer(world, pointer)
   let input = createInputMap(camera2dActions)

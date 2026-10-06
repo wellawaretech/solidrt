@@ -472,7 +472,7 @@ export type SceneOptions = {
    * { stagger })` at creation: every node added straight under the root
    * that enters or leaves in one frame is spaced by `index * stagger`,
    * the whole-scene form of a Group's stagger (nested groups declaring
-   * their own win for what is under them). */
+   * their own win for what is under them). See setStagger. */
   stagger?: number
   /** `autoFree: false` opts out of owner-scoped auto-dispose (then call dispose yourself). */
   autoFree?: boolean
@@ -830,6 +830,9 @@ export type Scene = {
    * measured projected size, for the scene, its views and its shadow
    * tiles. Below 1 switches to far levels sooner. */
   setLodBias(bias: number): void
+  /** Stagger (ms) on the scene's root node, live (SceneOptions.stagger
+   * is its creation form): null removes it. The 2d layer's setStagger. */
+  setStagger(ms: number | null): void
   /** The level a LOD group draws in the scene's own render (the thing to
    * read while tuning thresholds): the index into its levels, nearest
    * first, `levels.length` when culled past the last one, null before
@@ -2437,6 +2440,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       hooks._schedule()
     },
     size: () => ({ width, height }),
+    setStagger(ms) {
+      if (disposed) return
+      setTransition(root, ms === null ? null : { stagger: ms })
+    },
     setParams(params) {
       if (disposed) return
       Object.assign(sceneParams, params)

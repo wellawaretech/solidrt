@@ -4,10 +4,7 @@ import { createCamera2d } from "../camera2d.ts"
 import type { Camera2d as Camera2dHandle, Camera2dAxes, Camera2dOptions } from "../camera2d.ts"
 import { useSpriteLayer } from "./context.ts"
 
-export type Camera2dProps = Omit<Camera2dOptions, "viewport"> & {
-  /** Viewport in layer pixels; defaults to the driven view's own size
-   * (live: a fill layer's box, a setSize, a `<View2d>` resize). */
-  viewport?: () => { width: number; height: number }
+export type Camera2dProps = Camera2dOptions & {
   /** The input map driving the control (InputMap.drive): its `pan`,
    * `zoom` and `roll` actions, or the ones `actions` names. Live: a new
    * map reconnects. Without one the control moves only through `ref`. */
@@ -35,21 +32,17 @@ const MAX_CAMERA_DT = 0.1
  * getter and read where it applies, so a world, a zoom range, a pivot,
  * the follow's zones, the offset lane or a rate follows its prop, and a
  * bounds, pivot or offset change re-clamps and pushes the pose at once -
- * the `<OrbitCamera>` rule.
- * `viewport` defaults to the view's own size. Frames run only while the
- * camera moves (`active()`), so a resting camera leaves the app
- * demand-driven idle.
+ * the `<OrbitCamera>` rule. The view's `size()` is the viewport (live: a
+ * fill layer's box, a setSize, a `<View2d>` resize). Frames run only
+ * while the camera moves (`active()`), so a resting camera leaves the
+ * app demand-driven idle.
  */
 export let Camera2d: VoidComponent<Camera2dProps> = props => {
   let target = useSpriteLayer().viewport
   // Through merge, not a spread: a props object hands out getters, and
   // merge keeps them, so the control reads each option live where it
   // applies.
-  let options: Camera2dOptions = merge(props, {
-    get viewport() {
-      return props.viewport ?? (() => ({ width: target.width, height: target.height }))
-    },
-  })
+  let options: Camera2dOptions = merge(props, {})
   let cam = untrack(() => createCamera2d(target, options))
   createEffect(
     () => props.input,

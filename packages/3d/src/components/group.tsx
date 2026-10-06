@@ -2,11 +2,11 @@ import { onCleanup, untrack, useContext } from "@solidrt/core"
 import type { ParentComponent } from "@solidrt/core"
 import { SceneContext, provide } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
-import type { TransformProps, BubblingPointerEventProps } from "./node-props.ts"
+import type { TransformProps, BubblingNodePointerProps } from "./node-props.ts"
 import { add, createGroup, destroy } from "../node.ts"
 import type { SceneNode } from "../node.ts"
 
-export type GroupProps = TransformProps & BubblingPointerEventProps & { ref?: (node: SceneNode) => void }
+export type GroupProps = TransformProps & BubblingNodePointerProps & { ref?: (node: SceneNode) => void }
 
 /** A transform node: children inherit its position/rotation/scale. Its
  * pointer events are the ones bubbling up from a hit descendant; a group

@@ -9,8 +9,9 @@
 // node whose Pose2D record sink writes the pose instance buffer at the
 // core flush, so core producers reach sprites and picking walks the core
 // BVH; style stays a JS-written second instance buffer. The records layer (createRecordLayer)
-// is the raw escape hatch for motion only JS can compute: 15 JS-owned
-// floats per sprite published through the zero-copy write lease. The baked
+// is the raw escape hatch for motion only JS can compute: 16 JS-owned
+// floats per sprite in a mirror, published by dirty range through the
+// 3d record mesh's verbs (records/updateRecords/setRecordCount). The baked
 // tile layer (createTileLayer/TileLayer) is the static sibling: a tile
 // world rendered once into textures and composited as a few quads,
 // re-baked on change. Two faces throughout: the imperative core (usable
@@ -21,14 +22,14 @@
 // traps.
 
 export { addGroup, addSprite, createSpriteLayer, getSprite, destroyGroup, destroySprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, worldPosition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
-export { createRecordLayer, FLOATS_PER_SPRITE } from "./records.ts"
-export type { RecordLayer as RecordLayerHandle, RecordLayerOptions } from "./records.ts"
+export { createRecordLayer, records, setRecordCount, updateRecords, INSTANCE_FLOATS } from "./records.ts"
+export type { RecordLayer as RecordLayerHandle, RecordLayerOptions, UpdateRecordsOptions } from "./records.ts"
 export { floorReach, pointInSprite } from "./pick.ts"
 export { projectCamera, unprojectCamera } from "./camera.ts"
 export type { CameraState, CameraUpdate } from "./camera.ts"
 export { createCamera2d } from "./camera2d.ts"
-export type { Camera2d as Camera2dHandle, Camera2dAxes, Camera2dOptions, Camera2dPose, Camera2dTarget, Rect2d } from "./camera2d.ts"
-export { createShots, mixCamera2d } from "./shots.ts"
+export type { Camera2d as Camera2dHandle, Camera2dAxes, Camera2dOptions, Camera2dPose, Camera2dPoseState, Camera2dTarget, Rect2d } from "./camera2d.ts"
+export { createShots, mixCamera } from "./shots.ts"
 export type { ShotTarget, ShotsHandle } from "./shots.ts"
 export { camera2dActions, camera2dBindings } from "./input.ts"
 export type { CameraDevices } from "./input.ts"
@@ -44,6 +45,7 @@ export type {
   QueryOptions,
   Hit,
   Rect,
+  LayerEventBase,
   LayerPointerEvent,
   LayerPointerListener,
   LayerTapEvent,
@@ -64,11 +66,13 @@ export type {
   Volume,
 } from "./layer.ts"
 export { feedPointer } from "./views.ts"
+export { moveAndSlide } from "./collision.ts"
+export type { MoveLayer } from "./collision.ts"
 export type { ViewHandle, ViewOptions } from "./views.ts"
 export { createTileLayer } from "./tiles.ts"
 export type { TileChunk, TileLayer as TileLayerHandle, TileLayerOptions } from "./tiles.ts"
 
-export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"
+export type { NodeMotionSpec, NodeTransitionSpec } from "flux:spatial"
 export { fullFrame, grid, isFrame, namedFrames } from "./frames.ts"
 export type { Frame, GridOptions } from "./frames.ts"
 export { extrudeGrid, extrudeRects } from "./extrude.ts"
@@ -81,4 +85,4 @@ export { fitOversample } from "./oversample.ts"
 export { createAtlas, isAtlas } from "./atlas.ts"
 export type { Atlas, AtlasOptions } from "./atlas.ts"
 export { Camera2d, Group, Sprite, SpriteLayer, TileLayer, View2d, useSpriteLayer, Shot, Shots } from "./components/index.ts"
-export type { Camera2dProps, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps, ShotProps, ShotsProps } from "./components/index.ts"
+export type { BubblingSpritePointerProps, Camera2dProps, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps, ShotProps, ShotsProps } from "./components/index.ts"

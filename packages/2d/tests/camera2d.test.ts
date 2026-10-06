@@ -20,7 +20,7 @@ import { flush } from "@solidjs/signals"
 import { createCamera2d } from "../src/camera2d.ts"
 import type { Camera2d, Camera2dOptions } from "../src/camera2d.ts"
 import { projectCamera } from "../src/camera.ts"
-import { createShots, mixCamera2d } from "../src/shots.ts"
+import { createShots, mixCamera } from "../src/shots.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 
 function range(lo: number, hi: number): number {
@@ -50,9 +50,10 @@ type Rig = { cam: Camera2d; view: { width: number; height: number }; options: Ca
 function make(opts: Partial<Camera2dOptions> = {}, view = { width: 800, height: 600 }): Rig {
   let last: CameraUpdate | null = null
   let writes = 0
-  let options: Camera2dOptions = { viewport: () => view, ...opts }
+  let options: Camera2dOptions = { ...opts }
   let cam = createCamera2d(
     {
+      size: () => view,
       setCamera: (u) => {
         last = u
         writes++
@@ -186,7 +187,7 @@ test("damping: 0 applies a notch at once, 2 coasts longer", () => {
 
 test("glideTo: eased pose, exact landing, rest", () => {
   let { cam, writes } = make({ world: { width: 1000, height: 500 }, zoom: 2 })
-  cam.glideTo(700, 300, 3)
+  cam.glideTo({ x: 700, y: 300, zoom: 3 })
   let w0 = writes()
   let ticks = settle(cam)
   let c = cam.camera()
@@ -196,7 +197,7 @@ test("glideTo: eased pose, exact landing, rest", () => {
   if (cam.update(DT)) fail("a landed glide writes nothing more")
   // A destination outside the world lands on the clamp: at zoom 3 the view
   // is 800/3 x 200 world px, so x tops out at 1000 - 400/3 and y at 400.
-  cam.glideTo(5000, 5000)
+  cam.glideTo({ x: 5000, y: 5000 })
   settle(cam)
   c = cam.camera()
   if (!near(c.x!, 1000 - 400 / 3) || !near(c.y!, 400)) fail(`glideTo clamps its destination to (866.67,400), got ${c.x},${c.y}`)
@@ -324,7 +325,7 @@ test("a wheel zoom survives a per-frame follow of a moving target", () => {
   settle(cam)
   if (!near(cam.camera().x, last, 1e-3)) fail(`follow tracked the moving target to ${last}, got ${cam.camera().x}`)
   // A pose glide still yields to the follow.
-  cam.glideTo(100, 100)
+  cam.glideTo({ x: 100, y: 100 })
   cam.follow(last, 250)
   settle(cam)
   if (!near(cam.camera().x, last, 1e-3)) fail(`follow cancels a pose glide, got ${cam.camera().x}`)
@@ -438,18 +439,18 @@ test("damped bounds: a fling eases into the limit; a direct write clamps at once
 test("a pose glide inherits a pending anchor glide's zoom (a double tap that also glides)", () => {
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300 })
   cam.zoomAt(200, 150, 2, { glide: true })
-  cam.glideTo(100, 100)
+  cam.glideTo({ x: 100, y: 100 })
   settle(cam)
   if (cam.camera().zoom !== 2 || !near(cam.camera().x, 100)) fail(`glideTo keeps a pending zoom's target: ${JSON.stringify(cam.camera())}`)
   cam.zoomAt(200, 150, 2, { glide: true })
-  cam.glideTo(100, 100, 3)
+  cam.glideTo({ x: 100, y: 100, zoom: 3 })
   settle(cam)
   if (cam.camera().zoom !== 3) fail(`an explicit glideTo zoom wins, got ${cam.camera().zoom}`)
 })
 
 test("a rotation glide: eased, exact landing", () => {
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, x: 400, y: 300 })
-  cam.glideTo(400, 300, 1, Math.PI / 2)
+  cam.glideTo({ x: 400, y: 300, zoom: 1, rotation: Math.PI / 2 })
   cam.update(DT)
   let r = cam.camera().rotation
   if (!(r > 0 && r < Math.PI / 2)) fail(`a rotation glide eases, got ${r} after one tick`)
@@ -500,7 +501,7 @@ test("pivot at the top-left: the scrolling camera", () => {
   cam.set({ x: -50, y: 0 })
   let c = cam.camera()
   if (!near(c.x!, 0) || !near(c.y!, -50)) fail(`top-left pivot: x clamps to 0 and the short axis centers at -50, got ${c.x},${c.y}`)
-  cam.glideTo(100, 100)
+  cam.glideTo({ x: 100, y: 100 })
   settle(cam)
   c = cam.camera()
   if (c.x !== 100 || !near(c.y!, -50)) fail(`glideTo under a top-left pivot lands x=100, y=-50, got ${c.x},${c.y}`)
@@ -536,7 +537,7 @@ test("the axes: brackets, bracketed vs unbracketed zoom, rates", () => {
   // A pan gesture: its begin stops a glide, its deltas are viewport heights
   // of content travel (the world follows the finger, so the camera point
   // moves the other way), its end flings.
-  cam.glideTo(900, 900)
+  cam.glideTo({ x: 900, y: 900 })
   cam.axes.begin("pan")
   cam.update(DT)
   if (cam.camera().x !== 400) fail(`a pan begin stops the glide, x=${cam.camera().x}`)
@@ -591,12 +592,12 @@ test("the axes: brackets, bracketed vs unbracketed zoom, rates", () => {
 test("shots: the zoom blends in log space; a shot's control drives the view through the blender", () => {
   let a = { x: 0, y: 0, zoom: 1, rotation: 0, pivotX: 0, pivotY: 0 }
   let b = { x: 100, y: 50, zoom: 4, rotation: 1, pivotX: 10, pivotY: 20 }
-  let m = mixCamera2d(a, b, 0.5)
-  if (!near(m.zoom, 2) || !near(m.x, 50) || !near(m.rotation, 0.5) || !near(m.pivotX, 5)) fail(`mixCamera2d: zoom in log space, the rest linear, got ${JSON.stringify(m)}`)
+  let m = mixCamera(a, b, 0.5)
+  if (!near(m.zoom, 2) || !near(m.x, 50) || !near(m.rotation, 0.5) || !near(m.pivotX, 5)) fail(`mixCamera: zoom in log space, the rest linear, got ${JSON.stringify(m)}`)
   let last = null as CameraUpdate | null
-  let shots = createShots({ setCamera: u => (last = u) }, { blend: 0.25 })
-  let wide = createCamera2d(shots.shot("wide"), { viewport: () => ({ width: 800, height: 600 }), zoom: 1, x: 400, y: 300 })
-  let close = createCamera2d(shots.shot("close", { priority: 1 }), { viewport: () => ({ width: 800, height: 600 }), zoom: 4, x: 100, y: 100 })
+  let shots = createShots({ setCamera: u => (last = u), size: () => ({ width: 800, height: 600 }) }, { blend: 0.25 })
+  let wide = createCamera2d(shots.shot("wide"), { zoom: 1, x: 400, y: 300 })
+  let close = createCamera2d(shots.shot("close", { priority: 1 }), { zoom: 4, x: 100, y: 100 })
   if (last !== null) fail("a shot's control pushes into the recorder, not the view, until live")
   shots.activate("wide")
   if (last === null || (last as CameraUpdate).zoom !== 1) fail("the live shot's camera reaches the view")

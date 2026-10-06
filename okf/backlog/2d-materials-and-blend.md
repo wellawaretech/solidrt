@@ -90,10 +90,29 @@ Staged, each with value on its own:
    gpu's `BlendMode`; pipeline state, fixed at creation. Pinned by
    tests/screen-floor.test.tsx (two half-alpha whites: "alpha" composites
    to three quarters, "add" to opaque white).
-2. A custom fragment over the layer's varyings (`vUv`, `vFrame`, `vTint`)
-   with app params, modelled on `shaderMaterialClass`, plus the sampler
-   and param plumbing views already have.
-3. A custom vertex stage; the instance attribute layouts (the 15-float
+2. A custom fragment over the layer's varyings (`vUv`, `vFrame`, `vTint`,
+   `vAtlas`) with app params, modelled on `shaderMaterialClass`, plus the
+   sampler and param plumbing views already have. Since
+   [2d-atlas-limits](../done/2d-atlas-limits.md) the fragment stage is
+   GENERATED per layer (`fragmentFor(count)` in shaders.ts): one sampler
+   per declared atlas, the record's atlas index picking it, derivatives
+   taken before the branch, `textureGrad` as the tap. A custom fragment
+   must not re-derive any of that, so the hook is the generated `tap()`:
+   the app's source is appended after the generated preamble and calls
+   `vec4 texel = tap(dx, dy)` (or a variant taking a uv, for scrolling
+   and distortion) and composes on top of it - palette lookup, dissolve,
+   outline - never naming `uAtlasN` or branching on `vAtlas` itself. The
+   stock fragment then becomes the one-line default of the same hook.
+   Two consequences to design in: the app's own samplers (a palette LUT,
+   a noise texture) count against the SAME `limits.maxTextureUnits`
+   budget as the atlases (a layer's targets bind nothing else today, so
+   `checkAtlases` assumes the whole budget is its own; with a material
+   the cap is `maxTextureUnits - the material's samplers`, validated
+   where the material and the atlas list meet), and a frame's clamp
+   into its own atlas's texel grid lives inside `tap`, so a custom uv
+   passed to it is clamped the same way - document that a scrolling UV
+   wraps within the frame, not across the sheet.
+3. A custom vertex stage; the instance attribute layouts (the 16-float
    record, the pose/style pair) become part of the contract at that
    point, so it wants the open-format work
    [3d-vertex-data-model](../done/3d-vertex-data-model.md) did for 3d
@@ -106,7 +125,9 @@ the staging holds the no-breaking-changes rule.
 ## Involves
 
 `packages/2d/src/shaders.ts` (the pipeline builder takes a vertex source,
-attribute layouts and a blend mode, so the fragment source is what is
-left to parameterize), `layer.ts`/`records.ts`/`tiles.ts` at the three
-call sites, `components/sprite-layer.tsx` for the prop, and the AGENTS.md
-model section.
+attribute layouts, a blend mode and the atlas count; `fragmentFor` is
+where the generated preamble and the app's body meet), `atlas.ts`
+(`checkAtlases` learning the material's sampler count),
+`layer.ts`/`records.ts`/`tiles.ts` at the three call sites,
+`components/sprite-layer.tsx` for the prop, and the AGENTS.md model
+section ("Atlases and frames" states the generated-stage contract).

@@ -6,8 +6,8 @@
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
 export { add, createGroup, destroy, getMorphNames, getMorphWeights, getRotation, getTransform, lookAt, remove, setMorphWeights, setTransform, setTransition, setVisible, worldPosition } from "./node.ts"
-export type { LodConfig, MorphWeights, NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
-export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setDrawRange, setEnvironment, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, instanceAttribute, updateRecords, INSTANCE_FLOATS } from "./mesh.ts"
+export type { HoverHandlers, LodConfig, MorphWeights, NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
+export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setDrawRange, setEnvironment, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, instanceAttribute, records, updateRecords, INSTANCE_FLOATS } from "./mesh.ts"
 export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceOrderOptions, InstanceSlots, InstanceStream, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions, UpdateRecordsOptions } from "./mesh.ts"
 export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight } from "./light.ts"
 // The shader-source caps, also on the /glsl subpath next to the sources they size.
@@ -62,8 +62,8 @@ export type {
   MeshProps,
   OrbitCameraProps,
   PerspectiveCameraProps,
-  PointerEventProps,
-  BubblingPointerEventProps,
+  NodePointerProps,
+  BubblingNodePointerProps,
   GroupProps,
   PointLightProps,
   RecordMeshProps,

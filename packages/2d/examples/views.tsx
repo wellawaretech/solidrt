@@ -83,7 +83,7 @@ function App() {
     label: "minimap",
   })
 
-  cam = createCamera2d(main, { viewport: () => win, world: WORLD, maxZoom: MAX_ZOOM })
+  cam = createCamera2d(main, { world: WORLD, maxZoom: MAX_ZOOM })
   // The main view's gestures and any pad drive the camera through a map;
   // the minimap binds nothing (its tap glides through listen below).
   let pointer = createPointerFeed()
@@ -98,7 +98,7 @@ function App() {
   })
   // A tap on the minimap, sprite or not, glides the main camera there:
   // the view's dispatch undoes the MAP camera, so e.x/e.y are world pixels.
-  map.listen({ onTap: e => cam.glideTo(e.x, e.y) })
+  map.listen({ onTap: e => cam.glideTo({ x: e.x, y: e.y }) })
 
   createEffect(
     () => ({ size: windowSize(), scale: displayScale() }),

@@ -60,9 +60,12 @@ drag, and hover enter/leave pairs - hit testing runs over a BVH the
 scene maintains incrementally, so events put no ceiling on scene size.
 Underneath sit `scene.pick(x, y)` (the camera ray through a pixel,
 `project()`'s inverse) and `scene.raycast(origin, direction)`; hits are
-bounding-box accurate in v1. A scene also takes a `background` - fragment
-GLSL drawn inside its own pass behind the meshes, replacing the stacked
-backdrop-texture pattern.
+per triangle, carrying the face, its uv and a normal facing the ray.
+`scene.overlap`, `scene.sweep` and `scene.moveAndSlide` ask the same
+index what a volume touches, where a moving one first touches, and how a
+character body slides through it. A scene also takes a `background` -
+fragment GLSL drawn inside its own pass behind the meshes, or a skybox
+cube - replacing the stacked backdrop-texture pattern.
 Custom materials get a standard uniform set - per-mesh `uModel`/`uNormal`,
 shared `uViewProj`/`uCamPos`/`uCamRight`/`uCamUp`, each written once per
 change - plus your own uniforms: scene-wide via `scene.setParams` (one write
@@ -83,27 +86,27 @@ every fleet only JS can step (`examples/instanced.tsx`). And
 blinn, fresnel, a standard vertex stage) to compose your own lit looks
 from plain template literals.
 
-v1 scope: unlit color/textured materials plus `shaderMaterial` (your own
-GLSL as a first-class material), sprites (`<Sprite>` with a `sprite()`
-material: a quad facing the camera in the vertex stage, full or fixed-y
-billboarding), geometry generators (box, plane, circle,
-ring, sphere, cylinder, cone, torus, torus knot, the platonic solids with
-`detail` subdivision, so the icosahedron is also the icosphere), a profile
-kit for custom
-solids (`extrude` with bevels, `lathe`, polyline `sweep`/`tube` with
-mitred joints, flat `shape`, with `fillet`/`roundRect`/`triangulate`
-helpers), geometry as data (`transformGeometry` bakes a placement into
-vertices and `mergeGeometries` concatenates parts, so a static scene is
-one mesh per material), open vertex layouts (`withAttribute` appends any
-named channel to a geometry's interleave, `withColors` is the `aColor`
-vec4 case - tint, baked AO, any four scalars - and materials read channels
-by name), one perspective camera
-with an orbit control (`<OrbitCamera>` as a Scene child, or
-`createOrbitCamera` imperatively; drag, pinch/wheel zoom and a pad reach
-it through an input map the app binds, auto-orbit),
-mesh picking with pointer events, scene backgrounds, transparency, and
-lights (`lit` material with hemisphere ambient, up to four directional
-light nodes, Blinn-Phong highlight and triplanar mapping).
-Model loading and shadows are staged next - see `okf/notes/3d-roadmap.md`
-for the ranked list. Full usage notes and traps: [AGENTS.md](AGENTS.md);
-runnable examples: [examples/](examples/).
+In the package: materials (`unlit`, Blinn-Phong `phong`, metal/rough
+`standard` with surface maps and image-based lighting, `sprite` for
+camera-facing quads with a screen-size clamp, and `shaderMaterial` for
+your own GLSL as a first-class material), lights as graph nodes
+(directional, spot, point and hemisphere, up to eight, with cascaded
+directional, spot and six-face point shadows), geometry generators (box,
+plane, circle, ring, sphere, capsule, cylinder, cone, torus, torus knot,
+the platonic solids with `detail` subdivision, so the icosahedron is also
+the icosphere), a profile kit for custom solids (`extrude` with bevels,
+`lathe`, polyline `sweep`/`tube` with mitred joints, flat `polygon`, with
+`fillet`/`roundRect`/`triangulate` helpers), geometry as data
+(`transformGeometry` bakes a placement into vertices, `mergeGeometries`
+concatenates parts, `withAttribute`/`withColors` append named channels
+materials read by name, morph targets), models (`loadGltf`/`loadModel`,
+skins, a clip mixer with root motion, a baked `.sol3m` container with
+compressed textures), Gaussian splats, level of detail, views of one
+scene (split screen, a minimap, a reflection probe), environment and sky
+(skybox, equirect panoramas, baked environments, fog, bloom, tone
+mapping), camera controls (`<OrbitCamera>` and `<FirstPersonCamera>`
+driven by an input map the app binds, shots and blends between them),
+picking with pointer events, and the collision queries. Full usage notes
+and traps: [AGENTS.md](AGENTS.md); runnable examples:
+[examples/](examples/); the ranked list of what is next:
+`okf/notes/3d-roadmap.md`.

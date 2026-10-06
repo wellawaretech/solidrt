@@ -180,6 +180,15 @@ export type SceneHooks = {
  * cross-fade band. Re-applied whenever the node enters a scene. */
 export type LodConfig = { levels: { node: SceneNode | null; size: number }[]; fade: number }
 
+/** The hover pair, on the nodes a ray can strike (Mesh, InstanceNode):
+ * enter/leave fire on the struck node alone and never bubble, so a group
+ * or a light carries none - the 2d package's Sprite against its
+ * SpriteGroup. */
+export type HoverHandlers = {
+  onPointerEnter?: (event: NodePointerEvent) => void
+  onPointerLeave?: (event: NodePointerEvent) => void
+}
+
 export type SceneNode = {
   kind: "group" | "mesh" | "light" | "instance"
   parent: SceneNode | null
@@ -198,14 +207,13 @@ export type SceneNode = {
    * nearest hit - the struck instance of an instanced mesh, else the mesh
    * - bubble through its ancestors and end at the scene's listeners
    * (stopPropagation stops the walk, and a stopped down claims the whole
-   * press); enter/leave fire on the struck node alone. Events flow once
-   * the element showing the scene carries `scene.handlers`. */
+   * press); enter/leave are the struck node's own (HoverHandlers, on Mesh
+   * and InstanceNode). Events flow once the element showing the scene
+   * carries `scene.handlers`. */
   onPointerDown?: (event: NodePointerEvent) => void
   onPointerMove?: (event: NodePointerEvent) => void
   onPointerUp?: (event: NodePointerEvent) => void
   onPointerCancel?: (event: NodePointerEvent) => void
-  onPointerEnter?: (event: NodePointerEvent) => void
-  onPointerLeave?: (event: NodePointerEvent) => void
   /** The wheel over the node (NodeWheelEvent: `deltaX`/`deltaY`), bubbling
    * like down/move/up. */
   onWheel?: (event: NodeWheelEvent) => void

@@ -15,9 +15,9 @@ import type { Material } from "./material.ts"
 import type { TransformUpdate } from "./math.ts"
 import * as spatial from "flux:spatial"
 import { activateMorph, afterFree, createWeightsTexture, enterScene, leaveScene, makeNode, rebindMorph, remove, resetMorph, setTransform } from "./node.ts"
-import type { SceneNode } from "./node.ts"
+import type { HoverHandlers, SceneNode } from "./node.ts"
 
-export type Mesh = SceneNode & {
+export type Mesh = SceneNode & HoverHandlers & {
   kind: "mesh"
   geometry: Geometry
   material: Material
@@ -176,9 +176,10 @@ export type InstanceSlots = { slots: (InstanceNode | null)[]; free: number[] }
  * attribute list the material declared for it (any vertex format,
  * tightly packed), `data` the JS mirror of `capacity` records - a
  * Float32Array over an all-float layout, a Uint8Array otherwise
- * (vertexView's rule) - and `buffer` the mesh-owned GPU copy. Writes go
- * through instanceAttribute's accessor (or setInstanceStyle / setRecords,
- * which encode for you), land in the mirror, and publish as ONE
+ * (vertexView's rule; `records(mesh, stream)` hands it out for bulk
+ * writes) - and `buffer` the mesh-owned GPU copy. Writes go through
+ * instanceAttribute's accessor (or setInstanceStyle / setRecords, which
+ * encode for you) or the mirror itself, land in the mirror, and publish as ONE
  * coalesced buffer write per stream at the scene's next sync over the
  * `dirty` byte range - a frame-rate path, like setTransform. Growth
  * replaces `data` and `buffer` (the accessor follows; a held `data`
@@ -226,7 +227,7 @@ export type RecordMesh = Mesh & { _instances: MeshInstances & { matrix: null; no
  * Slot-bound to its mesh: created by addInstance, destroyed by
  * destroy; the generic add/remove reject it.
  */
-export type InstanceNode = SceneNode & {
+export type InstanceNode = SceneNode & HoverHandlers & {
   kind: "instance"
   /** The owning mesh; null once removed (the handle is inert). */
   mesh: InstancedMesh | null
@@ -890,6 +891,30 @@ export function instanceAttribute(mesh: InstancedMesh | RecordMesh, name: string
     if (i >= 0) return s._fields[i]!
   }
   return null
+}
+
+/**
+ * The mirror of record stream `stream` (default the first: a record
+ * mesh's records, an instanced mesh's style records) - the raw power
+ * path for a population written in bulk: `capacity` records at the
+ * layout's stride, a Float32Array over an all-float layout, bytes
+ * otherwise (write those through instanceAttribute's codecs, or a typed
+ * view of your own over the format). Write it, then updateRecords the
+ * range. Read it AT USE TIME: growth (setRecords past capacity,
+ * addInstance past it) replaces the mirror, and a hoisted view becomes a
+ * dead copy whose writes publish nothing. Throws on a transferred
+ * population (no mirror) and a disposed one. @solidrt/2d's
+ * records(layer).
+ */
+export function records(mesh: InstancedMesh | RecordMesh, stream = 0): ArrayBufferView {
+  let inst: MeshInstances | null = mesh._instances
+  if (inst === null) throw new Error("records: the mesh's instances are disposed")
+  if (inst.transfer) throw new Error("records: the records were transferred at creation (transfer: true) - there is no mirror to read or write")
+  let s = inst.streams[stream]
+  if (!Number.isInteger(stream) || s === undefined) {
+    throw new Error("records: stream " + stream + " is out of range; the mesh has record streams 0.." + (inst.streams.length - 1))
+  }
+  return s.data
 }
 
 /** Options of `updateRecords`: the stream (default 0) and the record

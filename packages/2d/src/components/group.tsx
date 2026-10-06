@@ -1,11 +1,14 @@
 import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { ParentComponent } from "@solidrt/core"
 import { addGroup, destroyGroup, setGroup, setGroupTransition } from "../layer.ts"
-import type { SpriteGroup, SpritePointerEvent, SpriteTapEvent, SpriteWheelEvent, TransitionEndEvent } from "../layer.ts"
+import type { SpriteGroup, TransitionEndEvent } from "../layer.ts"
 import type { SpriteTransition } from "../layer.ts"
 import { GroupContext, LayerContext } from "./context.ts"
+import type { BubblingSpritePointerProps } from "./sprite.tsx"
 
-export type GroupProps = {
+/** A group's props: the pose, the bubbling pointer events (from a hit
+ * child sprite; a group never receives enter/leave) and the transition. */
+export type GroupProps = BubblingSpritePointerProps & {
   /** Position in the parent frame (layer pixels at the root). */
   x?: number
   y?: number
@@ -16,14 +19,6 @@ export type GroupProps = {
   /** Show or hide the whole subtree (default true); see
    * GroupOptions.visible. */
   visible?: boolean
-  /** Bubbled from a hit child sprite (see SpritePointerProps); a group
-   * never receives enter/leave. */
-  onPointerDown?: (event: SpritePointerEvent) => void
-  onPointerMove?: (event: SpritePointerEvent) => void
-  onPointerUp?: (event: SpritePointerEvent) => void
-  onPointerCancel?: (event: SpritePointerEvent) => void
-  onWheel?: (event: SpriteWheelEvent) => void
-  onTap?: (event: SpriteTapEvent) => void
   /** How pose-prop changes animate (see setGroupTransition). The mount
    * pose snaps, unless a component's `from` animates it in from there. */
   transition?: SpriteTransition | string | null

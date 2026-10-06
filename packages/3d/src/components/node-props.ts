@@ -1,7 +1,7 @@
 import { createEffect, onCleanup, useContext } from "@solidrt/core"
 import { LodContext } from "./context.tsx"
 import { setTransform, setTransition, setVisible } from "../node.ts"
-import type { NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneNode, TransitionEndEvent } from "../node.ts"
+import type { HoverHandlers, NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneNode, TransitionEndEvent } from "../node.ts"
 import type { NodeTransition } from "flux:spatial"
 import type { Quat, Vec3 } from "../math.ts"
 
@@ -36,7 +36,7 @@ export type TransformProps = {
  * the built-in <Scene> leaf does (opt out with events={false}); an `output`
  * leaf spreads them itself.
  */
-export type PointerEventProps = BubblingPointerEventProps & {
+export type NodePointerProps = BubblingNodePointerProps & {
   /** Hover: enter/leave pair on the struck node alone, so only a hit
    * target - a mesh or an instance - takes them; `<Group>` and `<Lod>`
    * bubble and omit the pair. */
@@ -46,7 +46,7 @@ export type PointerEventProps = BubblingPointerEventProps & {
 
 /** The pointer props every node takes: the events that bubble from the
  * hit up through the Groups above it, without the hover pair. */
-export type BubblingPointerEventProps = {
+export type BubblingNodePointerProps = {
   onPointerDown?: (event: NodePointerEvent) => void
   onPointerMove?: (event: NodePointerEvent) => void
   onPointerUp?: (event: NodePointerEvent) => void
@@ -60,7 +60,7 @@ export type BubblingPointerEventProps = {
   onTap?: (event: NodeTapEvent) => void
 }
 
-export function syncNode(node: SceneNode, props: TransformProps & PointerEventProps): void {
+export function syncNode(node: SceneNode & HoverHandlers, props: TransformProps & NodePointerProps): void {
   // One effect for the transform and the handlers: re-assigning eight
   // handler fields on a transform write is free, an effect of its own is
   // not (a node component's mount cost is mostly its effects and its

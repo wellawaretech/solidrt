@@ -53,9 +53,9 @@ export type ViewHandle = {
   /** Element handlers wiring the view's pointer events (sprites, groups
    * and the root listeners); see handlersFor. */
   handlers: LayerHandlers
-  /** View pixels, as created or last set by setSize. */
-  readonly width: number
-  readonly height: number
+  /** View pixels, as created or last set by setSize (a fresh object per
+   * call) - @solidrt/3d's view.size(), what a camera control reads. */
+  size(): { width: number; height: number }
   setSize(width: number, height: number): void
   /**
    * Listen at the root of the event walk. Every down, move, up, wheel and
@@ -208,12 +208,7 @@ export function createViews(deps: ViewDeps): Views {
       let view: ViewHandle = {
         texture,
         handlers: undefined as unknown as LayerHandlers,
-        get width() {
-          return width
-        },
-        get height() {
-          return height
-        },
+        size: () => ({ width, height }),
         setSize(w, h) {
           if (disposed || (w === width && h === height)) return
           checkOversample("setSize", oversample, w, h)

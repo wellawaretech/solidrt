@@ -108,7 +108,6 @@ function App() {
   let roamer = addSprite(layer, { x: WORLD.width / 2, y: WORLD.height / 2, w: ROAMER, h: ROAMER, frame: frames[0], tint: [1, 0.8, 0.3, 1] })
 
   cam = createCamera2d(view, {
-    viewport: () => win,
     world: WORLD,
     maxZoom: MAX_ZOOM,
     follow: { deadZone: DEAD_ZONE, hardLimits: HARD_LIMITS, damping: FOLLOW_DAMPING, lookahead: LOOKAHEAD },
@@ -128,7 +127,7 @@ function App() {
       if (e.sprite) return
       select(null)
       setFollowing(false)
-      cam.glideTo(e.x, e.y)
+      cam.glideTo({ x: e.x, y: e.y })
     },
   })
 

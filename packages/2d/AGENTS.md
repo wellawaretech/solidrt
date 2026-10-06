@@ -173,7 +173,8 @@ every sprite a volume touches with its deepest contact `{ sprite,
 point, normal, depth }`, unordered; `layer.sweep(volume, dx, dy,
 opts?)` every sprite the moving volume first touches `{ sprite, time,
 point, normal }`, earliest first; `layer.moveAndSlide(volume, dx, dy,
-opts?)` the character mover over them, one core call per body per
+opts?)` (and the free `moveAndSlide(layer, ...)` spelling of it, as
+@solidrt/3d's) the character mover over them, one core call per body per
 frame (the depenetration, slide and floor-snap loop runs in the spatial
 core, the same one @solidrt/3d's mover uses), returning `{ motion,
 floor, wall, ceiling, hits }` with `up` defaulting to [0, -1] (y-down).
@@ -238,11 +239,26 @@ zero, the same demand-gate story as the rest of the platform.
 
 The records layer (`createRecordLayer`) keeps the old model whole: 16
 JS-owned floats per sprite `[cx, cy, w, h, u0, v0, u1, v1, rot, tint
-rgba, minScreenPx, maxScreenPx, atlas]` (`FLOATS_PER_SPRITE`; `atlas`
+rgba, minScreenPx, maxScreenPx, atlas]` (`INSTANCE_FLOATS`; `atlas`
 is the frame's texture as its index in `layer.atlases`), draw order =
-insertion order (or key
-order with `orderBy` - see below), remove
-shifts, `layer.records` + `touch()` raw writes, JS pick walk. It is the
+insertion order (or key order with `orderBy` - see below), remove
+shifts, raw writes, JS pick walk. The raw path speaks @solidrt/3d's
+record-mesh verbs, one dimension down: `records(layer)` is the mirror
+(read it at use time - growth replaces it), `updateRecords(layer, {
+first?, count? })` publishes a RANGE of it at the flush (the whole
+mirror by default; ten moved records of ten thousand cost ten - one
+`writeBuffer` at the range's byte offset, clipped to the live sprites;
+under `orderBy` the drawn prefix whole through the lease instead, since
+the core gathers it into key order during the copy), and
+`setRecordCount(layer, n)` dials the drawn prefix - the first n live
+sprites draw and pick, the rest stay live but undrawn and unpicked,
+and the dial stays in force as sprites come and go (write ahead, dial
+after; `layer.count` is the live total regardless). The sprite verbs
+mark their own record, so a `setSprite` here publishes one record, not
+the prefix. The POPULATION verbs differ by kind and stay so: a record
+mesh's records are opaque data (`setRecords` copies in and grows), a
+record layer's are sprites (`addSprite`/`destroySprite`), so the copy-in
+here is `records(layer).set(src)` then `updateRecords(layer)`. It is the
 escape hatch for motion only JS can compute at scale (measured 30k
 sprites: 12.9ms raw records vs 30.8ms via setSprite; both figures are
 the WRITE path only - whatever computes the motion is excluded and is
@@ -250,7 +266,9 @@ usually the dominant cost, e.g. a 24k-particle sim measured ~25ms with
 a near-free publish) - the axis is
 WHERE MOTION IS COMPUTED, not retained-vs-dynamic. The sprite functions
 (addSprite/setSprite/getSprite/destroySprite) work on both layer kinds;
-record sprites have `node: null` and no groups.
+record sprites have `node: null` and no groups. `tests/records.test.tsx`
+pins the range, the dial, growth and the ordered publish on painted
+frames.
 
 ### Layer space
 
@@ -284,8 +302,8 @@ range, the contain clamp) apply to pose plus lanes and move the pose,
 and the PUSH writes the final camera. `pose()` is the pose alone;
 `camera()` the final camera as the layers received it.
 
-Camera control: `createCamera2d(view | views, { viewport: () =>
-({ width, height }), world?: { width, height, damping? }, min/maxZoom?,
+Camera control: `createCamera2d(view | views, { world?: { width,
+height, damping? }, min/maxZoom?,
 pivot?, follow?: { damping?, deadZone?, hardLimits?, lookahead? },
 offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?,
 zoom?, rotation? })` - Godot's Camera2D and Three's MapControls in one
@@ -301,9 +319,13 @@ at the pivot", the pivot a viewport fraction defaulting to the center,
 so `camera().x/y` is the view center and glideTo/follow land there
 (without a `world`, the default pose puts world 0,0 at the pivot: a
 fill layer that wants world = screen at rest takes `pivot: { x: 0, y:
-0 }`). The first argument is anything with a view's `setCamera` (a view
-of a sprite layer, of a record layer, several at once - one camera over
-a scene's layers - or a signal setter feeding `<TileLayer camera>`).
+0 }`). The pivot is the point the control zooms and rolls about - the
+3d orbit control's target, which that control holds at the view centre
+and re-seats in world space (`setPivot`); this one places it on screen.
+The first argument is anything with a view's `setCamera` and `size()`
+(a view of a sprite layer, of a record layer, several at once - one
+camera over a scene's layers, the FIRST one's size the viewport - or a
+`{ setCamera, size }` pair over a signal feeding `<TileLayer camera>`).
 
 **Follow.** `follow(x, y)` chases a world point through the framing in
 `follow` (core's camera-control, shared with the 3d orbit camera):
@@ -337,7 +359,7 @@ view - a wide camera and a close one, each with its own control - and
 `activate(name, { blend? })` makes the highest-priority enabled shot
 live, blending the view from the current output over `blend` seconds
 (default 0.5; 0 cuts; x/y/rotation/pivot linear, the zoom in log
-space, `mixCamera2d`); `deactivate` falls back by priority. A live
+space, `mixCamera`); `deactivate` falls back by priority. A live
 shot's pushes reach the view at once; a blend needs `update(dt)` while
 `active()`, the controls' rule. `live()` and `camera()` read the state.
 A switch mid-blend starts from the output of that moment, so a quick
@@ -369,7 +391,8 @@ gesture measured (viewport heights per second from the pointer feed;
 the control has no estimator of its own). The
 verbs, each pushing the pose at once: `panBy(dx, dy)` screen pixels,
 `zoomAt(sx, sy, factor, { glide? })`, `rollBy(angle)`, `set(pose)`,
-`glideTo(x, y, zoom?, rotation?)` (eased, a rotation glide included),
+`glideTo({ x?, y?, zoom?, rotation? })` (eased, the fields given, a
+rotation glide included - the 3d controls' glideTo(pose)),
 `fit`, `follow`/`unfollow`, `shake`, `interrupt`, `release([vx, vy])`
 (screen pixels per second of content travel). An input
 map (core AGENTS.md) drives the axes by name and the APP binds devices
@@ -405,7 +428,7 @@ root with `e.sprite` null is "tap on empty space"). `<Camera2d
 input={input}>` inside `<SpriteLayer>` is all of that wired through
 context, the 3d `<OrbitCamera>` shape: options read at mount, driving
 the nearest view (the `<SpriteLayer>`'s own or the enclosing
-`<View2d>`), `viewport` defaulting to that view's size, the map's
+`<View2d>`), that view's `size()` the viewport, the map's
 `pan`/`zoom`/`roll` actions (or the names in `actions`) driving the
 axes, frames only while `active()`. A view's feed normalizes a drag by
 the leaf's own box, so a leaf under a designSize fit pans and zooms
@@ -452,7 +475,7 @@ entry ordered), every other entry reads them sorted. Growth, the
 instance count and the layer tint fan out to every view; the camera
 and the viewport are the view's own params, so a view costs no
 per-frame JS beyond its camera writes. The `ViewHandle` is the
-viewport contract (texture, width/height/setSize,
+viewport contract (texture, size/setSize,
 oversample/setOversample, setCamera/camera/project/unproject, pick (the
 layer's, through this camera), listen/handlers/handlersFor, dispose -
 views also die with the layer);
@@ -634,7 +657,7 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 | `SpriteLayer` | atlases (Atlas[], the sheets bound as one draw; mount-fixed), capacity?, blend? (core gpu BlendMode, "alpha" default, "add" for glows; mount-fixed), tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), minScreenPx?, maxScreenPx? (the screen-size clamp on the smaller axis, view pixels; 0 = off; equal = constant size), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
-| `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, follow?, offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?, zoom?, rotation?), viewport? (`() => { width, height }`, default: the driven viewport's size), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
+| `Camera2d` | createCamera2d's options (world?, min/maxZoom?, pivot?, follow?, offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?, zoom?, rotation?), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view; its `size()` the viewport) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
 | `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width, height (view pixels, live; fixed-size only for now), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture) (else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
 | `TileLayer` | cols, rows, tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed), frames? (the tileset `setTiles` indices name), chunkClearColor?, blend? (the bake's blend mode, "alpha" default; mount-fixed), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
@@ -655,7 +678,7 @@ inside a `<View2d>` that view), what a `<Camera2d>` drives, and
 `pointer` that view's feed (the owner's `pointer` prop, null without
 one); read under `output={false}` outside a `<View2d>` `viewport` throws. A FILL-mode
 view is 1x1 until the first layout: `ref` fires at mount, before it, so
-`viewport.width`/`height` read 1 there. Sprites added and positioned from
+`viewport.size()` reads 1x1 there. Sprites added and positioned from
 `ref` (the pool, the opening scene) are fine - the first layout resizes
 the view before the first paint - but anything that needs the real size
 (centering on the view) waits for `onLayout`, or works in a `designSize`
@@ -806,17 +829,18 @@ hover, wheel and tap rules headless.
   stays stable and a spawn is one setSprite, never an add. Keep a free
   list of hidden handles; scanning the pool for one is the cost that
   shows up first at a few hundred entities. On the records layer, do not
-  cache `layer.records` across addSprite - growth replaces the array and
-  a hoisted reference becomes a dead copy whose writes publish nothing.
-  `layer.withRecords(fn)` is the hoist-proof read; a bare `layer.records`
-  at use time is equally live.
+  cache `records(layer)` across addSprite - growth replaces the array and
+  a hoisted reference becomes a dead copy whose writes publish nothing;
+  read it at use time (the top of the frame's step is the place).
 - Records layer: record order is draw order: `destroySprite` shifts every
   later sprite down one slot (copyWithin + index fixup, O(later
-  sprites)). Its flush publishes the WHOLE live prefix, not a dirty
-  range: one moved sprite re-publishes count x 64 bytes - a single
-  memcpy, microseconds at 10k; the node layer's style publish is the same
-  whole-prefix shape. Dirty ranges were deliberately not built until a
-  measurement asks.
+  sprites)) and marks the shifted records dirty. The flush publishes the
+  DIRTY record range (one buffer write at its byte offset, clipped to
+  the live sprites), or under `orderBy` the drawn prefix whole through
+  the lease - so a moved sprite costs its 64 bytes on a plain layer and
+  count x 64 bytes on an ordered one. The node layer's style publish is
+  still the whole-prefix shape (a boolean dirty flag over the high-water
+  mark), the one place a range is not yet tracked.
 - `orderBy` on BOTH layers: the core gathers publishes into key order
   (gpu `instanceOrder`, radix sort + one extra memcpy, no per-record JS),
   so a y-sorted crowd costs the same flush as an unsorted one. Records

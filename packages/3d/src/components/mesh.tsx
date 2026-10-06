@@ -2,7 +2,7 @@ import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
-import type { TransformProps, PointerEventProps } from "./node-props.ts"
+import type { TransformProps, NodePointerProps } from "./node-props.ts"
 import { add, destroy, setMorphWeights } from "../node.ts"
 import type { MorphWeights } from "../node.ts"
 import { createMesh, setCastShadow, setCulling, setEnvironment, setGeometry, setLayers, setMaterial, setMeshParams, setRenderOrder } from "../mesh.ts"
@@ -12,7 +12,7 @@ import type { ShaderParams } from "@solidrt/core/gpu"
 import type { Geometry } from "../geometry.ts"
 import type { Material } from "../material.ts"
 
-export type MeshProps = TransformProps & PointerEventProps & {
+export type MeshProps = TransformProps & NodePointerProps & {
   geometry: Geometry
   material: Material
   /** Per-mesh uniforms for a custom material (setMeshParams as a prop).

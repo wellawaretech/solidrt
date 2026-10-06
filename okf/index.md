@@ -211,11 +211,10 @@ Shaped, not started.
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
   shadow view's caster filter - and the scene exposes no introspection at all,
   so the only diagnosis is a screenshot and a guess.
-- **[A View3d is fixed-size and has no overlay projection of its own](backlog/3d-scene-views-additive.md)** [2026-09-07]
+- **[A View3d is fixed-size](backlog/3d-scene-views-additive.md)** [2026-09-07]
   A <View3d> takes width and height only, so a second view cannot fill a box
-  the way <Scene> does, and a view handle has no project, unproject or
-  screenRay, so an overlay or a drag plane over a minimap has to redo the view
-  camera's math by hand; the 2d views have the same additive list.
+  the way <Scene> does; the 2d <View2d> has the same gap, and whichever side
+  moves first settles the shape for both.
 - **[A scene always owns a draw target, so a split-screen app pays for one it never shows](backlog/3d-scene-without-own-target.md)** [2026-09-11]
   createScene allocates its buffer, depth and resolve chain unconditionally,
   and there is no output={false}, so an app that renders only through
@@ -861,6 +860,12 @@ Shaped, not started.
 
 Finished, kept for the reasoning.
 
+- **[The 2d records layer and the 3d record mesh publish raw records two different ways](done/2d-3d-record-layers-one-model.md)** [2026-10-06]
+  createRecordLayer owns the Float32Array and publishes it in place through
+  the write lease (records, withRecords, touch), createRecordMesh copies
+  app-owned records in and republishes ranges (setRecords, updateRecords,
+  setRecordCount, instanceAttribute); the same escape hatch, two verb sets,
+  settled on neither side against the other.
 - **[Four names drifted apart between @solidrt/2d and @solidrt/3d after the symmetry passes](done/2d-3d-vocabulary-drift.md)** [2026-09-11]
   The same element-handler type is SpriteHandlers in one package and
   SceneHandlers in the other, a ray contact is RayHit against Hit, reading a

@@ -44,7 +44,7 @@ import { isFrame } from "./frames.ts"
 import type { Frame } from "./frames.ts"
 import { checkTint } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
-import { FLOATS_PER_SPRITE } from "./records.ts"
+import { INSTANCE_FLOATS } from "./records.ts"
 import { atlasBindings, createSpritePipeline, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 import { checkCell, checkRect, chunkOf, eachChunkSlice, slotOf } from "./tiles-math.ts"
 
@@ -326,7 +326,7 @@ export function createTileLayer(
   let allocate = (index: number): Chunk => {
     let x = (index % chunkCols) * chunkW
     let y = Math.floor(index / chunkCols) * chunkH
-    let records = new Float32Array(perChunk * FLOATS_PER_SPRITE)
+    let records = new Float32Array(perChunk * INSTANCE_FLOATS)
     let buffer = createBuffer(records.byteLength, { label: `${label}-chunk-records`, autoFree: false })
     let texture = createShaderTarget(
       gpu.pipeline,
@@ -357,7 +357,7 @@ export function createTileLayer(
   // A cell's chunk index, and its record offset inside that chunk
   // (tiles-math.ts, bound to this layer's grid).
   let chunkAt = (col: number, row: number): number => chunkOf(col, row, chunkTiles, chunkCols)
-  let slot = (col: number, row: number): number => slotOf(col, row, chunkTiles, FLOATS_PER_SPRITE)
+  let slot = (col: number, row: number): number => slotOf(col, row, chunkTiles, INSTANCE_FLOATS)
   // Write one cell's record: the quad at the cell, the frame's UVs and
   // atlas index, and the tint - the one given, else the default when the
   // cell comes up from empty (a re-set keeps its tint: absent keys keep
@@ -477,7 +477,7 @@ export function createTileLayer(
         for (let y = rowA; y < rowB; y++) {
           let at = slot(colA, y)
           let i = (y - row) * w + (colA - col)
-          for (let x = colA; x < colB; x++, at += FLOATS_PER_SPRITE, i++) {
+          for (let x = colA; x < colB; x++, at += INSTANCE_FLOATS, i++) {
             let u0: number
             let v0: number
             let u1: number

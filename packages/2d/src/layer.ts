@@ -276,7 +276,7 @@ export type SpriteOptions = {
    * "renderOrder"` (default 0; ties keep slot order, so untouched sprites draw
    * as without one). The raise idiom: `setSprite(hit, { renderOrder: ++top })`
    * on interaction, back to 0 to restore. Node layer only - a record
-   * layer's 15-float record has no key field (order it by one of its own
+   * layer's 16-float record has no key field (order it by one of its own
    * fields with `orderBy: { field }`); setting this there throws.
    */
   renderOrder?: number
@@ -1195,8 +1195,17 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       // The style bag with its defaults - renderOrder and the clamp at 0
       // explicitly, since a recycled slot holds the previous occupant's
       // values otherwise - resolved before a slot or node is taken, so a
-      // bad frame allocates nothing.
-      let style: SpriteOptions = { frame: fullFrame(atlases[0]!), tint: [1, 1, 1, 1], renderOrder: 0, minScreenPx: 0, maxScreenPx: 0, ...opts }
+      // bad frame allocates nothing. An absent key and an explicit
+      // undefined both take the default (the options convention
+      // everywhere; a plain spread would let undefined win).
+      let style: SpriteOptions = {
+        ...opts,
+        frame: opts?.frame ?? fullFrame(atlases[0]!),
+        tint: opts?.tint ?? [1, 1, 1, 1],
+        renderOrder: opts?.renderOrder ?? 0,
+        minScreenPx: opts?.minScreenPx ?? 0,
+        maxScreenPx: opts?.maxScreenPx ?? 0,
+      }
       let atlas = frameAtlas("addSprite", style)
       if (opts?.parent && opts.parent.layer !== layer) throw new Error("addSprite: parent group belongs to another layer")
       let slot = freeSlots.pop() ?? highWater++
@@ -1338,7 +1347,9 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
  * notices; a scene that needs depth order sorts by world y with the
  * layer's `orderBy: "y"` (core-produced, zero JS per frame). Past the
  * layer's reservation both instance buffers double (pose sinks move in one
- * core retarget); reserve with `capacity` to avoid the copies.
+ * core retarget); reserve with `capacity` to avoid the copies. An option
+ * left out or passed as undefined takes its default (zero pose and size,
+ * the first atlas whole, an opaque white tint).
  */
 export function addSprite(layer: SpriteLayer | RecordLayer, opts?: AddSpriteOptions): Sprite {
   if (opts) checkSpriteOptions("addSprite", opts)

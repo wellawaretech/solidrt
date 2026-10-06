@@ -14,14 +14,22 @@ import { GroupContext, LayerContext } from "./context.ts"
  * carries layer.handlers - the built-in `<SpriteLayer>` leaf does (opt
  * out with events={false}); an `output` leaf spreads them itself.
  */
-export type SpritePointerProps = {
-  onPointerDown?: (event: SpritePointerEvent) => void
-  onPointerMove?: (event: SpritePointerEvent) => void
-  onPointerUp?: (event: SpritePointerEvent) => void
-  onPointerCancel?: (event: SpritePointerEvent) => void
+export type SpritePointerProps = BubblingSpritePointerProps & {
   /** Sprites only: a Group never receives enter/leave. */
   onPointerEnter?: (event: SpritePointerEvent) => void
   onPointerLeave?: (event: SpritePointerEvent) => void
+}
+
+/** The pointer props a `<Group>` takes as well: the events that bubble
+ * from the hit sprite up through the Groups above it, without the hover
+ * pair (@solidrt/3d's BubblingNodePointerProps). */
+export type BubblingSpritePointerProps = {
+  onPointerDown?: (event: SpritePointerEvent) => void
+  onPointerMove?: (event: SpritePointerEvent) => void
+  onPointerUp?: (event: SpritePointerEvent) => void
+  /** The pointer's other end: the system took it away (see core's
+   * onPointerCancel); bubbles like up, and the press it ends never taps. */
+  onPointerCancel?: (event: SpritePointerEvent) => void
   onWheel?: (event: SpriteWheelEvent) => void
   /** A press released on the sprite without dragging; `tapCount` counts
    * repeats (2 = double tap). */

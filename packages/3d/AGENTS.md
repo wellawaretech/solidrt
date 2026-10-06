@@ -404,7 +404,8 @@ unmount lets them go in; nearest declaring ancestor wins) and cascades
 nothing unless they declare `from`/`exit` -
 a squad of instances spawning in is one `stagger` on their group, and
 for the nodes straight under the scene root it is `<Scene stagger>` /
-`createScene({ stagger })` (a declaration on `scene.root`). A populated
+`createScene({ stagger })` / `scene.setStagger(ms)` (a declaration on
+`scene.root`). A populated
 mesh unmounts as `destroy(mesh)` then `disposeInstances(mesh)`, and the
 dispose waits for a mesh still animating out, so an `<Instance>`'s exit
 plays through its `<InstancedMesh>`'s unmount (`model.dispose` waits the
@@ -1422,10 +1423,14 @@ vertex stream stepped per instance: on the mesh it is an `InstanceStream`
 (the layout, a byte mirror, a mesh-owned GPU buffer), written through
 `instanceAttribute(mesh, name)` - the accessor `geometryAttribute`
 returns, record index in, values as the shader sees them, the codec
-packing the bytes - and published with `updateRecords(mesh, { stream?,
-first?, count? })`, which is `updateVertices` for records: one coalesced
-buffer write per dirty stream at the scene's sync, so ten moved records
-of ten thousand cost ten. Its meshes come from `createInstancedMesh`
+packing the bytes - or in bulk through the mirror itself, `records(mesh,
+stream?)` (a Float32Array over an all-float layout, bytes otherwise;
+read it at use time, growth replaces it), and published with
+`updateRecords(mesh, { stream?, first?, count? })`, which is
+`updateVertices` for records: one coalesced buffer write per dirty
+stream at the scene's sync, so ten moved records of ten thousand cost
+ten - the same `records`/`updateRecords` pair as @solidrt/2d's records
+layer. Its meshes come from `createInstancedMesh`
 (the first buffer is the core-written matrix, the rest are streams; the
 second is the STYLE record, below) or `createRecordMesh` (every buffer a
 stream); a `createMesh` mesh is rejected at add(). `instanceStyle: [..]`
@@ -1543,11 +1548,13 @@ through `instanceAttribute`. `count` picks how many draw (default all).
 `setRecords(mesh, records, count?)` rewrites from the start (count
 defaults to the records written; more than capacity GROWS: capacity
 doubles into replacement buffers, the entry is re-pointed via
-`setDrawBuffers`, the old ones are freed), `instanceAttribute` +
-`updateRecords(mesh, { first, count })` rewrites a few (the range is
-against capacity, so write ahead and dial after), and
-`setRecordCount(mesh, n)` is the population dial (clamped to capacity;
-frame-rate-safe). Records are opaque data (position/yaw/tint/whatever
+`setDrawBuffers`, the old ones are freed), `records(mesh)` (the mirror)
+or `instanceAttribute` + `updateRecords(mesh, { first, count })`
+rewrites a few (the range is against capacity, so write ahead and dial
+after), and `setRecordCount(mesh, n)` is the population dial (clamped to
+capacity; frame-rate-safe). The @solidrt/2d records layer speaks the
+same three verbs over its sprites, `setRecords` alone staying the
+mesh's (a layer's population is addSprite's). Records are opaque data (position/yaw/tint/whatever
 your shader reads), so the
 library cannot know where they place instances: a record mesh has NO
 picking leaf unless you pass `bounds` (local, covering the population) -
@@ -3070,7 +3077,8 @@ successors) as ordinary content, the model-loading split repeated:
   a `setRecords` made in onFrame is in that frame's picture with its
   count, its buffers and its bytes together - the count alone
   (`setRecordCount`) reaches the engine at once. Growth replaces
-  `data`: hold the accessor, not the view.
+  `data`: hold the accessor, or re-read `records(mesh)` at use time,
+  never a hoisted view.
 - The sugar is for FEW records, the mirror is for MANY. `setInstanceStyle`
   over an all-float layout is indexed stores; over a packed layout (the
   stock `float16x4` color included) it is a codec call per component,
@@ -3080,10 +3088,11 @@ successors) as ordinary content, the model-loading split repeated:
   color, 9 ms through the accessor, 5 ms through the mirror - and that
   5 ms is the app's own per-instance tint math, the write itself is
   free. A population restyled per frame writes the mirror in bulk:
-  a typed view over `stream.data` (a Float32Array as handed out, a
-  `Float16Array` over the stock color, indexed by slot times components)
-  filled in a plain loop, then ONE `updateRecords(mesh, { first, count
-  })` - zero per-component calls, the same shape as `setRecords`.
+  `records(mesh)` (a Float32Array over an all-float layout, bytes
+  otherwise - a `Float16Array` over the stock color, indexed by slot
+  times components) filled in a plain loop, then ONE `updateRecords(mesh,
+  { first, count })` - zero per-component calls, the same shape as
+  `setRecords`.
 - Instanced casters: `castShadow` on a populated mesh needs a depth pass
   with the instance placement in it - the stock materials' `instanced`
   carries one, a custom class needs `shadowVertex` (see shadows below);

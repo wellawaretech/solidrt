@@ -329,9 +329,12 @@ export type OrbitCamera = {
    * camera's right and up (or the ground plane, `panPlane`), through
    * `clampPose`, and push. */
   panBy(right: number, up: number): void
-  /** Re-seat the pivot at a world point without moving the picture: the
-   * point is projected onto the view axis and becomes the target at that
-   * depth. Points at or behind the eye are ignored. */
+  /** Re-seat the pivot (the orbit target, the point the camera turns
+   * about - the 2d camera's pose point, which that control places ON
+   * SCREEN by its `pivot` fraction and moves in world space by its pose)
+   * at a world point without moving the picture: the point is projected
+   * onto the view axis and becomes the target at that depth. Points at
+   * or behind the eye are ignored. */
   setPivot(point: Vec3): void
   /** Re-seat the pivot at a world point EXACTLY, without moving the
    * picture: the target becomes the point, the distance its depth, and

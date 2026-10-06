@@ -116,7 +116,7 @@ export function makePointerInput(deps: PointerInputDeps): PointerInput {
   let sameHit = (hit: Hit, target: Target): boolean => hit.mesh === target.mesh && (hit.instance ?? null) === target.instance
   let sameTarget = (a: Target | null, b: Target | null): boolean => (a === null ? b === null : b !== null && a.mesh === b.mesh && a.instance === b.instance)
   // The node the walk starts at, and the one enter/leave fire on.
-  let nodeOf = (target: Target): SceneNode => target.instance ?? target.mesh
+  let nodeOf = (target: Target): Mesh | InstanceNode => target.instance ?? target.mesh
   // The captured target's own hit, if the ray still strikes it.
   let hitOn = (target: Target | null, x: number, y: number): Hit | null => {
     if (target === null) return null

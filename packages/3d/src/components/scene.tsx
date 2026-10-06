@@ -63,7 +63,7 @@ export type SceneProps = ScenePointerProps & {
   /** Stagger (ms) for the nodes straight under the scene root: their
    * enters and exits beginning in one frame are spaced by `index *
    * stagger`, the whole-scene form of `<Group transition={{ stagger }}>`
-   * (see SceneOptions.stagger). Set at creation. */
+   * (see SceneOptions.stagger). Live (scene.setStagger). */
   stagger?: number
   /** Scene-wide fog (scene.setFog): linear `{ color, near, far }` or exp2
    * `{ color, density }`, optionally thinning above `height` by
@@ -254,6 +254,11 @@ export let Scene: ParentComponent<SceneProps> = props => {
   createEffect(
     () => props.layers,
     l => scene.setLayers(l ?? 1),
+    { defer: true },
+  )
+  createEffect(
+    () => props.stagger,
+    ms => scene.setStagger(ms ?? null),
     { defer: true },
   )
   untrack(() => props.ref)?.(scene)

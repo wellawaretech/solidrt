@@ -1,7 +1,7 @@
 import { onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
-import type { TransformProps, PointerEventProps } from "./node-props.ts"
+import type { TransformProps, NodePointerProps } from "./node-props.ts"
 import { syncMesh } from "./mesh.tsx"
 import { add, destroy } from "../node.ts"
 import { createSprite } from "../mesh.ts"
@@ -9,7 +9,7 @@ import type { Mesh as MeshNode } from "../mesh.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
 import type { Material } from "../material.ts"
 
-export type SpriteProps = TransformProps & PointerEventProps & {
+export type SpriteProps = TransformProps & NodePointerProps & {
   /** A `sprite()` material (any material draws, only a sprite one turns). */
   material: Material
   /** Per-mesh uniforms, merge semantics - as on Mesh. */

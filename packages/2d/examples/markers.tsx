@@ -107,7 +107,7 @@ function App() {
   kinds.set(ring, { kind: "ring", index: -1 })
 
   // One camera, both views: the glow follows the world exactly.
-  cam = createCamera2d([world, glowView], { viewport: () => win, world: WORLD, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM })
+  cam = createCamera2d([world, glowView], { world: WORLD, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM })
   let pointer = createPointerFeed()
   feedPointer(world, pointer)
   let input = createInputMap(camera2dActions)

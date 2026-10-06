@@ -2,7 +2,7 @@ import { createContext, createEffect, onCleanup, untrack, useContext } from "@so
 import type { ParentComponent } from "@solidrt/core"
 import { SceneContext, provide } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
-import type { TransformProps, PointerEventProps } from "./node-props.ts"
+import type { TransformProps, NodePointerProps } from "./node-props.ts"
 import { syncMesh } from "./mesh.tsx"
 import type { PopulatedMeshProps } from "./mesh.tsx"
 import { add, destroy, setMorphWeights } from "../node.ts"
@@ -92,7 +92,7 @@ export let InstancedMesh: ParentComponent<InstancedMeshProps> = props => {
   )
 }
 
-export type InstanceProps = TransformProps & PointerEventProps & {
+export type InstanceProps = TransformProps & NodePointerProps & {
   /** The instance's style record (setInstanceStyle as a prop): one value
    * per component of the material's second instance buffer, in order -
    * `[r, g, b, a]` under a stock material's `instanceColors`. Reactive;
