@@ -1,4 +1,5 @@
-import { brightness } from "@solidrt/core"
+import { brightness, warmText } from "@solidrt/core"
+import type { MeasureTextOptions } from "@solidrt/core"
 import { theme, type TextStyle, type TextVariant } from "./theme"
 import { policy } from "./policy"
 
@@ -54,4 +55,31 @@ export function typeStyle(variant: TextVariant, onDark?: boolean) {
     lineHeight: role.lineHeight,
     fontWeight: typeWeight(role.weight, size, onDark),
   }
+}
+
+// Every role of the type scale, in both polarities' weights (a button's
+// label on its primary fill is the opposite polarity of body text), plus
+// the mono family at body size for code spans.
+const TYPE_SCALE_VARIANTS: TextVariant[] = ["caption", "label", "body", "title", "heading"]
+
+// The font styles the theme's type scale draws in, as warmText takes them.
+// Reactive like typeStyle: a theme or policy change yields the new set.
+export function typeScaleStyles(): MeasureTextOptions[] {
+  let styles: MeasureTextOptions[] = []
+  for (let variant of TYPE_SCALE_VARIANTS) {
+    for (let onDark of [false, true]) {
+      let style = typeStyle(variant, onDark)
+      styles.push({ fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight })
+    }
+  }
+  let body = typeStyle("body")
+  styles.push({ fontFamily: theme.text.monoFamily, fontSize: body.fontSize, fontWeight: body.fontWeight })
+  return styles
+}
+
+// Warm the text engine for the theme's type scale (see warmText in
+// @solidrt/core): the components' Window does this on mount and on every
+// theme change; an app without one calls it at startup.
+export function warmTypeScale(): void {
+  warmText(typeScaleStyles())
 }

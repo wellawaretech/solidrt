@@ -1,21 +1,28 @@
 mod decoration;
 pub mod glyphs;
+pub(crate) mod gradient;
 pub mod layout;
 mod runs;
 mod shape;
 mod words;
 
-pub use decoration::{FontMetricsTable, Underline, UnderlineMetrics};
+pub use decoration::{Underline, UnderlineMetrics};
+pub use glyphs::Fallback;
 pub use runs::{RunOverrides, RunStyle, Span, TextRun, ATOM_CHAR};
-pub use shape::{prepare_units, PreparedRun, PreparedUnit, ShaperKind};
-pub use words::{CaretStop, Shaped, Shaper, WordCache};
+pub use shape::{prepare_units, PreparedRun, PreparedUnit};
+pub use words::{CaretStop, ShapedWord, WordCache};
 
-use crate::impellers::{DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment};
+use crate::gpu::{GlyphGroup, GlyphQuad};
+use crate::impellers::{
+  DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment, Texture, TextureSampling,
+};
+use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, FaceId, StyleKey};
 use crate::rendertree::text::layout::{PlacedRun, Run, Wrap};
 use crate::rendertree::{
   Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext, PaintState,
   PlatformContext,
 };
+use crate::Context;
 use shape::OwnedCache;
 use std::cell::RefCell;
 use taffy::{AvailableSpace, Display, Style};
@@ -89,6 +96,8 @@ impl TextAnchor {
 // okf/backlog/dpi-aware-default-font-weight.md.
 pub const DEFAULT_FONT_SIZE: f32 = 20.0;
 pub const DEFAULT_FONT_WEIGHT: FontWeight = FontWeight::Medium;
+/// CSS font-stretch's normal: the width axis at 100 percent.
+pub const DEFAULT_FONT_STRETCH: f32 = 100.0;
 
 #[derive(Clone, Debug)]
 pub struct Text {
@@ -102,6 +111,10 @@ pub struct Text {
   pub font_size: f32,
   pub font_style: FontStyle,
   pub font_weight: FontWeight,
+  // The width axis percentage (CSS font-stretch), 100 normal.
+  pub font_stretch: f32,
+  // Extra advance after every character, px (CSS letter-spacing).
+  pub letter_spacing: f32,
   // None takes the anchor's side, else left (see alignment()).
   pub text_alignment: Option<TextAlignment>,
   // Detached-only: point-places the text at x instead of boxing it.
@@ -134,12 +147,14 @@ pub struct Text {
   pub h: Option<f32>,
   pub paint: PaintState,
   // The run metrics per wrap-unit piece (measured once per key through the
-  // shared word cache; the shaped paragraphs themselves live only in that
+  // shared word cache; the shaped words themselves live only in that
   // cache) plus the line layouts derived from them, keyed by width. Shaping
   // dominates measure/build cost and properties are written directly from
   // several places, so validity is checked by fingerprint (ParaKey) instead
   // of setter hooks. Interior-mutable: measure and build take &self.
   owned: RefCell<OwnedCache>,
+  // The raster of this text (see TextLayer).
+  layer: RefCell<Option<TextLayer>>,
 }
 
 impl Default for Text {
@@ -151,6 +166,8 @@ impl Default for Text {
       font_size: DEFAULT_FONT_SIZE,
       font_style: FontStyle::Normal,
       font_weight: DEFAULT_FONT_WEIGHT,
+      font_stretch: DEFAULT_FONT_STRETCH,
+      letter_spacing: 0.0,
       text_alignment: None,
       anchor: None,
       max_lines: 0,
@@ -168,7 +185,81 @@ impl Default for Text {
       h: None,
       paint: PaintState::default(),
       owned: RefCell::new(OwnedCache::default()),
+      layer: RefCell::new(None),
     }
+  }
+}
+
+// One drawn run of a line: a line's adjacent pieces in one style whose
+// positions are the sum of their advances, joined into one string (see
+// `Text::line_runs`), and where it starts.
+struct LineRun {
+  text: String,
+  style: usize,
+  x: f32,
+  y: f32,
+}
+
+/// The raster a `<text>` retains (okf/plans/text-own-rasterizer.md, stage
+/// 2): its glyphs drawn by the glyph pass from the text atlas into a
+/// texture of its painted box, composited as one quad. Validated by
+/// fingerprint like the shaping cache beside it: the prepared cache's
+/// generation, the shaping width, the scale, and the texel size. Holds
+/// pixels, never atlas cells, so cells may move or go beneath it. Released
+/// once the text goes unbuilt for `TEXT_LAYER_RELEASE_FRAMES` (scrolled
+/// out, culled, hidden), so a long document holds the layers of what it
+/// shows, not of all it has.
+#[derive(Clone)]
+struct TextLayer {
+  texture: Texture,
+  tex_w: u32,
+  tex_h: u32,
+  /// The box the pixels cover, relative to the text's origin (logical px).
+  rect: Rect,
+  scale: f32,
+  generation: u64,
+  width: f32,
+  /// Every glyph's cell was in the atlas when the layer was drawn; an
+  /// incomplete layer redraws when cells land.
+  complete: bool,
+  /// The text atlas frame this layer was last composited at.
+  used: u64,
+}
+
+/// A text rasterized outside a tree walk (see `Text::rasterize`): the
+/// texture and its size in texels, the box it covers relative to the text's
+/// origin (logical px), the placed ink's box, and whether every glyph had
+/// its cell.
+pub struct TextImage {
+  pub texture: Texture,
+  pub tex_w: u32,
+  pub tex_h: u32,
+  pub rect: Rect,
+  pub ink: Rect,
+  pub complete: bool,
+}
+
+// Frames a text may go unbuilt before its layer texture is released: two
+// seconds at 60 Hz, the text atlas's own eviction age, so a screen that
+// comes right back keeps its pixels.
+const TEXT_LAYER_RELEASE_FRAMES: u64 = 120;
+
+impl std::fmt::Debug for TextLayer {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "TextLayer({}x{} at {}, complete: {})", self.tex_w, self.tex_h, self.scale, self.complete)
+  }
+}
+
+// How far (a fraction) the composite scale may drift before a text layer
+// re-rasterizes: float noise never does, a zoom does from its second frame.
+const LAYER_SCALE_TOLERANCE: f32 = 0.02;
+
+// The scale an ancestor chain applies at this node, from the walk's window
+// map: the longer axis of a 2D transform, 1 when the chain is not 2D.
+fn composite_scale(map: &crate::rendertree::cull::WindowMap) -> f32 {
+  match map {
+    Some(m) => (m.m11 * m.m11 + m.m12 * m.m12).sqrt().max((m.m21 * m.m21 + m.m22 * m.m22).sqrt()),
+    None => 1.0,
   }
 }
 
@@ -189,71 +280,20 @@ impl Buildable for Text {
     let runs = owned.runs_for(index);
     let layout = &owned.layouts[index].layout;
     let styles = self.run_styles();
-    // Paragraphs come from the shared word cache per drawn piece of text (a
-    // miss shapes on the spot); nothing shaped is retained on the text
-    // itself. A line's adjacent pieces in one style whose positions are the
-    // sum of their advances draw as ONE paragraph of their joined text: the
-    // breaker placed them exactly where the shaper puts them in one string,
-    // so the joined draw lands the glyphs where the per-piece draws would,
-    // and the line costs one cache lookup and one display-list op instead
-    // of one per word. Where placement is not the sum of advances the pieces
-    // stay apart: a justified line (its gaps are spread), a style change, an
-    // atom, and a layout re-split at graphemes (overflowWrap), whose pieces
-    // are letters the shaper would kern and ligate back together. Hit
-    // testing and carets keep reading the per-piece metrics, and this is as
-    // LTR-only as the breaker: bidi becomes an input to both.
-    {
-      let typography = ctx.platform.typography();
-      let mut words = ctx.platform.words();
-      let mut draw = |text: &str, style: usize, x: f32, y: f32| {
-        if let Some(word) = words.get_or_shape(Shaper::Impeller(&typography), text, &styles[style]) {
-          // Every `<text>` shapes on Impeller, so the word is a paragraph;
-          // an engine-shaped word has no draw here by design.
-          if let Shaped::Paragraph(paragraph) = &word.shaped {
-            crate::rendertree::counters::note_paragraph();
-            builder.draw_paragraph(paragraph, Point::new(origin.x + x, origin.y + y));
-          }
-        }
-      };
-      let joinable = owned.layouts[index].runs.is_none();
-      for line in &layout.lines {
-        // The run being joined: its text, style, origin and where its ink
-        // ends (where the next piece must start to join it).
-        let mut pending: Option<(String, usize, f32, f32, f32)> = None;
-        for placed in &layout.runs[line.first..line.end] {
-          let shaped = &runs[placed.run];
-          if let Some((text, style, x, y, end)) = &mut pending {
-            let adjacent = (*end - placed.x).abs() <= LINE_JOIN_EPSILON && (*y - placed.y).abs() <= LINE_JOIN_EPSILON;
-            if joinable && !shaped.atom && *style == shaped.style && adjacent {
-              text.push_str(&shaped.text);
-              *end = placed.x + shaped.run.metrics.advance;
-              continue;
-            }
-            draw(text, *style, *x, *y);
-            pending = None;
-          }
-          if !shaped.atom {
-            let end = placed.x + shaped.run.metrics.advance;
-            pending = Some((shaped.text.clone(), shaped.style, placed.x, placed.y, end));
-          }
-        }
-        if let Some((text, style, x, y, _)) = &pending {
-          draw(text, *style, *x, *y);
-        }
-      }
-      if let (Some((x, y)), Some(ellipsis)) = (layout.ellipsis, owned.ellipsis.as_ref()) {
-        draw(&ellipsis.text, ellipsis.style, x, y);
-      }
-    }
+    let line_runs = self.line_runs(owned, index);
+    self.build_layer(ctx, builder, origin, owned, index, &styles, &line_runs);
     // CSS decorating boxes: the text's underline is one line in its own
     // style under everything (atoms excepted); a span's underline is its
     // own line in the span's style. Both may cover a run.
-    let font_metrics = ctx.platform.font_metrics();
+    let fonts = ctx.platform.glyphs();
+    let underline_metrics = |family: &str| {
+      fonts.resolve(family).and_then(|id| fonts.face(id)).map_or(UnderlineMetrics::DEFAULT, Face::underline)
+    };
     let ink_of = |placed: &PlacedRun| runs[placed.run].run.metrics.ink_width;
     if self.underline {
       let style = self.run_style();
       let underline = Underline::resolve(
-        font_metrics.underline(&style.font_family),
+        underline_metrics(&style.font_family),
         style.font_size,
         self.underline_offset,
         self.underline_thickness,
@@ -282,7 +322,7 @@ impl Buildable for Text {
           }
           let style = &styles[shaped.style];
           let underline = Underline::resolve(
-            font_metrics.underline(&style.font_family),
+            underline_metrics(&style.font_family),
             style.font_size,
             overrides.underline_offset.or(self.underline_offset),
             overrides.underline_thickness.or(self.underline_thickness),
@@ -321,6 +361,365 @@ impl Bounded for Text {
 }
 
 impl Text {
+  // The drawn runs of the layout at `index`: a line's adjacent pieces in
+  // one style whose positions are the sum of their advances draw as ONE
+  // run of their joined text: the breaker placed them exactly where the
+  // shaper puts them in one string, so the joined draw lands the glyphs
+  // where the per-piece draws would, and the line costs one cache lookup
+  // and one draw instead of one per word. Where placement is not the sum
+  // of advances the pieces stay apart: a justified line (its gaps are
+  // spread), a style change, an atom, and a layout re-split at graphemes
+  // (overflowWrap), whose pieces are letters the shaper would kern and
+  // ligate back together. Hit testing and carets keep reading the
+  // per-piece metrics, and this is as LTR-only as the breaker: bidi
+  // becomes an input to both. The ellipsis, when the layout placed one,
+  // comes last.
+  fn line_runs(&self, owned: &OwnedCache, index: usize) -> Vec<LineRun> {
+    let runs = owned.runs_for(index);
+    let layout = &owned.layouts[index].layout;
+    let joinable = owned.layouts[index].runs.is_none();
+    let mut out = Vec::new();
+    for line in &layout.lines {
+      // The run being joined: its text, style, origin and where its ink
+      // ends (where the next piece must start to join it).
+      let mut pending: Option<(String, usize, f32, f32, f32)> = None;
+      for placed in &layout.runs[line.first..line.end] {
+        let shaped = &runs[placed.run];
+        if let Some((text, style, _, y, end)) = &mut pending {
+          let adjacent = (*end - placed.x).abs() <= LINE_JOIN_EPSILON && (*y - placed.y).abs() <= LINE_JOIN_EPSILON;
+          if joinable && !shaped.atom && *style == shaped.style && adjacent {
+            text.push_str(&shaped.text);
+            *end = placed.x + shaped.run.metrics.advance;
+            continue;
+          }
+          let (text, style, x, y, _) = pending.take().expect("checked above");
+          out.push(LineRun { text, style, x, y });
+        }
+        if !shaped.atom {
+          let end = placed.x + shaped.run.metrics.advance;
+          pending = Some((shaped.text.clone(), shaped.style, placed.x, placed.y, end));
+        }
+      }
+      if let Some((text, style, x, y, _)) = pending {
+        out.push(LineRun { text, style, x, y });
+      }
+    }
+    if let (Some((x, y)), Some(ellipsis)) = (layout.ellipsis, owned.ellipsis.as_ref()) {
+      out.push(LineRun { text: ellipsis.text.clone(), style: ellipsis.style, x, y });
+    }
+    out
+  }
+
+  // Draw the text through its layer: the runs' glyphs as quads from the
+  // text atlas, rasterized by the glyph pass into a texture of the text's
+  // painted box at the display scale times the ancestors' scale, and that
+  // texture composited as one quad. The layer is kept while its inputs
+  // hold (see TextLayer); an incomplete one redraws when cells land.
+  #[allow(clippy::too_many_arguments)]
+  fn build_layer(
+    &self,
+    ctx: &mut BuildContext<'_>,
+    builder: &mut DisplayListBuilder,
+    origin: Point,
+    owned: &OwnedCache,
+    index: usize,
+    styles: &[RunStyle],
+    line_runs: &[LineRun],
+  ) {
+    let scale = ctx.platform.display_scale() * composite_scale(&ctx.to_window);
+    let Some((rect, tex_w, tex_h)) = Self::layer_geometry(owned, index, scale) else {
+      return;
+    };
+    let width = owned.layouts[index].width;
+    let content = Size::new(width, owned.layouts[index].layout.height);
+    let (frame, landed) = {
+      let atlas = ctx.platform.text_atlas();
+      (atlas.frame(), atlas.landed())
+    };
+    let mut layer = self.layer.borrow_mut();
+    let current = layer.as_ref().is_some_and(|l| {
+      l.generation == owned.generation
+        && l.width == width
+        && (l.scale - scale).abs() <= scale * LAYER_SCALE_TOLERANCE
+        && l.tex_w == tex_w
+        && l.tex_h == tex_h
+        && (l.complete || !landed)
+    });
+    if !current {
+      let into = layer.as_ref().filter(|l| l.tex_w == tex_w && l.tex_h == tex_h).map(|l| l.texture.clone());
+      match self.draw_layer(
+        ctx.platform,
+        ctx.alloy,
+        styles,
+        line_runs,
+        content,
+        rect,
+        scale,
+        tex_w,
+        tex_h,
+        into.as_ref(),
+      ) {
+        Ok(Some((texture, complete))) => {
+          *layer = Some(TextLayer {
+            texture,
+            tex_w,
+            tex_h,
+            rect,
+            scale,
+            generation: owned.generation,
+            width,
+            complete,
+            used: frame,
+          });
+        }
+        // No atlas texture: the GPU refused it (logged there); nothing to
+        // draw this frame.
+        Ok(None) => return,
+        Err(e) => {
+          log::warn!("[text] layer rasterization failed: {e}");
+          layer.take();
+          return;
+        }
+      }
+    }
+    let layer = layer.as_mut().expect("built above");
+    layer.used = frame;
+    // The content occupies the top-left rect * scale pixels of the
+    // ceil-padded texture; mapping exactly that region onto the logical box
+    // keeps the composite pixel-exact.
+    let src =
+      Rect::new(Point::zero(), Size::new(layer.rect.size.width * layer.scale, layer.rect.size.height * layer.scale));
+    let dst = Rect::new(origin + layer.rect.origin.to_vector(), layer.rect.size);
+    crate::rendertree::counters::note_draw();
+    builder.draw_texture_rect(&layer.texture, &src, &dst, TextureSampling::Linear, None);
+  }
+
+  /// This text drawn on its own, outside a tree walk (the stats HUD): laid
+  /// out at `width`, rasterized at `scale` device pixels per logical pixel,
+  /// re-rendered into `previous`'s texture while the texel size matches.
+  /// None when nothing could be drawn (no fonts, no atlas texture, a pass
+  /// failure, which is logged).
+  pub fn rasterize(
+    &self,
+    platform: &PlatformContext,
+    alloy: &Context,
+    width: f32,
+    scale: f32,
+    previous: Option<&TextImage>,
+  ) -> Option<TextImage> {
+    let mut owned = self.owned.borrow_mut();
+    self.prepare_owned(platform, &mut owned);
+    let index = self.owned_layout(platform, &mut owned, width);
+    let owned = &*owned;
+    let (rect, tex_w, tex_h) = Self::layer_geometry(owned, index, scale)?;
+    let content = Size::new(width, owned.layouts[index].layout.height);
+    let styles = self.run_styles();
+    let line_runs = self.line_runs(owned, index);
+    let into = previous.filter(|p| p.tex_w == tex_w && p.tex_h == tex_h).map(|p| &p.texture);
+    let (texture, complete) =
+      match self.draw_layer(platform, alloy, &styles, &line_runs, content, rect, scale, tex_w, tex_h, into) {
+        Ok(drawn) => drawn?,
+        Err(e) => {
+          log::warn!("[text] rasterization failed: {e}");
+          return None;
+        }
+      };
+    Some(TextImage { texture, tex_w, tex_h, rect, ink: Self::ink_box(owned, index), complete })
+  }
+
+  // The box a layer of the layout at `index` covers, relative to the text
+  // origin (logical px): the lines plus a line height of slack on every
+  // side, since ink overhangs its line box (italics, descenders), as
+  // painted_extent reckons; and its size in texels at `scale`. None when
+  // there is nothing to draw into.
+  fn layer_geometry(owned: &OwnedCache, index: usize, scale: f32) -> Option<(Rect, u32, u32)> {
+    let layout = &owned.layouts[index].layout;
+    let width = owned.layouts[index].width;
+    let slack = layout.lines.iter().map(|l| l.height).fold(0.0, f32::max);
+    let rect = Rect::new(
+      Point::new(-slack, -slack),
+      Size::new(width.max(layout.width) + 2.0 * slack, layout.height + 2.0 * slack),
+    );
+    let tex_w = (rect.size.width * scale).ceil() as u32;
+    let tex_h = (rect.size.height * scale).ceil() as u32;
+    if tex_w == 0 || tex_h == 0 || !scale.is_finite() {
+      return None;
+    }
+    Some((rect, tex_w, tex_h))
+  }
+
+  // Rasterize `line_runs` through the glyph pass into a texture of `tex_w`
+  // x `tex_h` texels covering `rect` at `scale` (or `into` an earlier one
+  // of that size), `content` being the text's own box (what a box gradient
+  // resolves against): the texture and whether every glyph had its cell.
+  // Ok(None) when there is no atlas texture (the GPU refused it, logged
+  // there), Err when the pass failed.
+  #[allow(clippy::too_many_arguments)]
+  fn draw_layer(
+    &self,
+    platform: &PlatformContext,
+    alloy: &Context,
+    styles: &[RunStyle],
+    line_runs: &[LineRun],
+    content: Size,
+    rect: Rect,
+    scale: f32,
+    tex_w: u32,
+    tex_h: u32,
+    into: Option<&Texture>,
+  ) -> Result<Option<(Texture, bool)>, String> {
+    let (groups, misses, atlas) = self.glyph_quads(platform, alloy, styles, line_runs, content, rect.origin, scale);
+    let Some(atlas) = atlas else {
+      return Ok(None);
+    };
+    crate::rendertree::counters::note_text_layer_drawn();
+    let texture = alloy.rasterize_glyphs(groups, atlas, tex_w, tex_h, platform.coverage_policy(), into)?;
+    Ok(Some((texture, misses == 0)))
+  }
+
+  // The placed ink of the layout at `index`, in the text's frame: from the
+  // leftmost run's start to the rightmost run's ink end (floats count), the
+  // lines' full height. Alignment moves lines within the wrap width, so
+  // this is where the ink landed, not the extent.
+  fn ink_box(owned: &OwnedCache, index: usize) -> Rect {
+    let layout = &owned.layouts[index].layout;
+    let runs = owned.runs_for(index);
+    let (left, right) = layout
+      .runs
+      .iter()
+      .chain(&layout.floats)
+      .fold((f32::MAX, f32::MIN), |(l, r), p| (l.min(p.x), r.max(p.x + runs[p.run].run.metrics.ink_width)));
+    let (left, width) = if left <= right { (left, right - left) } else { (0.0, 0.0) };
+    Rect::new(Point::new(left, 0.0), Size::new(width, layout.height))
+  }
+
+  // The runs' glyphs as quads in layer pixels (the box at `box_origin`
+  // relative to the text origin, scaled by `scale`), their cells ensured in
+  // the text atlas, grouped by paint: the solid-colored runs together, a
+  // gradient run's quads with its gradient resolved against `content` (the
+  // text's own box). Returns the groups, how many glyphs have no cell yet,
+  // and the atlas texture. Each run is shaped through the word cache; a
+  // glyph's pen x splits into the pixel its cell snaps to and the subpixel
+  // phase the cell is made at, its baseline y snaps to a pixel row. Glyphs
+  // are asked of the atlas per face and phase, since a run's glyphs may
+  // come from several faces (fallback) and a cell's style key names its
+  // face.
+  #[allow(clippy::too_many_arguments)]
+  fn glyph_quads(
+    &self,
+    platform: &PlatformContext,
+    alloy: &Context,
+    styles: &[RunStyle],
+    line_runs: &[LineRun],
+    content: Size,
+    box_origin: Point,
+    scale: f32,
+  ) -> (Vec<GlyphGroup>, usize, Option<u64>) {
+    let fonts = platform.glyphs();
+    let mut words = platform.words();
+    let mut atlas = platform.text_atlas();
+    let display_scale = platform.display_scale();
+    // A style's gradient resolved once; None draws the style's solid color.
+    let gradients: Vec<Option<crate::gpu::GlyphGradient>> = styles
+      .iter()
+      .map(|s| s.paint.gradient.as_ref().and_then(|g| gradient::layer_gradient(g, content, box_origin, scale)))
+      .collect();
+    let mut solid: Vec<GlyphQuad> = Vec::new();
+    // One group per gradient style, in first-use order.
+    let mut graded: Vec<(usize, GlyphGroup)> = Vec::new();
+    let mut misses = 0;
+    let mut ids: Vec<u16> = Vec::new();
+    let mut placements = Vec::new();
+    // Per (face, phase): the glyph's index in the run, its pixel x and its
+    // baseline y.
+    let mut buckets: Vec<(FaceId, u8, Vec<(usize, i32, f32)>)> = Vec::new();
+    for run in line_runs {
+      let style = &styles[run.style];
+      let Some(word) = words.get_or_shape(&fonts, &run.text, style, Fallback::Registered) else { continue };
+      let glyphs = &word.glyphs;
+      let weight = weight_value(style.font_weight);
+      let italic = style.font_style == FontStyle::Italic;
+      // The run's color rides on the quad; under a gradient only its alpha
+      // counts (the pass reads the color off the ramp).
+      let c = style.paint.color;
+      let color = [c.red, c.green, c.blue, c.alpha];
+      let quads: &mut Vec<GlyphQuad> = match &gradients[run.style] {
+        None => &mut solid,
+        Some(gradient) => {
+          let at = match graded.iter().position(|(s, _)| *s == run.style) {
+            Some(at) => at,
+            None => {
+              graded.push((run.style, GlyphGroup { quads: Vec::new(), gradient: Some(gradient.clone()) }));
+              graded.len() - 1
+            }
+          };
+          &mut graded[at].1.quads
+        }
+      };
+      let x0 = (run.x - box_origin.x) * scale;
+      let baseline = (run.y + word.metrics.ascent - box_origin.y) * scale;
+      for bucket in &mut buckets {
+        bucket.2.clear();
+      }
+      for (i, g) in glyphs.glyphs.iter().enumerate() {
+        let (px, phase) = split_phase(x0 + g.x * scale);
+        let entry = (g.face, phase, baseline + g.y * scale);
+        match buckets.iter_mut().find(|(face, p, _)| *face == entry.0 && *p == entry.1) {
+          Some(bucket) => bucket.2.push((i, px, entry.2)),
+          None => buckets.push((entry.0, entry.1, vec![(i, px, entry.2)])),
+        }
+      }
+      for (face, phase, entries) in &buckets {
+        if entries.is_empty() {
+          continue;
+        }
+        let key = StyleKey::new(*face, style.font_size * scale, weight, style.font_stretch, italic, display_scale);
+        ids.clear();
+        ids.extend(entries.iter().map(|(i, _, _)| glyphs.glyphs[*i].id));
+        misses += atlas.ensure(alloy, &fonts, key, *phase, &ids, &mut placements);
+        for ((_, px, yd), placement) in entries.iter().zip(&placements) {
+          let Some(p) = placement else { continue };
+          if p.width == 0 {
+            continue;
+          }
+          quads.push(GlyphQuad {
+            dst: [(*px + p.left) as f32, (yd.round() as i32 - p.top) as f32, p.width as f32, p.height as f32],
+            src: [p.x as f32, p.y as f32, p.width as f32, p.height as f32],
+            color,
+          });
+        }
+      }
+    }
+    let mut groups = Vec::with_capacity(1 + graded.len());
+    if !solid.is_empty() {
+      groups.push(GlyphGroup { quads: solid, gradient: None });
+    }
+    groups.extend(graded.into_iter().map(|(_, group)| group));
+    (groups, misses, atlas.texture())
+  }
+
+  /// Whether this text holds a layer texture.
+  pub(crate) fn has_layer(&self) -> bool {
+    self.layer.borrow().is_some()
+  }
+
+  /// Release the layer texture once the text has gone unbuilt for the
+  /// release age by `frame` (the composite walk asks every text holding
+  /// one). Returns whether a layer is still held.
+  pub(crate) fn release_stale_layer(&self, frame: u64) -> bool {
+    let mut layer = self.layer.borrow_mut();
+    if layer.as_ref().is_some_and(|l| frame.saturating_sub(l.used) > TEXT_LAYER_RELEASE_FRAMES) {
+      layer.take();
+    }
+    layer.is_some()
+  }
+
+  /// Whether the last layer drawn for this text lacked glyphs whose cells
+  /// were still in the making (see TextLayer).
+  pub(crate) fn layer_incomplete(&self) -> bool {
+    self.layer.borrow().as_ref().is_some_and(|l| !l.complete)
+  }
+
   /// Bounds of a detached text in its own frame (`frame` is the box it
   /// inherits): the laid-out paragraph from the layout the last paint used -
   /// widest line by line stack - with `w`/`h` overriding a side each. Before
@@ -335,22 +734,15 @@ impl Text {
     let Some(index) = owned.layouts.iter().position(|l| l.width == width) else {
       return self.local_bounds(frame);
     };
-    let layout = &owned.layouts[index].layout;
-    let runs = owned.runs_for(index);
     // The placed ink, not the extent: alignment moves lines within the wrap
     // width (Layout::width is measured from the extent's start, before that
     // offset), so a right-aligned boxed text reports where its ink landed.
     // `w` names the box itself and wins over the ink on that axis.
-    let (left, right) = layout
-      .runs
-      .iter()
-      .chain(&layout.floats)
-      .fold((f32::MAX, f32::MIN), |(l, r), p| (l.min(p.x), r.max(p.x + runs[p.run].run.metrics.ink_width)));
-    let (left, ink_width) = if left <= right { (left, right - left) } else { (0.0, 0.0) };
+    let ink = Self::ink_box(&owned, index);
     let x = self.x.unwrap_or(0.0) + self.anchor_shift(width);
     Rect::new(
-      Point::new(x + if self.w.is_some() { 0.0 } else { left }, self.y.unwrap_or(0.0)),
-      Size::new(self.w.unwrap_or(ink_width), self.h.unwrap_or(layout.height)),
+      Point::new(x + if self.w.is_some() { 0.0 } else { ink.origin.x }, self.y.unwrap_or(0.0)),
+      Size::new(self.w.unwrap_or(ink.size.width), self.h.unwrap_or(ink.size.height)),
     )
   }
 
@@ -438,7 +830,9 @@ impl Text {
       font_size: self.font_size,
       font_style: self.font_style,
       font_weight: self.font_weight,
+      font_stretch: self.font_stretch,
       line_height: self.line_height,
+      letter_spacing: self.letter_spacing,
       paint: self.paint.clone(),
     }
   }
@@ -596,6 +990,14 @@ impl Text {
   }
   pub fn set_font_style(&mut self, style: Option<FontStyle>) -> Damage {
     self.font_style = style.unwrap_or(FontStyle::Normal);
+    Damage::Layout
+  }
+  pub fn set_font_stretch(&mut self, v: Option<f32>) -> Damage {
+    self.font_stretch = v.unwrap_or(DEFAULT_FONT_STRETCH);
+    Damage::Layout
+  }
+  pub fn set_letter_spacing(&mut self, v: Option<f32>) -> Damage {
+    self.letter_spacing = v.unwrap_or(0.0);
     Damage::Layout
   }
   pub fn set_text_alignment(&mut self, alignment: Option<TextAlignment>) -> Damage {

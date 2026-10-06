@@ -6,35 +6,35 @@ mod frame_history;
 // links nothing on Android either (the activity is singleInstance).
 #[cfg_attr(feature = "go", allow(dead_code))]
 mod gl_libs;
-#[cfg(any(feature = "go", feature = "test"))]
-mod input_plan;
 #[cfg(feature = "go")]
 mod go;
+#[cfg(any(feature = "go", feature = "test"))]
+mod input_plan;
 #[cfg_attr(any(feature = "go", target_os = "android"), allow(dead_code))]
 mod links;
 mod manifest;
 mod overlay;
+mod paced_clock;
 #[cfg(not(feature = "go"))]
 mod payload;
-mod stats;
-mod paced_clock;
 mod plugins;
+#[cfg(feature = "go")]
+mod render_host;
 mod runtime;
 #[cfg(any(feature = "go", feature = "test"))]
 mod settle;
 #[cfg(feature = "speech")]
 pub mod speech;
-mod storage;
+mod stats;
 #[cfg(any(feature = "go", feature = "test"))]
 mod stepped;
+mod storage;
 #[cfg(feature = "test")]
 mod test_host;
 #[cfg(feature = "go")]
-mod render_host;
+use render_host::RenderRun;
 #[cfg(feature = "test")]
 use test_host::TestRun;
-#[cfg(feature = "go")]
-use render_host::RenderRun;
 
 #[cfg(test)]
 mod tests;
@@ -42,9 +42,9 @@ mod tests;
 pub use entry::{main, Modules};
 // What a custom runtime writes its modules against (`flux::gui::frame`,
 // `flux::rquickjs`), through the one dependency it names.
-pub use flux;
 #[cfg(target_os = "android")]
 pub use entry::android_main;
+pub use flux;
 #[cfg(feature = "android-entry")]
 crate::android_entry!(crate::Modules::new());
 
@@ -65,7 +65,11 @@ enum EngineCmd {
   // the BSOD trigger), which keep the current sandbox. `args` is the app's
   // argument vector for this start (the dev session's configured args; empty
   // for a player launch), exposed as flux:process argv.
-  Reload { code: String, app_id: Option<String>, args: Vec<String> },
+  Reload {
+    code: String,
+    app_id: Option<String>,
+    args: Vec<String>,
+  },
 }
 
 // What leaving the current app means, decided by host context (see
@@ -479,8 +483,8 @@ fn mount_assets(app_id: &str) {
 /// nothing (a dropped default, so the role falls back to the system font).
 /// Two fonts under one alias would form one family style set in which style
 /// matching keeps the first registered on a tie, so a project's "sans"
-/// override would lose to the base Noto Sans; so would its underline metrics
-/// (FontMetricsTable keeps the first entry too).
+/// override would lose to the base Noto Sans (the glyph engine's font set
+/// keeps the first registration per name).
 pub(crate) fn merge_fonts(base: &[FontPayload], app: manifest::AppFonts) -> Vec<FontPayload> {
   let claimed = |font: &FontPayload| font.alias.as_ref().is_some_and(|alias| app.aliases.contains(alias));
   let mut fonts: Vec<FontPayload> = base.iter().filter(|font| !claimed(font)).cloned().collect();
@@ -551,7 +555,9 @@ fn register_protocol_handler(app_id: Option<&str>, display_name: Option<&str>) -
   #[cfg(feature = "go")]
   {
     let _ = (app_id, display_name);
-    log::warn!("[sol] registerProtocolHandler: nothing registered in the dev client; a packed app registers its own scheme");
+    log::warn!(
+      "[sol] registerProtocolHandler: nothing registered in the dev client; a packed app registers its own scheme"
+    );
     Ok(())
   }
   #[cfg(all(not(feature = "go"), target_os = "android"))]
@@ -1600,7 +1606,21 @@ pub(crate) fn start(
   modules: Modules,
 ) {
   let hosts = Hosts { test: None, render: None, errors: None };
-  let _ = start_with(rt, app_source, launch, display_name, alloy::Mode::Run, size, stats, dev_server, fonts, storage, args, hosts, modules);
+  let _ = start_with(
+    rt,
+    app_source,
+    launch,
+    display_name,
+    alloy::Mode::Run,
+    size,
+    stats,
+    dev_server,
+    fonts,
+    storage,
+    args,
+    hosts,
+    modules,
+  );
 }
 
 /// Render `app` headless (render_host.rs): `run.frames` frames at `run.fps`

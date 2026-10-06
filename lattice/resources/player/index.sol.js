@@ -6987,6 +6987,9 @@ function measureText2(text, options) {
 function prepareText2(text, options) {
   return tree.prepareText(text, options);
 }
+function warmText2(styles) {
+  tree.warmText(styles);
+}
 function unitInk(units, index) {
   let ink = units[index].width;
   let advance = 0;
@@ -10996,6 +10999,54 @@ function PressFeedback(props) {
   return _el$;
 }
 
+// ../../packages/components/src/typography.ts
+var SMALL_TEXT = 16;
+function lightOnDark(text, fill) {
+  if (typeof text !== "string" || typeof fill !== "string" || fill === "transparent")
+    return;
+  return brightness2(text) > brightness2(fill);
+}
+function themeOnDark() {
+  return lightOnDark(theme.color.text, theme.color.background) ?? false;
+}
+function typeWeight(weight, size, onDark) {
+  let delta = onDark ?? themeOnDark() ? policy.textWeightDelta : 0;
+  if (delta > 0 && size < SMALL_TEXT)
+    delta += 100;
+  return Math.min(900, weight + delta);
+}
+function typeStyle(variant, onDark) {
+  let role = theme.text[variant];
+  let size = role.size * policy.textScale;
+  return {
+    fontFamily: theme.text.fontFamily,
+    fontSize: size,
+    lineHeight: role.lineHeight,
+    fontWeight: typeWeight(role.weight, size, onDark)
+  };
+}
+var TYPE_SCALE_VARIANTS = ["caption", "label", "body", "title", "heading"];
+function typeScaleStyles() {
+  let styles = [];
+  for (let variant of TYPE_SCALE_VARIANTS) {
+    for (let onDark of [false, true]) {
+      let style = typeStyle(variant, onDark);
+      styles.push({
+        fontFamily: style.fontFamily,
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight
+      });
+    }
+  }
+  let body = typeStyle("body");
+  styles.push({
+    fontFamily: theme.text.monoFamily,
+    fontSize: body.fontSize,
+    fontWeight: body.fontWeight
+  });
+  return styles;
+}
+
 // ../../packages/components/src/window.tsx
 function themeFinish() {
   let f = theme.finish;
@@ -11013,6 +11064,7 @@ function themeFinish() {
   };
 }
 function Window(props) {
+  createEffect(() => typeScaleStyles(), (styles) => warmText2(styles));
   var _el$ = createElement("window");
   spread(_el$, [() => props.layout, {
     get title() {
@@ -11355,33 +11407,6 @@ function View(props) {
   })(), null);
   return _el$;
 }
-// ../../packages/components/src/typography.ts
-var SMALL_TEXT = 16;
-function lightOnDark(text, fill) {
-  if (typeof text !== "string" || typeof fill !== "string" || fill === "transparent")
-    return;
-  return brightness2(text) > brightness2(fill);
-}
-function themeOnDark() {
-  return lightOnDark(theme.color.text, theme.color.background) ?? false;
-}
-function typeWeight(weight, size, onDark) {
-  let delta = onDark ?? themeOnDark() ? policy.textWeightDelta : 0;
-  if (delta > 0 && size < SMALL_TEXT)
-    delta += 100;
-  return Math.min(900, weight + delta);
-}
-function typeStyle(variant, onDark) {
-  let role = theme.text[variant];
-  let size = role.size * policy.textScale;
-  return {
-    fontFamily: theme.text.fontFamily,
-    fontSize: size,
-    lineHeight: role.lineHeight,
-    fontWeight: typeWeight(role.weight, size, onDark)
-  };
-}
-
 // ../../packages/components/src/text.tsx
 function Text(props) {
   let role = () => theme.text[props.variant ?? "body"];

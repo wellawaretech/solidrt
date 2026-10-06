@@ -1,21 +1,15 @@
-// Text decoration (underline) metrics and painting. Impeller's own paragraph
-// decoration is per paragraph and skips trailing whitespace; the owned engine
-// shapes one paragraph per wrap unit, so it draws decorations itself, one
-// rect per line, from the fonts' own metrics.
+// Text decoration (underline) metrics and painting. The owned engine shapes
+// one run per wrap unit, so it draws decorations itself, one rect per line,
+// from the fonts' own metrics (read per face at registration, see
+// glyphs::Face::underline).
 use crate::impellers::{DisplayListBuilder, Point, Rect, Size};
-use crate::rendertree::text::glyphs::family_names;
 use crate::rendertree::text::layout::{Layout, PlacedRun};
 use crate::rendertree::PaintState;
-use std::collections::HashMap;
-use swash::TableProvider;
-
-/// The OpenType table the underline position and thickness live in.
-const POST_TABLE: &[u8; 4] = b"post";
 
 /// Underline geometry in em: `position` is the stroke's center below the
 /// baseline (the OpenType `post` value, negated), `thickness` its height.
 /// Skia draws the font's underline this way, so a rect from these matches
-/// Impeller's own decoration pixel for pixel.
+/// what every other renderer draws for the font.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UnderlineMetrics {
   pub position: f32,
@@ -23,44 +17,9 @@ pub struct UnderlineMetrics {
 }
 
 impl UnderlineMetrics {
-  /// What an unregistered family gets (Impeller's system-font fallback):
-  /// the shipped Noto fonts' values.
+  /// What a face without a `post` table gets (the table the underline
+  /// metrics live in): the shipped Noto fonts' values.
   pub const DEFAULT: UnderlineMetrics = UnderlineMetrics { position: 0.10, thickness: 0.05 };
-}
-
-/// Underline metrics of the registered fonts, keyed by alias and by the
-/// fonts' own family names, so a role ("sans") and a name ("Noto Sans")
-/// both resolve. First registration per key wins; weight and style variants
-/// share metrics.
-#[derive(Clone, Debug, Default)]
-pub struct FontMetricsTable {
-  by_family: HashMap<String, UnderlineMetrics>,
-}
-
-impl FontMetricsTable {
-  /// Record `bytes`' underline metrics under `alias` and its family names,
-  /// read with swash as the glyph engine reads the same file. A font swash
-  /// cannot read, or one without a `post` table (where the underline
-  /// metrics live), adds nothing: its families fall back to
-  /// `UnderlineMetrics::DEFAULT`.
-  pub fn register(&mut self, bytes: &[u8], alias: Option<&str>) {
-    let Some(font) = swash::FontRef::from_index(bytes, 0) else {
-      return;
-    };
-    if font.table_by_tag(swash::tag_from_bytes(POST_TABLE)).is_none() {
-      return;
-    }
-    let read = font.metrics(&[]);
-    let upem = read.units_per_em as f32;
-    let metrics = UnderlineMetrics { position: -read.underline_offset / upem, thickness: read.stroke_size / upem };
-    for key in alias.map(str::to_string).into_iter().chain(family_names(&font)) {
-      self.by_family.entry(key).or_insert(metrics);
-    }
-  }
-
-  pub fn underline(&self, family: &str) -> UnderlineMetrics {
-    self.by_family.get(family).copied().unwrap_or(UnderlineMetrics::DEFAULT)
-  }
 }
 
 /// A run's resolved underline, in pixels: `offset` from the baseline to the
@@ -85,7 +44,7 @@ impl Underline {
 /// atom), `ink_of` with its ink width. Maximal runs of adjacent underlined
 /// runs with the same geometry and paint on a line become one rect from the
 /// first run's start to the last run's ink end, so spaces inside are covered
-/// and trailing whitespace hangs, as Impeller's own decoration does per line.
+/// and trailing whitespace hangs, as a browser's decoration does per line.
 pub fn draw_underlines<'a>(
   builder: &mut DisplayListBuilder,
   origin: Point,

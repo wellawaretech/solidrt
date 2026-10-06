@@ -47,7 +47,12 @@ pub(crate) struct Unsettled {
 
 impl Unsettled {
   pub(crate) fn read(ctx: &Ctx<'_>) -> Self {
-    Self { in_flight: flux::in_flight(ctx), demand: flux::gui::frame::demand(ctx), timer_due: flux::timer_due(ctx) }
+    let mut in_flight = flux::in_flight(ctx);
+    let cells = flux::gui::frame::text_cells_in_flight(ctx);
+    if cells > 0 {
+      in_flight.push(("text cells", cells));
+    }
+    Self { in_flight, demand: flux::gui::frame::demand(ctx), timer_due: flux::timer_due(ctx) }
   }
 
   fn at_rest(&self) -> bool {

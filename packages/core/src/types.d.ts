@@ -1053,6 +1053,14 @@ export interface PathProps extends PaintProps, PointerProps, DashProps {
   shadow?: ShadowProps
 }
 
+/**
+ * A font role ("sans", "serif", "mono": the font the app packages for it,
+ * or the runtime's own Noto) or a registered family name; an unknown
+ * family falls back to sans. A character the family's font lacks is drawn
+ * from the next registered font that has it, roles first; one no
+ * registered font has draws as the font's missing-glyph box. Whitespace
+ * and control characters never draw a box: a tab advances like a space.
+ */
 export type FontFamily = "sans" | "serif" | "mono" | (string & {})
 export type FontStyle = "normal" | "italic"
 export type FontWeight = 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
@@ -1077,10 +1085,20 @@ export interface TextRunProps {
   fontStyle?: FontStyle
   fontWeight?: FontWeight
   /**
+   * Width as a percentage of normal (CSS font-stretch: 100 normal, 75
+   * condensed, 125 expanded), set on the font's width axis and clamped to
+   * its range; a font without one draws at its one width. Default 100.
+   */
+  fontStretch?: number
+  /**
+   * Extra advance after every character (grapheme cluster) in pixels, the
+   * last one included, as CSS letter-spacing; negative tightens. Default 0.
+   */
+  letterSpacing?: number
+  /**
    * Underline in the run's own color, drawn straight through descenders
    * (no skip-ink). Position and thickness come from the font's own metrics
-   * unless overridden; a font Impeller resolves through the system fallback
-   * gets the shipped Noto values.
+   * unless overridden.
    */
   textDecoration?: TextDecoration
   /** Pixels from the baseline to the top of the underline. */

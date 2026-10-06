@@ -117,6 +117,25 @@ impl Context {
     })?
   }
 
+  /// Draw a text layer: `groups` of quads (each with its solid colors or
+  /// its gradient) sampled from the text atlas `atlas` (a registry texture
+  /// id) into a new adopted texture of `width` x `height` pixels under
+  /// `policy`, or `into` the storage of an earlier call at exactly that
+  /// size. Transparent where no glyph lands; glyphs composite over each
+  /// other premultiplied. The texture is owned by Impeller and the caller's
+  /// handle, like a snapshot's.
+  pub fn rasterize_glyphs(
+    &self,
+    groups: Vec<crate::gpu::GlyphGroup>,
+    atlas: u64,
+    width: u32,
+    height: u32,
+    policy: crate::gpu::CoveragePolicy,
+    into: Option<&Texture>,
+  ) -> Result<Texture, String> {
+    self.rpc(|reply| RasterCmd::RasterizeGlyphs { groups, atlas, width, height, policy, into: into.cloned(), reply })?
+  }
+
   /// Rasterize a shaded snapshot boundary's display list and run its node
   /// shader pass in one trip: the subtree renders into the source texture,
   /// then `shader.program` draws one fullscreen pass over it into the

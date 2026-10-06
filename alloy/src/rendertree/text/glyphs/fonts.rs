@@ -1,25 +1,26 @@
-// The registered fonts as the glyph engine sees them. `build_typography`
-// hands every `FontPayload` to Impeller's typography context and to the
-// underline metrics table; this is the third reader of the same bytes. A
-// face keeps the bytes (shared with the worker thread, which parses them
-// with swash per job) and a harfrust font at the default location, and
-// instances the weight axis of a variable font per requested weight, so a
-// `fontWeight: 700` run shapes with the 700 advances rather than the
-// regular ones. Resolution by name is `FontMetricsTable::register`'s: the
-// alias first, then the family names `family_names` reads (shared with the
-// underline table), first registration winning, so the engine and the
-// table never disagree on which file a family means.
+// The registered fonts as the glyph engine sees them: the one reader of
+// the font bytes. A face keeps the bytes (shared with the worker thread,
+// which parses them with swash per job), a harfrust font at the default
+// location, instanced on the weight axis of a variable font per requested
+// weight so a `fontWeight: 700` run shapes with the 700 advances rather
+// than the regular ones, and on its width axis per requested stretch, and
+// the underline metrics the decoration path draws with. Resolution by name: the alias first, then the family names
+// `family_names` reads, first registration winning.
 use crate::impellers::FontWeight;
+use crate::rendertree::text::UnderlineMetrics;
 use crate::rendertree::FontPayload;
 use harfrust::font::Variation as HarfVariation;
 use harfrust::{Font, Tag};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use swash::StringId;
+use swash::{StringId, TableProvider};
 
 /// The weight axis tag of a variable font (OpenType `wght`).
 const WEIGHT_AXIS: &[u8; 4] = b"wght";
+/// The width axis tag (OpenType `wdth`): CSS font-stretch's percentage,
+/// 100 normal.
+const WIDTH_AXIS: &[u8; 4] = b"wdth";
 /// The italic axis tag (OpenType `ital`): a font with one needs no
 /// synthetic slant.
 const ITALIC_AXIS: &[u8; 4] = b"ital";
@@ -29,6 +30,8 @@ const WEIGHT_STEP: u16 = 100;
 /// weight axis (the synthetic bold every renderer applies to a static
 /// regular face).
 const SYNTHETIC_BOLD_FROM: u16 = 600;
+/// The OpenType table the underline position and thickness live in.
+const POST_TABLE: &[u8; 4] = b"post";
 
 /// Index of a face in the set: stable for the set's life.
 pub type FaceId = usize;
@@ -46,12 +49,20 @@ pub struct Face {
   units_per_em: f32,
   /// The weight axis range when the font is variable in weight.
   weight_axis: Option<(f32, f32)>,
+  /// The width axis range when the font is variable in width.
+  width_axis: Option<(f32, f32)>,
   /// Whether the font carries a real italic axis.
   italic_axis: bool,
-  /// Weight instances, built on first use per weight (deriving one shares
-  /// the parsed tables; only the location differs). Interior mutability so
-  /// a set borrowed shared (the platform's `glyphs()`) still instances.
-  instances: RefCell<HashMap<u16, Font>>,
+  /// The font's underline position and thickness, in em.
+  underline: UnderlineMetrics,
+  /// Registered under a role alias ("sans", "serif", "mono"): what fallback
+  /// tries before the faces registered by family name alone.
+  role: bool,
+  /// Instances per (weight, width bits), built on first use (deriving one
+  /// shares the parsed tables; only the location differs). Interior
+  /// mutability so a set borrowed shared (the platform's `glyphs()`) still
+  /// instances.
+  instances: RefCell<HashMap<(u16, u32), Font>>,
 }
 
 impl Face {
@@ -70,6 +81,13 @@ impl Face {
     self.weight_axis.map(|(min, max)| (weight as f32).clamp(min, max))
   }
 
+  /// The width axis value a requested stretch (CSS font-stretch's
+  /// percentage, 100 normal) resolves to, clamped into the axis range;
+  /// None for a font without a width axis, which draws at its one width.
+  pub fn width_setting(&self, stretch: f32) -> Option<f32> {
+    self.width_axis.map(|(min, max)| stretch.clamp(min, max))
+  }
+
   /// Whether a requested weight needs synthetic emboldening: the font has
   /// no weight axis and the weight is bold-class.
   pub fn synthetic_bold(&self, weight: u16) -> bool {
@@ -81,19 +99,38 @@ impl Face {
     !self.italic_axis
   }
 
-  /// The harfrust font instanced at `weight` (the default location for a
-  /// static font), built once per weight. A clone shares the instance.
-  pub fn instance(&self, weight: u16) -> Font {
-    let Some(value) = self.weight_setting(weight) else {
+  /// The glyph the face's character map gives `ch`, None when the face has
+  /// none for it (what a warm-up filters a repertoire through, and what
+  /// fallback asks of each face in turn).
+  pub fn glyph_id(&self, ch: char) -> Option<u16> {
+    let id = self.font.charmap().map_unicode(ch)?.to_u32() as u16;
+    (id != 0).then_some(id)
+  }
+
+  /// The face's underline geometry, from its `post` table.
+  pub fn underline(&self) -> UnderlineMetrics {
+    self.underline
+  }
+
+  /// The harfrust font instanced at `weight` and `stretch` (the default
+  /// location for a static font), built once per pair. A clone shares the
+  /// instance.
+  pub fn instance(&self, weight: u16, stretch: f32) -> Font {
+    let axes: Vec<HarfVariation> = [
+      self.weight_setting(weight).map(|value| HarfVariation { tag: Tag::new(WEIGHT_AXIS), value }),
+      self.width_setting(stretch).map(|value| HarfVariation { tag: Tag::new(WIDTH_AXIS), value }),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if axes.is_empty() {
       return self.font.clone();
-    };
+    }
     self
       .instances
       .borrow_mut()
-      .entry(weight)
-      .or_insert_with(|| {
-        self.font.instance_builder().variations([HarfVariation { tag: Tag::new(WEIGHT_AXIS), value }]).build()
-      })
+      .entry((weight, stretch.to_bits()))
+      .or_insert_with(|| self.font.instance_builder().variations(axes).build())
       .clone()
   }
 }
@@ -110,55 +147,65 @@ const DEFAULT_ROLE: &str = "sans";
 
 impl FontSet {
   /// Register `bytes` under `alias` and the family names the file
-  /// declares. A file that is not a font is skipped: the typography context
-  /// reports that failure already, and a face the engine lacks just resolves
-  /// to the fallback.
-  pub fn register(&mut self, bytes: FontBytes, alias: Option<&str>) {
+  /// declares. Errs, registering nothing, when the bytes are not a font
+  /// either parser reads; the caller decides what that costs (a panic at
+  /// startup, a warning mid-session).
+  pub fn register(&mut self, bytes: FontBytes, alias: Option<&str>) -> Result<(), String> {
     let Some(font) = Font::new(bytes.clone(), 0) else {
-      return;
+      return Err("not a font file (no readable table directory)".to_string());
     };
     let Some(swash_font) = swash::FontRef::from_index(bytes.as_ref().as_ref(), 0) else {
-      return;
+      return Err("not a font file (unreadable by the rasterizer)".to_string());
     };
     let mut weight_axis = None;
+    let mut width_axis = None;
     let mut italic_axis = false;
     for axis in swash_font.variations() {
       if axis.tag() == swash::tag_from_bytes(WEIGHT_AXIS) {
         weight_axis = Some((axis.min_value(), axis.max_value()));
+      } else if axis.tag() == swash::tag_from_bytes(WIDTH_AXIS) {
+        width_axis = Some((axis.min_value(), axis.max_value()));
       } else if axis.tag() == swash::tag_from_bytes(ITALIC_AXIS) {
         italic_axis = true;
       }
     }
     let families = family_names(&swash_font);
+    let underline = underline_metrics(&swash_font);
     let id = self.faces.len();
     self.faces.push(Face {
       bytes,
       units_per_em: font.units_per_em() as f32,
       font,
       weight_axis,
+      width_axis,
       italic_axis,
+      underline,
+      role: alias.is_some(),
       instances: RefCell::new(HashMap::new()),
     });
     for key in alias.map(str::to_string).into_iter().chain(families) {
       self.by_name.entry(key).or_insert(id);
     }
+    Ok(())
   }
 
-  /// Register every payload in order (the typography context's order).
-  pub fn from_payloads(fonts: &[FontPayload]) -> Self {
+  /// Register every payload in order; `on_error` hears of each one that is
+  /// not a font (alias, reason) and the set goes on without it.
+  pub fn from_payloads(fonts: &[FontPayload], on_error: impl Fn(&str, &str)) -> Self {
     let mut set = Self::default();
     for FontPayload { alias, bytes } in fonts {
       let bytes: FontBytes = Arc::new(bytes.clone());
-      set.register(bytes, alias.as_deref());
+      if let Err(e) = set.register(bytes, alias.as_deref()) {
+        on_error(alias.as_deref().unwrap_or("<unaliased>"), &e);
+      }
     }
     set
   }
 
   /// The face a family name resolves to: the alias or family name as
   /// registered, else the fallback face - the one registered under the
-  /// "sans" role (Impeller's own fallback is its default family, which the
-  /// client registers as sans), else the first face. None only for an
-  /// empty set.
+  /// "sans" role (what every client registers its default face as), else
+  /// the first face. None only for an empty set.
   pub fn resolve(&self, family: &str) -> Option<FaceId> {
     self
       .by_name
@@ -172,6 +219,17 @@ impl FontSet {
     self.faces.get(id)
   }
 
+  /// The face a cluster `primary` cannot shape is re-shaped on: the first
+  /// face other than `primary` whose character map has `ch`, the faces
+  /// registered under a role alias first, then the rest, each in
+  /// registration order. None when no registered face covers `ch`.
+  pub fn fallback_face(&self, primary: FaceId, ch: char) -> Option<FaceId> {
+    let candidates = self.faces.iter().enumerate().filter(|(id, _)| *id != primary);
+    let roles = candidates.clone().filter(|(_, face)| face.role);
+    let others = candidates.filter(|(_, face)| !face.role);
+    roles.chain(others).find(|(_, face)| face.glyph_id(ch).is_some()).map(|(id, _)| id)
+  }
+
   pub fn is_empty(&self) -> bool {
     self.faces.is_empty()
   }
@@ -183,11 +241,21 @@ pub fn weight_value(weight: FontWeight) -> u16 {
   (weight as u16 + 1) * WEIGHT_STEP
 }
 
+// A face's underline geometry in em, from its `post` table; the shipped
+// Notos' values for a face without one.
+fn underline_metrics(font: &swash::FontRef<'_>) -> UnderlineMetrics {
+  if font.table_by_tag(swash::tag_from_bytes(POST_TABLE)).is_none() {
+    return UnderlineMetrics::DEFAULT;
+  }
+  let read = font.metrics(&[]);
+  let upem = read.units_per_em as f32;
+  UnderlineMetrics { position: -read.underline_offset / upem, thickness: read.stroke_size / upem }
+}
+
 /// The names a font registers under besides its alias: every family and
 /// typographic family record of its `name` table, in table order, decoded
 /// where the encoding is known (Unicode and Mac Roman; a record in another
-/// encoding decodes empty and is skipped). Both the face set and the
-/// underline table key on these, so the two resolve a family alike.
+/// encoding decodes empty and is skipped).
 pub fn family_names(font: &swash::FontRef<'_>) -> Vec<String> {
   font
     .localized_strings()

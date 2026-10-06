@@ -390,6 +390,18 @@ export function prepareText(text: string, options?: tree.MeasureTextOptions): tr
   return tree.prepareText(text, options)
 }
 
+/**
+ * Makes the glyph cells of printable ASCII for these font styles ahead of
+ * their first use, off the frame: call it at startup with the type scale
+ * the app draws in (the components' Window does it for the theme's), so a
+ * screen's first paint in any of them never waits for cells. Glyphs outside
+ * ASCII are made at first use. Each entry names a font as a <text> would;
+ * line height and maxLines are ignored.
+ */
+export function warmText(styles: tree.MeasureTextOptions[]): void {
+  tree.warmText(styles)
+}
+
 /** One laid-out line from layoutNextLine. */
 export type TextLine = {
   /** Unit range [from, to) into prepared.units. */

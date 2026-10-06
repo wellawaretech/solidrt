@@ -391,6 +391,18 @@ pub(crate) enum RasterCmd {
     aa: bool,
     reply: mpsc::Sender<Result<(), String>>,
   },
+  /// Draw a text layer: `quads` sampled from the text atlas texture `atlas`
+  /// into an adopted texture of `width` x `height` under `policy`, or
+  /// `into` one from an earlier call at exactly that size (cleared first).
+  RasterizeGlyphs {
+    groups: Vec<crate::gpu::GlyphGroup>,
+    atlas: u64,
+    width: u32,
+    height: u32,
+    policy: crate::gpu::CoveragePolicy,
+    into: Option<Texture>,
+    reply: mpsc::Sender<Result<Texture, String>>,
+  },
   /// Rasterize a shaded snapshot boundary and run its node shader pass in
   /// one trip: the display list renders into the source texture, then
   /// `shader.program` draws one fullscreen pass over it into the output,

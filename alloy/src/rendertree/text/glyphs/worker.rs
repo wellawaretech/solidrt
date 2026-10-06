@@ -3,13 +3,25 @@
 // of CPU and a distance field more; a label whose glyphs were never seen
 // would otherwise stall the frame that first draws it. Jobs go in over a
 // channel, done cells come back over another, and the owner drains them at
-// its own flush (a frame tick), uploads and re-frames. Dropping the worker
-// closes the job channel; the thread finishes the job in hand and exits,
-// joined by the drop so an engine teardown leaves no thread behind.
+// its own flush (a frame tick), uploads and re-frames. Two priorities: a
+// job for glyphs a frame is missing right now runs ahead of a warm-up,
+// however many warm-ups are queued. Dropping the worker closes the job
+// channel; the thread finishes the job in hand and exits, joined by the
+// drop so an engine teardown leaves no thread behind.
 use super::cells::{Cell, CellRequest, Rasterizer};
 use super::fonts::FontBytes;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::collections::VecDeque;
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
+
+/// How urgent a job is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobPriority {
+  /// A frame drew without these glyphs; it completes when they land.
+  Needed,
+  /// Glyphs nobody asked for yet, made ahead of their first use.
+  Warm,
+}
 
 /// One request: which owner (an atlas handle of the caller's) it is for,
 /// the face bytes and what to rasterize. `done` runs on the worker thread
@@ -20,6 +32,7 @@ pub struct CellJob {
   pub owner: u64,
   pub bytes: FontBytes,
   pub request: CellRequest,
+  pub priority: JobPriority,
   pub done: Option<Box<dyn FnOnce() + Send>>,
 }
 
@@ -36,6 +49,43 @@ pub struct CellWorker {
   thread: Option<JoinHandle<()>>,
 }
 
+// The worker's view of its inbox: everything received so far, by priority.
+#[derive(Default)]
+struct Inbox {
+  needed: VecDeque<CellJob>,
+  warm: VecDeque<CellJob>,
+}
+
+impl Inbox {
+  fn push(&mut self, job: CellJob) {
+    match job.priority {
+      JobPriority::Needed => self.needed.push_back(job),
+      JobPriority::Warm => self.warm.push_back(job),
+    }
+  }
+
+  fn pop(&mut self) -> Option<CellJob> {
+    self.needed.pop_front().or_else(|| self.warm.pop_front())
+  }
+
+  // The next job: whatever arrived while the last one ran goes in first,
+  // so a needed job jumps a queued warm-up; blocks when nothing is queued.
+  // None once the channel is closed and drained.
+  fn next(&mut self, rx: &Receiver<CellJob>) -> Option<CellJob> {
+    loop {
+      match rx.try_recv() {
+        Ok(job) => self.push(job),
+        Err(TryRecvError::Empty) => break,
+        Err(TryRecvError::Disconnected) => return self.pop(),
+      }
+    }
+    if let Some(job) = self.pop() {
+      return Some(job);
+    }
+    rx.recv().ok()
+  }
+}
+
 impl CellWorker {
   /// Start the thread. `name` labels it for a profiler.
   pub fn spawn(name: &str) -> std::io::Result<Self> {
@@ -43,10 +93,11 @@ impl CellWorker {
     let (done_tx, done_rx) = channel::<CellsDone>();
     let thread = std::thread::Builder::new().name(name.to_string()).spawn(move || {
       let mut rasterizer = Rasterizer::default();
-      while let Ok(mut job) = job_rx.recv() {
+      let mut inbox = Inbox::default();
+      while let Some(mut job) = inbox.next(&job_rx) {
         let bytes = job.bytes.as_ref().as_ref();
         let cells = rasterizer.rasterize(bytes, &job.request).unwrap_or_default();
-        let failed = job.request.glyphs.iter().copied().filter(|g| !cells.iter().any(|c| c.glyph == *g)).collect();
+        let failed = job.request.glyphs.iter().copied().filter(|g| !cells.iter().any(|c| c.key == *g)).collect();
         let sent = done_tx.send(CellsDone { owner: job.owner, cells, failed }).is_ok();
         if let Some(done) = job.done.take() {
           done();

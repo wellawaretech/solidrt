@@ -63,6 +63,7 @@ pub use sdl3;
 pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use context::{CaptureDone, CaptureInfo, Context, Overlay, YuvFrameSink};
+pub use gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, GradientTile, RAMP_WIDTH};
 pub use event::{
   AlloyCommand, AlloyEvent, Arrival, Cursor, CursorFrame, CursorImage, CursorShape, EventSender, GamepadState, Modifiers, Orientation, PointerType, SuspendHold,
   TextCapitalization, TextInputOptions, TextInputType,

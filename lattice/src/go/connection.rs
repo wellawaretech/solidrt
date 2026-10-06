@@ -1128,7 +1128,7 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
   put("textures", s.textures.into());
   put("nodes", s.node_count.into());
   put("measureCalls", s.measure_calls.into());
-  put("paraShapes", s.para_shapes.into());
+  put("wordShapes", s.word_shapes.into());
   put("wordHits", s.word_hits.into());
   put("dirtiedNodes", s.dirtied.into());
   put("cacheGets", s.cache_gets.into());
@@ -1218,7 +1218,7 @@ fn window_json(
       "paintMs": round2(worst.paint_ms),
       "hoverMs": round2(worst.hover_ms),
       "measureCalls": worst.counters.measure_calls,
-      "paraShapes": worst.counters.para_shapes,
+      "wordShapes": worst.counters.word_shapes,
       "wordHits": worst.counters.word_hits,
       "dirtiedNodes": worst.counters.dirtied,
       "cacheGets": worst.counters.cache_gets,
@@ -1273,7 +1273,7 @@ fn window_json(
 fn paint_ops_json(c: &alloy::rendertree::counters::LayoutCounters) -> serde_json::Value {
   serde_json::json!({
     "draws": c.draws,
-    "paragraphs": c.paragraphs,
+    "textLayers": c.text_layers,
     "clips": c.clips,
     "roundedClips": c.rounded_clips,
     "saveLayers": c.save_layers,

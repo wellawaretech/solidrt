@@ -71,6 +71,10 @@ struct RenderInner {
   // raster-side) and what it shows (HUD on, badge). A change refreshes it
   // immediately rather than waiting out the once-per-second cadence.
   overlay_key: Cell<OverlayKey>,
+  // The overlay's rasterized text, kept so the next refresh re-renders into
+  // the same texture while its size holds, and so an image drawn before all
+  // its glyph cells landed is refreshed the frame they do.
+  overlay_image: RefCell<Option<alloy::rendertree::text::TextImage>>,
 }
 
 type OverlayKey = (f32, f32, f32, f32, f32, f32, f32, bool, Option<overlay::Badge>);
@@ -115,6 +119,7 @@ pub fn store_state(
       last_node_count: Cell::new(0),
       first_frame_done: Cell::new(false),
       overlay_key: Cell::new((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, None)),
+      overlay_image: RefCell::new(None),
     })))
     .expect("store render state");
 }
@@ -191,8 +196,12 @@ impl RenderInner {
       stats_on,
       badge,
     );
+    let overlay_incomplete = self.overlay_image.borrow().as_ref().is_some_and(|image| !image.complete);
     let overlay_refresh = overlay_on
-      && (!self.overlay_installed.get() || self.overlay_key.get() != overlay_key || stats.borrow().overlay_due());
+      && (!self.overlay_installed.get()
+        || self.overlay_key.get() != overlay_key
+        || overlay_incomplete
+        || stats.borrow().overlay_due());
     let overlay_clear = !overlay_on && self.overlay_installed.get();
     // The frame the runtime stamped for us (see frame::RenderFrame). Its
     // start is consumed here, so a native call with no render event (the
@@ -248,21 +257,29 @@ impl RenderInner {
             history.summarize(Window::Ms(HUD_GPU_WINDOW_MS), now_ms).and_then(|w| w.raster_rates?.gpu_share_pct())
           })
           .flatten();
-        let overlay = overlay::build(
-          &snap,
-          gpu_pct,
-          stats_on,
-          badge,
-          &platform.typography(),
-          platform.safe_area(),
-          platform.display_scale(),
-        );
+        let built = {
+          let previous = self.overlay_image.borrow();
+          overlay::build(
+            &snap,
+            gpu_pct,
+            stats_on,
+            badge,
+            platform,
+            atx,
+            previous.as_ref(),
+            platform.safe_area(),
+            platform.display_scale(),
+          )
+        };
+        let (overlay, image) = built.map_or((None, None), |(overlay, image)| (Some(overlay), Some(image)));
         self.overlay_installed.set(overlay.is_some());
         self.overlay_key.set(overlay_key);
+        *self.overlay_image.borrow_mut() = image;
         atx.set_overlay(overlay);
       } else if overlay_clear {
         atx.set_overlay(None);
         self.overlay_installed.set(false);
+        self.overlay_image.borrow_mut().take();
       }
 
       // Content damage, then present-only reuse or the build handle: the
@@ -378,7 +395,7 @@ impl RenderInner {
               String::new()
             };
             qtx.logger().warn(&format!(
-              "Slow frame: {:.1} ms (budget {:.1}){}: js {:.1}, layout {:.1}, postLayout {:.1}, paint {:.1}, hover {:.1}; paraShapes {}, measureCalls {}, dirtiedNodes {}, nodesAdded {}, cacheHits {}/{}, nodesPainted {}",
+              "Slow frame: {:.1} ms (budget {:.1}){}: js {:.1}, layout {:.1}, postLayout {:.1}, paint {:.1}, hover {:.1}; wordShapes {}, measureCalls {}, dirtiedNodes {}, nodesAdded {}, cacheHits {}/{}, nodesPainted {}",
               record.total_ms,
               record.period_ms,
               cause,
@@ -387,7 +404,7 @@ impl RenderInner {
               record.post_ms,
               record.paint_ms,
               record.hover_ms,
-              counters.para_shapes,
+              counters.word_shapes,
               counters.measure_calls,
               counters.dirtied,
               nodes_added,

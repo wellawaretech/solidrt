@@ -38,7 +38,11 @@ pub struct RunStyle {
   pub font_size: f32,
   pub font_style: FontStyle,
   pub font_weight: FontWeight,
+  /// CSS font-stretch's percentage, 100 normal (the font's width axis).
+  pub font_stretch: f32,
   pub line_height: f32,
+  /// Extra advance after every character, in pixels (CSS letter-spacing).
+  pub letter_spacing: f32,
   pub paint: PaintState,
 }
 
@@ -50,7 +54,9 @@ impl Hash for RunStyle {
     hash_f32(self.font_size, state);
     self.font_style.hash(state);
     self.font_weight.hash(state);
+    hash_f32(self.font_stretch, state);
     hash_f32(self.line_height, state);
+    hash_f32(self.letter_spacing, state);
     self.paint.hash(state);
   }
 }
@@ -63,7 +69,9 @@ pub struct RunOverrides {
   pub font_size: Option<f32>,
   pub font_style: Option<FontStyle>,
   pub font_weight: Option<FontWeight>,
+  pub font_stretch: Option<f32>,
   pub line_height: Option<f32>,
+  pub letter_spacing: Option<f32>,
   pub paint: Option<PaintState>,
   pub underline: Option<bool>,
   pub underline_offset: Option<f32>,
@@ -78,7 +86,9 @@ impl RunOverrides {
       font_size: child.font_size.or(self.font_size),
       font_style: child.font_style.or(self.font_style),
       font_weight: child.font_weight.or(self.font_weight),
+      font_stretch: child.font_stretch.or(self.font_stretch),
       line_height: child.line_height.or(self.line_height),
+      letter_spacing: child.letter_spacing.or(self.letter_spacing),
       paint: child.paint.clone().or_else(|| self.paint.clone()),
       underline: child.underline.or(self.underline),
       underline_offset: child.underline_offset.or(self.underline_offset),
@@ -92,7 +102,9 @@ impl RunOverrides {
       font_size: self.font_size.unwrap_or(text.font_size),
       font_style: self.font_style.unwrap_or(text.font_style),
       font_weight: self.font_weight.unwrap_or(text.font_weight),
+      font_stretch: self.font_stretch.unwrap_or(text.font_stretch),
       line_height: self.line_height.unwrap_or(text.line_height),
+      letter_spacing: self.letter_spacing.unwrap_or(text.letter_spacing),
       paint: self.paint.clone().unwrap_or_else(|| text.paint.clone()),
     }
   }
@@ -136,6 +148,14 @@ impl Span {
   }
   pub fn set_font_style(&mut self, style: Option<FontStyle>) -> Damage {
     self.overrides.font_style = style;
+    Damage::Layout
+  }
+  pub fn set_font_stretch(&mut self, v: Option<f32>) -> Damage {
+    self.overrides.font_stretch = v;
+    Damage::Layout
+  }
+  pub fn set_letter_spacing(&mut self, v: Option<f32>) -> Damage {
+    self.overrides.letter_spacing = v;
     Damage::Layout
   }
   // Underline is paint-only: it neither shapes nor breaks.

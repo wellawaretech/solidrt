@@ -7,7 +7,7 @@ use taffy::prelude::*;
 
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::{bytes_of, elements, OptArg};
-use alloy::rendertree::text::{prepare_units, PreparedRun, PreparedUnit, ShaperKind};
+use alloy::rendertree::text::{prepare_units, Fallback, PreparedRun, PreparedUnit};
 use alloy::rendertree::{
   AnimValue, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, Rect, RenderTree, Text, Window,
 };
@@ -98,7 +98,9 @@ fn float_array_items(value: &Value<'_>) -> Option<Vec<PropValue>> {
 // the JSX property decoders (one parser for fontWeight and friends). Throws
 // on a value that does not decode.
 pub(crate) fn apply_font_options<'js>(ctx: &Ctx<'js>, node: &mut Text, opts: &Object<'js>) -> rquickjs::Result<()> {
-  for name in ["fontFamily", "fontSize", "fontStyle", "fontWeight", "lineHeight", "maxLines"] {
+  for name in
+    ["fontFamily", "fontSize", "fontStyle", "fontWeight", "fontStretch", "letterSpacing", "lineHeight", "maxLines"]
+  {
     let value: Value<'js> = opts.get(name)?;
     if value.is_undefined() {
       continue;
@@ -337,6 +339,7 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("dropCursor")?;
     decl.declare("measureText")?;
     decl.declare("prepareText")?;
+    decl.declare("warmText")?;
     decl.declare("getBoundingBox")?;
     decl.declare("getBoundingBoxViewport")?;
     decl.declare("getLayoutBox")?;
@@ -364,6 +367,7 @@ impl ModuleDef for RenderTreeModule {
     exports.export("dropCursor", Function::new(ctx.clone(), drop_cursor)?)?;
     exports.export("measureText", Function::new(ctx.clone(), measure_text)?)?;
     exports.export("prepareText", Function::new(ctx.clone(), prepare_text)?)?;
+    exports.export("warmText", Function::new(ctx.clone(), warm_text)?)?;
     exports.export("getBoundingBox", Function::new(ctx.clone(), get_bounding_box)?)?;
     exports.export("getBoundingBoxViewport", Function::new(ctx.clone(), get_bounding_box_viewport)?)?;
     exports.export("getLayoutBox", Function::new(ctx.clone(), get_layout_box)?)?;
@@ -644,6 +648,32 @@ fn measure_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) 
   Ok(TextSize { width: size.width, height: size.height })
 }
 
+// Warm the text atlas for a list of font styles (see TextAtlas): each
+// entry's font options through the JSX decoders onto a Text, its run style
+// resolved to a face and queued at the next frame, when the display scale
+// is known.
+fn warm_text<'js>(ctx: Ctx<'js>, styles: rquickjs::Array<'js>) -> rquickjs::Result<()> {
+  let s = state(&ctx);
+  let platform = &s.gui.platform;
+  let fonts = platform.glyphs();
+  let mut atlas = platform.text_atlas();
+  for item in styles.iter::<Object<'js>>() {
+    let opts = item?;
+    let mut node = Text::default();
+    apply_font_options(&ctx, &mut node, &opts)?;
+    let style = node.run_style();
+    let Some(face) = fonts.resolve(&style.font_family) else { continue };
+    atlas.request_warm(alloy::rendertree::text::glyphs::WarmRequest {
+      face,
+      size: style.font_size,
+      weight: alloy::rendertree::text::glyphs::weight_value(style.font_weight),
+      stretch: style.font_stretch,
+      italic: style.font_style == alloy::impellers::FontStyle::Italic,
+    });
+  }
+  Ok(())
+}
+
 fn prepare_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
   let mut node = Text::default();
   let mut carets = false;
@@ -656,17 +686,20 @@ fn prepare_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) 
     }
   }
   let s = state(&ctx);
-  let units = prepare_units(&s.gui.platform, ShaperKind::Impeller, &text, &node.run_style(), &runs, carets);
-  prepared_to_js(&ctx, text, units)
+  let units = prepare_units(&s.gui.platform, &text, &node.run_style(), &runs, carets, Fallback::Registered);
+  prepared_to_js(&ctx, text, units, false)
 }
 
 /// A prepared text as its JS shape (`PreparedText`): the units with their
-/// metrics, caret stops when asked for, and their glyphs when shaped on the
-/// engine. Shared with the font module, whose prepareText shapes there.
+/// metrics, caret stops when asked for, and with `glyphs` their glyphs (an
+/// object per glyph). Shared with the font module, whose prepareText is
+/// the one that reports glyphs: its ids name cells of its own atlas, where
+/// a `<text>`'s glyphs may come from any registered face.
 pub(crate) fn prepared_to_js<'js>(
   ctx: &Ctx<'js>,
   text: String,
   units: Vec<PreparedUnit>,
+  glyphs: bool,
 ) -> rquickjs::Result<Object<'js>> {
   let array = rquickjs::Array::new(ctx.clone())?;
   // Byte offsets to UTF-16 (JS string) offsets, incrementally: units tile
@@ -692,9 +725,9 @@ pub(crate) fn prepared_to_js<'js>(
       }
       obj.set("carets", array)?;
     }
-    if let Some(glyphs) = &unit.glyphs {
+    if glyphs {
       let array = rquickjs::Array::new(ctx.clone())?;
-      for (j, glyph) in glyphs.glyphs.iter().enumerate() {
+      for (j, glyph) in unit.glyphs.glyphs.iter().enumerate() {
         let o = Object::new(ctx.clone())?;
         o.set("id", glyph.id as u32)?;
         o.set("x", glyph.x)?;

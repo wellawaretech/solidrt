@@ -12,6 +12,10 @@ declare module "flux:rendertree" {
     fontSize?: number
     fontStyle?: "normal" | "italic"
     fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+    /** Width as a percentage of normal (CSS font-stretch), on the font's width axis; default 100. */
+    fontStretch?: number
+    /** Extra advance after every character in pixels (CSS letter-spacing); default 0. */
+    letterSpacing?: number
     lineHeight?: number
     /** measureText only. */
     maxLines?: number
@@ -35,6 +39,8 @@ declare module "flux:rendertree" {
     fontSize?: number
     fontStyle?: "normal" | "italic"
     fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+    fontStretch?: number
+    letterSpacing?: number
     lineHeight?: number
   }
 
@@ -74,11 +80,10 @@ declare module "flux:rendertree" {
      */
     carets?: { offset: number, x: number }[]
     /**
-     * The unit's glyphs when shaped on the runtime's own shaper
-     * (`flux:font`'s prepareText): the font's glyph `id`, the glyph origin
+     * The unit's glyphs, from `flux:font`'s prepareText only (its ids name
+     * cells of that font's atlas): the font's glyph `id`, the glyph origin
      * `x`/`y` from the unit's pen position (kerned, y down) and the pen
-     * `advance` it contributes. Absent from `flux:rendertree`'s prepareText,
-     * whose shaper exposes none.
+     * `advance` it contributes.
      */
     glyphs?: { id: number, x: number, y: number, advance: number }[]
   }
@@ -209,10 +214,20 @@ declare module "flux:rendertree" {
    * the shared word cache, so a text already drawn or prepared costs no
    * shaping), for app-side line breaking - text into a shape, around an
    * obstacle, across columns, fitted by size, per glyph; see layoutNextLine
-   * in @solidrt/core. `runs` restyle ranges, `carets` adds glyph positions;
+   * in @solidrt/core. `runs` restyle ranges, `carets` adds caret stops;
    * `maxLines` is ignored.
    */
   export function prepareText(text: string, options?: MeasureTextOptions): PreparedText
+  /**
+   * Make the glyph cells of printable ASCII for these font styles ahead of
+   * their first use, on the engine's worker thread: the type scale an app
+   * draws its screens in, called at startup under the splash, so a first
+   * paint in any of them never waits for cells. Each entry names a font
+   * (family, size, weight, style) as a `<text>` would; `lineHeight`,
+   * `maxLines`, `carets` and `runs` are ignored. Glyphs outside ASCII are
+   * made at first use.
+   */
+  export function warmText(styles: MeasureTextOptions[]): void
   /**
    * The node's bounding box from the most recent layout, relative to its
    * nearest positioning context (an ancestor with an explicit

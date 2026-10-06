@@ -32,6 +32,8 @@ declare module "flux:font" {
     fontSize?: number
     fontStyle?: "normal" | "italic"
     fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+    /** Width as a percentage of normal (CSS font-stretch), on the font's width axis; default 100. */
+    fontStretch?: number
     /** Line height as a multiplier of the size, 0 for the font's own line. */
     lineHeight?: number
   }
@@ -114,6 +116,11 @@ declare module "flux:font" {
    * `PreparedText` as `flux:rendertree`'s, every unit also carrying its
    * `glyphs` - ids and pen positions, kerned, in pixels at `fontSize` -
    * for app-side line breaking with `layoutNextLine` and glyph placement.
+   * The font is one face and its atlas holds that face's cells only, so a
+   * character the face lacks shapes to its missing glyph (id 0) with no
+   * fallback to another font, where a `<text>` would borrow the glyph;
+   * whitespace and control characters the face lacks take the space's
+   * advance.
    */
   function prepareText(font: FontId, text: string, options?: FontPrepareOptions): PreparedText
   /**

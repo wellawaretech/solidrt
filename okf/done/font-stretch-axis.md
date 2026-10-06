@@ -1,6 +1,6 @@
 ---
 title: fontStretch / width axis
-description: The bundled Noto variables carry a wdth axis the text API cannot reach; whether to expose a CSS-style font-stretch, pending an Impeller ParagraphStyle capability check.
+description: The bundled Noto variables carry a wdth axis the text API could not reach while Impeller shaped text; exposed as fontStretch once the glyph engine became the shaper.
 created: 2026-07-27
 ---
 
@@ -39,3 +39,14 @@ Update 2026-08-16: checked the impellers 0.4.2 C surface while shaping
 [text-inline-spans](../done/text-inline-spans.md): `ParagraphStyle` has no font
 feature or variation-axis setter, so the wdth axis is unreachable regardless
 of API design. Waits on upstream.
+
+Resolved 2026-10-06 with stage 2 step 3 of
+[text-own-rasterizer](../plans/text-own-rasterizer.md): the glyph engine
+is the one shaper, so the axis is one more instance setting. `fontStretch`
+is a CSS percentage (100 normal) on `<text>`, `<span>`, `measureText`,
+`prepareText`, `warmText` and `createFont`, set on the `wdth` axis of a
+variable face and clamped to its range; a face without the axis draws at
+its one width. The default-font stance is unchanged and stays with the
+packaging item: instancing `wdth` out of the shipped Notos would make
+`fontStretch` a no-op on them (custom fonts keep their axes); whichever
+lands second decides.

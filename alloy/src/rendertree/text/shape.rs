@@ -1,18 +1,18 @@
-// Owned shaping: every wrap unit of the text as its own single-line Impeller
-// paragraph, cached per input fingerprint (ParaKey), plus the line layouts
-// derived from them per width. The breaking itself is text::layout.
+// Owned shaping: every wrap unit of the text shaped as its own single-line
+// run through the shared word cache, cached per input fingerprint
+// (ParaKey), plus the line layouts derived from them per width. The
+// breaking itself is text::layout.
 use super::{OverflowWrap, Text, TextAnchor, TextOverflow, TextRun, ATOM_CHAR, MAX_CACHED_WIDTHS};
 use crate::impellers::{FontStyle, FontWeight, Size, TextAlignment};
-use crate::rendertree::text::glyphs::ShapedGlyphs;
+use crate::rendertree::text::glyphs::{Fallback, ShapedGlyphs};
 use crate::rendertree::text::layout::{self, Align, Layout, LineCursor, LineExtent, Run, RunMetrics, Wrap};
-use crate::rendertree::text::words::{Shaped, Shaper};
 use crate::rendertree::text::CaretStop;
 use crate::rendertree::text::RunStyle;
 use crate::rendertree::{PaintState, PlatformContext};
 use std::rc::Rc;
 
-// Snapshot of every input that feeds paragraph shaping; the cache is valid
-// only while the owning Text still matches it.
+// Snapshot of every input that feeds shaping; the cache is valid only while
+// the owning Text still matches it.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ParaKey {
   runs: Vec<TextRun>,
@@ -20,6 +20,8 @@ pub(super) struct ParaKey {
   font_size: f32,
   font_style: FontStyle,
   font_weight: FontWeight,
+  font_stretch: f32,
+  letter_spacing: f32,
   text_alignment: Option<TextAlignment>,
   anchor: Option<TextAnchor>,
   max_lines: u32,
@@ -39,6 +41,8 @@ impl ParaKey {
       && self.font_size == t.font_size
       && self.font_style == t.font_style
       && self.font_weight == t.font_weight
+      && self.font_stretch == t.font_stretch
+      && self.letter_spacing == t.letter_spacing
       && self.text_alignment == t.text_alignment
       && self.anchor == t.anchor
       && self.max_lines == t.max_lines
@@ -58,6 +62,8 @@ impl ParaKey {
       font_size: t.font_size,
       font_style: t.font_style,
       font_weight: t.font_weight,
+      font_stretch: t.font_stretch,
+      letter_spacing: t.letter_spacing,
       text_alignment: t.text_alignment,
       anchor: t.anchor,
       max_lines: t.max_lines,
@@ -72,13 +78,13 @@ impl ParaKey {
   }
 }
 
-// One piece of a wrap unit shaped as a single-line paragraph (or an atom's
-// box), plus what the breaker needs to know about it and what re-splitting it
+// One piece of a wrap unit shaped as a single-line run (or an atom's box),
+// plus what the breaker needs to know about it and what re-splitting it
 // finer needs.
 //
-// No shaped paragraph is kept here: the shared word cache (words.rs) is the
-// one holder of those, and paint asks it per visible run by (text, style) -
-// so a mounted text retains metrics and piece strings, not paragraph objects.
+// No shaped word is kept here: the shared word cache (words.rs) is the one
+// holder of those, and paint asks it per visible run by (text, style) - so
+// a mounted text retains metrics and piece strings, not glyphs.
 #[derive(Clone)]
 pub(super) struct ShapedRun {
   // An atom is a laid-out child's box on the line: nothing to draw here, the
@@ -104,9 +110,12 @@ pub(super) struct OwnedLayout {
 #[derive(Clone, Default)]
 pub(super) struct OwnedCache {
   pub(super) key: Option<ParaKey>,
+  // Bumped every time the cache is prepared anew: what a text layer built
+  // from it checks to know its pixels are current.
+  pub(super) generation: u64,
   pub(super) runs: Vec<ShapedRun>,
-  // Ellipsis run in the paragraph's default style, when text_overflow asks
-  // for one.
+  // Ellipsis run in the text's default style, when text_overflow asks for
+  // one.
   pub(super) ellipsis: Option<ShapedRun>,
   pub(super) layouts: Vec<OwnedLayout>,
 }
@@ -170,22 +179,11 @@ pub struct PreparedUnit {
   /// style.
   pub run: Option<usize>,
   /// Caret stops within the unit's text (offsets relative to the unit's
-  /// start, in UTF-16), when asked for: the engine's, on either shaper
-  /// (see `WordCache::carets`).
+  /// start, in UTF-16), when asked for (see `WordCache::carets`).
   pub carets: Option<Rc<[CaretStop]>>,
-  /// The unit's glyphs and positions, when shaped on the glyph engine
-  /// (`ShaperKind::Engine`); None on Impeller, which exposes none.
-  pub glyphs: Option<Rc<ShapedGlyphs>>,
-}
-
-/// Which shaper `prepare_units` shapes on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShaperKind {
-  /// Impeller's paragraph builder: metrics match what a `<text>` draws.
-  Impeller,
-  /// The glyph engine: metrics plus every unit's glyphs, for a consumer
-  /// that draws them itself from a glyph atlas.
-  Engine,
+  /// The unit's glyphs and positions, for a consumer that draws them itself
+  /// from a glyph atlas.
+  pub glyphs: Rc<ShapedGlyphs>,
 }
 
 /// A styled range of a prepared text: a byte range and the style its text
@@ -199,26 +197,23 @@ pub struct PreparedRun {
 }
 
 /// The wrap units of `text` in `style` (and `runs` overriding it per range),
-/// shaped through the shared word cache on `shaper`: the power-user
-/// counterpart of what a `<text>` does for itself in `prepare_owned` (no
-/// atoms). A wrap unit that crosses a run boundary comes back as one piece
-/// per run, the pieces after the first glued. With `carets`, each unit also
-/// carries its grapheme caret stops (for editing). Stops at the first unit
-/// the shaper refuses.
+/// shaped through the shared word cache: the power-user counterpart of what
+/// a `<text>` does for itself in `prepare_owned` (no atoms). A wrap unit
+/// that crosses a run boundary comes back as one piece per run, the pieces
+/// after the first glued. With `carets`, each unit also carries its
+/// grapheme caret stops (for editing). `fallback` says whether a cluster
+/// the style's face lacks may come from another registered face (what a
+/// `<text>` does) or stays its notdef (a font handle over one face). Stops
+/// at the first unit the shaper refuses.
 pub fn prepare_units(
   platform: &PlatformContext,
-  shaper: ShaperKind,
   text: &str,
   style: &RunStyle,
   runs: &[PreparedRun],
   carets: bool,
+  fallback: Fallback,
 ) -> Vec<PreparedUnit> {
-  let typography = platform.typography();
   let fonts = platform.glyphs();
-  let shaper = match shaper {
-    ShaperKind::Impeller => Shaper::Impeller(&typography),
-    ShaperKind::Engine => Shaper::Engine(&fonts),
-  };
   let mut units: Vec<PreparedUnit> = Vec::new();
   let mut run_index = 0;
   for segment in layout::segments(text) {
@@ -246,14 +241,10 @@ pub fn prepare_units(
       }
       let style = piece.region.map_or(style, |i| &runs[i].style);
       let mut words = platform.words();
-      let Some(word) = words.get_or_shape(shaper, word_text, style) else {
+      let Some(word) = words.get_or_shape(&fonts, word_text, style, fallback) else {
         return units;
       };
-      let stops = if carets { words.carets(shaper, &fonts, word_text, style) } else { None };
-      let glyphs = match &word.shaped {
-        Shaped::Glyphs(glyphs) => Some(glyphs.clone()),
-        Shaped::Paragraph(_) => None,
-      };
+      let stops = if carets { words.carets(&fonts, word_text, style, fallback) } else { None };
       units.push(PreparedUnit {
         text: word_text.to_string(),
         start: piece.start,
@@ -263,7 +254,7 @@ pub fn prepare_units(
         glue: !piece.first,
         run: piece.region,
         carets: stops,
-        glyphs,
+        glyphs: word.glyphs,
       });
     }
   }
@@ -271,9 +262,9 @@ pub fn prepare_units(
 }
 
 impl Text {
-  // Shape every wrap unit of the current text as its own single-line
-  // paragraph (through the shared word cache), unless this text's cache
-  // already holds them for the current inputs.
+  // Shape every wrap unit of the current text as its own single-line run
+  // (through the shared word cache), unless this text's cache already holds
+  // them for the current inputs.
   pub(super) fn prepare_owned(&self, platform: &PlatformContext, owned: &mut OwnedCache) {
     if owned.key.as_ref().is_some_and(|k| k.matches(self)) {
       return;
@@ -282,6 +273,7 @@ impl Text {
     owned.layouts.clear();
     owned.ellipsis = None;
     owned.key = Some(ParaKey::of(self));
+    owned.generation += 1;
 
     let styles = self.run_styles();
     let mut run_starts = Vec::with_capacity(self.runs.len());
@@ -328,8 +320,8 @@ impl Text {
     }
   }
 
-  // One piece of a wrap unit as a single-line paragraph in `styles[style]`,
-  // from the shared word cache.
+  // One piece of a wrap unit as a single-line run in `styles[style]`, from
+  // the shared word cache.
   fn shape_piece(
     platform: &PlatformContext,
     styles: &[RunStyle],
@@ -338,7 +330,7 @@ impl Text {
     hard_break: bool,
     glue: bool,
   ) -> Option<ShapedRun> {
-    let word = platform.words().get_or_shape(Shaper::Impeller(&platform.typography()), text, &styles[style])?;
+    let word = platform.words().get_or_shape(&platform.glyphs(), text, &styles[style], Fallback::Registered)?;
     Some(ShapedRun {
       atom: false,
       run: Run { metrics: word.metrics, hard_break, glue, float: None, clear: None },

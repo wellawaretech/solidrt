@@ -1,28 +1,43 @@
-// The glyph engine (rendertree/text/glyphs): the seam between the two
-// shapers, the caret path over the cluster map, mask cells, and the atlas
-// packer. The seam check is what gates switching prepareText's default
-// shaper later (okf/plans/text-own-rasterizer.md): a word shaped by the
-// engine and by Impeller must agree on advance.
+// The glyph engine (rendertree/text/glyphs): the font set, the caret path
+// over the cluster map, mask and distance-field cells, the atlas packer
+// and the text atlas. The layout contract itself is pinned by
+// text_baseline.rs.
 use crate::impellers::{FontStyle, FontWeight};
 use crate::rendertree::text::glyphs::{
-  AtlasPacker, Cell, CellKind, CellRequest, FontSet, InsertOutcome, Rasterizer, ShapedGlyphs, BYTES_PER_TEXEL,
+  split_phase, AtlasPacker, Cell, CellKind, CellRequest, Dirty, FontSet, InsertOutcome, Rasterizer, ShapeStyle,
+  ShapedGlyphs, StyleKey, TextAtlas, BYTES_PER_TEXEL, PHASES,
 };
-use crate::rendertree::text::{prepare_units, RunStyle, ShaperKind};
+use crate::rendertree::text::{prepare_units, Fallback, RunStyle};
 use crate::rendertree::{FontPayload, PaintState, PlatformContext};
 use std::borrow::Cow;
 
 const NOTO_SANS: &[u8] = include_bytes!("../../assets/fonts/NotoSans.ttf");
+const NOTO_SANS_MONO: &[u8] = include_bytes!("../../assets/fonts/NotoSansMono.ttf");
+// A code point no font has: the last private-use character.
+const UNCOVERED: char = '\u{10FFFD}';
 
-// A shaper's advance against Impeller's for the same word: within a texel
-// at 16 px (both are HarfBuzz over the same file; the rounding differs).
-const ADVANCE_TOLERANCE_PX: f32 = 1.0;
-// The size every seam check shapes at.
+// The size every shaping check shapes at.
 const SIZE: f32 = 16.0;
-// Float slack on a stop scaled onto the drawn advance.
-const SNAP_EPSILON_PX: f32 = 0.001;
 
 fn noto() -> FontPayload {
   FontPayload { alias: Some("sans".to_string()), bytes: Cow::Borrowed(NOTO_SANS) }
+}
+
+fn mono() -> FontPayload {
+  FontPayload { alias: Some("mono".to_string()), bytes: Cow::Borrowed(NOTO_SANS_MONO) }
+}
+
+fn fonts(payloads: &[FontPayload]) -> FontSet {
+  FontSet::from_payloads(payloads, |alias, e| panic!("{alias}: {e}"))
+}
+
+// A regular, normal-width style at `size` with `letter_spacing`.
+fn shaping(size: f32, letter_spacing: f32) -> ShapeStyle {
+  ShapeStyle { weight: 400, stretch: 100.0, size, line_height: 0.0, letter_spacing }
+}
+
+fn shape_one(fonts: &FontSet, text: &str, size: f32) -> ShapedGlyphs {
+  ShapedGlyphs::shape(fonts, 0, text, &shaping(size, 0.0), Fallback::None).expect("shaped")
 }
 
 fn style(weight: FontWeight) -> RunStyle {
@@ -31,102 +46,74 @@ fn style(weight: FontWeight) -> RunStyle {
     font_size: SIZE,
     font_style: FontStyle::Normal,
     font_weight: weight,
+    font_stretch: 100.0,
     line_height: 0.0,
+    letter_spacing: 0.0,
     paint: PaintState::default(),
   }
 }
 
 #[test]
 fn font_set_resolves_alias_family_and_fallback() {
-  let fonts = FontSet::from_payloads(&[noto()]);
+  let fonts = fonts(&[noto()]);
   assert_eq!(fonts.resolve("sans"), Some(0));
   assert_eq!(fonts.resolve("Noto Sans"), Some(0));
-  // An unknown family falls back to the sans role, as Impeller falls back
-  // to its default family.
+  // An unknown family falls back to the sans role.
   assert_eq!(fonts.resolve("No Such Font"), Some(0));
   assert!(FontSet::default().resolve("sans").is_none());
 }
 
 #[test]
 fn shipped_noto_is_variable_in_weight() {
-  let fonts = FontSet::from_payloads(&[noto()]);
+  let fonts = fonts(&[noto()]);
   let face = fonts.face(0).expect("face registered");
   assert_eq!(face.weight_setting(700), Some(700.0));
   assert!(!face.synthetic_bold(700), "a weight axis replaces synthetic bold");
   // Bold advances differ from regular ones on a variable font.
-  let regular = ShapedGlyphs::shape(face, 400, "Hamburg", SIZE, 0.0).expect("shaped");
-  let bold = ShapedGlyphs::shape(face, 700, "Hamburg", SIZE, 0.0).expect("shaped");
+  let regular = shape_one(&fonts, "Hamburg", SIZE);
+  let bold =
+    ShapedGlyphs::shape(&fonts, 0, "Hamburg", &ShapeStyle { weight: 700, ..shaping(SIZE, 0.0) }, Fallback::None)
+      .expect("shaped");
   assert!(bold.metrics.advance > regular.metrics.advance);
-}
-
-#[test]
-fn engine_and_impeller_agree_on_advance() {
-  let platform = PlatformContext::new(vec![noto()]);
-  for word in ["Hello", "world,", "AVAST", "fi", "kerning"] {
-    for weight in [FontWeight::Regular, FontWeight::Bold] {
-      let impeller = prepare_units(&platform, ShaperKind::Impeller, word, &style(weight), &[], false);
-      let engine = prepare_units(&platform, ShaperKind::Engine, word, &style(weight), &[], false);
-      assert_eq!(engine.len(), 1, "one unit for one word");
-      let (a, b) = (impeller[0].metrics, engine[0].metrics);
-      assert!(
-        (a.advance - b.advance).abs() <= ADVANCE_TOLERANCE_PX,
-        "{word} at {weight:?}: Impeller advance {} vs engine {}",
-        a.advance,
-        b.advance
-      );
-      assert!((a.ascent - b.ascent).abs() <= ADVANCE_TOLERANCE_PX, "{word}: ascent {} vs {}", a.ascent, b.ascent);
-      assert!((a.descent - b.descent).abs() <= ADVANCE_TOLERANCE_PX, "{word}: descent {} vs {}", a.descent, b.descent);
-      assert!(engine[0].glyphs.is_some(), "the engine's unit carries its glyphs");
-      assert!(impeller[0].glyphs.is_none(), "Impeller exposes none");
-    }
-  }
 }
 
 #[test]
 fn engine_carets_follow_the_cluster_map() {
   let platform = PlatformContext::new(vec![noto()]);
-  let units = prepare_units(&platform, ShaperKind::Engine, "ab", &style(FontWeight::Regular), &[], true);
+  let units = prepare_units(&platform, "ab", &style(FontWeight::Regular), &[], true, Fallback::Registered);
   let unit = &units[0];
   let stops = unit.carets.as_ref().expect("carets asked for");
-  let glyphs = &unit.glyphs.as_ref().expect("engine glyphs").glyphs;
+  let glyphs = &unit.glyphs.glyphs;
   assert_eq!(stops.len(), 3, "start, after a, after b");
   assert_eq!(stops[0].x, 0.0);
   assert_eq!(stops[1].x, glyphs[1].x, "the stop after a is b's pen position");
   assert_eq!(stops[2].x, unit.metrics.advance, "the last stop is the advance");
-  // An Impeller-shaped unit carries the engine's stops scaled onto its own
-  // advance: the same offsets, every stop within a texel of the engine's,
-  // the last on the drawn advance.
-  let drawn = prepare_units(&platform, ShaperKind::Impeller, "ab", &style(FontWeight::Regular), &[], true);
-  let theirs = drawn[0].carets.as_ref().expect("carets");
-  assert_eq!(theirs.len(), stops.len());
-  for (ours, theirs) in stops.iter().zip(theirs.iter()) {
-    assert_eq!(ours.offset, theirs.offset);
-    assert!((ours.x - theirs.x).abs() <= ADVANCE_TOLERANCE_PX, "caret {} vs {}", ours.x, theirs.x);
-  }
-  assert!((theirs[2].x - drawn[0].metrics.advance).abs() <= SNAP_EPSILON_PX, "the last stop is the drawn advance");
 }
 
 #[test]
-fn impeller_carets_cost_one_engine_shape_per_word() {
+fn carets_cost_no_shaping_beyond_the_word() {
   let platform = PlatformContext::new(vec![noto()]);
   let before = platform.words().len();
-  let units = prepare_units(&platform, ShaperKind::Impeller, "Hamburg", &style(FontWeight::Regular), &[], true);
+  let units = prepare_units(&platform, "Hamburg", &style(FontWeight::Regular), &[], true, Fallback::Registered);
   assert_eq!(units[0].carets.as_ref().expect("carets").len(), "Hamburg".len() + 1);
-  // The Impeller word and its engine twin; no grapheme prefixes.
-  assert_eq!(platform.words().len() - before, 2);
+  // The word itself; no grapheme prefixes.
+  assert_eq!(platform.words().len() - before, 1);
 }
 
 #[test]
 fn mask_cell_holds_the_glyph_coverage() {
-  let fonts = FontSet::from_payloads(&[noto()]);
+  let fonts = fonts(&[noto()]);
   let face = fonts.face(0).expect("face");
-  let shaped = ShapedGlyphs::shape(face, 400, "H", 32.0, 0.0).expect("shaped");
+  let shaped = shape_one(&fonts, "H", 32.0);
   let glyph = shaped.glyphs[0].id;
   let request = CellRequest {
     kind: CellKind::Mask { ppem: 32.0 },
     weight: face.weight_setting(400),
+    width: None,
     synthetic_bold: false,
     synthetic_italic: false,
+    phase: 0.0,
+    darken: 0.0,
     glyphs: vec![glyph],
   };
   let cells = Rasterizer::default().rasterize(NOTO_SANS, &request).expect("a font");
@@ -144,7 +131,7 @@ fn mask_cell_holds_the_glyph_coverage() {
 
 fn solid(glyph: u16, side: u32) -> Cell {
   Cell {
-    glyph,
+    key: glyph,
     width: side,
     height: side,
     left: 0,
@@ -166,7 +153,7 @@ fn packer_places_and_pads_and_reports_dirty_rects() {
   assert_eq!(packer.mirror()[left_of], 0);
   let inside = ((placed.y as usize) * stride + (placed.x as usize) * BYTES_PER_TEXEL) + 3;
   assert_eq!(packer.mirror()[inside], 255);
-  let dirty = packer.take_dirty().expect("something changed").expect("rects, not a growth");
+  let Some(Dirty::Rects(dirty)) = packer.take_dirty() else { panic!("rects, not a growth") };
   assert_eq!(dirty.len(), 1);
   assert_eq!(dirty[0], (placed.x - 1, placed.y - 1, 10, 10));
   assert!(packer.take_dirty().is_none(), "nothing changed since");
@@ -184,7 +171,7 @@ fn packer_grows_by_repacking_and_then_fills() {
   let mut grew = false;
   for glyph in 0..60u16 {
     match packer.insert(solid(glyph, 100)) {
-      InsertOutcome::Grew => grew = true,
+      InsertOutcome::Moved => grew = true,
       InsertOutcome::Full => panic!("full before the cap"),
       InsertOutcome::Placed => {}
     }
@@ -192,7 +179,7 @@ fn packer_grows_by_repacking_and_then_fills() {
   assert!(grew);
   assert_ne!(packer.size(), (w0, h0));
   assert_eq!(packer.len(), 60);
-  assert_eq!(packer.take_dirty(), Some(None), "a growth is the whole mirror");
+  assert_eq!(packer.take_dirty(), Some(Dirty::Whole { resized: true }), "a growth is the whole mirror");
   // Every cell survived the repack with its pixels.
   for glyph in 0..60u16 {
     let p = packer.placement(glyph).expect("kept");
@@ -237,14 +224,17 @@ fn median(texel: &[u8]) -> u8 {
 
 #[test]
 fn msdf_cell_holds_the_glyph_as_a_field() {
-  let fonts = FontSet::from_payloads(&[noto()]);
+  let fonts = fonts(&[noto()]);
   let face = fonts.face(0).expect("face");
-  let shaped = ShapedGlyphs::shape(face, 400, "H", MSDF_PPEM, 0.0).expect("shaped");
+  let shaped = shape_one(&fonts, "H", MSDF_PPEM);
   let request = CellRequest {
     kind: CellKind::Msdf { ppem: MSDF_PPEM, range: MSDF_RANGE },
     weight: face.weight_setting(400),
+    width: None,
     synthetic_bold: false,
     synthetic_italic: false,
+    phase: 0.0,
+    darken: 0.0,
     glyphs: vec![shaped.glyphs[0].id],
   };
   let cells = Rasterizer::default().rasterize(NOTO_SANS, &request).expect("a font");
@@ -283,15 +273,18 @@ fn msdf_cell_holds_the_glyph_as_a_field() {
 
 #[test]
 fn blank_glyphs_are_empty_cells_that_take_no_atlas_space() {
-  let fonts = FontSet::from_payloads(&[noto()]);
+  let fonts = fonts(&[noto()]);
   let face = fonts.face(0).expect("face");
-  let space = ShapedGlyphs::shape(face, 400, " ", SIZE, 0.0).expect("shaped").glyphs[0].id;
+  let space = shape_one(&fonts, " ", SIZE).glyphs[0].id;
   for kind in [CellKind::Mask { ppem: SIZE }, CellKind::Msdf { ppem: MSDF_PPEM, range: MSDF_RANGE }] {
     let request = CellRequest {
       kind,
       weight: face.weight_setting(400),
+      width: None,
       synthetic_bold: false,
       synthetic_italic: false,
+      phase: 0.0,
+      darken: 0.0,
       glyphs: vec![space],
     };
     let cells = Rasterizer::default().rasterize(NOTO_SANS, &request).expect("a font");
@@ -302,4 +295,189 @@ fn blank_glyphs_are_empty_cells_that_take_no_atlas_space() {
     assert_eq!(packer.placement(space).map(|p| (p.width, p.height)), Some((0, 0)));
     assert!(packer.take_dirty().is_none(), "{kind:?}: nothing to upload for a blank cell");
   }
+}
+
+#[test]
+fn packer_evicts_what_a_full_atlas_stopped_using() {
+  // A cap at the initial side, so there is no room to grow: cells of 100
+  // texels until the 512 square refuses one. Nothing is older than the
+  // eviction age yet, so that refusal is a real Full.
+  let mut packer = AtlasPacker::new(CellKind::Mask { ppem: 16.0 }, 512).with_eviction(2);
+  packer.begin_frame(1);
+  let mut glyph = 0u16;
+  while packer.insert(solid(glyph, 100)) != InsertOutcome::Full {
+    glyph += 1;
+    assert!(glyph < 100, "a 512 square holds fewer than a hundred 100-texel cells");
+  }
+  let held = glyph;
+  assert!(held >= 4, "the square holds a few: {held}");
+  let kept = held / 2;
+  // The first half keeps being used; the rest were last used at frame 1.
+  for frame in [2, 4] {
+    packer.begin_frame(frame);
+    for glyph in 0..kept {
+      assert!(packer.touch(glyph));
+    }
+  }
+  // The unused cells are older than two frames: they go, the ones in use
+  // stay, and the repack leaves the whole mirror new at the same size.
+  assert_eq!(packer.insert(solid(held, 100)), InsertOutcome::Moved);
+  for glyph in 0..kept {
+    assert!(packer.placement(glyph).is_some(), "glyph {glyph} in use stays");
+  }
+  for glyph in kept..held {
+    assert!(packer.placement(glyph).is_none(), "unused glyph {glyph} went");
+  }
+  assert!(packer.placement(held).is_some());
+  assert_eq!(packer.size(), (512, 512));
+  assert_eq!(packer.take_dirty(), Some(Dirty::Whole { resized: false }));
+}
+
+#[test]
+fn phases_split_a_pen_position_into_a_pixel_and_a_third() {
+  assert_eq!(split_phase(10.0), (10, 0));
+  assert_eq!(split_phase(10.34), (10, 1));
+  assert_eq!(split_phase(10.67), (10, 2));
+  assert_eq!(split_phase(10.999), (10, PHASES - 1));
+  assert_eq!(split_phase(-0.5), (-1, 1));
+}
+
+#[test]
+fn a_mask_at_a_subpixel_phase_shifts_its_coverage() {
+  let fonts = fonts(&[noto()]);
+  let face = fonts.face(0).expect("face");
+  let stem = shape_one(&fonts, "l", SIZE).glyphs[0].id;
+  let request = |phase: f32| CellRequest {
+    kind: CellKind::Mask { ppem: SIZE },
+    weight: face.weight_setting(400),
+    width: None,
+    synthetic_bold: false,
+    synthetic_italic: false,
+    phase,
+    darken: 0.0,
+    glyphs: vec![stem],
+  };
+  let mut rasterizer = Rasterizer::default();
+  let whole = rasterizer.rasterize(NOTO_SANS, &request(0.0)).expect("a font").remove(0);
+  let half = rasterizer.rasterize(NOTO_SANS, &request(0.5)).expect("a font").remove(0);
+  // Half a pixel over, the stem's coverage spreads across its edge
+  // columns instead of filling one: a different mask for the same glyph.
+  assert_ne!(whole.pixels, half.pixels);
+  let ink = |cell: &Cell| cell.pixels.chunks(BYTES_PER_TEXEL).map(|p| p[3] as u32).sum::<u32>();
+  assert!((ink(&whole) as i32 - ink(&half) as i32).abs() < ink(&whole) as i32 / 10, "the ink is the same");
+}
+
+#[test]
+fn warming_a_style_queues_its_ascii_at_every_phase() {
+  let fonts = fonts(&[noto()]);
+  let mut atlas = TextAtlas::default();
+  let style = StyleKey::new(0, SIZE, 500, 100.0, false, 1.0);
+  atlas.warm(&fonts, style);
+  // Printable ASCII is 95 code points and the shipped face covers them:
+  // one job per phase, 95 cells each.
+  assert_eq!(atlas.pending(), PHASES as usize);
+  assert_eq!(atlas.queued_cells(), 95 * PHASES as usize);
+  // Warming again queues nothing more.
+  atlas.warm(&fonts, style);
+  assert_eq!(atlas.pending(), PHASES as usize);
+  assert_eq!(atlas.queued_cells(), 95 * PHASES as usize);
+}
+
+#[test]
+fn fallback_borrows_a_missing_glyph_from_the_next_covering_face() {
+  let fonts = fonts(&[mono(), noto()]);
+  let sans = fonts.face(1).expect("sans");
+  // A character the mono face shapes to its notdef (its character map
+  // lacks it and the shaper cannot compose it from parts either), that
+  // the sans face covers and shapes as a cluster of its own after a letter
+  // (a combining mark would merge into the cluster before it); found
+  // rather than assumed, so a font update cannot rot the test.
+  let sans_alone = self::fonts(&[noto()]);
+  let own_cluster = |c: char| {
+    ShapedGlyphs::shape(&sans_alone, 0, &format!("a{c}"), &shaping(SIZE, 0.0), Fallback::None)
+      .is_some_and(|shaped| shaped.glyphs.iter().any(|g| g.cluster == 1 && g.id != 0))
+  };
+  let ch = (0x80u32..0x3000)
+    .filter_map(char::from_u32)
+    .find(|&c| {
+      sans.glyph_id(c).is_some()
+        && own_cluster(c)
+        && ShapedGlyphs::shape(&fonts, 0, &c.to_string(), &shaping(SIZE, 0.0), Fallback::None)
+          .is_some_and(|shaped| shaped.glyphs.iter().any(|g| g.id == 0))
+    })
+    .expect("the sans face covers something the mono face does not");
+  let text = format!("a{ch}b");
+  let with = ShapedGlyphs::shape(&fonts, 0, &text, &shaping(SIZE, 0.0), Fallback::Registered).expect("shaped");
+  let without = ShapedGlyphs::shape(&fonts, 0, &text, &shaping(SIZE, 0.0), Fallback::None).expect("shaped");
+  // The middle cluster (one glyph, or a base and its marks) comes from the
+  // covering face; the letters around it stay on the primary.
+  let middle = |shaped: &ShapedGlyphs| shaped.glyphs.iter().filter(|g| g.cluster == 1).copied().collect::<Vec<_>>();
+  let borrowed = middle(&with);
+  assert!(!borrowed.is_empty(), "{ch:?} shapes to something");
+  assert!(borrowed.iter().all(|g| g.face == 1 && g.id != 0), "{ch:?} comes from the sans face: {borrowed:?}");
+  assert!(with.glyphs.iter().filter(|g| g.cluster != 1).all(|g| g.face == 0 && g.id != 0));
+  assert!(middle(&without).iter().all(|g| g.face == 0 && g.id == 0), "a font handle keeps the notdef");
+  // The cluster map survives the splice: a caret stop per letter, the
+  // third on b's pen, the last on the advance.
+  let stops = with.caret_stops(&text);
+  assert_eq!(stops.len(), 4);
+  let b = with.glyphs.iter().find(|g| g.cluster as usize == 1 + ch.len_utf8()).expect("b's glyph");
+  assert_eq!(stops[2].x, b.x);
+  assert_eq!(stops[3].x, with.metrics.advance);
+}
+
+#[test]
+fn whitespace_the_face_lacks_takes_the_space_advance() {
+  let fonts = fonts(&[noto()]);
+  let tab = shape_one(&fonts, "a\tb", SIZE);
+  let space = shape_one(&fonts, "a b", SIZE);
+  assert_eq!(tab.glyphs[1].id, space.glyphs[1].id, "a tab is the space glyph: blank, never a box");
+  assert_eq!(tab.metrics.advance, space.metrics.advance);
+  assert_eq!(tab.glyphs[2].x, space.glyphs[2].x);
+}
+
+#[test]
+fn text_no_face_covers_keeps_the_notdef_box() {
+  let fonts = fonts(&[noto(), mono()]);
+  let text = format!("a{UNCOVERED}");
+  let shaped = ShapedGlyphs::shape(&fonts, 0, &text, &shaping(SIZE, 0.0), Fallback::Registered).expect("shaped");
+  assert_eq!(shaped.glyphs.len(), 2);
+  assert_eq!((shaped.glyphs[1].face, shaped.glyphs[1].id), (0, 0));
+  assert!(shaped.glyphs[1].advance > 0.0, "the notdef box has the font's notdef advance");
+}
+
+// Letter spacing on a three-letter word: px after every cluster.
+const SPACING: f32 = 2.0;
+// A condensed stretch inside the shipped Noto's width axis (62.5 to 100).
+const CONDENSED: f32 = 75.0;
+
+#[test]
+fn letter_spacing_adds_after_every_cluster() {
+  let fonts = fonts(&[noto()]);
+  let plain = shape_one(&fonts, "abc", SIZE);
+  let spaced = ShapedGlyphs::shape(&fonts, 0, "abc", &shaping(SIZE, SPACING), Fallback::None).expect("shaped");
+  assert_eq!(spaced.glyphs[0].x, plain.glyphs[0].x, "the first letter does not move");
+  assert_eq!(spaced.glyphs[1].x, plain.glyphs[1].x + SPACING);
+  assert_eq!(spaced.glyphs[2].x, plain.glyphs[2].x + 2.0 * SPACING);
+  assert_eq!(spaced.metrics.advance, plain.metrics.advance + 3.0 * SPACING, "the last letter is spaced too");
+  let stops = spaced.caret_stops("abc");
+  assert_eq!(stops[1].x, spaced.glyphs[1].x, "carets follow the spaced pens");
+  assert_eq!(stops[3].x, spaced.metrics.advance);
+}
+
+#[test]
+fn the_width_axis_condenses_and_clamps() {
+  let fonts = fonts(&[noto()]);
+  let face = fonts.face(0).expect("face");
+  assert_eq!(face.width_setting(CONDENSED), Some(CONDENSED), "the shipped Noto Sans has a width axis");
+  assert_eq!(face.width_setting(150.0), Some(100.0), "a stretch past the axis clamps to it");
+  let normal = shape_one(&fonts, "Hamburg", SIZE);
+  let condensed =
+    ShapedGlyphs::shape(&fonts, 0, "Hamburg", &ShapeStyle { stretch: CONDENSED, ..shaping(SIZE, 0.0) }, Fallback::None)
+      .expect("shaped");
+  assert!(condensed.metrics.advance < normal.metrics.advance, "condensed advances are narrower");
+  let widest =
+    ShapedGlyphs::shape(&fonts, 0, "Hamburg", &ShapeStyle { stretch: 150.0, ..shaping(SIZE, 0.0) }, Fallback::None)
+      .expect("shaped");
+  assert_eq!(widest.metrics.advance, normal.metrics.advance, "clamped to normal");
 }

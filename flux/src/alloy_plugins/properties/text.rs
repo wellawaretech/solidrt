@@ -1,9 +1,9 @@
 use alloy::impellers::{FontStyle, FontWeight, TextAlignment};
 
-use super::{opt, opt_f32, paint, str_of};
+use super::{opt, opt_f32, opt_positive_f32, paint, str_of};
 use crate::alloy_plugins::value::PropValue;
-use alloy::rendertree::Damage;
 use alloy::rendertree::text::layout::Wrap;
+use alloy::rendertree::Damage;
 use alloy::rendertree::{OverflowWrap, Span, Text, TextAnchor, TextOverflow};
 
 pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
@@ -61,6 +61,8 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Da
     })?),
     "fontStyle" => text.set_font_style(font_style_of(value)?),
     "fontWeight" => text.set_font_weight(font_weight_of(value)?),
+    "fontStretch" => text.set_font_stretch(opt_positive_f32(value, "fontStretch")?),
+    "letterSpacing" => text.set_letter_spacing(opt_f32(value, "letterSpacing")?),
     "textDecoration" => text.set_underline(underline_of(value)?),
     "textUnderlineOffset" => text.set_underline_offset(opt_f32(value, "textUnderlineOffset")?),
     "textDecorationThickness" => text.set_underline_thickness(opt_f32(value, "textDecorationThickness")?),
@@ -79,6 +81,8 @@ pub fn apply_span(span: &mut Span, name: &str, value: &PropValue) -> Result<Opti
     "lineHeight" => span.set_line_height(opt_f32(value, "lineHeight")?),
     "fontStyle" => span.set_font_style(font_style_of(value)?),
     "fontWeight" => span.set_font_weight(font_weight_of(value)?),
+    "fontStretch" => span.set_font_stretch(opt_positive_f32(value, "fontStretch")?),
+    "letterSpacing" => span.set_letter_spacing(opt_f32(value, "letterSpacing")?),
     "textDecoration" => span.set_underline(underline_of(value)?),
     "textUnderlineOffset" => span.set_underline_offset(opt_f32(value, "textUnderlineOffset")?),
     "textDecorationThickness" => span.set_underline_thickness(opt_f32(value, "textDecorationThickness")?),

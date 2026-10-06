@@ -16,9 +16,10 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use alloy::rendertree::text::glyphs::{
-  weight_value, CellJob, CellKind, CellPlacement, CellRequest, CellWorker, GlyphAtlas, InsertOutcome,
+  weight_value, AtlasPacker, CellJob, CellKind, CellPlacement, CellRequest, CellWorker, GlyphAtlas, InsertOutcome,
+  JobPriority,
 };
-use alloy::rendertree::text::{prepare_units, RunStyle, ShaperKind};
+use alloy::rendertree::text::{prepare_units, Fallback, RunStyle};
 use alloy::rendertree::Text;
 use alloy::{SamplerFilter, SamplerState, SamplerWrap, MIN_ANISOTROPY};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
@@ -46,7 +47,7 @@ struct FontEntry {
   face: usize,
   style: RunStyle,
   kind: CellKind,
-  atlas: GlyphAtlas,
+  atlas: GlyphAtlas<u16>,
   /// Glyphs handed to the worker or already placed.
   requested: HashSet<u16>,
   /// Glyphs the worker could not rasterize, or the full atlas refused:
@@ -193,7 +194,7 @@ fn create_font<'js>(ctx: Ctx<'js>, face: OptArg<Object<'js>>, options: OptArg<Ob
   let max_side = st.gui.alloy.gpu_limits().max_texture_size;
   let id = st.next_id.get();
   let label = label.unwrap_or_else(|| format!("font-{id}"));
-  let atlas = GlyphAtlas::new(&st.gui.alloy, kind, sampler, max_side, &label)
+  let atlas = GlyphAtlas::new(&st.gui.alloy, AtlasPacker::new(kind, max_side), sampler, &label)
     .map_err(|e| throw_str(&ctx, &format!("createFont: {e}")))?;
   st.next_id.set(id + 1);
   st.fonts
@@ -267,8 +268,10 @@ fn prepare_text<'js>(
     }
     carets = opts.get::<_, bool>("carets").unwrap_or(false);
   }
-  let units = prepare_units(&st.gui.platform, ShaperKind::Engine, &text, &style, &[], carets);
-  super::tree::prepared_to_js(&ctx, text, units)
+  // One face per handle, so a character it lacks is its notdef: this
+  // atlas holds no other face's cells.
+  let units = prepare_units(&st.gui.platform, &text, &style, &[], carets, Fallback::None);
+  super::tree::prepared_to_js(&ctx, text, units, true)
 }
 
 // Glyph ids from JS: non-negative integers within the font's id range.
@@ -305,8 +308,13 @@ fn request_glyphs<'js>(ctx: Ctx<'js>, font: u64, glyphs: Vec<f64>) -> rquickjs::
       let request = CellRequest {
         kind: entry.kind,
         weight: face.weight_setting(weight),
+        width: face.width_setting(entry.style.font_stretch),
         synthetic_bold: face.synthetic_bold(weight),
         synthetic_italic: entry.style.font_style == alloy::impellers::FontStyle::Italic && face.synthetic_italic(),
+        // A handle's cells are placed by their sampler (msdf) or drawn at
+        // whole pixels (mask): one phase, no darkening policy.
+        phase: 0.0,
+        darken: 0.0,
         glyphs: missing.clone(),
       };
       // The hold ends on the worker thread when the cells are made; the
@@ -321,7 +329,8 @@ fn request_glyphs<'js>(ctx: Ctx<'js>, font: u64, glyphs: Vec<f64>) -> rquickjs::
           wake();
         }
       });
-      let job = CellJob { owner: font, bytes: face.bytes().clone(), request, done: Some(done) };
+      let job =
+        CellJob { owner: font, bytes: face.bytes().clone(), request, priority: JobPriority::Needed, done: Some(done) };
       let submitted = st.worker.as_ref().is_some_and(|w| w.submit(job));
       if submitted {
         entry.requested.extend(missing);
@@ -359,16 +368,16 @@ fn cells_array<'js>(ctx: &Ctx<'js>, entry: &FontEntry, glyphs: &[u16]) -> rquick
   let array = Array::new(ctx.clone())?;
   for (i, glyph) in glyphs.iter().enumerate() {
     match entry.atlas.packer().placement(*glyph) {
-      Some(placement) => array.set(i, cell_object(ctx, placement)?)?,
+      Some(placement) => array.set(i, cell_object(ctx, *glyph, placement)?)?,
       None => array.set(i, rquickjs::Value::new_null(ctx.clone()))?,
     }
   }
   Ok(array)
 }
 
-fn cell_object<'js>(ctx: &Ctx<'js>, placement: CellPlacement) -> rquickjs::Result<Object<'js>> {
+fn cell_object<'js>(ctx: &Ctx<'js>, glyph: u16, placement: CellPlacement) -> rquickjs::Result<Object<'js>> {
   let obj = Object::new(ctx.clone())?;
-  obj.set("glyph", placement.glyph as u32)?;
+  obj.set("glyph", glyph as u32)?;
   obj.set("x", placement.x)?;
   obj.set("y", placement.y)?;
   obj.set("width", placement.width)?;
@@ -456,7 +465,7 @@ pub(crate) fn tick(ctx: &Ctx<'_>) -> bool {
         continue;
       };
       for cell in batch.cells {
-        let glyph = cell.glyph;
+        let glyph = cell.key;
         if entry.atlas.insert(cell) == InsertOutcome::Full {
           log::warn!(
             "[font] atlas of font {} is full at its {}x{} cap; glyph {glyph} stays missing",

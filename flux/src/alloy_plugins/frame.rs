@@ -200,6 +200,13 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
 /// as such. What a waiter reads to decide whether the app is at rest, and
 /// what it says when the app never comes to rest. Empty before the GUI is
 /// installed.
+/// Glyph cells the text atlas is still making on its worker: work in
+/// flight a text layer waits on (it draws without them until they land),
+/// so a settle does not read an incomplete screen.
+pub fn text_cells_in_flight(ctx: &Ctx<'_>) -> u32 {
+  super::gui(ctx).platform.text_atlas().pending() as u32
+}
+
 pub fn demand(ctx: &Ctx<'_>) -> Vec<String> {
   let Some(s) = tree::try_state(ctx) else {
     return Vec::new();

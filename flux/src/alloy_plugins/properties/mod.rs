@@ -27,13 +27,13 @@ mod window;
 pub use read::{read_jsx, ReadValue};
 
 /// Font options as measureText/prepareText take them (fontFamily, fontSize,
-/// fontStyle, fontWeight, lineHeight, maxLines), applied to a Text through
-/// the same decoders as the JSX props. Errors are the decoders' messages.
+/// fontStyle, fontWeight, fontStretch, letterSpacing, lineHeight,
+/// maxLines), applied to a Text through the same decoders as the JSX
+/// props. Errors are the decoders' messages.
 pub fn apply_font_options(node: &mut alloy::rendertree::Text, name: &str, value: &PropValue) -> Result<(), String> {
   match name {
-    "fontFamily" | "fontSize" | "fontStyle" | "fontWeight" | "lineHeight" | "maxLines" => {
-      text::apply(node, name, value).map(|_| ())
-    }
+    "fontFamily" | "fontSize" | "fontStyle" | "fontWeight" | "fontStretch" | "letterSpacing" | "lineHeight"
+    | "maxLines" => text::apply(node, name, value).map(|_| ()),
     _ => Ok(()),
   }
 }
@@ -46,7 +46,9 @@ use taffy::style::Position;
 use crate::alloy_plugins::value::PropValue;
 use alloy::impellers::Color;
 use alloy::rendertree::text::layout::{Clear, Side};
-use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, FilterState, PointerEvents, ShadowState, TransitionConfig};
+use alloy::rendertree::{
+  BoundaryMode, Damage, Element, ElementKind, FilterState, PointerEvents, ShadowState, TransitionConfig,
+};
 
 // Returns Ok(damage) on success; Err(message) for an unknown property or a
 // value that does not decode, which the FFI caller surfaces as a throwable JS
@@ -264,7 +266,9 @@ pub fn apply_jsx(
   // primitive. The same "Unknown property" prefix, so core warns and
   // continues; the hint saves the trip to the types.
   if matches!(el.kind, ElementKind::View(_)) && paint::is_paint_prop(name) {
-    return Err(format!("Unknown property '{name}': a view has no paint; put the fill on a child <rect> (or <d-rect>)"));
+    return Err(format!(
+      "Unknown property '{name}': a view has no paint; put the fill on a child <rect> (or <d-rect>)"
+    ));
   }
 
   Err(format!("Unknown property '{name}'"))

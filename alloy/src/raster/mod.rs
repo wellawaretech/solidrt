@@ -28,11 +28,11 @@ mod resources;
 mod targets;
 
 pub(crate) use cmd::RasterCmd;
-#[cfg(test)]
-pub(crate) use targets::propagation_order;
-pub(crate) use repaint::WindowRoute;
 pub use cmd::{DamageRect, PresentDamage};
 use repaint::DamageTracker;
+pub(crate) use repaint::WindowRoute;
+#[cfg(test)]
+pub(crate) use targets::propagation_order;
 
 use impellers::{Context as ImpellerContext, ISize};
 use std::collections::{HashMap, HashSet};
@@ -323,7 +323,6 @@ const PRESENT_FENCE_TIMEOUT_NS: i32 = 100_000_000;
 // okf/backlog/adaptive-present-fence-depth.md.
 const PRESENT_FENCE_DEPTH: usize = 2;
 
-
 /// The raster side of one YUV output (see yuv.rs): its latch, its two
 /// plane sets (uniform name, plane id, byte offset in a packed frame) and
 /// which set the conversion target samples now.
@@ -359,6 +358,8 @@ pub(crate) struct RasterState {
   // a per-call allocate/release cycle is exactly what ANGLE/D3D11 handles
   // poorly (see the OffscreenRig doc in gl/rig.rs).
   offscreen_rig: gl::OffscreenRig,
+  // The glyph pass's program and quads texture (see gl::glyphs).
+  glyph_rig: gl::GlyphRig,
   // Size of the last drawn frame, so geometry transitions are logged exactly
   // once. Diagnostic only (resize-race visibility).
   last_size: ISize,
@@ -626,6 +627,7 @@ impl RasterState {
     }
     let pass_timer = PassTimer::new(&gl);
     stats.timer_queries.store(pass_timer.supported(), Ordering::Relaxed);
+    let glyph_rig = gl::GlyphRig::new(&gl);
     RasterState {
       gl,
       impeller_ctx,
@@ -635,6 +637,7 @@ impl RasterState {
       pass_timer,
       limits,
       offscreen_rig: gl::OffscreenRig::new(),
+      glyph_rig,
       last_size: ISize::new(0, 0),
       sink,
       present_failures: 0,
@@ -967,6 +970,10 @@ impl RasterState {
           RasterCmd::RasterizeDlInto { dl, texture, width, height, aa, reply: tx } => {
             self.flush_dirty();
             reply(tx, self.rasterize_into(&dl, &texture, width, height, aa));
+          }
+          RasterCmd::RasterizeGlyphs { groups, atlas, width, height, policy, into, reply: tx } => {
+            self.flush_dirty();
+            reply(tx, self.rasterize_glyphs(&groups, atlas, width, height, policy, into));
           }
           RasterCmd::RasterizeDlShaded { dl, width, height, aa, shader, source, output, history, reply: tx } => {
             self.flush_dirty();

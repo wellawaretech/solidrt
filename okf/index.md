@@ -373,10 +373,6 @@ Shaped, not started.
   stages reduce it - createNode with a props object, a one-call-per-flush
   drain, interned prop ids with table dispatch, and a command buffer whose
   props land in a shared buffer Rust reads directly.
-- **[fontStretch / width axis](backlog/font-stretch-axis.md)** [2026-07-27]
-  The bundled Noto variables carry a wdth axis the text API cannot reach;
-  whether to expose a CSS-style font-stretch, pending an Impeller
-  ParagraphStyle capability check.
 - **[Frame driver pacing contract](backlog/frame-driver-pacing-contract.md)** [2026-08-14]
   Pacing verdicts cost 90 s on-device censuses because the frame driver cannot
   run against a synthetic vsync grid; stage 1, the harness in alloy's tests,
@@ -1542,6 +1538,10 @@ Finished, kept for the reasoning.
   over getFocusables(), scopes for modals, the player folded onto it,
   device-verified) and 2026-09-07 (the nav consumes navigate/cycle/select from
   the input map). The three small deferrals are tiny.md lines.
+- **[fontStretch / width axis](done/font-stretch-axis.md)** [2026-07-27]
+  The bundled Noto variables carry a wdth axis the text API could not reach
+  while Impeller shaped text; exposed as fontStretch once the glyph engine
+  became the shaper.
 - **[Frame-batched multi-pointer delivery (and frame-paced mouse)](done/frame-batched-pointer-input.md)** [2026-08-10]
   Touch is already resampled per pointer per frame, but each pointer still
   dispatches as its own JS event, so multi-touch consumers measure one fresh +

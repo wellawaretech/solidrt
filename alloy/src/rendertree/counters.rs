@@ -3,7 +3,7 @@ use std::cell::Cell;
 // Layout-activity counters for perf diagnosis (the "one layer below the phase
 // timings" instrumentation): how much measuring/shaping a rebuild did and how
 // much of the tree was dirtied leading into it. Thread-locals because the
-// increment sites (Text::measure, Text::shaped, invalidate_cache) have no
+// increment sites (Text::measure, the word cache, invalidate_cache) have no
 // tree reference in scope, and everything that touches them runs on the one
 // UI thread.
 //
@@ -16,13 +16,13 @@ use std::cell::Cell;
 
 thread_local! {
   static MEASURE_CALLS: Cell<u32> = const { Cell::new(0) };
-  static PARA_SHAPES: Cell<u32> = const { Cell::new(0) };
+  static WORD_SHAPES: Cell<u32> = const { Cell::new(0) };
   static WORD_HITS: Cell<u32> = const { Cell::new(0) };
   static DIRTIED: Cell<u32> = const { Cell::new(0) };
   static CACHE_GETS: Cell<u32> = const { Cell::new(0) };
   static CACHE_HITS: Cell<u32> = const { Cell::new(0) };
   static DRAWS: Cell<u32> = const { Cell::new(0) };
-  static PARAGRAPHS: Cell<u32> = const { Cell::new(0) };
+  static TEXT_LAYERS: Cell<u32> = const { Cell::new(0) };
   static CLIPS: Cell<u32> = const { Cell::new(0) };
   static ROUNDED_CLIPS: Cell<u32> = const { Cell::new(0) };
   static SAVE_LAYERS: Cell<u32> = const { Cell::new(0) };
@@ -35,9 +35,8 @@ thread_local! {
 pub struct LayoutCounters {
   /// Text measure invocations (mostly cache hits; cheap).
   pub measure_calls: u32,
-  /// Paragraphs actually shaped (cache misses; the expensive signal). On the
-  /// owned path one per word shaped, i.e. word cache misses.
-  pub para_shapes: u32,
+  /// Words actually shaped (word cache misses; the expensive signal).
+  pub word_shapes: u32,
   /// Words answered from the shared word cache (see rendertree/text/words.rs).
   pub word_hits: u32,
   /// Taffy layout caches cleared by property writes (invalidate_cache walks;
@@ -51,16 +50,16 @@ pub struct LayoutCounters {
   /// Display-list ops the paint walk recorded (the frame's cost on the
   /// raster thread and the GPU scales with these on a slow CPU or a tiled
   /// GPU, okf/backlog/display-list-op-cost.md): draw ops of every kind
-  /// (rects, paths, textures, paragraphs, replayed recordings), of which
-  /// `paragraphs` are the paragraph draws text emits (one per line run of
-  /// joined words, see Text::build); clip ops,
+  /// (rects, paths, textures, text layers, replayed recordings); clip ops,
   /// of which `rounded_clips` are the rounded (and oval) ones, the kind
   /// that costs a third of a tiled GPU's frame on a resizing box; and
   /// save layers (opacity and filter groups, backdrop filters). Ops inside
   /// a reused repaint-boundary recording are not re-recorded and so not
-  /// counted; its replay is one draw.
+  /// counted; its replay is one draw. `text_layers` counts the text layers
+  /// the glyph pass rasterized for the walk (a text whose pixels were
+  /// current composites its retained layer and counts a draw only).
   pub draws: u32,
-  pub paragraphs: u32,
+  pub text_layers: u32,
   pub clips: u32,
   pub rounded_clips: u32,
   pub save_layers: u32,
@@ -75,8 +74,8 @@ pub fn note_measure_call() {
   MEASURE_CALLS.with(|c| c.set(c.get() + 1));
 }
 
-pub fn note_para_shape() {
-  PARA_SHAPES.with(|c| c.set(c.get() + 1));
+pub fn note_word_shape() {
+  WORD_SHAPES.with(|c| c.set(c.get() + 1));
 }
 
 pub fn note_word_hit() {
@@ -99,11 +98,10 @@ pub fn note_draw() {
   DRAWS.with(|c| c.set(c.get() + 1));
 }
 
-/// One paragraph draw (also a draw): a line's run of joined words, or a lone
-/// piece where the line's placement kept them apart (Text::build).
-pub fn note_paragraph() {
-  DRAWS.with(|c| c.set(c.get() + 1));
-  PARAGRAPHS.with(|c| c.set(c.get() + 1));
+/// One text layer rasterized by the glyph pass (Text::build_layer); its
+/// composite is the draw.
+pub fn note_text_layer_drawn() {
+  TEXT_LAYERS.with(|c| c.set(c.get() + 1));
 }
 
 /// One clip op; `rounded` for a rounded-rect or oval clip.
@@ -136,13 +134,13 @@ pub fn note_paint(gradient: bool, blend: bool) {
 pub fn take() -> LayoutCounters {
   LayoutCounters {
     measure_calls: MEASURE_CALLS.with(|c| c.replace(0)),
-    para_shapes: PARA_SHAPES.with(|c| c.replace(0)),
+    word_shapes: WORD_SHAPES.with(|c| c.replace(0)),
     word_hits: WORD_HITS.with(|c| c.replace(0)),
     dirtied: DIRTIED.with(|c| c.replace(0)),
     cache_gets: CACHE_GETS.with(|c| c.replace(0)),
     cache_hits: CACHE_HITS.with(|c| c.replace(0)),
     draws: DRAWS.with(|c| c.replace(0)),
-    paragraphs: PARAGRAPHS.with(|c| c.replace(0)),
+    text_layers: TEXT_LAYERS.with(|c| c.replace(0)),
     clips: CLIPS.with(|c| c.replace(0)),
     rounded_clips: ROUNDED_CLIPS.with(|c| c.replace(0)),
     save_layers: SAVE_LAYERS.with(|c| c.replace(0)),

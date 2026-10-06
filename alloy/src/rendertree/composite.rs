@@ -74,6 +74,25 @@ pub fn paint_phase(
 
   layout_phase(tree, platform, alloy);
 
+  // The text atlas's frame: land the cells the worker made and open the
+  // synchronous budget before any text builds (see TextAtlas).
+  platform.text_atlas().begin_frame(
+    alloy,
+    &platform.frame_request_handle(),
+    &platform.glyphs(),
+    platform.display_scale(),
+  );
+  // Cells landed: every text whose layer drew without them redraws, its
+  // caches and its boundaries' cleared and its extent damaged, whether or
+  // not the walk would otherwise enter it this frame.
+  if platform.text_atlas().landed() {
+    for id in tree.incomplete_text_layers() {
+      if tree.try_node(id).is_some() {
+        tree.apply_damage(id, crate::rendertree::Damage::Paint);
+      }
+    }
+  }
+
   // Partial repaint: the damaged ids' last_extent cells still hold their
   // extents as of the LAST walk - the old half of the damage union (where
   // pixels must be erased). The walk below rewrites the cells; the second
@@ -134,6 +153,9 @@ pub fn paint_phase(
   // read back or free textures) run out of the tree borrow.
   stats.captures = alloy.deliver_captures() as u32;
   release_retired_textures(tree, alloy);
+  // Text layers nobody composited for a while go too (Text::release_stale_layer).
+  let frame = platform.text_atlas().frame();
+  tree.release_stale_text_layers(frame);
   stats
 }
 
@@ -743,6 +765,9 @@ pub(super) fn record_node<'a>(
       builder.transform(&own);
     } else if pass.is_none() {
       element.build(ctx, builder);
+      if let ElementKind::Text(text) = &element.kind {
+        scene.note_text_layer(node_id, text.has_layer(), text.layer_incomplete());
+      }
     }
   }
   if record_clip {

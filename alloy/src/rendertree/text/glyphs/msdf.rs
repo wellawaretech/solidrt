@@ -37,7 +37,7 @@ pub fn msdf_cell(glyph: u16, outline: &Outline, range: f32) -> Option<Cell> {
   }
   shape.normalize();
   let Some([l, b, r, t]) = shape.bounds() else {
-    return Some(Cell { glyph, width: 0, height: 0, left: 0, top: 0, pixels: Vec::new() });
+    return Some(Cell { key: glyph, width: 0, height: 0, left: 0, top: 0, pixels: Vec::new() });
   };
   let pad = range as f64 / 2.0;
   let left = (l - pad).floor();
@@ -54,7 +54,7 @@ pub fn msdf_cell(glyph: u16, outline: &Outline, range: f32) -> Option<Cell> {
     return None;
   }
   let pixels = field.iter().map(|v| (v.clamp(0.0, 1.0) * FIELD_MAX).round() as u8).collect();
-  Some(Cell { glyph, width, height, left: left as i32, top: top as i32, pixels })
+  Some(Cell { key: glyph, width, height, left: left as i32, top: top as i32, pixels })
 }
 
 /// Whether the outline's largest contour runs counter-clockwise (y up): the

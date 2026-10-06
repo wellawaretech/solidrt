@@ -10,6 +10,7 @@
 //! graph. The GL executors these shapes drive - programs, passes, targets,
 //! buffers, the sampler cache - live in `gl/`, raster-thread-only.
 
+mod glyphs;
 mod lease;
 mod limits;
 mod order;
@@ -18,25 +19,31 @@ pub(crate) mod spec;
 pub(crate) mod texture;
 pub(crate) mod vocab;
 
+pub use glyphs::{
+  CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, GradientTile, RAMP_WIDTH,
+};
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
-pub use order::{gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, OrderKey, OrderScratch, INDEX_NONE};
+pub use order::{
+  gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, OrderKey, OrderScratch,
+  INDEX_NONE,
+};
 pub use resources::{
-  GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources,
-  GpuTextureInfo, GpuWindowShaderInfo, GpuRegionInfo,
+  GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo,
+  GpuResources, GpuTextureInfo, GpuWindowShaderInfo,
 };
 pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use texture::{
-  SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, SamplerWrap, TextureEntry, TextureFormat, TextureRect,
-  TextureRegistry, TextureShape, CUBE_FACES, MIN_ANISOTROPY, check_cube_faces, mip_levels, mip_size,
+  check_cube_faces, mip_levels, mip_size, SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, SamplerWrap,
+  TextureEntry, TextureFormat, TextureRect, TextureRegistry, TextureShape, CUBE_FACES, MIN_ANISOTROPY,
 };
 #[cfg(test)]
 pub use vocab::merge_bindings;
 pub use vocab::{
-  blend_name, buffer_strides, cull_name, parse_blend, parse_cull, resolve_draw_range, validate_buffers,
-  validate_draw_range, validate_binding_shapes, validate_order, validate_param_if_declared, validate_params,
-  validate_texture_bindings, AttrFormat, AttributeTable, BlendMode, BoundTexture, BufferBound, BufferIds,
-  BufferLayout, BufferStride, BufferUpdate, CullMode, DepthState, DrawBounds, DrawRange, DrawUpdate, IndexFormat,
-  ParamValue, PipelineDesc, ShaderStage, StepMode, TextureBinding, Topology, UniformKind, UniformSlot,
-  UniformTable, VertexAttr, MAX_BUFFERS,
+  blend_name, buffer_strides, cull_name, parse_blend, parse_cull, resolve_draw_range, validate_binding_shapes,
+  validate_buffers, validate_draw_range, validate_order, validate_param_if_declared, validate_params,
+  validate_texture_bindings, AttrFormat, AttributeTable, BlendMode, BoundTexture, BufferBound, BufferIds, BufferLayout,
+  BufferStride, BufferUpdate, CullMode, DepthState, DrawBounds, DrawRange, DrawUpdate, IndexFormat, ParamValue,
+  PipelineDesc, ShaderStage, StepMode, TextureBinding, Topology, UniformKind, UniformSlot, UniformTable, VertexAttr,
+  MAX_BUFFERS,
 };

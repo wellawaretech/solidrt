@@ -13,7 +13,8 @@ fn reset_fonts_skips_unparseable_fonts() {
   // hostile or corrupt manifest font must not kill the client), and the
   // replaced context stays usable for shaping.
   platform.reset_fonts(vec![garbage()]);
-  assert!(crate::impellers::ParagraphBuilder::new(&platform.typography()).is_some());
+  assert!(platform.glyphs().is_empty(), "the bad font registered nothing");
+  assert!(platform.words().is_empty(), "the word cache was cleared");
 }
 
 #[test]
@@ -28,5 +29,6 @@ fn reset_fonts_replaces_previous_set() {
   // across resets).
   platform.reset_fonts(vec![noto.clone()]);
   platform.reset_fonts(vec![noto, garbage()]);
-  assert!(crate::impellers::ParagraphBuilder::new(&platform.typography()).is_some());
+  assert_eq!(platform.glyphs().resolve("sans"), Some(0), "the good font of the last set is face 0");
+  assert_eq!(platform.glyphs().resolve("bogus"), Some(0), "the bad one resolves to the fallback");
 }

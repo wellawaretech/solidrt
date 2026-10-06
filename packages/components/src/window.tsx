@@ -1,8 +1,9 @@
-import { displayScale } from "@solidrt/core"
+import { createEffect, displayScale, warmText } from "@solidrt/core"
 import type { LayoutProps, PointerProps, WindowShaderProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 import { colorFade } from "./motion"
 import { theme } from "./theme"
+import { typeScaleStyles } from "./typography"
 
 export interface WindowProps extends PointerProps {
   children?: any
@@ -35,6 +36,13 @@ function themeFinish(): WindowShaderProps | null {
 // the paint-only backgroundColor from style applies here. Its finish is the
 // theme's, or the app's own (`shader`).
 export function Window(props: WindowProps) {
+  // The theme's type scale warmed ahead of the first screen, and again
+  // when the theme or the text policy changes it (a warmed style costs
+  // nothing twice).
+  createEffect(
+    () => typeScaleStyles(),
+    styles => warmText(styles),
+  )
   return (
     <window
       {...props.layout}

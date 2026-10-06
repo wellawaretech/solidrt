@@ -11,8 +11,9 @@
 //   cell serves every zoom; a consumer decodes the field in its shader.
 //
 // Rasterization is CPU work (a few hundred microseconds per glyph) and runs
-// on the worker thread; a `Rasterizer` owns the swash context that thread
-// keeps, since swash scales through per-thread caches by design.
+// on the worker thread, or on the UI thread within the text atlas's budget;
+// a `Rasterizer` owns the swash context its thread keeps, since swash
+// scales through per-thread caches by design.
 use super::msdf::msdf_cell;
 use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::{Angle, Format, Transform, Vector};
@@ -48,10 +49,11 @@ impl CellKind {
 
 /// A rasterized glyph: its pixels and where its box sits relative to the
 /// glyph origin, in texels (`left` right of the origin, `top` above the
-/// baseline, both as swash places them).
+/// baseline, both as swash places them). Keyed by whatever its owner keys
+/// cells on; the rasterizer keys on the glyph id.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Cell {
-  pub glyph: u16,
+pub struct Cell<K = u16> {
+  pub key: K,
   pub width: u32,
   pub height: u32,
   pub left: i32,
@@ -60,17 +62,35 @@ pub struct Cell {
   pub pixels: Vec<u8>,
 }
 
+impl<K> Cell<K> {
+  /// The same pixels under another key: how an owner files a glyph-keyed
+  /// cell under its own identity for it.
+  pub fn with_key<K2>(self, key: K2) -> Cell<K2> {
+    Cell { key, width: self.width, height: self.height, left: self.left, top: self.top, pixels: self.pixels }
+  }
+}
+
 /// What a job rasterizes: one face at one location and style, for a cell
 /// kind, over a list of glyphs.
 #[derive(Clone, Debug)]
 pub struct CellRequest {
   pub kind: CellKind,
-  /// The weight axis value, None for a static face.
+  /// The weight axis value, None for a face without the axis.
   pub weight: Option<f32>,
+  /// The width axis value, None for a face without the axis.
+  pub width: Option<f32>,
   /// Synthetic bold outset (no weight axis, bold-class weight).
   pub synthetic_bold: bool,
   /// Synthetic slant (an italic run on a face without an italic axis).
   pub synthetic_italic: bool,
+  /// The subpixel x offset the outline is rasterized at, in pixels within
+  /// 0..1: a mask drawn at a pen position between pixels keeps its shape
+  /// when it is made at that fraction. Ignored by a distance field, which
+  /// is placed by its sampler.
+  pub phase: f32,
+  /// Extra outset per side in pixels, the low-DPI stem darkening policy
+  /// (zero for none); adds to a synthetic bold's.
+  pub darken: f32,
   pub glyphs: Vec<u16>,
 }
 
@@ -96,25 +116,34 @@ impl Rasterizer {
       .builder(font)
       .size(request.kind.ppem())
       .hint(false)
-      .variations(request.weight.map(|value| swash::Setting { tag: swash::tag_from_bytes(b"wght"), value }))
+      .variations(
+        [
+          request.weight.map(|value| swash::Setting { tag: swash::tag_from_bytes(b"wght"), value }),
+          request.width.map(|value| swash::Setting { tag: swash::tag_from_bytes(b"wdth"), value }),
+        ]
+        .into_iter()
+        .flatten(),
+      )
       .build();
+    let outset = |ppem: f32| if request.synthetic_bold { ppem * SYNTHETIC_BOLD_STRENGTH } else { 0.0 } + request.darken;
     let mut cells = Vec::with_capacity(request.glyphs.len());
     for &glyph in &request.glyphs {
       let cell = match request.kind {
         CellKind::Mask { ppem } => {
           let mut render = Render::new(&[Source::Outline]);
-          render.format(Format::Alpha).offset(Vector::new(0.0, 0.0));
+          render.format(Format::Alpha).offset(Vector::new(request.phase, 0.0));
           if request.synthetic_italic {
             render.transform(Some(Transform::skew(Angle::from_degrees(SYNTHETIC_ITALIC_DEGREES), Angle::ZERO)));
           }
-          if request.synthetic_bold {
-            render.embolden(ppem * SYNTHETIC_BOLD_STRENGTH);
+          let strength = outset(ppem);
+          if strength > 0.0 {
+            render.embolden(strength);
           }
           render.render(&mut scaler, glyph as GlyphId).map(|image| mask_cell(glyph, &image))
         }
         CellKind::Msdf { ppem, range } => scaler.scale_outline(glyph as GlyphId).and_then(|mut outline| {
-          if request.synthetic_bold {
-            let strength = ppem * SYNTHETIC_BOLD_STRENGTH;
+          let strength = outset(ppem);
+          if strength > 0.0 {
             outline.embolden(strength, strength);
           }
           if request.synthetic_italic {
@@ -139,5 +168,12 @@ fn mask_cell(glyph: u16, image: &swash::scale::image::Image) -> Cell {
   for &coverage in image.data.iter().take(texels) {
     pixels.extend_from_slice(&[coverage; BYTES_PER_TEXEL]);
   }
-  Cell { glyph, width: placement.width, height: placement.height, left: placement.left, top: placement.top, pixels }
+  Cell {
+    key: glyph,
+    width: placement.width,
+    height: placement.height,
+    left: placement.left,
+    top: placement.top,
+    pixels,
+  }
 }

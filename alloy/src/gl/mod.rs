@@ -13,6 +13,7 @@ mod buffer;
 mod context;
 mod entry;
 mod draw;
+mod glyphs;
 mod pass;
 mod program;
 mod readback;
@@ -38,6 +39,7 @@ pub(crate) use program::{
 #[cfg(test)]
 pub(crate) use program::declared_uniform_names;
 pub(crate) use entry::EntryBuffers;
+pub(crate) use glyphs::{render_glyphs, GlyphRig};
 pub(crate) use staging::UploadStaging;
 pub(crate) use storage::create_layer_target;
 pub(crate) use target::ShaderTexture;

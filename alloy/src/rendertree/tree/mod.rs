@@ -32,6 +32,14 @@ pub struct RenderTree {
   // was deleted, awaiting release by the frame loop. Interior-mutable so the
   // paint walk can drain it through the shared tree borrow it already holds.
   released_snapshot_textures: RefCell<Vec<u64>>,
+  // Text nodes holding a layer texture (Text::has_layer): the ones the
+  // release sweep visits (release_stale_text_layers), so it costs the
+  // texts with pixels and not every node.
+  text_layers: RefCell<HashSet<u64>>,
+  // Text nodes whose layer last drew without some of its glyphs (the
+  // cells were still in the making): damaged when cells land, so they
+  // redraw complete (composite::paint_phase).
+  incomplete_text: RefCell<HashSet<u64>>,
   // Nodes referencing any texture-registry id (Element::references_textures):
   // texture elements with a source, views whose shader samples extra texture
   // inputs. Keeps texture_content_changed and the destroy sweep at
@@ -75,6 +83,8 @@ impl RenderTree {
       revision: 0,
       transitions: Transitions::default(),
       released_snapshot_textures: RefCell::new(Vec::new()),
+      text_layers: RefCell::new(HashSet::new()),
+      incomplete_text: RefCell::new(HashSet::new()),
       texture_referencers: HashSet::new(),
       damage: DamageLedger::new(),
       reflowed: Vec::new(),
@@ -87,6 +97,7 @@ impl RenderTree {
       self.texture_referencers.insert(node_id);
     } else {
       self.texture_referencers.remove(&node_id);
+      self.incomplete_text.borrow_mut().remove(&node_id);
     }
   }
 
@@ -228,7 +239,6 @@ impl RenderTree {
     Ok(())
   }
 
-
   /// Unlinks `node_id` from its parent but keeps the subtree alive, so it can be
   /// re-inserted elsewhere (a move). This mirrors DOM removeChild, which detaches
   /// rather than destroys; the renderer frees the node later via destroy_node if
@@ -289,7 +299,6 @@ impl RenderTree {
     self.bump_revision();
   }
 
-
   /// Frees `node_id` and its whole subtree. Call after detach_node once the node
   /// is confirmed dead (not moved). Defensively unlinks from any parent still
   /// referencing it, so a direct destroy leaves no dangling child entry.
@@ -345,7 +354,6 @@ impl RenderTree {
     self.apply_damage(id, damage);
     self.sync_span_parent(id);
   }
-
 
   /// Partial repaint (okf/done/partial-repaint.md): note that `id`'s
   /// on-screen pixels may differ from the last painted frame. Every damage
@@ -543,7 +551,6 @@ impl RenderTree {
     self.nodes.get(&id)
   }
 
-
   pub(crate) fn node_mut(&mut self, id: u64) -> &mut Element {
     // unwrap_or_else keeps the hot path allocation-free: expect(&format!(..))
     // would build the message string on every call, hit or miss.
@@ -557,6 +564,8 @@ impl RenderTree {
     }
     if let Some(element) = self.nodes.remove(&node_id) {
       self.texture_referencers.remove(&node_id);
+      self.text_layers.borrow_mut().remove(&node_id);
+      self.incomplete_text.borrow_mut().remove(&node_id);
       if let Some(id) = element.snapshot_texture_id.get() {
         self.released_snapshot_textures.borrow_mut().push(id);
       }
@@ -589,6 +598,41 @@ impl RenderTree {
       }
     }
     Ok(id)
+  }
+
+  /// A text node was built: whether it holds a layer now, and whether that
+  /// layer drew without some of its glyphs (no cell yet). The paint walk
+  /// notes every text it builds.
+  pub fn note_text_layer(&self, node_id: u64, has_layer: bool, incomplete: bool) {
+    let mut layers = self.text_layers.borrow_mut();
+    if has_layer {
+      layers.insert(node_id);
+    } else {
+      layers.remove(&node_id);
+    }
+    let mut set = self.incomplete_text.borrow_mut();
+    if incomplete {
+      set.insert(node_id);
+    } else {
+      set.remove(&node_id);
+    }
+  }
+
+  /// The text nodes waiting on glyph cells.
+  pub fn incomplete_text_layers(&self) -> Vec<u64> {
+    self.incomplete_text.borrow().iter().copied().collect()
+  }
+
+  /// Release the layer textures of texts that went unbuilt long enough
+  /// (Text::release_stale_layer) as of text atlas frame `frame`: the walk
+  /// never enters a culled, hidden or scrolled-out text, so its stamp ages
+  /// on its own. Called once per paint walk, after it.
+  pub fn release_stale_text_layers(&self, frame: u64) {
+    let mut layers = self.text_layers.borrow_mut();
+    layers.retain(|&id| match self.nodes.get(&id).map(|e| &e.kind) {
+      Some(ElementKind::Text(text)) => text.release_stale_layer(frame),
+      _ => false,
+    });
   }
 
   /// Drain the vended snapshot texture ids whose boundary was deleted since
@@ -725,7 +769,6 @@ impl RenderTree {
     }
   }
 
-
   /// GPU-side content changed behind these texture ids - target re-renders,
   /// uploads, copies, camera frames - with no tree damage of their own
   /// (Context::take_content_changes is the source). Live texture references
@@ -843,5 +886,4 @@ impl RenderTree {
     }
     ids
   }
-
 }

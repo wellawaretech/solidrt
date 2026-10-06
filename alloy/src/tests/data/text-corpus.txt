@@ -1,0 +1,247 @@
+Toggle to recolor every control below.
+
+Toggle theme
+
+Auto
+
+Comfortable
+
+Compact
+
+Dense
+
+Normal
+
+Reduced
+
+None
+
++100
+
++200
+
+Primary
+
+Secondary
+
+Ghost
+
+Danger
+
+Disabled
+
+Free
+
+Team
+
+Right-click (mouse) or long-press (touch) the box below. Touch policy presents a bottom sheet, desktop and hybrid a menu at the pointer.
+
+Secondary actions live here
+
+Forks on the interaction policy: desktop and hybrid anchor a dropdown, touch opens a bottom sheet.
+
+Determinate, tracking the volume slider:
+
+Indeterminate:
+
+Error
+
+A divider separates content within a card.
+
+Rest the mouse on a button. Shows under desktop and hybrid interaction policies, never under touch.
+
+Hover me
+
+Below
+
+Swipe a row sideways to archive it (a slow drag springs back); a tap still opens it. Below, a pager: swipe between pages or drag and let go.
+
+Page one
+
+Page two
+
+Page three
+
+Lucide SVGs drawn through the core svg primitive. currentColor follows the theme; the last two are recolored explicitly.
+
+Encodes your name, or a link if the field is empty.
+
+Fetches, decodes, and uploads an image, then shows it as a GPU texture. Rounded via a clipping border radius.
+
+Components gallery
+
+Environment
+
+Window
+
+System
+
+Devices
+
+Inputs seen
+
+Capabilities
+
+Size class
+
+Policies
+
+Interaction policy
+
+Focus ring
+
+App policies
+
+Density policy
+
+Motion policy
+
+Text scale
+
+Text weight delta
+
+Buttons
+
+Switch and checkbox
+
+Notifications
+
+I agree to the terms
+
+Radio group
+
+Context menu
+
+Select
+
+Pick a fruit
+
+Slider
+
+Progress and spinner
+
+Loading
+
+Badges and divider
+
+Status
+
+Tooltip
+
+Swipe gestures
+
+Swipe to archive
+
+Icons
+
+Text input
+
+Your name
+
+QR code
+
+Image
+
+import House from "lucide-static/icons/house.svg"
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+
+stroke="currentColor" stroke-width="2" stroke-linecap="round"
+
+<path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+
+<path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5"/>
+
+<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/>
+
+<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/>
+
+<circle cx="12" cy="12" r="3"/>
+
+<path d="M10.268 21a2 2 0 0 0 3.464 0"/>
+
+<path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>
+
+} </Value> </Row> <Row label="System"> <Value>{
+
+}</Value> </Row> <Row label="Devices"> <Value> {env.inputDevices ? list( ["mouse", env.inputDevices.mouse], ["touch", env.inputDevices.touch], ["keyboard", env.inputDevices.keyboard], ) : "not reported"} </Value> </Row> <Row label="Inputs seen"> <Value> {list( ["mouse", env.mouseSeen], ["touch", env.touchSeen], ["keyboard", env.keyboardSeen], )} </Value> </Row> <Row label="Capabilities"> <Value> {list( ["hover", capabilities.hover], ["touch", capabilities.touch], ["keyboard nav", capabilities.keyboardNav], )} </Value> </Row> <Row label="Size class"> <Value>{capabilities.windowSizeClass}</Value> </Row> </Card> <Card title="Policies" layout={{ width: 360 }}> <Row label="Interaction policy"> <Value>{policy.interaction}</Value> </Row> <Row label="Focus ring"> <Value>{policy.focusRing ? "visible" : "hidden"}</Value> </Row> <Row label="App policies"> <Value>{
+
+[windows] srt mcp did not find its dev server - path spelling and live-pid checks were too strict.
+
+[windows] srt render was never headless - fell back to a hidden window; now runs without a display.
+
+[macos] srt render and srt pack work - libimpeller statically linked.
+
+Pretext-based paragraph rendering - text layout is SolidRT's own; <span> runs, inline atoms, floats, wrap controls, app-side line layout.
+
+GPU/3D: transparent materials - plus render order, uniform plumbing and material classes.
+
+Audio: PCM sounds - createPcmSound over app-generated samples.
+
+JSX: <span>; SpanProps, TextRunProps; float, clear on layout props.
+
+TextProps.textOverflow, overflowWrap, textIndent, textWrap.
+
+@solidrt/core: prepareText, layoutNextLine, createPcmSound; TextLine, PreparedText, TextUnit, PcmSoundOptions.
+
+flux:rendertree: prepareText. flux:audio: loadPcm.
+
+flux:gpu: BlendMode adds "multiply" and "alpha".
+
+@solidrt/3d: scene.setParams, setRenderOrder, renderOrder prop, shaderMaterialClass, Material.transparent; ShaderMaterialClass* types.
+
+srt init --with <pkg,pkg> - pick extensions to include; the picker multi-selects.
+
+srt mcp explains a miss - lists the registry's servers when none matches the project.
+
+get_stats reports wordHits next to paraShapes.
+
+srt init -t/--template removed - use --with.
+
+Scaffold AGENTS.md - rich text and inline atoms; flux:wasm documented as interpreted, not a fast lane.
+
+packages/3d/AGENTS.md - transparency, render order, uniform plumbing, material classes.
+
+Dependencies: none.
+
+Changelog images saved per release.
+
+Mixed scripts: the quick brown fox 跳过懒狗 jumps over the lazy dog, 今天天气很好，我们去公园散步吧。 Then back to Latin with a hyphen-ated word and an em... no, an ellipsis.
+
+Hard breaks:
+
+second line
+
+fourth line after a blank one, long enough to wrap around at least once at this column width.
+
+Averyveryverylongunbreakablewordthatexceedsthecolumnwidthandmustoverflow followed by normal words.
+
+Glued runs: code, then bold, and a code-hyphenated strong code; sizes mix on one line too.
+
+Paragraph options: maxLines, textOverflow and alignment on this deliberately long sample that wraps to several lines at the column width, so that truncation has something to cut and justify has slack to spread.
+
+A heading that balances its two lines instead of leaving one word
+
+Pretty wrapping only rescues a lone last word, otherwise it is plain greedy, so this sample is sized to end on one
+
+1234567890 0.5 -12.75 3,141,592 100% 16px 2x 60 fps 1080p 24/7 12:34:56 2026-10-06
+
+AVAST To Ye Wa Ta P. LT AWAY Vav fi fl ff ffi office waffle
+
+https://example.com/path/to/resource?query=value&other=1#fragment
+
+/home/user/projects/app/src/components/button.tsx:42:7
+
+6bfbcda9c078d2e4e4ccdb75885d04cf72b64af8 sha256 deadbeef
+
+Naive cafe resume facade jalapeno Zoe Chloe Bjork Dvorak Lodz Krakow
+
+Crème brûlée, façade, naïve, Ångström, Ærø, Łódź, Ñandú, Þórr, ß
+
+Ελληνικά: αβγδε ζηθικ λμνξο: Кириллица: абвгд ежзий клмно
+
+camelCase snake_case kebab-case SCREAMING_SNAKE PascalCase x_y_z
+
+Tabs	and   multiple   spaces inside, trailing spaces   
+
+The End.

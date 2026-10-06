@@ -14,6 +14,7 @@ are in that code anyway. File an item where the work happens, not where the
 symptom shows. A heading that outgrows this file splits into its own.
 
 ## Core
+- `packages/2d` text layout adds its own `letterSpacing` per glyph over `flux:font` units (`text-layout.ts`); the engine shapes letter spacing itself now (`ShapeStyle.letter_spacing`, the `letterSpacing` option), so `createFont`/`prepareText` could carry it and the 2d pen loop drop its copy.
 
 `packages/core` - the renderer and the reactivity surface.
 

@@ -55,7 +55,7 @@ pub struct StatsSnapshot {
   /// alloy::rendertree::counters.
   pub node_count: usize,
   pub measure_calls: u32,
-  pub para_shapes: u32,
+  pub word_shapes: u32,
   pub word_hits: u32,
   pub dirtied: u32,
   pub cache_gets: u32,
@@ -282,7 +282,7 @@ impl Stats {
       textures,
       node_count: self.node_count,
       measure_calls: self.layout_counters.measure_calls,
-      para_shapes: self.layout_counters.para_shapes,
+      word_shapes: self.layout_counters.word_shapes,
       word_hits: self.layout_counters.word_hits,
       dirtied: self.layout_counters.dirtied,
       cache_gets: self.layout_counters.cache_gets,

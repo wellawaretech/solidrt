@@ -1,16 +1,26 @@
 use alloy::impellers::{
-  Color, DisplayListBuilder, Paint, ParagraphBuilder, ParagraphStyle, Point, Rect, Size, TextAlignment,
-  TypographyContext,
+  Color, DisplayListBuilder, FontWeight, Paint, Point, Rect, Size, TextAlignment, TextureSampling,
 };
+use alloy::rendertree::text::TextImage;
+use alloy::rendertree::{PlatformContext, Text};
 
 use crate::stats::StatsSnapshot;
 
 const MIB: f32 = 1024.0 * 1024.0;
-// Wrap width of the paragraph, logical px: wide enough that the longest first
+// Wrap width of the text, logical px: wide enough that the longest first
 // line (badge + headline figures + FPS, e.g. "MUTED 100% CPU 1024 MEM 120 FPS"
-// in 14 px bold mono) never wraps. The backdrop is sized from the measured
-// longest line, not this.
+// in 14 px bold mono) never wraps. The backdrop is sized from the placed
+// ink, not this.
 const PARA_WIDTH: f32 = 300.0;
+// The HUD's type: the mono role, bold, at this size.
+const FONT_SIZE: f32 = 14.0;
+// The backdrop's inset around the text, logical px.
+const PAD: f32 = 10.0;
+// How far the text sits inside the safe area's top-right corner.
+const INSET: f32 = 10.0;
+// The darkening backdrop's opacity: enough to keep white text legible over
+// light content.
+const BACKDROP_ALPHA: f32 = 0.7;
 
 /// The dev-session fact shown on the overlay's first line: the client is
 /// connected to a dev server (which controls it), its user input is muted by
@@ -34,33 +44,25 @@ pub enum Badge {
 /// with `hud` on. `gpu_pct` is the GPU share over the last second's recorded
 /// frames (frame_history::RasterRates::gpu_share_pct, the same figure the
 /// stats query reports), None when there is no GPU timing source or no
-/// frame changed the picture. None when a paragraph cannot be built.
+/// frame changed the picture.
+///
+/// The text is rasterized by the glyph engine (`Text::rasterize`) into a
+/// texture the display list composites; the image comes back with the
+/// declaration so the caller keeps it alive and hands it in as `previous`
+/// next time, which re-renders into the same texture while the size
+/// holds. None when nothing could be drawn (no fonts yet).
+#[allow(clippy::too_many_arguments)]
 pub fn build(
   s: &StatsSnapshot,
   gpu_pct: Option<f32>,
   hud: bool,
   badge: Option<Badge>,
-  typography: &TypographyContext,
+  platform: &PlatformContext,
+  alloy: &alloy::Context,
+  previous: Option<&TextImage>,
   safe_area: Rect,
   scale: f32,
-) -> Option<alloy::Overlay> {
-  let mut b = DisplayListBuilder::new(None);
-  b.scale(scale, scale);
-  let mut paint = Paint::default();
-  paint.set_color(Color::new_srgba(1.0, 1.0, 1.0, 1.0));
-
-  let mut style = ParagraphStyle::default();
-  style.set_foreground(&paint);
-  style.set_font_family("mono");
-  style.set_font_size(14.0);
-  style.set_font_weight(alloy::impellers::FontWeight::Bold);
-  style.set_text_alignment(TextAlignment::Right);
-
-  let Some(mut pb) = ParagraphBuilder::new(typography) else {
-    return None;
-  };
-  pb.push_style(&style);
-
+) -> Option<(alloy::Overlay, TextImage)> {
   let mut text = String::new();
   match badge {
     Some(Badge::Connected) => text.push_str("CONN "),
@@ -76,38 +78,50 @@ pub fn build(
     push_hud_lines(&mut text, s, gpu_pct);
   }
 
-  pb.add_text(&text);
-  let Some(paragraph) = pb.build(PARA_WIDTH) else {
-    return None;
-  };
+  let mut node = Text::default();
+  node.set_plain_text(text);
+  node.font_family = "mono".to_string();
+  node.font_size = FONT_SIZE;
+  node.font_weight = FontWeight::Bold;
+  node.text_alignment = Some(TextAlignment::Right);
+  node.w = Some(PARA_WIDTH);
+  node.paint.color = Color::new_srgba(1.0, 1.0, 1.0, 1.0);
+  let image = node.rasterize(platform, alloy, PARA_WIDTH, scale, previous)?;
 
   // Darkening backdrop so the white text stays legible over light content,
   // drawn at the origin: placement travels as the declaration's rectangle.
-  let pad = 10.0;
-  let text_w = paragraph.get_longest_line_width();
-  let text_h = paragraph.get_height();
-  let w = text_w + pad * 2.0;
-  let h = text_h + pad * 2.0;
+  // The text is right-aligned in PARA_WIDTH: its ink box says where the
+  // lines landed, and the backdrop fits that ink one pad around.
+  let ink = image.ink;
+  let w = ink.size.width + PAD * 2.0;
+  let h = ink.size.height + PAD * 2.0;
+  let mut b = DisplayListBuilder::new(None);
+  b.scale(scale, scale);
   let mut bg_paint = Paint::default();
-  bg_paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, 0.7));
+  bg_paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, BACKDROP_ALPHA));
   b.draw_rect(&Rect::new(Point::new(0.0, 0.0), Size::new(w, h)), &bg_paint);
-  // The paragraph is right-aligned in PARA_WIDTH: place it so its right
-  // edge sits one pad inside the backdrop's right edge.
-  b.draw_paragraph(&paragraph, Point::new(pad + text_w - PARA_WIDTH, pad));
+  // The text origin sits where its ink lands one pad inside the backdrop;
+  // the image's box (ink slack included) is placed relative to that origin
+  // and mapped 1:1 onto its texels.
+  let origin = Point::new(PAD - ink.origin.x, PAD - ink.origin.y);
+  let src = Rect::new(Point::zero(), Size::new(image.rect.size.width * scale, image.rect.size.height * scale));
+  let dst = Rect::new(origin + image.rect.origin.to_vector(), image.rect.size);
+  b.draw_texture_rect(&image.texture, &src, &dst, TextureSampling::Linear, None);
 
-  // Same anchor the in-tree overlay drew at: the backdrop's right edge 10
-  // logical px inside the safe area's top-right corner, its top flush with
-  // the safe area's top.
-  let win_x = safe_area.origin.x + safe_area.size.width - 10.0 - text_w - pad;
-  let win_y = safe_area.origin.y + 10.0 - pad;
+  // Same anchor the in-tree overlay drew at: the text's right edge INSET
+  // logical px inside the safe area's top-right corner, its top INSET
+  // below the safe area's top, the backdrop one pad around it.
+  let win_x = safe_area.origin.x + safe_area.size.width - INSET - ink.size.width - PAD;
+  let win_y = safe_area.origin.y + INSET - PAD;
   let dl = b.build()?;
-  Some(alloy::Overlay {
+  let overlay = alloy::Overlay {
     dl,
     x: (win_x * scale).round() as i32,
     y: (win_y * scale).round() as i32,
     width: (w * scale).ceil() as u32,
     height: (h * scale).ceil() as u32,
-  })
+  };
+  Some((overlay, image))
 }
 
 /// The stats HUD's remaining lines, appended under the first line.
@@ -174,11 +188,15 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot, gpu_pct: Option<f32>) {
     text.push_str(&format!("\n{} GLASS", paint_stats.backdrops_prepainted));
   }
   // The last rebuild's display-list ops: draws, clips and save layers
-  // (DRW/CLP/LYR), then the paints that leave a tiled GPU's cheap path,
-  // non-source-over blends and gradients (BLD/GRD), shown only when any.
+  // (DRW/CLP/LYR), then the text layers the glyph pass rasterized and the
+  // paints that leave a tiled GPU's cheap path, non-source-over blends and
+  // gradients (TXT, BLD/GRD), each shown only when any.
   let ops = s.counters;
   if ops.draws > 0 {
     text.push_str(&format!("\n{} DRW {} CLP {} LYR", ops.draws, ops.clips, ops.save_layers));
+  }
+  if ops.text_layers > 0 {
+    text.push_str(&format!("\n{} TXT", ops.text_layers));
   }
   if ops.blends + ops.gradients > 0 {
     text.push_str(&format!("\n{} BLD {} GRD", ops.blends, ops.gradients));

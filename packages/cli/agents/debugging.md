@@ -275,9 +275,10 @@ when exactly one client is connected.
   with the counters under bimodal frame times. Two breakdowns name a
   cost without a reload per hypothesis: `paintOps` (top level for the
   latest rebuild, and in `window.worst`) counts the display-list ops the
-  paint walk recorded - `draws` (of which `paragraphs` are text's paragraph
-  draws, one per line run of same-styled words; a justified line or a
-  style change costs one per word), `clips` (of which `roundedClips`),
+  paint walk recorded - `draws`, `textLayers` (the text layers the glyph
+  pass rasterized for the rebuild; a text whose pixels are current
+  composites its retained layer, a draw and no layer), `clips` (of which
+  `roundedClips`),
   `saveLayers`, and
   the paints that leave a tiled GPU's cheap path, `blends` (not
   source-over) and `gradients`; ops inside a reused repaint-boundary
@@ -482,7 +483,7 @@ The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
   (a thousand-node tree relays out in well under a millisecond). If layoutMs
   still grows with tree size, read the get_stats counters - a low
   cacheHits/cacheGets ratio means the layout cache is being defeated, high
-  paraShapes means text is actually reshaping. Paint is viewport-culled:
+  wordShapes means text is actually reshaping. Paint is viewport-culled:
   under an `overflow="hidden"` scroller only the subtrees that can reach the
   visible box are painted, so paintMs tracks what is on screen, not what is
   mounted (nodesPainted in get_stats shows the count). Very long lists still

@@ -627,7 +627,8 @@ fn bounding_box_translate_and_scroll_fast_path() {
 // once the corner sum crosses into a higher binade than the size (an f32
 // rounds (a + w) - a back to w while both share one), so the placements
 // reach past that edge for the 275.75 x 298 child below.
-const SLIDE_PLACEMENTS: [(f32, f32); 5] = [(12.3456, 7.1), (250.1, 7.1), (384.75, 408.9), (1012.2537, 364.3), (705.5123, 408.9)];
+const SLIDE_PLACEMENTS: [(f32, f32); 5] =
+  [(12.3456, 7.1), (250.1, 7.1), (384.75, 408.9), (1012.2537, 364.3), (705.5123, 408.9)];
 
 #[test]
 fn bounding_box_size_exact_under_fractional_placement() {
@@ -990,7 +991,7 @@ fn painted_text(
 // width and line height, through the tree as well.
 #[test]
 fn detached_text_bounds_are_the_laid_out_paragraph() {
-  let platform = PlatformContext::new(Vec::new());
+  let platform = super::text_platform();
   let (mut t, paragraph) = painted_text(&platform, frame(400.0, 300.0), "hello", 10.0, None, None);
   t.set_y(Some(20.0));
   assert!(paragraph.size.width > 0.0 && paragraph.size.width < 400.0, "{paragraph:?}");
@@ -1009,7 +1010,7 @@ fn detached_text_bounds_are_the_laid_out_paragraph() {
 // x, at the natural (unwrapped) width, the same for every anchor.
 #[test]
 fn anchored_text_lands_its_anchor_on_x_at_natural_width() {
-  let platform = PlatformContext::new(Vec::new());
+  let platform = super::text_platform();
   let bounds = |anchor| painted_text(&platform, frame(400.0, 300.0), "hello world", 100.0, Some(anchor), None).1;
   let start = bounds(TextAnchor::Start);
   let middle = bounds(TextAnchor::Middle);
@@ -1028,7 +1029,7 @@ fn anchored_text_lands_its_anchor_on_x_at_natural_width() {
 // anchored at x.
 #[test]
 fn anchored_text_wraps_only_at_an_explicit_w() {
-  let platform = PlatformContext::new(Vec::new());
+  let platform = super::text_platform();
   let narrow = frame(60.0, 300.0);
   let text = "hello world hello world";
   let boxed = painted_text(&platform, narrow, text, 100.0, None, None).1;
@@ -1045,7 +1046,7 @@ fn anchored_text_wraps_only_at_an_explicit_w() {
 // tree must say (it is the trap `anchor` exists to replace).
 #[test]
 fn boxed_text_bounds_follow_the_aligned_ink() {
-  let platform = PlatformContext::new(Vec::new());
+  let platform = super::text_platform();
   let wide = frame(400.0, 300.0);
   let mut t = Text::default();
   t.set_plain_text("hello".to_string());
