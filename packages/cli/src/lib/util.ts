@@ -1,13 +1,5 @@
 import { resolveBinary } from "./artifacts"
 
-// A fatal usage or configuration error: the message, then exit. The
-// throw-in-dev policy (CLAUDE.md, "API design"): a bad value fails the
-// command instead of being papered over.
-export function fail(message: string): never {
-  console.error(message)
-  process.exit(1)
-}
-
 // Run `cmd` in `cwd` with its output held back: the exit code and the
 // combined output, for a caller that shows the output only on failure.
 export async function runQuiet(cmd: string[], cwd: string): Promise<{ code: number; output: string }> {

@@ -64,7 +64,7 @@ struct CameraPluginState(#[qjs(skip_trace)] Rc<Inner>);
 /// Store the camera plugin state in userdata. Runs at engine init (before any
 /// module import) so `CameraModule::evaluate` and the per-frame `tick` can read
 /// it. The `flux:camera` module surface is registered separately via
-/// `module_override`.
+/// `module`.
 pub(crate) fn store_state(ctx: &Ctx<'_>) {
   ctx
     .store_userdata(CameraPluginState(Rc::new(Inner {

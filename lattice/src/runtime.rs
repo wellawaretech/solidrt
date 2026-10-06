@@ -435,8 +435,8 @@ impl UiRuntime for FluxRuntime {
 
   /// Run the per-frame JS work for one frame signal (FrameRendered or idle
   /// Tick): publish the frame index, advance the paced clock, dispatch the
-  /// sampled moves, then drive flux's frame protocol (`frame::advance`, the
-  /// speech pump, and `frame::deliver` unless the clock is paused).
+  /// sampled moves, then drive flux's frame protocol (`frame::advance`, then
+  /// `frame::deliver` unless the clock is paused).
   /// `next_frame` is the present index the frame being computed would get.
   fn frame(&mut self, next_frame: u64, refreshes: u32, times: FrameTimes) {
     let FrameTimes { present_at, reference, grid } = times;
@@ -570,8 +570,6 @@ impl UiRuntime for FluxRuntime {
       // players advanced ahead of the frame's JS, the devices ticked. It
       // latches the frame request for what changed content.
       flux::gui::frame::advance(&ctx, ts);
-      #[cfg(feature = "speech")]
-      crate::plugins::speech::tick(&ctx);
       if !deliver {
         // Paused: skip rAF and the render event so app time stops, but run
         // the draw path directly - its demand gate decides whether anything

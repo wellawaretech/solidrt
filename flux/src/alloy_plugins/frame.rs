@@ -51,13 +51,47 @@ pub fn advance(ctx: &Ctx<'_>, now_ms: f64) {
     demand = true;
     reasons.push("a glyph atlas".to_string());
   }
-  *s.demand.borrow_mut() = reasons;
   // Settle any captureSnapshot promises whose captures alloy rendered on the
   // previous paint pass.
   gpu::tick(ctx);
+  // The modules' ticks, after the devices. Taken out while they run so a
+  // tick may register another; those go in behind. A tick that asks for
+  // the next frame is standing demand: noted for `draw`, which
+  // re-requests past its gate (the request made here is what this
+  // frame's gate consumes).
+  let mut ticks = std::mem::take(&mut *s.gui.ticks.borrow_mut());
+  let mut ticking = Vec::new();
+  for tick in &mut ticks {
+    if (tick.run)(ctx, now_ms) {
+      demand = true;
+      ticking.push(tick.reason);
+    }
+  }
+  ticks.append(&mut s.gui.ticks.borrow_mut());
+  *s.gui.ticks.borrow_mut() = ticks;
+  *s.gui.ticking.borrow_mut() = ticking;
+  *s.demand.borrow_mut() = reasons;
   if demand {
     s.gui.platform.request_frame();
   }
+}
+
+/// A per-frame hook in the frame protocol, for a module that paces work by
+/// the frame (a physics world stepping on a fixed timestep, a device read
+/// per frame): run in `advance` after the devices, with the frame's app
+/// time, so a paused clock holds it and a stepped run drives it
+/// deterministically. Returning true asks for the next frame under
+/// `reason`, standing demand the way a running transition is (re-requested
+/// past the draw gate, which consumes this frame's request), so the loop
+/// ticks while the module has motion and a settle waits for it. Per
+/// engine: registered from a module's init or `evaluate`, released with
+/// the engine.
+pub fn on_advance(ctx: &Ctx<'_>, reason: &'static str, run: impl for<'js> FnMut(&Ctx<'js>, f64) -> bool + 'static) {
+  let Some(gui) = super::try_gui(ctx) else {
+    log::warn!("[render] on_advance before the gui is installed: {reason} will never tick");
+    return;
+  };
+  gui.ticks.borrow_mut().push(super::Tick { reason, run: Box::new(run) });
 }
 
 /// The delivery half: hand the frame to JS. Timers fire first, one
@@ -121,15 +155,20 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
   // missed present from an idle gap (alloy's `demand_at_present`), and so
   // an animating app's intervals are judged.
   // A streaming texture (a playing video) is standing demand alloy holds:
-  // the loop ticks on the refresh grid while it plays.
+  // the loop ticks on the refresh grid while it plays. A module's tick
+  // that asked for the next frame (`on_advance`) is standing demand too.
   let on_frame = s.gui.platform.take_standing_demand();
   let streaming = s.gui.alloy.streaming_textures();
   let raf = super::raf::has_pending(ctx);
-  if anim_active || spatial.active || on_frame || streaming || raf {
+  let ticking = std::mem::take(&mut *s.gui.ticking.borrow_mut());
+  if anim_active || spatial.active || on_frame || streaming || raf || !ticking.is_empty() {
     s.gui.platform.request_frame();
   }
   {
     let mut reasons = s.demand.borrow_mut();
+    for reason in ticking {
+      reasons.push(reason.to_string());
+    }
     if anim_active {
       let node = s.tree.borrow().running_transition();
       reasons.push(match node {

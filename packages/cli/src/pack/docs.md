@@ -53,9 +53,19 @@ platform-neutral terms; the `android` group holds what only Android needs:
   "android": {
     "versionCode": 1,
     "permissions": ["com.android.vending.BILLING"]
-  }
+  },
+  "runtime": "runtime/dist"
 }
 ```
+
+`runtime` names the project's own runtime binaries, when the project builds
+a custom runtime (a cargo project over lattice with the project's native
+modules; see the runtime docs, "Native code"): a directory in the same
+layout as a checkout's `dist/`. `pack`, `run`, `android` and `test` take the
+app runtime from there first, `solidrt`, `solidrt-go` and the Android APKs
+alike, and fall back to the stock binary for a target the project did not
+build. The APKs are derived from the stock ones with the project's `.so`
+files swapped in, so the project never carries the Android shell.
 
 `iconBackground` is the ground behind the icon's transparent foreground
 (the adaptive icon's background layer behind `assets/icon.png`).

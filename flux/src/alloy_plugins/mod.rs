@@ -27,6 +27,7 @@ pub mod video;
 pub use properties::transition::anim_prop_name;
 pub use properties::{read_jsx, ReadValue};
 
+use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -34,7 +35,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use rquickjs::{Array, Ctx, JsLifetime, Object};
+use rquickjs::{Ctx, JsLifetime};
 
 use alloy::rendertree::{PlatformContext, RenderTree};
 use alloy::AlloyCommand;
@@ -59,6 +60,19 @@ pub(crate) struct Gui {
   // Read by the plugins whose release outlives their drop (video so far).
   #[cfg_attr(not(feature = "video"), allow(dead_code))]
   pub(crate) teardown: Teardown,
+  /// The per-frame hooks modules registered (`frame::on_advance`).
+  pub(crate) ticks: RefCell<Vec<Tick>>,
+  /// The reasons of the ticks that asked for the next frame this frame:
+  /// standing demand `frame::draw` re-requests past its gate.
+  pub(crate) ticking: RefCell<Vec<&'static str>>,
+}
+
+/// A per-frame hook a module registered (see `frame::on_advance`): run in
+/// `advance` with the frame's app time; true asks for the next frame under
+/// `reason`.
+pub(crate) struct Tick {
+  pub(crate) reason: &'static str,
+  pub(crate) run: Box<dyn for<'js> FnMut(&Ctx<'js>, f64) -> bool>,
 }
 
 /// What an engine's teardown leaves in flight: the exits the gui plugins'
@@ -157,7 +171,9 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   // `evaluate`.
   let builder = builder
     .plugin(move |ctx| {
-      ctx.store_userdata(GuiState(Rc::new(Gui { alloy, platform, teardown }))).expect("store gui state");
+      ctx
+        .store_userdata(GuiState(Rc::new(Gui { alloy, platform, teardown, ticks: RefCell::new(Vec::new()), ticking: RefCell::new(Vec::new()) })))
+        .expect("store gui state");
     })
     .plugin(move |ctx| tree::store_state(&ctx, render_tree, alloy_cmd_tx))
     .plugin(|ctx| input::store_state(&ctx))
@@ -170,15 +186,15 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .plugin(|ctx| font::store_state(&ctx))
     .plugin(move |ctx| crate::standards_plugins::clipboard::init_clipboard(&ctx, clipboard_cmd_tx))
     .plugin(register_capabilities)
-    .module_override("flux:rendertree", tree::RenderTreeModule)
-    .module_override("flux:camera", camera::CameraModule)
-    .module_override("flux:microphone", microphone::MicrophoneModule)
-    .module_override("flux:audio", audio::AudioModule)
-    .module_override("flux:gpu", gpu::GpuModule)
-    .module_override("flux:spatial", spatial::SpatialModule)
-    .module_override("flux:font", font::FontModule);
+    .module("flux:rendertree", tree::RenderTreeModule)
+    .module("flux:camera", camera::CameraModule)
+    .module("flux:microphone", microphone::MicrophoneModule)
+    .module("flux:audio", audio::AudioModule)
+    .module("flux:gpu", gpu::GpuModule)
+    .module("flux:spatial", spatial::SpatialModule)
+    .module("flux:font", font::FontModule);
   #[cfg(feature = "video")]
-  let builder = builder.plugin(|ctx| video::store_state(&ctx)).module_override("flux:video", video::VideoModule);
+  let builder = builder.plugin(|ctx| video::store_state(&ctx)).module("flux:video", video::VideoModule);
   builder
 }
 
@@ -188,18 +204,10 @@ pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", 
 #[cfg(not(feature = "video"))]
 pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial", "font"];
 
-/// Append the gui capability names to `Flux.capabilities` so availability checks
-/// are uniform with the other modules (`Flux.capabilities.includes("camera")`).
-/// Runs as a plugin (after `Flux` is created) and only on a gui build, since
+/// List the gui capability names in `Flux.capabilities`; a plugin, since
 /// `install` is the gui-feature seam.
 fn register_capabilities(ctx: Ctx<'_>) {
-  let Ok(flux) = ctx.globals().get::<_, Object>("Flux") else {
-    return;
-  };
-  let Ok(caps) = flux.get::<_, Array>("capabilities") else {
-    return;
-  };
   for name in GUI_CAPABILITIES {
-    let _ = caps.set(caps.len(), *name);
+    crate::add_capability(&ctx, name);
   }
 }

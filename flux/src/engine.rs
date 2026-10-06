@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use rquickjs::module::ModuleDef;
 
 use crate::logger::{default_logger, format_js_error, report_error, CtxLogger, LogLevel, Logger, UncaughtHook};
-use crate::plugins::{self, ModuleOverrideFn, PluginFn, UserdataFn};
+use crate::plugins::{self, ModuleFn, PluginFn, UserdataFn};
 
 type ShutdownFn = Box<dyn FnOnce(&Logger) + Send>;
 pub(crate) type ExecFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
@@ -138,7 +138,7 @@ pub struct EngineConfig {
 pub struct FluxEngineBuilder {
   plugins: Vec<PluginFn>,
   userdata: Vec<UserdataFn>,
-  module_overrides: Vec<ModuleOverrideFn>,
+  modules: Vec<ModuleFn>,
   logger: Option<Logger>,
   cache_dir: Option<PathBuf>,
   user_agent: Option<String>,
@@ -196,8 +196,8 @@ impl FluxEngineBuilder {
     self
   }
 
-  pub fn module_override<D: ModuleDef + Send + 'static>(mut self, name: &'static str, def: D) -> Self {
-    self.module_overrides.push(Box::new(move |resolver, loader| {
+  pub fn module<D: ModuleDef + Send + 'static>(mut self, name: &'static str, def: D) -> Self {
+    self.modules.push(Box::new(move |resolver, loader| {
       resolver.add_module(name);
       loader.add_module(name, def);
     }));
@@ -308,7 +308,7 @@ impl FluxEngineBuilder {
     FluxEngine {
       setups: self.plugins,
       userdata,
-      module_overrides: self.module_overrides,
+      modules: self.modules,
       exec_tx,
       exec_rx,
       logger: config.logger,
@@ -324,7 +324,7 @@ impl FluxEngineBuilder {
 pub struct FluxEngine {
   setups: Vec<PluginFn>,
   userdata: Vec<UserdataFn>,
-  module_overrides: Vec<ModuleOverrideFn>,
+  modules: Vec<ModuleFn>,
   exec_tx: tokio::sync::mpsc::UnboundedSender<ExecFn>,
   exec_rx: tokio::sync::mpsc::UnboundedReceiver<ExecFn>,
   logger: Logger,
@@ -340,7 +340,7 @@ impl FluxEngine {
     FluxEngineBuilder {
       plugins: Vec::new(),
       userdata: Vec::new(),
-      module_overrides: Vec::new(),
+      modules: Vec::new(),
       logger: None,
       cache_dir: None,
       user_agent: None,
@@ -480,7 +480,7 @@ impl FluxEngine {
     let (runtime, context, pending, rejections) = plugins::init_context(
       self.setups,
       self.userdata,
-      self.module_overrides,
+      self.modules,
       self.logger,
       self.stack_size,
       self.memory_limit,

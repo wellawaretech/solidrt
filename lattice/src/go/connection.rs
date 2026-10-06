@@ -107,6 +107,9 @@ pub struct QueryHandles {
   pub exec: Arc<Mutex<Option<flux::ExecHandle>>>,
   pub outbound_tx: UnboundedSender<String>,
   pub location: crate::plugins::dev::LocationSlot,
+  /// The capabilities the runtime's own modules add beyond flux's (see
+  /// `Modules`), reported beside them.
+  pub modules: Vec<&'static str>,
 }
 
 /// Query kinds this runtime answers, advertised in the connect-time `info`
@@ -537,12 +540,13 @@ async fn try_serve(
   // connect and the GPU strings. The GPU strings come from the raster
   // thread's context; a connect that wins that race sends null, which a
   // reconnect corrects.
+  let capabilities: Vec<&str> = flux::capabilities().into_iter().chain(queries.modules.iter().copied()).collect();
   let info = serde_json::json!({
     "type": "info",
     "platform": flux::platform(),
     "version": crate::VERSION,
     "profile": crate::PROFILE,
-    "capabilities": flux::capabilities(),
+    "capabilities": capabilities,
     "queries": QUERY_KINDS,
     "clientDir": crate::storage::get().map(|store| store.client_dir.to_string_lossy().into_owned()),
     "pid": std::process::id(),

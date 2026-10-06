@@ -3,7 +3,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { bundleWith, writeIsolates } from "../bundle/bundler"
 import { appArgs, source, values } from "../lib/args"
 import { collectAssets } from "../lib/project"
-import { fail, requireBinary } from "../lib/util"
+import { fail } from "../lib/fail"
+import { requireBinary } from "../lib/util"
 import { remapPositions } from "../server/remap"
 
 // sol test: run the test files of a project on the runtime the code ships

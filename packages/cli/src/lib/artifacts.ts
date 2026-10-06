@@ -1,7 +1,8 @@
 import { createRequire } from "node:module"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { resolve, dirname, join } from "node:path"
 import process from "node:process"
+import { projectRuntime } from "./runtime"
 
 let require = createRequire(import.meta.url)
 
@@ -19,21 +20,29 @@ let PKG_MAP: Record<string, string> = {
   "win32-x64": "@solidrt/win32-x64-msvc",
 }
 
+// The app runtime binaries, the ones a project's own runtime provides; the
+// tooling binaries (flux, fluxc, fluxrt) are always sol's own.
+const RUNTIME_BINARIES = new Set(["solidrt", "solidrt-go"])
+
 export function resolveBinary(name: string) {
   let key = `${process.platform}-${process.arch}`
   let ext = process.platform === "win32" ? ".exe" : ""
+  let triple = TRIPLE_MAP[key]
 
-  // 1. SOLIDRT_HOME: contributors pointing at their local solidrt checkout
-  let solRoot = process.env.SOLIDRT_HOME
-  if (solRoot) {
-    let triple = TRIPLE_MAP[key]
-    if (triple) {
-      let bin = resolve(solRoot, "dist", triple, name + ext)
-      if (existsSync(bin)) return bin
-    }
+  // 1. The project's own runtime (lib/runtime.ts)
+  if (RUNTIME_BINARIES.has(name) && triple) {
+    let own = projectRuntime()?.binary(name, triple, ext)
+    if (own) return own
   }
 
-  // 2. Platform npm package (installed via optionalDependencies)
+  // 2. SOLIDRT_HOME: contributors pointing at their local solidrt checkout
+  let solRoot = process.env.SOLIDRT_HOME
+  if (solRoot && triple) {
+    let bin = resolve(solRoot, "dist", triple, name + ext)
+    if (existsSync(bin)) return bin
+  }
+
+  // 3. Platform npm package (installed via optionalDependencies)
   let pkg = PKG_MAP[key]
   if (pkg) {
     try {
@@ -103,26 +112,18 @@ function androidPackageDir(abi: string): string | null {
   return null
 }
 
-// The client version the project expects on an `abi` device: the version of
-// its @solidrt/android-<abi> dev dependency (the release action pins it to the
-// runtime version). Null when the package is not installed.
-export function androidPackageVersion(abi: string): string | null {
-  let dir = androidPackageDir(abi)
-  if (!dir) return null
-  try {
-    let version = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version
-    return typeof version === "string" ? version : null
-  } catch {
-    return null
-  }
-}
-
-// The production runner APK `sol pack --apk` patches: staged per ABI by
-// `make android-runtime` in a checkout, or shipped inside the
+// The production runner APK `sol pack --apk` patches: the project's own
+// (lib/runtime.ts), else the stock one staged per ABI by `make
+// android-runtime` in a checkout, or shipped inside the
 // @solidrt/android-<abi> platform package next to solidrt-go.apk. Runners
 // are per-ABI by decision - a shipped app carries one ABI, never a fat APK
 // (okf/backlog/standalone-android-apk.md).
 export function resolveRunnerApk(abi: string = DEFAULT_ANDROID_ABI): string | null {
+  let stock = stockRunnerApk(abi)
+  return projectRuntime()?.runnerApk(abi, stock) ?? stock
+}
+
+function stockRunnerApk(abi: string): string | null {
   let solRoot = process.env.SOLIDRT_HOME
   if (solRoot) {
     let apk = resolve(solRoot, "dist/android-runtime", abi, "solidrt.apk")
@@ -136,7 +137,14 @@ export function resolveRunnerApk(abi: string = DEFAULT_ANDROID_ABI): string | nu
   return null
 }
 
+// The Player APK `sol android` installs: the project's own (lib/runtime.ts),
+// else the stock one.
 export function resolveApk(abi: string = DEFAULT_ANDROID_ABI) {
+  let stock = stockApk(abi)
+  return projectRuntime()?.apk(abi, stock) ?? stock
+}
+
+function stockApk(abi: string): string | null {
   // 1. SOLIDRT_HOME: contributor checkout, where `make android-dist` stages the APK
   //    under dist/android/<abi>/.
   let solRoot = process.env.SOLIDRT_HOME

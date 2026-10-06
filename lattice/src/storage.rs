@@ -95,12 +95,14 @@ impl Storage {
   }
 
   /// `<client_dir>/identity` - persisted client identity (p2p key).
+  #[cfg_attr(not(feature = "go"), allow(dead_code))]
   pub fn identity_dir(&self) -> PathBuf {
     self.client_dir.join("identity")
   }
 
   /// `<client_dir>/apps` - the per-app dirs (installs + data sandboxes). None
   /// in the packed flat layout, which has a single app and no apps/ level.
+  #[cfg_attr(not(feature = "go"), allow(dead_code))]
   pub fn apps_root(&self) -> Option<PathBuf> {
     (!self.flat).then(|| self.client_dir.join("apps"))
   }

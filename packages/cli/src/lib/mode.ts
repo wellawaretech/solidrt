@@ -18,7 +18,7 @@ import { existsSync, realpathSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { values, source, isSource, isPrebuilt } from "./args"
 import { loadProject } from "./project"
-import { fail } from "./util"
+import { fail } from "./fail"
 
 export type Mode =
   | { mode: "project"; key: string; projectDir: string; entry: string }

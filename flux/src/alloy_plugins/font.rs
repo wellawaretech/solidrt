@@ -96,7 +96,7 @@ fn state(ctx: &Ctx<'_>) -> Rc<Inner> {
 /// Store the font plugin state in userdata. Runs at engine init (before any
 /// module import) so `FontModule::evaluate` and the per-frame `tick` can
 /// read it. The `flux:font` module surface is registered separately via
-/// `module_override`.
+/// `module`.
 pub(crate) fn store_state(ctx: &Ctx<'_>) {
   let worker = match CellWorker::spawn(WORKER_NAME) {
     Ok(worker) => Some(worker),

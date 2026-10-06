@@ -12,6 +12,7 @@
 // the dex (okf/done/standalone-android-apk.md,
 // okf/done/packed-apk-data-on-device.md).
 
+import { createHash } from "node:crypto"
 import { inflateRawSync, deflateRawSync } from "node:zlib"
 import { parseZip, writeZip, crc32, type ZipEntry } from "./zip"
 import {
@@ -159,11 +160,69 @@ export function patchApk(base: Buffer, patch: ApkPatch): Buffer {
   return signApk(local, cd, entries.length)
 }
 
+// The inflated compiled manifest of an APK's entries.
+function manifestBytes(entries: ZipEntry[]): { entry: ZipEntry; axml: Buffer } {
+  let entry = entryNamed(entries, "AndroidManifest.xml")
+  return { entry, axml: entry.method === 0 ? entry.data : inflateRawSync(entry.data) }
+}
+
 // The application id an APK carries, read back from its compiled manifest.
 // The install side (sol android <file.apk>) needs it to address the launcher
 // activity, and the APK itself is the only place it lives.
 export function apkApplicationId(apk: Buffer): string {
-  let entry = entryNamed(parseZip(apk), "AndroidManifest.xml")
-  let axml = entry.method === 0 ? entry.data : inflateRawSync(entry.data)
-  return manifestInfo(axml).packageValue
+  return manifestInfo(manifestBytes(parseZip(apk)).axml).packageValue
+}
+
+// The versionName an APK carries: what `sol android` compares the installed
+// Player against, and what a derived APK suffixes (swapLibs).
+export function apkVersionName(apk: Buffer): string {
+  let { axml } = manifestBytes(parseZip(apk))
+  let info = manifestInfo(axml)
+  return poolStrings(axml, XML_POOL_OFFSET)[info.versionNameIndex]!
+}
+
+// How many hex digits of the libs' digest name a derived APK's version.
+const LIBS_HASH_CHARS = 8
+
+// A content digest of the libs, what makes a rebuilt runtime a new version
+// to `sol android` (which updates an installed Player whose versionName
+// differs from the project's).
+function libsHash(libs: { name: string; bytes: Buffer }[]): string {
+  let hash = createHash("sha256")
+  for (let lib of libs) {
+    hash.update(lib.name)
+    hash.update(lib.bytes)
+  }
+  return hash.digest("hex").slice(0, LIBS_HASH_CHARS)
+}
+
+// A project runtime's APK (lib/runtime.ts): the base APK (the stock Player
+// or runner) with `lib/<abi>/<name>` replaced, or added, for each lib, each
+// entry keeping the base's packing (deflated in the runner, stored and
+// page-aligned in the Player), the versionName suffixed with the libs'
+// digest, the zip re-aligned and re-signed with the development key. The
+// shell (dex, resources, the other libs) is the base's byte for byte: a
+// custom runtime differs from the stock one in its native code alone.
+export function swapLibs(base: Buffer, abi: string, libs: { name: string; bytes: Buffer }[]): Buffer {
+  let entries = parseZip(base)
+  let prefix = `lib/${abi}/`
+  let template = entries.find((e) => e.name.toString("latin1").startsWith(prefix))
+  if (!template) throw new Error(`Base APK has no ${prefix} libs`)
+  for (let lib of libs) {
+    let name = prefix + lib.name
+    let entry = entries.find((e) => e.name.toString("latin1") === name)
+    if (!entry) {
+      entry = { ...template, name: Buffer.from(name, "latin1") }
+      entries.push(entry)
+    }
+    replaceData(entry, lib.bytes)
+  }
+  let { entry, axml } = manifestBytes(entries)
+  let info = manifestInfo(axml)
+  // A base that is itself derived keeps one suffix.
+  let stem = poolStrings(axml, XML_POOL_OFFSET)[info.versionNameIndex]!.split("+")[0]!
+  let version = `${stem}+r${libsHash(libs)}`
+  replaceData(entry, replacePoolStrings(axml, XML_POOL_OFFSET, new Map([[info.versionNameIndex, version]])))
+  let { local, cd } = writeZip(entries)
+  return signApk(local, cd, entries.length)
 }

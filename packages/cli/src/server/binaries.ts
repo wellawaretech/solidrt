@@ -29,10 +29,22 @@ function platformDir(): string | null {
   return env.SOLIDRT_HOME && triple ? join(env.SOLIDRT_HOME, "dist", triple) : null
 }
 
-/** The absolute path of a platform binary, or a failed launch. */
-export async function requireBinary(name: string): Promise<string> {
+/**
+ * The absolute path of a platform binary, or a failed launch. `runtime` is
+ * the project's own runtime directory (mode.ts), tried first for the app
+ * runtime binaries; a host it was not built for falls back to the stock
+ * binary with a notice.
+ */
+export async function requireBinary(name: string, runtime: string | null = null): Promise<string> {
+  let fileName = name + (platform === "win32" ? ".exe" : "")
+  let triple = TRIPLES[`${platform}-${arch}`]
+  if (runtime && triple) {
+    let own = join(runtime, triple, fileName)
+    if (await file(own).exists()) return own
+    console.log(`[cli] No ${name} for ${triple} in ${runtime}; using the stock one`)
+  }
   let dir = platformDir()
-  let path = dir ? join(dir, name + (platform === "win32" ? ".exe" : "")) : null
+  let path = dir ? join(dir, fileName) : null
   if (path && (await file(path).exists())) return path
   fail(
     `Could not find the ${name} binary${dir ? ` in ${dir}` : ""}. Run through sol, or set SOLIDRT_HOME to a SolidRT checkout built with make client.`,

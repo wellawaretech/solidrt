@@ -18,9 +18,12 @@ import { file, realpath } from "flux:fs"
 import { join } from "flux:path"
 import { fail } from "./args"
 
+// `runtime`: the project's own runtime directory (`"solidrt": { "runtime" }`,
+// see lib/runtime.ts), absolute; the client spawns from it when it holds one
+// for this host.
 export type Mode =
-  | { mode: "project"; key: string; projectDir: string; entry: string }
-  | { mode: "file"; key: string; projectDir: null; entry: string }
+  | { mode: "project"; key: string; projectDir: string; entry: string; runtime: string | null }
+  | { mode: "file"; key: string; projectDir: null; entry: string; runtime: null }
 
 const DEFAULT_ENTRY = "src/index.tsx"
 // A prebuilt .sol.js ends with .js, so it is admitted by the same list.
@@ -40,12 +43,12 @@ export async function resolveMode(args: { entry: string | undefined; project: bo
   if (source === undefined) {
     if (args.file || args.project) fail("--file and --project need an entry file")
     if (!hasPkg) fail(`No package.json in ${cwd}. Run from the project root, or pass a file to use on its own.`)
-    let declared = await declaredEntry(cwd)
-    let entry = join(cwd, declared ?? DEFAULT_ENTRY)
+    let declared = await declaredConfig(cwd)
+    let entry = join(cwd, declared.entry ?? DEFAULT_ENTRY)
     if (!(await file(entry).exists())) {
-      fail(`Entry not found: ${entry}${declared ? "" : ' (set "solidrt": { "entry": ... } in package.json)'}`)
+      fail(`Entry not found: ${entry}${declared.entry ? "" : ' (set "solidrt": { "entry": ... } in package.json)'}`)
     }
-    return { mode: "project", key: cwd, projectDir: cwd, entry }
+    return { mode: "project", key: cwd, projectDir: cwd, entry, runtime: runtimeDir(cwd, declared) }
   }
 
   let entry = await realpath(source)
@@ -54,25 +57,34 @@ export async function resolveMode(args: { entry: string | undefined; project: bo
       `${cwd} is a project (it has a package.json) and ${source} is a file: pass --project to use the project with this entry, or --file to use the file on its own.`,
     )
   }
-  if (hasPkg && args.project) return { mode: "project", key: cwd, projectDir: cwd, entry }
+  if (hasPkg && args.project) {
+    return { mode: "project", key: cwd, projectDir: cwd, entry, runtime: runtimeDir(cwd, await declaredConfig(cwd)) }
+  }
   if (!hasPkg && args.project) fail(`--project needs a package.json in ${cwd}`)
-  return { mode: "file", key: entry, projectDir: null, entry }
+  return { mode: "file", key: entry, projectDir: null, entry, runtime: null }
 }
 
-// The project's declared entry (`"solidrt": { "entry" }` in package.json),
-// relative to the project root. Only the one field the server needs is
-// checked here; the bun commands validate the whole key (src/lib/project.ts).
-async function declaredEntry(dir: string): Promise<string | undefined> {
+// The project's declared entry and runtime (`"solidrt": { "entry", "runtime"
+// }` in package.json), relative to the project root. Only the fields the
+// server needs are checked here; the bun commands validate the whole key
+// (src/lib/project.ts).
+async function declaredConfig(dir: string): Promise<{ entry?: string; runtime?: string }> {
   let pkg = await file(join(dir, "package.json"))
     .json()
     .catch(() => fail(`Unreadable package.json in ${dir}`))
   let config = pkg?.solidrt
-  if (config === undefined) return undefined
+  if (config === undefined) return {}
   if (typeof config !== "object" || config === null || Array.isArray(config)) {
     fail('"solidrt" in package.json must be an object')
   }
-  if ("entry" in config && typeof config.entry !== "string") fail('"solidrt": "entry" must be a string')
-  return config.entry
+  for (let key of ["entry", "runtime"]) {
+    if (key in config && config[key] !== null && typeof config[key] !== "string") fail(`"solidrt": "${key}" must be a string`)
+  }
+  return { entry: config.entry ?? undefined, runtime: config.runtime ?? undefined }
+}
+
+function runtimeDir(cwd: string, declared: { runtime?: string }): string | null {
+  return declared.runtime ? join(cwd, declared.runtime) : null
 }
 
 /** The directory the file routes serve: the entry's directory. */

@@ -9,6 +9,9 @@ use serde::Deserialize;
 use std::path::Path;
 
 #[derive(Deserialize)]
+// The three structs are manifest.json's schema in full; which fields a build
+// reads is that build's business.
+#[allow(dead_code)]
 pub struct Manifest {
   #[serde(rename = "appId")]
   pub app_id: String,
@@ -39,6 +42,7 @@ pub struct Manifest {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct ManifestBundle {
   #[serde(default)]
   pub path: Option<String>,
@@ -48,6 +52,7 @@ pub struct ManifestBundle {
 
 /// One collected assets/ file, as the manifest lists it.
 #[derive(Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct AssetEntry {
   pub path: String,
   pub sha256: String,

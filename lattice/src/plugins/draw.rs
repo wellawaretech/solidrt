@@ -87,7 +87,7 @@ impl Drop for RenderInner {
 }
 
 /// Stash the draw bridge's host state in userdata, before any import. The
-/// `sol:render` surface is registered separately via `module_override`.
+/// `sol:render` surface is registered separately via `module`.
 pub fn store_state(
   ctx: &QuickJsContext<'_>,
   platform: Arc<PlatformContext>,

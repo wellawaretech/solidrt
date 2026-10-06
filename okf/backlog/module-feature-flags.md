@@ -9,7 +9,7 @@ created: 2026-10-06
 ## Symptom
 
 The custom runtime route
-([runtime-extension-modules](runtime-extension-modules.md)) works by
+([runtime-extension-modules](../plans/runtime-extension-modules.md)) works by
 addition and by subtraction: a project depending on lattice as a crate
 lists the features it wants, `default-features = false`, and anything not
 listed is neither compiled nor linked. Subtraction only works for a module

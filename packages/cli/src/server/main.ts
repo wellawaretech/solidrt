@@ -46,7 +46,7 @@ if (running) {
 }
 
 let sol = solCommand()
-let runner = args.client !== null ? await requireBinary("solidrt-go") : null
+let runner = args.client !== null ? await requireBinary("solidrt-go", mode.runtime) : null
 let serverDir = await serverDirFor(mode.key)
 
 // The LAN address (for --lan): the IPv4 of the interface holding the default

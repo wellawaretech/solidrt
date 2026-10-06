@@ -237,6 +237,12 @@ Shaped, not started.
   on the renderer it already has; what is missing is a per-app manifest opt-in
   through sol pack, a Play upload path, and a verification pass on the Desktop
   Head Unit for the second display, the density change and the driving block.
+- **[A record-mesh caster that starts empty casts no shadow after a cold start on Android](backlog/android-cold-start-shadow-loss.md)** [2026-10-06]
+  On the SM-T500 the tower-toppling demo casts no shadows when the Player
+  starts cold, while a reload of the same app, or any 3d scene run before it
+  in the same process, shows them; the trigger is a shadow tile whose every
+  caster had record count 0 at creation and got its records in the first
+  frames, and nothing short of a new engine recovers it.
 - **[Android client forgets its dev-server address](backlog/android-dev-server-persistence.md)** [2026-07-27]
   The dev-server address only reaches the client as a launch-intent extra, so
   any relaunch that does not come from the CLI (the device's own launcher, a
@@ -656,14 +662,6 @@ Shaped, not started.
   "Back to a list screen remounts it, so its scroll offset and focused row are
   lost; each stack entry should own a keyed store that lives while the entry
   is on the stack, with ScrollView opting in and focus restored on pop."
-- **[Register app-specific native modules without forking the runtime](backlog/runtime-extension-modules.md)** [2026-10-03]
-  The route for native code is a custom runtime build, but lattice builds its
-  FluxEngine inside start_with, the stock main is not reusable and sol only
-  knows the stock binaries, so a developer who needs one more module has to
-  fork; take extra flux plugins and per-frame hooks on the entry points,
-  expose the stock main as a function, and let sol pick up a project's own
-  runtime binaries, so a custom player is a cargo project beside the app
-  depending on a tagged lattice; speech recognition is the worked example.
 - **[Runtime optimization - what the binary weighs and how to shrink it](backlog/runtime-optimization.md)** [2026-09-29]
   The runtime is 61 MB at release (about 40 MB at release-opt) and size
   already decides what ships - speech recognition is compiled out of every
@@ -2144,6 +2142,15 @@ Finished, kept for the reasoning.
   on a non-first tab's root goes to the first tab, links land in their tab.
   The model every native router shares (React Navigation, Expo Router,
   go_router, UIKit/SwiftUI, Jetpack); web routers have nothing here."
+- **[Register app-specific native modules without forking the runtime](done/runtime-extension-modules.md)** [2026-10-06]
+  The route for native code is a custom runtime build, but lattice built its
+  engine with no way to hand modules in, the stock main was not reusable and
+  sol only knew the stock binaries, so one more module meant a fork; lattice
+  now takes Modules on its entry, the stock main is lattice::main, sol takes a
+  project's own runtime from a package.json key and derives its Android APKs
+  from the stock ones; the tower-toppling demo's Rapier physics
+  (flux:physics3d and flux:physics2d, stepping in the frame tick) is the
+  worked example.
 - **[A zoom debug command in the scaffold](done/scaffold-zoom-debug-command.md)** [2026-08-06]
   Snapshots reach an agent downscaled, so small hand-authored geometry needs
   magnified inspection; a ~15-line viewBox-shrinking registerDebug("zoom")
@@ -2575,6 +2582,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Best docs and layering in the repo; the frame-loop/dispatch fragility and
   silently-black invalid colors are fixed as of 2026-08-06 (see status note).
   Remaining gaps are zero tests and docs teaching nonexistent props.
+- **[Custom runtime findings](notes/custom-runtime-findings.md)** [2026-10-06]
+  What building the tower-toppling physics runtime taught about cdylib
+  exports, the frame protocol's demand gate, publishes as demand, and the
+  module's cost on desktop and on the SM-T500 tablet.
 - **[Declarative GPU surface](notes/declarative-gpu.md)** [2026-08-03]
   Survey of declarative GPU prior art against the current texture/gpu API;
   conclusion is a Shader component as sugar, subtree effects as the real gap,

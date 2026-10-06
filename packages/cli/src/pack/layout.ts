@@ -4,7 +4,7 @@ import { assetPathFor, collectAssets, loadAppIdentity, RUNTIME_VERSION, SOLIDRT_
 import { resolvePackFonts } from "../lib/fonts"
 import type { Mode } from "../lib/mode"
 import { runnerGlLibs } from "../lib/artifacts"
-import { fail } from "../lib/util"
+import { fail } from "../lib/fail"
 import { isolateAssetPath } from "../bundle/bundler"
 
 // The canonical flat pack folder (okf/plans/client-storage-updates.md, Pack

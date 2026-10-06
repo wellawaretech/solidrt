@@ -58,6 +58,10 @@ pub fn init(ctx: Ctx<'_>, atx: Arc<alloy::Context>) {
       pending: RefCell::new(Vec::new()),
     })))
     .expect("store speech state");
+  flux::gui::frame::on_advance(&ctx, "speech", |ctx, _now_ms| {
+    tick(ctx);
+    false
+  });
 
   let start = Function::new(ctx.clone(), start_impl).expect("create speech.start");
   let set_callback = Function::new(ctx.clone(), set_callback_impl).expect("create speech.setResultCallback");
@@ -223,10 +227,9 @@ fn reject_with(ctx: &Ctx<'_>, reject: Persistent<Function<'static>>, msg: &str) 
   }
 }
 
-/// Per-frame hook, called from the frame verb right after flux's
-/// `frame::advance`: pump mic samples into each worker, then dispatch worker
-/// events.
-pub fn tick(ctx: &Ctx<'_>) {
+/// The per-frame tick (`frame::on_advance`): pump mic samples into each
+/// worker, then dispatch worker events.
+fn tick(ctx: &Ctx<'_>) {
   let Some(state) = ctx.userdata::<SpeechPluginState>() else {
     return;
   };

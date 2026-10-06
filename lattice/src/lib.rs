@@ -1,16 +1,21 @@
+mod entry;
 mod frame;
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 mod frame_history;
-pub mod gl_libs;
+// The packed-payload pieces (gl_libs, links): nothing in the go client, and
+// links nothing on Android either (the activity is singleInstance).
+#[cfg_attr(feature = "go", allow(dead_code))]
+mod gl_libs;
 #[cfg(any(feature = "go", feature = "test"))]
 mod input_plan;
 #[cfg(feature = "go")]
 mod go;
-pub mod links;
-pub mod manifest;
+#[cfg_attr(any(feature = "go", target_os = "android"), allow(dead_code))]
+mod links;
+mod manifest;
 mod overlay;
 #[cfg(not(feature = "go"))]
-pub mod payload;
+mod payload;
 mod stats;
 mod paced_clock;
 mod plugins;
@@ -19,7 +24,7 @@ mod runtime;
 mod settle;
 #[cfg(feature = "speech")]
 pub mod speech;
-pub mod storage;
+mod storage;
 #[cfg(any(feature = "go", feature = "test"))]
 mod stepped;
 #[cfg(feature = "test")]
@@ -27,12 +32,21 @@ mod test_host;
 #[cfg(feature = "go")]
 mod render_host;
 #[cfg(feature = "test")]
-pub use test_host::TestRun;
+use test_host::TestRun;
 #[cfg(feature = "go")]
-pub use render_host::RenderRun;
+use render_host::RenderRun;
 
 #[cfg(test)]
 mod tests;
+
+pub use entry::{main, Modules};
+// What a custom runtime writes its modules against (`flux::gui::frame`,
+// `flux::rquickjs`), through the one dependency it names.
+pub use flux;
+#[cfg(target_os = "android")]
+pub use entry::android_main;
+#[cfg(feature = "android-entry")]
+crate::android_entry!(crate::Modules::new());
 
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 enum EngineCmd {
@@ -211,106 +225,6 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-// --- Start Android entry point ------------------------------
-
-// The go dev client: boots the player (no app source), auto-dials a dev
-// server when the launch intent carries one.
-#[cfg(all(target_os = "android", feature = "go"))]
-#[no_mangle]
-pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
-  let args = android_args(argc, argv);
-  let dev_server = dev_server_arg(&args);
-  let launch = launch_arg(&args);
-  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
-  // Android resolves its own sandboxed root; no flags, no packed identity.
-  // No app argument channel either: the activity is launched by intent, not
-  // from a command line.
-  let storage = storage::StorageSpec { data_root: None, client: None, app_id: None };
-  start(&rt, None, launch, None, (1280, 720), false, dev_server, embedded_fonts(), storage, Vec::new());
-  0
-}
-
-// Where `sol pack --apk` stores the payload in the APK, relative to assets/.
-#[cfg(all(target_os = "android", not(feature = "go")))]
-const PACKED_PAYLOAD_ASSET: &str = "app.solapp";
-
-// The production Android runtime: boots the .solapp packed into the APK
-// (`sol pack --apk`), read in place at its offset inside the APK - no dev
-// server, no player, no extraction. A runner APK without a payload is a
-// packaging error, so there is no fallback screen; the failure line lands in
-// logcat via SDL's stderr redirect when it does at all - primarily this exit
-// code is for the packager's bring-up.
-#[cfg(all(target_os = "android", not(feature = "go")))]
-#[no_mangle]
-pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
-  let launch = launch_arg(&android_args(argc, argv));
-  let Some((apk, offset, len)) = alloy::sdl_utils::packed_asset_location(PACKED_PAYLOAD_ASSET) else {
-    eprintln!("[sol] no {PACKED_PAYLOAD_ASSET} asset in this APK; nothing to run");
-    return 1;
-  };
-  let Some(payload) = forge::trailer::read_at(apk, offset, len, payload::EMBED_MAGIC).and_then(payload::load) else {
-    eprintln!("[sol] {PACKED_PAYLOAD_ASSET} is not a SolidRT app pack; nothing to run");
-    return 1;
-  };
-  forge::fs::set_assets_base(Some(payload.base));
-  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
-  // Storage anchors into the app's data sandbox under the Android-resolved
-  // root, keyed by the packed identity like every packed distribution. No
-  // argument channel: the activity is launched by intent.
-  let storage = storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
-  start(&rt, Some(payload.app), launch, payload.display_name, (1280, 720), false, None, payload.fonts, storage, Vec::new());
-  0
-}
-
-// The C argv SDL hands SDL_main, populated from the activity's
-// getArguments(): the launch fact from SolidRTActivity, plus the go client's
-// dev-server address.
-#[cfg(target_os = "android")]
-fn android_args(argc: i32, argv: *mut *mut i8) -> Vec<String> {
-  if argv.is_null() || argc <= 0 {
-    return Vec::new();
-  }
-  (0..argc as isize)
-    .filter_map(|i| {
-      let ptr = unsafe { *argv.offset(i) };
-      if ptr.is_null() {
-        return None;
-      }
-      // c_char is u8 on Android ARM, i8 elsewhere; cast so this builds on both.
-      unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) }.to_str().ok().map(str::to_owned)
-    })
-    .collect()
-}
-
-// The launch facts SolidRTActivity.getArguments() passes: `--restored` (the
-// activity was recreated from saved state) and `--link <link>` (the intent's
-// data); see Launch.
-#[cfg(target_os = "android")]
-fn launch_arg(args: &[String]) -> Launch {
-  let restored = args.iter().any(|arg| arg == "--restored");
-  let mut link = None;
-  let mut it = args.iter();
-  while let Some(arg) = it.next() {
-    if arg == "--link" {
-      link = it.next().cloned();
-    }
-  }
-  Launch { restored, link }
-}
-
-// `--dev-server <addr>`: the dev server the go client should auto-dial; None
-// when launched without it (e.g. tapping the app icon).
-#[cfg(all(target_os = "android", feature = "go"))]
-fn dev_server_arg(args: &[String]) -> Option<String> {
-  let mut it = args.iter();
-  while let Some(arg) = it.next() {
-    if arg == "--dev-server" {
-      return it.next().cloned();
-    }
-  }
-  None
-}
-
 // Receives the soft-keyboard (IME) inset height in pixels from
 // SolidRTActivity.nativeKeyboardInset (Android UI thread) and stores it for
 // the event loop to pick up. The export lives in the cdylib so the symbol
@@ -394,7 +308,7 @@ const BSOD_SOURCE: &str = include_str!("../resources/bsod/bsod.sol.js");
 /// packed payload, so these stay compiled in; the production runtime ships no
 /// font data and registers whatever the trailer carries.
 #[cfg(feature = "go")]
-pub fn embedded_fonts() -> Vec<FontPayload> {
+pub(crate) fn embedded_fonts() -> Vec<FontPayload> {
   use std::borrow::Cow;
   vec![
     FontPayload {
@@ -428,8 +342,9 @@ pub(crate) const PROFILE: &str = if cfg!(debug_assertions) { "debug" } else { "r
 const JS_STACK_SIZE: usize = 64 * 1024 * 1024;
 
 /// The app to run: either JS source (dev/default) or precompiled bytecode (packed binary).
-pub enum AppSource {
+pub(crate) enum AppSource {
   Text(String),
+  #[cfg_attr(feature = "go", allow(dead_code))]
   Bytecode(Vec<u8>),
 }
 
@@ -444,7 +359,7 @@ pub enum AppSource {
 /// VIEW intent's data, the runner's `--link`), raw; behind `env.launchLink`.
 /// A link arriving while the app runs is an event instead (AlloyEvent::Link).
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct Launch {
+pub(crate) struct Launch {
   pub restored: bool,
   pub link: Option<String>,
 }
@@ -490,6 +405,8 @@ struct RunOptions {
   test_passed: Arc<AtomicBool>,
   // The render host (render_host.rs), on a stepped run that renders.
   render: Option<RenderSetup>,
+  // The runtime's own modules (entry.rs), registered on every engine.
+  modules: Modules,
 }
 
 /// What `--strict` gates a capture on: the error-level lines the engine
@@ -498,7 +415,7 @@ struct RunOptions {
 /// report_error) - counted, with the first kept for the exit message
 /// (okf/done/render-as-a-verification-gate.md).
 #[derive(Default)]
-pub struct ErrorTally {
+pub(crate) struct ErrorTally {
   count: AtomicUsize,
   first: Mutex<Option<String>>,
 }
@@ -564,7 +481,7 @@ fn mount_assets(app_id: &str) {
 /// matching keeps the first registered on a tie, so a project's "sans"
 /// override would lose to the base Noto Sans; so would its underline metrics
 /// (FontMetricsTable keeps the first entry too).
-pub fn merge_fonts(base: &[FontPayload], app: manifest::AppFonts) -> Vec<FontPayload> {
+pub(crate) fn merge_fonts(base: &[FontPayload], app: manifest::AppFonts) -> Vec<FontPayload> {
   let claimed = |font: &FontPayload| font.alias.as_ref().is_some_and(|alias| app.aliases.contains(alias));
   let mut fonts: Vec<FontPayload> = base.iter().filter(|font| !claimed(font)).cloned().collect();
   fonts.extend(app.fonts);
@@ -713,6 +630,7 @@ fn ui_thread(
     test,
     test_passed,
     render,
+    modules,
   } = opts;
   #[cfg(not(feature = "test"))]
   let _ = (&test, &test_passed);
@@ -1171,6 +1089,7 @@ fn ui_thread(
         exec: query_exec.clone(),
         outbound_tx: outbound_tx.clone(),
         location: location_slot.clone(),
+        modules: modules.capabilities(),
       },
       dev_server,
     );
@@ -1335,11 +1254,11 @@ fn ui_thread(
             draw_muted,
           )
         })
-        .module_override("sol:render", plugins::draw::SolRenderModule)
-        .module_override("sol:events", plugins::events::SolEventsModule)
-        .module_override("sol:dev", plugins::dev::SolDevModule)
-        .module_override("sol:apps", plugins::apps::SolAppsModule)
-        .module_override("sol:app", plugins::app::SolAppModule)
+        .module("sol:render", plugins::draw::SolRenderModule)
+        .module("sol:events", plugins::events::SolEventsModule)
+        .module("sol:dev", plugins::dev::SolDevModule)
+        .module("sol:apps", plugins::apps::SolAppsModule)
+        .module("sol:app", plugins::app::SolAppModule)
         .userdata(timeline.clone())
         .userdata(location_slot.clone())
         .userdata(flux::ProcessArgs(current_args.clone()));
@@ -1397,6 +1316,10 @@ fn ui_thread(
           )
         })
       };
+      // The runtime's own modules: after the built-ins and the app surface,
+      // so a module's init finds the gui state, before the hosts' stepping
+      // setup below, so a test or render engine carries them too.
+      let builder = modules.install(builder);
       #[cfg(feature = "speech")]
       let builder = builder.plugin(move |ctx| plugins::speech::init(ctx, speech_atx));
       // The player's app-management surface over the version store; the
@@ -1413,7 +1336,7 @@ fn ui_thread(
         None => builder,
       };
       #[cfg(feature = "test")]
-      let builder = builder.module_override("sol:test", plugins::test::SolTestModule);
+      let builder = builder.module("sol:test", plugins::test::SolTestModule);
       // A test engine: the session's log sink, cap and seed, the stepper,
       // and the wall taken out (see test_host.rs).
       #[cfg(feature = "test")]
@@ -1663,7 +1586,7 @@ fn install_panic_hook() {
 
 /// Run the app interactively, on a display. Returns when the app winds down.
 #[allow(clippy::too_many_arguments)]
-pub fn start(
+pub(crate) fn start(
   rt: &tokio::runtime::Runtime,
   app_source: Option<AppSource>,
   launch: Launch,
@@ -1674,9 +1597,10 @@ pub fn start(
   fonts: Vec<FontPayload>,
   storage: storage::StorageSpec,
   args: Vec<String>,
+  modules: Modules,
 ) {
   let hosts = Hosts { test: None, render: None, errors: None };
-  let _ = start_with(rt, app_source, launch, display_name, alloy::Mode::Run, size, stats, dev_server, fonts, storage, args, hosts);
+  let _ = start_with(rt, app_source, launch, display_name, alloy::Mode::Run, size, stats, dev_server, fonts, storage, args, hosts, modules);
 }
 
 /// Render `app` headless (render_host.rs): `run.frames` frames at `run.fps`
@@ -1686,7 +1610,7 @@ pub fn start(
 /// errors under `strict`; the binary turns it into the process exit code.
 #[cfg(feature = "go")]
 #[allow(clippy::too_many_arguments)]
-pub fn start_render(
+pub(crate) fn start_render(
   rt: &tokio::runtime::Runtime,
   app: AppSource,
   run: RenderRun,
@@ -1697,12 +1621,13 @@ pub fn start_render(
   fonts: Vec<FontPayload>,
   storage: storage::StorageSpec,
   args: Vec<String>,
+  modules: Modules,
 ) -> Result<(), String> {
   let mode = alloy::Mode::Stepped(alloy::SteppedConfig { fps: run.fps });
   let host = render_host::RenderHost::new(run);
   let outcome = host.outcome.clone();
   let hosts = Hosts { test: None, render: Some(host), errors: strict.then(|| Arc::new(ErrorTally::default())) };
-  start_with(rt, Some(app), launch, None, mode, size, stats, None, fonts, storage, args, hosts)?;
+  start_with(rt, Some(app), launch, None, mode, size, stats, None, fonts, storage, args, hosts, modules)?;
   let outcome = outcome.lock().expect("render outcome lock poisoned").take();
   outcome.unwrap_or_else(|| Err("the render ended before it started".to_string()))
 }
@@ -1711,7 +1636,7 @@ pub fn start_render(
 /// tests, every test in an engine of its own, one record line on stdout
 /// per result. Err when the file failed to load or a test failed.
 #[cfg(feature = "test")]
-pub fn start_tests(
+pub(crate) fn start_tests(
   rt: &tokio::runtime::Runtime,
   app: AppSource,
   run: TestRun,
@@ -1719,11 +1644,12 @@ pub fn start_tests(
   fonts: Vec<FontPayload>,
   storage: storage::StorageSpec,
   args: Vec<String>,
+  modules: Modules,
 ) -> Result<(), String> {
   let mode = alloy::Mode::Stepped(alloy::SteppedConfig { fps: stepped::DEFAULT_FPS });
   let launch = Launch { restored: false, link: None };
   let hosts = Hosts { test: Some(run), render: None, errors: None };
-  start_with(rt, Some(app), launch, None, mode, size, false, None, fonts, storage, args, hosts)
+  start_with(rt, Some(app), launch, None, mode, size, false, None, fonts, storage, args, hosts, modules)
 }
 
 /// The headless hosts a run may carry, and the error tally of `--strict`.
@@ -1747,6 +1673,7 @@ fn start_with(
   storage: storage::StorageSpec,
   args: Vec<String>,
   hosts: Hosts,
+  modules: Modules,
 ) -> Result<(), String> {
   forge::process::return_large_allocations();
   alloy::install_logger();
@@ -1777,6 +1704,7 @@ fn start_with(
     test,
     test_passed: test_passed.clone(),
     render,
+    modules,
   };
   let resampler = app.resampler();
   let user_input_muted = app.user_input_mute();

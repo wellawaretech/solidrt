@@ -115,7 +115,7 @@ shaping above:
   depend-not-fork shape of a custom build (a cargo project over the lattice
   crate with extra modules registered, no fork) needs a registration hook
   on lattice's entry points that does not exist yet:
-  [runtime-extension-modules](../backlog/runtime-extension-modules.md).
+  [runtime-extension-modules](../plans/runtime-extension-modules.md).
 
 Why not a runtime extension mechanism in ffi's place (a native library the
 runtime dlopens, with a C ABI to register a module): on Android the only

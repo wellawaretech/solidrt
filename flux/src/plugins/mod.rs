@@ -28,7 +28,7 @@ use crate::pending::PendingOps;
 
 pub(crate) type PluginFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 pub(crate) type UserdataFn = Box<dyn for<'js> FnOnce(&Ctx<'js>) + Send>;
-pub(crate) type ModuleOverrideFn = Box<dyn FnOnce(&mut BuiltinResolver, &mut ModuleLoader) + Send>;
+pub(crate) type ModuleFn = Box<dyn FnOnce(&mut BuiltinResolver, &mut ModuleLoader) + Send>;
 
 /// Pending unhandled promise rejections, keyed by promise identity, awaiting the
 /// next microtask checkpoint. The value is the already-formatted message. See
@@ -49,7 +49,7 @@ fn value_identity(value: &Value<'_>) -> u64 {
 pub(crate) async fn init_context(
   setups: Vec<PluginFn>,
   userdata: Vec<UserdataFn>,
-  module_overrides: Vec<ModuleOverrideFn>,
+  modules: Vec<ModuleFn>,
   logger: Logger,
   stack_size: Option<usize>,
   memory_limit: Option<usize>,
@@ -160,7 +160,7 @@ pub(crate) async fn init_context(
     loader.add_module(crate::test_plugins::gui::MODULE_NAME, crate::test_plugins::gui::GuiTestModule);
   }
 
-  for f in module_overrides {
+  for f in modules {
     f(&mut resolver, &mut loader);
   }
 
@@ -261,4 +261,20 @@ fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {
     arr.set(i, *name).expect("set capability");
   }
   arr
+}
+
+/// Append `name` to `Flux.capabilities`, for a module registered beside the
+/// built-ins (the gui plugin set, an embedder's own modules): availability
+/// checks stay uniform, `Flux.capabilities.includes(name)` whoever provides
+/// it. Runs as a plugin, after `Flux` exists.
+pub fn add_capability(ctx: &Ctx<'_>, name: &str) {
+  let Ok(flux) = ctx.globals().get::<_, Object>("Flux") else {
+    return;
+  };
+  let Ok(caps) = flux.get::<_, Array>("capabilities") else {
+    return;
+  };
+  if let Err(e) = caps.set(caps.len(), name) {
+    log::warn!("[flux] could not list capability {name}: {e}");
+  }
 }

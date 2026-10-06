@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
-import { fail } from "./util"
+import { fail } from "./fail"
 
 // Project configuration lives in the `solidrt` key of the project's
 // package.json (okf/plans/client-storage-updates.md):
@@ -33,7 +33,11 @@ import { fail } from "./util"
 //       "permissions": ["com.android.vending.BILLING"]
 //                                   // <uses-permission> names beyond what
 //                                   // the capabilities imply, fully qualified
-//     }
+//     },
+//     "runtime": "runtime/dist"     // the project's own runtime (a cargo
+//                                   // project over lattice with the project's
+//                                   // modules), a directory in the
+//                                   // SOLIDRT_HOME/dist layout; lib/runtime.ts
 //   }
 //
 // The top level holds what the app is and intends, in platform-neutral
@@ -84,6 +88,12 @@ export type ProjectConfig = {
   /** Let the OS back up the app's data/ folder; off keeps it on the device. */
   backup?: boolean
   android?: AndroidConfig
+  /**
+   * The project's own runtime binaries (lib/runtime.ts): a directory in the
+   * SOLIDRT_HOME/dist layout, relative to the project. The app runtime
+   * (solidrt, solidrt-go, the APKs) resolves there first.
+   */
+  runtime?: string
 }
 
 /** The `android` packaging group, every field optional and shape-checked. */
@@ -148,7 +158,7 @@ function parseAndroidConfig(raw: unknown): AndroidConfig {
 export type Project = { dir: string; name: string | undefined; version: string | undefined; config: ProjectConfig }
 
 // Every key the `solidrt` object accepts (the ProjectConfig fields).
-const PROJECT_KEYS = ["entry", "appId", "org", "displayName", "icon", "iconBackground", "capabilities", "backup", "fonts", "textures", "android"]
+const PROJECT_KEYS = ["entry", "appId", "org", "displayName", "icon", "iconBackground", "capabilities", "backup", "fonts", "textures", "android", "runtime"]
 
 function parseProjectConfig(raw: unknown): ProjectConfig {
   if (raw === undefined) return {}
@@ -160,7 +170,7 @@ function parseProjectConfig(raw: unknown): ProjectConfig {
     if (!PROJECT_KEYS.includes(key)) fail(`"solidrt": unknown key "${key}"`)
     if (config[key] === null) delete config[key]
   }
-  for (let key of ["entry", "appId", "org", "displayName", "icon"]) {
+  for (let key of ["entry", "appId", "org", "displayName", "icon", "runtime"]) {
     if (key in config && typeof config[key] !== "string") fail(`"solidrt": "${key}" must be a string`)
   }
   if ("iconBackground" in config && !(typeof config.iconBackground === "string" && /^#[0-9a-fA-F]{6}$/.test(config.iconBackground))) {

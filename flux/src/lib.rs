@@ -27,6 +27,8 @@ pub use forge::seek::{SeekableRead, SeekableReader};
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
 pub use plugins::js_error::JsResult;
+pub use plugins::marshal::OptArg;
+pub use plugins::add_capability;
 pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use forge_plugins::process::{ProcessArgs, ProcessExit};
 pub use plugins::seekable::{SeekableOpener, SeekableSource};

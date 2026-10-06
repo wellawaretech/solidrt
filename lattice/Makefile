@@ -42,11 +42,11 @@ endif
 # too tight for model + inference buffers.
 SPEECH ?= 0
 ifeq ($(SPEECH),0)
-GO_FEATURES      = --no-default-features --features go
-RUNTIME_FEATURES = --no-default-features --features flux/compile
+GO_FEATURES      = --no-default-features --features go,android-entry
+RUNTIME_FEATURES = --no-default-features --features compile,android-entry
 else
-GO_FEATURES      = --features go,speech
-RUNTIME_FEATURES = --features speech
+GO_FEATURES      = --features go,speech,android-entry
+RUNTIME_FEATURES = --features speech,android-entry
 endif
 
 # Video playback (forge::video + flux:video + @solidrt/core/video) is on for

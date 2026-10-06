@@ -82,17 +82,120 @@ and the sandbox decides between them:
 - `flux:wasm` for portable compute: one `.wasm` module, the same bytes on
   every target, sandboxed. A proven C, C++ or Rust library with a wasm build
   runs here without porting.
-- A custom runtime build for anything that reaches a native library, a
-  platform SDK or engine state. The runtime is a set of Rust crates, and the
-  `solidrt` binary is a thin program over them; a custom build is your own
-  binary over the same crates with your module registered beside the built-in
-  ones, built for each target the app ships on. The app stays a plain
-  portable `.solapp`; what differs is the runtime it runs on.
+- A custom runtime for anything that reaches a native library, a platform
+  SDK or engine state: your own build of the runtime with your module
+  registered beside the built-in ones, for each target the app ships on.
+  The app stays a plain portable `.solapp`; what differs is the runtime it
+  runs on.
 
 There is deliberately no route that loads a shared library from app code. A
 shared library is per platform, so it would make the app payload per
 platform, and on Android the only native code that may run is what arrived
 inside the APK, so it would be part of a build anyway.
+
+### A custom runtime
+
+The runtime is a set of Rust crates, and the stock `solidrt` binary is one
+call into `lattice`, the crate that binds them. A custom runtime is a cargo
+project beside the app, `runtime/` say, that makes the same call with its
+modules:
+
+```toml
+# runtime/Cargo.toml
+[package]
+name = "my-runtime"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "lib"]   # the Android .so, and what the bins link
+
+[[bin]]
+name = "solidrt"
+path = "src/bin/solidrt.rs"
+
+[[bin]]
+name = "solidrt-go"
+path = "src/bin/solidrt-go.rs"
+required-features = ["go"]
+
+[features]
+go = ["lattice/go", "lattice/test"]   # the dev client, with the test host
+
+[dependencies]
+lattice = { git = "https://github.com/wellawaretech/solidrt", tag = "v0.0.68", default-features = false, features = ["compile", "video", "ktx2", "wasm-native"] }
+rquickjs = { version = "=0.14.0", features = ["macro"] }
+```
+
+```rust
+// runtime/src/lib.rs
+mod physics;
+
+pub fn modules() -> lattice::Modules {
+  lattice::Modules::new().add("flux:physics", physics::PhysicsModule)
+}
+
+// The Android .so's entry; nothing on other targets.
+lattice::android_entry!(crate::modules());
+```
+
+```rust
+// runtime/src/bin/solidrt.rs, and solidrt-go.rs the same
+fn main() {
+  lattice::main(my_runtime::modules());
+}
+```
+
+A module is an rquickjs `ModuleDef` (`lattice::flux::rquickjs`), registered
+under a `flux:*` name on every engine the runtime builds. `Flux.capabilities`
+lists it by its short name, `physics` here, so an app checks for it the way
+it checks a built-in, and the dev client reports it to the dev server beside
+the stock capabilities. A module that paces work by the frame (a physics
+world stepping on a fixed timestep, a device read per frame) registers a
+tick with `lattice::flux::gui::frame::on_advance`: it runs every frame with
+the app time, before the frame's callbacks, so the dev clock's pause and
+step hold and drive it and a headless render replays it; returning true
+demands the next frame, the way a running animation does.
+
+Build the two binaries one cargo run each, `--features go` for the player
+and none for the runtime (features unify within one build), and stage them
+in a directory laid out like a checkout's `dist/`: `<triple>/solidrt` and
+`<triple>/solidrt-go`, with the ANGLE libraries from the platform package
+beside them on Windows and macOS, and for Android `android/<abi>/libmain.so`
+and `android-runtime/<abi>/libmain.so` from `cargo ndk` builds of the
+cdylib, `--features go` for the first. Name that directory in the app's
+package.json:
+
+```json
+"solidrt": { "runtime": "runtime/dist" }
+```
+
+and `sol run`, `sol test`, `sol pack` and `sol android` take the app runtime
+from it: the binaries directly, the Android APKs derived from the stock ones
+with your `.so` files swapped in, so the Android shell is never yours to
+carry. A target you did not build falls back to the stock binary, with a
+notice.
+
+A dependency does not carry its workspace's settings, so the project repeats
+four of the checkout's: the toolchain pin (`rust-toolchain.toml`, the channel
+and the Android targets), the `[profile]` overrides, the Android link flag
+for 16 KB pages in `.cargo/config.toml` (`-C link-arg=-Wl,-z,max-page-size=16384`
+per Android target; sol refuses a lib under it), and `SOLIDRT_VERSION` in the
+build environment, which `lattice::VERSION` and every log line report. For
+Android, cmake builds the native pieces (SDL, the video codecs) and finds
+the NDK through the environment the checkout's `lattice/Makefile.android`
+sets for `cargo ndk`: `ANDROID_NDK_HOME` and `ANDROID_NDK_ROOT`, a copy of
+`lattice/android/cmake/android-abi.toolchain.cmake` (the NDK toolchain with
+the ABI defaulted from the environment, which a build that passes no ABI of
+its own needs) as `CMAKE_TOOLCHAIN_FILE_<rust target with underscores>`, and
+`CMAKE_ANDROID_ARCH_ABI`. The module's types live in
+the project (`types/physics.d.ts`, a `declare module "flux:physics"`,
+included by `tsconfig.json`).
+
+`lattice/examples/custom_runtime.rs` in the checkout is the shape at its
+smallest: one module with a tick, run as any custom runtime is.
 
 ## Capabilities, not platforms
 

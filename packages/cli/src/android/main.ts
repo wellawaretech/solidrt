@@ -1,13 +1,13 @@
 import { existsSync, readFileSync } from "node:fs"
 import { networkInterfaces } from "node:os"
 import { resolve } from "node:path"
-import { androidPackageVersion, resolveApk, ANDROID_PKG_MAP } from "../lib/artifacts"
+import { resolveApk, ANDROID_PKG_MAP } from "../lib/artifacts"
 import { ensureTargets } from "../lib/android-targets"
 import { values, port, source } from "../lib/args"
 import { devDir } from "../lib/dev-dir"
 import { confirm, multiselect } from "../lib/prompt"
 import { runQuiet } from "../lib/util"
-import { apkApplicationId } from "../pack/android/apk"
+import { apkApplicationId, apkVersionName } from "../pack/android/apk"
 import { census } from "./census"
 import { installPlatformTools, platformToolsAvailable } from "./platform-tools"
 import { resolveByPort, resolveFromCwd } from "../lib/registry"
@@ -209,8 +209,8 @@ function printDeviceStatus(devices: string[], abiByDevice: Map<string, string>) 
   for (let d of devices) print(`${d} - ${abiByDevice.get(d)}`)
 }
 
-// The version a checkout's android packages carry: the release placeholder,
-// never a client's real version, so there is nothing to compare against.
+// The version placeholder an unversioned build carries, never a client's
+// real version, so there is nothing to compare against.
 let UNRELEASED_VERSION = "0.0.0"
 
 // The versionName of the client installed on `target`, null when none is.
@@ -342,22 +342,23 @@ function playerId(abi: string): string {
 
 // Put the Player on `target` when it needs one: none installed yet, or
 // --install. An installed Player whose version is not the one the project's
-// package carries is updated after asking. Returns the Player's id, the one
+// APK carries (its package's, or its own runtime's, which a rebuild
+// re-versions) is updated after asking. Returns the Player's id, the one
 // to launch.
 async function prepare(adb: string, { target, abi }: Device): Promise<string> {
-  let player = playerId(abi)
-  let installed = installedVersion(adb, target, player)
-  let expected = androidPackageVersion(abi)
-  let update = values.install || installed === null
-  if (!update && expected !== null && expected !== UNRELEASED_VERSION && expected !== installed) {
-    update = await confirm(`${player} on ${target} is ${installed}; the project's ${ANDROID_PKG_MAP[abi]} is ${expected}. Update it?`)
-  }
-  if (!update) return player
   let apk = resolveApk(abi)
   if (!apk) {
     console.error(`Could not find a Player APK for ${target} (ABI "${abi}").`)
     process.exit(1)
   }
+  let player = apkAppId(apk)
+  let installed = installedVersion(adb, target, player)
+  let expected = apkVersion(apk)
+  let update = values.install || installed === null
+  if (!update && expected !== UNRELEASED_VERSION && expected !== installed) {
+    update = await confirm(`${player} on ${target} is ${installed}; the project's Player APK is ${expected}. Update it?`)
+  }
+  if (!update) return player
   console.log(`[cli] Installing ${player} on ${target}`)
   await adbInstall(adb, target, apk, player)
   return player
@@ -391,6 +392,16 @@ async function launch(adb: string, { target }: Device, player: string, server: L
 function apkAppId(path: string): string {
   try {
     return apkApplicationId(readFileSync(path))
+  } catch (e) {
+    console.error(`Could not read ${path} as an APK: ${e instanceof Error ? e.message : e}`)
+    process.exit(1)
+  }
+}
+
+// The versionName of the APK at `path`, exiting when it is not an APK.
+function apkVersion(path: string): string {
+  try {
+    return apkVersionName(readFileSync(path))
   } catch (e) {
     console.error(`Could not read ${path} as an APK: ${e instanceof Error ? e.message : e}`)
     process.exit(1)

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { loadProject } from "./project"
-import { fail } from "./util"
+import { fail } from "./fail"
 
 // The fonts `sol pack` appends to a solidrt binary (see
 // okf/plans/packaged-fonts.md). By default the three Noto role defaults;
