@@ -66,8 +66,9 @@ declare module "flux:rendertree" {
      * cluster boundary from its start (`offset` = start, x 0) to the end of
      * its shaped text (before any break characters), in order. `offset` is
      * into the prepared text, `x` from the unit's pen position. These are
-     * the per-glyph x positions of the shaping that is drawn, kerning
-     * included: for placing or animating single glyphs, use them rather
+     * the runtime's own shaper's glyph positions for the unit, kerning
+     * included, within a texel of what is drawn and ending on the unit's
+     * drawn advance: for placing or animating single glyphs, use them rather
      * than measuring characters one at a time with measureText, which sees
      * no neighbors and drifts on every kerning pair.
      */

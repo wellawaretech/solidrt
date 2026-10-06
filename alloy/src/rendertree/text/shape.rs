@@ -170,7 +170,8 @@ pub struct PreparedUnit {
   /// style.
   pub run: Option<usize>,
   /// Caret stops within the unit's text (offsets relative to the unit's
-  /// start, in UTF-16), when asked for.
+  /// start, in UTF-16), when asked for: the engine's, on either shaper
+  /// (see `WordCache::carets`).
   pub carets: Option<Rc<[CaretStop]>>,
   /// The unit's glyphs and positions, when shaped on the glyph engine
   /// (`ShaperKind::Engine`); None on Impeller, which exposes none.
@@ -248,7 +249,7 @@ pub fn prepare_units(
       let Some(word) = words.get_or_shape(shaper, word_text, style) else {
         return units;
       };
-      let stops = if carets { words.carets(shaper, word_text, style) } else { None };
+      let stops = if carets { words.carets(shaper, &fonts, word_text, style) } else { None };
       let glyphs = match &word.shaped {
         Shaped::Glyphs(glyphs) => Some(glyphs.clone()),
         Shaped::Paragraph(_) => None,

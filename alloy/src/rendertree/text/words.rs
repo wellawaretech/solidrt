@@ -108,40 +108,38 @@ impl WordCache {
 
   /// The caret stops of `text` in `style` (shaping it on a miss): one per
   /// grapheme cluster boundary from the word's start (offset 0, x 0) to its
-  /// end, in order. Computed once per cached word and shared.
-  pub fn carets(&mut self, shaper: Shaper<'_>, text: &str, style: &RunStyle) -> Option<Rc<[CaretStop]>> {
+  /// end, in order, read off the engine's cluster map in one pass. A word
+  /// shaped on Impeller, which exposes no glyph positions, takes the stops
+  /// of the engine's shaping of the same word (the two agree within a
+  /// texel, what the seam test gates) scaled onto the drawn advance, so a
+  /// word's end stop is where the next word's pen starts. Computed once per
+  /// cached word and shared.
+  pub fn carets(
+    &mut self,
+    shaper: Shaper<'_>,
+    fonts: &FontSet,
+    text: &str,
+    style: &RunStyle,
+  ) -> Option<Rc<[CaretStop]>> {
     let key = WordKey { text: text.to_string(), style: style.clone(), engine: shaper.is_engine() };
     if let Some(stops) = self.words.get(&key).and_then(|w| w.carets.clone()) {
       return Some(stops);
     }
-    let stops: Rc<[CaretStop]> = match shaper {
-      Shaper::Impeller(typography) => self.caret_stops(typography, text, style)?.into(),
-      // The engine's cluster map gives every stop in one pass.
-      Shaper::Engine(_) => match &self.get_or_shape(shaper, text, style)?.shaped {
-        Shaped::Glyphs(glyphs) => glyphs.caret_stops(text).into(),
-        Shaped::Paragraph(_) => return None,
-      },
+    let drawn = self.get_or_shape(shaper, text, style)?.metrics.advance;
+    let engine = self.get_or_shape(Shaper::Engine(fonts), text, style)?;
+    let Shaped::Glyphs(glyphs) = &engine.shaped else {
+      return None;
     };
-    self.get_or_shape(shaper, text, style)?;
+    let mut stops = glyphs.caret_stops(text);
+    if !shaper.is_engine() && engine.metrics.advance > 0.0 {
+      let scale = drawn / engine.metrics.advance;
+      for stop in &mut stops {
+        stop.x *= scale;
+      }
+    }
+    let stops: Rc<[CaretStop]> = stops.into();
     if let Some(word) = self.words.get_mut(&key) {
       word.carets = Some(stops.clone());
-    }
-    Some(stops)
-  }
-
-  // Impeller exposes no glyph positions (its glyph-info bounds come back
-  // without them), so each grapheme prefix of the word is shaped on its own,
-  // through this cache, and its advance is the caret x after that grapheme.
-  // Kerning across the cut is lost, a sub-pixel matter for the caret.
-  fn caret_stops(&mut self, typography: &TypographyContext, text: &str, style: &RunStyle) -> Option<Vec<CaretStop>> {
-    use unicode_segmentation::UnicodeSegmentation;
-    let mut stops = vec![CaretStop { offset: 0, x: 0.0 }];
-    let mut offset = 0u32;
-    for (start, grapheme) in text.grapheme_indices(true) {
-      offset += grapheme.encode_utf16().count() as u32;
-      let prefix = &text[..start + grapheme.len()];
-      let word = self.get_or_shape(Shaper::Impeller(typography), prefix, style)?;
-      stops.push(CaretStop { offset, x: word.metrics.advance });
     }
     Some(stops)
   }

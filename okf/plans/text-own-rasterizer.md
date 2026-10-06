@@ -92,8 +92,9 @@ The trait; a glyph atlas (texture upload path exists: `flux:gpu` textures,
 | 4. Atlas | built (`glyphs/atlas.rs`), the sub-rect upload in alloy and as `uploadTexture(id, data, rect)` |
 | 5. Worker | built (`glyphs/worker.rs`), completion ends the hold and wakes the loop |
 | 6. The seam | built (`Shaper`, `Shaped`, `ShaperKind`, `PreparedUnit.glyphs`); `prepareText`'s default stays Impeller |
+| 8. Carets | built 2026-10-06: every caret stop comes off the engine's cluster map, on either shaper; an Impeller-shaped word's stops are scaled onto its drawn advance; the prefix re-shaping is gone (`WordCache::carets`) |
 | 7. `flux:font` | built, with types and docs; consumed by `@solidrt/2d`'s sprite font |
-| Tests | `alloy/src/tests/glyphs.rs` (9: the seam, carets, both cell kinds, blank glyphs, the packer), `packages/core/tests/gpu-upload.test.tsx`, the 2d text tests (an msdf run at twice the face size with its outline among them) |
+| Tests | `alloy/src/tests/glyphs.rs` (10: the seam, carets on both shapers and their cost, both cell kinds, blank glyphs, the packer), `packages/core/tests/gpu-upload.test.tsx`, the 2d text tests (an msdf run at twice the face size with its outline among them) |
 
 ## Plan: stage 1, the glyph engine behind the seam (started 2026-10-06)
 
@@ -201,6 +202,16 @@ emoji, the hinting and gamma policy per DPI the spike explored.
   placed at a zero-sized spot without one, for either cell kind; before
   that a mask space took a 2x2 padding ring and an msdf space would have
   grown the atlas to its cap and come out missing.
+- 2026-10-06, carets: an Impeller-drawn word's caret stops now come from
+  the engine's shaping of the same word, which costs one cached shape per
+  word instead of one per grapheme prefix (`Hamburg` put two entries in
+  the word cache where it put eight). The engine's positions sit within a
+  texel of Impeller's (the seam finding), and scaling them onto Impeller's
+  advance makes a word's end stop exactly the next word's pen, so the
+  residual is inside words only. The one divergence: a role an app drops
+  with `false` draws from the system font through Impeller, a face the
+  engine never sees, and its carets come from the engine's fallback face.
+  That path ends with stage 2 either way.
 
 ## Where to pick up (updated 2026-10-06, after the MTSDF kind landed)
 
@@ -214,18 +225,122 @@ glyphs, `packages/2d/tests/text.test.tsx` an msdf run at twice the face
 size with its outline; the sprite font and `flux:font` default to "msdf"
 cells.
 
-Open, this item's scope, and the user's call before it starts:
+The carets followed the same day (part 8 of the State table): every
+consumer of `prepareText` carets, TextInput first, reads the engine's
+stops now, and nothing re-shapes prefixes. Stage 1 is complete; what is
+left of this item is stage 2 below.
 
-1. **Carets on the engine shaper**, gated by the seam test: switch
-   TextInput's caret stops to the engine (`words.rs` `caret_stops`
-   re-shapes every grapheme prefix on Impeller; the engine reads them off
-   the cluster map), per consumer first, by giving `prepareText`/
-   `measureText` callers a way to ask for the engine
-   (`ShaperKind::Engine`) where the drawn text is not Impeller's. The
-   catch: TextInput's drawn text IS Impeller's, so engine carets would sit
-   within a texel of the glyphs (the seam tolerance) rather than on them.
-   Whether that is acceptable before the draw half, or waits for stage 2,
-   decides the step.
+## Plan: stage 2, the draw half (prepared 2026-10-06, not started)
+
+What it is: `<text>` drawn by the engine from mask cells, Impeller's
+paragraph path deleted, and with it the quality and semantics this item
+exists for (the symptom section): coverage to color under our policy,
+stem darkening and hinting per DPI, shaping across word boundaries,
+fallback as our policy. The steps are a proposal; the decisions under
+"Decide first" are the user's before step 1 starts.
+
+### The question that shapes everything: how glyph quads reach the screen
+
+Today a line's run of same-styled words is ONE `draw_paragraph` op, and
+Impeller batches the run's glyphs from its own atlas. Three ways to draw
+ours:
+
+- **A. A display-list op per glyph**: `draw_texture_rect` from the atlas
+  texture adopted into Impeller (the `<texture>` bridge). A loop in
+  `Text::build`, nothing else. But the TV ceiling is per-op CPU cost
+  ([display-list-op-cost](../backlog/display-list-op-cost.md): 800 ops
+  run at 27 fps where 50 run locked), and a screen of prose is thousands
+  of glyphs. Fine for labels, not for a document.
+- **B. Text as rasterized layers**: a GL glyph pass on the raster thread
+  draws a text node's visible glyph quads from the atlas into a texture of
+  the node's painted box, composited as one `draw_texture_rect`: the
+  repaint boundary's rasterization path (`boundary.rs`) with a glyph
+  pipeline in place of Impeller's replay. One op per text node (today one
+  per line run), the glyph pipeline being the 2d sprite layer's on the
+  Rust side (instanced quads over the atlas, mask or field decode; alloy's
+  gpu module runs such pipelines and draw targets for `flux:gpu` already).
+  Memory is the visible text's pixels at display scale; offscreen nodes
+  drop their texture through the texture cache tier. Coverage to color is
+  that pass's fragment shader, so the policy is a uniform.
+- **C. Wait for the own renderer** ([replacing-impeller](../notes/replacing-impeller.md)),
+  where text lands last. B is the text engine that renderer needs anyway:
+  its glyph pass moves from a layer to a direct draw, nothing is thrown
+  away.
+
+Recommendation: B, gated by the measurement in step 1.
+
+### Steps
+
+1. **Measure before building.** A probe with a prose screen (some 2000
+   glyphs over 40 lines) drawn three ways, on the TV and the desktop:
+   `draw_paragraph` as today, per-glyph texture rects (A, a throwaway
+   loop), and one layer per text node (B, mocked by a snapshot
+   `repaintBoundary` view around each text, which already rasterizes it
+   to a texture drawn as one op). Sustained frames per second by the
+   saturation method and the
+   op count. Expected: A collapses on the TV, B matches or beats today.
+   Numbers decide; this plan assumes B from here.
+2. **Mask cells for drawing.** `CellKind::Mask` gains the subpixel phase
+   (a third of a pixel, three per glyph, the spike's choice) and the
+   policy inputs (hinting off, synthetic darkening by DPI). Cells for
+   `<text>` key on (face, size, weight, style, phase): one atlas per face
+   with the key on the cell, or one per key as `flux:font` makes today,
+   is a design point to settle here; `flux:font`'s handle stays the
+   app-facing API over it. Eviction
+   ([glyph-atlas-eviction](../backlog/glyph-atlas-eviction.md)) moves into
+   this stage: prose at several sizes turns over more cells than labels.
+3. **The glyph pass.** In alloy: a render pipeline (unit quad instanced
+   over the atlas; vertex from pen position and cell placement; fragment
+   coverage to color under the policy uniform) on the raster thread, and a
+   text layer per node, `boundary.rs`'s rasterization with the pass as its
+   content. Color per glyph run from the run's paint; opacity and filters
+   through the existing boundary composite; decoration (underline, ours
+   already) drawn into the same layer.
+4. **The draw.** `Text::build` emits the layer; `draw_paragraph`,
+   `Shaped::Paragraph` and `ShaperKind::Impeller` go, the word cache holds
+   `ShapedGlyphs` only, `prepareText` and `measureText` shape on the engine.
+   Joined-run drawing stays (one shape per line run). The gate before the
+   Impeller path is deleted: a pixel harness over the components gallery
+   and the changelog text at 1x and 2x against an Impeller baseline (the
+   method of [text-layout-owned](../done/text-layout-owned.md)), asserting
+   identical line breaks and advances within a texel; the pixels differ by
+   design, so the harness reports them for the judgement in step 5 rather
+   than failing on them.
+5. **Coverage to color, by eye.** The spike's four modes (naive sRGB,
+   linear light, polarity-aware contrast remap, hybrid) behind a debug
+   toggle on the gallery; screenshots at 1x and 2x, light on dark and dark
+   on light, 11 to 24 px; the user picks. Then the per-DPI policy (stem
+   darkening below 2x, none above) and the Medium default weight retires
+   ([dpi-aware-default-font-weight](../backlog/dpi-aware-default-font-weight.md)
+   closes).
+6. **Fallback as policy.** A cluster shaped to notdef is re-shaped in the
+   next registered face that covers it, in registration order with the
+   role aliases first. Packaged fonts only, no system font discovery: one
+   known app, the same pixels on every platform. A role dropped with
+   `false` then has no face at all, which the fonts doc says.
+7. **Cleanup.** Three font parsers to one: `FontMetricsTable` (the post
+   table) and Impeller's typography context fold into `FontSet`;
+   `register_font` on Impeller goes; the `impellers` typography imports
+   leave the rendertree. The letter-spacing and width-axis items
+   ([font-stretch-axis](../backlog/font-stretch-axis.md)) become plain
+   shaper parameters.
+8. **Platforms.** The pass is plain GLES 3.0; verify the layer texture's
+   adoption and the TV's frame cost on Android, then Windows and macOS.
+
+Colour emoji is a stage of its own after this one: bitmap strikes (CBDT,
+Noto Color Emoji) through swash into rgba cells, COLRv1 an open question
+for swash, and ten megabytes of font a packaging decision. Bidi,
+hyphenation, the rest of decoration and the own display list stay their
+own items.
+
+### Decide first
+
+- B (text as rasterized layers) as the direction, with step 1's numbers
+  as the gate.
+- Packaged fonts only once Impeller no longer draws text (no system font
+  discovery, the `false` role drop becomes "no face").
+- The harness's contract: identical breaks and advances within a texel,
+  pixels reported not asserted.
 
 Stage 2 (the draw half) stays its own plan, as written above. The
 glyph-atlas eviction a terminal would need is

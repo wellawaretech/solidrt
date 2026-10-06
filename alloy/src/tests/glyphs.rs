@@ -18,6 +18,8 @@ const NOTO_SANS: &[u8] = include_bytes!("../../assets/fonts/NotoSans.ttf");
 const ADVANCE_TOLERANCE_PX: f32 = 1.0;
 // The size every seam check shapes at.
 const SIZE: f32 = 16.0;
+// Float slack on a stop scaled onto the drawn advance.
+const SNAP_EPSILON_PX: f32 = 0.001;
 
 fn noto() -> FontPayload {
   FontPayload { alias: Some("sans".to_string()), bytes: Cow::Borrowed(NOTO_SANS) }
@@ -91,13 +93,27 @@ fn engine_carets_follow_the_cluster_map() {
   assert_eq!(stops[0].x, 0.0);
   assert_eq!(stops[1].x, glyphs[1].x, "the stop after a is b's pen position");
   assert_eq!(stops[2].x, unit.metrics.advance, "the last stop is the advance");
-  // The Impeller path, shaping each prefix, lands within a texel.
-  let prefix = prepare_units(&platform, ShaperKind::Impeller, "ab", &style(FontWeight::Regular), &[], true);
-  let theirs = prefix[0].carets.as_ref().expect("carets");
+  // An Impeller-shaped unit carries the engine's stops scaled onto its own
+  // advance: the same offsets, every stop within a texel of the engine's,
+  // the last on the drawn advance.
+  let drawn = prepare_units(&platform, ShaperKind::Impeller, "ab", &style(FontWeight::Regular), &[], true);
+  let theirs = drawn[0].carets.as_ref().expect("carets");
+  assert_eq!(theirs.len(), stops.len());
   for (ours, theirs) in stops.iter().zip(theirs.iter()) {
     assert_eq!(ours.offset, theirs.offset);
     assert!((ours.x - theirs.x).abs() <= ADVANCE_TOLERANCE_PX, "caret {} vs {}", ours.x, theirs.x);
   }
+  assert!((theirs[2].x - drawn[0].metrics.advance).abs() <= SNAP_EPSILON_PX, "the last stop is the drawn advance");
+}
+
+#[test]
+fn impeller_carets_cost_one_engine_shape_per_word() {
+  let platform = PlatformContext::new(vec![noto()]);
+  let before = platform.words().len();
+  let units = prepare_units(&platform, ShaperKind::Impeller, "Hamburg", &style(FontWeight::Regular), &[], true);
+  assert_eq!(units[0].carets.as_ref().expect("carets").len(), "Hamburg".len() + 1);
+  // The Impeller word and its engine twin; no grapheme prefixes.
+  assert_eq!(platform.words().len() - before, 2);
 }
 
 #[test]
