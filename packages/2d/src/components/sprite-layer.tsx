@@ -43,8 +43,19 @@ export type SpriteLayerProps = LayerPointerProps & {
   height?: number
   /** The atlases the sprites draw from (createAtlas records), bound as
    * one draw; every `<Sprite frame>` comes from one of them. Fixed at
-   * mount. */
-  atlases: Atlas[]
+   * mount. Give these (a layer of the component's own, disposed with it)
+   * or `layer`, not both. */
+  atlases?: Atlas[]
+  /**
+   * An existing layer (createSpriteLayer) to adopt instead of making one:
+   * the component shows and populates it - the view and the leaf are
+   * still its own, `<Sprite>`, `<Group>` and `<Text2d>` children mount
+   * into it - and leaves its lifetime to its maker, so the component
+   * face sits over an imperative layer. The creation props (atlases,
+   * capacity, blend, orderBy) describe a layer the component makes, so
+   * with `layer` they have nothing to apply to and throw.
+   */
+  layer?: LayerHandle
   /** Initial record reservation (grows on demand); default 1024. */
   capacity?: number
   /** How the sprites blend into the layer's views (see
@@ -137,6 +148,10 @@ export type SpriteLayerProps = LayerPointerProps & {
 // before the first paint, so it only has to be a valid target size.
 const FILL_INITIAL_SIZE = 1
 
+// The props that describe a layer the component creates - meaningless,
+// hence rejected, on an adopted one (`layer`), which was created already.
+const CREATION_PROPS = ["atlases", "capacity", "blend", "orderBy"] as const
+
 // The props that configure the layer's own view - meaningless, hence
 // rejected, on a layer without one (output={false}).
 const VIEW_PROPS = [
@@ -158,26 +173,35 @@ const VIEW_PROPS = [
 ] as const
 
 /**
- * Owns a sprite layer and, unless `output={false}`, its own view,
- * composited as an ordinary `<texture>` leaf so the output takes layout,
- * transforms, blendMode, and pointer events like any element - or hand
- * `output` the texture id and compose it yourself. A layout component:
- * it cannot sit inside a d-* subtree; `output` with a `<d-texture>` is
- * the detached form. Children (`<Sprite>`) render nothing themselves -
- * they populate the retained layer through context; `<View2d>` children
- * are further views of the same sprites.
+ * Owns a sprite layer (over `atlases`; or adopts an existing one through
+ * `layer`, owning only what follows) and, unless `output={false}`, its
+ * own view, composited as an ordinary `<texture>` leaf so the output
+ * takes layout, transforms, blendMode, and pointer events like any
+ * element - or hand `output` the texture id and compose it yourself. A
+ * layout component: it cannot sit inside a d-* subtree; `output` with a
+ * `<d-texture>` is the detached form. Children (`<Sprite>`) render
+ * nothing themselves - they populate the retained layer through context;
+ * `<View2d>` children are further views of the same sprites.
  */
 export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
-  let layer = untrack(() =>
-    createSpriteLayer(props.atlases, {
+  let layer = untrack(() => {
+    let adopted = props.layer
+    if (adopted) {
+      for (let name of CREATION_PROPS) {
+        if (props[name] !== undefined) throw new Error(`SpriteLayer: layer adopts an existing layer - ${name} was fixed when it was created`)
+      }
+      return adopted
+    }
+    if (props.atlases === undefined) throw new Error("SpriteLayer: give atlases (a layer of its own) or layer (an existing one)")
+    return createSpriteLayer(props.atlases, {
       capacity: props.capacity,
       blend: props.blend,
       tint: props.tint,
       orderBy: props.orderBy,
       stagger: props.stagger,
       label: props.label,
-    }),
-  )
+    })
+  })
   createEffect(
     () => props.tint,
     tint => {

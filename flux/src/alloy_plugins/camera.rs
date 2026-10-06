@@ -3,8 +3,14 @@
 //! `camera.open()` returns a promise that settles from `tick`, the per-frame
 //! hook driven by the FrameRendered handler (like raf::flush): it pumps alloy's
 //! camera sessions (permission transitions + frame uploads) and resolves or
-//! rejects any open() promises whose session left Pending. Opening is the
-//! permission request; there is no separate permission API (SDL semantics).
+//! rejects any open() promises whose session left Pending. The open is work
+//! in flight until the device answers, and the device answers to polling
+//! only, so a task of the engine pumps the one session between frames until
+//! it leaves Pending, then ends the hold and latches the frame that settles
+//! the promise (the glyph worker's pattern, font.rs `request_glyphs`): a
+//! stepped host runs no frame while work is in flight, so a hold the frame
+//! itself had to end would hang its settle. Opening is the permission
+//! request; there is no separate permission API (SDL semantics).
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -21,10 +27,13 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
 }
 
+/// How often a waiter on an open polls its session between frames, ms: a
+/// frame period, so the answer lands about when a client's own tick would
+/// have found it, while the poll stays cheap (two non-blocking SDL reads).
+const OPEN_POLL_MS: u64 = 16;
+
 struct PendingOpen {
   session: u64,
-  // The open is work in flight until the device answers (see `tick`).
-  _hold: crate::pending::Hold,
   resolve: Persistent<Function<'static>>,
   reject: Persistent<Function<'static>>,
 }
@@ -152,9 +161,27 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
       state.0.sessions.borrow_mut().insert(session);
       state.0.pending.borrow_mut().push(PendingOpen {
         session,
-        _hold: crate::pending::PendingOps::of(&ctx).in_flight("camera open"),
         resolve: Persistent::save(&ctx, resolve),
         reject: Persistent::save(&ctx, reject),
+      });
+      // The hold ends when the device answers, polled on the task's own
+      // cadence (a client's ticks pump the same session and may get there
+      // first); the latch and the wake bring the frame whose `tick` settles
+      // the promise. A session closed meanwhile answers None and ends the
+      // hold the same way.
+      let hold = crate::pending::PendingOps::of(&ctx).in_flight("camera open");
+      let latch = state.0.gui.platform.frame_request_handle();
+      let wake = state.0.gui.alloy.frame_wake();
+      let gui = state.0.gui.clone();
+      ctx.spawn(async move {
+        while matches!(gui.alloy.pump_camera(session), Some(CameraStatus::Pending)) {
+          tokio::time::sleep(std::time::Duration::from_millis(OPEN_POLL_MS)).await;
+        }
+        drop(hold);
+        latch.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(wake) = &wake {
+          wake();
+        }
       });
     }
     Err(e) => {

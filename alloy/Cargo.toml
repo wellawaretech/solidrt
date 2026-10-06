@@ -75,9 +75,6 @@ log = { workspace = true }
 # remains the renderer. glow is loader-based, so one entry covers all targets.
 glow = "=0.17.0"
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
-# Font-table reader for what Impeller does not expose: underline metrics
-# (post table) and family names of registered fonts. Safe Rust, no deps.
-ttf-parser = { version = "=0.25.1", default-features = false, features = ["std"] }
 # CSS color-string grammar (hex, rgb()/hsl()/hwb(), named colors) for the
 # color property and the parseColor binding; the color math itself (oklab,
 # mixing) is ours in src/color.rs. Replaced the JS-side colord dependency.
@@ -111,8 +108,10 @@ lru = "=0.18.5"
 # The glyph engine (rendertree/text/glyphs): harfrust shapes a run (the
 # HarfBuzz team's Rust port; rustybuzz was archived in its favour), swash
 # scales glyph outlines and rasterizes coverage masks (proven in the
-# swash-text spike, okf/notes/replacing-impeller.md), etagere allocates the
-# glyph atlas (the shelf allocator behind WebRender's texture cache).
+# swash-text spike, okf/notes/replacing-impeller.md) and reads the font
+# tables Impeller does not expose (family names, the underline metrics of
+# the post table), etagere allocates the glyph atlas (the shelf allocator
+# behind WebRender's texture cache).
 harfrust = "=0.14.0"
 swash = "=0.2.10"
 etagere = "=0.3.0"

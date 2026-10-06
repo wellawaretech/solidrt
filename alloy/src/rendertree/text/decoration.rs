@@ -3,9 +3,14 @@
 // shapes one paragraph per wrap unit, so it draws decorations itself, one
 // rect per line, from the fonts' own metrics.
 use crate::impellers::{DisplayListBuilder, Point, Rect, Size};
+use crate::rendertree::text::glyphs::family_names;
 use crate::rendertree::text::layout::{Layout, PlacedRun};
 use crate::rendertree::PaintState;
 use std::collections::HashMap;
+use swash::TableProvider;
+
+/// The OpenType table the underline position and thickness live in.
+const POST_TABLE: &[u8; 4] = b"post";
 
 /// Underline geometry in em: `position` is the stroke's center below the
 /// baseline (the OpenType `post` value, negated), `thickness` its height.
@@ -33,25 +38,22 @@ pub struct FontMetricsTable {
 }
 
 impl FontMetricsTable {
-  /// Record `bytes`' underline metrics under `alias` and its family names.
-  /// A font ttf-parser cannot read, or one without underline metrics, adds
-  /// nothing: its families fall back to `UnderlineMetrics::DEFAULT`.
+  /// Record `bytes`' underline metrics under `alias` and its family names,
+  /// read with swash as the glyph engine reads the same file. A font swash
+  /// cannot read, or one without a `post` table (where the underline
+  /// metrics live), adds nothing: its families fall back to
+  /// `UnderlineMetrics::DEFAULT`.
   pub fn register(&mut self, bytes: &[u8], alias: Option<&str>) {
-    let Ok(face) = ttf_parser::Face::parse(bytes, 0) else {
+    let Some(font) = swash::FontRef::from_index(bytes, 0) else {
       return;
     };
-    let Some(underline) = face.underline_metrics() else {
+    if font.table_by_tag(swash::tag_from_bytes(POST_TABLE)).is_none() {
       return;
-    };
-    let upem = face.units_per_em() as f32;
-    let metrics =
-      UnderlineMetrics { position: -(underline.position as f32) / upem, thickness: underline.thickness as f32 / upem };
-    let names = face.names();
-    let families = names
-      .into_iter()
-      .filter(|n| n.name_id == ttf_parser::name_id::FAMILY || n.name_id == ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
-      .filter_map(|n| n.to_string());
-    for key in alias.map(str::to_string).into_iter().chain(families) {
+    }
+    let read = font.metrics(&[]);
+    let upem = read.units_per_em as f32;
+    let metrics = UnderlineMetrics { position: -read.underline_offset / upem, thickness: read.stroke_size / upem };
+    for key in alias.map(str::to_string).into_iter().chain(family_names(&font)) {
       self.by_family.entry(key).or_insert(metrics);
     }
   }

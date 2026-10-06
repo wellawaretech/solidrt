@@ -68,7 +68,7 @@ fn deliver<S: std::io::Read + std::io::Write>(stream: &mut S, link: &str) -> boo
 /// Each link received is delivered like an OS-routed one (AlloyEvent::Link)
 /// and the window is raised. Silently steps aside when another instance
 /// already answers on the endpoint.
-pub fn listen(
+pub(crate) fn listen(
   app_id: &str,
   client_dir: PathBuf,
   handle: &tokio::runtime::Handle,

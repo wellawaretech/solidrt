@@ -187,3 +187,65 @@ emoji, the hinting and gamma policy per DPI the spike explored.
   uses), and the frame that follows lands the cells and settles the
   promise. A camera open settles from its tick too and would deadlock the
   same way under settle; not changed here.
+
+## Where to pick up (written 2026-10-06 for the next session)
+
+Precondition: reading under `alloy/vendor/msdfgen` must be allowed (a
+permission rule for the session, or the shim written by hand). The
+submodule is checked out at v1.13; nothing is built from it yet.
+
+1. **Build.** `alloy/build.rs` (new; alloy has none) compiling the
+   msdfgen core through cc as C++: every `core/*.cpp` except the
+   `save-*.cpp` and `export-svg.cpp` writers and `shape-description.cpp`
+   (the text format), plus the shim. `[build-dependencies] cc = "=1.5.1"`
+   (forge's pin). No `ext/` (FreeType, Skia): the outline comes from
+   swash. Portable C++11, the same path on every target as Basis.
+2. **The shim**, `alloy/csrc/msdf_shim.cpp` with a C ABI: shape new/free,
+   contour add, three edge adders (linear, quadratic, cubic, points in
+   em units), `shape.normalize()`, `edgeColoringSimple(shape, angle)`,
+   `generateMTSDF(bitmap, shape, transformation, config)` into a
+   caller-owned float rgba buffer of `w` x `h` with a scale and
+   translation (em units to texels) and the range in texels, and the
+   shape's bounds. Read the exact signatures in `msdfgen.h`,
+   `core/Shape.h`, `core/edge-segments.h`, `core/SDFTransformation.h`,
+   `core/Range.hpp`, `core/generator-config.h`; v1.13's `Range` is a
+   class and the transformation carries the projection and the distance
+   mapping. Bindings in `glyphs/ffi.rs` (one `unsafe` block, hand
+   declared like `forge/src/ktx2/ffi.rs`), a safe `glyphs/msdf.rs` over
+   it.
+3. **The cell.** In `msdf.rs`: `swash::Scaler::scale_outline(gid)` at
+   `ppem` (the kind's texels per em, variations and synthetic slant as
+   `cells.rs` does for masks; emboldening through `Outline::embolden`),
+   its `path().commands()` (zeno MoveTo/LineTo/QuadTo/CurveTo/Close,
+   y up) into the shim's contours with y flipped to texels down; cell
+   box = the outline bounds padded by `range / 2` on every side, rounded
+   out to whole texels; the transformation maps the padded box onto the
+   bitmap; the float field (0.5 at the edge, range texels across) to
+   rgba8 by `clamp(v * 255)`; `left` = padded box left, `top` = padded
+   box top above the baseline, as a mask cell reports them. Wire
+   `CellKind::Msdf` in `cells.rs` (atlas padding stays 0: the range is
+   the padding).
+4. **Tests.** `alloy/src/tests/glyphs.rs`: an msdf cell of "H" at 48 per
+   em, range 8, whose median crosses 0.5 along a row inside the stem
+   (the field is above 0.5 at the stem's centre, below 0.5 outside the
+   glyph box, and the alpha channel agrees with the median at the edge
+   within the quantization). `packages/2d/tests/text.test.tsx`: a run on
+   an msdf font drawn at twice the face size with an outline, the stem
+   probe and the outline colour beside it (the mask test is the model).
+5. **Flip the default.** `packages/2d/src/font.ts`: `cells: "msdf"`, its
+   module comment and the `SpriteFontOptions` doc; `flux-types
+   gui/font.d.ts` `cells` doc; the "Text runs" section and trap in
+   `packages/2d/AGENTS.md`; the header of `packages/2d/examples/text.tsx`
+   (and run it: `bun run sol run packages/2d/examples/text.tsx --project
+   --port 34899`, zoom with the `zoom` debug command, snapshot the
+   labels); the State tables of both plans; the memory note.
+6. **Then, in this item's scope and gated by the seam test**: switch
+   TextInput's caret stops to the engine shaper (`words.rs`
+   `caret_stops` re-shapes every grapheme prefix on Impeller; the engine
+   reads them off the cluster map), per consumer first, by giving
+   `prepareText`/`measureText` callers a way to ask for the engine
+   (`ShaperKind::Engine`) where the drawn text is not Impeller's.
+
+Stage 2 (the draw half) stays its own plan, as written above. The
+glyph-atlas eviction a terminal would need is
+[glyph-atlas-eviction](../backlog/glyph-atlas-eviction.md).

@@ -10,7 +10,9 @@
 //! subsystem is still starting waits for it first: the pump opens the device
 //! once the subsystem reports in. The pump is driven once per frame from the
 //! UI thread; `SDL_AcquireCameraFrame` is non-blocking, so no camera thread
-//! is needed.
+//! is needed. The device never signals: it is polled, so a waiter on an open
+//! pumps its one session between frames too (`pump_camera`), on its own
+//! cadence, and the answer does not wait for a frame.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -370,32 +372,54 @@ impl crate::context::Context {
     let mut sessions = self.cameras.sessions.borrow_mut();
     let mut uploaded = false;
     for session in sessions.values_mut() {
-      match session.status {
-        CameraStatus::Pending if session.request.is_some() => Self::pump_init(session),
-        CameraStatus::Pending => {
-          if !session.approved {
-            Self::pump_permission(session);
-          }
-          if session.approved {
-            uploaded |= self.pump_frame(session);
-          }
-          // Still Pending covers both "no permission" and "approved but no
-          // first frame": either way the backend never delivered.
-          #[cfg(target_os = "linux")]
-          if matches!(session.status, CameraStatus::Pending) && session.opened_at.elapsed() >= PENDING_DEADLINE {
-            log::warn!(
-              "[camera] start timed out after {}s (backend delivered neither permission nor a frame); closing",
-              PENDING_DEADLINE.as_secs()
-            );
-            sdl_utils::camera_close(session.camera);
-            session.status = CameraStatus::Failed("camera start timed out".to_string());
-          }
-        }
-        CameraStatus::Ready { .. } => uploaded |= self.pump_frame(session),
-        CameraStatus::Denied | CameraStatus::Failed(_) => {}
-      }
+      uploaded |= self.pump_session(session);
     }
     uploaded
+  }
+
+  /// Advance one session, for a waiter on its open polling between frames:
+  /// the same step the per-frame pump takes, so a session leaves `Pending`
+  /// (Ready, Denied or Failed) on the waiter's cadence on a host that runs
+  /// no frame while the open is in flight. The two pumps interleave freely
+  /// on the UI thread. Returns the status after the step; None for a closed
+  /// session.
+  pub fn pump_camera(&self, sid: u64) -> Option<CameraStatus> {
+    let mut sessions = self.cameras.sessions.borrow_mut();
+    let session = sessions.get_mut(&sid)?;
+    self.pump_session(session);
+    Some(session.status.clone())
+  }
+
+  /// One session's step: a deferred open once the subsystem is up, the
+  /// permission answer and then the first frame while Pending, the latest
+  /// frame while Ready. Returns true when a frame was uploaded.
+  fn pump_session(&self, session: &mut Session) -> bool {
+    match session.status {
+      CameraStatus::Pending if session.request.is_some() => {
+        Self::pump_init(session);
+        false
+      }
+      CameraStatus::Pending => {
+        if !session.approved {
+          Self::pump_permission(session);
+        }
+        let uploaded = session.approved && self.pump_frame(session);
+        // Still Pending covers both "no permission" and "approved but no
+        // first frame": either way the backend never delivered.
+        #[cfg(target_os = "linux")]
+        if matches!(session.status, CameraStatus::Pending) && session.opened_at.elapsed() >= PENDING_DEADLINE {
+          log::warn!(
+            "[camera] start timed out after {}s (backend delivered neither permission nor a frame); closing",
+            PENDING_DEADLINE.as_secs()
+          );
+          sdl_utils::camera_close(session.camera);
+          session.status = CameraStatus::Failed("camera start timed out".to_string());
+        }
+        uploaded
+      }
+      CameraStatus::Ready { .. } => self.pump_frame(session),
+      CameraStatus::Denied | CameraStatus::Failed(_) => false,
+    }
   }
 
   /// Finish a deferred open: once the subsystem is up, choose and open the

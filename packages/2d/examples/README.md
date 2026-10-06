@@ -85,6 +85,8 @@ copy one and adapt it.
   (`addText`: a group of glyph sprites in the one draw, anchored on its
   middle, an `outline` for the msdf kind), a counter re-set every half
   second (`setText` reuses the run's sprite pool) and a title at twice
-  the face's size. Wheel/pinch zooms, drag pans; the labels ride the
+  the face's size through the component face: a `<Text2d>` under a
+  `<SpriteLayer layer={layer} output={false}>` adopting the same
+  imperative layer. Wheel/pinch zooms, drag pans; the labels ride the
   camera with no JS per label. Debug commands `zoom` and `state` drive
   it headless.

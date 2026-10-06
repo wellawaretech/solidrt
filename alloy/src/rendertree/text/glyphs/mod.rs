@@ -36,6 +36,6 @@ mod worker;
 
 pub use atlas::{AtlasPacker, CellPlacement, DirtyRect, GlyphAtlas, InsertOutcome};
 pub use cells::{Cell, CellKind, CellRequest, Rasterizer, BYTES_PER_TEXEL};
-pub use fonts::{weight_value, Face, FaceId, FontSet};
+pub use fonts::{family_names, weight_value, Face, FaceId, FontSet};
 pub use shape::{PlacedGlyph, ShapedGlyphs};
 pub use worker::{CellJob, CellWorker, CellsDone};

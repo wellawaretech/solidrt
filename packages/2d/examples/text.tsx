@@ -7,8 +7,10 @@
 // Each sprite carries a name below it, anchored on its middle; a counter
 // at the top re-sets its text every half second (the sprite pool of the
 // run is reused, glyphs re-framed in place); the title draws at twice
-// the face's size. Wheel or pinch to zoom, drag to pan. The component face
-// is `<Text2d>` inside a `<SpriteLayer>`, the same run under a prop.
+// the face's size through the component face, a `<Text2d>` under a
+// `<SpriteLayer layer={layer} output={false}>` that adopts the same
+// imperative layer (the example's own view shows it), the same run under
+// props. Wheel or pinch to zoom, drag to pan.
 //
 // The cells are coverage masks at the face's size for now (the engine's
 // distance-field generator is pending, see okf/plans/text-own-rasterizer.md),
@@ -19,7 +21,7 @@
 // the pose; `state` returns the counter's text and box, the first label's
 // box and sprite count, and the font atlas as it is now.
 import { createEffect, createInputMap, createPointerFeed, decodeImage, displayScale, onFrame, render, windowSize } from "@solidrt/core"
-import { addSprite, addText, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteFont, createSpriteLayer, feedPointer, fitOversample, grid, setText } from "@solidrt/2d"
+import { addSprite, addText, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteFont, createSpriteLayer, feedPointer, fitOversample, grid, setText, SpriteLayer, Text2d } from "@solidrt/2d"
 import type { Camera2dHandle, SpriteFont, TextRun, ViewHandle } from "@solidrt/2d"
 import { registerDebug } from "sol:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
@@ -69,9 +71,6 @@ function App() {
     labels.push(addText(layer, { font, text: NAMES[i % NAMES.length]!, x, y: y + SPRITE / 2 + LABEL_GAP, anchor: "middle", tint: LABEL_TINT, outline: OUTLINE }))
   }
   counter = addText(layer, { font, text: "0 ticks", x: WORLD.width / 2, y: LABEL_PX, anchor: "middle", tint: COUNTER_TINT, outline: OUTLINE })
-  // The title, bottom center, bigger than the face: its glyphs scale their
-  // cells (a mask font resamples; an msdf font stays sharp).
-  addText(layer, { font, text: "World-space text", x: WORLD.width / 2, y: WORLD.height - LABEL_PX, fontSize: LABEL_PX * 2, anchor: "middle", anchorY: "bottom", tint: LABEL_TINT, outline: OUTLINE })
 
   cam = createCamera2d([world], { world: WORLD, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM })
   let pointer = createPointerFeed()
@@ -106,6 +105,13 @@ function App() {
   return (
     <window>
       <texture src={world.texture} position="absolute" left={0} top={0} width={windowSize().width} height={windowSize().height} {...world.handlers} />
+      {/* The title, bottom center, bigger than the face: its glyphs scale
+          their cells (a mask font resamples; an msdf font stays sharp). The
+          component face over the imperative layer: no view of its own, the
+          texture above shows it. */}
+      <SpriteLayer layer={layer} output={false}>
+        <Text2d font={font} text="World-space text" x={WORLD.width / 2} y={WORLD.height - LABEL_PX} fontSize={LABEL_PX * 2} anchor="middle" anchorY="bottom" tint={LABEL_TINT} outline={OUTLINE} />
+      </SpriteLayer>
       <view pointerEvents="none" gap={6} padding={20}>
         <text color="#eef4ff" fontSize={24} fontWeight={700}>
           Text

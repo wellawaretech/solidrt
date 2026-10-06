@@ -5,10 +5,10 @@
 // with swash per job) and a harfrust font at the default location, and
 // instances the weight axis of a variable font per requested weight, so a
 // `fontWeight: 700` run shapes with the 700 advances rather than the
-// regular ones. Resolution by name mirrors `FontMetricsTable::register`:
-// the alias first, then the family and typographic family names, first
-// registration winning, so the engine and the underline table never
-// disagree on which file a family means.
+// regular ones. Resolution by name is `FontMetricsTable::register`'s: the
+// alias first, then the family names `family_names` reads (shared with the
+// underline table), first registration winning, so the engine and the
+// table never disagree on which file a family means.
 use crate::impellers::FontWeight;
 use crate::rendertree::FontPayload;
 use harfrust::font::Variation as HarfVariation;
@@ -16,6 +16,7 @@ use harfrust::{Font, Tag};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
+use swash::StringId;
 
 /// The weight axis tag of a variable font (OpenType `wght`).
 const WEIGHT_AXIS: &[u8; 4] = b"wght";
@@ -116,9 +117,6 @@ impl FontSet {
     let Some(font) = Font::new(bytes.clone(), 0) else {
       return;
     };
-    let Ok(face) = ttf_parser::Face::parse(bytes.as_ref().as_ref(), 0) else {
-      return;
-    };
     let Some(swash_font) = swash::FontRef::from_index(bytes.as_ref().as_ref(), 0) else {
       return;
     };
@@ -131,12 +129,7 @@ impl FontSet {
         italic_axis = true;
       }
     }
-    let names = face.names();
-    let families: Vec<String> = names
-      .into_iter()
-      .filter(|n| n.name_id == ttf_parser::name_id::FAMILY || n.name_id == ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
-      .filter_map(|n| n.to_string())
-      .collect();
+    let families = family_names(&swash_font);
     let id = self.faces.len();
     self.faces.push(Face {
       bytes,
@@ -188,4 +181,18 @@ impl FontSet {
 /// bold rule read: Thin 100 through Black 900.
 pub fn weight_value(weight: FontWeight) -> u16 {
   (weight as u16 + 1) * WEIGHT_STEP
+}
+
+/// The names a font registers under besides its alias: every family and
+/// typographic family record of its `name` table, in table order, decoded
+/// where the encoding is known (Unicode and Mac Roman; a record in another
+/// encoding decodes empty and is skipped). Both the face set and the
+/// underline table key on these, so the two resolve a family alike.
+pub fn family_names(font: &swash::FontRef<'_>) -> Vec<String> {
+  font
+    .localized_strings()
+    .filter(|s| matches!(s.id(), StringId::Family | StringId::TypographicFamily))
+    .map(|s| s.to_string())
+    .filter(|name| !name.is_empty())
+    .collect()
 }

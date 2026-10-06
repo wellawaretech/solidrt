@@ -93,7 +93,7 @@ What exists already, and what would be new. Checked against Cargo.lock
 | Path building, bounds, hit test | lyon_path, lyon_algorithms, lyon_geom | yes |
 | Fill and stroke tessellation | lyon_tessellation | no, same author and same path type |
 | Segmentation and line breaking | unicode-segmentation, unicode-linebreak | yes |
-| Font table reading | ttf-parser | yes |
+| Font table reading | swash (names, post table) | yes |
 | Bidi | unicode-bidi | no |
 | Shaping | rustybuzz or harfrust | no |
 | Glyph rasterization | swash | no, proven in the spike |

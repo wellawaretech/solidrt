@@ -388,6 +388,12 @@ Shaped, not started.
   not felt. SDL3 has SDL_RumbleGamepad (low/high frequency motors, duration)
   and trigger rumble on pads that support it; one call to plumb, keyed by the
   pad's slot.
+- **[A full glyph atlas drops glyphs instead of evicting](backlog/glyph-atlas-eviction.md)** [2026-10-06]
+  The glyph engine's atlas grows by doubling up to the device's texture size
+  cap and then refuses further cells (a warning, the glyph stays missing); a
+  wide repertoire that keeps turning over - a terminal, a CJK document - needs
+  eviction of cells no live run references, which means knowing who references
+  what.
 - **[Go client crashes at launch on the x86_64 emulator](backlog/go-client-emulator-launch-crash.md)** [2026-09-01]
   The currently staged solidrt-go.apk aborts within a second of launch on the
   srt_pixel6 emulator (FORTIFY, destroyed mutex inside libhwui's CommonPool);

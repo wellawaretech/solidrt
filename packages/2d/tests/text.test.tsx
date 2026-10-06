@@ -14,7 +14,7 @@ import type { DecodedImage } from "@solidrt/core"
 import { readTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
 import { addText, createAtlas, createSpriteFont, createSpriteLayer, destroyText, fullFrame, addSprite, setText, SpriteLayer, Text2d, worldPosition } from "../src/index.ts"
-import type { SpriteLayerHandle, TextRun } from "../src/index.ts"
+import type { SpriteFont, SpriteLayerHandle, TextRun } from "../src/index.ts"
 
 const SIZE = 128
 // The mask font's pixel size: cells at this many texels per em, drawn 1:1.
@@ -210,6 +210,35 @@ test("<Text2d> is a run under props: text and pose follow signals, the run dies 
   await app.frame()
   expect(run.group.layer).toBe(null)
   expect(layer.count).toBe(0)
+})
+
+test("<SpriteLayer layer> adopts an imperative layer: its children populate it, and the component's end is not the layer's", async app => {
+  let [shown, setShown] = createSignal(true)
+  let run!: TextRun
+  let font!: SpriteFont
+  let layer!: SpriteLayerHandle
+  await app.mount(() => {
+    font = createSpriteFont({ fontFamily: "sans", fontSize: FONT_PX }, { cells: "mask", chars: false, label: "adopt" })
+    layer = createSpriteLayer([font.atlas], { capacity: 32, label: "adopt" })
+    return (
+      <view>
+        <Show when={shown()}>
+          <SpriteLayer layer={layer} output={false}>
+            <Text2d ref={r => (run = r)} font={font} text="ab" x={10} y={10} />
+          </SpriteLayer>
+        </Show>
+      </view>
+    )
+  })
+  expect(run.layer).toBe(layer)
+  expect(layer.count).toBe(2)
+  setShown(false)
+  await app.frame()
+  expect(run.group.layer).toBe(null)
+  expect(layer.count).toBe(0)
+  // Its maker's layer still: usable after the component is gone.
+  addText(layer, { font, text: "c", x: 0, y: 0 })
+  expect(layer.count).toBe(1)
 })
 
 test("addText refuses a layer that does not declare the font's atlas", async app => {

@@ -2,6 +2,7 @@ target/
 node_modules/
 dist/
 .solidrt-data/
+
 *.db
 # Dev sandbox: contents are personal scratch, only the folder convention
 # (its tsconfig) is committed. See okf/done/examples-rescope.md.
@@ -31,3 +32,6 @@ packages/*/*.dylib
 packages/*/*.apk
 frame-00*
 packages/*/THIRD-PARTY-NOTICES.txt
+
+# legacy
+examples/**/*.srt.js
