@@ -237,12 +237,6 @@ Shaped, not started.
   on the renderer it already has; what is missing is a per-app manifest opt-in
   through sol pack, a Play upload path, and a verification pass on the Desktop
   Head Unit for the second display, the density change and the driving block.
-- **[A record-mesh caster that starts empty casts no shadow after a cold start on Android](backlog/android-cold-start-shadow-loss.md)** [2026-10-06]
-  On the SM-T500 the tower-toppling demo casts no shadows when the Player
-  starts cold, while a reload of the same app, or any 3d scene run before it
-  in the same process, shows them; the trigger is a shadow tile whose every
-  caster had record count 0 at creation and got its records in the first
-  frames, and nothing short of a new engine recovers it.
 - **[Android client forgets its dev-server address](backlog/android-dev-server-persistence.md)** [2026-07-27]
   The dev-server address only reaches the client as a launch-intent extra, so
   any relaunch that does not come from the CLI (the device's own launcher, a
@@ -1207,6 +1201,12 @@ Finished, kept for the reasoning.
   the reflector itself; the mesh filter exists internally for shadow views and
   is not public. Expose it on ViewOptions, and widen depth "texture" to the
   scene's own target so a depth-reading post effect has an input.
+- **[A record-mesh caster that starts empty casts no shadow after a cold start on Android](done/android-cold-start-shadow-loss.md)** [2026-10-06]
+  On the SM-T500 the tower-toppling demo casts no shadows when the Player
+  starts cold, while a reload of the same app, or any 3d scene run before it
+  in the same process, shows them; the trigger is a shadow tile whose every
+  caster had record count 0 at creation and got its records in the first
+  frames, and nothing short of a new engine recovers it.
 - **[Measure the frame's GPU time on Android from EGL frame timestamps](done/android-frame-gpu-time-from-egl-timestamps.md)** [2026-09-21]
   On the SM-T500 the TIME_ELAPSED query around the window draw read the frame
   interval (32 ms at a two-refresh cadence, 46-52 at three) for a frame whose
@@ -2517,6 +2517,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   pipeline - why the resolve is a draw target, the pass cost on the Intel/Mesa
   laptop, and the bytes that prove linear-space blending, the round trip and
   the orientation.
+- **[The Adreno 610 breaks the first program that compares against a cleared depth texture](notes/adreno-first-comparison-draw.md)** [2026-10-06]
+  On the SM-T500 (Adreno 610, OpenGL ES 3.2 V@0502.0) the first program object
+  in a process to draw through a sampler2DShadow against a depth texture that
+  was cleared and never drawn into returns 1.0 from every comparison for the
+  rest of its life; later programs are fine; the raster spends that draw on a
+  throwaway program at start.
 - **[Alloy architecture review](notes/alloy-architecture-review.md)** [2026-09-02]
   Structural review of the alloy crate; macro-architecture is sound, the
   recurring debt is policies held by call-site convention, with a ranked list

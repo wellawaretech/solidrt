@@ -41,7 +41,7 @@ pub(crate) use entry::EntryBuffers;
 pub(crate) use staging::UploadStaging;
 pub(crate) use storage::create_layer_target;
 pub(crate) use target::ShaderTexture;
-pub(crate) use texture::{GpuTexture, SamplerCache};
+pub(crate) use texture::{warm_compare_sampler, GpuTexture, SamplerCache};
 pub(crate) use timing::{PassTimer, Timed};
 pub(crate) use draw::{
   render_display_list_into_texture, render_display_list_to_layer, render_display_list_to_texture,

@@ -616,6 +616,9 @@ impl RasterState {
   ) -> Self {
     let limits = crate::gl::query_limits(&gl);
     let samplers = SamplerCache::new(&gl, limits.max_anisotropy);
+    // The process's first comparison-sampled draw, spent here on purpose
+    // (see warm_compare_sampler).
+    gl::warm_compare_sampler(&gl, &samplers);
     if limits.max_anisotropy > 1 {
       log::info!("[alloy] anisotropic filtering up to {}x (EXT_texture_filter_anisotropic)", limits.max_anisotropy);
     } else {

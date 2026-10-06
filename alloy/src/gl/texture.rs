@@ -111,6 +111,96 @@ impl SamplerCache {
   }
 }
 
+/// The fragment stage of the comparison warm-up draw: one comparison tap
+/// through the sampler the warm-up binds; the result is never read.
+const COMPARE_WARM_FRAGMENT: &str =
+  "uniform sampler2DShadow uDepth;\nvoid main() { fragColor = vec4(texture(uDepth, vec3(0.5, 0.5, 0.5))); }";
+
+/// Spend the process's first comparison-sampled draw on a throwaway
+/// program. On the Adreno 610 (SM-T500, OpenGL ES 3.2 V@0502.0) the first
+/// program object in the process to draw through a `sampler2DShadow`
+/// against a depth texture that was cleared and never drawn into keeps
+/// returning 1.0 (lit) from every comparison for the rest of its life;
+/// every program that draws through the comparison sampler after it is
+/// fine, and setting the comparison mode on the texture object as well
+/// changes nothing. In a scene that is the first receiving material, whose
+/// shadow atlas holds only its clear while every caster still has zero
+/// records, so no shadow ever lands on it until an engine swap compiles
+/// the material again. Measured on the device, not documented by the
+/// vendor; see okf/notes/adreno-first-comparison-draw.md. One 1x1 depth
+/// texture cleared through its own FBO, one tap into a 1x1 color target,
+/// everything deleted again: a fraction of a millisecond at raster start,
+/// on every platform, so the path is always the same. Restores the FBO
+/// binding and the depth state it touches; a failure only logs, the
+/// warm-up is not load-bearing anywhere else.
+pub(crate) fn warm_compare_sampler(gl: &glow::Context, samplers: &SamplerCache) {
+  use super::pass::{render_program_to_fbo, PassInput};
+  use super::program::ShaderProgram;
+  use super::storage::{create_depth_texture, create_target};
+  unsafe {
+    let depth = match create_depth_texture(gl, 1, 1) {
+      Ok(tex) => tex,
+      Err(e) => {
+        log::warn!("[alloy] comparison sampler warm-up skipped: {e}");
+        return;
+      }
+    };
+    let depth_fbo = match gl.create_framebuffer() {
+      Ok(fbo) => fbo,
+      Err(e) => {
+        log::warn!("[alloy] comparison sampler warm-up skipped: glGenFramebuffers failed: {e}");
+        gl.delete_texture(depth);
+        return;
+      }
+    };
+    // The clear that leaves the texture in the state a fresh shadow atlas
+    // is in. Depth mask and clear-depth value are Impeller-cached state:
+    // saved and restored, as run_pass does.
+    let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+    let prev_depth_mask = gl.get_parameter_i32(glow::DEPTH_WRITEMASK) != 0;
+    let prev_clear_depth = gl.get_parameter_f32(glow::DEPTH_CLEAR_VALUE);
+    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(depth_fbo));
+    gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::TEXTURE_2D, Some(depth), 0);
+    gl.depth_mask(true);
+    gl.clear_depth_f32(1.0);
+    gl.clear(glow::DEPTH_BUFFER_BIT);
+    gl.depth_mask(prev_depth_mask);
+    gl.clear_depth_f32(prev_clear_depth);
+    gl.bind_framebuffer(glow::FRAMEBUFFER, super::prev_framebuffer(prev_fbo));
+    match (create_target(gl, 1, 1, TextureFormat::Rgba8), ShaderProgram::new_fragment(gl, COMPARE_WARM_FRAGMENT)) {
+      (Ok((color, color_fbo)), Ok(program)) => {
+        // create_target allocates only: attach the color and check it.
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(color_fbo));
+        gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(color), 0);
+        let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+        gl.bind_framebuffer(glow::FRAMEBUFFER, super::prev_framebuffer(prev_fbo));
+        if status == glow::FRAMEBUFFER_COMPLETE {
+          let input = PassInput::d2("uDepth", depth, Some(samplers.compare()));
+          render_program_to_fbo(gl, &program, Some(color_fbo), 1, 1, &[], &[input], None);
+          log::debug!("[alloy] comparison sampler warmed up");
+        } else {
+          log::warn!("[alloy] comparison sampler warm-up skipped: framebuffer status {status:#x}");
+        }
+        program.delete(gl);
+        gl.delete_framebuffer(color_fbo);
+        gl.delete_texture(color);
+      }
+      (color, program) => {
+        if let Ok((color, color_fbo)) = color {
+          gl.delete_framebuffer(color_fbo);
+          gl.delete_texture(color);
+        }
+        match program {
+          Ok(program) => program.delete(gl),
+          Err(e) => log::warn!("[alloy] comparison sampler warm-up skipped: {e}"),
+        }
+      }
+    }
+    gl.delete_framebuffer(depth_fbo);
+    gl.delete_texture(depth);
+  }
+}
+
 /// A GL texture that is adopted into Impeller right after creation. Impeller
 /// takes ownership of the GL name and deletes it when its Texture drops, so
 /// GpuTexture deliberately does NOT delete the name (no Drop impl) - doing so

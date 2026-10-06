@@ -2,6 +2,7 @@
 title: A record-mesh caster that starts empty casts no shadow after a cold start on Android
 description: On the SM-T500 the tower-toppling demo casts no shadows when the Player starts cold, while a reload of the same app, or any 3d scene run before it in the same process, shows them; the trigger is a shadow tile whose every caster had record count 0 at creation and got its records in the first frames, and nothing short of a new engine recovers it.
 created: 2026-10-06
+completed: 2026-10-06
 ---
 
 # A record-mesh caster that starts empty casts no shadow after a cold start on Android
@@ -49,17 +50,36 @@ and a non-zero count from its creation (the probe with a static ring of
 shape is a shadow tile whose every caster entry went 0 to N during the
 first, slow frames of the first 3d engine in the process.
 
-## Where to look
+## Cause
 
-The spatial sink's on-switch and count write (`set_sink_count` writes only
-sinks that are on; a sink turns on in the cull pass), the raster's tile
-render path (a tile renders inside its parent's pass, `render_groups`),
-and whatever an engine swap renews that a shadow-view recreation does
-not. Impeller shares the context; the launcher engine runs first on a
-cold start. Logging on the device is the next step: a raster-side trace
-of the tile's draws and counts on the first frames.
+A driver behaviour of the Adreno 610, written up in
+[adreno-first-comparison-draw](../notes/adreno-first-comparison-draw.md):
+the first program object in the process to draw through a
+`sampler2DShadow` against a depth texture that was cleared and never drawn
+into compares nothing for the rest of its life. With every caster at
+count 0 during the first frames the atlas holds only its clear when the
+scene's `phong()` program first samples it; that program is the first
+comparison user in a cold process, so it is the one poisoned. A reload or
+an earlier 3d scene makes another program take the hit, and a caster
+with records from creation puts a draw into the atlas before the first
+comparison. None of the engine's own state differed between the broken
+and the working run: the raster inventory, the atlas depth, the
+receivers' matrices and bindings were identical, and a new material in
+the broken engine saw the shadow the ground's program could not.
 
-## Done looks like
+## Fix
 
-The probe casts on a cold start of the Player on the tablet, with the
-cause named, and the demo needs no dummy caster.
+`gl::warm_compare_sampler` at raster start, on every platform: the
+process's first comparison draw is a throwaway tap on a 1x1 cleared depth
+texture. Verified by a cold start of the probe on the tablet with the
+rebuilt derived Player; the demo needs no dummy caster. Setting the
+comparison mode on the depth texture object was tried first and changed
+nothing (the note has the reasoning).
+
+## Trail
+
+The two-hour bisect before the cause was found was confounded by
+reload-on-save (every edited variant arrives as a hot reload, which hides
+the bug: cold-start each variant) and by a floor-darkness metric that
+cannot tell a shadow from a brick's shaded face. The repro
+`target/scratch/shadow-probe3.tsx` stays out of the repo.
