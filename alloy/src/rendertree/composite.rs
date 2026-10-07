@@ -74,19 +74,9 @@ pub fn paint_phase(
 
   layout_phase(tree, platform, alloy);
 
-  // The text atlas's frame: land the cells the worker made and open the
-  // synchronous budget before any text builds (see TextAtlas).
+  // The text atlas's frame: open the synchronous budget before any text
+  // builds (see TextAtlas; the landing ran in apply_content_changes).
   platform.text_atlas().begin_frame(alloy, &platform.glyphs(), platform.display_scale());
-  // Cells landed: every text whose layer drew without them redraws, its
-  // caches and its boundaries' cleared and its extent damaged, whether or
-  // not the walk would otherwise enter it this frame.
-  if platform.text_atlas().landed() {
-    for id in tree.incomplete_text_layers() {
-      if tree.try_node(id).is_some() {
-        tree.apply_damage(id, crate::rendertree::Damage::Paint);
-      }
-    }
-  }
 
   // Partial repaint: the damaged ids' last_extent cells still hold their
   // extents as of the LAST walk - the old half of the damage union (where
@@ -157,13 +147,31 @@ pub fn paint_phase(
 /// Apply GPU content writes since the last frame (target re-renders, uploads,
 /// camera frames) to the tree: they change pixels behind unchanged texture ids
 /// and leave no tree damage of their own, and a baked snapshot boundary over
-/// one would keep replaying stale pixels. Every frame producer calls this
-/// before resolving its frame; returns whether anything changed.
-pub(crate) fn apply_content_changes(tree: &mut RenderTree, alloy: &crate::Context) -> bool {
+/// one would keep replaying stale pixels. Then land the text atlas's cells:
+/// every text whose layer drew without them is paint-damaged (its caches and
+/// its boundaries' cleared, its extent damaged, the revision bumped), so a
+/// frame with no tree change of its own still rebuilds instead of resubmitting
+/// the retained list, whether or not the walk would otherwise enter the text.
+/// Every frame producer calls this before resolving its frame; returns whether
+/// anything changed.
+pub(crate) fn apply_content_changes(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Context) -> bool {
   let content = alloy.take_content_changes();
-  let changed = !content.is_empty();
+  let mut changed = !content.is_empty();
   if changed {
     tree.texture_content_changed(&content);
+  }
+  let landed = {
+    let mut atlas = platform.text_atlas();
+    atlas.land(alloy);
+    atlas.landed()
+  };
+  if landed {
+    for id in tree.incomplete_text_layers() {
+      if tree.try_node(id).is_some() {
+        tree.apply_damage(id, crate::rendertree::Damage::Paint);
+        changed = true;
+      }
+    }
   }
   changed
 }
@@ -230,7 +238,7 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
   // The runner's frame loop drains content changes itself, ahead of its
   // display-list reuse check; this path is the frame producer for everything
   // else, so it must apply them too.
-  apply_content_changes(tree, alloy);
+  apply_content_changes(tree, platform, alloy);
 
   let mut builder = DisplayListBuilder::new(None);
   let scale = platform.display_scale();

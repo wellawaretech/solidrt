@@ -83,7 +83,7 @@ impl<'d> PendingFrame<'d> {
     alloy: &crate::Context,
     present_at: std::time::Instant,
   ) -> Result<Commit<'d>, ()> {
-    let content_changed = composite::apply_content_changes(tree, alloy);
+    let content_changed = composite::apply_content_changes(tree, platform, alloy);
 
     if !alloy.has_pending_captures() {
       if let Some(c) = self.driver.cache.as_ref() {

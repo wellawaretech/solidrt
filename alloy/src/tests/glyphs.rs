@@ -203,6 +203,38 @@ fn packer_grows_by_repacking_and_then_fills() {
   assert!(packer.placement(big).is_none());
 }
 
+#[test]
+fn packer_insert_in_place_hands_back_what_does_not_fit_and_moves_nothing() {
+  let mut packer = AtlasPacker::new(CellKind::Mask { ppem: 16.0 }, 1024);
+  let side = packer.size();
+  // 100-texel cells until the initial square refuses one: the refused cell
+  // comes back, and nothing placed before it moved or grew.
+  let mut glyph = 0u16;
+  let refused = loop {
+    match packer.insert_in_place(solid(glyph, 100)) {
+      Ok(()) => glyph += 1,
+      Err(cell) => break cell,
+    }
+    assert!(glyph < 100, "a 512 square holds fewer than a hundred 100-texel cells");
+  };
+  assert_eq!(refused.key, glyph);
+  assert!(packer.placement(glyph).is_none());
+  assert_eq!(packer.size(), side);
+  let before: Vec<_> = (0..glyph).map(|g| packer.placement(g).expect("placed")).collect();
+  assert!(matches!(packer.take_dirty(), Some(Dirty::Rects(_))), "placing in place is rects, not a repack");
+  // A key already present is a no-op in place too.
+  assert_eq!(packer.insert_in_place(solid(0, 100)), Ok(()));
+  assert!(packer.take_dirty().is_none());
+  for (g, placement) in before.iter().enumerate() {
+    assert_eq!(packer.placement(g as u16).expect("kept"), *placement, "glyph {g} stayed put");
+  }
+  // The owner's frame start inserts the refused cell with growth allowed:
+  // that is the one place cells move.
+  assert_eq!(packer.insert(refused), InsertOutcome::Moved);
+  assert_ne!(packer.size(), side);
+  assert!(packer.placement(glyph).is_some());
+}
+
 // The distance-field cell checks: "H" at 48 texels per em with 8 texels of
 // range, the sprite font's defaults.
 const MSDF_PPEM: f32 = 48.0;

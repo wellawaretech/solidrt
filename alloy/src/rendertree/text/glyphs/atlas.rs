@@ -18,8 +18,10 @@
 // `max_side`; at the cap the atlas evicts, and only when nothing can go is
 // it full: `insert` says so and the glyph stays missing, which a consumer
 // draws as nothing at the right advance. Every placement moves on a
-// growth or a repack, so the outcome names it and an owner that hands
-// placements out re-reads every cell.
+// growth or a repack, so the outcome names it; an owner that hands
+// placements out over a frame adds cells with `insert_in_place`, which
+// never repacks, and keeps what did not fit for an `insert` at its next
+// frame start, when nobody holds a placement.
 use super::cells::{Cell, CellKind, BYTES_PER_TEXEL};
 use crate::gpu::{SamplerState, TextureFormat, TextureRect};
 use crate::Context;
@@ -201,8 +203,24 @@ impl<K: CellKey> AtlasPacker<K> {
     self.cells.is_empty()
   }
 
-  /// Add a cell. A key already present is a no-op (`Placed`, and the cell
-  /// counts as used now).
+  /// Add a cell at the current size, or hand it back when it does not
+  /// fit: never grows, evicts or repacks, so every placement stays where
+  /// it is. A key already present is a no-op (the cell counts as used
+  /// now).
+  pub fn insert_in_place(&mut self, cell: Cell<K>) -> Result<(), Cell<K>> {
+    if self.touch(cell.key) {
+      return Ok(());
+    }
+    if !self.place(&cell) {
+      return Err(cell);
+    }
+    self.sources.insert(cell.key, cell);
+    Ok(())
+  }
+
+  /// Add a cell, growing, evicting and repacking as needed (see
+  /// `InsertOutcome`). A key already present is a no-op (`Placed`, and the
+  /// cell counts as used now).
   pub fn insert(&mut self, cell: Cell<K>) -> InsertOutcome {
     if self.touch(cell.key) {
       return InsertOutcome::Placed;
@@ -413,6 +431,12 @@ impl<K: CellKey> GlyphAtlas<K> {
   /// Add a cell (see `AtlasPacker::insert`); `flush` uploads it.
   pub fn insert(&mut self, cell: Cell<K>) -> InsertOutcome {
     self.packer.insert(cell)
+  }
+
+  /// Add a cell without moving any other (see
+  /// `AtlasPacker::insert_in_place`); `flush` uploads it.
+  pub fn insert_in_place(&mut self, cell: Cell<K>) -> Result<(), Cell<K>> {
+    self.packer.insert_in_place(cell)
   }
 
   /// Upload what changed: the whole mirror after a growth (a resize at the

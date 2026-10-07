@@ -13,14 +13,24 @@
 //    budget is spent - time, not a count, so a slow CPU makes fewer.
 // 3. Past the budget the worker makes the rest at `Needed` priority, ahead
 //    of any warm-up; the layer draws without them and re-rasterizes the
-//    frame they land (`begin_frame` says when).
+//    frame they land (`land`, which every frame producer runs before it
+//    decides whether the tree changed: a landing is a change to pixels
+//    behind an unchanged tree, like a texture upload, so a frame that
+//    would otherwise resubmit its retained display list rebuilds).
+//
+// Between two `begin_frame`s no cell moves: a layer reads placements
+// bucket by bucket while it builds, and a repack under it would leave the
+// quads already built pointing at vacated texels. So the synchronous path
+// only places what fits the atlas at its size; a cell that does not fit
+// is kept and inserted at the next frame start, where the atlas may grow
+// or evict, and the layer completes then like one waiting on the worker.
 //
 // Cells are keyed on the face, the device pixels per em, the weight, the
 // style and the subpixel phase besides the glyph, so one texture serves
 // every style on screen and a glyph pass binds once per layer. Frames are
 // stamped on every use so a full atlas evicts what nobody drew lately.
 use super::atlas::{AtlasPacker, CellPlacement, GlyphAtlas, InsertOutcome};
-use super::cells::{CellKind, CellRequest, Rasterizer};
+use super::cells::{Cell, CellKind, CellRequest, Rasterizer};
 use super::fonts::{Face, FaceId, FontSet};
 use super::worker::{CellJob, CellWorker, JobPriority};
 use crate::gpu::{SamplerFilter, SamplerState, SamplerWrap, MIN_ANISOTROPY};
@@ -148,9 +158,14 @@ pub struct TextAtlas {
   rasterizer: Rasterizer,
   jobs: HashMap<u64, Job>,
   next_job: u64,
-  // Cells on the worker, and cells the font cannot make (or the atlas
-  // refused): neither is asked for twice.
+  // Cells on the worker or deferred to the next frame start, and cells
+  // the font cannot make (or the atlas refused): neither is asked for
+  // twice.
   pending: HashSet<CellKey>,
+  // Cells made on the synchronous path that did not fit the atlas at its
+  // size: inserted at the next frame start, when the atlas may grow (see
+  // the header).
+  deferred: Vec<Cell<CellKey>>,
   // What a job's hold is taken from. A job's work is in flight from its
   // submission until the worker has made its cells, and is counted there,
   // on the worker thread: never at the landing, which only a frame does,
@@ -186,6 +201,7 @@ impl TextAtlas {
       jobs: HashMap::new(),
       next_job: 1,
       pending: HashSet::new(),
+      deferred: Vec::new(),
       hold_source: None,
       failed: HashSet::new(),
       warmed: HashSet::new(),
@@ -207,9 +223,9 @@ impl TextAtlas {
     self.hold_source = Some(source);
   }
 
-  /// Start a frame: land the cells the worker made (uploading them), open
-  /// this frame's synchronous budget, and queue the warm-ups asked for
-  /// since the last frame at `display_scale`.
+  /// Start a frame's build (after its `land`): open this frame's
+  /// synchronous budget, and queue the warm-ups asked for since the last
+  /// frame at `display_scale`.
   pub fn begin_frame(&mut self, ctx: &Context, fonts: &FontSet, display_scale: f32) {
     if self.wake.is_none() {
       self.wake = ctx.frame_wake();
@@ -219,8 +235,6 @@ impl TextAtlas {
       atlas.packer_mut().begin_frame(self.frame);
     }
     self.deadline = Some(Instant::now() + SYNC_CELL_BUDGET);
-    self.landed = false;
-    self.land(ctx);
     for request in std::mem::take(&mut self.warm_requests) {
       let key = StyleKey::new(
         request.face,
@@ -246,8 +260,8 @@ impl TextAtlas {
     }
   }
 
-  /// Whether cells landed at this frame's start: every incomplete layer
-  /// then re-rasterizes.
+  /// Whether this frame's `land` put cells in the atlas: every incomplete
+  /// layer then re-rasterizes.
   pub fn landed(&self) -> bool {
     self.landed
   }
@@ -267,7 +281,8 @@ impl TextAtlas {
     self.atlas.as_ref().map(|a| a.packer().size())
   }
 
-  /// Cells asked of the worker that have not landed.
+  /// Cells not in the atlas yet: on the worker, or deferred to the next
+  /// frame start.
   pub fn queued_cells(&self) -> usize {
     self.pending.len()
   }
@@ -338,16 +353,21 @@ impl TextAtlas {
       for cell in made {
         let key = CellKey { style, phase, glyph: cell.key };
         let atlas = self.atlas.as_mut().expect("opened above");
-        if atlas.insert(cell.with_key(key)) == InsertOutcome::Full {
-          self.failed.insert(key);
-        } else {
-          inserted += 1;
+        match atlas.insert_in_place(cell.with_key(key)) {
+          Ok(()) => inserted += 1,
+          // No room at this size: the next frame start grows the atlas
+          // around it, and that frame is requested.
+          Err(cell) => {
+            self.pending.insert(key);
+            self.deferred.push(cell);
+            self.frame_request.store(true, Ordering::Relaxed);
+          }
         }
       }
       for &glyph in &misses {
         let key = CellKey { style, phase, glyph };
         let atlas = self.atlas.as_ref().expect("opened above");
-        if atlas.packer().placement(key).is_none() {
+        if atlas.packer().placement(key).is_none() && !self.pending.contains(&key) {
           self.failed.insert(key);
         }
       }
@@ -406,6 +426,7 @@ impl TextAtlas {
       self.stale = false;
       self.pending.clear();
       self.jobs.clear();
+      self.deferred.clear();
       if let Some(atlas) = &mut self.atlas {
         atlas.packer_mut().clear();
         atlas.packer_mut().begin_frame(self.frame);
@@ -473,13 +494,30 @@ impl TextAtlas {
     }
   }
 
-  // Land every finished job in the atlas and upload.
-  fn land(&mut self, ctx: &Context) {
+  /// Land the cells deferred for room and every finished job in the atlas,
+  /// growing it as needed (nothing holds a placement now), and upload.
+  /// Once per frame, before the frame producer decides whether anything
+  /// changed (see the header); `landed` says whether cells came in.
+  pub fn land(&mut self, ctx: &Context) {
+    self.landed = false;
+    let deferred = std::mem::take(&mut self.deferred);
     let done = self.worker.as_ref().map(|w| w.drain()).unwrap_or_default();
-    if done.is_empty() {
+    if deferred.is_empty() && done.is_empty() {
       return;
     }
     let mut inserted = 0;
+    for cell in deferred {
+      let key = cell.key;
+      self.pending.remove(&key);
+      if let Some(atlas) = &mut self.atlas {
+        match atlas.insert(cell) {
+          InsertOutcome::Full => {
+            self.failed.insert(key);
+          }
+          _ => inserted += 1,
+        }
+      }
+    }
     for batch in done {
       let Some(Job { style, phase }) = self.jobs.remove(&batch.owner) else {
         // A job from before a font reset: its cells belong to faces that

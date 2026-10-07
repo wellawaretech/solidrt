@@ -97,7 +97,6 @@ impl RenderTree {
       self.texture_referencers.insert(node_id);
     } else {
       self.texture_referencers.remove(&node_id);
-      self.incomplete_text.borrow_mut().remove(&node_id);
     }
   }
 
