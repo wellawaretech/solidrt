@@ -97,7 +97,10 @@ fn decode_gradient(value: &PropValue) -> Result<Gradient, String> {
       }
     }
     Some(other) => Err(format!("Unknown gradient kind \"{other}\"; expected linear or radial")),
-    None => Err("Color object is not a gradient (missing __gradient); create one with createLinearGradient/createRadialGradient".to_string()),
+    None => Err(
+      "Color object is not a gradient (missing __gradient); create one with createLinearGradient/createRadialGradient"
+        .to_string(),
+    ),
   }
 }
 

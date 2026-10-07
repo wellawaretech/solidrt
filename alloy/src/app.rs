@@ -12,8 +12,8 @@ use crate::event::{
 use crate::gl;
 use crate::liveness::SurfaceLiveness;
 use crate::mode::Mode;
-use crate::stepped::run_stepped_loop;
 use crate::raster::RasterCmd;
+use crate::stepped::run_stepped_loop;
 
 pub struct App {
   sdl_context: sdl3::Sdl,
@@ -205,7 +205,8 @@ fn apply_main_thread_effects(event: &AlloyEvent, surface_size: &Arc<AtomicU64>) 
 
 // Refresh rate in Hz of the window's current display, with a 60Hz fallback.
 fn display_refresh_rate(window: &sdl3::video::Window) -> f32 {
-  let hz = window.get_display().and_then(|d| d.get_mode()).map(|m| m.refresh_rate).ok().filter(|&hz| hz > 0.0).unwrap_or(60.0);
+  let hz =
+    window.get_display().and_then(|d| d.get_mode()).map(|m| m.refresh_rate).ok().filter(|&hz| hz > 0.0).unwrap_or(60.0);
   // Every query publishes the fact for out-of-loop readers (crate::refresh_rate).
   crate::set_refresh_rate(hz);
   hz
@@ -447,7 +448,8 @@ impl App {
     let start_time = Instant::now();
     let ms_since_start = |at: Instant| at.saturating_duration_since(start_time).as_secs_f64() * 1000.0;
     // Where a count places its signal (Counted::grid_ms), as an instant.
-    let grid_instant = |counted: crate::present::Counted| start_time + Duration::from_secs_f64(counted.grid_ms.max(0.0) / 1000.0);
+    let grid_instant =
+      |counted: crate::present::Counted| start_time + Duration::from_secs_f64(counted.grid_ms.max(0.0) / 1000.0);
     let mut refreshes = crate::present::RefreshCounting::new();
     // The cadence hold (see cadence.rs): the controller reads each present's
     // work time and sets the hold FrameRelease enforces; the policy comes
@@ -614,7 +616,16 @@ impl App {
                 // opens from this reference (one period without a hold).
                 let present_at = reference + tick_period * cadence.hold();
                 let grid = grid_instant(counted);
-                event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at, reference, grid }).ok();
+                event_tx
+                  .send(AlloyEvent::FrameRendered {
+                    frame,
+                    fps,
+                    refreshes: counted.refreshes,
+                    present_at,
+                    reference,
+                    grid,
+                  })
+                  .ok();
                 frame += 1;
                 last_frame_signal = Instant::now();
                 last_emission = last_frame_signal;
@@ -702,8 +713,14 @@ impl App {
           let now = Instant::now();
           let counted = count_signal(&mut refreshes, now, frame, false, false, None);
           let present_at = now + tick_period;
-          let signal =
-            AlloyEvent::Tick { frame, fps, refreshes: counted.refreshes, present_at, reference: now, grid: grid_instant(counted) };
+          let signal = AlloyEvent::Tick {
+            frame,
+            fps,
+            refreshes: counted.refreshes,
+            present_at,
+            reference: now,
+            grid: grid_instant(counted),
+          };
           if event_tx.send(signal).is_err() {
             break 'run;
           }
@@ -854,7 +871,16 @@ impl App {
               }
               let present_at = reference + tick_period * cadence.hold();
               let grid = grid_instant(counted);
-              event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at, reference, grid }).ok();
+              event_tx
+                .send(AlloyEvent::FrameRendered {
+                  frame,
+                  fps,
+                  refreshes: counted.refreshes,
+                  present_at,
+                  reference,
+                  grid,
+                })
+                .ok();
               frame += 1;
             }
             last_frame_signal = Instant::now();
@@ -914,13 +940,23 @@ impl App {
                 let reference = Instant::now();
                 for _ in 0..released {
                   let (demanded, work) = deferred.pop_front().map_or((true, None), |(d, w)| (d, Some(w)));
-                  let counted = count_signal(&mut refreshes, reference, frame, true, demanded, work.map(|(c, g)| c + g));
+                  let counted =
+                    count_signal(&mut refreshes, reference, frame, true, demanded, work.map(|(c, g)| c + g));
                   if let Some(work) = work {
                     learn(&mut cadence, &mut release, &mut refreshes, counted, work, reference, tick_period);
                   }
                   let present_at = reference + tick_period * cadence.hold();
                   let grid = grid_instant(counted);
-                  event_tx.send(AlloyEvent::FrameRendered { frame, fps, refreshes: counted.refreshes, present_at, reference, grid }).ok();
+                  event_tx
+                    .send(AlloyEvent::FrameRendered {
+                      frame,
+                      fps,
+                      refreshes: counted.refreshes,
+                      present_at,
+                      reference,
+                      grid,
+                    })
+                    .ok();
                   frame += 1;
                 }
                 last_frame_signal = Instant::now();

@@ -196,8 +196,7 @@ fn encode_texture<'js>(
   let Some(codec) = string_opt(&ctx, &opts, "codec", api)? else {
     return Err(Exception::throw_message(&ctx, "encodeTexture: codec is required (\"etc1s\" or \"uastc\")"));
   };
-  let codec =
-    forge::ktx2::Codec::parse(&codec).map_err(|e| Exception::throw_message(&ctx, &format!("{api}: {e}")))?;
+  let codec = forge::ktx2::Codec::parse(&codec).map_err(|e| Exception::throw_message(&ctx, &format!("{api}: {e}")))?;
   let wrap = match string_opt(&ctx, &opts, "wrap", api)? {
     Some(name) => {
       forge::ktx2::MipWrap::parse(&name).map_err(|e| Exception::throw_message(&ctx, &format!("{api}: {e}")))?

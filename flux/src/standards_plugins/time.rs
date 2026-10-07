@@ -1,7 +1,4 @@
-use rquickjs::{
-  function::MutFn,
-  Ctx, Exception, Function, JsLifetime, Object, Persistent, Value,
-};
+use rquickjs::{function::MutFn, Ctx, Exception, Function, JsLifetime, Object, Persistent, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
@@ -87,7 +84,13 @@ impl VirtualTime {
   /// Whether a live timer is due at or before `now_ms`.
   fn due(&self, now_ms: f64) -> bool {
     let callbacks = self.0.callbacks.borrow();
-    self.0.queue.borrow().iter().take_while(|((deadline, _), _)| f64::from_bits(*deadline) <= now_ms).any(|(_, entry)| callbacks.contains_key(&entry.id))
+    self
+      .0
+      .queue
+      .borrow()
+      .iter()
+      .take_while(|((deadline, _), _)| f64::from_bits(*deadline) <= now_ms)
+      .any(|(_, entry)| callbacks.contains_key(&entry.id))
   }
 }
 

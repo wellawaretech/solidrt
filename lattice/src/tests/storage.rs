@@ -9,11 +9,7 @@ fn temp_root(tag: &str) -> std::path::PathBuf {
 #[test]
 fn resolve_creates_tree_under_explicit_root() {
   let root = temp_root("tree");
-  let spec = StorageSpec {
-    data_root: Some(root.clone()),
-    client: Some(3),
-    app_id: Some("com.example.app".into()),
-  };
+  let spec = StorageSpec { data_root: Some(root.clone()), client: Some(3), app_id: Some("com.example.app".into()) };
   let store = resolve(&spec).expect("resolves");
   let client_dir = root.join("client3");
   assert_eq!(store.client_dir, client_dir);

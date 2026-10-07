@@ -42,9 +42,9 @@ pub fn init_clipboard(ctx: &Ctx<'_>, cmd_tx: Sender<AlloyCommand>) {
       let rx = roundtrip(&read_tx, AlloyCommand::GetClipboardText, "navigator.clipboard.readText");
       Ok(with_in_flight(&ctx, "clipboard", async move {
         match rx {
-          Ok(rx) => rx
-            .await
-            .unwrap_or_else(|_| Err("navigator.clipboard.readText: platform loop did not answer".into())),
+          Ok(rx) => {
+            rx.await.unwrap_or_else(|_| Err("navigator.clipboard.readText: platform loop did not answer".into()))
+          }
           Err(e) => Err(e),
         }
       }))
@@ -64,9 +64,9 @@ pub fn init_clipboard(ctx: &Ctx<'_>, cmd_tx: Sender<AlloyCommand>) {
         });
       Ok(with_in_flight(&ctx, "clipboard", async move {
         match rx {
-          Ok(rx) => rx
-            .await
-            .unwrap_or_else(|_| Err("navigator.clipboard.writeText: platform loop did not answer".into())),
+          Ok(rx) => {
+            rx.await.unwrap_or_else(|_| Err("navigator.clipboard.writeText: platform loop did not answer".into()))
+          }
           Err(e) => Err(e),
         }
       }))

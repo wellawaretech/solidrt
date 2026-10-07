@@ -395,10 +395,7 @@ impl Gamepads {
         };
         let id = JoystickId::new(*which);
         let opened = if gamepad.is_gamepad(id) {
-          gamepad
-            .open(id)
-            .map(|pad| Pad::Mapped { pad, joystick: joystick.open(id).ok() })
-            .map_err(|e| e.to_string())
+          gamepad.open(id).map(|pad| Pad::Mapped { pad, joystick: joystick.open(id).ok() }).map_err(|e| e.to_string())
         } else {
           joystick.open(id).map(Pad::Raw).map_err(|e| e.to_string())
         };

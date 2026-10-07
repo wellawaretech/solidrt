@@ -11,8 +11,8 @@
 
 mod buffer;
 mod context;
-mod entry;
 mod draw;
+mod entry;
 mod glyphs;
 mod pass;
 mod program;
@@ -29,28 +29,28 @@ pub(crate) use context::{
   adopt_texture, configure_opengl, create_gl_context, create_impeller_context, query_limits, setup_opengl_platform,
   SdlGlBinding,
 };
-pub(crate) use pass::{
-  take_vertices,
-  composite_program_over_window, render_program_to_fbo, render_program_to_window, PassInput, TILE_CLEAR_FRAGMENT,
+pub(crate) use draw::{
+  render_display_list_into_texture, render_display_list_to_layer, render_display_list_to_texture,
+  render_display_list_to_window,
 };
-pub(crate) use program::{
-  compile_stage, delete_stage, release_pipeline, release_program, CompiledStage, RenderPipeline, ShaderProgram,
+pub(crate) use entry::EntryBuffers;
+pub(crate) use glyphs::{render_glyphs, GlyphRig};
+pub(crate) use pass::{
+  composite_program_over_window, render_program_to_fbo, render_program_to_window, take_vertices, PassInput,
+  TILE_CLEAR_FRAGMENT,
 };
 #[cfg(test)]
 pub(crate) use program::declared_uniform_names;
-pub(crate) use entry::EntryBuffers;
-pub(crate) use glyphs::{render_glyphs, GlyphRig};
+pub(crate) use program::{
+  compile_stage, delete_stage, release_pipeline, release_program, CompiledStage, RenderPipeline, ShaderProgram,
+};
+pub(crate) use readback::{flip_rows, read_fbo0_pixels, read_texture_pixels};
+pub(crate) use rig::{forget_window_samples, msrtt, supports_invalidate, window_fast_path, MsrttFns, OffscreenRig};
 pub(crate) use staging::UploadStaging;
 pub(crate) use storage::create_layer_target;
 pub(crate) use target::ShaderTexture;
 pub(crate) use texture::{warm_compare_sampler, GpuTexture, SamplerCache};
 pub(crate) use timing::{PassTimer, Timed};
-pub(crate) use draw::{
-  render_display_list_into_texture, render_display_list_to_layer, render_display_list_to_texture,
-  render_display_list_to_window,
-};
-pub(crate) use readback::{flip_rows, read_fbo0_pixels, read_texture_pixels};
-pub(crate) use rig::{forget_window_samples, msrtt, supports_invalidate, window_fast_path, MsrttFns, OffscreenRig};
 
 use std::num::NonZeroU32;
 

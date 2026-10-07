@@ -469,7 +469,10 @@ fn start<'js>(
   };
   let host_error = |message: String| Some(TestError { message, stack: String::new() });
   let Some(registry) = registry else {
-    return finish(&ctx, host_error(format!("The test \"{name}\" is gone: the file did not import flux:test this time")));
+    return finish(
+      &ctx,
+      host_error(format!("The test \"{name}\" is gone: the file did not import flux:test this time")),
+    );
   };
   let promise = match registry.run_one(&ctx, name) {
     Ok(promise) => promise,

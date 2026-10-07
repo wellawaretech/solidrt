@@ -17,7 +17,11 @@ fn realpath<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Promised<impl 
 // `rename(from, to)`: move a file or directory. A plain forward to
 // forge::fs; both arguments are strings and the result is void, so nothing to
 // encode.
-fn rename<'js>(ctx: Ctx<'js>, from: String, to: String) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
+fn rename<'js>(
+  ctx: Ctx<'js>,
+  from: String,
+  to: String,
+) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
   Ok(with_in_flight(&ctx, "fs", async move { fs::rename(&from, &to).await }))
 }
 

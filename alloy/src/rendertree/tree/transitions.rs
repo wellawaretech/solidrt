@@ -433,7 +433,11 @@ impl RenderTree {
     match (declares, el.lifecycle.slide.is_some()) {
       (true, false) => el.lifecycle.slide = Some(Slide { under: el.parent, at: None }),
       (false, true) => {
-        let resized = el.lifecycle.slide.and_then(|s| s.at).is_some_and(|at| at.size != el.layout.as_ref().map(|l| l.size()).unwrap_or(at.size));
+        let resized = el
+          .lifecycle
+          .slide
+          .and_then(|s| s.at)
+          .is_some_and(|at| at.size != el.layout.as_ref().map(|l| l.size()).unwrap_or(at.size));
         el.lifecycle.slide = None;
         self.transitions.cancel(node_id, AnimProp::Layout);
         // Its children were laid out against the painted box; one run at
@@ -564,7 +568,10 @@ impl RenderTree {
       // settle's run at the solved size is owed by the frame before.
       if t.prop == AnimProp::Layout {
         let resizing = self.nodes.get(&t.node).is_some_and(|el| {
-          el.lifecycle.slide.and_then(|s| s.at).is_some_and(|at| el.layout.as_ref().is_some_and(|l| at.size != l.size()))
+          el.lifecycle
+            .slide
+            .and_then(|s| s.at)
+            .is_some_and(|at| el.layout.as_ref().is_some_and(|l| at.size != l.size()))
         });
         if resizing {
           self.resizing.insert(t.node, None);

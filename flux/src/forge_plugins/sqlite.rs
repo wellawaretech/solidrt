@@ -107,7 +107,9 @@ impl Database {
     path: String,
     mode: OptArg<String>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Database>>>> {
-    Ok(with_in_flight(&ctx, "sqlite", async move { SqliteConnection::open(path, mode.0).await.map(|conn| Database { conn }) }))
+    Ok(with_in_flight(&ctx, "sqlite", async move {
+      SqliteConnection::open(path, mode.0).await.map(|conn| Database { conn })
+    }))
   }
 
   /// Subscribe to writes on this connection. After each command that changed
@@ -253,7 +255,11 @@ impl Statement {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
     let bound = extract_params(&ctx, params.0)?;
-    Ok(with_in_flight(&ctx, "sqlite", async move { conn.get(sql, bound, true).await.map(|r| r.into_value().map(Neutral)) }))
+    Ok(with_in_flight(
+      &ctx,
+      "sqlite",
+      async move { conn.get(sql, bound, true).await.map(|r| r.into_value().map(Neutral)) },
+    ))
   }
 
   /// Execute as a write. Resolves to `{ changes, lastInsertRowid }`.

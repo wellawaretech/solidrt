@@ -335,9 +335,10 @@ impl Instance {
   pub fn write_memory<'js>(&self, ctx: Ctx<'js>, ptr: usize, bytes: Value<'js>) -> rquickjs::Result<()> {
     let slice = value_bytes(&ctx, &bytes)?;
     let (src, src_len) = (slice.as_ptr(), slice.len());
-    let overlaps = self.inner.memory_data_ptr().is_some_and(|(mem, mem_len)| {
-      (src as usize) < mem as usize + mem_len && (mem as usize) < src as usize + src_len
-    });
+    let overlaps = self
+      .inner
+      .memory_data_ptr()
+      .is_some_and(|(mem, mem_len)| (src as usize) < mem as usize + mem_len && (mem as usize) < src as usize + src_len);
     let result = if overlaps {
       let staged = slice.to_vec();
       self.inner.memory_write(ptr, &staged)

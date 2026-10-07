@@ -221,10 +221,7 @@ fn check_rate(ctx: &Ctx<'_>, who: &str, rate: f32) -> rquickjs::Result<()> {
 /// setRate, ended }`) so the raw id stays in Rust.
 fn playback_handle<'js>(ctx: &Ctx<'js>, track_id: u64) -> rquickjs::Result<Object<'js>> {
   let obj = Object::new(ctx.clone())?;
-  obj.set(
-    "stop",
-    Function::new(ctx.clone(), stop_builder(move |ctx, options| stop_impl(ctx, track_id, options)))?,
-  )?;
+  obj.set("stop", Function::new(ctx.clone(), stop_builder(move |ctx, options| stop_impl(ctx, track_id, options)))?)?;
   obj.set(
     "setGain",
     Function::new(ctx.clone(), setter_builder(move |ctx, gain, options| set_gain_impl(ctx, track_id, gain, options)))?,
@@ -387,7 +384,10 @@ fn set_master_gain_impl<'js>(ctx: Ctx<'js>, gain: f32, options: OptArg<Object<'j
 /// Throws so the unimplemented state cannot be missed; the .d.ts documents
 /// the interim pattern.
 fn set_bus_gain_impl(ctx: Ctx<'_>) -> rquickjs::Result<()> {
-  Err(throw_str(&ctx, "setBusGain: not implemented yet; keep a bus gain in the app and multiply it into each voice's setGain"))
+  Err(throw_str(
+    &ctx,
+    "setBusGain: not implemented yet; keep a bus gain in the app and multiply it into each voice's setGain",
+  ))
 }
 
 fn output_sample_rate_impl(ctx: Ctx<'_>) -> rquickjs::Result<i32> {

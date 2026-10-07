@@ -54,8 +54,7 @@ fn correlate_browse_assembles_instance() {
   // The instance label carries a space, which is legal on the wire but not in
   // from_ascii presentation format, so build it from raw labels.
   let instance =
-    Name::from_labels(vec![b"Office Printer".to_vec(), b"_ipp".to_vec(), b"_tcp".to_vec(), b"local".to_vec()])
-      .unwrap();
+    Name::from_labels(vec![b"Office Printer".to_vec(), b"_ipp".to_vec(), b"_tcp".to_vec(), b"local".to_vec()]).unwrap();
   let host = Name::from_ascii("printer.local.").unwrap();
 
   let mut m = Message::new(0, MessageType::Response, OpCode::Query);
@@ -83,11 +82,7 @@ fn correlate_browse_assembles_instance() {
 fn correlate_services_lists_types() {
   let meta = Name::from_ascii(SERVICE_ENUM).unwrap();
   let mut m = Message::new(0, MessageType::Response, OpCode::Query);
-  m.answers.push(Record::from_rdata(
-    meta.clone(),
-    120,
-    RData::PTR(PTR(Name::from_ascii("_ipp._tcp.local.").unwrap())),
-  ));
+  m.answers.push(Record::from_rdata(meta.clone(), 120, RData::PTR(PTR(Name::from_ascii("_ipp._tcp.local.").unwrap()))));
   m.answers.push(Record::from_rdata(meta, 120, RData::PTR(PTR(Name::from_ascii("_http._tcp.local.").unwrap()))));
 
   let out = correlate_services(&[m]);

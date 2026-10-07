@@ -106,7 +106,9 @@ impl InstanceOrder {
     let key = match (field, position) {
       (Some(_), Some(_)) => return Err("instanceOrder takes either field or position, not both".to_string()),
       (None, None) => {
-        return Err("instanceOrder needs a key: field (float offset) or position (float offset) with direction".to_string())
+        return Err(
+          "instanceOrder needs a key: field (float offset) or position (float offset) with direction".to_string(),
+        )
       }
       (Some(f), None) => {
         if direction.is_some() {
@@ -129,7 +131,9 @@ impl InstanceOrder {
       None => None,
       Some(s) => {
         if !(s.is_finite() && s > 0.0 && s.fract() == 0.0 && (s as usize) % 4 == 0) {
-          return Err(format!("instanceOrder indices.stride must be a positive multiple of 4 bytes (whole float records), got {s}"));
+          return Err(format!(
+            "instanceOrder indices.stride must be a positive multiple of 4 bytes (whole float records), got {s}"
+          ));
         }
         Some(s as usize)
       }
@@ -155,10 +159,7 @@ impl InstanceOrder {
       OrderKey::Projected { offset, .. } => (offset, 12, "position"),
     };
     if offset + len > stride {
-      return Err(format!(
-        "instanceOrder {name} offset {} does not fit the {stride}-byte instance record",
-        offset / 4
-      ));
+      return Err(format!("instanceOrder {name} offset {} does not fit the {stride}-byte instance record", offset / 4));
     }
     Ok(())
   }

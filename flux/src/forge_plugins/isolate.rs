@@ -542,7 +542,16 @@ impl Isolate {
     // A seeded parent (a test) seeds its children, so what they draw from
     // Math.random is as reproducible as what it draws.
     let random_seed = crate::standards_plugins::random::child_seed(ctx);
-    spawn_thread(config, self.id.clone(), code, self.args.clone(), self.memory_limit, random_seed, child_link, kill.clone())?;
+    spawn_thread(
+      config,
+      self.id.clone(),
+      code,
+      self.args.clone(),
+      self.memory_limit,
+      random_seed,
+      child_link,
+      kill.clone(),
+    )?;
 
     let instance = Arc::new(Instance {
       id: self.id.clone(),
@@ -696,8 +705,10 @@ fn proxy_get<'js>(ctx: Ctx<'js>, handle: Class<'js, Isolate>, prop: JsValue<'js>
     "then" => Ok(JsValue::new_undefined(ctx)),
     "terminate" => Function::new(ctx, move || handle.borrow().terminate()).map(|f| f.into_value()),
     "exited" => handle.borrow().exited_promise(ctx),
-    _ => Function::new(ctx, move |ctx: Ctx<'js>, args: Rest<JsValue<'js>>| handle.borrow().call(ctx, name.clone(), args.0))
-      .map(|f| f.into_value()),
+    _ => {
+      Function::new(ctx, move |ctx: Ctx<'js>, args: Rest<JsValue<'js>>| handle.borrow().call(ctx, name.clone(), args.0))
+        .map(|f| f.into_value())
+    }
   }
 }
 

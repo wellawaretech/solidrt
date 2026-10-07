@@ -661,7 +661,10 @@ impl UniformKind {
   /// True for the kinds texture bindings serve (plain and comparison
   /// samplers alike); params can set neither.
   pub fn is_sampler(self) -> bool {
-    matches!(self, UniformKind::Sampler2D | UniformKind::Sampler2DShadow | UniformKind::SamplerCube | UniformKind::USampler2D)
+    matches!(
+      self,
+      UniformKind::Sampler2D | UniformKind::Sampler2DShadow | UniformKind::SamplerCube | UniformKind::USampler2D
+    )
   }
 
   /// The texture shape a sampler kind binds; None for non-samplers.

@@ -217,7 +217,14 @@ impl FrameTimestamps {
       };
       let mut values = [0i64; 2];
       let ok = unsafe {
-        (armed.timestamps)(armed.display, armed.surface, frame_id, names.len() as i32, names.as_ptr(), values.as_mut_ptr())
+        (armed.timestamps)(
+          armed.display,
+          armed.surface,
+          frame_id,
+          names.len() as i32,
+          names.as_ptr(),
+          values.as_mut_ptr(),
+        )
       };
       if ok != EGL_TRUE {
         last_error = Some(armed.egl.get_error());

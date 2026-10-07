@@ -64,7 +64,11 @@ fn check_glob(rows: &[(&str, &[&str], &[&str])]) {
 #[test]
 fn a_glob_without_wildcards_is_the_path_itself() {
   check_glob(&[
-    ("assets/lion.png", &["assets/lion.png"], &["assets/lion.png.bak", "x/assets/lion.png", "assets/Lion.png", "assets/lionxpng"]),
+    (
+      "assets/lion.png",
+      &["assets/lion.png"],
+      &["assets/lion.png.bak", "x/assets/lion.png", "assets/Lion.png", "assets/lionxpng"],
+    ),
     ("a.b+c(d)$^|{e,f}", &["a.b+c(d)$^|{e,f}"], &["aXb+c(d)$^|{e,f}", "a.b+c(d)$^|e"]),
   ]);
 }
@@ -72,7 +76,11 @@ fn a_glob_without_wildcards_is_the_path_itself() {
 #[test]
 fn a_glob_star_stays_inside_its_segment() {
   check_glob(&[
-    ("assets/*.png", &["assets/lion.png", "assets/.png", "assets/.hidden.png"], &["assets/sub/lion.png", "assets/lion.jpg", "lion.png"]),
+    (
+      "assets/*.png",
+      &["assets/lion.png", "assets/.png", "assets/.hidden.png"],
+      &["assets/sub/lion.png", "assets/lion.jpg", "lion.png"],
+    ),
     ("assets/lion_*.png", &["assets/lion_.png", "assets/lion_head.png"], &["assets/lion.png", "assets/lion_a/b.png"]),
     ("a/*/c", &["a/b/c"], &["a/c", "a/b/b/c"]),
     ("tile_?.png", &["tile_1.png", "tile_a.png"], &["tile_.png", "tile_12.png", "tile_/.png"]),
@@ -105,9 +113,15 @@ fn a_glob_set_is_one_character_and_never_the_separator() {
 fn a_malformed_glob_errs_naming_where() {
   assert_eq!(
     matches_glob("ab", "a**b"),
-    Err("the pattern \"a**b\" is malformed at character 0: recursive wildcards must form a single path component".to_string())
+    Err(
+      "the pattern \"a**b\" is malformed at character 0: recursive wildcards must form a single path component"
+        .to_string()
+    )
   );
-  assert_eq!(matches_glob("ab", "a[b"), Err("the pattern \"a[b\" is malformed at character 1: invalid range pattern".to_string()));
+  assert_eq!(
+    matches_glob("ab", "a[b"),
+    Err("the pattern \"a[b\" is malformed at character 1: invalid range pattern".to_string())
+  );
   assert!(matches_glob("a", "a/***").is_err());
 }
 
@@ -129,5 +143,8 @@ fn relative_resolves_against_the_cwd() {
   let cwd = std::env::current_dir().expect("the process has a cwd");
   let inside = cwd.join("assets").join("a.png");
   assert_eq!(relative(".", &inside.to_string_lossy()), std::path::Path::new("assets").join("a.png").to_string_lossy());
-  assert_eq!(relative("assets", "assets/textures/a.png"), std::path::Path::new("textures").join("a.png").to_string_lossy());
+  assert_eq!(
+    relative("assets", "assets/textures/a.png"),
+    std::path::Path::new("textures").join("a.png").to_string_lossy()
+  );
 }

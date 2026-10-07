@@ -387,7 +387,8 @@ impl TriBvh {
     let mut boxes: Vec<Box3> = Vec::with_capacity(count);
     let mut centers: Vec<[f32; 3]> = Vec::with_capacity(count);
     for tri in shape.indices.chunks_exact(3) {
-      let mut b = [f32::INFINITY, f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+      let mut b =
+        [f32::INFINITY, f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
       for &i in tri {
         let k = i as usize * 3;
         for a in 0..3 {
@@ -478,8 +479,17 @@ impl TriBvh {
 /// Fill `node` with the faces in `faces[lo..hi]`: a leaf when the run is
 /// small enough, else a median split on the widest centroid axis with the
 /// two children pushed adjacently (the `link`/`link + 1` layout).
-fn fill(nodes: &mut Vec<TriNode>, faces: &mut [u32], boxes: &[Box3], centers: &[[f32; 3]], node: usize, lo: usize, hi: usize) {
-  let mut bounds = [f32::INFINITY, f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+fn fill(
+  nodes: &mut Vec<TriNode>,
+  faces: &mut [u32],
+  boxes: &[Box3],
+  centers: &[[f32; 3]],
+  node: usize,
+  lo: usize,
+  hi: usize,
+) {
+  let mut bounds =
+    [f32::INFINITY, f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
   for &f in &faces[lo..hi] {
     let b = &boxes[f as usize];
     for a in 0..3 {

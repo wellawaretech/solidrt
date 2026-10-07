@@ -307,7 +307,8 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
       // animated sub-layout the write is a resizing ancestor's animation
       // carrying the node (one motion, as a SwiftUI transaction), never a
       // reflow of its own.
-      let moved = slides && !animated && (data.computed.location != layout.location || data.computed.size != layout.size);
+      let moved =
+        slides && !animated && (data.computed.location != layout.location || data.computed.size != layout.size);
       let old = data.laid_out.then(|| data.solved_box());
       data.computed = *layout;
       // Partial repaint: this is the one place a node moved by someone

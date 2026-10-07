@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
+use crate::gpu::vocab::AttrKind;
 use crate::gpu::{
   check_cube_faces, mip_levels, mip_size, resolve_draw_range, validate_binding_shapes, validate_draw_range,
   validate_params, validate_texture_bindings, AttrFormat, BoundTexture, BufferBound, BufferIds, BufferUpdate,
   DrawBounds, DrawRange, DrawUpdate, GpuLimits, IndexFormat, ParamValue, StepMode, TextureBinding, TextureFormat,
   TextureShape, UniformKind, UniformSlot, UniformTable, CUBE_FACES,
 };
-use crate::gpu::vocab::AttrKind;
 
 fn table(entries: &[(&str, UniformKind)]) -> UniformTable {
   entries.iter().map(|(name, kind)| (name.to_string(), UniformSlot { kind: *kind, count: 1 })).collect()
@@ -479,9 +479,11 @@ fn binding_shapes_require_depth_behind_compare_sampler() {
 fn binding_shapes_pair_integer_textures_with_integer_samplers() {
   let t = table(&[("uRecords", UniformKind::USampler2D), ("uTex", UniformKind::Sampler2D)]);
   assert_eq!(validate_binding_shapes(&t, &[TextureBinding::new("uRecords", 4)], lookup), Ok(()));
-  let err = validate_binding_shapes(&t, &[TextureBinding::new("uRecords", 1)], lookup).expect_err("rgba8 on usampler2D must error");
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uRecords", 1)], lookup)
+    .expect_err("rgba8 on usampler2D must error");
   assert!(err.contains("usampler2D") && err.contains("rgba32ui"), "{err}");
-  let err = validate_binding_shapes(&t, &[TextureBinding::new("uTex", 4)], lookup).expect_err("rgba32ui on sampler2D must error");
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uTex", 4)], lookup)
+    .expect_err("rgba32ui on sampler2D must error");
   assert!(err.contains("integer texels") && err.contains("usampler2D"), "{err}");
   assert!(UniformKind::USampler2D.is_sampler());
   assert_eq!(UniformKind::USampler2D.sampler_shape(), Some(TextureShape::D2));

@@ -42,11 +42,9 @@ fn mdns_resolve<'js>(
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Neutral>>>> {
   let timeout_ms = opt_timeout(&opts)?;
-  Ok(with_in_flight(
-    &ctx,
-    "mdns query",
-    async move { forge::mdns::resolve(ips, timeout_ms).await.map(|hosts| Neutral(Value::list(hosts))) },
-  ))
+  Ok(with_in_flight(&ctx, "mdns query", async move {
+    forge::mdns::resolve(ips, timeout_ms).await.map(|hosts| Neutral(Value::list(hosts)))
+  }))
 }
 
 /// `browse(service, { timeoutMs? })` -> `Promise<ServiceInstance[]>`. `service`

@@ -638,8 +638,7 @@ impl NodeTransitions {
       if t.to == to {
         return true;
       }
-      let keep_spring_state =
-        matches!((&t.state, spec), (WeightsState::Spring { .. }, TransitionSpec::Spring { .. }));
+      let keep_spring_state = matches!((&t.state, spec), (WeightsState::Spring { .. }, TransitionSpec::Spring { .. }));
       if keep_spring_state {
         if let WeightsState::Spring { pos, vel } = &mut t.state {
           // A wider target grows the lanes; the new ones start at rest
@@ -676,7 +675,14 @@ impl NodeTransitions {
   /// register through `motion` - held when it carries a delay, started or
   /// retargeted now otherwise. Returns whether the register now animates
   /// or waits.
-  pub fn write_weights(&mut self, node: NodeId, current: &[f32], to: &[f32], motion: NodeMotion, unchanged: bool) -> bool {
+  pub fn write_weights(
+    &mut self,
+    node: NodeId,
+    current: &[f32],
+    to: &[f32],
+    motion: NodeMotion,
+    unchanged: bool,
+  ) -> bool {
     let now = self.now_ms;
     if motion.delay_ms > 0.0 {
       if let Some(w) = self.pending_weights.iter().find(|w| w.node == node) {
@@ -688,7 +694,12 @@ impl NodeTransitions {
       } else if unchanged {
         return false;
       }
-      self.schedule_weights(PendingWeights { node, to: to.to_vec(), spec: motion.spec, at_ms: now + motion.delay_ms as f64 });
+      self.schedule_weights(PendingWeights {
+        node,
+        to: to.to_vec(),
+        spec: motion.spec,
+        at_ms: now + motion.delay_ms as f64,
+      });
       return true;
     }
     self.unschedule_weights(node);

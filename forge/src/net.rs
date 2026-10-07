@@ -108,12 +108,7 @@ impl Conn {
     let peer = stream.peer_addr().map_err(|e| e.to_string())?;
     let _ = stream.set_nodelay(true);
     let (read, write) = stream.into_split();
-    Ok(Conn {
-      read: RefCell::new(Some(read)),
-      write: Mutex::new(Some(write)),
-      peer,
-      closed: CancellationToken::new(),
-    })
+    Ok(Conn { read: RefCell::new(Some(read)), write: Mutex::new(Some(write)), peer, closed: CancellationToken::new() })
   }
 
   /// Pull the next chunk (at most `READ_CHUNK` bytes). `Ok(None)` at end-of-stream
@@ -376,9 +371,7 @@ pub async fn icmp_echo(host: &str, payload: Vec<u8>, timeout_ms: u64) -> IcmpEch
   };
   // The socket API is blocking (socket2; tokio has no ICMP type), so the
   // send/recv loop runs on the blocking pool.
-  tokio::task::spawn_blocking(move || blocking_echo(addr, payload, timeout_ms))
-    .await
-    .unwrap_or(IcmpEcho::Timeout)
+  tokio::task::spawn_blocking(move || blocking_echo(addr, payload, timeout_ms)).await.unwrap_or(IcmpEcho::Timeout)
 }
 
 fn blocking_echo(addr: SocketAddr, payload: Vec<u8>, timeout_ms: u64) -> IcmpEcho {

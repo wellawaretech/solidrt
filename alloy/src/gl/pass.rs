@@ -7,9 +7,9 @@
 use glow::HasContext;
 
 use super::program::ShaderProgram;
+use super::{prev_framebuffer, prev_program, prev_sampler, prev_texture, prev_vertex_array};
 use crate::gpu::texture::TextureShape;
 use crate::gpu::vocab::{BlendMode, DrawRange, IndexFormat, ParamValue, PipelineDesc, UniformKind, UniformSlot};
-use super::{prev_framebuffer, prev_program, prev_sampler, prev_texture, prev_vertex_array};
 
 /// A resolved sampler input for a pass: uniform name, source GL texture, the
 /// sampler object carrying the source's declared filter/wrap (None for

@@ -180,7 +180,10 @@ fn signal_ahead_of_the_in_flight_present_is_banked() {
   // Back to the normal chain: the next present defers to its signal.
   let t3 = t2 + PERIOD;
   assert!(deferred_arm(fr.on_present(t3, PERIOD)).is_none());
-  assert!(matches!(fr.on_wake(t3 + Duration::from_millis(8), PERIOD, Some(t3 + Duration::from_millis(8))), Wake::Release { emit: 1, .. }));
+  assert!(matches!(
+    fr.on_wake(t3 + Duration::from_millis(8), PERIOD, Some(t3 + Duration::from_millis(8))),
+    Wake::Release { emit: 1, .. }
+  ));
 }
 
 // Neither present nor signal by the armed deadline (a dead vsync source

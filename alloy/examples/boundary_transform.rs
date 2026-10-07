@@ -121,7 +121,8 @@ fn build_scene() -> RenderTree {
   write_view(&mut tree, VIEW_A, |v| v.set_rotate(Some(std::f32::consts::FRAC_PI_2)));
   write_view(&mut tree, VIEW_B, |v| v.set_x(Some(30.0)));
 
-  for (id, mode) in [(VIEW_A, BoundaryMode::Recording), (VIEW_B, BoundaryMode::Snapshot), (VIEW_C, BoundaryMode::Recording)]
+  for (id, mode) in
+    [(VIEW_A, BoundaryMode::Recording), (VIEW_B, BoundaryMode::Snapshot), (VIEW_C, BoundaryMode::Recording)]
   {
     tree.edit(id, |el| {
       el.repaint_boundary = mode;

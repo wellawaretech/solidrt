@@ -328,7 +328,8 @@ pub async fn glob(pattern: &str, cwd: Option<&str>) -> Result<Vec<String>, Strin
 /// The `paths` the compiled pattern matches, sorted: the scan of a packed
 /// mount, whose files are the keys of its index.
 pub(crate) fn matching_paths<'a>(paths: impl Iterator<Item = &'a String>, pattern: &::glob::Pattern) -> Vec<String> {
-  let mut out: Vec<String> = paths.filter(|path| pattern.matches_with(path, crate::path::GLOB_OPTIONS)).cloned().collect();
+  let mut out: Vec<String> =
+    paths.filter(|path| pattern.matches_with(path, crate::path::GLOB_OPTIONS)).cloned().collect();
   out.sort();
   out
 }
@@ -350,7 +351,8 @@ fn scan(pattern: &str, root: Option<PathBuf>) -> Result<Vec<String>, String> {
   if let Some(root) = &root {
     scanned = format!("{}/{scanned}", ::glob::Pattern::escape(&root.to_string_lossy()));
   }
-  let entries = ::glob::glob_with(&scanned, crate::path::GLOB_OPTIONS).map_err(|e| format!("glob {pattern}: {}", e.msg))?;
+  let entries =
+    ::glob::glob_with(&scanned, crate::path::GLOB_OPTIONS).map_err(|e| format!("glob {pattern}: {}", e.msg))?;
   let mut out = Vec::new();
   for entry in entries {
     let path = entry.map_err(|e| format!("glob {pattern}: {}: {}", e.path().display(), e.error()))?;

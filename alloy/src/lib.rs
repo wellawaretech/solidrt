@@ -31,8 +31,8 @@ pub use raster::{DamageRect, PresentDamage, RasterCounters, TargetCounters};
 pub mod rendertree;
 pub mod resample;
 mod script;
-mod stepped;
 pub mod spatial;
+mod stepped;
 mod threads;
 #[cfg(target_os = "android")]
 pub mod touch;
@@ -62,32 +62,34 @@ pub use sdl3;
 
 pub use app::{setup, App};
 pub use backend::DisplayContext;
+pub use cadence::CadenceHold;
 pub use context::{CaptureDone, CaptureInfo, Context, Overlay, YuvFrameSink};
-pub use gpu::{CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, GradientTile, RAMP_WIDTH};
 pub use event::{
-  AlloyCommand, AlloyEvent, Arrival, Cursor, CursorFrame, CursorImage, CursorShape, EventSender, GamepadState, Modifiers, Orientation, PointerType, SuspendHold,
-  TextCapitalization, TextInputOptions, TextInputType,
+  AlloyCommand, AlloyEvent, Arrival, Cursor, CursorFrame, CursorImage, CursorShape, EventSender, GamepadState,
+  Modifiers, Orientation, PointerType, SuspendHold, TextCapitalization, TextInputOptions, TextInputType,
 };
 pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand, Gamepads};
-pub use gpu::{
-  parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferLayout, BufferUpdate, CullMode, DepthState,
-  DepthStorage, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, InstanceOrder, NodeShader, INDEX_NONE,
-  OrderKey, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, StepMode, TargetSpec, TextureBinding, Topology,
-  UniformKind, UniformSlot, UniformTable, VertexAttr, WindowShader, MAX_BUFFERS,
-};
 pub use gpu::{
   check_cube_faces, mip_levels, mip_size, GpuBufferLayoutInfo, SamplerFilter, SamplerOptions, SamplerOverride,
   SamplerState, SamplerWrap, TextureEntry, TextureFormat, TextureRect, TextureRegistry, TextureShape, CUBE_FACES,
   MIN_ANISOTROPY,
 };
+pub use gpu::{
+  parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferLayout, BufferUpdate, CullMode, DepthState,
+  DepthStorage, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, InstanceOrder, NodeShader,
+  OrderKey, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, StepMode, TargetSpec, TextureBinding, Topology,
+  UniformKind, UniformSlot, UniformTable, VertexAttr, WindowShader, INDEX_NONE, MAX_BUFFERS,
+};
+pub use gpu::{
+  CoverageMode, CoveragePolicy, GlyphGradient, GlyphGroup, GlyphQuad, GradientKind, GradientTile, RAMP_WIDTH,
+};
 pub use input::InputState;
 pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;
 pub use mode::Mode;
-pub use stepped::SteppedConfig;
 pub use present::{CountTally, Counted, RefreshCounter, RefreshCounting, SignalLedger, SignalRecord};
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
-pub use cadence::CadenceHold;
+pub use stepped::SteppedConfig;
 pub use vsync::FramePacing;
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 

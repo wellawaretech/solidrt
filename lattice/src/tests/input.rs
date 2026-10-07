@@ -212,9 +212,8 @@ fn invalid_events_reject_the_whole_sequence() {
   let bad = |v: serde_json::Value| parse(v).err().expect("must reject");
   assert!(bad(json!([{ "type": "key", "action": "tap", "key": "w" }, { "type": "warp" }])).contains("events[1]"));
   assert!(bad(json!([{ "type": "key", "action": "press", "key": "w" }])).contains("down, up or tap"));
-  assert!(
-    bad(json!([{ "type": "pointer", "action": "press", "x": 1, "y": 1 }])).contains("down, up, cancel, move, tap or drag")
-  );
+  assert!(bad(json!([{ "type": "pointer", "action": "press", "x": 1, "y": 1 }]))
+    .contains("down, up, cancel, move, tap or drag"));
   assert!(bad(json!([{ "type": "key", "action": "down", "key": "" }])).contains("non-empty key"));
   assert!(bad(json!([{ "type": "pointer", "action": "tap", "x": 1 }])).contains("y must be"));
   assert!(bad(json!([{ "type": "pointer", "action": "down", "x": 1, "y": 1, "holdMs": 10 }])).contains("holdMs"));

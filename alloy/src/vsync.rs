@@ -397,7 +397,12 @@ impl FrameRelease {
   /// ends the chain otherwise; an in-flight window that sees neither
   /// present nor signal by the deadline is given up (the present, if it
   /// ever comes, starts a fresh chain).
-  pub fn on_wake(&mut self, now: std::time::Instant, period: std::time::Duration, signal: Option<std::time::Instant>) -> Wake {
+  pub fn on_wake(
+    &mut self,
+    now: std::time::Instant,
+    period: std::time::Duration,
+    signal: Option<std::time::Instant>,
+  ) -> Wake {
     if !self.backend || self.pacing != FramePacing::VsyncLocked {
       // Present-return pacing: the one thing to wake for is a deferred
       // present (held, or floored) whose slot has ended. Its reference is

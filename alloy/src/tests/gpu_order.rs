@@ -1,4 +1,7 @@
-use crate::gpu::{gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, OrderKey, OrderScratch, INDEX_NONE};
+use crate::gpu::{
+  gather_ordered, gather_permuted, materialize_indices, order_permutation, InstanceOrder, OrderKey, OrderScratch,
+  INDEX_NONE,
+};
 
 // Pack f32 records into the byte shape the lease block holds.
 fn bytes(floats: &[f32]) -> Vec<u8> {
@@ -13,7 +16,13 @@ fn record_float(block: &[u8], stride: usize, i: usize, at: usize) -> f32 {
 }
 
 fn field(offset_floats: usize) -> InstanceOrder {
-  InstanceOrder { key: OrderKey::Field { offset: offset_floats * 4 }, descending: false, key_buffer: None, retain: false, indices: None }
+  InstanceOrder {
+    key: OrderKey::Field { offset: offset_floats * 4 },
+    descending: false,
+    key_buffer: None,
+    retain: false,
+    indices: None,
+  }
 }
 
 #[test]
@@ -62,8 +71,13 @@ fn check_stride_bounds_the_key_bytes() {
   // A 16-byte record: float offsets 0..3 hold an f32, 3 is the last that fits.
   field(3).check_stride(16).expect("last float fits");
   assert!(field(4).check_stride(16).expect_err("one past").contains("does not fit"));
-  let projected =
-    InstanceOrder { key: OrderKey::Projected { offset: 4, direction: [0.0, 0.0, 1.0] }, descending: false, key_buffer: None, retain: false, indices: None };
+  let projected = InstanceOrder {
+    key: OrderKey::Projected { offset: 4, direction: [0.0, 0.0, 1.0] },
+    descending: false,
+    key_buffer: None,
+    retain: false,
+    indices: None,
+  };
   projected.check_stride(16).expect("vec3 at float 1 fits a 16-byte record");
   assert!(projected.check_stride(12).expect_err("vec3 past the record").contains("does not fit"));
 }
@@ -72,7 +86,13 @@ fn check_stride_bounds_the_key_bytes() {
 fn set_direction_is_projected_only() {
   let mut f = field(0);
   assert!(f.set_direction([0.0, 1.0, 0.0]).expect_err("field key").contains("field key"));
-  let mut p = InstanceOrder { key: OrderKey::Projected { offset: 0, direction: [1.0, 0.0, 0.0] }, descending: false, key_buffer: None, retain: false, indices: None };
+  let mut p = InstanceOrder {
+    key: OrderKey::Projected { offset: 0, direction: [1.0, 0.0, 0.0] },
+    descending: false,
+    key_buffer: None,
+    retain: false,
+    indices: None,
+  };
   assert!(p.set_direction([0.0, 0.0, 0.0]).expect_err("zero direction").contains("zero vector"));
   p.set_direction([0.0, 2.0, 0.0]).expect("replace");
   assert_eq!(p.key, OrderKey::Projected { offset: 0, direction: [0.0, 2.0, 0.0] });
@@ -98,7 +118,13 @@ fn gather_descending_reverses() {
   let stride = 8;
   let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
-  let order = InstanceOrder { key: OrderKey::Field { offset: 0 }, descending: true, key_buffer: None, retain: false, indices: None };
+  let order = InstanceOrder {
+    key: OrderKey::Field { offset: 0 },
+    descending: true,
+    key_buffer: None,
+    retain: false,
+    indices: None,
+  };
   gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 1)).collect();
   assert_eq!(got, vec![1.0, 2.0, 0.0]);
@@ -111,8 +137,13 @@ fn projected_key_follows_the_direction() {
   let stride = 16;
   let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
-  let mut order =
-    InstanceOrder { key: OrderKey::Projected { offset: 0, direction: [0.0, 0.0, 1.0] }, descending: false, key_buffer: None, retain: false, indices: None };
+  let mut order = InstanceOrder {
+    key: OrderKey::Projected { offset: 0, direction: [0.0, 0.0, 1.0] },
+    descending: false,
+    key_buffer: None,
+    retain: false,
+    indices: None,
+  };
   gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 3)).collect();
   assert_eq!(got, vec![0.0, 2.0, 1.0], "depth ascending along +z");

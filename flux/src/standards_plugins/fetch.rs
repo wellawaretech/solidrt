@@ -10,9 +10,7 @@ use crate::standards_plugins::headers::header_pairs_from_init;
 use crate::standards_plugins::http::HttpClient;
 use crate::standards_plugins::response::response_from_parts;
 use forge::cache::Cache;
-use forge::fetch::{
-  channel_request_body, do_fetch, do_fetch_cached, CacheMode, HostLimits, RequestBody, ResponseData,
-};
+use forge::fetch::{channel_request_body, do_fetch, do_fetch_cached, CacheMode, HostLimits, RequestBody, ResponseData};
 
 /// Placeholder cap until a real default is decided (plan open question).
 const FETCH_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
@@ -33,92 +31,90 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
 
   let fetch_fn = Function::new(
     ctx.clone(),
-    MutFn::from(fetch_builder(
-      move |ctx, url: String, opts| {
-        let client = ctx.userdata::<HttpClient>().expect("http client").0.clone();
+    MutFn::from(fetch_builder(move |ctx, url: String, opts| {
+      let client = ctx.userdata::<HttpClient>().expect("http client").0.clone();
 
-        let cache_mode: Option<CacheMode> =
-          match opts.0.as_ref().and_then(|o| o.get::<_, Option<String>>("cache").ok().flatten()) {
-            None => None,
-            Some(v) => match v.as_str() {
-              "force-cache" => Some(CacheMode::ForceCache),
-              "reload" => Some(CacheMode::Reload),
-              // The rest of the standard vocabulary all means "just hit the
-              // network" in this model (no freshness, no revalidation).
-              "default" | "no-store" | "no-cache" => None,
-              _ => return Err(Exception::throw_message(&ctx, &format!("Unknown cache mode: {v}"))),
-            },
-          };
-        let cache = cache.clone();
-        let limits = limits.clone();
-
-        let method = opts
-          .0
-          .as_ref()
-          .and_then(|o| o.get::<_, Option<String>>("method").ok().flatten())
-          .unwrap_or_else(|| "GET".to_string())
-          .to_uppercase();
-
-        let body: Option<RequestBody> = match opts.0.as_ref().and_then(|o| o.get::<_, Value>("body").ok()) {
-          Some(val) => request_body_from_value(val)?,
+      let cache_mode: Option<CacheMode> =
+        match opts.0.as_ref().and_then(|o| o.get::<_, Option<String>>("cache").ok().flatten()) {
           None => None,
+          Some(v) => match v.as_str() {
+            "force-cache" => Some(CacheMode::ForceCache),
+            "reload" => Some(CacheMode::Reload),
+            // The rest of the standard vocabulary all means "just hit the
+            // network" in this model (no freshness, no revalidation).
+            "default" | "no-store" | "no-cache" => None,
+            _ => return Err(Exception::throw_message(&ctx, &format!("Unknown cache mode: {v}"))),
+          },
         };
+      let cache = cache.clone();
+      let limits = limits.clone();
 
-        let headers: Vec<(String, String)> = match opts.0.as_ref().and_then(|o| o.get::<_, Value>("headers").ok()) {
-          Some(val) => header_pairs_from_init(&val)?,
-          None => Vec::new(),
-        };
+      let method = opts
+        .0
+        .as_ref()
+        .and_then(|o| o.get::<_, Option<String>>("method").ok().flatten())
+        .unwrap_or_else(|| "GET".to_string())
+        .to_uppercase();
 
-        let signal: Option<Class<AbortSignal>> = match opts.0.as_ref() {
-          Some(o) => o
-            .get::<_, Option<Class<AbortSignal>>>("signal")
-            .map_err(|_| Exception::throw_type(&ctx, "signal must be an AbortSignal"))?,
-          None => None,
-        };
+      let body: Option<RequestBody> = match opts.0.as_ref().and_then(|o| o.get::<_, Value>("body").ok()) {
+        Some(val) => request_body_from_value(val)?,
+        None => None,
+      };
 
-        let net = async move {
-          match (cache, cache_mode) {
-            (Some(cache), Some(mode)) => {
-              do_fetch_cached(&client, &method, &url, headers, body, cache, mode, limits).await
-            }
-            _ => do_fetch(&client, &method, &url, headers, body).await,
+      let headers: Vec<(String, String)> = match opts.0.as_ref().and_then(|o| o.get::<_, Value>("headers").ok()) {
+        Some(val) => header_pairs_from_init(&val)?,
+        None => Vec::new(),
+      };
+
+      let signal: Option<Class<AbortSignal>> = match opts.0.as_ref() {
+        Some(o) => o
+          .get::<_, Option<Class<AbortSignal>>>("signal")
+          .map_err(|_| Exception::throw_type(&ctx, "signal must be an AbortSignal"))?,
+        None => None,
+      };
+
+      let net = async move {
+        match (cache, cache_mode) {
+          (Some(cache), Some(mode)) => {
+            do_fetch_cached(&client, &method, &url, headers, body, cache, mode, limits).await
           }
-        };
+          _ => do_fetch(&client, &method, &url, headers, body).await,
+        }
+      };
 
-        let Some(sig) = signal else {
-          return with_in_flight(&ctx, "fetch", async move { net.await.map(JsResponseData) }).into_js(&ctx);
-        };
+      let Some(sig) = signal else {
+        return with_in_flight(&ctx, "fetch", async move { net.await.map(JsResponseData) }).into_js(&ctx);
+      };
 
-        // Aborting must reject with the signal's own reason (a JS value), so
-        // this path settles the promise from a local task that holds the
-        // signal, instead of a `Promised` future (which cannot hold `'js`
-        // values). Abort wins the race and drops the request mid-flight; an
-        // already-aborted signal rejects without sending anything.
-        let (promise, resolve, reject) = Promise::new(&ctx)?;
-        let mut abort_rx = sig.borrow().subscribe();
-        let hold = PendingOps::of(&ctx).in_flight("fetch");
-        let task_ctx = ctx.clone();
-        ctx.spawn(async move {
-          tokio::pin!(net);
-          tokio::select! {
-            biased;
-            res = &mut abort_rx => {
-              if res.is_ok() {
-                let reason = sig.borrow().reason(task_ctx.clone());
-                let _ = reject.call::<_, ()>((reason,));
-              } else {
-                // The sender cannot drop while this task holds the signal;
-                // finish the request if it somehow does.
-                settle_fetch(&task_ctx, &resolve, &reject, net.await);
-              }
+      // Aborting must reject with the signal's own reason (a JS value), so
+      // this path settles the promise from a local task that holds the
+      // signal, instead of a `Promised` future (which cannot hold `'js`
+      // values). Abort wins the race and drops the request mid-flight; an
+      // already-aborted signal rejects without sending anything.
+      let (promise, resolve, reject) = Promise::new(&ctx)?;
+      let mut abort_rx = sig.borrow().subscribe();
+      let hold = PendingOps::of(&ctx).in_flight("fetch");
+      let task_ctx = ctx.clone();
+      ctx.spawn(async move {
+        tokio::pin!(net);
+        tokio::select! {
+          biased;
+          res = &mut abort_rx => {
+            if res.is_ok() {
+              let reason = sig.borrow().reason(task_ctx.clone());
+              let _ = reject.call::<_, ()>((reason,));
+            } else {
+              // The sender cannot drop while this task holds the signal;
+              // finish the request if it somehow does.
+              settle_fetch(&task_ctx, &resolve, &reject, net.await);
             }
-            r = &mut net => settle_fetch(&task_ctx, &resolve, &reject, r),
           }
-          drop(hold);
-        });
-        Ok(promise.into_value())
-      },
-    )),
+          r = &mut net => settle_fetch(&task_ctx, &resolve, &reject, r),
+        }
+        drop(hold);
+      });
+      Ok(promise.into_value())
+    })),
   )
   .expect("create fetch function");
 

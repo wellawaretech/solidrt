@@ -115,12 +115,19 @@ fn texture_exposes_its_paint() {
 fn sampler_state_parses_options_and_defaults() {
   use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, SamplerWrap};
 
-  let parse = |filter, wrap, mipmap, anisotropy| SamplerState::parse(&SamplerOptions { filter, wrap, mipmap, anisotropy });
+  let parse =
+    |filter, wrap, mipmap, anisotropy| SamplerState::parse(&SamplerOptions { filter, wrap, mipmap, anisotropy });
   let state = parse(None, None, None, None).expect("defaults parse");
-  assert_eq!(state, SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: false, anisotropy: 1 });
+  assert_eq!(
+    state,
+    SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: false, anisotropy: 1 }
+  );
 
   let state = parse(Some("nearest"), Some("repeat"), Some(true), Some(8.0)).expect("explicit values parse");
-  assert_eq!(state, SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Repeat, mipmap: true, anisotropy: 8 });
+  assert_eq!(
+    state,
+    SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Repeat, mipmap: true, anisotropy: 8 }
+  );
 
   let state = parse(Some("linear"), None, Some(false), None).expect("partial options parse");
   assert_eq!(state, SamplerState::default());
@@ -259,8 +266,11 @@ fn compressed_formats_size_by_block_and_chain() {
     assert_eq!(format.chain_byte_len(8, 4), 32 + 16 + 16 + 16);
     // A non-power-of-two chain floors its edges like GL (5x3 -> 2x1 -> 1x1).
     assert_eq!(format.chain_byte_len(5, 3), 32 + 16 + 16);
-    let state = SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: Some(8.0) })
-      .expect("linear, mipmap and anisotropy parse");
+    let state = SamplerState::parse_for(
+      format,
+      &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: Some(8.0) },
+    )
+    .expect("linear, mipmap and anisotropy parse");
     assert_eq!(state.filter, SamplerFilter::Linear);
     assert!(state.mipmap);
   }
@@ -298,12 +308,17 @@ fn integer_format_samples_like_the_32bit_floats() {
   assert!(!TextureFormat::Rgba32f.is_uint());
   assert!(!format.filterable());
   assert!(format.sample_only());
-  let state = SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: None, anisotropy: None })
-    .expect("defaults parse");
+  let state =
+    SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: None, anisotropy: None })
+      .expect("defaults parse");
   assert_eq!(state.filter, SamplerFilter::Nearest);
-  let linear = SamplerState::parse_for(format, &SamplerOptions { filter: Some("linear"), wrap: None, mipmap: None, anisotropy: None });
+  let linear = SamplerState::parse_for(
+    format,
+    &SamplerOptions { filter: Some("linear"), wrap: None, mipmap: None, anisotropy: None },
+  );
   assert!(linear.expect_err("linear refused").contains("nearest-only"));
-  let mip = SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: None });
+  let mip =
+    SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: None });
   assert!(mip.expect_err("mipmap refused").contains("mip"));
 }
 
@@ -316,8 +331,11 @@ fn half_float_and_srgb_sample_like_byte_formats() {
   use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, TextureFormat};
 
   for format in [TextureFormat::Rgba16f, TextureFormat::Rgba8Srgb] {
-    let state = SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: Some(4.0) })
-      .expect("linear, mipmap and anisotropy parse");
+    let state = SamplerState::parse_for(
+      format,
+      &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: Some(4.0) },
+    )
+    .expect("linear, mipmap and anisotropy parse");
     assert_eq!(state.filter, SamplerFilter::Linear);
     assert!(state.mipmap);
     assert_eq!(state.anisotropy, 4);

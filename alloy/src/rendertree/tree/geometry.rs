@@ -2,8 +2,8 @@
 //! layout boxes, painted quads, and the transform walk they share - the
 //! read-only geometry surface inspection and hit consumers ask of the tree.
 
-use crate::impellers::Matrix;
 use super::RenderTree;
+use crate::impellers::Matrix;
 use crate::rendertree::{ElementKind, Point, Rect, Size, Vector};
 
 impl RenderTree {
@@ -182,7 +182,6 @@ impl RenderTree {
       cur = node.parent?;
     }
   }
-
 }
 
 // A node's painted quad part-way up the ancestor chain: the corners as the

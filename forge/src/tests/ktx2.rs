@@ -235,7 +235,9 @@ fn refuses_what_it_cannot_read_or_write() {
   let mut truncated = encode(&solid(), SIZE, SIZE, &options(Codec::Etc1s, false, false)).expect("encode");
   truncated.truncate(40);
   assert!(transcode(&truncated, Target::Etc2Rgba8).is_err());
-  assert!(encode(&solid()[..16], SIZE, SIZE, &options(Codec::Etc1s, false, false)).expect_err("short").contains("expected 256"));
+  assert!(encode(&solid()[..16], SIZE, SIZE, &options(Codec::Etc1s, false, false))
+    .expect_err("short")
+    .contains("expected 256"));
   let bad = EncodeOptions { quality: 2.0, ..options(Codec::Etc1s, false, false) };
   assert!(encode(&solid(), SIZE, SIZE, &bad).expect_err("quality").contains("out of range"));
   assert!(Target::parse("astc").is_err());

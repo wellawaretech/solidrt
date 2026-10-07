@@ -129,8 +129,8 @@ fn update_reuses_held_assets() {
   let asset = b"shared bytes";
   let (code1, code2) = ("let v = 1", "let v = 2");
   let fetched = HashMap::from([("assets/data.bin".to_string(), asset.to_vec())]);
-  let v1 =
-    install_at(&app_dir, &manifest_with_asset(code1, "assets/data.bin", asset), code1, &fetched, None).expect("installs v1");
+  let v1 = install_at(&app_dir, &manifest_with_asset(code1, "assets/data.bin", asset), code1, &fetched, None)
+    .expect("installs v1");
 
   // Same asset in the next version: nothing fetched, the store links it from
   // the held version.
@@ -210,8 +210,8 @@ fn app_info_reports_versions_files_and_data_usage() {
   let app_dir = apps.join("com.example.app");
   install_at(&app_dir, &manifest_for(code1), code1, &HashMap::new(), None).expect("installs v1");
   let fetched = HashMap::from([("assets/hero.jpg".to_string(), asset.to_vec())]);
-  let v2 =
-    install_at(&app_dir, &manifest_with_asset(code2, "assets/hero.jpg", asset), code2, &fetched, None).expect("installs v2");
+  let v2 = install_at(&app_dir, &manifest_with_asset(code2, "assets/hero.jpg", asset), code2, &fetched, None)
+    .expect("installs v2");
   // A data sandbox with one file and one subdir holding another file.
   std::fs::create_dir_all(app_dir.join("data/nested")).expect("data dirs");
   std::fs::write(app_dir.join("data/top.txt"), b"12345").expect("data file");

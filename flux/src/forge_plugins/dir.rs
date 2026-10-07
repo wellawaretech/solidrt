@@ -110,7 +110,9 @@ fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> 
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_in_flight(&ctx, "directory", async move { fs::read_dir(&path).await.map(|entries| Neutral(Value::list(entries))) }))
+        Ok(with_in_flight(&ctx, "directory", async move {
+          fs::read_dir(&path).await.map(|entries| Neutral(Value::list(entries)))
+        }))
       }
     }),
   )

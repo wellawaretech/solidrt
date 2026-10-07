@@ -154,7 +154,8 @@ pub(crate) const GLOB_OPTIONS: glob::MatchOptions =
 
 /// The glob `pattern` compiled, or what is wrong with it and where.
 pub(crate) fn glob_pattern(pattern: &str) -> Result<glob::Pattern, String> {
-  glob::Pattern::new(pattern).map_err(|e| format!("the pattern {pattern:?} is malformed at character {}: {}", e.pos, e.msg))
+  glob::Pattern::new(pattern)
+    .map_err(|e| format!("the pattern {pattern:?} is malformed at character {}: {}", e.pos, e.msg))
 }
 
 /// Whether the glob `pattern` is well formed; what is wrong with it and

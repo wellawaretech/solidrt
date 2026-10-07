@@ -3,10 +3,10 @@ use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::forge_plugins::websocket::{call_callback, message_payload};
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::marshal::OptArg;
-use crate::forge_plugins::websocket::{call_callback, message_payload};
 use crate::standards_plugins::body::JsBytes;
 use forge::websocket::{
   parse_ws_url, run_client, ClientDispatch, ClientSocket, ClientWriter, CLOSED, CLOSING, CONNECTING, OPEN,
@@ -165,7 +165,12 @@ impl<'js> JsClientDispatch<'js> {
   /// Build a `{ type }` event object and pass it to `build` for event-specific
   /// fields, then invoke the handler with it. Event-building failures are
   /// logged, not propagated (there is no JS caller).
-  fn fire(&self, handler: &Option<Function<'js>>, what: &str, build: impl FnOnce(&Object<'js>) -> rquickjs::Result<()>) {
+  fn fire(
+    &self,
+    handler: &Option<Function<'js>>,
+    what: &str,
+    build: impl FnOnce(&Object<'js>) -> rquickjs::Result<()>,
+  ) {
     if handler.is_none() {
       return;
     }

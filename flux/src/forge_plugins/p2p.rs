@@ -38,8 +38,8 @@ use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, iter_result, with_in_flight, with_standing, OptArg, Step};
-use crate::standards_plugins::body::{extract_body_value, JsBytes};
 use crate::plugins::value::Neutral;
+use crate::standards_plugins::body::{extract_body_value, JsBytes};
 use forge::p2p::{decode_hex32, Endpoint, Stream, StreamWriter};
 
 /// `next()` of the `accept` async-iterable: a promise resolving to an iterator
@@ -219,7 +219,11 @@ impl P2pStream {
   /// transport only advances as JS iterates.
   pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Step<JsBytes>>>>> {
     let inner = self.inner.clone();
-    Ok(with_standing(&ctx, "p2p stream read", async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) }))
+    Ok(with_standing(
+      &ctx,
+      "p2p stream read",
+      async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) },
+    ))
   }
 
   /// Queue bytes (string or Uint8Array) on the send half.

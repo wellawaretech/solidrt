@@ -471,7 +471,8 @@ impl UiRuntime for FluxRuntime {
     let paced_period_ms = self.paced.as_ref().map(|p| p.period_ms());
     // The refresh period a frame's cost is judged against (frame history):
     // the presentation model's in run mode, the stepped rate when stepped.
-    let judge_period_ms = paced_period_ms.map(|p| p as f32).unwrap_or_else(|| 1000.0 / self.platform.fps().max(1) as f32);
+    let judge_period_ms =
+      paced_period_ms.map(|p| p as f32).unwrap_or_else(|| 1000.0 / self.platform.fps().max(1) as f32);
     let clock_control = self.clock_control.clone();
     let wall_start = self.wall_start;
     let platform = self.platform.clone();
@@ -561,7 +562,13 @@ impl UiRuntime for FluxRuntime {
       // (its demand gate latches video against the same deadline); the JS
       // start instant is added below, on delivery.
       crate::frame::RENDER_FRAME.with(|c| {
-        c.set(crate::frame::RenderFrame { start: None, frame: next_frame, period_ms: judge_period_ms, present_at, input_ms: input_ts })
+        c.set(crate::frame::RenderFrame {
+          start: None,
+          frame: next_frame,
+          period_ms: judge_period_ms,
+          present_at,
+          input_ms: input_ts,
+        })
       });
       // The pre-delivery half of flux's frame protocol: both animation
       // clocks stamped with this frame's app time (so property writes during

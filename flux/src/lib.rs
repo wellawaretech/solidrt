@@ -1,13 +1,13 @@
+#[cfg(feature = "gui")]
+pub mod alloy_plugins;
 mod engine;
+mod forge_plugins;
 mod logger;
 pub(crate) mod pending;
 mod plugins;
 mod standards_plugins;
-mod forge_plugins;
 #[cfg(feature = "test")]
 mod test_plugins;
-#[cfg(feature = "gui")]
-pub mod alloy_plugins;
 
 #[cfg(test)]
 mod tests;
@@ -24,14 +24,15 @@ pub use engine::{
 pub use forge::fetch::{do_fetch, ResponseData};
 pub use forge::process::{arch, platform};
 pub use forge::seek::{SeekableRead, SeekableReader};
+pub use forge_plugins::process::{ProcessArgs, ProcessExit};
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
-pub use plugins::js_error::JsResult;
-pub use plugins::marshal::OptArg;
 pub use plugins::add_capability;
 pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
-pub use forge_plugins::process::{ProcessArgs, ProcessExit};
+pub use plugins::js_error::JsResult;
+pub use plugins::marshal::OptArg;
 pub use plugins::seekable::{SeekableOpener, SeekableSource};
+pub use rquickjs;
 pub use standards_plugins::body::{attach_body, JsBytes, JsonValue};
 pub use standards_plugins::fetch::{request_body_from_value, JsResponseData};
 pub use standards_plugins::headers::header_pairs_from_init;
@@ -40,7 +41,6 @@ pub use standards_plugins::time::{
   advance_virtual_time, advance_virtual_time_to_now, freeze_wall, install_virtual_time, set_virtual_now_source,
   timeline_now_ms, timer_due, Timeline,
 };
-pub use rquickjs;
 
 /// Feature names this build provides, as surfaced to JS via `Flux.capabilities`.
 /// Native callers (e.g. a dev client introspecting the runtime) get the same

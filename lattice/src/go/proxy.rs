@@ -57,9 +57,9 @@ pub fn install_proxy_state(ctx: Ctx<'_>, dev_server: String) {
 
         let proxy_url = (*proxy_url).clone();
         let client = state.client.clone();
-        Ok(Promised(
-          async move { JsResult(do_fetch(&client, &method, &proxy_url, headers, body).await.map(JsResponseData)) },
-        ))
+        Ok(Promised(async move {
+          JsResult(do_fetch(&client, &method, &proxy_url, headers, body).await.map(JsResponseData))
+        }))
       }
     }),
   )

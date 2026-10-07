@@ -15,8 +15,8 @@ use crate::alloy_plugins::properties::transition::{
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::{elements_mut_of, elements_of, OptArg};
 use alloy::spatial::{
-  vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawOrder, DrawQueue, DrawSink,
-  InstanceProjection, InstanceRecordSink, LodLevel, MoveOptions, NodeEndpoint, NodeMotion,
+  vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawOrder,
+  DrawQueue, DrawSink, InstanceProjection, InstanceRecordSink, LodLevel, MoveOptions, NodeEndpoint, NodeMotion,
   NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RootMotion, Shape, SharedSlotSink,
   TextureSlotSink, Volume,
 };
@@ -362,13 +362,17 @@ fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, opts: OptArg<Object<
   };
   let flag = |name: &str, default: bool| -> rquickjs::Result<bool> {
     match field(name)? {
-      Some(v) if !v.is_undefined() => Ok(v.as_bool().ok_or_else(|| throw_str(&ctx, &format!("bindDraw: {name} must be a boolean")))?),
+      Some(v) if !v.is_undefined() => {
+        Ok(v.as_bool().ok_or_else(|| throw_str(&ctx, &format!("bindDraw: {name} must be a boolean")))?)
+      }
       _ => Ok(default),
     }
   };
   let number = |name: &str, default: f64| -> rquickjs::Result<f64> {
     match field(name)? {
-      Some(v) if !v.is_undefined() => Ok(v.as_number().ok_or_else(|| throw_str(&ctx, &format!("bindDraw: {name} must be a number")))?),
+      Some(v) if !v.is_undefined() => {
+        Ok(v.as_number().ok_or_else(|| throw_str(&ctx, &format!("bindDraw: {name} must be a number")))?)
+      }
       _ => Ok(default),
     }
   };
@@ -381,7 +385,10 @@ fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, opts: OptArg<Object<
   let render_order = number("renderOrder", 0.0)? as i32;
   super::gui(&ctx)
     .alloy
-    .spatial_bind(id, DrawSink { target, draw, normal, count, fade, params, order: DrawOrder { queue, render_order }, order_feed })
+    .spatial_bind(
+      id,
+      DrawSink { target, draw, normal, count, fade, params, order: DrawOrder { queue, render_order }, order_feed },
+    )
     .map_err(|e| throw_str(&ctx, &format!("bindDraw: {e}")))
 }
 

@@ -281,7 +281,14 @@ impl RefreshCounting {
   /// rate - reported as `missed`; a held interval is by definition not a
   /// miss. An interval opened by an idle present is idle, not jank,
   /// whatever its length.
-  pub fn count(&mut self, reference_ms: f64, frame: u64, presented: bool, demanded: bool, work_ms: Option<f32>) -> Counted {
+  pub fn count(
+    &mut self,
+    reference_ms: f64,
+    frame: u64,
+    presented: bool,
+    demanded: bool,
+    work_ms: Option<f32>,
+  ) -> Counted {
     let refreshes = self.counter.on_signal(reference_ms);
     let mut missed = 0;
     let mut interval = 0;

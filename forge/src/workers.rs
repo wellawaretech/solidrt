@@ -44,7 +44,8 @@ impl Workers {
   {
     let (done, result) = oneshot::channel();
     let job: Job = Box::new(move || {
-      let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).map_err(|panic| panic_message(panic.as_ref()));
+      let outcome =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).map_err(|panic| panic_message(panic.as_ref()));
       // The receiver is gone when the caller stopped waiting; the result
       // has nobody to go to then.
       let _ = done.send(outcome);

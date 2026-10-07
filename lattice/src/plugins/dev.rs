@@ -102,7 +102,9 @@ pub fn call_debug(ctx: &Ctx<'_>, name: &str, args: Option<serde_json::Value>) ->
   // read as a silent success. The value is encoded right here - nothing
   // awaits it - so reject loudly instead.
   if value.as_promise().is_some() {
-    return Err(format!("debug command '{name}' returned a Promise; commands must return synchronously (not be async)"));
+    return Err(format!(
+      "debug command '{name}' returned a Promise; commands must return synchronously (not be async)"
+    ));
   }
   match ctx.json_stringify(value) {
     Ok(Some(s)) => {

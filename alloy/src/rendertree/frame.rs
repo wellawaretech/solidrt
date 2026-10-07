@@ -106,7 +106,11 @@ impl<'d> PendingFrame<'d> {
           // this path, and their nodes' extents are current.
           let (w, h) = platform.window_size();
           let damage = composite::resolve_reuse_damage(tree, crate::impellers::Size::new(w, h));
-          alloy.submit_clean(c.dl.clone(), crate::PresentDamage::from_frame(damage, platform.display_scale()), present_at)?;
+          alloy.submit_clean(
+            c.dl.clone(),
+            crate::PresentDamage::from_frame(damage, platform.display_scale()),
+            present_at,
+          )?;
           // The reuse path skips paint_phase, which runs this sweep itself -
           // run it here too so a destroy with no other tree change (its
           // requested frame lands in this path) is not stranded until the

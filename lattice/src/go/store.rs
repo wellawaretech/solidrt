@@ -189,10 +189,7 @@ pub(crate) fn list_installed_at(apps: &Path) -> Vec<InstalledApp> {
       }
       let updated = modified_millis(&app_dir.join("state.json"));
       let manifest = Manifest::load(&version_dir);
-      let size = manifest
-        .as_ref()
-        .map(|m| m.bundle.size + m.assets.iter().map(|a| a.size).sum::<u64>())
-        .unwrap_or(0);
+      let size = manifest.as_ref().map(|m| m.bundle.size + m.assets.iter().map(|a| a.size).sum::<u64>()).unwrap_or(0);
       let icon = manifest.as_ref().and_then(|m| load_icon(&version_dir, m));
       let name = manifest.and_then(|m| m.display_name).unwrap_or_else(|| id.clone());
       Some(InstalledApp { id, name, icon, version: state.current, updated, size })

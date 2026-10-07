@@ -348,7 +348,12 @@ const ENCODE_THREADS: usize = 4;
 /// holds however many encodes it starts. The pixels of an encode that
 /// waits are held meanwhile, so a caller with many images starts a few at
 /// a time all the same.
-pub async fn encode_queued(pixels: Vec<u8>, width: u32, height: u32, options: EncodeOptions) -> Result<Vec<u8>, String> {
+pub async fn encode_queued(
+  pixels: Vec<u8>,
+  width: u32,
+  height: u32,
+  options: EncodeOptions,
+) -> Result<Vec<u8>, String> {
   static WORKERS: OnceLock<Workers> = OnceLock::new();
   let workers = WORKERS.get_or_init(|| {
     let cores = std::thread::available_parallelism().map(|cores| cores.get()).unwrap_or(ENCODE_THREADS);
@@ -405,7 +410,9 @@ pub fn encode(pixels: &[u8], width: u32, height: u32, options: &EncodeOptions) -
     if ffi::bu_comp_params_set_image_rgba32(params.0, 0, pixels.as_ptr() as u64, width, height, pitch) == 0 {
       return Err("the encoder refused the image".to_string());
     }
-    if ffi::bu_compress_texture(params.0, format, quality, ffi::EFFORT_DEFAULT, flags, ffi::LOW_LEVEL_QUALITY_UNUSED) == 0 {
+    if ffi::bu_compress_texture(params.0, format, quality, ffi::EFFORT_DEFAULT, flags, ffi::LOW_LEVEL_QUALITY_UNUSED)
+      == 0
+    {
       return Err(format!("the encoder failed on the {width}x{height} image"));
     }
     let size = ffi::bu_comp_params_get_comp_data_size(params.0) as usize;

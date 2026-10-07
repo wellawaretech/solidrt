@@ -8,8 +8,8 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 use crate::logger::CtxLogger;
-use crate::plugins::marshal::OptArg;
 use crate::plugins::events::{add_listener, emit_event, has_listeners, remove_listener};
+use crate::plugins::marshal::OptArg;
 use forge::process::{alive, arch, env_vars, exec_path, exit, home_dir, kill, pid, platform, rss, SignalStream};
 
 // flux:process - process-level events. The first such surface flux owns on top

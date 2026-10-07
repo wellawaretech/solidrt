@@ -1184,7 +1184,13 @@ fn shadow(s: ShadowState) -> transitions::AnimValue {
   transitions::AnimValue::Shadow(s)
 }
 
-const SHADOW: ShadowState = ShadowState { dx: 8.0, dy: 8.0, blur: 16.0, spread: 2.0, color: crate::impellers::Color::new_srgba(0.0, 0.0, 0.0, 0.5) };
+const SHADOW: ShadowState = ShadowState {
+  dx: 8.0,
+  dy: 8.0,
+  blur: 16.0,
+  spread: 2.0,
+  color: crate::impellers::Color::new_srgba(0.0, 0.0, 0.0, 0.5),
+};
 
 #[test]
 fn shadow_animates_as_one_value_from_none() {

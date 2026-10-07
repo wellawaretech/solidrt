@@ -372,7 +372,9 @@ fn probe_runs(
       // A zero total means the queries cannot see the heavy pass at all:
       // a broken vote, not a discard.
       let share = if total > 0 { heavy_nanos as f64 / total as f64 } else { 0.0 };
-      log::debug!("[alloy] attribution probe run {run}: heavy {heavy_nanos}ns, sample {sample_nanos}ns, share {share:.2}");
+      log::debug!(
+        "[alloy] attribution probe run {run}: heavy {heavy_nanos}ns, sample {sample_nanos}ns, share {share:.2}"
+      );
       if share >= ATTRIBUTION_MIN_SHARE {
         honest += 1;
       } else {

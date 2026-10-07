@@ -172,7 +172,9 @@ impl History {
       // Interpolate when the target sits inside the samples and ahead of
       // what was dispatched; a fresh sample is never held back otherwise.
       let inside = target.filter(|(at, _)| {
-        *at + RESAMPLE_MIN_AHEAD < newest_at && *at >= self.samples[0].0 && self.emitted.is_none_or(|emitted| *at > emitted)
+        *at + RESAMPLE_MIN_AHEAD < newest_at
+          && *at >= self.samples[0].0
+          && self.emitted.is_none_or(|emitted| *at > emitted)
       });
       return Some(match inside {
         Some((at, _)) => {
@@ -218,7 +220,17 @@ impl History {
     if !self.predicted {
       self.emitted = Some(self.emitted.map_or(at, |emitted| emitted.max(at)));
     }
-    Sample { pointer_type: key.0, pointer_id: key.1, x, y, dx, dy, modifiers: self.modifiers, at, predicted: self.predicted }
+    Sample {
+      pointer_type: key.0,
+      pointer_id: key.1,
+      x,
+      y,
+      dx,
+      dy,
+      modifiers: self.modifiers,
+      at,
+      predicted: self.predicted,
+    }
   }
 }
 
@@ -263,7 +275,15 @@ impl Resampler {
   /// pointer was there. `rel` is the hardware motion delta when the device
   /// reports one; it sums into the history (positions collapse to one per
   /// frame, deltas must accumulate).
-  pub fn push(&mut self, key: (PointerType, u64), x: f32, y: f32, rel: Option<(f32, f32)>, modifiers: Modifiers, at: Instant) {
+  pub fn push(
+    &mut self,
+    key: (PointerType, u64),
+    x: f32,
+    y: f32,
+    rel: Option<(f32, f32)>,
+    modifiers: Modifiers,
+    at: Instant,
+  ) {
     let Some(h) = self.pointers.get_mut(&key) else {
       // Move without a down (a mouse hovering, a missed down across an
       // engine swap): track from here.
@@ -374,7 +394,12 @@ impl SharedResampler {
   /// and travels alone: no flush, a cancelled pointer has no last position
   /// worth reading. Everything else passes through. The result is `send`'s,
   /// Ok when nothing was sent.
-  pub fn feed<E>(&self, event: AlloyEvent, at: Instant, mut send: impl FnMut(AlloyEvent, Instant) -> Result<(), E>) -> Result<(), E> {
+  pub fn feed<E>(
+    &self,
+    event: AlloyEvent,
+    at: Instant,
+    mut send: impl FnMut(AlloyEvent, Instant) -> Result<(), E>,
+  ) -> Result<(), E> {
     match &event {
       AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, rel, modifiers } => {
         self.lock().push((*pointer_type, *pointer_id), *x, *y, *rel, *modifiers, at);

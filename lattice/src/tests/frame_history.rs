@@ -91,13 +91,25 @@ fn target_rates_attribute_a_window_s_passes_by_target() {
   // never, and a view created mid-window (absent from the first record)
   // renders 30 times from zero.
   let h = history(&[
-    at(0.0, 0, vec![target(1, "scene", 100, 10_000, 100_000, 6_000), target(2, "atlas", 50, 5_000, 20_000, 0), target(3, "probe", 6, 600, 3_000, 0)]),
-    at(1000.0, 60, vec![
-      target(1, "scene", 160, 40_000, 160_000, 366_000),
-      target(2, "atlas", 80, 8_000, 35_000, 0),
-      target(3, "probe", 6, 600, 3_000, 0),
-      target(4, "view", 30, 3_000, 15_000, 180_000),
-    ]),
+    at(
+      0.0,
+      0,
+      vec![
+        target(1, "scene", 100, 10_000, 100_000, 6_000),
+        target(2, "atlas", 50, 5_000, 20_000, 0),
+        target(3, "probe", 6, 600, 3_000, 0),
+      ],
+    ),
+    at(
+      1000.0,
+      60,
+      vec![
+        target(1, "scene", 160, 40_000, 160_000, 366_000),
+        target(2, "atlas", 80, 8_000, 35_000, 0),
+        target(3, "probe", 6, 600, 3_000, 0),
+        target(4, "view", 30, 3_000, 15_000, 180_000),
+      ],
+    ),
   ]);
   let w = h.summarize(Window::Ms(1000.0), 1000.0).expect("frames");
   let ids: Vec<u64> = w.target_rates.iter().map(|t| t.id).collect();

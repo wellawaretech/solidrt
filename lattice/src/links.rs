@@ -79,8 +79,12 @@ pub(crate) fn listen(
 }
 
 /// One accepted hand-off connection: read the link, deliver it, acknowledge.
-async fn serve<S>(stream: S, app_id: String, events: crate::runtime::EventSender, commands: std::sync::mpsc::Sender<AlloyCommand>)
-where
+async fn serve<S>(
+  stream: S,
+  app_id: String,
+  events: crate::runtime::EventSender,
+  commands: std::sync::mpsc::Sender<AlloyCommand>,
+) where
   S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
   let (reader, mut writer) = tokio::io::split(stream);
@@ -297,7 +301,8 @@ pub(crate) mod freedesktop {
         lines.len() - 1
       }
     };
-    let end = lines[start + 1..].iter().position(|l| l.trim_start().starts_with('[')).map_or(lines.len(), |n| start + 1 + n);
+    let end =
+      lines[start + 1..].iter().position(|l| l.trim_start().starts_with('[')).map_or(lines.len(), |n| start + 1 + n);
     let prefix = format!("{key}=");
     let new_line = |current: Option<&str>| {
       if accumulate {

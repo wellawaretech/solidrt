@@ -36,9 +36,7 @@ fn engine_provides_web_globals() {
 fn engine_base64_follows_whatwg() {
   with_bare_ctx(|ctx| {
     // Round-trip through the full byte range.
-    let round: bool = ctx
-      .eval(r#"atob(btoa("\x00a\xff")) === "\x00a\xff""#)
-      .expect("round-trip");
+    let round: bool = ctx.eval(r#"atob(btoa("\x00a\xff")) === "\x00a\xff""#).expect("round-trip");
     assert!(round);
     // Forgiving decode: unpadded input is accepted.
     let unpadded: String = ctx.eval(r#"atob("YQ")"#).expect("unpadded decode");

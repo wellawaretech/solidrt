@@ -30,7 +30,11 @@ fn animation_reading_keeps_wall_rate_under_slow_frames() {
     // The first tick anchors at 0; from there the reading tracks raw deltas
     // exactly.
     let expected = raw - 46.5;
-    assert!((clock.timer_now_ms() - expected).abs() < EPS, "timer reading drifted at tick {i}: {} vs {expected}", clock.timer_now_ms());
+    assert!(
+      (clock.timer_now_ms() - expected).abs() < EPS,
+      "timer reading drifted at tick {i}: {} vs {expected}",
+      clock.timer_now_ms()
+    );
     let step = clock.now_ms() - last_now;
     last_now = clock.now_ms();
     let periods = step / PERIOD;
@@ -97,7 +101,11 @@ fn pause_and_step_move_both_readings_in_lockstep() {
   raw += PERIOD;
   clock.tick(raw, raw, 1, Advance::Step);
   assert!((clock.now_ms() - (anim + PERIOD)).abs() < EPS, "step moved animation by {}", clock.now_ms() - anim);
-  assert!((clock.timer_now_ms() - (timer + PERIOD)).abs() < EPS, "step moved timers by {}", clock.timer_now_ms() - timer);
+  assert!(
+    (clock.timer_now_ms() - (timer + PERIOD)).abs() < EPS,
+    "step moved timers by {}",
+    clock.timer_now_ms() - timer
+  );
   raw += PERIOD;
   clock.tick(raw, raw, 1, Advance::Run(1.0));
   assert!((clock.now_ms() - (anim + 2.0 * PERIOD)).abs() < EPS, "resume jumped the animation reading");
@@ -113,7 +121,11 @@ fn scale_advances_period_times_scale() {
   let (anim, timer) = (clock.now_ms(), clock.timer_now_ms());
   clock.tick(PERIOD, PERIOD, 3, Advance::Run(0.5));
   assert!((clock.now_ms() - anim - 0.5 * PERIOD).abs() < EPS, "scaled animation step {}", clock.now_ms() - anim);
-  assert!((clock.timer_now_ms() - timer - 0.5 * PERIOD).abs() < EPS, "scaled timer step {}", clock.timer_now_ms() - timer);
+  assert!(
+    (clock.timer_now_ms() - timer - 0.5 * PERIOD).abs() < EPS,
+    "scaled timer step {}",
+    clock.timer_now_ms() - timer
+  );
 }
 
 // A suspension (a count worth more than the threshold) is skipped by the
@@ -176,7 +188,11 @@ fn an_instant_reads_the_same_after_either_tick() {
       assert!((after - before).abs() < EPS, "tick {i}: one instant read {before} and {after}");
     }
     if let Some(last) = last {
-      assert!((after - last - 2.0 * PERIOD).abs() < EPS, "tick {i}: instants two periods apart read {} apart", after - last);
+      assert!(
+        (after - last - 2.0 * PERIOD).abs() < EPS,
+        "tick {i}: instants two periods apart read {} apart",
+        after - last
+      );
     }
     last = Some(after);
   }
@@ -234,7 +250,10 @@ fn input_reading_follows_pause_step_and_scale() {
   let paused = clock.input_frame_ms();
   assert!((clock.input_at_ms(PERIOD + 500.0) - paused).abs() < EPS, "an event moved a paused input reading");
   clock.tick(2.0 * PERIOD, 2.0 * PERIOD, 1, Advance::Step);
-  assert!((clock.input_frame_ms() - (paused + PERIOD)).abs() < EPS, "a step moved the input reading by other than a period");
+  assert!(
+    (clock.input_frame_ms() - (paused + PERIOD)).abs() < EPS,
+    "a step moved the input reading by other than a period"
+  );
   assert!((clock.input_at_ms(2.0 * PERIOD + 500.0) - (paused + PERIOD)).abs() < EPS, "an event after a step moved it");
   clock.tick(3.0 * PERIOD, 3.0 * PERIOD, 3, Advance::Run(0.5));
   let scaled = clock.input_frame_ms();

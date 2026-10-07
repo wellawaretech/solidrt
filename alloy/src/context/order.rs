@@ -122,7 +122,12 @@ fn instance_strides(strides: [BufferStride; MAX_BUFFERS]) -> [usize; MAX_BUFFERS
 
 impl InstanceOrders {
   pub(super) fn new() -> Self {
-    Self { entries: HashMap::new(), by_buffer: HashMap::new(), mirrors: HashMap::new(), scratch: OrderScratch::default() }
+    Self {
+      entries: HashMap::new(),
+      by_buffer: HashMap::new(),
+      mirrors: HashMap::new(),
+      scratch: OrderScratch::default(),
+    }
   }
 }
 
@@ -164,7 +169,9 @@ impl Context {
       }
       let slots = instance_strides.iter().filter(|&&s| s > 0).count();
       if slots != 1 {
-        return Err(format!("an indexed instanceOrder takes one instance-step buffer (the id stream); the entry declares {slots}"));
+        return Err(format!(
+          "an indexed instanceOrder takes one instance-step buffer (the id stream); the entry declares {slots}"
+        ));
       }
       let orders = self.orders.borrow();
       if let Some(mirror) = orders.mirrors.get(&ids.buffers[key]) {
@@ -203,10 +210,14 @@ impl Context {
       }
       let buffer = ids.buffers[index];
       if ids.index.is_some_and(|(i, _)| i == buffer) {
-        return Err(format!("buffer {buffer} is also the entry's index buffer; an ordered buffer holds instance records only"));
+        return Err(format!(
+          "buffer {buffer} is also the entry's index buffer; an ordered buffer holds instance records only"
+        ));
       }
       if ids.buffers.iter().enumerate().any(|(j, &b)| j != index && b == buffer) {
-        return Err(format!("buffer {buffer} is bound twice on the entry; an ordered buffer holds instance records only"));
+        return Err(format!(
+          "buffer {buffer} is bound twice on the entry; an ordered buffer holds instance records only"
+        ));
       }
       if let Some((t, d)) = orders.by_buffer.get(&buffer) {
         return Err(format!(
@@ -223,7 +234,10 @@ impl Context {
           }
           let size = self.gpu_buffer_len(buffer)?;
           if mirror.held > size {
-            return Err(format!("buffer {buffer} is {size} bytes; its {} handed-off record bytes do not fit", mirror.held));
+            return Err(format!(
+              "buffer {buffer} is {size} bytes; its {} handed-off record bytes do not fit",
+              mirror.held
+            ));
           }
         }
       }
@@ -264,10 +278,7 @@ impl Context {
         seed = mirror.published > 0;
       }
     }
-    orders.entries.insert(
-      (target, draw),
-      OrderedEntry { order, key, strides, buffers, perm: Vec::new() },
-    );
+    orders.entries.insert((target, draw), OrderedEntry { order, key, strides, buffers, perm: Vec::new() });
     seed
   }
 
@@ -365,10 +376,14 @@ impl Context {
       }
       let new_buffer = ids.buffers[index];
       if ids.buffers.iter().enumerate().any(|(j, &b)| j != index && b == new_buffer) {
-        return Err(format!("buffer {new_buffer} is bound twice on the entry; an ordered buffer holds instance records only"));
+        return Err(format!(
+          "buffer {new_buffer} is bound twice on the entry; an ordered buffer holds instance records only"
+        ));
       }
       if ids.index.is_some_and(|(i, _)| i == new_buffer) {
-        return Err(format!("buffer {new_buffer} is also the entry's index buffer; an ordered buffer holds instance records only"));
+        return Err(format!(
+          "buffer {new_buffer} is also the entry's index buffer; an ordered buffer holds instance records only"
+        ));
       }
       if new_buffer == entry.buffers[index] {
         continue;
@@ -663,12 +678,7 @@ impl Context {
         gather_permuted(&entry.perm, stride, &mirror.data[..len], &mut dst[..len]);
         len
       };
-      self.send(RasterCmd::WriteBufferLease {
-        id,
-        block: dst,
-        len,
-        recycle: self.block_recycle_tx.clone(),
-      });
+      self.send(RasterCmd::WriteBufferLease { id, block: dst, len, recycle: self.block_recycle_tx.clone() });
       self.note_buffer_content(id);
     }
   }

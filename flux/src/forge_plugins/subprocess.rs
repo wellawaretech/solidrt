@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 use crate::pending::PendingOps;
 use crate::plugins::marshal::{with_in_flight, with_standing, CopyBytes, OptArg};
-use crate::standards_plugins::body::byte_stream_iterable;
 use crate::plugins::value::Neutral;
+use crate::standards_plugins::body::byte_stream_iterable;
 use forge::subprocess::{self, CommandSpec, Spawned};
 
 // flux:subprocess - spawn child processes and collect their output.
@@ -245,7 +245,11 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
       let child = child.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let child = child.clone();
-        Ok(with_standing(&ctx, "subprocess", async move { Ok::<Neutral, String>(Neutral(child.status().await.into())) }))
+        Ok(with_standing(
+          &ctx,
+          "subprocess",
+          async move { Ok::<Neutral, String>(Neutral(child.status().await.into())) },
+        ))
       }
     }),
   )

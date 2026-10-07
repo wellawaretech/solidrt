@@ -54,7 +54,10 @@ fn buffers_and_views_decode_to_bytes() {
     assert_eq!(decode(ctx, "new Uint8Array([1, 2, 3])"), Value::bytes(vec![1, 2, 3]));
     assert_eq!(decode(ctx, "new Uint8Array([1, 2, 3]).buffer"), Value::bytes(vec![1, 2, 3]));
     assert_eq!(decode(ctx, "new Uint8Array([1, 2, 3, 4]).subarray(1, 3)"), Value::bytes(vec![2, 3]));
-    assert_eq!(decode(ctx, "new Uint16Array([258])"), Value::Bytes { elem: Elem::U16, data: 258u16.to_ne_bytes().to_vec() });
+    assert_eq!(
+      decode(ctx, "new Uint16Array([258])"),
+      Value::Bytes { elem: Elem::U16, data: 258u16.to_ne_bytes().to_vec() }
+    );
     assert_eq!(decode(ctx, "new Float64Array(1)"), Value::Bytes { elem: Elem::F64, data: vec![0; 8] });
   });
 }

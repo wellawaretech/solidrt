@@ -1,9 +1,8 @@
 use crate::sqlite::SqliteConnection;
 
 async fn open_with(schema: &str) -> SqliteConnection {
-  let conn = SqliteConnection::open(":memory:".to_string(), Some("rw+".to_string()))
-    .await
-    .expect("open in-memory database");
+  let conn =
+    SqliteConnection::open(":memory:".to_string(), Some("rw+".to_string())).await.expect("open in-memory database");
   conn.exec(schema.to_string()).await.expect("apply schema");
   conn
 }
@@ -11,10 +10,7 @@ async fn open_with(schema: &str) -> SqliteConnection {
 #[tokio::test]
 async fn read_set_reports_tables() {
   let conn = open_with("CREATE TABLE a (x); CREATE TABLE b (y);").await;
-  let tables = conn
-    .read_set("SELECT x, (SELECT y FROM b) FROM a".to_string())
-    .await
-    .expect("read set");
+  let tables = conn.read_set("SELECT x, (SELECT y FROM b) FROM a".to_string()).await.expect("read set");
   assert_eq!(tables, vec!["a".to_string(), "b".to_string()]);
 }
 

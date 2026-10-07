@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Notify};
 
-use crate::source::{Facts, HttpSource, OpenFuture, Opened, Producer, Reader, STREAM_RING_BYTES, STREAM_SKIP_BY_READ_BYTES};
+use crate::source::{
+  Facts, HttpSource, OpenFuture, Opened, Producer, Reader, STREAM_RING_BYTES, STREAM_SKIP_BY_READ_BYTES,
+};
 use crate::stream::{from_bytes, ByteStream};
 
 /// A ring small enough that a few chunks fill it.

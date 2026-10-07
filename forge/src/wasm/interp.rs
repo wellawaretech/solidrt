@@ -244,7 +244,13 @@ impl Instance {
   /// Run `func` to completion, bridging suspended host-import calls to `host`.
   /// `what` names the call target (an export name or `table[i] (sig)`) so
   /// failures say which call went wrong.
-  fn drive(&self, what: &str, func: Func, args: Vec<WasmValue>, host: HostHandler<'_>) -> Result<Vec<WasmValue>, String> {
+  fn drive(
+    &self,
+    what: &str,
+    func: Func,
+    args: Vec<WasmValue>,
+    host: HostHandler<'_>,
+  ) -> Result<Vec<WasmValue>, String> {
     let n_results = {
       let store = self.store.borrow();
       func.ty(&*store).results().len()

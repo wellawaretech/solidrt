@@ -205,13 +205,12 @@ pub(crate) fn query_limits(gl: &glow::Context) -> GpuLimits {
     // GL 4.6 spelling (ARB), same enums. The parameter is a float in the
     // spec.
     let ext = gl.supported_extensions();
-    let anisotropy = if ext.contains("GL_EXT_texture_filter_anisotropic")
-      || ext.contains("GL_ARB_texture_filter_anisotropic")
-    {
-      gl.get_parameter_f32(glow::MAX_TEXTURE_MAX_ANISOTROPY_EXT) as i32
-    } else {
-      1
-    };
+    let anisotropy =
+      if ext.contains("GL_EXT_texture_filter_anisotropic") || ext.contains("GL_ARB_texture_filter_anisotropic") {
+        gl.get_parameter_f32(glow::MAX_TEXTURE_MAX_ANISOTROPY_EXT) as i32
+      } else {
+        1
+      };
     // Half-float render targets are likewise an extension at every GLES
     // level (the float one implies the half one); a fact for the mip gate
     // on rgba16f, never an error.

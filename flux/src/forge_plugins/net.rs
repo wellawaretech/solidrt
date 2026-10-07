@@ -173,7 +173,11 @@ impl NetConn {
   /// `{ done: true }` at EOF. Pull-based, so the socket only advances as JS reads.
   pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Step<JsBytes>>>>> {
     let inner = self.inner.clone();
-    Ok(with_standing(&ctx, "socket read", async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) }))
+    Ok(with_standing(
+      &ctx,
+      "socket read",
+      async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) },
+    ))
   }
 
   /// Write all of `data` (string or Uint8Array). Resolves once it's handed off.

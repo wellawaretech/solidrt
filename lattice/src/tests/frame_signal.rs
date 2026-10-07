@@ -32,6 +32,9 @@ fn a_present_after_ticks_stays_a_present() {
     AlloyEvent::Tick { frame: 5, fps: 60, refreshes: 1, present_at: now, reference: now, grid: now },
     AlloyEvent::Tick { frame: 5, fps: 60, refreshes: 1, present_at: now, reference: now, grid: now },
   );
-  let folded = coalesce_frame_signals(ticks, AlloyEvent::FrameRendered { frame: 5, fps: 60, refreshes: 1, present_at: now, reference: now, grid: now });
+  let folded = coalesce_frame_signals(
+    ticks,
+    AlloyEvent::FrameRendered { frame: 5, fps: 60, refreshes: 1, present_at: now, reference: now, grid: now },
+  );
   assert!(matches!(folded, AlloyEvent::FrameRendered { frame: 5, refreshes: 3, .. }));
 }

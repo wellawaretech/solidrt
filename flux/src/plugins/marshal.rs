@@ -68,7 +68,11 @@ pub fn string_opt<'js>(ctx: &Ctx<'js>, opts: &Object<'js>, key: &str, api: &str)
 /// in `JsResult` (so an `Err(String)` rejects as a clean JS `Error`, with no
 /// `IO Error:` prefix): `Ok(with_in_flight(&ctx, "file", async move {
 /// work().await }))`.
-pub fn with_in_flight<'js, T, F>(ctx: &Ctx<'js>, kind: &'static str, fut: F) -> Promised<impl Future<Output = JsResult<T>>>
+pub fn with_in_flight<'js, T, F>(
+  ctx: &Ctx<'js>,
+  kind: &'static str,
+  fut: F,
+) -> Promised<impl Future<Output = JsResult<T>>>
 where
   F: Future<Output = Result<T, String>>,
 {
@@ -83,7 +87,11 @@ where
 /// `with_in_flight` for an op that waits on the outside world with no bound
 /// (a read on an open socket, a child's exit): the engine is held as
 /// standing, so nothing that waits for work in flight waits for it.
-pub fn with_standing<'js, T, F>(ctx: &Ctx<'js>, kind: &'static str, fut: F) -> Promised<impl Future<Output = JsResult<T>>>
+pub fn with_standing<'js, T, F>(
+  ctx: &Ctx<'js>,
+  kind: &'static str,
+  fut: F,
+) -> Promised<impl Future<Output = JsResult<T>>>
 where
   F: Future<Output = Result<T, String>>,
 {

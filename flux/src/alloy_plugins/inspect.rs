@@ -105,7 +105,11 @@ pub fn node_record(
 /// is all of its parent's text is that text (as `find` sees it): one line,
 /// not two. What `locator.outline()` reads and what a failed app test
 /// prints.
-pub fn outline(node: &alloy::rendertree::NodeSnapshot, tree: Option<&alloy::rendertree::RenderTree>, props: bool) -> String {
+pub fn outline(
+  node: &alloy::rendertree::NodeSnapshot,
+  tree: Option<&alloy::rendertree::RenderTree>,
+  props: bool,
+) -> String {
   let mut lines = Vec::new();
   outline_lines(node, tree, props, 0, &mut lines);
   lines.join("\n")
@@ -262,7 +266,11 @@ fn param_json(v: &alloy::ParamValue, elide: bool) -> serde_json::Value {
 /// `label` keeps only the resources created with that label; `draw` is the
 /// draw entry id (target-scoped, so pair it with `label` to pin one target)
 /// whose params are reported in full instead of elided.
-pub fn gpu_record(ctx: &rquickjs::Ctx<'_>, label: Option<&str>, draw: Option<u64>) -> Result<serde_json::Value, String> {
+pub fn gpu_record(
+  ctx: &rquickjs::Ctx<'_>,
+  label: Option<&str>,
+  draw: Option<u64>,
+) -> Result<serde_json::Value, String> {
   let Some(atx) = super::alloy_context(ctx) else {
     return Err("no alloy context".to_string());
   };

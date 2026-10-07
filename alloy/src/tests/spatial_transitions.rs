@@ -15,7 +15,11 @@ fn all(spec: TransitionSpec) -> Option<NodeTransitionConfig> {
 /// A position entry on `spec` with the given lifecycle endpoints, each on
 /// the entry's own motion (the decoder's default when an endpoint names
 /// no motion of its own).
-fn position_entry(spec: TransitionSpec, from: Option<[f32; 3]>, exit: Option<[f32; 3]>) -> NodeTransitionEntry<[f32; 3]> {
+fn position_entry(
+  spec: TransitionSpec,
+  from: Option<[f32; 3]>,
+  exit: Option<[f32; 3]>,
+) -> NodeTransitionEntry<[f32; 3]> {
   NodeTransitionEntry {
     motion: spec.into(),
     from: from.map(|value| NodeEndpoint { value, motion: spec.into() }),

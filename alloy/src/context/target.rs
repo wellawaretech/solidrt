@@ -189,7 +189,11 @@ impl Context {
   /// so cannot be bounds-checked here (raw GL semantics; robust drivers
   /// clamp). Shared by the two split creates, the fused create, and
   /// add_draw.
-  fn resolve_entry_range(&self, entry: &mut DrawSpec, strides: [BufferStride; MAX_BUFFERS]) -> Result<DrawBounds, String> {
+  fn resolve_entry_range(
+    &self,
+    entry: &mut DrawSpec,
+    strides: [BufferStride; MAX_BUFFERS],
+  ) -> Result<DrawBounds, String> {
     let mut buffers = [BufferBound::default(); MAX_BUFFERS];
     for (index, (layout, &id)) in strides.iter().zip(entry.buffers.iter()).enumerate() {
       match (layout.stride, id) {
@@ -451,7 +455,13 @@ impl Context {
         draw: None,
         bounds: DrawBounds::default(),
         buffers: BufferIds::default(),
-        entries: Some(DrawListMirror { depth, depth_texture: None, next_draw: 1, entries: HashMap::new(), order: Vec::new() }),
+        entries: Some(DrawListMirror {
+          depth,
+          depth_texture: None,
+          next_draw: 1,
+          entries: HashMap::new(),
+          order: Vec::new(),
+        }),
       },
     );
     self.shader_sources.borrow_mut().insert(id, HashMap::new());
@@ -587,7 +597,15 @@ impl Context {
       // A handed-off mirror seeds the first ordered publish here, with no
       // publish from the app - the transfer form's attach, and the
       // re-attach over a buffer whose mirror survived.
-      if self.insert_instance_order(target, draw_id, order, key, strides, entry.buffer_ids(), entry.draw.instance_count.max(0) as usize) {
+      if self.insert_instance_order(
+        target,
+        draw_id,
+        order,
+        key,
+        strides,
+        entry.buffer_ids(),
+        entry.draw.instance_count.max(0) as usize,
+      ) {
         self.rematerialize_retained_order(target, draw_id);
       }
     }
@@ -959,7 +977,8 @@ impl Context {
     // become the sorted population, re-sorted and republished here - the
     // count dial with no records on the app side. Entries whose records
     // the app publishes carry a count change in their own republish.
-    if instances_changed && self.set_instance_order_count(target, entry_key, next_range.instance_count.max(0) as usize) {
+    if instances_changed && self.set_instance_order_count(target, entry_key, next_range.instance_count.max(0) as usize)
+    {
       self.rematerialize_retained_order(target, entry_key);
     }
     Ok(())

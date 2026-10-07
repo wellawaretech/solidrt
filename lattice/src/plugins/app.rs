@@ -59,7 +59,8 @@ fn register_protocol_handler_impl(ctx: Ctx<'_>) -> flux::rquickjs::Result<()> {
   let Some(control) = ctx.userdata::<AppControl>().map(|c| c.clone()) else {
     return Err(Exception::throw_message(&ctx, "sol:app is not available in this build"));
   };
-  (control.0.register_protocol_handler)().map_err(|e| Exception::throw_message(&ctx, &format!("registerProtocolHandler: {e}")))
+  (control.0.register_protocol_handler)()
+    .map_err(|e| Exception::throw_message(&ctx, &format!("registerProtocolHandler: {e}")))
 }
 
 pub struct SolAppModule;

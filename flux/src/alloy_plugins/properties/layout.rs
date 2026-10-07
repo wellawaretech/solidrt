@@ -232,7 +232,11 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Result<Option<
                 style.flex_shrink = parse_f32(parts[1], "flex shrink")?;
                 style.flex_basis = parse_dimension_str(parts[2])?;
               }
-              _ => return Err(format!("Invalid flex value \"{s}\"; expected a number, none, auto, \"grow shrink\" or \"grow shrink basis\"")),
+              _ => {
+                return Err(format!(
+                  "Invalid flex value \"{s}\"; expected a number, none, auto, \"grow shrink\" or \"grow shrink basis\""
+                ))
+              }
             }
           }
         }
@@ -294,7 +298,9 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Result<Option<
         "column" => GridAutoFlow::Column,
         "row-dense" => GridAutoFlow::RowDense,
         "column-dense" => GridAutoFlow::ColumnDense,
-        v => return Err(format!("Unknown gridAutoFlow value \"{v}\"; expected row, column, row-dense or column-dense")),
+        v => {
+          return Err(format!("Unknown gridAutoFlow value \"{v}\"; expected row, column, row-dense or column-dense"))
+        }
       };
     }
     "gridTemplateColumns" => {
@@ -426,7 +432,8 @@ fn parse_grid_template(template: &str) -> Result<Vec<GridTemplateComponent<Strin
         let v = parse_f32(s, "Grid px track")?;
         minmax(length(v), length(v))
       } else {
-        let v: f32 = part.parse().map_err(|_| format!("Invalid grid track \"{part}\"; expected a number, Npx, Nfr or auto"))?;
+        let v: f32 =
+          part.parse().map_err(|_| format!("Invalid grid track \"{part}\"; expected a number, Npx, Nfr or auto"))?;
         minmax(length(v), length(v))
       };
       Ok(GridTemplateComponent::from(track))
