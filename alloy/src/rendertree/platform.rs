@@ -62,17 +62,18 @@ impl PlatformContext {
     // Startup fonts are the client's own (embedded Notos, a packed trailer);
     // one failing to parse is a build defect, so this panics.
     let glyphs = FontSet::from_payloads(&fonts, |alias, e| panic!("Failed to register font '{alias}': {e}"));
+    let frame_requested = Arc::new(AtomicBool::new(false));
     Self {
       glyphs: RefCell::new(glyphs),
       words: RefCell::new(WordCache::default()),
-      text_atlas: RefCell::new(TextAtlas::default()),
+      text_atlas: RefCell::new(TextAtlas::new(frame_requested.clone())),
       coverage_policy: Cell::new(CoveragePolicy::default()),
       window_size: Cell::new((0.0, 0.0)),
       window_size_dirty: Cell::new(false),
       display_scale: Cell::new(1.0),
       safe_area: Cell::new(Rect::new(Point::new(0.0, 0.0), Size::new(0.0, 0.0))),
       fps: Cell::new(0),
-      frame_requested: Arc::new(AtomicBool::new(false)),
+      frame_requested,
       standing_demand: AtomicBool::new(false),
       stats_enabled: Arc::new(AtomicBool::new(false)),
     }

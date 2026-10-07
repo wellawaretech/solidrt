@@ -304,6 +304,11 @@ Shaped, not started.
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
   either not found or checked against the wrong file.
+- **[Read a depth texture through the control API](backlog/control-api-depth-texture-read.md)** [2026-10-07]
+  A target's depth texture is sampler-only, so /texture refuses it and a
+  shadow-map bug cannot be split into "the tile was not written" and "the
+  receiver does not sample it" without instrumenting the runtime; a debug read
+  that renders the depth through a copy pass would answer that in one call.
 - **[Generate the docs/core.md props reference from the types](backlog/core-docs-generated-props.md)** [2026-08-06]
   Hand-copied prop lists are how core.md drifted (fill/background/imageWidth);
   jsx-runtime.d.ts and types.d.ts are clean enough to generate the per-element
@@ -622,6 +627,11 @@ Shaped, not started.
   load/reload, because the backlog lives in the raster command channel rather
   than in the app; the dev has no way out short of restarting the process, and
   no reason to suspect the runtime.
+- **[Carry a remote client's engine log into /logs](backlog/remote-client-logs.md)** [2026-10-07]
+  An Android client's own log lines (the engine logger, slow-frame warnings,
+  GL and shader diagnostics) never reach the dev server, so /logs shows
+  nothing from the device and every device problem starts with adb logcat; the
+  client should forward its log the way the local one's stderr is captured.
 - **[Remote control input device for the input map](backlog/remote-control-input-device.md)** [2026-09-12]
   A TV remote reaches the app as key events or as gamepad buttons depending on
   whether alloy opened it as a joystick, and Android's auto-mapping can drop
@@ -777,6 +787,13 @@ Shaped, not started.
   ascent and descent and the baseline snaps to whole pixels; a half-leading
   placement only moves the error around, so the candidate is cap-band
   centering, to be simulated before it is built.
+- **[Text layers blur at fractional offsets and drop glyphs while scaling](backlog/text-layer-motion.md)** [2026-10-07]
+  Every <text> draws as a cached layer composited with bilinear sampling at
+  its logical position, so text between device pixels (a momentum scroll, a
+  translate animation, a 1.5x display) softens by up to half a pixel; and a
+  scale animation (zoom on hover or focus) re-rasterizes every 2%, making
+  cells at every intermediate size, which on the TV overruns the synchronous
+  budget and draws the label with letters missing.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -2671,6 +2688,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   gaps by workload, and a file split proposal. Its shortlist closed
   2026-07-31, all eight items; see the status section for what shipped and
   what the do-order is now."
+- **[How GPUI renders text, against our text layer](notes/gpui-text-rendering.md)** [2026-10-07]
+  Zed's GPUI shapes and rasterizes with each OS's own stack (Core Text,
+  DirectWrite) and with cosmic-text plus swash on Linux and the web, into one
+  bitmap atlas drawn as instanced quads every frame; the same family as our
+  engine, ahead on LCD AA, a proven coverage-to-color recipe and hinting, with
+  no distance fields and different pixels per platform.
 - **[Graphics backend strategy](notes/graphics-backend-strategy.md)** [2026-08-12]
   Settled direction; one GLES contract over ANGLE on every platform, native
   Vulkan rejected, Metal-native kept only as a mapped contingency; includes

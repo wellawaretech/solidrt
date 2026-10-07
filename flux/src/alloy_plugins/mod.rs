@@ -9,12 +9,12 @@ pub mod camera;
 pub mod events;
 pub mod font;
 pub mod frame;
+pub mod gpu;
 pub mod input;
 pub mod inspect;
 pub mod microphone;
 pub(crate) mod properties;
 pub mod raf;
-pub mod gpu;
 pub mod spatial;
 pub mod tree;
 pub mod value;
@@ -171,8 +171,20 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   // `evaluate`.
   let builder = builder
     .plugin(move |ctx| {
+      // The text atlas's cell jobs count as this engine's work in flight
+      // (a settle waits for them, so it never reads a screen drawn without
+      // its glyphs): each job holds the engine until its cells are made.
+      // The atlas outlives the engine, so the source is bound per engine.
+      let pending = crate::pending::PendingOps::of(&ctx);
+      platform.text_atlas().set_hold_source(Arc::new(move || Box::new(pending.in_flight("text cells"))));
       ctx
-        .store_userdata(GuiState(Rc::new(Gui { alloy, platform, teardown, ticks: RefCell::new(Vec::new()), ticking: RefCell::new(Vec::new()) })))
+        .store_userdata(GuiState(Rc::new(Gui {
+          alloy,
+          platform,
+          teardown,
+          ticks: RefCell::new(Vec::new()),
+          ticking: RefCell::new(Vec::new()),
+        })))
         .expect("store gui state");
     })
     .plugin(move |ctx| tree::store_state(&ctx, render_tree, alloy_cmd_tx))

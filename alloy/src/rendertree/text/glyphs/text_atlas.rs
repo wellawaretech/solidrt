@@ -25,8 +25,9 @@ use super::fonts::{Face, FaceId, FontSet};
 use super::worker::{CellJob, CellWorker, JobPriority};
 use crate::gpu::{SamplerFilter, SamplerState, SamplerWrap, MIN_ANISOTROPY};
 use crate::Context;
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -120,6 +121,17 @@ pub struct WarmRequest {
   pub italic: bool,
 }
 
+/// A token for one job on the worker, taken from the embedder's
+/// `HoldSource` when the job is submitted and dropped on the worker thread
+/// once its cells are made: how the embedder counts the atlas's work in
+/// flight (a headless host's settle waits for it). Opaque here; what it
+/// counts into is the embedder's.
+pub type WorkHold = Box<dyn Any + Send>;
+
+/// Where a job's `WorkHold` comes from. Set per embedder session
+/// (`set_hold_source`); without one the jobs run uncounted.
+pub type HoldSource = Arc<dyn Fn() -> WorkHold + Send + Sync>;
+
 // A job on the worker, by its owner id: which cells it makes.
 struct Job {
   style: StyleKey,
@@ -139,11 +151,11 @@ pub struct TextAtlas {
   // Cells on the worker, and cells the font cannot make (or the atlas
   // refused): neither is asked for twice.
   pending: HashSet<CellKey>,
-  // Jobs the worker has not finished, counted down on the worker thread
-  // itself: what a headless host's settle waits on. It must not wait on
-  // the landing, which only a frame does, and a frame only runs once
-  // nothing is in flight.
-  in_flight: Arc<AtomicU32>,
+  // What a job's hold is taken from. A job's work is in flight from its
+  // submission until the worker has made its cells, and is counted there,
+  // on the worker thread: never at the landing, which only a frame does,
+  // and a frame only runs once nothing is in flight.
+  hold_source: Option<HoldSource>,
   failed: HashSet<CellKey>,
   warmed: HashSet<StyleKey>,
   // Styles asked for ahead of use, warmed at the next frame start.
@@ -155,14 +167,17 @@ pub struct TextAtlas {
   landed: bool,
   // Registered fonts changed: the face ids in every key are void.
   stale: bool,
-  // What a landing job does on the worker thread: latch a frame and wake
-  // the loop, so the frame that completes the layers runs.
-  frame_request: Option<Arc<AtomicBool>>,
+  // The platform's frame request latch: what a landing job sets from the
+  // worker thread, with the loop's wake, so the frame that completes the
+  // layers runs; and what a warm-up asked for ahead of use sets, so the
+  // frame that submits it runs.
+  frame_request: Arc<AtomicBool>,
   wake: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
-impl Default for TextAtlas {
-  fn default() -> Self {
+impl TextAtlas {
+  /// An empty atlas over `frame_request`, the platform's latch.
+  pub fn new(frame_request: Arc<AtomicBool>) -> Self {
     Self {
       atlas: None,
       worker: None,
@@ -171,7 +186,7 @@ impl Default for TextAtlas {
       jobs: HashMap::new(),
       next_job: 1,
       pending: HashSet::new(),
-      in_flight: Arc::new(AtomicU32::new(0)),
+      hold_source: None,
       failed: HashSet::new(),
       warmed: HashSet::new(),
       warm_requests: Vec::new(),
@@ -179,20 +194,24 @@ impl Default for TextAtlas {
       deadline: None,
       landed: false,
       stale: false,
-      frame_request: None,
+      frame_request,
       wake: None,
     }
   }
-}
 
-impl TextAtlas {
+  /// Where the jobs' holds come from (see `WorkHold`). An embedder sets it
+  /// when its session starts and again for the next one: a job submitted
+  /// afterwards is counted into the new source, one already on the worker
+  /// releases into the old.
+  pub fn set_hold_source(&mut self, source: HoldSource) {
+    self.hold_source = Some(source);
+  }
+
   /// Start a frame: land the cells the worker made (uploading them), open
   /// this frame's synchronous budget, and queue the warm-ups asked for
-  /// since the last frame at `display_scale`. `frame_request` is the
-  /// platform's latch, which a landing job sets from the worker thread.
-  pub fn begin_frame(&mut self, ctx: &Context, frame_request: &Arc<AtomicBool>, fonts: &FontSet, display_scale: f32) {
-    if self.frame_request.is_none() {
-      self.frame_request = Some(frame_request.clone());
+  /// since the last frame at `display_scale`.
+  pub fn begin_frame(&mut self, ctx: &Context, fonts: &FontSet, display_scale: f32) {
+    if self.wake.is_none() {
       self.wake = ctx.frame_wake();
     }
     self.frame += 1;
@@ -218,10 +237,12 @@ impl TextAtlas {
   }
 
   /// Ask for a style's printable ASCII ahead of its use; made at the next
-  /// frame start on the worker. A style already warmed costs nothing.
+  /// frame start on the worker, and that frame is requested. A style
+  /// already warmed costs nothing.
   pub fn request_warm(&mut self, request: WarmRequest) {
     if !self.warm_requests.contains(&request) {
       self.warm_requests.push(request);
+      self.frame_request.store(true, Ordering::Relaxed);
     }
   }
 
@@ -244,12 +265,6 @@ impl TextAtlas {
   /// The atlas's current size in texels.
   pub fn size(&self) -> Option<(u32, u32)> {
     self.atlas.as_ref().map(|a| a.packer().size())
-  }
-
-  /// Jobs the worker has not finished: work in flight a layer waits on
-  /// (their cells land at the frame the finish requests).
-  pub fn pending(&self) -> usize {
-    self.in_flight.load(Ordering::Relaxed) as usize
   }
 
   /// Cells asked of the worker that have not landed.
@@ -436,28 +451,25 @@ impl TextAtlas {
     let request = request(face, style, phase, glyphs.clone());
     let latch = self.frame_request.clone();
     let wake = self.wake.clone();
-    let in_flight = self.in_flight.clone();
-    in_flight.fetch_add(1, Ordering::SeqCst);
+    let hold = self.hold_source.as_ref().map(|source| source());
     let done: Box<dyn FnOnce() + Send> = Box::new(move || {
-      // The cells are queued for the landing by now: the job is no longer
-      // in flight, and the frame that lands them is requested.
-      in_flight.fetch_sub(1, Ordering::SeqCst);
-      if let Some(latch) = latch {
-        latch.store(true, Ordering::Relaxed);
-      }
+      // The cells are queued for the landing by now: the frame that lands
+      // them is requested first, then the job stops counting as in flight,
+      // so whoever that releases finds the frame demanded.
+      latch.store(true, Ordering::Relaxed);
       if let Some(wake) = wake {
         wake();
       }
+      drop(hold);
     });
     let job = CellJob { owner, bytes: face.bytes().clone(), request, priority, done: Some(done) };
+    // A job the worker refuses is dropped unsent, its closure and its hold
+    // with it.
     if worker.submit(job) {
       self.jobs.insert(owner, Job { style, phase });
       for glyph in glyphs {
         self.pending.insert(CellKey { style, phase, glyph });
       }
-    } else {
-      // Dropped unsent: its closure never runs.
-      self.in_flight.fetch_sub(1, Ordering::SeqCst);
     }
   }
 

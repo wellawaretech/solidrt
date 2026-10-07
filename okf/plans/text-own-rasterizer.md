@@ -188,8 +188,8 @@ emoji, the hinting and gamma policy per DPI the spike explored.
   cells are made, the same closure latches the platform's frame request
   and calls the main loop's wake (`Context::frame_wake`, what a YUV sink
   uses), and the frame that follows lands the cells and settles the
-  promise. A camera open settles from its tick too and would deadlock the
-  same way under settle; not changed here.
+  promise. A camera open ends its hold from a polling task of its own, not
+  a tick, so it does not deadlock.
 - 2026-10-06, the MTSDF cells: msdfgen's inside is the right-hand side
   of travel, so an outline wound clockwise with y up (TrueType) is
   positive inside and a counter-clockwise one (CFF) is inverted; the
@@ -295,8 +295,26 @@ emoji, the hinting and gamma policy per DPI the spike explored.
   stage 1 settle finding again: work in flight must be counted down on
   the worker thread when a job finishes, not at the frame that lands its
   cells, or the headless host's settle waits for a frame it will never
-  step (`TextAtlas::pending` reads an atomic the job's done closure
-  decrements; lattice's settle lists "text cells").
+  step.
+- 2026-10-07, the settle finding once more, completed. Step 2 counted the
+  jobs in an atomic of the atlas's own that lattice's settle only read
+  (`TextAtlas::pending`): settle awaits flux's holds, so while cells were
+  on the worker it stepped a frame per look, and the 5000 ms app-time cap
+  ran out in a fraction of a second of wall time. A release client made
+  the warm-up first; CI's debug client did not (`text-warm.test.tsx`).
+  Work in flight must be counted where settle waits: the atlas takes a
+  `WorkHold` per job from a `HoldSource` the embedder sets per engine
+  (`set_hold_source`; flux binds it to `PendingOps::in_flight("text
+  cells")` in `gui::install`) and drops it on the worker thread, so the
+  wait passes no app time and is bounded by the host's wall cap (30 s on
+  the render host, the runner's per-test timeout under `sol test`). Two
+  things found beside it: a job's done closure must latch the frame and
+  wake the loop BEFORE it drops the hold, or whoever the drop releases can
+  read no demand and report at rest with the cells unlanded (the stage 1
+  `flux:font` and camera closures had the same order, reordered); and
+  `warmText` queued its warm-ups for a frame nothing requested, which a
+  bare `warmText(); settle()` would never run (`request_warm` latches the
+  platform's frame request now, which the atlas is constructed with).
 
   Open after step 2, for step 3: the first engine frame of a screen costs
   the glyph program's compile and ten layer round trips (91 ms of paint

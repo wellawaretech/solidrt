@@ -318,16 +318,17 @@ fn request_glyphs<'js>(ctx: Ctx<'js>, font: u64, glyphs: Vec<f64>) -> rquickjs::
         glyphs: missing.clone(),
       };
       // The hold ends on the worker thread when the cells are made; the
-      // latch and the wake bring the frame that lands them.
+      // latch and the wake bring the frame that lands them, and go first,
+      // so whoever the hold's end releases finds the frame demanded.
       let hold = crate::pending::PendingOps::of(&ctx).in_flight("glyph cells");
       let latch = st.gui.platform.frame_request_handle();
       let wake = st.gui.alloy.frame_wake();
       let done: Box<dyn FnOnce() + Send> = Box::new(move || {
-        drop(hold);
         latch.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(wake) = &wake {
           wake();
         }
+        drop(hold);
       });
       let job =
         CellJob { owner: font, bytes: face.bytes().clone(), request, priority: JobPriority::Needed, done: Some(done) };

@@ -49,5 +49,5 @@ pub use atlas::{AtlasPacker, CellKey as AtlasKey, CellPlacement, Dirty, DirtyRec
 pub use cells::{Cell, CellKind, CellRequest, Rasterizer, BYTES_PER_TEXEL};
 pub use fonts::{family_names, weight_value, Face, FaceId, FontSet};
 pub use shape::{Fallback, PlacedGlyph, ShapeStyle, ShapedGlyphs};
-pub use text_atlas::{split_phase, CellKey, StyleKey, TextAtlas, WarmRequest, PHASES};
+pub use text_atlas::{split_phase, CellKey, HoldSource, StyleKey, TextAtlas, WarmRequest, WorkHold, PHASES};
 pub use worker::{CellJob, CellWorker, CellsDone, JobPriority};

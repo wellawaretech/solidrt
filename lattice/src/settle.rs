@@ -3,8 +3,8 @@
 // `settle` query. An app is at rest when
 //
 // - nothing it started is in flight (flux's holds: a fetch, a file read, a
-//   query; what stands, like a server or a timer not yet due, is not waited
-//   for) and the job queue is dry,
+//   query, the glyph cells a text drew without; what stands, like a server
+//   or a timer not yet due, is not waited for) and the job queue is dry,
 // - no timer is due (on the frame timeline a due timer fires with the next
 //   frame, so it is work waiting that no frame request stands for), and
 // - no frame is demanded (the request latch, which a tree write, a running
@@ -47,12 +47,7 @@ pub(crate) struct Unsettled {
 
 impl Unsettled {
   pub(crate) fn read(ctx: &Ctx<'_>) -> Self {
-    let mut in_flight = flux::in_flight(ctx);
-    let cells = flux::gui::frame::text_cells_in_flight(ctx);
-    if cells > 0 {
-      in_flight.push(("text cells", cells));
-    }
-    Self { in_flight, demand: flux::gui::frame::demand(ctx), timer_due: flux::timer_due(ctx) }
+    Self { in_flight: flux::in_flight(ctx), demand: flux::gui::frame::demand(ctx), timer_due: flux::timer_due(ctx) }
   }
 
   fn at_rest(&self) -> bool {

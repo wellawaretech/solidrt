@@ -165,8 +165,9 @@ test("the list loads", async app => {
 })
 ```
 
-At rest means: nothing the app started is in flight (waited for with no
-app time passing), no timer is due, and no frame is demanded. A demanded
+At rest means: nothing the app started is in flight (a fetch, a file read,
+the glyph cells a text drew without: waited for with no app time passing),
+no timer is due, and no frame is demanded. A demanded
 frame is run, so a running transition is played to its end and the test
 reads the end state; a timer that is already due fires with the next
 frame. A timer due later is not waited for: `app.advance(ms)` reaches it.

@@ -167,8 +167,9 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
       // The hold ends when the device answers, polled on the task's own
       // cadence (a client's ticks pump the same session and may get there
       // first); the latch and the wake bring the frame whose `tick` settles
-      // the promise. A session closed meanwhile answers None and ends the
-      // hold the same way.
+      // the promise, and go first, so whoever the hold's end releases finds
+      // the frame demanded. A session closed meanwhile answers None and
+      // ends the hold the same way.
       let hold = crate::pending::PendingOps::of(&ctx).in_flight("camera open");
       let latch = state.0.gui.platform.frame_request_handle();
       let wake = state.0.gui.alloy.frame_wake();
@@ -177,11 +178,11 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
         while matches!(gui.alloy.pump_camera(session), Some(CameraStatus::Pending)) {
           tokio::time::sleep(std::time::Duration::from_millis(OPEN_POLL_MS)).await;
         }
-        drop(hold);
         latch.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(wake) = &wake {
           wake();
         }
+        drop(hold);
       });
     }
     Err(e) => {

@@ -76,12 +76,7 @@ pub fn paint_phase(
 
   // The text atlas's frame: land the cells the worker made and open the
   // synchronous budget before any text builds (see TextAtlas).
-  platform.text_atlas().begin_frame(
-    alloy,
-    &platform.frame_request_handle(),
-    &platform.glyphs(),
-    platform.display_scale(),
-  );
+  platform.text_atlas().begin_frame(alloy, &platform.glyphs(), platform.display_scale());
   // Cells landed: every text whose layer drew without them redraws, its
   // caches and its boundaries' cleared and its extent damaged, whether or
   // not the walk would otherwise enter it this frame.

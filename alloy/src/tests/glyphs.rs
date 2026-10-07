@@ -4,12 +4,15 @@
 // text_baseline.rs.
 use crate::impellers::{FontStyle, FontWeight};
 use crate::rendertree::text::glyphs::{
-  split_phase, AtlasPacker, Cell, CellKind, CellRequest, Dirty, FontSet, InsertOutcome, Rasterizer, ShapeStyle,
-  ShapedGlyphs, StyleKey, TextAtlas, BYTES_PER_TEXEL, PHASES,
+  split_phase, AtlasPacker, Cell, CellKind, CellRequest, Dirty, FontSet, HoldSource, InsertOutcome, Rasterizer,
+  ShapeStyle, ShapedGlyphs, StyleKey, TextAtlas, WarmRequest, BYTES_PER_TEXEL, PHASES,
 };
 use crate::rendertree::text::{prepare_units, Fallback, RunStyle};
 use crate::rendertree::{FontPayload, PaintState, PlatformContext};
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 const NOTO_SANS: &[u8] = include_bytes!("../../assets/fonts/NotoSans.ttf");
 const NOTO_SANS_MONO: &[u8] = include_bytes!("../../assets/fonts/NotoSansMono.ttf");
@@ -367,20 +370,73 @@ fn a_mask_at_a_subpixel_phase_shifts_its_coverage() {
   assert!((ink(&whole) as i32 - ink(&half) as i32).abs() < ink(&whole) as i32 / 10, "the ink is the same");
 }
 
+// A hold source that counts: how many holds were taken, how many are
+// still held. What an embedder's work-in-flight ledger sees of the atlas.
+struct CountingHolds {
+  taken: AtomicU32,
+  held: Arc<AtomicU32>,
+}
+
+struct CountedHold(Arc<AtomicU32>);
+
+impl Drop for CountedHold {
+  fn drop(&mut self) {
+    self.0.fetch_sub(1, Ordering::SeqCst);
+  }
+}
+
+fn counting_holds() -> (Arc<CountingHolds>, HoldSource) {
+  let counts = Arc::new(CountingHolds { taken: AtomicU32::new(0), held: Arc::new(AtomicU32::new(0)) });
+  let source = counts.clone();
+  let hold_source: HoldSource = Arc::new(move || {
+    source.taken.fetch_add(1, Ordering::SeqCst);
+    source.held.fetch_add(1, Ordering::SeqCst);
+    Box::new(CountedHold(source.held.clone()))
+  });
+  (counts, hold_source)
+}
+
+// How long a unit test gives the worker to make a warm-up's cells.
+const WORKER_WAIT: Duration = Duration::from_secs(10);
+
 #[test]
 fn warming_a_style_queues_its_ascii_at_every_phase() {
   let fonts = fonts(&[noto()]);
-  let mut atlas = TextAtlas::default();
+  let latch = Arc::new(AtomicBool::new(false));
+  let mut atlas = TextAtlas::new(latch.clone());
+  let (holds, source) = counting_holds();
+  atlas.set_hold_source(source);
   let style = StyleKey::new(0, SIZE, 500, 100.0, false, 1.0);
   atlas.warm(&fonts, style);
   // Printable ASCII is 95 code points and the shipped face covers them:
-  // one job per phase, 95 cells each.
-  assert_eq!(atlas.pending(), PHASES as usize);
+  // one job per phase, 95 cells each, each job a hold on the embedder.
+  assert_eq!(holds.taken.load(Ordering::SeqCst), PHASES as u32);
   assert_eq!(atlas.queued_cells(), 95 * PHASES as usize);
   // Warming again queues nothing more.
   atlas.warm(&fonts, style);
-  assert_eq!(atlas.pending(), PHASES as usize);
+  assert_eq!(holds.taken.load(Ordering::SeqCst), PHASES as u32);
   assert_eq!(atlas.queued_cells(), 95 * PHASES as usize);
+  // The worker ends each hold when the job's cells are made, after it
+  // requested the frame that lands them.
+  let started = Instant::now();
+  while holds.held.load(Ordering::SeqCst) > 0 {
+    assert!(started.elapsed() < WORKER_WAIT, "the worker did not finish the warm-up");
+    std::thread::sleep(Duration::from_millis(1));
+  }
+  assert!(latch.load(Ordering::Relaxed), "a finished job requests the frame that lands its cells");
+}
+
+#[test]
+fn a_warm_request_asks_for_the_frame_that_submits_it() {
+  let latch = Arc::new(AtomicBool::new(false));
+  let mut atlas = TextAtlas::new(latch.clone());
+  let request = WarmRequest { face: 0, size: SIZE, weight: 500, stretch: 100.0, italic: false };
+  atlas.request_warm(request);
+  assert!(latch.load(Ordering::Relaxed));
+  // The same request again changes nothing.
+  latch.store(false, Ordering::Relaxed);
+  atlas.request_warm(request);
+  assert!(!latch.load(Ordering::Relaxed));
 }
 
 #[test]
