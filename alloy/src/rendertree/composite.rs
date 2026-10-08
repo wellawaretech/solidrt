@@ -5,8 +5,8 @@ use taffy::{AvailableSpace, NodeId};
 use crate::rendertree::boundary::{self, Hoist};
 use crate::rendertree::cull::{self, CullRect};
 use crate::rendertree::{
-  BackdropPass, BoundaryMode, BuildContext, Element, ElementKind, FilterState, FrameDamage, LayoutContext, PaintCache,
-  PlatformContext, RenderTree,
+  grid, BackdropPass, BoundaryMode, BuildContext, Element, ElementKind, FilterState, FrameDamage, LayoutContext,
+  PaintCache, PlatformContext, RenderTree, Vector,
 };
 use crate::{CaptureDone, CaptureInfo};
 
@@ -98,11 +98,15 @@ pub fn paint_phase(
   // scoped: only plain stats leave the block.
   let (mut stats, damage, regions) = {
     let mut ctx = BuildContext::new(platform, alloy);
-    ctx.size = size;
+    // The window's grid: device pixels through the display scale.
+    ctx.grid = grid::at_scale(platform.display_scale());
     // The root's boxes come from its layout like every other node's (the hit
-    // side derives them per element, so a padded root must agree here too);
-    // before the first layout the window is the frame.
-    ctx.content = tree.node(root_id).content_box().unwrap_or(Rect::new(Point::zero(), ctx.size));
+    // side derives them per element, so a padded root must agree here too),
+    // snapped like every other node's; before the first layout the window
+    // is the frame.
+    let root = tree.node(root_id);
+    ctx.size = grid::snap_box(&ctx.grid, Point::zero(), root.painted_size().unwrap_or(size)).1;
+    ctx.content = root.content_box().unwrap_or(Rect::new(Point::zero(), ctx.size));
     // Nothing outside the window is visible: the root cull rect is the window.
     ctx.cull = Some(window_rect);
     ctx.to_window = Some(euclid::default::Transform2D::identity());
@@ -273,21 +277,47 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
 // A View's own box transform: the user chain only, no design-size fit (the fit
 // maps children into the box, it never moves the box itself, and it is
 // content - recorded by record_node so caches and captures hold fitted,
-// box-sized output). Resolved against the view's border box - the same frame
-// the hit side passes (okf/done/padding-box-divergence.md); detached views
-// fall back to the inherited frame. record_node applies it under Hoist::None; boundary
-// callers hoist it out of the cached content and apply it at composite time,
-// so the cache stays reusable under transform-only changes and Snapshot mode
-// never bakes a rotation/scale into the layout-box crop. None for non-View
-// kinds, which paint transform-free content in build().
-pub(super) fn own_matrix(element: &Element, inherited: Size) -> Option<Matrix> {
+// box-sized output). Resolved against the view's painted box (`size`, the
+// walk's ctx.size: its snapped border box, the inherited frame for a
+// detached view) - the box the hit side derives per element too
+// (okf/done/padding-box-divergence.md). record_node applies it under
+// Hoist::None; boundary callers hoist it out of the cached content and
+// apply it at composite time, so the cache stays reusable under
+// transform-only changes and Snapshot mode never bakes a rotation/scale
+// into the layout-box crop. None for non-View kinds, which paint
+// transform-free content in build().
+fn own_matrix(element: &Element, size: Size) -> Option<Matrix> {
   match &element.kind {
-    ElementKind::View(v) => {
-      let box_size = element.frame_size(inherited);
-      Some(v.box_matrix(box_size))
-    }
+    ElementKind::View(v) => Some(v.box_matrix(size)),
     _ => None,
   }
+}
+
+// own_matrix with its translation snapped to the grid: under `slot_grid`
+// (the grid of the frame the node is placed in) the box origin lands on a
+// whole device pixel when the chain stays axis-aligned, and is left where
+// the matrix puts it otherwise. The one value both the inline path and
+// the composite-time hoists apply, so a recording's interior, snapped
+// against a grid-aligned box frame when recorded, replays on the grid
+// after a transform write.
+pub(super) fn snapped_own(element: &Element, size: Size, slot_grid: &grid::GridMap) -> Option<Matrix> {
+  let own = own_matrix(element, size)?;
+  match grid::shift(&grid::through(slot_grid, &own), Point::zero()) {
+    Some(by) => Some(Matrix::translation(by.x, by.y, 0.0).then(&own)),
+    None => Some(own),
+  }
+}
+
+// A View's scroll offset snapped to whole device pixels under `box_grid`
+// (the grid of the box frame, after the own matrix): the children slide by
+// whole pixels, as every browser scrolls, so a recording boundary's
+// interior stays on the grid at every scroll offset. None for non-Views and
+// unscrolled Views.
+pub(super) fn snapped_scroll(element: &Element, box_grid: &grid::GridMap) -> Option<Vector> {
+  let ElementKind::View(v) = &element.kind else { return None };
+  let s = v.scroll?;
+  let by = grid::shift(&grid::translate(box_grid, -s), Point::zero()).unwrap_or_default();
+  Some(s - by)
 }
 
 // Per-axis overflow clipping from the element's layout style; no layout means
@@ -304,15 +334,15 @@ fn overflow_clips(element: &Element) -> (bool, bool) {
 // node-local, pre-scroll BOX space: the rect is the layout box, so it must be
 // applied under the user chain but before any design-size fit (a box-sized rect
 // emitted in design space clips the wrong rectangle in both fit directions -
-// okf/backlog/overflow-viewbox-clip.md). Shared by record_node and the
-// Recording boundary composite path so the two cannot diverge. No-op without
-// a clip.
-pub(super) fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
+// okf/backlog/overflow-viewbox-clip.md). The rect is `size`, the node's
+// painted box as the walk snapped it (an overflow clip requires layout, so
+// it is the border box). Shared by record_node and the Recording boundary
+// composite path so the two cannot diverge. No-op without a clip.
+pub(super) fn apply_clip(builder: &mut DisplayListBuilder, element: &Element, size: Size) {
   let (clip_x, clip_y) = overflow_clips(element);
   if !clip_x && !clip_y {
     return;
   }
-  let size = element.painted_size().expect("overflow clip requires layout");
   let (w, h) = (size.width, size.height);
   // Rounded clip only applies when the whole box is clipped (both axes);
   // a single-axis clip has no meaningful corners to round.
@@ -341,17 +371,15 @@ pub(super) fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
   }
 }
 
-// Scroll offset, in box pixels: applied after the clip (the clip box stays
-// put in viewport space while children slide under it) and before any design size
-// fit, so one scroll pixel is one box pixel regardless of fit scale - the hit
-// side divides by the fit scale instead (View::content_scroll). Positive
-// scroll shifts content leftward/upward. No-op for non-Views and unscrolled
-// Views.
-pub(super) fn apply_scroll(builder: &mut DisplayListBuilder, element: &Element) {
-  if let ElementKind::View(view) = &element.kind {
-    if let Some(s) = view.scroll {
-      builder.translate(-s.x, -s.y);
-    }
+// Scroll offset (snapped_scroll), in box pixels: applied after the clip (the
+// clip box stays put in viewport space while children slide under it) and
+// before any design size fit, so one scroll pixel is one box pixel
+// regardless of fit scale - the hit side divides by the fit scale instead
+// (View::content_scroll). Positive scroll shifts content leftward/upward.
+// No-op without a scroll.
+pub(super) fn apply_scroll(builder: &mut DisplayListBuilder, scroll: Option<Vector>) {
+  if let Some(s) = scroll {
+    builder.translate(-s.x, -s.y);
   }
 }
 
@@ -410,18 +438,17 @@ pub(super) fn effect_paint(rgb: f32, opacity: f32, filter: Option<&FilterState>)
 // target, and glass fades with its panel like CSS composites it. `alpha`
 // is the same trick one level up: the opacity of the fading ancestors a
 // backdrops-only pass (emit_backdrops_below) is emitting the panel ahead
-// of, 1 on the regular paths. The bounds are the layout box in box space,
-// so this must be emitted after the view's matrix and before any scroll
-// translate. No-op for non-Views, empty declarations, and fully transparent
-// elements.
-pub(super) fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element, inherited: Size, alpha: f32) {
+// of, 1 on the regular paths. The bounds are the painted box (`size`, the
+// walk's ctx.size) in box space, so this must be emitted after the view's
+// matrix and before any scroll translate. No-op for non-Views, empty
+// declarations, and fully transparent elements.
+pub(super) fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element, size: Size, alpha: f32) {
   let ElementKind::View(v) = &element.kind else { return };
   let Some(f) = v.active_backdrop_filter() else { return };
   let opacity = v.opacity.unwrap_or(1.0) * alpha;
   if opacity <= 0.0 {
     return;
   }
-  let size = element.frame_size(inherited);
   let bounds = Rect::new(Point::zero(), size);
   let backdrop = f.to_backdrop_image_filter();
   let color_filter = f.to_color_filter();
@@ -443,7 +470,7 @@ pub(super) fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element,
   // live target. Callers that did (record_node, draw_cached_recording)
   // intersect an identical clip, which is a no-op.
   builder.save();
-  apply_clip(builder, element);
+  apply_clip(builder, element, size);
   crate::rendertree::counters::note_clip(false);
   builder.clip_rect(&bounds, ClipOperation::Intersect);
   crate::rendertree::counters::note_save_layer();
@@ -598,9 +625,8 @@ fn build_recursive<'a>(
   // be able to pull the whole region into the repaint rect.
   if let ElementKind::View(v) = &element.kind {
     if let Some(f) = v.active_backdrop_filter() {
-      let size = element.frame_size(ctx.size);
-      let region = cull::Extent::Bounded(Rect::new(Point::zero(), size))
-        .transformed(&own_matrix(element, ctx.size).unwrap_or_else(Matrix::identity))
+      let region = cull::Extent::Bounded(Rect::new(Point::zero(), ctx.size))
+        .transformed(&snapped_own(element, ctx.size, &ctx.grid).unwrap_or_else(Matrix::identity))
         .to_window(Point::zero(), &ctx.to_window);
       ctx.backdrop_regions.push(match region {
         cull::Extent::Bounded(r) => Some((r, f.blur_outset())),
@@ -635,8 +661,15 @@ fn build_recursive<'a>(
   match element.repaint_boundary {
     BoundaryMode::None => record_node(scene, node_id, ctx, builder, Hoist::None),
     BoundaryMode::Recording => {
-      let own = own_matrix(element, ctx.size);
-      let hoist = if own.is_some() { Hoist::Full } else { Hoist::None };
+      // A View boundary's matrix, clip and scroll are the composite's to
+      // apply, snapped against this frame's grid (the recording's interior
+      // was snapped against a grid-aligned box frame when recorded).
+      let own = snapped_own(element, ctx.size, &ctx.grid);
+      let hoisted = own.map(|m| (m, snapped_scroll(element, &grid::through(&ctx.grid, &m))));
+      let hoist = match own {
+        Some(m) => Hoist::Full(m),
+        None => Hoist::None,
+      };
       let cached = match &*element.paint_cache.borrow() {
         Some(PaintCache::Recording(rec)) => Some((rec.dl.clone(), rec.backdrops)),
         _ => None,
@@ -657,7 +690,7 @@ fn build_recursive<'a>(
           }),
         }
         ctx.boundaries_reused += 1;
-        boundary::draw_cached_recording(builder, element, own.as_ref(), &dl, ctx.size);
+        boundary::draw_cached_recording(builder, element, hoisted, &dl, ctx.size);
         return;
       }
       // The recording outlives this frame's viewport (an ancestor scroll
@@ -673,7 +706,7 @@ fn build_recursive<'a>(
         // predates regions_before) summarize what the cache must stand in
         // for on reuse frames.
         let backdrops = boundary::BakedBackdrops::summarize(&ctx.backdrop_regions[regions_before..]);
-        boundary::draw_cached_recording(builder, element, own.as_ref(), &dl, ctx.size);
+        boundary::draw_cached_recording(builder, element, hoisted, &dl, ctx.size);
         *element.paint_cache.borrow_mut() = Some(PaintCache::Recording(boundary::RecordingCache { dl, backdrops }));
       }
     }
@@ -709,15 +742,21 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
     return;
   }
 
-  let own = own_matrix(element, ctx.size);
-  let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
+  let hoist = match snapped_own(element, ctx.size, &ctx.grid) {
+    Some(m) => Hoist::Transform(m),
+    None => Hoist::None,
+  };
 
   let mut sub = DisplayListBuilder::new(None);
   sub.scale(scale, scale);
   if offset != (0.0, 0.0) {
     sub.translate(-offset.0, -offset.1);
   }
+  // The capture is a raster root: its grid is the texture's.
+  let slot_grid = ctx.grid;
+  ctx.grid = grid::raster(scale, -Vector::new(offset.0, offset.1));
   isolated_walk(scene, node_id, ctx, &mut sub, hoist);
+  ctx.grid = slot_grid;
 
   let Some(dl) = sub.build() else {
     for done in requests {
@@ -755,23 +794,40 @@ pub(super) fn record_node<'a>(
   }
 
   let (clip_x, clip_y) = overflow_clips(element);
-  let record_clip = (clip_x || clip_y) && hoist != Hoist::Full;
+  let hoisted_full = matches!(hoist, Hoist::Full(_));
+  let record_clip = (clip_x || clip_y) && !hoisted_full;
 
   // A save is only needed for ops this recording itself carries: a recorded
   // clip, or a View's matrix/scroll (child translates below are undone
   // explicitly). Under Hoist::Full there is normally nothing to restore - a
   // design-size fit is the exception, recorded below even when hoisted.
   let view_fit = match &element.kind {
-    // The fit resolves against the border box, like own_matrix; detached
-    // views fall back to the inherited frame in ctx.size.
-    ElementKind::View(v) => v.fit_matrix(element.frame_size(ctx.size)),
+    // The fit resolves against the painted box, like own_matrix.
+    ElementKind::View(v) => v.fit_matrix(ctx.size),
     _ => None,
   };
   let needs_save =
-    record_clip || (matches!(&element.kind, ElementKind::View(_)) && (hoist != Hoist::Full || view_fit.is_some()));
+    record_clip || (matches!(&element.kind, ElementKind::View(_)) && (!hoisted_full || view_fit.is_some()));
   if needs_save {
     builder.save();
   }
+
+  // The node's own matrix and scroll, snapped to the grid (snapped_own,
+  // snapped_scroll): under a hoist they are the caller's, computed against
+  // the same slot grid and carried in the hoist, so the recording and its
+  // composite agree. The box grid is the raster's own under
+  // Hoist::Transform (the caller reset it: the matrix is applied to the
+  // quad, not inside the raster) and the slot grid through the matrix
+  // otherwise.
+  let own = match hoist {
+    Hoist::None => snapped_own(element, ctx.size, &ctx.grid),
+    Hoist::Transform(m) | Hoist::Full(m) => Some(m),
+  };
+  let box_grid = match (hoist, &own) {
+    (Hoist::Transform(_), _) | (_, None) => ctx.grid,
+    (_, Some(m)) => grid::through(&ctx.grid, m),
+  };
+  let scroll = snapped_scroll(element, &box_grid);
 
   // Record order: user matrix, clip, scroll, fit, children - a hoist covers a
   // prefix, and draw_cached_recording applies the same order around a cached
@@ -779,9 +835,9 @@ pub(super) fn record_node<'a>(
   // both mean the layout BOX - the clip rect in box space, the scroll offset
   // in box pixels - which is why they sit under the user chain and before any
   // design-size fit (okf/backlog/overflow-viewbox-clip.md).
-  if hoist == Hoist::None {
-    if let Some(own) = own_matrix(element, ctx.size) {
-      builder.transform(&own);
+  if matches!(hoist, Hoist::None) {
+    if let Some(own) = &own {
+      builder.transform(own);
     } else if pass.is_none() {
       element.build(ctx, builder);
       if let ElementKind::Text(text) = &element.kind {
@@ -790,7 +846,7 @@ pub(super) fn record_node<'a>(
     }
   }
   if record_clip {
-    apply_clip(builder, element);
+    apply_clip(builder, element, ctx.size);
   }
   // The backdrop layer reads the current target, so only the inline path
   // emits it here; boundary callers emit it at composite time instead
@@ -801,7 +857,7 @@ pub(super) fn record_node<'a>(
   // pass) and counts them.
   match ctx.backdrop_pass {
     None => {
-      if hoist == Hoist::None {
+      if matches!(hoist, Hoist::None) {
         emit_backdrop(builder, element, ctx.size, 1.0);
       }
     }
@@ -813,8 +869,8 @@ pub(super) fn record_node<'a>(
     }
     Some(_) => {}
   }
-  if hoist != Hoist::Full {
-    apply_scroll(builder, element);
+  if !hoisted_full {
+    apply_scroll(builder, scroll);
   }
   if let Some(fit) = &view_fit {
     // The fit belongs to the CONTENT, recorded at every hoist level, so
@@ -829,18 +885,25 @@ pub(super) fn record_node<'a>(
   // the content still lands under it on screen, which is what the damage
   // extents must describe. Unlike the cull rect it is never suspended
   // inside boundary recordings - a recording replays at the walk's current
-  // window position this frame.
+  // window position this frame. The grid map follows the same ops into the
+  // child frame, from the box grid (see above).
   let saved_map = ctx.to_window;
-  if let Some(own) = own_matrix(element, ctx.size) {
-    ctx.to_window = cull::map_through(&ctx.to_window, &own);
+  if let Some(own) = &own {
+    ctx.to_window = cull::map_through(&ctx.to_window, own);
   }
-  if let ElementKind::View(v) = &element.kind {
-    if let Some(s) = v.scroll {
-      ctx.to_window = cull::map_translate(&ctx.to_window, -s);
-    }
+  if let Some(s) = scroll {
+    ctx.to_window = cull::map_translate(&ctx.to_window, -s);
   }
   if let Some(fit) = &view_fit {
     ctx.to_window = cull::map_through(&ctx.to_window, fit);
+  }
+  let saved_grid = ctx.grid;
+  ctx.grid = box_grid;
+  if let Some(s) = scroll {
+    ctx.grid = grid::translate(&ctx.grid, -s);
+  }
+  if let Some(fit) = &view_fit {
+    ctx.grid = grid::through(&ctx.grid, fit);
   }
 
   // The cull rect follows the same four ops into the child frame. Under a
@@ -849,8 +912,8 @@ pub(super) fn record_node<'a>(
   // cull here.
   let saved_cull = ctx.cull;
   if ctx.cull.is_some() {
-    if let Some(own) = own_matrix(element, ctx.size) {
-      ctx.cull = ctx.cull.through(&own);
+    if let Some(own) = &own {
+      ctx.cull = ctx.cull.through(own);
     }
     // A filter blur pulls just-offscreen content into view: widen what
     // counts as visible by its reach so that content is not culled away.
@@ -860,13 +923,11 @@ pub(super) fn record_node<'a>(
         ctx.cull = ctx.cull.map(|r| r.inflate(reach, reach));
       }
     }
-    if let Some(size) = element.painted_size() {
-      ctx.cull = ctx.cull.clipped(size, clip_x, clip_y);
+    if element.painted_size().is_some() {
+      ctx.cull = ctx.cull.clipped(ctx.size, clip_x, clip_y);
     }
-    if let ElementKind::View(v) = &element.kind {
-      if let Some(s) = v.scroll {
-        ctx.cull = ctx.cull.scrolled(s);
-      }
+    if let Some(s) = scroll {
+      ctx.cull = ctx.cull.scrolled(s);
     }
     if let Some(fit) = &view_fit {
       ctx.cull = ctx.cull.through(fit);
@@ -880,7 +941,7 @@ pub(super) fn record_node<'a>(
   // current clip coverage.
   let opacity = view_opacity(element);
   let filter = view_filter(element);
-  let effect_layer = pass.is_none() && hoist == Hoist::None && (opacity < 1.0 || filter.is_some());
+  let effect_layer = pass.is_none() && matches!(hoist, Hoist::None) && (opacity < 1.0 || filter.is_some());
   if effect_layer {
     let paint = effect_paint(0.0, opacity, filter);
     let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
@@ -921,7 +982,19 @@ pub(super) fn record_node<'a>(
       continue;
     }
 
-    let pos = child.placement();
+    // The child's painted box: its layout box snapped to the grid (grid.rs),
+    // origin and far edges on whole device pixels, where the whole
+    // subtree is then placed. A detached child has no box of its own: it
+    // inherits the frame whole (the design size under a design-size view,
+    // so a d-text wraps and a d-rect fills in design units) and draws its
+    // own geometry where it says, unsnapped - the detached kinds are the
+    // animation lane. The content box stays the layout's: text and inline
+    // atoms are placed fractionally inside the snapped box, as browsers
+    // place text runs. Hit testing reads the layout boxes, never these.
+    let (pos, child_size) = match child.painted_size() {
+      Some(size) => grid::snap_box(&ctx.grid, child.placement(), size),
+      None => (child.placement(), child_frame),
+    };
 
     // The child's current window extent, kept on the element for damage
     // resolves (see paint_phase). Written for culled children too - their
@@ -948,32 +1021,28 @@ pub(super) fn record_node<'a>(
     ctx.cull = child_cull;
     let parent_map = ctx.to_window;
     ctx.to_window = cull::map_translate(&ctx.to_window, pos.to_vector());
+    let parent_grid = ctx.grid;
+    ctx.grid = grid::translate(&ctx.grid, pos.to_vector());
 
     builder.translate(pos.x, pos.y);
 
-    if let (Some(size), Some(content)) = (child.painted_size(), child.content_box()) {
-      // The child's border box (painted: a layout slide's mid-motion box
-      // included), and its content box derived from the same layout - the
-      // split hit testing makes too, so paint and hit size a kind against
-      // the same boxes (okf/done/padding-box-divergence.md).
-      ctx.size = size;
-      ctx.content = content;
-      build_recursive(scene, child_id, ctx, builder);
-    } else {
-      // A detached child inherits the frame whole (the design size under a
-      // design-size view, so a d-text wraps and a d-rect fills in design units);
-      // no layout means no padding, so content covers the frame.
-      ctx.size = child_frame;
-      ctx.content = Rect::new(Point::zero(), child_frame);
-      build_recursive(scene, child_id, ctx, builder);
-    }
+    // The child's border box (painted: a layout slide's mid-motion box
+    // included, snapped above), and its content box derived from the same
+    // layout - the split hit testing makes too, so paint and hit size a
+    // kind against the same boxes (okf/done/padding-box-divergence.md). No
+    // layout means no padding, so content covers the frame.
+    ctx.size = child_size;
+    ctx.content = child.content_box().unwrap_or(Rect::new(Point::zero(), child_size));
+    build_recursive(scene, child_id, ctx, builder);
 
     ctx.cull = parent_cull;
     ctx.to_window = parent_map;
+    ctx.grid = parent_grid;
     builder.translate(-pos.x, -pos.y);
   }
   ctx.cull = saved_cull;
   ctx.to_window = saved_map;
+  ctx.grid = saved_grid;
   ctx.backdrop_pass = pass;
 
   if effect_layer {

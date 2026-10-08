@@ -506,7 +506,10 @@ emoji, the hinting and gamma policy per DPI the spike explored.
   general paint-time snap is okf/backlog/pixel-snapped-paint-boxes.md,
   which retires `grid_shift` when it lands. What remains soft on
   purpose is the stems: the light mode leaves x alone for the subpixel
-  phases, Chrome's look on Linux.
+  phases, Chrome's look on Linux. (Landed the same day,
+  okf/done/pixel-snapped-paint-boxes.md: the walk snaps every box, the
+  layer snaps its quad with the shared `grid::shift` against the grid
+  map, and a text inside a snapshot boundary is on the grid too.)
 - 2026-10-08, step 5, the full mode. The user asked whether every font
   should read crisp; the answer is the mode question, so `hint` became a
   mode: `Hint::{Off, Light, Full}` on the cell request, the style key and

@@ -19,7 +19,7 @@ use crate::impellers::{
 use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, FaceId, Hint, StyleKey};
 use crate::rendertree::text::layout::{PlacedRun, Run, Wrap};
 use crate::rendertree::{
-  Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext, PaintState,
+  grid, Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext, PaintState,
   PlatformContext,
 };
 use crate::Context;
@@ -255,35 +255,12 @@ impl std::fmt::Debug for TextLayer {
 // re-rasterizes: float noise never does, a zoom does from its second frame.
 const LAYER_SCALE_TOLERANCE: f32 = 0.02;
 
-// The scale an ancestor chain applies at this node, from the walk's window
-// map: the longer axis of a 2D transform, 1 when the chain is not 2D.
-fn composite_scale(map: &crate::rendertree::cull::WindowMap) -> f32 {
-  match map {
-    Some(m) => (m.m11 * m.m11 + m.m12 * m.m12).sqrt().max((m.m21 * m.m21 + m.m22 * m.m22).sqrt()),
-    None => 1.0,
-  }
-}
-
-// The offset, in the node's frame, that puts `point` (the layer's origin in
-// that frame) on the device pixel grid under `map` at `display_scale`. The
-// glyph quads snap to pixel rows and subpixel phases inside the layer, so
-// the layer must land on whole device pixels or every row is resampled a
-// fraction off and the hinted rows blur (text moves by under a pixel, as
-// in every browser). None without a map or under a rotation, where there
-// is no grid to land on.
-fn grid_shift(
-  map: &crate::rendertree::cull::WindowMap,
-  display_scale: f32,
-  point: Point,
-) -> Option<euclid::default::Vector2D<f32>> {
-  let m = map.as_ref()?;
-  if m.m12 != 0.0 || m.m21 != 0.0 || m.m11 <= 0.0 || m.m22 <= 0.0 {
-    return None;
-  }
-  let window = m.transform_point(point);
-  let device = window * display_scale;
-  let residual = device.round() - device;
-  Some(euclid::default::Vector2D::new(residual.x / (m.m11 * display_scale), residual.y / (m.m22 * display_scale)))
+// The layer's raster density: the device pixels per logical pixel of the
+// target the layer is drawn into, from the walk's grid map (the display
+// scale times the ancestors' scale; the display scale alone past a 3d
+// transform, where the map is gone).
+fn layer_scale(ctx: &BuildContext<'_>) -> f32 {
+  grid::scale(&ctx.grid).unwrap_or_else(|| ctx.platform.display_scale())
 }
 
 impl Buildable for Text {
@@ -449,7 +426,7 @@ impl Text {
     styles: &[RunStyle],
     line_runs: &[LineRun],
   ) {
-    let scale = ctx.platform.display_scale() * composite_scale(&ctx.to_window);
+    let scale = layer_scale(ctx);
     let Some((rect, tex_w, tex_h)) = Self::layer_geometry(owned, index, scale) else {
       return;
     };
@@ -515,8 +492,12 @@ impl Text {
     // keeps the composite pixel-exact.
     let src =
       Rect::new(Point::zero(), Size::new(layer.rect.size.width * layer.scale, layer.rect.size.height * layer.scale));
+    // The glyph quads snap to pixel rows and subpixel phases inside the
+    // layer, so the layer's quad is a painted box like any other: its
+    // origin (the text origin plus the slack, fractional) lands on a whole
+    // device pixel, and the text moves by under a pixel with it.
     let mut dst = Rect::new(origin + layer.rect.origin.to_vector(), layer.rect.size);
-    if let Some(shift) = grid_shift(&ctx.to_window, ctx.platform.display_scale(), dst.origin) {
+    if let Some(shift) = grid::shift(&ctx.grid, dst.origin) {
       dst.origin += shift;
     }
     crate::rendertree::counters::note_draw();

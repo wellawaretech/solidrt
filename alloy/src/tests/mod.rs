@@ -14,6 +14,7 @@ mod gpu_graph;
 mod gpu_lease;
 mod gpu_order;
 mod gpu_validate;
+mod grid;
 mod hit;
 mod inspect;
 mod keymap;

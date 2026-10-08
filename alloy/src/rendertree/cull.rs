@@ -177,17 +177,15 @@ pub(crate) fn is_backdrop_root(element: &Element) -> bool {
   filtered || matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa)
 }
 
-// The frame a node's detached children inherit: its own layout box (design
-// size under a design size), else what it inherited itself. Mirrors the child
-// walk in composite::record_node.
-pub(crate) fn child_frame(element: &Element, inherited: Size) -> Size {
-  let mut frame = element.frame_size(inherited);
-  if let ElementKind::View(v) = &element.kind {
-    if let Some(vb) = v.design_space() {
-      frame = vb;
-    }
+// The frame a node's detached children inherit, given the node's own box
+// (`frame_size` of what it inherited; the paint walk passes its snapped
+// box): the design size under a design size, else the box itself. Mirrors
+// the child walk in composite::record_node.
+pub(crate) fn child_frame(element: &Element, box_size: Size) -> Size {
+  match &element.kind {
+    ElementKind::View(v) => v.design_space().unwrap_or(box_size),
+    _ => box_size,
   }
-  frame
 }
 
 // What the node's own build() paints, in its box frame. Kinds default their
@@ -270,7 +268,7 @@ fn compute_envelope(scene: &RenderTree, element: &Element, platform: &PlatformCo
   let mut children = Extent::Empty;
   if !(clip_x && clip_y) {
     let text_atoms = matches!(&element.kind, ElementKind::Text(_));
-    let frame = child_frame(element, inherited);
+    let frame = child_frame(element, element.frame_size(inherited));
     for &child_id in &element.children {
       let child = scene.node(child_id);
       if child.is_hidden() {

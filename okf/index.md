@@ -300,6 +300,11 @@ Shaped, not started.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
+- **[Border widths land off the device grid at fractional scales](backlog/border-width-device-pixels.md)** [2026-10-08]
+  A 1 logical px stroke at 1.5x is 1.5 device pixels, so its inner edge sits
+  on a half pixel and reads as a soft second row whatever the box does;
+  browsers snap border widths to whole device pixels (at least one), and the
+  box kinds' strokes should too.
 - **[Make sol check honor solidrt.entry](backlog/check-honors-project-entry.md)** [2026-09-29]
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
@@ -560,13 +565,6 @@ Shaped, not started.
   friction stepped inside the solver, which is per-wheel-per-substep work no
   app can do in JS. Rapier has no vehicle module of its own; shape it as the
   physics core's first higher-level controller after the core lands.
-- **[Painted boxes land off the device pixel grid](backlog/pixel-snapped-paint-boxes.md)** [2026-10-08]
-  Layout places every node at fractional logical positions (a 16.98 px row
-  height puts rows at 45.71, 62.69, 79.67), and the composite walk draws them
-  there, so a 1 px border, a divider, an icon and a snapshot boundary are
-  resampled a fraction off; the text layer snaps itself today and that snap,
-  and the boundary leftover, should fall out of one paint-time rule for
-  axis-aligned boxes, as browsers do.
 - **[Make the fence wait over a video plane adaptive](backlog/plane-adaptive-fence-wait.md)** [2026-09-12]
   An app animating over a playing video plane runs at 16 fps because every
   window present waits for its GPU work while a plane exists; wait only for
@@ -701,6 +699,12 @@ Shaped, not started.
   A numeric pixel-delta mode on get_snapshot against the previous capture of
   the same node, so "does it still render the same" is one call with a number
   instead of two images an agent has to eyeball.
+- **[Snapshot boundaries are resampled under a scale](backlog/snapshot-raster-composite-scale.md)** [2026-10-08]
+  A snapshot boundary rasterizes at the display scale only, so under a
+  design-size fit or a scale transform its texture is scaled on composite and
+  every pixel in it is resampled, however well its quad lands on the grid; the
+  text layer already rasterizes at the display scale times the chain's scale
+  and tolerates drift, and the snapshot should do the same.
 - **[Reactivity diagnostics carry no source location](backlog/solid-diagnostics-source-location.md)** [2026-09-08]
   A STRICT_READ_UNTRACKED warning names the shape of the mistake but not the
   file or line, so finding it in an app with a dozen effects is a manual hunt;
@@ -2094,6 +2098,13 @@ Finished, kept for the reasoning.
   (GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT), killing the app; hit twice,
   reproducibly, on the Linux desktop client while bringing up the 2d starlings
   demo.
+- **[Painted boxes land off the device pixel grid](done/pixel-snapped-paint-boxes.md)** [2026-10-08]
+  Layout places every node at fractional logical positions (a 16.98 px row
+  height puts rows at 45.71, 62.69, 79.67), and the composite walk drew them
+  there, so a 1 px border, a divider, an icon and a snapshot boundary were
+  resampled a fraction off; now the walk snaps every axis-aligned box to the
+  device grid at paint time, origin and far edges, as browsers do, and the
+  text layer's and the boundaries' own snapping fell out of that one rule.
 - **[Intermittent SIGABRT at headless playback shutdown](done/playback-shutdown-sigabrt.md)** [2026-09-03]
   Every headless render ended in a signal after a complete capture, static
   apps included - the loop's final FrameRendered had the raster thread drawing

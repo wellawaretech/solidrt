@@ -4,6 +4,7 @@ pub mod counters;
 pub mod cull;
 pub(crate) mod damage;
 pub mod frame;
+pub(crate) mod grid;
 pub mod hit;
 pub(crate) mod kinds;
 pub mod layout;
@@ -68,6 +69,12 @@ pub struct BuildContext<'a> {
   /// for the damage-extent cells; None past a non-2D matrix (see
   /// cull::WindowMap). Never suspended inside boundary recordings.
   pub to_window: cull::WindowMap,
+  /// The transform from the walk's current frame to the device pixels of
+  /// the target being rasterized, for the paint-time snap of axis-aligned
+  /// boxes (see grid.rs): the window's through the display scale, a
+  /// snapshot's or a capture's texture inside its raster. None past a
+  /// non-2D matrix.
+  pub grid: grid::GridMap,
   /// Nodes whose subtree the walk entered this frame (culled ones excluded).
   pub nodes_painted: u32,
   /// Backdrop-filter regions the walk passed, in window space with each
@@ -110,6 +117,7 @@ impl<'a> BuildContext<'a> {
       content: Rect::new(Point::zero(), Size::default()),
       cull: None,
       to_window: None,
+      grid: None,
       nodes_painted: 0,
       backdrop_regions: Vec::new(),
       boundaries_reused: 0,

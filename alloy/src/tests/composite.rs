@@ -272,3 +272,43 @@ fn glass_under_a_fading_group_is_prepainted() {
   assert_eq!(reused.boundaries_reused, 1);
   assert_eq!(reused.backdrops_prepainted, 1);
 }
+
+// The paint-time snap (rendertree/grid.rs): a child laid out at a
+// fractional position is painted with its device origin on a whole pixel,
+// which its extent cell records (the envelope's 1 px AA outset above the
+// snapped origin). At 1x a 16.98 px spacer puts the next row at 17; at
+// 1.5x the grid is the device's, so 25.47 device snaps to 25, two thirds
+// of a logical pixel. Layout itself keeps the fractional box.
+#[test]
+fn child_boxes_are_painted_on_the_device_grid() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, Rectangle::default().with_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
+  tree.root = Some(1);
+  size(&mut tree, 1, 400.0, 300.0);
+  size(&mut tree, 2, 400.0, 16.98);
+  size(&mut tree, 3, 400.0, 16.98);
+  let alloy = headless();
+
+  let extent_at = |tree: &mut RenderTree, scale: f32| {
+    let platform = PlatformContext::new(Vec::new());
+    platform.set_window_size(400.0, 300.0);
+    platform.set_display_scale(scale);
+    paint_phase(&mut DisplayListBuilder::new(None), tree, &platform, &alloy);
+    match tree.node(3).last_extent.get() {
+      crate::rendertree::cull::Extent::Bounded(r) => r,
+      other => panic!("expected a bounded extent, got {other:?}"),
+    }
+  };
+  let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+
+  let at_1x = extent_at(&mut tree, 1.0);
+  assert!(close(at_1x.origin.y, 17.0 - 1.0), "{at_1x:?}");
+  assert!(close(tree.node(3).placement().y, 16.98), "layout keeps the fractional box");
+
+  let at_1_5x = extent_at(&mut tree, 1.5);
+  assert!(close(at_1_5x.origin.y, 25.0 / 1.5 - 1.0), "{at_1_5x:?}");
+}

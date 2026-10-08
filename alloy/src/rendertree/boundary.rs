@@ -11,10 +11,10 @@ use crate::impellers::{
 };
 
 use crate::rendertree::composite::{
-  apply_clip, apply_scroll, effect_paint, emit_backdrop, own_matrix, record_node, service_captures_under_cache,
+  apply_clip, apply_scroll, effect_paint, emit_backdrop, record_node, service_captures_under_cache, snapped_own,
   view_filter, view_opacity, CLIP_INF,
 };
-use crate::rendertree::{BuildContext, Element, ElementKind, FilterState, RenderTree};
+use crate::rendertree::{grid, BuildContext, Element, ElementKind, FilterState, RenderTree, Vector};
 
 // What a boundary caller applies itself at composite time, and record_node
 // therefore leaves out of the cached content. The record order is matrix,
@@ -22,18 +22,21 @@ use crate::rendertree::{BuildContext, Element, ElementKind, FilterState, RenderT
 // three (a hoisted scroll requires a hoisted clip, otherwise the
 // composite-time scroll translate would move a recorded clip that must stay
 // put in viewport space; a design-size fit is never hoisted - it is content).
-#[derive(Clone, Copy, PartialEq, Eq)]
+// A hoisted matrix is carried: the View's own matrix as the caller snapped
+// it (composite::snapped_own), so the record walk folds the same matrix
+// into its maps that the composite applies.
+#[derive(Clone, Copy)]
 pub(super) enum Hoist {
   /// Record everything (non-boundary nodes, non-View boundaries).
   None,
   /// The caller applies the View's matrix; clip and scroll stay recorded.
   /// Snapshot boundaries use this: their raster must bake clip and scroll,
   /// since the texture holds only the pixels visible at rasterize time.
-  Transform,
+  Transform(Matrix),
   /// The caller applies matrix, clip and scroll; the cache holds the fit and
   /// children only. Recording boundaries use this, making the cache reusable
   /// under scroll writes as well as transform writes (see Damage::Scroll).
-  Full,
+  Full(Matrix),
 }
 
 /// A boundary's retained paint result, in node-local coordinates.
@@ -236,17 +239,18 @@ impl<'e> BoundaryComposite<'e> {
 }
 
 // A node's painted box relative to its parent-translated origin: a laid-out
-// node's layout box. A detached (d-*) node has none, but it is still drawn
-// into a definite rectangle: its kind's painted box, sized with the same
-// inherited frame its build() reads, so snapshot, capture and paint box the
-// node identically by construction rather than by separate derivations. The
-// returned offset is the node's own paint offset, countered in the recording
-// so the content lands at the texture origin and restored on the composited
-// quad's dst - except for a View, whose offset (translate) lives in the
-// matrix that Hoist::Transform keeps out of the recording anyway.
+// node's box as the walk snapped it (`frame`, its ctx.size). A detached
+// (d-*) node has none, but it is still drawn into a definite rectangle: its
+// kind's painted box, sized with the same inherited frame its build()
+// reads, so snapshot, capture and paint box the node identically by
+// construction rather than by separate derivations. The returned offset is
+// the node's own paint offset, countered in the recording so the content
+// lands at the texture origin and restored on the composited quad's dst -
+// except for a View, whose offset (translate) lives in the matrix that
+// Hoist::Transform keeps out of the recording anyway.
 pub(super) fn painted_box(element: &Element, frame: Size) -> (f32, f32, (f32, f32)) {
   match element.painted_size() {
-    Some(size) => (size.width, size.height, (0.0, 0.0)),
+    Some(_) => (frame.width, frame.height, (0.0, 0.0)),
     None => {
       let local = element.kind.local_bounds(frame);
       let offset = match &element.kind {
@@ -282,26 +286,28 @@ fn draw_dl_with_effects(
 }
 
 // Composites a Recording boundary's cached content. A View boundary's cache
-// holds children only (Hoist::Full): its current matrix, clip and scroll are
-// applied around the draw here, so transform and scroll writes replay the
-// same cache. A non-View boundary's cache holds everything and draws bare.
+// holds children only (Hoist::Full): its current matrix and scroll, snapped
+// by the caller (`hoisted`), and its clip are applied around the draw here,
+// so transform and scroll writes replay the same cache. A non-View
+// boundary's cache holds everything and draws bare. `size` is the node's
+// painted box.
 pub(super) fn draw_cached_recording(
   builder: &mut DisplayListBuilder,
   element: &Element,
-  matrix: Option<&Matrix>,
+  hoisted: Option<(Matrix, Option<Vector>)>,
   dl: &DisplayList,
-  inherited: Size,
+  size: Size,
 ) {
   let opacity = view_opacity(element);
   let filter = view_filter(element);
-  if let Some(m) = matrix {
+  if let Some((m, scroll)) = hoisted {
     builder.save();
-    builder.transform(m);
-    apply_clip(builder, element);
+    builder.transform(&m);
+    apply_clip(builder, element, size);
     // Box-space bounds: before the scroll translate, like record_node's
     // emission order.
-    emit_backdrop(builder, element, inherited, 1.0);
-    apply_scroll(builder, element);
+    emit_backdrop(builder, element, size, 1.0);
+    apply_scroll(builder, scroll);
     draw_dl_with_effects(builder, dl, opacity, filter);
     builder.restore();
   } else {
@@ -354,8 +360,16 @@ fn snapshot_node_unculled<'a>(
     return;
   }
 
-  let own = own_matrix(element, ctx.size);
-  let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
+  let own = snapped_own(element, ctx.size, &ctx.grid);
+  let hoist = match own {
+    Some(m) => Hoist::Transform(m),
+    None => Hoist::None,
+  };
+  // The raster is a raster root: inside it the grid is the texture's, the
+  // content countered by the paint offset (and pushed out by a shader
+  // outset below). The slot grid comes back for the composite.
+  let slot_grid = ctx.grid;
+  let paint_offset = Vector::new(offset.0, offset.1);
 
   // The boundary shader (views only) and its pending-write flag, consumed
   // here whichever branch runs: every shaded branch re-runs the pass, and
@@ -387,8 +401,11 @@ fn snapshot_node_unculled<'a>(
     // and belongs to the effect, and the composited quad extends past the
     // box by the same amount. The pass and all textures work at canvas
     // size, which the key (and the quad derived from it) carries.
-    let key = SnapshotKey { outset: decl.outset.max(0.0), ..box_key };
-    let outset = key.outset;
+    // The outset is whole device pixels (rounded up: the margin is at
+    // least the declared one), so the content inside the canvas and the
+    // quad it composites as both sit on the grid.
+    let outset = (decl.outset.max(0.0) * scale).ceil() / scale;
+    let key = SnapshotKey { outset, ..box_key };
     let (tex_w, tex_h) = key.texture_dims();
     let quad = BoundaryComposite::new(element, own, frame, offset, &key);
 
@@ -434,7 +451,9 @@ fn snapshot_node_unculled<'a>(
       // paint into the effect's transparent margin.
       sub.clip_rect(&Rect::new(Point::new(0.0, 0.0), Size::new(width, height)), ClipOperation::Intersect);
     }
+    ctx.grid = grid::raster(scale, Vector::new(outset, outset));
     record_node(scene, node_id, ctx, &mut sub, hoist);
+    ctx.grid = slot_grid;
     let Some(dl) = sub.build() else { return };
 
     // Reusable storage: the source (plain or shaded), plus output and
@@ -526,7 +545,9 @@ fn snapshot_node_unculled<'a>(
   if offset != (0.0, 0.0) {
     sub.translate(-offset.0, -offset.1);
   }
+  ctx.grid = grid::raster(scale, -paint_offset);
   record_node(scene, node_id, ctx, &mut sub, hoist);
+  ctx.grid = slot_grid;
   let Some(dl) = sub.build() else { return };
 
   // Stale storage at unchanged dimensions is re-rendered in place: the
