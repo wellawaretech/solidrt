@@ -5,7 +5,7 @@
 // are policy and belong to the component (the "skin") that composes these.
 
 import { createMemo, createSignal, flush, untrack } from "@solidjs/signals"
-import { getLayoutBox, layoutNextLine, measureText, prepareText, unitInk } from "./core"
+import { FIT_SLACK, getLayoutBox, layoutNextLine, measureText, prepareText, unitInk } from "./core"
 import type { MeasureTextOptions, PreparedText, TextRunRange, TextUnit } from "flux:rendertree"
 import { onLayout } from "./window"
 
@@ -542,12 +542,12 @@ export function createTextEditorLayout(
 // through as is.
 function splitWide(prepared: PreparedText, width: number): PreparedText {
   let all = prepared.units
-  if (!all.some((u, i) => !u.glue && unitInk(all, i) > width)) return prepared
+  if (!all.some((u, i) => !u.glue && unitInk(all, i) > width + FIT_SLACK)) return prepared
   let wide = false
   let units: TextUnit[] = []
   for (let u = 0; u < all.length; u++) {
     let unit = all[u]!
-    if (!unit.glue) wide = unitInk(all, u) > width
+    if (!unit.glue) wide = unitInk(all, u) > width + FIT_SLACK
     let stops = unit.carets
     if (!wide || !stops || stops.length <= 2) {
       units.push(unit)

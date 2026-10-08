@@ -91,6 +91,20 @@ test("maxWidth wraps greedily at unit boundaries, an overlong unit goes whole", 
   expect(wide.width).toBe(80)
 })
 
+test("a width a hair under the line's ink still fits, a visible shortfall breaks", () => {
+  // "aaa bb" is 60 wide. A width that came back from a layout box is a float
+  // ulp off the width the text measured, so the fit carries a slack far
+  // below a pixel; a tenth of a pixel short is a real shortfall and breaks.
+  expect(layoutText(prepare("aaa bb c"), { maxWidth: 59.99 }).lines.map(l => [l.from, l.to])).toEqual([
+    [0, 2],
+    [2, 3],
+  ])
+  expect(layoutText(prepare("aaa bb c"), { maxWidth: 59.9 }).lines.map(l => [l.from, l.to])).toEqual([
+    [0, 1],
+    [1, 3],
+  ])
+})
+
 test("lines align inside the run's width", () => {
   let right = layoutText(prepare("abcd\nab"), { align: "right" })
   expect(right.lines[1]!.x).toBe(20)

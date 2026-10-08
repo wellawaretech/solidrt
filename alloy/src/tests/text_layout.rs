@@ -403,3 +403,88 @@ fn zero_width_line_terminates_with_the_unit_overflowing() {
   let balanced = layout_wrap(&runs, &full(0.0), Align::Left, 0, None, Wrap::Balance);
   assert_eq!(balanced.lines.len(), 2);
 }
+
+// Words a padded, content-sized parent wraps inside themselves on a client
+// (okf/backlog/shrink-wrapped-text-breaks-own-word.md), plus their
+// neighbours that did not, so the sweep covers both bit patterns.
+const SHRINK_WRAP_WORDS: [&str; 12] =
+  ["Capsule", "Nets", "Sphere", "Cone", "Torus", "Cube", "Cylinder", "Plane", "serve", "sqlite", "subprocess", "p2p"];
+// Font sizes the sweep lays out at, logical px: small print to a heading.
+const SHRINK_WRAP_SIZES: [f32; 5] = [11.0, 12.0, 13.0, 14.0, 24.0];
+// Weights the sweep lays out at: the shipped Noto Sans' instances.
+const SHRINK_WRAP_WEIGHTS: [crate::impellers::FontWeight; 3] =
+  [crate::impellers::FontWeight::Regular, crate::impellers::FontWeight::Medium, crate::impellers::FontWeight::Bold];
+// The pill's horizontal padding, logical px.
+const SHRINK_WRAP_PADDING: f32 = 12.0;
+
+// A Context with no raster thread behind it: laying out text never sends a
+// command, so a dangling channel is enough.
+fn headless() -> crate::Context {
+  let stats = std::sync::Arc::new(crate::raster::RasterStats::new());
+  let (tx, _rx) = std::sync::mpsc::channel();
+  crate::Context::new(crate::raster::RasterSender::new(tx, stats.clone()), stats, None)
+}
+
+// The laid-out box of `word` at `size`/`weight` as the text of a padded
+// view in a row (`padded`: the content-sized pill) or as the direct child
+// of the 400 px wide root (one line, the reference).
+fn shrink_wrapped_box(
+  platform: &crate::rendertree::PlatformContext,
+  alloy: &crate::Context,
+  word: &str,
+  size: f32,
+  weight: crate::impellers::FontWeight,
+  padded: bool,
+) -> crate::impellers::Size {
+  use crate::rendertree::{RenderTree, Text, View};
+  use taffy::prelude::*;
+  let mut text = Text::default();
+  text.set_plain_text(word.to_string());
+  text.set_font_size(Some(size));
+  text.set_font_weight(Some(weight));
+  let mut tree = RenderTree::new();
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, View::default().with_layout());
+  tree.create_node(3, text.with_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.root = Some(1);
+  let root = tree.node_mut(1).style_mut().expect("root");
+  root.flex_direction = FlexDirection::Row;
+  root.size = taffy::Size { width: length(400.0), height: length(300.0) };
+  if padded {
+    let pill = tree.node_mut(2).style_mut().expect("pill");
+    pill.padding.left = length(SHRINK_WRAP_PADDING);
+    pill.padding.right = length(SHRINK_WRAP_PADDING);
+  } else {
+    tree.node_mut(2).style_mut().expect("column").flex_grow = 1.0;
+  }
+  platform.set_window_size(400.0, 300.0);
+  crate::rendertree::composite::layout_phase(&mut tree, platform, alloy);
+  tree.node(3).layout_data().size()
+}
+
+// A text laid out at its own max-content width never wraps: the box a
+// content-sized parent hands back through taffy can come out a float ulp
+// under the width the text measured, and the fit must survive that.
+#[test]
+fn shrink_wrapped_text_fits_its_own_measure() {
+  let platform = super::text_platform();
+  let alloy = headless();
+  let mut broken = Vec::new();
+  for word in SHRINK_WRAP_WORDS {
+    for size in SHRINK_WRAP_SIZES {
+      for weight in SHRINK_WRAP_WEIGHTS {
+        let one_line = shrink_wrapped_box(&platform, &alloy, word, size, weight, false);
+        let pill = shrink_wrapped_box(&platform, &alloy, word, size, weight, true);
+        if pill.height != one_line.height {
+          broken.push(format!(
+            "{word} {size}px {weight:?}: {}x{} vs one line {}",
+            pill.width, pill.height, one_line.height
+          ));
+        }
+      }
+    }
+  }
+  assert!(broken.is_empty(), "wrapped inside the word:\n{}", broken.join("\n"));
+}

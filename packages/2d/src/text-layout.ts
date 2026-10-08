@@ -115,6 +115,11 @@ export function layoutText(prepared: FontPreparedText, opts?: TextLayoutOptions)
   return { glyphs, lines, width: runWidth, height, ascent: firstAscent }
 }
 
+// Slack a line's width may be exceeded by and still fit, logical px: core's
+// FIT_SLACK, the same value, for the same reason (a width that came back
+// from a layout box is a float ulp off the width the text measured).
+const FIT_SLACK = 1 / 64
+
 // Ink width of the wrap unit starting at `index` (core's unitInk): its
 // advance through every glued piece after it, plus the last piece's ink.
 function unitInk(units: FontTextUnit[], index: number): number {
@@ -138,7 +143,7 @@ function nextLine(units: FontTextUnit[], cursor: number, width: number) {
   let i = cursor
   while (i < units.length) {
     let unit = units[i]!
-    if (i > cursor && !unit.glue && pen + unitInk(units, i) > width) break
+    if (i > cursor && !unit.glue && pen + unitInk(units, i) > width + FIT_SLACK) break
     pen += unit.advance
     if (unit.ascent > ascent) ascent = unit.ascent
     if (unit.descent > descent) descent = unit.descent

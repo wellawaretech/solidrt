@@ -450,6 +450,13 @@ export type TextLine = {
  * every glued piece that follows, plus the last piece's ink. What must fit on
  * the line for the unit to go on it.
  */
+// Slack a line's width may be exceeded by and still fit, logical px: the
+// width a laid-out box hands back is a float ulp off the width its text
+// measured (the rendertree's layout::FIT_SLACK, the same value), so an
+// exact fit wraps a word inside its own box. 1/64 px is a browser layout
+// unit: far above any ulp drift, far below a visible overhang.
+export const FIT_SLACK = 1 / 64
+
 export function unitInk(units: tree.TextUnit[], index: number): number {
   let ink = units[index]!.width
   let advance = 0
@@ -463,7 +470,8 @@ export function unitInk(units: tree.TextUnit[], index: number): number {
 /**
  * The next line of `prepared` from unit `cursor` that fits `width`, or null
  * when the text is used up. Greedy: units go on the line while the pen plus
- * the unit's ink stays within `width`; a hard break ends the line; a unit
+ * the unit's ink stays within `width` (a hair of slack for float drift
+ * included); a hard break ends the line; a unit
  * wider than `width` on its own goes on the line whole and overflows. Draw a
  * line as `<d-text x y w={line.width + 1}>{prepared.text.slice(line.start, line.end)}</d-text>`
  * with the same font options; its words are already shaped, so that is
@@ -482,7 +490,7 @@ export function layoutNextLine(prepared: tree.PreparedText, cursor: number, widt
     let unit = units[i]!
     // Glued pieces stay with the unit they continue: the whole wrap unit
     // (this piece through the last glued one) must fit for any of it to go on.
-    if (i > cursor && !unit.glue && pen + unitInk(units, i) > width) break
+    if (i > cursor && !unit.glue && pen + unitInk(units, i) > width + FIT_SLACK) break
     pen += unit.advance
     if (unit.ascent > ascent) ascent = unit.ascent
     if (unit.descent > descent) descent = unit.descent

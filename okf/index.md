@@ -1925,6 +1925,11 @@ Finished, kept for the reasoning.
   Taffy's one-entry-per-shape node cache self-clobbers within a flex pass,
   re-measuring the whole tree for a one-node change; replaced by a 16-slot
   ring keeping taffy's key semantics.
+- **[One fit slack for every measured-size comparison](done/layout-fit-epsilon.md)** [2026-10-08]
+  The inventory and fix that followed the shrink-wrapped text bug: every "does
+  this fit" decision between two derived layout floats now compares with one
+  named slack, in the Rust breaker and the three JS breakers, and the sites
+  that need none are listed with why.
 - **[Line vs path - the segment primitive](done/line-layout-endpoints.md)** [2026-08-02]
   Decided 2026-08-02 - line stays, as the primitive whose geometry is numbers
   (animatable endpoints, dash) against path's DSL string; a laid-out line is a
@@ -2205,6 +2210,11 @@ Finished, kept for the reasoning.
   Navigation follows the pane count instead of its own breakpoint, and
   TextInput/Select share Button's vertical padding so controls in a row are
   one height.
+- **[Shrink-wrapped text must fit its own measure](done/shrink-wrapped-text-breaks-own-word.md)** [2026-10-08]
+  A single word in a content-sized box sometimes wraps onto a second line
+  inside itself ("Capsul / e"), because the width the box gets back can come
+  out a float ulp under the max-content width the text measured, and the line
+  breaker's fit test is an exact comparison.
 - **[The slow-frame warning fires on the first frame after every load](done/slow-frame-warning-first-frame-after-load.md)** [2026-09-23]
   Fixed 2026-09-23: the engine's first rebuild is tagged in its slow-frame
   line ("first frame after load: the first rebuild shapes, decodes and records
@@ -2971,6 +2981,11 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   createLoadingBoundary and createRevealOrder from client/hydration.js, but
   those are @internal and stripped from client/hydration.d.ts; with
   skipLibCheck they silently type as any, without it TS2305.
+- **[taffy flex-wrap line fit is exact, so a content-sized wrapping row wraps its last item](upstream/taffy-flex-wrap-exact-line-fit.md)** [2026-10-08]
+  A wrapping flex row sized to its own max-content, through a padded parent,
+  gets an inner width a float ulp under the sum of its items, and the line
+  collection's exact `line_length > main_axis_available_space` then pushes the
+  last item onto a second line.
 - **[taffy measure cache evicts entries it can still hit](upstream/taffy-measure-cache-clobber.md)** [2026-08-03]
   Cache::store picks a slot from the input shape alone (9 slots) while
   Cache::get matches on shape AND parent width, so the

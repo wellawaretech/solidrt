@@ -9,6 +9,7 @@
 // levels become an input to `layout` later, not a redesign (see the backlog
 // item's Bidi section).
 
+use crate::rendertree::layout::FIT_SLACK;
 use unicode_linebreak::{break_property, linebreaks, BreakClass, BreakOpportunity};
 
 /// One wrap unit: a byte range of the source text ending at a UAX #14 break
@@ -374,7 +375,7 @@ fn layout_capped(
       let height = run.metrics.height();
       loop {
         let width = b.open(height);
-        if b.pen + ink <= width && b.under_cap(b.pen + ink) {
+        if b.pen + ink <= width + FIT_SLACK && b.under_cap(b.pen + ink) {
           break;
         }
         // Does not fit here: try the line's next segment, then the next
@@ -670,7 +671,7 @@ impl Breaker<'_> {
     while self.line.end > self.seg_first {
       let placed = self.out.runs[self.line.end - 1];
       ell_x = placed.x + self.runs[placed.run].metrics.ink_width;
-      if ell_x + ell.ink_width <= width {
+      if ell_x + ell.ink_width <= width + FIT_SLACK {
         break;
       }
       self.out.runs.pop();
