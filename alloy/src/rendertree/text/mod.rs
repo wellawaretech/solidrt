@@ -621,7 +621,9 @@ impl Text {
     let display_scale = platform.display_scale();
     // An untransformed text's style is the one every other text of its
     // size shares, worth warming on first sight; a text under a scaling
-    // transform (a pressed button's label) has a ppem of its own.
+    // transform (a pressed button's label) has a ppem of its own. Only the
+    // run's own face is warmed: a face borrowed for a cluster the primary
+    // lacks (fallback) draws those clusters, not the warm-up's ASCII.
     let warm = scale == display_scale;
     // A style's gradient resolved once; None draws the style's solid color.
     let gradients: Vec<Option<crate::gpu::GlyphGradient>> = styles
@@ -640,6 +642,7 @@ impl Text {
     for run in line_runs {
       let style = &styles[run.style];
       let Some(word) = words.get_or_shape(&fonts, &run.text, style, Fallback::Registered) else { continue };
+      let primary = fonts.resolve(&style.font_family);
       let glyphs = &word.glyphs;
       let weight = weight_value(style.font_weight);
       let italic = style.font_style == FontStyle::Italic;
@@ -680,7 +683,8 @@ impl Text {
         let key = StyleKey::new(*face, style.font_size * scale, weight, style.font_stretch, italic, display_scale);
         ids.clear();
         ids.extend(entries.iter().map(|(i, _, _)| glyphs.glyphs[*i].id));
-        misses += atlas.ensure(alloy, &fonts, key, *phase, &ids, warm, &mut placements);
+        let warm_face = warm && primary == Some(*face);
+        misses += atlas.ensure(alloy, &fonts, key, *phase, &ids, warm_face, &mut placements);
         for ((_, px, yd), placement) in entries.iter().zip(&placements) {
           let Some(p) = placement else { continue };
           if p.width == 0 {

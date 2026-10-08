@@ -14,13 +14,7 @@ are in that code anyway. File an item where the work happens, not where the
 symptom shows. A heading that outgrows this file splits into its own.
 
 ## Core
-- Three places still say a dropped font role "falls back to the system font" (`lattice/src/lib.rs` merge_fonts doc, `lattice/src/tests/fonts.rs`, `packages/cli/agents/assets.md`); since text-own-rasterizer step 3 the glyph engine resolves registered faces only, so a dropped or unknown role falls back to sans: say so.
-- The stats HUD's text is rasterized before the text atlas's `begin_frame` of that frame, so its missing cells always go to the worker and the sync budget never helps: the first HUD frame after toggling it on is incomplete and refreshes a frame later. Either warm the HUD's style (mono, bold, 14) when the platform is created or build the overlay after the atlas's frame start.
-- `probes/text-draw-bench.tsx`'s header describes "today" as Impeller paragraph ops and the snapshot/glyphs modes as the alternatives of the step 1 measurement; "today" is the engine's text layer now. Rewrite the header (and drop the modes that measured a direction not taken) or move the probe's reading into the plan's Findings and retire it.
 - `packages/components/src/typography.ts` (the weight compensation comment) names Impeller as the renderer that composites coverage in sRGB; the glyph pass does that now under the naive policy, and step 4 of text-own-rasterizer replaces the compensation. Rewrite the comment with step 4.
-- `TextUnit.glyphs` sits on the shared `PreparedText` type but only `flux:font`'s prepareText fills it (the rendertree one never does, by design): split a `FontPreparedText`/`FontTextUnit` type in `gui/font.d.ts` so the rendertree type carries no optional field that is always absent.
-- `alloy/src/rendertree/text/glyphs/text_atlas.rs` warms printable ASCII for every style key on first sight, a fallback face included; a CJK face borrowed for one word gets 285 Latin cells it never draws. Skip the warm-up for a face that is not the run's own.
-- `packages/2d` text layout adds its own `letterSpacing` per glyph over `flux:font` units (`text-layout.ts`); the engine shapes letter spacing itself now (`ShapeStyle.letter_spacing`, the `letterSpacing` option), so `createFont`/`prepareText` could carry it and the 2d pen loop drop its copy.
 
 `packages/core` - the renderer and the reactivity surface.
 

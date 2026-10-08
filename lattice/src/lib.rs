@@ -480,7 +480,10 @@ fn mount_assets(app_id: &str) {
 /// The font set an app runs on: the runner's base fonts plus the app's own,
 /// where every alias the app's manifest binds is the app's alone: a base
 /// entry under it is dropped, whether the app binds a file (its override) or
-/// nothing (a dropped default, so the role falls back to the system font).
+/// nothing (a dropped default: the role then resolves like an unknown
+/// family, to the sans role, or to the first registered face when sans
+/// itself is gone; the glyph engine draws registered faces only, nothing
+/// comes from the system).
 /// Two fonts under one alias would form one family style set in which style
 /// matching keeps the first registered on a tie, so a project's "sans"
 /// override would lose to the base Noto Sans (the glyph engine's font set
@@ -499,7 +502,15 @@ pub(crate) fn merge_fonts(base: &[FontPayload], app: manifest::AppFonts) -> Vec<
 // across apps, and no alias is ever registered twice into one context.
 #[cfg(feature = "go")]
 fn apply_app_fonts(app_id: &str, platform: &PlatformContext, base_fonts: &[FontPayload]) {
-  platform.reset_fonts(merge_fonts(base_fonts, go::store::app_fonts(app_id)));
+  reset_fonts(platform, merge_fonts(base_fonts, go::store::app_fonts(app_id)));
+}
+
+// Replace the platform's font set and re-warm what the runtime draws outside
+// the tree (the stats HUD): a reset voids every warm-up of the text atlas.
+#[cfg(feature = "go")]
+fn reset_fonts(platform: &PlatformContext, fonts: Vec<FontPayload>) {
+  platform.reset_fonts(fonts);
+  overlay::warm(platform);
 }
 
 // The mechanics of anchoring, separated from storage resolution so tests can
@@ -677,6 +688,7 @@ fn ui_thread(
   #[cfg(feature = "go")]
   let base_fonts = fonts.clone();
   let platform = Arc::new(PlatformContext::new(fonts));
+  overlay::warm(&platform);
   // Hand alloy's loop the demand gate's latch so it can self-schedule the
   // repaints its surface lifecycle requires (expose, resize settling,
   // return to visibility); the rebind+repaint policy lives in alloy's
@@ -1487,7 +1499,7 @@ fn ui_thread(
                   // guard) holding its data dir alive. Its fonts go with it -
                   // the player runs on the base set alone.
                   current_app_id = Some(default_app_id.clone());
-                  platform.reset_fonts(base_fonts.clone());
+                  reset_fonts(&platform, base_fonts.clone());
                 }
                 EngineCmd::Quit => quit = true,
               }
@@ -1563,7 +1575,7 @@ fn ui_thread(
             showing_bsod = false;
             // Same sandbox and font release as the in-loop Stop arm above.
             current_app_id = Some(default_app_id.clone());
-            platform.reset_fonts(base_fonts.clone());
+            reset_fonts(&platform, base_fonts.clone());
           }
           Some(EngineCmd::Quit) | None => break,
         }

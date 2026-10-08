@@ -143,7 +143,8 @@ impl ModuleDef for FontModule {
 }
 
 // The face options (fontFamily, fontSize, fontWeight, fontStyle,
-// lineHeight) through the JSX decoders onto a Text, then its run style:
+// fontStretch, letterSpacing, lineHeight) through the JSX decoders onto a
+// Text, then its run style:
 // one parser for the whole runtime's font vocabulary.
 fn run_style<'js>(ctx: &Ctx<'js>, options: Option<&Object<'js>>) -> rquickjs::Result<RunStyle> {
   let mut node = Text::default();
@@ -265,6 +266,12 @@ fn prepare_text<'js>(
         ));
       }
       style.line_height = line_height;
+    }
+    if let Some(letter_spacing) = opts.get::<_, Option<f32>>("letterSpacing")? {
+      if !letter_spacing.is_finite() {
+        return Err(throw_str(&ctx, &format!("prepareText: letterSpacing must be a finite number, got {letter_spacing}")));
+      }
+      style.letter_spacing = letter_spacing;
     }
     carets = opts.get::<_, bool>("carets").unwrap_or(false);
   }

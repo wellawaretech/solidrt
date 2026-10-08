@@ -216,8 +216,9 @@ emoji, the hinting and gamma policy per DPI the spike explored.
   with `false` draws from the system font through Impeller, a face the
   engine never sees, and its carets come from the engine's fallback face.
   That path ends with stage 2 either way.
-- 2026-10-06, stage 2 step 1, the draw measurement
-  (`probes/text-draw-bench.tsx`, read by `probes/text-draw-bench-read.ts`):
+- 2026-10-06, stage 2 step 1, the draw measurement (`probes/text-draw-bench.tsx`
+  and its reader, retired 2026-10-08 once the decision was taken: this
+  table is their reading):
   a field of 40 lines of 16 px prose (1622 glyph quads) under a mover that
   demands a frame every refresh, the sustained rate read from the `/stats`
   window. "today" is `<text>` through Impeller (40 paragraph ops),

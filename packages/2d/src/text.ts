@@ -23,7 +23,7 @@ export type TextStyle = {
   fontSize?: number
   /** Baseline to baseline in layer pixels; default each line's own box. */
   lineHeight?: number
-  /** Added after every glyph, layer pixels; default 0. */
+  /** Extra advance after every character, layer pixels (CSS letter-spacing); default the font's. */
   letterSpacing?: number
   /** Wrap at this width; unset, only `\n` breaks. */
   maxWidth?: number
@@ -149,13 +149,12 @@ function relayout(run: RunState, style: TextStyle): void {
   run._style = style
   run.text = style.text
   let fontSize = style.fontSize ?? run.font.fontSize
-  let prepared = run.font.prepare(style.text, { fontSize, lineHeight: 0 })
+  let prepared = run.font.prepare(style.text, { fontSize, lineHeight: 0, letterSpacing: style.letterSpacing })
   run._layout = layoutText(prepared, {
     maxWidth: style.maxWidth,
     align: style.align,
     anchor: style.anchor,
     anchorY: style.anchorY,
-    letterSpacing: style.letterSpacing,
     lineHeight: style.lineHeight,
   })
   run.width = run._layout.width

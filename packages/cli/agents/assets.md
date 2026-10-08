@@ -31,10 +31,11 @@ preparing a build for distribution.
 
 - Custom fonts go in `assets/fonts/` and are declared in the `solidrt.fonts`
   map in package.json (alias -> file path; role aliases `sans`/`serif`/`mono`
-  replace the built-in defaults, `false` drops one so that role falls back
-  to the system font, other keys add fonts selectable via fontFamily). The
-  dev client, `sol render` and a pack all apply the same map: a newly added
-  or changed font registers on the next reload.
+  replace the built-in defaults, `false` drops one so that role resolves to
+  `sans` like an unknown family, other keys add fonts selectable via
+  fontFamily). Only registered faces draw: there is no system font fallback.
+  The dev client, `sol render` and a pack all apply the same map: a newly
+  added or changed font registers on the next reload.
 - The `solidrt` key in package.json is the app's identity: set a stable
   reverse-DNS `appId` before distributing - it keys the app's storage
   folder, defaults from the package name in dev, and `sol pack` warns

@@ -1,11 +1,11 @@
 // Tests for the text layout (text-layout.ts): glyph placements from
 // hand-built prepared units (what a sprite font's prepare returns),
 // pinning the greedy breaking against core's layoutNextLine rules, the
-// alignment and anchors, letter spacing and the throws. Pure-module input
-// only, so it runs headless on flux: `sol test packages/2d`.
+// alignment and anchors and the throws. Pure-module input only, so it
+// runs headless on flux: `sol test packages/2d`.
 
 import { expect, test } from "flux:test"
-import type { PreparedText, TextUnit } from "@solidrt/core"
+import type { FontPreparedText, FontTextUnit } from "flux:font"
 import { layoutText } from "../src/text-layout.ts"
 
 // A monospace stand-in: every glyph advances by ADVANCE, a unit's width is
@@ -16,8 +16,8 @@ const DESCENT = 2
 
 // `text` as units: words split at spaces, each unit's advance including
 // its trailing space, glyph ids the char codes, pen positions per glyph.
-function prepare(text: string): PreparedText {
-  let units: TextUnit[] = []
+function prepare(text: string): FontPreparedText {
+  let units: FontTextUnit[] = []
   let at = 0
   for (let line of text.split("\n")) {
     let words = line.split(" ")
@@ -108,27 +108,14 @@ test("anchors shift the whole run", () => {
   expect(layoutText(text, { anchorY: "bottom" }).glyphs[0]!.y).toBe(-DESCENT)
 })
 
-test("letter spacing opens every glyph and counts toward wrapping", () => {
-  let spaced = layoutText(prepare("ab cd"), { letterSpacing: 2 })
-  expect(spaced.glyphs.map(g => g.x)).toEqual([0, 12, 34, 46])
-  expect(spaced.width).toBe(58)
-  // At 2 px per glyph "ab cd" is 58 wide: a 50 px line wraps it.
-  expect(layoutText(prepare("ab cd"), { letterSpacing: 2, maxWidth: 50 }).lines.length).toBe(2)
-  expect(layoutText(prepare("ab cd"), { maxWidth: 50 }).lines.length).toBe(1)
-})
-
 test("an explicit line height sets the baseline step", () => {
   let layout = layoutText(prepare("a\nb\nc"), { lineHeight: 30 })
   expect(layout.lines.map(l => l.y)).toEqual([ASCENT, ASCENT + 30, ASCENT + 60])
   expect(layout.height).toBe(90)
 })
 
-test("units without glyphs and bad options throw", () => {
-  let impeller = prepare("ab")
-  delete impeller.units[0]!.glyphs
-  expect(() => layoutText(impeller)).toThrow()
+test("a non-positive wrap width throws", () => {
   expect(() => layoutText(prepare("ab"), { maxWidth: 0 })).toThrow()
-  expect(() => layoutText(prepare("ab"), { letterSpacing: Number.NaN })).toThrow()
 })
 
 test("an empty text is one empty line of no size", () => {

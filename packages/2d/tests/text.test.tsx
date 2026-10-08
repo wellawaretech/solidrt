@@ -116,13 +116,13 @@ test("a text run draws its glyphs from the engine's cells where the layout puts 
   expect(run.group.layer).toBe(null)
 })
 
-test("a run's pose is its group's, and a run anchors and wraps as laid out", async app => {
-  let { view, run } = await mounted(app, () => {
+test("a run's pose is its group's, and a run anchors, spaces and wraps as laid out", async app => {
+  let { view, run, font } = await mounted(app, () => {
     let font = createSpriteFont({ fontFamily: "sans", fontSize: FONT_PX }, { cells: "mask", chars: false, label: "text-pose" })
     let layer = createSpriteLayer([font.atlas], { capacity: 32, label: "text-pose" })
     let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: "text-pose" })
     let run = addText(layer, { font, text: "a b", x: SIZE / 2, y: SIZE / 2, anchor: "middle", anchorY: "middle" })
-    return { layer, view, run, texture: view.texture }
+    return { layer, view, run, font, texture: view.texture }
   })
   await app.settle()
   await app.frame()
@@ -138,6 +138,13 @@ test("a run's pose is its group's, and a run anchors and wraps as laid out", asy
   expect(run.sprites.map(s => [s._x, s._y])).not.toEqual(local)
   await app.frame()
   expect(inkIn(view.texture, 16, 16, 16 + run.width, 16 + run.height)).toBeGreaterThan(0)
+  // Letter spacing is shaped by the engine: the second glyph's pen moves
+  // by it, and the run widens with it.
+  let plain = font.prepare("ab").units[0]!.glyphs[1]!.x
+  expect(font.prepare("ab", { letterSpacing: 2 }).units[0]!.glyphs[1]!.x).toBe(plain + 2)
+  let unspaced = run.width
+  setText(run, { letterSpacing: 2 })
+  expect(run.width).toBeGreaterThan(unspaced)
   // Wrapping at the first word's width makes two lines.
   setText(run, { maxWidth: run.width / 2 + 1 })
   expect(run.lines).toBe(2)

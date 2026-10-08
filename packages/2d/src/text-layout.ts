@@ -6,8 +6,9 @@
 // unit placed whole), restated here rather than imported because core
 // loads the gui modules and this file is checked headless on the flux
 // binary (tests/text-layout.test.ts), like frames.ts. No GPU or GUI
-// imports: the PreparedText import is a type.
-import type { PreparedText, TextUnit } from "@solidrt/core"
+// imports: the flux:font import is a type. Letter spacing is the
+// engine's, shaped into the units (`prepareText`'s `letterSpacing`).
+import type { FontPreparedText, FontTextUnit } from "flux:font"
 
 /** The anchor of the run's x: where the point sits on each line's
  * extent (SVG's text-anchor, d-text's `anchor`). */
@@ -28,8 +29,6 @@ export type TextLayoutOptions = {
   anchor?: TextAnchor
   /** Default "top". */
   anchorY?: TextAnchorY
-  /** Added after every glyph, run pixels (CSS letter-spacing); default 0. */
-  letterSpacing?: number
   /** Baseline to baseline, run pixels; default each line's own ascent
    * plus descent. */
   lineHeight?: number
@@ -65,24 +64,18 @@ export type TextLayout = {
 
 /**
  * Lay out a prepared text (from `SpriteFont.prepare`) into glyph
- * placements. Throws on units without glyphs (a text prepared on
- * Impeller, which exposes none).
+ * placements.
  */
-export function layoutText(prepared: PreparedText, opts?: TextLayoutOptions): TextLayout {
+export function layoutText(prepared: FontPreparedText, opts?: TextLayoutOptions): TextLayout {
   let units = prepared.units
   let maxWidth = opts?.maxWidth ?? Infinity
   if (!(maxWidth > 0)) throw new Error(`layoutText: maxWidth must be positive, got ${maxWidth}`)
-  let letterSpacing = opts?.letterSpacing ?? 0
-  if (!Number.isFinite(letterSpacing)) throw new Error(`layoutText: letterSpacing must be finite, got ${letterSpacing}`)
-  for (let i = 0; i < units.length; i++) {
-    if (units[i]!.glyphs === undefined) throw new Error(`layoutText: unit ${i} ("${units[i]!.text}") carries no glyphs; prepare the text on a sprite font`)
-  }
   // Break into lines: the greedy pass, lines as unit ranges.
   type Range = { from: number; to: number; ascent: number; descent: number; width: number }
   let ranges: Range[] = []
   let cursor = 0
   while (cursor < units.length) {
-    ranges.push(nextLine(units, cursor, maxWidth, letterSpacing))
+    ranges.push(nextLine(units, cursor, maxWidth))
     cursor = ranges[ranges.length - 1]!.to
   }
   // A text with no units (empty) still has one empty line of no height.
@@ -115,10 +108,7 @@ export function layoutText(prepared: PreparedText, opts?: TextLayoutOptions): Te
     let pen = line.x
     for (let i = line.from; i < line.to; i++) {
       let unit = units[i]!
-      for (let g of unit.glyphs!) {
-        glyphs.push({ id: g.id, x: pen + g.x, y: line.y + g.y })
-        pen += letterSpacing
-      }
+      for (let g of unit.glyphs) glyphs.push({ id: g.id, x: pen + g.x, y: line.y + g.y })
       pen += unit.advance
     }
   }
@@ -126,14 +116,13 @@ export function layoutText(prepared: PreparedText, opts?: TextLayoutOptions): Te
 }
 
 // Ink width of the wrap unit starting at `index` (core's unitInk): its
-// advance through every glued piece after it, plus the last piece's ink,
-// with the letter spacing its glyphs add.
-function unitInk(units: TextUnit[], index: number, letterSpacing: number): number {
-  let ink = units[index]!.width + letterSpacing * units[index]!.glyphs!.length
+// advance through every glued piece after it, plus the last piece's ink.
+function unitInk(units: FontTextUnit[], index: number): number {
+  let ink = units[index]!.width
   let advance = 0
   for (let j = index + 1; j < units.length && units[j]!.glue; j++) {
-    advance += units[j - 1]!.advance + letterSpacing * units[j - 1]!.glyphs!.length
-    ink = advance + units[j]!.width + letterSpacing * units[j]!.glyphs!.length
+    advance += units[j - 1]!.advance
+    ink = advance + units[j]!.width
   }
   return ink
 }
@@ -142,15 +131,15 @@ function unitInk(units: TextUnit[], index: number, letterSpacing: number): numbe
 // layoutNextLine): units go on while the pen plus the unit's ink stays
 // within the width; a hard break ends the line; a unit wider than the
 // line on its own goes on whole.
-function nextLine(units: TextUnit[], cursor: number, width: number, letterSpacing: number) {
+function nextLine(units: FontTextUnit[], cursor: number, width: number) {
   let pen = 0
   let ascent = 0
   let descent = 0
   let i = cursor
   while (i < units.length) {
     let unit = units[i]!
-    if (i > cursor && !unit.glue && pen + unitInk(units, i, letterSpacing) > width) break
-    pen += unit.advance + letterSpacing * unit.glyphs!.length
+    if (i > cursor && !unit.glue && pen + unitInk(units, i) > width) break
+    pen += unit.advance
     if (unit.ascent > ascent) ascent = unit.ascent
     if (unit.descent > descent) descent = unit.descent
     i++
@@ -158,6 +147,6 @@ function nextLine(units: TextUnit[], cursor: number, width: number, letterSpacin
   }
   let last = units[i - 1]!
   // The ink width: trailing whitespace off, like the unit's own `width`.
-  let lineWidth = pen - (last.advance + letterSpacing * last.glyphs!.length) + last.width + letterSpacing * last.glyphs!.length
+  let lineWidth = pen - last.advance + last.width
   return { from: cursor, to: i, ascent, descent, width: Math.max(lineWidth, 0) }
 }

@@ -38,8 +38,8 @@ fn merge_drops_a_base_entry_the_app_binds_to_nothing() {
   let base = [font("sans", b"noto-sans"), font("mono", b"noto-mono")];
   let app = AppFonts { fonts: Vec::new(), aliases: vec!["mono".to_string()] };
   // A dropped default (`"mono": false`) claims the alias without a file: the
-  // base mono goes and nothing takes its place, so the role falls through to
-  // the system font.
+  // base mono goes and nothing takes its place, so the role resolves to
+  // sans like an unknown family (the engine knows no system font).
   assert_eq!(aliases(&merge_fonts(&base, app)), ["sans"]);
 }
 

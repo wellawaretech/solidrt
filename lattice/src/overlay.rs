@@ -1,6 +1,7 @@
 use alloy::impellers::{
-  Color, DisplayListBuilder, FontWeight, Paint, Point, Rect, Size, TextAlignment, TextureSampling,
+  Color, DisplayListBuilder, FontStyle, FontWeight, Paint, Point, Rect, Size, TextAlignment, TextureSampling,
 };
+use alloy::rendertree::text::glyphs::{weight_value, WarmRequest};
 use alloy::rendertree::text::TextImage;
 use alloy::rendertree::{PlatformContext, Text};
 
@@ -21,6 +22,38 @@ const INSET: f32 = 10.0;
 // The darkening backdrop's opacity: enough to keep white text legible over
 // light content.
 const BACKDROP_ALPHA: f32 = 0.7;
+
+// The overlay's text node before its text: the one style the HUD is built
+// in and warmed for.
+fn hud_text() -> Text {
+  let mut node = Text::default();
+  node.font_family = "mono".to_string();
+  node.font_size = FONT_SIZE;
+  node.font_weight = FontWeight::Bold;
+  node.text_alignment = Some(TextAlignment::Right);
+  node.w = Some(PARA_WIDTH);
+  node.paint.color = Color::new_srgba(1.0, 1.0, 1.0, 1.0);
+  node
+}
+
+/// Warm the text atlas for the HUD's style, so the first frame after it is
+/// toggled on is complete: the overlay is built ahead of the frame's paint,
+/// before the atlas opens its synchronous budget, so a cell it lacks goes to
+/// the worker and the HUD refreshes a frame later. Called once the font set
+/// is registered, and again after every reset, which voids the atlas's
+/// warm-ups.
+pub fn warm(platform: &PlatformContext) {
+  let style = hud_text().run_style();
+  let fonts = platform.glyphs();
+  let Some(face) = fonts.resolve(&style.font_family) else { return };
+  platform.text_atlas().request_warm(WarmRequest {
+    face,
+    size: style.font_size,
+    weight: weight_value(style.font_weight),
+    stretch: style.font_stretch,
+    italic: style.font_style == FontStyle::Italic,
+  });
+}
 
 /// The dev-session fact shown on the overlay's first line: the client is
 /// connected to a dev server (which controls it), its user input is muted by
@@ -78,14 +111,8 @@ pub fn build(
     push_hud_lines(&mut text, s, gpu_pct);
   }
 
-  let mut node = Text::default();
+  let mut node = hud_text();
   node.set_plain_text(text);
-  node.font_family = "mono".to_string();
-  node.font_size = FONT_SIZE;
-  node.font_weight = FontWeight::Bold;
-  node.text_alignment = Some(TextAlignment::Right);
-  node.w = Some(PARA_WIDTH);
-  node.paint.color = Color::new_srgba(1.0, 1.0, 1.0, 1.0);
   let image = node.rasterize(platform, alloy, PARA_WIDTH, scale, previous)?;
 
   // Darkening backdrop so the white text stays legible over light content,

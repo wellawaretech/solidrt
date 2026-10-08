@@ -14,9 +14,8 @@
 // (`Atlas.sdf`), and "mask", coverage at the face's exact size for drawing
 // 1:1.
 import { getOwner, onCleanup } from "@solidrt/core"
-import type { PreparedText } from "@solidrt/core"
 import { createFont, destroyFont, fontAtlas, glyphCells, prepareText, requestGlyphs } from "flux:font"
-import type { FontAtlasOptions, FontFace, FontId, FontPrepareOptions, GlyphCell } from "flux:font"
+import type { FontAtlasOptions, FontFace, FontId, FontPreparedText, FontPrepareOptions, GlyphCell } from "flux:font"
 import type { Atlas } from "./atlas.ts"
 import type { Frame } from "./frames.ts"
 
@@ -68,7 +67,7 @@ export type SpriteFont = {
   readonly fontSize: number
   /** Shape `text` on the engine (see flux:font prepareText): every unit
    * carries its glyphs, for `layoutText`. */
-  prepare(text: string, options?: FontPrepareOptions): PreparedText
+  prepare(text: string, options?: FontPrepareOptions): FontPreparedText
   /** The glyph's frame and placement, or null while its cell is not in
    * the atlas (request it with `request`). */
   glyph(id: number): Glyph | null

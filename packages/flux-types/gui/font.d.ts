@@ -14,7 +14,7 @@
 
 declare module "flux:font" {
   import type { TextureId } from "flux:gpu"
-  import type { PreparedText } from "flux:rendertree"
+  import type { TextUnit } from "flux:rendertree"
 
   /** A created font, valid until {@link destroyFont}. */
   type FontId = number
@@ -34,6 +34,8 @@ declare module "flux:font" {
     fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
     /** Width as a percentage of normal (CSS font-stretch), on the font's width axis; default 100. */
     fontStretch?: number
+    /** Extra advance after every character in pixels (CSS letter-spacing), what {@link prepareText} shapes with by default; default 0. */
+    letterSpacing?: number
     /** Line height as a multiplier of the size, 0 for the font's own line. */
     lineHeight?: number
   }
@@ -97,8 +99,27 @@ declare module "flux:font" {
     fontSize?: number
     /** Line height multiplier; default the face's. */
     lineHeight?: number
+    /** Extra advance after every character in pixels, at `fontSize`; default the face's. */
+    letterSpacing?: number
     /** Also report each unit's caret stops (one pass over the cluster map). */
     carets?: boolean
+  }
+
+  /**
+   * A wrap unit shaped on a font: `flux:rendertree`'s unit plus the unit's
+   * glyphs - the font's glyph `id` (a cell of this font's atlas), the glyph
+   * origin `x`/`y` from the unit's pen position (kerned, letter-spaced, y
+   * down) and the pen `advance` it contributes - all in pixels at the
+   * shaping size.
+   */
+  type FontTextUnit = TextUnit & {
+    glyphs: { id: number, x: number, y: number, advance: number }[]
+  }
+
+  /** A text shaped on a font: `flux:rendertree`'s `PreparedText` with every unit carrying its glyphs. */
+  type FontPreparedText = {
+    text: string
+    units: FontTextUnit[]
   }
 
   /**
@@ -112,17 +133,16 @@ declare module "flux:font" {
   /** The font's atlas as it is now. */
   function fontAtlas(font: FontId): FontAtlas
   /**
-   * Shape `text` on the font (the runtime's own shaper): the same
-   * `PreparedText` as `flux:rendertree`'s, every unit also carrying its
-   * `glyphs` - ids and pen positions, kerned, in pixels at `fontSize` -
-   * for app-side line breaking with `layoutNextLine` and glyph placement.
+   * Shape `text` on the font (the runtime's own shaper): the units of
+   * `flux:rendertree`'s prepareText, each also carrying its glyphs, for
+   * app-side line breaking with `layoutNextLine` and glyph placement.
    * The font is one face and its atlas holds that face's cells only, so a
    * character the face lacks shapes to its missing glyph (id 0) with no
    * fallback to another font, where a `<text>` would borrow the glyph;
    * whitespace and control characters the face lacks take the space's
    * advance.
    */
-  function prepareText(font: FontId, text: string, options?: FontPrepareOptions): PreparedText
+  function prepareText(font: FontId, text: string, options?: FontPrepareOptions): FontPreparedText
   /**
    * Make the cells of `glyphs` (ids from prepared units) that the atlas
    * does not hold yet, on the worker thread. Resolves once every glyph is

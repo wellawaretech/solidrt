@@ -603,10 +603,10 @@ for a zoom animation that would re-rasterize every label per frame.
 Layout is `layoutText` (text-layout.ts, pure): `\n` breaks, `maxWidth`
 wraps with core's greedy rule, `align` per line, `anchor`
 (start/middle/end, as d-text) and `anchorY` (top/middle/baseline/bottom)
-place the run's point, `letterSpacing` and `lineHeight` as named. The
-run reports `width`, `height`, `ascent` and `lines`. A run's `fontSize`
-defaults to the face's; glyphs scale their cells by `fontSize /
-font.size`.
+place the run's point, `lineHeight` as named; `letterSpacing` is shaped
+into the units by the engine. The run reports `width`, `height`, `ascent`
+and `lines`. A run's `fontSize` defaults to the face's; glyphs scale their
+cells by `fontSize / font.size`.
 
 ### Pure pieces
 

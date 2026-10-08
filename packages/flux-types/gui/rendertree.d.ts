@@ -79,13 +79,6 @@ declare module "flux:rendertree" {
      * no neighbors and drifts on every kerning pair.
      */
     carets?: { offset: number, x: number }[]
-    /**
-     * The unit's glyphs, from `flux:font`'s prepareText only (its ids name
-     * cells of that font's atlas): the font's glyph `id`, the glyph origin
-     * `x`/`y` from the unit's pen position (kerned, y down) and the pen
-     * `advance` it contributes.
-     */
-    glyphs?: { id: number, x: number, y: number, advance: number }[]
   }
 
   /** The wrap units of a text in one font, shaped once. Plain data; layout is arithmetic over `units`. */
