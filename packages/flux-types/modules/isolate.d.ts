@@ -107,6 +107,13 @@ declare module "flux:isolate" {
    * already-aborted signal rejects without sending anything (or starting the
    * child).
    *
+   * A child that cannot start (an id no module resolves to or a malformed
+   * one, a module that does not decode, a runtime that cannot spawn
+   * isolates) never throws from the call expression: the first use rejects
+   * with the failure as an `Error`, a `for await` over it throws that error
+   * on its first step, and `exited` settles with the message. Nothing is
+   * remembered, so a later use tries again.
+   *
    * Reserved names: `terminate`, `exited`, `then`.
    */
   export function isolate<T = Record<string, (...args: any[]) => any>>(id: string, opts?: IsolateOptions): Isolated<T>

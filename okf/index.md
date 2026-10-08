@@ -210,7 +210,9 @@ Shaped, not started.
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
   shadow view's caster filter - and the scene exposes no introspection at all,
-  so the only diagnosis is a screenshot and a guess.
+  so the only diagnosis is a screenshot and a guess; worse, the engine's
+  per-entry switch can disagree with the node (a visible, in-view mesh left at
+  instanceCount 0), and nothing can show that disagreement.
 - **[A View3d is fixed-size](backlog/3d-scene-views-additive.md)** [2026-09-07]
   A <View3d> takes width and height only, so a second view cannot fill a box
   the way <Scene> does; the 2d <View2d> has the same gap, and whichever side
@@ -717,12 +719,6 @@ Shaped, not started.
   every pixel in it is resampled, however well its quad lands on the grid; the
   text layer already rasterizes at the display scale times the chain's scale
   and tolerates drift, and the snapshot should do the same.
-- **[Build an app's isolates under sol test, and reject a missing one](backlog/sol-test-isolates.md)** [2026-10-08]
-  An app test is bundled from the test file, so the bundler looks for "use
-  isolate" modules under tests/ and every isolate() the app makes fails with
-  "no such isolate module"; that failure is also thrown from the call itself
-  instead of rejecting its promise, which sends an app that handles rejections
-  into the error window.
 - **[Reactivity diagnostics carry no source location](backlog/solid-diagnostics-source-location.md)** [2026-09-08]
   A STRICT_READ_UNTRACKED warning names the shape of the mistake but not the
   file or line, so finding it in an app with a dozen effects is a manual hunt;
@@ -2287,6 +2283,12 @@ Finished, kept for the reasoning.
   launch (background shell, supervisor, CI) tore down the server, the client
   and the registry record within a second; startRepl now returns early when
   stdin is not a tty, and the piped-sleep workaround is gone.
+- **[Build an app's isolates under sol test, and reject a missing one](done/sol-test-isolates.md)** [2026-10-08]
+  An app test is bundled from the test file, so the bundler looks for "use
+  isolate" modules under tests/ and every isolate() the app makes fails with
+  "no such isolate module"; that failure is also thrown from the call itself
+  instead of rejecting its promise, which sends an app that handles rejections
+  into the error window.
 - **[Move the app test layer into @solidrt/test](done/solidrt-test-package.md)** [2026-10-01]
   The app test layer (mount, find, input, frames, readers) leaves core for a
   package of its own, @solidrt/test, a devDependency of every app and a peer

@@ -58,6 +58,7 @@ const CHECK_ALL_GLOBS = [
   "packages/*/demos/src/*.tsx",
   "tests/*.test.{ts,tsx}",
   "packages/*/tests/*.test.{ts,tsx}",
+  "packages/*/tests/fixtures/*/tests/*.test.{ts,tsx}",
   "flux/tests/*.test.ts",
   "packages/cli/src/main.ts",
   "packages/cli/src/*/main.ts",

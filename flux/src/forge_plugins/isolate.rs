@@ -55,6 +55,12 @@
 //!   Reading it is a first use (spawns the child) and keeps this runtime's
 //!   loop open until the child exits, so an exit is noticed with no call in
 //!   flight.
+//! - A child that cannot start (an id no module resolves to or a malformed
+//!   one, a module that does not decode, a runtime without a resolver, a
+//!   failed spawn) never throws from the call expression: the first use
+//!   rejects with the failure as an `Error`, a stream over it ends with that
+//!   error on its first step, and `exited` settles with the message. Nothing
+//!   is remembered, so a later use asks the resolver again.
 //! - Reserved names: `terminate` (the method), `exited` (the promise) and
 //!   `then` (so a handle is not a thenable). Symbol properties are looked up
 //!   on the handle itself.
@@ -360,7 +366,13 @@ impl Isolate {
         return Ok(promise.into_value());
       }
     }
-    let instance = self.instance(&ctx).map_err(|m| Exception::throw_message(&ctx, &m))?;
+    let instance = match self.instance(&ctx) {
+      Ok(instance) => instance,
+      // The child cannot start (or is gone): the failure is this call's
+      // rejection, not a throw from the call expression, so a caller that
+      // maps rejections sees it.
+      Err(message) => return failed_call(&ctx, message),
+    };
     let (tx, rx) = mpsc::unbounded_channel();
     let id = instance.next_call.fetch_add(1, Ordering::Relaxed);
     instance.pending.lock().expect("pending lock poisoned").insert(id, tx);
@@ -487,7 +499,8 @@ impl Isolate {
   /// error that ended it or `null` for a clean end. Reading it is a first
   /// use: the child spawns like it would for a call, and the exit pump keeps
   /// this runtime's loop open until the child exits, so the exit is noticed
-  /// with no call in flight.
+  /// with no call in flight. A child that cannot start is gone as well: the
+  /// promise settles with the failure.
   fn exited_promise<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
     let (promise, resolve, _reject) = Promise::new(&ctx)?;
     let existing = self.instance.borrow().clone();
@@ -499,7 +512,13 @@ impl Isolate {
           resolve.call::<_, ()>((JsValue::new_null(ctx.clone()),))?;
           return Ok(promise.into_value());
         }
-        self.instance(&ctx).map_err(|m| Exception::throw_message(&ctx, &m))?
+        match self.instance(&ctx) {
+          Ok(instance) => instance,
+          Err(message) => {
+            resolve.call::<_, ()>((message,))?;
+            return Ok(promise.into_value());
+          }
+        }
       }
     };
     let rx = instance.watch();
@@ -572,6 +591,35 @@ impl Isolate {
 
 fn not_a_stream(name: &str) -> String {
   format!("export '{name}' is not a stream")
+}
+
+/// The promise of a call whose child could not start (or is gone): rejected
+/// with `message` as an `Error`, from a task so the caller attaches its
+/// handlers first. It is an async iterator like any call's promise, so
+/// `for await` over it meets the same error on its first step: `next()`
+/// rejects with it (marking the promise observed, since a reader never looks
+/// at the promise itself) and `return()` is already done. The closures
+/// capture only the message (see the Persistent trap in flux/CLAUDE.md).
+fn failed_call<'js>(ctx: &Ctx<'js>, message: String) -> rquickjs::Result<JsValue<'js>> {
+  let (promise, _resolve, reject) = Promise::new(ctx)?;
+  let (reject_ctx, reject_message) = (ctx.clone(), message.clone());
+  ctx.spawn(async move {
+    if let Ok(err) = build_thrown(&reject_ctx, reject_message.into()) {
+      let _ = reject.call::<_, ()>((err,));
+    }
+  });
+  promise.set(
+    "next",
+    Function::new(ctx.clone(), move |ctx: Ctx<'js>, this: This<JsValue<'js>>| -> rquickjs::Result<JsValue<'js>> {
+      mark_observed(&this.0);
+      let (step, _resolve, reject) = Promise::new(&ctx)?;
+      reject.call::<_, ()>((build_thrown(&ctx, message.clone().into())?,))?;
+      Ok(step.into_value())
+    })?,
+  )?;
+  promise.set("return", Function::new(ctx.clone(), |ctx: Ctx<'js>| IterResult(None).into_js(&ctx))?)?;
+  promise.set(PredefinedAtom::SymbolAsyncIterator, Function::new(ctx.clone(), |this: This<JsValue<'js>>| this.0)?)?;
+  Ok(promise.into_value())
 }
 
 /// One `{ value, done }` iterator result.

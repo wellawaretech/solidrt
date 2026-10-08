@@ -241,3 +241,84 @@ async fn a_seeded_context_seeds_its_isolates() {
   // (src/tests/random.rs pins it): spawning took nothing from it.
   assert_eq!(values[3], "0.29404672187536485");
 }
+
+// A child that cannot start: the failure is the call's rejection (and a
+// stream's first error, and what `exited` settles with), never a throw from
+// the call expression, so a caller that maps rejections sees it.
+
+#[tokio::test]
+async fn an_unknown_module_rejects_the_call() {
+  let (out, spawns) = run_with_worker(
+    r#"
+    import { isolate } from "flux:isolate"
+    let w = isolate("nope")
+    let call = w.anything()
+    console.log("promise:", call instanceof Promise)
+    await call.then(() => console.log("unexpected resolve"), e => console.log("rejected:", e instanceof Error, e.message))
+    try {
+      await w.again()
+    } catch (e) {
+      console.log("again:", e.message)
+    }
+    "#,
+  )
+  .await;
+  assert!(out.log().contains("promise: true"), "log: {}", out.log());
+  assert!(out.log().contains("rejected: true unknown isolate 'nope'"), "log: {}", out.log());
+  assert!(out.log().contains("again: unknown isolate 'nope'"), "log: {}", out.log());
+  assert_eq!(spawns, 2, "a failed start is remembered: the resolver was not asked again");
+  assert!(out.errors().is_empty(), "errors: {}", out.errors());
+}
+
+#[tokio::test]
+async fn an_unknown_module_ends_a_stream_with_the_error() {
+  let (out, _) = run_with_worker(
+    r#"
+    import { isolate } from "flux:isolate"
+    let w = isolate("nope")
+    try {
+      for await (let item of w.counting()) console.log("unexpected item", item)
+    } catch (e) {
+      console.log("stream:", e instanceof Error, e.message)
+    }
+    "#,
+  )
+  .await;
+  assert!(out.log().contains("stream: true unknown isolate 'nope'"), "log: {}", out.log());
+  assert!(!out.log().contains("unexpected item"), "log: {}", out.log());
+  assert!(out.errors().is_empty(), "the call's own rejection went unobserved: {}", out.errors());
+}
+
+#[tokio::test]
+async fn exited_settles_with_the_start_failure() {
+  let (out, _) = run_with_worker(
+    r#"
+    import { isolate } from "flux:isolate"
+    let w = isolate("nope")
+    console.log("exited:", await w.exited)
+    "#,
+  )
+  .await;
+  assert!(out.log().contains("exited: unknown isolate 'nope'"), "log: {}", out.log());
+  assert!(out.errors().is_empty(), "errors: {}", out.errors());
+}
+
+#[tokio::test]
+async fn a_runtime_without_a_resolver_rejects() {
+  let sink = LogSink::new();
+  let engine = FluxEngine::builder().logger(sink.logger()).build();
+  engine
+    .eval_source(
+      r#"
+      import { isolate } from "flux:isolate"
+      try {
+        await isolate("worker").echoCount()
+      } catch (e) {
+        console.log("no resolver:", e instanceof Error, e.message)
+      }
+      "#,
+    )
+    .await;
+  let out = sink.captured();
+  assert!(out.log().contains("no resolver: true this runtime cannot spawn isolates"), "log: {}", out.log());
+}

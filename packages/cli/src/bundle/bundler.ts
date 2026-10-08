@@ -181,11 +181,22 @@ export function isolateAssetPath(id: string, ext: "js" | "bin"): string {
 // `project` is the project root (mode.ts decides it, never a search), or
 // null for a file on its own: no assets in the manifest and no isolate
 // modules (isolates are a project feature).
+// `isolateRoot` is the directory the project's "use isolate" modules are
+// found under and their ids count from: the entry's own directory when
+// unset, which is the source root for an app entry. A build whose entry is
+// not the app's (an app test, bundled from its test file) passes the app's.
 // `target` is the platform the bundle resolves builtins for: "browser" (the
 // default) for app code and flux scripts, whose builtins are the flux: and
 // sol: externals; "bun" for a bun program (the CLI's own commands, which
 // `sol check` covers), whose node: imports are bun's.
-export type BundleOptions = { entry: string; dev: boolean; minify: boolean; project: string | null; target?: "browser" | "bun" }
+export type BundleOptions = {
+  entry: string
+  dev: boolean
+  minify: boolean
+  project: string | null
+  isolateRoot?: string
+  target?: "browser" | "bun"
+}
 
 // The `sol bundle --json` stdout contract doubles as the in-process result.
 export type BundleResult = BundleOutput
@@ -258,7 +269,7 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
   let code = await codeFromOutputs(main.outputs)
 
   let isolates: { id: string; code: string; map: string | null }[] = []
-  let modules = opts.project === null ? [] : findIsolateModules(dirname(resolvePath(opts.entry)))
+  let modules = opts.project === null ? [] : findIsolateModules(opts.isolateRoot ?? dirname(resolvePath(opts.entry)))
   for (let module of modules) {
     let moduleMaps = opts.dev ? new Map<string, object>() : undefined
     let result = await build(module.path, moduleMaps, module.path)

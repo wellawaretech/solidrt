@@ -1,0 +1,5 @@
+{
+  "name": "isolate-app",
+  "type": "module",
+  "private": true
+}

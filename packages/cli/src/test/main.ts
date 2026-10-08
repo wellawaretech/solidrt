@@ -4,6 +4,7 @@ import { bundleWith, writeIsolates } from "../bundle/bundler"
 import { appArgs, source, values } from "../lib/args"
 import { collectAssets } from "../lib/project"
 import { fail } from "../lib/fail"
+import { projectEntry } from "../lib/mode"
 import { requireBinary } from "../lib/util"
 import { remapPositions } from "../server/remap"
 
@@ -18,7 +19,9 @@ import { remapPositions } from "../server/remap"
 // file that imports the app runtime. This command is the only reporter.
 
 // Where tests live, and what a test file is called: one tests/ folder per
-// package or project, never beside the sources.
+// package or project, never beside the sources. A fixture project under a
+// tests/ folder (tests/fixtures/<app>/, with a tests/ folder of its own) is
+// a project like any other, so the walk goes on below a tests/ folder.
 const TESTS_DIR = "tests"
 const TEST_FILE = /\.test\.tsx?$/
 // Folders never searched for a tests/ folder: dependencies and build
@@ -91,8 +94,7 @@ function testFilesIn(dir: string): string[] {
 }
 
 function discover(dir: string): string[] {
-  if (basename(dir) === TESTS_DIR) return testFilesIn(dir)
-  let files: string[] = []
+  let files = basename(dir) === TESTS_DIR ? testFilesIn(dir) : []
   for (let entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
     if (!entry.isDirectory() || entry.name.startsWith(".") || SKIPPED_DIRS.includes(entry.name)) continue
     files.push(...discover(join(dir, entry.name)))
@@ -153,10 +155,17 @@ async function bundleFlux(file: string): Promise<Bundled | string> {
 // An app's bundle (JSX through the Solid transform), staged like a render:
 // the bundle, its isolates, the manifest and the project's assets under one
 // root, which the client mounts. Returns the staged bundle's path.
+// The isolates are the project's, found under its source root (the
+// directory of its entry) and named as `sol run` names them, so
+// `isolate("mesher")` works from the app and from the test. A package with
+// no app entry (a library) has no source root: the test file's own folder
+// is searched, as for any entry.
 async function stageApp(file: string): Promise<{ path: string; stage: string; map: string | null } | string> {
   let dir = workingDir(file)
   let project = existsSync(join(dir, "package.json")) ? dir : null
-  let result = await bundleWith({ entry: file, dev: true, minify: false, project })
+  let entry = project === null ? null : projectEntry(project)
+  let isolateRoot = entry !== null && existsSync(entry) ? dirname(entry) : undefined
+  let result = await bundleWith({ entry: file, dev: true, minify: false, project, isolateRoot })
   if (!result) return "See the compile error above"
   let stage = join(dir, STAGE_DIR, basename(file).replace(/\.test\.tsx?$/, ""))
   rmSync(stage, { recursive: true, force: true })

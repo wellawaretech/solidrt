@@ -49,7 +49,7 @@ export function resolveMode(): Mode {
     if (values.file || values.project) fail("--file and --project need an entry file")
     if (!hasPkg) fail(`No package.json in ${cwd}. Run from the project root, or pass a file to use on its own.`)
     let declared = loadProject(cwd)!.config.entry
-    let entry = resolve(cwd, declared ?? DEFAULT_ENTRY)
+    let entry = projectEntry(cwd)
     if (!existsSync(entry)) {
       fail(`Entry not found: ${entry}${declared ? "" : ' (set "solidrt": { "entry": ... } in package.json)'}`)
     }
@@ -69,6 +69,15 @@ export function resolveMode(): Mode {
   }
   if (!hasPkg && values.project) fail(`--project needs a package.json in ${cwd}`)
   return { mode: "file", key: entry, projectDir: null, entry }
+}
+
+/**
+ * The entry a project declares (`solidrt.entry`, default src/index.tsx),
+ * resolved against its root. Only named, not checked: a library package
+ * declares none and has no file at the default.
+ */
+export function projectEntry(projectDir: string): string {
+  return resolve(projectDir, loadProject(projectDir)!.config.entry ?? DEFAULT_ENTRY)
 }
 
 /** The directory the file routes serve: the entry's directory. */

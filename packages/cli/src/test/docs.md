@@ -78,6 +78,12 @@ sol test tests/pick.test.ts --seed 12345
 
 Everything after `--` reaches the test file as its `flux:process` argv.
 
+An app test runs with the project's isolates: its `"use isolate"` modules
+are found under the source root (the directory of the entry, `src/` unless
+`solidrt.entry` says otherwise) and named as `sol run` names them, so
+`isolate("mesher")` works from the loaded app and from the test. A package
+with no app entry has no isolates of its own.
+
 A test can import every headless module (`flux:fs`, `flux:http`,
 `flux:sqlite`, ...): a server under test is started with `serve` and called
 with `fetch` over loopback.
