@@ -103,13 +103,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
-- **[Own glyph rasterizer behind the shaper seam](plans/text-own-rasterizer.md)** [2026-08-17]
-  Text quality and shaping semantics are capped by Impeller's paragraph engine
-  (grayscale AA only, no gamma or stem darkening, no glyph positions so carets
-  re-shape every prefix, shaping cut at word boundaries, fallback not ours);
-  the owned layout reduced the engine's job to shape-one-run and draw-one-run,
-  so a second implementation with its own glyph atlas can replace it where
-  quality matters.
 - **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
   Client-initiated streaming - open(url) plays a WebM served over HTTP on the
   Android plane with buffering, seek by Range and a cancel-safe close, built
@@ -2400,6 +2393,13 @@ Finished, kept for the reasoning.
   width from a cursor, draw a laid-out line) to app code, so editorial layouts
   (column handoff, obstacles, fitted headlines) are app work on a stable
   foundation instead of ever more <text> props.
+- **[Own glyph rasterizer behind the shaper seam](done/text-own-rasterizer.md)** [2026-10-08]
+  Text quality and shaping semantics are capped by Impeller's paragraph engine
+  (grayscale AA only, no gamma or stem darkening, no glyph positions so carets
+  re-shape every prefix, shaping cut at word boundaries, fallback not ours);
+  the owned layout reduced the engine's job to shape-one-run and draw-one-run,
+  so a second implementation with its own glyph atlas can replace it where
+  quality matters.
 - **[A paragraph is painted as one Impeller paragraph per word, an order of magnitude over what its glyphs need](done/text-paint-per-word-paragraphs.md)** [2026-09-24]
   Fixed 2026-09-24: paint draws a line's run of same-styled words as one
   paragraph of their joined text through the same word cache, so five
@@ -2828,6 +2828,14 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   harness work surfaced and that hold without it - where tests run, what a
   never-settling promise does, Math.random, the fail() trap, the select! bias,
   a fake backend's deadlock under settle.
+- **[What the glyph engine and the text layer found](notes/text-rasterizer-findings.md)** [2026-10-08]
+  Facts the own-rasterizer work surfaced that hold without it - harfrust
+  against Impeller's shaper, the per-device cost of a paragraph op versus a
+  text layer, mask cell times on the armv7, the coverage-to-color modes and
+  DirectWrite's blend, skrifa and zeno traps (inspect before render, embolden
+  over stroke, the light target and linear metrics, the mono target for
+  stems), the layer off the grid, the hinter's cost on the TV, and the Mac
+  rendering headless over ssh.
 - **[Text shaping and layout costs, measured](notes/text-shaping-costs.md)** [2026-08-17]
   What one Impeller paragraph per wrap unit costs against one paragraph per
   width, and what the shared word cache changes; the numbers under the owned

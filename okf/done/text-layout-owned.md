@@ -10,7 +10,7 @@ Done (2026-08-17): the owned engine is the text engine. Started as an
 experiment with [text-inline-spans](text-inline-spans.md) as the fallback
 (same `<span>` API on Impeller's style stack); the fallback was never
 needed. Open work that came out of it: [text-bidi](../backlog/text-bidi.md)
-and, as a kept idea, [text-own-rasterizer](../backlog/text-own-rasterizer.md).
+and, as a kept idea, [text-own-rasterizer](../done/text-own-rasterizer.md).
 Measurements: [text-shaping-costs](../notes/text-shaping-costs.md).
 
 ## Problem
@@ -76,7 +76,7 @@ via the run's glyph info plus the run's offset. No glyph math of our own.
 
 The engine's contract collapsed to shape-one-run and draw-one-run; the
 reasoning and the candidate second implementation moved to
-[text-own-rasterizer](../backlog/text-own-rasterizer.md).
+[text-own-rasterizer](../done/text-own-rasterizer.md).
 
 ## Bidi
 
@@ -263,7 +263,7 @@ bench: `alloy/examples/text_layout_bench.rs`.
    lands (7). Spans, atoms, floats, indent and wrap do nothing on it.
    Sanity: gallery example and probe render unchanged.
 7. Own rasterizer: kept as an idea, not scheduled:
-   [text-own-rasterizer](../backlog/text-own-rasterizer.md).
+   [text-own-rasterizer](../done/text-own-rasterizer.md).
 
 ## Related
 

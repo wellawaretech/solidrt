@@ -48,7 +48,7 @@ gamma or contrast compensation for light-on-dark text can actually be done.
 ## Resolution (2026-10-08)
 
 Closed by the own glyph engine rather than by a scale-dependent default
-([text-own-rasterizer](../plans/text-own-rasterizer.md), stage 2 step 4):
+([text-own-rasterizer](../done/text-own-rasterizer.md), stage 2 step 4):
 the glyph pass blends coverage with DirectWrite's gamma-aware recipe, which
 keeps light-on-dark stems at 1x, so the default weight is Regular at every
 display scale and the components' `textWeightDelta` compensation is gone.

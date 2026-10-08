@@ -41,7 +41,7 @@ feature or variation-axis setter, so the wdth axis is unreachable regardless
 of API design. Waits on upstream.
 
 Resolved 2026-10-06 with stage 2 step 3 of
-[text-own-rasterizer](../plans/text-own-rasterizer.md): the glyph engine
+[text-own-rasterizer](../done/text-own-rasterizer.md): the glyph engine
 is the one shaper, so the axis is one more instance setting. `fontStretch`
 is a CSS percentage (100 normal) on `<text>`, `<span>`, `measureText`,
 `prepareText`, `warmText` and `createFont`, set on the `wdth` axis of a

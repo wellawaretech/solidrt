@@ -15,7 +15,7 @@ Analysis, not a decision. Nothing here is scheduled. The reason to write it
 down is that the pieces existed in five places and the synthesis in none:
 [graphics-backend-strategy](graphics-backend-strategy.md) has the interop
 analysis but assumes Impeller stays,
-[text-own-rasterizer](../backlog/text-own-rasterizer.md) covers the text
+[text-own-rasterizer](../done/text-own-rasterizer.md) covers the text
 half, [display-list-op-cost](../backlog/display-list-op-cost.md) has the
 performance motivation without naming a replacement, and the three
 `upstream/impeller-*` files each record one unfixable defect without adding
@@ -123,7 +123,7 @@ Bevy's vector plugin. etagere, by the same author, **is** in WebRender.
 
 `spikes/swash-text/` (on this machine only, `spikes/` is gitignored, which
 is why its result is recorded here) answers the question
-[text-own-rasterizer](../backlog/text-own-rasterizer.md) raised. Two
+[text-own-rasterizer](../done/text-own-rasterizer.md) raised. Two
 renderers behind one toggle, against a SolidRT app rendering the same lines
 for an Impeller baseline, tiled side by side in `compare-1x.png` and
 `compare-2x.png`:

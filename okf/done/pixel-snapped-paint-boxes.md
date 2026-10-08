@@ -14,7 +14,7 @@ Taffy hands back fractional positions and sizes, and the composite walk
 child) drew every node at exactly that position. On the text coverage
 probe at 1x the sample rows sit at y 45.71, 62.69, 79.67 (a line box of
 16.98 px plus a 2 px gap), and Impeller resamples whatever is drawn there
-with its fraction: step 5 of okf/plans/text-own-rasterizer.md found the
+with its fraction: step 5 of okf/done/text-own-rasterizer.md found the
 hinted text rows blurred by exactly this, measured off the window as an
 x-height split 64/75 over two rows where the cell had it in one. The same
 happened to everything else that is one pixel sharp by design and
