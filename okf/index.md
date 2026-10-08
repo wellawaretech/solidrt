@@ -364,10 +364,6 @@ Shaped, not started.
   and the rig partial path; the bottleneck is per-op display-list processing
   on the armv7 CPU, so the real lever is not handing Impeller the full scene
   DL every frame.
-- **[Default font weight should follow display scale](backlog/dpi-aware-default-font-weight.md)** [2026-08-14]
-  Text defaults to Medium so that small type stays readable on 1x desktop
-  displays, which over-thickens every label on the 2-3x phone screens that
-  never needed it.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
@@ -1434,6 +1430,10 @@ Finished, kept for the reasoning.
   pass, so descendants kept their last boxes and kept painting; now the pass
   runs, and paint, hit and envelope walks skip hidden subtrees through one
   Element::is_hidden gate.
+- **[Default font weight should follow display scale](done/dpi-aware-default-font-weight.md)** [2026-10-08]
+  Text defaults to Medium so that small type stays readable on 1x desktop
+  displays, which over-thickens every label on the 2-3x phone screens that
+  never needed it.
 - **[TextInput logs STRICT_READ_UNTRACKED for a ref and for focus moved from an effect](done/editor-field-untracked-prop-reads.md)** [2026-09-21]
   EditorField reads props.ref in its ref callback and props.onBlur in its blur
   handler, both of which can run in an untracked owned scope, so a ref'd field

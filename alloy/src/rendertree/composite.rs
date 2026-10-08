@@ -76,7 +76,13 @@ pub fn paint_phase(
 
   // The text atlas's frame: open the synchronous budget before any text
   // builds (see TextAtlas; the landing ran in apply_content_changes).
-  platform.text_atlas().begin_frame(alloy, &platform.glyphs(), platform.display_scale());
+  platform.text_atlas().begin_frame(
+    alloy,
+    &platform.glyphs(),
+    platform.display_scale(),
+    platform.text_darken_em(),
+    platform.text_hint(),
+  );
 
   // Partial repaint: the damaged ids' last_extent cells still hold their
   // extents as of the LAST walk - the old half of the damage union (where
@@ -167,6 +173,16 @@ pub(crate) fn apply_content_changes(tree: &mut RenderTree, platform: &PlatformCo
   };
   if landed {
     for id in tree.incomplete_text_layers() {
+      if tree.try_node(id).is_some() {
+        tree.apply_damage(id, crate::rendertree::Damage::Paint);
+        changed = true;
+      }
+    }
+  }
+  // A changed text rendering policy redraws every layer the same way: the
+  // damage rebuilds the text, and its layer's generation no longer matches.
+  if platform.take_text_rendering_dirty() {
+    for id in tree.text_layer_nodes() {
       if tree.try_node(id).is_some() {
         tree.apply_damage(id, crate::rendertree::Damage::Paint);
         changed = true;

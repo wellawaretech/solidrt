@@ -76,6 +76,8 @@ uniform sampler2D uAtlas;
 uniform sampler2D uRamp;
 uniform int uMode;
 uniform float uGamma;
+uniform float uContrast;
+uniform vec4 uGammaRatios;
 uniform int uGradient;
 uniform vec3 uGradientX;
 uniform vec3 uGradientY;
@@ -109,6 +111,14 @@ void main() {
     if (light) c = pow(1.0 - pow(1.0 - c, uGamma), 1.0 / uGamma);
   } else if (uMode == 3) {
     if (light) c = pow(c, 1.0 / uGamma);
+  } else if (uMode == 4) {
+    // DirectWrite's grayscale blend (Windows Terminal's dwrite_helpers.hlsl,
+    // MIT): the contrast boost fades with the text's lightness, the alpha
+    // correction reads its intensity.
+    float k = uContrast * clamp(dot(color.rgb, vec3(0.30, 0.59, 0.11) * -4.0) + 3.0, 0.0, 1.0);
+    float f = dot(color.rgb, vec3(0.25, 0.5, 0.25));
+    c = c * (k + 1.0) / (c * k + 1.0);
+    c = c + c * (1.0 - c) * ((uGammaRatios.x * f + uGammaRatios.y) * c + (uGammaRatios.z * f + uGammaRatios.w));
   }
   float a = c * color.a;
   fragColor = vec4(color.rgb * a, a);
@@ -359,6 +369,8 @@ fn draw_groups(
     let params = [
       ("uMode".to_string(), ParamValue::Scalar(policy.mode as i32 as f32)),
       ("uGamma".to_string(), ParamValue::Scalar(policy.gamma)),
+      ("uContrast".to_string(), ParamValue::Scalar(policy.contrast)),
+      ("uGammaRatios".to_string(), ParamValue::Array(policy.gamma_ratios().to_vec())),
       ("uAtlasSize".to_string(), ParamValue::Array(vec![atlas_size.0 as f32, atlas_size.1 as f32])),
       ("uQuadsWidth".to_string(), ParamValue::Scalar(QUADS_TEXTURE_WIDTH as f32)),
       ("uGradient".to_string(), ParamValue::Scalar(kind as f32)),

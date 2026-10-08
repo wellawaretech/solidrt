@@ -2,7 +2,7 @@ import { Show, children } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import { space } from "./spacing"
-import { typeStyle, typeWeight, lightOnDark } from "./typography"
+import { typeStyle } from "./typography"
 import { policy } from "./policy"
 import { Surface } from "./surface"
 import type { ElevationLevel, MaterialRole, StyleProps, TransitionProps } from "./types"
@@ -51,7 +51,6 @@ export function Badge(props: BadgeProps) {
   // share one build - reading the raw getter again would orphan native nodes.
   let resolved = children(() => props.children)
   let isText = () => typeof resolved() === "string" || typeof resolved() === "number"
-  let labelOnDark = () => lightOnDark(fg(), bg())
 
   let split = () => splitTransition(props.transition)
 
@@ -90,8 +89,8 @@ export function Badge(props: BadgeProps) {
         <text
           transition={colorFade()}
           color={fg()}
-          {...typeStyle("caption", labelOnDark())}
-          fontWeight={typeWeight(600, theme.text.caption.size * policy.textScale, labelOnDark())}
+          {...typeStyle("caption")}
+          fontWeight={600}
         >
           {resolved()}
         </text>

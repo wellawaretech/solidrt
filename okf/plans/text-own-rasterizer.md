@@ -98,7 +98,9 @@ The trait; a glyph atlas (texture upload path exists: `flux:gpu` textures,
 | 9. Draw half, step 1 | measured 2026-10-06 (Findings): a text layer per node (B) locks the TV at 50 where `<text>` presents at 25 today, a texture op per glyph (A) collapses to 9 |
 | 10. Draw half, step 2 | built 2026-10-06 (Findings): the text atlas, the glyph pass and the text layer behind a switch; the TV's prose at 50 fps where Impeller gave 25 |
 | 11. Draw half, step 3 | built 2026-10-06 (Findings): the switch flipped and removed, Impeller's paragraph path, typography context and metrics table deleted, `FontSet` the one reader of the font bytes; the HUD on the engine; fallback as policy; letter spacing and the width axis as shaper parameters and props; gradient text in the pass; text layers released when unbuilt; the glyph program compiled at raster start; `paraShapes`/`paragraphs` renamed `wordShapes`/`textLayers` |
-| Tests | `alloy/src/tests/glyphs.rs` (18: the font set, carets, both cell kinds, blank glyphs, the packer and its eviction, the phases, the warm-up, fallback, the whitespace rule, letter spacing, the width axis), `text_baseline.rs` (the layout contract pinned over a corpus), `text_gradient.rs` (the layer's gradient mapping), `alloy/examples/text_layer.rs` (the pass against a CPU composite, the policy remaps, a gradient run), `packages/core/tests/text-warm.test.tsx`, the 2d text tests |
+| 12. Coverage policy, step 4 | built 2026-10-08: `setTextRendering` on `flux:rendertree` and `@solidrt/core` (mode, gamma, contrast, stem darkening, hinting, live), DirectWrite's blend as a fifth mode and the default (gamma 1.8, contrast 1, no darkening), the Medium default and the components' weight compensation retired, `probes/text-coverage-probe.tsx`; picked by eye at 1x (headless render, DP-2) and 1.5x (tablet) |
+| 13. Hinting | next: the light autohinter of fontations (skrifa), forced on below 2x, swash replaced by skrifa + zeno (Where to pick up) |
+| Tests | `alloy/src/tests/glyphs.rs` (20: the font set, carets, both cell kinds, blank glyphs, the packer and its eviction, the phases, the warm-up, fallback, the whitespace rule, letter spacing, the width axis), `text_baseline.rs` (the layout contract pinned over a corpus), `text_gradient.rs` (the layer's gradient mapping), `alloy/examples/text_layer.rs` (the pass against a CPU composite, the policy remaps, a gradient run), `packages/core/tests/text-warm.test.tsx`, the 2d text tests |
 
 ## Plan: stage 1, the glyph engine behind the seam (started 2026-10-06)
 
@@ -409,28 +411,99 @@ emoji, the hinting and gamma policy per DPI the spike explored.
   pixel asserts on the desktop GPU; flux and lattice compile; the sol
   tests and a device read are listed under "Where to pick up".
 
-## Where to pick up (updated 2026-10-06, after stage 2 step 3)
+- 2026-10-08, step 4, the instrument. The policy became a live setting of
+  the platform context (`TextRendering`: the coverage policy plus an
+  optional stem darkening override in em per side; the darkening is part
+  of the cell's style key, so a change makes new cells and the old age
+  out), counted by a generation every text layer records and a dirty flag
+  the frame start turns into paint damage on every text with a layer, the
+  same path cells landing take, so a text inside a reused recording
+  boundary redraws too. DirectWrite's grayscale blend went in as
+  `CoverageMode::DirectWrite` from Windows Terminal's published shader and
+  gamma-ratio table (MIT): an enhanced-contrast boost faded out by the
+  text's lightness, then an alpha correction keyed on its intensity. What
+  the example found about it (`text_layer.rs`): at gamma 1.8 it lifts
+  white text's edge coverage and thins black text's mid coverage, the
+  gamma-aware counterpart of naive sRGB blending, and black's curve is not
+  monotone (faint coverage rises with the boost, mid coverage falls under
+  the correction), so the example asserts counts and solid texels, not a
+  direction per texel. Verified: the knob changes a line's pixels on the
+  live client and restores them exactly on the way back (snapshot
+  hashes), 28 glyph and text tests, the example's asserts on the desktop
+  GPU. `sol render` found a `--client` is needed beside a running dev
+  client (both default to client0's storage).
 
-Stage 1 and stage 2's steps 1 to 3 are built (the State table). Impeller
-draws no text anywhere; the engine is the one shaper. Next is step 4,
-coverage to color by eye: the four modes are uniforms already
-(`CoveragePolicy`, settable through `PlatformContext::set_coverage_policy`),
-so the step is the gallery toggle, the screenshots at 1x and 2x on both
-polarities, the choice, then the per-DPI darkening (`LOW_DPI_DARKEN_EM` in
-`text_atlas.rs` is zero until then) and retiring the Medium default and
-the components' weight compensation (`policy.textWeightDelta`).
+- 2026-10-08, step 4, the pick. On the 1x sheet (headless render, so exact
+  1x pixels) and live on a 1x monitor, DirectWrite's blend read best at
+  its Windows defaults (gamma 1.8, contrast 1); the three remaps and the
+  darkened rows (0.015 and 0.03 em) were not needed once it lifted light
+  text's edges. It is the default now, the Medium default weight is
+  Regular, and the components' `textWeightDelta`, `typeWeight`,
+  `lightOnDark` and the polarity argument of `typeStyle` are gone (the
+  backlog item dpi-aware-default-font-weight closed). The 2x read is still
+  owed: the TV was unreachable, the tablet (1.5x) agreed with 1x.
+- 2026-10-08, step 4, the blur at 12 px and what hinting can do. Unhinted
+  outlines with only the baseline snapped put the x-height and cap height
+  wherever the size lands them: Noto Sans's 0.536 and 0.714 em sit near a
+  row at 11 and 13 px (5.90 and 7.85, 6.97 and 9.28) and mid-row at 12 px
+  (6.43 and 8.57), so 12 px reads blurry beside 11. swash's `hint(true)`
+  changed nothing because the shipped Notos are the variable builds with
+  no instructions (no `fpgm`, no `cvt`, a 7-byte `prep`, zero glyphs
+  instructed) and swash drives skrifa's hinter with its default engine,
+  AutoFallback, which copies FreeType's rule and sends a TrueType font
+  with a non-empty `prep` to the interpreter. skrifa's autohinter (the
+  fontations port of FreeType's, what Chrome ships) forced on with
+  `Engine::Auto` in `SmoothMode::Light` does the right thing, measured on
+  the shipped Noto Sans in a scratch crate: at 12 px x 6.44 -> 7.00, H
+  8.56 -> 9.00, o -0.12..6.55 -> 0.00..7.00; at 14 px x 7.50 -> 8.00; at
+  16 px H 11.42 -> 12.00; x extents untouched in every case, so the
+  subpixel phases keep working. swash hard-codes its hinting mode and
+  hides the engine choice, so the clean route is skrifa directly.
 
-Left open by step 3, to settle before or with step 4:
+## Where to pick up (updated 2026-10-08, after step 4)
 
-- The eye and the device: the gallery, the console and the changelog shot
-  at 1x here and at 2x on the TV were not looked at after the flip in the
-  session that built it; the alloy example and the tests passed. Read
-  the TV's text with the probe once more too.
-- `packages/2d` applies its own `letterSpacing` over `flux:font` glyphs at
-  layout time; the engine shapes letter spacing now, so the 2d layout could
-  take it from the face instead (tiny.md).
-- A fallback face is warmed with printable ASCII on first use like any
-  style, which is wasted for a CJK face; harmless.
+Step 4 is closed (the State table): DirectWrite's blend is the default
+policy, Regular the default weight, the components carry no weight
+compensation, and `setTextRendering` plus `probes/text-coverage-probe.tsx`
+are the instrument for any later policy question (keys 1 to 5 the mode,
+g/G gamma, c/C contrast, d/D darkening, h hinting, 0 reset; `/debug?name=set`;
+`option=value` app arguments for a headless render:
+
+    bun run sol render probes/text-coverage-probe.tsx --project --client 7 \
+      --settle --size 1200x480 --duration 1 --fps 1 -o <dir>/ -- \
+      coverage=directWrite gamma=1.8 hint=true
+
+renders one true-1x frame without a display; the live window lands on the
+laptop panel and `hyprctl dispatch movetoworkspacesilent <ws>,address:<a>`
+plus `movewindowpixel exact <x> <y>,address:<a>` puts it on a 1x monitor).
+
+Next, step 5 of this plan is hinting (the Findings bullet on the 12 px
+blur has the measurements): replace swash with fontations directly, which
+the shaper already sits on (harfrust over read-fonts).
+
+- `skrifa` (=0.44.0, in the lock already under swash) for everything swash
+  gave `glyphs/fonts.rs`, `cells.rs` and `msdf.rs`: metrics, the
+  character map, the variation axes and their normalized coordinates,
+  outlines, and hinted outlines through a `HintingInstance` cached per
+  (face, ppem, coordinates) with `HintingOptions { engine:
+  Engine::Auto(None), target: Target::Smooth { mode: SmoothMode::Light,
+  symmetric_rendering: true, preserve_linear_metrics: true } }` below
+  `LOW_DPI_SCALE` and unhinted above; `Engine::Auto`, not AutoFallback,
+  because of the stub `prep`. The `GlyphStyles` can be precomputed per
+  face.
+- `zeno` (=0.3.3, swash's own rasterizer, compiled in already) for the
+  coverage masks at the subpixel phase, the synthetic italic as a skew
+  transform of the path, and synthetic bold and darkening as a stroke of
+  twice the outset added to the fill (nonzero).
+- The MTSDF kind reads its outline from the same place, unhinted.
+- `LOW_DPI_HINT` turns on; the `hint` knob already carries the override.
+  The layout baseline (`text_baseline.rs`) pins the metrics, so a number
+  that moves in the port fails a test; `preserve_linear_metrics` keeps
+  advances unhinted so layout and carets do not change.
+- Judge on the probe at 1x: 12, 14 and 16 px should read like 11 and 13.
+
+After that, the old step 5 (platforms: the layer on Windows and macOS, the
+TV's frame cost re-read) and the 2x look on the TV.
 
 ## Plan: stage 2, the draw half (prepared 2026-10-06, step 1 started the same day)
 

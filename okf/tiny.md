@@ -14,7 +14,6 @@ are in that code anyway. File an item where the work happens, not where the
 symptom shows. A heading that outgrows this file splits into its own.
 
 ## Core
-- `packages/components/src/typography.ts` (the weight compensation comment) names Impeller as the renderer that composites coverage in sRGB; the glyph pass does that now under the naive policy, and step 4 of text-own-rasterizer replaces the compensation. Rewrite the comment with step 4.
 
 `packages/core` - the renderer and the reactivity surface.
 

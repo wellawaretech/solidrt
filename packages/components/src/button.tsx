@@ -3,7 +3,7 @@ import { createPress } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
-import { typeStyle, lightOnDark } from "./typography"
+import { typeStyle } from "./typography"
 import { Spinner } from "./spinner"
 import { Surface, surfaceSinks } from "./surface"
 import type { LayoutProps } from "@solidrt/core"
@@ -93,12 +93,6 @@ export function Button(props: ButtonProps) {
   // share this single memoized build (an unmounted build leaks native nodes).
   let resolved = children(() => props.children)
   let isText = () => typeof resolved() === "string" || typeof resolved() === "number"
-  // The label's polarity against the idle fill: onPrimary on a saturated fill
-  // is light-on-dark even in a light theme, so it needs the low-DPI weight
-  // compensation there too. The base fill, not the lit gradient: the
-  // compensation reads a solid color.
-  let labelOnDark = () => lightOnDark(label(), bg())
-
   // props (not a literal) so a swapped-in onPress is read at event time.
   let press = createPress(props)
   let pressed = () => !props.disabled && press.pressed()
@@ -167,7 +161,7 @@ export function Button(props: ButtonProps) {
         onOutlineTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
       />
       <Show when={isText()} fallback={resolved()}>
-        <text transition={colorFade()} color={press.pending() ? withAlpha(label(), 0) : label()} {...typeStyle("body", labelOnDark())}>
+        <text transition={colorFade()} color={press.pending() ? withAlpha(label(), 0) : label()} {...typeStyle("body")}>
           {resolved()}
         </text>
       </Show>

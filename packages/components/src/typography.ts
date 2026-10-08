@@ -1,65 +1,26 @@
-import { brightness, warmText } from "@solidrt/core"
+import { warmText } from "@solidrt/core"
 import type { MeasureTextOptions } from "@solidrt/core"
-import { theme, type TextStyle, type TextVariant } from "./theme"
+import { theme, type TextVariant } from "./theme"
 import { policy } from "./policy"
-
-// Below this effective font size, light-on-dark text on a low-DPI display
-// needs an extra compensation step (edge pixels dominate small glyphs).
-const SMALL_TEXT = 16
-
-// The rendering polarity of `text` drawn on `fill`, for typeWeight/typeStyle:
-// true when the text is the lighter of the two. Returns undefined (= fall
-// back to the theme's default polarity) when either side is not a comparable
-// color (gradients, "transparent").
-export function lightOnDark(text: unknown, fill: unknown): boolean | undefined {
-  if (typeof text !== "string" || typeof fill !== "string" || fill === "transparent") return undefined
-  return brightness(text) > brightness(fill)
-}
-
-// The theme's default polarity, derived from its own palette: light text on
-// a dark window background means a dark scheme. Nothing to declare per
-// preset, and it cannot disagree with the colors.
-function themeOnDark(): boolean {
-  return lightOnDark(theme.color.text, theme.color.background) ?? false
-}
-
-// A themed font weight with low-DPI rendering compensation applied. The
-// renderer (Impeller) rasterizes glyphs unhinted and composites the coverage
-// in nonlinear sRGB, which steals stem ink from light-on-dark text only (and
-// donates it to dark-on-light); the loss grows as glyphs shrink. Compensated
-// text adds policy.textWeightDelta (0 on high-DPI displays) plus one extra
-// step under SMALL_TEXT px; dark-on-light text passes through untouched.
-// `onDark` is the run's own polarity where the caller knows both colors (use
-// the lightOnDark() helper, like Button does for its fills); omitted, it
-// defaults to the theme's palette polarity. `size` is the effective
-// (post-textScale) font size. Clamped to the 900 ceiling; reactive like any
-// theme/policy read.
-export function typeWeight(weight: number, size: number, onDark?: boolean): TextStyle["weight"] {
-  let delta = (onDark ?? themeOnDark()) ? policy.textWeightDelta : 0
-  if (delta > 0 && size < SMALL_TEXT) delta += 100
-  return Math.min(900, weight + delta) as TextStyle["weight"]
-}
 
 // Resolved font props for a type-scale role, with the text policies applied:
 // spread onto a <text> or d-text. fontSize carries policy.textScale
-// (lineHeight is relative to the size, so it scales implicitly), fontWeight
-// carries the typeWeight compensation (pass `onDark` when the text sits on a
-// known fill). Reactive when called inside a tracked scope, like any
-// theme/policy read.
-export function typeStyle(variant: TextVariant, onDark?: boolean) {
+// (lineHeight is relative to the size, so it scales implicitly). Reactive
+// when called inside a tracked scope, like any theme/policy read. The weight
+// is the role's own: the text engine blends coverage with DirectWrite's
+// recipe, so light-on-dark text needs no compensation at any display scale.
+export function typeStyle(variant: TextVariant) {
   let role = theme.text[variant]
-  let size = role.size * policy.textScale
   return {
     fontFamily: theme.text.fontFamily,
-    fontSize: size,
+    fontSize: role.size * policy.textScale,
     lineHeight: role.lineHeight,
-    fontWeight: typeWeight(role.weight, size, onDark),
+    fontWeight: role.weight,
   }
 }
 
-// Every role of the type scale, in both polarities' weights (a button's
-// label on its primary fill is the opposite polarity of body text), plus
-// the mono family at body size for code spans.
+// Every role of the type scale, plus the mono family at body size for code
+// spans.
 const TYPE_SCALE_VARIANTS: TextVariant[] = ["caption", "label", "body", "title", "heading"]
 
 // The font styles the theme's type scale draws in, as warmText takes them.
@@ -67,10 +28,8 @@ const TYPE_SCALE_VARIANTS: TextVariant[] = ["caption", "label", "body", "title",
 export function typeScaleStyles(): MeasureTextOptions[] {
   let styles: MeasureTextOptions[] = []
   for (let variant of TYPE_SCALE_VARIANTS) {
-    for (let onDark of [false, true]) {
-      let style = typeStyle(variant, onDark)
-      styles.push({ fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight })
-    }
+    let style = typeStyle(variant)
+    styles.push({ fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight })
   }
   let body = typeStyle("body")
   styles.push({ fontFamily: theme.text.monoFamily, fontSize: body.fontSize, fontWeight: body.fontWeight })

@@ -1,6 +1,6 @@
 use crate::gpu::CoveragePolicy;
 use crate::impellers::{Point, Rect, Size};
-use crate::rendertree::text::glyphs::{FontSet, TextAtlas};
+use crate::rendertree::text::glyphs::{FontSet, TextAtlas, TextRendering};
 use crate::rendertree::text::WordCache;
 use std::borrow::Cow;
 use std::cell::{Cell, Ref, RefCell, RefMut};
@@ -32,9 +32,14 @@ pub struct PlatformContext {
   // The one mask atlas every `<text>` draws from; its cells are keyed on
   // face ids of `glyphs`, so a reset voids it.
   text_atlas: RefCell<TextAtlas>,
-  // How a text layer turns coverage into color (see CoveragePolicy);
-  // settable live for the gallery's by-eye comparison.
-  coverage_policy: Cell<CoveragePolicy>,
+  // How every text is rendered (see TextRendering); settable live, so a
+  // policy can be judged by eye. The generation counts the changes: a text
+  // layer records the one it was drawn under and redraws on a mismatch,
+  // and the dirty flag has the next frame damage every text with a layer,
+  // which a cached recording would otherwise never rebuild.
+  text_rendering: Cell<TextRendering>,
+  text_rendering_generation: Cell<u64>,
+  text_rendering_dirty: Cell<bool>,
   window_size: Cell<(f32, f32)>,
   window_size_dirty: Cell<bool>,
   display_scale: Cell<f32>,
@@ -67,7 +72,9 @@ impl PlatformContext {
       glyphs: RefCell::new(glyphs),
       words: RefCell::new(WordCache::default()),
       text_atlas: RefCell::new(TextAtlas::new(frame_requested.clone())),
-      coverage_policy: Cell::new(CoveragePolicy::default()),
+      text_rendering: Cell::new(TextRendering::default()),
+      text_rendering_generation: Cell::new(0),
+      text_rendering_dirty: Cell::new(false),
       window_size: Cell::new((0.0, 0.0)),
       window_size_dirty: Cell::new(false),
       display_scale: Cell::new(1.0),
@@ -97,16 +104,48 @@ impl PlatformContext {
     self.text_atlas.borrow_mut()
   }
 
-  /// The text layers' coverage-to-color policy.
-  pub fn coverage_policy(&self) -> CoveragePolicy {
-    self.coverage_policy.get()
+  /// How every text is rendered.
+  pub fn text_rendering(&self) -> TextRendering {
+    self.text_rendering.get()
   }
 
-  /// Change the policy; every text layer re-rasterizes at the frame this
-  /// requests.
-  pub fn set_coverage_policy(&self, policy: CoveragePolicy) {
-    self.coverage_policy.set(policy);
+  /// Change how text is rendered; every text layer redraws at the frame
+  /// this requests (a text inside a recording boundary reused since its
+  /// layer was released redraws when the recording next re-records).
+  pub fn set_text_rendering(&self, rendering: TextRendering) {
+    if rendering == self.text_rendering.replace(rendering) {
+      return;
+    }
+    self.text_rendering_generation.set(self.text_rendering_generation.get() + 1);
+    self.text_rendering_dirty.set(true);
     self.request_frame();
+  }
+
+  /// The number of `set_text_rendering` changes so far: what a text layer
+  /// records to know it was drawn under the current policy.
+  pub fn text_rendering_generation(&self) -> u64 {
+    self.text_rendering_generation.get()
+  }
+
+  /// Whether the rendering changed since this was last asked (the frame
+  /// start asks, and damages every text with a layer).
+  pub fn take_text_rendering_dirty(&self) -> bool {
+    self.text_rendering_dirty.replace(false)
+  }
+
+  /// The text layers' coverage-to-color policy.
+  pub fn coverage_policy(&self) -> CoveragePolicy {
+    self.text_rendering.get().coverage
+  }
+
+  /// The stem darkening cells are made with on this display, em per side.
+  pub fn text_darken_em(&self) -> f32 {
+    self.text_rendering.get().darken_em(self.display_scale())
+  }
+
+  /// Whether cells are made from hinted outlines on this display.
+  pub fn text_hint(&self) -> bool {
+    self.text_rendering.get().hint_at(self.display_scale())
   }
 
   /// Replace the registered font set (an app switch): a fresh set built

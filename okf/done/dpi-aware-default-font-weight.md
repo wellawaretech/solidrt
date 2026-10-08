@@ -2,6 +2,7 @@
 title: Default font weight should follow display scale
 description: Text defaults to Medium so that small type stays readable on 1x desktop displays, which over-thickens every label on the 2-3x phone screens that never needed it.
 created: 2026-08-14
+completed: 2026-10-08
 ---
 
 # Default font weight should follow display scale
@@ -43,3 +44,13 @@ Longer term the workaround goes away with an own rasterizer behind the
 shaper trait ([text-own-rasterizer](text-own-rasterizer.md), grown out of
 [text-layout-owned](../done/text-layout-owned.md)), which is where
 gamma or contrast compensation for light-on-dark text can actually be done.
+
+## Resolution (2026-10-08)
+
+Closed by the own glyph engine rather than by a scale-dependent default
+([text-own-rasterizer](../plans/text-own-rasterizer.md), stage 2 step 4):
+the glyph pass blends coverage with DirectWrite's gamma-aware recipe, which
+keeps light-on-dark stems at 1x, so the default weight is Regular at every
+display scale and the components' `textWeightDelta` compensation is gone.
+Judged by eye on the text coverage probe at 1x (headless render) and 1.5x
+(tablet); stem darkening was tried alongside and found unnecessary.

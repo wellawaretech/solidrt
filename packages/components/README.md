@@ -132,7 +132,6 @@ The fields:
 - `motion` (`"normal" | "reduced" | "none"`) - animation intensity. Gates every built-in component transition: `reduced` keeps the color/opacity fades (a fade is not movement) but snaps everything that travels or scales, and halves the indeterminate `Spinner`/`ProgressBar` speeds; `none` snaps it all and parks the indeterminate loops.
 - `focusRing` (`boolean`) - whether focused controls draw a visible focus indicator (true when a keyboard or gamepad/remote is present).
 - `textScale` (`number`) - multiplier on type-scale font sizes; defaults to the OS text-scale preference.
-- `textWeightDelta` (`number`) - weight compensation (steps of 100) for light-on-dark text on low-DPI displays.
 - `navigation` (`"bottomTabs" | "rail" | "sidebar"`) - recommended nav layout, derived from the pane count: `sidebar` beside a two-pane layout, `bottomTabs` under a single pane (a side strip spends the width a narrow window is short of). `rail` is never derived; set it for a content-dense two-pane app. `NavShell` follows it.
 - `layout` (`"singlePane" | "twoPane"`) - recommended pane count, derived from the window size class. `SplitView` follows it.
 
@@ -161,13 +160,13 @@ API: `StyleProps`, `Glow`, `Glass`, `Material`, `MaterialRole`, `ElevationLevel`
 
 ## Typography helpers
 
-`typeStyle(variant)` resolves a theme type-scale role (`caption`/`label`/`body`/`title`/`heading`) to font props ready to spread onto a `<text>` or `d-text`: `fontSize` carries `policy.textScale`, and `fontWeight` carries the low-DPI weight compensation. Reactive when called inside a tracked scope, like any theme/policy read. `Text` applies it for you; reach for the helpers when building custom text out of core primitives.
+`typeStyle(variant)` resolves a theme type-scale role (`caption`/`label`/`body`/`title`/`heading`) to font props ready to spread onto a `<text>` or `d-text`: `fontSize` carries `policy.textScale`, `fontWeight` is the role's own. Reactive when called inside a tracked scope, like any theme/policy read. `Text` applies it for you; reach for the helpers when building custom text out of core primitives.
 
-`typeScaleStyles()` is the type scale as font styles (every role in both polarities' weights, plus the mono family at body size), and `warmTypeScale()` hands them to core's `warmText`, which makes their glyph cells ahead of the first screen on the text engine's worker. `Window` does this on mount and again when the theme or the text policy changes; an app that draws its own window calls it once at startup.
+`typeScaleStyles()` is the type scale as font styles (every role, plus the mono family at body size), and `warmTypeScale()` hands them to core's `warmText`, which makes their glyph cells ahead of the first screen on the text engine's worker. `Window` does this on mount and again when the theme or the text policy changes; an app that draws its own window calls it once at startup.
 
-The compensation exists because the renderer rasterizes glyphs unhinted and composites in nonlinear sRGB, which thins light-on-dark text on low-DPI displays as glyphs shrink. `typeWeight(weight, size, onDark?)` adds `policy.textWeightDelta` (0 on high-DPI displays) plus one extra step below 16px; dark-on-light text passes through untouched. `lightOnDark(text, fill)` computes the polarity for a known pair of colors (Button uses it for its fills); omitted, the theme's own palette polarity is used.
+There is no weight compensation: the text engine blends glyph coverage with DirectWrite's gamma-aware recipe, so light-on-dark text keeps its stems at every display scale.
 
-API: `typeStyle`, `typeWeight`, `lightOnDark`, `typeScaleStyles`, `warmTypeScale` - typed and commented in [src/typography.ts](./src/typography.ts).
+API: `typeStyle`, `typeScaleStyles`, `warmTypeScale` - typed and commented in [src/typography.ts](./src/typography.ts).
 
 ## Spacing
 

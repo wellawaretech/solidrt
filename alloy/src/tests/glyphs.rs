@@ -3,9 +3,10 @@
 // and the text atlas. The layout contract itself is pinned by
 // text_baseline.rs.
 use crate::impellers::{FontStyle, FontWeight};
+use crate::gpu::{CoverageMode, CoveragePolicy};
 use crate::rendertree::text::glyphs::{
   split_phase, AtlasPacker, Cell, CellKind, CellRequest, Dirty, FontSet, HoldSource, InsertOutcome, Rasterizer,
-  ShapeStyle, ShapedGlyphs, StyleKey, TextAtlas, WarmRequest, BYTES_PER_TEXEL, PHASES, WARM_CHUNK,
+  ShapeStyle, ShapedGlyphs, StyleKey, TextAtlas, TextRendering, WarmRequest, BYTES_PER_TEXEL, PHASES, WARM_CHUNK,
 };
 use crate::rendertree::text::{prepare_units, Fallback, RunStyle};
 use crate::rendertree::{FontPayload, PaintState, PlatformContext};
@@ -117,6 +118,7 @@ fn mask_cell_holds_the_glyph_coverage() {
     synthetic_italic: false,
     phase: 0.0,
     darken: 0.0,
+    hint: false,
     glyphs: vec![glyph],
   };
   let cells = Rasterizer::default().rasterize(NOTO_SANS, &request).expect("a font");
@@ -270,6 +272,7 @@ fn msdf_cell_holds_the_glyph_as_a_field() {
     synthetic_italic: false,
     phase: 0.0,
     darken: 0.0,
+    hint: false,
     glyphs: vec![shaped.glyphs[0].id],
   };
   let cells = Rasterizer::default().rasterize(NOTO_SANS, &request).expect("a font");
@@ -320,6 +323,7 @@ fn blank_glyphs_are_empty_cells_that_take_no_atlas_space() {
       synthetic_italic: false,
       phase: 0.0,
       darken: 0.0,
+      hint: false,
       glyphs: vec![space],
     };
     let cells = Rasterizer::default().rasterize(NOTO_SANS, &request).expect("a font");
@@ -390,6 +394,7 @@ fn a_mask_at_a_subpixel_phase_shifts_its_coverage() {
     synthetic_italic: false,
     phase,
     darken: 0.0,
+    hint: false,
     glyphs: vec![stem],
   };
   let mut rasterizer = Rasterizer::default();
@@ -438,7 +443,7 @@ fn warming_a_style_queues_its_ascii_at_every_phase() {
   let mut atlas = TextAtlas::new(latch.clone());
   let (holds, source) = counting_holds();
   atlas.set_hold_source(source);
-  let style = StyleKey::new(0, SIZE, 500, 100.0, false, 1.0);
+  let style = StyleKey::new(0, SIZE, 500, 100.0, false, 0.0, false);
   atlas.warm(&fonts, style);
   // Printable ASCII is 95 code points and the shipped face covers them:
   // 95 cells per phase in jobs of a chunk each, each job a hold on the
@@ -540,6 +545,10 @@ fn text_no_face_covers_keeps_the_notdef_box() {
 const SPACING: f32 = 2.0;
 // A condensed stretch inside the shipped Noto's width axis (62.5 to 100).
 const CONDENSED: f32 = 75.0;
+// How close a computed gamma ratio must come to the published float.
+const RATIO_TOLERANCE: f32 = 1e-6;
+// A stem darkening strength, em per side, for the key checks.
+const DARKEN: f32 = 0.02;
 
 #[test]
 fn letter_spacing_adds_after_every_cluster() {
@@ -570,4 +579,36 @@ fn the_width_axis_condenses_and_clamps() {
     ShapedGlyphs::shape(&fonts, 0, "Hamburg", &ShapeStyle { stretch: 150.0, ..shaping(SIZE, 0.0) }, Fallback::None)
       .expect("shaped");
   assert_eq!(widest.metrics.advance, normal.metrics.advance, "clamped to normal");
+}
+
+#[test]
+fn directwrite_gamma_ratios_match_the_published_defaults() {
+  // The 1.8 ratios dwrite_helpers.hlsl documents, and the table's clamp.
+  let policy = CoveragePolicy { mode: CoverageMode::DirectWrite, gamma: 1.8, ..CoveragePolicy::default() };
+  let expected = [0.148054421, -0.894594550, 1.47590804, -0.324668258];
+  for (got, want) in policy.gamma_ratios().iter().zip(expected) {
+    assert!((got - want).abs() < RATIO_TOLERANCE, "{got} vs {want}");
+  }
+  let low = CoveragePolicy { gamma: 0.5, ..policy };
+  assert_eq!(low.gamma_ratios(), [0.0; 4], "below the table is gamma 1.0: no correction");
+  let high = CoveragePolicy { gamma: 3.0, ..policy };
+  let top = CoveragePolicy { gamma: 2.2, ..policy };
+  assert_eq!(high.gamma_ratios(), top.gamma_ratios(), "above the table is its last row");
+}
+
+#[test]
+fn text_rendering_darkening_follows_the_display_scale_unless_set() {
+  let rendering = TextRendering::default();
+  assert_eq!(rendering.darken_em(2.0), 0.0, "no darkening at 2x");
+  let set = TextRendering { darken: Some(DARKEN), ..rendering };
+  assert_eq!(set.darken_em(2.0), DARKEN, "a set strength applies at any scale");
+  assert_eq!(set.darken_em(1.0), DARKEN);
+  let plain = StyleKey::new(0, SIZE, 400, 100.0, false, 0.0, false);
+  let darkened = StyleKey::new(0, SIZE, 400, 100.0, false, DARKEN, false);
+  assert_ne!(plain, darkened, "darkening is part of the cell's identity");
+  assert_eq!(darkened.darken_em(), DARKEN);
+  let hinted = StyleKey::new(0, SIZE, 400, 100.0, false, 0.0, true);
+  assert_ne!(plain, hinted, "hinting is part of the cell's identity");
+  assert!(!rendering.hint_at(1.0), "unhinted by default until judged");
+  assert!(TextRendering { hint: Some(true), ..rendering }.hint_at(2.0), "a set hinting applies at any scale");
 }

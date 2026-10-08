@@ -89,13 +89,12 @@ impl TextAnchor {
 }
 
 // The engine text defaults, shared by Default and the null-reset paths in
-// set_font_size / set_font_weight. Weight is Medium, not Regular: Impeller
-// antialiases text in grayscale only, so small type on a 1x desktop display
-// renders as hairlines that bleed into dark backgrounds. Costs a little
-// extra weight on 2-3x screens that never needed it; see
-// okf/backlog/dpi-aware-default-font-weight.md.
+// set_font_size / set_font_weight. Regular since 2026-10-08: the Medium
+// default compensated Impeller's grayscale blending, which thinned light
+// text on 1x displays; the glyph pass blends with DirectWrite's recipe now
+// (okf/done/dpi-aware-default-font-weight.md).
 pub const DEFAULT_FONT_SIZE: f32 = 20.0;
-pub const DEFAULT_FONT_WEIGHT: FontWeight = FontWeight::Medium;
+pub const DEFAULT_FONT_WEIGHT: FontWeight = FontWeight::Regular;
 /// CSS font-stretch's normal: the width axis at 100 percent.
 pub const DEFAULT_FONT_STRETCH: f32 = 100.0;
 
@@ -219,6 +218,8 @@ struct TextLayer {
   scale: f32,
   generation: u64,
   width: f32,
+  /// The platform's text rendering generation the layer was drawn under.
+  rendering: u64,
   /// Every glyph's cell was in the atlas when the layer was drawn; an
   /// incomplete layer redraws when cells land.
   complete: bool,
@@ -436,9 +437,11 @@ impl Text {
       let atlas = ctx.platform.text_atlas();
       (atlas.frame(), atlas.landed())
     };
+    let rendering = ctx.platform.text_rendering_generation();
     let mut layer = self.layer.borrow_mut();
     let current = layer.as_ref().is_some_and(|l| {
       l.generation == owned.generation
+        && l.rendering == rendering
         && l.width == width
         && (l.scale - scale).abs() <= scale * LAYER_SCALE_TOLERANCE
         && l.tex_w == tex_w
@@ -468,6 +471,7 @@ impl Text {
             scale,
             generation: owned.generation,
             width,
+            rendering,
             complete,
             used: frame,
           });
@@ -619,6 +623,8 @@ impl Text {
     let mut words = platform.words();
     let mut atlas = platform.text_atlas();
     let display_scale = platform.display_scale();
+    let darken_em = platform.text_darken_em();
+    let hint = platform.text_hint();
     // An untransformed text's style is the one every other text of its
     // size shares, worth warming on first sight; a text under a scaling
     // transform (a pressed button's label) has a ppem of its own. Only the
@@ -680,7 +686,7 @@ impl Text {
         if entries.is_empty() {
           continue;
         }
-        let key = StyleKey::new(*face, style.font_size * scale, weight, style.font_stretch, italic, display_scale);
+        let key = StyleKey::new(*face, style.font_size * scale, weight, style.font_stretch, italic, darken_em, hint);
         ids.clear();
         ids.extend(entries.iter().map(|(i, _, _)| glyphs.glyphs[*i].id));
         let warm_face = warm && primary == Some(*face);

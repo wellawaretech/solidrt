@@ -4,7 +4,6 @@ import type { StyleProps, TextLayoutProps, TransitionProps, TransitionViewProp }
 import { splitTextLayout, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { theme, type TextVariant } from "./theme"
 import { policy } from "./policy"
-import { typeWeight } from "./typography"
 import { colorFade } from "./motion"
 
 // Semantic text colors, resolved through the theme. Curated: only tokens that
@@ -15,9 +14,8 @@ export interface TextProps extends PointerProps, TransitionProps<TransitionViewP
   children?: any
   // Typography role from the theme's type scale; defaults to "body". Explicit
   // layout font props override the role's fields individually. fontSize
-  // (role-derived or explicit) is multiplied by policy.textScale and
-  // fontWeight carries the typeWeight low-DPI compensation; use the core
-  // <text> primitive for text that must not scale.
+  // (role-derived or explicit) is multiplied by policy.textScale; use the
+  // core <text> primitive for text that must not scale.
   variant?: TextVariant
   // Semantic color from the theme; defaults to "text". style.color still wins.
   color?: TextColor
@@ -86,7 +84,7 @@ export function Text(props: TextProps) {
         fontSize={size()}
         lineHeight={props.layout?.lineHeight ?? role().lineHeight}
         fontStyle={props.layout?.fontStyle}
-        fontWeight={typeWeight(props.layout?.fontWeight ?? role().weight, size())}
+        fontWeight={props.layout?.fontWeight ?? role().weight}
         textAlign={props.layout?.textAlign}
         maxLines={props.layout?.maxLines}
       >

@@ -7858,9 +7858,6 @@ function withAlpha(color, alpha) {
   let a = Math.round(Math.min(1, Math.max(0, alpha)) * ALPHA_MAX);
   return "#" + rgb.toString(16).padStart(6, "0") + a.toString(16).padStart(2, "0");
 }
-function brightness2(color) {
-  return tree3.brightness(color);
-}
 function createLinearGradient(x0, y0, x1, y1, stops) {
   return {
     __gradient: "linear",
@@ -10870,7 +10867,6 @@ function defaultPolicyResolver(caps) {
     motion: "normal",
     focusRing: caps.keyboardNav || gamepads().some((p) => p != null),
     textScale: env.textScale,
-    textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
     navigation: layout === "twoPane" ? "sidebar" : "bottomTabs",
     layout
   };
@@ -10895,9 +10891,6 @@ var policy = {
   },
   get textScale() {
     return overrides().textScale ?? resolved().textScale;
-  },
-  get textWeightDelta() {
-    return overrides().textWeightDelta ?? resolved().textWeightDelta;
   },
   get navigation() {
     return overrides().navigation ?? resolved().navigation;
@@ -11000,43 +10993,25 @@ function PressFeedback(props) {
 }
 
 // ../../packages/components/src/typography.ts
-var SMALL_TEXT = 16;
-function lightOnDark(text, fill) {
-  if (typeof text !== "string" || typeof fill !== "string" || fill === "transparent")
-    return;
-  return brightness2(text) > brightness2(fill);
-}
-function themeOnDark() {
-  return lightOnDark(theme.color.text, theme.color.background) ?? false;
-}
-function typeWeight(weight, size, onDark) {
-  let delta = onDark ?? themeOnDark() ? policy.textWeightDelta : 0;
-  if (delta > 0 && size < SMALL_TEXT)
-    delta += 100;
-  return Math.min(900, weight + delta);
-}
-function typeStyle(variant, onDark) {
+function typeStyle(variant) {
   let role = theme.text[variant];
-  let size = role.size * policy.textScale;
   return {
     fontFamily: theme.text.fontFamily,
-    fontSize: size,
+    fontSize: role.size * policy.textScale,
     lineHeight: role.lineHeight,
-    fontWeight: typeWeight(role.weight, size, onDark)
+    fontWeight: role.weight
   };
 }
 var TYPE_SCALE_VARIANTS = ["caption", "label", "body", "title", "heading"];
 function typeScaleStyles() {
   let styles = [];
   for (let variant of TYPE_SCALE_VARIANTS) {
-    for (let onDark of [false, true]) {
-      let style = typeStyle(variant, onDark);
-      styles.push({
-        fontFamily: style.fontFamily,
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight
-      });
-    }
+    let style = typeStyle(variant);
+    styles.push({
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight
+    });
   }
   let body = typeStyle("body");
   styles.push({
@@ -11510,7 +11485,7 @@ function Text(props) {
     i: size(),
     n: props.layout?.lineHeight ?? role().lineHeight,
     s: props.layout?.fontStyle,
-    h: typeWeight(props.layout?.fontWeight ?? role().weight, size()),
+    h: props.layout?.fontWeight ?? role().weight,
     r: props.layout?.textAlign,
     d: props.layout?.maxLines
   }), ({
@@ -13040,7 +13015,7 @@ function EditorField(props) {
     fontSize: fontSize(),
     lineHeight: lineHeight(),
     fontStyle: layoutFont().fontStyle,
-    fontWeight: typeWeight(layoutFont().fontWeight ?? theme.text.body.weight, fontSize())
+    fontWeight: layoutFont().fontWeight ?? theme.text.body.weight
   }), {
     equals: sameFont
   });
@@ -14057,7 +14032,6 @@ function Button(props) {
   let label = () => props.disabled ? theme.color.textMuted : colors().label;
   let resolved2 = children(() => props.children);
   let isText = () => typeof resolved2() === "string" || typeof resolved2() === "number";
-  let labelOnDark = () => lightOnDark(label(), bg());
   let press = createPress(props);
   let pressed = () => !props.disabled && press.pressed();
   let hovered = () => !props.disabled && press.hovered() && policy.interaction !== "touch";
@@ -14193,7 +14167,7 @@ function Button(props) {
         get color() {
           return memo2(() => !!press.pending())() ? withAlpha(label(), 0) : label();
         }
-      }, () => typeStyle("body", labelOnDark())], true);
+      }, () => typeStyle("body")], true);
       insert(_el$2, resolved2);
       return _el$2;
     }
@@ -14817,7 +14791,7 @@ function SegmentedControl(props) {
         get color() {
           return label(active());
         }
-      }, () => typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)], true);
+      }, () => typeStyle("body")], true);
       insert(_el$8, () => opt.label);
       return _el$6;
     }

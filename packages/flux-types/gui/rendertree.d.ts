@@ -221,6 +221,40 @@ declare module "flux:rendertree" {
    * made at first use.
    */
   export function warmText(styles: MeasureTextOptions[]): void
+  /** How every text is rendered, for {@link setTextRendering}. */
+  export interface TextRenderingOptions {
+    /**
+     * How a glyph's coverage becomes color: "naive" takes it as is;
+     * "linearLight", "polarityRemap" and "polarityLinear" remap it by
+     * `gamma` for light text on a dark ground; "directWrite" applies
+     * DirectWrite's contrast boost (`contrast`) and gamma alpha correction
+     * (`gamma`, 1.0 to 2.2).
+     */
+    coverage?: "naive" | "linearLight" | "polarityRemap" | "polarityLinear" | "directWrite"
+    /** The exponent of the remaps, or the DirectWrite gamma; positive. */
+    gamma?: number
+    /** The DirectWrite mode's enhanced contrast; positive, 1 is its default. */
+    contrast?: number
+    /**
+     * Stem darkening of every glyph in em per side, at any display scale;
+     * null restores the default (a low-DPI strength below 2x, none above).
+     */
+    darken?: number | null
+    /**
+     * Make glyph cells from hinted outlines (the font's own instructions,
+     * which snap x-height and cap height to pixel rows) at any display
+     * scale; null restores the default (unhinted).
+     */
+    hint?: boolean | null
+  }
+  /**
+   * Change how every text is rendered. Each option given replaces its part
+   * of the current policy and the rest stays; every text redraws at the
+   * next frame. The defaults are what an app that says nothing gets; this
+   * is the knob for judging a policy by eye on a running app. Throws on an
+   * unknown mode or an invalid number.
+   */
+  export function setTextRendering(options: TextRenderingOptions): void
   /**
    * The node's bounding box from the most recent layout, relative to its
    * nearest positioning context (an ancestor with an explicit

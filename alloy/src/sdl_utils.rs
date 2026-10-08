@@ -1,4 +1,6 @@
-use sdl3::sys::keyboard::{SDL_GetModState, SDL_HasKeyboard};
+use sdl3::sys::keyboard::{SDL_GetKeyFromScancode, SDL_GetModState, SDL_HasKeyboard};
+use sdl3::sys::keycode::{SDLK_UNKNOWN, SDL_Keymod};
+use sdl3::sys::scancode::SDL_Scancode;
 use sdl3::sys::mouse::{
   SDL_CreateAnimatedCursor, SDL_CreateColorCursor, SDL_CreateSystemCursor, SDL_Cursor, SDL_CursorFrameInfo,
   SDL_DestroyCursor, SDL_HasMouse, SDL_HideCursor, SDL_SetCursor, SDL_ShowCursor, SDL_SystemCursor,
@@ -68,6 +70,17 @@ pub fn has_keyboard() -> bool {
 
 pub fn has_mouse() -> bool {
   unsafe { SDL_HasMouse() }
+}
+
+// The keycode a physical key produces under a modifier state, through the
+// active layout, as SDL's raw codepoint. The crate's `Keycode::from_scancode`
+// wraps the same call but maps the result through its enum of named
+// constants, which has no entry for a shifted letter ("C" is 0x43, not a
+// constant), so a Shift+letter lookup came back None through it. None when
+// SDL knows no key for the scancode.
+pub fn key_from_scancode(scancode: sdl3::keyboard::Scancode, modstate: SDL_Keymod) -> Option<u32> {
+  let key = unsafe { SDL_GetKeyFromScancode(SDL_Scancode(scancode as i32), modstate, false) };
+  (key != SDLK_UNKNOWN).then_some(key.0)
 }
 
 // The crate wraps this on KeyboardUtil, but the input-devices event snapshot

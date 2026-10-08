@@ -70,7 +70,7 @@ export {
   type LayoutPolicy,
 } from "./policy"
 export { Density, type DensityProps, densityScale } from "./density"
-export { typeStyle, typeWeight, lightOnDark, typeScaleStyles, warmTypeScale } from "./typography"
+export { typeStyle, typeScaleStyles, warmTypeScale } from "./typography"
 export { space } from "./spacing"
 export type {
   StyleProps,

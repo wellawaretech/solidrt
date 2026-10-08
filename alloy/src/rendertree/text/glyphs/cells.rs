@@ -91,6 +91,10 @@ pub struct CellRequest {
   /// Extra outset per side in pixels, the low-DPI stem darkening policy
   /// (zero for none); adds to a synthetic bold's.
   pub darken: f32,
+  /// Apply the font's hinting instructions to the outline (the low-DPI
+  /// policy: x-height and cap height snap to pixel rows). A mask only; a
+  /// distance field is unhinted whatever this says.
+  pub hint: bool,
   pub glyphs: Vec<u16>,
 }
 
@@ -115,7 +119,7 @@ impl Rasterizer {
       .context
       .builder(font)
       .size(request.kind.ppem())
-      .hint(false)
+      .hint(request.hint && matches!(request.kind, CellKind::Mask { .. }))
       .variations(
         [
           request.weight.map(|value| swash::Setting { tag: swash::tag_from_bytes(b"wght"), value }),

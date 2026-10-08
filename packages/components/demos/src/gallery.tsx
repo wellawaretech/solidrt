@@ -46,7 +46,6 @@ import {
   Density,
   theme,
   space,
-  typeWeight,
   setTheme,
   darkTheme,
   lightTheme,
@@ -267,11 +266,6 @@ function App() {
     setTextScaleChoice(v)
     setPolicy({ textScale: v === "auto" ? undefined : (v as number) })
   }
-  let [weightDeltaChoice, setWeightDeltaChoice] = createSignal<unknown>("auto")
-  let chooseWeightDelta = (v: unknown) => {
-    setWeightDeltaChoice(v)
-    setPolicy({ textWeightDelta: v === "auto" ? undefined : (v as number) })
-  }
 
   // The gallery's groups: one list row each, one set of cards each. The
   // cards read the signals above, so a group's content is built fresh each
@@ -377,25 +371,6 @@ function App() {
               <Radio value={0.9}>0.9</Radio>
               <Radio value={1.0}>1.0</Radio>
               <Radio value={1.1}>1.1</Radio>
-            </RadioGroup>
-            <Divider />
-            <Row label="Text weight delta">
-              <Value>
-                {`base +${policy.textWeightDelta}, body ${typeWeight(
-                  theme.text.body.weight,
-                  theme.text.body.size * policy.textScale,
-                )}, title ${typeWeight(theme.text.title.weight, theme.text.title.size * policy.textScale)}`}
-              </Value>
-            </Row>
-            <RadioGroup
-              value={weightDeltaChoice()}
-              onChange={chooseWeightDelta}
-              layout={{ flexDirection: "row", flexWrap: "wrap", gap: space("md") }}
-            >
-              <Radio value="auto">Auto</Radio>
-              <Radio value={0}>0</Radio>
-              <Radio value={100}>+100</Radio>
-              <Radio value={200}>+200</Radio>
             </RadioGroup>
           </Card>
         </>

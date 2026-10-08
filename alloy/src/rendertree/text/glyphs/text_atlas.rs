@@ -39,7 +39,7 @@ use super::atlas::{AtlasPacker, CellPlacement, GlyphAtlas, InsertOutcome};
 use super::cells::{Cell, CellKind, CellRequest, Rasterizer};
 use super::fonts::{Face, FaceId, FontSet};
 use super::worker::{CellJob, CellWorker, JobPriority};
-use crate::gpu::{SamplerFilter, SamplerState, SamplerWrap, MIN_ANISOTROPY};
+use crate::gpu::{CoveragePolicy, SamplerFilter, SamplerState, SamplerWrap, MIN_ANISOTROPY};
 use crate::Context;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -65,21 +65,63 @@ const WARM_LAST: u32 = 0x7e;
 /// waits at most this many warm cells for the one in hand (a chunk is
 /// some 16 ms on the armv7 TV at a millisecond a cell).
 pub const WARM_CHUNK: usize = 16;
-/// Below this display scale masks are stem-darkened by `LOW_DPI_DARKEN_EM`
-/// of the em per side: the light-on-dark bleed the plan's symptom section
-/// describes lives on 1x desktops. Zero until stage 2's step 4 tunes it
-/// together with retiring the Medium default weight.
+/// Below this display scale masks may be stem-darkened by
+/// `LOW_DPI_DARKEN_EM` of the em per side. Judged unnecessary by eye at 1x
+/// on 2026-10-08 once the layer blended with DirectWrite's recipe, so the
+/// default strength is zero; the mechanism stays behind `TextRendering`.
 const LOW_DPI_SCALE: f32 = 2.0;
 const LOW_DPI_DARKEN_EM: f32 = 0.0;
+/// Whether masks below `LOW_DPI_SCALE` are made from hinted outlines. Off
+/// until the light autohinter lands (okf/plans/text-own-rasterizer.md,
+/// "Where to pick up"): the shipped Notos carry no instructions, so the
+/// font's own hinting has nothing to run.
+const LOW_DPI_HINT: bool = false;
 /// The thread the text atlas's cells are made on.
 const WORKER_NAME: &str = "alloy-text-cells";
 const ATLAS_LABEL: &str = "text-atlas";
 
-/// One face at one size, weight, width and style on one kind of display:
-/// what a run's glyphs are made as. `ppem` is the device pixels per em
-/// (the run's size times the layer's scale) and `stretch` the width axis
-/// percentage, both kept as the float's bits so equal values make equal
-/// keys.
+/// How every `<text>` is rendered: the layer's coverage-to-color policy
+/// and the stem darkening its cells are made with. Settable live
+/// (`PlatformContext::set_text_rendering`), so the policy can be judged by
+/// eye on a running app; the defaults are what an app that says nothing
+/// gets.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct TextRendering {
+  pub coverage: CoveragePolicy,
+  /// Stem darkening in em per side at any display scale; None applies the
+  /// low-DPI default (`LOW_DPI_DARKEN_EM` below `LOW_DPI_SCALE`, none
+  /// above).
+  pub darken: Option<f32>,
+  /// Hinted outlines at any display scale; None applies the low-DPI
+  /// default (`LOW_DPI_HINT` below `LOW_DPI_SCALE`, unhinted above).
+  pub hint: Option<bool>,
+}
+
+impl TextRendering {
+  /// The stem darkening cells are made with at `display_scale`, em per
+  /// side.
+  pub fn darken_em(&self, display_scale: f32) -> f32 {
+    match self.darken {
+      Some(em) => em,
+      None if display_scale < LOW_DPI_SCALE => LOW_DPI_DARKEN_EM,
+      None => 0.0,
+    }
+  }
+
+  /// Whether cells are made from hinted outlines at `display_scale`.
+  pub fn hint_at(&self, display_scale: f32) -> bool {
+    match self.hint {
+      Some(hint) => hint,
+      None => display_scale < LOW_DPI_SCALE && LOW_DPI_HINT,
+    }
+  }
+}
+
+/// One face at one size, weight, width, style, darkening and hinting: what
+/// a run's glyphs are made as. `ppem` is the device pixels per em (the
+/// run's size times the layer's scale), `stretch` the width axis
+/// percentage and `darken` the stem darkening in em per side, each kept as
+/// the float's bits so equal values make equal keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct StyleKey {
   pub face: FaceId,
@@ -87,21 +129,13 @@ pub struct StyleKey {
   pub weight: u16,
   stretch: u32,
   pub italic: bool,
-  /// Low-DPI stem darkening applies (the display scale is below
-  /// `LOW_DPI_SCALE`): the same ppem reads differently at 1x and 2x.
-  pub darken: bool,
+  darken: u32,
+  pub hint: bool,
 }
 
 impl StyleKey {
-  pub fn new(face: FaceId, ppem: f32, weight: u16, stretch: f32, italic: bool, display_scale: f32) -> Self {
-    Self {
-      face,
-      ppem: ppem.to_bits(),
-      weight,
-      stretch: stretch.to_bits(),
-      italic,
-      darken: display_scale < LOW_DPI_SCALE,
-    }
+  pub fn new(face: FaceId, ppem: f32, weight: u16, stretch: f32, italic: bool, darken_em: f32, hint: bool) -> Self {
+    Self { face, ppem: ppem.to_bits(), weight, stretch: stretch.to_bits(), italic, darken: darken_em.to_bits(), hint }
   }
 
   pub fn ppem(&self) -> f32 {
@@ -110,6 +144,10 @@ impl StyleKey {
 
   pub fn stretch(&self) -> f32 {
     f32::from_bits(self.stretch)
+  }
+
+  pub fn darken_em(&self) -> f32 {
+    f32::from_bits(self.darken)
   }
 }
 
@@ -236,8 +274,9 @@ impl TextAtlas {
 
   /// Start a frame's build (after its `land`): open this frame's
   /// synchronous budget, and queue the warm-ups asked for since the last
-  /// frame at `display_scale`.
-  pub fn begin_frame(&mut self, ctx: &Context, fonts: &FontSet, display_scale: f32) {
+  /// frame at `display_scale`, darkened by `darken_em` (em per side),
+  /// hinted when `hint`.
+  pub fn begin_frame(&mut self, ctx: &Context, fonts: &FontSet, display_scale: f32, darken_em: f32, hint: bool) {
     if self.wake.is_none() {
       self.wake = ctx.frame_wake();
     }
@@ -253,7 +292,8 @@ impl TextAtlas {
         request.weight,
         request.stretch,
         request.italic,
-        display_scale,
+        darken_em,
+        hint,
       );
       if !self.warmed.contains(&key) {
         self.warm(fonts, key);
@@ -592,7 +632,8 @@ fn request(face: &Face, style: StyleKey, phase: u8, glyphs: Vec<u16>) -> CellReq
     synthetic_bold: face.synthetic_bold(style.weight),
     synthetic_italic: style.italic && face.synthetic_italic(),
     phase: phase as f32 / PHASES as f32,
-    darken: if style.darken { ppem * LOW_DPI_DARKEN_EM } else { 0.0 },
+    darken: ppem * style.darken_em(),
+    hint: style.hint,
     glyphs,
   }
 }

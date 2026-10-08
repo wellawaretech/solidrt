@@ -4,7 +4,7 @@ import { createPress } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
-import { typeStyle, lightOnDark } from "./typography"
+import { typeStyle } from "./typography"
 import { Surface, facePaint } from "./surface"
 import type { ElevationLevel, Option, StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
 import { partTransition, partTransitionEnd, splitTransition, transitionEndFor } from "./types"
@@ -241,7 +241,7 @@ export function SegmentedControl<T>(props: SegmentedControlProps<T>) {
               <text
                 transition={colorFade()}
                 color={label(active())}
-                {...typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)}
+                {...typeStyle("body")}
               >
                 {opt.label}
               </text>

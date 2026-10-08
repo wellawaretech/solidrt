@@ -322,6 +322,7 @@ fn request_glyphs<'js>(ctx: Ctx<'js>, font: u64, glyphs: Vec<f64>) -> rquickjs::
         // whole pixels (mask): one phase, no darkening policy.
         phase: 0.0,
         darken: 0.0,
+        hint: false,
         glyphs: missing.clone(),
       };
       // The hold ends on the worker thread when the cells are made; the

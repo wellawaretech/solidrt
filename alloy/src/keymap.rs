@@ -178,16 +178,17 @@ pub(crate) fn w3c_key(keycode: Option<Keycode>, scancode: Option<Scancode>, keym
     }
   }
   // Printables: let SDL resolve the physical key through the layout with
-  // modifiers applied (SDL_GetKeyFromScancode), then take the character.
+  // modifiers applied (SDL_GetKeyFromScancode, raw: the crate's enum cannot
+  // hold a shifted letter), then take the character. The call's `key_event`
+  // flag stays off: with it SDL drops the modifier state, so Shift+c would
+  // read "c" and Shift+1 "1".
   if let Some(s) = scancode {
-    if let Some(k) = Keycode::from_scancode(s, SDL_Keymod(keymod.bits()), true) {
-      if let Some(ch) = keycode_char(k) {
-        return ch.to_string();
-      }
+    if let Some(ch) = crate::sdl_utils::key_from_scancode(s, SDL_Keymod(keymod.bits())).and_then(codepoint_char) {
+      return ch.to_string();
     }
   }
   // No scancode (synthetic events): fall back to the keycode's own codepoint.
-  if let Some(ch) = keycode.and_then(keycode_char) {
+  if let Some(ch) = keycode.and_then(|k| codepoint_char(k as u32)) {
     return ch.to_string();
   }
   "Unidentified".to_string()
@@ -447,8 +448,7 @@ pub fn w3c_code_for_key(key: &str) -> &'static str {
 // The character a keycode produces, when it is a printable codepoint. SDL
 // keycodes for printables are the unicode value itself; non-character keys
 // have the scancode bit (1<<30) or extended bit (1<<29) set instead.
-fn keycode_char(k: Keycode) -> Option<char> {
-  let v = k as u32;
+fn codepoint_char(v: u32) -> Option<char> {
   if v == 0 || v & 0x6000_0000 != 0 {
     return None;
   }

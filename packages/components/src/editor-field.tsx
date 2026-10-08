@@ -30,7 +30,6 @@ import { Surface } from "./surface"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
-import { typeWeight } from "./typography"
 
 // Caret thickness. Shared so the drawn caret and the scroll offset's reserved
 // edge column cannot drift apart.
@@ -421,7 +420,7 @@ export function EditorField(props: EditorFieldProps) {
       fontSize: fontSize(),
       lineHeight: lineHeight(),
       fontStyle: layoutFont().fontStyle,
-      fontWeight: typeWeight(layoutFont().fontWeight ?? theme.text.body.weight, fontSize()),
+      fontWeight: layoutFont().fontWeight ?? theme.text.body.weight,
     }),
     { equals: sameFont },
   )

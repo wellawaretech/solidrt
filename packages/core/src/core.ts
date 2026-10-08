@@ -402,6 +402,19 @@ export function warmText(styles: tree.MeasureTextOptions[]): void {
   tree.warmText(styles)
 }
 
+export type TextRenderingOptions = tree.TextRenderingOptions
+
+/**
+ * Changes how every text is rendered: the coverage-to-color mode and its
+ * gamma or contrast, and the stem darkening and hinting of the glyph cells. Each option
+ * given replaces its part of the current policy, the rest stays; every text
+ * redraws at the next frame. The defaults are what an app that says nothing
+ * gets; this is the knob for judging a policy by eye on a running app.
+ */
+export function setTextRendering(options: TextRenderingOptions): void {
+  tree.setTextRendering(options)
+}
+
 /** One laid-out line from layoutNextLine. */
 export type TextLine = {
   /** Unit range [from, to) into prepared.units. */

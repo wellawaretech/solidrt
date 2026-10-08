@@ -622,6 +622,11 @@ impl RenderTree {
     self.incomplete_text.borrow().iter().copied().collect()
   }
 
+  /// The text nodes holding a layer.
+  pub fn text_layer_nodes(&self) -> Vec<u64> {
+    self.text_layers.borrow().iter().copied().collect()
+  }
+
   /// Release the layer textures of texts that went unbuilt long enough
   /// (Text::release_stale_layer) as of text atlas frame `frame`: the walk
   /// never enters a culled, hidden or scrolled-out text, so its stamp ages

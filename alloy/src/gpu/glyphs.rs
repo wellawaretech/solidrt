@@ -18,14 +18,15 @@ pub struct GlyphQuad {
   pub color: [f32; 4],
 }
 
-/// How a mask's coverage becomes color: the swash spike's four modes. A
-/// layer is composited over whatever lies beneath it by the compositor's
-/// plain sRGB source-over, so the modes are coverage remaps that assume a
-/// background of the opposite polarity to the text (light text on a dark
-/// ground, where the symptom lives), keyed on the text color's luminance.
+/// How a mask's coverage becomes color: the swash spike's four modes and
+/// DirectWrite's recipe. A layer is composited over whatever lies beneath
+/// it by the compositor's plain sRGB source-over, so the modes are coverage
+/// remaps that assume a background of the opposite polarity to the text
+/// (light text on a dark ground, where the symptom lives), keyed on the
+/// text color's luminance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CoverageMode {
-  /// Coverage as is: what Impeller does.
+  /// Coverage as is: what Impeller did.
   #[default]
   Naive = 0,
   /// Linear-light blending against black for light text and white for
@@ -37,22 +38,77 @@ pub enum CoverageMode {
   /// Linear light for light text, naive for dark (which keeps its
   /// implicit darkening).
   PolarityLinear = 3,
+  /// DirectWrite's grayscale blend as Windows Terminal publishes it
+  /// (`dwrite_helpers.hlsl`, MIT): an enhanced-contrast boost of
+  /// `contrast`, faded out as the text color brightens past 0.5 and gone
+  /// at 0.75 lightness, then a gamma alpha correction from the text's
+  /// intensity and the `gamma_ratios` of `gamma` (1.0 to 2.2, Windows's
+  /// default 1.8). The default of `CoveragePolicy`.
+  DirectWrite = 4,
 }
 
-/// The exponent the remaps map through: the sRGB-ish gamma the spike
-/// tuned around.
-pub const DEFAULT_COVERAGE_GAMMA: f32 = 2.2;
+/// The default policy's gamma: DirectWrite's Windows default, picked by eye
+/// at 1x and 1.5x on 2026-10-08 (okf/plans/text-own-rasterizer.md, step
+/// 4). The remap modes were tuned around 2.2 and want it set alongside.
+pub const DEFAULT_COVERAGE_GAMMA: f32 = 1.8;
+/// DirectWrite's default grayscale enhanced contrast.
+pub const DEFAULT_COVERAGE_CONTRAST: f32 = 1.0;
 
 /// The coverage-to-color policy of a text layer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CoveragePolicy {
   pub mode: CoverageMode,
   pub gamma: f32,
+  /// The enhanced contrast of `CoverageMode::DirectWrite`; the other modes
+  /// ignore it.
+  pub contrast: f32,
 }
 
 impl Default for CoveragePolicy {
   fn default() -> Self {
-    Self { mode: CoverageMode::Naive, gamma: DEFAULT_COVERAGE_GAMMA }
+    Self { mode: CoverageMode::DirectWrite, gamma: DEFAULT_COVERAGE_GAMMA, contrast: DEFAULT_COVERAGE_CONTRAST }
+  }
+}
+
+// DirectWrite's alpha-correction constants per gamma, 1.0 to 2.2 in steps
+// of a tenth (Windows Terminal's `DWrite_GetGammaRatios`, MIT), stored as
+// the table has them, each over 4, scaled on read by the two 8-bit
+// normalizers below.
+const GAMMA_RATIO_TABLE: [[f32; 4]; 13] = [
+  [0.0000, 0.0000, 0.0000, 0.0000],
+  [0.0166, -0.0807, 0.2227, -0.0751],
+  [0.0350, -0.1760, 0.4325, -0.1370],
+  [0.0543, -0.2821, 0.6302, -0.1876],
+  [0.0739, -0.3963, 0.8167, -0.2287],
+  [0.0933, -0.5161, 0.9926, -0.2616],
+  [0.1121, -0.6395, 1.1588, -0.2877],
+  [0.1300, -0.7649, 1.3159, -0.3080],
+  [0.1469, -0.8911, 1.4644, -0.3234],
+  [0.1627, -1.0170, 1.6051, -0.3347],
+  [0.1773, -1.1420, 1.7385, -0.3426],
+  [0.1908, -1.2652, 1.8650, -0.3476],
+  [0.2031, -1.3864, 1.9851, -0.3501],
+];
+const GAMMA_RATIO_TABLE_FIRST: f32 = 1.0;
+const GAMMA_RATIO_TABLE_STEP: f32 = 0.1;
+// The table's entries are quarters; the first and third ratios normalize a
+// 16-bit product of two 8-bit values, the second and fourth an 8-bit one.
+const GAMMA_RATIO_NORM_SQUARE: f64 = 65536.0 / (255.0 * 255.0) * 4.0;
+const GAMMA_RATIO_NORM_LINEAR: f64 = 256.0 / 255.0 * 4.0;
+
+impl CoveragePolicy {
+  /// The alpha-correction constants the DirectWrite mode applies for this
+  /// policy's gamma, clamped to the table's range.
+  pub fn gamma_ratios(&self) -> [f32; 4] {
+    let index = ((self.gamma - GAMMA_RATIO_TABLE_FIRST) / GAMMA_RATIO_TABLE_STEP).round();
+    let index = (index.max(0.0) as usize).min(GAMMA_RATIO_TABLE.len() - 1);
+    let r = GAMMA_RATIO_TABLE[index];
+    [
+      (GAMMA_RATIO_NORM_SQUARE * r[0] as f64 / 4.0) as f32,
+      (GAMMA_RATIO_NORM_LINEAR * r[1] as f64 / 4.0) as f32,
+      (GAMMA_RATIO_NORM_SQUARE * r[2] as f64 / 4.0) as f32,
+      (GAMMA_RATIO_NORM_LINEAR * r[3] as f64 / 4.0) as f32,
+    ]
   }
 }
 

@@ -340,6 +340,7 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("measureText")?;
     decl.declare("prepareText")?;
     decl.declare("warmText")?;
+    decl.declare("setTextRendering")?;
     decl.declare("getBoundingBox")?;
     decl.declare("getBoundingBoxViewport")?;
     decl.declare("getLayoutBox")?;
@@ -368,6 +369,7 @@ impl ModuleDef for RenderTreeModule {
     exports.export("measureText", Function::new(ctx.clone(), measure_text)?)?;
     exports.export("prepareText", Function::new(ctx.clone(), prepare_text)?)?;
     exports.export("warmText", Function::new(ctx.clone(), warm_text)?)?;
+    exports.export("setTextRendering", Function::new(ctx.clone(), set_text_rendering)?)?;
     exports.export("getBoundingBox", Function::new(ctx.clone(), get_bounding_box)?)?;
     exports.export("getBoundingBoxViewport", Function::new(ctx.clone(), get_bounding_box_viewport)?)?;
     exports.export("getLayoutBox", Function::new(ctx.clone(), get_layout_box)?)?;
@@ -671,6 +673,63 @@ fn warm_text<'js>(ctx: Ctx<'js>, styles: rquickjs::Array<'js>) -> rquickjs::Resu
       italic: style.font_style == alloy::impellers::FontStyle::Italic,
     });
   }
+  Ok(())
+}
+
+// Change how every text is rendered (see TextRendering): each option given
+// replaces its part of the current policy, the rest stays. `darken: null`
+// and `hint: null` restore the display-scale defaults. Invalid values throw.
+fn set_text_rendering<'js>(ctx: Ctx<'js>, options: Object<'js>) -> rquickjs::Result<()> {
+  use alloy::CoverageMode;
+  let throw = |msg: String| rquickjs::Exception::throw_message(&ctx, &msg);
+  let s = state(&ctx);
+  let platform = &s.gui.platform;
+  let mut rendering = platform.text_rendering();
+  if let Ok(mode) = options.get::<_, String>("coverage") {
+    rendering.coverage.mode = match mode.as_str() {
+      "naive" => CoverageMode::Naive,
+      "linearLight" => CoverageMode::LinearLight,
+      "polarityRemap" => CoverageMode::PolarityRemap,
+      "polarityLinear" => CoverageMode::PolarityLinear,
+      "directWrite" => CoverageMode::DirectWrite,
+      other => return Err(throw(format!("setTextRendering: unknown coverage mode '{other}'"))),
+    };
+  }
+  let positive = |name: &str| -> rquickjs::Result<Option<f32>> {
+    let value: Value<'js> = options.get(name)?;
+    if value.is_undefined() {
+      return Ok(None);
+    }
+    match value.as_number() {
+      Some(n) if n.is_finite() && n > 0.0 => Ok(Some(n as f32)),
+      _ => Err(throw(format!("setTextRendering: {name} must be a positive number"))),
+    }
+  };
+  if let Some(gamma) = positive("gamma")? {
+    rendering.coverage.gamma = gamma;
+  }
+  if let Some(contrast) = positive("contrast")? {
+    rendering.coverage.contrast = contrast;
+  }
+  let darken: Value<'js> = options.get("darken")?;
+  if darken.is_null() {
+    rendering.darken = None;
+  } else if !darken.is_undefined() {
+    match darken.as_number() {
+      Some(n) if n.is_finite() && n >= 0.0 => rendering.darken = Some(n as f32),
+      _ => return Err(throw("setTextRendering: darken must be a non-negative number or null".to_string())),
+    }
+  }
+  let hint: Value<'js> = options.get("hint")?;
+  if hint.is_null() {
+    rendering.hint = None;
+  } else if !hint.is_undefined() {
+    match hint.as_bool() {
+      Some(on) => rendering.hint = Some(on),
+      None => return Err(throw("setTextRendering: hint must be a boolean or null".to_string())),
+    }
+  }
+  platform.set_text_rendering(rendering);
   Ok(())
 }
 

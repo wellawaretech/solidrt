@@ -1,6 +1,6 @@
 export * from "./renderer"
-export { setFocus, focusedNode, startTextInput, textInputActive, getFocusables, measureText, prepareText, warmText, layoutNextLine, unitInk, getBoundingBox, getBoundingBoxViewport, getLayoutBox, snapshotTexture, onPointerMove } from "./core"
-export type { BoundingBox, GlobalPointerEvent, TextLine } from "./core"
+export { setFocus, focusedNode, startTextInput, textInputActive, getFocusables, measureText, prepareText, warmText, setTextRendering, layoutNextLine, unitInk, getBoundingBox, getBoundingBoxViewport, getLayoutBox, snapshotTexture, onPointerMove } from "./core"
+export type { BoundingBox, GlobalPointerEvent, TextLine, TextRenderingOptions } from "./core"
 export { parseColor, mixColors, withAlpha, brightness, createLinearGradient, createRadialGradient } from "./color"
 export type { Gradient, GradientStop } from "./color"
 export { onFrame, frameTime, onBeforeRender, onLayout, onResize, onWindowFocus, onWindowBlur, onBack, onLink, onSuspend, onQuit, exit, background, registerProtocolHandler } from "./window"

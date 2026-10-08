@@ -23,12 +23,6 @@ export type Policies = {
   // Multiplier on type-scale font sizes (Dynamic Type). Follows the OS
   // preference (env.textScale); override via setPolicy to pin it.
   textScale: number
-  // Base weight compensation for light-on-dark text on this display, in
-  // steps of 100 (other steps decode as 400): low-DPI rendering thins
-  // inverted-polarity glyphs. Applied by typeWeight to light-on-dark runs
-  // only (per-run polarity, or the theme's palette polarity as the default),
-  // with one extra step for small font sizes; see typography.ts.
-  textWeightDelta: number
   // Application policies: recommendations derived from the window size class
   // (layout), and from the resulting pane count (navigation).
   // The application owns the final decision; accept them by consuming
@@ -63,7 +57,6 @@ export function defaultPolicyResolver(caps: Capabilities): Policies {
     // otherwise navigate ringless on keyboard-free TVs.
     focusRing: caps.keyboardNav || gamepads().some((p) => p != null),
     textScale: env.textScale,
-    textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
     // Navigation follows the pane count, not its own breakpoint: a side strip
     // spends width, which a single-pane window is short of, so only a
     // two-pane layout earns one. "rail" is never a default output; it is the
@@ -97,9 +90,6 @@ export let policy = {
   },
   get textScale(): number {
     return overrides().textScale ?? resolved().textScale
-  },
-  get textWeightDelta(): number {
-    return overrides().textWeightDelta ?? resolved().textWeightDelta
   },
   get navigation(): NavigationPolicy {
     return overrides().navigation ?? resolved().navigation
