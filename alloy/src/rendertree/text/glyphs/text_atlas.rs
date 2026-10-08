@@ -6,8 +6,10 @@
 // Three sources fill it:
 //
 // 1. Warm-up on the worker: printable ASCII at every subpixel phase for a
-//    style the moment a build first sees it (`warm`), and whatever an app
-//    warms ahead of time (its type scale at startup, under the splash).
+//    style the moment a build first sees it untransformed (`ensure` with
+//    `warm`), and whatever an app warms ahead of time (its type scale at
+//    startup, under the splash). Warm jobs are small chunks, so a needed
+//    job never waits long for the one in hand.
 // 2. The synchronous path (`ensure`): a glyph a build needs now and the
 //    atlas lacks is made on this thread, in paint order, until the frame's
 //    budget is spent - time, not a count, so a slow CPU makes fewer.
@@ -17,6 +19,10 @@
 //    decides whether the tree changed: a landing is a change to pixels
 //    behind an unchanged tree, like a texture upload, so a frame that
 //    would otherwise resubmit its retained display list rebuilds).
+//
+// What a build needs never waits on a warm-up: a glyph queued in a warm
+// job is still a miss to `ensure`, made now or sent as needed, and the
+// warm job's copy of it lands as a no-op.
 //
 // Between two `begin_frame`s no cell moves: a layer reads placements
 // bucket by bucket while it builds, and a repack under it would leave the
@@ -55,6 +61,10 @@ const EVICT_AFTER_FRAMES: u64 = 120;
 /// The code points a warm-up makes for a style: printable ASCII.
 const WARM_FIRST: u32 = 0x20;
 const WARM_LAST: u32 = 0x7e;
+/// Glyphs per warm job: the worker takes jobs whole, so a needed job
+/// waits at most this many warm cells for the one in hand (a chunk is
+/// some 16 ms on the armv7 TV at a millisecond a cell).
+pub const WARM_CHUNK: usize = 16;
 /// Below this display scale masks are stem-darkened by `LOW_DPI_DARKEN_EM`
 /// of the em per side: the light-on-dark bleed the plan's symptom section
 /// describes lives on 1x desktops. Zero until stage 2's step 4 tunes it
@@ -158,10 +168,11 @@ pub struct TextAtlas {
   rasterizer: Rasterizer,
   jobs: HashMap<u64, Job>,
   next_job: u64,
-  // Cells on the worker or deferred to the next frame start, and cells
-  // the font cannot make (or the atlas refused): neither is asked for
-  // twice.
-  pending: HashSet<CellKey>,
+  // Cells on the worker or deferred to the next frame start, by the
+  // priority they went at: a cell pending at `Needed` is not asked for
+  // again, one pending at `Warm` still counts as a miss to a build (see
+  // the header). A warm-up skips both.
+  pending: HashMap<CellKey, JobPriority>,
   // Cells made on the synchronous path that did not fit the atlas at its
   // size: inserted at the next frame start, when the atlas may grow (see
   // the header).
@@ -200,7 +211,7 @@ impl TextAtlas {
       rasterizer: Rasterizer::default(),
       jobs: HashMap::new(),
       next_job: 1,
-      pending: HashSet::new(),
+      pending: HashMap::new(),
       deferred: Vec::new(),
       hold_source: None,
       failed: HashSet::new(),
@@ -297,9 +308,12 @@ impl TextAtlas {
 
   /// The placements of `glyphs` for `style` at `phase`, making what the
   /// atlas lacks: synchronously within the frame's budget, on the worker
-  /// past it (a None in the result, filled in at a later frame). Also
-  /// warms the style's ASCII on first sight. Returns how many came back
-  /// None.
+  /// past it (a None in the result, filled in at a later frame). With
+  /// `warm`, also warms the style's ASCII on first sight: a layer passes
+  /// it for an untransformed text, whose style every other text of that
+  /// size shares, and not for one under a scaling transform, whose ppem
+  /// is its own. Returns how many came back None.
+  #[allow(clippy::too_many_arguments)]
   pub fn ensure(
     &mut self,
     ctx: &Context,
@@ -307,6 +321,7 @@ impl TextAtlas {
     style: StyleKey,
     phase: u8,
     glyphs: &[u16],
+    warm: bool,
     out: &mut Vec<Option<CellPlacement>>,
   ) -> usize {
     out.clear();
@@ -328,18 +343,16 @@ impl TextAtlas {
           out.push(Some(placement));
         }
         None => {
-          if !self.failed.contains(&key) && !self.pending.contains(&key) && !misses.contains(&glyph) {
+          let needed = self.pending.get(&key) == Some(&JobPriority::Needed);
+          if !self.failed.contains(&key) && !needed && !misses.contains(&glyph) {
             misses.push(glyph);
           }
           out.push(None);
         }
       }
     }
-    if !self.warmed.contains(&style) {
-      self.warmed.insert(style);
-      self.warm(fonts, style);
-    }
     if misses.is_empty() {
+      self.warm_once(fonts, style, warm);
       return out.iter().filter(|p| p.is_none()).count();
     }
     // Within the budget the misses are made here and now; past it they go
@@ -358,7 +371,7 @@ impl TextAtlas {
           // No room at this size: the next frame start grows the atlas
           // around it, and that frame is requested.
           Err(cell) => {
-            self.pending.insert(key);
+            self.pending.insert(key, JobPriority::Needed);
             self.deferred.push(cell);
             self.frame_request.store(true, Ordering::Relaxed);
           }
@@ -367,7 +380,7 @@ impl TextAtlas {
       for &glyph in &misses {
         let key = CellKey { style, phase, glyph };
         let atlas = self.atlas.as_ref().expect("opened above");
-        if atlas.packer().placement(key).is_none() && !self.pending.contains(&key) {
+        if atlas.packer().placement(key).is_none() && !self.pending.contains_key(&key) {
           self.failed.insert(key);
         }
       }
@@ -388,11 +401,23 @@ impl TextAtlas {
     } else {
       self.submit(face, style, phase, misses, JobPriority::Needed);
     }
+    // After the build's own glyphs, so the warm-up skips what they made
+    // or queued.
+    self.warm_once(fonts, style, warm);
     out.iter().filter(|p| p.is_none()).count()
   }
 
+  // The first-sight warm-up of `ensure`: once per style, and only when
+  // the build asks for it.
+  fn warm_once(&mut self, fonts: &FontSet, style: StyleKey, warm: bool) {
+    if warm && !self.warmed.contains(&style) {
+      self.warm(fonts, style);
+    }
+  }
+
   /// Make `style`'s printable ASCII at every phase on the worker, ahead of
-  /// its use. A style already warmed is a no-op.
+  /// its use, in jobs of `WARM_CHUNK` glyphs. A style already warmed is a
+  /// no-op.
   pub fn warm(&mut self, fonts: &FontSet, style: StyleKey) {
     let Some(face) = fonts.face(style.face) else { return };
     self.warmed.insert(style);
@@ -408,13 +433,13 @@ impl TextAtlas {
         .copied()
         .filter(|&glyph| {
           let key = CellKey { style, phase, glyph };
-          !self.pending.contains(&key)
+          !self.pending.contains_key(&key)
             && !self.failed.contains(&key)
             && self.atlas.as_ref().is_none_or(|a| a.packer().placement(key).is_none())
         })
         .collect();
-      if !missing.is_empty() {
-        self.submit(face, style, phase, missing, JobPriority::Warm);
+      for chunk in missing.chunks(WARM_CHUNK) {
+        self.submit(face, style, phase, chunk.to_vec(), JobPriority::Warm);
       }
     }
   }
@@ -489,7 +514,7 @@ impl TextAtlas {
     if worker.submit(job) {
       self.jobs.insert(owner, Job { style, phase });
       for glyph in glyphs {
-        self.pending.insert(CellKey { style, phase, glyph });
+        self.pending.insert(CellKey { style, phase, glyph }, priority);
       }
     }
   }

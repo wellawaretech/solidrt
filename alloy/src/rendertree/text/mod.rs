@@ -619,6 +619,10 @@ impl Text {
     let mut words = platform.words();
     let mut atlas = platform.text_atlas();
     let display_scale = platform.display_scale();
+    // An untransformed text's style is the one every other text of its
+    // size shares, worth warming on first sight; a text under a scaling
+    // transform (a pressed button's label) has a ppem of its own.
+    let warm = scale == display_scale;
     // A style's gradient resolved once; None draws the style's solid color.
     let gradients: Vec<Option<crate::gpu::GlyphGradient>> = styles
       .iter()
@@ -676,7 +680,7 @@ impl Text {
         let key = StyleKey::new(*face, style.font_size * scale, weight, style.font_stretch, italic, display_scale);
         ids.clear();
         ids.extend(entries.iter().map(|(i, _, _)| glyphs.glyphs[*i].id));
-        misses += atlas.ensure(alloy, &fonts, key, *phase, &ids, &mut placements);
+        misses += atlas.ensure(alloy, &fonts, key, *phase, &ids, warm, &mut placements);
         for ((_, px, yd), placement) in entries.iter().zip(&placements) {
           let Some(p) = placement else { continue };
           if p.width == 0 {

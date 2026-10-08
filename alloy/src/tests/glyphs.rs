@@ -5,7 +5,7 @@
 use crate::impellers::{FontStyle, FontWeight};
 use crate::rendertree::text::glyphs::{
   split_phase, AtlasPacker, Cell, CellKind, CellRequest, Dirty, FontSet, HoldSource, InsertOutcome, Rasterizer,
-  ShapeStyle, ShapedGlyphs, StyleKey, TextAtlas, WarmRequest, BYTES_PER_TEXEL, PHASES,
+  ShapeStyle, ShapedGlyphs, StyleKey, TextAtlas, WarmRequest, BYTES_PER_TEXEL, PHASES, WARM_CHUNK,
 };
 use crate::rendertree::text::{prepare_units, Fallback, RunStyle};
 use crate::rendertree::{FontPayload, PaintState, PlatformContext};
@@ -441,12 +441,14 @@ fn warming_a_style_queues_its_ascii_at_every_phase() {
   let style = StyleKey::new(0, SIZE, 500, 100.0, false, 1.0);
   atlas.warm(&fonts, style);
   // Printable ASCII is 95 code points and the shipped face covers them:
-  // one job per phase, 95 cells each, each job a hold on the embedder.
-  assert_eq!(holds.taken.load(Ordering::SeqCst), PHASES as u32);
+  // 95 cells per phase in jobs of a chunk each, each job a hold on the
+  // embedder.
+  let jobs = PHASES as u32 * 95u32.div_ceil(WARM_CHUNK as u32);
+  assert_eq!(holds.taken.load(Ordering::SeqCst), jobs);
   assert_eq!(atlas.queued_cells(), 95 * PHASES as usize);
   // Warming again queues nothing more.
   atlas.warm(&fonts, style);
-  assert_eq!(holds.taken.load(Ordering::SeqCst), PHASES as u32);
+  assert_eq!(holds.taken.load(Ordering::SeqCst), jobs);
   assert_eq!(atlas.queued_cells(), 95 * PHASES as usize);
   // The worker ends each hold when the job's cells are made, after it
   // requested the frame that lands them.
