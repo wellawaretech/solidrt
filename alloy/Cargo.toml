@@ -106,14 +106,16 @@ unicode-segmentation = "=1.13.3"
 # Bounded LRU for the shared shaped-word cache (rendertree/text/words.rs).
 lru = "=0.18.5"
 # The glyph engine (rendertree/text/glyphs): harfrust shapes a run (the
-# HarfBuzz team's Rust port; rustybuzz was archived in its favour), swash
-# scales glyph outlines and rasterizes coverage masks (proven in the
-# swash-text spike, okf/notes/replacing-impeller.md) and reads the font
-# tables Impeller does not expose (family names, the underline metrics of
-# the post table), etagere allocates the glyph atlas (the shelf allocator
-# behind WebRender's texture cache).
+# HarfBuzz team's Rust port; rustybuzz was archived in its favour), skrifa
+# (fontations, the parser harfrust reads with) scales glyph outlines,
+# hints them with its port of FreeType's autohinter and reads the metrics
+# and name tables, zeno (the rasterizer under swash, which the spike of
+# okf/notes/replacing-impeller.md proved; swash itself hid the hinting
+# engine) rasterizes coverage masks, etagere allocates the glyph atlas (the
+# shelf allocator behind WebRender's texture cache).
 harfrust = "=0.14.0"
-swash = "=0.2.10"
+skrifa = "=0.44.0"
+zeno = "=0.3.3"
 etagere = "=0.3.0"
 # f32 -> f16 packing for rgba16f uploads (gpu/texture.rs `f16_bytes`).
 half = "=2.7.1"

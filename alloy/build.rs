@@ -2,7 +2,7 @@
 // pinned to a release tag) and the C shim over it (csrc/msdf_shim.cpp)
 // through cc: the glyph engine's distance-field generator
 // (src/rendertree/text/glyphs/msdf.rs binds the shim). The core only: no
-// ext/ (FreeType, Skia, libpng) since the outline comes from swash, and none
+// ext/ (FreeType, Skia, libpng) since the outline comes from skrifa, and none
 // of the core's image writers (save-*.cpp, export-svg.cpp) or its text shape
 // format (shape-description.cpp). Portable C++, the same path on every
 // target as forge's Basis build; Android links the NDK's shared C++ runtime

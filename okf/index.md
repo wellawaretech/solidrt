@@ -560,6 +560,13 @@ Shaped, not started.
   friction stepped inside the solver, which is per-wheel-per-substep work no
   app can do in JS. Rapier has no vehicle module of its own; shape it as the
   physics core's first higher-level controller after the core lands.
+- **[Painted boxes land off the device pixel grid](backlog/pixel-snapped-paint-boxes.md)** [2026-10-08]
+  Layout places every node at fractional logical positions (a 16.98 px row
+  height puts rows at 45.71, 62.69, 79.67), and the composite walk draws them
+  there, so a 1 px border, a divider, an icon and a snapshot boundary are
+  resampled a fraction off; the text layer snaps itself today and that snap,
+  and the boundary leftover, should fall out of one paint-time rule for
+  axis-aligned boxes, as browsers do.
 - **[Make the fence wait over a video plane adaptive](backlog/plane-adaptive-fence-wait.md)** [2026-09-12]
   An app animating over a playing video plane runs at 16 fps because every
   window present waits for its GPU work while a plane exists; wait only for

@@ -16,7 +16,7 @@ use crate::gpu::{GlyphGroup, GlyphQuad};
 use crate::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment, Texture, TextureSampling,
 };
-use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, FaceId, StyleKey};
+use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, FaceId, Hint, StyleKey};
 use crate::rendertree::text::layout::{PlacedRun, Run, Wrap};
 use crate::rendertree::{
   Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext, PaintState,
@@ -264,6 +264,28 @@ fn composite_scale(map: &crate::rendertree::cull::WindowMap) -> f32 {
   }
 }
 
+// The offset, in the node's frame, that puts `point` (the layer's origin in
+// that frame) on the device pixel grid under `map` at `display_scale`. The
+// glyph quads snap to pixel rows and subpixel phases inside the layer, so
+// the layer must land on whole device pixels or every row is resampled a
+// fraction off and the hinted rows blur (text moves by under a pixel, as
+// in every browser). None without a map or under a rotation, where there
+// is no grid to land on.
+fn grid_shift(
+  map: &crate::rendertree::cull::WindowMap,
+  display_scale: f32,
+  point: Point,
+) -> Option<euclid::default::Vector2D<f32>> {
+  let m = map.as_ref()?;
+  if m.m12 != 0.0 || m.m21 != 0.0 || m.m11 <= 0.0 || m.m22 <= 0.0 {
+    return None;
+  }
+  let window = m.transform_point(point);
+  let device = window * display_scale;
+  let residual = device.round() - device;
+  Some(euclid::default::Vector2D::new(residual.x / (m.m11 * display_scale), residual.y / (m.m22 * display_scale)))
+}
+
 impl Buildable for Text {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
     // Lines wrap at and start from the content box - the box taffy measured
@@ -493,7 +515,10 @@ impl Text {
     // keeps the composite pixel-exact.
     let src =
       Rect::new(Point::zero(), Size::new(layer.rect.size.width * layer.scale, layer.rect.size.height * layer.scale));
-    let dst = Rect::new(origin + layer.rect.origin.to_vector(), layer.rect.size);
+    let mut dst = Rect::new(origin + layer.rect.origin.to_vector(), layer.rect.size);
+    if let Some(shift) = grid_shift(&ctx.to_window, ctx.platform.display_scale(), dst.origin) {
+      dst.origin += shift;
+    }
     crate::rendertree::counters::note_draw();
     builder.draw_texture_rect(&layer.texture, &src, &dst, TextureSampling::Linear, None);
   }
@@ -675,7 +700,10 @@ impl Text {
         bucket.2.clear();
       }
       for (i, g) in glyphs.glyphs.iter().enumerate() {
-        let (px, phase) = split_phase(x0 + g.x * scale);
+        let x = x0 + g.x * scale;
+        // A fully hinted cell has its stems on whole pixels: one phase, the
+        // quad at the nearest pixel.
+        let (px, phase) = if hint == Hint::Full { (x.round() as i32, 0) } else { split_phase(x) };
         let entry = (g.face, phase, baseline + g.y * scale);
         match buckets.iter_mut().find(|(face, p, _)| *face == entry.0 && *p == entry.1) {
           Some(bucket) => bucket.2.push((i, px, entry.2)),

@@ -56,6 +56,14 @@ declare module "flux:font" {
     range?: number
     /** Keep a mip chain on the atlas texture: default true for msdf (sampled at every zoom), false for mask. */
     mipmap?: boolean
+    /**
+     * mask only: how the cells are hinted. "light" snaps baseline, x-height
+     * and cap height to pixel rows (`true` means the same); "full" snaps
+     * stems to whole pixels as well, which a grid of cells drawn at whole
+     * pixels (a terminal) wants; false (default) keeps the outline as the
+     * font draws it. An msdf atlas is never hinted.
+     */
+    hint?: boolean | "light" | "full"
     /** Debug label of the atlas texture. */
     label?: string
   }
@@ -73,6 +81,8 @@ declare module "flux:font" {
     fontSize: number
     /** msdf: the distance range in texels; 0 for a mask atlas. */
     range: number
+    /** How the cells are hinted; "off" for an msdf atlas. */
+    hint: "off" | "light" | "full"
   }
 
   /**

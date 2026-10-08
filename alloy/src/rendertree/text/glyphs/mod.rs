@@ -1,13 +1,14 @@
 // The glyph engine: the owned half of text behind the shape/draw seam
 // (okf/plans/text-own-rasterizer.md). This module shapes a word to glyph
 // ids and kerned positions (harfrust, the HarfBuzz team's Rust port) and
-// turns glyphs into atlas cells (swash outlines and coverage masks, msdfgen
-// distance fields) that live in a texture a consumer samples itself: the
-// text layer every `<text>` draws through (stage 2), the 2d sprite
-// layer's world-space text, a terminal grid later. The files:
+// turns glyphs into atlas cells (skrifa outlines, hinted by its autohinter
+// at low DPI, zeno coverage masks, msdfgen distance fields) that live in a
+// texture a consumer samples itself: the text layer every `<text>` draws
+// through (stage 2), the 2d sprite layer's world-space text, a terminal
+// grid later. The files:
 //
 // - fonts.rs: the registered `FontPayload`s as faces (one harfrust font and
-//   the bytes swash reads, per payload, with the underline metrics), the
+//   the bytes skrifa reads, per payload, with the underline metrics), the
 //   one reader of the font bytes, resolved by alias and family name, with
 //   a variable font's weight axis instanced per requested weight.
 // - shape.rs: a word in a run style to `ShapedGlyphs` - glyph ids, pen
@@ -19,7 +20,10 @@
 //   a terminal want), or a multi-channel distance field at a fixed size per
 //   em (what a zoomed consumer wants). Generated on the worker thread
 //   (worker.rs) or, for a `<text>` within its frame budget, on the UI
-//   thread.
+//   thread, each thread's rasterizer caching the hinters it has built.
+// - outline.rs: the outline skrifa draws a glyph into, as zeno path
+//   commands, with the synthetic slant and the outline embolden (bold,
+//   darkening) applied before a cell is made.
 // - msdf.rs: the distance-field kind, a glyph outline through the vendored
 //   msdfgen (ffi.rs binds the C shim build.rs compiles with its core).
 // - atlas.rs: cells packed into one growing texture (etagere's shelf
@@ -41,13 +45,14 @@ mod cells;
 mod ffi;
 mod fonts;
 mod msdf;
+mod outline;
 mod shape;
 mod text_atlas;
 mod worker;
 
 pub use atlas::{AtlasPacker, CellKey as AtlasKey, CellPlacement, Dirty, DirtyRect, GlyphAtlas, InsertOutcome};
-pub use cells::{Cell, CellKind, CellRequest, Rasterizer, BYTES_PER_TEXEL};
-pub use fonts::{family_names, weight_value, Face, FaceId, FontSet};
+pub use cells::{Cell, CellKind, CellRequest, Hint, Rasterizer, BYTES_PER_TEXEL};
+pub use fonts::{family_names, weight_value, Face, FaceId, FontBytes, FontSet};
 pub use shape::{Fallback, PlacedGlyph, ShapeStyle, ShapedGlyphs};
 pub use text_atlas::{
   split_phase, CellKey, HoldSource, StyleKey, TextAtlas, TextRendering, WarmRequest, WorkHold, PHASES, WARM_CHUNK,

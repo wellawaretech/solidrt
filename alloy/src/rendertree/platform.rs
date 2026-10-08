@@ -1,6 +1,6 @@
 use crate::gpu::CoveragePolicy;
 use crate::impellers::{Point, Rect, Size};
-use crate::rendertree::text::glyphs::{FontSet, TextAtlas, TextRendering};
+use crate::rendertree::text::glyphs::{FontSet, Hint, TextAtlas, TextRendering};
 use crate::rendertree::text::WordCache;
 use std::borrow::Cow;
 use std::cell::{Cell, Ref, RefCell, RefMut};
@@ -143,8 +143,8 @@ impl PlatformContext {
     self.text_rendering.get().darken_em(self.display_scale())
   }
 
-  /// Whether cells are made from hinted outlines on this display.
-  pub fn text_hint(&self) -> bool {
+  /// How cells are hinted on this display.
+  pub fn text_hint(&self) -> Hint {
     self.text_rendering.get().hint_at(self.display_scale())
   }
 

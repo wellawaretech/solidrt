@@ -7,6 +7,7 @@ use taffy::prelude::*;
 
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::{bytes_of, elements, OptArg};
+use alloy::rendertree::text::glyphs::Hint;
 use alloy::rendertree::text::{prepare_units, Fallback, PreparedRun, PreparedUnit};
 use alloy::rendertree::{
   AnimValue, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, Rect, RenderTree, Text, Window,
@@ -724,13 +725,29 @@ fn set_text_rendering<'js>(ctx: Ctx<'js>, options: Object<'js>) -> rquickjs::Res
   if hint.is_null() {
     rendering.hint = None;
   } else if !hint.is_undefined() {
-    match hint.as_bool() {
-      Some(on) => rendering.hint = Some(on),
-      None => return Err(throw("setTextRendering: hint must be a boolean or null".to_string())),
+    match hint_mode(&hint) {
+      Some(mode) => rendering.hint = Some(mode),
+      None => return Err(throw(format!("setTextRendering: hint {HINT_VALUES}, or null"))),
     }
   }
   platform.set_text_rendering(rendering);
   Ok(())
+}
+
+/// What a `hint` option accepts, for the errors that name it.
+pub(super) const HINT_VALUES: &str = "must be false, true (light), \"light\" or \"full\"";
+
+/// A `hint` option's value as a mode: `false` off, `true` light, or the
+/// mode by name. None for anything else.
+pub(super) fn hint_mode(value: &Value<'_>) -> Option<Hint> {
+  if let Some(on) = value.as_bool() {
+    return Some(if on { Hint::Light } else { Hint::Off });
+  }
+  match value.as_string().and_then(|s| s.to_string().ok())?.as_str() {
+    "light" => Some(Hint::Light),
+    "full" => Some(Hint::Full),
+    _ => None,
+  }
 }
 
 fn prepare_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {

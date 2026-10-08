@@ -18,10 +18,12 @@
 //   one piece so they kern and ligate among themselves. A glyph carries
 //   the face it came from. What no registered face covers stays the
 //   primary face's notdef box. The line box is the primary face's.
-use super::fonts::{Face, FaceId, FontSet};
+use super::fonts::{axis_location, Face, FaceId, FontSet};
 use crate::rendertree::text::layout::RunMetrics;
 use crate::rendertree::text::CaretStop;
 use harfrust::{Buffer, GlyphId, ShapeOptions, ShaperFont};
+use skrifa::instance::Size;
+use skrifa::{FontRef, MetadataProvider};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// What a word is shaped with besides its face: the run style's shaping
@@ -270,13 +272,14 @@ fn space_clusters(raw: &mut [RawGlyph], spacing: f32) {
 /// set.
 fn vertical_metrics(face: &Face, style: &ShapeStyle) -> (f32, f32) {
   let bytes = face.bytes().as_ref().as_ref();
-  let Some(font) = swash::FontRef::from_index(bytes, 0) else {
+  let Ok(font) = FontRef::from_index(bytes, 0) else {
     return (style.size, 0.0);
   };
-  let coords = axis_coords(&font, face.weight_setting(style.weight), face.width_setting(style.stretch));
-  let metrics = font.metrics(&coords).scale(style.size);
+  let location = axis_location(&font, face.weight_setting(style.weight), face.width_setting(style.stretch));
+  let metrics = font.metrics(Size::new(style.size), &location);
+  // skrifa's descent is the table's descender, negative below the baseline.
   let ascent = metrics.ascent;
-  let descent = metrics.descent + metrics.leading;
+  let descent = -metrics.descent + metrics.leading;
   let natural = ascent + descent;
   if style.line_height > 0.0 && natural > 0.0 {
     let factor = style.line_height * style.size / natural;
@@ -284,30 +287,6 @@ fn vertical_metrics(face: &Face, style: &ShapeStyle) -> (f32, f32) {
   } else {
     (ascent, descent)
   }
-}
-
-/// The normalized coordinates swash wants for a weight and a width axis
-/// setting, in the font's axis order (every other axis at its default).
-pub(super) fn axis_coords(
-  font: &swash::FontRef<'_>,
-  weight: Option<f32>,
-  width: Option<f32>,
-) -> Vec<swash::NormalizedCoord> {
-  let variations = font.variations();
-  let mut coords = vec![0; variations.len()];
-  for var in variations {
-    let setting = if var.tag() == swash::tag_from_bytes(b"wght") {
-      weight
-    } else if var.tag() == swash::tag_from_bytes(b"wdth") {
-      width
-    } else {
-      None
-    };
-    if let Some(value) = setting {
-      coords[var.index()] = var.normalize(value);
-    }
-  }
-  coords
 }
 
 /// The pen position after the last cluster that is not whitespace: what

@@ -99,8 +99,8 @@ The trait; a glyph atlas (texture upload path exists: `flux:gpu` textures,
 | 10. Draw half, step 2 | built 2026-10-06 (Findings): the text atlas, the glyph pass and the text layer behind a switch; the TV's prose at 50 fps where Impeller gave 25 |
 | 11. Draw half, step 3 | built 2026-10-06 (Findings): the switch flipped and removed, Impeller's paragraph path, typography context and metrics table deleted, `FontSet` the one reader of the font bytes; the HUD on the engine; fallback as policy; letter spacing and the width axis as shaper parameters and props; gradient text in the pass; text layers released when unbuilt; the glyph program compiled at raster start; `paraShapes`/`paragraphs` renamed `wordShapes`/`textLayers` |
 | 12. Coverage policy, step 4 | built 2026-10-08: `setTextRendering` on `flux:rendertree` and `@solidrt/core` (mode, gamma, contrast, stem darkening, hinting, live), DirectWrite's blend as a fifth mode and the default (gamma 1.8, contrast 1, no darkening), the Medium default and the components' weight compensation retired, `probes/text-coverage-probe.tsx`; picked by eye at 1x (headless render, DP-2) and 1.5x (tablet) |
-| 13. Hinting | next: the light autohinter of fontations (skrifa), forced on below 2x, swash replaced by skrifa + zeno (Where to pick up) |
-| Tests | `alloy/src/tests/glyphs.rs` (20: the font set, carets, both cell kinds, blank glyphs, the packer and its eviction, the phases, the warm-up, fallback, the whitespace rule, letter spacing, the width axis), `text_baseline.rs` (the layout contract pinned over a corpus), `text_gradient.rs` (the layer's gradient mapping), `alloy/examples/text_layer.rs` (the pass against a CPU composite, the policy remaps, a gradient run), `packages/core/tests/text-warm.test.tsx`, the 2d text tests |
+| 13. Hinting, step 5 | built 2026-10-08 (Findings): swash replaced by skrifa and zeno in `glyphs/`, the light autohinter forced on below 2x (`Engine::Auto`, linear metrics preserved), hinters cached per thread, FreeType's embolden carried over for the synthetic bold; the layout baseline unchanged; the text layer snapped to the device grid (`grid_shift`), without which hinted rows blurred on composite; `hint` a mode (off, light, full = the mono target), on `setTextRendering` and `createFont` |
+| Tests | `alloy/src/tests/glyphs.rs` (24: the font set, carets, both cell kinds, blank glyphs, the hinted cap height, the synthetic bold and slant, the packer and its eviction, the phases, the warm-up, fallback, the whitespace rule, letter spacing, the width axis, the rendering policy), `text_baseline.rs` (the layout contract pinned over a corpus), `text_gradient.rs` (the layer's gradient mapping), `alloy/examples/text_layer.rs` (the pass against a CPU composite, the policy remaps, a gradient run), `packages/core/tests/text-warm.test.tsx`, the 2d text tests |
 
 ## Plan: stage 1, the glyph engine behind the seam (started 2026-10-06)
 
@@ -460,50 +460,110 @@ emoji, the hinting and gamma policy per DPI the spike explored.
   subpixel phases keep working. swash hard-codes its hinting mode and
   hides the engine choice, so the clean route is skrifa directly.
 
-## Where to pick up (updated 2026-10-08, after step 4)
+- 2026-10-08, step 5, the port. swash went: `glyphs/fonts.rs` reads the
+  axes, the family names and the underline metrics through skrifa
+  (`MetadataProvider`), `shape.rs` the vertical metrics (skrifa's descent
+  is the table's negative descender, negated back), `cells.rs` draws
+  each glyph into `outline.rs` (an `OutlinePen` over zeno path commands)
+  and renders the mask with zeno at the subpixel phase, bottom-left
+  origin, the same calls swash made inside, with one trap: zeno reports
+  the placement's `top` relative to the baseline only once `inspect` has
+  sized the mask, so a `render()` without it puts every cell at top 0.
+  The synthetic bold and the darkening are FreeType's outline embolden
+  carried over from swash's port (the plan's stroke-plus-fill would
+  over-count every edge texel the stroke straddles, and zeno cannot
+  stroke one side), so bold cells are unchanged. The hinter: a
+  `HintingInstance` per (font, ppem, normalized coordinates) cached in
+  each thread's `Rasterizer`, keyed on the font's allocation and pinning
+  it, with `Engine::Auto` over the font's precomputed `GlyphStyles` and
+  the light smooth target preserving linear metrics; a hinter skrifa
+  refuses draws unhinted. `LOW_DPI_HINT` is on. Verified: the layout
+  baseline passes untouched (advances, ascents, descents and breaks
+  identical to swash's), 670 alloy tests including a new one that reads
+  the H's top row at 12 px (unhinted the cap height crosses it at 0.57
+  of the row below, hinted the two rows are equal, the box's width and
+  left unchanged) and one for the embolden and the slant, the text layer
+  example's pixel asserts on the desktop GPU; the lock drops swash and
+  yazi, nothing else moves. The 1x sheet (the probe rendered headless,
+  hinted over unhinted, 11 to 16 px) was sent for the user's read; on it
+  12 and 14 px sit on their rows like 11 and 13, the remaining softness
+  is the stems, which the light mode leaves to the subpixel phases.
+- 2026-10-08, step 5, the layer off the grid. Live on the 1x monitor the
+  12 px line read worse than 11; the row ink read off the tree (a node
+  snapshot in raw format, alpha summed per row) said why: the 11 px
+  line's x-height and baseline each sat in one row (17 to 74, 78 to 6),
+  the 12, 13 and 14 px lines' were split over two (64/75, 69/57 at 12 px),
+  and the headless frame agreed. The cells were right; the layer was
+  composited at the node's logical position (y 79.67), so Impeller
+  resampled every row a fraction off and undid the snapping the quads do
+  inside the layer. Fixed in `build_layer`: `grid_shift` maps the layer's
+  origin through `ctx.to_window` to device pixels and shifts the quad by
+  the residual, under a plain translate-and-scale only (a rotation has
+  no grid), so the layer lands on whole device pixels at every scroll
+  offset without re-rasterizing, and text moves by under a pixel as in
+  every browser. A text inside a snapshot boundary still inherits the
+  boundary's fractional position, as does every border and icon: the
+  general paint-time snap is okf/backlog/pixel-snapped-paint-boxes.md,
+  which retires `grid_shift` when it lands. What remains soft on
+  purpose is the stems: the light mode leaves x alone for the subpixel
+  phases, Chrome's look on Linux.
+- 2026-10-08, step 5, the full mode. The user asked whether every font
+  should read crisp; the answer is the mode question, so `hint` became a
+  mode: `Hint::{Off, Light, Full}` on the cell request, the style key and
+  `TextRendering` (`setTextRendering({ hint })` takes `false`, `true` for
+  light, `"light"`, `"full"` or `null`), and `flux:font`'s `createFont`
+  takes the same `hint` option per mask atlas, off by default, reported
+  by `fontAtlas`, since a terminal grid is where the full mode lives: its
+  cells sit at whole pixels anyway. A full-hinted `<text>` cell is made at
+  one phase and its quad placed at the nearest pixel. Two things the port
+  of FreeType's autohinter taught: `preserve_linear_metrics` makes the
+  autohinter treat any target as light (horizontal hinting off), so the
+  full target cannot keep linear metrics (layout reads the shaper's
+  advances anyway); and the grayscale "normal" target only nearly aligns
+  stems (a 1.1 px stem fills one column at 244 and spills 36 into the
+  next), so the full mode is the mono target rasterized with
+  anti-aliasing: stem widths and positions rounded to whole pixels,
+  curves still smooth. The test reads the H's top row at 12 px: light has
+  no solid column, full has exactly two and nothing between. Judged live
+  on the 1x monitor: stems solid, the text thinner (a 1.1 px stem is 1 px),
+  and at 11 px Regular and Medium become the same glyphs, since 1.1 and
+  1.25 px stems both round to 1 px and only a stem past 1.5 px gets 2;
+  with the walking text, the reason full is a per-app and per-atlas
+  choice and not the default. Why nobody runs full any more is recorded
+  in the Where to pick up section.
 
-Step 4 is closed (the State table): DirectWrite's blend is the default
-policy, Regular the default weight, the components carry no weight
-compensation, and `setTextRendering` plus `probes/text-coverage-probe.tsx`
-are the instrument for any later policy question (keys 1 to 5 the mode,
-g/G gamma, c/C contrast, d/D darkening, h hinting, 0 reset; `/debug?name=set`;
-`option=value` app arguments for a headless render:
+## Where to pick up (updated 2026-10-08, after step 5)
+
+Step 5 is built (the State table): masks below 2x come from the light
+autohinter, `setTextRendering({ hint })` sets the mode (off, light, full)
+live, the probe's `h` key cycles it, and the probe renders a true-1x frame
+headless:
 
     bun run sol render probes/text-coverage-probe.tsx --project --client 7 \
       --settle --size 1200x480 --duration 1 --fps 1 -o <dir>/ -- \
-      coverage=directWrite gamma=1.8 hint=true
+      coverage=directWrite gamma=1.8 hint=false
 
-renders one true-1x frame without a display; the live window lands on the
-laptop panel and `hyprctl dispatch movetoworkspacesilent <ws>,address:<a>`
-plus `movewindowpixel exact <x> <y>,address:<a>` puts it on a 1x monitor).
+(`SOLIDRT_HOME=$PWD` in the checkout; `--client N` beside a running dev
+client; the live window lands on the laptop panel and `hyprctl dispatch
+movetoworkspacesilent <ws>,address:<a>` plus `movewindowpixel exact <x>
+<y>,address:<a>` puts it on a 1x monitor).
 
-Next, step 5 of this plan is hinting (the Findings bullet on the 12 px
-blur has the measurements): replace swash with fontations directly, which
-the shaper already sits on (harfrust over read-fonts).
+The full mode is the terminal's and the far-away 1x screen's: stems on
+whole pixels at the cost of letterforms rounded per size, text that can
+only move by whole pixels (so it walks under animation), and no subpixel
+positioning, which is why browsers and desktops moved to light plus
+subpixel positioning once 2x screens arrived. Light stays the default
+below 2x; a TV app may set full for its UI, a terminal creates its
+`flux:font` atlas with it.
 
-- `skrifa` (=0.44.0, in the lock already under swash) for everything swash
-  gave `glyphs/fonts.rs`, `cells.rs` and `msdf.rs`: metrics, the
-  character map, the variation axes and their normalized coordinates,
-  outlines, and hinted outlines through a `HintingInstance` cached per
-  (face, ppem, coordinates) with `HintingOptions { engine:
-  Engine::Auto(None), target: Target::Smooth { mode: SmoothMode::Light,
-  symmetric_rendering: true, preserve_linear_metrics: true } }` below
-  `LOW_DPI_SCALE` and unhinted above; `Engine::Auto`, not AutoFallback,
-  because of the stub `prep`. The `GlyphStyles` can be precomputed per
-  face.
-- `zeno` (=0.3.3, swash's own rasterizer, compiled in already) for the
-  coverage masks at the subpixel phase, the synthetic italic as a skew
-  transform of the path, and synthetic bold and darkening as a stroke of
-  twice the outset added to the fill (nonzero).
-- The MTSDF kind reads its outline from the same place, unhinted.
-- `LOW_DPI_HINT` turns on; the `hint` knob already carries the override.
-  The layout baseline (`text_baseline.rs`) pins the metrics, so a number
-  that moves in the port fails a test; `preserve_linear_metrics` keeps
-  advances unhinted so layout and carets do not change.
-- Judge on the probe at 1x: 12, 14 and 16 px should read like 11 and 13.
-
-After that, the old step 5 (platforms: the layer on Windows and macOS, the
-TV's frame cost re-read) and the 2x look on the TV.
+Next is the old step 5 (platforms): the layer on Windows and macOS, the
+TV's frame cost re-read with `probes/text-draw-bench.tsx`, and the 2x look
+on the TV, which step 4 still owes (the tablet at 1.5x agreed with 1x).
+The hinter costs on the armv7 TV are unmeasured: a `HintingInstance` is
+built once per (font, size, weight) on each rasterizing thread and derives
+the font's glyph styles on the first one, so the warm-up's first job of a
+new style pays it; if the TV's first frame shows it, the styles can move
+to `Face` and be shared.
 
 ## Plan: stage 2, the draw half (prepared 2026-10-06, step 1 started the same day)
 

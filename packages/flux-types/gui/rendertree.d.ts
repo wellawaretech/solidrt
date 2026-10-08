@@ -241,11 +241,15 @@ declare module "flux:rendertree" {
      */
     darken?: number | null
     /**
-     * Make glyph cells from hinted outlines (the font's own instructions,
-     * which snap x-height and cap height to pixel rows) at any display
-     * scale; null restores the default (unhinted).
+     * How glyph cells are hinted, at any display scale: "light" (the
+     * autohinter's light mode: baseline, x-height and cap height snap to
+     * pixel rows, stems and advances untouched; `true` means the same),
+     * "full" (stems snap to whole pixels as well, letterforms rounded per
+     * size: a 1x screen read from a distance) or `false` (the outline as
+     * the font draws it). null restores the default: light below 2x,
+     * off above.
      */
-    hint?: boolean | null
+    hint?: boolean | "light" | "full" | null
   }
   /**
    * Change how every text is rendered. Each option given replaces its part

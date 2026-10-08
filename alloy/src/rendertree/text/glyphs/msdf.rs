@@ -1,5 +1,5 @@
-// Distance-field cells: a glyph outline (swash, y up, in texels at the cell
-// kind's size) through msdfgen into an MTSDF cell, rgb the multi-channel
+// Distance-field cells: a glyph outline (outline.rs, y up, in texels at
+// the cell kind's size) through msdfgen into an MTSDF cell, rgb the multi-channel
 // field whose median is the edge and alpha the true distance, `range`
 // texels across with 0.5 at the edge. One cell serves every zoom; a consumer
 // decodes the field in its shader (the 2d sprite layer's `Atlas.sdf`).
@@ -16,8 +16,7 @@
 use super::cells::{Cell, BYTES_PER_TEXEL};
 use super::ffi;
 use std::ffi::c_int;
-use swash::scale::outline::Outline;
-use swash::zeno::{Command, PathData, Point};
+use zeno::{Command, Point};
 
 /// msdfgen's corner threshold for edge colouring, radians: edges meeting at
 /// a sharper angle than this get different channels (the generator's own
@@ -29,7 +28,7 @@ const FIELD_MAX: f32 = 255.0;
 /// The MTSDF cell of `outline` with `range` texels of distance across the
 /// field. A blank outline (a space) is an empty cell; None when msdfgen
 /// rejects the shape or the range leaves no texel to draw in.
-pub fn msdf_cell(glyph: u16, outline: &Outline, range: f32) -> Option<Cell> {
+pub fn msdf_cell(glyph: u16, outline: &[Command], range: f32) -> Option<Cell> {
   let mut shape = Shape::new();
   shape.add_outline(outline);
   if counter_clockwise(outline) {
@@ -60,7 +59,7 @@ pub fn msdf_cell(glyph: u16, outline: &Outline, range: f32) -> Option<Cell> {
 /// Whether the outline's largest contour runs counter-clockwise (y up): the
 /// CFF convention, the mirror of the winding msdfgen's inside assumes. The
 /// largest contour is an outer one, so its sense is the font's.
-fn counter_clockwise(outline: &Outline) -> bool {
+fn counter_clockwise(outline: &[Command]) -> bool {
   let mut dominant = 0.0f64;
   let mut area = 0.0f64;
   let mut start = Point::default();
@@ -72,7 +71,7 @@ fn counter_clockwise(outline: &Outline) -> bool {
     }
     *area = 0.0;
   };
-  for command in outline.path().commands() {
+  for &command in outline {
     match command {
       Command::MoveTo(p) => {
         end_contour(&mut area, prev, start, &mut dominant);
@@ -125,8 +124,8 @@ impl Shape {
     Self { raw: unsafe { ffi::msdf_shape_new() }, start: Point::default(), pen: Point::default(), edges: 0 }
   }
 
-  fn add_outline(&mut self, outline: &Outline) {
-    for command in outline.path().commands() {
+  fn add_outline(&mut self, outline: &[Command]) {
+    for &command in outline {
       match command {
         Command::MoveTo(p) => {
           self.close();

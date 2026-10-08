@@ -4,7 +4,7 @@
 // Cyrillic, CJK) in the styles apps draw in: every wrap unit's advance, ink
 // width, ascent and descent, and the line breaks of every paragraph at
 // three widths. Pinned by data/text-baseline.txt, the engine's own numbers,
-// so a harfrust or swash bump that moves a break anywhere fails here and
+// so a harfrust or skrifa bump that moves a break anywhere fails here and
 // not in an app. Breaks are pinned in every style, word metrics in one
 // style per face (the breaks of the other styles pin their advances
 // indirectly), the vertical metrics once per style. Regenerate with

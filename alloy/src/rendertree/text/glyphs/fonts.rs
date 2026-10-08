@@ -1,6 +1,6 @@
 // The registered fonts as the glyph engine sees them: the one reader of
 // the font bytes. A face keeps the bytes (shared with the worker thread,
-// which parses them with swash per job), a harfrust font at the default
+// which parses them with skrifa per job), a harfrust font at the default
 // location, instanced on the weight axis of a variable font per requested
 // weight so a `fontWeight: 700` run shapes with the 700 advances rather
 // than the regular ones, and on its width axis per requested stretch, and
@@ -11,10 +11,12 @@ use crate::rendertree::text::UnderlineMetrics;
 use crate::rendertree::FontPayload;
 use harfrust::font::Variation as HarfVariation;
 use harfrust::{Font, Tag};
+use skrifa::instance::{Location, LocationRef, Size};
+use skrifa::string::StringId;
+use skrifa::{FontRef, MetadataProvider, Tag as SkrifaTag};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use swash::{StringId, TableProvider};
 
 /// The weight axis tag of a variable font (OpenType `wght`).
 const WEIGHT_AXIS: &[u8; 4] = b"wght";
@@ -30,13 +32,11 @@ const WEIGHT_STEP: u16 = 100;
 /// weight axis (the synthetic bold every renderer applies to a static
 /// regular face).
 const SYNTHETIC_BOLD_FROM: u16 = 600;
-/// The OpenType table the underline position and thickness live in.
-const POST_TABLE: &[u8; 4] = b"post";
 
 /// Index of a face in the set: stable for the set's life.
 pub type FaceId = usize;
 
-/// The shared font bytes: what read-fonts and swash parse. A borrowed
+/// The shared font bytes: what harfrust and skrifa parse. A borrowed
 /// payload (the embedded Notos) costs no copy; an owned one (a packed
 /// trailer font) is moved in once.
 pub type FontBytes = Arc<dyn AsRef<[u8]> + Send + Sync>;
@@ -66,7 +66,7 @@ pub struct Face {
 }
 
 impl Face {
-  /// The bytes, for the worker's swash parse.
+  /// The bytes, for the rasterizer's and the metrics' skrifa parse.
   pub fn bytes(&self) -> &FontBytes {
     &self.bytes
   }
@@ -154,23 +154,23 @@ impl FontSet {
     let Some(font) = Font::new(bytes.clone(), 0) else {
       return Err("not a font file (no readable table directory)".to_string());
     };
-    let Some(swash_font) = swash::FontRef::from_index(bytes.as_ref().as_ref(), 0) else {
+    let Ok(skrifa_font) = FontRef::from_index(bytes.as_ref().as_ref(), 0) else {
       return Err("not a font file (unreadable by the rasterizer)".to_string());
     };
     let mut weight_axis = None;
     let mut width_axis = None;
     let mut italic_axis = false;
-    for axis in swash_font.variations() {
-      if axis.tag() == swash::tag_from_bytes(WEIGHT_AXIS) {
+    for axis in skrifa_font.axes().iter() {
+      if axis.tag() == SkrifaTag::new(WEIGHT_AXIS) {
         weight_axis = Some((axis.min_value(), axis.max_value()));
-      } else if axis.tag() == swash::tag_from_bytes(WIDTH_AXIS) {
+      } else if axis.tag() == SkrifaTag::new(WIDTH_AXIS) {
         width_axis = Some((axis.min_value(), axis.max_value()));
-      } else if axis.tag() == swash::tag_from_bytes(ITALIC_AXIS) {
+      } else if axis.tag() == SkrifaTag::new(ITALIC_AXIS) {
         italic_axis = true;
       }
     }
-    let families = family_names(&swash_font);
-    let underline = underline_metrics(&swash_font);
+    let families = family_names(&skrifa_font);
+    let underline = underline_metrics(&skrifa_font);
     let id = self.faces.len();
     self.faces.push(Face {
       bytes,
@@ -243,24 +243,33 @@ pub fn weight_value(weight: FontWeight) -> u16 {
 
 // A face's underline geometry in em, from its `post` table; the shipped
 // Notos' values for a face without one.
-fn underline_metrics(font: &swash::FontRef<'_>) -> UnderlineMetrics {
-  if font.table_by_tag(swash::tag_from_bytes(POST_TABLE)).is_none() {
+fn underline_metrics(font: &FontRef<'_>) -> UnderlineMetrics {
+  let metrics = font.metrics(Size::unscaled(), LocationRef::default());
+  let Some(underline) = metrics.underline else {
     return UnderlineMetrics::DEFAULT;
-  }
-  let read = font.metrics(&[]);
-  let upem = read.units_per_em as f32;
-  UnderlineMetrics { position: -read.underline_offset / upem, thickness: read.stroke_size / upem }
+  };
+  let upem = metrics.units_per_em as f32;
+  UnderlineMetrics { position: -underline.offset / upem, thickness: underline.thickness / upem }
 }
 
-/// The names a font registers under besides its alias: every family and
-/// typographic family record of its `name` table, in table order, decoded
-/// where the encoding is known (Unicode and Mac Roman; a record in another
-/// encoding decodes empty and is skipped).
-pub fn family_names(font: &swash::FontRef<'_>) -> Vec<String> {
-  font
-    .localized_strings()
-    .filter(|s| matches!(s.id(), StringId::Family | StringId::TypographicFamily))
+/// The names a font registers under besides its alias: every family
+/// record of its `name` table, then every typographic family record, each
+/// in table order, decoded where the encoding is known (Unicode and Mac
+/// Roman; a record in another encoding decodes empty and is skipped).
+pub fn family_names(font: &FontRef<'_>) -> Vec<String> {
+  [StringId::FAMILY_NAME, StringId::TYPOGRAPHIC_FAMILY_NAME]
+    .into_iter()
+    .flat_map(|id| font.localized_strings(id))
     .map(|s| s.to_string())
     .filter(|name| !name.is_empty())
     .collect()
+}
+
+/// The location in the font's variation space for a weight and a width
+/// axis setting (every other axis at its default), as the metrics and the
+/// outlines read it.
+pub(super) fn axis_location(font: &FontRef<'_>, weight: Option<f32>, width: Option<f32>) -> Location {
+  let settings =
+    [weight.map(|value| (SkrifaTag::new(WEIGHT_AXIS), value)), width.map(|value| (SkrifaTag::new(WIDTH_AXIS), value))];
+  font.axes().location(settings.into_iter().flatten())
 }

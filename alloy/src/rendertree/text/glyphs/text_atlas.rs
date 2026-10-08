@@ -36,7 +36,7 @@
 // every style on screen and a glyph pass binds once per layer. Frames are
 // stamped on every use so a full atlas evicts what nobody drew lately.
 use super::atlas::{AtlasPacker, CellPlacement, GlyphAtlas, InsertOutcome};
-use super::cells::{Cell, CellKind, CellRequest, Rasterizer};
+use super::cells::{Cell, CellKind, CellRequest, Hint, Rasterizer};
 use super::fonts::{Face, FaceId, FontSet};
 use super::worker::{CellJob, CellWorker, JobPriority};
 use crate::gpu::{CoveragePolicy, SamplerFilter, SamplerState, SamplerWrap, MIN_ANISOTROPY};
@@ -71,11 +71,11 @@ pub const WARM_CHUNK: usize = 16;
 /// default strength is zero; the mechanism stays behind `TextRendering`.
 const LOW_DPI_SCALE: f32 = 2.0;
 const LOW_DPI_DARKEN_EM: f32 = 0.0;
-/// Whether masks below `LOW_DPI_SCALE` are made from hinted outlines. Off
-/// until the light autohinter lands (okf/plans/text-own-rasterizer.md,
-/// "Where to pick up"): the shipped Notos carry no instructions, so the
-/// font's own hinting has nothing to run.
-const LOW_DPI_HINT: bool = false;
+/// How masks below `LOW_DPI_SCALE` are hinted (`Hint`, cells.rs): at 1x
+/// the x-height and cap height of a size land mid-row as often as not and
+/// the glyph reads blurry beside its neighbours, so the light mode; at 2x
+/// and up the rows are fine enough to leave the outline alone.
+const LOW_DPI_HINT: Hint = Hint::Light;
 /// The thread the text atlas's cells are made on.
 const WORKER_NAME: &str = "alloy-text-cells";
 const ATLAS_LABEL: &str = "text-atlas";
@@ -92,9 +92,9 @@ pub struct TextRendering {
   /// low-DPI default (`LOW_DPI_DARKEN_EM` below `LOW_DPI_SCALE`, none
   /// above).
   pub darken: Option<f32>,
-  /// Hinted outlines at any display scale; None applies the low-DPI
+  /// The hinting mode at any display scale; None applies the low-DPI
   /// default (`LOW_DPI_HINT` below `LOW_DPI_SCALE`, unhinted above).
-  pub hint: Option<bool>,
+  pub hint: Option<Hint>,
 }
 
 impl TextRendering {
@@ -108,11 +108,12 @@ impl TextRendering {
     }
   }
 
-  /// Whether cells are made from hinted outlines at `display_scale`.
-  pub fn hint_at(&self, display_scale: f32) -> bool {
+  /// How cells are hinted at `display_scale`.
+  pub fn hint_at(&self, display_scale: f32) -> Hint {
     match self.hint {
       Some(hint) => hint,
-      None => display_scale < LOW_DPI_SCALE && LOW_DPI_HINT,
+      None if display_scale < LOW_DPI_SCALE => LOW_DPI_HINT,
+      None => Hint::Off,
     }
   }
 }
@@ -130,11 +131,11 @@ pub struct StyleKey {
   stretch: u32,
   pub italic: bool,
   darken: u32,
-  pub hint: bool,
+  pub hint: Hint,
 }
 
 impl StyleKey {
-  pub fn new(face: FaceId, ppem: f32, weight: u16, stretch: f32, italic: bool, darken_em: f32, hint: bool) -> Self {
+  pub fn new(face: FaceId, ppem: f32, weight: u16, stretch: f32, italic: bool, darken_em: f32, hint: Hint) -> Self {
     Self { face, ppem: ppem.to_bits(), weight, stretch: stretch.to_bits(), italic, darken: darken_em.to_bits(), hint }
   }
 
@@ -202,7 +203,7 @@ pub struct TextAtlas {
   atlas: Option<GlyphAtlas<CellKey>>,
   worker: Option<CellWorker>,
   worker_failed: bool,
-  // The synchronous path's rasterizer: this thread's own swash state.
+  // The synchronous path's rasterizer: this thread's own hinter cache.
   rasterizer: Rasterizer,
   jobs: HashMap<u64, Job>,
   next_job: u64,
@@ -275,8 +276,8 @@ impl TextAtlas {
   /// Start a frame's build (after its `land`): open this frame's
   /// synchronous budget, and queue the warm-ups asked for since the last
   /// frame at `display_scale`, darkened by `darken_em` (em per side),
-  /// hinted when `hint`.
-  pub fn begin_frame(&mut self, ctx: &Context, fonts: &FontSet, display_scale: f32, darken_em: f32, hint: bool) {
+  /// hinted as `hint` says.
+  pub fn begin_frame(&mut self, ctx: &Context, fonts: &FontSet, display_scale: f32, darken_em: f32, hint: Hint) {
     if self.wake.is_none() {
       self.wake = ctx.frame_wake();
     }
@@ -400,8 +401,7 @@ impl TextAtlas {
     let in_budget = self.deadline.is_some_and(|deadline| Instant::now() < deadline);
     if in_budget {
       let request = request(face, style, phase, misses.clone());
-      let bytes = face.bytes().clone();
-      let made = self.rasterizer.rasterize(bytes.as_ref().as_ref(), &request).unwrap_or_default();
+      let made = self.rasterizer.rasterize(face.bytes(), &request).unwrap_or_default();
       let mut inserted = 0;
       for cell in made {
         let key = CellKey { style, phase, glyph: cell.key };

@@ -16,8 +16,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use alloy::rendertree::text::glyphs::{
-  weight_value, AtlasPacker, CellJob, CellKind, CellPlacement, CellRequest, CellWorker, GlyphAtlas, InsertOutcome,
-  JobPriority,
+  weight_value, AtlasPacker, CellJob, CellKind, CellPlacement, CellRequest, CellWorker, GlyphAtlas, Hint,
+  InsertOutcome, JobPriority,
 };
 use alloy::rendertree::text::{prepare_units, Fallback, RunStyle};
 use alloy::rendertree::Text;
@@ -47,6 +47,8 @@ struct FontEntry {
   face: usize,
   style: RunStyle,
   kind: CellKind,
+  /// How a mask atlas's cells are hinted (a distance field never is).
+  hint: Hint,
   atlas: GlyphAtlas<u16>,
   /// Glyphs handed to the worker or already placed.
   requested: HashSet<u16>,
@@ -161,6 +163,7 @@ fn create_font<'js>(ctx: Ctx<'js>, face: OptArg<Object<'js>>, options: OptArg<Ob
   let mut range: Option<f32> = None;
   let mut mipmap: Option<bool> = None;
   let mut label: Option<String> = None;
+  let mut hint = Hint::Off;
   if let Some(opts) = options.0 {
     if let Some(value) = opts.get::<_, Option<String>>("cells")? {
       cells = value;
@@ -169,6 +172,11 @@ fn create_font<'js>(ctx: Ctx<'js>, face: OptArg<Object<'js>>, options: OptArg<Ob
     range = opts.get("range")?;
     mipmap = opts.get("mipmap")?;
     label = opts.get("label")?;
+    let value: rquickjs::Value<'js> = opts.get("hint")?;
+    if !value.is_undefined() {
+      hint = super::tree::hint_mode(&value)
+        .ok_or_else(|| throw_str(&ctx, &format!("createFont: hint {}", super::tree::HINT_VALUES)))?;
+    }
   }
   let kind = match cells.as_str() {
     // A mask atlas is drawn 1:1, so its cells are the face's own size.
@@ -200,7 +208,7 @@ fn create_font<'js>(ctx: Ctx<'js>, face: OptArg<Object<'js>>, options: OptArg<Ob
   st.next_id.set(id + 1);
   st.fonts
     .borrow_mut()
-    .insert(id, FontEntry { face, style, kind, atlas, requested: HashSet::new(), failed: HashSet::new() });
+    .insert(id, FontEntry { face, style, kind, hint, atlas, requested: HashSet::new(), failed: HashSet::new() });
   Ok(id)
 }
 
@@ -223,6 +231,12 @@ fn font_atlas(ctx: Ctx<'_>, font: u64) -> rquickjs::Result<Object<'_>> {
   obj.set("width", width)?;
   obj.set("height", height)?;
   obj.set("fontSize", entry.style.font_size)?;
+  let hint = match entry.hint {
+    Hint::Off => "off",
+    Hint::Light => "light",
+    Hint::Full => "full",
+  };
+  obj.set("hint", hint)?;
   match entry.kind {
     CellKind::Mask { ppem } => {
       obj.set("cells", "mask")?;
@@ -269,7 +283,10 @@ fn prepare_text<'js>(
     }
     if let Some(letter_spacing) = opts.get::<_, Option<f32>>("letterSpacing")? {
       if !letter_spacing.is_finite() {
-        return Err(throw_str(&ctx, &format!("prepareText: letterSpacing must be a finite number, got {letter_spacing}")));
+        return Err(throw_str(
+          &ctx,
+          &format!("prepareText: letterSpacing must be a finite number, got {letter_spacing}"),
+        ));
       }
       style.letter_spacing = letter_spacing;
     }
@@ -319,10 +336,11 @@ fn request_glyphs<'js>(ctx: Ctx<'js>, font: u64, glyphs: Vec<f64>) -> rquickjs::
         synthetic_bold: face.synthetic_bold(weight),
         synthetic_italic: entry.style.font_style == alloy::impellers::FontStyle::Italic && face.synthetic_italic(),
         // A handle's cells are placed by their sampler (msdf) or drawn at
-        // whole pixels (mask): one phase, no darkening policy.
+        // whole pixels (mask): one phase, no darkening policy, the hinting
+        // the handle was created with.
         phase: 0.0,
         darken: 0.0,
-        hint: false,
+        hint: entry.hint,
         glyphs: missing.clone(),
       };
       // The hold ends on the worker thread when the cells are made; the

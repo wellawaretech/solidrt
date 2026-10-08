@@ -95,8 +95,7 @@ impl CellWorker {
       let mut rasterizer = Rasterizer::default();
       let mut inbox = Inbox::default();
       while let Some(mut job) = inbox.next(&job_rx) {
-        let bytes = job.bytes.as_ref().as_ref();
-        let cells = rasterizer.rasterize(bytes, &job.request).unwrap_or_default();
+        let cells = rasterizer.rasterize(&job.bytes, &job.request).unwrap_or_default();
         let failed = job.request.glyphs.iter().copied().filter(|g| !cells.iter().any(|c| c.key == *g)).collect();
         let sent = done_tx.send(CellsDone { owner: job.owner, cells, failed }).is_ok();
         if let Some(done) = job.done.take() {
