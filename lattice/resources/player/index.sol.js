@@ -6990,6 +6990,7 @@ function prepareText2(text, options) {
 function warmText2(styles) {
   tree.warmText(styles);
 }
+var FIT_SLACK = 1 / 64;
 function unitInk(units, index) {
   let ink = units[index].width;
   let advance = 0;
@@ -7009,7 +7010,7 @@ function layoutNextLine(prepared, cursor, width) {
   let i = cursor;
   while (i < units.length) {
     let unit = units[i];
-    if (i > cursor && !unit.glue && pen + unitInk(units, i) > width)
+    if (i > cursor && !unit.glue && pen + unitInk(units, i) > width + FIT_SLACK)
       break;
     pen += unit.advance;
     if (unit.ascent > ascent)
@@ -8330,6 +8331,19 @@ function Logo(props) {
   });
   return _el$;
 }
+// ../../packages/core/src/warn.ts
+function warnOnce() {
+  let origin2 = new Error().stack ?? "";
+  let warned = false;
+  return (message) => {
+    if (warned)
+      return;
+    warned = true;
+    console.warn(`${message}
+${origin2}`);
+  };
+}
+
 // ../../packages/core/src/scroll.ts
 function createScroll(viewport, content, options = {}) {
   let axis = options.axis ?? "vertical";
@@ -8345,8 +8359,7 @@ function createScroll(viewport, content, options = {}) {
   });
   let [behavior, setBehavior] = createSignal("auto");
   let lastBehavior = "auto";
-  let origin2 = new Error().stack ?? "";
-  let warnedCollapsed = false;
+  let warnCollapsed = warnOnce();
   let maxX = 0;
   let maxY = 0;
   let clamp2 = (x, y) => ({
@@ -8372,15 +8385,11 @@ function createScroll(viewport, content, options = {}) {
     let cb = getBoundingBox2(ct);
     if (!vb || !cb)
       return;
-    if (!warnedCollapsed) {
-      let zeroY = canY && vb.height === 0 && cb.height > 0;
-      let zeroX = canX && vb.width === 0 && cb.width > 0;
-      if (zeroY || zeroX) {
-        warnedCollapsed = true;
-        let axisName = zeroY ? "height" : "width";
-        console.warn(`Scroll container resolved to ${axisName} 0, so its content is invisible. ` + `Give it an explicit ${axisName} or flex; maxHeight/maxWidth alone does not size it.
-${origin2}`);
-      }
+    let zeroY = canY && vb.height === 0 && cb.height > 0;
+    let zeroX = canX && vb.width === 0 && cb.width > 0;
+    if (zeroY || zeroX) {
+      let axisName = zeroY ? "height" : "width";
+      warnCollapsed(`Scroll container resolved to ${axisName} 0, so its content is invisible. ` + `Give it an explicit ${axisName} or flex; maxHeight/maxWidth alone does not size it.`);
     }
     maxX = Math.max(0, cb.width - vb.width);
     maxY = Math.max(0, cb.height - vb.height);
@@ -11941,14 +11950,14 @@ function createTextEditorLayout(viewport, input) {
 }
 function splitWide(prepared, width) {
   let all = prepared.units;
-  if (!all.some((u, i) => !u.glue && unitInk(all, i) > width))
+  if (!all.some((u, i) => !u.glue && unitInk(all, i) > width + FIT_SLACK))
     return prepared;
   let wide = false;
   let units = [];
   for (let u = 0;u < all.length; u++) {
     let unit = all[u];
     if (!unit.glue)
-      wide = unitInk(all, u) > width;
+      wide = unitInk(all, u) > width + FIT_SLACK;
     let stops = unit.carets;
     if (!wide || !stops || stops.length <= 2) {
       units.push(unit);

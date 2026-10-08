@@ -103,6 +103,21 @@ export interface LayoutProps extends FlexboxProps, GridProps {
    * resolves against whatever relative element is above all of them.
    */
   position?: "relative" | "absolute"
+  /**
+   * CSS size containment: the element sizes as if it had no content. A
+   * texture or text measures as zero on every axis layout does not hand it,
+   * and a view's children add nothing to its box; they lay out inside
+   * whatever box it gets. The one CSS `contain` value with a meaning here.
+   * The element still needs a size from its own props or its parent (a
+   * `flexGrow` in a sized column), or it comes out empty.
+   *
+   * What takes the place of the web's `minHeight={0}` escape from the flex
+   * automatic minimum, declared on the element whose content would
+   * otherwise pin its ancestors: a fill-mode `<Scene>` or `<SpriteLayer>`
+   * leaf sets it, so the target that follows the leaf's box never feeds its
+   * pixel size back into layout.
+   */
+  contain?: "size"
 
   top?: Dimension
   right?: Dimension

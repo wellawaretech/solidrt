@@ -629,6 +629,16 @@ or fixed is decided at mount; `output` requires explicit sizes (the
 target cannot follow a leaf it does not own), and giving exactly one of
 width/height throws.
 
+The fill leaf is size-contained (`contain="size"`, the CSS layout prop
+every element takes): it adds nothing to its ancestors' sizes, exactly as
+an empty `<view>` at 100% would. So a column of header, `<Scene>` pane
+(`flexGrow: 1`) and footer lays out at the window's height with no
+`minHeight={0}` anywhere, and a pane with no definite height does not
+come out square. The price is that the leaf has no size of its own at
+all: a parent with no size leaves it empty, the scene is invisible, and
+the component warns once with the stack of the component that built it,
+naming the fix (a size, or flexGrow in a sized column).
+
 Fixed sizes still matter where the target is a measured quantity: probes
 and checks that snapshot exact pixels, supersampling via `output`, or a
 scene composited at a size unrelated to its layout. `width`/`height` are

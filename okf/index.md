@@ -379,6 +379,12 @@ Shaped, not started.
   stages reduce it - createNode with a props object, a one-call-per-flush
   drain, interned prop ids with table dispatch, and a command buffer whose
   props land in a shared buffer Rust reads directly.
+- **[Decide whether flex items keep the web's automatic minimum size](backlog/flex-automatic-minimum-default.md)** [2026-10-08]
+  A flex item's automatic minimum is its content size, so a child larger than
+  its share pins every ancestor until someone writes minHeight 0; Yoga has no
+  such minimum and React Native layouts never need the escape. Decide which
+  default solidrt wants, with the text and scroll contracts measured against
+  it.
 - **[Frame driver pacing contract](backlog/frame-driver-pacing-contract.md)** [2026-08-14]
   Pacing verdicts cost 90 s on-device censuses because the frame driver cannot
   run against a synthetic vsync grid; stage 1, the harness in alloy's tests,
@@ -638,6 +644,12 @@ Shaped, not started.
   whether alloy opened it as a joystick, and Android's auto-mapping can drop
   buttons it sends; a core remoteControl() device for createInputMap should
   hide both so an app binds select, navigate and back once.
+- **[Keep sol render off the dev client's data and the user's files](backlog/render-data-and-output-safety.md)** [2026-10-08]
+  sol render runs in the dev client's own data tree (client 0) even while that
+  client is up, so a render reads and writes the live app's saved state; it
+  wipes dist/render/ for its staging, taking any frames a user wrote there
+  with -o; and a missing -o directory fails only after every frame has
+  rendered.
 - **[Node lifetime is a deferred sweep, not reference lifetime](backlog/renderer-node-lifetime.md)** [2026-08-14]
   removeNode detaches and a microtask sweep frees, so control-flow reuse
   inside one tick survives but a node re-inserted in a later async tick is
@@ -705,6 +717,12 @@ Shaped, not started.
   every pixel in it is resampled, however well its quad lands on the grid; the
   text layer already rasterizes at the display scale times the chain's scale
   and tolerates drift, and the snapshot should do the same.
+- **[Build an app's isolates under sol test, and reject a missing one](backlog/sol-test-isolates.md)** [2026-10-08]
+  An app test is bundled from the test file, so the bundler looks for "use
+  isolate" modules under tests/ and every isolate() the app makes fails with
+  "no such isolate module"; that failure is also thrown from the call itself
+  instead of rejecting its promise, which sends an app that handles rejections
+  into the error window.
 - **[Reactivity diagnostics carry no source location](backlog/solid-diagnostics-source-location.md)** [2026-09-08]
   A STRICT_READ_UNTRACKED warning names the shape of the mistake but not the
   file or line, so finding it in an app with a dozen effects is a manual hunt;
@@ -1511,6 +1529,12 @@ Finished, kept for the reasoning.
   hand-rolled DataView reinterpretation, and every declared symbol must
   resolve so one absent symbol takes down a whole binding; add typed read
   helpers and a per-symbol optional flag.
+- **[A fill-mode scene or sprite layer adds no intrinsic size to the layout](done/fill-leaf-intrinsic-size.md)** [2026-10-08]
+  The fill leaf of <Scene> and <SpriteLayer> is a <texture> at 100%, and a
+  texture measures its pixel size, so flexbox's automatic minimum pins its
+  ancestors to the target's size (a 1280 px tall screen in a 720 px window)
+  and an indefinite height comes out square; the target follows the box, so
+  the leaf holds whatever size it first fed itself.
 - **["flux:audio mix control: playback rate, master gain, ramps, voice cap, PCM validation"](done/flux-audio-mix-control.md)** [2026-08-20]
   Landed 2026-08-20: playback rate, master gain, ramped gain/pan/rate,
   fade-in/out, the voice cap, PCM validation, the unloaded-clip error and

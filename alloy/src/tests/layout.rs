@@ -492,3 +492,177 @@ fn layout_box_follows_placement_not_the_cache() {
   layout(&mut tree, &platform, &alloy);
   assert_eq!(tree.layout_box(3).expect("shown again").size, Size::new(320.0, 60.0));
 }
+
+// CSS `contain: size` (LayoutData::contain_size): the node sizes as if it
+// had no content.
+fn contain(tree: &mut RenderTree, id: u64) {
+  tree.edit(id, |e| {
+    e.set_contain_size(true);
+    Damage::Layout
+  });
+}
+
+// A fill leaf (okf/done/fill-leaf-intrinsic-size.md): a texture at 100%
+// whose target follows its box, so whatever size it measures once, it
+// holds. Under size containment it measures as empty and its ancestors size
+// as if it were an empty view: the leaf takes what the column leaves and
+// the footer stays in view, however large the texture it shows.
+#[test]
+fn contained_fill_leaf_adds_nothing_to_its_column() {
+  // root(1, 400x300 column) > header(2, 40), leaf(3, 100% x 100%, grows,
+  //                           1280x1280 intrinsic via the crop), footer(4, 40)
+  let build = |contained: bool| {
+    let mut tree = RenderTree::new();
+    tree.create_node(1, attached());
+    tree.create_node(2, attached());
+    tree.create_node(3, Texture { src_w: Some(1280.0), src_h: Some(1280.0), ..Texture::default() }.with_layout());
+    tree.create_node(4, attached());
+    for id in [2, 3, 4] {
+      tree.insert_node(1, id, None).expect("insert");
+    }
+    tree.root = Some(1);
+    tree.node_mut(1).style_mut().expect("root").flex_direction = FlexDirection::Column;
+    size(&mut tree, 1, 400.0, 300.0);
+    size(&mut tree, 2, 400.0, 40.0);
+    size(&mut tree, 4, 400.0, 40.0);
+    for id in [2, 4] {
+      tree.node_mut(id).style_mut().expect("bar").flex_shrink = 0.0;
+    }
+    let leaf = tree.node_mut(3).style_mut().expect("leaf");
+    leaf.size = taffy::Size { width: percent(1.0), height: percent(1.0) };
+    leaf.flex_grow = 1.0;
+    if contained {
+      contain(&mut tree, 3);
+    }
+    tree
+  };
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+
+  // The trap: the texture's intrinsic size is the leaf's automatic minimum,
+  // so the leaf cannot shrink to its share and the footer leaves the box.
+  let mut tree = build(false);
+  layout(&mut tree, &platform, &alloy);
+  assert!(box_of(&tree, 3).height > 220.0, "uncontained, the texture pins the leaf");
+  assert!(tree.node(4).layout_data().location().y > 300.0, "and pushes the footer off screen");
+
+  let mut tree = build(true);
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(box_of(&tree, 3), Size::new(400.0, 220.0));
+  assert_eq!(tree.node(3).layout_data().location().y, 40.0);
+  assert_eq!(tree.node(4).layout_data().location().y, 260.0);
+}
+
+// Where the leaf's height is indefinite (a content-sized parent) an
+// uncontained leaf derives it from the width by the texture's aspect, a
+// square for a square target. Contained, it is empty, as an empty view at
+// 100% would be: the case the fill components warn about.
+#[test]
+fn contained_leaf_in_a_content_sized_parent_is_empty() {
+  // root(1, 400x300 row) > pane(2, 200 wide, alignSelf start: content-sized
+  //                        height) > leaf(3, 100% x 100%, 1280x1280 intrinsic)
+  let build = |contained: bool| {
+    let mut tree = RenderTree::new();
+    tree.create_node(1, attached());
+    tree.create_node(2, attached());
+    tree.create_node(3, Texture { src_w: Some(1280.0), src_h: Some(1280.0), ..Texture::default() }.with_layout());
+    tree.insert_node(1, 2, None).expect("insert");
+    tree.insert_node(2, 3, None).expect("insert");
+    tree.root = Some(1);
+    size(&mut tree, 1, 400.0, 300.0);
+    let pane = tree.node_mut(2).style_mut().expect("pane");
+    pane.size.width = length(200.0);
+    pane.align_self = Some(AlignSelf::FLEX_START);
+    tree.node_mut(3).style_mut().expect("leaf").size = taffy::Size { width: percent(1.0), height: percent(1.0) };
+    if contained {
+      contain(&mut tree, 3);
+    }
+    tree
+  };
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+
+  let mut tree = build(false);
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(box_of(&tree, 3), Size::new(200.0, 200.0), "uncontained: square, by the texture's aspect");
+
+  let mut tree = build(true);
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(box_of(&tree, 3), Size::new(200.0, 0.0));
+  assert_eq!(box_of(&tree, 2), Size::new(200.0, 0.0));
+}
+
+// A contained text measures as empty too: stretched to the column's width,
+// no height of its own. Its lines still lay out at paint, in the box it gets.
+#[test]
+fn contained_text_sizes_as_if_empty() {
+  // root(1, 400x300 column) > text(2, "NITRO!", contained)
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut text = Text::default();
+  text.set_plain_text("NITRO!".to_string());
+  tree.create_node(2, text.with_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.root = Some(1);
+  tree.node_mut(1).style_mut().expect("root").flex_direction = FlexDirection::Column;
+  size(&mut tree, 1, 400.0, 300.0);
+  contain(&mut tree, 2);
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(box_of(&tree, 2), Size::new(400.0, 0.0));
+}
+
+// A contained container is a layout boundary (LayoutContext::contained_layout):
+// its children never reach its parent, and lay out inside the box the parent
+// solved - overflowing it, as on the web, when they are larger.
+#[test]
+fn contained_view_lays_out_its_children_in_the_box_it_gets() {
+  // root(1, 400x300 column) > header(2, 40), pane(3, grows) > body(4, 400x637),
+  //                           footer(5, 40)
+  let build = |contained: bool| {
+    let mut tree = RenderTree::new();
+    tree.create_node(1, attached());
+    tree.create_node(2, attached());
+    tree.create_node(3, attached());
+    tree.create_node(4, Rectangle::default().with_layout());
+    tree.create_node(5, attached());
+    for id in [2, 3, 5] {
+      tree.insert_node(1, id, None).expect("insert");
+    }
+    tree.insert_node(3, 4, None).expect("insert");
+    tree.root = Some(1);
+    tree.node_mut(1).style_mut().expect("root").flex_direction = FlexDirection::Column;
+    size(&mut tree, 1, 400.0, 300.0);
+    size(&mut tree, 2, 400.0, 40.0);
+    size(&mut tree, 4, 400.0, 637.0);
+    size(&mut tree, 5, 400.0, 40.0);
+    // The body overflows the pane like a scroll region does: keep its
+    // stated height instead of letting flex shrink it.
+    for id in [2, 4, 5] {
+      tree.node_mut(id).style_mut().expect("fixed height").flex_shrink = 0.0;
+    }
+    tree.node_mut(3).style_mut().expect("pane").flex_grow = 1.0;
+    if contained {
+      contain(&mut tree, 3);
+    }
+    tree
+  };
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+
+  // The trap: the body's height is the pane's automatic minimum.
+  let mut tree = build(false);
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(box_of(&tree, 3), Size::new(400.0, 637.0));
+  assert_eq!(tree.node(5).layout_data().location().y, 677.0);
+
+  let mut tree = build(true);
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(box_of(&tree, 3), Size::new(400.0, 220.0));
+  assert_eq!(tree.node(5).layout_data().location().y, 260.0);
+  assert_eq!(box_of(&tree, 4), Size::new(400.0, 637.0), "the body keeps its size inside");
+  let loc = tree.node(4).layout_data().location();
+  assert_xy(Point::new(loc.x, loc.y), 0.0, 0.0);
+}

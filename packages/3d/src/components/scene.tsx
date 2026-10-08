@@ -1,4 +1,4 @@
-import { createEffect, createRenderEffect, createSignal, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack } from "@solidrt/core"
+import { createEffect, createRenderEffect, createSignal, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack, warnOnce } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { createScene } from "../scene.ts"
@@ -311,11 +311,22 @@ export let Scene: ParentComponent<SceneProps> = props => {
     // onLayout handler and as an effect apply, both untracked scopes, so
     // its scale read is wrapped in an explicit untrack (the effect's
     // compute is what tracks it).
+    let warnEmpty = warnOnce()
     let apply = () =>
       untrack(() => {
         if (!leafNode) return
         let box = getBoundingBoxViewport(leafNode)
         if (!box) return
+        // The leaf adds no size of its own (contain="size" below), so a
+        // parent with no size leaves it empty: nothing renders, and nothing
+        // on screen says why.
+        if (box.width === 0 || box.height === 0) {
+          warnEmpty(
+            `Scene: the fill leaf laid out ${box.width} x ${box.height}, so the scene is invisible. ` +
+              `It adds no size of its own: give its parent a size (width/height, or flexGrow in a sized column), as on the web.`,
+          )
+          return
+        }
         let scale = displayScale()
         scene.setSize(Math.max(1, Math.round(box.width * scale)), Math.max(1, Math.round(box.height * scale)))
       })
@@ -325,6 +336,11 @@ export let Scene: ParentComponent<SceneProps> = props => {
   // Pointer events on the built-in leaf: at target size the plain
   // handlers, in fill mode scaled from the laid-out box.
   let sceneHandlers = fill ? scene.handlersFor(builtinLayout) : scene.handlers
+  // The fill leaf is size-contained: the target follows the leaf's box, so
+  // the target's pixels must never come back as the leaf's intrinsic size
+  // (the flex automatic minimum would pin every ancestor to the target, and
+  // an indefinite height would come out square). The leaf adds nothing to
+  // its ancestors, exactly as an empty view at 100% would.
   return (
     <SceneContext value={{ scene, parent: scene.root, viewport: scene, pointer }}>
       {output ? (
@@ -335,6 +351,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
           src={scene.texture}
           width={fill ? "100%" : props.width}
           height={fill ? "100%" : props.height}
+          contain={fill ? "size" : undefined}
           onPointerDown={events ? sceneHandlers.onPointerDown : undefined}
           onPointerMove={events ? sceneHandlers.onPointerMove : undefined}
           onPointerUp={events ? sceneHandlers.onPointerUp : undefined}

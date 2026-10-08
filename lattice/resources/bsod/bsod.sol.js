@@ -4533,6 +4533,7 @@ function activateTextInput() {
   if (textInputEligible())
     syncTextInput(true);
 }
+var FIT_SLACK = 1 / 64;
 
 // ../../packages/core/src/window.ts
 var EXIT_HOOK_DEADLINE_MS = 2000;

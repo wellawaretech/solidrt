@@ -133,6 +133,29 @@ pub fn apply_jsx(
     return Ok(Damage::Layout);
   }
 
+  // CSS `contain: size` (see LayoutData::contain_size), decoded here because
+  // it is a layout flag beside the taffy Style, not a style field. Null
+  // clears it. Layout elements only: the "Unknown property" prefix makes the
+  // detached rejection warn-and-continue in core, like other name-level
+  // rejections.
+  if name == "contain" {
+    if !el.has_layout() {
+      return Err(
+        "Unknown property 'contain': a detached element has no box to contain, so this is available on the layout form only"
+          .to_string(),
+      );
+    }
+    let contain = match value {
+      PropValue::Null => false,
+      _ => match str_of(value, "contain")? {
+        "size" => true,
+        v => return Err(format!("Unknown contain value \"{v}\"; expected size")),
+      },
+    };
+    el.set_contain_size(contain);
+    return Ok(Damage::Layout);
+  }
+
   // Marks a retained-paint boundary (see Element::repaint_boundary). The
   // field is element-level, but the JSX contract is view/d-view only
   // (ViewOwnProps): a boundary fences a subtree, and wrapping in a view is

@@ -200,6 +200,11 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
     BoundaryMode::Snapshot => out.push(("repaintBoundary", ReadValue::Str("snapshot".into()))),
     BoundaryMode::SnapshotNoAa => out.push(("repaintBoundary", ReadValue::Str("snapshot-no-aa".into()))),
   }
+  // Size containment is a layout flag beside the style (LayoutData), so it
+  // reads back here rather than from the style adapter.
+  if element.layout.as_ref().is_some_and(|layout| layout.contain_size) {
+    out.push(("contain", ReadValue::Str("size".into())));
+  }
   // Overflow is layout style, applicable to any layouted kind. The write side
   // fans "overflow" out to both axes; read back the uniform name when they
   // agree and the per-axis names when they differ. Off-default = not Visible.

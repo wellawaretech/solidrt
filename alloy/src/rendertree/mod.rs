@@ -633,6 +633,14 @@ impl Element {
     layout.positioning_context = matches!(position, Position::Relative);
   }
 
+  /// CSS `contain: size` on or off (see LayoutData::contain_size): the node
+  /// sizes as if it had no content. Layout elements only; a detached node has
+  /// no box to contain.
+  pub fn set_contain_size(&mut self, contain: bool) {
+    let layout = self.layout.as_mut().expect("contain requires a layout element");
+    layout.contain_size = contain;
+  }
+
   /// Sets how this element participates in hit testing. Paint/hit only; never
   /// affects layout. `None` clears any local override, so the element goes
   /// back to inheriting its effective value from the nearest ancestor that

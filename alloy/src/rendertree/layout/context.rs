@@ -26,6 +26,14 @@ pub struct LayoutData {
   // box's values or from the cache: the layout-box queries (geometry.rs) and
   // the layout slide's diff (tree/transitions.rs) key on it.
   pub laid_out: bool,
+  // CSS `contain: size`: the node sizes as if it had no content. A measured
+  // leaf's intrinsic size is zero (a texture's pixels, a text's lines add
+  // nothing), a container's children add nothing to its box and lay out
+  // inside whatever box the parent solved (LayoutContext::boxed_layout).
+  // What breaks the flex automatic minimum for a fill leaf whose texture
+  // follows its own box (okf/done/fill-leaf-intrinsic-size.md). Written by
+  // Element::set_contain_size.
+  pub contain_size: bool,
 }
 
 impl LayoutData {
@@ -37,6 +45,7 @@ impl LayoutData {
       layout_children: vec![],
       positioning_context: false,
       laid_out: false,
+      contain_size: false,
     }
   }
 
@@ -219,28 +228,25 @@ impl<'a> LayoutContext<'a> {
     }
   }
 
-  // A design-size view lays out on both sides of its fit
-  // (okf/done/viewbox-layout-space.md).
+  // A layout boundary: a container that lays out on both sides of its box.
   //
-  // Outside, it is a replaced element with the design size as intrinsic size
+  // Outside, it is a replaced element with `intrinsic` as its intrinsic size
   // (the texture's <img> rules), except that it compresses: a min-content
-  // query gets zero, since a design has no size it cannot scale below - a
-  // `flex={1}` design-size view fits a window smaller than its design instead of
-  // overflowing it the way a texture would.
+  // query gets zero, so a `flex={1}` boundary fits a parent smaller than its
+  // intrinsic size instead of overflowing it the way a texture would.
   //
-  // Inside, the children are their own root at the design size, whatever box
-  // the outside settled on: the space paint, hit testing, culling and
-  // bounding boxes already hand them, which the fit maps onto the box. The
-  // view's own size styles belong to the outer box, so the inner pass runs in
-  // ContentSize mode, where only the known dimensions count. Its output (the
-  // design size) is not what the parent sees; the children's placements are
-  // the point. The inner input is constant, so a resize re-solves nothing
-  // below the view: the children's caches answer.
-  fn design_size_layout(
+  // Inside, the children are their own root in the box `inner` names,
+  // whatever the outside settled on. The node's own size styles belong to
+  // the outer box, so the inner pass runs in ContentSize mode, where only
+  // the known dimensions count; its output is not what the parent sees, the
+  // children's placements are the point. An inner box that does not change
+  // re-solves nothing below the node: the children's caches answer.
+  fn boxed_layout(
     &mut self,
     node_id: NodeId,
     inputs: LayoutInput,
-    design: crate::impellers::Size,
+    intrinsic: crate::impellers::Size,
+    inner: impl FnOnce(Size<f32>) -> Size<f32>,
     display: Display,
   ) -> taffy::LayoutOutput {
     let style = &self.render_tree.node(u64::from(node_id)).layout_data().style;
@@ -253,13 +259,14 @@ impl<'a> LayoutContext<'a> {
         if min_content(available.width) || min_content(available.height) {
           return Size::ZERO;
         }
-        let size = replaced_size(known, design);
+        let size = replaced_size(known, intrinsic);
         Size { width: size.width, height: size.height }
       },
     );
     if inputs.run_mode == RunMode::PerformLayout {
-      let known = Size { width: Some(design.width), height: Some(design.height) };
-      let inner = LayoutInput {
+      let inner = inner(output.size);
+      let known = Size { width: Some(inner.width), height: Some(inner.height) };
+      let inputs = LayoutInput {
         run_mode: RunMode::PerformLayout,
         sizing_mode: SizingMode::ContentSize,
         axis: RequestedAxis::Both,
@@ -267,14 +274,41 @@ impl<'a> LayoutContext<'a> {
         known_dimensions_are_definite: Size { width: true, height: true },
         parent_size: known,
         available_space: Size {
-          width: AvailableSpace::Definite(design.width),
-          height: AvailableSpace::Definite(design.height),
+          width: AvailableSpace::Definite(inner.width),
+          height: AvailableSpace::Definite(inner.height),
         },
         vertical_margins_are_collapsible: Line::FALSE,
       };
-      self.container_layout(node_id, display, inner);
+      self.container_layout(node_id, display, inputs);
     }
     output
+  }
+
+  // A design-size view lays out on both sides of its fit
+  // (okf/done/viewbox-layout-space.md): outside a replaced element with the
+  // design size as intrinsic size (zero under size containment, like any
+  // contained node), inside the children at the design size, which the space
+  // paint, hit testing, culling and bounding boxes already hand them and the
+  // fit maps onto the box. The inner input is constant, so a resize
+  // re-solves nothing below the view.
+  fn design_size_layout(
+    &mut self,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    design: crate::impellers::Size,
+    display: Display,
+  ) -> taffy::LayoutOutput {
+    let contained = self.render_tree.node(u64::from(node_id)).layout_data().contain_size;
+    let intrinsic = if contained { crate::impellers::Size::zero() } else { design };
+    self.boxed_layout(node_id, inputs, intrinsic, |_| Size { width: design.width, height: design.height }, display)
+  }
+
+  // A contained container (LayoutData::contain_size): outside a replaced
+  // element of zero intrinsic size, so its children never reach its parent;
+  // inside the children in the box the parent solved, as any container lays
+  // them out.
+  fn contained_layout(&mut self, node_id: NodeId, inputs: LayoutInput, display: Display) -> taffy::LayoutOutput {
+    self.boxed_layout(node_id, inputs, crate::impellers::Size::zero(), |solved| solved, display)
   }
 }
 
@@ -365,7 +399,9 @@ impl<'a> LayoutContext<'a> {
         let alloy = tree.alloy;
         let (padding, border) = tree.insets(node_id);
         let inset = padding + border;
-        let style = &tree.render_tree.node(id).layout_data().style;
+        let layout = tree.render_tree.node(id).layout_data();
+        let style = &layout.style;
+        let contained = layout.contain_size;
         let kind = &tree.render_tree.node(id).kind;
         let output = compute_leaf_layout(
           inputs,
@@ -381,7 +417,14 @@ impl<'a> LayoutContext<'a> {
               width: known.width.map(|w| (w - inset.horizontal_axis_sum()).max(0.0)),
               height: known.height.map(|h| (h - inset.vertical_axis_sum()).max(0.0)),
             };
-            let size = kind.measure(&MeasureContext { platform, alloy, known, available });
+            // Size containment: the leaf measures as if empty, so nothing
+            // of its content reaches the parent and the kind's own measure
+            // is not consulted (a text still lays its lines out at paint).
+            let size = if contained {
+              replaced_size(known, crate::impellers::Size::zero())
+            } else {
+              kind.measure(&MeasureContext { platform, alloy, known, available })
+            };
             Size { width: size.width, height: size.height }
           },
         );
@@ -391,14 +434,16 @@ impl<'a> LayoutContext<'a> {
         output
       } else {
         let display = element.layout_data().style.display;
-        // A design-size view is a layout boundary (design_size_layout); a hidden one
-        // is hidden first.
+        // A design-size view and a contained container are layout boundaries
+        // (design_size_layout, contained_layout); a hidden one is hidden first.
+        let contained = element.layout_data().contain_size && display != Display::None;
         let design = match &element.kind {
           ElementKind::View(v) if display != Display::None => v.design_space(),
           _ => None,
         };
         match design {
           Some(design) => tree.design_size_layout(node_id, inputs, design, display),
+          None if contained => tree.contained_layout(node_id, inputs, display),
           None => tree.container_layout(node_id, display, inputs),
         }
       }

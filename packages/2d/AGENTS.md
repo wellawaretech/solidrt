@@ -720,8 +720,16 @@ sits, `viewport` is the nearest view (the `<SpriteLayer>`'s own, or
 inside a `<View2d>` that view), what a `<Camera2d>` drives, and
 `pointer` that view's feed (the owner's `pointer` prop, null without
 one); read under `output={false}` outside a `<View2d>` `viewport` throws. A FILL-mode
-view is 1x1 until the first layout: `ref` fires at mount, before it, so
-`viewport.size()` reads 1x1 there. Sprites added and positioned from
+leaf is size-contained (`contain="size"`, the CSS layout prop every
+element takes): it adds nothing to its ancestors' sizes, exactly as an
+empty `<view>` at 100% would, so a column of header, layer pane
+(`flexGrow: 1`) and footer needs no `minHeight={0}`, and a pane with no
+definite height does not come out square. The leaf then has no size of
+its own at all: a parent with no size leaves it empty, the view is
+invisible, and the component warns once with the stack of the component
+that built it, naming the fix (a size, or flexGrow in a sized column). A
+FILL-mode view is 1x1 until the first layout: `ref` fires at mount,
+before it, so `viewport.size()` reads 1x1 there. Sprites added and positioned from
 `ref` (the pool, the opening scene) are fine - the first layout resizes
 the view before the first paint - but anything that needs the real size
 (centering on the view) waits for `onLayout`, or works in a `designSize`

@@ -7,6 +7,7 @@
 import { createSignal } from "@solidjs/signals"
 import { getBoundingBox } from "./core"
 import { onLayout } from "./window"
+import { warnOnce } from "./warn"
 
 export type ScrollAxis = "vertical" | "horizontal" | "both"
 
@@ -75,11 +76,9 @@ export function createScroll(
 
   // A scroll viewport with no explicit main-axis size resolves to 0 in flex
   // layout and its content silently vanishes - a classic trap (maxHeight alone
-  // does not size it either). Detect it at measure time and warn once, with a
-  // stack captured at creation so the warning points at the component that
-  // built the scroller (the dev server remaps the frames to .tsx).
-  let origin = new Error().stack ?? ""
-  let warnedCollapsed = false
+  // does not size it either). Detect it at measure time and warn once, from
+  // the component that built the scroller (warnOnce captures its stack here).
+  let warnCollapsed = warnOnce()
 
   // Last measured overflow, refreshed each layout. scrollBy/scrollTo clamp
   // against these between layouts; onLayout re-clamps once new sizes are known.
@@ -110,17 +109,14 @@ export function createScroll(
     let vb = getBoundingBox(vp)
     let cb = getBoundingBox(ct)
     if (!vb || !cb) return
-    if (!warnedCollapsed) {
-      let zeroY = canY && vb.height === 0 && cb.height > 0
-      let zeroX = canX && vb.width === 0 && cb.width > 0
-      if (zeroY || zeroX) {
-        warnedCollapsed = true
-        let axisName = zeroY ? "height" : "width"
-        console.warn(
-          `Scroll container resolved to ${axisName} 0, so its content is invisible. ` +
-            `Give it an explicit ${axisName} or flex; maxHeight/maxWidth alone does not size it.\n${origin}`,
-        )
-      }
+    let zeroY = canY && vb.height === 0 && cb.height > 0
+    let zeroX = canX && vb.width === 0 && cb.width > 0
+    if (zeroY || zeroX) {
+      let axisName = zeroY ? "height" : "width"
+      warnCollapsed(
+        `Scroll container resolved to ${axisName} 0, so its content is invisible. ` +
+          `Give it an explicit ${axisName} or flex; maxHeight/maxWidth alone does not size it.`,
+      )
     }
     maxX = Math.max(0, cb.width - vb.width)
     maxY = Math.max(0, cb.height - vb.height)

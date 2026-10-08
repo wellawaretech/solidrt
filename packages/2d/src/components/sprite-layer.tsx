@@ -1,4 +1,4 @@
-import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack } from "@solidrt/core"
+import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack, warnOnce } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import type { BlendMode } from "@solidrt/core/gpu"
 import type { Atlas } from "../atlas.ts"
@@ -314,7 +314,18 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   // one onLayout applies size then oversample in order; setSize no-ops
   // when nothing changed.
   if (fill) {
+    let warnEmpty = warnOnce()
     onLayout(() => {
+      // The leaf adds no size of its own (contain="size" below), so a
+      // parent with no size leaves it empty: nothing renders, and nothing
+      // on screen says why.
+      let box = leaf && getLayoutBox(leaf)
+      if (box && (box.width <= 0 || box.height <= 0)) {
+        warnEmpty(
+          `SpriteLayer: the fill leaf laid out ${box.width} x ${box.height}, so the view is invisible. ` +
+            `It adds no size of its own: give its parent a size (width/height, or flexGrow in a sized column), as on the web.`,
+        )
+      }
       let size = viewSize()
       if (size) view.setSize(size.width, size.height)
     })
@@ -354,6 +365,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
               src={view.texture}
               width={fill ? "100%" : props.width}
               height={fill ? "100%" : props.height}
+              contain={fill ? "size" : undefined}
               onPointerDown={events ? viewHandlers.onPointerDown : undefined}
               onPointerMove={events ? viewHandlers.onPointerMove : undefined}
               onPointerUp={events ? viewHandlers.onPointerUp : undefined}
