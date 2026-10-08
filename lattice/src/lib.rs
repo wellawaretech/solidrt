@@ -41,7 +41,7 @@ mod tests;
 
 pub use entry::{main, Modules};
 // What a custom runtime writes its modules against (`flux::gui::frame`,
-// `flux::rquickjs`), through the one dependency it names.
+// `flux::rquickjs`, `flux::alloy`), through the one dependency it names.
 #[cfg(target_os = "android")]
 pub use entry::android_main;
 pub use flux;

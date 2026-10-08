@@ -14,6 +14,10 @@ mod tests;
 
 #[cfg(feature = "gui")]
 pub use alloy_plugins as gui;
+// The gui bindings hand out alloy's types (`gui::alloy_context`), so a module
+// names them through flux rather than through a dependency of its own.
+#[cfg(feature = "gui")]
+pub use alloy;
 #[cfg(feature = "test")]
 pub use test_plugins::host as test;
 
@@ -38,8 +42,8 @@ pub use standards_plugins::fetch::{request_body_from_value, JsResponseData};
 pub use standards_plugins::headers::header_pairs_from_init;
 pub use standards_plugins::random::{seed_random, DEFAULT_SEED};
 pub use standards_plugins::time::{
-  advance_virtual_time, advance_virtual_time_to_now, freeze_wall, install_virtual_time, set_virtual_now_source,
-  timeline_now_ms, timer_due, Timeline,
+  advance_virtual_time, advance_virtual_time_to_now, freeze_wall, idle_due, install_idle_periods, install_virtual_time,
+  set_virtual_now_source, timeline_now_ms, timer_due, Timeline,
 };
 
 /// Feature names this build provides, as surfaced to JS via `Flux.capabilities`.

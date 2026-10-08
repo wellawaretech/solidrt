@@ -7,7 +7,11 @@
 use rquickjs::{Context, Ctx, Runtime};
 
 use crate::pending::PendingOps;
-use crate::standards_plugins::time::{advance_virtual_time, install_virtual_time, set_virtual_now_source};
+use std::time::Duration;
+
+use crate::standards_plugins::time::{
+  advance_virtual_time, idle_due, install_idle_periods, install_virtual_time, run_idle_period, set_virtual_now_source,
+};
 
 fn with_virtual_ctx(f: impl FnOnce(&Ctx<'_>)) {
   let rt = Runtime::new().expect("js runtime");
@@ -208,5 +212,96 @@ fn a_frozen_wall_reads_zero_and_a_calendar_on_the_timeline() {
     assert_eq!(read(ctx), "0|946684800000|2000-01-01T00:00:00.000Z|true|string|5|true|true|946684800000|946684800000");
     frame_ms.store(1500, Ordering::Relaxed);
     assert_eq!(read(ctx), "0|946684801500|2000-01-01T00:00:01.500Z|true|string|5|true|true|946684800000|946684800000");
+  });
+}
+
+// ----- Idle callbacks on a frame driver -----
+// With `install_idle_periods` the idle periods are the driver's to run
+// (`run_idle_period`), the way a frame runner does after each frame;
+// the `timeout` rides the virtual timers.
+
+fn with_idle_ctx(f: impl FnOnce(&Ctx<'_>)) {
+  with_virtual_ctx(|ctx| {
+    install_idle_periods(ctx);
+    ctx
+      .eval::<(), _>(
+        "globalThis.idle = (opts) => requestIdleCallback((d) => \
+           log.push('idle:' + d.didTimeout + ':' + (d.timeRemaining() <= 50)), opts)",
+      )
+      .expect("define idle");
+    f(ctx);
+  });
+}
+
+#[test]
+fn idle_callback_runs_in_an_idle_period_not_with_the_timers() {
+  with_idle_ctx(|ctx| {
+    ctx.eval::<(), _>("idle()").expect("register");
+    assert!(idle_due(ctx));
+    advance_virtual_time(ctx, 100.0);
+    assert_eq!(log(ctx), "");
+    run_idle_period(ctx, None);
+    assert_eq!(log(ctx), "idle:false:true");
+    assert!(!idle_due(ctx));
+  });
+}
+
+#[test]
+fn idle_period_that_has_passed_runs_nothing() {
+  with_idle_ctx(|ctx| {
+    ctx.eval::<(), _>("idle()").expect("register");
+    run_idle_period(ctx, Some(tokio::time::Instant::now() - Duration::from_millis(1)));
+    assert_eq!(log(ctx), "");
+    assert!(idle_due(ctx));
+    run_idle_period(ctx, Some(tokio::time::Instant::now() + Duration::from_secs(1)));
+    assert_eq!(log(ctx), "idle:false:true");
+  });
+}
+
+#[test]
+fn idle_callbacks_run_in_registration_order_and_a_reregistration_waits() {
+  with_idle_ctx(|ctx| {
+    ctx
+      .eval::<(), _>("requestIdleCallback(() => { log.push('a'); requestIdleCallback(() => log.push('c')) }); idle()")
+      .expect("register");
+    run_idle_period(ctx, None);
+    assert_eq!(log(ctx), "a,idle:false:true");
+    run_idle_period(ctx, None);
+    assert_eq!(log(ctx), "a,idle:false:true,c");
+  });
+}
+
+#[test]
+fn idle_timeout_runs_the_callback_as_a_timer_once() {
+  with_idle_ctx(|ctx| {
+    ctx.eval::<(), _>("idle({ timeout: 100 })").expect("register");
+    advance_virtual_time(ctx, 99.0);
+    assert_eq!(log(ctx), "");
+    advance_virtual_time(ctx, 100.0);
+    assert_eq!(log(ctx), "idle:true:true");
+    assert!(!idle_due(ctx));
+    run_idle_period(ctx, None);
+    assert_eq!(log(ctx), "idle:true:true");
+  });
+}
+
+#[test]
+fn idle_period_drops_the_timeout() {
+  with_idle_ctx(|ctx| {
+    ctx.eval::<(), _>("idle({ timeout: 100 })").expect("register");
+    run_idle_period(ctx, None);
+    advance_virtual_time(ctx, 500.0);
+    assert_eq!(log(ctx), "idle:false:true");
+  });
+}
+
+#[test]
+fn cancel_idle_callback_drops_the_timeout_too() {
+  with_idle_ctx(|ctx| {
+    ctx.eval::<(), _>("cancelIdleCallback(idle({ timeout: 10 }))").expect("register and cancel");
+    assert!(!idle_due(ctx));
+    advance_virtual_time(ctx, 50.0);
+    run_idle_period(ctx, None);
+    assert_eq!(log(ctx), "");
   });
 }

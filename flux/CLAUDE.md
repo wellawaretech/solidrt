@@ -25,9 +25,26 @@ they marshal:
   `gui::install`; flux owns which plugins exist and their registration order,
   and `gui::frame` owns the frame protocol: `advance` and `deliver` fix the
   order the per-frame hooks run in, `draw` runs the transition ticks, the
-  demand gate and the draw phases over the tree. A runner drives a frame
-  with those three calls, never the per-plugin hooks or the tree handle
-  (both crate-private).
+  demand gate and the draw phases over the tree, `idle` runs the idle
+  period after the frame. A runner drives a frame with those four calls,
+  never the per-plugin hooks or the tree handle (both crate-private).
+
+A fourth layer, `test_plugins/` (behind the `test` feature, which only the
+`flux` binary turns on): `flux:test`, which is no web standard and marshals
+neither forge nor alloy but flux's own facilities. Its surface is plain JS
+embedded in the crate (`test.js`), exported by a native module definition.
+Beside it sits the test host (`host.rs`, exported as `flux::test`): it runs
+a test file by evaluating it once to list its tests and once more per test,
+every test in an engine of its own, and the `flux` binary's `--test` mode
+is that host. A failed test's record carries details read in its engine
+(what is in flight, plus what an embedder's `DetailsHook` adds).
+
+The flux module tests are `flux/tests/*.test.ts`, run by `srt test --only
+flux` on that host, typed against `packages/flux-types`. `flux/tests/*.rs`
+holds only what Rust observes about an engine and a test inside it cannot
+(the logger, uncaught reporting, idleness, exit, the embedding API, isolate
+spawning, the websocket wire against a raw client); a test that only checks
+what a module call returns belongs in the `.test.ts` file beside it.
 
 Placement rule: is the JS surface a web standard? `standards_plugins/`,
 regardless of what backs it (`fetch` marshals forge but is a standard).
@@ -52,7 +69,7 @@ only the instance id and forwards to a free `*_impl` fn. Models:
 
 `plugins/` holds what the layers share: `js_error.rs` + `marshal.rs` +
 `value.rs` + `seekable.rs`, the marshalling toolkit; `events.rs`, the event
-bus mechanism (listener registry, sticky cache, PendingOps hold) with no JS
+bus mechanism (listener registry, sticky cache, standing hold) with no JS
 surface of its own, which forge plugins and lattice build their `on`/`once`
 surfaces on; and `mod.rs`, which builds the JS context and registers the
 layers. `value.rs` is where
@@ -144,8 +161,8 @@ trips QuickJS's shutdown assertion (`gc_obj_list` not empty). Keep Persistents
 in a context-userdata registry keyed by an id, and have the class hold ONLY
 the id - a clone of the registry Rc kept in the class pins the Persistents
 just as fatally. Userdata drops with the context, before the runtime is
-freed, so everything releases in order. See `WasmHandlers` (flux:wasm) and
-`FfiHandlers` (flux:ffi) for the worked pattern.
+freed, so everything releases in order. See `WasmHandlers` (flux:wasm) for the
+worked pattern.
 
 The same holds for `Function::new` closures that stay reachable from JS at
 teardown (a method set on a long-lived object): a captured `Object`/`Value`
@@ -167,8 +184,16 @@ runs on the JS thread with `ctx` in hand, so the rejection is a plain `Error`.
 
 - Sync argument validation (where you already hold `Ctx`) throws directly with
   `Exception::throw_message(&ctx, msg)`.
-- Hold/release `PendingOps` around the awaited work so the engine stays alive
-  while the async op is in flight.
+- Hold the engine while the async op lasts, with a `PendingOps` hold
+  (`pending.rs`), released when it is dropped. A hold has a class and names
+  its kind: `in_flight("fetch")` for work that completes by itself (what
+  `settle` waits for), `standing("server")` for what lasts until its owner
+  or the outside world ends it (a listener, an open socket, a read waiting
+  on a peer, a running child, a timer). Take it where the work is started,
+  before the future is built, not inside it; `with_in_flight` and
+  `with_standing` (`marshal.rs`) do both for a plain fallible future. A new
+  async binding decides its class by one question: does it end without
+  anyone else acting?
 
 ## Never panic on JS input
 

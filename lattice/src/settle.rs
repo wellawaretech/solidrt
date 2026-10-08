@@ -6,7 +6,8 @@
 //   query, the glyph cells a text drew without; what stands, like a server
 //   or a timer not yet due, is not waited for) and the job queue is dry,
 // - no timer is due (on the frame timeline a due timer fires with the next
-//   frame, so it is work waiting that no frame request stands for), and
+//   frame, so it is work waiting that no frame request stands for), no idle
+//   callback waits for the idle period a frame brings, and
 // - no frame is demanded (the request latch, which a tree write, a running
 //   transition and an `onFrame` callback all set).
 //
@@ -43,15 +44,21 @@ pub(crate) struct Unsettled {
   pub in_flight: Vec<(&'static str, u32)>,
   pub demand: Vec<String>,
   pub timer_due: bool,
+  pub idle_due: bool,
 }
 
 impl Unsettled {
   pub(crate) fn read(ctx: &Ctx<'_>) -> Self {
-    Self { in_flight: flux::in_flight(ctx), demand: flux::gui::frame::demand(ctx), timer_due: flux::timer_due(ctx) }
+    Self {
+      in_flight: flux::in_flight(ctx),
+      demand: flux::gui::frame::demand(ctx),
+      timer_due: flux::timer_due(ctx),
+      idle_due: flux::idle_due(ctx),
+    }
   }
 
   fn at_rest(&self) -> bool {
-    self.in_flight.is_empty() && self.demand.is_empty() && !self.timer_due
+    self.in_flight.is_empty() && self.demand.is_empty() && !self.timer_due && !self.idle_due
   }
 
   /// What is left, as a sentence part: "frames are still demanded by
@@ -63,6 +70,9 @@ impl Unsettled {
     }
     if self.timer_due {
       parts.push("a timer is due at every frame (one that re-arms with no delay)".to_string());
+    }
+    if self.idle_due {
+      parts.push("an idle callback waits at every frame (one that re-registers itself)".to_string());
     }
     if !self.in_flight.is_empty() {
       parts.push(format!("still in flight: {}", flux::describe_in_flight(&self.in_flight)));

@@ -795,6 +795,7 @@ async fn try_serve(
                             "inFlight": in_flight,
                             "demand": left.as_ref().map(|left| left.demand.clone()).unwrap_or_default(),
                             "timerDue": left.as_ref().is_some_and(|left| left.timer_due),
+                            "idleDue": left.as_ref().is_some_and(|left| left.idle_due),
                           },
                         })
                         .to_string();

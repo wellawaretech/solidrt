@@ -1,5 +1,13 @@
-// Timers, microtask scheduling, and the monotonic clock. flux's timers differ
-// from the browser in one way: no extra callback arguments are forwarded.
+// Timers, task scheduling, idle callbacks, microtask scheduling, and the
+// monotonic clock. flux's timers differ from the browser in one way: no
+// extra callback arguments are forwarded.
+//
+// Two kinds of scheduling. What names a point in time (setTimeout,
+// setInterval, requestAnimationFrame) runs on the app's frame clock, as
+// described next. What names a turn (queueMicrotask, setImmediate) runs on
+// the engine loop whenever it is ready: between frames in a GUI runtime,
+// never waiting for one, and not held by a paused clock. requestIdleCallback
+// sits on the frame side: its idle period is what is left of a frame.
 //
 // In a GUI runtime the timers are FRAME-QUANTIZED but WALL-ACCURATE: a
 // deadline is measured against the real clock from the moment of
@@ -31,6 +39,50 @@ declare function clearTimeout(id?: number): void
 declare function setInterval(callback: () => void, ms?: number): number
 /** Cancel a running interval. Unknown or missing ids are ignored. */
 declare function clearInterval(id?: number): void
+/**
+ * Run `callback` on the next turn of the engine loop: after the current
+ * task and its microtasks, with no delay floor. Not a timer: in a GUI
+ * runtime it runs between frames (a chain of immediates makes progress at
+ * CPU speed while frames keep coming) and a paused clock does not hold it;
+ * it always runs before a `setTimeout(fn, 0)` registered with it there.
+ * Returns an id for {@link clearImmediate}.
+ */
+declare function setImmediate(callback: () => void): number
+/** Cancel a pending immediate. Unknown or missing ids are ignored. */
+declare function clearImmediate(id?: number): void
+
+/** What an idle callback is handed: how much of the idle period is left. */
+interface IdleDeadline {
+  /** Milliseconds left in the idle period; 0 once it has passed. */
+  timeRemaining(): number
+  /** Whether the `timeout` ran the callback instead of an idle period. */
+  readonly didTimeout: boolean
+}
+
+interface IdleRequestOptions {
+  /**
+   * If no idle period has run the callback after this many ms, run it as
+   * a task anyway, with `didTimeout` true and no time remaining. That
+   * task is a timer, so in a GUI runtime it fires on a frame boundary,
+   * like `setTimeout`.
+   */
+  timeout?: number
+}
+
+/**
+ * Run `callback` in an idle period, oldest registration first, with an
+ * {@link IdleDeadline}. In a GUI runtime an idle period is what is left of a
+ * frame after its work: it begins once the frame's callbacks, flush and
+ * draw are done and its microtasks have run, and ends when the frame is
+ * due on screen, at most 50 ms later. Callbacks that do not fit wait for
+ * the next frame's period, and one registered during a period waits for
+ * the next. A paused clock holds the frames and with them the idle
+ * periods. Headless flux has no frames: the callback runs on the next
+ * turn with the full 50 ms. Returns an id for {@link cancelIdleCallback}.
+ */
+declare function requestIdleCallback(callback: (deadline: IdleDeadline) => void, options?: IdleRequestOptions): number
+/** Cancel a pending idle callback. Unknown or missing ids are ignored. */
+declare function cancelIdleCallback(id?: number): void
 /**
  * Queue `callback` to run as a microtask: after the current job finishes, before
  * any timer fires.

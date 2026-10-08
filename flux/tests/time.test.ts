@@ -159,6 +159,128 @@ test("async/await after a timer", async () => {
   expect(await work()).toBe("step1,step2,step3")
 })
 
+// ----- setImmediate -----
+
+test("setImmediate runs after the current job and its microtasks", async () => {
+  let order: string[] = []
+  await new Promise<void>((resolve) => {
+    setImmediate(() => {
+      order.push("immediate")
+      resolve()
+    })
+    queueMicrotask(() => order.push("microtask"))
+    order.push("sync")
+  })
+  expect(order).toEqual(["sync", "microtask", "immediate"])
+})
+
+test("setImmediate returns a numeric id", () => {
+  let id = setImmediate(() => {})
+  expect(typeof id).toBe("number")
+  clearImmediate(id)
+})
+
+test("clearImmediate cancels a pending immediate", async () => {
+  let fired = false
+  let id = setImmediate(() => {
+    fired = true
+  })
+  clearImmediate(id)
+  await sleep(20)
+  expect(fired).toBe(false)
+})
+
+test("clearImmediate of an unknown or missing id is a no-op", () => {
+  expect(() => clearImmediate(999)).not.toThrow()
+  expect(() => clearImmediate()).not.toThrow()
+})
+
+test("a chain of immediates makes progress at CPU speed", async () => {
+  // The chunking use: each step yields to the loop and comes straight back,
+  // with no delay floor between steps.
+  let start = performance.now()
+  let steps = 0
+  await new Promise<void>((resolve) => {
+    function step() {
+      if (++steps < 1000) setImmediate(step)
+      else resolve()
+    }
+    setImmediate(step)
+  })
+  expect(steps).toBe(1000)
+  expect(performance.now() - start).toBeLessThan(1000)
+})
+
+// ----- requestIdleCallback -----
+// Headless flux has no frames to be idle between: the idle period is the
+// next turn, with the full budget.
+
+test("requestIdleCallback runs with an idle deadline", async () => {
+  let deadline = await new Promise<IdleDeadline>((resolve) => requestIdleCallback(resolve))
+  expect(deadline.didTimeout).toBe(false)
+  let remaining = deadline.timeRemaining()
+  expect(remaining).toBeGreaterThan(0)
+  expect(remaining).toBeLessThanOrEqual(50)
+})
+
+test("requestIdleCallback runs after the current job and its microtasks", async () => {
+  let order: string[] = []
+  await new Promise<void>((resolve) => {
+    requestIdleCallback(() => {
+      order.push("idle")
+      resolve()
+    })
+    queueMicrotask(() => order.push("microtask"))
+    order.push("sync")
+  })
+  expect(order).toEqual(["sync", "microtask", "idle"])
+})
+
+test("idle callbacks run in registration order", async () => {
+  let order: number[] = []
+  await new Promise<void>((resolve) => {
+    requestIdleCallback(() => order.push(1))
+    requestIdleCallback(() => order.push(2))
+    requestIdleCallback(() => {
+      order.push(3)
+      resolve()
+    })
+  })
+  expect(order).toEqual([1, 2, 3])
+})
+
+test("cancelIdleCallback cancels a pending idle callback", async () => {
+  let fired = false
+  let id = requestIdleCallback(() => {
+    fired = true
+  })
+  cancelIdleCallback(id)
+  await sleep(20)
+  expect(fired).toBe(false)
+})
+
+test("cancelIdleCallback of an unknown or missing id is a no-op", () => {
+  expect(() => cancelIdleCallback(999)).not.toThrow()
+  expect(() => cancelIdleCallback()).not.toThrow()
+})
+
+test("an idle callback with a timeout runs once, from the idle period", async () => {
+  // The period comes first here; the timeout must then be dropped rather
+  // than run the callback a second time.
+  let runs = 0
+  let didTimeout: boolean | undefined
+  requestIdleCallback(
+    (deadline) => {
+      runs++
+      didTimeout = deadline.didTimeout
+    },
+    { timeout: 5 },
+  )
+  await sleep(40)
+  expect(runs).toBe(1)
+  expect(didTimeout).toBe(false)
+})
+
 // ----- performance.now() -----
 
 test("performance.now returns a number", () => {

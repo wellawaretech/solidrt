@@ -51,7 +51,7 @@ rely on must be named.
   `flux:camera`, `flux:microphone`, `flux:audio`, `flux:gpu`, `flux:spatial`,
   `flux:font`.
 - Web-standard globals: `console`, `fetch` + `Headers`/`Request`/`Response`,
-  `setTimeout`/`setInterval`/`queueMicrotask`, `performance`, `WebSocket`,
+  `setTimeout`/`setInterval`/`setImmediate`/`requestIdleCallback`/`queueMicrotask`, `performance`, `WebSocket`,
   `TextEncoder`/`TextDecoder`, `crypto.subtle.digest`. These are deliberate subsets matching exactly what
   the runtime implements.
 - GUI globals (gui-enabled runtime only): `requestAnimationFrame` /

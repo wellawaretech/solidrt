@@ -195,16 +195,26 @@ pub fn advance_virtual_time(ctx: &Ctx<'_>, now_ms: f64) {
   }
 }
 
-// ----- Scheduling: setTimeout / setInterval / queueMicrotask -----
+// ----- Scheduling: setTimeout / setInterval / setImmediate / queueMicrotask -----
 
-// id -> the cancel signal of a wall-clock timer and its standing hold on
-// the engine, released with the entry: on fire or cancel, whichever is first.
-type ActiveMap = Rc<std::cell::RefCell<HashMap<u32, (oneshot::Sender<()>, Hold)>>>;
+// id -> the cancel signal of a wall-clock timer or an immediate and its hold
+// on the engine, released with the entry: on fire or cancel, whichever is
+// first.
+type ActiveMap = Rc<RefCell<HashMap<u32, (oneshot::Sender<()>, Hold)>>>;
 
-#[derive(Clone)]
+// The scheduling state of a context, one id space for everything it hands
+// out (timers, immediates, idle callbacks): an id lives in exactly one
+// store, so a cancel can try each in turn. In context userdata so the frame
+// protocol reaches the idle queue.
+#[derive(Clone, JsLifetime)]
 pub(crate) struct Timers {
+  #[qjs(skip_trace)]
   next_id: Rc<Cell<u32>>,
+  #[qjs(skip_trace)]
   active: ActiveMap,
+  #[qjs(skip_trace)]
+  idle: Rc<RefCell<IdleQueue>>,
+  #[qjs(skip_trace)]
   pending: PendingOps,
 }
 
@@ -212,7 +222,8 @@ impl Timers {
   pub fn new(ctx: &Ctx<'_>) -> Self {
     Self {
       next_id: Rc::new(Cell::new(1)),
-      active: Rc::new(std::cell::RefCell::new(HashMap::new())),
+      active: Rc::new(RefCell::new(HashMap::new())),
+      idle: Rc::new(RefCell::new(IdleQueue::default())),
       pending: PendingOps::of(ctx),
     }
   }
@@ -266,6 +277,35 @@ impl Timers {
     id
   }
 
+  // Run `cb` on the next turn of the engine loop: after the current task
+  // and its microtasks, ahead of nothing in particular. Not a timer: it is
+  // never on the virtual timeline, so in a frame-paced runtime it runs
+  // between frames and a paused clock does not hold it. The task yields
+  // once before running, which is what lets a chain of immediates
+  // interleave with the loop's other work (a frame, an event): the
+  // engine's scheduler hands control back when a task re-queues itself,
+  // but never between a task that completes and the one it spawned.
+  fn set_immediate<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>) -> u32 {
+    let id = self.alloc_id();
+    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+    // In flight, not standing: an immediate completes by itself, so what
+    // waits for the app to come to rest waits for it.
+    self.active.borrow_mut().insert(id, (cancel_tx, self.pending.in_flight("immediate")));
+    let timers = self.clone();
+    ctx.spawn(async move {
+      tokio::select! {
+          _ = tokio::task::yield_now() => {
+              timers.remove(id);
+              if let Err(e) = cb.call::<(), ()>(()) {
+                report_uncaught(cb.ctx(), e, "setImmediate callback");
+              }
+          }
+          _ = cancel_rx => {}
+      }
+    });
+    id
+  }
+
   fn set_interval<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, ms: u64) -> u32 {
     let id = self.alloc_id();
     if let Some(vt) = ctx.userdata::<VirtualTime>() {
@@ -291,6 +331,166 @@ impl Timers {
       }
     });
     id
+  }
+}
+
+// ----- Idle callbacks: requestIdleCallback / cancelIdleCallback -----
+
+// The longest idle period an idle callback is given, in ms: the Background
+// Tasks spec's cap on timeRemaining(), and the whole budget of a period
+// with no frame due (headless flux, a stepped host between its frames).
+const IDLE_PERIOD_MAX_MS: f64 = 50.0;
+
+struct IdleEntry {
+  id: u32,
+  callback: Persistent<Function<'static>>,
+  // The timer that runs the callback with didTimeout if no idle period got
+  // to it first (the `timeout` option); cancelled when a period does.
+  timeout_timer: Option<u32>,
+  // Standing: the callback waits for an idle period, which only a frame (or
+  // the next turn, headless) brings; a settle steps that frame itself.
+  _hold: Hold,
+}
+
+#[derive(Default)]
+struct IdleQueue {
+  // Registration order, which is the order the periods run them in.
+  entries: Vec<IdleEntry>,
+  // Whether a frame driver hands out the idle periods (see
+  // `install_idle_periods`). Without one, a registration schedules its own
+  // period on the next engine turn: headless flux has no frames to be idle
+  // between, so the next turn is as idle as it gets.
+  frame_driven: bool,
+}
+
+// The IdleDeadline handed to a callback: `timeRemaining()` counts down to
+// the period's end, `didTimeout` says the timeout ran it instead.
+fn idle_deadline<'js>(ctx: Ctx<'js>, until: Instant, did_timeout: bool) -> rquickjs::Result<Object<'js>> {
+  let deadline = Object::new(ctx.clone())?;
+  deadline.set("didTimeout", did_timeout)?;
+  let time_remaining =
+    Function::new(ctx, move || until.saturating_duration_since(Instant::now()).as_secs_f64() * 1000.0)?;
+  deadline.set("timeRemaining", time_remaining)?;
+  Ok(deadline)
+}
+
+impl Timers {
+  fn request_idle_callback<'js>(
+    &self,
+    ctx: &Ctx<'js>,
+    cb: Function<'js>,
+    timeout_ms: Option<u64>,
+  ) -> rquickjs::Result<u32> {
+    let id = self.alloc_id();
+    let timeout_timer = match timeout_ms {
+      Some(ms) => {
+        let timers = self.clone();
+        let timed_out = Function::new(ctx.clone(), MutFn::from(move |ctx: Ctx<'_>| timers.idle_timed_out(&ctx, id)))?;
+        Some(self.set_timeout(ctx, timed_out, ms))
+      }
+      None => None,
+    };
+    let hold = self.pending.standing("idle callback");
+    let mut idle = self.idle.borrow_mut();
+    idle.entries.push(IdleEntry { id, callback: Persistent::save(ctx, cb), timeout_timer, _hold: hold });
+    if !idle.frame_driven {
+      let ctx = ctx.clone();
+      ctx.clone().spawn(async move {
+        tokio::task::yield_now().await;
+        run_idle_period(&ctx, None);
+      });
+    }
+    Ok(id)
+  }
+
+  fn cancel_idle_callback(&self, ctx: &Ctx<'_>, id: u32) {
+    let entry = self.take_idle_entry(id);
+    if let Some(timer) = entry.and_then(|e| e.timeout_timer) {
+      self.cancel(ctx, timer);
+    }
+  }
+
+  fn take_idle_entry(&self, id: u32) -> Option<IdleEntry> {
+    let mut idle = self.idle.borrow_mut();
+    let at = idle.entries.iter().position(|e| e.id == id)?;
+    Some(idle.entries.remove(at))
+  }
+
+  // The `timeout` ran out before an idle period got to the callback: run it
+  // now, as the task the timer is, with nothing remaining.
+  fn idle_timed_out(&self, ctx: &Ctx<'_>, id: u32) {
+    if let Some(entry) = self.take_idle_entry(id) {
+      self.run_idle_entry(ctx, entry, Instant::now(), true);
+    }
+  }
+
+  fn run_idle_entry(&self, ctx: &Ctx<'_>, entry: IdleEntry, until: Instant, did_timeout: bool) {
+    if let Some(timer) = entry.timeout_timer {
+      self.cancel(ctx, timer);
+    }
+    let Ok(cb) = entry.callback.restore(ctx) else {
+      return;
+    };
+    let deadline = match idle_deadline(ctx.clone(), until, did_timeout) {
+      Ok(deadline) => deadline,
+      Err(e) => {
+        report_uncaught(ctx, e, "requestIdleCallback deadline");
+        return;
+      }
+    };
+    if let Err(e) = cb.call::<_, ()>((deadline,)) {
+      report_uncaught(ctx, e, "requestIdleCallback callback");
+    }
+  }
+}
+
+/// Hand this context's idle periods to a frame driver: from here on an idle
+/// callback waits for `run_idle_period`, which the driver calls after a
+/// frame's work. Install with the driver, before app code runs.
+pub fn install_idle_periods(ctx: &Ctx<'_>) {
+  let timers = ctx.userdata::<Timers>().expect("timers installed");
+  timers.idle.borrow_mut().frame_driven = true;
+}
+
+/// Whether an idle callback of this context waits for a frame-driven idle
+/// period: work waiting that no frame request stands for, like a due
+/// timer. False without `install_idle_periods`, where the next turn runs it.
+pub fn idle_due(ctx: &Ctx<'_>) -> bool {
+  let Some(timers) = ctx.userdata::<Timers>() else {
+    return false;
+  };
+  let idle = timers.idle.borrow();
+  idle.frame_driven && !idle.entries.is_empty()
+}
+
+/// An idle period: run the idle callbacks registered before this call,
+/// oldest first, each with a deadline counting down to `until`, until it
+/// passes or none is left. `None` is a period with nothing due; either way
+/// the period is capped at the spec's 50 ms. A callback registered during
+/// the period waits for the next one, and a period whose end has already
+/// passed runs nothing.
+pub fn run_idle_period(ctx: &Ctx<'_>, until: Option<Instant>) {
+  let Some(timers) = ctx.userdata::<Timers>() else {
+    return;
+  };
+  let timers = timers.clone();
+  let Some(last_id) = timers.idle.borrow().entries.last().map(|e| e.id) else {
+    return;
+  };
+  let cap = Instant::now() + Duration::from_secs_f64(IDLE_PERIOD_MAX_MS / 1000.0);
+  let until = until.map_or(cap, |until| until.min(cap));
+  while Instant::now() < until {
+    let entry = {
+      let mut idle = timers.idle.borrow_mut();
+      match idle.entries.first() {
+        Some(first) if first.id <= last_id => Some(idle.entries.remove(0)),
+        _ => None,
+      }
+    };
+    let Some(entry) = entry else {
+      break;
+    };
+    timers.run_idle_entry(ctx, entry, until, false);
   }
 }
 
@@ -337,6 +537,13 @@ fn timer_id(arg: OptArg<Value<'_>>) -> Option<u32> {
   } else {
     None
   }
+}
+
+// The `timeout` of requestIdleCallback's options: a positive finite number
+// of ms arms the timeout, anything else (no options, no timeout, 0) does not.
+fn idle_timeout_ms(opts: OptArg<Value<'_>>) -> Option<u64> {
+  let timeout: f64 = opts.0?.into_object()?.get::<_, Option<f64>>("timeout").ok()??;
+  (timeout.is_finite() && timeout > 0.0).then(|| timeout as u64)
 }
 
 // The delay argument as the web reads it: omitted, undefined or null is 0
@@ -388,13 +595,69 @@ fn init_timers(ctx: &Ctx<'_>) {
 
   let clear_interval = Function::new(
     ctx.clone(),
-    MutFn::from(move |ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
-      if let Some(id) = timer_id(id) {
-        timers.cancel(&ctx, id);
+    MutFn::from({
+      let timers = timers.clone();
+      move |ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
+        if let Some(id) = timer_id(id) {
+          timers.cancel(&ctx, id);
+        }
       }
     }),
   )
   .unwrap();
+
+  let set_immediate = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let timers = timers.clone();
+      move |cb: Function<'_>| -> u32 {
+        let ctx = cb.ctx().clone();
+        timers.set_immediate(&ctx, cb)
+      }
+    }),
+  )
+  .unwrap();
+
+  // clearImmediate: the one cancel serves every id the context hands out.
+  let clear_immediate = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let timers = timers.clone();
+      move |ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
+        if let Some(id) = timer_id(id) {
+          timers.cancel(&ctx, id);
+        }
+      }
+    }),
+  )
+  .unwrap();
+
+  let request_idle_callback = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let timers = timers.clone();
+      move |cb: Function<'_>, opts: OptArg<Value<'_>>| -> rquickjs::Result<u32> {
+        let ctx = cb.ctx().clone();
+        timers.request_idle_callback(&ctx, cb, idle_timeout_ms(opts))
+      }
+    }),
+  )
+  .unwrap();
+
+  let cancel_idle_callback = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let timers = timers.clone();
+      move |ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
+        if let Some(id) = timer_id(id) {
+          timers.cancel_idle_callback(&ctx, id);
+        }
+      }
+    }),
+  )
+  .unwrap();
+
+  ctx.store_userdata(timers).expect("store timers");
 
   // Stash the engine's native queueMicrotask before the global is overwritten
   // below - reading it afterwards would recurse into our wrapper.
@@ -406,6 +669,10 @@ fn init_timers(ctx: &Ctx<'_>) {
   globals.set("clearTimeout", clear_timeout).unwrap();
   globals.set("setInterval", set_interval).unwrap();
   globals.set("clearInterval", clear_interval).unwrap();
+  globals.set("setImmediate", set_immediate).unwrap();
+  globals.set("clearImmediate", clear_immediate).unwrap();
+  globals.set("requestIdleCallback", request_idle_callback).unwrap();
+  globals.set("cancelIdleCallback", cancel_idle_callback).unwrap();
   globals.set("queueMicrotask", queue_microtask).unwrap();
 }
 

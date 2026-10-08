@@ -331,9 +331,10 @@ when exactly one client is connected.
   mute leaves them alone.
 - `/settle` (`?max=<ms>`, default 5000, at most 30000) - waits until the
   app is at rest and says whether it got there: `{ settled, waitedMs,
-  demand, inFlight, timerDue }`. At rest means nothing the app started is
-  in flight (a fetch, a file or body read, a query, an isolate call), no
-  timer is due and no frame is demanded. Call it after `/input`, `/debug`,
+  demand, inFlight, timerDue, idleDue }`. At rest means nothing the app
+  started is in flight (a fetch, a file or body read, a query, an isolate
+  call), no timer is due, no idle callback waits for its idle period and no
+  frame is demanded. Call it after `/input`, `/debug`,
   `/link` or `/reload` and before `/tree` or `/snapshot`, in place of a
   sleep. When `settled` is false the rest says why: `demand` lists what
   still wants frames ("onFrame", "a transition on view labelled \"drawer\"",

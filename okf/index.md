@@ -298,6 +298,13 @@ Shaped, not started.
   on a half pixel and reads as a soft second row whatever the box does;
   browsers snap border widths to whole device pixels (at least one), and the
   box kinds' strokes should too.
+- **[Native modules cannot read camera frames](backlog/camera-frame-tap.md)** [2026-10-08]
+  alloy's camera pump holds every frame as upright RGBA on the CPU and hands
+  it only to the texture upload and the QR decoder, so a custom runtime module
+  (inference, hand tracking, OCR) can reach frames only by reading the camera
+  texture back from the GPU; a latest-frame tap on the session, keyed by the
+  texture id JS already holds, gives a module frames on its own thread, and QR
+  decoding moves onto it off the UI thread.
 - **[Make sol check honor solidrt.entry](backlog/check-honors-project-entry.md)** [2026-09-29]
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is

@@ -49,6 +49,8 @@ echo 'console.log("hello")' | fluxc > app.bin
 | `console.log/warn/error`           | routed through the configured logger                          |
 | `setTimeout` / `clearTimeout`      |                                                               |
 | `setInterval` / `clearInterval`    |                                                               |
+| `setImmediate` / `clearImmediate`  | next engine turn; between frames in a GUI runtime             |
+| `requestIdleCallback`              | what is left of a frame; the next turn headless               |
 | `performance.now()`                | ms since process start; host-overridable via `Clock` userdata |
 | `fetch(url, opts?)`                | returns a `Response`                                          |
 | `Request` / `Response` / `Headers` | web-standard                                                  |

@@ -190,6 +190,8 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .plugin(move |ctx| tree::store_state(&ctx, render_tree, alloy_cmd_tx))
     .plugin(|ctx| input::store_state(&ctx))
     .plugin(|ctx| raf::init(&ctx))
+    // The frame protocol hands out the idle periods (`frame::idle`).
+    .plugin(|ctx| crate::standards_plugins::time::install_idle_periods(&ctx))
     .plugin(|ctx| gpu::store_state(&ctx))
     .plugin(|ctx| camera::store_state(&ctx))
     .plugin(|ctx| microphone::store_state(&ctx))

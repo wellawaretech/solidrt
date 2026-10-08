@@ -477,6 +477,7 @@ impl UiRuntime for FluxRuntime {
     let wall_start = self.wall_start;
     let platform = self.platform.clone();
     let timing = self.timing.clone();
+    let idle_exec = eh.clone();
     eh.exec(move |ctx| {
       // Publish the present being computed before reading the clock, so in
       // a stepped run the clock reports this frame's virtual time.
@@ -609,6 +610,15 @@ impl UiRuntime for FluxRuntime {
       // render host) looks again.
       #[cfg(any(feature = "go", feature = "test"))]
       crate::settle::frame_ran(&ctx);
+      // The idle period after the frame, in an exec of its own so the
+      // frame's microtask checkpoint runs first: until the present deadline
+      // in run mode (the next signal comes with the present), the full
+      // budget when stepped (nothing is due until the host steps). Only
+      // queued when an idle callback waits.
+      if flux::idle_due(&ctx) {
+        let until = paced.as_ref().map(|_| present_at);
+        idle_exec.exec(move |ctx| flux::gui::frame::idle(&ctx, until));
+      }
     });
   }
 }

@@ -16,7 +16,8 @@ This site is built by a Flux script.
 
 Web-standard APIs are global, with the names and shapes you already know:
 `fetch`, `Request`, `Response`, `Headers`, `console`, `setTimeout` and
-`setInterval`, `queueMicrotask`, `performance`, `WebSocket`, `TextEncoder`
+`setInterval`, `setImmediate`, `requestIdleCallback`, `queueMicrotask`,
+`performance`, `WebSocket`, `TextEncoder`
 and `TextDecoder`, `atob` and `btoa`, `AbortController` and `AbortSignal`.
 What is not there is as deliberate as what is: no `URL`, no `crypto`, no
 `Blob`, `FormData` or streams. A single known app rarely needs them, and
@@ -157,7 +158,10 @@ world stepping on a fixed timestep, a device read per frame) registers a
 tick with `lattice::flux::gui::frame::on_advance`: it runs every frame with
 the app time, before the frame's callbacks, so the dev clock's pause and
 step hold and drive it and a headless render replays it; returning true
-demands the next frame, the way a running animation does.
+demands the next frame, the way a running animation does. A module that
+works with the renderer's state, a texture or a camera, gets alloy's
+`Context` from `lattice::flux::gui::alloy_context(ctx)` and names alloy's
+types through `lattice::flux::alloy`.
 
 Build the two binaries one cargo run each, `--features go` for the player
 and none for the runtime (features unify within one build), and stage them

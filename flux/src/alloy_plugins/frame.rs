@@ -1,10 +1,11 @@
 // The per-frame protocol over the gui plugins: the order their per-frame
 // hooks run in is fixed here, where the plugins live, so a runner drives a
-// frame with three calls (`advance`, `deliver`, `draw`) and never learns
-// which plugins exist or what each hook returns. The runner keeps what is
-// its own: input dispatch ahead of the frame, the clock policy (which app
-// time and timer time this frame gets, and whether it is delivered at all),
-// and its policy around the draw phases.
+// frame with four calls (`advance`, `deliver`, `draw`, then `idle` once
+// the frame's work is behind it) and never learns which plugins exist or
+// what each hook returns. The runner keeps what is its own: input dispatch
+// ahead of the frame, the clock policy (which app time and timer time this
+// frame gets, and whether it is delivered at all), its policy around the
+// draw phases, and how long the idle period after the frame is.
 
 use std::cell::RefCell;
 use std::time::Instant;
@@ -107,6 +108,18 @@ pub fn deliver(ctx: &Ctx<'_>, frame: u64, now_ms: f64, timer_now_ms: f64) {
   payload.set("frame", frame).expect("set frame");
   payload.set("time", now_ms / 1000.0).expect("set time");
   crate::emit_event(ctx, "render", payload);
+}
+
+/// The idle half: the idle period after a delivered frame, for the
+/// `requestIdleCallback` queue (see `time::run_idle_period`). The runner
+/// calls it in an exec of its own after the frame's exec, so the frame's
+/// microtask checkpoint is behind it, and only while `idle_due` says a
+/// callback waits. `until` is when the next frame is due (the frame's
+/// present deadline, which is when the next signal comes), None when
+/// nothing is due: a stepped host between its frames, where the period gets
+/// the full budget.
+pub fn idle(ctx: &Ctx<'_>, until: Option<Instant>) {
+  crate::standards_plugins::time::run_idle_period(ctx, until.map(tokio::time::Instant::from_std));
 }
 
 /// One frame of the draw protocol over the shared render tree, the same on
