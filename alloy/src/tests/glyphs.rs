@@ -2,11 +2,11 @@
 // over the cluster map, mask and distance-field cells, the atlas packer
 // and the text atlas. The layout contract itself is pinned by
 // text_baseline.rs.
-use crate::gpu::{CoverageMode, CoveragePolicy};
+use crate::gpu::{CoverageMode, CoveragePolicy, TextureFormat};
 use crate::impellers::{FontStyle, FontWeight};
 use crate::rendertree::text::glyphs::{
   split_phase, AtlasPacker, Cell, CellKind, CellRequest, Dirty, FontBytes, FontSet, Hint, HoldSource, InsertOutcome,
-  Rasterizer, ShapeStyle, ShapedGlyphs, StyleKey, TextAtlas, TextRendering, WarmRequest, BYTES_PER_TEXEL, PHASES,
+  Rasterizer, ShapeStyle, ShapedGlyphs, StyleKey, TextAtlas, TextRendering, WarmRequest, MSDF_BYTES_PER_TEXEL, PHASES,
   WARM_CHUNK,
 };
 use crate::rendertree::text::{prepare_units, Fallback, RunStyle};
@@ -127,28 +127,21 @@ fn mask_cell_holds_the_glyph_coverage() {
     hint: Hint::Off,
     glyphs: vec![glyph],
   };
-  let cells = Rasterizer::default().rasterize(&noto_bytes(), &request).expect("a font");
+  let cells = Rasterizer::default().rasterize(&noto_bytes(), face.styles(), &request).expect("a font");
   assert_eq!(cells.len(), 1);
   let cell = &cells[0];
   assert!(cell.width > 0 && cell.height > 0);
-  assert_eq!(cell.pixels.len(), (cell.width * cell.height) as usize * BYTES_PER_TEXEL);
-  // Premultiplied white: every channel is the coverage, and an H has ink.
-  let ink: u32 = cell.pixels.chunks(BYTES_PER_TEXEL).map(|p| p[3] as u32).sum();
+  // One byte of coverage a texel, and an H has ink.
+  assert_eq!(cell.pixels.len(), (cell.width * cell.height) as usize);
+  assert_eq!(cell.bytes_per_texel(), 1);
+  let ink: u32 = cell.pixels.iter().map(|&a| a as u32).sum();
   assert!(ink > 0);
-  assert!(cell.pixels.chunks(BYTES_PER_TEXEL).all(|p| p[0] == p[3] && p[1] == p[3] && p[2] == p[3]));
   // The cell sits on the baseline: its top is above it by its height.
   assert!(cell.top > 0 && cell.top as u32 <= cell.height);
 }
 
 fn solid(glyph: u16, side: u32) -> Cell {
-  Cell {
-    key: glyph,
-    width: side,
-    height: side,
-    left: 0,
-    top: side as i32,
-    pixels: vec![255; (side * side) as usize * BYTES_PER_TEXEL],
-  }
+  Cell { key: glyph, width: side, height: side, left: 0, top: side as i32, pixels: vec![255; (side * side) as usize] }
 }
 
 #[test]
@@ -157,12 +150,14 @@ fn packer_places_and_pads_and_reports_dirty_rects() {
   assert_eq!(packer.insert(solid(1, 8)), InsertOutcome::Placed);
   let placed = packer.placement(1).expect("placed");
   assert_eq!((placed.width, placed.height), (8, 8));
-  // The padding ring stays transparent around the cell.
+  // The padding ring stays transparent around the cell; a mask atlas is
+  // R8, one byte a texel.
+  assert_eq!(packer.format(), TextureFormat::R8);
   let (w, _) = packer.size();
-  let stride = w as usize * BYTES_PER_TEXEL;
-  let left_of = ((placed.y as usize) * stride + (placed.x as usize - 1) * BYTES_PER_TEXEL) + 3;
+  let stride = w as usize;
+  let left_of = (placed.y as usize) * stride + (placed.x as usize - 1);
   assert_eq!(packer.mirror()[left_of], 0);
-  let inside = ((placed.y as usize) * stride + (placed.x as usize) * BYTES_PER_TEXEL) + 3;
+  let inside = (placed.y as usize) * stride + (placed.x as usize);
   assert_eq!(packer.mirror()[inside], 255);
   let Some(Dirty::Rects(dirty)) = packer.take_dirty() else { panic!("rects, not a growth") };
   assert_eq!(dirty.len(), 1);
@@ -171,6 +166,34 @@ fn packer_places_and_pads_and_reports_dirty_rects() {
   // A second insert of the same glyph changes nothing.
   assert_eq!(packer.insert(solid(1, 8)), InsertOutcome::Placed);
   assert!(packer.take_dirty().is_none());
+}
+
+#[test]
+fn an_rgba8_mask_atlas_expands_cells_to_premultiplied_white() {
+  let mut packer = AtlasPacker::new(CellKind::Mask { ppem: 16.0 }, 2048).with_format(TextureFormat::Rgba8);
+  assert_eq!(packer.mirror().len(), 4 * AtlasPacker::<u16>::new(CellKind::Mask { ppem: 16.0 }, 2048).mirror().len());
+  let mut cell = solid(1, 4);
+  // A gradient down the cell's first column, to see each byte land in its
+  // own texel.
+  for row in 0..4 {
+    cell.pixels[row * 4] = row as u8 * 60;
+  }
+  assert_eq!(packer.insert(cell), InsertOutcome::Placed);
+  let placed = packer.placement(1).expect("placed");
+  let (w, _) = packer.size();
+  for row in 0..4usize {
+    let at = ((placed.y as usize + row) * w as usize + placed.x as usize) * 4;
+    let value = row as u8 * 60;
+    assert_eq!(&packer.mirror()[at..at + 4], &[value; 4], "row {row}: the byte in every channel");
+    assert_eq!(&packer.mirror()[at + 4..at + 8], &[255; 4], "the next texel is solid");
+  }
+  // A repack (growth) keeps the expansion.
+  let before = packer.copy_out(placed.x, placed.y, 4, 4);
+  for glyph in 2..200u16 {
+    packer.insert(solid(glyph, 100));
+  }
+  let moved = packer.placement(1).expect("kept");
+  assert_eq!(packer.copy_out(moved.x, moved.y, 4, 4), before, "the cell's texels moved with it");
 }
 
 #[test]
@@ -195,8 +218,8 @@ fn packer_grows_by_repacking_and_then_fills() {
   for glyph in 0..60u16 {
     let p = packer.placement(glyph).expect("kept");
     let (w, _) = packer.size();
-    let at = (p.y as usize) * w as usize * BYTES_PER_TEXEL + (p.x as usize) * BYTES_PER_TEXEL;
-    assert_eq!(packer.mirror()[at + 3], 255, "glyph {glyph} pixels moved with it");
+    let at = (p.y as usize) * w as usize + (p.x as usize);
+    assert_eq!(packer.mirror()[at], 255, "glyph {glyph} pixels moved with it");
   }
   // Past the cap the packer says Full and keeps what it has.
   let mut big = 1000u16;
@@ -281,15 +304,16 @@ fn msdf_cell_holds_the_glyph_as_a_field() {
     hint: Hint::Off,
     glyphs: vec![shaped.glyphs[0].id],
   };
-  let cells = Rasterizer::default().rasterize(&noto_bytes(), &request).expect("a font");
+  let cells = Rasterizer::default().rasterize(&noto_bytes(), face.styles(), &request).expect("a font");
   assert_eq!(cells.len(), 1);
   let cell = &cells[0];
   let (w, h) = (cell.width as usize, cell.height as usize);
   assert!(w > 0 && h > 0);
-  assert_eq!(cell.pixels.len(), w * h * BYTES_PER_TEXEL);
+  assert_eq!(cell.pixels.len(), w * h * MSDF_BYTES_PER_TEXEL);
+  assert_eq!(cell.bytes_per_texel(), MSDF_BYTES_PER_TEXEL);
   // The baseline runs through the cell: the box is padded below it.
   assert!(cell.top > 0 && (cell.top as usize) < h, "top {} in {h}", cell.top);
-  let texel = |x: usize, y: usize| &cell.pixels[(y * w + x) * BYTES_PER_TEXEL..][..BYTES_PER_TEXEL];
+  let texel = |x: usize, y: usize| &cell.pixels[(y * w + x) * MSDF_BYTES_PER_TEXEL..][..MSDF_BYTES_PER_TEXEL];
   // The rim of the box is outside: the padding is half the range.
   for x in 0..w {
     assert!(median(texel(x, 0)) <= OUTSIDE_MAX && median(texel(x, h - 1)) <= OUTSIDE_MAX, "rim at x {x}");
@@ -332,7 +356,7 @@ fn blank_glyphs_are_empty_cells_that_take_no_atlas_space() {
       hint: Hint::Off,
       glyphs: vec![space],
     };
-    let cells = Rasterizer::default().rasterize(&noto_bytes(), &request).expect("a font");
+    let cells = Rasterizer::default().rasterize(&noto_bytes(), face.styles(), &request).expect("a font");
     assert_eq!(cells.len(), 1, "{kind:?}: a space is a cell, not a failure");
     assert_eq!((cells[0].width, cells[0].height), (0, 0), "{kind:?}");
     let mut packer = AtlasPacker::new(kind, 1024);
@@ -404,12 +428,12 @@ fn a_mask_at_a_subpixel_phase_shifts_its_coverage() {
     glyphs: vec![stem],
   };
   let mut rasterizer = Rasterizer::default();
-  let whole = rasterizer.rasterize(&noto_bytes(), &request(0.0)).expect("a font").remove(0);
-  let half = rasterizer.rasterize(&noto_bytes(), &request(0.5)).expect("a font").remove(0);
+  let whole = rasterizer.rasterize(&noto_bytes(), face.styles(), &request(0.0)).expect("a font").remove(0);
+  let half = rasterizer.rasterize(&noto_bytes(), face.styles(), &request(0.5)).expect("a font").remove(0);
   // Half a pixel over, the stem's coverage spreads across its edge
   // columns instead of filling one: a different mask for the same glyph.
   assert_ne!(whole.pixels, half.pixels);
-  let ink = |cell: &Cell| cell.pixels.chunks(BYTES_PER_TEXEL).map(|p| p[3] as u32).sum::<u32>();
+  let ink = |cell: &Cell| cell.pixels.iter().map(|&a| a as u32).sum::<u32>();
   assert!((ink(&whole) as i32 - ink(&half) as i32).abs() < ink(&whole) as i32 / 10, "the ink is the same");
 }
 
@@ -434,10 +458,10 @@ fn synthetic_bold_and_italic_restyle_the_outline() {
     glyphs: vec![stem],
   };
   let mut rasterizer = Rasterizer::default();
-  let plain = rasterizer.rasterize(&noto_bytes(), &request(false, false)).expect("a font").remove(0);
-  let bold = rasterizer.rasterize(&noto_bytes(), &request(true, false)).expect("a font").remove(0);
-  let italic = rasterizer.rasterize(&noto_bytes(), &request(false, true)).expect("a font").remove(0);
-  let ink = |cell: &Cell| cell.pixels.chunks(BYTES_PER_TEXEL).map(|p| p[3] as u32).sum::<u32>() as f32;
+  let plain = rasterizer.rasterize(&noto_bytes(), face.styles(), &request(false, false)).expect("a font").remove(0);
+  let bold = rasterizer.rasterize(&noto_bytes(), face.styles(), &request(true, false)).expect("a font").remove(0);
+  let italic = rasterizer.rasterize(&noto_bytes(), face.styles(), &request(false, true)).expect("a font").remove(0);
+  let ink = |cell: &Cell| cell.pixels.iter().map(|&a| a as u32).sum::<u32>() as f32;
   // Emboldened, the stem grows on every side and keeps its height within
   // the outset.
   assert!(ink(&bold) > ink(&plain) * SYNTHETIC_BOLD_INK_GAIN, "bold ink {} over {}", ink(&bold), ink(&plain));
@@ -680,18 +704,14 @@ fn hinting_snaps_the_cap_height_to_a_pixel_row() {
     glyphs: vec![glyph],
   };
   let mut rasterizer = Rasterizer::default();
-  let plain = rasterizer.rasterize(&noto_bytes(), &request(Hint::Off)).expect("a font").remove(0);
-  let hinted = rasterizer.rasterize(&noto_bytes(), &request(Hint::Light)).expect("a font").remove(0);
-  let full = rasterizer.rasterize(&noto_bytes(), &request(Hint::Full)).expect("a font").remove(0);
+  let plain = rasterizer.rasterize(&noto_bytes(), face.styles(), &request(Hint::Off)).expect("a font").remove(0);
+  let hinted = rasterizer.rasterize(&noto_bytes(), face.styles(), &request(Hint::Light)).expect("a font").remove(0);
+  let full = rasterizer.rasterize(&noto_bytes(), face.styles(), &request(Hint::Full)).expect("a font").remove(0);
   // The ink per row, top first: the two stems' coverage, which the light
   // mode leaves alone horizontally, so rows the stems span whole read the
   // same and a row the cap height crosses reads a share of that.
   let rows = |cell: &Cell| -> Vec<u32> {
-    cell
-      .pixels
-      .chunks(cell.width as usize * BYTES_PER_TEXEL)
-      .map(|row| row.iter().skip(3).step_by(4).map(|&a| a as u32).sum())
-      .collect()
+    cell.pixels.chunks(cell.width as usize).map(|row| row.iter().map(|&a| a as u32).sum()).collect()
   };
   let (plain_rows, hinted_rows) = (rows(&plain), rows(&hinted));
   assert!(
@@ -705,11 +725,56 @@ fn hinting_snaps_the_cap_height_to_a_pixel_row() {
   // The full mode puts the stems on whole pixels: above the crossbar the
   // H's two stems are two solid columns and nothing else, where the light
   // mode's stems straddle two columns each.
-  let top_row = |cell: &Cell| -> Vec<u8> {
-    cell.pixels[..cell.width as usize * BYTES_PER_TEXEL].chunks(BYTES_PER_TEXEL).map(|p| p[3]).collect()
-  };
+  let top_row = |cell: &Cell| -> Vec<u8> { cell.pixels[..cell.width as usize].to_vec() };
   let top_row_solid = |cell: &Cell| -> usize { top_row(cell).iter().filter(|&&a| a == u8::MAX).count() };
   assert_eq!(top_row_solid(&hinted), 0, "light stems straddle columns: {:?}", top_row(&hinted));
   assert_eq!(top_row_solid(&full), 2, "full stems are two solid columns: {:?}", top_row(&full));
   assert!(top_row(&full).iter().all(|&a| a == 0 || a == u8::MAX), "and nothing between: {:?}", top_row(&full));
+}
+
+// The whole-pixel growth of a synthetic bold's 0.04 em outset per side at
+// SIZE: 1.28 px of growth rounds to one column (and one row).
+const SNAPPED_OUTSET_PIXELS: u32 = 1;
+
+#[test]
+fn a_synthetic_outset_grows_a_hinted_axis_by_whole_pixels() {
+  let fonts = fonts(&[noto()]);
+  let face = fonts.face(0).expect("face");
+  let stem = shape_one(&fonts, "l", SIZE).glyphs[0].id;
+  let request = |bold: bool, hint: Hint| CellRequest {
+    kind: CellKind::Mask { ppem: SIZE },
+    weight: face.weight_setting(400),
+    width: None,
+    synthetic_bold: bold,
+    synthetic_italic: false,
+    phase: 0.0,
+    darken: 0.0,
+    hint,
+    glyphs: vec![stem],
+  };
+  let mut rasterizer = Rasterizer::default();
+  let mut cell = |bold: bool, hint: Hint| {
+    rasterizer.rasterize(&noto_bytes(), face.styles(), &request(bold, hint)).expect("a font").remove(0)
+  };
+  // Full: the stem keeps its snapped left edge and is one whole column
+  // wider, still solid columns and nothing between.
+  let (plain, bold) = (cell(false, Hint::Full), cell(true, Hint::Full));
+  let middle = |cell: &Cell| -> Vec<u8> {
+    let row = cell.height as usize / 2;
+    cell.pixels[row * cell.width as usize..][..cell.width as usize].to_vec()
+  };
+  let solid = |row: &[u8]| row.iter().filter(|&&a| a == u8::MAX).count() as u32;
+  assert!(middle(&bold).iter().all(|&a| a == 0 || a == u8::MAX), "full bold stem is solid: {:?}", middle(&bold));
+  assert_eq!(solid(&middle(&bold)), solid(&middle(&plain)) + SNAPPED_OUTSET_PIXELS, "one column wider");
+  assert_eq!(bold.left, plain.left, "the left edge stays on its column");
+  assert_eq!(bold.height, plain.height + SNAPPED_OUTSET_PIXELS, "and one row taller");
+  // Light: the vertical growth is the same whole row, the horizontal one
+  // the exact outset (the stem straddles columns as before).
+  let (plain, bold) = (cell(false, Hint::Light), cell(true, Hint::Light));
+  assert_eq!(bold.height, plain.height + SNAPPED_OUTSET_PIXELS, "light: one row taller");
+  assert!(bold.width > plain.width, "and wider by the outset");
+  // Unhinted, nothing is rounded: the box grows by the outset rounded out
+  // to texels either way, so only the ink tells, and it has no step in it.
+  let (plain, bold) = (cell(false, Hint::Off), cell(true, Hint::Off));
+  assert!(bold.width > plain.width && bold.height > plain.height);
 }

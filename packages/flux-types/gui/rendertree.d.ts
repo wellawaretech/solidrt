@@ -259,6 +259,23 @@ declare module "flux:rendertree" {
    * unknown mode or an invalid number.
    */
   export function setTextRendering(options: TextRenderingOptions): void
+  /** The text rendering policy as it stands, resolved for this display: what {@link textRendering} returns. */
+  export interface TextRenderingPolicy {
+    coverage: "naive" | "linearLight" | "polarityRemap" | "polarityLinear" | "directWrite"
+    gamma: number
+    contrast: number
+    /** The stem darkening in effect on this display, em per side. */
+    darken: number
+    /** The hinting in effect on this display. */
+    hint: false | "light" | "full"
+  }
+  /**
+   * The current text rendering policy, resolved for this display: a
+   * `darken` or `hint` left at its default reads as the value the display
+   * scale gives it, so a settings screen shows what is in effect, and
+   * setting the result back changes nothing on this display.
+   */
+  export function textRendering(): TextRenderingPolicy
   /**
    * The node's bounding box from the most recent layout, relative to its
    * nearest positioning context (an ancestor with an explicit

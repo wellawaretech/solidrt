@@ -17,10 +17,11 @@
 //   covers it) and caret stops read off the cluster map in O(n).
 // - cells.rs: a glyph to a `Cell` of pixels of a `CellKind`: a coverage
 //   mask at an exact pixel size and subpixel phase (what the text layer and
-//   a terminal want), or a multi-channel distance field at a fixed size per
-//   em (what a zoomed consumer wants). Generated on the worker thread
-//   (worker.rs) or, for a `<text>` within its frame budget, on the UI
-//   thread, each thread's rasterizer caching the hinters it has built.
+//   a terminal want, one byte a texel), or a multi-channel distance field
+//   at a fixed size per em (what a zoomed consumer wants, rgba8).
+//   Generated on the worker thread (worker.rs) or, for a `<text>` within
+//   its frame budget, on the UI thread, each thread's rasterizer caching
+//   the hinters it has built from the face's glyph styles.
 // - outline.rs: the outline skrifa draws a glyph into, as zeno path
 //   commands, with the synthetic slant and the outline embolden (bold,
 //   darkening) applied before a cell is made.
@@ -29,7 +30,9 @@
 // - atlas.rs: cells packed into one growing texture (etagere's shelf
 //   allocator, the one behind WebRender's texture cache), keyed by the
 //   owner, with frame stamps for eviction, the CPU mirror growth repacks
-//   from and the dirty rects a flush uploads.
+//   from and the dirty rects a flush uploads; R8 for a mask atlas the
+//   glyph pass reads, rgba8 for a distance field or a mask atlas sampled
+//   as a plain texture.
 // - text_atlas.rs: the one mask atlas every `<text>` draws from: cells
 //   keyed on face, size, weight, style, phase and glyph, filled by a
 //   warm-up on the worker, a budgeted synchronous path at build, and the
@@ -51,7 +54,7 @@ mod text_atlas;
 mod worker;
 
 pub use atlas::{AtlasPacker, CellKey as AtlasKey, CellPlacement, Dirty, DirtyRect, GlyphAtlas, InsertOutcome};
-pub use cells::{Cell, CellKind, CellRequest, Hint, Rasterizer, BYTES_PER_TEXEL};
+pub use cells::{Cell, CellKind, CellRequest, Hint, Rasterizer, MSDF_BYTES_PER_TEXEL};
 pub use fonts::{family_names, weight_value, Face, FaceId, FontBytes, FontSet};
 pub use shape::{Fallback, PlacedGlyph, ShapeStyle, ShapedGlyphs};
 pub use text_atlas::{

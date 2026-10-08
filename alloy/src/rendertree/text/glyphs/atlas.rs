@@ -22,7 +22,7 @@
 // placements out over a frame adds cells with `insert_in_place`, which
 // never repacks, and keeps what did not fit for an `insert` at its next
 // frame start, when nobody holds a placement.
-use super::cells::{Cell, CellKind, BYTES_PER_TEXEL};
+use super::cells::{Cell, CellKind};
 use crate::gpu::{SamplerState, TextureFormat, TextureRect};
 use crate::Context;
 use etagere::{size2, AllocId, AtlasAllocator};
@@ -91,6 +91,13 @@ struct Slot {
 /// The pure half: placements, the texel mirror and what changed.
 pub struct AtlasPacker<K: CellKey> {
   kind: CellKind,
+  /// What the texture holds: R8 for a mask atlas the glyph pass reads
+  /// (one byte a texel, the cell's own form), rgba8 for a distance field
+  /// and for a mask atlas sampled as a plain texture, where a mask cell
+  /// expands to premultiplied white on blit.
+  format: TextureFormat,
+  /// Bytes per texel of `format`.
+  texel: usize,
   width: u32,
   height: u32,
   max_side: u32,
@@ -98,7 +105,7 @@ pub struct AtlasPacker<K: CellKey> {
   cells: HashMap<K, Slot>,
   /// Every cell's pixels, for repacks.
   sources: HashMap<K, Cell<K>>,
-  /// The texels as uploaded, rows top to bottom, rgba8.
+  /// The texels as uploaded, rows top to bottom, in `format`.
   mirror: Vec<u8>,
   /// Rects the mirror changed since the last `take_dirty`.
   dirty: Vec<DirtyRect>,
@@ -113,24 +120,50 @@ pub struct AtlasPacker<K: CellKey> {
 
 impl<K: CellKey> AtlasPacker<K> {
   /// An empty packer at the initial side (capped by `max_side`). `kind`
-  /// decides the padding around a cell. Without `evict_after` (see
-  /// `with_eviction`) a full atlas never evicts.
+  /// decides the padding around a cell and the texel format: R8 for a
+  /// mask, rgba8 for a distance field (see `with_format`). Without
+  /// `evict_after` (see `with_eviction`) a full atlas never evicts.
   pub fn new(kind: CellKind, max_side: u32) -> Self {
     let side = INITIAL_SIDE.min(max_side);
+    let format = match kind {
+      CellKind::Mask { .. } => TextureFormat::R8,
+      CellKind::Msdf { .. } => TextureFormat::Rgba8,
+    };
     Self {
       kind,
+      format,
+      texel: format.byte_len(1, 1),
       width: side,
       height: side,
       max_side,
       allocator: AtlasAllocator::new(size2(side as i32, side as i32)),
       cells: HashMap::new(),
       sources: HashMap::new(),
-      mirror: vec![0u8; side as usize * side as usize * BYTES_PER_TEXEL],
+      mirror: vec![0u8; side as usize * side as usize * format.byte_len(1, 1)],
       dirty: Vec::new(),
       whole: None,
       frame: 0,
       evict_after: u64::MAX,
     }
+  }
+
+  /// Hold the texels in `format` instead of the kind's own: rgba8 for a
+  /// mask atlas that is sampled as a plain texture (a mask cell expands
+  /// to premultiplied white, so white text to tint). R8 holds a mask
+  /// only; a distance field has three channels and the true distance.
+  /// For an empty packer, before anything is placed.
+  pub fn with_format(mut self, format: TextureFormat) -> Self {
+    let holds = match format {
+      TextureFormat::Rgba8 => true,
+      TextureFormat::R8 => matches!(self.kind, CellKind::Mask { .. }),
+      _ => false,
+    };
+    assert!(holds, "a {} atlas cannot hold {:?} cells", format.name(), self.kind);
+    assert!(self.cells.is_empty(), "the format is fixed before the first cell");
+    self.format = format;
+    self.texel = format.byte_len(1, 1);
+    self.mirror = vec![0u8; self.width as usize * self.height as usize * self.texel];
+    self
   }
 
   /// Evict cells unused for `frames` frames when the atlas is full at its
@@ -144,12 +177,17 @@ impl<K: CellKey> AtlasPacker<K> {
     self.kind
   }
 
+  /// The texture format the mirror is in (see `with_format`).
+  pub fn format(&self) -> TextureFormat {
+    self.format
+  }
+
   pub fn size(&self) -> (u32, u32) {
     (self.width, self.height)
   }
 
-  /// The texels, rows top to bottom, rgba8: what the texture holds after a
-  /// flush.
+  /// The texels, rows top to bottom, in `format`: what the texture holds
+  /// after a flush.
   pub fn mirror(&self) -> &[u8] {
     &self.mirror
   }
@@ -261,11 +299,11 @@ impl<K: CellKey> AtlasPacker<K> {
 
   /// The mirror's texels of a rect, rows top to bottom.
   pub fn copy_out(&self, x: u32, y: u32, width: u32, height: u32) -> Vec<u8> {
-    let row_bytes = width as usize * BYTES_PER_TEXEL;
-    let stride = self.width as usize * BYTES_PER_TEXEL;
+    let row_bytes = width as usize * self.texel;
+    let stride = self.width as usize * self.texel;
     let mut out = Vec::with_capacity(row_bytes * height as usize);
     for row in 0..height as usize {
-      let from = (y as usize + row) * stride + x as usize * BYTES_PER_TEXEL;
+      let from = (y as usize + row) * stride + x as usize * self.texel;
       out.extend_from_slice(&self.mirror[from..from + row_bytes]);
     }
     out
@@ -347,7 +385,7 @@ impl<K: CellKey> AtlasPacker<K> {
   // whole mirror is new afterwards.
   fn repack(&mut self) {
     self.allocator = AtlasAllocator::new(size2(self.width as i32, self.height as i32));
-    self.mirror = vec![0u8; self.width as usize * self.height as usize * BYTES_PER_TEXEL];
+    self.mirror = vec![0u8; self.width as usize * self.height as usize * self.texel];
     let stamps: HashMap<K, u64> = self.cells.iter().map(|(key, slot)| (*key, slot.last_used)).collect();
     self.cells.clear();
     // Tallest first packs shelves tightest; the sources map has no order,
@@ -373,21 +411,33 @@ impl<K: CellKey> AtlasPacker<K> {
     }
   }
 
+  // Copy the cell's texels into the mirror at (x, y); a cell in a
+  // narrower form than the mirror (a mask in an rgba8 atlas) fills every
+  // channel of a texel with its one byte: premultiplied white.
   fn blit(&mut self, cell: &Cell<K>, x: u32, y: u32) {
-    let row_bytes = cell.width as usize * BYTES_PER_TEXEL;
-    let stride = self.width as usize * BYTES_PER_TEXEL;
+    let cell_texel = cell.bytes_per_texel();
+    let stride = self.width as usize * self.texel;
     for row in 0..cell.height as usize {
-      let from = row * row_bytes;
-      let to = (y as usize + row) * stride + x as usize * BYTES_PER_TEXEL;
-      self.mirror[to..to + row_bytes].copy_from_slice(&cell.pixels[from..from + row_bytes]);
+      let from = row * cell.width as usize * cell_texel;
+      let to = (y as usize + row) * stride + x as usize * self.texel;
+      if cell_texel == self.texel {
+        let row_bytes = cell.width as usize * self.texel;
+        self.mirror[to..to + row_bytes].copy_from_slice(&cell.pixels[from..from + row_bytes]);
+      } else {
+        debug_assert_eq!(cell_texel, 1, "a cell is one byte a texel or the mirror's own form");
+        for (texel, &value) in cell.pixels[from..from + cell.width as usize].iter().enumerate() {
+          let at = to + texel * self.texel;
+          self.mirror[at..at + self.texel].fill(value);
+        }
+      }
     }
   }
 
   fn fill_rect(&mut self, x: u32, y: u32, w: u32, h: u32, value: u8) {
-    let stride = self.width as usize * BYTES_PER_TEXEL;
-    let row_bytes = w as usize * BYTES_PER_TEXEL;
+    let stride = self.width as usize * self.texel;
+    let row_bytes = w as usize * self.texel;
     for row in 0..h as usize {
-      let start = (y as usize + row) * stride + x as usize * BYTES_PER_TEXEL;
+      let start = (y as usize + row) * stride + x as usize * self.texel;
       self.mirror[start..start + row_bytes].fill(value);
     }
   }
@@ -400,9 +450,9 @@ pub struct GlyphAtlas<K: CellKey> {
 }
 
 impl<K: CellKey> GlyphAtlas<K> {
-  /// Create the atlas texture (rgba8, `sampler`) in the registry over
-  /// `packer`, which caps growth at the device's texture size limit, or
-  /// less.
+  /// Create the atlas texture (the packer's format, `sampler`) in the
+  /// registry over `packer`, which caps growth at the device's texture
+  /// size limit, or less.
   pub fn new(ctx: &Context, packer: AtlasPacker<K>, sampler: SamplerState, label: &str) -> Result<Self, String> {
     let (width, height) = packer.size();
     let texture = ctx.create_texture_from_pixels(
@@ -410,7 +460,7 @@ impl<K: CellKey> GlyphAtlas<K> {
       height,
       packer.mirror(),
       sampler,
-      TextureFormat::Rgba8,
+      packer.format(),
       Some(label.to_string()),
     )?;
     Ok(Self { packer, texture })

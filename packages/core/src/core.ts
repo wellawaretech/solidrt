@@ -403,6 +403,7 @@ export function warmText(styles: tree.MeasureTextOptions[]): void {
 }
 
 export type TextRenderingOptions = tree.TextRenderingOptions
+export type TextRenderingPolicy = tree.TextRenderingPolicy
 
 /**
  * Changes how every text is rendered: the coverage-to-color mode and its
@@ -413,6 +414,16 @@ export type TextRenderingOptions = tree.TextRenderingOptions
  */
 export function setTextRendering(options: TextRenderingOptions): void {
   tree.setTextRendering(options)
+}
+
+/**
+ * The text rendering policy as it stands, resolved for this display: the
+ * shape setTextRendering takes, with a darkening or hinting left at its
+ * default read as the value the display scale gives it. What a settings
+ * screen shows; setting it back changes nothing on this display.
+ */
+export function textRendering(): TextRenderingPolicy {
+  return tree.textRendering()
 }
 
 /** One laid-out line from layoutNextLine. */

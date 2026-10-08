@@ -10,6 +10,7 @@
 // drop so an engine teardown leaves no thread behind.
 use super::cells::{Cell, CellRequest, Rasterizer};
 use super::fonts::FontBytes;
+use skrifa::outline::GlyphStyles;
 use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
@@ -24,13 +25,15 @@ pub enum JobPriority {
 }
 
 /// One request: which owner (an atlas handle of the caller's) it is for,
-/// the face bytes and what to rasterize. `done` runs on the worker thread
+/// the face bytes and styles and what to rasterize. `done` runs on the worker thread
 /// right after the result is queued: the owner's way to wake whatever
 /// drains the cells (latch a frame request) and to end a hold that counts
 /// the job as work in flight.
 pub struct CellJob {
   pub owner: u64,
   pub bytes: FontBytes,
+  /// The face's autohinter styles (`Face::styles`), for a hinted request.
+  pub styles: GlyphStyles,
   pub request: CellRequest,
   pub priority: JobPriority,
   pub done: Option<Box<dyn FnOnce() + Send>>,
@@ -95,7 +98,7 @@ impl CellWorker {
       let mut rasterizer = Rasterizer::default();
       let mut inbox = Inbox::default();
       while let Some(mut job) = inbox.next(&job_rx) {
-        let cells = rasterizer.rasterize(&job.bytes, &job.request).unwrap_or_default();
+        let cells = rasterizer.rasterize(&job.bytes, &job.styles, &job.request).unwrap_or_default();
         let failed = job.request.glyphs.iter().copied().filter(|g| !cells.iter().any(|c| c.key == *g)).collect();
         let sent = done_tx.send(CellsDone { owner: job.owner, cells, failed }).is_ok();
         if let Some(done) = job.done.take() {

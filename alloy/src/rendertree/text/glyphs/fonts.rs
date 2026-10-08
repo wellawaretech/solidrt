@@ -3,15 +3,19 @@
 // which parses them with skrifa per job), a harfrust font at the default
 // location, instanced on the weight axis of a variable font per requested
 // weight so a `fontWeight: 700` run shapes with the 700 advances rather
-// than the regular ones, and on its width axis per requested stretch, and
-// the underline metrics the decoration path draws with. Resolution by name: the alias first, then the family names
-// `family_names` reads, first registration winning.
+// than the regular ones, and on its width axis per requested stretch, the
+// underline metrics the decoration path draws with, and the autohinter's
+// glyph styles (its per-glyph script classification, invariant per font)
+// derived here once so a rasterizer on either thread hints without
+// deriving them inside a frame. Resolution by name: the alias first, then
+// the family names `family_names` reads, first registration winning.
 use crate::impellers::FontWeight;
 use crate::rendertree::text::UnderlineMetrics;
 use crate::rendertree::FontPayload;
 use harfrust::font::Variation as HarfVariation;
 use harfrust::{Font, Tag};
 use skrifa::instance::{Location, LocationRef, Size};
+use skrifa::outline::GlyphStyles;
 use skrifa::string::StringId;
 use skrifa::{FontRef, MetadataProvider, Tag as SkrifaTag};
 use std::cell::RefCell;
@@ -55,6 +59,9 @@ pub struct Face {
   italic_axis: bool,
   /// The font's underline position and thickness, in em.
   underline: UnderlineMetrics,
+  /// The autohinter's per-glyph styles (an Arc inside: a clone is the
+  /// same set), what every hinter of the face is built with.
+  styles: GlyphStyles,
   /// Registered under a role alias ("sans", "serif", "mono"): what fallback
   /// tries before the faces registered by family name alone.
   role: bool,
@@ -69,6 +76,12 @@ impl Face {
   /// The bytes, for the rasterizer's and the metrics' skrifa parse.
   pub fn bytes(&self) -> &FontBytes {
     &self.bytes
+  }
+
+  /// The autohinter's glyph styles of the face, for the rasterizer's
+  /// hinters (handed to a worker job with the bytes).
+  pub fn styles(&self) -> &GlyphStyles {
+    &self.styles
   }
 
   pub fn units_per_em(&self) -> f32 {
@@ -171,6 +184,7 @@ impl FontSet {
     }
     let families = family_names(&skrifa_font);
     let underline = underline_metrics(&skrifa_font);
+    let styles = GlyphStyles::new(&skrifa_font.outline_glyphs());
     let id = self.faces.len();
     self.faces.push(Face {
       bytes,
@@ -180,6 +194,7 @@ impl FontSet {
       width_axis,
       italic_axis,
       underline,
+      styles,
       role: alias.is_some(),
       instances: RefCell::new(HashMap::new()),
     });

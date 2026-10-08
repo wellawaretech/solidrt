@@ -401,7 +401,7 @@ impl TextAtlas {
     let in_budget = self.deadline.is_some_and(|deadline| Instant::now() < deadline);
     if in_budget {
       let request = request(face, style, phase, misses.clone());
-      let made = self.rasterizer.rasterize(face.bytes(), &request).unwrap_or_default();
+      let made = self.rasterizer.rasterize(face.bytes(), face.styles(), &request).unwrap_or_default();
       let mut inserted = 0;
       for cell in made {
         let key = CellKey { style, phase, glyph: cell.key };
@@ -548,7 +548,14 @@ impl TextAtlas {
       }
       drop(hold);
     });
-    let job = CellJob { owner, bytes: face.bytes().clone(), request, priority, done: Some(done) };
+    let job = CellJob {
+      owner,
+      bytes: face.bytes().clone(),
+      styles: face.styles().clone(),
+      request,
+      priority,
+      done: Some(done),
+    };
     // A job the worker refuses is dropped unsent, its closure and its hold
     // with it.
     if worker.submit(job) {

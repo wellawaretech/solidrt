@@ -2,9 +2,9 @@
 //
 // - `Mask`: the glyph's coverage at an exact pixel size, rasterized by zeno
 //   from its outline at a subpixel phase. Drawn 1:1 it is what a text
-//   renderer and a terminal grid want; stored as premultiplied white
-//   (coverage in every channel) so a consumer that samples it as a plain
-//   texture draws white text to tint.
+//   renderer and a terminal grid want; one byte of coverage per texel,
+//   what an R8 atlas holds as is and an rgba8 one (sampled as a plain
+//   texture, so white text to tint) expands to premultiplied white.
 // - `Msdf`: a multi-channel signed distance field at a fixed size per em
 //   with a distance range in texels, generated from the outline by msdfgen
 //   (msdf.rs, over the shim build.rs compiles with the vendored core). One
@@ -19,7 +19,11 @@
 //
 // Rasterization is CPU work (a few hundred microseconds per glyph) and runs
 // on the worker thread, or on the UI thread within the text atlas's budget;
-// a `Rasterizer` owns its thread's hinter cache and raster scratch.
+// a `Rasterizer` owns its thread's hinter cache and raster scratch. The
+// autohinter's glyph styles (its per-glyph script classification, a walk
+// over the character map and GSUB) are the face's, derived once at
+// registration and handed in with the bytes, so neither thread derives
+// them inside a frame.
 use super::fonts::{axis_location, FontBytes};
 use super::msdf::msdf_cell;
 use super::outline::Outline;
@@ -32,8 +36,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use zeno::{Fill, Format, Mask, Origin, Placement, Scratch, Vector};
 
-/// Bytes per atlas texel: cells are rgba8 whatever their kind.
-pub const BYTES_PER_TEXEL: usize = 4;
+/// Bytes per texel of a distance-field cell: rgba8, three field channels
+/// and the true distance in alpha.
+pub const MSDF_BYTES_PER_TEXEL: usize = 4;
 /// The slant of a synthetic italic, degrees from vertical: the angle every
 /// renderer uses for a face without an italic (FreeType, Skia, Impeller).
 const SYNTHETIC_ITALIC_DEGREES: f32 = 12.0;
@@ -73,6 +78,20 @@ pub enum Hint {
   Full,
 }
 
+impl Hint {
+  /// Whether the mode snaps the outline's horizontal extents (stems) to
+  /// whole pixels.
+  fn snaps_x(self) -> bool {
+    self == Hint::Full
+  }
+
+  /// Whether the mode snaps the outline's vertical extents (baseline,
+  /// x-height, cap height) to pixel rows.
+  fn snaps_y(self) -> bool {
+    self != Hint::Off
+  }
+}
+
 /// What kind of pixels an atlas holds, fixed at its creation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CellKind {
@@ -89,6 +108,15 @@ impl CellKind {
       CellKind::Mask { ppem } | CellKind::Msdf { ppem, .. } => *ppem,
     }
   }
+
+  /// Bytes per texel of a cell of the kind: one of coverage for a mask,
+  /// rgba8 for a distance field.
+  pub fn bytes_per_texel(&self) -> usize {
+    match self {
+      CellKind::Mask { .. } => 1,
+      CellKind::Msdf { .. } => MSDF_BYTES_PER_TEXEL,
+    }
+  }
 }
 
 /// A rasterized glyph: its pixels and where its box sits relative to the
@@ -102,7 +130,8 @@ pub struct Cell<K = u16> {
   pub height: u32,
   pub left: i32,
   pub top: i32,
-  /// `width * height * BYTES_PER_TEXEL` bytes, rgba8, rows top to bottom.
+  /// `width * height * kind.bytes_per_texel()` bytes, rows top to bottom:
+  /// a mask's coverage one byte a texel, a distance field's rgba8.
   pub pixels: Vec<u8>,
 }
 
@@ -111,6 +140,17 @@ impl<K> Cell<K> {
   /// cell under its own identity for it.
   pub fn with_key<K2>(self, key: K2) -> Cell<K2> {
     Cell { key, width: self.width, height: self.height, left: self.left, top: self.top, pixels: self.pixels }
+  }
+
+  /// Bytes per texel of the pixels, read off their length (a blank cell
+  /// has no texels and reads as one).
+  pub fn bytes_per_texel(&self) -> usize {
+    let texels = self.width as usize * self.height as usize;
+    if texels == 0 {
+      1
+    } else {
+      self.pixels.len() / texels
+    }
   }
 }
 
@@ -142,9 +182,8 @@ pub struct CellRequest {
 }
 
 /// The per-thread state cells are made with: the hinters built so far,
-/// per font, size and location (building one derives the font's glyph
-/// styles and blue zones, far more than a glyph costs), and zeno's
-/// scratch memory.
+/// per font, size and location (building one derives the font's blue
+/// zones, far more than a glyph costs), and zeno's scratch memory.
 #[derive(Default)]
 pub struct Rasterizer {
   /// Keyed by the font's allocation, which the entry pins: a reset font
@@ -156,9 +195,9 @@ pub struct Rasterizer {
 
 struct FontHinters {
   _bytes: FontBytes,
-  /// The autohinter's per-glyph classification, invariant per font, so
-  /// derived once and shared by every hinter of the font.
-  styles: Option<GlyphStyles>,
+  /// The autohinter's per-glyph classification: the face's, shared by
+  /// every hinter of the font.
+  styles: GlyphStyles,
   /// Per (ppem bits, normalized coordinates' bits, mode).
   by_instance: HashMap<(u32, Vec<i16>, Hint), HintingInstance>,
 }
@@ -177,9 +216,8 @@ impl FontHinters {
     match self.by_instance.entry(key) {
       Entry::Occupied(entry) => Some(entry.into_mut()),
       Entry::Vacant(entry) => {
-        let styles = self.styles.get_or_insert_with(|| GlyphStyles::new(outlines)).clone();
         let target = if hint == Hint::Full { FULL_TARGET } else { LIGHT_TARGET };
-        let options = HintingOptions { engine: Engine::Auto(Some(styles)), target };
+        let options = HintingOptions { engine: Engine::Auto(Some(self.styles.clone())), target };
         let hinter = HintingInstance::new(outlines, Size::new(ppem), location, options).ok()?;
         Some(entry.insert(hinter))
       }
@@ -188,10 +226,11 @@ impl FontHinters {
 }
 
 impl Rasterizer {
-  /// Rasterize every glyph of `request` from `bytes`. A glyph skrifa cannot
-  /// draw (no outline, an id past the font) is left out; the caller
-  /// reports those by their absence. None when the bytes are not a font.
-  pub fn rasterize(&mut self, bytes: &FontBytes, request: &CellRequest) -> Option<Vec<Cell>> {
+  /// Rasterize every glyph of `request` from `bytes`, hinted with the
+  /// face's `styles`. A glyph skrifa cannot draw (no outline, an id past
+  /// the font) is left out; the caller reports those by their absence.
+  /// None when the bytes are not a font.
+  pub fn rasterize(&mut self, bytes: &FontBytes, styles: &GlyphStyles, request: &CellRequest) -> Option<Vec<Cell>> {
     let font = FontRef::from_index(bytes.as_ref().as_ref(), 0).ok()?;
     let outlines = font.outline_glyphs();
     let location = axis_location(&font, request.weight, request.width);
@@ -200,14 +239,18 @@ impl Rasterizer {
       let key = Arc::as_ptr(bytes) as *const () as usize;
       let hinters = self.fonts.entry(key).or_insert_with(|| FontHinters {
         _bytes: bytes.clone(),
-        styles: None,
+        styles: styles.clone(),
         by_instance: HashMap::new(),
       });
       hinters.hinter(&outlines, ppem, &location, request.hint)
     } else {
       None
     };
+    // The mode the outline is actually drawn in: unhinted when no hinter
+    // applies (a distance field, a font skrifa cannot hint).
+    let hint = if hinter.is_some() { request.hint } else { Hint::Off };
     let outset = if request.synthetic_bold { ppem * SYNTHETIC_BOLD_STRENGTH } else { 0.0 } + request.darken;
+    let (outset_x, outset_y) = snapped_outset(outset, hint);
     let mut cells = Vec::with_capacity(request.glyphs.len());
     for &glyph in &request.glyphs {
       let Some(outline_glyph) = outlines.get(GlyphId::new(glyph as u32)) else {
@@ -221,8 +264,8 @@ impl Rasterizer {
       if drawn.is_err() {
         continue;
       }
-      if outset > 0.0 {
-        outline.embolden(outset);
+      if outset_x > 0.0 || outset_y > 0.0 {
+        outline.embolden(outset_x, outset_y);
       }
       if request.synthetic_italic {
         outline.skew(SYNTHETIC_ITALIC_DEGREES);
@@ -239,10 +282,22 @@ impl Rasterizer {
   }
 }
 
-/// The coverage mask of `outline` at the subpixel `phase`, as a
-/// premultiplied-white rgba8 cell; a blank outline is an empty cell. The
-/// box is the outline's bounds at the phase rounded out to pixels, placed
-/// y up from the baseline (zeno's bottom-left origin).
+/// The outset per side along each axis for an outline hinted in `hint`.
+/// An axis the hinter snapped to the pixel grid grows by whole pixels
+/// (the outline's growth is twice the per-side outset, rounded, zero
+/// below half a pixel), FreeType's rule for emboldening a hinted bitmap:
+/// a full-hinted stem keeps its snapped edges and widens by whole
+/// columns, a light-hinted x-height stays on its row. An unsnapped axis
+/// grows by the exact outset.
+fn snapped_outset(outset: f32, hint: Hint) -> (f32, f32) {
+  let snapped = (2.0 * outset).round() / 2.0;
+  (if hint.snaps_x() { snapped } else { outset }, if hint.snaps_y() { snapped } else { outset })
+}
+
+/// The coverage mask of `outline` at the subpixel `phase`, one byte a
+/// texel; a blank outline is an empty cell. The box is the outline's
+/// bounds at the phase rounded out to pixels, placed y up from the
+/// baseline (zeno's bottom-left origin).
 fn mask_cell(glyph: u16, outline: &Outline, phase: f32, scratch: &mut Scratch) -> Cell {
   let mut coverage = Vec::new();
   let mut placement = Placement::default();
@@ -259,17 +314,13 @@ fn mask_cell(glyph: u16, outline: &Outline, phase: f32, scratch: &mut Scratch) -
       .inspect(|format, width, height| coverage.resize(format.buffer_size(width, height), 0))
       .render_into(&mut coverage, None);
   }
-  let texels = placement.width as usize * placement.height as usize;
-  let mut pixels = Vec::with_capacity(texels * BYTES_PER_TEXEL);
-  for &alpha in coverage.iter().take(texels) {
-    pixels.extend_from_slice(&[alpha; BYTES_PER_TEXEL]);
-  }
+  coverage.truncate(placement.width as usize * placement.height as usize);
   Cell {
     key: glyph,
     width: placement.width,
     height: placement.height,
     left: placement.left,
     top: placement.top,
-    pixels,
+    pixels: coverage,
   }
 }

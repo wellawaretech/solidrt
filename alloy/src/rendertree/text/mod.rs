@@ -630,13 +630,20 @@ impl Text {
     let mut atlas = platform.text_atlas();
     let display_scale = platform.display_scale();
     let darken_em = platform.text_darken_em();
-    let hint = platform.text_hint();
+    // A text drawn at the display scale is at rest on the pixel grid; one
+    // under a scaling transform (a pressed button's label, a zooming card)
+    // has a ppem of its own and re-rasterizes as the scale drifts, so it
+    // is drawn unhinted: a hinted outline moves its x-height between rows
+    // as the size changes and the text would pop from frame to frame. It
+    // comes to rest hinted, like any static text.
+    let native = scale == display_scale;
+    let hint = if native { platform.text_hint() } else { Hint::Off };
     // An untransformed text's style is the one every other text of its
-    // size shares, worth warming on first sight; a text under a scaling
-    // transform (a pressed button's label) has a ppem of its own. Only the
-    // run's own face is warmed: a face borrowed for a cluster the primary
-    // lacks (fallback) draws those clusters, not the warm-up's ASCII.
-    let warm = scale == display_scale;
+    // size shares, worth warming on first sight; a scaled one is not. Only
+    // the run's own face is warmed: a face borrowed for a cluster the
+    // primary lacks (fallback) draws those clusters, not the warm-up's
+    // ASCII.
+    let warm = native;
     // A style's gradient resolved once; None draws the style's solid color.
     let gradients: Vec<Option<crate::gpu::GlyphGradient>> = styles
       .iter()

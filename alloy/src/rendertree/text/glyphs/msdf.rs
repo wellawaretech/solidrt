@@ -13,7 +13,7 @@
 // and is reversed whole. The cell box is the outline's bounds padded by
 // half the range on every side, where the field reaches its outside value,
 // rounded out to texels: the padding an atlas would need is in the cell.
-use super::cells::{Cell, BYTES_PER_TEXEL};
+use super::cells::{Cell, MSDF_BYTES_PER_TEXEL};
 use super::ffi;
 use std::ffi::c_int;
 use zeno::{Command, Point};
@@ -48,7 +48,7 @@ pub fn msdf_cell(glyph: u16, outline: &[Command], range: f32) -> Option<Cell> {
   if width == 0 || height == 0 {
     return None;
   }
-  let mut field = vec![0f32; width as usize * height as usize * BYTES_PER_TEXEL];
+  let mut field = vec![0f32; width as usize * height as usize * MSDF_BYTES_PER_TEXEL];
   if !shape.generate(&mut field, width, height, (-left, -bottom), range as f64) {
     return None;
   }
@@ -219,7 +219,7 @@ impl Shape {
   /// Generate into `field` (width * height rgba floats, rows top first):
   /// texels at scale 1 after `translate`, `range` texels across.
   fn generate(&mut self, field: &mut [f32], width: u32, height: u32, translate: (f64, f64), range: f64) -> bool {
-    debug_assert_eq!(field.len(), width as usize * height as usize * BYTES_PER_TEXEL);
+    debug_assert_eq!(field.len(), width as usize * height as usize * MSDF_BYTES_PER_TEXEL);
     let ok = unsafe {
       ffi::msdf_generate_mtsdf(
         self.raw,

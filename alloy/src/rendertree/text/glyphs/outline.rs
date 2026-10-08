@@ -35,12 +35,15 @@ impl Outline {
     }
   }
 
-  /// Grow the outline by `strength` pixels on every side: every point moves
-  /// outward along the bisector of its two edges, bounded at sharp corners
-  /// (FreeType's `FT_Outline_EmboldenXY`, the same strength both ways).
-  /// The winding is read off the whole outline, so counters shrink as the
-  /// stems around them grow.
-  pub fn embolden(&mut self, strength: f32) {
+  /// Grow the outline by `x` pixels on each side horizontally and `y`
+  /// vertically: every point moves outward along the bisector of its two
+  /// edges, bounded at sharp corners (FreeType's `FT_Outline_EmboldenXY`,
+  /// whose strengths are the per-side ones here). The left and bottom
+  /// edges stay where they are and the right and top ones move by twice
+  /// the outset, so a stem's left edge keeps its column. The winding is
+  /// read off the whole outline, so counters shrink as the stems around
+  /// them grow.
+  pub fn embolden(&mut self, x: f32, y: f32) {
     let mut points: Vec<Point> = Vec::new();
     let mut contours: Vec<(usize, usize)> = Vec::new();
     let mut start = 0;
@@ -69,7 +72,7 @@ impl Outline {
     }
     let counter_clockwise = signed_area(&points) > 0.0;
     for (from, to) in contours {
-      embolden_contour(&mut points[from..to], counter_clockwise, strength);
+      embolden_contour(&mut points[from..to], counter_clockwise, x, y);
     }
     let mut next = points.into_iter();
     let mut take = || next.next().expect("one shifted point per outline point");
@@ -125,9 +128,10 @@ fn signed_area(points: &[Point]) -> f32 {
 // FreeType's embolden over one closed contour of control points, every
 // point treated alike (on or off the curve): walk the edges, and for each
 // corner shift the run of coincident points at it along the bisector of
-// the edge in and the edge out, by `strength` scaled for the corner's
-// angle and capped by the shorter edge so a sharp corner does not spike.
-fn embolden_contour(points: &mut [Point], counter_clockwise: bool, strength: f32) {
+// the edge in and the edge out, by the axis's strength scaled for the
+// corner's angle and capped by the shorter edge so a sharp corner does
+// not spike.
+fn embolden_contour(points: &mut [Point], counter_clockwise: bool, x_strength: f32, y_strength: f32) {
   if points.is_empty() {
     return;
   }
@@ -176,20 +180,15 @@ fn embolden_contour(points: &mut [Point], counter_clockwise: bool, strength: f32
           q = -q;
         }
         let l = in_len.min(out_len);
-        if strength * q <= l * d {
-          sx = sx * strength / d;
-          sy = sy * strength / d;
-        } else {
-          sx = sx * l / q;
-          sy = sy * l / q;
-        }
+        sx = if x_strength * q <= l * d { sx * x_strength / d } else { sx * l / q };
+        sy = if y_strength * q <= l * d { sy * y_strength / d } else { sy * l / q };
         Point::new(sx, sy)
       } else {
         Point::ZERO
       };
       while i != j {
-        points[i].x += strength + shift.x;
-        points[i].y += strength + shift.y;
+        points[i].x += x_strength + shift.x;
+        points[i].y += y_strength + shift.y;
         i = step(i);
       }
     } else {

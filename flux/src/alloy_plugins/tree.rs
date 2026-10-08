@@ -342,6 +342,7 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("prepareText")?;
     decl.declare("warmText")?;
     decl.declare("setTextRendering")?;
+    decl.declare("textRendering")?;
     decl.declare("getBoundingBox")?;
     decl.declare("getBoundingBoxViewport")?;
     decl.declare("getLayoutBox")?;
@@ -371,6 +372,7 @@ impl ModuleDef for RenderTreeModule {
     exports.export("prepareText", Function::new(ctx.clone(), prepare_text)?)?;
     exports.export("warmText", Function::new(ctx.clone(), warm_text)?)?;
     exports.export("setTextRendering", Function::new(ctx.clone(), set_text_rendering)?)?;
+    exports.export("textRendering", Function::new(ctx.clone(), text_rendering)?)?;
     exports.export("getBoundingBox", Function::new(ctx.clone(), get_bounding_box)?)?;
     exports.export("getBoundingBoxViewport", Function::new(ctx.clone(), get_bounding_box_viewport)?)?;
     exports.export("getLayoutBox", Function::new(ctx.clone(), get_layout_box)?)?;
@@ -677,23 +679,28 @@ fn warm_text<'js>(ctx: Ctx<'js>, styles: rquickjs::Array<'js>) -> rquickjs::Resu
   Ok(())
 }
 
+/// The coverage modes by their JS names, both ways (`setTextRendering`
+/// reads a name, `textRendering` writes one).
+const COVERAGE_MODES: [(&str, alloy::CoverageMode); 5] = [
+  ("naive", alloy::CoverageMode::Naive),
+  ("linearLight", alloy::CoverageMode::LinearLight),
+  ("polarityRemap", alloy::CoverageMode::PolarityRemap),
+  ("polarityLinear", alloy::CoverageMode::PolarityLinear),
+  ("directWrite", alloy::CoverageMode::DirectWrite),
+];
+
 // Change how every text is rendered (see TextRendering): each option given
 // replaces its part of the current policy, the rest stays. `darken: null`
 // and `hint: null` restore the display-scale defaults. Invalid values throw.
 fn set_text_rendering<'js>(ctx: Ctx<'js>, options: Object<'js>) -> rquickjs::Result<()> {
-  use alloy::CoverageMode;
   let throw = |msg: String| rquickjs::Exception::throw_message(&ctx, &msg);
   let s = state(&ctx);
   let platform = &s.gui.platform;
   let mut rendering = platform.text_rendering();
   if let Ok(mode) = options.get::<_, String>("coverage") {
-    rendering.coverage.mode = match mode.as_str() {
-      "naive" => CoverageMode::Naive,
-      "linearLight" => CoverageMode::LinearLight,
-      "polarityRemap" => CoverageMode::PolarityRemap,
-      "polarityLinear" => CoverageMode::PolarityLinear,
-      "directWrite" => CoverageMode::DirectWrite,
-      other => return Err(throw(format!("setTextRendering: unknown coverage mode '{other}'"))),
+    rendering.coverage.mode = match COVERAGE_MODES.iter().find(|(name, _)| *name == mode) {
+      Some((_, mode)) => *mode,
+      None => return Err(throw(format!("setTextRendering: unknown coverage mode '{mode}'"))),
     };
   }
   let positive = |name: &str| -> rquickjs::Result<Option<f32>> {
@@ -732,6 +739,32 @@ fn set_text_rendering<'js>(ctx: Ctx<'js>, options: Object<'js>) -> rquickjs::Res
   }
   platform.set_text_rendering(rendering);
   Ok(())
+}
+
+// The policy as it stands, resolved for this display: the shape
+// `setTextRendering` takes, with `darken` and `hint` as the display scale
+// resolves them when they are unset, so a settings screen shows what is in
+// effect and setting the result back changes nothing on this display.
+fn text_rendering(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
+  let s = state(&ctx);
+  let platform = &s.gui.platform;
+  let rendering = platform.text_rendering();
+  let coverage = COVERAGE_MODES
+    .iter()
+    .find(|(_, mode)| *mode == rendering.coverage.mode)
+    .map(|(name, _)| *name)
+    .expect("every coverage mode has a name");
+  let obj = Object::new(ctx.clone())?;
+  obj.set("coverage", coverage)?;
+  obj.set("gamma", rendering.coverage.gamma)?;
+  obj.set("contrast", rendering.coverage.contrast)?;
+  obj.set("darken", platform.text_darken_em())?;
+  match platform.text_hint() {
+    Hint::Off => obj.set("hint", false)?,
+    Hint::Light => obj.set("hint", "light")?,
+    Hint::Full => obj.set("hint", "full")?,
+  }
+  Ok(obj)
 }
 
 /// What a `hint` option accepts, for the errors that name it.

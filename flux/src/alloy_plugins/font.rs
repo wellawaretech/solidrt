@@ -21,7 +21,7 @@ use alloy::rendertree::text::glyphs::{
 };
 use alloy::rendertree::text::{prepare_units, Fallback, RunStyle};
 use alloy::rendertree::Text;
-use alloy::{SamplerFilter, SamplerState, SamplerWrap, MIN_ANISOTROPY};
+use alloy::{SamplerFilter, SamplerState, SamplerWrap, TextureFormat, MIN_ANISOTROPY};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent};
@@ -203,7 +203,11 @@ fn create_font<'js>(ctx: Ctx<'js>, face: OptArg<Object<'js>>, options: OptArg<Ob
   let max_side = st.gui.alloy.gpu_limits().max_texture_size;
   let id = st.next_id.get();
   let label = label.unwrap_or_else(|| format!("font-{id}"));
-  let atlas = GlyphAtlas::new(&st.gui.alloy, AtlasPacker::new(kind, max_side), sampler, &label)
+  // The app samples the atlas as a plain texture, so a mask atlas holds
+  // premultiplied white rather than the one-channel form the runtime's
+  // own glyph pass reads; a distance field is rgba8 either way.
+  let packer = AtlasPacker::new(kind, max_side).with_format(TextureFormat::Rgba8);
+  let atlas = GlyphAtlas::new(&st.gui.alloy, packer, sampler, &label)
     .map_err(|e| throw_str(&ctx, &format!("createFont: {e}")))?;
   st.next_id.set(id + 1);
   st.fonts
@@ -356,8 +360,14 @@ fn request_glyphs<'js>(ctx: Ctx<'js>, font: u64, glyphs: Vec<f64>) -> rquickjs::
         }
         drop(hold);
       });
-      let job =
-        CellJob { owner: font, bytes: face.bytes().clone(), request, priority: JobPriority::Needed, done: Some(done) };
+      let job = CellJob {
+        owner: font,
+        bytes: face.bytes().clone(),
+        styles: face.styles().clone(),
+        request,
+        priority: JobPriority::Needed,
+        done: Some(done),
+      };
       let submitted = st.worker.as_ref().is_some_and(|w| w.submit(job));
       if submitted {
         entry.requested.extend(missing);

@@ -7,7 +7,9 @@
 //! pass runs through `run_pass` with its exhaustive save/restore. The
 //! fragment stage resolves the run's color (the quad's own, or a gradient
 //! sampled from a ramp texture at the parameter the layer pixel maps to),
-//! samples the mask's coverage, applies the coverage-to-color policy, and
+//! samples the mask's coverage (the atlas's red channel: the text atlas is
+//! R8, and an rgba8 mask atlas holds premultiplied white, the same value
+//! in red), applies the coverage-to-color policy, and
 //! writes premultiplied color blended source-over, so kerned pairs and
 //! diacritics that overlap composite right. Single-sample, GLES 3.0.
 
@@ -103,7 +105,7 @@ void main() {
     vec4 g = texture(uRamp, vec2(clamp(t, 0.0, 1.0), 0.5));
     color = vec4(g.rgb, g.a * vColor.a * inside);
   }
-  float c = texture(uAtlas, vUv).a;
+  float c = texture(uAtlas, vUv).r;
   bool light = lum(color.rgb) > 0.5;
   if (uMode == 1) {
     c = light ? pow(c, 1.0 / uGamma) : 1.0 - pow(1.0 - c, 1.0 / uGamma);
