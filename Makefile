@@ -34,8 +34,14 @@ help client runtime player-bundle dist android-client android-run android-run-ar
 test:
 	cargo test --workspace
 
+# The whole workspace, each crate at its own edition. The workspace is
+# rustfmt-clean, so this touches only what you changed.
 format:
 	cargo fmt --all
 
+# Lists the files `format` would change, and fails if there are any.
+format-check:
+	cargo fmt --all --check -- -l
+
 # lattice, flux, apps and dist are also directory names at the repo root.
-.PHONY: all lattice flux apps clean help client runtime player-bundle dist android-client android-run android-run-armeabi-v7a android-runtime android-dist android-dist-armeabi-v7a dist-clean download-fonts test format
+.PHONY: all lattice flux apps clean help client runtime player-bundle dist android-client android-run android-run-armeabi-v7a android-runtime android-dist android-dist-armeabi-v7a dist-clean download-fonts test format format-check

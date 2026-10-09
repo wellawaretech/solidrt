@@ -1,14 +1,15 @@
 ---
-title: How GPUI renders text, against our text layer
-description: Zed's GPUI shapes and rasterizes with each OS's own stack (Core Text, DirectWrite) and with cosmic-text plus swash on Linux and the web, into one bitmap atlas drawn as instanced quads every frame; the same family as our engine, ahead on LCD AA, a proven coverage-to-color recipe and hinting, with no distance fields and different pixels per platform.
+title: How GPUI renders and lays out text, against ours
+description: Zed's GPUI shapes and rasterizes with each OS's own stack (Core Text, DirectWrite) and with cosmic-text plus swash on Linux and the web, into one bitmap atlas drawn as instanced quads every frame, and lays out by shaping whole lines; the same rasterizing family as our engine with the same DirectWrite blend, ahead on LCD AA, color emoji and system fallback, with no layer, no distance fields, different pixels per platform, and no primitive for breaking text a line at a time at varying widths.
 created: 2026-10-07
 ---
 
-# How GPUI renders text, against our text layer
+# How GPUI renders and lays out text, against ours
 
-Checked against the Zed source, `main` at c3ab556 (2026-10-06). The
-platform code lives in crates of its own: `gpui_macos` with `gpui_apple`
-(Metal), `gpui_windows`, `gpui_linux`, `gpui_wgpu`, `gpui_web`.
+Rendering checked against the Zed source, `main` at c3ab556 (2026-10-06),
+layout against `main` at b01d137 (2026-10-09). The platform code lives in
+crates of its own: `gpui_macos` with `gpui_apple` (Metal), `gpui_windows`,
+`gpui_linux`, `gpui_wgpu`, `gpui_web`.
 
 ## Per platform
 
@@ -48,14 +49,53 @@ platform code lives in crates of its own: `gpui_macos` with `gpui_apple`
 - `TextRenderingMode` (`PlatformDefault`, `Subpixel`, `Grayscale`) is a
   user setting over the platform default.
 
-## Against ours
+## Layout
+
+The API is in `gpui/src/text_system.rs`, `text_system/line_layout.rs` and
+`text_system/line_wrapper.rs`.
+
+- The unit of shaping is the whole line. `WindowTextSystem::shape_line(text,
+  font_size, runs, force_width)` (one line, no newlines) and `layout_line`
+  shape a paragraph with its style runs (`TextRun`) through the platform
+  shaper in one call. The `LineLayout` is public: `runs` of `ShapedRun {
+  font_id, glyphs }`, each `ShapedGlyph { id, position, index, is_emoji }`,
+  with `width`, `ascent`, `descent`, and `index_for_x`,
+  `closest_index_for_x` and `x_for_index` for hit testing and carets.
+- Wrapping: `shape_text(text, font_size, runs, wrap_width, line_clamp)`
+  shapes each paragraph as one line and walks its glyph positions
+  (`compute_wrap_boundaries`): a break candidate after a space before a
+  word character, or at any other non-word character; past `wrap_width`
+  the line breaks at the last candidate, else at the current glyph. Greedy,
+  exact by construction (the string was shaped whole, so cross-word
+  kerning and ligatures are in the positions), one width for every line,
+  no cursor.
+- `LineWrapper` (`TextSystem::line_wrapper(font, font_size)`), what Zed's
+  editor soft wrap uses, sums per-character widths (`width_for_char`, each
+  character measured alone, cached in a 128-entry ASCII array and a map for
+  the rest): no kerning or ligatures, fit for a monospace editor and
+  approximate for proportional text. `wrap_line(fragments, wrap_width,
+  indent_adjustment)` yields byte-index boundaries; `truncate_line`
+  truncates from the start, the end or the middle (`TruncateFrom`).
+- The cache: `LineLayoutCache` holds two frames of shaped and wrapped
+  lines. A lookup checks the current frame, then the previous one
+  (promoting a hit), else shapes; `finish_frame` swaps and clears, so a
+  line unused for one frame is gone. The `*_by_hash` variants key on a
+  caller's text hash so a hit never materializes the string; `add_fonts`
+  clears it.
+
+## Against ours: rendering
 
 Our engine (`alloy/src/rendertree/text/glyphs/`, the layer in
-`rendertree/text/mod.rs`, the pass in `alloy/src/gpu/glyphs.rs`) is
-GPUI's Linux path in most respects: harfrust shaping, swash coverage masks
-at horizontal subpixel phases, one shared atlas, instanced quads, coverage
-to color in the fragment shader. Three phases against GPUI's four is a
-worst-case placement error of 1/6 px against 1/8, not visible.
+`rendertree/text/mod.rs`, the pass in `alloy/src/gl/glyphs.rs`) is
+GPUI's Linux path in most respects: harfrust shaping, coverage masks at
+horizontal subpixel phases (skrifa outlines rasterized by zeno), one shared
+atlas, instanced quads, coverage to color in the fragment shader. Three
+phases against GPUI's four is a worst-case placement error of 1/6 px
+against 1/8, not visible. The coverage recipe is the same as well: our
+default, `CoverageMode::DirectWrite`, is the same Windows Terminal port
+(gamma 1.8, contrast 1). The other modes stay behind `setTextRendering` as
+a live setting, where GPUI's recipe is fixed (DirectWrite's on Linux and
+Windows, Core Graphics' dilation on macOS).
 
 Where GPUI differs:
 
@@ -66,24 +106,73 @@ Where GPUI differs:
   core. Only 1x desktop panels would gain; the TV, phones and 2x screens
   would not.
 - **Native rasterizers on macOS and Windows**: the platform's own look,
-  at the price of different pixels per platform. Ours is swash
+  at the price of different pixels per platform. Ours is one stack
   everywhere, identical pixels on every platform, which the headless
   snapshot tests rely on.
-- **Hinting** on Linux (swash) and Windows (DirectWrite grid fit); our
-  cells are unhinted. Hinting matters at 1x and hardly at 2x.
-- **One fixed coverage-to-color recipe**, DirectWrite's, where ours is
-  `CoveragePolicy`, a uniform with four modes (`Naive`, `LinearLight`,
-  `PolarityRemap`, `PolarityLinear`) and a gamma. The Windows Terminal
-  formula is a fifth, battle-tested candidate.
-- **Color emoji and system-font fallback** work; ours resolves packaged
+- **Hinting by platform**: on Linux (swash) and Windows (DirectWrite grid
+  fit), not on macOS. Ours forces skrifa's autohinter on below 2x (light:
+  rows snapped, x left to the phases), with full (the mono target, stems
+  on whole pixels) per app or per `flux:font` atlas. swash's hint flag
+  does nothing on an uninstructed variable font like the shipped Notos
+  (its default engine sends a TrueType font with a non-empty `prep` to the
+  interpreter, which has nothing to run), so how much GPUI's Linux path
+  hints depends on the font.
+- **Color emoji and system-font fallback** work; ours resolves registered
   fonts only.
-- **No layer**, so none of the layer's traps under motion
-  ([text-layer-motion](../backlog/text-layer-motion.md)). GPUI pays the
-  glyph pass every frame; the draw bench of 2026-10-06 found that pass
-  alone (one instanced draw of 1622 glyph quads) costs nothing visible on
-  any of our devices, the armv7 TV included. Drawing glyphs straight into
-  the frame is not open to us while Impeller composites it.
+- **No layer.** GPUI draws every glyph into the frame every frame at its
+  rounded pixel. Our layer's blur at fractional offsets is gone since the
+  paint walk snaps every box to the device grid
+  ([pixel-snapped-paint-boxes](../done/pixel-snapped-paint-boxes.md)), the
+  same rounding GPUI does vertically; the scale animation trap (a layer
+  remade at each intermediate size, glyphs missing on the TV until the
+  worker catches up) is open
+  ([text-layer-motion](../backlog/text-layer-motion.md)). The draw bench
+  of 2026-10-06 found the glyph pass alone (one instanced draw of 1622
+  glyph quads) costs nothing visible on any of our devices, the armv7 TV
+  included. Drawing glyphs straight into the frame is not open to us while
+  Impeller composites it.
 
 What GPUI has no counterpart for: distance-field (MTSDF) cells for text
 drawn at arbitrary scale, and transform-scaled text at all. Zed's zoom
 changes the font size and lays out again.
+
+## Against ours: layout
+
+Ours is the pretext split
+([text-layout-owned](../done/text-layout-owned.md),
+[text-layout-primitives](../done/text-layout-primitives.md)): a text is
+segmented into wrap units (UAX 14), each shaped once through a word cache
+shared by every text, and line breaking is arithmetic over the cached
+advances and ink widths. Apps get it as plain data: `prepareText(text, {
+runs, carets })` returns the units (`advance`, `width`, `ascent`,
+`descent`, `hardBreak`, `glue`, `run`, optional kerned `carets`), and
+`layoutNextLine(prepared, cursor, width)` in `@solidrt/core` breaks one
+line from a cursor at a width of its own; `examples/text-flow` flows two
+columns with cursor handoff around a moving circle and a drop cap.
+`<text>` runs on the same arithmetic (floats, `textIndent`, atoms,
+`textWrap` balance and pretty, `maxLines` with ellipsis), and
+`flux:font`'s `prepareText` reports glyph ids for its own atlas.
+
+- **Lines of varying width** are a primitive here and app work there.
+  GPUI's wrap takes one width for every line and has no cursor, so text
+  around an obstacle or across columns means a breaker of one's own,
+  re-shaping candidate substrings with `shape_line` or summing
+  `LineWrapper`'s per-character widths, which see no kerning. Ours breaks
+  on the widths the drawn text has.
+- **Line choice beyond greedy**: `<text>`'s `textWrap` balance and pretty
+  are extra passes over the same cached widths; GPUI's wrap is greedy.
+- **The caches differ in grain and life**: a word shaped anywhere here is
+  a hit in any later layout, in any frame; GPUI keeps whole lines for two
+  frames, so the same paragraph reflowed into another shape is another
+  line.
+- **Exactness**: GPUI shapes the paragraph as one string, so its positions
+  are exact by construction. Ours shape per unit and draw a line's
+  same-style run joined (`Text::line_runs`), relying on the units'
+  advances summing to the joined shape: the corpus baseline holds it,
+  nothing guarantees it (kerning against a space, a ligature across one).
+- **Glyph-level access**: GPUI exposes glyph ids and positions for any
+  line; the `<text>` path gives caret positions and no glyph ids (only
+  `flux:font` does, for its own atlas).
+- **Truncation**: GPUI truncates from the start, the middle or the end;
+  `<text>` ellipsizes at the end of the last line (`maxLines`,
+  `textOverflow`).

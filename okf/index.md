@@ -2749,12 +2749,14 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   gaps by workload, and a file split proposal. Its shortlist closed
   2026-07-31, all eight items; see the status section for what shipped and
   what the do-order is now."
-- **[How GPUI renders text, against our text layer](notes/gpui-text-rendering.md)** [2026-10-07]
+- **[How GPUI renders and lays out text, against ours](notes/gpui-text-rendering.md)** [2026-10-07]
   Zed's GPUI shapes and rasterizes with each OS's own stack (Core Text,
   DirectWrite) and with cosmic-text plus swash on Linux and the web, into one
-  bitmap atlas drawn as instanced quads every frame; the same family as our
-  engine, ahead on LCD AA, a proven coverage-to-color recipe and hinting, with
-  no distance fields and different pixels per platform.
+  bitmap atlas drawn as instanced quads every frame, and lays out by shaping
+  whole lines; the same rasterizing family as our engine with the same
+  DirectWrite blend, ahead on LCD AA, color emoji and system fallback, with no
+  layer, no distance fields, different pixels per platform, and no primitive
+  for breaking text a line at a time at varying widths.
 - **[Graphics backend strategy](notes/graphics-backend-strategy.md)** [2026-08-12]
   Settled direction; one GLES contract over ANGLE on every platform, native
   Vulkan rejected, Metal-native kept only as a mapped contingency; includes

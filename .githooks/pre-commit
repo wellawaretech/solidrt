@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # The generated-file checks CI's okf job runs, before the commit instead of
 # after the push: a stale okf/index.md or components docs page has been the
-# most common red on main. Both checks take well under a second.
+# most common red on main. Both checks take well under a second. A commit
+# that stages Rust also checks the workspace is rustfmt-clean (`make
+# format-check`, about a second); like the others it reads the working tree,
+# not the index.
 #
 # Enable once per clone:
 #   git config core.hooksPath .githooks
@@ -10,3 +13,9 @@ set -eu
 cd "$(git rev-parse --show-toplevel)"
 bun scripts/build-okf-index.ts --check
 bun scripts/build-components-docs.ts --check
+if ! git diff --cached --quiet -- '*.rs'; then
+  cargo fmt --all --check -- -l || {
+    echo "Rust code is not rustfmt-clean: run make format" >&2
+    exit 1
+  }
+fi

@@ -1,6 +1,5 @@
 use sdl3::sys::keyboard::{SDL_GetKeyFromScancode, SDL_GetModState, SDL_HasKeyboard};
-use sdl3::sys::keycode::{SDLK_UNKNOWN, SDL_Keymod};
-use sdl3::sys::scancode::SDL_Scancode;
+use sdl3::sys::keycode::{SDL_Keymod, SDLK_UNKNOWN};
 use sdl3::sys::mouse::{
   SDL_CreateAnimatedCursor, SDL_CreateColorCursor, SDL_CreateSystemCursor, SDL_Cursor, SDL_CursorFrameInfo,
   SDL_DestroyCursor, SDL_HasMouse, SDL_HideCursor, SDL_SetCursor, SDL_ShowCursor, SDL_SystemCursor,
@@ -8,6 +7,7 @@ use sdl3::sys::mouse::{
 use sdl3::sys::pixels::SDL_PixelFormat;
 use sdl3::sys::power::{SDL_GetPowerInfo, SDL_PowerState};
 use sdl3::sys::rect::SDL_Rect;
+use sdl3::sys::scancode::SDL_Scancode;
 use sdl3::sys::surface::{SDL_AddSurfaceAlternateImage, SDL_CreateSurfaceFrom, SDL_DestroySurface, SDL_Surface};
 use sdl3::sys::video::{
   SDL_GetSystemTheme, SDL_GetWindowDisplayScale, SDL_GetWindowSafeArea, SDL_SetWindowIcon, SDL_SystemTheme,
