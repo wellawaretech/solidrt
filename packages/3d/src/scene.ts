@@ -2071,7 +2071,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       for (let v of views) attachView(v, mesh)
       // Record writes made while the mesh was out of a scene kept their
       // dirty ranges: publish them now.
-      if (inst !== null && inst.streams.some(s => s.dirty !== null)) recordsDirty.add(mesh)
+      if (inst !== null && inst.streams.some(s => s.stream !== null && s.stream.dirty)) recordsDirty.add(mesh)
       // Picking: an ordinary mesh's node carries its geometry's shape,
       // which is its box in the core index (following every
       // updateVertices) and its triangle narrowphase. An instanced mesh's

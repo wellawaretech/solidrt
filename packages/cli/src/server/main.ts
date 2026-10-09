@@ -24,10 +24,10 @@ import { absolute, resolveMode, sourceDirOf } from "./mode"
 import { requireBinary, solCommand } from "./binaries"
 import * as cache from "./cache"
 import { handleProxy } from "./proxy"
-import { appendLog, handleControl, onShutdownRequest, resolveQuery } from "./control"
+import { appendLog, handleControl, onShutdownRequest, ready, resolveQuery } from "./control"
 import { printIdentity } from "./identity"
 import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
-import { rebuildAndBroadcast, showBuildFailure } from "./rebuild"
+import { pushed, rebuildAndBroadcast, showBuildFailure } from "./rebuild"
 import { stopWatcher } from "./watcher"
 import { startRepl } from "./repl"
 import { devDir, pruneDeadRecords, rememberedPort, removeRecord, runningFor, serverDirFor, writeRecord } from "./registry"
@@ -256,6 +256,7 @@ function onOpen(ws: ServerWebSocket) {
     queries: [],
     stats: state.stats,
     timeScale: 1,
+    loading: null,
     clientDir: null,
     pid: null,
     execPath: null,
@@ -277,6 +278,7 @@ function onOpen(ws: ServerWebSocket) {
 
 function onClose(ws: ServerWebSocket) {
   let info = state.clients.get(ws)
+  ready(ws)
   state.clients.delete(ws)
   console.log(`[cli] Client disconnected: ${info?.platform ?? "unknown"}`)
 }
@@ -295,6 +297,11 @@ function onMessage(ws: ServerWebSocket, msg: string | Uint8Array) {
         queries: Array.isArray(data.queries) ? data.queries.map(String) : [],
         stats: existing?.stats ?? state.stats,
         timeScale: existing?.timeScale ?? 1,
+        // A runtime that reports its first frame (`ready`) is loading from
+        // the moment it got the latched push in onOpen; its info always
+        // precedes that frame. An older runtime never reports, so it is
+        // never waited for.
+        loading: data.ready === true ? state.currentReload !== null : null,
         clientDir: text(data.clientDir),
         pid: typeof data.pid === "number" ? data.pid : null,
         execPath: text(data.execPath),
@@ -314,6 +321,11 @@ function onMessage(ws: ServerWebSocket, msg: string | Uint8Array) {
             : null,
       })
       console.log(`[cli] Client info ${ws.remoteAddr ?? "unknown"} ${data.platform} (${data.version})`)
+      if (data.ready === true && state.currentReload !== null) pushed(ws)
+    } else if (data.type === "ready") {
+      // The client built the first frame of the last push: the queries
+      // waiting for an engine go out now (see control.ts).
+      ready(ws)
     } else if (data.type === "log") {
       // Forwarded console output / runtime errors from the client's engine
       // logger, buffered for the control API (see control.ts). Not printed
@@ -415,10 +427,15 @@ let signalOffs = ["SIGINT", "SIGTERM"].map((signal) =>
   }),
 )
 
-// Orderly exit: drop the record, stop the client, close the listeners and
-// release every handle that keeps the loop alive, so the process ends on
-// its own (flux has no exit call; an idle loop is the exit).
-async function shutdown() {
+// Orderly exit in two steps: `release` gives up what makes this server
+// visible (the registry record, the local client, the watcher, the repl,
+// the keepalive), `closeListeners` ends the listeners; after both, every
+// handle that keeps the loop alive is gone and the process ends on its own
+// (flux has no exit call; an idle loop is the exit). The split is for the
+// control API: it acks a shutdown only once the record is gone, so a `sol
+// run` issued right after the ack never meets the dying server's record,
+// and closes the listeners after the ack has gone out.
+async function release() {
   if (shuttingDown) return
   shuttingDown = true
   clearInterval(keepalive)
@@ -427,10 +444,16 @@ async function shutdown() {
   stopWatcher()
   await removeRecord(config.serverDir)
   if (localClient) localClient.kill()
+}
+async function closeListeners() {
   server.close()
   if (tunnel) await tunnel.close()
 }
-onShutdownRequest(shutdown)
+async function shutdown() {
+  await release()
+  await closeListeners()
+}
+onShutdownRequest({ release, closeListeners })
 
 // Native engine diagnostics on the spawned client's stderr - flutter and
 // Impeller "[ERROR:path] message" lines, validation breaks among them -

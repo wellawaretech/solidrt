@@ -5,12 +5,14 @@
 // algorithm, later over earlier; `orderBy` swaps that for a core-produced
 // key order at publish, records untouched); mutations batch, and the flush
 // (ahead of the frame's paint, or at a microtask outside a frame)
-// publishes what changed: the dirty record range as one buffer write, or
-// under `orderBy` the drawn prefix whole through the zero-copy write lease
-// (the core gathers it into key order during the copy, and a byte range
-// has no stable position under a permutation). A moved sprite is 20 float
-// stores plus its share of one memcpy per dirty frame; a static layer
-// publishes nothing and therefore costs nothing.
+// publishes what changed through the core's record stream
+// (`createRecordStream` in @solidrt/core/gpu, the publish model every
+// JS-stepped population shares): the dirty record range as one buffer
+// write, or under `orderBy` the drawn prefix whole through the zero-copy
+// write lease (the core gathers it into key order during the copy, and a
+// byte range has no stable position under a permutation). A moved sprite
+// is 20 float stores plus its share of one memcpy per dirty frame; a
+// static layer publishes nothing and therefore costs nothing.
 //
 // The record vocabulary is @solidrt/3d's record mesh's, one dimension
 // down: `records(layer)` is the mirror, `updateRecords(layer, { first?,
@@ -32,13 +34,13 @@
 // (addSprite/setSprite/...) are shared with the node layer; picking here is
 // the JS reverse walk (pointInSprite), since records have no nodes.
 import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
-import { beginBufferWrite, checkScreenSize, createBuffer, destroyBuffer, endBufferWrite, screenSizeScale, writeBuffer } from "@solidrt/core/gpu"
+import { checkScreenSize, createRecordStream, destroyBuffer, screenSizeScale } from "@solidrt/core/gpu"
 import type { BufferId } from "@solidrt/core/gpu"
 import { checkAtlases, frameIndex } from "./atlas.ts"
 import type { Atlas } from "./atlas.ts"
 import { fullFrame, isFrame, writeFrame } from "./frames.ts"
 import { checkTint, readFrame } from "./layer.ts"
-import type { LayerBase, Sprite, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
+import type { LayerBase, Sprite, SpriteLayer, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
 import { pointInSprite } from "./pick.ts"
 import { createSpritePipeline, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 import { createViews } from "./views.ts"
@@ -83,10 +85,6 @@ export type RecordLayerOptions = Omit<SpriteLayerOptions, "orderBy"> & {
 }
 
 export type RecordLayer = LayerBase & {
-  /** The record mirror; read it through records(). Replaced by growth. */
-  _records: Float32Array
-  /** The record range [lo, hi) written since the last publish, or null. */
-  _dirty: [number, number] | null
   /** The count dial (setRecordCount): how many leading sprites draw and
    * pick; Infinity (the identity of the min against the live count)
    * until a dial is set. */
@@ -99,21 +97,34 @@ export type RecordLayer = LayerBase & {
 export type UpdateRecordsOptions = { first?: number; count?: number }
 
 /**
- * The layer's record mirror - the raw power path. Layout per sprite is
- * INSTANCE_FLOATS floats: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR,
- * tintG, tintB, tintA, minScreenPx, maxScreenPx, atlas, outlineR,
- * outlineG, outlineB, outlineWidth], record i at i * INSTANCE_FLOATS;
- * `atlas` is the frame's texture as its index in the layer's `atlases`
- * list, and the outline is read only by a distance-field atlas (see
- * `Atlas.sdf`): rgb in 0..1 and a width in world pixels, zero for none. Record order is draw order - unless the
+ * The layer's record mirror - the raw power path. On a records layer the
+ * layout per sprite is INSTANCE_FLOATS floats: [cx, cy, w, h, u0, v0, u1,
+ * v1, rot, tintR, tintG, tintB, tintA, minScreenPx, maxScreenPx, atlas,
+ * outlineR, outlineG, outlineB, outlineWidth], record i at i *
+ * INSTANCE_FLOATS; `atlas` is the frame's texture as its index in the
+ * layer's `atlases` list, and the outline is read only by a
+ * distance-field atlas (see `Atlas.sdf`): rgb in 0..1 and a width in
+ * world pixels, zero for none. Record order is draw order - unless the
  * layer was created with `orderBy`, which draws in key order while record
- * i keeps meaning sprite i. Write fields directly for large per-frame
- * populations, then updateRecords the range. Read it AT USE TIME: addSprite
- * past capacity replaces the array, and a hoisted reference becomes a dead
- * copy whose writes publish nothing. Do not cache indices across
- * destroySprite - records shift. @solidrt/3d's records(mesh).
+ * i keeps meaning sprite i. Do not cache indices across destroySprite -
+ * records shift.
+ *
+ * On a node layer (createSpriteLayer) the records are its STYLE records,
+ * STYLE_FLOATS floats per sprite slot: [u0, v0, u1, v1, tintR, tintG,
+ * tintB, tintA, renderOrder, minScreenPx, maxScreenPx, atlas, outlineR,
+ * outlineG, outlineB, outlineWidth], slot i at i * STYLE_FLOATS (a
+ * sprite's slot is fixed for its life; a freed slot recycles) - the pose
+ * lives in the core and is written through setSprite. The 3d
+ * `records(instancedMesh)`, one dimension down: a bulk restyle (a palette
+ * cycle over thousands of sprites) is one loop over this and one
+ * updateRecords.
+ *
+ * Write fields directly for large per-frame populations, then
+ * updateRecords the range. Read it AT USE TIME: an add past capacity
+ * replaces the array, and a hoisted reference becomes a dead copy whose
+ * writes publish nothing. @solidrt/3d's records(mesh).
  */
-export function records(layer: RecordLayer): Float32Array {
+export function records(layer: RecordLayer | SpriteLayer): Float32Array {
   return layer._records
 }
 
@@ -123,13 +134,14 @@ export function records(layer: RecordLayer): Float32Array {
  * moved records of ten thousand cost ten); the whole mirror by default.
  * Write the mirror first, through records(), then call this. The range
  * is against the mirror's capacity, not the live sprites: a record past
- * the last live sprite is accepted and never drawn. Under `orderBy` any
- * range republishes the drawn prefix whole - the core gathers it into
- * key order, and a byte range has no stable position under a
- * permutation. @solidrt/3d's updateRecords(mesh).
+ * the last live sprite (on a node layer, past the highest slot in use)
+ * is accepted and never drawn. Under `orderBy` any range republishes the
+ * drawn prefix whole - the core gathers it into key order, and a byte
+ * range has no stable position under a permutation. @solidrt/3d's
+ * updateRecords(mesh).
  */
-export function updateRecords(layer: RecordLayer, options: UpdateRecordsOptions = {}): void {
-  let capacity = layer._records.length / INSTANCE_FLOATS
+export function updateRecords(layer: RecordLayer | SpriteLayer, options: UpdateRecordsOptions = {}): void {
+  let capacity = layer._stream.capacity
   let first = options.first ?? 0
   let count = options.count ?? capacity - first
   if (!Number.isInteger(first) || !Number.isInteger(count) || first < 0 || count < 0 || first + count > capacity) {
@@ -154,14 +166,10 @@ export function setRecordCount(layer: RecordLayer, count: number): void {
   layer._schedule()
 }
 
-// Extend the layer's dirty range over records [lo, hi) and schedule the
-// flush that publishes it.
-function markRecords(layer: RecordLayer, lo: number, hi: number): void {
-  if (layer._dirty === null) layer._dirty = [lo, hi]
-  else {
-    if (lo < layer._dirty[0]) layer._dirty[0] = lo
-    if (hi > layer._dirty[1]) layer._dirty[1] = hi
-  }
+// Mark records [lo, hi) of the layer's stream and schedule the flush that
+// publishes them.
+function markRecords(layer: RecordLayer | SpriteLayer, lo: number, hi: number): void {
+  layer._stream.mark(lo, hi)
   layer._schedule()
 }
 
@@ -179,10 +187,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     throw new Error(`createRecordLayer: capacity must be a positive integer, got ${capacity}`)
   }
   let label = opts?.label ?? "sprites"
-  let buffer: BufferId = createBuffer(capacity * RECORD_BYTES, {
-    label: `${label}-records`,
-    autoFree: false,
-  })
+  let stream = createRecordStream(RECORD_BYTES, capacity, { label: `${label}-records`, autoFree: false })
   let tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createRecordLayer", tint)
   let orderBy = opts?.orderBy
@@ -215,60 +220,45 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
 
   // How many leading sprites draw: the dial against the live count.
   let drawn = () => Math.min(layer._dial, layer._order.length)
-  // Publish the first `n` records whole through the write lease: a
-  // replacement buffer's first fill (its contents are unspecified), and
-  // every publish of an ordered layer (the gather runs in the copy).
-  let publishWhole = (target: BufferId, n: number) => {
-    let out = beginBufferWrite(target)
-    out.set(layer._records.subarray(0, n * INSTANCE_FLOATS))
-    endBufferWrite(target, n * RECORD_BYTES)
-  }
 
-  // The GPU buffer's record capacity; the mirror grows ahead of it
-  // (addSprite) and the flush catches the buffer up: a larger buffer is
-  // created, written in full, swapped in, and the old one destroyed. The
-  // entries hold the old buffer alive until the swaps land, so the destroy
-  // is safe to issue right after.
-  let gpuCapacity = capacity
+  // The buffers growth replaced since the last flush (addSprite grows the
+  // stream at once; the views still draw from the first of these until the
+  // flush swaps the replacement in). The entries hold a swapped-out buffer
+  // alive until the swap lands, so the destroys are safe to issue right
+  // after.
+  let grownFrom: BufferId[] = []
   let flush = () => {
     scheduled = false
     if (disposed) return
-    let dirty = layer._dirty
-    layer._dirty = null
-    let mirror = layer._records
     let live = layer._order.length
     let count = drawn()
-    if (mirror.length > gpuCapacity * INSTANCE_FLOATS) {
-      gpuCapacity = mirror.length / INSTANCE_FLOATS
-      let grown = createBuffer(mirror.length * Float32Array.BYTES_PER_ELEMENT, { label: `${label}-records`, autoFree: false })
+    if (grownFrom.length > 0) {
       // The replacement is filled whole before the swap (the entry must
       // never point at an unwritten buffer): the live prefix, or under
       // orderBy the drawn one, which is all the gather may see.
-      publishWhole(grown, ordered ? count : live)
-      views.setBuffers([grown])
+      stream.publish(true, ordered ? count : live)
+      views.setBuffers([stream.buffer])
       views.setCount(count)
       if (ordered) {
         // That publish landed BEFORE the swap, so the order had not yet
         // followed to the grown buffer and it went out ungathered. One
         // more publish, now under the swapped-in order, restores key
         // order - growth frames only.
-        publishWhole(grown, count)
+        stream.publish(true, count)
       }
-      destroyBuffer(buffer)
-      buffer = grown
+      for (let old of grownFrom) destroyBuffer(old)
+      grownFrom.length = 0
       published = count
       return
     }
     if (ordered) {
       // The gathered set IS the drawn prefix: a dirty record or a moved
       // dial republishes it whole.
-      if (dirty !== null || count !== published) publishWhole(buffer, count)
-    } else if (dirty !== null) {
+      if (stream.dirty || count !== published) stream.publish(true, count)
+    } else {
       // The dirty range, clipped to the live sprites (a record past them
       // is never drawn): one partial write at its byte offset.
-      let lo = dirty[0]
-      let hi = Math.min(dirty[1], live)
-      if (hi > lo) writeBuffer(buffer, mirror.subarray(lo * INSTANCE_FLOATS, hi * INSTANCE_FLOATS), lo * RECORD_BYTES)
+      stream.publish(false, live)
     }
     if (count !== published) {
       views.setCount(count)
@@ -335,7 +325,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     pipeline: gpu.pipeline,
     quad: gpu.quad,
     atlases: atlases.map(a => a.texture),
-    buffers: () => [buffer],
+    buffers: () => [stream.buffer],
     count: () => published,
     tint: () => tint,
     pick: (x, y, zoom) => layer.pick(x, y, zoom),
@@ -383,7 +373,9 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       for (let sprite of layer._order) sprite.layer = null
       layer._order.length = 0
       views.dispose()
-      destroyBuffer(buffer)
+      for (let old of grownFrom) destroyBuffer(old)
+      grownFrom.length = 0
+      stream.destroy()
       gpu.dispose()
     },
     _add(opts) {
@@ -407,12 +399,11 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       }
       let atlas = checkWrite("addSprite", record)
       let index = layer._order.length
-      if ((index + 1) * INSTANCE_FLOATS > layer._records.length) {
-        // Growth replaces the mirror (doubling); the flush catches the GPU
-        // buffer up with a whole publish.
-        let next = new Float32Array(layer._records.length * 2)
-        next.set(layer._records)
-        layer._records = next
+      if (index + 1 > stream.capacity) {
+        // Growth replaces the mirror and the buffer (doubling); the flush
+        // fills the replacement whole and swaps it in.
+        grownFrom.push(stream.grow(stream.capacity * 2))
+        layer._records = new Float32Array(stream.bytes.buffer)
       }
       let sprite: SpriteState = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0, _flipX: false, _flipY: false, _visible: true, _parent: null }
       layer._order.push(sprite)
@@ -469,8 +460,8 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       scheduled = true
       RESOLVED.then(flush)
     },
-    _records: new Float32Array(capacity * INSTANCE_FLOATS),
-    _dirty: null,
+    _stream: stream,
+    _records: new Float32Array(stream.bytes.buffer),
     _dial: Infinity,
     _order: [],
   }

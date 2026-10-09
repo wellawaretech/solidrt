@@ -26,7 +26,20 @@ import type {
 // Ring buffer of forwarded client logs. Capped so a chatty app cannot grow the
 // server without bound; readers page through it with the `since` cursor.
 const LOG_CAP = 2000
-const QUERY_TIMEOUT_MS = 5000
+// How long a forwarded query waits for the client's answer. Sized for a
+// slow device (an SM-T500 answered a settle-then-tree pair late at 5 s and
+// fine at the next call), not for the desktop case, which answers in ms.
+const QUERY_TIMEOUT_MS = 10000
+// The extra a raw-format snapshot or texture read gets: the reply is the
+// uncompressed RGBA of the window (8+ MB base64 at 2000x1092), encoded on
+// the client's JS thread and sent over its websocket, which a tablet takes
+// seconds over.
+const RAW_IMAGE_EXTRA_MS = 10000
+// The prefix of the client's once-a-second slow-frame warning (lattice's
+// draw plugin), collapsed per run in /logs like identical lines are: a
+// continuous animation produces one a second, and the real warning in
+// between is what a reader is after.
+const SLOW_FRAME_PREFIX = "Slow frame:"
 // Wall time a clock query is allowed per stepped frame on top of the base
 // timeout: the client answers once its steps ran, one per frame, and
 // waits at most about this long for each before giving up.
@@ -36,8 +49,8 @@ const MAX_WAIT_MS = 30000
 // caller says otherwise (the client's own default, stated here so the
 // query timeout can be stretched by it).
 const SETTLE_MAX_MS = 5000
-// Delay between acking POST /shutdown and running the shutdown, so the
-// response reaches the caller before the listener closes.
+// Delay between acking POST /shutdown and closing the listeners, so the
+// response reaches the caller before its connection goes.
 const SHUTDOWN_ACK_MS = 100
 
 let logs: LogEntry[] = []
@@ -63,6 +76,35 @@ export function appendLog(client: number, level: string, text: string) {
   for (let wake of waiters) wake()
 }
 
+/// The client built the first frame of the last push (its `ready`
+/// message), or went away: release the queries waiting for it (the push
+/// side is rebuild.ts pushed).
+export function ready(ws: ServerWebSocket) {
+  let info = state.clients.get(ws)
+  if (info && info.loading !== null) info.loading = false
+  let entry = state.loading.get(ws)
+  if (!entry) return
+  state.loading.delete(ws)
+  for (let wake of entry.waiters) wake()
+}
+
+// Wait up to `timeoutMs` for the client's first frame after a push. Resolves
+// with null once it is there (or was never pending), or with the error
+// Response to answer instead when the wait ran out.
+async function awaitFirstFrame(ws: ServerWebSocket, timeoutMs: number): Promise<Response | null> {
+  let entry = state.loading.get(ws)
+  if (!entry) return null
+  let woken = new Promise<true>((resolve) => entry.waiters.push(() => resolve(true)))
+  let done = await Promise.race([woken, sleep(timeoutMs).then(() => false)])
+  if (done) return null
+  return Response.json(
+    {
+      error: `The app is still loading: no frame built since the push ${Date.now() - entry.since} ms ago. Retry, or read the logs for a startup error.`,
+    },
+    { status: 503 },
+  )
+}
+
 /// A `result` message arrived from a client: hand it to the awaiting query.
 export function resolveQuery(msg: { id?: number }) {
   if (typeof msg.id !== "number") return
@@ -86,6 +128,7 @@ export function clientList(withAddress = false): (ClientEntry & { address?: stri
     queries: info.queries,
     stats: info.stats,
     timeScale: info.timeScale,
+    loading: info.loading,
     clientDir: info.clientDir,
     pid: info.pid,
     execPath: info.execPath,
@@ -169,6 +212,10 @@ async function queryClient(
   extra?: Record<string, unknown>,
   timeoutMs: number = QUERY_TIMEOUT_MS,
 ): Promise<{ data: any } | { error: Response }> {
+  // An engine still starting after a push answers nothing on its JS
+  // thread: wait for its first frame first, within the same budget.
+  let notReady = await awaitFirstFrame(ws, timeoutMs)
+  if (notReady) return { error: notReady }
   let id = nextQueryId++
   let reply = new Promise<any>((resolve) => {
     pendingQueries.set(id, resolve)
@@ -179,7 +226,9 @@ async function queryClient(
   if (!msg)
     return {
       error: Response.json(
-        { error: "Query timed out: the client is connected but did not answer (JS thread busy or app wedged?)" },
+        {
+          error: `Query timed out after ${timeoutMs} ms: the client is connected but did not answer. A slow device or a heavy query (a raw snapshot of a large window) usually answers on retry; a repeat means its JS thread is busy or the app is wedged.`,
+        },
         { status: 504 },
       ),
     }
@@ -202,17 +251,28 @@ async function handleQuery(
   return "error" in result ? result.error : Response.json(result.data)
 }
 
+// Whether two consecutive texts belong to one run: identical, or both the
+// client's slow-frame warning (the figures differ per frame, the warning is
+// the same).
+function sameRun(a: string, b: string): boolean {
+  return a === b || (a.startsWith(SLOW_FRAME_PREFIX) && b.startsWith(SLOW_FRAME_PREFIX))
+}
+
 // Merge runs of consecutive identical entries (same client, level, text) into
 // one entry carrying `repeats` and the run's last seq/at, so 176 copies of one
 // error read as a single line and a `since` cursor still skips the whole run.
+// A run of slow-frame warnings collapses the same way, to its latest line.
 function collapseRepeats(entries: LogEntry[]): (LogEntry & { repeats?: number })[] {
   let out: (LogEntry & { repeats?: number })[] = []
   for (let e of entries) {
     let last = out[out.length - 1]
-    if (last && last.client === e.client && last.level === e.level && last.text === e.text) {
+    if (last && last.client === e.client && last.level === e.level && sameRun(last.text, e.text)) {
       last.repeats = (last.repeats ?? 1) + 1
       last.seq = e.seq
       last.at = e.at
+      // A slow-frame run reads as its latest line, the figures of the
+      // frame that just went over: the run is one entry, not one per second.
+      last.text = e.text
     } else {
       out.push({ ...e })
     }
@@ -332,11 +392,14 @@ export function setUserInputMuted(on: boolean) {
 // its explicit /reload is. Changes made while paused are not replayed on
 // resume.
 // The server's orderly shutdown, registered by main.ts where it lives next
-// to the handles it releases (registry record, local client, listeners).
-let shutdownHook: (() => void) | null = null
+// to the handles it releases: `release` drops the registry record and the
+// local client (what a caller may act on once acked), `closeListeners` ends
+// the listeners (after the ack has gone out).
+type ShutdownHooks = { release: () => Promise<void>; closeListeners: () => Promise<void> }
+let shutdownHooks: ShutdownHooks | null = null
 
-export function onShutdownRequest(fn: () => void) {
-  shutdownHook = fn
+export function onShutdownRequest(hooks: ShutdownHooks) {
+  shutdownHooks = hooks
 }
 
 export function setWatchActive(on: boolean) {
@@ -472,7 +535,7 @@ export async function handleControl(req: Request, path: string, query: Map<strin
         if (step !== "1" && step !== "true") return Response.json({ error: 'Step must be "1" or "true"' }, { status: 400 })
         extra.step = true
       }
-      return handleQuery(query, "snapshot", extra)
+      return handleQuery(query, "snapshot", extra, QUERY_TIMEOUT_MS + (format === "raw" ? RAW_IMAGE_EXTRA_MS : 0))
     }
     case "/__control__/gpu": {
       // ?label=<text> keeps only resources created with exactly that label;
@@ -520,7 +583,7 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let format = parseFormat(query)
       if (format instanceof Response) return format
       if (format) extra.format = format
-      return handleQuery(query, "texture", extra)
+      return handleQuery(query, "texture", extra, QUERY_TIMEOUT_MS + (format === "raw" ? RAW_IMAGE_EXTRA_MS : 0))
     }
     case "/__control__/clock": {
       // Clock control: POST ?scale=<x> sets the client's time scale (0
@@ -671,14 +734,17 @@ export async function handleControl(req: Request, path: string, query: Map<strin
     }
     case "/__control__/shutdown": {
       // Orderly server exit over the wire, the counterpart of the repl's
-      // `quit`: acks first, then triggers the shutdown after a short delay
-      // so the response gets out. Address by port: this only ever reaches
-      // the server whose port the caller was given.
+      // `quit`: releases the record and the local client first, acks, and
+      // closes the listeners after a short delay so the response gets out.
+      // Acking after the release means a caller that starts the next server
+      // on the ack never meets this one's record. Address by port: this
+      // only ever reaches the server whose port the caller was given.
       if (req.method !== "POST") return Response.json({ error: "Shutdown requires POST" }, { status: 405 })
-      if (!shutdownHook) return Response.json({ error: "Shutdown is not available on this server" }, { status: 503 })
+      if (!shutdownHooks) return Response.json({ error: "Shutdown is not available on this server" }, { status: 503 })
       console.log("[cli] Shutdown requested over the control API")
-      let fn = shutdownHook
-      setTimeout(fn, SHUTDOWN_ACK_MS)
+      let hooks = shutdownHooks
+      await hooks.release()
+      setTimeout(() => void hooks.closeListeners(), SHUTDOWN_ACK_MS)
       let body: ShutdownResponse = { ok: true }
       return Response.json(body)
     }

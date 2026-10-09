@@ -23,6 +23,11 @@ export type ClientEntry = {
   /** Its time scale as the client last reported it to POST /clock: 0 paused,
    * 1 real time. Back to 1 on every push (a reload restarts the clock). */
   timeScale: number
+  /** Whether the client is still building the first frame of the last push
+   * (true from the push until its `ready` message; queries wait for it
+   * within their timeout), or null on a runtime that predates the message
+   * and is queried right away. */
+  loading: boolean | null
   /** The client's process id on its own machine. */
   pid: number | null
   /** The runtime binary it runs. */
@@ -98,7 +103,8 @@ export type StatsResponse = { ok: true; active: boolean; clients: number }
 /** POST /watch: whether reload-on-save is now active. */
 export type WatchResponse = { ok: true; active: boolean }
 
-/** POST /shutdown: the ack, sent just before the server exits. */
+/** POST /shutdown: the ack, sent once the server's registry record is gone
+ * and its local client stopped; the listeners close right after it. */
 export type ShutdownResponse = { ok: true }
 
 /** GET /snapshot and /texture: png by default, RGBA8 bytes with format=raw. */

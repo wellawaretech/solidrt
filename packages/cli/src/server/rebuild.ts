@@ -1,5 +1,6 @@
 import { command } from "flux:subprocess"
 import { dir, file } from "flux:fs"
+import type { ServerWebSocket } from "flux:http"
 import { state } from "./state"
 import { armWatcher } from "./watcher"
 import type { BundleOutput } from "../types/bundle"
@@ -32,11 +33,26 @@ function buildReload(code: string, manifest?: string) {
 // of leaving the previous app frozen on screen.
 const BSOD_TRIGGER = `throw new Error("SolidRT: build failed")`
 
+/** A push is going out to `ws`: until the client reports its first frame,
+ * queries to it wait instead of timing out against an engine that is still
+ * starting (control.ts awaitFirstFrame). Only for a runtime that sends
+ * `ready` (ClientEntry `loading` non-null); an older one is queried right
+ * away as before. */
+export function pushed(ws: ServerWebSocket) {
+  let info = state.clients.get(ws)
+  if (!info || info.loading === null) return
+  info.loading = true
+  let entry = state.loading.get(ws)
+  if (entry) entry.since = Date.now()
+  else state.loading.set(ws, { since: Date.now(), waiters: [] })
+}
+
 function latchAndSend(text: string) {
   state.currentReload = text
   for (let [ws, info] of state.clients) {
     // The runtime restarts the app's clock with the app.
     info.timeScale = 1
+    pushed(ws)
     ws.send(text)
   }
 }

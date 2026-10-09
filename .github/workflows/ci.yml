@@ -30,13 +30,30 @@ jobs:
 
       - uses: ./.github/actions/linux-system-deps
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - uses: ./.github/actions/js-install
+
+      # The player and BSOD bundles lattice embeds are generated, not
+      # tracked (lattice/build.rs), so every lattice compile below needs
+      # them bundled first.
+      - name: Bundle the player
+        run: make -C lattice player-bundle
+
+      # Formatting is a check, not a convention: the workspace was made
+      # rustfmt-clean once and nothing but this keeps it so.
+      - name: Format
+        run: make format-check
+
       # --all-targets so tests, examples and bins compile too: without it a
       # broken test or probe example passes CI untouched. Video is not a
       # cargo default (see lattice/Makefile) but every shipped build carries
       # it, so the feature rides along here and in the two test steps: flux's
-      # gui video plugin and lattice's passthrough compile nowhere else.
+      # gui video plugin and lattice's passthrough compile nowhere else. ktx2
+      # (forge's texture encoder and its flux marshalling) is compiled by the
+      # release build alone otherwise, so it rides along here too.
       - name: Check
-        run: cargo check --workspace --all-targets --features flux/video,lattice/video
+        run: cargo check --workspace --all-targets --features flux/video,lattice/video,flux/ktx2
 
       # The Linux-only suites: alloy (hit testing, routing, layout cache, GPU
       # graph propagation), flux with the gui feature (unified in through

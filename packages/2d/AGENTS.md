@@ -267,7 +267,20 @@ mark their own record, so a `setSprite` here publishes one record, not
 the prefix. The POPULATION verbs differ by kind and stay so: a record
 mesh's records are opaque data (`setRecords` copies in and grows), a
 record layer's are sprites (`addSprite`/`destroySprite`), so the copy-in
-here is `records(layer).set(src)` then `updateRecords(layer)`. It is the
+here is `records(layer).set(src)` then `updateRecords(layer)`. The
+publish itself is the core's record stream (`createRecordStream` in
+`@solidrt/core/gpu`: the GPU buffer, the byte mirror, the dirty range,
+the range-or-whole publish, growth into a replacement), the one model
+the 3d instance streams run on too; this file only decides what to
+mark and when to flush. The node layer speaks the same two verbs over
+its STYLE records: `records(spriteLayer)` is the style mirror
+(`STYLE_FLOATS` floats per slot: `[u0, v0, u1, v1, tint rgba,
+renderOrder, minScreenPx, maxScreenPx, atlas, outline rgb,
+outlineWidth]`, slot-indexed, poses stay the core's) and
+`updateRecords(spriteLayer, { first?, count? })` publishes the slot
+range, so a bulk restyle (a palette cycle over thousands of sprites) is
+one loop and one range write instead of a setSprite each - the 3d
+`records(instancedMesh)` pairing, one dimension down. It is the
 escape hatch for motion only JS can compute at scale (measured 30k
 sprites: 12.9ms raw records vs 30.8ms via setSprite; both figures are
 the WRITE path only - whatever computes the motion is excluded and is

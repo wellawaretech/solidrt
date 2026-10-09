@@ -1258,6 +1258,17 @@ fn ui_thread(
       let draw_connected = dev_connected.clone();
       let draw_installing = dev_installing.clone();
       let draw_muted = user_input_muted.clone();
+      // The engine's first frame, reported to the dev server as `ready`
+      // (go/connection.rs): it holds the queries it got since the push
+      // until then. Only while a server is connected, so an offline app
+      // never queues it (the channel is drained by the connection task).
+      let ready_tx = outbound_tx.clone();
+      let ready_connected = dev_connected.clone();
+      let on_first_frame: Box<dyn Fn() + Send + Sync> = Box::new(move || {
+        if ready_connected.load(std::sync::atomic::Ordering::Relaxed) {
+          let _ = ready_tx.send(serde_json::json!({"type": "ready"}).to_string());
+        }
+      });
       let builder = builder
         .plugin(move |ctx| {
           plugins::draw::store_state(
@@ -1270,6 +1281,7 @@ fn ui_thread(
             draw_connected,
             draw_installing,
             draw_muted,
+            Some(on_first_frame),
           )
         })
         .module("sol:render", plugins::draw::SolRenderModule)

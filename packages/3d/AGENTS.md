@@ -1430,7 +1430,10 @@ makes an INSTANCED material: the vertex stage reads the attributes as
 `in` variables beside the layout's own, and each drawn instance gets one
 record from each of the mesh's instance buffers. An instance buffer IS a
 vertex stream stepped per instance: on the mesh it is an `InstanceStream`
-(the layout, a byte mirror, a mesh-owned GPU buffer), written through
+(the layout over the core's record stream - `createRecordStream` in
+`@solidrt/core/gpu`: the GPU buffer, the byte mirror, the dirty range
+and the range-or-whole publish, the one model @solidrt/2d's layers run
+on too), written through
 `instanceAttribute(mesh, name)` - the accessor `geometryAttribute`
 returns, record index in, values as the shader sees them, the codec
 packing the bytes - or in bulk through the mirror itself, `records(mesh,
@@ -3078,8 +3081,8 @@ successors) as ordinary content, the model-loading split repeated:
   rebuild.
 - Record writes are mirrored, not immediate: `setInstanceStyle`,
   `setRecords` and an `instanceAttribute` write land in the stream's
-  `data` and the scene's sync publishes the `dirty` range (`updateRecords`
-  marks it for accessor writes) - so a write on a mesh outside any scene
+  `data` (the core record stream's mirror) and the scene's sync publishes
+  its dirty range (`updateRecords` marks it for accessor writes) - so a write on a mesh outside any scene
   shows once it is added (the dirty range waits), and reading the GPU
   buffer back between the write and the sync lags the mirror. The sync
   runs in the publish pass of core's `onBeforeRender`, ahead of the

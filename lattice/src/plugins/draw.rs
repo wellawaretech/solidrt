@@ -50,6 +50,10 @@ struct RenderInner {
   dev_connected: Arc<AtomicBool>,
   dev_installing: Arc<AtomicBool>,
   user_input_muted: Arc<AtomicBool>,
+  // Called once per engine, after its first rebuild: the tree exists and
+  // the JS thread answers dev queries from here on (the go runtime reports
+  // it to the dev server, which holds queries for it after a push).
+  on_first_frame: Option<Box<dyn Fn() + Send + Sync>>,
   // Whether an overlay display list is currently installed on the raster
   // thread (see Context::set_overlay): drives the enable/disable edges
   // and the teardown clear in Drop.
@@ -103,6 +107,7 @@ pub fn store_state(
   dev_connected: Arc<AtomicBool>,
   dev_installing: Arc<AtomicBool>,
   user_input_muted: Arc<AtomicBool>,
+  on_first_frame: Option<Box<dyn Fn() + Send + Sync>>,
 ) {
   ctx
     .store_userdata(RenderState(Rc::new(RenderInner {
@@ -115,6 +120,7 @@ pub fn store_state(
       dev_connected,
       dev_installing,
       user_input_muted,
+      on_first_frame,
       overlay_installed: Cell::new(false),
       last_slow_warn: Cell::new(None),
       last_node_count: Cell::new(0),
@@ -383,6 +389,11 @@ impl RenderInner {
         // not a hitch the app made; so does the engine's first rebuild, whose
         // cost is the load (see first_frame_done), still worth seeing.
         let first_frame = !self.first_frame_done.replace(true);
+        if first_frame {
+          if let Some(report) = &self.on_first_frame {
+            report();
+          }
+        }
         if record.total_ms > record.period_ms && record.period_ms > 0.0 {
           let due = self.last_slow_warn.get().is_none_or(|t| t.elapsed() >= SLOW_WARN_INTERVAL);
           if due {

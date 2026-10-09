@@ -35,8 +35,8 @@
 // (dispatch.ts) undoes it with unprojectCamera.
 import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
-import { beginBufferWrite, checkScreenSize, createBuffer, destroyBuffer, endBufferWrite, screenSizeScale } from "@solidrt/core/gpu"
-import type { BlendMode, BufferId, TextureId } from "@solidrt/core/gpu"
+import { checkScreenSize, createBuffer, createRecordStream, destroyBuffer, screenSizeScale } from "@solidrt/core/gpu"
+import type { BlendMode, BufferId, RecordStream, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type {
   Impact as CoreImpact,
@@ -591,6 +591,13 @@ export type LayerBase = {
   _read(sprite: Sprite): Required<SpriteOptions>
   _destroy(sprite: SpriteState): void
   _schedule(): void
+  /** The layer's JS-owned record stream, what records()/updateRecords
+   * read and mark: a records layer's whole records, a node layer's style
+   * records (its poses are the core's). Internal. */
+  _stream: RecordStream
+  /** The stream's mirror as floats, re-pointed by growth; records() hands
+   * it out. Internal. */
+  _records: Float32Array
 }
 
 /** A query volume for overlap/sweep/moveAndSlide, in layer pixels: a
@@ -827,7 +834,12 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   let tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createSpriteLayer", tint)
   let pose: BufferId = createBuffer(capacity * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
-  let style: BufferId = createBuffer(capacity * STYLE_FLOATS * 4, { label: `${label}-style`, autoFree: false })
+  // The style records: JS-written through the sprite verbs (writeStyle),
+  // records()/updateRecords for a bulk restyle, published by the flush as
+  // the dirty slot range, or the used prefix whole under an order (the
+  // core gathers both buffers under the one permutation).
+  let style = createRecordStream(STYLE_FLOATS * 4, capacity, { label: `${label}-style`, autoFree: false })
+  let ordered = opts?.orderBy !== undefined
   let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_LAYOUTS_SPLIT, opts?.blend ?? "alpha", atlases)
   // The sprites with a screen-size clamp (either bound on), and the
   // furthest any of them reaches from its center at its floor (floorReach,
@@ -853,7 +865,6 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
 
   let disposed = false
   let scheduled = false
-  let styleDirty = false
   let published = 0
   // The publish pass of every frame runs the pending flush ahead of the
   // paint, so a write made anywhere in the frame's JS is in that frame's
@@ -878,7 +889,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   // slot stays taken until the core says it is gone; dispose frees them.
   let leaving = new Set<NodeId>()
   let gpuCapacity = capacity
-  let styleData = new Float32Array(capacity * STYLE_FLOATS)
+  let styleData = new Float32Array(style.bytes.buffer)
   let byNode = new Map<NodeId, SpriteState>()
   // The layer's root node (identity): parentless sprites and groups hang
   // off it, so a query scoped to it sees exactly this layer.
@@ -909,12 +920,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   let flush = () => {
     scheduled = false
     if (disposed) return
-    if (styleDirty) {
-      styleDirty = false
-      let out = beginBufferWrite(style)
-      out.set(styleData.subarray(0, highWater * STYLE_FLOATS))
-      endBufferWrite(style, highWater * STYLE_FLOATS * 4)
-    }
+    if (style.dirty) style.publish(ordered, highWater)
     if (published !== highWater) {
       views.setCount(highWater)
       published = highWater
@@ -926,23 +932,19 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
 
   // Grow both instance buffers to `next` slots: the pose sinks move in one
   // retargetRecords call (the whole used range republishes at the next
-  // flush), the style mirror grows in JS and republishes through the lease.
-  // The entries hold the old buffers alive until the swaps land, so the
-  // destroys are safe to issue right after.
+  // flush), the style stream grows into a replacement marked whole, which
+  // the next flush publishes. The entries hold the old buffers alive until
+  // the swaps land, so the destroys are safe to issue right after.
   let grow = (next: number) => {
     let newPose = createBuffer(next * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
-    let newStyle = createBuffer(next * STYLE_FLOATS * 4, { label: `${label}-style`, autoFree: false })
     spatial.retargetRecords(pose, newPose)
-    let grownStyle = new Float32Array(next * STYLE_FLOATS)
-    grownStyle.set(styleData)
-    styleData = grownStyle
-    views.setBuffers([newPose, newStyle])
+    let oldStyle = style.grow(next)
+    styleData = new Float32Array(style.bytes.buffer)
+    views.setBuffers([newPose, style.buffer])
     destroyBuffer(pose)
-    destroyBuffer(style)
+    destroyBuffer(oldStyle)
     pose = newPose
-    style = newStyle
     gpuCapacity = next
-    styleDirty = true
   }
 
   // A frame's atlas index, or a throw: run before ANY field of a write
@@ -956,6 +958,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
 
   let writeStyle = (sprite: SpriteState, opts: SpriteOptions, atlas: number) => {
     let at = sprite._slot * STYLE_FLOATS
+    let changed = false
     let flipX = opts.flipX !== undefined && opts.flipX !== sprite._flipX
     let flipY = opts.flipY !== undefined && opts.flipY !== sprite._flipY
     if (flipX) sprite._flipX = !sprite._flipX
@@ -964,31 +967,32 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       let f = opts.frame
       writeFrame(styleData, at, f.u0, f.v0, f.u1, f.v1, sprite._flipX, sprite._flipY)
       styleData[at + STYLE_ATLAS_FIELD] = atlas
-      styleDirty = true
+      changed = true
     } else if (flipX || flipY) {
       // No new frame: toggle the changed axes on the stored UVs.
       writeFrame(styleData, at, styleData[at]!, styleData[at + 1]!, styleData[at + 2]!, styleData[at + 3]!, flipX, flipY)
-      styleDirty = true
+      changed = true
     }
     if (opts.tint !== undefined) {
       styleData[at + 4] = opts.tint[0]
       styleData[at + 5] = opts.tint[1]
       styleData[at + 6] = opts.tint[2]
       styleData[at + 7] = opts.tint[3]
-      styleDirty = true
+      changed = true
     }
     if (opts.renderOrder !== undefined) {
       styleData[at + STYLE_KEY_FIELD] = opts.renderOrder
-      styleDirty = true
+      changed = true
     }
     if (opts.minScreenPx !== undefined) {
       styleData[at + STYLE_MIN_PX_FIELD] = opts.minScreenPx
-      styleDirty = true
+      changed = true
     }
     if (opts.maxScreenPx !== undefined) {
       styleData[at + STYLE_MAX_PX_FIELD] = opts.maxScreenPx
-      styleDirty = true
+      changed = true
     }
+    if (changed) style.mark(sprite._slot, sprite._slot + 1)
     let min = styleData[at + STYLE_MIN_PX_FIELD]!
     if (min > 0 || styleData[at + STYLE_MAX_PX_FIELD]! > 0) {
       clamped.add(sprite)
@@ -1005,7 +1009,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     pipeline: gpu.pipeline,
     quad: gpu.quad,
     atlases: atlases.map(a => a.texture),
-    buffers: () => [pose, style],
+    buffers: () => [pose, style.buffer],
     count: () => published,
     tint: () => tint,
     pick: (x, y, zoom) => layer.pick(x, y, zoom),
@@ -1195,7 +1199,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       spatial.flush()
       views.dispose()
       destroyBuffer(pose)
-      destroyBuffer(style)
+      style.destroy()
       gpu.dispose()
     },
     _add(opts) {
@@ -1257,7 +1261,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       styleData[at + 1] = g
       styleData[at + 2] = b
       styleData[at + 3] = width
-      styleDirty = true
+      style.mark(sprite._slot, sprite._slot + 1)
       layer._schedule()
     },
     _write(sprite, opts) {
@@ -1287,7 +1291,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       ) {
         writeStyle(sprite, opts, atlas)
       }
-      if (moved || styleDirty) layer._schedule()
+      if (moved || style.dirty) layer._schedule()
     },
     _read(sprite) {
       let at = sprite._slot * STYLE_FLOATS
@@ -1354,6 +1358,10 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     },
     _groups: new Set(),
     _root: root,
+    _stream: style,
+    get _records() {
+      return styleData
+    },
   }
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => layer.dispose())
   return layer

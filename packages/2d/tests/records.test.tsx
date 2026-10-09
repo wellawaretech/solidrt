@@ -13,8 +13,8 @@ import { test, expect } from "@solidrt/test"
 import type { Pixels, RefLocator, TestApp } from "@solidrt/test"
 import { onFrame } from "@solidrt/core"
 import type { TextureId } from "@solidrt/core/gpu"
-import { addSprite, createAtlas, createRecordLayer, destroySprite, records, setRecordCount, updateRecords, INSTANCE_FLOATS } from "../src/index.ts"
-import type { RecordLayerHandle, RecordLayerOptions } from "../src/index.ts"
+import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, destroySprite, records, setRecordCount, updateRecords, INSTANCE_FLOATS, STYLE_FLOATS } from "../src/index.ts"
+import type { RecordLayerHandle, RecordLayerOptions, SpriteLayerHandle, SpriteLayerOptions } from "../src/index.ts"
 
 const SIZE = 64
 // The atlas: one opaque white texel.
@@ -28,6 +28,10 @@ const RIGHT = (3 * SIZE) / 4
 // Record field offsets (see records()).
 const FIELD_Y = 1
 const FIELD_W = 2
+// Style record field offsets of the tint and the renderOrder key (the
+// node layer's records()).
+const STYLE_TINT = 4
+const STYLE_KEY = 8
 const WHITE = [255, 255, 255, 255]
 const RED = [255, 0, 0, 255]
 const GREEN = [0, 255, 0, 255]
@@ -157,6 +161,71 @@ test("an ordered layer gathers a published range into key order", async app => {
   // its record alone re-gathers the pair.
   let after = await painted(app, leaf, () => {
     records(layer)[0 * INSTANCE_FLOATS + FIELD_Y] = MID + 4
+    updateRecords(layer, { first: 0, count: 1 })
+  })
+  expect(at(after, MID, MID)).toEqual(RED)
+})
+
+/** A node layer of `capacity` sprites with one view, under the mounted
+ * app's root; the view's texture is the leaf. */
+async function mountedNodes(app: TestApp, opts: SpriteLayerOptions = {}): Promise<{ layer: SpriteLayerHandle; leaf: RefLocator }> {
+  let leaf = app.ref()
+  let layer!: SpriteLayerHandle
+  let texture!: TextureId
+  await app.mount(() => {
+    let atlas = createAtlas(ATLAS, { label: "nodes-atlas" })
+    layer = createSpriteLayer([atlas], { capacity: 2, label: "nodes", ...opts })
+    texture = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 1], label: "nodes" }).texture
+    return <texture ref={leaf} src={texture} width={SIZE} height={SIZE} />
+  })
+  return { layer, leaf }
+}
+
+test("a node layer's records() is its style mirror and updateRecords publishes the slot range it names", async app => {
+  let { layer, leaf } = await mountedNodes(app)
+  addSprite(layer, square(LEFT))
+  addSprite(layer, square(RIGHT))
+  let before = await painted(app, leaf, () => {})
+  expect(at(before, LEFT, MID)).toEqual(WHITE)
+  expect(at(before, RIGHT, MID)).toEqual(WHITE)
+  // Both slots turn red in the mirror; only the second publishes.
+  let partial = await painted(app, leaf, () => {
+    let r = records(layer)
+    for (let slot of [0, 1]) {
+      r[slot * STYLE_FLOATS + STYLE_TINT + 1] = 0
+      r[slot * STYLE_FLOATS + STYLE_TINT + 2] = 0
+    }
+    updateRecords(layer, { first: 1, count: 1 })
+  })
+  expect(at(partial, LEFT, MID)).toEqual(WHITE)
+  expect(at(partial, RIGHT, MID)).toEqual(RED)
+  let whole = await painted(app, leaf, () => updateRecords(layer))
+  expect(at(whole, LEFT, MID)).toEqual(RED)
+  expect(() => updateRecords(layer, { first: 1, count: 2 })).toThrow()
+  // Growth replaces the mirror: the hoisted view is a dead copy.
+  let old = records(layer)
+  let grown = await painted(app, leaf, () => addSprite(layer, square(MID)))
+  expect(at(grown, MID, MID)).toEqual(WHITE)
+  expect(records(layer)).not.toBe(old)
+  expect(records(layer).length).toBe(4 * STYLE_FLOATS)
+  let dead = await painted(app, leaf, () => {
+    old[0 * STYLE_FLOATS + STYLE_TINT + 1] = 1
+    updateRecords(layer)
+  })
+  expect(at(dead, LEFT, MID)).toEqual(RED)
+})
+
+test("an ordered node layer republishes its style records whole, gathered into key order", async app => {
+  let { layer, leaf } = await mountedNodes(app, { orderBy: "renderOrder" })
+  // Two overlapping squares at the centre; the green one's key draws it last.
+  addSprite(layer, { ...square(MID, [1, 0, 0, 1]), renderOrder: 1 })
+  addSprite(layer, { ...square(MID, [0, 1, 0, 1]), renderOrder: 2 })
+  let before = await painted(app, leaf, () => {})
+  expect(at(before, MID, MID)).toEqual(GREEN)
+  // The red record's key moves above the green one's in the mirror;
+  // publishing its slot alone re-gathers the pair.
+  let after = await painted(app, leaf, () => {
+    records(layer)[0 * STYLE_FLOATS + STYLE_KEY] = 3
     updateRecords(layer, { first: 0, count: 1 })
   })
   expect(at(after, MID, MID)).toEqual(RED)

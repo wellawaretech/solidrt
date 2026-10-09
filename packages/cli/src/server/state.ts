@@ -10,6 +10,13 @@ export let state = {
   clients: new Map<ServerWebSocket, ClientEntry>(),
   nextClientId: 0,
   /**
+   * The clients still building the first frame of the last push, with when
+   * the push went out and the queries waiting for the frame (control.ts
+   * awaitFirstFrame). Entered by a push (rebuild.ts pushed), left on the
+   * client's `ready` message or its disconnect (control.ts ready).
+   */
+  loading: new Map<ServerWebSocket, { since: number; waiters: Array<() => void> }>(),
+  /**
    * Identity of this server run, included in control responses that carry
    * cross-call state (client ids, log seq cursors). Both reset on restart, so
    * a consumer that sees the generation change knows its ids and cursors are

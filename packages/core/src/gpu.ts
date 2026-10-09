@@ -754,6 +754,128 @@ export function writeBuffer(id: gpu.BufferId, data: ArrayBuffer | ArrayBufferVie
 }
 
 /**
+ * A stream of fixed-size records with a GPU buffer, a CPU mirror and a
+ * dirty range: the publish model shared by every JS-stepped population
+ * (a 2d sprite layer's records, a 3d mesh's instance streams). Write the
+ * mirror, `mark` the records written, then `publish` at the flush: the
+ * dirty range goes out as one `writeBuffer` at its byte offset, or the
+ * drawn prefix whole through the write lease when the buffer carries an
+ * instance order (the engine gathers the copy into key order, and a byte
+ * range has no stable position under a permutation). Growth replaces the
+ * buffer and the mirror (never a resize) and marks what the mirror held,
+ * so the next publish fills the replacement; the old buffer is the
+ * caller's to destroy once nothing binds it. Read `buffer` and `bytes` at
+ * use time: both are replaced by growth.
+ */
+export type RecordStream = {
+  /** The GPU buffer the records publish to; replaced by `grow`. */
+  readonly buffer: gpu.BufferId
+  /** The mirror, `capacity * stride` bytes; replaced by `grow`. View it as
+   * the record layout wants (a Float32Array over it for an all-float
+   * record). */
+  readonly bytes: Uint8Array<ArrayBuffer>
+  /** Bytes per record. */
+  readonly stride: number
+  /** Records the mirror and the buffer hold. */
+  readonly capacity: number
+  /** Whether any record is marked since the last publish. */
+  readonly dirty: boolean
+  /** Extend the dirty range over records [first, last). */
+  mark(first: number, last: number): void
+  /** Send what is dirty and clear the mark. `whole`: the first `limit`
+   * records go out through the lease regardless of the range (the
+   * ordered form, and a replacement buffer's first fill); otherwise the
+   * dirty range, clipped to `limit` records (the live sprites, or the
+   * capacity when records are written ahead of their count). Nothing is
+   * sent for an empty range or a zero `limit`. */
+  publish(whole: boolean, limit: number): void
+  /** Replace the buffer and the mirror with room for `capacity` records,
+   * the old contents copied over and marked whole; returns the OLD buffer
+   * for the caller to destroy once its draws point at the new one. */
+  grow(capacity: number): gpu.BufferId
+  /** Free the buffer. Safe to call more than once. */
+  destroy(): void
+}
+
+/**
+ * Creates a record stream of `capacity` records of `stride` bytes (see
+ * {@link RecordStream}): a sized, unwritten GPU buffer and a zeroed
+ * mirror. Freed with the reactive owner like a buffer (opt out with
+ * `{ autoFree: false }` and call `destroy`).
+ */
+export function createRecordStream(stride: number, capacity: number, opts?: CreateOptions): RecordStream {
+  if (!(Number.isInteger(stride) && stride > 0)) throw new Error("createRecordStream: stride must be a positive integer, got " + stride)
+  if (!(Number.isInteger(capacity) && capacity > 0)) throw new Error("createRecordStream: capacity must be a positive integer, got " + capacity)
+  let buffer = createBuffer(capacity * stride, { label: opts?.label, autoFree: false })
+  let bytes = new Uint8Array(capacity * stride)
+  let dirty: [number, number] | null = null
+  let destroyed = false
+  let stream: RecordStream = {
+    get buffer() {
+      return buffer
+    },
+    get bytes() {
+      return bytes
+    },
+    stride,
+    get capacity() {
+      return bytes.length / stride
+    },
+    get dirty() {
+      return dirty !== null
+    },
+    mark(first, last) {
+      let capacity = bytes.length / stride
+      if (!Number.isInteger(first) || !Number.isInteger(last) || first < 0 || last > capacity || first > last) {
+        throw new Error("RecordStream.mark: range [" + first + ", " + last + ") is outside the stream's " + capacity + " records")
+      }
+      if (first === last) return
+      if (dirty === null) dirty = [first, last]
+      else {
+        if (first < dirty[0]) dirty[0] = first
+        if (last > dirty[1]) dirty[1] = last
+      }
+    },
+    publish(whole, limit) {
+      let range = dirty
+      dirty = null
+      if (whole) {
+        let byteLength = Math.min(limit, bytes.length / stride) * stride
+        if (byteLength <= 0) return
+        let out = beginBufferWrite(buffer)
+        new Uint8Array(out.buffer, 0, byteLength).set(bytes.subarray(0, byteLength))
+        gpu.endBufferWrite(buffer, byteLength)
+        return
+      }
+      if (range === null) return
+      let lo = range[0]
+      let hi = Math.min(range[1], limit)
+      if (hi > lo) writeBuffer(buffer, bytes.subarray(lo * stride, hi * stride), lo * stride)
+    },
+    grow(next) {
+      let previous = bytes.length / stride
+      if (!(Number.isInteger(next) && next > previous)) {
+        throw new Error("RecordStream.grow: capacity must be an integer above the current " + previous + ", got " + next)
+      }
+      let old = buffer
+      buffer = createBuffer(next * stride, { label: opts?.label, autoFree: false })
+      let grown = new Uint8Array(next * stride)
+      grown.set(bytes)
+      bytes = grown
+      dirty = [0, previous]
+      return old
+    },
+    destroy() {
+      if (destroyed) return
+      destroyed = true
+      gpu.destroyBuffer(buffer)
+    },
+  }
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => stream.destroy())
+  return stream
+}
+
+/**
  * Hands an ordered instance buffer's full record set to the engine - the
  * write-once form: the engine keeps the one CPU copy and sorts,
  * republishes and count-dials from it on its own; the caller keeps

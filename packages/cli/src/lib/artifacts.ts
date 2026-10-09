@@ -42,7 +42,16 @@ export function resolveBinary(name: string) {
     if (existsSync(bin)) return bin
   }
 
-  // 3. Platform npm package (installed via optionalDependencies)
+  // 3. The checkout this CLI runs from: sol run from packages/cli of a
+  //    built checkout, with nothing set. Its dist/<triple> is four levels
+  //    up from this module (packages/cli/src/lib); a published install has
+  //    no dist there and falls through.
+  if (triple) {
+    let bin = resolve(import.meta.dir, "../../../..", "dist", triple, name + ext)
+    if (existsSync(bin)) return bin
+  }
+
+  // 4. Platform npm package (installed via optionalDependencies)
   let pkg = PKG_MAP[key]
   if (pkg) {
     try {

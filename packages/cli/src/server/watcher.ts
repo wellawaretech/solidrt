@@ -28,6 +28,11 @@ let timer: ReturnType<typeof setTimeout> | null = null
 let changed = new Set<string>()
 let building = false
 let dirty = false
+// Set by the server's shutdown: a bundle in flight at that moment still
+// finishes and would re-arm the watch from its inputs, and a change it
+// queued would start another, either of which keeps the process alive
+// after the server is gone. Once stopped, arming and changes are no-ops.
+let stopped = false
 
 function basename(path: string): string {
   return path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1)
@@ -44,7 +49,8 @@ function isToolingPath(path: string, root: string): boolean {
 
 /** Arm the watch from a build's inputs; null (a failed build) watches the source tree as a whole. */
 export function armWatcher(inputs: string[] | null) {
-  stopWatcher()
+  if (stopped) return
+  dropWatches()
   let config = state.config
   let hit = (path: string) => onChange(path)
   try {
@@ -70,17 +76,23 @@ export function armWatcher(inputs: string[] | null) {
       dir(assets)
         .exists()
         .then((exists) => {
-          if (exists && offs.length) offs.push(dir(assets).watch((e) => !isToolingPath(e.path, assets) && hit(e.path), { recursive: true }))
+          if (exists && !stopped && offs.length) offs.push(dir(assets).watch((e) => !isToolingPath(e.path, assets) && hit(e.path), { recursive: true }))
         })
     }
   } catch (e) {
     console.error(`[cli] Watch failed: ${e instanceof Error ? e.message : e}`)
-    stopWatcher()
+    dropWatches()
   }
 }
 
-/** Drop every watch; the engine loop can go idle. */
+/** End reload-on-save for good: drop every watch and refuse to re-arm, so
+ * the engine loop can go idle (the server's shutdown). */
 export function stopWatcher() {
+  stopped = true
+  dropWatches()
+}
+
+function dropWatches() {
   for (let off of offs) off()
   offs = []
   if (timer !== null) clearTimeout(timer)
@@ -89,7 +101,7 @@ export function stopWatcher() {
 }
 
 function onChange(path: string) {
-  if (state.watchPaused) return
+  if (state.watchPaused || stopped) return
   changed.add(path)
   if (building) {
     dirty = true

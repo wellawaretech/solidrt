@@ -141,8 +141,11 @@ talk to a client take `?client=<id>` (from `/clients`); it may be omitted
 when exactly one client is connected.
 
 - `/clients` - `{ generation, key, mode, entry, projectDir, userInputMuted,
-  watchPaused, clients: [{ id, ... }] }`. Check `key` (the project root or
-  single file served) is the app you mean.
+  watchPaused, clients: [{ id, loading, ... }] }`. Check `key` (the project
+  root or single file served) is the app you mean. A client's `loading` is
+  true while it still builds the first frame of the last push: a query to
+  it waits for that frame within its timeout and answers 503 if it never
+  comes (null on a runtime that predates the signal, queried right away).
 - `/logs?since=<seq>&level=<lvl>&contains=<text>&wait=<ms>&client=<id>` -
   `{ entries: [{ seq, at, client, level, text, repeats? }], latest,
   generation }`. Pass the previous `latest` as `since` to read only new
@@ -353,6 +356,11 @@ when exactly one client is connected.
   reply gave up waiting. GET `/clock` reads the same record without
   touching it. `/clients` reports each client's `timeScale`, reset to 1 by
   every push.
+- A forwarded query that gets no answer in its budget (10 s, more for a
+  raw-format image or a stepped clock) is a 504 naming the budget. On a
+  slow device, or for a heavy reply (a raw snapshot of a large window), a
+  retry usually answers; only a repeat means the client's JS thread is
+  busy or the app is wedged.
 - POST `/reload` - rebuild and push to every client; `{ ok, clients }` or
   the build error.
 - POST `/load` with `{ "entry": "<path>" }` - switch the entry and push it;

@@ -548,6 +548,9 @@ async fn try_serve(
     "profile": crate::PROFILE,
     "capabilities": capabilities,
     "queries": QUERY_KINDS,
+    // This runtime reports each engine's first frame (`ready`), so the
+    // server holds queries for it after a push instead of timing out.
+    "ready": true,
     "clientDir": crate::storage::get().map(|store| store.client_dir.to_string_lossy().into_owned()),
     "pid": std::process::id(),
     "execPath": forge::process::exec_path(),
@@ -828,9 +831,13 @@ async fn try_serve(
                 }
                 .clamped();
                 let now_ms = crate::frame_history::now_ms();
-                let window = {
+                let (window, latest_frame_age_ms) = {
                   let history = queries.history.lock().expect("frame history lock poisoned");
                   let window = history.summarize(ask, now_ms);
+                  // How old the top-level (latest-frame) figures are: an
+                  // app that just went idle reads its last busy frame
+                  // there beside a quiet window summary.
+                  let latest_frame_age_ms = history.reach(now_ms).map(|(_, _, newest_ms)| newest_ms);
                   // An empty window over a ring that holds frames is the
                   // reading a tablet gave right after an animation
                   // (okf/backlog/stats-window-frames-zero.md): say what the
@@ -843,7 +850,7 @@ async fn try_serve(
                       );
                     }
                   }
-                  window
+                  (window, latest_frame_age_ms)
                 };
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
@@ -855,13 +862,21 @@ async fn try_serve(
                       // backlogged raster thread produces no frames, so the
                       // latch goes stale exactly when these matter.
                       let raster = flux::gui::alloy_context(&ctx).map(|atx| atx.raster_counters());
-                      let reply = StatsReply { snap, time_ms: now_ms, ask, window: window.as_ref(), counts, raster };
+                      let reply =
+                        StatsReply { snap, time_ms: now_ms, latest_frame_age_ms, ask, window: window.as_ref(), counts, raster };
                       let _ = reply_tx.send(stats_reply(id, reply));
                     });
                   }
                   None => {
-                    let reply =
-                      StatsReply { snap, time_ms: now_ms, ask, window: window.as_ref(), counts: None, raster: None };
+                    let reply = StatsReply {
+                      snap,
+                      time_ms: now_ms,
+                      latest_frame_age_ms,
+                      ask,
+                      window: window.as_ref(),
+                      counts: None,
+                      raster: None,
+                    };
                     let _ = client.send(tokio_websockets::Message::text(stats_reply(id, reply))).await;
                   }
                 }
@@ -1096,6 +1111,9 @@ const CLOCK_STEP_POLL_MS: u64 = 4;
 struct StatsReply<'a> {
   snap: crate::stats::StatsSnapshot,
   time_ms: f64,
+  /// Age of the newest frame record, the frame the top-level figures
+  /// describe; None while the history is empty.
+  latest_frame_age_ms: Option<f64>,
   ask: crate::frame_history::Window,
   window: Option<&'a crate::frame_history::WindowSummary>,
   counts: Option<(usize, usize)>,
@@ -1114,6 +1132,9 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
   };
   put("timeMs", round2_64(r.time_ms).into());
   put("frame", s.frame.into());
+  if let Some(age) = r.latest_frame_age_ms {
+    put("latestFrameAgeMs", round2_64(age).into());
+  }
   put("fps", s.fps.into());
   put("cpuPct", round2(s.cpu_pct).into());
   put("memBytes", s.mem_bytes.into());

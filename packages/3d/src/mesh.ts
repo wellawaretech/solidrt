@@ -3,8 +3,8 @@
 // setter write paths that keep a live scene's draw entries in step. The
 // scene side is reached through the node's SceneHooks (node.ts).
 
-import { beginBufferWrite, createBuffer, destroyBuffer, destroyTexture, endBufferWrite, transferRecords, writeBuffer } from "@solidrt/core/gpu"
-import type { BufferId, DrawId, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
+import { createBuffer, createRecordStream, destroyBuffer, destroyTexture, transferRecords } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, RecordStream, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
 import { checkCubeKnobs } from "./environment.ts"
 import type { EnvironmentOptions } from "./environment.ts"
 import { geometryBounds, isFloatLayout, layoutKey, layoutStride, plane, vertexBytes, vertexView, VERTEX_FORMATS } from "./geometry.ts"
@@ -189,15 +189,22 @@ export type InstanceStream = {
   layout: VertexAttribute[]
   /** Bytes per record: the layout's stride. */
   stride: number
+  /** The GPU buffer the entry binds; `stream.buffer` where a stream
+   * exists (growth re-points both), the engine-held buffer otherwise. */
   buffer: BufferId
+  /** The core record stream behind the mirror (createRecordStream: the
+   * buffer, the byte mirror, the dirty range and the publish), or null
+   * where no JS mirror exists: the transfer form hands the records to
+   * the engine, the indexed order's id stream is the engine's to fill. */
+  stream: RecordStream | null
+  /** The mirror as the layout's view (a Float32Array over an all-float
+   * layout, bytes otherwise): `stream.bytes` viewed, re-derived on growth;
+   * zero-length without a stream. */
   data: ArrayBufferView
   /** The record a fresh (or recycled) instance slot starts with: the
    * material's instanceStyle encoded, on the first stream of an
    * instanced mesh; zeros otherwise. */
   blank: Uint8Array
-  /** The byte range [lo, hi) of `data` written since the last publish,
-   * or null. */
-  dirty: [number, number] | null
   /** The DataView the accessors read through; follows `data`. */
   _view: DataView
   /** All-float32 layout: `data` is a Float32Array and a record write is
@@ -384,23 +391,25 @@ function streamLabel(label: string | undefined, index: number): string | undefin
   return label === undefined ? undefined : label + "-" + index
 }
 
-// A stream of `capacity` zeroed records over `layout`; its GPU buffer is
-// sized and unwritten (the mirror is the truth, publishes follow dirty).
+// A stream of `capacity` zeroed records over `layout` on a core record
+// stream; its GPU buffer is sized and unwritten (the mirror is the truth,
+// publishes follow the dirty range).
 function makeStream(layout: VertexAttribute[], capacity: number, blank: Uint8Array | null, label: string | undefined): InstanceStream {
   let stride = layoutStride(layout)
+  let records = createRecordStream(stride, capacity, { autoFree: false, label })
   let stream: InstanceStream = {
     layout,
     stride,
-    buffer: createBuffer(capacity * stride, { autoFree: false, label }),
+    buffer: records.buffer,
+    stream: records,
     data: new Uint8Array(0),
     blank: blank ?? new Uint8Array(stride),
-    dirty: null,
     _view: new DataView(new ArrayBuffer(0)),
     _floats: isFloatLayout(layout),
     _components: layoutComponents(layout),
     _fields: [],
   }
-  viewStream(stream, new ArrayBuffer(capacity * stride))
+  viewStream(stream, records.bytes.buffer)
   stream._fields = streamFields(stream)
   return stream
 }
@@ -416,9 +425,9 @@ function makeIndexStream(layout: VertexAttribute[], capacity: number, group: num
     layout,
     stride,
     buffer: createBuffer(Math.ceil(capacity / group) * stride, { autoFree: false, label }),
+    stream: null,
     data: new Uint8Array(0),
     blank: new Uint8Array(stride),
-    dirty: null,
     _view: new DataView(new ArrayBuffer(0)),
     _floats: false,
     _components: layoutComponents(layout),
@@ -442,9 +451,9 @@ function makeTransferredStream(layout: VertexAttribute[], records: Uint8Array, o
     buffer: ordered
       ? createBuffer(records.byteLength, { autoFree: false, label })
       : createBuffer(records, { autoFree: false, label }),
+    stream: null,
     data: new Uint8Array(0),
     blank: new Uint8Array(stride),
-    dirty: null,
     _view: new DataView(new ArrayBuffer(0)),
     _floats: isFloatLayout(layout),
     _components: layoutComponents(layout),
@@ -475,21 +484,18 @@ function writeRecord(stream: InstanceStream, i: number, values: ArrayLike<number
 // One record of `layout` encoded from `values`, the bytes a blank slot copies.
 function encodeRecord(layout: VertexAttribute[], values: ArrayLike<number>, site: string): Uint8Array {
   let stride = layoutStride(layout)
-  let one: InstanceStream = { layout, stride, buffer: 0 as BufferId, data: new Uint8Array(0), blank: new Uint8Array(0), dirty: null, _view: new DataView(new ArrayBuffer(0)), _floats: isFloatLayout(layout), _components: layoutComponents(layout), _fields: [] }
+  let one: InstanceStream = { layout, stride, buffer: 0 as BufferId, stream: null, data: new Uint8Array(0), blank: new Uint8Array(0), _view: new DataView(new ArrayBuffer(0)), _floats: isFloatLayout(layout), _components: layoutComponents(layout), _fields: [] }
   viewStream(one, new ArrayBuffer(stride))
   one._fields = streamFields(one)
   writeRecord(one, 0, values, site)
   return vertexBytes(one.data)
 }
 
-// Extend a stream's dirty range over [lo, hi) bytes of the mirror and ask
-// the scene to publish it at the next sync.
+// Mark records [lo, hi) of a stream's mirror and ask the scene to publish
+// them at the next sync.
 function markRecords(mesh: Mesh, stream: InstanceStream, lo: number, hi: number): void {
-  if (stream.dirty === null) stream.dirty = [lo, hi]
-  else {
-    if (lo < stream.dirty[0]) stream.dirty[0] = lo
-    if (hi > stream.dirty[1]) stream.dirty[1] = hi
-  }
+  if (stream.stream === null) throw new Error("markRecords: the stream has no mirror (its records were transferred to the engine)")
+  stream.stream.mark(lo, hi)
   mesh._scene?._setRecords(mesh)
 }
 
@@ -869,7 +875,7 @@ export function setInstanceStyle(instance: InstanceNode, values: ArrayLike<numbe
     let stream = l._instances.streams[0]
     if (stream === undefined) continue
     writeRecord(stream, instance._slot, values, "setInstanceStyle")
-    markRecords(l, stream, instance._slot * stream.stride, (instance._slot + 1) * stream.stride)
+    markRecords(l, stream, instance._slot, instance._slot + 1)
   }
 }
 
@@ -944,34 +950,23 @@ export function updateRecords(mesh: InstancedMesh | RecordMesh, options: UpdateR
   if (!Number.isInteger(first) || !Number.isInteger(count) || first < 0 || count < 0 || first + count > inst.capacity) {
     throw new Error("updateRecords: range [" + first + ", " + (first + count) + ") is outside the mesh's " + inst.capacity + " records")
   }
-  if (count > 0) markRecords(mesh, stream, first * stream.stride, (first + count) * stream.stride)
+  if (count > 0) markRecords(mesh, stream, first, first + count)
 }
 
 /** Publish a mesh's pending record writes, one buffer write per dirty
- * stream (the scene calls it from its sync). An ordered mesh publishes
- * the LIVE record set whole through the write lease - the engine gathers
- * it into key order during the copy, and a byte range has no stable
- * position under a permutation (writeBuffer throws on an ordered buffer). */
+ * stream (the scene calls it from its sync): the dirty record range, up
+ * to the capacity (a record mesh writes ahead of its count). An ordered
+ * mesh publishes the LIVE record set whole through the write lease - the
+ * engine gathers it into key order during the copy, and a byte range has
+ * no stable position under a permutation (writeBuffer throws on an
+ * ordered buffer). */
 export function publishRecords(mesh: Mesh): void {
   let inst = mesh._instances
   if (inst === null) return
-  if (inst.order !== null) {
-    for (let s of inst.streams) {
-      if (s.dirty === null) continue
-      s.dirty = null
-      let bytes = inst.count * s.stride
-      if (bytes === 0) continue
-      let block = beginBufferWrite(s.buffer)
-      new Uint8Array(block.buffer, 0, bytes).set(vertexBytes(s.data).subarray(0, bytes))
-      endBufferWrite(s.buffer, bytes)
-    }
-    return
-  }
+  let ordered = inst.order !== null
   for (let s of inst.streams) {
-    if (s.dirty === null) continue
-    let [lo, hi] = s.dirty
-    s.dirty = null
-    writeBuffer(s.buffer, vertexBytes(s.data).subarray(lo, hi), lo)
+    if (s.stream === null || !s.stream.dirty) continue
+    s.stream.publish(ordered, ordered ? inst.count : inst.capacity)
   }
 }
 
@@ -984,7 +979,7 @@ export function markLiveRecords(mesh: Mesh): void {
   // A transferred mesh has no mirror; the engine's own (buffer-lifetime)
   // mirror seeds a re-attached entry instead.
   if (inst === null || inst.count === 0 || inst.transfer) return
-  for (let s of inst.streams) markRecords(mesh, s, 0, inst.count * s.stride)
+  for (let s of inst.streams) markRecords(mesh, s, 0, inst.count)
 }
 
 /**
@@ -1033,7 +1028,7 @@ export function addInstance(mesh: InstancedMesh, update?: TransformUpdate, paren
     // A recycled slot must not wear its last occupant's records.
     for (let s of li.streams) {
       vertexBytes(s.data).set(s.blank, slot * s.stride)
-      markRecords(l, s, slot * s.stride, (slot + 1) * s.stride)
+      markRecords(l, s, slot, slot + 1)
     }
   }
   if (parent._scene) enterScene(instance, parent._scene)
@@ -1069,14 +1064,13 @@ export function reparentInstance(instance: InstanceNode, parent: SceneNode): voi
 
 // Grow the population's buffers to `next` records: replacements (never a
 // resize). An instanced mesh's live matrix records move to the new buffer
-// in one core call and republish at the next flush; every stream's mirror
-// is copied over and marked whole, so the scene republishes it; the entry
-// re-points, then the old buffers, which the entry held alive until now,
-// are freed.
+// in one core call and republish at the next flush; every stream grows
+// into a replacement with its mirror copied over and marked whole, so the
+// scene republishes it; the entry re-points, then the old buffers, which
+// the entry held alive until now, are freed.
 function growInstances(mesh: InstancedMesh | RecordMesh, next: number): void {
   let inst: MeshInstances = mesh._instances
   if (inst.transfer) throw new Error("growInstances: a transferred population is fixed at its creation records")
-  let previous = inst.capacity
   inst.capacity = next
   let freed: BufferId[] = []
   if (inst.matrix !== null) {
@@ -1085,15 +1079,13 @@ function growInstances(mesh: InstancedMesh | RecordMesh, next: number): void {
     // Out of a scene nothing is bound, and retargeting an empty source throws.
     if (inst.nodes !== null && inst.nodes.slots.some(n => n !== null && n._node !== null)) spatial.retargetRecords(freed[0]!, inst.matrix)
   }
-  inst.streams.forEach((s, i) => {
-    freed.push(s.buffer)
-    s.buffer = createBuffer(next * s.stride, { autoFree: false, label: streamLabel(inst.label, i) })
-    let held = vertexBytes(s.data)
-    viewStream(s, new ArrayBuffer(next * s.stride))
-    vertexBytes(s.data).set(held)
-    s.dirty = null
-    markRecords(mesh, s, 0, previous * s.stride)
-  })
+  for (let s of inst.streams) {
+    if (s.stream === null) throw new Error("growInstances: a stream without a mirror cannot grow")
+    freed.push(s.stream.grow(next))
+    s.buffer = s.stream.buffer
+    viewStream(s, s.stream.bytes.buffer)
+    mesh._scene?._setRecords(mesh)
+  }
   mesh._scene?._setBuffer(mesh)
   for (let b of freed) destroyBuffer(b)
   if (inst.morph !== null) replacePopulationMorph(mesh, populationMorph(mesh.geometry, next, inst.label), true)
@@ -1180,7 +1172,7 @@ export function createRecordMesh(
 function copyRecords(mesh: RecordMesh, records: ArrayBufferView, written: number): void {
   let stream = mesh._instances.streams[0]!
   vertexBytes(stream.data).set(vertexBytes(records))
-  if (written > 0) markRecords(mesh, stream, 0, written * stream.stride)
+  if (written > 0) markRecords(mesh, stream, 0, written)
 }
 
 /**
@@ -1220,7 +1212,7 @@ export function setRecordCount(mesh: RecordMesh, count: number): void {
   // old population's nearest records, a growth its stale tail. A
   // transferred mesh has no mirror to publish from; the engine follows
   // the entry's instance count into its own mirror's prefix instead.
-  if (inst.order !== null && !inst.transfer && n > 0) for (let s of inst.streams) markRecords(mesh, s, 0, n * s.stride)
+  if (inst.order !== null && !inst.transfer && n > 0) for (let s of inst.streams) markRecords(mesh, s, 0, n)
   mesh._scene?._setCount(mesh)
 }
 
@@ -1259,7 +1251,10 @@ export function disposeInstances(mesh: InstancedMesh | RecordMesh): void {
     spatial.flush()
   }
   if (inst.matrix !== null) destroyBuffer(inst.matrix)
-  for (let s of inst.streams) destroyBuffer(s.buffer)
+  for (let s of inst.streams) {
+    if (s.stream !== null) s.stream.destroy()
+    else destroyBuffer(s.buffer)
+  }
   if (inst.morph !== null) destroyTexture(inst.morph.texture)
   for (let t of inst.textures) destroyTexture(t)
   ;(mesh as Mesh)._instances = null
