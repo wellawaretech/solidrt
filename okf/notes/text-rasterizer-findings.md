@@ -1,6 +1,6 @@
 ---
 title: What the glyph engine and the text layer found
-description: Facts the own-rasterizer work surfaced that hold without it - harfrust against Impeller's shaper, the per-device cost of a paragraph op versus a text layer, mask cell times on the armv7, the coverage-to-color modes and DirectWrite's blend, skrifa and zeno traps (inspect before render, embolden over stroke, the light target and linear metrics, the mono target for stems), the layer off the grid, the hinter's cost on the TV, and the Mac rendering headless over ssh.
+description: Facts the own-rasterizer work surfaced that hold without it - harfrust against Impeller's shaper, the per-device cost of a paragraph op versus a text layer, mask cell times on the armv7, the coverage-to-color modes and DirectWrite's blend, skrifa and zeno traps (inspect before render, embolden over stroke, the light target and linear metrics, the mono target for stems), the layer off the grid, the hinter's cost on the TV, the Mac rendering headless over ssh, and the raster scale under motion (rest takes three looks, a recording replays its text stretched, what textLayers counts).
 created: 2026-10-08
 ---
 
@@ -433,3 +433,48 @@ refer to that plan.
   cost side, the one-time stall of a cold style, is the per-cell times
   above (0.1 ms desktop, 0.4 to 0.5 tablet, 1 ms TV); the TV's read under
   the rule is a tiny.md chore.
+- 2026-10-09, one look is too few to call a scale at rest
+  ([text-layer-motion](../done/text-layer-motion.md)). A first cut counted
+  a scale as at rest when it equalled the previous frame's. Under a paused
+  clock every scale holds, so a stepped read (`/clock?step=1`)
+  re-rasterized at each paused scale and the frozen-clock protocol
+  measured the tool, not the rule; and an app writing its scale every
+  other frame (30 Hz logic on a 60 Hz display) would read as resting
+  between its writes and churn again. Rest is three consecutive looks
+  (`SCALE_REST_LOOKS`, 50 ms at 60 Hz), a text or recording waiting
+  re-registers each look, and a look that skipped a frame starts the
+  count over.
+- 2026-10-09, a recording boundary never rebuilds its text under a scale
+  write, found by reading the damage model, not from a symptom: a `scale`
+  write is `Damage::Compose`, under which a recording replays with the new
+  matrix, so the stock Button's press scale (0.97, back to 1) stretched
+  its label and was saved only by returning to the recorded scale.
+- 2026-10-09, the raster hysteresis read live on the desktop (Intel
+  RPL-P, 60 Hz, 1.33x, `probes/text-motion-probe.tsx`, `window.textLayers`
+  over the case's own records): a label under a plain view zooming to 1.1
+  rasterizes once, for its end on the zoom's first frame (the write frame;
+  the nine tween frames and the rest make no raster and no looks); the
+  zoom back rasterizes once, at rest. The same inside a recording boundary
+  and inside a snapshot boundary. A detached label under a 4 percent
+  breathing scale rasterizes nothing in 180 frames. Read unmuted, each
+  case in a time window (`/stats?window=450` after `/settle`) with a
+  second's pause between cases: a zoom to a known end makes 9 or 10
+  records (the tween frames, and the write's own frame when it rebuilds
+  one), a zoom back 12 or 13 (the 3 looks that make rest), so a window by
+  record count reaches into the previous case by a frame either way. The
+  TV read of the focus idiom is a tiny.md chore.
+- 2026-10-09, what the counter counts. `paintOps.textLayers` and the
+  window's `textLayers` count the layers the paint walk rasterized; the
+  dev-session overlay's own text (the CONN badge with the FPS figure,
+  refreshed once a second and whenever its text changes) is rasterized
+  outside any walk and was counted too until the count moved to
+  `build_layer`. With it in, a breathing label read 2 to 3 per 180 frames
+  and every case one more than its rasters; a mute adds the MUTED badge's
+  refreshes, and an idle stretch booked the overlay's backlog into the
+  next rebuild's record. The overlay itself re-rasterizes only when its
+  text changed (`overlay::text` is composed apart from the raster).
+- 2026-10-09, a snapshot's record walk must be told its density is a
+  resting one: the texts inside read their composite scale off the
+  raster's grid and have no observation of the motion outside, so without
+  the flag a snapshot made for a zoom's end held unhinted text. The walk
+  gets `scale_at_rest` for a raster made at rest or for a known end.

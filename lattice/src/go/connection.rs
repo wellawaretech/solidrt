@@ -1206,6 +1206,7 @@ fn window_json(
   put("captureFrames", w.capture_frames.into());
   put("periodMs", round2(worst.period_ms).into());
   put("backdropsPrepainted", w.backdrops_prepainted.into());
+  put("textLayers", w.text_layers.into());
   put("nodesPaintedMax", w.nodes_painted_max.into());
   put(
     "worst",

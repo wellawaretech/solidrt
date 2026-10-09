@@ -4,6 +4,7 @@ use taffy::{AvailableSpace, NodeId};
 
 use crate::rendertree::boundary::{self, Hoist};
 use crate::rendertree::cull::{self, CullRect};
+use crate::rendertree::text;
 use crate::rendertree::{
   grid, BackdropPass, BoundaryMode, BuildContext, Element, ElementKind, FilterState, FrameDamage, LayoutContext,
   PaintCache, PlatformContext, RenderTree, Vector,
@@ -167,6 +168,15 @@ pub(crate) fn apply_content_changes(tree: &mut RenderTree, platform: &PlatformCo
     tree.texture_content_changed(&content);
   }
   platform.text_atlas().land();
+  // Texts and recordings that kept their raster under a scale that moved
+  // last frame get their look (text::raster_scale): a Compose damage keeps
+  // their caches and brings the walk to them.
+  for id in tree.take_scale_waits() {
+    if tree.try_node(id).is_some() {
+      tree.apply_damage(id, crate::rendertree::Damage::Compose);
+      changed = true;
+    }
+  }
   // A changed text rendering policy redraws every layer the same way: the
   // damage rebuilds the text, and its layer's generation no longer matches.
   if platform.take_text_rendering_dirty() {
@@ -654,36 +664,76 @@ fn build_recursive<'a>(
         Some(m) => Hoist::Full(m),
         None => Hoist::None,
       };
+      // The density the recording's text layers are judged at: the grid
+      // scale inside the boundary's own matrix, what its texts read as
+      // their composite scale (text::layer_scale). Observed at every
+      // composite, so a scale that held over the rest looks is at rest.
+      let inner_grid = match &own {
+        Some(m) => grid::through(&ctx.grid, m),
+        None => ctx.grid,
+      };
+      let composite = grid::scale(&inner_grid);
+      let seen = composite.map(|now| text::scale_observed(element.scale_seen.get(), now, ctx.frame));
+      element.scale_seen.set(seen);
+      let at_rest = seen.is_some_and(|seen| seen.at_rest()) || ctx.scale_at_rest;
       let cached = match &*element.paint_cache.borrow() {
-        Some(PaintCache::Recording(rec)) => Some((rec.dl.clone(), rec.backdrops)),
+        Some(PaintCache::Recording(rec)) => Some((rec.dl.clone(), rec.backdrops, rec.grid_scale, rec.holds_text)),
         _ => None,
       };
-      if let Some((dl, backdrops)) = cached {
-        service_captures_under_cache(scene, node_id, ctx, hoist);
-        // Panels baked inside the recording re-filter the live window at
-        // replay, but the walk is not entering the subtree to push their
-        // regions: push one in their place - the boundary's subtree
-        // extent as the parent loop just wrote it this frame, so it is
-        // live under transform and scroll writes the cache survives.
-        match backdrops {
-          boundary::BakedBackdrops::None => {}
-          boundary::BakedBackdrops::Unmappable => ctx.backdrop_regions.push(None),
-          boundary::BakedBackdrops::Reach(reach) => ctx.backdrop_regions.push(match element.last_extent.get() {
-            cull::Extent::Bounded(rect) => Some((rect, reach)),
-            _ => None,
-          }),
+      // The density the recording's text layers are made for, by the rule
+      // the layers themselves apply (text::raster_density), with this
+      // boundary's own scale transition folded into the chain's.
+      let factor = ctx.scale_target * scene.scale_transition_factor(node_id);
+      let recorded = cached.as_ref().and_then(|c| c.2);
+      let density = composite.map(|now| text::raster_density(recorded, now, factor, at_rest));
+      // Whether a re-record below is the scale coming to rest: the texts
+      // inside have no observation of their own from the replayed frames,
+      // so the record walk tells them.
+      let mut settled = false;
+      if let Some((dl, backdrops, recorded, holds_text)) = cached {
+        let remake = holds_text && matches!((recorded, density), (Some(have), Some((want, _))) if want != have);
+        if remake {
+          // The text layers inside were rasterized for another density.
+          element.paint_cache.borrow_mut().take();
+          settled = at_rest;
+        } else {
+          if holds_text && matches!(density, Some((_, true))) {
+            scene.note_scale_wait(node_id);
+            ctx.platform.request_frame();
+          }
+          service_captures_under_cache(scene, node_id, ctx, hoist);
+          // Panels baked inside the recording re-filter the live window at
+          // replay, but the walk is not entering the subtree to push their
+          // regions: push one in their place - the boundary's subtree
+          // extent as the parent loop just wrote it this frame, so it is
+          // live under transform and scroll writes the cache survives.
+          match backdrops {
+            boundary::BakedBackdrops::None => {}
+            boundary::BakedBackdrops::Unmappable => ctx.backdrop_regions.push(None),
+            boundary::BakedBackdrops::Reach(reach) => ctx.backdrop_regions.push(match element.last_extent.get() {
+              cull::Extent::Bounded(rect) => Some((rect, reach)),
+              _ => None,
+            }),
+          }
+          ctx.boundaries_reused += 1;
+          if holds_text {
+            ctx.text_layers += 1;
+          }
+          boundary::draw_cached_recording(builder, element, hoisted, &dl, ctx.size);
+          return;
         }
-        ctx.boundaries_reused += 1;
-        boundary::draw_cached_recording(builder, element, hoisted, &dl, ctx.size);
-        return;
       }
       // The recording outlives this frame's viewport (an ancestor scroll
       // does not invalidate it), so it must hold the whole subtree.
       let regions_before = ctx.backdrop_regions.len();
+      let layers_before = ctx.text_layers;
+      let outer_rest = ctx.scale_at_rest;
+      ctx.scale_at_rest = outer_rest || settled;
       let mut sub = DisplayListBuilder::new(None);
       let cull = ctx.cull.take();
       record_node(scene, node_id, ctx, &mut sub, hoist);
       ctx.cull = cull;
+      ctx.scale_at_rest = outer_rest;
       if let Some(dl) = sub.build() {
         ctx.boundaries_recorded += 1;
         // The regions the record walk pushed (the boundary's own entry
@@ -691,7 +741,12 @@ fn build_recursive<'a>(
         // for on reuse frames.
         let backdrops = boundary::BakedBackdrops::summarize(&ctx.backdrop_regions[regions_before..]);
         boundary::draw_cached_recording(builder, element, hoisted, &dl, ctx.size);
-        *element.paint_cache.borrow_mut() = Some(PaintCache::Recording(boundary::RecordingCache { dl, backdrops }));
+        *element.paint_cache.borrow_mut() = Some(PaintCache::Recording(boundary::RecordingCache {
+          dl,
+          backdrops,
+          grid_scale: density.map(|(want, _)| want),
+          holds_text: ctx.text_layers > layers_before,
+        }));
       }
     }
     BoundaryMode::Snapshot => boundary::snapshot_node(scene, node_id, ctx, builder, true),
@@ -826,6 +881,9 @@ pub(super) fn record_node<'a>(
       element.build(ctx, builder);
       if let ElementKind::Text(text) = &element.kind {
         scene.note_text_layer(node_id, text.has_layer());
+        if text.scale_wait() {
+          scene.note_scale_wait(node_id);
+        }
       }
     }
   }
@@ -888,6 +946,15 @@ pub(super) fn record_node<'a>(
   }
   if let Some(fit) = &view_fit {
     ctx.grid = grid::through(&ctx.grid, fit);
+  }
+  // Where this view's scale is headed under a running transition, carried
+  // down like the grid: a text or a snapshot below rasters for the larger
+  // of now and then, so a zoom minifies its raster instead of magnifying
+  // it (text::raster_density). Not under Hoist::Transform: that matrix is
+  // applied to a raster's quad, and the raster decided its own density.
+  let saved_target = ctx.scale_target;
+  if !matches!(hoist, Hoist::Transform(_)) {
+    ctx.scale_target *= scene.scale_transition_factor(node_id);
   }
 
   // The cull rect follows the same four ops into the child frame. Under a
@@ -1027,6 +1094,7 @@ pub(super) fn record_node<'a>(
   ctx.cull = saved_cull;
   ctx.to_window = saved_map;
   ctx.grid = saved_grid;
+  ctx.scale_target = saved_target;
   ctx.backdrop_pass = pass;
 
   if effect_layer {

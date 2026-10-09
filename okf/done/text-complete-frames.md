@@ -110,7 +110,7 @@ pinned in `alloy/src/tests/glyphs.rs`).
 
 - Text under a changing scale: with complete frames the per-frame cells
   of an animated scale cost frame time instead of letters, and the fix is
-  raster hysteresis, [text-layer-motion](../backlog/text-layer-motion.md).
+  raster hysteresis, [text-layer-motion](text-layer-motion.md).
 - In `okf/tiny.md`: the TV's cold-style first paint read again under the
   rule (the number before was 83 ms with three cells a frame made in time
   and the rest arriving over a few frames), and `warmText` taking strings

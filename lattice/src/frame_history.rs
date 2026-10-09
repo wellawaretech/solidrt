@@ -98,6 +98,10 @@ pub struct WindowSummary {
   /// Backdrop panels re-filtered under a fading group, summed over the
   /// window: nonzero means a glass fade ran, whichever frame was worst.
   pub backdrops_prepainted: u32,
+  /// Text layers the glyph pass rasterized, summed over the window: how
+  /// often the window's frames re-rasterized text, where the latest
+  /// rebuild's `paintOps` shows one frame.
+  pub text_layers: u32,
   /// The widest paint walk in the window.
   pub nodes_painted_max: u32,
   /// Rates over the window's span, derived from the raster samples of its
@@ -272,6 +276,7 @@ impl FrameHistory {
       capture_frames,
       worst,
       backdrops_prepainted: frames.iter().map(|r| r.backdrops_prepainted).sum(),
+      text_layers: frames.iter().map(|r| r.counters.text_layers).sum(),
       nodes_painted_max: frames.iter().map(|r| r.nodes_painted).max().unwrap_or(0),
       raster_rates,
       target_rates,

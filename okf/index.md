@@ -708,12 +708,6 @@ Shaped, not started.
   A numeric pixel-delta mode on get_snapshot against the previous capture of
   the same node, so "does it still render the same" is one call with a number
   instead of two images an agent has to eyeball.
-- **[Snapshot boundaries are resampled under a scale](backlog/snapshot-raster-composite-scale.md)** [2026-10-08]
-  A snapshot boundary rasterizes at the display scale only, so under a
-  design-size fit or a scale transform its texture is scaled on composite and
-  every pixel in it is resampled, however well its quad lands on the grid; the
-  text layer already rasterizes at the display scale times the chain's scale
-  and tolerates drift, and the snapshot should do the same.
 - **[Reactivity diagnostics carry no source location](backlog/solid-diagnostics-source-location.md)** [2026-09-08]
   A STRICT_READ_UNTRACKED warning names the shape of the mistake but not the
   file or line, so finding it in an app with a dozen effects is a manual hunt;
@@ -803,13 +797,6 @@ Shaped, not started.
   ascent and descent and the baseline snaps to whole pixels; a half-leading
   placement only moves the error around, so the candidate is cap-band
   centering, to be simulated before it is built.
-- **[Text layers blur at fractional offsets and drop glyphs while scaling](backlog/text-layer-motion.md)** [2026-10-07]
-  Every <text> draws as a cached layer composited with bilinear sampling at
-  its logical position, so text between device pixels (a momentum scroll, a
-  translate animation, a 1.5x display) softens by up to half a pixel; and a
-  scale animation (zoom on hover or focus) re-rasterizes every 2%, making a
-  fresh set of cells at every intermediate size, which costs frame time on the
-  TV and churns the atlas.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -2257,6 +2244,12 @@ Finished, kept for the reasoning.
   A content change drops the retained texture outright, so every re-raster
   rebuilds texture, MSAA renderbuffers, two FBOs and a wrapped surface (~133
   MB at 1440p); retain the storage and pool the rig instead.
+- **[Snapshot boundaries are resampled under a scale](done/snapshot-raster-composite-scale.md)** [2026-10-09]
+  A snapshot boundary rasterizes at the display scale only, so under a
+  design-size fit or a scale transform its texture is scaled on composite and
+  every pixel in it is resampled, however well its quad lands on the grid; the
+  text layer already rasterizes at the display scale times the chain's scale
+  and tolerates drift, and the snapshot should do the same.
 - **[Node snapshots need a frame to happen](done/snapshot-requires-next-render.md)** [2026-07-30]
   captureSnapshot and get_snapshot latch a frame request but do not wake the
   render loop, so a truly idle client never services the capture and the query
@@ -2436,6 +2429,14 @@ Finished, kept for the reasoning.
   style borderWidth 0 leaves a faint outline in the theme border colour,
   visible on coloured cards; done means a zero width draws no border, on
   TextInput and on any other element whose stroke width can be 0.
+- **[Text re-rasterizes at every step of a scale animation, or never inside a boundary](done/text-layer-motion.md)** [2026-10-09]
+  A text layer rasterizes at the composite scale and re-rasterizes whenever
+  that scale drifts past 2 percent, so a zoom to 1.1 makes fresh cells at five
+  intermediate sizes and a breathing title makes them every frame; a text
+  inside a recording boundary under the same zoom is never re-rasterized at
+  all and stays stretched at rest. The raster scale should follow rest, as
+  browsers do: composite the existing raster stretched while the scale moves,
+  re-rasterize once it holds.
 - **[Own the text layout, demote drawParagraph to a shaper](done/text-layout-owned.md)** [2026-08-16]
   Impeller's paragraph is a black box for line breaking, so inline elements,
   exclusions, custom breaking and cheap re-layout are unreachable; experiment
@@ -2889,8 +2890,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   text layer, mask cell times on the armv7, the coverage-to-color modes and
   DirectWrite's blend, skrifa and zeno traps (inspect before render, embolden
   over stroke, the light target and linear metrics, the mono target for
-  stems), the layer off the grid, the hinter's cost on the TV, and the Mac
-  rendering headless over ssh.
+  stems), the layer off the grid, the hinter's cost on the TV, the Mac
+  rendering headless over ssh, and the raster scale under motion (rest takes
+  three looks, a recording replays its text stretched, what textLayers
+  counts).
 - **[Text shaping and layout costs, measured](notes/text-shaping-costs.md)** [2026-08-17]
   What one Impeller paragraph per wrap unit costs against one paragraph per
   width, and what the shared word cache changes; the numbers under the owned

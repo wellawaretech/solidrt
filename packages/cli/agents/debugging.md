@@ -277,7 +277,9 @@ when exactly one client is connected.
   latest rebuild, and in `window.worst`) counts the display-list ops the
   paint walk recorded - `draws`, `textLayers` (the text layers the glyph
   pass rasterized for the rebuild; a text whose pixels are current
-  composites its retained layer, a draw and no layer), `clips` (of which
+  composites its retained layer, a draw and no layer; `window.textLayers`
+  sums them over the window's frames, the count that says how often a
+  scale animation re-rasterized its labels), `clips` (of which
   `roundedClips`),
   `saveLayers`, and
   the paints that leave a tiled GPU's cheap path, `blends` (not

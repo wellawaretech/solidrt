@@ -14,7 +14,7 @@ use crate::rendertree::composite::{
   apply_clip, apply_scroll, effect_paint, emit_backdrop, record_node, service_captures_under_cache, snapped_own,
   view_filter, view_opacity, CLIP_INF,
 };
-use crate::rendertree::{grid, BuildContext, Element, ElementKind, FilterState, RenderTree, Vector};
+use crate::rendertree::{grid, text, BuildContext, Element, ElementKind, FilterState, RenderTree, Vector};
 
 // What a boundary caller applies itself at composite time, and record_node
 // therefore leaves out of the cached content. The record order is matrix,
@@ -56,6 +56,16 @@ pub enum PaintCache {
 pub struct RecordingCache {
   pub dl: DisplayList,
   pub backdrops: BakedBackdrops,
+  /// The density its text layers were made for when recorded (the grid
+  /// scale inside the boundary's own matrix, or a running zoom's end),
+  /// which every replay judges the current scale against (composite.rs,
+  /// text::raster_density). None under a rotation or a 3d transform, where
+  /// there is no grid and nothing re-records for scale.
+  pub grid_scale: Option<f32>,
+  /// Whether the record walk drew text layers, nested recordings included:
+  /// a vector-only recording replays crisply at any scale and never
+  /// re-records for one.
+  pub holds_text: bool,
 }
 
 /// The backdrop panels inside a Recording cache, summarized from the
@@ -315,9 +325,12 @@ pub(super) fn draw_cached_recording(
   }
 }
 
-// Snapshot gate: the subtree is rasterized into a texture at the current
-// display scale and composited as a single quad until something inside it
-// changes, its layout size changes, or the display scale changes. Content
+// Snapshot gate: the subtree is rasterized into a texture at the density
+// its quad composites at (the grid inside the node's own matrix, at rest:
+// text::raster_density, so a zoom stretches the texture until the scale
+// holds and re-rasterizes once) and composited as a single quad until
+// something inside it changes, its layout size changes, or that density
+// changes. Content
 // painting outside the layout box is cropped (unlike a recording boundary);
 // the crop happens in untransformed local space, since the boundary's own
 // transform is hoisted out of the raster and applied to the quad instead.
@@ -349,7 +362,35 @@ fn snapshot_node_unculled<'a>(
   // emission (ctx cannot be re-borrowed at draw time).
   let frame = ctx.size;
   let (width, height, offset) = painted_box(element, ctx.size);
-  let scale = ctx.platform.display_scale();
+  let own = snapped_own(element, ctx.size, &ctx.grid);
+  // The raster density: the grid inside the node's own matrix (what the
+  // quad is scaled by on composite), followed at rest and ahead of a known
+  // zoom's end like a text layer (text::raster_density), so the texture is
+  // pixel-exact where the node rests; the display scale alone, as before,
+  // only where there is no grid (a rotation above).
+  let display_scale = ctx.platform.display_scale();
+  let inner_grid = match &own {
+    Some(m) => grid::through(&ctx.grid, m),
+    None => ctx.grid,
+  };
+  let composite = grid::scale(&inner_grid).unwrap_or(display_scale);
+  let seen = text::scale_observed(element.scale_seen.get(), composite, ctx.frame);
+  element.scale_seen.set(Some(seen));
+  let at_rest = seen.at_rest() || ctx.scale_at_rest;
+  let factor = ctx.scale_target * scene.scale_transition_factor(node_id);
+  let have = match &*element.paint_cache.borrow() {
+    Some(PaintCache::Snapshot(snap)) => Some(snap.scale),
+    _ => None,
+  };
+  let (scale, wait) = text::raster_density(have, composite, factor, at_rest);
+  if wait {
+    scene.note_scale_wait(node_id);
+    ctx.platform.request_frame();
+  }
+  // A raster made for a scale the node rests at (at rest, or a known zoom's
+  // end) is told to its record walk below: the texts inside raster hinted
+  // for exactly this density, as any text at rest, and wait for nothing.
+  let for_rest = at_rest || (factor > 1.0 && text::scale_held(scale, composite * factor));
   let box_key = SnapshotKey { width, height, scale, outset: 0.0 };
   let (tex_w, tex_h) = box_key.texture_dims();
 
@@ -360,7 +401,6 @@ fn snapshot_node_unculled<'a>(
     return;
   }
 
-  let own = snapped_own(element, ctx.size, &ctx.grid);
   let hoist = match own {
     Some(m) => Hoist::Transform(m),
     None => Hoist::None,
@@ -452,7 +492,10 @@ fn snapshot_node_unculled<'a>(
       sub.clip_rect(&Rect::new(Point::new(0.0, 0.0), Size::new(width, height)), ClipOperation::Intersect);
     }
     ctx.grid = grid::raster(scale, Vector::new(outset, outset));
+    let outer_rest = ctx.scale_at_rest;
+    ctx.scale_at_rest = outer_rest || for_rest;
     record_node(scene, node_id, ctx, &mut sub, hoist);
+    ctx.scale_at_rest = outer_rest;
     ctx.grid = slot_grid;
     let Some(dl) = sub.build() else { return };
 
@@ -546,7 +589,10 @@ fn snapshot_node_unculled<'a>(
     sub.translate(-offset.0, -offset.1);
   }
   ctx.grid = grid::raster(scale, -paint_offset);
+  let outer_rest = ctx.scale_at_rest;
+  ctx.scale_at_rest = outer_rest || for_rest;
   record_node(scene, node_id, ctx, &mut sub, hoist);
+  ctx.scale_at_rest = outer_rest;
   ctx.grid = slot_grid;
   let Some(dl) = sub.build() else { return };
 

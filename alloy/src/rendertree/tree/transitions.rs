@@ -6,7 +6,7 @@
 
 use super::RenderTree;
 use crate::rendertree::transitions::{AnimValue, PendingWrite};
-use crate::rendertree::{AnimProp, Damage, Endpoint, Rect, Size, Slide, Vector};
+use crate::rendertree::{AnimProp, Damage, ElementKind, Endpoint, Rect, Size, Slide, Vector};
 use std::collections::HashMap;
 
 /// What a sliding node has still to cover to its solved box: the offset of
@@ -471,6 +471,34 @@ impl RenderTree {
 
   pub(crate) fn keep_resizing(&mut self, node_id: u64, laid_out_against: Size) {
     self.resizing.insert(node_id, Some(laid_out_against));
+  }
+
+  /// Where a view's own scale is headed: the end of a running transition
+  /// on its scale props (the longer axis, as the grid measures scale)
+  /// relative to the value it holds now; 1 with no scale transition
+  /// running, or for a node that is no view. What the paint walk carries
+  /// down the chain so a text or a snapshot below rasters for the end of
+  /// a zoom at once (text::raster_density).
+  pub fn scale_transition_factor(&self, node_id: u64) -> f32 {
+    let Some(ElementKind::View(view)) = self.nodes.get(&node_id).map(|el| &el.kind) else { return 1.0 };
+    let scalar = |value: Option<AnimValue>| match value {
+      Some(AnimValue::Scalar(s)) => Some(s),
+      _ => None,
+    };
+    let uniform = scalar(self.transitions.target(node_id, AnimProp::Scale));
+    let target_x = scalar(self.transitions.target(node_id, AnimProp::ScaleX)).or(uniform);
+    let target_y = scalar(self.transitions.target(node_id, AnimProp::ScaleY)).or(uniform);
+    if target_x.is_none() && target_y.is_none() {
+      return 1.0;
+    }
+    let (cur_x, cur_y) = (view.scale_x.unwrap_or(1.0), view.scale_y.unwrap_or(1.0));
+    let now = cur_x.abs().max(cur_y.abs());
+    let then = target_x.unwrap_or(cur_x).abs().max(target_y.unwrap_or(cur_y).abs());
+    if now > 0.0 && then.is_finite() && then > 0.0 {
+      then / now
+    } else {
+      1.0
+    }
   }
 
   /// The exit endpoints in force on a node on its way out - for each

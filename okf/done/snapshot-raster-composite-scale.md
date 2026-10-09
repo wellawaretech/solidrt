@@ -2,6 +2,7 @@
 title: Snapshot boundaries are resampled under a scale
 description: A snapshot boundary rasterizes at the display scale only, so under a design-size fit or a scale transform its texture is scaled on composite and every pixel in it is resampled, however well its quad lands on the grid; the text layer already rasterizes at the display scale times the chain's scale and tolerates drift, and the snapshot should do the same.
 created: 2026-10-08
+completed: 2026-10-09
 ---
 
 # Snapshot boundaries are resampled under a scale
@@ -36,3 +37,14 @@ animation re-rasterizes at the tolerance's pace, not per frame.
 of the display scale, with the tolerance deciding reuse; the raster grid
 (`grid::raster`) and the shader outset follow; `service_captures` stays
 at the display scale (a capture is the node at its own density).
+
+## Done
+
+Landed 2026-10-09 with [text-layer-motion](text-layer-motion.md): the
+snapshot's density is the grid inside its own matrix (`inner_grid` in
+`snapshot_node_unculled`), followed by the raster hysteresis every text
+layer and recording boundary use (`text::raster_density`): pixel-exact
+where the node rests, kept and stretched while its scale moves, made for
+a known zoom's end at once. The key carries the scale as before, so
+storage re-renders in place at a dimension match. `service_captures`
+stays at the display scale.

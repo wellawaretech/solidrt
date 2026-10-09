@@ -83,17 +83,10 @@ pub enum Badge {
 /// next time, which re-renders into the same texture while the size
 /// holds. None when nothing could be drawn (no fonts yet).
 #[allow(clippy::too_many_arguments)]
-pub fn build(
-  s: &StatsSnapshot,
-  gpu_pct: Option<f32>,
-  hud: bool,
-  badge: Option<Badge>,
-  platform: &PlatformContext,
-  alloy: &alloy::Context,
-  previous: Option<&TextImage>,
-  safe_area: Rect,
-  scale: f32,
-) -> Option<(alloy::Overlay, TextImage)> {
+/// The overlay's text for the figures `s`: the badge, the figures when
+/// `hud`, the FPS. Composed apart from the raster so a refresh whose text
+/// is unchanged (a badge over an idle app, the same FPS) is skipped.
+pub fn text(s: &StatsSnapshot, gpu_pct: Option<f32>, hud: bool, badge: Option<Badge>) -> String {
   let mut text = String::new();
   match badge {
     Some(Badge::Connected) => text.push_str("CONN "),
@@ -108,7 +101,19 @@ pub fn build(
   if hud {
     push_hud_lines(&mut text, s, gpu_pct);
   }
+  text
+}
 
+/// The overlay for `text` (see `text`): rasterized at `scale`, placed in
+/// `safe_area`, re-rendered into `previous` while its size holds.
+pub fn build(
+  text: String,
+  platform: &PlatformContext,
+  alloy: &alloy::Context,
+  previous: Option<&TextImage>,
+  safe_area: Rect,
+  scale: f32,
+) -> Option<(alloy::Overlay, TextImage)> {
   let mut node = hud_text();
   node.set_plain_text(text);
   let image = node.rasterize(platform, alloy, PARA_WIDTH, scale, previous)?;

@@ -897,7 +897,7 @@ fn boundary_shader_input_hit_keeps_the_bake() {
   shaded_boundary(&mut tree, 1, 9);
   tree.insert_node(0, 1, None).expect("insert");
   let dl = || crate::impellers::DisplayListBuilder::new(None).build().expect("build empty display list");
-  let rec = || RecordingCache { dl: dl(), backdrops: BakedBackdrops::None };
+  let rec = || RecordingCache { dl: dl(), backdrops: BakedBackdrops::None, grid_scale: None, holds_text: false };
   *tree.node(0).paint_cache.borrow_mut() = Some(PaintCache::Recording(rec()));
   *tree.node(1).paint_cache.borrow_mut() = Some(PaintCache::Recording(rec()));
   assert!(tree.texture_content_changed(&ids(&[9])));
@@ -933,6 +933,8 @@ fn content_hit_invalidates_the_boundary_cache_path() {
   *tree.node(0).paint_cache.borrow_mut() = Some(PaintCache::Recording(RecordingCache {
     dl: crate::impellers::DisplayListBuilder::new(None).build().expect("build empty display list"),
     backdrops: BakedBackdrops::None,
+    grid_scale: None,
+    holds_text: false,
   }));
   assert!(tree.texture_content_changed(&ids(&[7])));
   assert!(tree.node(0).paint_cache.borrow().is_none());

@@ -75,6 +75,22 @@ pub struct BuildContext<'a> {
   /// snapshot's or a capture's texture inside its raster. None past a
   /// non-2D matrix.
   pub grid: grid::GridMap,
+  /// The text atlas frame this walk belongs to: what a text or a recording
+  /// stamps its scale observation with (text::build_layer).
+  pub frame: u64,
+  /// An enclosing recording re-recording at rest told this walk the
+  /// composite scale is at rest: every text below rasters at it
+  /// (text::raster_scale), whatever its own observation says.
+  pub scale_at_rest: bool,
+  /// Text layers this walk drew so far; a recording reads the delta across
+  /// its record walk to know whether it holds text.
+  pub text_layers: u32,
+  /// Where the composite scale of this frame is headed: the product of the
+  /// running scale transitions' ends over their current values along the
+  /// chain (RenderTree::scale_transition_factor), 1 with none. A text or a
+  /// snapshot below rasters for the larger of now and then
+  /// (text::raster_density).
+  pub scale_target: f32,
   /// Nodes whose subtree the walk entered this frame (culled ones excluded).
   pub nodes_painted: u32,
   /// Backdrop-filter regions the walk passed, in window space with each
@@ -118,6 +134,10 @@ impl<'a> BuildContext<'a> {
       cull: None,
       to_window: None,
       grid: None,
+      frame: platform.text_atlas().frame(),
+      scale_at_rest: false,
+      text_layers: 0,
+      scale_target: 1.0,
       nodes_painted: 0,
       backdrop_regions: Vec::new(),
       boundaries_reused: 0,
@@ -416,6 +436,10 @@ pub struct Element {
   // RenderTree::invalidate_paint on any content or layout change in the
   // subtree. Interior-mutable because painting traverses a shared tree.
   pub paint_cache: RefCell<Option<PaintCache>>,
+  // As a Recording boundary: the grid scale inside its own matrix as the
+  // composites saw it (text::ScaleSeen), so a scale that held over the
+  // rest looks is at rest (composite.rs, text::raster_scale).
+  pub scale_seen: Cell<Option<text::ScaleSeen>>,
   // A snapshot boundary's retained rasterization vended as a registry
   // texture id (RenderTree::snapshot_texture). Allocated on first request,
   // stable for the element's lifetime; the paint walk re-publishes the
@@ -458,6 +482,7 @@ impl Element {
       float: None,
       clear: None,
       paint_cache: RefCell::new(None),
+      scale_seen: Cell::new(None),
       snapshot_texture_id: Cell::new(None),
       envelope: cull::EnvelopeCache::default(),
       last_extent: Cell::new(cull::Extent::Empty),
@@ -484,6 +509,7 @@ impl Element {
       float: None,
       clear: None,
       paint_cache: RefCell::new(None),
+      scale_seen: Cell::new(None),
       snapshot_texture_id: Cell::new(None),
       envelope: cull::EnvelopeCache::default(),
       last_extent: Cell::new(cull::Extent::Empty),

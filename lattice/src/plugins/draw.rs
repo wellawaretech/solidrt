@@ -72,8 +72,10 @@ struct RenderInner {
   // immediately rather than waiting out the once-per-second cadence.
   overlay_key: Cell<OverlayKey>,
   // The overlay's rasterized text, kept so the next refresh re-renders into
-  // the same texture while its size holds.
+  // the same texture while its size holds, and the text it shows, so a due
+  // refresh whose text is unchanged rasterizes nothing.
   overlay_image: RefCell<Option<alloy::rendertree::text::TextImage>>,
+  overlay_text: RefCell<String>,
 }
 
 type OverlayKey = (f32, f32, f32, f32, f32, f32, f32, bool, Option<overlay::Badge>);
@@ -119,6 +121,7 @@ pub fn store_state(
       first_frame_done: Cell::new(false),
       overlay_key: Cell::new((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, None)),
       overlay_image: RefCell::new(None),
+      overlay_text: RefCell::new(String::new()),
     })))
     .expect("store render state");
 }
@@ -195,7 +198,11 @@ impl RenderInner {
       stats_on,
       badge,
     );
-    let overlay_refresh = overlay_on
+    // A refresh may be due: the overlay is new, its placement changed, or
+    // the figures' refresh interval passed. Whether it is due waits for the
+    // figures below: a due refresh whose text is unchanged (a badge over an
+    // idle app, the same FPS) is skipped, since the raster would be the same.
+    let overlay_stale = overlay_on
       && (!self.overlay_installed.get() || self.overlay_key.get() != overlay_key || stats.borrow().overlay_due());
     let overlay_clear = !overlay_on && self.overlay_installed.get();
     // The frame the runtime stamped for us (see frame::RenderFrame). Its
@@ -220,6 +227,21 @@ impl RenderInner {
     // the demand gate skips draws; and what the HUD below renders.
     let snap = stats.borrow().snapshot(render_frame.frame, platform.fps(), atx.textures.len());
     *stats_snapshot.lock().expect("stats snapshot lock poisoned") = snap;
+    let overlay_text = overlay_stale.then(|| {
+      // The HUD's GPU share: the frame history's own figure over the last
+      // second, read only when the HUD is drawn.
+      let gpu_pct = stats_on
+        .then(|| {
+          let now_ms = crate::frame_history::now_ms();
+          let history = self.history.lock().expect("frame history lock poisoned");
+          history.summarize(Window::Ms(HUD_GPU_WINDOW_MS), now_ms).and_then(|w| w.raster_rates?.gpu_share_pct())
+        })
+        .flatten();
+      overlay::text(&snap, gpu_pct, stats_on, badge)
+    });
+    let overlay_refresh = overlay_text.as_ref().is_some_and(|text| {
+      !self.overlay_installed.get() || self.overlay_key.get() != overlay_key || *text != *self.overlay_text.borrow()
+    });
 
     // The frame protocol - the transition ticks (render tree, spatial arena,
     // each settling to JS before the frame paints), the demand gate, reuse
@@ -243,33 +265,16 @@ impl RenderInner {
       // frame. Built from the figures record_js just sampled; the raster
       // thread retains the list, so nothing is sent while the figures stand.
       if overlay_refresh {
-        // The HUD's GPU share: the frame history's own figure over the last
-        // second, read only when the HUD is drawn.
-        let gpu_pct = stats_on
-          .then(|| {
-            let now_ms = crate::frame_history::now_ms();
-            let history = self.history.lock().expect("frame history lock poisoned");
-            history.summarize(Window::Ms(HUD_GPU_WINDOW_MS), now_ms).and_then(|w| w.raster_rates?.gpu_share_pct())
-          })
-          .flatten();
+        let text = overlay_text.clone().expect("a refresh has its text");
         let built = {
           let previous = self.overlay_image.borrow();
-          overlay::build(
-            &snap,
-            gpu_pct,
-            stats_on,
-            badge,
-            platform,
-            atx,
-            previous.as_ref(),
-            platform.safe_area(),
-            platform.display_scale(),
-          )
+          overlay::build(text.clone(), platform, atx, previous.as_ref(), platform.safe_area(), platform.display_scale())
         };
         let (overlay, image) = built.map_or((None, None), |(overlay, image)| (Some(overlay), Some(image)));
         self.overlay_installed.set(overlay.is_some());
         self.overlay_key.set(overlay_key);
         *self.overlay_image.borrow_mut() = image;
+        *self.overlay_text.borrow_mut() = text;
         atx.set_overlay(overlay);
       } else if overlay_clear {
         atx.set_overlay(None);

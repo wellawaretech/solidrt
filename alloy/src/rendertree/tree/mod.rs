@@ -36,6 +36,11 @@ pub struct RenderTree {
   // release sweep visits (release_stale_text_layers), so it costs the
   // texts with pixels and not every node.
   text_layers: RefCell<HashSet<u64>>,
+  // Texts and recording boundaries that kept their raster under a composite
+  // scale that moved this frame and want a look at the next, to tell rest
+  // from motion (text::raster_scale): the frame start gives each a Compose
+  // damage, caches intact, so the walk reaches it.
+  scale_waits: RefCell<HashSet<u64>>,
   // Nodes referencing any texture-registry id (Element::references_textures):
   // texture elements with a source, views whose shader samples extra texture
   // inputs. Keeps texture_content_changed and the destroy sweep at
@@ -80,6 +85,7 @@ impl RenderTree {
       transitions: Transitions::default(),
       released_snapshot_textures: RefCell::new(Vec::new()),
       text_layers: RefCell::new(HashSet::new()),
+      scale_waits: RefCell::new(HashSet::new()),
       texture_referencers: HashSet::new(),
       damage: DamageLedger::new(),
       reflowed: Vec::new(),
@@ -559,6 +565,7 @@ impl RenderTree {
     if let Some(element) = self.nodes.remove(&node_id) {
       self.texture_referencers.remove(&node_id);
       self.text_layers.borrow_mut().remove(&node_id);
+      self.scale_waits.borrow_mut().remove(&node_id);
       if let Some(id) = element.snapshot_texture_id.get() {
         self.released_snapshot_textures.borrow_mut().push(id);
       }
@@ -602,6 +609,19 @@ impl RenderTree {
     } else {
       layers.remove(&node_id);
     }
+  }
+
+  /// A text or a recording boundary kept its raster under a composite scale
+  /// that moved this frame and wants a look at the next (see
+  /// `take_scale_waits`).
+  pub fn note_scale_wait(&self, node_id: u64) {
+    self.scale_waits.borrow_mut().insert(node_id);
+  }
+
+  /// The nodes waiting for the next frame's look, taken once per frame by
+  /// the frame producer, which gives each a Compose damage.
+  pub fn take_scale_waits(&self) -> Vec<u64> {
+    self.scale_waits.borrow_mut().drain().collect()
   }
 
   /// The text nodes holding a layer.

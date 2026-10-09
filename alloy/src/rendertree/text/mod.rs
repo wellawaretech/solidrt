@@ -24,7 +24,7 @@ use crate::rendertree::{
 };
 use crate::Context;
 use shape::OwnedCache;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use taffy::{AvailableSpace, Display, Style};
 
 // Shaping bound: at most this many widths cached per text node. A layout pass
@@ -154,6 +154,14 @@ pub struct Text {
   owned: RefCell<OwnedCache>,
   // The raster of this text (see TextLayer).
   layer: RefCell<Option<TextLayer>>,
+  // The composite scale as the builds saw it (see ScaleSeen): a scale that
+  // held over the rest looks is at rest (build_layer).
+  scale_seen: Cell<Option<ScaleSeen>>,
+  // The last build kept its raster under a scale that moved and asked for
+  // a look at the next frame (build_layer); the walk registers it.
+  scale_wait: Cell<bool>,
+  // The raster scale the last build chose, whether or not its pass ran.
+  chosen_scale: Cell<Option<f32>>,
 }
 
 impl Default for Text {
@@ -185,6 +193,9 @@ impl Default for Text {
       paint: PaintState::default(),
       owned: RefCell::new(OwnedCache::default()),
       layer: RefCell::new(None),
+      scale_seen: Cell::new(None),
+      scale_wait: Cell::new(false),
+      chosen_scale: Cell::new(None),
     }
   }
 }
@@ -220,6 +231,10 @@ struct TextLayer {
   width: f32,
   /// The platform's text rendering generation the layer was drawn under.
   rendering: u64,
+  /// Whether the cells were hinted: a raster made for a scale the text
+  /// rests at is, one made mid-motion at an in-between scale is not (see
+  /// build_layer), and is re-made hinted once the scale rests.
+  hinted: bool,
   /// The text atlas frame this layer was last composited at.
   used: u64,
 }
@@ -246,9 +261,115 @@ impl std::fmt::Debug for TextLayer {
   }
 }
 
-// How far (a fraction) the composite scale may drift before a text layer
-// re-rasterizes: float noise never does, a zoom does from its second frame.
-const LAYER_SCALE_TOLERANCE: f32 = 0.02;
+// The ratio (either way) between the composite scale and the raster scale
+// past which a layer re-rasterizes even while the scale is moving: the cap
+// on how soft a stretched raster may get mid-animation (Chrome's pinch
+// rule re-rasters at 2).
+const LAYER_SCALE_MOTION_BOUND: f32 = 1.5;
+// Two composite scales within this fraction of each other are the same
+// scale: a frame's matrix composition noise, never a step of an animation.
+const SCALE_HELD_EPSILON: f32 = 1e-5;
+// Consecutive looks a composite scale must hold before it is at rest: 50 ms
+// at 60 Hz, past the gap of a writer at half the refresh rate, so an
+// animation driven at 30 Hz does not read as resting between its writes.
+const SCALE_REST_LOOKS: u32 = 3;
+
+/// A node's observation of its composite scale: the scale at its last
+/// look, the frame of that look, and how many consecutive looks it has
+/// held for (`scale_observed`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScaleSeen {
+  pub scale: f32,
+  pub frame: u64,
+  pub held: u32,
+}
+
+impl ScaleSeen {
+  /// Whether the scale has held long enough to count as at rest.
+  pub fn at_rest(&self) -> bool {
+    self.held >= SCALE_REST_LOOKS
+  }
+}
+
+/// The observation after a look at `now` in `frame`, given the previous
+/// one: the hold grows by one when the look follows the previous frame
+/// and the scale is the same, and starts over when the scale moved or the
+/// node was not looked at last frame (unknown: wait a frame).
+pub(crate) fn scale_observed(prev: Option<ScaleSeen>, now: f32, frame: u64) -> ScaleSeen {
+  let held = match prev {
+    Some(prev) if prev.frame + 1 == frame && scale_held(prev.scale, now) => prev.held + 1,
+    _ => 0,
+  };
+  ScaleSeen { scale: now, frame, held }
+}
+
+/// What a raster made at one scale does under another (`raster_scale`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RasterScale {
+  /// The scale is the raster's: the raster stays.
+  Keep,
+  /// The scale moved and has not held yet: the raster stays, stretched,
+  /// and the node asks for a look at the next frame.
+  Wait,
+  /// The scale held at a new value, or ran past the motion bound: a new
+  /// raster at the composite scale.
+  Rerasterize,
+}
+
+/// The raster hysteresis rule (okf/done/text-layer-motion.md), shared by
+/// the text layer, a recording boundary holding text layers and a snapshot
+/// boundary (through `raster_density`): a raster made at `have` under a
+/// composite scale of `now`, `at_rest` when `now` held over the rest
+/// looks. The raster scale follows rest, as browsers treat a transform
+/// animation: a zoom composites the existing raster stretched and
+/// re-rasterizes once where it comes to rest, for exactly that scale; a
+/// breathing scale never re-rasterizes; only a drift past the motion
+/// bound re-rasterizes in flight.
+pub(crate) fn raster_scale(have: f32, now: f32, at_rest: bool) -> RasterScale {
+  if !(have > 0.0 && now > 0.0 && have.is_finite() && now.is_finite()) {
+    return RasterScale::Keep;
+  }
+  if (now / have).max(have / now) > LAYER_SCALE_MOTION_BOUND {
+    return RasterScale::Rerasterize;
+  }
+  if scale_held(have, now) {
+    return RasterScale::Keep;
+  }
+  if at_rest {
+    RasterScale::Rerasterize
+  } else {
+    RasterScale::Wait
+  }
+}
+
+/// The density a raster is made or kept at, and whether the node waits for
+/// rest: `have` the raster's scale (None before the first), `now` the
+/// composite scale, `factor` where the running scale transitions on the
+/// chain take it (`BuildContext::scale_target`, 1 with none), `at_rest`
+/// whether `now` held over the rest looks. With a transition headed up,
+/// the raster is made for its end at once and the motion minifies it, as
+/// Chrome rasters a known animation at its larger end; headed down, the
+/// raster is kept and minified, and re-made at the resting scale.
+pub(crate) fn raster_density(have: Option<f32>, now: f32, factor: f32, at_rest: bool) -> (f32, bool) {
+  let ahead = (factor > 1.0 && factor.is_finite()).then(|| now * factor);
+  let Some(have) = have else {
+    return (ahead.unwrap_or(now), false);
+  };
+  let up = ahead.filter(|&end| end > have && !scale_held(have, end));
+  match raster_scale(have, now, at_rest) {
+    RasterScale::Rerasterize => (ahead.map_or(now, |end| end.max(now)), false),
+    RasterScale::Keep => (up.unwrap_or(have), false),
+    RasterScale::Wait => match up {
+      Some(end) => (end, false),
+      None => (have, true),
+    },
+  }
+}
+
+/// Whether two composite scales observed a frame apart are the same scale.
+pub(crate) fn scale_held(a: f32, b: f32) -> bool {
+  (a - b).abs() <= b.abs() * SCALE_HELD_EPSILON
+}
 
 // The layer's raster density: the device pixels per logical pixel of the
 // target the layer is drawn into, from the walk's grid map (the display
@@ -407,9 +528,14 @@ impl Text {
 
   // Draw the text through its layer: the runs' glyphs as quads from the
   // text atlas, rasterized by the glyph pass into a texture of the text's
-  // painted box at the display scale times the ancestors' scale, and that
-  // texture composited as one quad. The layer is kept while its inputs
-  // hold (see TextLayer).
+  // painted box at the raster scale, and that texture composited as one
+  // quad. The layer is kept while its inputs hold (see TextLayer). The
+  // raster scale follows the composite scale at rest and holds while it
+  // moves (`raster_density`): a text under a scale animation composites
+  // its existing raster stretched until the scale has held, then
+  // re-rasterizes once, or rasters for a known end at once; a text that
+  // decides to wait asks for a look at the next frame (`scale_wait`, which
+  // the walk registers with the tree).
   #[allow(clippy::too_many_arguments)]
   fn build_layer(
     &self,
@@ -421,24 +547,49 @@ impl Text {
     styles: &[RunStyle],
     line_runs: &[LineRun],
   ) {
-    let scale = layer_scale(ctx);
+    let composite = layer_scale(ctx);
+    // At rest when the scale held over the rest looks, or when an enclosing
+    // recording decided so for its record walk.
+    let seen = scale_observed(self.scale_seen.get(), composite, ctx.frame);
+    self.scale_seen.set(Some(seen));
+    let at_rest = seen.at_rest() || ctx.scale_at_rest;
+    let mut layer = self.layer.borrow_mut();
+    let (scale, wait) = raster_density(layer.as_ref().map(|l| l.scale), composite, ctx.scale_target, at_rest);
+    self.scale_wait.set(wait);
+    self.chosen_scale.set(Some(scale));
+    if wait {
+      ctx.platform.request_frame();
+    }
+    // Hinted when made for a scale the text rests at: at rest, at the
+    // display scale (every static text), or at a running transition's end,
+    // which it rests at next. A raster made mid-motion at an in-between
+    // scale is unhinted, so its x-height does not pop between rows as the
+    // size moves; a kept raster keeps its hinting while the scale moves and
+    // is re-made hinted once it rests.
+    let display_scale = ctx.platform.display_scale();
+    let at_end = ctx.scale_target != 1.0 && scale_held(scale, composite * ctx.scale_target);
+    let hinted = at_rest || scale == display_scale || at_end;
     let Some((rect, tex_w, tex_h)) = Self::layer_geometry(owned, index, scale) else {
       return;
     };
+    ctx.text_layers += 1;
     let width = owned.layouts[index].width;
     let content = Size::new(width, owned.layouts[index].layout.height);
-    let frame = ctx.platform.text_atlas().frame();
+    let frame = ctx.frame;
     let rendering = ctx.platform.text_rendering_generation();
-    let mut layer = self.layer.borrow_mut();
     let current = layer.as_ref().is_some_and(|l| {
       l.generation == owned.generation
         && l.rendering == rendering
         && l.width == width
-        && (l.scale - scale).abs() <= scale * LAYER_SCALE_TOLERANCE
+        && l.scale == scale
+        && (l.hinted == hinted || !at_rest)
         && l.tex_w == tex_w
         && l.tex_h == tex_h
     });
     if !current {
+      // The frame's count of layers the walk rasterized (paintOps.textLayers);
+      // the stats overlay's own raster, outside any walk, is not one.
+      crate::rendertree::counters::note_text_layer_drawn();
       let into = layer.as_ref().filter(|l| l.tex_w == tex_w && l.tex_h == tex_h).map(|l| l.texture.clone());
       match self.draw_layer(
         ctx.platform,
@@ -448,6 +599,7 @@ impl Text {
         content,
         rect,
         scale,
+        hinted,
         tex_w,
         tex_h,
         into.as_ref(),
@@ -462,6 +614,7 @@ impl Text {
             generation: owned.generation,
             width,
             rendering,
+            hinted,
             used: frame,
           });
         }
@@ -516,14 +669,15 @@ impl Text {
     let styles = self.run_styles();
     let line_runs = self.line_runs(owned, index);
     let into = previous.filter(|p| p.tex_w == tex_w && p.tex_h == tex_h).map(|p| &p.texture);
-    let texture = match self.draw_layer(platform, alloy, &styles, &line_runs, content, rect, scale, tex_w, tex_h, into)
-    {
-      Ok(drawn) => drawn?,
-      Err(e) => {
-        log::warn!("[text] rasterization failed: {e}");
-        return None;
-      }
-    };
+    let hinted = scale == platform.display_scale();
+    let texture =
+      match self.draw_layer(platform, alloy, &styles, &line_runs, content, rect, scale, hinted, tex_w, tex_h, into) {
+        Ok(drawn) => drawn?,
+        Err(e) => {
+          log::warn!("[text] rasterization failed: {e}");
+          return None;
+        }
+      };
     Some(TextImage { texture, tex_w, tex_h, rect, ink: Self::ink_box(owned, index) })
   }
 
@@ -550,9 +704,10 @@ impl Text {
 
   // Rasterize `line_runs` through the glyph pass into a texture of `tex_w`
   // x `tex_h` texels covering `rect` at `scale` (or `into` an earlier one
-  // of that size), `content` being the text's own box (what a box gradient
-  // resolves against). Ok(None) when there is no atlas texture (the GPU
-  // refused it, logged there), Err when the pass failed.
+  // of that size), `hinted` as the platform's text hinting says or not at
+  // all, `content` being the text's own box (what a box gradient resolves
+  // against). Ok(None) when there is no atlas texture (the GPU refused it,
+  // logged there), Err when the pass failed.
   #[allow(clippy::too_many_arguments)]
   fn draw_layer(
     &self,
@@ -563,15 +718,15 @@ impl Text {
     content: Size,
     rect: Rect,
     scale: f32,
+    hinted: bool,
     tex_w: u32,
     tex_h: u32,
     into: Option<&Texture>,
   ) -> Result<Option<Texture>, String> {
-    let (groups, atlas) = self.glyph_quads(platform, alloy, styles, line_runs, content, rect.origin, scale);
+    let (groups, atlas) = self.glyph_quads(platform, alloy, styles, line_runs, content, rect.origin, scale, hinted);
     let Some(atlas) = atlas else {
       return Ok(None);
     };
-    crate::rendertree::counters::note_text_layer_drawn();
     let texture = alloy.rasterize_glyphs(groups, atlas, tex_w, tex_h, platform.coverage_policy(), into)?;
     Ok(Some(texture))
   }
@@ -615,20 +770,18 @@ impl Text {
     content: Size,
     box_origin: Point,
     scale: f32,
+    hinted: bool,
   ) -> (Vec<GlyphGroup>, Option<u64>) {
     let fonts = platform.glyphs();
     let mut words = platform.words();
     let mut atlas = platform.text_atlas();
     let display_scale = platform.display_scale();
     let darken_em = platform.text_darken_em();
-    // A text drawn at the display scale is at rest on the pixel grid; one
-    // under a scaling transform (a pressed button's label, a zooming card)
-    // has a ppem of its own and re-rasterizes as the scale drifts, so it
-    // is drawn unhinted: a hinted outline moves its x-height between rows
-    // as the size changes and the text would pop from frame to frame. It
-    // comes to rest hinted, like any static text.
+    // Hinted as the caller decided (build_layer: a raster for a scale the
+    // text rests at); a text at the display scale is one at rest on the
+    // pixel grid, whose style every other text of its size shares.
     let native = scale == display_scale;
-    let hint = if native { platform.text_hint() } else { Hint::Off };
+    let hint = if hinted { platform.text_hint() } else { Hint::Off };
     // An untransformed text's style is the one every other text of its
     // size shares, worth warming on first sight; a scaled one is not. Only
     // the run's own face is warmed: a face borrowed for a cluster the
@@ -728,6 +881,18 @@ impl Text {
   /// Whether this text holds a layer texture.
   pub(crate) fn has_layer(&self) -> bool {
     self.layer.borrow().is_some()
+  }
+
+  /// Whether the last build kept its raster under a scale that moved and
+  /// wants a look at the next frame, to tell rest from motion.
+  pub(crate) fn scale_wait(&self) -> bool {
+    self.scale_wait.get()
+  }
+
+  /// The raster scale the last build chose (a test's read).
+  #[cfg(test)]
+  pub(crate) fn chosen_scale(&self) -> Option<f32> {
+    self.chosen_scale.get()
   }
 
   /// Release the layer texture once the text has gone unbuilt for the

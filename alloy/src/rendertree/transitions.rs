@@ -584,6 +584,17 @@ impl Transitions {
     self.pending.retain(|w| w.node != node);
   }
 
+  /// Where the running track for (`node`, `prop`) is headed, a held write
+  /// included (it is where the value goes next); None with nothing running.
+  pub fn target(&self, node: u64, prop: AnimProp) -> Option<AnimValue> {
+    self
+      .tracks
+      .iter()
+      .find(|t| t.node == node && t.prop == prop)
+      .map(|t| t.target())
+      .or_else(|| self.pending.iter().find(|w| w.node == node && w.prop == prop).map(|w| w.to))
+  }
+
   /// Whether any track or pending write runs for the node on one of `props`
   /// (the exiting-node liveness check).
   pub fn any_running(&self, node: u64, props: &[AnimProp]) -> bool {

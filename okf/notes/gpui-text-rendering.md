@@ -125,8 +125,8 @@ Where GPUI differs:
   ([pixel-snapped-paint-boxes](../done/pixel-snapped-paint-boxes.md)), the
   same rounding GPUI does vertically; the scale animation trap (a layer
   remade at each intermediate size, glyphs missing on the TV until the
-  worker catches up) is open
-  ([text-layer-motion](../backlog/text-layer-motion.md)). The draw bench
+  worker catches up) is fixed
+  ([text-layer-motion](../done/text-layer-motion.md)). The draw bench
   of 2026-10-06 found the glyph pass alone (one instanced draw of 1622
   glyph quads) costs nothing visible on any of our devices, the armv7 TV
   included. Drawing glyphs straight into the frame is not open to us while

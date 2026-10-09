@@ -102,7 +102,12 @@ Rules, in order of leverage:
    boundary node itself (or any ancestor) are hoisted out of the cache and
    applied at composite time, so animating x/y/scale/rotate/opacity of a
    boundary does NOT re-raster it (verified by A/B measurement - the damage
-   system classifies these as Transform and keeps the node's own cache).
+   system classifies these as Compose and keeps the node's own cache). One
+   exception, for crispness: a boundary holding text that comes to rest at
+   a new scale re-records once there (a snapshot boundary re-rasterizes
+   once), so its content is rasterized at the resting size instead of
+   stretched, and a scale transition with a known end rasters for that end
+   as it starts; a press scale that returns to 1 never re-rasters.
    What DOES invalidate the cache is any paint or content change inside the
    subtree - colors, path data, text, a Show toggling - so drive animation
    with transforms and keep the cached content itself static. Off a boundary,
