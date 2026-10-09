@@ -807,9 +807,9 @@ Shaped, not started.
   Every <text> draws as a cached layer composited with bilinear sampling at
   its logical position, so text between device pixels (a momentum scroll, a
   translate animation, a 1.5x display) softens by up to half a pixel; and a
-  scale animation (zoom on hover or focus) re-rasterizes every 2%, making
-  cells at every intermediate size, which on the TV overruns the synchronous
-  budget and draws the label with letters missing.
+  scale animation (zoom on hover or focus) re-rasterizes every 2%, making a
+  fresh set of cells at every intermediate size, which costs frame time on the
+  TV and churns the atlas.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -2397,6 +2397,16 @@ Finished, kept for the reasoning.
   of its own, behind one command, sol test. Supersedes the JS test
   infrastructure backlog item; the ten bun test files and the checks/ rigs are
   its first consumers.
+- **[A frame never draws text without its glyphs](done/text-complete-frames.md)** [2026-10-09]
+  A text layer whose cells are not in the atlas draws without them when the
+  frame's 3 ms cell budget is spent, and the frame presents that way - a size
+  step loses a third of its letters for one frame in a headless render, a
+  snapshot comes back without its text, a title under a per-frame scale
+  flickers live; the warm-up that was meant to prevent it is ASCII-only, keyed
+  on the exact ppem, and its cells are dropped when they land before any text
+  has drawn. The rule becomes the one every renderer uses - a frame that draws
+  text has all of its glyphs, a cold style makes its frame late and never
+  incomplete - and the warm-up is kept as what it is, an optimization.
 - **[Inline styled runs in <text> via <span>](done/text-inline-spans.md)** [2026-08-16]
   A paragraph cannot mix styles, so a bold lead-in or inline code is laid out
   a word at a time in a wrapping row; Impeller shapes styled runs natively, so

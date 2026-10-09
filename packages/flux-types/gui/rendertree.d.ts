@@ -215,10 +215,12 @@ declare module "flux:rendertree" {
    * Make the glyph cells of printable ASCII for these font styles ahead of
    * their first use, on the engine's worker thread: the type scale an app
    * draws its screens in, called at startup under the splash, so a first
-   * paint in any of them never waits for cells. Each entry names a font
-   * (family, size, weight, style) as a `<text>` would; `lineHeight`,
-   * `maxLines`, `carets` and `runs` are ignored. Glyphs outside ASCII are
-   * made at first use.
+   * paint in any of them does not stop to make them. A cell a text needs
+   * that is not in the atlas is made in that frame, so text never draws
+   * with glyphs missing; warming only moves that work ahead of time. Each
+   * entry names a font (family, size, weight, style) as a `<text>` would;
+   * `lineHeight`, `maxLines`, `carets` and `runs` are ignored. Glyphs
+   * outside ASCII are made at first use.
    */
   export function warmText(styles: MeasureTextOptions[]): void
   /** How every text is rendered, for {@link setTextRendering}. */

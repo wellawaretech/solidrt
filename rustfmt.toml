@@ -1,3 +1,7 @@
+# Every workspace crate is edition 2021. Plain `rustfmt <file>` defaults to
+# 2015, so the edition is pinned here and needs no `--edition` flag (a wrong
+# one restyles imports). Bump it with the crates' `edition`.
+edition = "2021"
 tab_spaces = 2
 use_small_heuristics = "Max"
 max_width = 120

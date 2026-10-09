@@ -36,12 +36,10 @@ fn hud_text() -> Text {
   node
 }
 
-/// Warm the text atlas for the HUD's style, so the first frame after it is
-/// toggled on is complete: the overlay is built ahead of the frame's paint,
-/// before the atlas opens its synchronous budget, so a cell it lacks goes to
-/// the worker and the HUD refreshes a frame later. Called once the font set
-/// is registered, and again after every reset, which voids the atlas's
-/// warm-ups.
+/// Warm the text atlas for the HUD's style ahead of its use, so the frame
+/// that first draws the overlay does not stop to make its cells. Called once
+/// the font set is registered, and again after every reset, which voids the
+/// atlas's warm-ups.
 pub fn warm(platform: &PlatformContext) {
   let style = hud_text().run_style();
   let fonts = platform.glyphs();

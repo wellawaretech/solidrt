@@ -72,8 +72,7 @@ struct RenderInner {
   // immediately rather than waiting out the once-per-second cadence.
   overlay_key: Cell<OverlayKey>,
   // The overlay's rasterized text, kept so the next refresh re-renders into
-  // the same texture while its size holds, and so an image drawn before all
-  // its glyph cells landed is refreshed the frame they do.
+  // the same texture while its size holds.
   overlay_image: RefCell<Option<alloy::rendertree::text::TextImage>>,
 }
 
@@ -196,12 +195,8 @@ impl RenderInner {
       stats_on,
       badge,
     );
-    let overlay_incomplete = self.overlay_image.borrow().as_ref().is_some_and(|image| !image.complete);
     let overlay_refresh = overlay_on
-      && (!self.overlay_installed.get()
-        || self.overlay_key.get() != overlay_key
-        || overlay_incomplete
-        || stats.borrow().overlay_due());
+      && (!self.overlay_installed.get() || self.overlay_key.get() != overlay_key || stats.borrow().overlay_due());
     let overlay_clear = !overlay_on && self.overlay_installed.get();
     // The frame the runtime stamped for us (see frame::RenderFrame). Its
     // start is consumed here, so a native call with no render event (the

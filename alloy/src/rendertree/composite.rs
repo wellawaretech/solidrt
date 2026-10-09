@@ -74,15 +74,14 @@ pub fn paint_phase(
 
   layout_phase(tree, platform, alloy);
 
-  // The text atlas's frame: open the synchronous budget before any text
-  // builds (see TextAtlas; the landing ran in apply_content_changes).
-  platform.text_atlas().begin_frame(
-    alloy,
-    &platform.glyphs(),
-    platform.display_scale(),
-    platform.text_darken_em(),
-    platform.text_hint(),
-  );
+  // The text atlas's frame, before any text builds (see TextAtlas; the
+  // landing ran in apply_content_changes): its growth cap is the device's,
+  // and the warm-ups asked for since the last frame go to the worker.
+  {
+    let mut atlas = platform.text_atlas();
+    atlas.set_texture_cap(alloy.gpu_limits().max_texture_size);
+    atlas.begin_frame(&platform.glyphs(), platform.display_scale(), platform.text_darken_em(), platform.text_hint());
+  }
 
   // Partial repaint: the damaged ids' last_extent cells still hold their
   // extents as of the LAST walk - the old half of the damage union (where
@@ -157,32 +156,17 @@ pub fn paint_phase(
 /// Apply GPU content writes since the last frame (target re-renders, uploads,
 /// camera frames) to the tree: they change pixels behind unchanged texture ids
 /// and leave no tree damage of their own, and a baked snapshot boundary over
-/// one would keep replaying stale pixels. Then land the text atlas's cells:
-/// every text whose layer drew without them is paint-damaged (its caches and
-/// its boundaries' cleared, its extent damaged, the revision bumped), so a
-/// frame with no tree change of its own still rebuilds instead of resubmitting
-/// the retained list, whether or not the walk would otherwise enter the text.
-/// Every frame producer calls this before resolving its frame; returns whether
-/// anything changed.
+/// one would keep replaying stale pixels. Then land the text atlas's warm-up
+/// cells, which change nothing visible (a layer that needed one of them made
+/// it itself) and so count as no change. Every frame producer calls this
+/// before resolving its frame; returns whether anything changed.
 pub(crate) fn apply_content_changes(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Context) -> bool {
   let content = alloy.take_content_changes();
   let mut changed = !content.is_empty();
   if changed {
     tree.texture_content_changed(&content);
   }
-  let landed = {
-    let mut atlas = platform.text_atlas();
-    atlas.land(alloy);
-    atlas.landed()
-  };
-  if landed {
-    for id in tree.incomplete_text_layers() {
-      if tree.try_node(id).is_some() {
-        tree.apply_damage(id, crate::rendertree::Damage::Paint);
-        changed = true;
-      }
-    }
-  }
+  platform.text_atlas().land();
   // A changed text rendering policy redraws every layer the same way: the
   // damage rebuilds the text, and its layer's generation no longer matches.
   if platform.take_text_rendering_dirty() {
@@ -841,7 +825,7 @@ pub(super) fn record_node<'a>(
     } else if pass.is_none() {
       element.build(ctx, builder);
       if let ElementKind::Text(text) = &element.kind {
-        scene.note_text_layer(node_id, text.has_layer(), text.layer_incomplete());
+        scene.note_text_layer(node_id, text.has_layer());
       }
     }
   }

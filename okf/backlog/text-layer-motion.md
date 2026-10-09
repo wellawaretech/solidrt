@@ -1,6 +1,6 @@
 ---
 title: Text layers blur at fractional offsets and drop glyphs while scaling
-description: Every <text> draws as a cached layer composited with bilinear sampling at its logical position, so text between device pixels (a momentum scroll, a translate animation, a 1.5x display) softens by up to half a pixel; and a scale animation (zoom on hover or focus) re-rasterizes every 2%, making cells at every intermediate size, which on the TV overruns the synchronous budget and draws the label with letters missing.
+description: Every <text> draws as a cached layer composited with bilinear sampling at its logical position, so text between device pixels (a momentum scroll, a translate animation, a 1.5x display) softens by up to half a pixel; and a scale animation (zoom on hover or focus) re-rasterizes every 2%, making a fresh set of cells at every intermediate size, which costs frame time on the TV and churns the atlas.
 created: 2026-10-07
 ---
 
@@ -33,20 +33,21 @@ the next move.
 2. `StyleKey` carries the exact device ppem (`font_size * scale`), so each
    intermediate size needs fresh cells for every glyph of the label.
 3. A mask cell costs about 1 ms on the armv7 TV (0.4 on the tablet, 0.1 on
-   the desktop) against a `SYNC_CELL_BUDGET` of 3 ms, so a few cells per
-   frame are made in time and the rest go to the worker. `glyph_quads`
-   skips a glyph without a placement, and the replacement layer is drawn
-   without it: letters blink out mid-animation until the worker catches
-   up. The same holds for any re-rasterization at a new scale that misses
-   cells (a window moved to a display of another scale, a pinch zoom): an
-   incomplete layer replaces a complete one.
+   the desktop), and every cell a frame draws is made in that frame
+   ([text-complete-frames](../done/text-complete-frames.md)), so a label
+   of twenty letters costs the TV some 20 ms of cell making per
+   re-rasterization: the animation drops frames. (Before that decision the
+   cells past a 3 ms budget went to the worker and the layer drew without
+   them, so letters blinked out mid-animation instead.) The same holds for
+   any re-rasterization at a new scale (a window moved to a display of
+   another scale, a pinch zoom).
 4. Each intermediate size is a style seen for the first time, so
    `TextAtlas::ensure` warms its printable ASCII at every phase: 285 cells
    per size, some 1400 per animation, over a second of worker time on the
    TV, held in the atlas for `EVICT_AFTER_FRAMES` (120).
 
-On the desktop the budget hides most of the scale case; on the TV it does
-not, and on the tablet only just.
+On the desktop the scale case costs under a frame; on the TV it does not,
+and on the tablet only just.
 
 ## Done looks like
 
@@ -92,6 +93,5 @@ Scale animation:
   from masks at rest. Scale-free, but at 14 to 16 px the field draws
   visibly different glyphs, so the switch at rest pops.
 
-Either way, a re-rasterization with misses would keep compositing the
-previous texture until it is complete, and warm-up would key on resting
-sizes only.
+Either way, warm-up would key on resting sizes only, and the cells of
+the sizes passed through would never be made.

@@ -416,4 +416,20 @@ refer to that plan.
   TV's. The user's read of both: the text as it is looks perfect on both
   devices, so the DirectWrite blend at 2x unhinted and the light hinter
   at 1.5x pass, and the plan closes.
-
+- 2026-10-09, the atlas may move under a frame. `Context::rasterize_glyphs`
+  is a blocking round trip, so a text layer's pixels are in its own
+  texture before the next layer's build touches the atlas: a growth or an
+  eviction between two layers of one frame invalidates nothing. Within one
+  layer the placements must hold from the first read to the last quad,
+  which `glyph_quads` gets by ensuring every bucket before reading any
+  placement ([text-complete-frames](../done/text-complete-frames.md)).
+- 2026-10-09, the complete-frame rule read on the desktop (headless
+  render, 1280x720, 60 fps): thirty lines of 23 px ASCII mounted at 0.5 s
+  with nothing warmed, every cell made in the frame that first drew them.
+  The first frame with text and the five after it read the same
+  bright-pixel fraction of the frame to six digits
+  (`packages/core/tests/text-complete.test.tsx` pins the same on the test
+  host: what the first frame painted equals the settled picture). The
+  cost side, the one-time stall of a cold style, is the per-cell times
+  above (0.1 ms desktop, 0.4 to 0.5 tablet, 1 ms TV); the TV's read under
+  the rule is a tiny.md chore.

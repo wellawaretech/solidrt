@@ -171,12 +171,6 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   // `evaluate`.
   let builder = builder
     .plugin(move |ctx| {
-      // The text atlas's cell jobs count as this engine's work in flight
-      // (a settle waits for them, so it never reads a screen drawn without
-      // its glyphs): each job holds the engine until its cells are made.
-      // The atlas outlives the engine, so the source is bound per engine.
-      let pending = crate::pending::PendingOps::of(&ctx);
-      platform.text_atlas().set_hold_source(Arc::new(move || Box::new(pending.in_flight("text cells"))));
       ctx
         .store_userdata(GuiState(Rc::new(Gui {
           alloy,

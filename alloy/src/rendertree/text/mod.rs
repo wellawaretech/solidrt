@@ -16,7 +16,7 @@ use crate::gpu::{GlyphGroup, GlyphQuad};
 use crate::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment, Texture, TextureSampling,
 };
-use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, FaceId, Hint, StyleKey};
+use crate::rendertree::text::glyphs::{split_phase, weight_value, Face, Hint, StyleKey};
 use crate::rendertree::text::layout::{PlacedRun, Run, Wrap};
 use crate::rendertree::{
   grid, Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext, PaintState,
@@ -220,24 +220,19 @@ struct TextLayer {
   width: f32,
   /// The platform's text rendering generation the layer was drawn under.
   rendering: u64,
-  /// Every glyph's cell was in the atlas when the layer was drawn; an
-  /// incomplete layer redraws when cells land.
-  complete: bool,
   /// The text atlas frame this layer was last composited at.
   used: u64,
 }
 
 /// A text rasterized outside a tree walk (see `Text::rasterize`): the
 /// texture and its size in texels, the box it covers relative to the text's
-/// origin (logical px), the placed ink's box, and whether every glyph had
-/// its cell.
+/// origin (logical px), and the placed ink's box.
 pub struct TextImage {
   pub texture: Texture,
   pub tex_w: u32,
   pub tex_h: u32,
   pub rect: Rect,
   pub ink: Rect,
-  pub complete: bool,
 }
 
 // Frames a text may go unbuilt before its layer texture is released: two
@@ -247,7 +242,7 @@ const TEXT_LAYER_RELEASE_FRAMES: u64 = 120;
 
 impl std::fmt::Debug for TextLayer {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "TextLayer({}x{} at {}, complete: {})", self.tex_w, self.tex_h, self.scale, self.complete)
+    write!(f, "TextLayer({}x{} at {})", self.tex_w, self.tex_h, self.scale)
   }
 }
 
@@ -414,7 +409,7 @@ impl Text {
   // text atlas, rasterized by the glyph pass into a texture of the text's
   // painted box at the display scale times the ancestors' scale, and that
   // texture composited as one quad. The layer is kept while its inputs
-  // hold (see TextLayer); an incomplete one redraws when cells land.
+  // hold (see TextLayer).
   #[allow(clippy::too_many_arguments)]
   fn build_layer(
     &self,
@@ -432,10 +427,7 @@ impl Text {
     };
     let width = owned.layouts[index].width;
     let content = Size::new(width, owned.layouts[index].layout.height);
-    let (frame, landed) = {
-      let atlas = ctx.platform.text_atlas();
-      (atlas.frame(), atlas.landed())
-    };
+    let frame = ctx.platform.text_atlas().frame();
     let rendering = ctx.platform.text_rendering_generation();
     let mut layer = self.layer.borrow_mut();
     let current = layer.as_ref().is_some_and(|l| {
@@ -445,7 +437,6 @@ impl Text {
         && (l.scale - scale).abs() <= scale * LAYER_SCALE_TOLERANCE
         && l.tex_w == tex_w
         && l.tex_h == tex_h
-        && (l.complete || !landed)
     });
     if !current {
       let into = layer.as_ref().filter(|l| l.tex_w == tex_w && l.tex_h == tex_h).map(|l| l.texture.clone());
@@ -461,7 +452,7 @@ impl Text {
         tex_h,
         into.as_ref(),
       ) {
-        Ok(Some((texture, complete))) => {
+        Ok(Some(texture)) => {
           *layer = Some(TextLayer {
             texture,
             tex_w,
@@ -471,7 +462,6 @@ impl Text {
             generation: owned.generation,
             width,
             rendering,
-            complete,
             used: frame,
           });
         }
@@ -526,15 +516,15 @@ impl Text {
     let styles = self.run_styles();
     let line_runs = self.line_runs(owned, index);
     let into = previous.filter(|p| p.tex_w == tex_w && p.tex_h == tex_h).map(|p| &p.texture);
-    let (texture, complete) =
-      match self.draw_layer(platform, alloy, &styles, &line_runs, content, rect, scale, tex_w, tex_h, into) {
-        Ok(drawn) => drawn?,
-        Err(e) => {
-          log::warn!("[text] rasterization failed: {e}");
-          return None;
-        }
-      };
-    Some(TextImage { texture, tex_w, tex_h, rect, ink: Self::ink_box(owned, index), complete })
+    let texture = match self.draw_layer(platform, alloy, &styles, &line_runs, content, rect, scale, tex_w, tex_h, into)
+    {
+      Ok(drawn) => drawn?,
+      Err(e) => {
+        log::warn!("[text] rasterization failed: {e}");
+        return None;
+      }
+    };
+    Some(TextImage { texture, tex_w, tex_h, rect, ink: Self::ink_box(owned, index) })
   }
 
   // The box a layer of the layout at `index` covers, relative to the text
@@ -561,9 +551,8 @@ impl Text {
   // Rasterize `line_runs` through the glyph pass into a texture of `tex_w`
   // x `tex_h` texels covering `rect` at `scale` (or `into` an earlier one
   // of that size), `content` being the text's own box (what a box gradient
-  // resolves against): the texture and whether every glyph had its cell.
-  // Ok(None) when there is no atlas texture (the GPU refused it, logged
-  // there), Err when the pass failed.
+  // resolves against). Ok(None) when there is no atlas texture (the GPU
+  // refused it, logged there), Err when the pass failed.
   #[allow(clippy::too_many_arguments)]
   fn draw_layer(
     &self,
@@ -577,14 +566,14 @@ impl Text {
     tex_w: u32,
     tex_h: u32,
     into: Option<&Texture>,
-  ) -> Result<Option<(Texture, bool)>, String> {
-    let (groups, misses, atlas) = self.glyph_quads(platform, alloy, styles, line_runs, content, rect.origin, scale);
+  ) -> Result<Option<Texture>, String> {
+    let (groups, atlas) = self.glyph_quads(platform, alloy, styles, line_runs, content, rect.origin, scale);
     let Some(atlas) = atlas else {
       return Ok(None);
     };
     crate::rendertree::counters::note_text_layer_drawn();
     let texture = alloy.rasterize_glyphs(groups, atlas, tex_w, tex_h, platform.coverage_policy(), into)?;
-    Ok(Some((texture, misses == 0)))
+    Ok(Some(texture))
   }
 
   // The placed ink of the layout at `index`, in the text's frame: from the
@@ -607,13 +596,15 @@ impl Text {
   // relative to the text origin, scaled by `scale`), their cells ensured in
   // the text atlas, grouped by paint: the solid-colored runs together, a
   // gradient run's quads with its gradient resolved against `content` (the
-  // text's own box). Returns the groups, how many glyphs have no cell yet,
-  // and the atlas texture. Each run is shaped through the word cache; a
+  // text's own box). Returns the groups and the atlas texture (None when
+  // the GPU refused it). Each run is shaped through the word cache; a
   // glyph's pen x splits into the pixel its cell snaps to and the subpixel
   // phase the cell is made at, its baseline y snaps to a pixel row. Glyphs
-  // are asked of the atlas per face and phase, since a run's glyphs may
-  // come from several faces (fallback) and a cell's style key names its
-  // face.
+  // are asked of the atlas per style key and phase, since a run's glyphs
+  // may come from several faces (fallback) and a cell's style key names
+  // its face; every bucket is ensured before any placement is read, so
+  // the atlas may grow or evict under the layer without moving a cell the
+  // layer has used (see TextAtlas).
   #[allow(clippy::too_many_arguments)]
   fn glyph_quads(
     &self,
@@ -624,7 +615,7 @@ impl Text {
     content: Size,
     box_origin: Point,
     scale: f32,
-  ) -> (Vec<GlyphGroup>, usize, Option<u64>) {
+  ) -> (Vec<GlyphGroup>, Option<u64>) {
     let fonts = platform.glyphs();
     let mut words = platform.words();
     let mut atlas = platform.text_atlas();
@@ -649,83 +640,89 @@ impl Text {
       .iter()
       .map(|s| s.paint.gradient.as_ref().and_then(|g| gradient::layer_gradient(g, content, box_origin, scale)))
       .collect();
-    let mut solid: Vec<GlyphQuad> = Vec::new();
-    // One group per gradient style, in first-use order.
-    let mut graded: Vec<(usize, GlyphGroup)> = Vec::new();
-    let mut misses = 0;
-    let mut ids: Vec<u16> = Vec::new();
-    let mut placements = Vec::new();
-    // Per (face, phase): the glyph's index in the run, its pixel x and its
-    // baseline y.
-    let mut buckets: Vec<(FaceId, u8, Vec<(usize, i32, f32)>)> = Vec::new();
+    // A glyph's quad before its placement is known: its cell key, where
+    // the quad goes (its pixel x and baseline y) and which group it joins.
+    struct Slot {
+      style: StyleKey,
+      phase: u8,
+      id: u16,
+      px: i32,
+      baseline: f32,
+      group: usize,
+      color: [f32; 4],
+    }
+    let mut slots: Vec<Slot> = Vec::new();
+    // Per (style key, phase): the glyph ids to ensure, and whether the
+    // style is warmed on first sight.
+    let mut buckets: Vec<(StyleKey, u8, Vec<u16>, bool)> = Vec::new();
+    // The solid group first, then one group per gradient style in
+    // first-use order (`graded` maps a style index to its group).
+    let mut groups: Vec<GlyphGroup> = vec![GlyphGroup { quads: Vec::new(), gradient: None }];
+    let mut graded: Vec<(usize, usize)> = Vec::new();
     for run in line_runs {
       let style = &styles[run.style];
       let Some(word) = words.get_or_shape(&fonts, &run.text, style, Fallback::Registered) else { continue };
       let primary = fonts.resolve(&style.font_family);
-      let glyphs = &word.glyphs;
       let weight = weight_value(style.font_weight);
       let italic = style.font_style == FontStyle::Italic;
       // The run's color rides on the quad; under a gradient only its alpha
       // counts (the pass reads the color off the ramp).
       let c = style.paint.color;
       let color = [c.red, c.green, c.blue, c.alpha];
-      let quads: &mut Vec<GlyphQuad> = match &gradients[run.style] {
-        None => &mut solid,
-        Some(gradient) => {
-          let at = match graded.iter().position(|(s, _)| *s == run.style) {
-            Some(at) => at,
-            None => {
-              graded.push((run.style, GlyphGroup { quads: Vec::new(), gradient: Some(gradient.clone()) }));
-              graded.len() - 1
-            }
-          };
-          &mut graded[at].1.quads
-        }
+      let group = match &gradients[run.style] {
+        None => 0,
+        Some(gradient) => match graded.iter().find(|(s, _)| *s == run.style) {
+          Some((_, group)) => *group,
+          None => {
+            groups.push(GlyphGroup { quads: Vec::new(), gradient: Some(gradient.clone()) });
+            graded.push((run.style, groups.len() - 1));
+            groups.len() - 1
+          }
+        },
       };
       let x0 = (run.x - box_origin.x) * scale;
       let baseline = (run.y + word.metrics.ascent - box_origin.y) * scale;
-      for bucket in &mut buckets {
-        bucket.2.clear();
-      }
-      for (i, g) in glyphs.glyphs.iter().enumerate() {
+      for g in &word.glyphs.glyphs {
         let x = x0 + g.x * scale;
         // A fully hinted cell has its stems on whole pixels: one phase, the
         // quad at the nearest pixel.
         let (px, phase) = if hint == Hint::Full { (x.round() as i32, 0) } else { split_phase(x) };
-        let entry = (g.face, phase, baseline + g.y * scale);
-        match buckets.iter_mut().find(|(face, p, _)| *face == entry.0 && *p == entry.1) {
-          Some(bucket) => bucket.2.push((i, px, entry.2)),
-          None => buckets.push((entry.0, entry.1, vec![(i, px, entry.2)])),
-        }
-      }
-      for (face, phase, entries) in &buckets {
-        if entries.is_empty() {
-          continue;
-        }
-        let key = StyleKey::new(*face, style.font_size * scale, weight, style.font_stretch, italic, darken_em, hint);
-        ids.clear();
-        ids.extend(entries.iter().map(|(i, _, _)| glyphs.glyphs[*i].id));
-        let warm_face = warm && primary == Some(*face);
-        misses += atlas.ensure(alloy, &fonts, key, *phase, &ids, warm_face, &mut placements);
-        for ((_, px, yd), placement) in entries.iter().zip(&placements) {
-          let Some(p) = placement else { continue };
-          if p.width == 0 {
-            continue;
+        let key = StyleKey::new(g.face, style.font_size * scale, weight, style.font_stretch, italic, darken_em, hint);
+        let warm_face = warm && primary == Some(g.face);
+        match buckets.iter_mut().find(|(k, p, _, _)| *k == key && *p == phase) {
+          Some(bucket) => {
+            bucket.2.push(g.id);
+            bucket.3 |= warm_face;
           }
-          quads.push(GlyphQuad {
-            dst: [(*px + p.left) as f32, (yd.round() as i32 - p.top) as f32, p.width as f32, p.height as f32],
-            src: [p.x as f32, p.y as f32, p.width as f32, p.height as f32],
-            color,
-          });
+          None => buckets.push((key, phase, vec![g.id], warm_face)),
         }
+        slots.push(Slot { style: key, phase, id: g.id, px, baseline: baseline + g.y * scale, group, color });
       }
     }
-    let mut groups = Vec::with_capacity(1 + graded.len());
-    if !solid.is_empty() {
-      groups.push(GlyphGroup { quads: solid, gradient: None });
+    for (key, phase, ids, warm_face) in &buckets {
+      atlas.ensure(&fonts, *key, *phase, ids, *warm_face);
     }
-    groups.extend(graded.into_iter().map(|(_, group)| group));
-    (groups, misses, atlas.texture())
+    let texture = atlas.flush(alloy);
+    for slot in slots {
+      let Some(p) = atlas.placement(slot.style, slot.phase, slot.id) else { continue };
+      if p.width == 0 {
+        continue;
+      }
+      groups[slot.group].quads.push(GlyphQuad {
+        dst: [
+          (slot.px + p.left) as f32,
+          (slot.baseline.round() as i32 - p.top) as f32,
+          p.width as f32,
+          p.height as f32,
+        ],
+        src: [p.x as f32, p.y as f32, p.width as f32, p.height as f32],
+        color: slot.color,
+      });
+    }
+    if groups[0].quads.is_empty() {
+      groups.remove(0);
+    }
+    (groups, texture)
   }
 
   /// Whether this text holds a layer texture.
@@ -742,12 +739,6 @@ impl Text {
       layer.take();
     }
     layer.is_some()
-  }
-
-  /// Whether the last layer drawn for this text lacked glyphs whose cells
-  /// were still in the making (see TextLayer).
-  pub(crate) fn layer_incomplete(&self) -> bool {
-    self.layer.borrow().as_ref().is_some_and(|l| !l.complete)
   }
 
   /// Bounds of a detached text in its own frame (`frame` is the box it

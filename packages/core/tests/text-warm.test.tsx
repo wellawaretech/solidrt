@@ -1,9 +1,8 @@
 // warmText: the type scale's styles warmed ahead of use, and a text drawn
-// in a warmed style settles and has ink. Under either text engine (the
-// warm-up is a no-op while Impeller draws text; on the glyph engine the
-// cells are made on the worker and `settle` waits for them), so the test
-// pins the contract that matters to an app: warming never throws, never
-// blocks, and the text that follows draws.
+// in a warmed style settles and has ink. The cells are made on the worker
+// and a text that needs one still queued makes it itself, so the test pins
+// the contract that matters to an app: warming never throws, never blocks,
+// and the text that follows draws.
 
 import { test, expect } from "@solidrt/test"
 import { warmText } from "@solidrt/core"

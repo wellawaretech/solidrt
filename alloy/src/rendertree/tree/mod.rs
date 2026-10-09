@@ -36,10 +36,6 @@ pub struct RenderTree {
   // release sweep visits (release_stale_text_layers), so it costs the
   // texts with pixels and not every node.
   text_layers: RefCell<HashSet<u64>>,
-  // Text nodes whose layer last drew without some of its glyphs (the
-  // cells were still in the making): damaged when cells land, so they
-  // redraw complete (composite::paint_phase).
-  incomplete_text: RefCell<HashSet<u64>>,
   // Nodes referencing any texture-registry id (Element::references_textures):
   // texture elements with a source, views whose shader samples extra texture
   // inputs. Keeps texture_content_changed and the destroy sweep at
@@ -84,7 +80,6 @@ impl RenderTree {
       transitions: Transitions::default(),
       released_snapshot_textures: RefCell::new(Vec::new()),
       text_layers: RefCell::new(HashSet::new()),
-      incomplete_text: RefCell::new(HashSet::new()),
       texture_referencers: HashSet::new(),
       damage: DamageLedger::new(),
       reflowed: Vec::new(),
@@ -564,7 +559,6 @@ impl RenderTree {
     if let Some(element) = self.nodes.remove(&node_id) {
       self.texture_referencers.remove(&node_id);
       self.text_layers.borrow_mut().remove(&node_id);
-      self.incomplete_text.borrow_mut().remove(&node_id);
       if let Some(id) = element.snapshot_texture_id.get() {
         self.released_snapshot_textures.borrow_mut().push(id);
       }
@@ -599,27 +593,15 @@ impl RenderTree {
     Ok(id)
   }
 
-  /// A text node was built: whether it holds a layer now, and whether that
-  /// layer drew without some of its glyphs (no cell yet). The paint walk
+  /// A text node was built: whether it holds a layer now. The paint walk
   /// notes every text it builds.
-  pub fn note_text_layer(&self, node_id: u64, has_layer: bool, incomplete: bool) {
+  pub fn note_text_layer(&self, node_id: u64, has_layer: bool) {
     let mut layers = self.text_layers.borrow_mut();
     if has_layer {
       layers.insert(node_id);
     } else {
       layers.remove(&node_id);
     }
-    let mut set = self.incomplete_text.borrow_mut();
-    if incomplete {
-      set.insert(node_id);
-    } else {
-      set.remove(&node_id);
-    }
-  }
-
-  /// The text nodes waiting on glyph cells.
-  pub fn incomplete_text_layers(&self) -> Vec<u64> {
-    self.incomplete_text.borrow().iter().copied().collect()
   }
 
   /// The text nodes holding a layer.

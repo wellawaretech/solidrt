@@ -19,9 +19,9 @@
 //   mask at an exact pixel size and subpixel phase (what the text layer and
 //   a terminal want, one byte a texel), or a multi-channel distance field
 //   at a fixed size per em (what a zoomed consumer wants, rgba8).
-//   Generated on the worker thread (worker.rs) or, for a `<text>` within
-//   its frame budget, on the UI thread, each thread's rasterizer caching
-//   the hinters it has built from the face's glyph styles.
+//   Generated on the UI thread at build, or ahead of use on the worker
+//   thread (worker.rs), each thread's rasterizer caching the hinters it
+//   has built from the face's glyph styles.
 // - outline.rs: the outline skrifa draws a glyph into, as zeno path
 //   commands, with the synthetic slant and the outline embolden (bold,
 //   darkening) applied before a cell is made.
@@ -34,9 +34,9 @@
 //   glyph pass reads, rgba8 for a distance field or a mask atlas sampled
 //   as a plain texture.
 // - text_atlas.rs: the one mask atlas every `<text>` draws from: cells
-//   keyed on face, size, weight, style, phase and glyph, filled by a
-//   warm-up on the worker, a budgeted synchronous path at build, and the
-//   worker past the budget.
+//   keyed on face, size, weight, style, phase and glyph, every cell a
+//   frame draws made in that frame, and a warm-up on the worker ahead of
+//   it.
 //
 // Engine-independent by the rendertree rule: nothing here names a
 // scripting engine, and the only renderer it touches is `crate::Context`'s
@@ -57,7 +57,5 @@ pub use atlas::{AtlasPacker, CellKey as AtlasKey, CellPlacement, Dirty, DirtyRec
 pub use cells::{Cell, CellKind, CellRequest, Hint, Rasterizer, MSDF_BYTES_PER_TEXEL};
 pub use fonts::{family_names, weight_value, Face, FaceId, FontBytes, FontSet};
 pub use shape::{Fallback, PlacedGlyph, ShapeStyle, ShapedGlyphs};
-pub use text_atlas::{
-  split_phase, CellKey, HoldSource, StyleKey, TextAtlas, TextRendering, WarmRequest, WorkHold, PHASES, WARM_CHUNK,
-};
+pub use text_atlas::{split_phase, CellKey, StyleKey, TextAtlas, TextRendering, WarmRequest, PHASES, WARM_CHUNK};
 pub use worker::{CellJob, CellWorker, CellsDone, JobPriority};

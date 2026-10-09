@@ -5,14 +5,13 @@
 use crate::gpu::{CoverageMode, CoveragePolicy, TextureFormat};
 use crate::impellers::{FontStyle, FontWeight};
 use crate::rendertree::text::glyphs::{
-  split_phase, AtlasPacker, Cell, CellKind, CellRequest, Dirty, FontBytes, FontSet, Hint, HoldSource, InsertOutcome,
-  Rasterizer, ShapeStyle, ShapedGlyphs, StyleKey, TextAtlas, TextRendering, WarmRequest, MSDF_BYTES_PER_TEXEL, PHASES,
-  WARM_CHUNK,
+  split_phase, AtlasPacker, Cell, CellKind, CellRequest, Dirty, FontBytes, FontSet, Hint, InsertOutcome, Rasterizer,
+  ShapeStyle, ShapedGlyphs, StyleKey, TextAtlas, TextRendering, WarmRequest, MSDF_BYTES_PER_TEXEL, PHASES,
 };
 use crate::rendertree::text::{prepare_units, Fallback, RunStyle};
 use crate::rendertree::{FontPayload, PaintState, PlatformContext};
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -471,62 +470,62 @@ fn synthetic_bold_and_italic_restyle_the_outline() {
   assert!((ink(&italic) - ink(&plain)).abs() < ink(&plain) / 10.0, "italic ink {} vs {}", ink(&italic), ink(&plain));
 }
 
-// A hold source that counts: how many holds were taken, how many are
-// still held. What an embedder's work-in-flight ledger sees of the atlas.
-struct CountingHolds {
-  taken: AtomicU32,
-  held: Arc<AtomicU32>,
-}
-
-struct CountedHold(Arc<AtomicU32>);
-
-impl Drop for CountedHold {
-  fn drop(&mut self) {
-    self.0.fetch_sub(1, Ordering::SeqCst);
-  }
-}
-
-fn counting_holds() -> (Arc<CountingHolds>, HoldSource) {
-  let counts = Arc::new(CountingHolds { taken: AtomicU32::new(0), held: Arc::new(AtomicU32::new(0)) });
-  let source = counts.clone();
-  let hold_source: HoldSource = Arc::new(move || {
-    source.taken.fetch_add(1, Ordering::SeqCst);
-    source.held.fetch_add(1, Ordering::SeqCst);
-    Box::new(CountedHold(source.held.clone()))
-  });
-  (counts, hold_source)
-}
-
 // How long a unit test gives the worker to make a warm-up's cells.
 const WORKER_WAIT: Duration = Duration::from_secs(10);
 
-#[test]
-fn warming_a_style_queues_its_ascii_at_every_phase() {
-  let fonts = fonts(&[noto()]);
-  let latch = Arc::new(AtomicBool::new(false));
-  let mut atlas = TextAtlas::new(latch.clone());
-  let (holds, source) = counting_holds();
-  atlas.set_hold_source(source);
-  let style = StyleKey::new(0, SIZE, 500, 100.0, false, 0.0, Hint::Off);
-  atlas.warm(&fonts, style);
-  // Printable ASCII is 95 code points and the shipped face covers them:
-  // 95 cells per phase in jobs of a chunk each, each job a hold on the
-  // embedder.
-  let jobs = PHASES as u32 * 95u32.div_ceil(WARM_CHUNK as u32);
-  assert_eq!(holds.taken.load(Ordering::SeqCst), jobs);
-  assert_eq!(atlas.queued_cells(), 95 * PHASES as usize);
-  // Warming again queues nothing more.
-  atlas.warm(&fonts, style);
-  assert_eq!(holds.taken.load(Ordering::SeqCst), jobs);
-  assert_eq!(atlas.queued_cells(), 95 * PHASES as usize);
-  // The worker ends each hold when the job's cells are made, after it
-  // requested the frame that lands them.
+// The code points a warm-up covers, as the atlas counts them.
+const PRINTABLE_ASCII: usize = 95;
+
+// A regular 16 px style of the first face, unhinted.
+fn style_key(size: f32) -> StyleKey {
+  StyleKey::new(0, size, 400, 100.0, false, 0.0, Hint::Off)
+}
+
+// Land the worker's cells until nothing is queued, within WORKER_WAIT.
+fn land_all(atlas: &mut TextAtlas) {
   let started = Instant::now();
-  while holds.held.load(Ordering::SeqCst) > 0 {
-    assert!(started.elapsed() < WORKER_WAIT, "the worker did not finish the warm-up");
+  loop {
+    atlas.land();
+    if atlas.queued_cells() == 0 {
+      return;
+    }
+    assert!(started.elapsed() < WORKER_WAIT, "the worker did not finish: {} cells queued", atlas.queued_cells());
     std::thread::sleep(Duration::from_millis(1));
   }
-  assert!(latch.load(Ordering::Relaxed), "a finished job requests the frame that lands its cells");
+}
+
+// The glyph ids of `text` on the first face.
+fn glyph_ids(fonts: &FontSet, text: &str) -> Vec<u16> {
+  shape_one(fonts, text, SIZE).glyphs.iter().map(|g| g.id).collect()
+}
+
+#[test]
+fn warming_a_style_lands_its_ascii_at_every_phase_before_any_text_drew() {
+  let fonts = fonts(&[noto()]);
+  let mut atlas = TextAtlas::new(Arc::new(AtomicBool::new(false)));
+  let style = style_key(SIZE);
+  atlas.warm(&fonts, style);
+  // Printable ASCII is 95 code points and the shipped face covers them:
+  // 95 cells per phase queued on the worker, and warming again queues
+  // nothing more.
+  assert_eq!(atlas.queued_cells(), PRINTABLE_ASCII * PHASES as usize);
+  atlas.warm(&fonts, style);
+  assert_eq!(atlas.queued_cells(), PRINTABLE_ASCII * PHASES as usize);
+  assert!(atlas.is_warmed(style));
+  // The cells land in the packer whether or not a text has drawn yet (no
+  // flush ran, so there is no texture): what a warmText at startup, under
+  // a splash, relies on.
+  land_all(&mut atlas);
+  assert!(atlas.texture().is_none());
+  for ch in ' '..='~' {
+    let glyph = fonts.face(0).expect("face").glyph_id(ch).expect("covered");
+    for phase in 0..PHASES {
+      assert!(atlas.placement(style, phase, glyph).is_some(), "{ch:?} at phase {phase} landed");
+    }
+  }
+  // A build over the warmed style finds every cell: nothing to make.
+  let ids = glyph_ids(&fonts, "Warmed text");
+  assert_eq!(atlas.ensure(&fonts, style, 0, &ids, true), 0);
 }
 
 #[test]
@@ -540,6 +539,66 @@ fn a_warm_request_asks_for_the_frame_that_submits_it() {
   latch.store(false, Ordering::Relaxed);
   atlas.request_warm(request);
   assert!(!latch.load(Ordering::Relaxed));
+}
+
+#[test]
+fn a_build_makes_every_cell_it_lacks_in_the_frame() {
+  let fonts = fonts(&[noto()]);
+  let mut atlas = TextAtlas::new(Arc::new(AtomicBool::new(false)));
+  // A cold style, nothing warmed, more glyphs than any budget: every cell
+  // is in the atlas when ensure returns, at every phase asked for.
+  let style = style_key(SIZE);
+  let ids = glyph_ids(&fonts, "The quick brown fox jumps over the lazy dog, 0123456789.");
+  for phase in 0..PHASES {
+    assert_eq!(atlas.ensure(&fonts, style, phase, &ids, false), 0, "phase {phase}");
+    for &id in &ids {
+      assert!(atlas.placement(style, phase, id).is_some());
+    }
+  }
+  // Without `warm` the first sight queued nothing; with it, the style's
+  // ASCII goes to the worker minus what the build made.
+  assert_eq!(atlas.queued_cells(), 0);
+  assert!(!atlas.is_warmed(style));
+  atlas.ensure(&fonts, style, 0, &ids, true);
+  assert!(atlas.is_warmed(style));
+  let distinct: std::collections::HashSet<u16> = ids.iter().copied().collect();
+  assert_eq!(atlas.queued_cells(), PRINTABLE_ASCII * PHASES as usize - distinct.len() * PHASES as usize);
+  // A big style grows the atlas past its initial side within the build:
+  // still every cell placed, the earlier ones still there.
+  let big = style_key(160.0);
+  assert_eq!(atlas.ensure(&fonts, big, 0, &ids, false), 0);
+  assert!(atlas.size().0 > 512 || atlas.size().1 > 512, "grew: {:?}", atlas.size());
+  for &id in &ids {
+    assert!(atlas.placement(big, 0, id).is_some());
+    assert!(atlas.placement(style, 0, id).is_some());
+  }
+}
+
+#[test]
+fn an_eviction_forgets_the_style_was_warmed() {
+  let fonts = fonts(&[noto()]);
+  let mut atlas = TextAtlas::new(Arc::new(AtomicBool::new(false)));
+  // The atlas capped at its initial side, so a few large cells fill it.
+  atlas.set_texture_cap(512);
+  let small = style_key(SIZE);
+  atlas.begin_frame(&fonts, 1.0, 0.0, Hint::Off);
+  atlas.warm(&fonts, small);
+  land_all(&mut atlas);
+  assert!(atlas.is_warmed(small));
+  // Frames go by without a use of the small cells, past the eviction age.
+  for _ in 0..200 {
+    atlas.begin_frame(&fonts, 1.0, 0.0, Hint::Off);
+  }
+  // A build of large cells needs the room: the stale small cells go, and
+  // the style is no longer warmed, so its next first sight warms again.
+  let big = style_key(240.0);
+  let ids = glyph_ids(&fonts, "ABCDEFGHIJKLMNOP");
+  atlas.ensure(&fonts, big, 0, &ids, false);
+  assert_eq!(atlas.size(), (512, 512));
+  assert!(!atlas.is_warmed(small), "the eviction forgot the warm-up");
+  atlas.warm(&fonts, small);
+  assert!(atlas.queued_cells() > 0);
+  assert!(atlas.is_warmed(small));
 }
 
 #[test]

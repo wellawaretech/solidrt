@@ -116,6 +116,8 @@ pub struct AtlasPacker<K: CellKey> {
   frame: u64,
   /// How many frames a cell may go unused before an eviction takes it.
   evict_after: u64,
+  /// Keys an eviction took since the last `take_evicted`.
+  evicted: Vec<K>,
 }
 
 impl<K: CellKey> AtlasPacker<K> {
@@ -144,6 +146,7 @@ impl<K: CellKey> AtlasPacker<K> {
       whole: None,
       frame: 0,
       evict_after: u64::MAX,
+      evicted: Vec::new(),
     }
   }
 
@@ -171,6 +174,20 @@ impl<K: CellKey> AtlasPacker<K> {
   pub fn with_eviction(mut self, frames: u64) -> Self {
     self.evict_after = frames;
     self
+  }
+
+  /// Raise the growth cap to `max_side` (the device's texture size limit,
+  /// known once there is a GPU context); never lowered below the current
+  /// size, which cells already occupy.
+  pub fn set_max_side(&mut self, max_side: u32) {
+    self.max_side = max_side.max(self.width).max(self.height);
+  }
+
+  /// The keys evictions took since the last call: what an owner that
+  /// remembers more than the atlas holds (a warmed style) reconciles
+  /// against.
+  pub fn take_evicted(&mut self) -> Vec<K> {
+    std::mem::take(&mut self.evicted)
   }
 
   pub fn kind(&self) -> CellKind {
@@ -378,7 +395,9 @@ impl<K: CellKey> AtlasPacker<K> {
       }
       self.sources.remove(key);
     }
-    stale.len()
+    let count = stale.len();
+    self.evicted.extend(stale);
+    count
   }
 
   // Lay every cell out again at the current size, from the sources. The
@@ -453,16 +472,8 @@ impl<K: CellKey> GlyphAtlas<K> {
   /// Create the atlas texture (the packer's format, `sampler`) in the
   /// registry over `packer`, which caps growth at the device's texture
   /// size limit, or less.
-  pub fn new(ctx: &Context, packer: AtlasPacker<K>, sampler: SamplerState, label: &str) -> Result<Self, String> {
-    let (width, height) = packer.size();
-    let texture = ctx.create_texture_from_pixels(
-      width,
-      height,
-      packer.mirror(),
-      sampler,
-      packer.format(),
-      Some(label.to_string()),
-    )?;
+  pub fn new(ctx: &Context, mut packer: AtlasPacker<K>, sampler: SamplerState, label: &str) -> Result<Self, String> {
+    let texture = create_texture(ctx, &mut packer, sampler, label)?;
     Ok(Self { packer, texture })
   }
 
@@ -493,37 +504,61 @@ impl<K: CellKey> GlyphAtlas<K> {
   /// same id) or a repack, else the dirty rects. Returns whether anything
   /// was sent.
   pub fn flush(&mut self, ctx: &Context) -> Result<bool, String> {
-    let (width, height) = self.packer.size();
-    match self.packer.take_dirty() {
-      None => Ok(false),
-      Some(Dirty::Whole { resized: true }) => {
-        ctx.resize_texture(self.texture, width, height, self.packer.mirror())?;
-        Ok(true)
-      }
-      Some(Dirty::Whole { resized: false }) => {
-        let rect = TextureRect { x: 0, y: 0, width, height, pixels: self.packer.mirror().to_vec() };
-        ctx.update_texture_rects(self.texture, vec![rect])?;
-        Ok(true)
-      }
-      Some(Dirty::Rects(dirty)) => {
-        let rects = dirty
-          .into_iter()
-          .map(|(x, y, width, height)| TextureRect {
-            x,
-            y,
-            width,
-            height,
-            pixels: self.packer.copy_out(x, y, width, height),
-          })
-          .collect();
-        ctx.update_texture_rects(self.texture, rects)?;
-        Ok(true)
-      }
-    }
+    flush_texture(ctx, self.texture, &mut self.packer)
   }
 
   /// Free the texture. The atlas is unusable after this.
   pub fn destroy(&mut self, ctx: &Context) {
     ctx.destroy_texture(self.texture);
+  }
+}
+
+/// Create the registry texture for `packer` (its format, `sampler`) from
+/// its mirror as it stands: whatever was packed before there was a GPU
+/// context is on the texture at once, and the packer's dirty state is
+/// taken, so the next `flush_texture` uploads only what changes from here.
+pub fn create_texture<K: CellKey>(
+  ctx: &Context,
+  packer: &mut AtlasPacker<K>,
+  sampler: SamplerState,
+  label: &str,
+) -> Result<u64, String> {
+  let (width, height) = packer.size();
+  let texture = ctx.create_texture_from_pixels(
+    width,
+    height,
+    packer.mirror(),
+    sampler,
+    packer.format(),
+    Some(label.to_string()),
+  )?;
+  packer.take_dirty();
+  Ok(texture)
+}
+
+/// Upload what changed in `packer` to `texture`: the whole mirror after a
+/// growth (a resize at the same id) or a repack, else the dirty rects.
+/// Returns whether anything was sent.
+pub fn flush_texture<K: CellKey>(ctx: &Context, texture: u64, packer: &mut AtlasPacker<K>) -> Result<bool, String> {
+  let (width, height) = packer.size();
+  match packer.take_dirty() {
+    None => Ok(false),
+    Some(Dirty::Whole { resized: true }) => {
+      ctx.resize_texture(texture, width, height, packer.mirror())?;
+      Ok(true)
+    }
+    Some(Dirty::Whole { resized: false }) => {
+      let rect = TextureRect { x: 0, y: 0, width, height, pixels: packer.mirror().to_vec() };
+      ctx.update_texture_rects(texture, vec![rect])?;
+      Ok(true)
+    }
+    Some(Dirty::Rects(dirty)) => {
+      let rects = dirty
+        .into_iter()
+        .map(|(x, y, width, height)| TextureRect { x, y, width, height, pixels: packer.copy_out(x, y, width, height) })
+        .collect();
+      ctx.update_texture_rects(texture, rects)?;
+      Ok(true)
+    }
   }
 }
