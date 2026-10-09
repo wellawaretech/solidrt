@@ -48,11 +48,6 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
-- **[World-space text for 2d layers (labels that ride the camera)](plans/2d-world-space-text.md)** [2026-09-02]
-  Text living IN a layer's world - node labels, cluster names, damage numbers
-  - has no path: apps re-project laid-out <text> elements per camera change,
-  which works for tens of labels and not at all for thousands; give the layer
-  an atlas-text answer.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -1020,6 +1015,11 @@ Finished, kept for the reasoning.
   Decide whether the TileLayer's creation-fixed cols x rows grid is the
   contract, or sketch the additive route to an unbounded world before
   something depends on the bound
+- **[World-space text for 2d layers (labels that ride the camera)](done/2d-world-space-text.md)** [2026-10-09]
+  Text living IN a layer's world - node labels, cluster names, damage numbers
+  - has no path: apps re-project laid-out <text> elements per camera change,
+  which works for tens of labels and not at all for thousands; give the layer
+  an atlas-text answer.
 - **[The 3d agent doc is 1900 lines under four headings](done/3d-agents-doc-navigability.md)** [2026-09-08]
   packages/3d/AGENTS.md is excellent material presented as a wall - four
   top-level headings across 1910 lines, with individual APIs documented inside

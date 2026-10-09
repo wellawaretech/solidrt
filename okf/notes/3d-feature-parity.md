@@ -172,7 +172,7 @@ geometry has no fix and decals are blocked on it.
 | XR | yes: WebXR | yes | yes | no | untracked; needs an explicit yes or no |
 | Decals | addon: DecalGeometry | yes: Decal Projector (v) | yes: Decal node | no | untracked; blocked on polygon offset |
 | Planar reflection / water | addon | HDRP only | no: SSR only | no | Three-only at runtime; cheap for us (a view with a mirrored camera) |
-| 3D text / world-space labels | addon: TextGeometry, CSS2DRenderer | yes: TextMeshPro | yes: Label3D, TextMesh | no | [2d-world-space-text](../backlog/2d-world-space-text.md) tracks the 2d half; the 3d half is untracked |
+| 3D text / world-space labels | addon: TextGeometry, CSS2DRenderer | yes: TextMeshPro | yes: Label3D, TextMesh | no | [2d-world-space-text](../done/2d-world-space-text.md) is the 2d half (sprite-font text runs); the 3d half is untracked |
 | Particle system | no: Points only | yes | yes: GPU and CPU particles | no | untracked |
 | Terrain | no | yes | no: addon | no | Unity-only |
 | Gaussian splats | no | no | no | no | [gaussian-splats](../backlog/gaussian-splats.md); ahead of all three |

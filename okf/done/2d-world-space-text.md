@@ -2,6 +2,7 @@
 title: World-space text for 2d layers (labels that ride the camera)
 description: Text living IN a layer's world - node labels, cluster names, damage numbers - has no path: apps re-project laid-out <text> elements per camera change, which works for tens of labels and not at all for thousands; give the layer an atlas-text answer.
 created: 2026-09-02
+completed: 2026-10-09
 ---
 
 # World-space text for 2d layers (labels that ride the camera)
@@ -99,7 +100,7 @@ when text rendering is replaced.
 | 3. Layout | built, `text-layout.ts`, `tests/text-layout.test.ts` (9) |
 | 4. Runs and `<Text2d>` | built; `tests/text.test.tsx` (7, an msdf run at twice the face size with its outline among them) on the headless client |
 | 5. Example, docs | built: `examples/text.tsx`, AGENTS.md section and traps, READMEs |
-| The relay demo's labels | not migrated (the demos are untracked; on the user's go) |
+| The relay demo's labels | migrated (2026-10-09): a text run per cluster in the map layer's one draw, world-sized off the fit zoom (LABEL_PX on screen at the overview on any window), the fade a run tint write over the paint-only `setText` path; runs rather than the container the decision named, since the demo's attract mode zooms continuously, the case runs are for |
 
 ## Plan (started 2026-10-06, after stage 1 of the engine)
 

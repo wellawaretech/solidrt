@@ -9,6 +9,9 @@
 //
 // The node layer only: a run is a group. Three verbs like the sprites':
 // addText, setText (re-laid out, the sprite pool reused), destroyText.
+// A setText that changes only the paint (tint, outline, renderOrder)
+// re-writes the glyph sprites without shaping: a fade is sprite writes,
+// not an engine call per frame.
 import { addGroup, addSprite, destroyGroup, destroySprite, setGroup, setSprite } from "./layer.ts"
 import type { Sprite, SpriteGroup, SpriteLayer } from "./layer.ts"
 import type { SpriteFont } from "./font.ts"
@@ -119,7 +122,9 @@ export function addText(layer: SpriteLayer, opts: AddTextOptions): TextRun {
 }
 
 /** Change a run: the style fields re-lay it out (the sprite pool is
- * reused), the pose fields move its group. Absent keys keep values. */
+ * reused), the pose fields move its group. Absent keys keep values, and so
+ * does a key passed with its current value; a change to only tint,
+ * outline or renderOrder re-writes the glyph sprites without shaping. */
 export function setText(run: TextRun, opts: Partial<TextStyle> & TextPose): void {
   let state = run as RunState
   if (state.group.layer === null) return
@@ -127,12 +132,42 @@ export function setText(run: TextRun, opts: Partial<TextStyle> & TextPose): void
   if (x !== undefined || y !== undefined || rotation !== undefined || visible !== undefined) {
     setGroup(state.group, { x, y, rotation, visible })
   }
-  let keys = Object.keys(style) as (keyof TextStyle)[]
-  if (keys.some(k => style[k] !== undefined)) {
-    let next: TextStyle = { ...state._style }
-    for (let k of keys) if (style[k] !== undefined) (next as Record<string, unknown>)[k] = style[k]
-    relayout(state, next)
+  // Compare by value, not by presence: a component effect passes every
+  // style key on any change, and only a key that differs costs anything.
+  let current = state._style
+  let next: TextStyle = { ...current }
+  let reshape = false
+  let repaint = false
+  for (let k of Object.keys(style) as (keyof TextStyle)[]) {
+    let value = style[k]
+    if (value === undefined || sameStyleValue(k, value, current[k])) continue
+    ;(next as Record<string, unknown>)[k] = value
+    if (PAINT_KEYS.has(k)) repaint = true
+    else reshape = true
   }
+  if (reshape) relayout(state, next)
+  else if (repaint) {
+    checkStyle(next)
+    state._style = next
+    paint(state)
+  }
+}
+
+// The style keys that change only how a glyph sprite is drawn, never which
+// glyphs or where: every other key re-shapes.
+const PAINT_KEYS: ReadonlySet<keyof TextStyle> = new Set<keyof TextStyle>(["tint", "outline", "renderOrder"])
+
+// Equal as a style value: tint by channel, outline by colour and width,
+// the rest by identity.
+function sameStyleValue(key: keyof TextStyle, a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (key === "tint" && Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((c, i) => c === b[i])
+  if (key === "outline" && a != null && b != null) {
+    let { color: ca, width: wa } = a as NonNullable<TextStyle["outline"]>
+    let { color: cb, width: wb } = b as NonNullable<TextStyle["outline"]>
+    return wa === wb && ca[0] === cb[0] && ca[1] === cb[1] && ca[2] === cb[2]
+  }
+  return false
 }
 
 /** Remove the run: its group and every glyph sprite. */
@@ -164,6 +199,27 @@ function relayout(run: RunState, style: TextStyle): void {
   place(run)
 }
 
+// The paint fields of the run's style, as every glyph sprite takes them.
+function paintOf(style: TextStyle) {
+  return { tint: style.tint ?? [1, 1, 1, 1], outline: style.outline ?? null, renderOrder: style.renderOrder ?? 0 }
+}
+
+// Write a sprite's outline from the style (none clears it).
+function writeOutline(layer: SpriteLayer, sprite: Sprite, outline: TextStyle["outline"]): void {
+  if (outline != null) layer._outline(sprite, outline.color[0], outline.color[1], outline.color[2], outline.width)
+  else layer._outline(sprite, 0, 0, 0, 0)
+}
+
+// Re-paint the glyph sprites in place: the layout, the pool and the
+// pending cells all stand, only tint, outline and order are written.
+function paint(run: RunState): void {
+  let { tint, outline, renderOrder } = paintOf(run._style)
+  for (let sprite of run.sprites) {
+    setSprite(sprite, { tint, renderOrder })
+    writeOutline(run.layer, sprite, outline)
+  }
+}
+
 // Write every glyph sprite from the layout and the font's cells: a cell
 // the atlas lacks leaves its sprite hidden and asks the font for it.
 function place(run: RunState): void {
@@ -172,9 +228,7 @@ function place(run: RunState): void {
   let fontSize = style.fontSize ?? font.fontSize
   // Cells are made at `font.size` texels per em; the run draws at fontSize.
   let scale = fontSize / font.size
-  let tint = style.tint ?? [1, 1, 1, 1]
-  let outline = style.outline ?? null
-  let renderOrder = style.renderOrder ?? 0
+  let { tint, outline, renderOrder } = paintOf(style)
   let placements = run._layout.glyphs
   run._pending.clear()
   let missing: number[] = []
@@ -210,8 +264,7 @@ function place(run: RunState): void {
     } else {
       setSprite(sprite, fields)
     }
-    if (outline !== null) layer._outline(sprite, outline.color[0], outline.color[1], outline.color[2], outline.width)
-    else layer._outline(sprite, 0, 0, 0, 0)
+    writeOutline(layer, sprite, outline)
     used++
   }
   for (let i = used; i < sprites.length; i++) destroySprite(sprites[i]!)

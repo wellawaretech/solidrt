@@ -13,7 +13,7 @@ import { createSignal, Show } from "@solidrt/core"
 import type { DecodedImage } from "@solidrt/core"
 import { readTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
-import { addText, createAtlas, createSpriteFont, createSpriteLayer, destroyText, fullFrame, addSprite, setText, SpriteLayer, Text2d, worldPosition } from "../src/index.ts"
+import { addText, createAtlas, createSpriteFont, createSpriteLayer, destroyText, fullFrame, addSprite, getSprite, setText, SpriteLayer, Text2d, worldPosition } from "../src/index.ts"
 import type { SpriteFont, SpriteLayerHandle, TextRun } from "../src/index.ts"
 
 const SIZE = 128
@@ -148,6 +148,44 @@ test("a run's pose is its group's, and a run anchors, spaces and wraps as laid o
   // Wrapping at the first word's width makes two lines.
   setText(run, { maxWidth: run.width / 2 + 1 })
   expect(run.lines).toBe(2)
+})
+
+test("a paint-only setText re-writes the sprites without shaping", async app => {
+  let { run, font } = await mounted(app, () => {
+    let font = createSpriteFont({ fontFamily: "sans", fontSize: FONT_PX }, { cells: "mask", chars: false, label: "text-paint" })
+    let layer = createSpriteLayer([font.atlas], { capacity: 32, label: "text-paint" })
+    let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: "text-paint" })
+    let run = addText(layer, { font, text: "Hi", x: SIZE / 2, y: SIZE / 2, tint: [1, 1, 1, 1] })
+    return { layer, view, run, font, texture: view.texture }
+  })
+  await app.settle()
+  // Count the engine's shaping calls through the run's font.
+  let shaped = 0
+  let prepare = font.prepare
+  font.prepare = (text, options) => {
+    shaped++
+    return prepare.call(font, text, options)
+  }
+  let sprites = run.sprites.slice()
+  let places = sprites.map(s => [s._x, s._y])
+  let width = run.width
+  // Tint, outline and order change: the sprites take them where they are.
+  setText(run, { tint: [1, 0, 0, 0.5], outline: { color: [0, 0, 1], width: 2 }, renderOrder: 3 })
+  expect(shaped).toBe(0)
+  expect(run.sprites).toEqual(sprites)
+  expect(run.sprites.map(s => [s._x, s._y])).toEqual(places)
+  expect(run.width).toBe(width)
+  expect(getSprite(run.sprites[0]!)!.tint).toEqual([1, 0, 0, 0.5])
+  expect(getSprite(run.sprites[0]!)!.renderOrder).toBe(3)
+  // The whole style passed again with the same values, as a component
+  // effect does: nothing to do.
+  setText(run, { text: "Hi", tint: [1, 0, 0, 0.5], outline: { color: [0, 0, 1], width: 2 }, renderOrder: 3 })
+  expect(shaped).toBe(0)
+  // A layout key that differs shapes once, paint keys riding along.
+  setText(run, { text: "Hip", tint: [0, 1, 0, 1] })
+  expect(shaped).toBe(1)
+  expect(run.sprites.length).toBe(3)
+  expect(getSprite(run.sprites[2]!)!.tint).toEqual([0, 1, 0, 1])
 })
 
 test("an sdf atlas decodes its field: a sharp edge at 2x and an outline ring", async app => {
