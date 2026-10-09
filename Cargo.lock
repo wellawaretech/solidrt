@@ -1372,6 +1372,7 @@ dependencies = [
  "crossterm",
  "fastrand",
  "fastwebsockets",
+ "flate2",
  "futures-core",
  "glob",
  "hickory-proto",

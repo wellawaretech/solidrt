@@ -43,6 +43,10 @@ hyper-util = { version = "=0.1.21", features = ["tokio"] }
 http-body-util = "=0.1.5"
 # The digest core behind crypto.subtle.digest.
 sha2 = "=0.11.0"
+# forge::compression (CompressionStream / DecompressionStream): deflate, the
+# zlib format and the gzip framing's CRC-32, on the pure-Rust backend. Already
+# in the tree (image -> png depends on it).
+flate2 = "=1.1.9"
 bytes = "=1.12.1"
 futures-core = "=0.3.34"
 # Jitter for the fetch 429 backoff. Already in the tree (tokio and others

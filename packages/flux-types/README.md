@@ -52,6 +52,7 @@ rely on must be named.
   `flux:font`.
 - Web-standard globals: `console`, `fetch` + `Headers`/`Request`/`Response`,
   `ReadableStream`/`WritableStream`/`TransformStream`,
+  `CompressionStream`/`DecompressionStream`,
   `setTimeout`/`setInterval`/`setImmediate`/`requestIdleCallback`/`queueMicrotask`, `performance`, `WebSocket`,
   `TextEncoder`/`TextDecoder` and `TextEncoderStream`/`TextDecoderStream`, `crypto.subtle.digest`.
   These are deliberate subsets matching exactly what the runtime implements.

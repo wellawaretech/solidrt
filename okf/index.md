@@ -306,12 +306,6 @@ Shaped, not started.
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
   either not found or checked against the wrong file.
-- **[Add CompressionStream and DecompressionStream](backlog/compression-streams.md)** [2026-10-09]
-  Flux has no way to inflate or deflate bytes (a fetched .gz asset, a ZIP
-  entry, a compressed save), and the web standard for it is the Compression
-  Streams API; add the two classes as TransformStreams over an incremental
-  flate2 codec in forge, one worker job per chunk so no thread is parked and
-  no frame stalls, with the spec's three formats and its TypeError cases.
 - **[Read a depth texture through the control API](backlog/control-api-depth-texture-read.md)** [2026-10-07]
   A target's depth texture is sampler-only, so /texture refuses it and a
   shadow-map bug cannot be split into "the tile was not written" and "the
@@ -1397,6 +1391,12 @@ Finished, kept for the reasoning.
   Press semantics extracted from Pressable into a components-package util;
   widened to gesture recognizers and promoted to
   okf/plans/component-gestures.md, this file is a pointer.
+- **[Add CompressionStream and DecompressionStream](done/compression-streams.md)** [2026-10-09]
+  Flux has no way to inflate or deflate bytes (a fetched .gz asset, a ZIP
+  entry, a compressed save), and the web standard for it is the Compression
+  Streams API; add the two classes as TransformStreams over an incremental
+  flate2 codec in forge, one worker job per chunk so no thread is parked and
+  no frame stalls, with the spec's three formats and its TypeError cases.
 - **[Content-damage perf watchpoints](done/content-damage-perf.md)** [2026-09-23]
   Perf potholes in the damage-tracking path, closed 2026-09-23: the O(nodes)
   texture walk (referencer index, 2026-09-02) and the boundary-shader-input

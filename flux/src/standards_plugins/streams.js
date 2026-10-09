@@ -1,15 +1,17 @@
 // The WHATWG Streams subset: ReadableStream, WritableStream and
 // TransformStream, plus TextDecoderStream and TextEncoderStream over the
-// TextDecoder/TextEncoder globals. Evaluated once per context by streams.rs,
-// which installs what this source returns as globals. Plain JS on purpose:
-// streams are promise and queue plumbing, which is short here and miserable
-// in rquickjs (okf/done/web-streams.md).
+// TextDecoder/TextEncoder globals, and CompressionStream and
+// DecompressionStream over the native DeflateCodec (compression.rs) this
+// source takes. Evaluated once per context by streams.rs, which installs
+// what this source returns as globals. Plain JS on purpose: streams are
+// promise and queue plumbing, which is short here and miserable in rquickjs
+// (okf/done/web-streams.md).
 //
 // The subset, as packages/flux-types/standards/streams.d.ts documents it: no
 // BYOB readers or byte streams, a chunk-count highWaterMark as the only
 // queuing strategy, no pipeTo options. One reader or writer at a time, as
 // on the web.
-() => {
+(DeflateCodec) => {
   // Chunks a stream queues ahead of its consumer before it stops pulling,
   // or ahead of its sink before a writer sees backpressure (the spec's
   // default count queuing strategy).
@@ -991,5 +993,93 @@
     }
   }
 
-  return { ReadableStream, WritableStream, TransformStream, TextDecoderStream, TextEncoderStream }
+  // -- The compression streams --
+
+  // A chunk written to a compression stream, as the bytes the codec takes:
+  // an ArrayBuffer or any view of one (the standard's BufferSource).
+  function bytesOf(chunk, api) {
+    if (chunk instanceof Uint8Array) return chunk
+    if (chunk instanceof ArrayBuffer) return new Uint8Array(chunk)
+    if (ArrayBuffer.isView(chunk)) return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+    throw new TypeError(`${api}: a chunk must be an ArrayBuffer or an ArrayBuffer view`)
+  }
+
+  // Whether the readable side still takes chunks: not once it is cancelled,
+  // errored or closing.
+  function tsReadable(ts) {
+    let rs = internals.get(ts.readable)
+    return rs.state === "readable" && !rs.closeRequested
+  }
+
+  // A TransformStream over a native deflate codec: a chunk is one codec
+  // step on the codec threads, and the output comes back in pieces of at
+  // most the codec's piece size, each handed on once the reader asks for
+  // it, so an input that inflates to a lot never runs ahead of its reader
+  // (okf/done/compression-streams.md).
+  function codecStream(codec, api) {
+    let ts = null
+    // One codec call, then its further pieces for what it holds, waiting
+    // for the reader between them. A readable side that no longer takes
+    // chunks ends the run: nobody is waiting for the rest.
+    async function run(controller, call) {
+      let piece = await call()
+      while (true) {
+        if (!tsReadable(ts)) return
+        if (piece.length > 0) controller.enqueue(piece)
+        if (!codec.pending) return
+        while (ts.backpressure) await ts.changed.promise
+        if (!tsReadable(ts)) return
+        piece = await codec.next()
+      }
+    }
+    let transform = new TransformStream({
+      transform(chunk, controller) {
+        let bytes = bytesOf(chunk, api)
+        return run(controller, () => codec.push(bytes))
+      },
+      flush(controller) {
+        return run(controller, () => codec.finish())
+      },
+    })
+    ts = internals.get(transform)
+    return transform
+  }
+
+  class CompressionStream {
+    constructor(format) {
+      internals.set(this, codecStream(new DeflateCodec("compress", format), "CompressionStream"))
+    }
+
+    get readable() {
+      return internals.get(this).readable
+    }
+
+    get writable() {
+      return internals.get(this).writable
+    }
+  }
+
+  class DecompressionStream {
+    constructor(format) {
+      internals.set(this, codecStream(new DeflateCodec("decompress", format), "DecompressionStream"))
+    }
+
+    get readable() {
+      return internals.get(this).readable
+    }
+
+    get writable() {
+      return internals.get(this).writable
+    }
+  }
+
+  return {
+    ReadableStream,
+    WritableStream,
+    TransformStream,
+    TextDecoderStream,
+    TextEncoderStream,
+    CompressionStream,
+    DecompressionStream,
+  }
 }

@@ -1,4 +1,5 @@
 mod cache;
+mod compression;
 mod crypto;
 mod fetch;
 mod fs;

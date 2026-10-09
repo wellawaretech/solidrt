@@ -16,7 +16,8 @@ This site is built by a Flux script.
 
 Web-standard APIs are global, with the names and shapes you already know:
 `fetch`, `Request`, `Response`, `Headers`, `ReadableStream`,
-`WritableStream` and `TransformStream`, `console`, `setTimeout` and
+`WritableStream` and `TransformStream`, `CompressionStream` and
+`DecompressionStream`, `console`, `setTimeout` and
 `setInterval`, `setImmediate`, `requestIdleCallback`, `queueMicrotask`,
 `performance`, `WebSocket`, `TextEncoder` and `TextDecoder` with
 `TextEncoderStream` and `TextDecoderStream`, `atob` and `btoa`,

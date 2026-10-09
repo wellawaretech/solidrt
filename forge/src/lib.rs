@@ -8,6 +8,7 @@
 //! scripting host (flux) depends on this crate and supplies all the marshalling.
 
 pub mod cache;
+pub mod compression;
 pub mod crypto;
 pub mod events;
 pub mod fetch;

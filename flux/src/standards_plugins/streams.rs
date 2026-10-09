@@ -1,9 +1,12 @@
 // The WHATWG Streams subset: `ReadableStream`, `WritableStream` and
-// `TransformStream`, plus `TextDecoderStream` and `TextEncoderStream`. The
-// classes are plain JS (streams.js: promise and queue plumbing, short there
-// and miserable in rquickjs), evaluated once per context here and installed
-// as globals. `readable_from` is what the body and subprocess plugins wrap a
-// native byte source with (okf/done/web-streams.md).
+// `TransformStream`, plus `TextDecoderStream` and `TextEncoderStream`, and
+// the Compression Streams API's `CompressionStream` and
+// `DecompressionStream`. The classes are plain JS (streams.js: promise and
+// queue plumbing, short there and miserable in rquickjs), evaluated once per
+// context here and installed as globals; the compression streams are built
+// over the native `DeflateCodec` (compression.rs) the source is handed.
+// `readable_from` is what the body and subprocess plugins wrap a native
+// byte source with (okf/done/web-streams.md).
 
 use rquickjs::context::EvalOptions;
 use rquickjs::function::This;
@@ -14,14 +17,22 @@ const SOURCE: &str = include_str!("streams.js");
 /// The file name stack frames inside the implementation cite.
 const FILE_NAME: &str = "flux:streams";
 
-const GLOBALS: &[&str] =
-  &["ReadableStream", "WritableStream", "TransformStream", "TextDecoderStream", "TextEncoderStream"];
+const GLOBALS: &[&str] = &[
+  "ReadableStream",
+  "WritableStream",
+  "TransformStream",
+  "TextDecoderStream",
+  "TextEncoderStream",
+  "CompressionStream",
+  "DecompressionStream",
+];
 
 pub(crate) fn init_streams(ctx: &Ctx<'_>) {
   let mut options = EvalOptions::default();
   options.filename = Some(FILE_NAME.to_string());
   let build: Function = ctx.eval_with_options(SOURCE, options).expect("evaluate streams.js");
-  let api: Object = build.call(()).expect("build the streams classes");
+  let codec = crate::standards_plugins::compression::constructor(ctx);
+  let api: Object = build.call((codec,)).expect("build the streams classes");
   for name in GLOBALS {
     let class: Value = api.get(*name).expect("streams class");
     ctx.globals().set(*name, class).expect("install streams global");

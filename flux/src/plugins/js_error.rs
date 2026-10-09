@@ -15,3 +15,17 @@ impl<'js, T: IntoJs<'js>> IntoJs<'js> for JsResult<T> {
     }
   }
 }
+
+/// `JsResult` whose error is a `TypeError`: for a standard whose contract
+/// names that class for its failures (the compression streams' corrupt,
+/// cut-short and trailing-data errors).
+pub struct JsTypeResult<T>(pub Result<T, String>);
+
+impl<'js, T: IntoJs<'js>> IntoJs<'js> for JsTypeResult<T> {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    match self.0 {
+      Ok(value) => value.into_js(ctx),
+      Err(message) => Err(Exception::throw_type(ctx, &message)),
+    }
+  }
+}

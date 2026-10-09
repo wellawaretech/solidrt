@@ -2,11 +2,33 @@
 title: Add CompressionStream and DecompressionStream
 description: Flux has no way to inflate or deflate bytes (a fetched .gz asset, a ZIP entry, a compressed save), and the web standard for it is the Compression Streams API; add the two classes as TransformStreams over an incremental flate2 codec in forge, one worker job per chunk so no thread is parked and no frame stalls, with the spec's three formats and its TypeError cases.
 created: 2026-10-09
+completed: 2026-10-09
 ---
 
 # Add CompressionStream and DecompressionStream
 
 Builds on `web-streams.md`: each class is a `TransformStream`.
+
+Built 2026-10-09 as shaped below, with four decisions taken on the way:
+
+- flate2's gzip mem API (`new_gzip`) exists on its zlib backends only, not
+  on the pure-Rust backend in the tree, so `forge::compression` does the
+  gzip framing itself: the 10-byte header (and the optional fields an
+  incoming one may carry) and the CRC-32/size trailer, over flate2's `Crc`,
+  around the mem API's raw deflate. The zlib format stays the mem API's.
+- The two classes live in `streams.js` beside the text streams, over a
+  native `DeflateCodec` object (`compression.rs`, the marshalling only) that
+  `streams.rs` hands the source: pacing the output needs the transform's
+  backpressure signal, which only the streams source has.
+- The cap is a step loop, not one call per chunk: a codec step returns one
+  piece of at most `OUTPUT_CHUNK_BYTES` (64 KiB) and says whether more is
+  pending; the transform enqueues it, waits for the reader, and steps again.
+  One worker job per piece, on a pool of `CODEC_THREADS` (2).
+- The errors reject as `TypeError` through `JsTypeResult` (`js_error.rs`),
+  the typed sibling of `JsResult`.
+
+Tests: `flux/tests/compression.test.ts` (10), `forge/src/tests/compression.rs`
+(9).
 
 ## Symptom
 
