@@ -23,7 +23,6 @@ const SKIN = 0.01
 // The slope's tilt: 30 degrees, well inside the 45-degree floor limit.
 const SLOPE = -Math.PI / 6
 
-let rounded = (v: readonly number[]) => v.map(x => Number(x.toFixed(DIGITS)) + 0)
 
 function world() {
   let atlas = createAtlas(ATLAS, { label: "collision-atlas" })
@@ -60,10 +59,10 @@ test("overlap over a circle finds the sprites in a blast radius, each contact ou
   expect(blast.length).toBe(3)
   let middle = blast.find(c => c.sprite === floor[1])
   expect(middle).not.toBe(undefined)
-  expect(rounded([middle!.depth])).toEqual([16])
-  expect(rounded(middle!.normal)).toEqual([0, -1])
-  expect(rounded(middle!.point)).toEqual([48, 100])
-  for (let c of blast) expect(rounded([Math.hypot(c.normal[0], c.normal[1])])).toEqual([1])
+  expect(middle!.depth).toBeCloseTo(16, DIGITS)
+  expect(middle!.normal).toBeCloseTo([0, -1], DIGITS)
+  expect(middle!.point).toBeCloseTo([48, 100], DIGITS)
+  for (let c of blast) expect(Math.hypot(c.normal[0], c.normal[1])).toBeCloseTo(1, DIGITS)
 })
 
 test("sweep reports the first sprite a shot reaches, at the exact time, with the touch point and the edge normal; raycast is the ray form", async app => {
@@ -74,14 +73,14 @@ test("sweep reports the first sprite a shot reaches, at the exact time, with the
   expect(shot.length).toBeGreaterThan(0)
   let hit = shot[0]!
   expect(hit.sprite).toBe(floor[1])
-  expect(rounded([hit.time])).toEqual([0.39])
-  expect(rounded(hit.point)).toEqual([48, 100])
-  expect(rounded(hit.normal)).toEqual([0, -1])
+  expect(hit.time).toBeCloseTo(0.39, DIGITS)
+  expect(hit.point).toBeCloseTo([48, 100], DIGITS)
+  expect(hit.normal).toBeCloseTo([0, -1], DIGITS)
   let ray = layer.raycast(48, 20, 0, 1)
   expect(ray.length).toBeGreaterThan(0)
   expect(ray[0]!.sprite).toBe(floor[1])
-  expect(rounded([ray[0]!.distance])).toEqual([80])
-  expect(rounded(ray[0]!.point)).toEqual([48, 100])
+  expect(ray[0]!.distance).toBeCloseTo(80, DIGITS)
+  expect(ray[0]!.point).toBeCloseTo([48, 100], DIGITS)
 })
 
 test("pickRect is overlap over an unrotated rect, sprites only", async app => {
@@ -105,8 +104,8 @@ test("moveAndSlide lands a capsule a skin short of the floor, stops at a wall ke
   let body = { ax: 200, ay: 60, bx: 200, by: 80, radius: 8 }
   let land = layer.moveAndSlide(body, 0, 50)
   expect(land.floor).not.toBeNull()
-  expect(rounded(land.floor!)).toEqual([0, -1])
-  expect(rounded([land.motion[1]])).toEqual([12 - SKIN])
+  expect(land.floor!).toBeCloseTo([0, -1], DIGITS)
+  expect(land.motion[1]).toBeCloseTo(12 - SKIN, DIGITS)
   expect(land.wall).toBe(false)
   expect(land.ceiling).toBe(false)
   // Standing a skin above the floor, walking into the wall: stops a skin
@@ -114,13 +113,13 @@ test("moveAndSlide lands a capsule a skin short of the floor, stops at a wall ke
   let stand = { ax: 240, ay: 72, bx: 240, by: 100 - SKIN - 8, radius: 8 }
   let bump = layer.moveAndSlide(stand, 30, 0)
   expect(bump.wall).toBe(true)
-  expect(rounded(bump.motion)).toEqual([8 - SKIN, 0])
+  expect(bump.motion).toBeCloseTo([8 - SKIN, 0], DIGITS)
   expect(bump.floor).not.toBeNull()
   // The slope: drop onto it, then walk +x and climb.
   let climber = { ax: 400, ay: 30, bx: 400, by: 50, radius: 8 }
   let drop = layer.moveAndSlide(climber, 0, 80)
   expect(drop.floor).not.toBeNull()
-  expect(rounded(drop.floor!)).toEqual(rounded([Math.sin(SLOPE), -Math.cos(SLOPE)]))
+  expect(drop.floor!).toBeCloseTo([Math.sin(SLOPE), -Math.cos(SLOPE)], DIGITS)
   expect(drop.hits.length).toBeGreaterThan(0)
   expect(drop.hits[0]!.sprite).toBe(slope)
   let landed = { ax: 400, ay: 30 + drop.motion[1], bx: 400, by: 50 + drop.motion[1], radius: 8 }

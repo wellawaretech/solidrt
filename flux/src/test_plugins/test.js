@@ -209,14 +209,25 @@
 
     toEqual: (received, expected) => ({ pass: equals(received, expected), expected: format(expected) }),
 
+    // A number against a number, or an array of numbers (a point, a normal,
+    // a motion) against one of the same length, each entry within the
+    // tolerance; the failure prints both arrays whole.
     toBeCloseTo(received, expected, digits = DEFAULT_CLOSE_DIGITS) {
-      if (typeof received !== "number") throw new TypeError(`toBeCloseTo: the received value must be a number, got ${format(received)}`)
-      if (typeof expected !== "number") throw new TypeError(`toBeCloseTo: the expected value must be a number, got ${format(expected)}`)
       if (!Number.isInteger(digits) || digits < 0) throw new TypeError(`toBeCloseTo: digits must be a non-negative integer, got ${format(digits)}`)
       let tolerance = 10 ** -digits / 2
       // The equality test is what lets an infinity be close to itself.
-      let pass = received === expected || Math.abs(expected - received) < tolerance
-      return { pass, expected: `${format(expected)} (within ${tolerance})` }
+      let close = (a, b) => a === b || Math.abs(b - a) < tolerance
+      if (Array.isArray(expected)) {
+        if (!expected.every((entry) => typeof entry === "number")) throw new TypeError(`toBeCloseTo: the expected array must hold numbers, got ${format(expected)}`)
+        if (!Array.isArray(received) || !received.every((entry) => typeof entry === "number")) {
+          throw new TypeError(`toBeCloseTo: the received value must be an array of numbers to compare with one, got ${format(received)}`)
+        }
+        let pass = received.length === expected.length && expected.every((entry, i) => close(received[i], entry))
+        return { pass, expected: `${format(expected)} (each within ${tolerance})` }
+      }
+      if (typeof expected !== "number") throw new TypeError(`toBeCloseTo: the expected value must be a number or an array of numbers, got ${format(expected)}`)
+      if (typeof received !== "number") throw new TypeError(`toBeCloseTo: the received value must be a number, got ${format(received)}`)
+      return { pass: close(received, expected), expected: `${format(expected)} (within ${tolerance})` }
     },
 
     toBeNull: (received) => ({ pass: received === null, expected: "null" }),

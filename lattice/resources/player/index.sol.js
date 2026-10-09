@@ -6987,8 +6987,8 @@ function measureText2(text, options) {
 function prepareText2(text, options) {
   return tree.prepareText(text, options);
 }
-function warmText2(styles) {
-  tree.warmText(styles);
+function warmText2(entries) {
+  tree.warmText(entries);
 }
 var FIT_SLACK = 1 / 64;
 function unitInk(units, index) {

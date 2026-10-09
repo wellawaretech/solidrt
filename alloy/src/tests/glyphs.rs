@@ -532,13 +532,39 @@ fn warming_a_style_lands_its_ascii_at_every_phase_before_any_text_drew() {
 fn a_warm_request_asks_for_the_frame_that_submits_it() {
   let latch = Arc::new(AtomicBool::new(false));
   let mut atlas = TextAtlas::new(latch.clone());
-  let request = WarmRequest { face: 0, size: SIZE, weight: 500, stretch: 100.0, italic: false };
-  atlas.request_warm(request);
+  let request = WarmRequest { face: 0, size: SIZE, weight: 500, stretch: 100.0, italic: false, text: None };
+  atlas.request_warm(request.clone());
   assert!(latch.load(Ordering::Relaxed));
   // The same request again changes nothing.
   latch.store(false, Ordering::Relaxed);
   atlas.request_warm(request);
   assert!(!latch.load(Ordering::Relaxed));
+}
+
+#[test]
+fn a_warm_request_with_a_text_lands_the_glyphs_it_shapes_to() {
+  let fonts = fonts(&[noto()]);
+  let mut atlas = TextAtlas::new(Arc::new(AtomicBool::new(false)));
+  // Curly quotes, an accented letter and a ligature pair: glyphs no ASCII
+  // warm-up makes, which a text warming the string gets at every phase.
+  let text = "\u{201c}Caf\u{e9} office\u{201d}";
+  let request =
+    WarmRequest { face: 0, size: SIZE, weight: 400, stretch: 100.0, italic: false, text: Some(text.to_string()) };
+  atlas.request_warm(request);
+  atlas.begin_frame(&fonts, 1.0, 0.0, Hint::Off);
+  let style = style_key(SIZE);
+  assert!(atlas.is_warmed(style), "the style's ASCII is warmed beside the text");
+  let ids = glyph_ids(&fonts, text);
+  let ascii = glyph_ids(&fonts, "Cafe office");
+  assert!(ids.iter().any(|id| !ascii.contains(id)), "the text shapes to glyphs outside ASCII");
+  land_all(&mut atlas);
+  for &id in &ids {
+    for phase in 0..PHASES {
+      assert!(atlas.placement(style, phase, id).is_some(), "glyph {id} at phase {phase} landed");
+    }
+  }
+  // A build of the text over the warmed style finds every cell.
+  assert_eq!(atlas.ensure(&fonts, style, 0, &ids, true), 0);
 }
 
 #[test]

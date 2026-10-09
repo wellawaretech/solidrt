@@ -18,7 +18,8 @@
 // 2. Warm-up on the worker: printable ASCII at every subpixel phase for a
 //    style the moment a build first sees it untransformed (`ensure` with
 //    `warm`), and whatever an app warms ahead of time (its type scale at
-//    startup, under the splash), landed at the next frame start (`land`).
+//    startup, under the splash, with the strings it knows it will draw),
+//    landed at the next frame start (`land`).
 //    An optimization and nothing more: a build that needs a cell still
 //    queued in a warm job makes it itself, and the job's copy lands as a
 //    no-op, so nothing visible waits on the worker and a warm job holds
@@ -43,6 +44,7 @@
 use super::atlas::{create_texture, flush_texture, AtlasPacker, CellPlacement, InsertOutcome};
 use super::cells::{Cell, CellKind, CellRequest, Hint, Rasterizer};
 use super::fonts::{Face, FaceId, FontSet};
+use super::shape::{Fallback, ShapeStyle, ShapedGlyphs};
 use super::worker::{CellJob, CellWorker, JobPriority};
 use crate::gpu::{CoveragePolicy, SamplerFilter, SamplerState, SamplerWrap, MIN_ANISOTROPY};
 use crate::Context;
@@ -173,14 +175,16 @@ pub fn split_phase(x: f32) -> (i32, u8) {
 
 /// A style an app asked to warm ahead of its use (`request_warm`): the face
 /// and the size in logical pixels, resolved to a style key at the next
-/// frame, when the display scale is known.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// frame, when the display scale is known, and optionally a string it will
+/// draw in it, whose glyphs are warmed beside the style's ASCII.
+#[derive(Clone, Debug, PartialEq)]
 pub struct WarmRequest {
   pub face: FaceId,
   pub size: f32,
   pub weight: u16,
   pub stretch: f32,
   pub italic: bool,
+  pub text: Option<String>,
 }
 
 // A job on the worker, by its owner id: which cells it makes.
@@ -269,12 +273,16 @@ impl TextAtlas {
       if !self.warmed.contains(&key) {
         self.warm(fonts, key);
       }
+      if let Some(text) = &request.text {
+        self.warm_text(fonts, &request, key, text);
+      }
     }
   }
 
-  /// Ask for a style's printable ASCII ahead of its use; made at the next
-  /// frame start on the worker, and that frame is requested. A style
-  /// already warmed costs nothing.
+  /// Ask for a style's printable ASCII, and the glyphs of its `text` if it
+  /// names one, ahead of their use; made at the next frame start on the
+  /// worker, and that frame is requested. A style already warmed costs
+  /// nothing; a text's cells already in the atlas cost nothing.
   pub fn request_warm(&mut self, request: WarmRequest) {
     if !self.warm_requests.contains(&request) {
       self.warm_requests.push(request);
@@ -428,6 +436,43 @@ impl TextAtlas {
       .collect::<HashSet<u16>>()
       .into_iter()
       .collect();
+    self.warm_glyphs(face, style, glyphs);
+  }
+
+  // Make the cells of `text` shaped in the request's style ahead of a text
+  // drawing it: the glyphs the shaper picks (a ligature, a curly quote, a
+  // letter beyond ASCII), each keyed on the face that covers it, since a
+  // cluster the primary lacks draws from a fallback face's cells. `style`
+  // is the primary's key; a fallback's is the same key on its face.
+  fn warm_text(&mut self, fonts: &FontSet, request: &WarmRequest, style: StyleKey, text: &str) {
+    let shaping = ShapeStyle {
+      weight: request.weight,
+      stretch: request.stretch,
+      size: request.size,
+      line_height: 0.0,
+      letter_spacing: 0.0,
+    };
+    let Some(shaped) = ShapedGlyphs::shape(fonts, request.face, text, &shaping, Fallback::Registered) else { return };
+    let mut by_face: Vec<(FaceId, Vec<u16>)> = Vec::new();
+    for g in &shaped.glyphs {
+      match by_face.iter_mut().find(|(face, _)| *face == g.face) {
+        Some((_, ids)) => {
+          if !ids.contains(&g.id) {
+            ids.push(g.id);
+          }
+        }
+        None => by_face.push((g.face, vec![g.id])),
+      }
+    }
+    for (face_id, ids) in by_face {
+      let Some(face) = fonts.face(face_id) else { continue };
+      self.warm_glyphs(face, StyleKey { face: face_id, ..style }, ids);
+    }
+  }
+
+  // Make `glyphs` of `style` at every phase on the worker: the ones the
+  // atlas lacks, has not queued and has not failed, in chunks.
+  fn warm_glyphs(&mut self, face: &Face, style: StyleKey, glyphs: Vec<u16>) {
     for phase in 0..PHASES {
       let missing: Vec<u16> = glyphs
         .iter()

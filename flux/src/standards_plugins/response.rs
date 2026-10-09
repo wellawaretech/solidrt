@@ -16,8 +16,8 @@ use crate::standards_plugins::headers::{headers_from_init, headers_from_pairs, H
 #[derive(JsLifetime)]
 #[rquickjs::class(rename = "Response")]
 pub struct Response<'js> {
-  /// The readable body: buffered bytes or a streamed (incoming) network body. The
-  /// OUTGOING stream case lives in `stream`, not here.
+  /// The readable body: buffered bytes or a streamed (incoming) network body. A
+  /// body held as a JS `ReadableStream` lives in `stream`, not here.
   #[qjs(skip_trace)]
   pub(crate) body: MessageBody,
   /// The body as a `ReadableStream`: given to the constructor

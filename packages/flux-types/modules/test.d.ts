@@ -114,9 +114,11 @@ declare module "flux:test" {
     /**
      * A number within half a unit of the last of `digits` decimal places
      * (default 2): the difference is below `10 ** -digits / 2`. The way to
-     * compare floating point results.
+     * compare floating point results. An array of numbers (a point, a
+     * normal, a motion) compares to one of the same length entry by entry,
+     * and a failure prints both arrays whole.
      */
-    toBeCloseTo(expected: number, digits?: number): void
+    toBeCloseTo(expected: number | readonly number[], digits?: number): void
 
     /**
      * For a function: calling it throws. With a string, the thrown error's

@@ -58,9 +58,9 @@ impl IncomingBody {
 
 /// The body of a `Request` or `Response`: either buffered bytes (a JS-constructed
 /// body, a server static response) or a live network stream (a fetch response, an
-/// incoming server request). Shared so both message types read bodies identically;
-/// the only extra case is a `Response`'s outgoing `async function*`, which lives in
-/// `Response::stream`, not here.
+/// incoming server request). Shared so both message types read bodies identically.
+/// A body held as a JS `ReadableStream` (one given to the `Response` constructor,
+/// or the one `.body` handed out) lives in the message's `stream` field, not here.
 pub(crate) enum MessageBody {
   Buffered(BodyState),
   Incoming(IncomingBody),

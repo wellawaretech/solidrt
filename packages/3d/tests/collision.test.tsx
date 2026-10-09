@@ -18,7 +18,6 @@ const DIGITS = 3
 // The mover's default skin, what the landing gap is measured in.
 const SKIN = 0.01
 
-let rounded = (v: readonly number[]) => v.map(x => Number(x.toFixed(DIGITS)) + 0)
 
 function world() {
   let scene = createScene(SIZE, SIZE, { clearColor: [0.07, 0.07, 0.1, 1], label: "collision" })
@@ -82,9 +81,9 @@ test("sweep is exact: the analytic time, the face normal and the touch point, an
   let hits = scene.sweep({ center: [-5, 0, 0], radius: 0.5 }, [10, 0, 0], { meshes: [cube] })
   expect(hits.length).toBe(1)
   let hit = hits[0]!
-  expect(rounded([hit.time])).toEqual([0.35])
-  expect(rounded(hit.normal)).toEqual([-1, 0, 0])
-  expect(rounded(hit.point)).toEqual([-1, 0, 0])
+  expect(hit.time).toBeCloseTo(0.35, DIGITS)
+  expect(hit.normal).toBeCloseTo([-1, 0, 0], DIGITS)
+  expect(hit.point).toBeCloseTo([-1, 0, 0], DIGITS)
   expect(scene.sweep({ center: [-5, 0, 0], radius: 0.5 }, [3, 0, 0], { meshes: [cube] }).length).toBe(0)
 })
 
@@ -93,7 +92,7 @@ test("testing is in world space: a scaled cube is hit where its scaled face is",
   // The wide cube's near face is at x = 8, not at its unit box's x = 9.5.
   let scaled = scene.sweep({ center: [3, 0, 0], radius: 0.5 }, [10, 0, 0], { meshes: [wide] })
   expect(scaled.length).toBe(1)
-  expect(rounded([scaled[0]!.time])).toEqual([0.45])
+  expect(scaled[0]!.time).toBeCloseTo(0.45, DIGITS)
 })
 
 test("the slide filter: along a contact nothing, into it time 0 with the surface normal, away from it nothing", async app => {
@@ -105,8 +104,8 @@ test("the slide filter: along a contact nothing, into it time 0 with the surface
   expect(scene.sweep(resting, [0.5, 0, 0], { meshes: [cube] }).length).toBe(0)
   let press = scene.sweep(resting, [0.5, -0.5, 0], { meshes: [cube] })
   expect(press.length).toBe(1)
-  expect(rounded([press[0]!.time])).toEqual([0])
-  expect(rounded(press[0]!.normal)).toEqual([0, 1, 0])
+  expect(press[0]!.time).toBeCloseTo(0, DIGITS)
+  expect(press[0]!.normal).toBeCloseTo([0, 1, 0], DIGITS)
   expect(scene.sweep(resting, [0, 1, 0], { meshes: [cube] }).length).toBe(0)
 })
 
@@ -129,9 +128,9 @@ test("the box tier: an instanced mesh contacts by its population box like any su
   expect(contacts.length).toBe(1)
   let contact = contacts[0]!
   expect(contact.mesh).toBe(instanced)
-  expect(rounded([contact.depth])).toEqual([0.2])
-  expect(rounded(contact.normal)).toEqual([0, -1, 0])
-  expect(rounded(contact.point)).toEqual([0, 9, 0])
+  expect(contact.depth).toBeCloseTo(0.2, DIGITS)
+  expect(contact.normal).toBeCloseTo([0, -1, 0], DIGITS)
+  expect(contact.point).toBeCloseTo([0, 9, 0], DIGITS)
 })
 
 test("moveAndSlide lands a capsule a skin above the floor and reports it", async app => {
@@ -139,8 +138,8 @@ test("moveAndSlide lands a capsule a skin above the floor and reports it", async
   let body = { a: [0, 3, 0] as Vec3, b: [0, 4, 0] as Vec3, radius: 0.5 }
   let move = moveAndSlide(scene, body, [0, -3, 0], { meshes: [cube] })
   expect(move.floor).not.toBeNull()
-  expect(rounded(move.floor!)).toEqual([0, 1, 0])
-  expect(rounded([move.motion[1]])).toEqual([-(1.5 - SKIN)])
+  expect(move.floor!).toBeCloseTo([0, 1, 0], DIGITS)
+  expect(move.motion[1]).toBeCloseTo(-(1.5 - SKIN), DIGITS)
   expect(move.wall).toBe(false)
   expect(move.ceiling).toBe(false)
 })

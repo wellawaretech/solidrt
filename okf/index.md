@@ -382,6 +382,12 @@ Shaped, not started.
   such minimum and React Native layouts never need the escape. Decide which
   default solidrt wants, with the text and scroll contracts measured against
   it.
+- **[Sockets, p2p streams and child stdin cannot be piped into](backlog/flux-duplex-streams.md)** [2026-10-09]
+  Bodies and child output are ReadableStreams since web-streams, but the byte
+  duplexes left outside (flux:net Conn, flux:p2p P2pStream, a spawned child's
+  stdin) still write through write()/closeWrite(), so nothing can pipeTo a
+  socket or a child; give each the readable/writable pair, which for p2p first
+  needs a write with backpressure in forge.
 - **[Frame driver pacing contract](backlog/frame-driver-pacing-contract.md)** [2026-08-14]
   Pacing verdicts cost 90 s on-device censuses because the frame driver cannot
   run against a synthetic vsync grid; stage 1, the harness in alloy's tests,

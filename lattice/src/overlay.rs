@@ -50,6 +50,7 @@ pub fn warm(platform: &PlatformContext) {
     weight: weight_value(style.font_weight),
     stretch: style.font_stretch,
     italic: style.font_style == FontStyle::Italic,
+    text: None,
   });
 }
 

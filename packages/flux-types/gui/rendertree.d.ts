@@ -212,17 +212,25 @@ declare module "flux:rendertree" {
    */
   export function prepareText(text: string, options?: MeasureTextOptions): PreparedText
   /**
-   * Make the glyph cells of printable ASCII for these font styles ahead of
-   * their first use, on the engine's worker thread: the type scale an app
-   * draws its screens in, called at startup under the splash, so a first
-   * paint in any of them does not stop to make them. A cell a text needs
-   * that is not in the atlas is made in that frame, so text never draws
-   * with glyphs missing; warming only moves that work ahead of time. Each
-   * entry names a font (family, size, weight, style) as a `<text>` would;
-   * `lineHeight`, `maxLines`, `carets` and `runs` are ignored. Glyphs
-   * outside ASCII are made at first use.
+   * One font to warm for {@link warmText}: a font (family, size, weight,
+   * style) as a `<text>` names it, and optionally a string the app will
+   * draw in it.
    */
-  export function warmText(styles: MeasureTextOptions[]): void
+  export type WarmTextEntry = MeasureTextOptions & { text?: string }
+  /**
+   * Make glyph cells ahead of their first use, on the engine's worker
+   * thread: the type scale an app draws its screens in, called at startup
+   * under the splash, so a first paint in any of them does not stop to
+   * make them. A cell a text needs that is not in the atlas is made in
+   * that frame, so text never draws with glyphs missing; warming only
+   * moves that work ahead of time. Each entry names a font as a `<text>`
+   * would (`lineHeight`, `maxLines`, `carets` and `runs` are ignored) and
+   * warms its printable ASCII; an entry with a `text` also warms the
+   * glyphs that string shapes to in the font, a ligature, a curly quote or
+   * a letter beyond ASCII included, on whichever face covers it. Anything
+   * else is made at first use.
+   */
+  export function warmText(entries: WarmTextEntry[]): void
   /** How every text is rendered, for {@link setTextRendering}. */
   export interface TextRenderingOptions {
     /**

@@ -30,7 +30,14 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &c
 
   let available_space =
     taffy::Size { width: AvailableSpace::Definite(width), height: AvailableSpace::Definite(height) };
-  let mut layout_ctx = LayoutContext { render_tree: tree, platform, alloy, hidden_depth: 0, animated: false };
+  let mut layout_ctx = LayoutContext {
+    render_tree: tree,
+    platform,
+    alloy,
+    hidden_depth: 0,
+    animated: false,
+    paint_cleared: std::collections::HashSet::new(),
+  };
   taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
   // Declaring nodes the pass moved or resized slide from the box they were
   // painted at; the children of the resizing ones lay out against it.

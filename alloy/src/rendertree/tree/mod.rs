@@ -527,9 +527,10 @@ impl RenderTree {
   /// The invalidate_paint walk for a batch of start nodes sharing one
   /// `visited` set: an ancestor already cleared by an earlier walk in the
   /// batch ends the walk, so N animated siblings clear their shared
-  /// ancestors once per frame instead of once per write. Idempotent per
-  /// node, so stopping at a visited ancestor loses nothing.
-  fn invalidate_paint_batched(&self, node_id: u64, visited: &mut HashSet<u64>) {
+  /// ancestors once per frame instead of once per write, and a layout
+  /// pass clears what a resize moved once per node (LayoutContext).
+  /// Idempotent per node, so stopping at a visited ancestor loses nothing.
+  pub(crate) fn invalidate_paint_batched(&self, node_id: u64, visited: &mut HashSet<u64>) {
     let mut current = Some(node_id);
     while let Some(id) = current {
       if !visited.insert(id) {

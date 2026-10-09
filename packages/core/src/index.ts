@@ -94,7 +94,7 @@ export type {
   Color,
   Pct,
 } from "./types"
-export type { MeasureTextOptions, PreparedText, TextRunRange, TextUnit } from "flux:rendertree"
+export type { MeasureTextOptions, PreparedText, TextRunRange, TextUnit, WarmTextEntry } from "flux:rendertree"
 
 // A percentage value for dimensional props (e.g. transformOrigin): `pct(50)` is
 // half the element box. Keeps percentages a first-class branded value rather

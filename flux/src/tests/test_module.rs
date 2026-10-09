@@ -370,6 +370,14 @@ fn to_be_close_to_passes_within_half_a_unit_of_the_last_digit() {
       ["infinity", () => expect(Infinity).toBeCloseTo(Infinity), true],
       ["nan", () => expect(NaN).toBeCloseTo(1), false],
       ["not a number", () => expect("1").toBeCloseTo(1), false],
+      ["vector", () => expect([0.0004, -1, 0]).toBeCloseTo([0, -1, 0], 3), true],
+      ["vector entry off", () => expect([0.0006, -1, 0]).toBeCloseTo([0, -1, 0], 3), false],
+      ["vector negative zero", () => expect([-0]).toBeCloseTo([0]), true],
+      ["vector length", () => expect([1, 2]).toBeCloseTo([1, 2, 3]), false],
+      ["vector against a number", () => expect([1]).toBeCloseTo(1), false],
+      ["number against a vector", () => expect(1).toBeCloseTo([1]), false],
+      ["vector not of numbers", () => expect(["1"]).toBeCloseTo([1]), false],
+      ["not vector", () => expect([1, 2]).not.toBeCloseTo([1, 3]), true],
       "#
     ),
     ""

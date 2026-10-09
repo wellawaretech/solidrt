@@ -8,6 +8,7 @@ use taffy::{
 
 use super::super::tree::RenderTree;
 use crate::rendertree::{replaced_size, ElementKind, Measurable, MeasureContext, PlatformContext};
+use std::collections::HashSet;
 
 pub struct LayoutData {
   pub style: Style,
@@ -98,6 +99,11 @@ pub struct LayoutContext<'a> {
   // set_unrounded_layout starts no slide from them and drops any slide of
   // the nodes it places.
   pub animated: bool,
+  // The nodes whose retained paint this pass has cleared (the `visited`
+  // set of `invalidate_paint_batched`): a box write clears up to the first
+  // ancestor an earlier write already cleared, so a resize that moves
+  // nearly every node costs one walk per node, not one per node per depth.
+  pub paint_cleared: HashSet<u64>,
 }
 
 impl<'a> LayoutContext<'a> {
@@ -349,7 +355,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
       // else's relayout (a sibling grew) becomes visible, so its old and
       // new extents join the frame damage.
       self.render_tree.note_damage(id);
-      self.render_tree.invalidate_paint(id);
+      self.render_tree.invalidate_paint_batched(id, &mut self.paint_cleared);
       if moved {
         self.render_tree.note_reflow(id, old);
       }

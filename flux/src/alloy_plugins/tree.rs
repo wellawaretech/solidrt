@@ -656,7 +656,7 @@ fn measure_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) 
 // Warm the text atlas for a list of font styles (see TextAtlas): each
 // entry's font options through the JSX decoders onto a Text, its run style
 // resolved to a face and queued at the next frame, when the display scale
-// is known.
+// is known, with the entry's `text` if it names one.
 fn warm_text<'js>(ctx: Ctx<'js>, styles: rquickjs::Array<'js>) -> rquickjs::Result<()> {
   let s = state(&ctx);
   let platform = &s.gui.platform;
@@ -668,12 +668,14 @@ fn warm_text<'js>(ctx: Ctx<'js>, styles: rquickjs::Array<'js>) -> rquickjs::Resu
     apply_font_options(&ctx, &mut node, &opts)?;
     let style = node.run_style();
     let Some(face) = fonts.resolve(&style.font_family) else { continue };
+    let text: Option<String> = opts.get("text")?;
     atlas.request_warm(alloy::rendertree::text::glyphs::WarmRequest {
       face,
       size: style.font_size,
       weight: alloy::rendertree::text::glyphs::weight_value(style.font_weight),
       stretch: style.font_stretch,
       italic: style.font_style == alloy::impellers::FontStyle::Italic,
+      text,
     });
   }
   Ok(())

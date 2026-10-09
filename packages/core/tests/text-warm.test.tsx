@@ -6,7 +6,7 @@
 
 import { test, expect } from "@solidrt/test"
 import { warmText } from "@solidrt/core"
-import type { MeasureTextOptions } from "@solidrt/core"
+import type { MeasureTextOptions, WarmTextEntry } from "@solidrt/core"
 
 const SIZE = 16
 const WEIGHT = 500 as const
@@ -49,4 +49,19 @@ test("warming the same styles again costs nothing and changes nothing", async ap
   warmText(styles)
   await app.settle()
   expect(inked(text.pixels())).toBe(before)
+})
+
+test("an entry with a text warms the glyphs the text shapes to", async app => {
+  // Curly quotes, an accented letter and a ligature pair: glyphs the
+  // style's ASCII warm-up never makes.
+  let headline = "\u201cCaf\u00e9 office\u201d"
+  let entries: WarmTextEntry[] = [{ fontFamily: "sans", fontSize: SIZE * 2, fontWeight: 700, text: headline }]
+  warmText(entries)
+  let text = await app.mount(() => (
+    <text fontSize={SIZE * 2} fontWeight={700} color="#ffffff">
+      {headline}
+    </text>
+  ))
+  await app.settle()
+  expect(inked(text.pixels())).toBeGreaterThan(0)
 })

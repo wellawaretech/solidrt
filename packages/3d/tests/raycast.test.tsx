@@ -39,7 +39,6 @@ const DIGITS = 3
 const LIFT = 6
 
 let down: Vec3 = [0, 0, -1]
-let rounded = (v: readonly number[]) => v.map(x => Number(x.toFixed(DIGITS)) + 0)
 
 function world() {
   let scene = createScene(SIZE, SIZE, { clearColor: [0.07, 0.07, 0.1, 1], label: "raycast" })
@@ -122,8 +121,8 @@ test("an ordinary mesh picks per triangle: hits carry face, uv and normal, and a
   expect(hit.mesh).toBe(merged)
   expect(hit.face).not.toBe(undefined)
   expect(hit.uv).not.toBe(undefined)
-  expect(rounded(hit.normal)).toEqual([0, 0, 1])
-  expect(rounded([hit.distance])).toEqual([9.5])
+  expect(hit.normal).toBeCloseTo([0, 0, 1], DIGITS)
+  expect(hit.distance).toBeCloseTo(9.5, DIGITS)
   expect(scene.raycast([0, 0, 10], down).length).toBe(0)
 })
 
@@ -135,7 +134,7 @@ test("an instanced mesh is box-only: its hit carries the struck face's normal an
   expect(hit.mesh).toBe(instanced)
   expect(hit.face).toBe(undefined)
   expect(hit.uv).toBe(undefined)
-  expect(rounded(hit.normal)).toEqual([0, 0, 1])
+  expect(hit.normal).toBeCloseTo([0, 0, 1], DIGITS)
 })
 
 test("an instanced mesh with bounds picks per instance and never by its own box", async app => {
@@ -191,5 +190,5 @@ test("updateVertices moves the pick with the mesh: gone from the rest pose, tria
   expect(moved.length).toBe(1)
   expect(moved[0]!.mesh).toBe(deforming)
   expect(moved[0]!.face).not.toBe(undefined)
-  expect(rounded([moved[0]!.distance])).toEqual([9.5])
+  expect(moved[0]!.distance).toBeCloseTo(9.5, DIGITS)
 })
