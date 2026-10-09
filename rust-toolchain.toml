@@ -11,6 +11,11 @@
 # checkout/CI, without a manual `rustup target add`. A channel pin means rustup
 # only installs the targets named here, not whatever a CI action added to a
 # different toolchain; keep this in sync with ANDROID_ABIS.
+#
+# The same holds for components: rustup auto-installs the pinned toolchain with
+# the minimal profile, which has no rustfmt, so `make format-check` (CI, the
+# pre-commit hook) needs it named here.
 [toolchain]
 channel = "1.96.0"
+components = ["rustfmt"]
 targets = ["aarch64-linux-android", "x86_64-linux-android", "armv7-linux-androideabi"]
