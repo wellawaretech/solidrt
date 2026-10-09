@@ -2,8 +2,7 @@
 //!
 //! The scripting-engine-independent half of `flux:p2p`: the bound `Endpoint`
 //! (keypair identity, dial/accept, ticket encoding, path introspection), the
-//! bidirectional `Stream` (pull-based read + queued writer), and the iroh-facing
-//! free functions. It names no scripting-engine types, and no iroh types cross
+//! bidirectional `Stream` (a byte duplex), and the iroh-facing free functions. It names no scripting-engine types, and no iroh types cross
 //! its boundary: `connect`/`accept_one` hand back an assembled `Stream`, and
 //! `connect_io`/`accept_io` a byte duplex. The marshalling layer (flux
 //! `forge_plugins/p2p.rs`) decodes JS args into these types, builds the JS
@@ -13,34 +12,32 @@
 //! ALPN (RFC 7301): an opaque identifier negotiated in the handshake that both
 //! selects and routes the connection. The bytes are passed through verbatim.
 //!
-//! A `Stream` is a byte-oriented duplex: reads are pull-based (`read_chunk` pulls
-//! at most `READ_CHUNK` bytes, `Ok(None)` at end-of-stream) so the transport only
-//! advances as the caller iterates; writes go through an mpsc queue drained by
-//! the `StreamWriter` handed out beside the stream (the caller spawns its `run`,
-//! since spawning is host-specific), the same split as the websocket
-//! `SocketSink`.
+//! A `Stream` is a byte-oriented duplex with the `net::Conn` shape: the read
+//! half is a `ByteStream` view (`readable()`) that advances only as it is
+//! polled; a write awaits the transport under a lock, so a fast producer sees
+//! QUIC's flow control as backpressure and a failed write reaches the caller.
+//! Nothing runs in the background.
 
-use std::cell::RefCell;
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 
-use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream, TransportAddrUsage};
+use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream, TransportAddrUsage, VarInt};
 use iroh::{Endpoint as IrohEndpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 
-use crate::logger::Logger;
+use crate::stream::{holding, read_half, ByteStream, Closing, ReadSlot};
 use crate::Value;
 
-/// Read granularity: each `read_chunk` pulls at most this many bytes off a stream.
+/// Read granularity: each read off a `Stream` pulls at most this many bytes.
 const READ_CHUNK: usize = 64 * 1024;
 
-/// A message queued from the caller for the per-stream writer task.
-enum WriteMsg {
-  Data(Vec<u8>),
-  Finish,
-}
+/// The application error code an aborted stream resets its send half with.
+/// Nothing reads it: the peer sees the reset itself.
+const RESET_CODE: u32 = 0;
+
+/// What a write reports once the stream was closed (not aborted).
+const STREAM_CLOSED: &str = "stream is closed";
 
 /// A bound iroh endpoint with a stable keypair. Cheaply cloned (the iroh handle
 /// is itself a clone of shared state plus the 32-byte secret), so the caller can
@@ -108,9 +105,8 @@ impl Endpoint {
 
   /// Dial a peer and open one bidirectional stream over `protocol`. `peer` is
   /// either a `ticket` (connects directly, no discovery) or a bare endpoint `id`
-  /// (needs discovery to resolve the peer's address). Returns the assembled
-  /// `Stream` plus its writer task, which the caller spawns.
-  pub async fn connect(&self, peer: String, protocol: String) -> Result<(Rc<Stream>, StreamWriter), String> {
+  /// (needs discovery to resolve the peer's address).
+  pub async fn connect(&self, peer: String, protocol: String) -> Result<Stream, String> {
     let (conn, send, recv) = self.connect_raw(peer, protocol).await?;
     Ok(Stream::open(conn, send, recv))
   }
@@ -131,9 +127,10 @@ impl Endpoint {
   }
 
   /// Accept the next incoming connection matching `alpn` and open its first
-  /// bidirectional stream as a `Stream` plus its writer task. `Ok(None)` once
-  /// the endpoint stops accepting (closed).
-  pub async fn accept_one(&self, alpn: &[u8]) -> Result<Option<(Rc<Stream>, StreamWriter)>, String> {
+  /// bidirectional stream as a `Stream`: it arrives with the dialer's first
+  /// bytes, since QUIC announces a stream by its data. `Ok(None)` once the
+  /// endpoint stops accepting (closed).
+  pub async fn accept_one(&self, alpn: &[u8]) -> Result<Option<Stream>, String> {
     Ok(accept_one(&self.inner, alpn).await?.map(|(conn, send, recv)| Stream::open(conn, send, recv)))
   }
 
@@ -219,86 +216,108 @@ impl From<ConnInfo> for Value {
   }
 }
 
-/// A single bidirectional p2p stream: a byte duplex. Reads are pull-based; writes
-/// go through the writer task (`StreamWriter`) draining the queue. Holds the
-/// `Connection` only to keep the QUIC connection (and thus the stream) alive for
-/// the stream's lifetime.
+/// A single bidirectional p2p stream: a byte duplex. The read half is read
+/// through the `readable()` view; writes await the send half under a lock.
+/// Holds the `Connection` to keep the QUIC connection (and thus the stream)
+/// alive for the stream's lifetime; the read view holds its own handle, so a
+/// consumer still reading keeps it up after the `Stream` is gone.
 pub struct Stream {
   conn: Connection,
-  recv: RefCell<Option<RecvStream>>,
-  tx: mpsc::UnboundedSender<WriteMsg>,
-}
-
-/// The send half of a `Stream` plus the queue feeding it, handed out beside
-/// the stream so the host spawns `run` where its tasks live (spawning is
-/// host-specific).
-pub struct StreamWriter {
-  send: SendStream,
-  rx: mpsc::UnboundedReceiver<WriteMsg>,
-}
-
-impl StreamWriter {
-  /// Drain queued writes onto the send half in order, then finish it. A write
-  /// error or a closed queue ends the task.
-  pub async fn run(mut self, logger: &Logger) {
-    while let Some(msg) = self.rx.recv().await {
-      match msg {
-        WriteMsg::Data(buf) => {
-          if let Err(e) = self.send.write_all(&buf).await {
-            logger.warn(&format!("[flux] p2p write error: {e}"));
-            break;
-          }
-        }
-        WriteMsg::Finish => break,
-      }
-    }
-    let _ = self.send.finish();
-  }
+  recv: ReadSlot<RecvStream>,
+  send: Mutex<Option<SendStream>>,
+  closing: Closing,
 }
 
 impl Stream {
-  /// Assemble a stream and its writer from an opened bi-stream.
-  fn open(conn: Connection, send: SendStream, recv: RecvStream) -> (Rc<Stream>, StreamWriter) {
-    let (tx, rx) = mpsc::unbounded_channel::<WriteMsg>();
-    let stream = Rc::new(Stream { conn, recv: RefCell::new(Some(recv)), tx });
-    (stream, StreamWriter { send, rx })
+  /// Assemble a stream from an opened bi-stream.
+  fn open(conn: Connection, send: SendStream, recv: RecvStream) -> Stream {
+    Stream { conn, recv: ReadSlot::new(recv), send: Mutex::new(Some(send)), closing: Closing::new() }
   }
 
-  /// Pull the next chunk (at most `READ_CHUNK` bytes). `Ok(None)` at end-of-stream
-  /// or once the recv half is gone (closed). The recv half is taken out before the
-  /// await and put back after, so no borrow is held across it.
-  pub async fn read_chunk(&self) -> Result<Option<Vec<u8>>, String> {
-    let Some(mut recv) = self.recv.borrow_mut().take() else {
-      return Ok(None);
+  /// The recv half as a `ByteStream`: at most `READ_CHUNK` bytes per chunk,
+  /// pulled as the consumer polls, ending at end-of-stream or when the stream
+  /// is closed (as an error when aborted). One view per stream: dropping it
+  /// releases the recv half, which tells the peer to stop sending (QUIC
+  /// STOP_SENDING), while the send half stays usable.
+  pub fn readable(&self) -> ByteStream {
+    holding(read_half(&self.recv, &self.closing, READ_CHUNK), self.conn.clone())
+  }
+
+  /// Write all of `bytes` on the send half, serialized behind the lock and
+  /// paced by QUIC flow control. Errors once the send half was finished, the
+  /// stream closed or aborted, or when the peer stopped reading or went away.
+  pub async fn write(&self, bytes: Vec<u8>) -> Result<(), String> {
+    let mut guard = self.send.lock().await;
+    let Some(send) = guard.as_mut() else {
+      return Err(self.write_closed());
     };
-    let mut buf = vec![0u8; READ_CHUNK];
-    // iroh's read returns Ok(None) at end-of-stream, Ok(Some(n)) for n bytes read.
-    let n = recv.read(&mut buf).await.map_err(|e| e.to_string())?;
-    match n {
-      None => Ok(None),
-      Some(n) => {
-        buf.truncate(n);
-        *self.recv.borrow_mut() = Some(recv);
-        Ok(Some(buf))
+    let r = tokio::select! {
+      r = send.write_all(&bytes) => r.map_err(|e| e.to_string()),
+      _ = self.closing.closed() => Err(self.closing.write_error(STREAM_CLOSED)),
+    };
+    if self.closing.is_closed() {
+      // close()/abort() could not reach the locked send half; end it here.
+      if let Some(send) = guard.take() {
+        self.end_send(send);
       }
+    }
+    r
+  }
+
+  /// Half-close: finish the send half (QUIC FIN) after the writes so far,
+  /// keeping the recv half open for replies. After it, `write` errors.
+  /// Idempotent, and a no-op once the stream is closed.
+  pub async fn finish(&self) -> Result<(), String> {
+    let mut guard = self.send.lock().await;
+    let Some(mut send) = guard.take() else {
+      return Ok(());
+    };
+    if self.closing.is_closed() {
+      self.end_send(send);
+      return Err(self.closing.write_error(STREAM_CLOSED));
+    }
+    send.finish().map_err(|e| e.to_string())
+  }
+
+  /// Tear the stream down gracefully: a pending read ends, the recv half is
+  /// released and the send half finished (QUIC FIN). Idempotent.
+  pub fn close(&self) {
+    self.closing.close();
+    self.release();
+  }
+
+  /// Tear the stream down with an error: as `close()`, except that the send
+  /// half is reset instead of finished, so the peer's read fails rather than
+  /// ending cleanly, and a pending or later read here reports `reason`.
+  /// Idempotent (the first end wins).
+  pub fn abort(&self, reason: String) {
+    self.closing.abort(reason);
+    self.release();
+  }
+
+  fn release(&self) {
+    self.recv.close();
+    if let Ok(mut guard) = self.send.try_lock() {
+      if let Some(send) = guard.take() {
+        self.end_send(send);
+      }
+    } // else a write is in flight; its closed branch ends the half
+  }
+
+  /// End a send half the way the stream ended: reset after an abort, else
+  /// finished (which dropping an unfinished half does).
+  fn end_send(&self, mut send: SendStream) {
+    if self.closing.reason().is_some() {
+      let _ = send.reset(VarInt::from_u32(RESET_CODE));
     }
   }
 
-  /// Queue bytes on the send half.
-  pub fn write(&self, bytes: Vec<u8>) {
-    let _ = self.tx.send(WriteMsg::Data(bytes));
-  }
-
-  /// Finish the send half (QUIC FIN) after queued writes flush. The recv half
-  /// stays open for replies.
-  pub fn finish(&self) {
-    let _ = self.tx.send(WriteMsg::Finish);
-  }
-
-  /// Tear the stream down: finish the send half and stop reading.
-  pub fn close(&self) {
-    let _ = self.tx.send(WriteMsg::Finish);
-    self.recv.borrow_mut().take();
+  fn write_closed(&self) -> String {
+    if self.closing.is_closed() {
+      self.closing.write_error(STREAM_CLOSED)
+    } else {
+      "send half is finished".to_string()
+    }
   }
 
   /// The remote peer's endpoint id.
@@ -464,8 +483,6 @@ async fn accept_one(ep: &IrohEndpoint, alpn: &[u8]) -> Result<Option<(Connection
   }
 }
 
-/// Drain queued writes onto the send half in order, then finish it. A write
-/// error or a closed queue ends the task.
 fn encode_hex(bytes: &[u8]) -> String {
   bytes.iter().map(|b| format!("{b:02x}")).collect()
 }

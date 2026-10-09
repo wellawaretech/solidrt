@@ -3,7 +3,7 @@
 //! Marshalling only: decode JS args into the native types of the engine-free
 //! `forge::p2p` core, drive its `Endpoint`/`Stream` methods, and encode the
 //! results back to JS. The iroh-facing logic (binding, dial/accept, ticket
-//! encoding, the read/writer mechanics) lives in `forge::p2p`.
+//! encoding, the read/write mechanics) lives in `forge::p2p`.
 //!
 //! Surface (stage 1, deliberately minimal):
 //! - `Endpoint.create(opts)` binds an iroh endpoint. Identity is a keypair; an
@@ -12,16 +12,18 @@
 //! - `endpoint.connect(peer, protocol)` dials a peer (by `ticket` or bare `id`)
 //!   and opens one bidirectional stream.
 //! - `endpoint.accept(protocol)` is an async-iterable of incoming streams.
-//! - A `P2pStream` is a byte duplex: read with `for await (chunk of stream)`,
-//!   write with `stream.write(bytes)`, end the send half with `stream.closeWrite()`.
+//! - A `P2pStream` is a byte duplex as the web shapes it: `stream.readable`
+//!   reads, `stream.writable` writes, `writable.close()` ends the send half
+//!   (QUIC FIN, the recv half stays open), `writable.abort(reason)` resets it
+//!   and errors the stream, `stream.close()` tears it down cleanly.
 //!
 //! "protocol" is the JS-facing name for the QUIC/iroh ALPN. Out of scope for
 //! stage 1: unidirectional streams, multiple streams per peer, gossip/blobs, and
 //! key persistence (the caller stores the `secretKey` getter value itself).
 //!
 //! The stream-building paths (`connect`, the `accept` iterator's `next`) keep a
-//! hand-rolled `Promised` rather than `with_in_flight`: they must build a JS class
-//! and spawn the writer task, so the future captures `Ctx`. They report errors
+//! hand-rolled `Promised` rather than `with_in_flight`: they must build a JS
+//! class, so the future captures `Ctx`. They report errors
 //! with `Exception::throw_message` (a clean `Error`, no `IO Error:` prefix), the
 //! same clean rejection `with_in_flight`/`JsResult` give the other methods.
 
@@ -32,15 +34,15 @@ use std::rc::Rc;
 use rquickjs::class::Trace;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
-use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Value};
+use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object};
 
-use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, iter_result, with_in_flight, with_standing, OptArg, Step};
+use crate::plugins::marshal::{attach_async_iterator, iter_result, with_in_flight, OptArg};
 use crate::plugins::value::Neutral;
-use crate::standards_plugins::body::{extract_body_value, JsBytes};
-use forge::p2p::{decode_hex32, Endpoint, Stream, StreamWriter};
+use crate::standards_plugins::body::byte_stream_readable;
+use crate::standards_plugins::streams::writable_to;
+use forge::p2p::{decode_hex32, Endpoint, Stream};
 
 /// `next()` of the `accept` async-iterable: a promise resolving to an iterator
 /// result object (boxed so the closure has a nameable return type).
@@ -125,7 +127,7 @@ impl P2pEndpoint {
       let r = inner.connect(peer, protocol).await;
       drop(hold);
       match r {
-        Ok((stream, writer)) => P2pStream::create(&ctx2, stream, writer),
+        Ok(stream) => P2pStream::create(&ctx2, stream),
         Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
       }
     }))
@@ -148,8 +150,8 @@ impl P2pEndpoint {
         let r = inner.accept_one(&alpn).await;
         drop(hold);
         match r {
-          Ok(Some((stream, writer))) => {
-            let stream = P2pStream::create(&ctx2, stream, writer)?;
+          Ok(Some(stream)) => {
+            let stream = P2pStream::create(&ctx2, stream)?;
             iter_result(&ctx2, Some(stream.into_js(&ctx2)?))
           }
           Ok(None) => iter_result(&ctx2, None),
@@ -185,8 +187,8 @@ impl P2pEndpoint {
   }
 }
 
-/// A single bidirectional p2p stream: a thin JS wrapper over the forge stream
-/// core. It is its own async iterator (`for await` reads the recv half).
+/// A single bidirectional p2p stream: a byte duplex as a `readable`/`writable`
+/// pair of web streams over the forge `Stream`, plus `close()` and `remoteId`.
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class(rename = "P2pStream")]
 pub struct P2pStream {
@@ -195,53 +197,51 @@ pub struct P2pStream {
 }
 
 impl P2pStream {
-  /// Build the JS stream object over the forge `Stream`: spawn its writer task
-  /// (spawning is host-specific, so it stays in marshalling) and make the
-  /// instance async-iterable.
-  fn create<'js>(ctx: &Ctx<'js>, inner: Rc<Stream>, writer: StreamWriter) -> rquickjs::Result<Class<'js, P2pStream>> {
-    let hold = PendingOps::of(ctx).standing("p2p stream");
-    let logger = ctx.logger();
-    ctx.spawn(async move {
-      writer.run(&logger).await;
-      drop(hold);
-    });
-
+  /// Build the JS stream object over the forge `Stream`: the class instance
+  /// with its `readable` (the recv half, a read waiting on the peer held as
+  /// standing) and `writable` (the send half; a write is work in flight) as
+  /// own properties. The streams capture only the shared `Rc` of the core.
+  fn create<'js>(ctx: &Ctx<'js>, stream: Stream) -> rquickjs::Result<Class<'js, P2pStream>> {
+    let inner = Rc::new(stream);
+    let pending = PendingOps::of(ctx);
+    let readable = byte_stream_readable(ctx, inner.readable(), move || pending.standing("p2p stream read"))?;
+    let writable = writable_to(
+      ctx,
+      "P2pStream.writable",
+      "p2p write",
+      {
+        let stream = inner.clone();
+        move |bytes| {
+          let stream = stream.clone();
+          Box::pin(async move { stream.write(bytes).await })
+        }
+      },
+      {
+        let stream = inner.clone();
+        move || {
+          let stream = stream.clone();
+          Box::pin(async move { stream.finish().await })
+        }
+      },
+      {
+        let stream = inner.clone();
+        move |reason| {
+          stream.abort(reason);
+          Box::pin(std::future::ready(Ok(())))
+        }
+      },
+    )?;
     let instance = Class::instance(ctx.clone(), P2pStream { inner })?;
-    attach_async_iterator(ctx, &instance)?;
+    instance.set("readable", readable)?;
+    instance.set("writable", writable)?;
     Ok(instance)
   }
 }
 
 #[rquickjs::methods]
 impl P2pStream {
-  /// Async-iterator step: resolve `{ value: Uint8Array, done: false }` for the
-  /// next chunk, or `{ done: true }` at end-of-stream. Pull-based, so the
-  /// transport only advances as JS iterates.
-  pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Step<JsBytes>>>>> {
-    let inner = self.inner.clone();
-    Ok(with_standing(
-      &ctx,
-      "p2p stream read",
-      async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) },
-    ))
-  }
-
-  /// Queue bytes (string or Uint8Array) on the send half.
-  pub fn write(&self, data: Value<'_>) -> rquickjs::Result<()> {
-    let bytes = extract_body_value(&data, "P2pStream.write")?;
-    self.inner.write(bytes);
-    Ok(())
-  }
-
-  /// Half-close: end the send half (QUIC FIN) after any queued writes flush.
-  /// The recv half stays open for replies.
-  #[qjs(rename = "closeWrite")]
-  pub fn close_write(&self) -> rquickjs::Result<()> {
-    self.inner.finish();
-    Ok(())
-  }
-
-  /// Tear the stream down: end the send half and stop reading.
+  /// Tear the stream down: a pending read ends, the recv half is released and
+  /// the send half finished.
   pub fn close(&self) -> rquickjs::Result<()> {
     self.inner.close();
     Ok(())

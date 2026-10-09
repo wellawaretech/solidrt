@@ -68,27 +68,41 @@ declare module "flux:net" {
   }
 
   /**
-   * A connected TCP stream: a byte duplex. It is its own async iterator, so
-   * `for await (let chunk of conn)` reads it until end-of-stream.
+   * A connected TCP stream: a byte duplex as a `readable`/`writable` pair of
+   * web streams, the shape sockets have in every runtime with web streams.
+   * `for await (let chunk of conn.readable)` reads it, `conn.readable
+   * .pipeTo(other.writable)` is one half of a proxy, and a pipe carries the
+   * half-close: when the source ends, the destination's write side closes.
    */
-  export class Conn implements AsyncIterable<Uint8Array> {
+  export class Conn {
     /** The remote peer's address, e.g. "192.168.2.37:445". */
     readonly remoteAddr: string
-    /** Write all of `data`. Resolves once it is handed to the OS. */
-    write(data: string | Uint8Array): Promise<void>
     /**
-     * Half-close: flush and end the write side, so the peer sees end-of-stream
-     * while this side keeps reading until the peer closes. The way to signal
-     * "request done" to protocols that answer after EOF. After it, {@link write}
-     * throws. Idempotent, and a no-op once the connection is closed.
+     * What the peer sends, one chunk per read, pulled only as far as it is
+     * read. Ends when the peer ends its write side or closes, or on
+     * {@link close}; errors with the reason after `writable.abort(reason)`.
+     * `cancel()` stops reading and releases the read half: the write side
+     * stays usable and the connection stays open until {@link close}.
      */
-    closeWrite(): Promise<void>
+    readonly readable: ReadableStream<Uint8Array>
     /**
-     * Close the connection now: a pending read ends, the peer sees end-of-stream
-     * at once. Bytes already handed to the OS still flush.
+     * What to send: strings (as UTF-8) or `Uint8Array`s. A write resolves
+     * once the OS took the bytes, so a producer faster than the peer reads
+     * sees backpressure. `close()` is the half-close: it flushes and ends the
+     * write side, so the peer sees end-of-stream while this side keeps
+     * reading until the peer closes (the way to say "request done" to a
+     * protocol that answers after EOF); a later write rejects. `abort(reason)`
+     * tears the connection down with an error: a pending or later read of
+     * {@link readable} rejects with the reason. TCP has no abortive
+     * half-close, so the peer still sees a plain end-of-stream.
+     */
+    readonly writable: WritableStream<string | Uint8Array>
+    /**
+     * Close the connection now: a pending read ends, a pending write rejects,
+     * the peer sees end-of-stream at once. Bytes already handed to the OS
+     * still flush.
      */
     close(): void
-    [Symbol.asyncIterator](): AsyncIterator<Uint8Array>
   }
 
   /**

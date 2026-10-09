@@ -2,15 +2,19 @@
 //!
 //! Marshalling only: decode JS args into the engine-free `forge::net` core, drive
 //! its calls, and encode the results back to JS. The socket mechanics live in
-//! `forge::net`; this layer adds the JS surface, the async-iterable `Conn` /
-//! `Listener`, and the byte (`Uint8Array`) conversions.
+//! `forge::net`; this layer adds the JS surface, the `readable`/`writable`
+//! stream pair of a `Conn`, the async-iterable `Listener`, and the byte
+//! (`Uint8Array`) conversions.
 //!
 //! Surface:
 //! - `probe(host, port, opts?)` -> `"open" | "closed" | "filtered"`. The connect-
 //!   scan primitive: `closed` (a refusal) still means the host is up.
-//! - `connect(host, port, opts?)` -> `Conn`, a byte duplex: `for await (chunk of
-//!   conn)` reads, `await conn.write(bytes)` writes, `conn.close()` ends it,
-//!   `conn.closeWrite()` half-closes (end-of-writes, reads continue).
+//! - `connect(host, port, opts?)` -> `Conn`, a byte duplex as the web shapes
+//!   it: `conn.readable` (a `ReadableStream<Uint8Array>`) reads,
+//!   `conn.writable` (a `WritableStream`) writes, `writable.close()`
+//!   half-closes (end-of-writes, reads continue), `writable.abort(reason)`
+//!   tears the connection down with an error, `conn.close()` tears it down
+//!   cleanly. `a.readable.pipeTo(b.writable)` is a proxy half.
 //! - `listen(port, opts?)` -> `Listener`, an async-iterable of incoming `Conn`s;
 //!   `close()` releases the port and ends the iteration.
 //! - `udp(opts?)` -> `Udp`: `send` / `recv` plus the broadcast / multicast knobs
@@ -21,7 +25,7 @@
 //! - `interfaces()` -> the local interfaces (name / mac / flags / addrs), the
 //!   no-subprocess replacement for parsing `ip addr` to find the subnet to scan.
 //!
-//! Names follow flux idioms (factory functions, `timeoutMs`, async-iterables,
+//! Names follow flux idioms (factory functions, `timeoutMs`, web streams,
 //! `Uint8Array`); the socket-option setters borrow Node/BSD vocabulary
 //! (`setBroadcast`, `setMulticastTtl`, ...) where that is the expected term.
 //!
@@ -41,8 +45,9 @@ use rquickjs::{Array, Class, Ctx, Exception, FromJs, Function, IntoJs, JsLifetim
 
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, iter_result, with_in_flight, with_standing, OptArg, Step};
-use crate::standards_plugins::body::{extract_body_value, JsBytes};
+use crate::plugins::marshal::{attach_async_iterator, iter_result, with_in_flight, with_standing, OptArg};
+use crate::standards_plugins::body::{byte_stream_readable, extract_body_value};
+use crate::standards_plugins::streams::writable_to;
 
 // ---- free functions ---------------------------------------------------------
 
@@ -150,8 +155,8 @@ fn net_interfaces<'js>(ctx: Ctx<'js>) -> rquickjs::Result<Array<'js>> {
 
 // ---- Conn -------------------------------------------------------------------
 
-/// A connected TCP stream: a byte duplex. It is its own async iterator (`for await
-/// (chunk of conn)` reads the recv half). A thin wrapper over `forge::net::Conn`.
+/// A connected TCP stream: a byte duplex as a `readable`/`writable` pair of web
+/// streams over `forge::net::Conn`, plus `close()` and `remoteAddr`.
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class(rename = "Conn")]
 pub struct NetConn {
@@ -160,45 +165,49 @@ pub struct NetConn {
 }
 
 impl NetConn {
+  /// Build the JS `Conn`: the class instance with its `readable` (the read
+  /// half, a read waiting on the peer held as standing) and `writable` (the
+  /// write half; a write is work in flight) as own properties, like a child's
+  /// `stdout`. The streams capture only the shared `Rc` of the core.
   fn create<'js>(ctx: &Ctx<'js>, conn: forge::net::Conn) -> rquickjs::Result<Class<'js, NetConn>> {
-    let instance = Class::instance(ctx.clone(), NetConn { inner: Rc::new(conn) })?;
-    attach_async_iterator(ctx, &instance)?;
+    let inner = Rc::new(conn);
+    let pending = PendingOps::of(ctx);
+    let readable = byte_stream_readable(ctx, inner.readable(), move || pending.standing("socket read"))?;
+    let writable = writable_to(
+      ctx,
+      "Conn.writable",
+      "socket write",
+      {
+        let conn = inner.clone();
+        move |bytes| {
+          let conn = conn.clone();
+          Box::pin(async move { conn.write(bytes).await })
+        }
+      },
+      {
+        let conn = inner.clone();
+        move || {
+          let conn = conn.clone();
+          Box::pin(async move { conn.close_write().await })
+        }
+      },
+      {
+        let conn = inner.clone();
+        move |reason| {
+          conn.abort(reason);
+          Box::pin(std::future::ready(Ok(())))
+        }
+      },
+    )?;
+    let instance = Class::instance(ctx.clone(), NetConn { inner })?;
+    instance.set("readable", readable)?;
+    instance.set("writable", writable)?;
     Ok(instance)
   }
 }
 
 #[rquickjs::methods]
 impl NetConn {
-  /// Async-iterator step: `{ value: Uint8Array, done: false }` for the next chunk,
-  /// `{ done: true }` at EOF. Pull-based, so the socket only advances as JS reads.
-  pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Step<JsBytes>>>>> {
-    let inner = self.inner.clone();
-    Ok(with_standing(
-      &ctx,
-      "socket read",
-      async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) },
-    ))
-  }
-
-  /// Write all of `data` (string or Uint8Array). Resolves once it's handed off.
-  pub fn write<'js>(
-    &self,
-    ctx: Ctx<'js>,
-    data: Value<'js>,
-  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
-    let bytes = extract_body_value(&data, "Conn.write")?;
-    let inner = self.inner.clone();
-    Ok(with_in_flight(&ctx, "socket write", async move { inner.write(bytes).await }))
-  }
-
-  /// Half-close: end the write side (the peer sees FIN) while reads continue
-  /// until the peer closes. After it, `write` throws.
-  #[qjs(rename = "closeWrite")]
-  pub fn close_write<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
-    let inner = self.inner.clone();
-    Ok(with_in_flight(&ctx, "socket write", async move { inner.close_write().await }))
-  }
-
   /// Close the connection now: a pending read ends, the peer sees FIN at once.
   pub fn close(&self) -> rquickjs::Result<()> {
     self.inner.close();

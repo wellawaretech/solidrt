@@ -14,32 +14,34 @@
 //! detection. The raw-socket ceiling (no unprivileged ICMP / ARP) is the same as
 //! Node and Bun; this is ordinary userland sockets.
 //!
-//! Reads are pull-based (`Conn::read_chunk` -> `Ok(None)` at EOF) so the caller
-//! drives the transport, the same shape as the p2p `Stream`. No background task
-//! is needed (writes go straight out under a lock), so unlike subprocess / p2p
-//! the caller spawns nothing.
+//! Reads are pull-based (`Conn::readable` is a `ByteStream` that advances as it
+//! is polled) so the caller drives the transport, the same shape as the p2p
+//! `Stream`. No background task is needed (writes go straight out under a
+//! lock), so the caller spawns nothing.
 //!
 //! Every socket type has a `close()` that releases the fd immediately and
-//! unblocks its pending await (`read_chunk` / `accept` / `recv` resolve their
-//! end-of-stream value). Without it a pending op would pin the socket — and in
-//! flux the whole engine, via the pending-ops hold — until GC, if ever. The
+//! unblocks its pending await (a read / `accept` / `recv` resolve their
+//! end-of-stream value). Without it a pending op would pin the socket - and in
+//! flux the whole engine, via the pending-ops hold - until GC, if ever. The
 //! mechanism is one level-triggered `CancellationToken` per socket, `select!`ed
-//! against the blocking call.
+//! against the blocking call; for `Conn` it is the shared `stream::Closing`,
+//! which also carries an `abort` reason to the reader.
 
-use std::cell::RefCell;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex as SyncMutex};
 use std::time::Duration;
 
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-/// Read granularity: each `read_chunk` pulls at most this many bytes.
+use crate::stream::{read_half, ByteStream, Closing, ReadSlot};
+
+/// Read granularity: each read off a `Conn` pulls at most this many bytes.
 const READ_CHUNK: usize = 64 * 1024;
 
 /// Largest UDP datagram a single `recv` will return. A beacon is far smaller;
@@ -91,59 +93,53 @@ pub async fn probe(host: &str, port: u16, timeout_ms: u64) -> Liveness {
 
 // ---- TCP streams ------------------------------------------------------------
 
-/// A connected TCP stream: a byte duplex. Reads are pull-based; writes go straight
-/// out under a lock so concurrent writes serialize instead of racing. The split
-/// halves are held in `Option`s and taken across awaits (no borrow is held across
-/// `.await`), mirroring the p2p `Stream`. `close()` (or dropping the `Conn`)
-/// closes the socket.
+/// A connected TCP stream: a byte duplex. The read half is read through the
+/// `readable()` view (a `ByteStream` that advances only as it is polled);
+/// writes go straight out under a lock so concurrent writes serialize instead
+/// of racing. The write half is held in an `Option` taken across awaits (no
+/// borrow is held across `.await`), the same shape as the p2p `Stream`.
+/// `close()` ends both halves gracefully, `abort(reason)` with an error the
+/// reader reports; dropping the `Conn` closes the socket.
 pub struct Conn {
-  read: RefCell<Option<OwnedReadHalf>>,
+  read: ReadSlot<OwnedReadHalf>,
   write: Mutex<Option<OwnedWriteHalf>>,
   peer: SocketAddr,
-  closed: CancellationToken,
+  closing: Closing,
 }
+
+/// What a write reports once the connection was closed (not aborted).
+const CONN_CLOSED: &str = "connection is closed";
 
 impl Conn {
   fn from_stream(stream: TcpStream) -> Result<Conn, String> {
     let peer = stream.peer_addr().map_err(|e| e.to_string())?;
     let _ = stream.set_nodelay(true);
     let (read, write) = stream.into_split();
-    Ok(Conn { read: RefCell::new(Some(read)), write: Mutex::new(Some(write)), peer, closed: CancellationToken::new() })
+    Ok(Conn { read: ReadSlot::new(read), write: Mutex::new(Some(write)), peer, closing: Closing::new() })
   }
 
-  /// Pull the next chunk (at most `READ_CHUNK` bytes). `Ok(None)` at end-of-stream
-  /// or once closed. The read half is taken out before the await and put back
-  /// after, so no borrow is held across it; `close()` during the await cancels the
-  /// read and the taken half drops with the future.
-  pub async fn read_chunk(&self) -> Result<Option<Vec<u8>>, String> {
-    let Some(mut read) = self.read.borrow_mut().take() else {
-      return Ok(None);
-    };
-    let mut buf = vec![0u8; READ_CHUNK];
-    let n = tokio::select! {
-      r = read.read(&mut buf) => r.map_err(|e| e.to_string())?,
-      _ = self.closed.cancelled() => return Ok(None),
-    };
-    if n == 0 || self.closed.is_cancelled() {
-      return Ok(None); // EOF or closed: leave the read half taken, so further reads stay Ok(None)
-    }
-    buf.truncate(n);
-    *self.read.borrow_mut() = Some(read);
-    Ok(Some(buf))
+  /// The read half as a `ByteStream`: at most `READ_CHUNK` bytes per chunk,
+  /// pulled as the consumer polls, ending at end-of-stream or when the
+  /// connection is closed (as an error when aborted). One view per
+  /// connection: dropping it releases the read half, so a consumer that
+  /// stops reading holds nothing while the write half stays usable.
+  pub fn readable(&self) -> ByteStream {
+    read_half(&self.read, &self.closing, READ_CHUNK)
   }
 
-  /// Write all of `bytes`, serialized behind the write lock. Errors if the
-  /// connection has been closed or the write fails.
+  /// Write all of `bytes`, serialized behind the write lock. Errors once the
+  /// write side was ended (`close_write`), the connection closed or aborted,
+  /// or when the write fails.
   pub async fn write(&self, bytes: Vec<u8>) -> Result<(), String> {
     let mut guard = self.write.lock().await;
     let Some(w) = guard.as_mut() else {
-      return Err("connection is closed".to_string());
+      return Err(self.write_closed());
     };
     let r = tokio::select! {
       r = w.write_all(&bytes) => r.map_err(|e| e.to_string()),
-      _ = self.closed.cancelled() => Err("connection is closed".to_string()),
+      _ = self.closing.closed() => Err(self.closing.write_error(CONN_CLOSED)),
     };
-    if self.closed.is_cancelled() {
+    if self.closing.is_closed() {
       guard.take(); // close() could not reach the locked write half; drop it here so FIN still goes out
     }
     r
@@ -159,21 +155,42 @@ impl Conn {
     };
     let r = tokio::select! {
       r = w.shutdown() => r.map_err(|e| e.to_string()),
-      _ = self.closed.cancelled() => Err("connection is closed".to_string()),
+      _ = self.closing.closed() => Err(self.closing.write_error(CONN_CLOSED)),
     };
     guard.take();
     r
   }
 
-  /// Close the connection now: cancel a pending read, drop both halves (dropping
-  /// the write half sends FIN) and release the fd. Bytes already handed to the OS
-  /// still flush. Idempotent.
+  /// Close the connection now: a pending read ends, both halves are dropped
+  /// (dropping the write half sends FIN) and the fd is released. Bytes already
+  /// handed to the OS still flush. Idempotent.
   pub fn close(&self) {
-    self.closed.cancel();
-    self.read.borrow_mut().take();
+    self.closing.close();
+    self.release();
+  }
+
+  /// Close the connection with an error: as `close()`, except that a pending
+  /// or later read reports `reason` instead of end-of-stream, and so does a
+  /// write in flight. TCP has no abortive half-close, so the peer still sees
+  /// FIN. Idempotent (the first end wins).
+  pub fn abort(&self, reason: String) {
+    self.closing.abort(reason);
+    self.release();
+  }
+
+  fn release(&self) {
+    self.read.close();
     if let Ok(mut guard) = self.write.try_lock() {
       guard.take();
-    } // else a write is in flight; its cancelled branch drops the half
+    } // else a write is in flight; its closed branch drops the half
+  }
+
+  fn write_closed(&self) -> String {
+    if self.closing.is_closed() {
+      self.closing.write_error(CONN_CLOSED)
+    } else {
+      "write side is closed".to_string()
+    }
   }
 
   /// The remote peer's address, e.g. `192.168.2.37:445`.

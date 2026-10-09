@@ -4,8 +4,8 @@
 //! plugin's specific argument/result surface) stays in each plugin; only the
 //! uniform value/async plumbing lives here: `with_in_flight` bridges a fallible
 //! native future to a JS promise, and `iter_result` + `attach_async_iterator`
-//! build the Rust-backed async-iterables (fetch/p2p byte streams, the p2p accept
-//! iterator). More (an `object_builder` HRTB coercion, an actor request/reply
+//! build the Rust-backed async-iterables (the byte-stream source behind a
+//! `ReadableStream`, the net `Listener`, the p2p accept iterator). More (an `object_builder` HRTB coercion, an actor request/reply
 //! bridge) land here as the plugins shrink.
 
 use std::future::Future;
@@ -140,7 +140,7 @@ pub fn iter_result<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::
 
 /// Make `obj` its own async-iterator: `obj[Symbol.asyncIterator]()` returns
 /// `obj`, so `for await (const x of obj)` drives its `next()`. A `Class`
-/// instance (`P2pStream`, `NetConn`) derefs to its `Object`.
+/// instance (`NetListener`) derefs to its `Object`.
 pub fn attach_async_iterator<'js>(ctx: &Ctx<'js>, obj: &Object<'js>) -> rquickjs::Result<()> {
   obj.set(PredefinedAtom::SymbolAsyncIterator, Function::new(ctx.clone(), |this: This<Value<'js>>| this.0)?)
 }

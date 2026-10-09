@@ -20,6 +20,7 @@ use crate::standards_plugins::streams::readable_from;
 // (response, request) stay unchanged; the engine-free primitive itself lives
 // in `forge::stream`.
 pub(crate) use forge::stream::ByteStream;
+use forge::stream::Closing;
 
 /// In-memory body buffer shared by Response and Request. Consume-once semantics:
 /// `take` returns the bytes once, then subsequent calls return None.
@@ -215,8 +216,9 @@ type IterStepFuture = Promised<Pin<Box<dyn Future<Output = JsResult<Step<JsBytes
 
 /// A `ReadableStream` over a native byte stream: `byte_stream_iterable`
 /// wrapped by `ReadableStream.from`, so the stream pulls one chunk per read
-/// and cancelling it drops the native stream. What `.body` and a child's
-/// `stdout`/`stderr` hand to JS.
+/// and cancelling it drops the native stream, ending a read in flight. What
+/// `.body`, a child's `stdout`/`stderr` and the `readable` of a socket or
+/// p2p stream hand to JS.
 pub(crate) fn byte_stream_readable<'js>(
   ctx: &Ctx<'js>,
   stream: ByteStream,
@@ -229,33 +231,35 @@ pub(crate) fn byte_stream_readable<'js>(
 /// Build a Rust-backed JS async-iterator over a network byte stream, the
 /// underlying source of `byte_stream_readable`. Each `next()` pulls one chunk
 /// (a Uint8Array) from `stream`, resolving `{ value, done }`; `return()` drops
-/// the stream, so a consumer that stops early (a `break`, a stream cancel)
-/// releases the socket or pipe behind it now, not at GC; and
+/// the stream and ends a `next()` in flight, so a consumer that stops early
+/// (a `break`, a stream cancel) releases the socket or pipe behind it now,
+/// not at GC and not when the peer next speaks; and
 /// `[Symbol.asyncIterator]()` returns the object itself. The structural dual
 /// of `drive_async_iterable` (JS-produces -> Rust-consumes): here Rust
 /// produces and JS consumes. Pull-based, so the network only advances as JS
 /// pulls; `hold` is taken for each read and released when it lands, so an
 /// abandoned iterator holds nothing. The caller decides its class: a
-/// response body is work in flight, a running child's output is standing.
+/// response body is work in flight, a running child's output or an open
+/// socket's input is standing.
 fn byte_stream_iterable<'js>(
   ctx: &Ctx<'js>,
   stream: ByteStream,
   hold: impl Fn() -> Hold + 'static,
 ) -> rquickjs::Result<Object<'js>> {
   let cell = Rc::new(RefCell::new(Some(stream)));
-  // Set by `return()`: a `next()` in flight at that moment drops the stream
-  // when its chunk lands instead of putting it back.
-  let closed = Rc::new(Cell::new(false));
+  // Ended by `return()`: a `next()` in flight at that moment ends now and
+  // drops the stream instead of putting it back.
+  let ended = Closing::new();
   let iter = Object::new(ctx.clone())?;
 
   let next_fn = Function::new(
     ctx.clone(),
     MutFn::from({
       let cell = cell.clone();
-      let closed = closed.clone();
+      let ended = ended.clone();
       move |_ctx: Ctx<'_>| -> rquickjs::Result<IterStepFuture> {
         let cell = cell.clone();
-        let closed = closed.clone();
+        let ended = ended.clone();
         let hold = hold();
         Ok(Promised(Box::pin(async move {
           // Take the stream out so no RefCell borrow is held across the await. A
@@ -263,11 +267,14 @@ fn byte_stream_iterable<'js>(
           let Some(mut stream) = cell.borrow_mut().take() else {
             return JsResult(Ok(Step(None)));
           };
-          let item = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await;
+          let item = tokio::select! {
+            item = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)) => item,
+            _ = ended.closed() => None,
+          };
           drop(hold);
           JsResult(match item {
             Some(Ok(chunk)) => {
-              if !closed.get() {
+              if !ended.is_closed() {
                 *cell.borrow_mut() = Some(stream);
               }
               Ok(Step(Some(JsBytes(chunk.to_vec()))))
@@ -284,7 +291,7 @@ fn byte_stream_iterable<'js>(
   let return_fn = Function::new(
     ctx.clone(),
     MutFn::from(move |_ctx: Ctx<'_>| -> rquickjs::Result<Step<JsBytes>> {
-      closed.set(true);
+      ended.close();
       cell.borrow_mut().take();
       Ok(Step(None))
     }),

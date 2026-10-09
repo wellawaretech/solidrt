@@ -2,9 +2,39 @@
 title: Sockets, p2p streams and child stdin cannot be piped into
 description: Bodies and child output are ReadableStreams since web-streams, but the byte duplexes left outside (flux:net Conn, flux:p2p P2pStream, a spawned child's stdin) still write through write()/closeWrite(), so nothing can pipeTo a socket or a child; give each the readable/writable pair, which for p2p first needs a write with backpressure in forge.
 created: 2026-10-09
+completed: 2026-10-09
 ---
 
 # Sockets, p2p streams and child stdin cannot be piped into
+
+Built 2026-10-09 as shaped below, with the open points settled this way:
+
+- The read halves are forge `ByteStream`s, not plugin-side iterators: `Conn`
+  and `Stream` keep their reader in a `stream::ReadSlot` and hand out a
+  `read_half` view, so `byte_stream_readable` serves bodies, child pipes,
+  sockets and p2p streams alike and flux has one readable builder. A view
+  that is dropped (a `cancel()`) closes the slot, which for QUIC is
+  STOP_SENDING: a peer writing to a reader that gave up gets an error
+  instead of stalling on flow control. The p2p view holds a `Connection`
+  clone, so a consumer still reading keeps the connection up.
+- `close()` and `abort(reason)` share one `stream::Closing` per duplex: a
+  token plus a reason slot both halves read. `close()` is graceful (reads
+  end, writes fail); `abort` is Node's duplex-to-web mapping, a destroy with
+  a reason: a pending or later read reports it, and a write in flight does
+  too. TCP still sends FIN (it has no abortive half-close); QUIC resets the
+  send half, so the peer's read fails rather than ending. A child's stdin is
+  no duplex: its abort closes the pipe and leaves stdout alone.
+- `byte_stream_iterable`'s `return()` ends a `next()` in flight, so a
+  cancelled stream releases its hold and its source at once instead of when
+  the peer next speaks (this improves fetch bodies too).
+- The p2p writer task and its standing hold are gone; a `P2pStream` holds
+  the engine only during a pending read or write, like a `Conn`.
+- A QUIC stream reaches the acceptor with its first bytes, so the dialer
+  writes first; documented on `accept` after the test fixture deadlocked
+  on it.
+
+Tests: `flux/tests/net.test.ts` (8), `flux/tests/subprocess.test.ts` (3),
+`flux/tests/p2p.test.ts` (3), plus `forge/src/tests/net.rs` (10).
 
 ## Symptom
 

@@ -1,8 +1,24 @@
+use std::future::poll_fn;
 use std::time::Duration;
 
 use tokio::net::TcpListener;
 
 use crate::net::*;
+use crate::stream::ByteStream;
+
+/// The next chunk of a read view: `Ok(Some(bytes))`, `Ok(None)` at the end,
+/// `Err` for an errored (aborted) duplex.
+async fn next_chunk(stream: &mut ByteStream) -> Result<Option<Vec<u8>>, String> {
+  match poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
+    Some(Ok(chunk)) => Ok(Some(chunk.to_vec())),
+    Some(Err(e)) => Err(e.to_string()),
+    None => Ok(None),
+  }
+}
+
+async fn soon<T>(fut: impl std::future::Future<Output = T>) -> T {
+  tokio::time::timeout(Duration::from_secs(2), fut).await.expect("within the budget")
+}
 
 /// Probe budget wide enough for a loopback refusal on every platform: Windows
 /// retries the SYN for ~2 s before reporting the RST, so anything tighter
@@ -93,21 +109,21 @@ async fn close_write_signals_eof_but_keeps_reading() {
   let (client, server) = tokio::join!(connect("127.0.0.1", port, 1000), listener.accept());
   let client = client.unwrap();
   let server = server.unwrap().expect("accepted conn");
+  let mut from_client = server.readable();
+  let mut from_server = client.readable();
 
   // The netcat-style exchange: write the request, signal end-of-request with FIN.
   client.write(b"request".to_vec()).await.unwrap();
   client.close_write().await.unwrap();
 
-  let chunk =
-    tokio::time::timeout(Duration::from_secs(2), server.read_chunk()).await.unwrap().unwrap().expect("request bytes");
+  let chunk = soon(next_chunk(&mut from_client)).await.unwrap().expect("request bytes");
   assert_eq!(chunk.as_slice(), b"request");
-  let eof = tokio::time::timeout(Duration::from_secs(2), server.read_chunk()).await.unwrap();
+  let eof = soon(next_chunk(&mut from_client)).await;
   assert!(matches!(eof, Ok(None)), "server sees EOF after the client's closeWrite");
 
   // The read side stayed open: the answer still comes through.
   server.write(b"response".to_vec()).await.unwrap();
-  let resp =
-    tokio::time::timeout(Duration::from_secs(2), client.read_chunk()).await.unwrap().unwrap().expect("response bytes");
+  let resp = soon(next_chunk(&mut from_server)).await.unwrap().expect("response bytes");
   assert_eq!(resp.as_slice(), b"response");
 
   assert!(client.write(b"x".to_vec()).await.is_err(), "write after closeWrite errors");
@@ -121,19 +137,62 @@ async fn conn_close_unblocks_pending_read_and_fins_peer() {
   let (client, server) = tokio::join!(connect("127.0.0.1", port, 1000), listener.accept());
   let client = client.unwrap();
   let server = server.unwrap().expect("accepted conn");
+  let mut from_server = client.readable();
+  let mut from_client = server.readable();
 
-  let (read, _) = tokio::time::timeout(Duration::from_secs(2), async {
-    tokio::join!(client.read_chunk(), async {
+  let (read, _) = soon(async {
+    tokio::join!(next_chunk(&mut from_server), async {
       tokio::time::sleep(Duration::from_millis(50)).await;
       client.close();
     })
   })
-  .await
-  .unwrap();
+  .await;
   assert!(matches!(read, Ok(None)), "pending read resolves end on close");
 
   // close() drops the write half, so the FIN reaches the peer now, not at GC.
-  let peer_read = tokio::time::timeout(Duration::from_secs(2), server.read_chunk()).await.unwrap();
+  let peer_read = soon(next_chunk(&mut from_client)).await;
   assert!(matches!(peer_read, Ok(None)), "peer sees EOF right after close");
   assert!(client.write(b"x".to_vec()).await.is_err(), "write after close errors");
+}
+
+#[tokio::test]
+async fn conn_abort_errors_the_pending_read_with_the_reason() {
+  let listener = listen("127.0.0.1", 0).await.unwrap();
+  let port = listener.local_addr().rsplit(':').next().unwrap().parse::<u16>().unwrap();
+  let (client, server) = tokio::join!(connect("127.0.0.1", port, 1000), listener.accept());
+  let client = client.unwrap();
+  let _server = server.unwrap().expect("accepted conn");
+  let mut from_server = client.readable();
+
+  let (read, _) = soon(async {
+    tokio::join!(next_chunk(&mut from_server), async {
+      tokio::time::sleep(Duration::from_millis(50)).await;
+      client.abort("upstream broke".to_string());
+    })
+  })
+  .await;
+  assert_eq!(read, Err("upstream broke".to_string()), "pending read reports the abort reason");
+  assert!(matches!(next_chunk(&mut from_server).await, Ok(None)), "then the view is done");
+  assert_eq!(client.write(b"x".to_vec()).await, Err("upstream broke".to_string()), "a write reports it too");
+}
+
+#[tokio::test]
+async fn dropping_the_read_view_releases_the_half_and_keeps_writing() {
+  let listener = listen("127.0.0.1", 0).await.unwrap();
+  let port = listener.local_addr().rsplit(':').next().unwrap().parse::<u16>().unwrap();
+  let (client, server) = tokio::join!(connect("127.0.0.1", port, 1000), listener.accept());
+  let client = client.unwrap();
+  let server = server.unwrap().expect("accepted conn");
+  let mut from_client = server.readable();
+
+  drop(client.readable());
+  // The write half is untouched by the view going away.
+  client.write(b"still writing".to_vec()).await.unwrap();
+  let chunk = soon(next_chunk(&mut from_client)).await.unwrap().expect("bytes");
+  assert_eq!(chunk.as_slice(), b"still writing");
+  // A new view over the released half finds nothing to read: it ends at once.
+  assert!(matches!(
+    client.readable().as_mut().poll_next(&mut std::task::Context::from_waker(std::task::Waker::noop())),
+    std::task::Poll::Ready(None)
+  ));
 }

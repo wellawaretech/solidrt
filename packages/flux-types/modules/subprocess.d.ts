@@ -5,7 +5,11 @@ declare module "flux:subprocess" {
     cwd?: string
     /** Extra env vars, added to / overriding the inherited environment. */
     env?: Record<string, string>
-    /** Bytes written to the child's stdin, after which stdin is closed. */
+    /**
+     * Bytes written to the child's stdin first. With {@link Command.output}
+     * stdin is closed after them; with {@link Command.spawn} it stays open for
+     * the child's `stdin` stream.
+     */
     stdin?: string | Uint8Array
     /** Kill the child if it has not exited within this many milliseconds. */
     timeoutMs?: number
@@ -17,7 +21,8 @@ declare module "flux:subprocess" {
     /**
      * `spawn()` only: the child outlives this engine and this process. It is
      * never killed on drop or reload, has no stdin/stdout/stderr pipes (all
-     * null: `stdout`/`stderr` end at once, `write` fails) and runs in
+     * null: `stdout`/`stderr` end at once, the first write to `stdin`
+     * rejects) and runs in
      * its own process group, so a Ctrl+C to the parent does not reach it.
      * `pid`, `kill()` and `status()` still work. Cannot combine with `stdin`.
      * What a dev tool uses to launch another runtime instance.
@@ -57,10 +62,15 @@ declare module "flux:subprocess" {
     stdout: ReadableStream<Uint8Array>
     /** Live stderr as a stream of byte chunks, read as far as it is consumed. */
     stderr: ReadableStream<Uint8Array>
-    /** Queue bytes to the child's stdin. Writes serialize and respect backpressure. */
-    write(data: string | Uint8Array): Promise<void>
-    /** Half-close: close the child's stdin (after queued writes drain) so it sees EOF. */
-    closeWrite(): Promise<void>
+    /**
+     * The child's stdin as a stream: strings (as UTF-8) or `Uint8Array`s,
+     * written after any {@link CommandOptions.stdin}. A write resolves once
+     * the pipe took the bytes, so a producer faster than the child reads
+     * sees backpressure. `close()` (and `abort()`) closes the pipe after the
+     * writes so far, so the child sees EOF; a later write rejects. A body
+     * piped in (`response.body.pipeTo(child.stdin)`) closes it at the end.
+     */
+    stdin: WritableStream<string | Uint8Array>
     /** Request termination (portable; SIGKILL / TerminateProcess). */
     kill(): void
     /** Resolves with the exit status when the child exits. */
@@ -73,7 +83,7 @@ declare module "flux:subprocess" {
     args: string[]
     /** Run the child to completion, buffering stdout/stderr. */
     output(): Promise<CommandOutput>
-    /** Spawn the child and return a handle with live streams, stdin, and control. */
+    /** Spawn the child and return a handle with live stdout/stderr, a stdin stream, and control. */
     spawn(): Child
   }
 

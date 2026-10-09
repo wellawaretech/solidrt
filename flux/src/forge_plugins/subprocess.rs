@@ -8,6 +8,7 @@ use crate::pending::PendingOps;
 use crate::plugins::marshal::{with_in_flight, with_standing, CopyBytes, OptArg};
 use crate::plugins::value::Neutral;
 use crate::standards_plugins::body::byte_stream_readable;
+use crate::standards_plugins::streams::writable_to;
 use forge::subprocess::{self, CommandSpec, Spawned};
 
 // flux:subprocess - spawn child processes and collect their output.
@@ -24,8 +25,8 @@ use forge::subprocess::{self, CommandSpec, Spawned};
 // The shape mirrors flux:fs: a lowercase `command(cmd, args?, opts?)` factory
 // returns a reusable reference object, and async work hangs off it as methods.
 // `output()` runs the child to completion and buffers stdout/stderr; `spawn()`
-// returns a live child handle (stdout/stderr streams, stdin write/closeWrite, kill,
-// status).
+// returns a live child handle (stdout/stderr ReadableStreams, a stdin
+// WritableStream, kill, status).
 //
 // Arguments are always passed as an array and never through a shell, so there is
 // no per-platform shell or quoting to reason about (and no shell injection).
@@ -39,7 +40,8 @@ use forge::subprocess::{self, CommandSpec, Spawned};
 //   detached  spawn() only: the child outlives this engine and process (null
 //             stdio, own process group, never killed on drop); its supervisor
 //             runs on the process runtime so it is still reaped. stdin and
-//             detached together is an error: there is no pipe to write.
+//             detached together is an error: there is no pipe to write, and
+//             the first write to the spawned child's stdin stream errors.
 
 fn parse_spec<'js>(
   ctx: &Ctx<'js>,
@@ -145,7 +147,7 @@ where
 }
 
 // Spawn the child (via the forge core) and build its JS handle: live
-// stdout/stderr ReadableStreams, stdin write()/closeWrite(), kill(), and status().
+// stdout/stderr ReadableStreams, a stdin WritableStream, kill(), and status().
 // spawn() is synchronous (the process is launched here); a failure to launch
 // throws a clean Error. The supervisor and initial-stdin tasks are spawned here
 // because spawning is host-specific.
@@ -195,38 +197,45 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
   obj.set("stdout", byte_stream_readable(&ctx, stdout, output_hold(&pending))?)?;
   obj.set("stderr", byte_stream_readable(&ctx, stderr, output_hold(&pending))?)?;
 
-  // write(data) -> Promise: serialized behind the stdin lock.
-  let write_fn = Function::new(
-    ctx.clone(),
-    MutFn::from({
-      let child = child.clone();
-      move |ctx: Ctx<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
-        let bytes = value_to_bytes(&ctx, &data)?;
+  // stdin: a WritableStream over the child's stdin pipe. Writes serialize
+  // behind the stdin lock (after the initial stdin above) and resolve once the
+  // pipe took the bytes, so a pipe into a slow child sees backpressure;
+  // closing or aborting the stream closes the pipe, so the child sees EOF.
+  obj.set(
+    "stdin",
+    writable_to(
+      &ctx,
+      "Child.stdin",
+      "subprocess write",
+      {
         let child = child.clone();
-        Ok(with_in_flight(&ctx, "subprocess write", async move { child.write_stdin(bytes).await }))
-      }
-    }),
-  )
-  .expect("create write function");
-  obj.set("write", write_fn)?;
-
-  // closeWrite() -> Promise: close stdin so the child sees EOF, after any queued
-  // writes have drained (it takes the same lock).
-  let close_write_fn = Function::new(
-    ctx.clone(),
-    MutFn::from({
-      let child = child.clone();
-      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        move |bytes| {
+          let child = child.clone();
+          Box::pin(async move { child.write_stdin(bytes).await })
+        }
+      },
+      {
         let child = child.clone();
-        Ok(with_in_flight(&ctx, "subprocess write", async move {
-          child.end_stdin().await;
-          Ok::<(), String>(())
-        }))
-      }
-    }),
-  )
-  .expect("create closeWrite function");
-  obj.set("closeWrite", close_write_fn)?;
+        move || {
+          let child = child.clone();
+          Box::pin(async move {
+            child.end_stdin().await;
+            Ok(())
+          })
+        }
+      },
+      {
+        let child = child.clone();
+        move |_reason| {
+          let child = child.clone();
+          Box::pin(async move {
+            child.end_stdin().await;
+            Ok(())
+          })
+        }
+      },
+    )?,
+  )?;
 
   // kill(): request termination (portable; SIGKILL / TerminateProcess).
   let kill_fn = Function::new(ctx.clone(), {
