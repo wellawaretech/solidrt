@@ -16,10 +16,12 @@
 
 // Web-standard globals. The runtime is QuickJS, not a browser or Node, so it
 // ships no lib.dom / @types/bun: these declarations are the sole source for
-// console, fetch, the Fetch types, timers, WebSocket, the encoders, and crypto.
+// console, fetch, the Fetch types, the streams, timers, WebSocket, the
+// encoders, and crypto.
 /// <reference path="./standards/console.d.ts" />
 /// <reference path="./standards/time.d.ts" />
 /// <reference path="./standards/text.d.ts" />
+/// <reference path="./standards/streams.d.ts" />
 /// <reference path="./standards/base64.d.ts" />
 /// <reference path="./standards/fetch.d.ts" />
 /// <reference path="./standards/websocket.d.ts" />

@@ -1,4 +1,5 @@
 // TextEncoder / TextDecoder. UTF-8 only (the only encoding the runtime needs).
+// Their stream forms, TextEncoderStream / TextDecoderStream, are in streams.d.ts.
 
 interface TextEncoder {
   /** Always "utf-8". */

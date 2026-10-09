@@ -79,7 +79,9 @@ appended-bytecode trailer) are minimal and correct. Boundaries worth knowing:
   silently dropped** (body becomes None). A plain object should either throw
   or JSON-encode; silence is the worst of the options.
 - Deliberate and documented: no `ReadableStream` (async-iterables are the
-  house pattern), `wss://` rejected until TLS lands, `Headers` iterates via
+  house pattern; reversed 2026-10-09, see `okf/done/web-streams.md`: bodies
+  are `ReadableStream`s, which are async-iterable), `wss://` rejected until
+  TLS lands, `Headers` iterates via
   `forEach` only, WebSocket client has handler properties but no
   `addEventListener`. The sqlite module doc's Bun-divergence list is the model
   for how to document this kind of scope decision.
@@ -333,4 +335,6 @@ lost (add if the file's scope should grow from traps to conventions):
   an abandoned iterator cannot wedge the engine.
 - **Streaming house pattern** (one line in "Module surface"): byte streams
   are async-iterables built with the `marshal.rs` helpers, not
-  ReadableStream.
+  ReadableStream. (Reversed 2026-10-09 by `okf/done/web-streams.md`: a byte
+  source is still a Rust-backed async iterator, wrapped as a `ReadableStream`
+  by `body::byte_stream_readable`.)

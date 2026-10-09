@@ -195,6 +195,7 @@ pub(crate) async fn init_context(
       crate::standards_plugins::request::init_request(&ctx);
       crate::standards_plugins::response::init_response(&ctx);
       crate::standards_plugins::text::init_text(&ctx);
+      crate::standards_plugins::streams::init_streams(&ctx);
       crate::standards_plugins::websocket::init_websocket(&ctx);
       crate::standards_plugins::abort::init_abort(&ctx);
       crate::standards_plugins::crypto::init_crypto(&ctx);

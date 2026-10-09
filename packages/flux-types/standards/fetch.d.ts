@@ -1,6 +1,6 @@
 // The Fetch API cluster (Headers, Request, Response, fetch). A deliberate subset
 // of the WHATWG Fetch standard: flux provides exactly these members and no more
-// (no Blob, FormData, ReadableStream, clone(), ...).
+// (no Blob, FormData, clone(), ...). Bodies are ReadableStreams (streams.d.ts).
 // Grouped in one file because the four share BodyInit/HeadersInit and reference
 // each other.
 
@@ -11,11 +11,12 @@
 type HeadersInit = Record<string, string> | Headers
 
 /**
- * A message body: a string, raw bytes, or an async-iterable of string/byte
- * chunks (e.g. an `async function*`), which is sent as a stream. Any other
- * value throws (the web stringifies it).
+ * A message body: a string, raw bytes, or a stream of string/byte chunks (a
+ * `ReadableStream`, or any async-iterable such as an `async function*`),
+ * which is sent as it is produced. Any other value throws (the web
+ * stringifies it).
  */
-type BodyInit = string | Uint8Array | AsyncIterable<string | Uint8Array>
+type BodyInit = string | Uint8Array | ReadableStream<string | Uint8Array> | AsyncIterable<string | Uint8Array>
 
 /** A subset of the WHATWG Headers API. Names are case-insensitive. */
 interface Headers {
@@ -89,8 +90,12 @@ interface Request {
   readonly headers: Headers
   /** Route params from the matched pattern; an empty object for a JS-constructed Request. */
   readonly params: Record<string, string>
-  /** The body as an async-iterable of byte chunks (read once). */
-  readonly body: AsyncIterable<Uint8Array>
+  /**
+   * The body as a stream of byte chunks, read once: an incoming request's
+   * network stream, read as far as it is consumed; a buffered body as one
+   * chunk. Reading it with `for await` is the common form.
+   */
+  readonly body: ReadableStream<Uint8Array>
   /** Read the whole body as UTF-8 text. */
   text(): Promise<string>
   /** Read the whole body as raw bytes. */
@@ -122,26 +127,38 @@ interface Response {
   readonly ok: boolean
   readonly url: string
   readonly headers: Headers
-  /** The body as an async-iterable of byte chunks (read once). */
-  readonly body: AsyncIterable<Uint8Array>
-  /** Read the whole body as UTF-8 text. */
+  /**
+   * The body as a stream of byte chunks, read once: a fetched response's
+   * network stream, read as far as it is consumed; a buffered body as one
+   * chunk; a stream given to the constructor as it is. Reading it with
+   * `for await` is the common form.
+   */
+  readonly body: ReadableStream<Uint8Array>
+  /** Read the whole body as UTF-8 text. A stream body is drained. */
   text(): Promise<string>
-  /** Read the whole body as raw bytes. */
+  /** Read the whole body as raw bytes. A stream body is drained. */
   bytes(): Promise<Uint8Array>
-  /** Read the whole body as an ArrayBuffer. */
+  /** Read the whole body as an ArrayBuffer. A stream body is drained. */
   arrayBuffer(): Promise<ArrayBuffer>
-  /** Read and parse the whole body as JSON. */
+  /** Read and parse the whole body as JSON. A stream body is drained. */
   json(): Promise<any>
 }
 
 declare let Response: {
+  /**
+   * A stream body (a `ReadableStream`, or any async-iterable of string or
+   * byte chunks, wrapped as one) is sent as it is produced: served over
+   * chunked transfer encoding, or drained by `text()` and the other
+   * readers.
+   */
   new (body?: BodyInit | null, init?: ResponseInit): Response
   /** Build a JSON response (sets Content-Type to application/json when unset). */
   json(data: any, init?: ResponseInit): Response
 }
 
 /**
- * Fetch a resource over HTTP(S). The body may be a string, Uint8Array, or an
- * async-iterable (streamed). Resolves to a {@link Response}.
+ * Fetch a resource over HTTP(S). The body may be a string, Uint8Array, or a
+ * stream (a `ReadableStream` or any async-iterable, sent as it is
+ * produced). Resolves to a {@link Response}.
  */
 declare function fetch(url: string, options?: RequestInit): Promise<Response>

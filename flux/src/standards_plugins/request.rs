@@ -7,16 +7,15 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::forge_plugins::websocket::ServeUpgrade;
-use crate::pending::{Hold, PendingOps};
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::OptArg;
 use crate::standards_plugins::body::{
-  collect_array_buffer, collect_bytes, collect_json, collect_text, extract_body_value, BodySource, ByteStream,
-  JsArrayBuffer, JsBytes, JsonValue, MessageBody,
+  body_read_all, body_stream, collect_array_buffer, collect_bytes, collect_json, collect_text, extract_body_value,
+  BodyRead, ByteStream, JsArrayBuffer, JsBytes, JsonValue, MessageBody,
 };
 use crate::standards_plugins::headers::{headers_from_init, headers_from_pairs, Headers};
 
-type BodyFuture<T> = Promised<Pin<Box<dyn Future<Output = JsResult<T>>>>>;
+type BodyFuture<'js, T> = Promised<Pin<Box<dyn Future<Output = JsResult<T>> + 'js>>>;
 
 #[derive(JsLifetime)]
 #[rquickjs::class(rename = "Request")]
@@ -25,6 +24,9 @@ pub struct Request<'js> {
   /// body (an incoming server request, read incrementally). Shared with Response.
   #[qjs(skip_trace)]
   pub(crate) body: MessageBody,
+  /// The body's `ReadableStream` once `.body` handed it out, kept so every
+  /// read sees the same stream; taken by a reader (`text()`), which drains it.
+  pub(crate) stream: RefCell<Option<Object<'js>>>,
   #[qjs(skip_trace)]
   pub(crate) method: String,
   #[qjs(skip_trace)]
@@ -47,6 +49,9 @@ impl<'js> Trace<'js> for Request<'js> {
   fn trace<'a>(&self, tracer: rquickjs::class::Tracer<'a, 'js>) {
     self.headers.trace(tracer);
     self.params.trace(tracer);
+    if let Some(stream) = &*self.stream.borrow() {
+      stream.trace(tracer);
+    }
     if let Some(upgrade) = &*self.upgrade.borrow() {
       upgrade.trace(tracer);
     }
@@ -72,6 +77,7 @@ impl<'js> Request<'js> {
     let params = Object::new(ctx.clone())?;
     Ok(Request {
       body: MessageBody::buffered(body_bytes),
+      stream: RefCell::new(None),
       method,
       url,
       headers,
@@ -101,42 +107,36 @@ impl<'js> Request<'js> {
     self.params.clone()
   }
 
-  /// The body as an async-iterable of `Uint8Array` chunks. An incoming request
-  /// iterates its network stream (read incrementally, constant-memory for large
-  /// uploads); a buffered one yields its bytes as one chunk. `for await` ready.
+  /// The body as a `ReadableStream` of `Uint8Array` chunks, the same object
+  /// on every read. An incoming request reads its network stream
+  /// (incrementally, constant-memory for large uploads); a buffered one
+  /// yields its bytes as one chunk. `for await` ready.
   #[qjs(get)]
-  pub fn body(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    self.body.as_async_iterable(&ctx)
+  pub fn body(&self, ctx: Ctx<'js>) -> rquickjs::Result<Object<'js>> {
+    body_stream(&ctx, &self.body, &self.stream)
   }
 
-  pub fn text(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<String>> {
-    let (source, hold) = self.reader(&ctx)?;
-    Ok(Promised(Box::pin(collect_text(source, hold))))
+  pub fn text(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<'js, String>> {
+    Ok(Promised(Box::pin(collect_text(self.read_all(&ctx)?))))
   }
 
-  pub fn bytes(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsBytes>> {
-    let (source, hold) = self.reader(&ctx)?;
-    Ok(Promised(Box::pin(collect_bytes(source, hold))))
+  pub fn bytes(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<'js, JsBytes>> {
+    Ok(Promised(Box::pin(collect_bytes(self.read_all(&ctx)?))))
   }
 
   #[qjs(rename = "arrayBuffer")]
-  pub fn array_buffer(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsArrayBuffer>> {
-    let (source, hold) = self.reader(&ctx)?;
-    Ok(Promised(Box::pin(collect_array_buffer(source, hold))))
+  pub fn array_buffer(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<'js, JsArrayBuffer>> {
+    Ok(Promised(Box::pin(collect_array_buffer(self.read_all(&ctx)?))))
   }
 
-  pub fn json(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsonValue>> {
-    let (source, hold) = self.reader(&ctx)?;
-    Ok(Promised(Box::pin(collect_json(source, hold))))
+  pub fn json(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<'js, JsonValue>> {
+    Ok(Promised(Box::pin(collect_json(self.read_all(&ctx)?))))
   }
 }
 
 impl<'js> Request<'js> {
-  /// Consume the body once for a reader (`text`/`bytes`/`json`), returning the
-  /// drainable source and the read's hold on the engine.
-  fn reader(&self, ctx: &Ctx<'js>) -> rquickjs::Result<(BodySource, Hold)> {
-    let source = self.body.take_source(ctx)?;
-    Ok((source, PendingOps::of(ctx).in_flight("body read")))
+  fn read_all(&self, ctx: &Ctx<'js>) -> rquickjs::Result<BodyRead<'js>> {
+    body_read_all(ctx, &self.body, &self.stream)
   }
 }
 
@@ -164,6 +164,7 @@ pub(crate) fn request_from_parts<'js>(
     ctx.clone(),
     Request {
       body: MessageBody::incoming(body),
+      stream: RefCell::new(None),
       method,
       url,
       headers,

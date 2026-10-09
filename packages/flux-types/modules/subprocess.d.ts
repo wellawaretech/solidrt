@@ -17,7 +17,7 @@ declare module "flux:subprocess" {
     /**
      * `spawn()` only: the child outlives this engine and this process. It is
      * never killed on drop or reload, has no stdin/stdout/stderr pipes (all
-     * null: `stdout`/`stderr` iterate to nothing, `write` fails) and runs in
+     * null: `stdout`/`stderr` end at once, `write` fails) and runs in
      * its own process group, so a Ctrl+C to the parent does not reach it.
      * `pid`, `kill()` and `status()` still work. Cannot combine with `stdin`.
      * What a dev tool uses to launch another runtime instance.
@@ -53,10 +53,10 @@ declare module "flux:subprocess" {
   type Child = {
     /** The OS process id, if available. */
     pid: number | undefined
-    /** Live stdout as an async-iterable of byte chunks. */
-    stdout: AsyncIterable<Uint8Array>
-    /** Live stderr as an async-iterable of byte chunks. */
-    stderr: AsyncIterable<Uint8Array>
+    /** Live stdout as a stream of byte chunks, read as far as it is consumed. */
+    stdout: ReadableStream<Uint8Array>
+    /** Live stderr as a stream of byte chunks, read as far as it is consumed. */
+    stderr: ReadableStream<Uint8Array>
     /** Queue bytes to the child's stdin. Writes serialize and respect backpressure. */
     write(data: string | Uint8Array): Promise<void>
     /** Half-close: close the child's stdin (after queued writes drain) so it sees EOF. */

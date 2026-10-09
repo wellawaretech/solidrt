@@ -15,13 +15,15 @@ This site is built by a Flux script.
 ## Two kinds of API
 
 Web-standard APIs are global, with the names and shapes you already know:
-`fetch`, `Request`, `Response`, `Headers`, `console`, `setTimeout` and
+`fetch`, `Request`, `Response`, `Headers`, `ReadableStream`,
+`WritableStream` and `TransformStream`, `console`, `setTimeout` and
 `setInterval`, `setImmediate`, `requestIdleCallback`, `queueMicrotask`,
-`performance`, `WebSocket`, `TextEncoder`
-and `TextDecoder`, `atob` and `btoa`, `AbortController` and `AbortSignal`.
+`performance`, `WebSocket`, `TextEncoder` and `TextDecoder` with
+`TextEncoderStream` and `TextDecoderStream`, `atob` and `btoa`,
+`AbortController` and `AbortSignal`.
 What is not there is as deliberate as what is: no `URL`, no `crypto`, no
-`Blob`, `FormData` or streams. A single known app rarely needs them, and
-each is a module away when it does.
+`Blob` or `FormData`. A single known app rarely needs them, and each is a
+module away when it does.
 
 Everything else is an explicit `flux:*` module import. Capabilities are
 named, not ambient:

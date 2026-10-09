@@ -7,7 +7,7 @@ use std::rc::Rc;
 use crate::pending::PendingOps;
 use crate::plugins::marshal::{with_in_flight, with_standing, CopyBytes, OptArg};
 use crate::plugins::value::Neutral;
-use crate::standards_plugins::body::byte_stream_iterable;
+use crate::standards_plugins::body::byte_stream_readable;
 use forge::subprocess::{self, CommandSpec, Spawned};
 
 // flux:subprocess - spawn child processes and collect their output.
@@ -145,7 +145,7 @@ where
 }
 
 // Spawn the child (via the forge core) and build its JS handle: live
-// stdout/stderr async-iterables, stdin write()/closeWrite(), kill(), and status().
+// stdout/stderr ReadableStreams, stdin write()/closeWrite(), kill(), and status().
 // spawn() is synchronous (the process is launched here); a failure to launch
 // throws a clean Error. The supervisor and initial-stdin tasks are spawned here
 // because spawning is host-specific.
@@ -192,8 +192,8 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
   // they iterate to nothing.
   let obj = Object::new(ctx.clone())?;
   obj.set("pid", child.pid())?;
-  obj.set("stdout", byte_stream_iterable(&ctx, stdout, output_hold(&pending))?)?;
-  obj.set("stderr", byte_stream_iterable(&ctx, stderr, output_hold(&pending))?)?;
+  obj.set("stdout", byte_stream_readable(&ctx, stdout, output_hold(&pending))?)?;
+  obj.set("stderr", byte_stream_readable(&ctx, stderr, output_hold(&pending))?)?;
 
   // write(data) -> Promise: serialized behind the stdin lock.
   let write_fn = Function::new(

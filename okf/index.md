@@ -306,6 +306,12 @@ Shaped, not started.
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
   either not found or checked against the wrong file.
+- **[Add CompressionStream and DecompressionStream](backlog/compression-streams.md)** [2026-10-09]
+  Flux has no way to inflate or deflate bytes (a fetched .gz asset, a ZIP
+  entry, a compressed save), and the web standard for it is the Compression
+  Streams API; add the two classes as TransformStreams over an incremental
+  flate2 codec in forge, one worker job per chunk so no thread is parked and
+  no frame stalls, with the spec's three formats and its TypeError cases.
 - **[Read a depth texture through the control API](backlog/control-api-depth-texture-read.md)** [2026-10-07]
   A target's depth texture is sampler-only, so /texture refuses it and a
   shadow-map bug cannot be split into "the tile was not written" and "the
@@ -2567,6 +2573,13 @@ Finished, kept for the reasoning.
   constant factor over JavaScript on tight compute", but nobody has measured
   wasmi against QuickJS in flux; a small benchmark would back that claim with
   a number.
+- **[Add ReadableStream, WritableStream and TransformStream as a documented subset](done/web-streams.md)** [2026-10-09]
+  Flux has no web streams by decision; the first API whose standard shape is a
+  transform (CompressionStream) shows that each stream-shaped standard would
+  otherwise get a bespoke adapter, and the adapters together are a nonstandard
+  streams API. Add the three classes as globals, implemented in embedded JS,
+  with a documented subset (no BYOB, no queuing strategies beyond a chunk
+  count), and type bodies and subprocess output as ReadableStream.
 
 ## Notes
 

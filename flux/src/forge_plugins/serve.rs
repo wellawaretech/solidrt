@@ -12,7 +12,7 @@ use crate::forge_plugins::websocket::{message_payload, parse_ws_handlers, spawn_
 use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::marshal::{mark_observed, OptArg};
-use crate::standards_plugins::body::{pump_async_iterable, MessageBody};
+use crate::standards_plugins::body::{pump_async_iterable, ByteStream, MessageBody};
 use crate::standards_plugins::headers::headers_from_init;
 use crate::standards_plugins::request::{request_from_parts, Request};
 use crate::standards_plugins::response::Response;
@@ -27,9 +27,10 @@ use forge::websocket::{accept_upgrade, Topics};
 // options, builds the JS Request, calls the JS handlers, and turns what they
 // return into a `Reply`.
 
-/// Read a server-built Response's buffered bytes. Server responses are buffered
-/// (`new Response(string/bytes)`) or outgoing streams (handled separately), never
-/// `Incoming`, so a non-buffered body just yields nothing here.
+/// Read a Response's buffered bytes. A stream body (a `ReadableStream` given
+/// to the constructor, or the network stream of a fetched Response) is
+/// relayed separately; an `Incoming` body seen here was already consumed, so
+/// it yields nothing.
 fn buffered_bytes(r: &Response<'_>) -> Vec<u8> {
   match &r.body {
     MessageBody::Buffered(state) => state.take().unwrap_or_default(),
@@ -41,12 +42,11 @@ fn response_from_native<'js>(r: &Response<'js>) -> Reply {
   Reply::full(r.status, &r.headers.borrow().entries(), buffered_bytes(r))
 }
 
-/// Build a streamed reply: spawn a task that drives the JS async-iterable body
+/// Build a streamed reply: spawn a task that drives the JS stream body
 /// (`resp.stream`), feeding its chunks into the reply over chunked transfer
 /// encoding (no Content-Length). The handler has already returned, so production
 /// continues on the executor while hyper flushes frames as they arrive.
-fn stream_response<'js>(ctx: &Ctx<'js>, resp: &Response<'js>) -> Reply {
-  let iterable = resp.stream.clone().expect("stream_response called without a stream");
+fn stream_response<'js>(ctx: &Ctx<'js>, resp: &Response<'js>, iterable: Object<'js>) -> Reply {
   let (tx, reply) = Reply::streamed(resp.status, &resp.headers.borrow().entries());
 
   let pump_ctx = ctx.clone();
@@ -58,6 +58,22 @@ fn stream_response<'js>(ctx: &Ctx<'js>, resp: &Response<'js>) -> Reply {
   reply
 }
 
+/// Build a streamed reply over a native byte stream: the handler returned a
+/// fetched Response (`return fetch(upstream)`), whose body is the network
+/// stream itself, relayed chunk by chunk without a pass through JS. The relay
+/// ends with the stream, its first error, or the client going away.
+fn stream_incoming(resp: &Response<'_>, mut stream: ByteStream) -> Reply {
+  let (tx, reply) = Reply::streamed(resp.status, &resp.headers.borrow().entries());
+  tokio::spawn(async move {
+    while let Some(Ok(chunk)) = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
+      if tx.send(chunk.to_vec()).await.is_err() {
+        break;
+      }
+    }
+  });
+  reply
+}
+
 fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> Reply {
   if let Some(s) = val.as_string() {
     let s = s.to_string().unwrap_or_default();
@@ -65,8 +81,14 @@ fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> Reply {
   }
   if let Ok(class) = Class::<Response>::from_value(&val) {
     let resp = class.borrow();
-    if resp.stream.is_some() {
-      return stream_response(val.ctx(), &resp);
+    let stream = resp.stream.borrow().clone();
+    if let Some(stream) = stream {
+      return stream_response(val.ctx(), &resp, stream);
+    }
+    if let MessageBody::Incoming(incoming) = &resp.body {
+      if let Some(stream) = incoming.take() {
+        return stream_incoming(&resp, stream);
+      }
     }
     return response_from_native(&resp);
   }

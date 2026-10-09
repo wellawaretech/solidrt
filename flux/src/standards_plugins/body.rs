@@ -13,7 +13,8 @@ use tokio::sync::mpsc;
 use crate::logger::{format_js_error, Logger};
 use crate::pending::{Hold, PendingOps};
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, CopyBytes, Step};
+use crate::plugins::marshal::{attach_async_iterator, mark_observed, CopyBytes, Step};
+use crate::standards_plugins::streams::readable_from;
 
 // Re-exported so the `crate::standards_plugins::body::ByteStream` importers
 // (response, request) stay unchanged; the engine-free primitive itself lives
@@ -82,17 +83,68 @@ impl MessageBody {
     }
   }
 
-  /// Consume the body once into an async-iterable of Uint8Array chunks (`.body`).
-  /// A streamed body iterates the network stream; a buffered one yields its bytes
-  /// as a single chunk, so `for await (const c of msg.body)` works uniformly.
-  pub(crate) fn as_async_iterable<'js>(&self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+  /// Consume the body once into a `ReadableStream` of Uint8Array chunks
+  /// (`.body`). A streamed body reads the network stream; a buffered one
+  /// yields its bytes as a single chunk, so `for await (const c of msg.body)`
+  /// works uniformly.
+  pub(crate) fn as_readable<'js>(&self, ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     let stream = match self {
       MessageBody::Incoming(incoming) => incoming.take().ok_or_else(|| throw_consumed(ctx))?,
       MessageBody::Buffered(state) => forge::stream::from_bytes(state.take().ok_or_else(|| throw_consumed(ctx))?),
     };
     let pending = PendingOps::of(ctx);
-    Ok(byte_stream_iterable(ctx, stream, move || pending.in_flight("body read"))?.into_value())
+    byte_stream_readable(ctx, stream, move || pending.in_flight("body read"))
   }
+
+  /// Consume the body once into a read of all its bytes, for
+  /// `text`/`bytes`/`arrayBuffer`/`json`: the read holds the engine as work
+  /// in flight until the body is drained.
+  fn read_all<'js>(&self, ctx: &Ctx<'js>) -> rquickjs::Result<BodyRead<'js>> {
+    let source = self.take_source(ctx)?;
+    let hold = PendingOps::of(ctx).in_flight("body read");
+    Ok(Box::pin(source.collect(hold)))
+  }
+}
+
+/// The `.body` of a Request or Response: the stream it was constructed with
+/// or already handed out (`stream`), the same object on every read as on the
+/// web; else one over its bytes, kept in `stream` for the next read.
+pub(crate) fn body_stream<'js>(
+  ctx: &Ctx<'js>,
+  body: &MessageBody,
+  stream: &RefCell<Option<Object<'js>>>,
+) -> rquickjs::Result<Object<'js>> {
+  if let Some(stream) = &*stream.borrow() {
+    return Ok(stream.clone());
+  }
+  let readable = body.as_readable(ctx)?;
+  *stream.borrow_mut() = Some(readable.clone());
+  Ok(readable)
+}
+
+/// Consume a Request's or Response's body once for a reader
+/// (`text`/`bytes`/`arrayBuffer`/`json`). A stream (constructed with, or
+/// handed out as `.body`) is taken and drained through the engine; the read
+/// holds the engine as work in flight until the body is done.
+pub(crate) fn body_read_all<'js>(
+  ctx: &Ctx<'js>,
+  body: &MessageBody,
+  stream: &RefCell<Option<Object<'js>>>,
+) -> rquickjs::Result<BodyRead<'js>> {
+  let Some(stream) = stream.borrow_mut().take() else {
+    return body.read_all(ctx);
+  };
+  // Whatever the stream left in the body is its own (it was built over the
+  // bytes, or the bytes are empty beside a constructed stream): taken, so a
+  // later read sees the body consumed.
+  let _ = body.take_source(ctx);
+  let hold = PendingOps::of(ctx).in_flight("body read");
+  let ctx = ctx.clone();
+  Ok(Box::pin(async move {
+    let bytes = drain_async_iterable(&ctx, stream).await;
+    drop(hold);
+    bytes
+  }))
 }
 
 /// The drainable source behind a body reader (`text`/`bytes`/`json`): either
@@ -133,71 +185,111 @@ async fn drain_stream(mut stream: ByteStream, hold: Hold) -> Result<Vec<u8>, Str
   }
 }
 
-async fn collect_text_raw(source: BodySource, hold: Hold) -> Result<String, String> {
-  let bytes = source.collect(hold).await?;
+/// A read of a whole body, behind `text`/`bytes`/`arrayBuffer`/`json`:
+/// `'js`-bound because a JS stream body is drained through the engine.
+pub(crate) type BodyRead<'js> = Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + 'js>>;
+
+async fn read_text(read: BodyRead<'_>) -> Result<String, String> {
+  let bytes = read.await?;
   String::from_utf8(bytes).map_err(|e| e.to_string())
 }
 
-pub(crate) async fn collect_text(source: BodySource, hold: Hold) -> JsResult<String> {
-  JsResult(collect_text_raw(source, hold).await)
+pub(crate) async fn collect_text(read: BodyRead<'_>) -> JsResult<String> {
+  JsResult(read_text(read).await)
 }
 
-pub(crate) async fn collect_bytes(source: BodySource, hold: Hold) -> JsResult<JsBytes> {
-  JsResult(source.collect(hold).await.map(JsBytes))
+pub(crate) async fn collect_bytes(read: BodyRead<'_>) -> JsResult<JsBytes> {
+  JsResult(read.await.map(JsBytes))
 }
 
-pub(crate) async fn collect_array_buffer(source: BodySource, hold: Hold) -> JsResult<JsArrayBuffer> {
-  JsResult(source.collect(hold).await.map(JsArrayBuffer))
+pub(crate) async fn collect_array_buffer(read: BodyRead<'_>) -> JsResult<JsArrayBuffer> {
+  JsResult(read.await.map(JsArrayBuffer))
 }
 
-pub(crate) async fn collect_json(source: BodySource, hold: Hold) -> JsResult<JsonValue> {
-  JsResult(collect_text_raw(source, hold).await.map(JsonValue))
+pub(crate) async fn collect_json(read: BodyRead<'_>) -> JsResult<JsonValue> {
+  JsResult(read_text(read).await.map(JsonValue))
 }
 
 /// Return type of the iterator's `next()`: a promise resolving to one step.
 type IterStepFuture = Promised<Pin<Box<dyn Future<Output = JsResult<Step<JsBytes>>>>>>;
 
-/// Build a Rust-backed JS async-iterable over a network byte stream. Each `next()`
-/// pulls one chunk (a Uint8Array) from `stream`, resolving `{ value, done }`;
-/// `[Symbol.asyncIterator]()` returns the object itself, so `for await` works.
-/// The structural dual of `pump_async_iterable` (JS-produces -> Rust-consumes):
-/// here Rust produces and JS consumes. Pull-based, so the network only advances
-/// as JS pulls; `hold` is taken for each read and released when it lands, so
-/// an abandoned iterator holds nothing. The caller decides its class: a
+/// A `ReadableStream` over a native byte stream: `byte_stream_iterable`
+/// wrapped by `ReadableStream.from`, so the stream pulls one chunk per read
+/// and cancelling it drops the native stream. What `.body` and a child's
+/// `stdout`/`stderr` hand to JS.
+pub(crate) fn byte_stream_readable<'js>(
+  ctx: &Ctx<'js>,
+  stream: ByteStream,
+  hold: impl Fn() -> Hold + 'static,
+) -> rquickjs::Result<Object<'js>> {
+  let iter = byte_stream_iterable(ctx, stream, hold)?;
+  readable_from(ctx, iter)
+}
+
+/// Build a Rust-backed JS async-iterator over a network byte stream, the
+/// underlying source of `byte_stream_readable`. Each `next()` pulls one chunk
+/// (a Uint8Array) from `stream`, resolving `{ value, done }`; `return()` drops
+/// the stream, so a consumer that stops early (a `break`, a stream cancel)
+/// releases the socket or pipe behind it now, not at GC; and
+/// `[Symbol.asyncIterator]()` returns the object itself. The structural dual
+/// of `drive_async_iterable` (JS-produces -> Rust-consumes): here Rust
+/// produces and JS consumes. Pull-based, so the network only advances as JS
+/// pulls; `hold` is taken for each read and released when it lands, so an
+/// abandoned iterator holds nothing. The caller decides its class: a
 /// response body is work in flight, a running child's output is standing.
-pub(crate) fn byte_stream_iterable<'js>(
+fn byte_stream_iterable<'js>(
   ctx: &Ctx<'js>,
   stream: ByteStream,
   hold: impl Fn() -> Hold + 'static,
 ) -> rquickjs::Result<Object<'js>> {
   let cell = Rc::new(RefCell::new(Some(stream)));
+  // Set by `return()`: a `next()` in flight at that moment drops the stream
+  // when its chunk lands instead of putting it back.
+  let closed = Rc::new(Cell::new(false));
   let iter = Object::new(ctx.clone())?;
 
   let next_fn = Function::new(
     ctx.clone(),
-    MutFn::from(move |_ctx: Ctx<'_>| -> rquickjs::Result<IterStepFuture> {
+    MutFn::from({
       let cell = cell.clone();
-      let hold = hold();
-      Ok(Promised(Box::pin(async move {
-        // Take the stream out so no RefCell borrow is held across the await. A
-        // concurrent (un-awaited) next() finding it gone just reports done.
-        let Some(mut stream) = cell.borrow_mut().take() else {
-          return JsResult(Ok(Step(None)));
-        };
-        let item = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await;
-        drop(hold);
-        JsResult(match item {
-          Some(Ok(chunk)) => {
-            *cell.borrow_mut() = Some(stream);
-            Ok(Step(Some(JsBytes(chunk.to_vec()))))
-          }
-          Some(Err(e)) => Err(e.to_string()),
-          None => Ok(Step(None)),
-        })
-      })))
+      let closed = closed.clone();
+      move |_ctx: Ctx<'_>| -> rquickjs::Result<IterStepFuture> {
+        let cell = cell.clone();
+        let closed = closed.clone();
+        let hold = hold();
+        Ok(Promised(Box::pin(async move {
+          // Take the stream out so no RefCell borrow is held across the await. A
+          // concurrent (un-awaited) next() finding it gone just reports done.
+          let Some(mut stream) = cell.borrow_mut().take() else {
+            return JsResult(Ok(Step(None)));
+          };
+          let item = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await;
+          drop(hold);
+          JsResult(match item {
+            Some(Ok(chunk)) => {
+              if !closed.get() {
+                *cell.borrow_mut() = Some(stream);
+              }
+              Ok(Step(Some(JsBytes(chunk.to_vec()))))
+            }
+            Some(Err(e)) => Err(e.to_string()),
+            None => Ok(Step(None)),
+          })
+        })))
+      }
     }),
   )?;
   iter.set("next", next_fn)?;
+
+  let return_fn = Function::new(
+    ctx.clone(),
+    MutFn::from(move |_ctx: Ctx<'_>| -> rquickjs::Result<Step<JsBytes>> {
+      closed.set(true);
+      cell.borrow_mut().take();
+      Ok(Step(None))
+    }),
+  )?;
+  iter.set("return", return_fn)?;
   attach_async_iterator(ctx, &iter)?;
 
   Ok(iter)
@@ -229,96 +321,115 @@ pub(crate) fn is_async_iterable<'js>(val: &Value<'js>) -> rquickjs::Result<bool>
 }
 
 /// Parse a Response body value into either buffered bytes or, when it is an
-/// async-iterable, a stream source object to be drained later (see
-/// `pump_async_iterable`). Otherwise falls back to the buffered `extract_body_value`
-/// rules (string, Uint8Array, null/undefined).
+/// async-iterable, a `ReadableStream` to be drained later (the value itself
+/// when it is one, else `ReadableStream.from` over it, so `.body` is one
+/// shape whatever was given). Otherwise falls back to the buffered
+/// `extract_body_value` rules (string, Uint8Array, null/undefined).
 pub(crate) fn extract_streaming_body<'js>(val: &Value<'js>) -> rquickjs::Result<(Vec<u8>, Option<Object<'js>>)> {
   if is_async_iterable(val)? {
     let obj = val.clone().into_object().expect("async iterable is an object");
-    return Ok((Vec::new(), Some(obj)));
+    return Ok((Vec::new(), Some(readable_from(val.ctx(), obj)?)));
   }
   Ok((extract_body_value(val, "Response")?, None))
 }
 
-/// Drive a JS async-iterable body, sending each yielded chunk to `tx` as bytes
-/// until the iterator is done, an error occurs, or the consumer drops the
-/// receiver. Chunks must be strings or Uint8Arrays; empty chunks are skipped.
+/// Drive a JS async-iterable body chunk by chunk, handing the bytes of each
+/// non-empty chunk (a string or Uint8Array) to `sink`, until the iterator is
+/// done or `sink` returns false (the consumer is gone). When the drive stops
+/// before the end the iterator's `return()` is called, so a `ReadableStream`
+/// behind it is cancelled rather than left locked. `Err` carries the message
+/// of a throw, a rejection, or a chunk of the wrong type.
 ///
-/// Touches JS values, so it must run on the QuickJS executor (spawn via
-/// `ctx.spawn`). Shared by the HTTP server's streamed responses today; the same
-/// shape fits a streamed fetch request body (a different sink) later.
+/// Touches JS values, so it runs on the QuickJS executor (a `ctx.spawn` task
+/// or a `Promised` future).
+async fn drive_async_iterable<'js>(
+  ctx: &Ctx<'js>,
+  iterable: Object<'js>,
+  mut sink: impl AsyncFnMut(Vec<u8>) -> bool,
+) -> Result<(), String> {
+  let get_iter: Function<'js> = iterable
+    .get(PredefinedAtom::SymbolAsyncIterator)
+    .map_err(|e| format!("body is not async-iterable: {}", format_js_error(ctx, e)))?;
+  let iter: Object<'js> = get_iter
+    .call((This(iterable),))
+    .map_err(|e| format!("could not get async iterator: {}", format_js_error(ctx, e)))?;
+  let next: Function<'js> = iter.get("next").map_err(|e| format!("iterator has no next(): {e}"))?;
+
+  loop {
+    let step: Value<'js> =
+      next.call((This(iter.clone()),)).map_err(|e| format!("iterator next() threw: {}", format_js_error(ctx, e)))?;
+    mark_observed(&step);
+    let result = MaybePromise::from_value(step)
+      .into_future::<Value<'js>>()
+      .await
+      .map_err(|e| format!("iterator rejected: {}", format_js_error(ctx, e)))?;
+    let Some(obj) = result.into_object() else {
+      return Err("iterator result was not an object".to_string());
+    };
+    if obj.get("done").unwrap_or(true) {
+      return Ok(());
+    }
+    let value: Value<'js> = obj.get("value").map_err(|e| format!("could not read chunk value: {e}"))?;
+    let chunk = match extract_body_value(&value, "stream chunk") {
+      Ok(b) => b,
+      Err(e) => {
+        return_iterator(ctx, &iter);
+        return Err(format!("chunk must be a string or Uint8Array: {e}"));
+      }
+    };
+    if chunk.is_empty() {
+      continue;
+    }
+    if !sink(chunk).await {
+      return_iterator(ctx, &iter);
+      return Ok(());
+    }
+  }
+}
+
+/// Call the iterator's `return()`, if it has one, for a drive that stops
+/// before the end. Its outcome is nobody's to observe: a rejection is
+/// marked handled, a throw is taken off the context.
+fn return_iterator<'js>(ctx: &Ctx<'js>, iter: &Object<'js>) {
+  let Ok(Some(ret)) = iter.get::<_, Option<Function<'js>>>("return") else {
+    return;
+  };
+  match ret.call::<_, Value<'js>>((This(iter.clone()),)) {
+    Ok(result) => mark_observed(&result),
+    Err(_) => {
+      let _ = ctx.catch();
+    }
+  }
+}
+
+/// Drive a JS async-iterable body into `tx`, chunk by chunk, until the
+/// iterator is done, an error occurs, or the consumer drops the receiver.
+/// What the HTTP server's streamed responses and a streamed fetch request
+/// body run under `ctx.spawn`; an error is logged, since no caller is left
+/// to receive it.
 pub(crate) async fn pump_async_iterable<'js>(
   ctx: Ctx<'js>,
   iterable: Object<'js>,
   tx: mpsc::Sender<Vec<u8>>,
   logger: Logger,
 ) {
-  let get_iter: Function<'js> = match iterable.get(PredefinedAtom::SymbolAsyncIterator) {
-    Ok(f) => f,
-    Err(e) => {
-      logger.warn(&format!("[flux] stream: body is not async-iterable: {}", format_js_error(&ctx, e)));
-      return;
-    }
-  };
-  let iter: Object<'js> = match get_iter.call((This(iterable),)) {
-    Ok(i) => i,
-    Err(e) => {
-      logger.warn(&format!("[flux] stream: could not get async iterator: {}", format_js_error(&ctx, e)));
-      return;
-    }
-  };
-  let next: Function<'js> = match iter.get("next") {
-    Ok(n) => n,
-    Err(e) => {
-      logger.warn(&format!("[flux] stream: iterator has no next(): {e}"));
-      return;
-    }
-  };
-
-  loop {
-    let step: Value<'js> = match next.call((This(iter.clone()),)) {
-      Ok(v) => v,
-      Err(e) => {
-        logger.warn(&format!("[flux] stream: iterator next() threw: {}", format_js_error(&ctx, e)));
-        break;
-      }
-    };
-    let result = match MaybePromise::from_value(step).into_future::<Value<'js>>().await {
-      Ok(v) => v,
-      Err(e) => {
-        logger.warn(&format!("[flux] stream: iterator rejected: {}", format_js_error(&ctx, e)));
-        break;
-      }
-    };
-    let Some(obj) = result.into_object() else {
-      logger.warn("[flux] stream: iterator result was not an object");
-      break;
-    };
-    if obj.get("done").unwrap_or(true) {
-      break;
-    }
-    let value: Value<'js> = match obj.get("value") {
-      Ok(v) => v,
-      Err(e) => {
-        logger.warn(&format!("[flux] stream: could not read chunk value: {e}"));
-        break;
-      }
-    };
-    let chunk = match extract_body_value(&value, "stream chunk") {
-      Ok(b) => b,
-      Err(e) => {
-        logger.warn(&format!("[flux] stream: chunk must be a string or Uint8Array: {e}"));
-        break;
-      }
-    };
-    if chunk.is_empty() {
-      continue;
-    }
-    // A send error means the consumer is gone (e.g. the connection closed).
-    if tx.send(chunk).await.is_err() {
-      break;
-    }
+  // A send error means the consumer is gone (e.g. the connection closed).
+  let drive = drive_async_iterable(&ctx, iterable, async |chunk| tx.send(chunk).await.is_ok());
+  if let Err(message) = drive.await {
+    logger.warn(&format!("[flux] stream: {message}"));
   }
+}
+
+/// Read a JS async-iterable body to its end, concatenating the chunks: what
+/// `text`/`bytes`/`arrayBuffer`/`json` do on a stream-bodied Response.
+pub(crate) async fn drain_async_iterable<'js>(ctx: &Ctx<'js>, iterable: Object<'js>) -> Result<Vec<u8>, String> {
+  let mut buf = Vec::new();
+  drive_async_iterable(ctx, iterable, async |chunk| {
+    buf.extend_from_slice(&chunk);
+    true
+  })
+  .await?;
+  Ok(buf)
 }
 
 pub struct JsBytes(pub Vec<u8>);
