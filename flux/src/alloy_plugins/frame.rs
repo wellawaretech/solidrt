@@ -20,13 +20,20 @@ use super::{camera, font, gpu, raf, spatial, tree};
 /// The pre-delivery half of a frame, run once per frame signal before the
 /// frame's JS: stamp both animation clocks with the frame's app time
 /// (`now_ms`, the timeline rAF and the render event report), advance the
-/// clip players (so onFrame handlers read and can overwrite the fresh
-/// poses), then tick the capture devices (camera, gpu capture settles).
-/// Content a device or player changed, or a player still running, latches
-/// a frame request. Video is not here: its frames reach their textures
-/// through the raster thread's latch, off the frame loop. Runs whether or
-/// not the frame is delivered: a paused clock stops app time, not the
-/// devices. No-op before the GUI is installed.
+/// native motion of the spatial arena - the clip players, then the node
+/// transitions - so the frame's JS reads the posed nodes and can
+/// overwrite them (the frame's write wins the frame, the producer rule),
+/// the late pass of `onBeforeRender` sees the final pose and the publish
+/// pass hands what derives from it to the engine; then tick the capture
+/// devices (camera, gpu capture settles). What the motion has to tell JS
+/// waits for `deliver`. Content a device or mover changed latches a
+/// frame request; motion still running is standing demand `draw`
+/// re-requests past its gate, and this frame's reasons are seeded here
+/// (`draw` appends its own). Video is not here: its frames reach their
+/// textures through the raster thread's latch, off the frame loop. Runs
+/// whether or not the frame is delivered: a paused clock stops app time
+/// (an unchanged stamp steps nothing), not the devices. No-op before the
+/// GUI is installed.
 pub fn advance(ctx: &Ctx<'_>, now_ms: f64) {
   let Some(s) = tree::try_state(ctx) else {
     return;
@@ -36,10 +43,15 @@ pub fn advance(ctx: &Ctx<'_>, now_ms: f64) {
   // This frame's reasons to ask for the next one are collected from here.
   let mut reasons = Vec::new();
   let players = spatial::advance_players(ctx);
-  let mut demand = players.active || players.wrote;
+  let transitions = spatial::advance_transitions(ctx);
+  let mut demand = players.active || players.wrote || transitions;
   if players.active {
     reasons.push("an animation player".to_string());
   }
+  if transitions {
+    reasons.push("a spatial transition".to_string());
+  }
+  s.gui.motion.set(super::NativeMotion { players: players.active, transitions });
   // A camera frame landed in its texture: the screen content changed even
   // though the tree did not.
   if camera::tick(ctx) {
@@ -97,17 +109,27 @@ pub fn on_advance(ctx: &Ctx<'_>, reason: &'static str, run: impl for<'js> FnMut(
 
 /// The delivery half: hand the frame to JS. Timers fire first, one
 /// task-queue turn on the timer reading (`timer_now_ms`; see
-/// `advance_virtual_time`), then the rAF callbacks and the "render" event
-/// (payload `{ frame, time }`, time in seconds) on the app time `now_ms`,
-/// so the frame's render handler consumes the state the callbacks dirtied.
-/// The runner skips this call to pause app time.
+/// `advance_virtual_time`), then the frame on the app time `now_ms`: the
+/// "frameStart" event (payload `{ frame, time }`, time in seconds) that
+/// stamps the frame's clock for JS, what the advance's native motion has
+/// to report (a clip's end, a settle: handlers see the frame's poses and
+/// its clock), the rAF callbacks, and the "render" event (the same
+/// payload), so the frame's render handler consumes the state the
+/// callbacks dirtied. The runner skips this call to pause app time; the
+/// motion's reports then wait for the next delivery.
 pub fn deliver(ctx: &Ctx<'_>, frame: u64, now_ms: f64, timer_now_ms: f64) {
   crate::standards_plugins::time::advance_virtual_time(ctx, timer_now_ms);
+  crate::emit_event(ctx, "frameStart", frame_payload(ctx, frame, now_ms));
+  spatial::deliver_motion(ctx);
   raf::flush(ctx, now_ms);
-  let payload = Object::new(ctx.clone()).expect("create render event object");
+  crate::emit_event(ctx, "render", frame_payload(ctx, frame, now_ms));
+}
+
+fn frame_payload<'js>(ctx: &Ctx<'js>, frame: u64, now_ms: f64) -> Object<'js> {
+  let payload = Object::new(ctx.clone()).expect("create frame event object");
   payload.set("frame", frame).expect("set frame");
   payload.set("time", now_ms / 1000.0).expect("set time");
-  crate::emit_event(ctx, "render", payload);
+  payload
 }
 
 /// The idle half: the idle period after a delivered frame, for the
@@ -124,14 +146,16 @@ pub fn idle(ctx: &Ctx<'_>, until: Option<Instant>) {
 
 /// One frame of the draw protocol over the shared render tree, the same on
 /// every path (the runner's per-frame draw, the direct `render` export): the
-/// transition ticks (the render tree's tracks, then the spatial arena's,
-/// each reporting its settles to JS before the frame paints), the demand
+/// transition ticks (the render tree's tracks, reporting their settles to
+/// JS before the frame paints; then the spatial arena's starts and flush,
+/// its step having run in `advance` ahead of the frame's JS), the demand
 /// gate, then the build `f` sequences through the handle - commit, and on a
 /// rebuild layout, paint and finish with the caller's own work between the
 /// phases (a post-layout hook, hover refresh). `f` gets None when nothing
 /// wanted a frame: the gate consumed no request and `extra_demand`, the
-/// caller's own reason to draw, was false. Running transitions are demand
-/// and re-request the next frame here, so the loop ticks until they settle.
+/// caller's own reason to draw, was false. Running transitions and native
+/// motion are demand and re-request the next frame here, so the loop ticks
+/// until they settle.
 /// One driver per tree, so consecutive frames on either path reuse the
 /// retained display list. Tree borrows are scoped to each phase call, so
 /// JS run between the phases may write properties. `present_at` is when
@@ -169,12 +193,15 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
   // an animating app's intervals are judged.
   // A streaming texture (a playing video) is standing demand alloy holds:
   // the loop ticks on the refresh grid while it plays. A module's tick
-  // that asked for the next frame (`on_advance`) is standing demand too.
+  // that asked for the next frame (`on_advance`) is standing demand too,
+  // and so is the native motion `advance` found running (its reasons are
+  // already in) or the spatial starts just set running.
   let on_frame = s.gui.platform.take_standing_demand();
   let streaming = s.gui.alloy.streaming_textures();
   let raf = super::raf::has_pending(ctx);
   let ticking = std::mem::take(&mut *s.gui.ticking.borrow_mut());
-  if anim_active || spatial.active || on_frame || streaming || raf || !ticking.is_empty() {
+  let motion = s.gui.motion.replace(super::NativeMotion::default());
+  if anim_active || motion.any() || spatial.active || on_frame || streaming || raf || !ticking.is_empty() {
     s.gui.platform.request_frame();
   }
   {
@@ -189,7 +216,9 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
         None => "a transition".to_string(),
       });
     }
-    if spatial.active {
+    // The advance reported the transitions it found running; the starts
+    // may have set the first one running since.
+    if spatial.active && !motion.transitions {
       reasons.push("a spatial transition".to_string());
     }
     if on_frame {

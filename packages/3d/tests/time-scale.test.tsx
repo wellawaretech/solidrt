@@ -9,7 +9,8 @@
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
 import { add, createGroup, createScene, getTransform, remove, setTimeScale, setTransform, setTransition, timeRate } from "../src/index.ts"
-import type { Scene, SceneNode } from "../src/index.ts"
+import type { SceneNode } from "../src/index.ts"
+import type { Scene } from "../src/scene.ts"
 
 const SIZE = 32
 // A linear tween over a second to x = 10: app time in ms maps to x / 100.

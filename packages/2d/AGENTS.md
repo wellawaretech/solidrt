@@ -212,7 +212,9 @@ detach here (3d's `remove`), and a sprite that should come back is
 hidden (`visible: false`).
 A handle's x/y are local to its group; `worldPosition(sprite | group)`
 reads the layer-pixel position composed through every enclosing group
-from the core's world matrix (@solidrt/3d's worldPosition).
+from the core's world matrix (@solidrt/3d's worldPosition) - under a
+transition the pose of this frame, since native motion steps before the
+frame's JS.
 
 ### Visibility
 

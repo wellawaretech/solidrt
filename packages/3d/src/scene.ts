@@ -2292,17 +2292,39 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // first frame.
   lightsDirty = true
   hooks._schedule()
+  // What the sync derives from poses the core moves on its own, placed
+  // every frame: a casting light's shadow cameras follow a light under a
+  // transition or a clip player in the frame the lighting moves, which
+  // the core writes itself. The compare in placeShadowCamera makes this
+  // one world read per caster and no write when nothing moved; the
+  // records, the lights and the budgets wait for a write to schedule the
+  // sync, which places the cameras itself.
+  let follow = () => {
+    if (disposed) return
+    shadowSys.placeCameras(false)
+    for (let v of views) {
+      ensureCamera(v.camera, v.width, v.height)
+      if (!v.camera.pending) continue
+      v.camera.pending = false
+      setTargetParams(v.texture, cameraParams(v.camera, v.width, v.height))
+      setView(v.texture, v.camera)
+      if (v.shadowFilter !== null) shadowSys.markMatricesDirty()
+    }
+    shadowSys.flushMatrices(params => receivingTargets(t => setTargetParams(t, params)))
+  }
   // The publish pass of every frame runs the pending sync ahead of the
   // paint, so a write made anywhere in the frame's JS is in that frame's
   // picture: the count, the buffers and the bytes of a record write land
-  // together, and nothing shows a frame late. The microtask stays for
-  // writes made outside a frame. Registered outside any owner: the scene's
-  // own dispose unhooks it (an autoFree: false scene outlives the owner it
+  // together, and nothing shows a frame late. With nothing scheduled it
+  // follows native motion instead. The microtask stays for writes made
+  // outside a frame. Registered outside any owner: the scene's own
+  // dispose unhooks it (an autoFree: false scene outlives the owner it
   // was created in).
   let unhook = runWithOwner(null, () =>
     onBeforeRender(
       () => {
         if (scheduled) sync()
+        else follow()
       },
       { publish: true },
     ),

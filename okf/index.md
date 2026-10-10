@@ -217,11 +217,6 @@ Shaped, not started.
   and there is no output={false}, so an app that renders only through
   <View3d>s carries a full unused scene target; @solidrt/2d took the opposite
   structure on 09-07 and layers render only through views.
-- **[Re-place a casting light's shadow when native motion moves it](backlog/3d-shadow-follows-native-motion.md)** [2026-10-10]
-  A castShadow light moved by the spatial core (a node transition, a clip
-  player, root motion) lights the scene from its animated pose while its
-  shadow map stays where the last JS write left it, because the shadow cameras
-  are placed in the scene's JS sync, which native motion never schedules.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -1198,6 +1193,12 @@ Finished, kept for the reasoning.
   N maps, landed 2026-08-28 as shadow.cascades on a directional light with a
   blend band and shadow.distance; the split ratios stay fixed (their own
   backlog item).
+- **[Node transitions advance before the frame's JS, so a casting light's shadow follows native motion](done/3d-shadow-follows-native-motion.md)** [2026-10-10]
+  A castShadow light moved by a node transition lights the scene from its
+  animated pose while its shadow map stays where the last JS write left it,
+  and any JS reader of a transitioned node's pose (a late-pass follow,
+  worldPosition, a 2d pin) is one frame stale, because node transitions are
+  the one native mover that advances after the frame's JS.
 - **[Shadow maps and their dependencies](done/3d-shadow-maps.md)** [2026-08-26]
   Directional shadow maps for @solidrt/3d, staged over the three things they
   need - a sampleable depth id in the engine, per-target draw sinks in the

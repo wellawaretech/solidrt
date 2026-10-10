@@ -155,10 +155,13 @@ declare module "flux:spatial" {
    * setTransform. A component matching its running track's target is
    * left alone, so rewriting the whole array to move one component never
    * restarts the others (a held write's target counts, so re-sending it
-   * does not restart its delay). Each settled component fires one
-   * "spatialTransitionEnd" engine event (sol:events), payload
-   * `{ node, component: NodeComponent }` - on a live node; a leaving
-   * node's settles feed its free instead (exitNode).
+   * does not restart its delay). The core steps every track before the
+   * frame's JS (beside the clip players), so a read in the frame sees
+   * this frame's pose and a raw setTransform made in the frame wins the
+   * frame. Each settled component fires one "spatialTransitionEnd"
+   * engine event (sol:events), payload `{ node, component:
+   * NodeComponent }`, ahead of the frame's JS - on a live node; a
+   * leaving node's settles feed its free instead (exitNode).
    */
   export function writeTransform(node: NodeId, transform: Float32Array): void
   /**
@@ -267,6 +270,13 @@ declare module "flux:spatial" {
   /** Recompute every changed subtree and write the sinks; requests a frame
    * when anything was written. */
   export function flush(): void
+  /** The frame's start pass, core's to call after the frame callbacks and
+   * their reactive flush: start the lifecycle motion they declared (the
+   * enter of a node created in the frame from its `from`, the exit of one
+   * let go of), so a read in the late pass of onBeforeRender sees the pose
+   * the frame draws. Running motion steps before the callbacks instead.
+   * Idempotent within a frame; requests a frame for what it started. */
+  export function startTransitions(): void
 
   export type ShapeId = number & { readonly __spatialShape: unique symbol }
 

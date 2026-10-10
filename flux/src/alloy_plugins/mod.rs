@@ -27,7 +27,7 @@ pub mod video;
 pub use properties::transition::anim_prop_name;
 pub use properties::{read_jsx, ReadValue};
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -65,6 +65,23 @@ pub(crate) struct Gui {
   /// The reasons of the ticks that asked for the next frame this frame:
   /// standing demand `frame::draw` re-requests past its gate.
   pub(crate) ticking: RefCell<Vec<&'static str>>,
+  /// The native motion still running as of this frame's `frame::advance`:
+  /// standing demand `frame::draw` re-requests past its gate, the way
+  /// `ticking` is, and the reasons it already reported.
+  pub(crate) motion: Cell<NativeMotion>,
+}
+
+/// What `frame::advance` found still running, per mover.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct NativeMotion {
+  pub(crate) players: bool,
+  pub(crate) transitions: bool,
+}
+
+impl NativeMotion {
+  pub(crate) fn any(self) -> bool {
+    self.players || self.transitions
+  }
 }
 
 /// A per-frame hook a module registered (see `frame::on_advance`): run in
@@ -178,6 +195,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
           teardown,
           ticks: RefCell::new(Vec::new()),
           ticking: RefCell::new(Vec::new()),
+          motion: Cell::new(NativeMotion::default()),
         })))
         .expect("store gui state");
     })

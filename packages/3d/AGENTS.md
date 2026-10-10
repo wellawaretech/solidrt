@@ -301,7 +301,10 @@ shadow })`, `setLight`) makes the scene own an internal
 `createView({ depth: "texture", overrideMaterial: depth pass })` drawing
 the `castShadow` meshes (`<Mesh castShadow>`, `setCastShadow`) from an
 orthographic camera at the light's WORLD position along its world
-direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum.
+direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum,
+re-placed whenever the light's world matrix moves - by a JS write or
+by native motion (a transition on the light or an ancestor, a clip
+player), in the frame the lighting moves.
 Any light may cast, bounded by the shadow-slot budget
 (`MAX_SHADOW_MAPS` = 8, its own constant, exported from the root and
 `/glsl` with `MAX_LIGHTS` and `MAX_CASCADES`: a directional light claims
@@ -382,7 +385,18 @@ RETARGETED motion is native: `setTransition(node, { position:
 animates toward every frame (position/scale per lane, rotation along
 the quaternion geodesic - a spring keeps its velocity through
 retargets), so a mesh gliding to a slot or a camera rig easing costs
-one JS write per target change, zero per frame. The declaration lives
+one JS write per target change, zero per frame - for the mesh, its
+lighting and its shadow alike (a casting light on a transitioned group
+re-places its shadow cameras in the scene's sync, which runs every
+frame). One rule for every native mover, transitions and clip players
+both: the core steps running motion BEFORE the frame's callbacks and
+starts what they declared (an enter from its `from`, an exit) AFTER
+them and their flush - Unity's animation update between Update and
+LateUpdate - so `worldPosition`, `getTransform` and a late-pass follow
+read the pose the frame draws (a node created in a frame's callback
+reads its created pose there and its `from` from the late pass on),
+and a raw `setTransform` made in the frame wins that frame (the next
+step overwrites it again - the producer rule, last write wins). The declaration lives
 on the SceneNode and re-applies on every scene enter; the pose a node
 enters with snaps, unless a component's `from` (`position: { duration,
 from: [x, y, z] }`, a quaternion for `rotation`) animates it in from

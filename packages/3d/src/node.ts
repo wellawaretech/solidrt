@@ -977,7 +977,11 @@ export function getTransform(node: SceneNode): { position: Vec3; quaternion: Qua
 /**
  * A node's position in world space, copied into `out` (or a fresh Vec3) -
  * Three's `getWorldPosition`. Brings the ancestor chain up to date first,
- * so it is exact before the pending sync has run.
+ * so it is exact before the pending sync has run, and exact against
+ * native motion: a transition or a clip player has stepped to this
+ * frame's pose before any of the frame's JS runs, so a read in onFrame
+ * or the late pass of onBeforeRender is where the node is drawn this
+ * frame.
  */
 export function worldPosition(node: SceneNode, out: Vec3 = [0, 0, 0]): Vec3 {
   let world = worldInto(worldScratch, node)

@@ -92,6 +92,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("worldMatrix")?;
     decl.declare("shown")?;
     decl.declare("flush")?;
+    decl.declare("startTransitions")?;
     decl.declare("setBounds")?;
     decl.declare("setView")?;
     decl.declare("setLodBias")?;
@@ -155,6 +156,7 @@ impl ModuleDef for SpatialModule {
     exports.export("worldMatrix", Function::new(ctx.clone(), world_matrix)?)?;
     exports.export("shown", Function::new(ctx.clone(), shown)?)?;
     exports.export("flush", Function::new(ctx.clone(), flush)?)?;
+    exports.export("startTransitions", Function::new(ctx.clone(), start_transitions)?)?;
     exports.export("setBounds", Function::new(ctx.clone(), set_bounds)?)?;
     exports.export("setView", Function::new(ctx.clone(), set_view)?)?;
     exports.export("setLodBias", Function::new(ctx.clone(), set_lod_bias)?)?;
@@ -492,6 +494,19 @@ fn shown(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<bool> {
 fn flush(ctx: Ctx<'_>) -> rquickjs::Result<()> {
   let st = super::gui(&ctx);
   if st.alloy.spatial_flush() {
+    st.platform.request_frame();
+  }
+  Ok(())
+}
+
+/// Start the lifecycle motion the frame's callbacks declared (enters of
+/// nodes created in the frame, exits of nodes let go of), the frame's
+/// start pass: core calls it after the frame callbacks and their reactive
+/// flush, before the late pass, so a late-pass read sees the pose the
+/// frame draws. Motion it started is demand: the frame is requested.
+fn start_transitions(ctx: Ctx<'_>) -> rquickjs::Result<()> {
+  let st = super::gui(&ctx);
+  if st.alloy.spatial().start_transitions() {
     st.platform.request_frame();
   }
   Ok(())
@@ -1334,9 +1349,12 @@ pub(crate) fn stamp_clock(ctx: &Ctx<'_>, now_ms: f64) {
   }
 }
 
-/// What a frame's node-transition tick produced (see `tick`).
+/// What a frame's draw-side node-transition tick produced (see `tick`).
 pub(crate) struct SpatialTick {
-  /// Tracks still run: the runner's signal to keep requesting frames.
+  /// Motion still runs after the starts and the free gates: the runner's
+  /// signal to keep requesting frames (the step's own signal is
+  /// `advance_transitions`' return, carried over the frame by the frame
+  /// module).
   pub active: bool,
   /// The flush sent sink writes: this frame must paint.
   pub wrote: bool,
@@ -1354,18 +1372,53 @@ pub(crate) struct PlayersTick {
 /// poses into the arena. The frame module calls this BEFORE the frame's JS
 /// (right after stamping the clock), so `onFrame` handlers read and can
 /// overwrite freshly posed nodes - the post-animation hook - and the draw
-/// path's flush publishes the result. Finished/dropped players reach JS
-/// as one "spatialClipEnd" engine event each, payload `{ player, reason }`
-/// (reason "finished" or "dropped"), emitted here so handlers run in the
-/// same frame's turn. Root-motion deltas of bound players follow as one
-/// "spatialRootMotion" event each, payload `{ player, x, y, z, yaw }`.
+/// path's flush publishes the result. What the advance has to tell JS
+/// (finished and dropped players, root-motion deltas) waits in the arena
+/// for `deliver_motion`.
 pub(crate) fn advance_players(ctx: &Ctx<'_>) -> PlayersTick {
   let Some(st) = super::try_gui(ctx) else {
     return PlayersTick { active: false, wrote: false };
   };
   let tick = st.alloy.spatial().advance_players();
-  let events = st.alloy.spatial().take_clip_events();
-  for event in events {
+  PlayersTick { active: tick.active, wrote: tick.wrote }
+}
+
+/// Step the node transitions to the stamped clock: every running track
+/// writes its node's TRS through the arena's ordinary snap path (the
+/// draw tick's flush publishes it). The frame module calls this BEFORE
+/// the frame's JS, right after the players, so the frame reads the
+/// stepped pose (a late-pass follow, a shadow camera placed from a
+/// light's world matrix) and may overwrite it. The settles wait in the
+/// arena for `deliver_motion`. Returns whether any track still runs or
+/// any write still waits on a node whose time moves: standing demand the
+/// frame module carries to `frame::draw`.
+pub(crate) fn advance_transitions(ctx: &Ctx<'_>) -> bool {
+  let Some(st) = super::try_gui(ctx) else {
+    return false;
+  };
+  let active = st.alloy.spatial().advance_transitions();
+  active
+}
+
+/// Hand JS what the native motion of this frame's advance produced, as
+/// engine events: one "spatialClipEnd" per finished or dropped player,
+/// payload `{ player, reason }` (reason "finished" or "dropped"), one
+/// "spatialRootMotion" per bound player's delta, payload `{ player, x,
+/// y, z, yaw }`, and one "spatialTransitionEnd" per settled track,
+/// payload `{ node, component }`. The frame module calls this in
+/// `deliver`, after the frame's clock reached JS ("frameStart") and
+/// ahead of the frame's callbacks, so a handler sees the frame's stepped
+/// poses and its clock, and its follow-up write lands in the same frame.
+pub(crate) fn deliver_motion(ctx: &Ctx<'_>) {
+  let Some(st) = super::try_gui(ctx) else {
+    return;
+  };
+  // Each list is taken before its loop: a handler reads the arena (a
+  // pose, a world matrix), so the borrow must not outlive the take.
+  let clips = st.alloy.spatial().take_clip_events();
+  let root_motion = st.alloy.spatial().take_root_motion();
+  let settled = st.alloy.spatial().take_settled_transitions();
+  for event in clips {
     let obj = Object::new(ctx.clone()).expect("create spatialClipEnd object");
     let (player, reason) = match event {
       ClipEvent::Finished(id) => (id, "finished"),
@@ -1375,7 +1428,7 @@ pub(crate) fn advance_players(ctx: &Ctx<'_>) -> PlayersTick {
     obj.set("reason", reason).expect("set reason");
     crate::emit_event(ctx, "spatialClipEnd", obj);
   }
-  for (player, delta, yaw) in st.alloy.spatial().take_root_motion() {
+  for (player, delta, yaw) in root_motion {
     let obj = Object::new(ctx.clone()).expect("create spatialRootMotion object");
     obj.set("player", player).expect("set player");
     obj.set("x", delta[0] as f64).expect("set x");
@@ -1384,38 +1437,35 @@ pub(crate) fn advance_players(ctx: &Ctx<'_>) -> PlayersTick {
     obj.set("yaw", yaw as f64).expect("set yaw");
     crate::emit_event(ctx, "spatialRootMotion", obj);
   }
-  PlayersTick { active: tick.active, wrote: tick.wrote }
-}
-
-/// Advance the node transitions to the stamped clock and publish what
-/// moved: steps every running track (writing node TRS through the arena's
-/// ordinary snap path), flushes the arena when anything was written, and
-/// emits one "spatialTransitionEnd" engine event per settled track,
-/// payload `{ node, component }`, then one "spatialNodeFreed" per leaving
-/// node the advance freed. `frame::draw` calls this beside the render
-/// tree's transition advance, before the frame's demand gate.
-pub(crate) fn tick(ctx: &Ctx<'_>) -> SpatialTick {
-  let Some(st) = super::try_gui(ctx) else {
-    return SpatialTick { active: false, wrote: false };
-  };
-  let active = st.alloy.spatial().advance_transitions();
-  let settled = st.alloy.spatial().take_settled_transitions();
-  let freed = st.alloy.spatial().take_freed();
-  // The flush is unconditional: besides transition writes, the queue may
-  // hold clip-player poses (advanced before the frame's JS) and whatever
-  // that JS wrote without its own microtask flush landing yet. An empty
-  // queue is a cheap no-op.
-  let wrote = st.alloy.spatial_flush();
   for (node, component) in settled {
     let obj = Object::new(ctx.clone()).expect("create spatialTransitionEnd object");
     obj.set("node", node).expect("set node");
     obj.set("component", component_name(component)).expect("set component");
     crate::emit_event(ctx, "spatialTransitionEnd", obj);
   }
-  // Leaving nodes the advance freed: their slot-zeroing writes landed in
-  // the flush above, so a consumer recycling a record slot on this event
-  // never races the corpse's last frame. One "spatialNodeFreed" per node,
-  // payload `{ node }`.
+}
+
+/// The draw-side half of the node transitions, after the frame's JS:
+/// start what that JS declared and the frame's own start pass missed
+/// (`start_transitions`, for nodes created outside a frame), run the free
+/// gates (`check_exits`), flush the arena, then emit one
+/// "spatialNodeFreed" engine event per leaving node freed, payload
+/// `{ node }`. The flush is unconditional: besides the step's and the
+/// starts' writes, the queue may hold clip-player poses and whatever the
+/// frame's JS wrote without its own microtask flush landing yet. An empty
+/// queue is a cheap no-op. The freed events come after the flush, so the
+/// corpses' slot-zeroing writes have landed and a consumer recycling a
+/// record slot on the event never races the corpse's last frame.
+/// `frame::draw` calls this beside the render tree's transition advance,
+/// before the frame's demand gate.
+pub(crate) fn tick(ctx: &Ctx<'_>) -> SpatialTick {
+  let Some(st) = super::try_gui(ctx) else {
+    return SpatialTick { active: false, wrote: false };
+  };
+  st.alloy.spatial().start_transitions();
+  let active = st.alloy.spatial().check_exits();
+  let freed = st.alloy.spatial().take_freed();
+  let wrote = st.alloy.spatial_flush();
   for node in freed {
     let obj = Object::new(ctx.clone()).expect("create spatialNodeFreed object");
     obj.set("node", node).expect("set node");

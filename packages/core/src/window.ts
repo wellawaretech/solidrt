@@ -1,5 +1,6 @@
 import { createSignal, getOwner, onCleanup, onSettled, runWithOwner, flush } from "@solidjs/signals"
 import { requestFrame, setPointerLock } from "flux:rendertree"
+import { startTransitions } from "flux:spatial"
 import { renderFrame } from "sol:render"
 import { on, once } from "sol:events"
 import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "sol:app"
@@ -470,7 +471,9 @@ export function onLayout(fn: () => void) {
 // The last JS of a frame, in two passes. The plain handlers are the app's
 // late update: they run once per frame after every onFrame callback and
 // the reactive flush, so a follow or a fit reads the finished state of the
-// frame (Unity's LateUpdate). The publish handlers run after them, and
+// frame (Unity's LateUpdate) - native motion stepped before the frame's
+// callbacks and started after them (runFrame), so a pose read here is the
+// one this frame draws. The publish handlers run after them, and
 // once more after the post-layout handlers' flush (the one other JS entry
 // ahead of the paint): an extension hands its pending writes to the engine
 // there - a scene's record bytes and lights, a layer's style and pose
@@ -527,7 +530,11 @@ export interface BeforeRenderOptions {
  * Calls `fn` right before every frame renders: after the frame's `onFrame`
  * callbacks and the reactive flush, when the frame's state is final. The
  * frame's late update: a camera follow, a fit to a measured box, anything
- * that must see what every frame callback wrote and write once more.
+ * that must see what every frame callback wrote and write once more. The
+ * engine's own motion (a clip player, a node transition) has stepped to
+ * this frame's pose before the frame's callbacks and started what they
+ * declared (an enter from its `from`) after them, so a follow of an
+ * animated node reads where it is drawn, not where it was.
  * Writes made here, to the engine or through signals, are in this frame:
  * the pending reactive writes are flushed once every handler has run.
  *
@@ -641,6 +648,7 @@ export function setWindowRoot(nodeId: number) {
 export function attachWindow(nodeId: number) {
   setWindowRoot(nodeId)
   let unsubscribe: () => void = null!
+  let unsubFrameStart: () => void = null!
   let unsubDown: () => void = null!
   let unsubUp: () => void = null!
   let unsubCancel: () => void = null!
@@ -665,8 +673,10 @@ export function attachWindow(nodeId: number) {
   // (okf/done/onframe-tick-reset-on-reload.md). The callbacks stay
   // registered and run on the first real render event, before the first
   // paint with their writes applied.
+  // The frame's tick is stamped by "frameStart", ahead of this handler
+  // and of the engine's motion events (a clip's end, a settle), so a
+  // handler of those reads the frame's clock, not the last frame's.
   function runFrame(t: number, frame: number, bootstrap = false) {
-    if (!bootstrap) latestTick = t
     if (!bootstrap && animationFrames.size > 0) {
       let frames = animationFrames
       animationFrames = new Map()
@@ -679,6 +689,12 @@ export function attachWindow(nodeId: number) {
     } catch (err) {
       console.error("Error in reactive flush:", err)
     }
+    // The frame's start pass: the native motion the callbacks and the
+    // flush declared (a node created with an enter, one let go of with an
+    // exit) starts here, where Unity runs its animation update - after
+    // Update, before LateUpdate - so the late pass reads the pose the
+    // frame draws. The engine steps running motion before the callbacks.
+    startTransitions()
     runBeforeRender(bootstrap)
     scanForOrphans(t)
     renderFrame()
@@ -690,6 +706,9 @@ export function attachWindow(nodeId: number) {
       if (hz > 0) refreshRate = hz
     })
 
+    unsubFrameStart = on("frameStart", ({ time }: { time: number; frame: number }) => {
+      latestTick = time * 1000
+    })
     unsubscribe = on("render", ({ time, frame }: { time: number; frame: number }) => {
       runFrame(time * 1000, frame)
     })
@@ -855,6 +874,7 @@ export function attachWindow(nodeId: number) {
   onCleanup(() => {
     setInterestRoot(null)
     if (unsubscribe) unsubscribe()
+    if (unsubFrameStart) unsubFrameStart()
     if (unsubDown) unsubDown()
     if (unsubUp) unsubUp()
     if (unsubCancel) unsubCancel()

@@ -4,6 +4,26 @@ use crate::spatial::{
   SinkWriter, Spatial,
 };
 
+/// One frame of the transition protocol at the current stamp, in the
+/// frame's order: the step (`advance_transitions`, ahead of the frame's
+/// JS), then the starts of what the frame's JS declared
+/// (`start_transitions`) and the free gates (`check_exits`, the draw
+/// tick). A test acts as a frame's JS would - create, write, exit - and
+/// ticks at that stamp before moving time on, as the frame that ran the
+/// JS starts what it declared. The halves alone are pinned by the
+/// `split_*` tests.
+pub(crate) trait Tick {
+  fn tick(&mut self) -> bool;
+}
+
+impl Tick for Spatial {
+  fn tick(&mut self) -> bool {
+    self.advance_transitions();
+    self.start_transitions();
+    self.check_exits()
+  }
+}
+
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const ONE: [f32; 3] = [1.0, 1.0, 1.0];
 const LINEAR_100: TransitionSpec = TransitionSpec::Tween { duration_ms: 100.0, curve: Curve::Linear };
@@ -70,7 +90,7 @@ fn run_to(s: &mut Spatial, from_ms: f64, ms: f64) -> bool {
   while t < ms {
     t = (t + 16.0).min(ms);
     s.set_transition_now(t);
-    running = s.advance_transitions();
+    running = s.tick();
   }
   running
 }
@@ -99,14 +119,14 @@ fn spring_position_settles_exactly_and_reports() {
   assert!(s.write_transform(id, [100.0, 20.0, 0.0], Q, ONE).expect("write"));
 
   s.set_transition_now(16.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   let mid = pos_x(&s, id);
   assert!(mid > 0.0 && mid < 100.0, "mid-flight, got {mid}");
 
   let mut running = true;
   for k in 2..200 {
     s.set_transition_now(k as f64 * 16.0);
-    running = s.advance_transitions();
+    running = s.tick();
     if !running {
       break;
     }
@@ -127,21 +147,21 @@ fn full_write_leaves_unchanged_components_alone() {
   s.write_transform(id, [10.0, 0.0, 0.0], Q, ONE).expect("write");
 
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, id) - 5.0).abs() < 1e-4, "tween midway");
   // The full-TRS re-send: position target unchanged, scale is new. The
   // position tween must NOT restart from 5 - it settles at t=100.
   s.write_transform(id, [10.0, 0.0, 0.0], Q, [2.0, 2.0, 2.0]).expect("write");
 
   s.set_transition_now(100.0);
-  s.advance_transitions();
+  s.tick();
   let m = s.world(id).expect("world");
   assert_eq!(m[12], 10.0, "position settled on schedule");
   assert!((m[0] - 1.5).abs() < 1e-4, "scale midway (started at 50)");
   assert_eq!(s.take_settled_transitions(), vec![(id, Component::Position)]);
 
   s.set_transition_now(150.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(s.world(id).expect("world")[0], 2.0, "scale settled exactly");
   assert_eq!(s.take_settled_transitions(), vec![(id, Component::Scale)]);
 }
@@ -170,11 +190,11 @@ fn rotation_tween_follows_geodesic() {
   s.write_transform(id, [0.0; 3], qz(std::f32::consts::FRAC_PI_2), ONE).expect("write");
 
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!((angle_z(&s, id) - std::f32::consts::FRAC_PI_4).abs() < 1e-3, "slerp midpoint is half the angle");
 
   s.set_transition_now(100.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   let m = s.world(id).expect("world");
   assert!(m[0].abs() < 1e-6 && (m[1] - 1.0).abs() < 1e-6, "lands the target exactly");
   assert_eq!(s.take_settled_transitions(), vec![(id, Component::Rotation)]);
@@ -189,7 +209,7 @@ fn rotation_spring_retarget_keeps_momentum() {
   s.write_transform(id, [0.0; 3], qz(std::f32::consts::FRAC_PI_2), ONE).expect("write");
   for k in 1..=5 {
     s.set_transition_now(k as f64 * 16.0);
-    s.advance_transitions();
+    s.tick();
   }
   let before = angle_z(&s, id);
   assert!(before > 0.1 && before < std::f32::consts::FRAC_PI_2, "mid-flight");
@@ -197,13 +217,13 @@ fn rotation_spring_retarget_keeps_momentum() {
   // the retarget point before the spring pulls it back.
   s.write_transform(id, [0.0; 3], Q, ONE).expect("write");
   s.set_transition_now(6.0 * 16.0);
-  s.advance_transitions();
+  s.tick();
   assert!(angle_z(&s, id) > before, "momentum survives the retarget");
   // And it still settles on the new target.
   let mut running = true;
   for k in 7..300 {
     s.set_transition_now(k as f64 * 16.0);
-    running = s.advance_transitions();
+    running = s.tick();
     if !running {
       break;
     }
@@ -224,11 +244,11 @@ fn near_antipodal_target_takes_the_short_arc() {
   s.write_transform(id, [0.0; 3], qz(rad), ONE).expect("write");
 
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!(angle_z(&s, id) < 0.0, "midpoint on the short (negative) arc");
 
   s.set_transition_now(100.0);
-  s.advance_transitions();
+  s.tick();
   let m = s.world(id).expect("world");
   assert!((m[0] - rad.cos()).abs() < 1e-5 && (m[1] - rad.sin()).abs() < 1e-5, "same rotation as written");
 }
@@ -241,13 +261,13 @@ fn config_clear_cancels_in_place() {
   s.set_transition_now(0.0);
   s.write_transform(id, [100.0, 0.0, 0.0], Q, ONE).expect("write");
   s.set_transition_now(32.0);
-  s.advance_transitions();
+  s.tick();
   let mid = pos_x(&s, id);
   assert!(mid > 0.0 && mid < 100.0);
 
   s.set_node_transition(id, None).expect("clear");
   s.set_transition_now(200.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(pos_x(&s, id), mid, "keeps the mid-flight value");
   assert!(s.take_settled_transitions().is_empty(), "cancel is not a settle");
 
@@ -265,7 +285,7 @@ fn destroy_drops_tracks() {
   s.write_transform(id, [100.0, 0.0, 0.0], Q, ONE).expect("write");
   s.destroy(id).expect("destroy");
   s.set_transition_now(16.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert!(s.take_settled_transitions().is_empty());
 }
 
@@ -286,7 +306,7 @@ fn noop_write_starts_no_track() {
   s.set_transition_now(0.0);
   assert!(!s.write_transform(id, [3.0, 0.0, 0.0], Q, ONE).expect("write"));
   s.set_transition_now(16.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
 }
 
 #[test]
@@ -297,10 +317,10 @@ fn paused_clock_holds_values() {
   s.set_transition_now(0.0);
   s.write_transform(id, [100.0, 0.0, 0.0], Q, ONE).expect("write");
   s.set_transition_now(16.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   let held = pos_x(&s, id);
   // Same stamp again (the paused path): still running, nothing moves.
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert_eq!(pos_x(&s, id), held);
 }
 
@@ -312,7 +332,7 @@ fn hidden_nodes_still_animate() {
   s.set_transition_now(0.0);
   s.write_transform(id, [100.0, 0.0, 0.0], Q, ONE).expect("write");
   s.set_transition_now(16.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert!(pos_x(&s, id) > 0.0, "visibility gates sinks, not motion");
 }
 
@@ -334,13 +354,13 @@ fn enter_from_plays_at_first_advance() {
   let id = s.create([100.0, 0.0, 0.0], Q, ONE, true);
   s.set_node_transition(id, enter_from_x(0.0)).expect("config");
   assert_eq!(pos_x(&s, id), 100.0, "creation holds the created pose");
-  assert!(s.advance_transitions(), "the enter starts at the advance");
+  assert!(s.tick(), "the enter starts at the advance");
   assert_eq!(pos_x(&s, id), 0.0, "the first advance snaps to from");
   s.set_transition_now(50.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert!((pos_x(&s, id) - 50.0).abs() < 0.01, "halfway to the created pose, got {}", pos_x(&s, id));
   s.set_transition_now(100.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(pos_x(&s, id), 100.0, "settles on the created pose");
   assert_eq!(s.take_settled_transitions(), vec![(id, Component::Position)]);
 }
@@ -359,13 +379,13 @@ fn enter_from_rotation_slerps_to_created_pose() {
     ..Default::default()
   };
   s.set_node_transition(id, Some(config)).expect("config");
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert!(angle_z(&s, id).abs() < 1e-5, "snapped to the from rotation");
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!((angle_z(&s, id) - 0.5).abs() < 1e-3, "halfway along the arc, got {}", angle_z(&s, id));
   s.set_transition_now(100.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert!((angle_z(&s, id) - 1.0).abs() < 1e-5);
 }
 
@@ -378,13 +398,13 @@ fn enter_from_targets_a_write_made_in_the_creating_tick() {
   let id = s.create([0.0; 3], Q, ONE, true);
   s.set_node_transition(id, enter_from_x(-100.0)).expect("config");
   assert!(s.write_transform(id, [100.0, 0.0, 0.0], Q, ONE).expect("write"));
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert_eq!(pos_x(&s, id), -100.0, "from wins over the written target for the first frame");
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, id) - 0.0).abs() < 0.01, "halfway from -100 to the written 100, got {}", pos_x(&s, id));
   s.set_transition_now(100.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(pos_x(&s, id), 100.0);
 }
 
@@ -399,14 +419,76 @@ fn enter_runs_once_and_skips_nodes_without_from_or_gone() {
   let gone = s.create([9.0, 0.0, 0.0], Q, ONE, true);
   s.set_node_transition(gone, enter_from_x(0.0)).expect("config");
   s.destroy(gone).expect("destroy");
-  assert!(!s.advance_transitions(), "no from, from == pose, or freed: nothing to animate");
+  assert!(!s.tick(), "no from, from == pose, or freed: nothing to animate");
   assert_eq!(pos_x(&s, plain), 5.0);
   // A later declaration with from does not replay: creation is the one
   // way onto the enter queue.
   s.set_node_transition(plain, enter_from_x(0.0)).expect("config");
   s.set_transition_now(16.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(pos_x(&s, plain), 5.0);
+}
+
+// The frame protocol's split: `advance_transitions` steps before the
+// frame's JS, `start_transitions` starts what that JS declared after its
+// callbacks, `check_exits` frees what settled in the draw tick. Each
+// alone.
+
+#[test]
+fn split_enter_starts_at_the_start_not_the_step() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let id = s.create([100.0, 0.0, 0.0], Q, ONE, true);
+  s.set_node_transition(id, enter_from_x(0.0)).expect("config");
+  assert!(!s.advance_transitions(), "the step alone starts nothing");
+  assert_eq!(pos_x(&s, id), 100.0, "the created pose holds through the step");
+  assert!(s.start_transitions(), "the start snaps to from and runs");
+  assert_eq!(pos_x(&s, id), 0.0, "the first flushed transform is from");
+  s.set_transition_now(50.0);
+  assert!(s.advance_transitions());
+  assert!((pos_x(&s, id) - 50.0).abs() < 0.01, "halfway at the next step, got {}", pos_x(&s, id));
+}
+
+#[test]
+fn split_settled_exit_frees_at_the_gates_not_the_start() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let id = s.create([10.0, 0.0, 0.0], Q, ONE, true);
+  s.set_node_transition(id, exit_to_x(LINEAR_100, 0.0)).expect("config");
+  assert!(s.exit(id).expect("exit"));
+  assert!(s.start_transitions(), "the exit starts at the start");
+  s.set_transition_now(100.0);
+  assert!(!s.advance_transitions(), "the exit settles in the step");
+  assert_eq!(pos_x(&s, id), 0.0, "the corpse stays through the frame's JS, at its exit value");
+  assert!(s.leaving(id).expect("leaving"));
+  assert!(s.take_freed().is_empty(), "not freed before the gates run");
+  assert!(!s.start_transitions(), "the start frees nothing");
+  assert!(s.leaving(id).expect("leaving"));
+  assert!(!s.check_exits());
+  assert!(s.world(id).is_err(), "freed at the gates, whose tick's flush carries its zeroing writes");
+  assert_eq!(s.take_freed(), vec![id]);
+}
+
+#[test]
+fn split_raw_write_in_the_frame_wins_the_frame() {
+  // The producer rule: a raw set_transform between the step and the next
+  // one is what this frame flushes; the track overwrites it at the next
+  // step, as a clip pose overwrites an onFrame adjustment.
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let id = s.create([0.0; 3], Q, ONE, true);
+  s.set_node_transition(id, all(LINEAR_100)).expect("config");
+  assert!(s.write_transform(id, [100.0, 0.0, 0.0], Q, ONE).expect("write"));
+  s.start_transitions();
+  s.set_transition_now(50.0);
+  assert!(s.advance_transitions());
+  assert!((pos_x(&s, id) - 50.0).abs() < 0.01);
+  s.set_transform(id, [7.0, 0.0, 0.0], Q, ONE).expect("set");
+  assert!(s.start_transitions(), "the track still runs");
+  assert_eq!(pos_x(&s, id), 7.0, "the frame's write is what this frame flushes");
+  s.set_transition_now(75.0);
+  assert!(s.advance_transitions());
+  assert!((pos_x(&s, id) - 75.0).abs() < 0.01, "the track overwrites it at the next step, got {}", pos_x(&s, id));
 }
 
 // Exit animations and the leaving state (mod.rs `exit`): a node let go of
@@ -424,11 +506,11 @@ fn exit_animates_out_and_frees_at_settle() {
   assert!(s.exit(id).expect("exit"), "an exit with somewhere to go keeps the node");
   assert!(s.leaving(id).expect("leaving"));
   s.set_transition_now(50.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert!((pos_x(&s, id) - 5.0).abs() < 1e-4, "halfway out, got {}", pos_x(&s, id));
   assert!(s.take_freed().is_empty(), "not freed mid-flight");
   s.set_transition_now(100.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert!(s.world(id).is_err(), "freed at the settle");
   assert_eq!(s.take_freed(), vec![id]);
   assert!(s.take_freed().is_empty(), "drain empties");
@@ -450,7 +532,7 @@ fn exit_with_nothing_to_animate_frees_now() {
   assert!(!s.exit(held).expect("exit"), "exit value already holds: freed at once");
   assert!(s.world(held).is_err());
   assert!(s.take_freed().is_empty(), "a synchronous free is the caller's to see");
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
 }
 
 #[test]
@@ -466,7 +548,7 @@ fn exit_picks_up_from_mid_flight_with_momentum() {
   assert!(before > 0.0 && before < 100.0, "mid-flight");
   assert!(s.exit(id).expect("exit"));
   s.set_transition_now(96.0);
-  s.advance_transitions();
+  s.tick();
   assert!(pos_x(&s, id) > before, "the spring keeps its velocity through the exit retarget");
   assert!(!run_to(&mut s, 96.0, 3000.0), "settles on the exit value");
   assert_eq!(s.take_freed(), vec![id]);
@@ -501,13 +583,13 @@ fn parent_frees_after_its_leaving_children() {
   assert!(s.exit(child).expect("exit child"));
   assert!(s.exit(parent).expect("exit parent"), "a parent with a leaving child waits");
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!(s.world(parent).is_ok() && s.world(child).is_ok());
   // The child's world position composes through the parent to the end.
   s.set_transform(parent, [100.0, 0.0, 0.0], Q, ONE).expect("move parent");
   assert!((pos_x(&s, child) - 105.0).abs() < 1e-4, "the corpse stays in its parent's frame");
   s.set_transition_now(100.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(s.take_freed(), vec![child, parent], "child settles, then the parent's gate empties");
 }
 
@@ -524,10 +606,10 @@ fn parent_with_own_exit_waits_for_both() {
   assert!(s.exit(child).expect("exit"));
   assert!(s.exit(parent).expect("exit"));
   s.set_transition_now(100.0);
-  s.advance_transitions();
+  s.tick();
   assert!(s.take_freed().is_empty(), "the parent's own exit settled; its child still runs");
   s.set_transition_now(200.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(s.take_freed(), vec![child, parent]);
 }
 
@@ -552,7 +634,7 @@ fn destroy_frees_a_leaving_node_and_its_corpses_now() {
   let mut expected = vec![parent, child];
   expected.sort_unstable();
   assert_eq!(freed, expected, "every free of a leaving node reports, whoever caused it");
-  assert!(!s.advance_transitions(), "their tracks went with them");
+  assert!(!s.tick(), "their tracks went with them");
 }
 
 #[test]
@@ -600,16 +682,16 @@ fn exit_keeps_undeclared_components_running_without_gating_on_them() {
   s.set_node_transition(id, Some(config)).expect("config");
   s.write_transform(id, [100.0, 0.0, 0.0], Q, ONE).expect("write");
   s.set_transition_now(16.0);
-  s.advance_transitions();
+  s.tick();
   let before = pos_x(&s, id);
   assert!(s.exit(id).expect("exit"));
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!(pos_x(&s, id) > before, "the slow position spring keeps running under the exit");
   // The scale exit started at 16 and settles at 116, the spring runs on
   // for seconds: the free rides on the exit alone.
   s.set_transition_now(116.0);
-  assert!(!s.advance_transitions(), "freed at the scale exit's settle, the spring notwithstanding");
+  assert!(!s.tick(), "freed at the scale exit's settle, the spring notwithstanding");
   assert_eq!(s.take_freed(), vec![id]);
   assert!(s.take_settled_transitions().is_empty());
 }
@@ -623,7 +705,7 @@ fn clearing_the_declaration_of_a_leaving_node_frees_it() {
   assert!(s.exit(id).expect("exit"));
   s.set_node_transition(id, None).expect("clear");
   s.set_transition_now(16.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(s.take_freed(), vec![id], "no exit set left to gate on");
 }
 
@@ -639,7 +721,7 @@ fn exit_in_the_creating_tick_skips_the_enter() {
   s.set_node_transition(id, Some(config)).expect("config");
   assert!(s.exit(id).expect("exit"));
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!(
     (pos_x(&s, id) - 150.0).abs() < 1e-3,
     "leaves from the created pose, never from `from`; got {}",
@@ -667,7 +749,7 @@ fn delayed_write_holds_then_runs_on_schedule() {
   s.set_node_transition(id, delayed_position(100.0)).expect("config");
   assert!(s.write_transform(id, [10.0, 0.0, 0.0], Q, ONE).expect("write"), "a held write is a change");
   s.set_transition_now(50.0);
-  assert!(s.advance_transitions(), "a hold keeps the advance live");
+  assert!(s.tick(), "a hold keeps the advance live");
   assert_eq!(pos_x(&s, id), 0.0, "nothing moves during the hold");
   // The full-TRS re-send of the held target keeps the hold: the delay does
   // not restart from 50 (50 of the 100 ms hold are left).
@@ -677,10 +759,10 @@ fn delayed_write_holds_then_runs_on_schedule() {
     vec![MotionState { component: Component::Position, to: vec![10.0, 0.0, 0.0], held_for_ms: Some(50.0) }]
   );
   s.set_transition_now(150.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, id) - 5.0).abs() < 1e-4, "halfway, 50 ms into the 100 ms tween");
   s.set_transition_now(200.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(pos_x(&s, id), 10.0);
   assert_eq!(s.take_settled_transitions(), vec![(id, Component::Position)]);
 }
@@ -695,7 +777,7 @@ fn late_frame_after_a_hold_catches_up() {
   // The first advance after the slot lands 75 ms late: the tween is
   // already three quarters through, not starting.
   s.set_transition_now(175.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, id) - 7.5).abs() < 1e-4, "got {}", pos_x(&s, id));
 }
 
@@ -709,13 +791,13 @@ fn newer_write_restarts_the_hold_and_an_immediate_one_supersedes_it() {
   s.set_transition_now(60.0);
   s.write_transform(id, [20.0, 0.0, 0.0], Q, ONE).expect("write");
   s.set_transition_now(120.0);
-  s.advance_transitions();
+  s.tick();
   assert_eq!(pos_x(&s, id), 0.0, "the newer write restarted the delay (due at 160)");
   // A declaration without delay takes over: its write applies now.
   s.set_node_transition(id, all(LINEAR_100)).expect("config");
   s.write_transform(id, [30.0, 0.0, 0.0], Q, ONE).expect("write");
   s.set_transition_now(170.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, id) - 15.0).abs() < 1e-4, "the held write is gone; the immediate one runs from 120");
 }
 
@@ -733,13 +815,13 @@ fn enter_delay_holds_at_from() {
     ..Default::default()
   };
   s.set_node_transition(id, Some(config)).expect("config");
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert_eq!(pos_x(&s, id), 0.0, "snapped to from at the first advance");
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert_eq!(pos_x(&s, id), 0.0, "held there");
   s.set_transition_now(150.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, id) - 50.0).abs() < 1e-3, "halfway to the created pose, got {}", pos_x(&s, id));
 }
 
@@ -759,14 +841,14 @@ fn exit_delay_holds_then_leaves() {
   s.set_node_transition(id, Some(config)).expect("config");
   assert!(s.exit(id).expect("exit"), "a held exit keeps the node");
   s.set_transition_now(50.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert_eq!(pos_x(&s, id), 10.0, "holds its pose during the delay");
   assert!(s.leaving(id).expect("leaving"));
   s.set_transition_now(150.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, id) - 5.0).abs() < 1e-4);
   s.set_transition_now(200.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(s.take_freed(), vec![id]);
 }
 
@@ -786,10 +868,10 @@ fn held_exit_to_the_current_value_frees_when_due() {
   s.set_node_transition(id, Some(config)).expect("config");
   assert!(s.exit(id).expect("exit"), "the hold itself keeps the node");
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!(s.take_freed().is_empty());
   s.set_transition_now(100.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(s.take_freed(), vec![id], "due, nothing to move: freed");
 }
 
@@ -815,22 +897,22 @@ fn stagger_spaces_enters_under_the_declaring_ancestor() {
       id
     })
     .collect();
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   for &k in &kids {
     assert_eq!(pos_x(&s, k), 0.0, "every child snaps to from at the first advance");
   }
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, kids[0]) - 50.0).abs() < 1e-3, "index 0 runs at once");
   assert_eq!(pos_x(&s, kids[1]), 0.0, "index 1 is held 50 ms");
   assert_eq!(pos_x(&s, kids[2]), 0.0, "index 2 is held 100 ms");
   s.set_transition_now(100.0);
-  s.advance_transitions();
+  s.tick();
   assert_eq!(pos_x(&s, kids[0]), 100.0);
   assert!((pos_x(&s, kids[1]) - 50.0).abs() < 1e-3);
   assert_eq!(pos_x(&s, kids[2]), 0.0);
   s.set_transition_now(200.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(pos_x(&s, kids[2]), 100.0, "the last of the cascade lands");
 }
 
@@ -850,15 +932,17 @@ fn stagger_spaces_exits_and_the_group_waits_for_the_last() {
   assert!(s.exit(a).expect("exit"));
   assert!(s.exit(b).expect("exit"), "a held exit keeps the node");
   assert!(s.exit(group).expect("exit"), "the group waits on its staggered children");
+  // The frame that let go starts the cascade, as of its own stamp.
+  s.tick();
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, a) - 5.0).abs() < 1e-3, "index 0 left at once");
   assert_eq!(pos_x(&s, b), 10.0, "index 1 is still held");
   s.set_transition_now(100.0);
-  s.advance_transitions();
+  s.tick();
   assert_eq!(s.take_freed(), vec![a], "a settles; b runs, the group waits");
   s.set_transition_now(150.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(s.take_freed(), vec![b, group]);
 }
 
@@ -880,7 +964,7 @@ fn stagger_counts_per_frame_and_the_nearest_ancestor_wins() {
   let deep0 = make(&mut s, inner);
   let deep1 = make(&mut s, inner);
   let shallow = make(&mut s, outer);
-  s.advance_transitions();
+  s.tick();
   let held = |s: &Spatial, id: u64| s.motion_of(id).expect("motion")[0].held_for_ms;
   assert_eq!(held(&s, deep0), None, "inner index 0: immediate");
   assert_eq!(held(&s, deep1), Some(10.0), "inner index 1: the inner group's spacing, never the outer's");
@@ -888,7 +972,7 @@ fn stagger_counts_per_frame_and_the_nearest_ancestor_wins() {
   // A later frame starts its own count at zero.
   s.set_transition_now(16.0);
   let deep2 = make(&mut s, inner);
-  s.advance_transitions();
+  s.tick();
   assert_eq!(held(&s, deep2), None, "a fresh frame, index 0 again");
 }
 
@@ -906,7 +990,7 @@ fn stagger_orchestrates_descendants_only() {
   let plain = s.create([100.0, 0.0, 0.0], Q, ONE, true);
   s.set_parent(plain, Some(group)).expect("parent");
   s.set_node_transition(plain, all(LINEAR_100)).expect("config");
-  s.advance_transitions();
+  s.tick();
   assert_eq!(s.motion_of(group).expect("motion")[0].held_for_ms, None, "its own enter is not staggered by itself");
   // An ordinary write under the group never staggers.
   s.write_transform(plain, [0.0; 3], Q, ONE).expect("write");
@@ -935,7 +1019,7 @@ fn staggered_exits_index_by_tree_order_whatever_the_call_order() {
   }
   assert!(s.exit(group).expect("exit"));
   assert!(s.motion_of(kids[0]).expect("motion").is_empty(), "nothing starts before the advance");
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   let held = |s: &Spatial, id: u64| s.motion_of(id).expect("motion")[0].held_for_ms;
   assert_eq!(held(&s, kids[0]), None, "the first child is index 0");
   assert_eq!(held(&s, kids[1]), Some(50.0));
@@ -943,7 +1027,7 @@ fn staggered_exits_index_by_tree_order_whatever_the_call_order() {
   // And they run as of the clock they were let go of at: the first is
   // halfway at 50 even though the advance that started it came at 0.
   s.set_transition_now(50.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, kids[0]) - 5.0).abs() < 1e-3);
   assert!(!run_to(&mut s, 50.0, 250.0));
   assert_eq!(s.take_freed(), vec![kids[0], kids[1], kids[2], group]);
@@ -967,7 +1051,7 @@ fn a_deferred_exit_gates_its_node_until_it_runs() {
   // exit has not run yet, so its gate must hold.
   s.destroy(child).expect("destroy");
   assert!(s.world(parent).is_ok(), "a deferred exit is not an empty gate");
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert!(s.motion_of(parent).expect("motion").len() == 1, "the parent's exit runs at the advance");
   assert!(!run_to(&mut s, 0.0, 150.0));
   assert_eq!(s.take_freed(), vec![child, parent]);
@@ -995,39 +1079,39 @@ fn weights_lane_enters_animates_writes_and_exits() {
   let id = s.create([0.0; 3], Q, ONE, true);
   s.set_weights(id, &[1.0, 0.5]).expect("weights");
   s.set_node_transition(id, weights_entry(Some(&[0.0, 0.0]), Some(&[0.0, 0.0]))).expect("config");
-  assert!(s.advance_transitions(), "the enter starts at the advance");
+  assert!(s.tick(), "the enter starts at the advance");
   assert_eq!(weights(&s, id), vec![0.0, 0.0], "the first advance snaps to from");
   s.set_transition_now(50.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert_eq!(weights(&s, id), vec![0.5, 0.25], "halfway to the held register");
   s.set_transition_now(100.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(weights(&s, id), vec![1.0, 0.5], "settles on the held register");
   assert_eq!(s.take_settled_transitions(), vec![(id, Component::Weights)]);
   // A write through the declaration animates; the same write again is a
   // no-op; a raw set_weights is overwritten by the running track.
   assert!(s.write_weights(id, &[0.0, 1.0], None).expect("write"));
   s.set_transition_now(125.0);
-  s.advance_transitions();
+  s.tick();
   // The same target again is left alone: the tween does not restart.
   assert!(s.write_weights(id, &[0.0, 1.0], None).expect("write again"), "a track runs");
   assert!(s.motion_of(id).expect("motion").iter().any(|m| m.component == Component::Weights && m.to == vec![0.0, 1.0]));
   s.set_transition_now(150.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert_eq!(weights(&s, id), vec![0.5, 0.75]);
   s.set_transition_now(200.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(weights(&s, id), vec![0.0, 1.0]);
   assert_eq!(s.take_settled_transitions(), vec![(id, Component::Weights)]);
   // The exit: the register animates to its exit lanes and the node frees
   // at the settle, no settled event.
   assert!(s.exit(id).expect("exit"), "an exit with somewhere to go keeps the node");
   s.set_transition_now(250.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert_eq!(weights(&s, id), vec![0.0, 0.5], "halfway out");
   assert!(s.take_freed().is_empty());
   s.set_transition_now(300.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(s.take_freed(), vec![id]);
   assert!(s.take_settled_transitions().is_empty(), "an exit settle is not an event");
 }
@@ -1041,25 +1125,25 @@ fn weights_write_takes_a_one_off_motion_and_snaps_without_one() {
   // No declaration: the write snaps, exactly set_weights.
   assert!(s.write_weights(id, &[0.25], None).expect("write"));
   assert_eq!(weights(&s, id), vec![0.25]);
-  assert!(!s.advance_transitions(), "a snap runs no track");
+  assert!(!s.tick(), "a snap runs no track");
   // A motion on the write animates without any declaration; the write
   // may widen the register (a new target weighs from zero).
   assert!(s.write_weights(id, &[1.0, 1.0], Some(LINEAR_100.into())).expect("write"));
   s.set_transition_now(50.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert_eq!(weights(&s, id), vec![0.625, 0.5]);
   s.set_transition_now(100.0);
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(weights(&s, id), vec![1.0, 1.0]);
   assert_eq!(s.take_settled_transitions(), vec![(id, Component::Weights)]);
   // Clearing a declaration cancels a running weights track in place.
   s.set_node_transition(id, weights_entry(None, None)).expect("config");
   assert!(s.write_weights(id, &[0.0, 0.0], None).expect("write"));
   s.set_transition_now(150.0);
-  s.advance_transitions();
+  s.tick();
   assert_eq!(weights(&s, id), vec![0.5, 0.5]);
   s.set_node_transition(id, None).expect("clear");
-  assert!(!s.advance_transitions());
+  assert!(!s.tick());
   assert_eq!(weights(&s, id), vec![0.5, 0.5], "kept mid-flight");
   assert!(s.take_settled_transitions().is_empty());
 }
@@ -1073,13 +1157,13 @@ fn write_before_the_first_stamp_starts_at_the_first_advanced_frame() {
   let id = s.create([0.0; 3], Q, ONE, true);
   s.set_node_transition(id, all(LINEAR_100)).expect("config");
   assert!(s.write_transform(id, [10.0, 0.0, 0.0], Q, ONE).expect("write"));
-  s.advance_transitions();
+  s.tick();
 
   s.set_transition_now(60_000.0);
-  assert!(s.advance_transitions(), "track runs");
+  assert!(s.tick(), "track runs");
   assert!(pos_x(&s, id).abs() < 1e-4, "at its start, got {}", pos_x(&s, id));
   s.set_transition_now(60_050.0);
-  s.advance_transitions();
+  s.tick();
   assert!((pos_x(&s, id) - 5.0).abs() < 1e-4, "halfway 50 ms in, got {}", pos_x(&s, id));
 }
 
@@ -1108,7 +1192,7 @@ fn a_frozen_subtree_holds_and_resumes_from_where_it_was() {
   // Resumed: it continues from 5 at app rate, not from where app time is.
   assert!(s.set_time_scale(world, None).expect("scale"));
   s.set_transition_now(416.0);
-  assert!(s.advance_transitions(), "live again");
+  assert!(s.tick(), "live again");
   assert!((pos_x(&s, id) - 6.6).abs() < 1e-3, "16 ms further, got {}", pos_x(&s, id));
   assert!(!run_to(&mut s, 416.0, 500.0));
   assert_eq!(pos_x(&s, id), 10.0);
@@ -1182,7 +1266,7 @@ fn a_rate_follows_the_node_through_reparenting_and_orphaning() {
   s.set_parent(id, None).expect("parent");
   assert_eq!(s.time_rate(id).expect("rate"), 1.0);
   s.set_transition_now(166.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert!((pos_x(&s, id) - 1.6).abs() < 1e-3, "one 16 ms step, got {}", pos_x(&s, id));
   // Back under the frozen node, mid-flight: holds again.
   s.set_parent(id, Some(slow)).expect("parent");
@@ -1192,7 +1276,7 @@ fn a_rate_follows_the_node_through_reparenting_and_orphaning() {
   s.destroy(slow).expect("destroy");
   assert_eq!(s.time_rate(id).expect("rate"), 1.0);
   s.set_transition_now(316.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert!((pos_x(&s, id) - 3.2).abs() < 1e-3, "got {}", pos_x(&s, id));
 }
 
@@ -1215,7 +1299,7 @@ fn a_hold_under_a_frozen_node_waits_and_catches_up_on_resume() {
   // tween 30 ms in, as if every frame had landed.
   s.set_time_scale(world, None).expect("scale");
   s.set_transition_now(580.0);
-  assert!(s.advance_transitions());
+  assert!(s.tick());
   assert!((pos_x(&s, id) - 3.0).abs() < 1e-3, "got {}", pos_x(&s, id));
 }
 

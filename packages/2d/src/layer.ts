@@ -1451,7 +1451,8 @@ export function destroySprite(sprite: Sprite): void {
  * through every enclosing group (@solidrt/3d's worldPosition, Three's
  * getWorldPosition), read from the core's world matrix as the tree stands
  * now, pending writes included. Under a transition this is the
- * mid-flight pose - what picking and the screen show - where the handle's
+ * mid-flight pose of THIS frame (native motion steps before any of the
+ * frame's JS) - what picking and the screen show - where the handle's
  * own fields hold the target. A record layer's sprite has no groups, so
  * its world position is its own, read as getSprite reads it (the records
  * array). A fresh pair per call; null once the handle is inert.

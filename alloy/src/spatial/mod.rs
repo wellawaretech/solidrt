@@ -2914,9 +2914,11 @@ impl Spatial {
   /// the full-TRS write shape re-sends unchanged components on every call.
   /// Returns whether anything changed (a track started or retargeted, a
   /// write held, or a snap moved the node) - the caller's frame-demand
-  /// signal. A raw `set_transform` never consults or cancels tracks: a
-  /// running track overwrites it at the next advance (last write wins, the
-  /// producer rule).
+  /// signal. A raw `set_transform` never consults or cancels tracks: native
+  /// motion steps before the frame's JS (`advance_transitions`, like the
+  /// clip players), so a raw write made in the frame wins that frame and
+  /// the track overwrites it again at the next step (last write wins, the
+  /// producer rule - the same for a clip-posed node an `onFrame` adjusts).
   pub fn write_transform(
     &mut self,
     id: NodeId,
@@ -3011,27 +3013,72 @@ impl Spatial {
     }
   }
 
+  /// Start the lifecycle motion the frame's JS declared: the enters of
+  /// nodes created since the last start (`start_enter_transitions`) and
+  /// the exits of nodes let go of since (`start_staggered_exits`). Runs
+  /// AFTER the frame's callbacks and their reactive flush, the other half
+  /// of the frame from `advance_transitions` (which steps before them):
+  /// a created node's first flushed transform is its `from`, an exit
+  /// starts in the frame that let go, and everything from the frame's
+  /// late pass on reads the pose the frame draws. Frees nothing: an exit
+  /// that started nothing queues its free gate for `check_exits`, so no
+  /// node disappears under the JS still running in the frame. Idempotent
+  /// within a frame (the queues drain once), so the draw tick calls it
+  /// again for nodes created outside a frame. Returns whether any motion
+  /// now runs or waits on a node whose time moves (the demand
+  /// `advance_transitions` reports, recomputed over what this started).
+  pub fn start_transitions(&mut self) -> bool {
+    self.start_enter_transitions();
+    let mut exit_checks = std::mem::take(&mut self.transitions.exit_checks);
+    self.start_staggered_exits(&mut exit_checks);
+    self.transitions.exit_checks = exit_checks;
+    let nodes = &self.nodes;
+    self.transitions.demand(&|id: NodeId| rate_in(nodes, id))
+  }
+
+  /// Run the free gate of every leaving node queued for it (`check_exit`:
+  /// a settled exit track from the step, an exit that started nothing, a
+  /// config change on a leaving node). Runs in the draw tick, after the
+  /// frame's JS and ahead of the flush that carries the freed nodes'
+  /// zeroing writes, so a consumer told through `take_freed` after that
+  /// flush never races a corpse's last frame. Returns the demand as of
+  /// after the gates: a freed node's remaining tracks count no more.
+  pub fn check_exits(&mut self) -> bool {
+    let mut exit_checks = std::mem::take(&mut self.transitions.exit_checks);
+    exit_checks.sort_unstable();
+    exit_checks.dedup();
+    for id in exit_checks {
+      if let Ok(i) = self.resolve(id) {
+        self.check_exit(i);
+      }
+    }
+    let nodes = &self.nodes;
+    self.transitions.demand(&|id: NodeId| rate_in(nodes, id))
+  }
+
   /// Advance every running track by the app time since the last advance,
   /// each at its node's rate (`set_time_scale`), writing the interpolated
   /// TRS through the ordinary snap path (nodes queue; the next flush
   /// propagates). Held writes whose hold ran out apply first, their tracks
   /// starting as far in as the frame overshot the slot. Settled tracks
   /// land the target exactly and report via `take_settled_transitions`,
-  /// except on a leaving node, whose settles feed its free gate instead
-  /// (`check_exit`, run after the pass; a freed node lands in
-  /// `take_freed`). Tracks of freed nodes drop silently. Returns whether
-  /// any track still runs or any write still waits on a node whose time
-  /// moves - the embedder's signal to keep requesting frames; a frozen
-  /// subtree asks for nothing. A repeated call at an unchanged stamp (the
-  /// paused path) writes nothing.
+  /// except on a leaving node, whose settles queue its free gate for the
+  /// next `check_exits` instead (the node stays, leaving, until then).
+  /// Tracks of freed nodes drop silently. Runs BEFORE the frame's JS,
+  /// beside the clip players (`advance_players`): the frame's JS reads
+  /// the stepped pose and may overwrite it, and the frame's write wins
+  /// the frame (the producer rule, see `write_transform`). Starting
+  /// motion is `start_transitions`' job, after the frame's callbacks. Returns
+  /// whether any track still runs or any write still waits on a node
+  /// whose time moves - the embedder's signal to keep requesting frames;
+  /// a frozen subtree asks for nothing. A repeated call at an unchanged
+  /// stamp (the paused path) writes nothing.
   pub fn advance_transitions(&mut self) -> bool {
-    self.start_enter_transitions();
     let now = self.transitions.now_ms;
-    let mut exit_checks = std::mem::take(&mut self.transitions.exit_checks);
-    self.start_staggered_exits(&mut exit_checks);
-    if self.transitions.is_empty() && exit_checks.is_empty() {
+    if self.transitions.is_empty() {
       return false;
     }
+    let mut exit_checks = Vec::new();
     // Due writes apply exactly as a write this frame would, from the
     // component's present value; state may have shifted during the hold
     // (the node died), and a write that no longer applies is dropped.
@@ -3153,13 +3200,9 @@ impl Spatial {
     self.weights_scratch = value;
     weights.append(&mut self.transitions.weights);
     self.transitions.weights = weights;
-    exit_checks.sort_unstable();
-    exit_checks.dedup();
-    for id in exit_checks {
-      if let Ok(i) = self.resolve(id) {
-        self.check_exit(i);
-      }
-    }
+    // A settled exit (or a due exit write that started nothing) queues
+    // its node's free gate for `check_exits`, after the frame's JS.
+    self.transitions.exit_checks.append(&mut exit_checks);
     let nodes = &self.nodes;
     self.transitions.demand(&|id: NodeId| rate_in(nodes, id))
   }

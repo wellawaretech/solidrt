@@ -164,7 +164,11 @@ export interface TestApp {
    * Mounts `ui` and returns a locator for the window it is in. `ui` is what
    * an app hands `render`: its `<window>`, or any content, which is then
    * put in a window of its own. Once per test (a test is one app). The
-   * first frame is built when this returns; no app time has passed.
+   * first frame is built when this returns; no app time has passed, and
+   * no animation clock is stamped yet: a transition written before the
+   * first `frame` or `advance` starts at the first frame that runs (the
+   * startup anchor), not at `time` 0, so a test timing a track against
+   * `time` runs one frame first and writes after it.
    * `ui` runs as a component body, the owner of what it creates: a
    * pointer feed, an input map, a GPU buffer or a scene is created inside
    * it, never at the top of the test.
