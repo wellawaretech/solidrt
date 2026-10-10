@@ -1,4 +1,4 @@
-import { Show, createRadialGradient, createSignal, getLayoutBox, withAlpha } from "@solidrt/core"
+import { Show, createRadialGradient, createSignal, getLayoutBox, untrack, withAlpha } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
 import { policy } from "./policy"
@@ -78,7 +78,10 @@ export function Card(props: CardProps) {
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         node = n
-        props.ref?.(n)
+        // A ref callback runs in the element's owned scope, where a prop
+        // read warns in dev (STRICT_READ_UNTRACKED); the caller's ref is a
+        // one-shot, read untracked.
+        untrack(() => props.ref)?.(n)
       }}
       repaintBoundary
       flexDirection="column"

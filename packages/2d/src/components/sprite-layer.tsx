@@ -1,4 +1,4 @@
-import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack, warnOnce } from "@solidrt/core"
+import { callRef, createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack, warnOnce } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import type { ShaderParams } from "@solidrt/core/gpu"
 import type { Atlas } from "../atlas.ts"
@@ -241,7 +241,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     scale => layer.setTimeScale(scale ?? null),
     { defer: true },
   )
-  untrack(() => props.ref)?.(layer)
+  callRef(() => props.ref, layer)
   let output = untrack(() => props.output)
   if (output === false) {
     untrack(() => {
@@ -302,7 +302,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     },
     { defer: true },
   )
-  untrack(() => props.viewRef)?.(view)
+  callRef(() => props.viewRef, view)
   let pointer = untrack(() => props.pointer) ?? null
   if (pointer) onCleanup(feedPointer(view, pointer))
   // The view's own handlers at the root of the walk; the props are read

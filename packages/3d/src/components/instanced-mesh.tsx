@@ -1,4 +1,4 @@
-import { createContext, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createContext, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { ParentComponent } from "@solidrt/core"
 import { SceneContext, provide } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
@@ -80,7 +80,7 @@ export let InstancedMesh: ParentComponent<InstancedMeshProps> = props => {
     c => setCastShadow(mesh, c === true),
   )
   syncMesh(mesh, props)
-  untrack(() => props.ref)?.(mesh)
+  callRef(() => props.ref, mesh)
   onCleanup(() => {
     destroy(mesh)
     disposeInstances(mesh)
@@ -140,7 +140,7 @@ export let Instance: ParentComponent<InstanceProps> = props => {
       if (w !== undefined) setMorphWeights(instance, w)
     },
   )
-  untrack(() => props.ref)?.(instance)
+  callRef(() => props.ref, instance)
   onCleanup(() => destroy(instance))
   return provide(ctx, instance, props)
 }

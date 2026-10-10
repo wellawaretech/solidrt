@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { ParentComponent } from "@solidrt/core"
 import { LodContext, SceneContext, provide } from "./context.tsx"
 import type { LodRegistry } from "./context.tsx"
@@ -54,7 +54,7 @@ export let Lod: ParentComponent<LodProps> = props => {
     () => declare(),
     { defer: true },
   )
-  untrack(() => props.ref)?.(node)
+  callRef(() => props.ref, node)
   onCleanup(() => destroy(node))
   return <LodContext value={registry}>{provide(ctx, node, props)}</LodContext>
 }
@@ -91,7 +91,7 @@ export let InstancedLod: ParentComponent<InstancedLodProps> = props => {
     c => setCastShadow(mesh, c === true),
   )
   syncMesh(mesh, props)
-  untrack(() => props.ref)?.(mesh)
+  callRef(() => props.ref, mesh)
   onCleanup(() => {
     destroy(mesh)
     disposeInstances(mesh)

@@ -82,7 +82,10 @@ export function Carousel(props: CarouselProps) {
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         node = n
-        props.ref?.(n)
+        // A ref callback runs in the element's owned scope, where a prop
+        // read warns in dev (STRICT_READ_UNTRACKED); the caller's ref is a
+        // one-shot, read untracked.
+        untrack(() => props.ref)?.(n)
       }}
       overflow="hidden"
       {...props.layout}

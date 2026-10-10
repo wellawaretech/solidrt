@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { setGroupTransition } from "../layer.ts"
 import type { SpritePointerEvent, SpriteTapEvent, SpriteTransition, SpriteWheelEvent, TransitionEndEvent } from "../layer.ts"
@@ -71,7 +71,7 @@ export let Text2d: VoidComponent<Text2dProps> = props => {
       run.group.onTransitionEnd = end
     },
   )
-  untrack(() => props.ref)?.(run)
+  callRef(() => props.ref, run)
   onCleanup(() => destroyText(run))
   return null
 }

@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { syncMesh } from "./mesh.tsx"
@@ -41,7 +41,7 @@ export let SplatMesh: VoidComponent<SplatMeshProps> = props => {
     { defer: true },
   )
   syncMesh(mesh, props)
-  untrack(() => props.ref)?.(mesh)
+  callRef(() => props.ref, mesh)
   onCleanup(() => {
     destroy(mesh)
     disposeInstances(mesh)

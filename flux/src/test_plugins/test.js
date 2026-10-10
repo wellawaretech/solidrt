@@ -231,6 +231,21 @@
     },
 
     toBeNull: (received) => ({ pass: received === null, expected: "null" }),
+    toBeDefined: (received) => ({ pass: received !== undefined, expected: "a value other than undefined" }),
+    toBeUndefined: (received) => ({ pass: received === undefined, expected: "undefined" }),
+
+    toHaveLength(received, length) {
+      if (!Number.isInteger(length) || length < 0) throw new TypeError(`toHaveLength: the length must be a non-negative integer, got ${format(length)}`)
+      if (received === null || received === undefined || typeof received.length !== "number") {
+        throw new TypeError(`toHaveLength: the received value must have a numeric length (a string, an array, a typed array), got ${format(received)}`)
+      }
+      return { pass: received.length === length, expected: `a length of ${length}`, received: `a length of ${received.length}` }
+    },
+
+    toBeInstanceOf(received, expected) {
+      if (typeof expected !== "function") throw new TypeError(`toBeInstanceOf: the expected value must be a class or constructor, got ${format(expected)}`)
+      return { pass: received instanceof expected, expected: `an instance of ${expected.name || "the given class"}` }
+    },
 
     toContain(received, item) {
       if (typeof received === "string") {

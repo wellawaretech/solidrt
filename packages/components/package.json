@@ -19,6 +19,9 @@
   "dependencies": {
     "qrcode-generator": "^2.0.4"
   },
+  "devDependencies": {
+    "@solidrt/test": "workspace:*"
+  },
   "peerDependencies": {
     "@solidrt/core": "workspace:*",
     "@solidjs/signals": "2.0.0-rc.13"

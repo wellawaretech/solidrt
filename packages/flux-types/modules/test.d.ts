@@ -130,6 +130,21 @@ declare module "flux:test" {
     /** Exactly `null`; `undefined` is not. */
     toBeNull(): void
 
+    /** Anything but `undefined`; `null` counts as defined. */
+    toBeDefined(): void
+
+    /** Exactly `undefined`; `null` is not. */
+    toBeUndefined(): void
+
+    /**
+     * A string, array, typed array or anything else with a numeric `length`
+     * whose length is `length`; a failure prints the length it found.
+     */
+    toHaveLength(length: number): void
+
+    /** An instance of the class (or constructor) `expected`, as `instanceof` sees it. */
+    toBeInstanceOf(expected: abstract new (...args: any[]) => unknown): void
+
     /**
      * A string that contains the part `item`, or an array (or any other
      * iterable) with an entry that is `item` by `===`.

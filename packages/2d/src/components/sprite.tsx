@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { addSprite, destroySprite, setSprite, setSpriteTimeScale, setSpriteTransition } from "../layer.ts"
 import { setInstanceStyle } from "../records.ts"
@@ -104,7 +104,7 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
       sprite.onTransitionEnd = end
     },
   )
-  untrack(() => props.ref)?.(sprite)
+  callRef(() => props.ref, sprite)
   onCleanup(() => destroySprite(sprite))
   return null
 }

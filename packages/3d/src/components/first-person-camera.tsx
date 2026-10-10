@@ -1,4 +1,4 @@
-import { createEffect, merge, onFrame, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, merge, onFrame, untrack, useContext } from "@solidrt/core"
 import type { InputMap, VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { createFirstPersonCamera } from "../first-person.ts"
@@ -67,6 +67,6 @@ export let FirstPersonCamera: VoidComponent<FirstPersonCameraProps> = props => {
     () => untrack(() => camera.set({})),
     { defer: true },
   )
-  untrack(() => props.ref)?.(camera)
+  callRef(() => props.ref, camera)
   return null
 }

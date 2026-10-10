@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { feedPointer } from "../scene-pointer.ts"
@@ -116,7 +116,7 @@ export let View3d: ParentComponent<View3dProps> = props => {
     b => view.setBloom(b ?? null),
     { defer: true },
   )
-  untrack(() => props.ref)?.(view)
+  callRef(() => props.ref, view)
   onCleanup(() => view.dispose())
   // The pointer feed the app handed in (see Scene) listens at the view's
   // root; children reach it through useScene().pointer.

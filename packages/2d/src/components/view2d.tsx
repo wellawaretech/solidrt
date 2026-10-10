@@ -1,4 +1,4 @@
-import { createEffect, displayScale, getBoundingBoxViewport, onCleanup, onLayout, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, displayScale, getBoundingBoxViewport, onCleanup, onLayout, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import type { CameraUpdate } from "../camera.ts"
 import { feedPointer } from "../views.ts"
@@ -96,7 +96,7 @@ export let View2d: ParentComponent<View2dProps> = props => {
     },
     { defer: true },
   )
-  untrack(() => props.ref)?.(view)
+  callRef(() => props.ref, view)
   onCleanup(() => view.dispose())
   let pointer = untrack(() => props.pointer) ?? null
   if (pointer) onCleanup(feedPointer(view, pointer))

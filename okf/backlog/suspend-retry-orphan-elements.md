@@ -74,6 +74,11 @@ create-path cost turns out to be affordable; take the second as the
 interim either way, since the sentinel message is wrong today whatever
 happens to the underlying behaviour.
 
+2026-10-10: the message half of the documented path landed. The sentinel
+counts builds a throw cut short (insert's guard, NotReadyError included,
+and the root boundary) and names that as a cause beside the element-valued
+prop. Free-on-dispose and the AGENTS.md hoist rule remain open.
+
 ## Done looks like
 
 The natural spelling above runs through a `<Loading>` retry cycle with

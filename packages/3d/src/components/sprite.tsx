@@ -1,4 +1,4 @@
-import { onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import type { TransformProps, NodePointerProps } from "./node-props.ts"
@@ -32,7 +32,7 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
   let mesh = untrack(() => createSprite(props.material))
   add(ctx.parent, mesh)
   syncMesh(mesh, props)
-  untrack(() => props.ref)?.(mesh)
+  callRef(() => props.ref, mesh)
   onCleanup(() => destroy(mesh))
   return null
 }

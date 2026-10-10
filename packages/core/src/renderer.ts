@@ -1,7 +1,7 @@
 // createErrorBoundary comes from signals, not solid-js: solid-js marks it
 // @internal (an app writes <Errored>, a renderer reaches for the primitive)
 // and leaves it out of its public types.
-import { createErrorBoundary, createRoot, onCleanup, NotReadyError, untrack } from "@solidjs/signals"
+import { createErrorBoundary, createRoot, onCleanup, NotReadyError, runWithOwner, untrack } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
 import type { Element } from "solid-js"
 import * as tree from "flux:rendertree"
@@ -122,6 +122,13 @@ let warnedLeakTypes = new Set<string>()
 // warning: a leak that keeps growing at a stable set of types warns again
 // each time the total crosses the next power of ten.
 let warnedMagnitude = -1
+// The other cause of orphans: a subtree whose build a throw cut short (a
+// child expression or component body that threw an error, or a pending
+// read on its way to <Loading>, which retries and abandons again). The
+// elements created before the throw are never inserted. Counted where
+// such throws pass (insert's guard, the root boundary) so the warning can
+// point at it (okf/backlog/suspend-retry-orphan-elements.md).
+let abandonedBuilds = 0
 
 export function scanForOrphans(now: number): void {
   if (!import.meta.env.DEV) return
@@ -144,11 +151,17 @@ export function scanForOrphans(now: number): void {
   for (let [type] of fresh) warnedLeakTypes.add(type)
   warnedMagnitude = magnitude
   let list = [...counts].map(([type, n]) => `<${type}> x${n}`).join(", ")
+  let abandoned =
+    abandonedBuilds === 0
+      ? ""
+      : `A build cut short by a throw leaves what it had created unreachable too: ${abandonedBuilds} ` +
+        `such throws so far (an error in a child expression or component body, or a pending read ` +
+        `on its way to <Loading>, which retries and abandons again). `
   console.warn(
     `Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` +
       `The usual cause is reading an element-valued prop more than once (every read ` +
       `builds a new subtree); read it once where it mounts, or resolve it with ` +
-      `children(). If these nodes are intentionally kept for later mounting, ignore ` +
+      `children(). ${abandoned}If these nodes are intentionally kept for later mounting, ignore ` +
       `this. The next warning comes when a new element type joins the list or the ` +
       `total passes ${10 ** (magnitude + 1)}.`,
   )
@@ -345,6 +358,28 @@ export let { memo, createComponent, createElement, createTextNode, insertNode, s
   renderer
 let { effect: rawEffect, insert: rawInsert } = renderer
 
+/** A ref callback as a component prop: a function, or an array of them. */
+export type RefCallback<T> = ((handle: T) => void) | RefCallback<T>[]
+
+/**
+ * Hands `handle` to a component's `ref` callback prop the way Solid hands
+ * an element to an element's `ref`: read untracked, called outside any
+ * owner, so a signal setter passed straight in (`ref={setLayer}`) writes
+ * without tripping the owned-scope guard. A component body is an owned
+ * scope, so calling the prop directly there throws
+ * REACTIVE_WRITE_IN_OWNED_SCOPE in dev; `untrack` does not lift that.
+ * Accepts an array of callbacks like Solid's applyRef does.
+ */
+export function callRef<T>(read: () => RefCallback<T> | undefined, handle: T): void {
+  let callback = untrack(read)
+  if (callback === undefined) return
+  runWithOwner(null, () => {
+    if (Array.isArray(callback)) {
+      for (let f of (callback as unknown[]).flat(Infinity) as ((handle: T) => void)[]) f(handle)
+    } else callback(handle)
+  })
+}
+
 // ------ Per-node error containment --------
 //
 // Every reactive write into the tree goes through two exports the compiled
@@ -382,6 +417,9 @@ function guard<T>(fn: (prev?: T) => T, describe: () => string, nested: boolean, 
       last = value
       return value
     } catch (e) {
+      // Only a child expression builds a subtree a throw can abandon; a
+      // prop expression creates no elements.
+      if (nested) abandonedBuilds += 1
       if (e instanceof NotReadyError) throw e
       if (!failing) {
         failing = true
@@ -456,6 +494,7 @@ export function render(code: () => any) {
       (error, reset) => {
         // The boundary hands the error as an accessor.
         let err = error()
+        abandonedBuilds += 1
         console.error("Uncaught error: the app is replaced by the error window until reset or reload.", err)
         let win = errorWindow(err, reset)
         errorWindows.add(win.id)

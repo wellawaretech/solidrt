@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { ParentComponent } from "@solidrt/core"
 import { addGroup, destroyGroup, setGroup, setGroupTimeScale, setGroupTransition } from "../layer.ts"
 import type { SpriteGroup, TransitionEndEvent } from "../layer.ts"
@@ -71,7 +71,7 @@ export let Group: ParentComponent<GroupProps> = props => {
       group.onTransitionEnd = end
     },
   )
-  untrack(() => props.ref)?.(group)
+  callRef(() => props.ref, group)
   onCleanup(() => destroyGroup(group))
   return <GroupContext value={group}>{props.children}</GroupContext>
 }

@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
@@ -46,7 +46,7 @@ export let DirectionalLight: VoidComponent<DirectionalLightProps> = props => {
     () => [props.direction, props.color, props.intensity, props.layers, props.castShadow, props.shadow] as const,
     ([direction, color, intensity, layers, castShadow, shadow]) => setLight(light, { direction, color, intensity, layers, castShadow, shadow }),
   )
-  untrack(() => props.ref)?.(light)
+  callRef(() => props.ref, light)
   onCleanup(() => destroy(light))
   return null
 }

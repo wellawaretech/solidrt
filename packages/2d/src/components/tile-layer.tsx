@@ -1,4 +1,4 @@
-import { createEffect, createSignal, displayScale, For, getBoundingBoxViewport, onLayout, untrack } from "@solidrt/core"
+import { callRef, createEffect, createSignal, displayScale, For, getBoundingBoxViewport, onLayout, untrack } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import type { FilterMode, ShaderParams } from "@solidrt/core/gpu"
 import type { Atlas } from "../atlas.ts"
@@ -103,7 +103,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       label: props.label,
     }),
   )
-  untrack(() => props.ref)?.(layer)
+  callRef(() => props.ref, layer)
   createEffect(
     () => props.oversample,
     n => {

@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { add, destroy } from "../node.ts"
@@ -26,7 +26,7 @@ export let HemisphereLight: VoidComponent<HemisphereLightProps> = props => {
     () => [props.sky, props.ground, props.intensity, props.layers] as const,
     ([sky, ground, intensity, layers]) => setLight(light, { sky, ground, intensity, layers }),
   )
-  untrack(() => props.ref)?.(light)
+  callRef(() => props.ref, light)
   onCleanup(() => destroy(light))
   return null
 }

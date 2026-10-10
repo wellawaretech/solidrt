@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
@@ -63,7 +63,7 @@ export let SpotLight: VoidComponent<SpotLightProps> = props => {
     ([direction, color, intensity, layers, distance, angle, penumbra, decay, castShadow, shadow]) =>
       setLight(light, { direction, color, intensity, layers, distance, angle, penumbra, decay, castShadow, shadow }),
   )
-  untrack(() => props.ref)?.(light)
+  callRef(() => props.ref, light)
   onCleanup(() => destroy(light))
   return null
 }

@@ -1,4 +1,4 @@
-import { createEffect, createRenderEffect, createSignal, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack, warnOnce } from "@solidrt/core"
+import { callRef, createEffect, createRenderEffect, createSignal, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack, warnOnce } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { createScene } from "../scene.ts"
@@ -272,7 +272,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
     scale => scene.setTimeScale(scale ?? null),
     { defer: true },
   )
-  untrack(() => props.ref)?.(scene)
+  callRef(() => props.ref, scene)
   // The pointer feed the app handed in listens at the scene's root, and
   // children reach it through useScene().pointer. Fixed at creation, like
   // output.

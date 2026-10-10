@@ -1,4 +1,4 @@
-import { onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, onCleanup, useContext } from "@solidrt/core"
 import type { ParentComponent } from "@solidrt/core"
 import { SceneContext, provide } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
@@ -16,7 +16,7 @@ export let Group: ParentComponent<GroupProps> = props => {
   let node = createGroup()
   add(ctx.parent, node)
   syncNode(node, props)
-  untrack(() => props.ref)?.(node)
+  callRef(() => props.ref, node)
   onCleanup(() => destroy(node))
   return provide(ctx, node, props)
 }

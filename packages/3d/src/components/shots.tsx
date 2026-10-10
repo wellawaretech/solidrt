@@ -1,4 +1,4 @@
-import { createContext, createEffect, onCleanup, onFrame, untrack, useContext } from "@solidrt/core"
+import { callRef, createContext, createEffect, onCleanup, onFrame, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { createShots } from "../shots.ts"
@@ -60,7 +60,7 @@ export let Shots: ParentComponent<ShotsProps> = props => {
       })
     },
   )
-  untrack(() => props.ref)?.(shots)
+  callRef(() => props.ref, shots)
   return <ShotsContext value={shots}>{props.children}</ShotsContext>
 }
 

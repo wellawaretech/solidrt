@@ -1,4 +1,4 @@
-import { createEffect, merge, onFrame, untrack } from "@solidrt/core"
+import { callRef, createEffect, merge, onFrame, untrack } from "@solidrt/core"
 import type { InputMap, VoidComponent } from "@solidrt/core"
 import { createCamera2d } from "../camera2d.ts"
 import type { Camera2d as Camera2dHandle, Camera2dAxes, Camera2dOptions } from "../camera2d.ts"
@@ -72,6 +72,6 @@ export let Camera2d: VoidComponent<Camera2dProps> = props => {
     () => untrack(() => cam.set({})),
     { defer: true },
   )
-  untrack(() => props.ref)?.(cam)
+  callRef(() => props.ref, cam)
   return null
 }

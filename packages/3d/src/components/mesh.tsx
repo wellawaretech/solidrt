@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
@@ -110,7 +110,7 @@ export let Mesh: VoidComponent<MeshProps> = props => {
     },
   )
   syncMesh(mesh, props)
-  untrack(() => props.ref)?.(mesh)
+  callRef(() => props.ref, mesh)
   onCleanup(() => destroy(mesh))
   return null
 }

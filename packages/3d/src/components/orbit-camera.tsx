@@ -1,4 +1,4 @@
-import { createEffect, merge, onFrame, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, merge, onFrame, untrack, useContext } from "@solidrt/core"
 import type { InputMap, VoidComponent } from "@solidrt/core"
 import type { Vec2 } from "@solidrt/core/input"
 import { SceneContext } from "./context.tsx"
@@ -158,6 +158,6 @@ export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
     () => untrack(() => orbit.set({})),
     { defer: true },
   )
-  untrack(() => props.ref)?.(orbit)
+  callRef(() => props.ref, orbit)
   return null
 }

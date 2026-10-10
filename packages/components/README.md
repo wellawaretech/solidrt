@@ -374,7 +374,7 @@ createEffect(
 <ScrollView scrollRef={setScroll}>...</ScrollView>
 ```
 
-The range changes whenever the content or the viewport changes size. The first fill (nothing was scrollable before it, whether it mounted with the view or arrived a second later) lands instantly, as a chat opens at its end; after that the view follows the end only if it was at the previous end, and the spring makes that follow a glide. The handle arrives once the component has settled, after an effect's first compute, so hold it in a signal (a setter can be passed as the ref) rather than a plain variable, which the effect would find unset and never track. The offset is read untracked: the policy reacts to the range, not to every scroll.
+The range changes whenever the content or the viewport changes size. The first fill (nothing was scrollable before it, whether it mounted with the view or arrived a second later) lands instantly, as a chat opens at its end; after that the view follows the end only if it was at the previous end, and the spring makes that follow a glide. The handle arrives during mount, outside any reactive scope, so a signal setter can be passed as the ref; holding it in a signal lets the effect track its arrival. The offset is read untracked: the policy reacts to the range, not to every scroll.
 
 A `scrollX`/`scrollY` entry in `transition` replaces the default spring: `transition={{ scrollY: { duration: 400, bounce: 0.2 } }}` (keep it a spring rather than a tween, because the wheel retargets mid-flight). The other entries animate the box itself and its background/border as on any component.
 

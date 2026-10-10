@@ -1,4 +1,4 @@
-import { createSignal, createSwipe, getLayoutBox } from "@solidrt/core"
+import { createSignal, createSwipe, getLayoutBox, untrack } from "@solidrt/core"
 import type { LayoutProps, SwipeDirection, TransitionEndEvent } from "@solidrt/core"
 import type { StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
@@ -98,7 +98,10 @@ export function Dismissible(props: DismissibleProps) {
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         node = n
-        props.ref?.(n)
+        // A ref callback runs in the element's owned scope, where a prop
+        // read warns in dev (STRICT_READ_UNTRACKED); the caller's ref is a
+        // one-shot, read untracked.
+        untrack(() => props.ref)?.(n)
       }}
       overflow="hidden"
       {...props.layout}

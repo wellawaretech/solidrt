@@ -1,4 +1,4 @@
-import { createPan, createScroll, createSignal, getBoundingBoxViewport, getLayoutBox, onSettled, untrack } from "@solidrt/core"
+import { callRef, createPan, createScroll, createSignal, getBoundingBoxViewport, getLayoutBox } from "@solidrt/core"
 import type { InputProps, LayoutProps, PointerEvent, Scroll, TransitionCurve, TransitionEndEvent, WheelEvent } from "@solidrt/core"
 import type { StyleProps, TransitionProps, TransitionScrollProp, TransitionStyleProp, TransitionViewProp } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
@@ -14,8 +14,8 @@ export interface ScrollViewProps
   horizontal?: boolean
   /** Receives the scroll handle (offset, range, scrollTo) for driving the view
    * from app code; scroll policies such as following a growing log are written
-   * against it. Called once the component has settled, outside any reactive
-   * scope, so a signal setter can be passed directly. */
+   * against it. Called during mount, outside any reactive scope, so a signal
+   * setter can be passed directly. */
   scrollRef?: (scroll: Scroll) => void
 }
 
@@ -72,11 +72,7 @@ export function ScrollView(props: ScrollViewProps) {
     () => content,
     { axis: props.horizontal ? "horizontal" : "vertical" },
   )
-  // Handed out from onSettled rather than the body: the body is an owned
-  // scope, where a signal write (an app passing its setter) is refused.
-  onSettled(() => {
-    untrack(() => props.scrollRef)?.(scroll)
-  })
+  callRef(() => props.scrollRef, scroll)
 
   // Content follows the finger: it moves opposite to scroll offsets, which
   // grow toward the bottom/right. The lift's velocity (parent-frame px/s,

@@ -385,6 +385,36 @@ fn to_be_close_to_passes_within_half_a_unit_of_the_last_digit() {
 }
 
 #[test]
+fn to_be_defined_undefined_have_length_and_instance_of() {
+  assert_eq!(
+    wrong_rows(
+      r#"
+      ["defined", () => expect(0).toBeDefined(), true],
+      ["null is defined", () => expect(null).toBeDefined(), true],
+      ["undefined is not defined", () => expect(undefined).toBeDefined(), false],
+      ["not defined", () => expect(undefined).not.toBeDefined(), true],
+      ["undefined", () => expect(undefined).toBeUndefined(), true],
+      ["null is not undefined", () => expect(null).toBeUndefined(), false],
+      ["array length", () => expect([1, 2]).toHaveLength(2), true],
+      ["array length differs", () => expect([1, 2]).toHaveLength(3), false],
+      ["string length", () => expect("abc").toHaveLength(3), true],
+      ["typed array length", () => expect(new Float32Array(4)).toHaveLength(4), true],
+      ["no length", () => expect({}).toHaveLength(0), false],
+      ["negative length", () => expect([]).toHaveLength(-1), false],
+      ["not length", () => expect([1]).not.toHaveLength(2), true],
+      ["instance", () => expect(new TypeError("t")).toBeInstanceOf(TypeError), true],
+      ["base class instance", () => expect(new TypeError("t")).toBeInstanceOf(Error), true],
+      ["other class", () => expect(new TypeError("t")).toBeInstanceOf(RangeError), false],
+      ["primitive", () => expect(1).toBeInstanceOf(Number), false],
+      ["not a class", () => expect({}).toBeInstanceOf("Object"), false],
+      ["not instance", () => expect({}).not.toBeInstanceOf(Array), true],
+      "#
+    ),
+    ""
+  );
+}
+
+#[test]
 fn to_throw_takes_a_message_part_a_pattern_a_class_or_nothing() {
   assert_eq!(
     wrong_rows(
