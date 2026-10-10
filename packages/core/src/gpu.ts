@@ -152,6 +152,13 @@ export {
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
 export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceOrder, OrderUpdate, ShaderParams, Topology, VertexAttribute, VertexBufferLayout, VertexFormat } from "flux:gpu"
 
+// The vertex vocabulary as data (vertex.ts): the format codecs, the
+// arithmetic over an attribute list and the record accessors that the 3d
+// geometry layouts, the 3d instance streams and the 2d material style
+// streams all run on.
+export { attributeAccess, checkLayout, encodeRecord, formatFeeds, isFloatFormat, isFloatLayout, layoutBytes, layoutComponents, layoutFields, layoutKey, layoutSlot, layoutStride, layoutView, writeRecord, VERTEX_FORMATS } from "./vertex.ts"
+export type { AttributeAccess, FormatCodec, FormatKind } from "./vertex.ts"
+
 // The draw-list verbs, re-exported raw: entries live and die with their draw
 // target (see createDrawTarget below), so there is no per-entry lifetime to
 // wrap. addDraw adds an entry (appended, or inserted via opts.before) and

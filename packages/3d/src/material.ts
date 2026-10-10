@@ -257,6 +257,19 @@ export type UnlitOptions = {
    * MultiMesh instance color. A cutout's shadow multiplies by the same
    * color, so alpha below `alphaTest` cuts the shadow with the pixels. */
   instanceColors?: boolean
+  /** GLSL at file scope for `surface`: uniforms (each an ordinary
+   * per-entry param, `params` on the mesh or setMeshParams) and helper
+   * functions. See the tier-2 look in AGENTS.md "Custom looks". */
+  prelude?: string
+  /** GLSL declaring `void surface(inout Surface s)`, called once the
+   * program has resolved the base (the color, the map, the vertex and
+   * instance colors, the cutout) and before the scene tail: rewrite
+   * `s.base` or `discard`. The unlit program shades nothing, so `base`
+   * is the only field read back and `s.normal` is zero. Runs in the
+   * shadow twin too (attached whenever a surface is given), so what it
+   * discards casts no shadow, the twin seeing a `prelude` uniform at its
+   * zero value. One program per distinct source, like every option. */
+  surface?: string
 }
 
 // The fog an unlit program composes: none when opted out, the additive
@@ -306,13 +319,15 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let instanceColors = opts.instanceColors === true
   let instanced = opts.instanced === true || instanceColors
   let vertexColors = opts.vertexColors === true
+  let prelude = opts.prelude ?? ""
+  let surface = opts.surface ?? ""
   if (mapTransform && !map) throw new Error("unlit: mapTransform without a map to transform")
-  let key = [map, vertexColors, transparent, blend, cull, alphaTest, fog, mapTransform, skinned, instanced, instanceColors, morph].join("|")
+  let key = [map, vertexColors, transparent, blend, cull, alphaTest, fog, mapTransform, skinned, instanced, instanceColors, morph, prelude, surface].join("|")
   let cls = unlitClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
       vertex: unlitVertex({ vertexColors, skinned, instanced, instanceColors, morph }),
-      fragment: unlitFragment({ map, vertexColors, alphaTest, transparent, fog, mapTransform, instanceColors }),
+      fragment: unlitFragment({ map, vertexColors, alphaTest, transparent, fog, mapTransform, instanceColors, prelude, surface }),
       shadowVertex: instanced ? shadowDepthVertex(skinned, true, morph) : undefined,
       instanceBuffers: stockInstanceBuffers(instanced, instanceColors),
       instanceStyle: instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
@@ -327,12 +342,21 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let params: ShaderParams = { uColor }
   if (alphaTest) params.uAlphaTest = opts.alphaTest!
   if (mapTransform) params.uMapTransform = mapTransformParam(opts.mapTransform!)
+  // A mapped cutout casts its cutout and a surface function casts its
+  // discards (lit's rule); a color-only alphaTest is all or nothing and
+  // keeps the plain depth variant.
   return cls.instance({
     params,
     textures: map ? { uMap: opts.map! } : undefined,
     shadow:
-      alphaTest && map
-        ? unlitShadowMaterial(shadowCull(cull), vertexColors, skinned, instanced, instanceColors, morph, uColor, opts.alphaTest!, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
+      (alphaTest && map) || surface !== ""
+        ? unlitShadowMaterial(
+            { cull: shadowCull(cull), map, vertexColors, alphaTest: alphaTest && map, skinned, instanced, instanceColors, morph, mapTransform, prelude, surface },
+            uColor,
+            opts.alphaTest,
+            opts.map,
+            mapTransform ? (params.uMapTransform as number[]) : undefined,
+          )
         : undefined,
   })
 }
@@ -892,42 +916,59 @@ function shadowVariant(cull: CullMode, skinned: boolean, morphed: boolean): Mate
 
 let unlitShadowClasses = new Map<string, ShaderMaterialClass>()
 
+/** The flags an unlit shadow twin is keyed and built on: the shadow
+ * cull, the source options the discard depends on, and the vertex
+ * stage's own (skinning, instancing, morphing, so the cutout casts its
+ * pose and placement). */
+type UnlitShadowFlags = {
+  cull: CullMode
+  map: boolean
+  vertexColors: boolean
+  alphaTest: boolean
+  skinned: boolean
+  instanced: boolean
+  instanceColors: boolean
+  morph: boolean
+  mapTransform: boolean
+  prelude: string
+  surface: string
+}
+
 /** The shadow variant of a discarding unlit material: unlitShadowFragment
  * on the same vertex stage (skinned when the material skins, so the
- * cutout casts its pose), litShadowMaterial's unlit twin. unlit()'s
- * only discard is the mapped cutout, so what varies is the shadow cull,
- * skinning and whether the cutout's uv is transformed - one class per
- * combination. An instance per material (its map, color, cutoff,
- * transform). */
-function unlitShadowMaterial(
-  cull: CullMode,
-  vertexColors: boolean,
-  skinned: boolean,
-  instanced: boolean,
-  instanceColors: boolean,
-  morph: boolean,
-  uColor: number[],
-  uAlphaTest: number,
-  uMap: TextureId,
-  uMapTransform?: number[],
-): Material {
-  let key = [cull, uMapTransform !== undefined, vertexColors, skinned, instanced, instanceColors, morph].join("|")
+ * cutout casts its pose), litShadowMaterial's unlit twin. unlit()
+ * discards through the mapped cutout and through a surface function,
+ * so what varies is the shadow cull, the source flags and the sources
+ * themselves - one class per combination. An instance per material (its
+ * map, color, cutoff, transform); a prelude uniform reaches the twin at
+ * its zero value, mesh params going to the main entry only. */
+function unlitShadowMaterial(flags: UnlitShadowFlags, uColor: number[], uAlphaTest: number | undefined, uMap: TextureId | undefined, uMapTransform?: number[]): Material {
+  let key = [flags.cull, flags.map, flags.vertexColors, flags.alphaTest, flags.skinned, flags.instanced, flags.instanceColors, flags.morph, flags.mapTransform, flags.prelude, flags.surface].join("|")
   let cls = unlitShadowClasses.get(key)
   if (cls === undefined) {
-    let fragment = unlitShadowFragment({ map: true, vertexColors, alphaTest: true, mapTransform: uMapTransform !== undefined, instanceColors })
-    if (fragment === undefined) throw new Error("unlitShadowMaterial: the cutout options cannot discard")
+    let fragment = unlitShadowFragment({
+      map: flags.map,
+      vertexColors: flags.vertexColors,
+      alphaTest: flags.alphaTest,
+      mapTransform: flags.mapTransform,
+      instanceColors: flags.instanceColors,
+      prelude: flags.prelude,
+      surface: flags.surface,
+    })
+    if (fragment === undefined) throw new Error("unlitShadowMaterial: the options cannot discard")
     cls = shaderMaterialClass({
-      vertex: unlitVertex({ vertexColors, skinned, instanced, instanceColors, morph }),
+      vertex: unlitVertex({ vertexColors: flags.vertexColors, skinned: flags.skinned, instanced: flags.instanced, instanceColors: flags.instanceColors, morph: flags.morph }),
       fragment,
-      cull,
-      instanceBuffers: stockInstanceBuffers(instanced, instanceColors),
+      cull: flags.cull,
+      instanceBuffers: stockInstanceBuffers(flags.instanced, flags.instanceColors),
       label: "scene-unlit-shadow-" + key,
     })
     unlitShadowClasses.set(key, cls)
   }
-  let params: ShaderParams = { uColor, uAlphaTest }
+  let params: ShaderParams = { uColor }
+  if (flags.alphaTest) params.uAlphaTest = uAlphaTest!
   if (uMapTransform !== undefined) params.uMapTransform = uMapTransform
-  return cls.instance({ params, textures: { uMap } })
+  return cls.instance({ params, textures: flags.map ? { uMap: uMap! } : undefined })
 }
 
 /** A sprite's options: unlit's, minus instancing (the billboard stage
@@ -973,19 +1014,6 @@ export type SpriteOptions = Omit<UnlitOptions, "instanced" | "instanceColors" | 
    */
   maxScreenPx?: number
 }
-
-// The radial shape as a tier-2 surface on the unlit fragment: the
-// vertex stages always write vUv, which the fragment declares only with
-// a map, so the mapless prelude declares it itself.
-const RADIAL_PRELUDE = glsl`
-  uniform float uFalloff;
-`
-const RADIAL_SURFACE = glsl`
-  void surface(inout Surface s) {
-    float disc = clamp(1.0 - 2.0 * length(vUv - 0.5), 0.0, 1.0);
-    s.base *= pow(disc, uFalloff);
-  }
-`
 
 // The billboard vertex stages: the unit quad's corners placed along the
 // camera axes at the mesh's world position, with the quad's size read
@@ -1103,18 +1131,14 @@ export function sprite(opts: SpriteOptions = {}): Material {
   let minScreenPx = opts.minScreenPx ?? 0
   let maxScreenPx = opts.maxScreenPx ?? 0
   checkScreenSize("sprite", minScreenPx, maxScreenPx)
-  let key = [map, transparent, blend, fixedY, fog, radial].join("|")
+  let prelude = opts.prelude ?? ""
+  let surface = opts.surface ?? ""
+  let key = [map, transparent, blend, fixedY, fog, radial, prelude, surface].join("|")
   let cls = spriteClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
       vertex: fixedY ? SPRITE_FIXED_Y_VERTEX_SRC : SPRITE_VERTEX_SRC,
-      fragment: unlitFragment({
-        map,
-        transparent,
-        fog,
-        prelude: radial ? (map ? "" : "in vec2 vUv;\n") + RADIAL_PRELUDE : undefined,
-        surface: radial ? RADIAL_SURFACE : undefined,
-      }),
+      fragment: unlitFragment({ map, transparent, fog, radial, prelude, surface }),
       transparent,
       blend,
       cull: "none",

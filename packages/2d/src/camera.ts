@@ -3,7 +3,7 @@
 // imports, so its test (tests/camera.test.ts) exercises this
 // module headless on the flux binary. Three consumers implement or undo
 // exactly this mapping and must agree with it: the vertex stages
-// (shaders.ts, uCamera + uCameraRot), the tile layer's composite
+// (glsl.ts, uCamera + uCameraRot), the tile layer's composite
 // transform (the <view> props in components/tile-layer.tsx) and the pointer inverse
 // (spriteDispatch in layer.ts, which calls unprojectCamera directly). The
 // check keeps the spellings from drifting.
@@ -101,7 +101,7 @@ export function applyCamera(camera: CameraState, update: CameraUpdate): void {
   if (update.pivotY !== undefined) camera.pivotY = update.pivotY
 }
 
-/** The shared params the vertex stages (shaders.ts) read for a camera:
+/** The shared params the vertex stage (glsl.ts) reads for a camera:
  * uCamera [x, y, zoom, zoom] and uCameraRot [cos, sin, pivotX, pivotY]. */
 export function cameraParams(camera: CameraState): { uCamera: [number, number, number, number]; uCameraRot: [number, number, number, number] } {
   return {

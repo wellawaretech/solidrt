@@ -3,12 +3,12 @@
 // setter write paths that keep a live scene's draw entries in step. The
 // scene side is reached through the node's SceneHooks (node.ts).
 
-import { createBuffer, createRecordStream, destroyBuffer, destroyTexture, transferRecords } from "@solidrt/core/gpu"
-import type { BufferId, DrawId, RecordStream, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
+import { createBuffer, createRecordStream, destroyBuffer, destroyTexture, encodeRecord, layoutComponents, layoutFields, transferRecords, writeRecord as writeLayoutRecord, VERTEX_FORMATS } from "@solidrt/core/gpu"
+import type { AttributeAccess, BufferId, DrawId, RecordStream, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
 import { checkCubeKnobs } from "./environment.ts"
 import type { EnvironmentOptions } from "./environment.ts"
-import { geometryBounds, isFloatLayout, layoutKey, layoutStride, plane, vertexBytes, vertexView, VERTEX_FORMATS } from "./geometry.ts"
-import type { AttributeAccess, Geometry } from "./geometry.ts"
+import { geometryBounds, isFloatLayout, layoutKey, layoutStride, plane, vertexBytes, vertexView } from "./geometry.ts"
+import type { Geometry } from "./geometry.ts"
 import { INSTANCE_MATRIX_ATTRIBUTES } from "./glsl.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Material } from "./material.ts"
@@ -344,13 +344,6 @@ const MATRIX_KEY = layoutKey(INSTANCE_MATRIX_ATTRIBUTES)
 // doubles past it.
 const DEFAULT_CAPACITY = 64
 
-// Values per record of a layout: its attributes' components summed - what
-// setInstanceStyle and a material's instanceStyle count in.
-function layoutComponents(layout: VertexAttribute[]): number {
-  let n = 0
-  for (let a of layout) n += VERTEX_FORMATS[a.format].components
-  return n
-}
 
 // Records in a byte view of `layout`: 4-aligned and a whole number of
 // strides, or a throw naming `site`.
@@ -363,22 +356,6 @@ function recordCount(records: ArrayBufferView, layout: VertexAttribute[], site: 
   return records.byteLength / stride
 }
 
-// The accessors of a stream's attributes, reading through the stream's
-// current view so they survive growth.
-function streamFields(stream: InstanceStream): AttributeAccess[] {
-  let offset = 0
-  return stream.layout.map(attr => {
-    let codec = VERTEX_FORMATS[attr.format]
-    let at = offset
-    offset += codec.bytes
-    return {
-      format: attr.format,
-      components: codec.components,
-      get: (i, k) => codec.get(stream._view, i * stream.stride + at, k),
-      set: (i, k, v) => codec.set(stream._view, i * stream.stride + at, k, v),
-    }
-  })
-}
 
 // Point a stream's mirror at `bytes` (a fresh ArrayBuffer of whole
 // records): the handed-out view and the accessors' view.
@@ -410,7 +387,7 @@ function makeStream(layout: VertexAttribute[], capacity: number, blank: Uint8Arr
     _fields: [],
   }
   viewStream(stream, records.bytes.buffer)
-  stream._fields = streamFields(stream)
+  stream._fields = layoutFields(stream.layout, () => stream._view)
   return stream
 }
 
@@ -464,32 +441,12 @@ function makeTransferredStream(layout: VertexAttribute[], records: Uint8Array, o
 }
 
 // Encode `values` (one per component, in layout order, as the shader
-// sees them) into record `i` of a stream: one typed-array set over an
-// all-float layout (the values ARE the bytes), the codecs otherwise.
+// sees them) into record `i` of a stream: core's writeRecord over the
+// stream's layout, accessors and float view.
 function writeRecord(stream: InstanceStream, i: number, values: ArrayLike<number>, site: string): void {
-  let n = stream._components
-  if (values.length !== n) throw new Error(site + ": a " + layoutKey(stream.layout) + " record is " + n + " values, got " + values.length)
-  if (stream._floats) {
-    // Indexed stores beat TypedArray.set over a plain array under QuickJS,
-    // which walks the array-like generically.
-    let data = stream.data as Float32Array
-    let at = i * n
-    for (let k = 0; k < n; k++) data[at + k] = values[k]!
-    return
-  }
-  let j = 0
-  for (let f of stream._fields) for (let k = 0; k < f.components; k++) f.set(i, k, values[j++]!)
+  writeLayoutRecord(stream.layout, stream._fields, stream._floats ? (stream.data as Float32Array) : null, i, values, site)
 }
 
-// One record of `layout` encoded from `values`, the bytes a blank slot copies.
-function encodeRecord(layout: VertexAttribute[], values: ArrayLike<number>, site: string): Uint8Array {
-  let stride = layoutStride(layout)
-  let one: InstanceStream = { layout, stride, buffer: 0 as BufferId, stream: null, data: new Uint8Array(0), blank: new Uint8Array(0), _view: new DataView(new ArrayBuffer(0)), _floats: isFloatLayout(layout), _components: layoutComponents(layout), _fields: [] }
-  viewStream(one, new ArrayBuffer(stride))
-  one._fields = streamFields(one)
-  writeRecord(one, 0, values, site)
-  return vertexBytes(one.data)
-}
 
 // Mark records [lo, hi) of a stream's mirror and ask the scene to publish
 // them at the next sync.

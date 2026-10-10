@@ -58,7 +58,7 @@ export type {
   Element,
   LayoutProps,
   TransformProps,
-  PointerProps,
+  InputProps,
   TransitionProps,
   Transition,
   TransitionCurve,
@@ -119,6 +119,8 @@ export {
   createRenderEffect,
   createRoot,
   createStore,
+  createProjection,
+  snapshot,
   reconcile,
   merge,
   omit,
@@ -130,6 +132,22 @@ export {
   onSettled,
 } from "@solidjs/signals"
 export type { Accessor, Setter, Signal, Store, StoreSetter } from "@solidjs/signals"
+
+// Async and optimistic state (from @solidjs/signals). `isPending` and
+// `latest` read an async value's in-flight change, `refresh` re-asks it
+// and `affects` marks it as changing; `action` runs a mutation as a
+// transition, and the optimistic primitives show the expected value until
+// it completes. See CHEATSHEET.md "Async" and "Actions & optimistic".
+export {
+  action,
+  createOptimistic,
+  createOptimisticStore,
+  isPending,
+  latest,
+  refresh,
+  affects,
+} from "@solidjs/signals"
+export type { Refreshable } from "@solidjs/signals"
 
 // Owner and lifecycle (from @solidjs/signals). `createRoot` above is the fourth
 // member of this group - it creates an owned scope, these reach the owner it

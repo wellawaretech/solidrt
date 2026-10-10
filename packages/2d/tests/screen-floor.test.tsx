@@ -6,15 +6,15 @@
 // zoom it is asked for - on the node layer (through group scale, the
 // world-matrix path) and on the record layer (the JS walk) alike, with
 // `view.pick` passing its camera's zoom; the clamp pair is validated
-// against the stored bounds before any write; and "add" accumulates
-// overlapping sprites where "alpha" composites them. GPU state
-// throughout, so this is an app test.
+// against the stored bounds before any write; and a material's "add"
+// accumulates overlapping sprites where "alpha" composites them. GPU
+// state throughout, so this is an app test.
 
 import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
 import { readTexture } from "@solidrt/core/gpu"
 import type { BlendMode, TextureId } from "@solidrt/core/gpu"
-import { addGroup, addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, destroySprite, fullFrame, getSprite, setSprite } from "../src/index.ts"
+import { addGroup, addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, destroySprite, fullFrame, getSprite, setSprite, unlit } from "../src/index.ts"
 
 const SIZE = 64
 // The atlas: one opaque white texel, tinted per sprite.
@@ -143,12 +143,12 @@ test("the record layer floors and picks the same way", async app => {
   expect(() => addSprite(layer, { minScreenPx: Number.NaN })).toThrow()
 })
 
-/** Two half-alpha sprites over each other on a layer with `blend`: the
- * center pixel of the view. */
+/** Two half-alpha sprites over each other on a layer whose material
+ * blends with `blend`: the center pixel of the view. */
 async function overlapped(app: TestApp, blend: BlendMode): Promise<number[]> {
   let { view } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: `${blend}-atlas` })
-    let layer = createSpriteLayer([atlas], { capacity: 8, blend, label: blend })
+    let layer = createSpriteLayer([atlas], { capacity: 8, material: unlit({ blend }), label: blend })
     let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: blend })
     addSprite(layer, { x: 32, y: 32, w: 16, h: 16, tint: HALF })
     addSprite(layer, { x: 32, y: 32, w: 16, h: 16, tint: HALF })
@@ -166,10 +166,10 @@ test("blend: \"add\" accumulates overlapping sprites to opaque white", async app
   expectPixel(await overlapped(app, "add"), [255, 255, 255, 255])
 })
 
-test("a tile layer takes the blend too, baking its cells with it", async app => {
+test("a tile layer takes the material too, baking its cells with its blend", async app => {
   let { layer } = await mounted(app, () => {
     let atlas = createAtlas(ATLAS, { label: "tiles-add-atlas" })
-    let layer = createTileLayer(2, 2, 8, 8, [atlas], { blend: "add", label: "tiles-add" })
+    let layer = createTileLayer(2, 2, 8, 8, [atlas], { material: unlit({ blend: "add" }), label: "tiles-add" })
     layer.setTile(0, 0, fullFrame(atlas), { tint: HALF })
     return { layer, texture: layer.chunks[0]!.texture }
   })

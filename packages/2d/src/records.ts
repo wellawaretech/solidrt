@@ -15,12 +15,15 @@
 // static layer publishes nothing and therefore costs nothing.
 //
 // The record vocabulary is @solidrt/3d's record mesh's, one dimension
-// down: `records(layer)` is the mirror, `updateRecords(layer, { first?,
-// count? })` publishes a range, `setRecordCount(layer, n)` dials the drawn
-// prefix. The POPULATION differs by kind and keeps its own verbs - a
-// record mesh's records are opaque data (setRecords), a record layer's
-// are sprites (addSprite/destroySprite) - so the copy-in here is
-// `records(layer).set(src)` followed by updateRecords.
+// down: `records(layer, stream?)` is the mirror (stream 0 the layer's
+// own record, 1.. the material's style streams), `updateRecords(layer, {
+// stream?, first?, count? })` publishes a range, `setRecordCount(layer,
+// n)` dials the drawn prefix, `setInstanceStyle(layer, sprite, values)`
+// and `instanceAttribute(layer, name)` write the material's per-sprite
+// style record (style.ts). The POPULATION differs by kind and keeps its
+// own verbs - a record mesh's records are opaque data (setRecords), a
+// record layer's are sprites (addSprite/destroySprite) - so the copy-in
+// here is `records(layer).set(src)` followed by updateRecords.
 //
 // This is NOT the default live layer - that is layer.ts, where sprites are
 // spatial arena nodes core producers can reach. Use this when a JS loop
@@ -36,13 +39,16 @@
 import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
 import { checkScreenSize, createRecordStream, destroyBuffer, screenSizeScale } from "@solidrt/core/gpu"
 import type { BufferId } from "@solidrt/core/gpu"
+import type { AttributeAccess, ShaderParams } from "@solidrt/core/gpu"
 import { checkAtlases, frameIndex } from "./atlas.ts"
 import type { Atlas } from "./atlas.ts"
 import { fullFrame, isFrame, writeFrame } from "./frames.ts"
-import { checkTint, readFrame } from "./layer.ts"
+import { atlasBindings, RECORD_ATTRIBUTES } from "./glsl.ts"
+import { checkParams, checkTint, readFrame } from "./layer.ts"
 import type { LayerBase, Sprite, SpriteLayer, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
+import { materialSamplers, unlit } from "./material.ts"
 import { pointInSprite } from "./pick.ts"
-import { createSpritePipeline, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
+import { blankStyle, createStyleStreams, growStyle, shiftStyle, writeStyle } from "./style.ts"
 import { createViews } from "./views.ts"
 
 // Floats per instance record:
@@ -92,12 +98,20 @@ export type RecordLayer = LayerBase & {
   _order: SpriteState[]
 }
 
-/** Options of `updateRecords`: the record range (default the whole
- * mirror, capacity wide). */
-export type UpdateRecordsOptions = { first?: number; count?: number }
+/** Options of `updateRecords`: the stream (default 0, the layer's own
+ * record; 1.. the material's style streams in its instanceBuffers
+ * order) and the record range (default the whole mirror, capacity
+ * wide). */
+export type UpdateRecordsOptions = { stream?: number; first?: number; count?: number }
 
 /**
- * The layer's record mirror - the raw power path. On a records layer the
+ * The layer's record mirror - the raw power path. Stream 0 (the default)
+ * is the layer's own record; stream 1.. are the material's style
+ * streams in its `instanceBuffers` order, each a Float32Array over an
+ * all-float layout and bytes otherwise (write those through
+ * instanceAttribute's codecs, or a typed view of your own over the
+ * format), slot-indexed like the layer's own, blank (the material's
+ * instanceStyle) until written. On a records layer the
  * layout per sprite is INSTANCE_FLOATS floats: [cx, cy, w, h, u0, v0, u1,
  * v1, rot, tintR, tintG, tintB, tintA, minScreenPx, maxScreenPx, atlas,
  * outlineR, outlineG, outlineB, outlineWidth], record i at i *
@@ -110,9 +124,9 @@ export type UpdateRecordsOptions = { first?: number; count?: number }
  * records shift.
  *
  * On a node layer (createSpriteLayer) the records are its STYLE records,
- * STYLE_FLOATS floats per sprite slot: [u0, v0, u1, v1, tintR, tintG,
+ * SPRITE_FLOATS floats per sprite slot: [u0, v0, u1, v1, tintR, tintG,
  * tintB, tintA, renderOrder, minScreenPx, maxScreenPx, atlas, outlineR,
- * outlineG, outlineB, outlineWidth], slot i at i * STYLE_FLOATS (a
+ * outlineG, outlineB, outlineWidth], slot i at i * SPRITE_FLOATS (a
  * sprite's slot is fixed for its life; a freed slot recycles) - the pose
  * lives in the core and is written through setSprite. The 3d
  * `records(instancedMesh)`, one dimension down: a bulk restyle (a palette
@@ -124,12 +138,67 @@ export type UpdateRecordsOptions = { first?: number; count?: number }
  * replaces the array, and a hoisted reference becomes a dead copy whose
  * writes publish nothing. @solidrt/3d's records(mesh).
  */
-export function records(layer: RecordLayer | SpriteLayer): Float32Array {
-  return layer._records
+export function records(layer: RecordLayer | SpriteLayer): Float32Array
+export function records(layer: RecordLayer | SpriteLayer, stream: number): ArrayBufferView
+export function records(layer: RecordLayer | SpriteLayer, stream = 0): ArrayBufferView {
+  if (stream === 0) return layer._records
+  return styleStream("records", layer, stream).data
+}
+
+// The material style stream at index `stream` (1-based after the layer's
+// own record), or a throw naming the range.
+function styleStream(verb: string, layer: RecordLayer | SpriteLayer, stream: number) {
+  let s = layer._styles[stream - 1]
+  if (!Number.isInteger(stream) || stream < 1 || s === undefined) {
+    throw new Error(`${verb}: stream ${stream} is out of range; the layer has record streams 0..${layer._styles.length} (0 its own record, then the material's instance buffers)`)
+  }
+  return s
 }
 
 /**
- * Publish records [first, first + count) of the mirror at the layer's
+ * Write a sprite's style record - the material's per-sprite data, its
+ * FIRST instance buffer (any format; `values` one per component, in
+ * attribute order, as the shader sees them: a unorm8x4 tint as 0..1) -
+ * marking the slot for the next flush; a frame-rate path like
+ * setSprite, any number of sprites restyled between two frames
+ * costing one coalesced buffer write. Throws on a material without an
+ * instance buffer or a record of the wrong length; a no-op on a
+ * destroyed sprite. instanceAttribute + updateRecords is the same
+ * write by attribute name, and the only way into a second stream.
+ * @solidrt/3d's setInstanceStyle(instance, values).
+ */
+export function setInstanceStyle(layer: RecordLayer | SpriteLayer, sprite: Sprite, values: ArrayLike<number>): void {
+  if (sprite.layer !== layer) {
+    if (sprite.layer === null) return
+    throw new Error("setInstanceStyle: the sprite belongs to another layer")
+  }
+  let style = layer._styles[0]
+  if (style === undefined) throw new Error("setInstanceStyle: the layer's material declares no instance buffer (no style record)")
+  writeStyle(style, sprite._slot, values, "setInstanceStyle")
+  layer._schedule()
+}
+
+/**
+ * The accessor for the material's per-sprite attribute `name` over the
+ * layer's style streams: slot in (a sprite's `_slot`), component values
+ * as the shader sees them (a unorm8x4 reads and writes as 0..1),
+ * encoded through the format's codec. Write through it, then
+ * updateRecords the range of that stream; the accessor stays valid
+ * across growth. Null when no stream carries the name (the layer's own
+ * record fields are records(layer)'s, not reachable here).
+ * @solidrt/3d's instanceAttribute(mesh, name).
+ */
+export function instanceAttribute(layer: RecordLayer | SpriteLayer, name: string): AttributeAccess | null {
+  for (let s of layer._styles) {
+    let i = s.layout.findIndex(a => a.name === name)
+    if (i >= 0) return s.fields[i]!
+  }
+  return null
+}
+
+/**
+ * Publish records [first, first + count) of a mirror (`stream` 0 the
+ * layer's own record, 1.. the material's style streams) at the layer's
  * next flush - the partial rewrite a population stepped in JS wants (ten
  * moved records of ten thousand cost ten); the whole mirror by default.
  * Write the mirror first, through records(), then call this. The range
@@ -141,13 +210,17 @@ export function records(layer: RecordLayer | SpriteLayer): Float32Array {
  * updateRecords(mesh).
  */
 export function updateRecords(layer: RecordLayer | SpriteLayer, options: UpdateRecordsOptions = {}): void {
-  let capacity = layer._stream.capacity
+  let index = options.stream ?? 0
+  let stream = index === 0 ? layer._stream : styleStream("updateRecords", layer, index).stream
+  let capacity = stream.capacity
   let first = options.first ?? 0
   let count = options.count ?? capacity - first
   if (!Number.isInteger(first) || !Number.isInteger(count) || first < 0 || count < 0 || first + count > capacity) {
     throw new Error("updateRecords: range [" + first + ", " + (first + count) + ") is outside the layer's " + capacity + " records")
   }
-  if (count > 0) markRecords(layer, first, first + count)
+  if (count === 0) return
+  stream.mark(first, first + count)
+  layer._schedule()
 }
 
 /**
@@ -190,6 +263,12 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
   let stream = createRecordStream(RECORD_BYTES, capacity, { label: `${label}-records`, autoFree: false })
   let tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createRecordLayer", tint)
+  let material = opts?.material ?? unlit()
+  checkAtlases("createRecordLayer", atlases, materialSamplers(material))
+  let params: ShaderParams = { ...material.params, ...opts?.params }
+  // The material's style streams, after the layer's own record: the
+  // same publish, the same growth, the same shift on destroy.
+  let styles = createStyleStreams(material, capacity, label)
   let orderBy = opts?.orderBy
   let instanceOrder =
     orderBy === undefined
@@ -198,7 +277,9 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
         ? { field: Y_FIELD_OFFSET }
         : { field: orderBy.field, descending: orderBy.descending }
   let ordered = instanceOrder !== undefined
-  let gpu = createSpritePipeline(label, VERTEX, [INSTANCE_ATTRIBUTES], opts?.blend ?? "alpha", atlases)
+  let gpu = material.pipeline(atlases, [RECORD_ATTRIBUTES], label)
+  // The instance buffers in pipeline order after the quad.
+  let buffers = () => [stream.buffer, ...styles.map(s => s.stream.buffer)]
 
   let disposed = false
   let scheduled = false
@@ -233,18 +314,20 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     let live = layer._order.length
     let count = drawn()
     if (grownFrom.length > 0) {
-      // The replacement is filled whole before the swap (the entry must
+      // The replacements are filled whole before the swap (the entry must
       // never point at an unwritten buffer): the live prefix, or under
       // orderBy the drawn one, which is all the gather may see.
       stream.publish(true, ordered ? count : live)
-      views.setBuffers([stream.buffer])
+      for (let s of styles) s.stream.publish(true, ordered ? count : live)
+      views.setBuffers(buffers())
       views.setCount(count)
       if (ordered) {
         // That publish landed BEFORE the swap, so the order had not yet
-        // followed to the grown buffer and it went out ungathered. One
+        // followed to the grown buffers and it went out ungathered. One
         // more publish, now under the swapped-in order, restores key
         // order - growth frames only.
         stream.publish(true, count)
+        for (let s of styles) s.stream.publish(true, count)
       }
       for (let old of grownFrom) destroyBuffer(old)
       grownFrom.length = 0
@@ -253,12 +336,18 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     }
     if (ordered) {
       // The gathered set IS the drawn prefix: a dirty record or a moved
-      // dial republishes it whole.
-      if (stream.dirty || count !== published) stream.publish(true, count)
+      // dial republishes it whole, every stream alike (the core gathers
+      // them under one permutation).
+      if (stream.dirty || count !== published) {
+        stream.publish(true, count)
+        for (let s of styles) s.stream.publish(true, count)
+      }
     } else {
       // The dirty range, clipped to the live sprites (a record past them
-      // is never drawn): one partial write at its byte offset.
+      // is never drawn): one partial write at its byte offset, per
+      // dirty stream.
       stream.publish(false, live)
+      for (let s of styles) s.stream.publish(false, live)
     }
     if (count !== published) {
       views.setCount(count)
@@ -324,16 +413,18 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     label,
     pipeline: gpu.pipeline,
     quad: gpu.quad,
-    atlases: atlases.map(a => a.texture),
-    buffers: () => [stream.buffer],
+    textures: { ...atlasBindings(atlases.map(a => a.texture)), ...material.textures },
+    buffers,
     count: () => published,
     tint: () => tint,
+    params: () => params,
     pick: (x, y, zoom) => layer.pick(x, y, zoom),
     order: instanceOrder,
   })
 
   let layer: RecordLayer = {
     atlases,
+    material,
     get count() {
       return layer._order.length
     },
@@ -342,6 +433,12 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       checkTint("setTint", next)
       tint = next
       views.setTint(next)
+    },
+    setParams(next) {
+      if (disposed) return
+      checkParams("setParams", next)
+      Object.assign(params, next)
+      views.setParams(next)
     },
     createView(vopts) {
       if (disposed) throw new Error("createView: layer is disposed")
@@ -376,7 +473,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       for (let old of grownFrom) destroyBuffer(old)
       grownFrom.length = 0
       stream.destroy()
-      gpu.dispose()
+      for (let s of styles) s.stream.destroy()
     },
     _add(opts) {
       if (opts?.parent) {
@@ -400,9 +497,11 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       let atlas = checkWrite("addSprite", record)
       let index = layer._order.length
       if (index + 1 > stream.capacity) {
-        // Growth replaces the mirror and the buffer (doubling); the flush
-        // fills the replacement whole and swaps it in.
-        grownFrom.push(stream.grow(stream.capacity * 2))
+        // Growth replaces the mirrors and the buffers (doubling); the
+        // flush fills the replacements whole and swaps them in.
+        let next = stream.capacity * 2
+        grownFrom.push(stream.grow(next))
+        for (let s of styles) grownFrom.push(growStyle(s, next))
         layer._records = new Float32Array(stream.bytes.buffer)
       }
       let sprite: SpriteState = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0, _flipX: false, _flipY: false, _visible: true, _parent: null }
@@ -411,6 +510,8 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       // No outline until a raw writer sets one: the slot may hold a
       // shifted-out sprite's record otherwise.
       layer._records.fill(0, index * INSTANCE_FLOATS + OUTLINE_FIELD_OFFSET, index * INSTANCE_FLOATS + OUTLINE_FIELD_OFFSET + 4)
+      // The material's style slot starts blank for the same reason.
+      for (let s of styles) blankStyle(s, index)
       markRecords(layer, index, index + 1)
       return sprite
     },
@@ -450,6 +551,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
       let r = layer._records
       let last = order.length - 1
       r.copyWithin(index * INSTANCE_FLOATS, (index + 1) * INSTANCE_FLOATS, order.length * INSTANCE_FLOATS)
+      if (index < last) for (let s of styles) shiftStyle(s, index + 1, order.length)
       order.splice(index, 1)
       for (let i = index; i < order.length; i++) order[i]!._slot = i
       if (index < last) markRecords(layer, index, last)
@@ -462,6 +564,7 @@ export function createRecordLayer(atlases: Atlas[], opts?: RecordLayerOptions): 
     },
     _stream: stream,
     _records: new Float32Array(stream.bytes.buffer),
+    _styles: styles,
     _dial: Infinity,
     _order: [],
   }

@@ -138,11 +138,6 @@ Shaped, not started.
   cannot be shown twice, a minimap cannot admit marker sprites only, several
   views cannot share one atlas target, and a view cannot tint itself apart
   from the layer. Each is an additive step on the landed view contract.
-- **[A sprite layer has one hardwired fragment and vertex stage, so there is no custom shader](backlog/2d-materials-and-blend.md)** [2026-09-11]
-  Every 2d draw goes through one fixed shader pair with tint and the layer
-  blend as the only knobs, so palette swaps, dissolves, outlines and scrolling
-  UVs have no path at all, while @solidrt/3d ships four stock materials and a
-  custom shader class.
 - **[Retro presets for @solidrt/2d](backlog/2d-retro-presets.md)** [2026-08-19]
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what
@@ -179,6 +174,14 @@ Shaped, not started.
   per-instance frame/atlas value for the stock materials (Godot's custom data,
   Unity's property block) - plus per-instance frustum gating; none changes a
   shipped contract.
+- **[3d transforms are float32 from the FFI boundary on, so content far from the origin jitters and steps](backlog/3d-large-world-precision.md)** [2026-10-10]
+  A node position is an f64 JS number until setTransform copies it into a
+  Float32Array; the spatial arena composes world matrices in f32 and the
+  vertex stage multiplies that uModel by a uViewProj carrying the camera
+  translation, so past roughly 10^4 to 10^5 units from the origin vertices
+  jitter and slow motion steps; a snapped per-target render origin plus f64
+  stored translations would fix it with no API change and keep the one-write
+  camera move.
 - **[3D fill and pass count put low-end Android GPUs far off 60 fps](backlog/3d-low-end-gpu-performance.md)** [2026-08-27]
   The third-dimension demo ran at 13 fps on an Adreno 610 tablet: ~44 ms
   fragment work, ~13 ms flat per-pass overhead, ~2 ms composite. The shadow
@@ -217,6 +220,13 @@ Shaped, not started.
   and there is no output={false}, so an app that renders only through
   <View3d>s carries a full unused scene target; @solidrt/2d took the opposite
   structure on 09-07 and layers render only through views.
+- **[A 3d world larger than memory has no residency, so every streaming app hand-rolls loading, freeing and pooling](backlog/3d-world-residency.md)** [2026-10-10]
+  Culling and LOD gate drawing, not memory, so an open map or a long track
+  either loads whole or streams by hand from onFrame (camera distance in JS,
+  createModel and dispose, or a pool re-pointed with setGeometry), and with
+  createModel synchronous on main and GPU creates blocking, every region that
+  streams in costs a frame; the 2d tile layer's stage B2 is the same problem
+  one dimension down.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -1978,6 +1988,13 @@ Finished, kept for the reasoning.
   Reintroduce per-node localX/localY on pointer events (already carried
   through hit testing, dropped in flux marshalling), and cap move hit-tests to
   one per pointer per frame.
+- **[One material model for the 2d and 3d extensions](done/materials-one-model.md)** [2026-10-10]
+  A 2d layer had one hardwired shader pair with blend as its only knob, and
+  the 3d custom-look tiers had settled after that note was written; both
+  packages now share one model - a material on whatever is one draw, blend on
+  the material, a surface function in the stock material, a shader class over
+  the package's set, and an app-owned per-instance style record - with the
+  vertex codec in core.
 - **[MCP bridge - match dev servers in subdirectories of the bridge's project](done/mcp-bridge-workspace-project-match.md)** [2026-08-25]
   Superseded 2026-08-25 by the key-based registry: a server registers under
   its project root (the cwd) or its file, never a directory found by walking

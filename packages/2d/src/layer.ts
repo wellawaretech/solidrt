@@ -12,19 +12,27 @@
 //
 // Two instance-buffer slots split ownership: slot 0 is the pose buffer,
 // written ONLY by the core (one coalesced write per flush however many
-// nodes moved); slot 1 is the style buffer [u0, v0, u1, v1, tint rgba,
-// renderOrder, minScreenPx, maxScreenPx, atlas], JS-owned and published
-// through the zero-copy write lease. Never write the pose buffer from JS -
-// the core's staging mirror is the owner and will overwrite. For motion
-// only JS can compute at large populations, the records layer (records.ts)
+// nodes moved); slot 1 is the SPRITE record [u0, v0, u1, v1, tint rgba,
+// renderOrder, minScreenPx, maxScreenPx, atlas, outline], JS-owned
+// through the sprite verbs and published through the zero-copy write
+// lease. After them come the MATERIAL's style streams (style.ts), one
+// per instance buffer its material declares: app-owned per-sprite data
+// in any vertex format, written with setInstanceStyle, instanceAttribute
+// or records(layer, stream). Never write the pose buffer from JS - the
+// core's staging mirror is the owner and will overwrite. For motion only
+// JS can compute at large populations, the records layer (records.ts)
 // is the escape hatch.
 //
 // A layer draws from the ATLASES it declares at creation, bound together
-// as one draw: every frame carries its texture, the style record stores
-// that texture's index in the list, and the generated fragment stage
-// (shaders.ts) picks the sampler per instance - so sprites from several
-// sheets interleave freely in one draw, key order included, and a frame
-// from a sheet the layer did not declare throws at the write.
+// as one draw: every frame carries its texture, the sprite record stores
+// that texture's index in the list, and the fragment set generated for
+// the list (glsl.ts) picks the sampler per instance - so sprites from
+// several sheets interleave freely in one draw, key order included, and
+// a frame from a sheet the layer did not declare throws at the write.
+// What the pixels look like is the layer's MATERIAL (material.ts): the
+// stock `unlit()` unless the options name one, which owns the pipeline
+// (its blend, its program over the layer's set) and whose params and
+// textures every view seeds.
 //
 // Sprites hold FIXED instance slots (freed slots recycle): draw order is
 // slot order, so removal never shifts records and pose sinks never rebind.
@@ -36,7 +44,7 @@
 import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import { checkScreenSize, createBuffer, createRecordStream, destroyBuffer, screenSizeScale } from "@solidrt/core/gpu"
-import type { BlendMode, BufferId, RecordStream, TextureId } from "@solidrt/core/gpu"
+import type { BufferId, RecordStream, ShaderParams, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type {
   Impact as CoreImpact,
@@ -56,7 +64,11 @@ import type { Frame } from "./frames.ts"
 import { fullFrame, isFrame, writeFrame } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
 import { floorReach, pointInSprite } from "./pick.ts"
-import { createSpritePipeline, INSTANCE_LAYOUTS_SPLIT, VERTEX_SPLIT } from "./shaders.ts"
+import { atlasBindings, POSE_ATTRIBUTES, SPRITE_ATTRIBUTES } from "./glsl.ts"
+import { materialSamplers, unlit } from "./material.ts"
+import type { Material } from "./material.ts"
+import { blankStyle, createStyleStreams, growStyle } from "./style.ts"
+import type { StyleStream } from "./style.ts"
 import { createViews } from "./views.ts"
 import type { ViewHandle, ViewOptions } from "./views.ts"
 
@@ -65,24 +77,24 @@ export const POSE_FLOATS = 5
 
 // Float offset of world y in a pose record - what `orderBy: "y"` keys on.
 const POSE_Y_FIELD = 1
-/** Floats per style record:
+/** Floats per sprite record (the node layer's slot 1, SPRITE_ATTRIBUTES):
  * [u0, v0, u1, v1, tintR, tintG, tintB, tintA, renderOrder, minScreenPx,
  * maxScreenPx, atlas, outlineR, outlineG, outlineB, outlineWidth]. */
-export const STYLE_FLOATS = 16
+export const SPRITE_FLOATS = 16
 
-// Float offset of renderOrder in a style record - what `orderBy: "renderOrder"`
+// Float offset of renderOrder in a sprite record - what `orderBy: "renderOrder"`
 // keys on.
-const STYLE_KEY_FIELD = 8
-// Float offsets of the screen-size clamp in a style record.
-const STYLE_MIN_PX_FIELD = 9
-const STYLE_MAX_PX_FIELD = 10
+const SPRITE_KEY_FIELD = 8
+// Float offsets of the screen-size clamp in a sprite record.
+const SPRITE_MIN_PX_FIELD = 9
+const SPRITE_MAX_PX_FIELD = 10
 // Float offset of the outline (rgb plus width in world pixels) a
 // distance-field atlas draws under the sprite; text runs write it, a
 // colour atlas ignores it.
-const STYLE_OUTLINE_FIELD = 12
+const SPRITE_OUTLINE_FIELD = 12
 // Float offset of the atlas sampler index (the frame's texture's position
 // in the layer's atlas list).
-const STYLE_ATLAS_FIELD = 11
+const SPRITE_ATLAS_FIELD = 11
 
 const RESOLVED = Promise.resolve()
 
@@ -287,7 +299,7 @@ export type SpriteOptions = {
   /**
    * Show or hide the sprite (default true), @solidrt/3d's setVisible in
    * the setSprite bag: hidden, its pose slot zeroes (nothing drawn) and
-   * pick/pickRect skip it; the handle, slot, style records and any
+   * pick/pickRect skip it; the handle, slot, sprite records and any
    * running transition state stay, so showing again restores the sprite
    * as it was. Node layer only - a record sprite has no node (hide it by
    * zeroing w or h); setting this there throws.
@@ -415,6 +427,17 @@ export function checkTint(verb: string, tint: [number, number, number, number]):
   }
 }
 
+/** Validate a params record (throws - the dev validation policy): a
+ * plain object of finite numbers or number lists. Internal - every
+ * layer kind's setParams calls it. */
+export function checkParams(verb: string, params: ShaderParams): void {
+  if (typeof params !== "object" || params === null || Array.isArray(params)) throw new Error(`${verb}: params must be an object of uniform values, got ${JSON.stringify(params)}`)
+  for (let [name, value] of Object.entries(params)) {
+    let ok = typeof value === "number" ? Number.isFinite(value) : Array.isArray(value) && value.length > 0 && value.every(Number.isFinite)
+    if (!ok) throw new Error(`${verb}: ${name} must be a finite number or a list of them, got ${JSON.stringify(value)}`)
+  }
+}
+
 export type SpriteLayerOptions = {
   /**
    * Initial slot reservation; default 1024. The layer grows past it on
@@ -427,13 +450,25 @@ export type SpriteLayerOptions = {
    * setTint. */
   tint?: [number, number, number, number]
   /**
-   * How the sprites blend into the layer's targets, core gpu's BlendMode;
-   * default "alpha" (premultiplied source-over in draw order). "add" for
-   * glows, explosions and additive particles, "multiply" to darken, "none"
-   * to overwrite. Pipeline state, fixed at creation: an additive layer is
-   * a second layer over the same atlas.
+   * What the sprites look like: the layer's material (material.ts),
+   * fixed at creation - its pipeline (the blend mode, its program over
+   * the layer's atlases), its params and its textures on every view,
+   * its instance buffers as per-sprite style streams after the layer's
+   * own records. Default `unlit()`: the atlas texel times the tints,
+   * alpha-blended in draw order. An additive glow layer is
+   * `material: unlit({ blend: "add" })` over the same atlases; a look is
+   * `unlit({ prelude, surface })` or a shaderMaterialClass instance. The
+   * material sits on the LAYER because the layer is the batch - two
+   * looks are two layers, which is also how you order them.
    */
-  blend?: BlendMode
+  material?: Material
+  /**
+   * Uniform values seeded on every view of the layer over the
+   * material's own (a prelude's uniforms: a flash amount, a palette
+   * row, a clock); see setParams. Names the program does not declare
+   * are skipped.
+   */
+  params?: ShaderParams
   /** Names the GPU resources (buffers, pipeline; views default to
    * `<label>-view`); default "sprites". */
   label?: string
@@ -451,13 +486,13 @@ export type SpriteLayerOptions = {
   autoFree?: boolean
   /**
    * Draw sprites in KEY order instead of slot order, produced by core at
-   * every publish (the gpu `instanceOrder` primitive across the pose/style
+   * every publish (the gpu `instanceOrder` primitive across the pose/sprite
    * buffer pair - no per-sprite JS anywhere): `"y"` keys on the sprite's
    * WORLD y, the pose the core itself writes, so a perspective crowd
    * paints back to front (smaller y = further up the screen = drawn
    * first) - and because the key is core-owned, sprites moved by native
    * transitions or any other core producer re-sort with zero JS per
-   * frame. Slots stay fixed - handles, picking and the style records are
+   * frame. Slots stay fixed - handles, picking and the sprite records are
    * untouched, only the draw order changes - and ties keep slot order, so
    * sprites at equal y draw exactly as without it.
    *
@@ -555,6 +590,9 @@ export type LayerBase = {
    * in draw order.
    */
   readonly atlases: readonly Atlas[]
+  /** The material the layer draws with, as declared at creation (the
+   * stock `unlit()` when none was). */
+  readonly material: Material
   /** Live sprite count. */
   readonly count: number
   /**
@@ -566,6 +604,16 @@ export type LayerBase = {
    * kinds.
    */
   setTint(tint: [number, number, number, number]): void
+  /**
+   * Write uniform values to every view of the layer (one shared-params
+   * write per view, cheap to animate): the material's prelude uniforms
+   * - a flash amount, a palette row, a scroll offset, a clock - over the
+   * material's own `params`; @solidrt/3d's setMeshParams one dimension
+   * down, the layer being the draw entry. Absent names keep their
+   * values; a name the program does not declare is skipped. Views
+   * created later seed from the merged record.
+   */
+  setParams(params: ShaderParams): void
   /** Every shown sprite whose rotated rect contains the layer-pixel point
    * (a hidden sprite or subtree is never hit), topmost first - the
    * all-hits shape of @solidrt/3d's pick; `pick(x, y)[0]` is the topmost.
@@ -596,12 +644,16 @@ export type LayerBase = {
   _destroy(sprite: SpriteState): void
   _schedule(): void
   /** The layer's JS-owned record stream, what records()/updateRecords
-   * read and mark: a records layer's whole records, a node layer's style
-   * records (its poses are the core's). Internal. */
+   * read and mark: a records layer's whole records, a node layer's
+   * sprite records (its poses are the core's). Internal. */
   _stream: RecordStream
   /** The stream's mirror as floats, re-pointed by growth; records() hands
    * it out. Internal. */
   _records: Float32Array
+  /** The material's style streams, one per instance buffer it declares,
+   * in its order; what setInstanceStyle, instanceAttribute, records(layer,
+   * stream) and updateRecords reach. Internal. */
+  _styles: StyleStream[]
 }
 
 /** A query volume for overlap/sweep/moveAndSlide, in layer pixels: a
@@ -851,14 +903,22 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   let label = opts?.label ?? "sprites"
   let tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createSpriteLayer", tint)
+  let material = opts?.material ?? unlit()
+  checkAtlases("createSpriteLayer", atlases, materialSamplers(material))
+  // The params every view seeds: the material's, the layer's over them,
+  // merged as setParams writes land so a later view starts current.
+  let params: ShaderParams = { ...material.params, ...opts?.params }
   let pose: BufferId = createBuffer(capacity * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
-  // The style records: JS-written through the sprite verbs (writeStyle),
+  // The sprite records: JS-written through the sprite verbs (writeSprite),
   // records()/updateRecords for a bulk restyle, published by the flush as
   // the dirty slot range, or the used prefix whole under an order (the
-  // core gathers both buffers under the one permutation).
-  let style = createRecordStream(STYLE_FLOATS * 4, capacity, { label: `${label}-style`, autoFree: false })
+  // core gathers every instance buffer under the one permutation).
+  let sprites = createRecordStream(SPRITE_FLOATS * 4, capacity, { label: `${label}-sprites`, autoFree: false })
+  // The material's style streams, after the layer's own: the same
+  // publish, the same growth.
+  let styles = createStyleStreams(material, capacity, label)
   let ordered = opts?.orderBy !== undefined
-  let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_LAYOUTS_SPLIT, opts?.blend ?? "alpha", atlases)
+  let gpu = material.pipeline(atlases, [POSE_ATTRIBUTES, SPRITE_ATTRIBUTES], label)
   // The sprites with a screen-size clamp (either bound on), and the
   // furthest any of them reaches from its center at its floor (floorReach,
   // view pixels): the candidate box a pick searches around the pointer. A
@@ -877,8 +937,8 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   // ceiling set alone must not drop below the floor already there.
   let checkClamp = (verb: string, sprite: SpriteState, opts: SpriteOptions): void => {
     if (opts.minScreenPx === undefined && opts.maxScreenPx === undefined) return
-    let at = sprite._slot * STYLE_FLOATS
-    checkScreenSize(verb, opts.minScreenPx ?? styleData[at + STYLE_MIN_PX_FIELD]!, opts.maxScreenPx ?? styleData[at + STYLE_MAX_PX_FIELD]!)
+    let at = sprite._slot * SPRITE_FLOATS
+    checkScreenSize(verb, opts.minScreenPx ?? spriteData[at + SPRITE_MIN_PX_FIELD]!, opts.maxScreenPx ?? spriteData[at + SPRITE_MAX_PX_FIELD]!)
   }
 
   let disposed = false
@@ -907,7 +967,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   // slot stays taken until the core says it is gone; dispose frees them.
   let leaving = new Set<NodeId>()
   let gpuCapacity = capacity
-  let styleData = new Float32Array(style.bytes.buffer)
+  let spriteData = new Float32Array(sprites.bytes.buffer)
   let byNode = new Map<NodeId, SpriteState>()
   // The layer's root node (identity): parentless sprites and groups hang
   // off it, so a query scoped to it sees exactly this layer.
@@ -939,7 +999,8 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   let flush = () => {
     scheduled = false
     if (disposed) return
-    if (style.dirty) style.publish(ordered, highWater)
+    if (sprites.dirty) sprites.publish(ordered, highWater)
+    for (let s of styles) if (s.stream.dirty) s.stream.publish(ordered, highWater)
     if (published !== highWater) {
       views.setCount(highWater)
       published = highWater
@@ -949,20 +1010,25 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     spatial.flush()
   }
 
-  // Grow both instance buffers to `next` slots: the pose sinks move in one
+  // The instance buffers in pipeline order after the quad: the pose, the
+  // sprite records, the material's style streams.
+  let buffers = (): BufferId[] => [pose, sprites.buffer, ...styles.map(s => s.stream.buffer)]
+  // Grow every instance buffer to `next` slots: the pose sinks move in one
   // retargetRecords call (the whole used range republishes at the next
-  // flush), the style stream grows into a replacement marked whole, which
+  // flush), the record streams grow into replacements marked whole, which
   // the next flush publishes. The entries hold the old buffers alive until
   // the swaps land, so the destroys are safe to issue right after.
   let grow = (next: number) => {
-    let newPose = createBuffer(next * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
-    spatial.retargetRecords(pose, newPose)
-    let oldStyle = style.grow(next)
-    styleData = new Float32Array(style.bytes.buffer)
-    views.setBuffers([newPose, style.buffer])
-    destroyBuffer(pose)
-    destroyBuffer(oldStyle)
-    pose = newPose
+    let oldPose = pose
+    pose = createBuffer(next * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
+    spatial.retargetRecords(oldPose, pose)
+    let oldSprites = sprites.grow(next)
+    spriteData = new Float32Array(sprites.bytes.buffer)
+    let oldStyles = styles.map(s => growStyle(s, next))
+    views.setBuffers(buffers())
+    destroyBuffer(oldPose)
+    destroyBuffer(oldSprites)
+    for (let old of oldStyles) destroyBuffer(old)
     gpuCapacity = next
   }
 
@@ -975,8 +1041,8 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     return frameIndex(verb, atlasIndex, opts.frame)
   }
 
-  let writeStyle = (sprite: SpriteState, opts: SpriteOptions, atlas: number) => {
-    let at = sprite._slot * STYLE_FLOATS
+  let writeSprite = (sprite: SpriteState, opts: SpriteOptions, atlas: number) => {
+    let at = sprite._slot * SPRITE_FLOATS
     let changed = false
     let flipX = opts.flipX !== undefined && opts.flipX !== sprite._flipX
     let flipY = opts.flipY !== undefined && opts.flipY !== sprite._flipY
@@ -984,36 +1050,36 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     if (flipY) sprite._flipY = !sprite._flipY
     if (opts.frame !== undefined) {
       let f = opts.frame
-      writeFrame(styleData, at, f.u0, f.v0, f.u1, f.v1, sprite._flipX, sprite._flipY)
-      styleData[at + STYLE_ATLAS_FIELD] = atlas
+      writeFrame(spriteData, at, f.u0, f.v0, f.u1, f.v1, sprite._flipX, sprite._flipY)
+      spriteData[at + SPRITE_ATLAS_FIELD] = atlas
       changed = true
     } else if (flipX || flipY) {
       // No new frame: toggle the changed axes on the stored UVs.
-      writeFrame(styleData, at, styleData[at]!, styleData[at + 1]!, styleData[at + 2]!, styleData[at + 3]!, flipX, flipY)
+      writeFrame(spriteData, at, spriteData[at]!, spriteData[at + 1]!, spriteData[at + 2]!, spriteData[at + 3]!, flipX, flipY)
       changed = true
     }
     if (opts.tint !== undefined) {
-      styleData[at + 4] = opts.tint[0]
-      styleData[at + 5] = opts.tint[1]
-      styleData[at + 6] = opts.tint[2]
-      styleData[at + 7] = opts.tint[3]
+      spriteData[at + 4] = opts.tint[0]
+      spriteData[at + 5] = opts.tint[1]
+      spriteData[at + 6] = opts.tint[2]
+      spriteData[at + 7] = opts.tint[3]
       changed = true
     }
     if (opts.renderOrder !== undefined) {
-      styleData[at + STYLE_KEY_FIELD] = opts.renderOrder
+      spriteData[at + SPRITE_KEY_FIELD] = opts.renderOrder
       changed = true
     }
     if (opts.minScreenPx !== undefined) {
-      styleData[at + STYLE_MIN_PX_FIELD] = opts.minScreenPx
+      spriteData[at + SPRITE_MIN_PX_FIELD] = opts.minScreenPx
       changed = true
     }
     if (opts.maxScreenPx !== undefined) {
-      styleData[at + STYLE_MAX_PX_FIELD] = opts.maxScreenPx
+      spriteData[at + SPRITE_MAX_PX_FIELD] = opts.maxScreenPx
       changed = true
     }
-    if (changed) style.mark(sprite._slot, sprite._slot + 1)
-    let min = styleData[at + STYLE_MIN_PX_FIELD]!
-    if (min > 0 || styleData[at + STYLE_MAX_PX_FIELD]! > 0) {
+    if (changed) sprites.mark(sprite._slot, sprite._slot + 1)
+    let min = spriteData[at + SPRITE_MIN_PX_FIELD]!
+    if (min > 0 || spriteData[at + SPRITE_MAX_PX_FIELD]! > 0) {
       clamped.add(sprite)
       let r = floorReach(sprite._w, sprite._h, min)
       if (r >= reach) reach = r
@@ -1027,13 +1093,14 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     label,
     pipeline: gpu.pipeline,
     quad: gpu.quad,
-    atlases: atlases.map(a => a.texture),
-    buffers: () => [pose, style.buffer],
+    textures: { ...atlasBindings(atlases.map(a => a.texture)), ...material.textures },
+    buffers,
     count: () => published,
     tint: () => tint,
+    params: () => params,
     pick: (x, y, zoom) => layer.pick(x, y, zoom),
     // The order key one view entry declares: "y" on world y in the pose
-    // record (slot 0), "renderOrder" on the app-owned key in the style
+    // record (slot 0), "renderOrder" on the app-owned key in the sprite
     // record (slot 1); either way the core gathers BOTH buffers under the
     // one permutation at every publish and republishes the sibling itself
     // when the key buffer re-orders.
@@ -1041,12 +1108,13 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       opts?.orderBy === "y"
         ? { field: POSE_Y_FIELD }
         : opts?.orderBy === "renderOrder"
-          ? { field: STYLE_KEY_FIELD, buffer: 2 }
+          ? { field: SPRITE_KEY_FIELD, buffer: 2 }
           : undefined,
   })
 
   let layer: SpriteLayer = {
     atlases,
+    material,
     get count() {
       return byNode.size
     },
@@ -1055,6 +1123,12 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       checkTint("setTint", next)
       tint = next
       views.setTint(next)
+    },
+    setParams(next) {
+      if (disposed) return
+      checkParams("setParams", next)
+      Object.assign(params, next)
+      views.setParams(next)
     },
     createView(vopts) {
       if (disposed) throw new Error("createView: layer is disposed")
@@ -1091,7 +1165,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
         // the vertex stage draws.
         if (reachDirty) {
           reach = 0
-          for (let s of clamped) reach = Math.max(reach, floorReach(s._w, s._h, styleData[s._slot * STYLE_FLOATS + STYLE_MIN_PX_FIELD]!))
+          for (let s of clamped) reach = Math.max(reach, floorReach(s._w, s._h, spriteData[s._slot * SPRITE_FLOATS + SPRITE_MIN_PX_FIELD]!))
           reachDirty = false
         }
         let candidates = new Set<NodeId>()
@@ -1107,8 +1181,8 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
           spatial.worldMatrix(sprite.node!, WORLD)
           let w = Math.hypot(WORLD[0]!, WORLD[1]!)
           let h = Math.hypot(WORLD[4]!, WORLD[5]!)
-          let at = sprite._slot * STYLE_FLOATS
-          let scale = screenSizeScale(w, h, zoom, styleData[at + STYLE_MIN_PX_FIELD]!, styleData[at + STYLE_MAX_PX_FIELD]!)
+          let at = sprite._slot * SPRITE_FLOATS
+          let scale = screenSizeScale(w, h, zoom, spriteData[at + SPRITE_MIN_PX_FIELD]!, spriteData[at + SPRITE_MAX_PX_FIELD]!)
           if (pointInSprite(x, y, WORLD[12]!, WORLD[13]!, w * scale, h * scale, Math.atan2(WORLD[1]!, WORLD[0]!))) out.push(sprite)
         }
       }
@@ -1218,18 +1292,18 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       spatial.flush()
       views.dispose()
       destroyBuffer(pose)
-      style.destroy()
-      gpu.dispose()
+      sprites.destroy()
+      for (let s of styles) s.stream.destroy()
     },
     _add(opts) {
       if (disposed) throw new Error("addSprite: layer is disposed")
-      // The style bag with its defaults - renderOrder and the clamp at 0
+      // The fields bag with its defaults - renderOrder and the clamp at 0
       // explicitly, since a recycled slot holds the previous occupant's
       // values otherwise - resolved before a slot or node is taken, so a
       // bad frame allocates nothing. An absent key and an explicit
       // undefined both take the default (the options convention
       // everywhere; a plain spread would let undefined win).
-      let style: SpriteOptions = {
+      let fields: SpriteOptions = {
         ...opts,
         frame: opts?.frame ?? fullFrame(atlases[0]!),
         tint: opts?.tint ?? [1, 1, 1, 1],
@@ -1237,7 +1311,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
         minScreenPx: opts?.minScreenPx ?? 0,
         maxScreenPx: opts?.maxScreenPx ?? 0,
       }
-      let atlas = frameAtlas("addSprite", style)
+      let atlas = frameAtlas("addSprite", fields)
       if (opts?.parent && opts.parent.layer !== layer) throw new Error("addSprite: parent group belongs to another layer")
       let slot = freeSlots.pop() ?? highWater++
       if (slot >= gpuCapacity) grow(gpuCapacity * 2)
@@ -1267,20 +1341,22 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       spatial.setBounds(node, COLUMN_BOUNDS)
       spatial.bindPoseRecord(node, pose, slot)
       byNode.set(node, sprite)
-      writeStyle(sprite, style, atlas)
+      writeSprite(sprite, fields, atlas)
       // No outline until a text run sets one: a recycled slot would
-      // otherwise leak the previous occupant's.
-      styleData.fill(0, slot * STYLE_FLOATS + STYLE_OUTLINE_FIELD, slot * STYLE_FLOATS + STYLE_OUTLINE_FIELD + 4)
+      // otherwise leak the previous occupant's. The material's sprites
+      // slots start over for the same reason.
+      spriteData.fill(0, slot * SPRITE_FLOATS + SPRITE_OUTLINE_FIELD, slot * SPRITE_FLOATS + SPRITE_OUTLINE_FIELD + 4)
+      for (let style of styles) blankStyle(style, slot)
       layer._schedule()
       return sprite
     },
     _outline(sprite, r, g, b, width) {
-      let at = sprite._slot * STYLE_FLOATS + STYLE_OUTLINE_FIELD
-      styleData[at] = r
-      styleData[at + 1] = g
-      styleData[at + 2] = b
-      styleData[at + 3] = width
-      style.mark(sprite._slot, sprite._slot + 1)
+      let at = sprite._slot * SPRITE_FLOATS + SPRITE_OUTLINE_FIELD
+      spriteData[at] = r
+      spriteData[at + 1] = g
+      spriteData[at + 2] = b
+      spriteData[at + 3] = width
+      sprites.mark(sprite._slot, sprite._slot + 1)
       layer._schedule()
     },
     _write(sprite, opts) {
@@ -1308,25 +1384,25 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
         opts.maxScreenPx !== undefined ||
         (moved && clamped.has(sprite))
       ) {
-        writeStyle(sprite, opts, atlas)
+        writeSprite(sprite, opts, atlas)
       }
-      if (moved || style.dirty) layer._schedule()
+      if (moved || sprites.dirty) layer._schedule()
     },
     _read(sprite) {
-      let at = sprite._slot * STYLE_FLOATS
+      let at = sprite._slot * SPRITE_FLOATS
       return {
         x: sprite._x,
         y: sprite._y,
         w: sprite._w,
         h: sprite._h,
-        frame: readFrame(styleData, at, sprite, atlases[styleData[at + STYLE_ATLAS_FIELD]!]!.texture),
+        frame: readFrame(spriteData, at, sprite, atlases[spriteData[at + SPRITE_ATLAS_FIELD]!]!.texture),
         flipX: sprite._flipX,
         flipY: sprite._flipY,
         rotation: sprite._rot,
-        tint: [styleData[at + 4]!, styleData[at + 5]!, styleData[at + 6]!, styleData[at + 7]!],
-        minScreenPx: styleData[at + STYLE_MIN_PX_FIELD]!,
-        maxScreenPx: styleData[at + STYLE_MAX_PX_FIELD]!,
-        renderOrder: styleData[at + STYLE_KEY_FIELD]!,
+        tint: [spriteData[at + 4]!, spriteData[at + 5]!, spriteData[at + 6]!, spriteData[at + 7]!],
+        minScreenPx: spriteData[at + SPRITE_MIN_PX_FIELD]!,
+        maxScreenPx: spriteData[at + SPRITE_MAX_PX_FIELD]!,
+        renderOrder: spriteData[at + SPRITE_KEY_FIELD]!,
         visible: sprite._visible,
       }
     },
@@ -1384,10 +1460,11 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
     },
     _groups: new Set(),
     _root: root,
-    _stream: style,
+    _stream: sprites,
     get _records() {
-      return styleData
+      return spriteData
     },
+    _styles: styles,
   }
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => layer.dispose())
   return layer

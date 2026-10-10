@@ -95,7 +95,7 @@ function frameOf(atlas: Atlas, x: number, y: number, w: number, h: number): Fram
  * a cell and an animation is a slice of consecutive indices.
  *
  * Cells that touch do not bleed at mip level 0: the layer shaders clamp
- * every sample into its frame (shaders.ts). A mip chain is different - its
+ * every sample into its frame (glsl.ts). A mip chain is different - its
  * texels straddle cell edges before sampling - so a sheet going through
  * `createAtlas` with `mipmap` is extruded first (`extrudeGrid`, whose
  * returned options slice the repacked sheet).

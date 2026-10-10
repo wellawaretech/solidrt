@@ -67,7 +67,7 @@ copy one and adapt it.
   `maxScreenPx`), a label bar that never grows past 24 px (`maxScreenPx`)
   and a selection ring that never shrinks under 48 px (`minScreenPx`,
   gliding to the tapped sprite through a position transition), the glow
-  layer the same atlas on `blend: "add"` with haloes that add up to white
+  layer the same atlas on `unlit({ blend: "add" })` with haloes that add up to white
   where they overlap. Picking follows the drawn size. Debug commands
   `zoom`, `select` and `pick` drive it headless.
 - `split-screen.tsx` - one `<SpriteLayer output={false}>` (sprites, no

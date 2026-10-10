@@ -1739,6 +1739,12 @@ export type UnlitSourceOptions = {
   /** Multiply the base by the per-instance `iColor` (implies `instanced`;
    * see the lit option): the one per-copy value an unlit fleet wants. */
   instanceColors?: boolean
+  /** The sprite material's radial shape: declare `uniform float
+   * uFalloff` and multiply the base (color and alpha, the premultiplied
+   * rule) by `(1 - 2 * |vUv - 0.5|)^uFalloff` clamped over the quad's
+   * inscribed disc, after the cutout and before the surface slot. Reads
+   * vUv, so the fragment declares it with or without a map. */
+  radial?: boolean
   /** GLSL spliced at file scope, before main. */
   prelude?: string
   /** GLSL declaring `void surface(inout Surface s)`, called with the base
@@ -1759,6 +1765,7 @@ type UnlitSource = {
   instanced: boolean
   instanceColors: boolean
   morph: boolean
+  radial: boolean
   prelude: string
   surface: string
 }
@@ -1775,6 +1782,7 @@ function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
     instanced: o.instanced === true || o.instanceColors === true,
     instanceColors: o.instanceColors === true,
     morph: o.morph === true,
+    radial: o.radial === true,
     prelude: o.prelude ?? "",
     surface: o.surface ?? "",
   }
@@ -1837,20 +1845,21 @@ function unlitBase(c: UnlitSource): string {
  * does - vWorldPos is read whether or not the program fogs).
  *
  * Per-entry uniforms on instance(): `uColor` (linear light, premultiplied
- * vec4), plus `uMap`/`uAlphaTest` for the options that declare them, plus
- * whatever `prelude` declares.
+ * vec4), plus `uMap`/`uAlphaTest`/`uFalloff` for the options that declare
+ * them, plus whatever `prelude` declares.
  */
 export function unlitFragment(o: UnlitSourceOptions = {}): string {
   let c = resolveUnlit(o)
   let alpha = c.transparent ? "base.a" : "1.0"
   return glsl`
-    ${c.map ? "in vec2 vUv;" : ""}
+    ${c.map || c.radial ? "in vec2 vUv;" : ""}
     in vec3 vWorldPos;
     ${c.vertexColors || c.instanceColors ? "in vec4 vColor;" : ""}
     ${c.map ? "uniform sampler2D uMap;" : ""}
     uniform vec4 uColor;
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
+    ${c.radial ? "uniform float uFalloff;" : ""}
     ${sceneSource({ lights: false, fog: c.fog })}
     ${LOD_FADE}
     ${c.prelude}
@@ -1859,6 +1868,7 @@ export function unlitFragment(o: UnlitSourceOptions = {}): string {
       lodFade();
       ${unlitBase(c)}
       ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
+      ${c.radial ? "base *= pow(clamp(1.0 - 2.0 * length(vUv - 0.5), 0.0, 1.0), uFalloff);" : ""}
       ${c.surface ? "Surface s = surfaceOf(base, vec3(0.0));\n      surface(s);\n      base = s.base;" : ""}
       fragColor = sceneOutput(base.rgb, ${alpha}, vWorldPos);
     }

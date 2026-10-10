@@ -13,7 +13,7 @@ import { test, expect } from "@solidrt/test"
 import type { Pixels, RefLocator, TestApp } from "@solidrt/test"
 import { onFrame } from "@solidrt/core"
 import type { TextureId } from "@solidrt/core/gpu"
-import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, destroySprite, records, setRecordCount, updateRecords, INSTANCE_FLOATS, STYLE_FLOATS } from "../src/index.ts"
+import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, destroySprite, records, setRecordCount, updateRecords, INSTANCE_FLOATS, SPRITE_FLOATS } from "../src/index.ts"
 import type { RecordLayerHandle, RecordLayerOptions, SpriteLayerHandle, SpriteLayerOptions } from "../src/index.ts"
 
 const SIZE = 64
@@ -28,7 +28,7 @@ const RIGHT = (3 * SIZE) / 4
 // Record field offsets (see records()).
 const FIELD_Y = 1
 const FIELD_W = 2
-// Style record field offsets of the tint and the renderOrder key (the
+// Sprite record field offsets of the tint and the renderOrder key (the
 // node layer's records()).
 const STYLE_TINT = 4
 const STYLE_KEY = 8
@@ -192,8 +192,8 @@ test("a node layer's records() is its style mirror and updateRecords publishes t
   let partial = await painted(app, leaf, () => {
     let r = records(layer)
     for (let slot of [0, 1]) {
-      r[slot * STYLE_FLOATS + STYLE_TINT + 1] = 0
-      r[slot * STYLE_FLOATS + STYLE_TINT + 2] = 0
+      r[slot * SPRITE_FLOATS + STYLE_TINT + 1] = 0
+      r[slot * SPRITE_FLOATS + STYLE_TINT + 2] = 0
     }
     updateRecords(layer, { first: 1, count: 1 })
   })
@@ -207,9 +207,9 @@ test("a node layer's records() is its style mirror and updateRecords publishes t
   let grown = await painted(app, leaf, () => addSprite(layer, square(MID)))
   expect(at(grown, MID, MID)).toEqual(WHITE)
   expect(records(layer)).not.toBe(old)
-  expect(records(layer).length).toBe(4 * STYLE_FLOATS)
+  expect(records(layer).length).toBe(4 * SPRITE_FLOATS)
   let dead = await painted(app, leaf, () => {
-    old[0 * STYLE_FLOATS + STYLE_TINT + 1] = 1
+    old[0 * SPRITE_FLOATS + STYLE_TINT + 1] = 1
     updateRecords(layer)
   })
   expect(at(dead, LEFT, MID)).toEqual(RED)
@@ -225,7 +225,7 @@ test("an ordered node layer republishes its style records whole, gathered into k
   // The red record's key moves above the green one's in the mirror;
   // publishing its slot alone re-gathers the pair.
   let after = await painted(app, leaf, () => {
-    records(layer)[0 * STYLE_FLOATS + STYLE_KEY] = 3
+    records(layer)[0 * SPRITE_FLOATS + STYLE_KEY] = 3
     updateRecords(layer, { first: 0, count: 1 })
   })
   expect(at(after, MID, MID)).toEqual(RED)

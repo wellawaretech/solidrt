@@ -16,6 +16,11 @@ matches the work before starting it:
   before writing any per-frame code, any animation, or anything that writes
   properties in a loop.
 
+When SolidRT itself gets in the way (a bug, a missing export, a doc that
+misled you, a trap nothing warned about), append it to SOLIDRT-FEEDBACK.md
+in the project root, creating the file if needed: what you hit, and what
+you expected instead.
+
 ## The window is device-sized - design fluid
 
 A SolidRT window is host-sized and resizable, and the SAME app runs on phones,

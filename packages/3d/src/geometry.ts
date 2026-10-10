@@ -40,7 +40,8 @@
 // array math (tests/geometry.test.ts runs it headless on
 // flux). The GPU buffer step lives in geometry-gpu.ts.
 
-import type { Topology, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
+import { attributeAccess as coreAccess, checkLayout as coreCheck, isFloatFormat, isFloatLayout as coreIsFloat, layoutBytes, layoutKey as coreKey, layoutSlot as coreSlot, layoutStride as coreStride, layoutView, VERTEX_FORMATS } from "@solidrt/core/gpu"
+import type { AttributeAccess, Topology, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
 import { premultipliedColor } from "./color.ts"
 import { add, compose, cross, mat4, normalize, normalMatrix, sub, updateRotation, updateScale } from "./math.ts"
 import type { Quat, TransformUpdate, Vec2, Vec3 } from "./math.ts"
@@ -78,144 +79,15 @@ export const VERTEX_LAYOUTS: Record<"base" | "colored" | "skinned", VertexAttrib
  * format before packing). */
 export const BASE_FLOATS = 8
 
-/** The shader `in` family a vertex format feeds (WebGPU's rule: the
- * format decides): "float" for the float and normalized formats (`in
- * vec*`), "uint" for uint* (`in uvec*`), "sint" for sint* (`in ivec*`). */
-export type FormatKind = "float" | "uint" | "sint"
-
-/** One vertex format's codec: its size, its component count, its kind,
- * and the read and write of component `k` of an attribute at byte `at`
- * of a DataView, in the value the shader sees (a normalized integer
- * decodes to 0..1 / -1..1, an unnormalized one to its exact value).
- * Every format is a multiple of 4 bytes (WebGPU's alignment rule), which
- * is what keeps every offset and stride 4-aligned with no padding
- * arithmetic anywhere. */
-export type FormatCodec = {
-  bytes: number
-  components: number
-  kind: FormatKind
-  get(dv: DataView, at: number, k: number): number
-  set(dv: DataView, at: number, k: number, v: number): void
-}
-
-// The integer component kinds behind the packed formats: width, the
-// value that maps to 1 (GL ES 3.0's normalization rule, -max mapping to
-// -1 and the one value below it clamped there), and the raw accessors.
-type IntKind = { bytes: number; max: number; get(dv: DataView, at: number): number; set(dv: DataView, at: number, v: number): void }
-const U8: IntKind = { bytes: 1, max: 255, get: (dv, at) => dv.getUint8(at), set: (dv, at, v) => dv.setUint8(at, v) }
-const S8: IntKind = { bytes: 1, max: 127, get: (dv, at) => dv.getInt8(at), set: (dv, at, v) => dv.setInt8(at, v) }
-const U16: IntKind = { bytes: 2, max: 65535, get: (dv, at) => dv.getUint16(at, true), set: (dv, at, v) => dv.setUint16(at, v, true) }
-const S16: IntKind = { bytes: 2, max: 32767, get: (dv, at) => dv.getInt16(at, true), set: (dv, at, v) => dv.setInt16(at, v, true) }
-const U32: IntKind = { bytes: 4, max: 4294967295, get: (dv, at) => dv.getUint32(at, true), set: (dv, at, v) => dv.setUint32(at, v, true) }
-const S32: IntKind = { bytes: 4, max: 2147483647, get: (dv, at) => dv.getInt32(at, true), set: (dv, at, v) => dv.setInt32(at, v, true) }
-
-function clamp(v: number, lo: number, hi: number): number {
-  return v < lo ? lo : v > hi ? hi : v
-}
-
-function floatCodec(components: number, bytes: number, get: (dv: DataView, at: number) => number, set: (dv: DataView, at: number, v: number) => void): FormatCodec {
-  return {
-    bytes: components * bytes,
-    components,
-    kind: "float",
-    get: (dv, at, k) => get(dv, at + k * bytes),
-    set: (dv, at, k, v) => set(dv, at + k * bytes, v),
-  }
-}
-
-function unormCodec(components: number, int: IntKind): FormatCodec {
-  return {
-    bytes: components * int.bytes,
-    components,
-    kind: "float",
-    get: (dv, at, k) => int.get(dv, at + k * int.bytes) / int.max,
-    set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, 0, 1) * int.max)),
-  }
-}
-
-function snormCodec(components: number, int: IntKind): FormatCodec {
-  return {
-    bytes: components * int.bytes,
-    components,
-    kind: "float",
-    get: (dv, at, k) => Math.max(int.get(dv, at + k * int.bytes) / int.max, -1),
-    set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, -1, 1) * int.max)),
-  }
-}
-
-function uintCodec(components: number, int: IntKind): FormatCodec {
-  return {
-    bytes: components * int.bytes,
-    components,
-    kind: "uint",
-    get: (dv, at, k) => int.get(dv, at + k * int.bytes),
-    set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, 0, int.max))),
-  }
-}
-
-function sintCodec(components: number, int: IntKind): FormatCodec {
-  return {
-    bytes: components * int.bytes,
-    components,
-    kind: "sint",
-    get: (dv, at, k) => int.get(dv, at + k * int.bytes),
-    set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, -int.max - 1, int.max))),
-  }
-}
-
-let getF32 = (dv: DataView, at: number) => dv.getFloat32(at, true)
-let setF32 = (dv: DataView, at: number, v: number) => dv.setFloat32(at, v, true)
-let getF16 = (dv: DataView, at: number) => dv.getFloat16(at, true)
-let setF16 = (dv: DataView, at: number, v: number) => dv.setFloat16(at, v, true)
-
-/** The vertex vocabulary: one codec per format (the engine's table in
- * the same spelling), so it is also the list a declared format must be
- * one of. A format feeds the shader `in` of its kind and component
- * count (`formatFeeds`). */
-export const VERTEX_FORMATS: Record<VertexFormat, FormatCodec> = {
-  float32: floatCodec(1, Float32Array.BYTES_PER_ELEMENT, getF32, setF32),
-  float32x2: floatCodec(2, Float32Array.BYTES_PER_ELEMENT, getF32, setF32),
-  float32x3: floatCodec(3, Float32Array.BYTES_PER_ELEMENT, getF32, setF32),
-  float32x4: floatCodec(4, Float32Array.BYTES_PER_ELEMENT, getF32, setF32),
-  float16x2: floatCodec(2, Float16Array.BYTES_PER_ELEMENT, getF16, setF16),
-  float16x4: floatCodec(4, Float16Array.BYTES_PER_ELEMENT, getF16, setF16),
-  unorm8x4: unormCodec(4, U8),
-  snorm8x4: snormCodec(4, S8),
-  unorm16x2: unormCodec(2, U16),
-  unorm16x4: unormCodec(4, U16),
-  snorm16x2: snormCodec(2, S16),
-  snorm16x4: snormCodec(4, S16),
-  uint8x4: uintCodec(4, U8),
-  uint16x2: uintCodec(2, U16),
-  uint16x4: uintCodec(4, U16),
-  uint32: uintCodec(1, U32),
-  uint32x2: uintCodec(2, U32),
-  uint32x3: uintCodec(3, U32),
-  uint32x4: uintCodec(4, U32),
-  sint8x4: sintCodec(4, S8),
-  sint16x2: sintCodec(2, S16),
-  sint16x4: sintCodec(4, S16),
-  sint32: sintCodec(1, S32),
-  sint32x2: sintCodec(2, S32),
-  sint32x3: sintCodec(3, S32),
-  sint32x4: sintCodec(4, S32),
-}
-
-/** Whether a layout declaring `declared` may feed a program input the
- * engine reflects as `reflected` (float32xN for `vec*`, uint32xN for
- * `uvec*`, sint32xN for `ivec*`): same component count and same kind,
- * the engine's own pipeline rule. */
-export function formatFeeds(declared: VertexFormat, reflected: VertexFormat): boolean {
-  let d = VERTEX_FORMATS[declared]
-  let r = VERTEX_FORMATS[reflected]
-  return d.components === r.components && d.kind === r.kind
-}
-
-/** Whether a format is one of the float32 family: what a Float32Array
- * holds directly, and what the generators write. */
-export function isFloatFormat(format: VertexFormat): boolean {
-  return format.startsWith("float32")
-}
+// The vertex vocabulary - the format codecs, the stride and key of an
+// attribute list, the record accessors - is core's (`@solidrt/core/gpu`,
+// vertex.ts), shared with the 2d package's material style streams;
+// re-exported here so the package's own modules and callers keep one
+// import for layouts. What stays here is the PRESET side: the named
+// layouts and the functions taking a VertexLayout (a preset name or a
+// list).
+export { formatFeeds, isFloatFormat, VERTEX_FORMATS } from "@solidrt/core/gpu"
+export type { AttributeAccess, FormatCodec, FormatKind } from "@solidrt/core/gpu"
 
 /** The attribute list of a layout (a preset name resolves to its list). */
 export function layoutAttributes(layout?: VertexLayout): VertexAttribute[] {
@@ -227,64 +99,48 @@ export function layoutAttributes(layout?: VertexLayout): VertexAttribute[] {
 
 /** Bytes per vertex of a layout - its interleave stride. */
 export function layoutStride(layout?: VertexLayout): number {
-  let stride = 0
-  for (let attr of layoutAttributes(layout)) stride += VERTEX_FORMATS[attr.format].bytes
-  return stride
+  return coreStride(layoutAttributes(layout))
 }
 
 /** A layout's identity as a string (name:format per attribute, in order):
  * two layouts with equal keys interleave identically. */
 export function layoutKey(layout?: VertexLayout): string {
-  return layoutAttributes(layout)
-    .map(a => a.name + ":" + a.format)
-    .join(",")
+  return coreKey(layoutAttributes(layout))
 }
 
 /** Where an attribute sits in the interleave: its byte offset, format
  * and component count. Null when the layout does not carry that name. */
 export function layoutSlot(layout: VertexLayout | undefined, name: string): { offset: number; format: VertexFormat; components: number } | null {
-  let offset = 0
-  for (let attr of layoutAttributes(layout)) {
-    let codec = VERTEX_FORMATS[attr.format]
-    if (attr.name === name) return { offset, format: attr.format, components: codec.components }
-    offset += codec.bytes
-  }
-  return null
+  return coreSlot(layoutAttributes(layout), name)
 }
 
 /** Whether every attribute of a layout is float32-family: such a buffer
  * is a Float32Array of `layoutStride / 4` floats per vertex, the
  * generators' write form. */
 export function isFloatLayout(layout?: VertexLayout): boolean {
-  return layoutAttributes(layout).every(a => isFloatFormat(a.format))
+  return coreIsFloat(layoutAttributes(layout))
 }
 
-/** The check every layout must pass: aPos float32x3 first and no
- * duplicate names. */
+/** The check every layout must pass: aPos float32x3 first, known
+ * formats and no duplicate names. */
 function checkLayout(layout: VertexAttribute[], where: string): void {
   let first = layout[0]
   if (first === undefined || first.name !== "aPos" || first.format !== "float32x3") {
     throw new Error(where + ": a layout must start with aPos float32x3")
   }
-  let seen = new Set<string>()
-  for (let attr of layout) {
-    if (seen.has(attr.name)) throw new Error(where + ": duplicate attribute '" + attr.name + "'")
-    seen.add(attr.name)
-  }
+  coreCheck(layout, where)
 }
 
 /** The bytes of a vertex buffer, whatever view holds them. */
 export function vertexBytes(vertices: ArrayBufferView): Uint8Array {
-  return new Uint8Array(vertices.buffer, vertices.byteOffset, vertices.byteLength)
+  return layoutBytes(vertices)
 }
 
 /** The view a vertex buffer of `layout` is handed out as: a Float32Array
  * over an all-float layout (the generators' form, indexable as floats),
  * a Uint8Array over a layout with a packed channel. */
 export function vertexView(layout: VertexLayout | undefined, buffer: ArrayBuffer, byteOffset = 0, byteLength = buffer.byteLength - byteOffset): ArrayBufferView {
-  return isFloatLayout(layout)
-    ? new Float32Array(buffer, byteOffset, byteLength / Float32Array.BYTES_PER_ELEMENT)
-    : new Uint8Array(buffer, byteOffset, byteLength)
+  return layoutView(layoutAttributes(layout), buffer, byteOffset, byteLength)
 }
 
 /** Vertices in a buffer of `layout`. Throws naming `where` when the byte
@@ -302,32 +158,11 @@ export function vertexCount(vertices: ArrayBufferView, layout: VertexLayout | un
   return vertices.byteLength / stride
 }
 
-/** A view on one attribute of a vertex buffer: component `k` of vertex
- * `i`, read and written as the float the shader sees, through the
- * format's codec. The one way anything touches vertex data, so no
- * caller knows an offset, a stride or a format. */
-export type AttributeAccess = {
-  format: VertexFormat
-  components: number
-  get(i: number, k: number): number
-  set(i: number, k: number, v: number): void
-}
-
 /** The accessor for `name` over a bare vertex buffer of `layout`; null
- * when the layout lacks the name. */
+ * when the layout lacks the name (core's attributeAccess over the
+ * resolved list). */
 export function attributeAccess(vertices: ArrayBufferView, layout: VertexLayout | undefined, name: string): AttributeAccess | null {
-  let slot = layoutSlot(layout, name)
-  if (slot === null) return null
-  let stride = layoutStride(layout)
-  let codec = VERTEX_FORMATS[slot.format]
-  let offset = slot.offset
-  let dv = new DataView(vertices.buffer, vertices.byteOffset, vertices.byteLength)
-  return {
-    format: slot.format,
-    components: codec.components,
-    get: (i, k) => codec.get(dv, i * stride + offset, k),
-    set: (i, k, v) => codec.set(dv, i * stride + offset, k, v),
-  }
+  return coreAccess(vertices, layoutAttributes(layout), name)
 }
 
 /** One extra vertex buffer of a geometry (see `Geometry.streams`): its

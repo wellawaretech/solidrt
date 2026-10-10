@@ -8,7 +8,7 @@ the walk.
 
 ## Handlers
 
-{{ decl packages/core/src/types.d.ts PointerProps }}
+{{ decl packages/core/src/types.d.ts InputProps }}
 
 `pointerEvents="none"` takes an element out of hit testing, and the walk skips
 it as an ancestor too, so the `parentX`/`parentY` of an event stay in the frame

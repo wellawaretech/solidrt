@@ -1,5 +1,5 @@
 import { children, untrack } from "@solidrt/core"
-import type { Element, LayoutProps, PointerProps } from "@solidrt/core"
+import type { Element, InputProps, LayoutProps } from "@solidrt/core"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { createPress, type PressState } from "./press"
@@ -7,7 +7,7 @@ import { colorFade, scaleFeedback } from "./motion"
 
 export type { PressState } from "./press"
 
-export interface PressableProps extends PointerProps, TransitionProps {
+export interface PressableProps extends InputProps, TransitionProps {
   // children and style may be functions of the press state, so a caller can
   // restyle on press/hover without wiring their own signals. The state is live
   // (getters, not a snapshot): read it inside a prop or child expression, never

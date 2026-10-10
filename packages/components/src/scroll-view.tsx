@@ -1,10 +1,10 @@
 import { createPan, createScroll, createSignal, getBoundingBoxViewport, getLayoutBox, onSettled, untrack } from "@solidrt/core"
-import type { LayoutProps, PointerEvent, PointerProps, Scroll, TransitionCurve, TransitionEndEvent, WheelEvent } from "@solidrt/core"
+import type { InputProps, LayoutProps, PointerEvent, Scroll, TransitionCurve, TransitionEndEvent, WheelEvent } from "@solidrt/core"
 import type { StyleProps, TransitionProps, TransitionScrollProp, TransitionStyleProp, TransitionViewProp } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
 
 export interface ScrollViewProps
-  extends PointerProps,
+  extends InputProps,
     TransitionProps<TransitionViewProp | TransitionStyleProp | TransitionScrollProp> {
   children?: any
   ref?: (node: { id: number }) => void

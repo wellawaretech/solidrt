@@ -1,9 +1,9 @@
-import type { LayoutProps, PointerProps } from "@solidrt/core"
+import type { InputProps, LayoutProps } from "@solidrt/core"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { colorFade } from "./motion"
 
-export interface ViewProps extends PointerProps, TransitionProps {
+export interface ViewProps extends InputProps, TransitionProps {
   children?: any
   ref?: (node: { id: number }) => void
   layout?: LayoutProps

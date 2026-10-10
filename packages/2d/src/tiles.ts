@@ -5,15 +5,18 @@
 // chunk textures, and scrolling is a transform on the composited world
 // (see <TileLayer> in components/tile-layer.tsx), never a repaint.
 //
-// Each chunk is a manual target over the layer's ONE sprite pipeline
-// (shaders.ts, compiled once per layer for its atlases) with fixed record
+// Each chunk is a manual target over the layer's ONE pipeline (its
+// material's, resolved once per layer for its atlases) with fixed record
 // slots - record localRow * chunkTiles + localCol IS that tile, an empty
 // tile is a zero-size quad, instance count is constant per chunk. Records
 // hold WORLD pixel coordinates; the chunk target's uCamera is its pixel
 // origin, so the shared vertex stage does the chunk-local mapping (the
 // same mechanism a camera pass uses, pointed at a chunk rect). A cell's
 // frame names its atlas like a sprite's (the record's atlas index), so a
-// tile world draws from several tilesets in one bake.
+// tile world draws from several tilesets in one bake. The material's
+// style streams are per chunk too (a cell's `style`), plain arrays
+// uploaded whole with the chunk's records; its params reach every
+// resident chunk, each write a re-bake like the layer tint.
 //
 // Chunks allocate lazily on the first setTile that gives them content: an
 // empty chunk costs nothing - no records, no buffer, no texture - so a
@@ -32,20 +35,27 @@ import {
   destroyBuffer,
   destroyTexture,
   endBufferWrite,
+  isFloatLayout,
+  layoutFields,
+  layoutStride,
   limits,
   renderTarget,
   setTargetParams,
   setTargetSize,
+  writeBuffer,
+  writeRecord,
 } from "@solidrt/core/gpu"
-import type { BlendMode, BufferId, FilterMode, TextureId } from "@solidrt/core/gpu"
+import type { AttributeAccess, BufferId, FilterMode, ShaderParams, TextureId, VertexAttribute } from "@solidrt/core/gpu"
 import { checkAtlases, frameIndex } from "./atlas.ts"
 import type { Atlas } from "./atlas.ts"
 import { isFrame } from "./frames.ts"
 import type { Frame } from "./frames.ts"
-import { checkTint } from "./layer.ts"
+import { atlasBindings, RECORD_ATTRIBUTES } from "./glsl.ts"
+import { checkParams, checkTint } from "./layer.ts"
+import { materialBlank, materialSamplers, unlit } from "./material.ts"
+import type { Material } from "./material.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import { INSTANCE_FLOATS } from "./records.ts"
-import { atlasBindings, createSpritePipeline, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 import { checkCell, checkRect, chunkOf, eachChunkSlice, slotOf } from "./tiles-math.ts"
 
 const RESOLVED = Promise.resolve()
@@ -77,12 +87,19 @@ export type TileLayerOptions = {
    */
   filter?: FilterMode
   /**
-   * How the cells blend into their chunk bakes, core gpu's BlendMode;
-   * default "alpha". "add" for a glow or light map baked over the
-   * transparent chunk clear, "multiply" to darken. Pipeline state, fixed
-   * at creation.
+   * What the cells look like: the layer's material (see
+   * SpriteLayerOptions.material), fixed at creation; default `unlit()`.
+   * Its blend is how the cells bake into their chunks ("add" for a glow
+   * or light map baked over the transparent chunk clear), its params and
+   * textures reach every chunk target, its instance buffers are a style
+   * record per cell (`setTile`'s `style`). A tile layer BAKES, so a
+   * param change re-renders every resident chunk, like the tint:
+   * animated uniforms belong on a sprite layer.
    */
-  blend?: BlendMode
+  material?: Material
+  /** Uniform values seeded on every chunk over the material's own; see
+   * TileLayer.setParams. */
+  params?: ShaderParams
   /**
    * Target texels per world pixel in the baked chunks (positive integer,
    * default 1); see TileLayer.setOversample. `<TileLayer>` picks it from
@@ -120,10 +137,26 @@ export type TileChunk = {
   height: number
 }
 
+/** A cell write's options: the cell's tint and, under a material with
+ * instance buffers, its style record. */
+export type TileCellOptions = {
+  /** The cell's tint, multiplied over its texels like a sprite's; absent
+   * keeps the cell's current tint. */
+  tint?: Tint
+  /** The cell's style record (the material's FIRST instance buffer, one
+   * value per component in attribute order), absent keeps it; a cell set
+   * from empty starts at the material's instanceStyle. Throws on a
+   * material without an instance buffer. */
+  style?: ArrayLike<number>
+}
+
 export type TileLayer = {
   /** The atlases the layer bakes from, as declared at creation: every
    * frame set names one of their textures (see LayerBase.atlases). */
   readonly atlases: readonly Atlas[]
+  /** The material the layer bakes with, as declared at creation (the
+   * stock `unlit()` when none was). */
+  readonly material: Material
   /** Grid shape, fixed at creation. */
   cols: number
   rows: number
@@ -164,7 +197,7 @@ export type TileLayer = {
    * a frame) publishes and re-bakes ONLY the chunks that changed, however
    * many tiles did.
    */
-  setTile(col: number, row: number, frame: Frame | null, opts?: { tint?: Tint }): void
+  setTile(col: number, row: number, frame: Frame | null, opts?: TileCellOptions): void
   /**
    * Set a rect of cells at once: `cols` x `rows` cells from `col`, `row`,
    * `cells` in row-major order (`cols * rows` long) - frames (null clears)
@@ -174,10 +207,10 @@ export type TileLayer = {
    * touches, the per-cell loop inside the layer over its own records, the
    * same batching and flush. A chunk the rect only clears never allocates,
    * so a whole-world write of a sparse world stays sparse. `tint` applies
-   * to every cell set, as setTile's; absent, each cell keeps its own. A
-   * bad entry throws before any cell changes.
+   * to every cell set, as setTile's, and so does `style`; absent, each
+   * cell keeps its own. A bad entry throws before any cell changes.
    */
-  setTiles(col: number, row: number, cols: number, rows: number, cells: ArrayLike<Frame | null> | ArrayLike<number>, opts?: { tint?: Tint }): void
+  setTiles(col: number, row: number, cols: number, rows: number, cells: ArrayLike<Frame | null> | ArrayLike<number>, opts?: TileCellOptions): void
   /** The frame at a cell, or null when empty. */
   getTile(col: number, row: number): Frame | null
   /** The frames table given at creation (what setTiles' indices name), or
@@ -191,17 +224,34 @@ export type TileLayer = {
    * animate it coarsely, not per frame.
    */
   setTint(tint: [number, number, number, number]): void
+  /**
+   * Write uniform values to every resident chunk (the material's prelude
+   * uniforms, over its own `params`): LayerBase.setParams for a baked
+   * layer, so each write re-renders every resident chunk, like setTint -
+   * drive it from slow state, not per frame. Absent names keep their
+   * values; a name the program does not declare is skipped.
+   */
+  setParams(params: ShaderParams): void
   dispose(): void
 }
 
 type Chunk = TileChunk & {
   records: Float32Array
   buffer: BufferId
+  /** The material's style records of the chunk, one array and buffer
+   * per instance buffer, uploaded whole with the records. */
+  styles: ChunkStyle[]
   dirty: boolean
   /** Records changed since the last flush (a tint-only or resize re-bake
    * renders without re-uploading them). */
   wrote: boolean
 }
+
+type ChunkStyle = { bytes: Uint8Array; buffer: BufferId; fields: AttributeAccess[]; floats: Float32Array | null }
+
+// One style stream of the material as the tile layer keeps it: the
+// layout, the blank record, and the stride.
+type StyleShape = { layout: VertexAttribute[]; blank: Uint8Array; stride: number }
 
 /**
  * Create a baked tile layer: `cols` x `rows` cells of `tileW` x `tileH`
@@ -243,9 +293,12 @@ export function createTileLayer(
     )
   }
   let label = opts?.label ?? "tiles"
-  let blend: BlendMode = opts?.blend ?? "alpha"
   let tint: Tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createTileLayer", tint)
+  let material = opts?.material ?? unlit()
+  checkAtlases("createTileLayer", atlases, materialSamplers(material))
+  let params: ShaderParams = { ...material.params, ...opts?.params }
+  let shapes: StyleShape[] = (material.instanceBuffers ?? []).map((b, i) => ({ layout: b.attributes, blank: materialBlank(material, i), stride: layoutStride(b.attributes) }))
   // The frames table, copied (the caller's array may move on) and checked
   // once, plus its UVs and atlas index as five floats per entry: an index
   // write copies by offset instead of reading a frame object per cell.
@@ -273,9 +326,10 @@ export function createTileLayer(
   let chunkCols = Math.ceil(cols / chunkTiles)
   let perChunk = chunkTiles * chunkTiles
   // The one pipeline (and unit quad) every chunk target draws with:
-  // compiled once per layer, however many chunks allocate.
-  let gpu = createSpritePipeline(label, VERTEX, [INSTANCE_ATTRIBUTES], blend, atlases)
-  let textures = atlasBindings(atlases.map(a => a.texture))
+  // the material's, resolved once per layer, however many chunks
+  // allocate.
+  let gpu = material.pipeline(atlases, [RECORD_ATTRIBUTES], label)
+  let textures = { ...atlasBindings(atlases.map(a => a.texture)), ...material.textures }
 
   let disposed = false
   let scheduled = false
@@ -309,6 +363,7 @@ export function createTileLayer(
         let out = beginBufferWrite(chunk.buffer)
         out.set(chunk.records)
         endBufferWrite(chunk.buffer, chunk.records.byteLength)
+        for (let style of chunk.styles) writeBuffer(style.buffer, style.bytes)
       }
       renderTarget(chunk.texture)
     }
@@ -328,16 +383,29 @@ export function createTileLayer(
     let y = Math.floor(index / chunkCols) * chunkH
     let records = new Float32Array(perChunk * INSTANCE_FLOATS)
     let buffer = createBuffer(records.byteLength, { label: `${label}-chunk-records`, autoFree: false })
+    // Every cell's style slot starts blank (the material's
+    // instanceStyle), so an unwritten cell shows the material's default.
+    let styles: ChunkStyle[] = shapes.map((shape, i) => {
+      let bytes = new Uint8Array(perChunk * shape.stride)
+      for (let slot = 0; slot < perChunk; slot++) bytes.set(shape.blank, slot * shape.stride)
+      let view = new DataView(bytes.buffer)
+      return {
+        bytes,
+        buffer: createBuffer(bytes.byteLength, { label: `${label}-chunk-style${i}`, autoFree: false }),
+        fields: layoutFields(shape.layout, () => view),
+        floats: isFloatLayout(shape.layout) ? new Float32Array(bytes.buffer) : null,
+      }
+    })
     let texture = createShaderTarget(
       gpu.pipeline,
       chunkW * oversample,
       chunkH * oversample,
       // Bake targets pin the camera rotation to identity: the tile camera
       // rotates the COMPOSITED world (<TileLayer>'s view), never the bake.
-      { uViewport: [chunkW, chunkH], uCamera: [x, y, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: tint },
+      { uViewport: [chunkW, chunkH], uCamera: [x, y, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: tint, ...params },
       {
         label: `${label}-chunk`,
-        buffers: [gpu.quad, buffer],
+        buffers: [gpu.quad, buffer, ...styles.map(s => s.buffer)],
         vertexCount: 4,
         instanceCount: perChunk,
         textures,
@@ -347,7 +415,7 @@ export function createTileLayer(
         autoFree: false,
       },
     )
-    let chunk: Chunk = { texture, x, y, width: chunkW, height: chunkH, records, buffer, dirty: false, wrote: false }
+    let chunk: Chunk = { texture, x, y, width: chunkW, height: chunkH, records, buffer, styles, dirty: false, wrote: false }
     resident.set(index, chunk)
     layer.chunks.push(chunk)
     layer.onChunk?.(chunk)
@@ -386,14 +454,27 @@ export function createTileLayer(
     }
   }
   // Clear one cell: a zero-size quad draws nothing (the tint stays, and
-  // a later set from empty resets it).
+  // a later set from empty resets it; the style stays the same way).
   let clearCell = (r: Float32Array, at: number): void => {
     r[at + 2] = 0
     r[at + 3] = 0
   }
+  // A cell write's style, checked before any cell changes: the material
+  // must declare an instance buffer, and the record must be its length
+  // (the encode throws on a wrong count).
+  let checkStyle = (verb: string, style: ArrayLike<number> | undefined): void => {
+    if (style === undefined) return
+    if (shapes.length === 0) throw new Error(`${verb}: the layer's material declares no instance buffer (no style record)`)
+  }
+  // Write a cell's style record into its chunk's first style stream.
+  let writeStyle = (chunk: Chunk, slot: number, style: ArrayLike<number>, verb: string): void => {
+    let s = chunk.styles[0]!
+    writeRecord(shapes[0]!.layout, s.fields, s.floats, slot, style, verb)
+  }
 
   let layer: TileLayer = {
     atlases,
+    material,
     cols,
     rows,
     tileW,
@@ -432,9 +513,11 @@ export function createTileLayer(
       } else {
         if (!isFrame(frame)) throw new Error(`setTile: not a frame, got ${JSON.stringify(frame)}`)
         if (opts?.tint !== undefined) checkTint("setTile", opts.tint)
+        checkStyle("setTile", opts?.style)
         let atlas = frameIndex("setTile", atlasIndex, frame)
         chunk ??= allocate(index)
         writeCell(chunk.records, at, col, row, frame.u0, frame.v0, frame.u1, frame.v1, atlas, opts?.tint)
+        if (opts?.style !== undefined) writeStyle(chunk, at / INSTANCE_FLOATS, opts.style, "setTile")
       }
       touch(chunk)
     },
@@ -443,7 +526,9 @@ export function createTileLayer(
       checkRect("setTiles", col, row, w, h, cols, rows)
       if (cells.length !== w * h) throw new Error(`setTiles: a ${w} x ${h} rect takes ${w * h} cells, got ${cells.length}`)
       if (opts?.tint !== undefined) checkTint("setTiles", opts.tint)
+      checkStyle("setTiles", opts?.style)
       let cellTint = opts?.tint
+      let cellStyle = opts?.style
       // The two forms: indices into the table, or frames. Every entry is
       // checked (and a frame resolved to its atlas) before the first write,
       // so a bad one changes nothing.
@@ -512,6 +597,7 @@ export function createTileLayer(
               r = chunk.records
             }
             writeCell(r, at, x, y, u0, v0, u1, v1, atlas, cellTint)
+            if (cellStyle !== undefined) writeStyle(chunk!, at / INSTANCE_FLOATS, cellStyle, "setTiles")
           }
         }
         if (chunk) touch(chunk)
@@ -536,6 +622,15 @@ export function createTileLayer(
         touch(chunk, false)
       }
     },
+    setParams(next) {
+      if (disposed) return
+      checkParams("setParams", next)
+      Object.assign(params, next)
+      for (let chunk of resident.values()) {
+        setTargetParams(chunk.texture, next)
+        touch(chunk, false)
+      }
+    },
     dispose() {
       if (disposed) return
       disposed = true
@@ -543,10 +638,10 @@ export function createTileLayer(
       for (let chunk of resident.values()) {
         destroyTexture(chunk.texture)
         destroyBuffer(chunk.buffer)
+        for (let style of chunk.styles) destroyBuffer(style.buffer)
       }
       resident.clear()
       layer.chunks.length = 0
-      gpu.dispose()
     },
   }
 

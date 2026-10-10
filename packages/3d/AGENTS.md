@@ -1357,7 +1357,7 @@ uint16/uint32 indices by vertex count automatically.
 
 #### unlit
 
-`unlit({ color?, map?, vertexColors?, transparent?, blend?, cull?, alphaTest?, fog? })` -
+`unlit({ color?, map?, vertexColors?, transparent?, blend?, cull?, alphaTest?, fog?, prelude?, surface? })` -
 straight `[r, g, b, a?]` 0..1 sRGB (decoded to linear light, see Color
 below), premultiplied internally; `vertexColors: true` multiplies by the
 "colored" layout's aColor (the geometry must carry it: withColors, a
@@ -1366,12 +1366,16 @@ gridHelper or axesHelper); `blend` the factors of a transparent draw,
 `transparent` unless told `transparent: false`, the shaderMaterial
 rule); `cull` and
 `alphaTest` as on phong (a mapped cutout casts its cutout); `fog: false`
-opts out of the scene's fog (all four library materials take it).
+opts out of the scene's fog (all four library materials take it);
+`prelude`/`surface` the tier-2 slot every stock material takes (Custom
+looks below): `void surface(inout Surface s)` called with the base
+resolved, `s.base` the only field the unlit program reads back, a
+discard casting through the shadow twin like phong's.
 
 #### sprite
 
 `sprite({ color?, map?, transparent?, blend?, billboard?, shape?,
-falloff?, minScreenPx?, maxScreenPx? })` - unlit on a quad
+falloff?, minScreenPx?, maxScreenPx?, prelude?, surface? })` - unlit on a quad
 that turns to face the camera IN THE VERTEX STAGE (off the shared
 uCamRight/uCamUp, or uCamPos for `billboard: "fixed-y"`, which yaws
 only and stays upright on world y - Godot's BILLBOARD_FIXED_Y, the
@@ -2031,7 +2035,14 @@ same constants - customizing never means leaving the system.
 
 A custom look is a citizen of the scene - lit by its lights, shadowed
 and fogged like the stock materials, exposed and tone mapped by the same
-resolve - at one of three tiers, top first:
+resolve - at one of three tiers, top first. The same three tiers, the
+same words (`unlit`, `prelude`/`surface`, `shaderMaterialClass`,
+`instanceBuffers`/`instanceStyle`/`setInstanceStyle`) are
+`@solidrt/2d`'s, where the material sits on the LAYER (the layer is the
+batch, as the mesh is the draw entry here); the one deliberate
+asymmetry is that a 3d `blend` implies `transparent` and the scene's
+back-to-front sort, while a 2d layer has no depth and draws in record
+order (okf/plans/materials-one-model.md).
 
 1. STANDARD FRAGMENT, CUSTOM VERTEX. Any vertex stage that writes the lit
    varyings (vWorldPos, vNormal, vUv, plus vColor with `vertexColors`,
@@ -2049,7 +2060,10 @@ resolve - at one of three tiers, top first:
    is the white starting point (the stock materials seed exactly this
    from their `color` option).
 2. A SURFACE FUNCTION inside the stock material. `phong({ ..., prelude,
-   surface })` / `standard({ ..., prelude, surface })`: every other
+   surface })` / `standard({ ..., prelude, surface })`, and the same two
+   slots on `unlit` and `sprite` (the unlit program shades nothing, so
+   `s.base` is the one field read back, after the cutout and the
+   sprite's radial falloff): every other
    option seeds as usual (`color`, the maps, metalness and roughness),
    `prelude` is file scope (uniforms and helpers; a uniform it declares
    is an ordinary per-entry param, `params` on the mesh or

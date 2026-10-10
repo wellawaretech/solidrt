@@ -17,7 +17,8 @@ Contents:
   - [Three faces](#three-faces)
   - [A layer renders through its views](#a-layer-renders-through-its-views)
   - [Atlases and frames](#atlases-and-frames)
-  - [Pose and style slots](#pose-and-style-slots)
+  - [Materials](#materials)
+  - [Pose, sprite and style slots](#pose-sprite-and-style-slots)
   - [Fixed instance slots](#fixed-instance-slots)
   - [Growth](#growth)
   - [Picking](#picking)
@@ -48,6 +49,7 @@ Contents:
   - [Pointer events](#pointer-events)
 - [Traps](#traps)
   - [Atlases and sampling](#atlases-and-sampling)
+  - [Materials](#materials-1)
   - [Slots, capacity and order](#slots-capacity-and-order)
   - [Nodes, transitions and queries](#nodes-transitions-and-queries)
   - [Cameras and rotation](#cameras-and-rotation)
@@ -94,10 +96,12 @@ included, and a tile world bakes from several tilesets in one pass. A
 Unity's Sprite and Godot's AtlasTexture pair the texture with the rect
 the same way), the record stores that texture's index in the layer's
 list (`layer.atlases`, what a raw record writer stores), and the
-fragment stage is GENERATED per layer with one sampler per atlas, the
-flat per-instance index picking it: derivatives are taken from the
-unclamped uv before the branch and the tap is `textureGrad`, so mip
-selection is the quad's own and well defined inside the branch. A frame
+fragment SET is GENERATED per layer with one sampler per atlas, the
+flat per-instance index picking it (`spriteSource` in `@solidrt/2d/glsl`,
+prepended to whatever fragment the layer's material carries):
+derivatives are taken from the unclamped uv before the branch and the
+tap is `textureGrad`, so mip selection is the quad's own and well
+defined inside the branch. A frame
 whose texture the layer did not declare THROWS at the write (the
 wrong-sheet bug, caught instead of drawn); the frame left out of
 `addSprite` is the whole FIRST atlas. An atlas declared `sdf: { range }`
@@ -107,19 +111,114 @@ the edge, anti-aliased over one screen pixel at whatever zoom, the true
 field in alpha grows a per-sprite outline (text runs set it; a colour
 atlas ignores the field). Fixed at creation like the list itself.
 
-### Pose and style slots
+### Materials
 
-Node layer ownership split, two instance-buffer slots on one pipeline
-(the layer's, blended with its `blend` option, "alpha" unless it says
-"add", "multiply" or "none" at creation - two blend modes are two
-layers): slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY
-by the core (each sprite node's Pose2D record sink; one coalesced buffer
-write per flush however many nodes moved), slot 1 the STYLE buffer
-`[u0, v0, u1, v1, tint rgba, renderOrder, minScreenPx, maxScreenPx,
-atlas, outline rgb, outlineWidth]` (16 floats), JS-owned, published
-through the zero-copy write lease. NEVER
-write the pose buffer from JS - the core's staging mirror owns it and
-will overwrite.
+What a layer's pixels look like is its MATERIAL (material.ts), one per
+layer, fixed at creation (`createSpriteLayer(atlases, { material })`,
+the records and tile layers alike, `<SpriteLayer material>` /
+`<TileLayer material>`): the material sits on the thing that is one
+draw entry - the layer is the batch - as @solidrt/3d's sits on the
+mesh, so two looks are two layers, which is also how you order them
+(the additive glow layer draws over the scene layer). The same model
+and the same words as 3d, deliberately: `unlit()` is the stock
+material, `prelude`/`surface` its tier-2 slot, `shaderMaterialClass`
+/ `shaderMaterial` the class form over the layer's GLSL set,
+`instanceBuffers` / `instanceStyle` / `setInstanceStyle` /
+`instanceAttribute` the per-sprite style record (the comparison and
+the decisions: okf/plans/materials-one-model.md; Godot's
+`CanvasItem.material` with a `canvas_item` shader is the nearest
+engine shape, PixiJS and Phaser the batch-per-look precedent). The one
+deliberate asymmetry: a 3d `blend` implies `transparent` and the
+scene's back-to-front sort; a layer has no depth and draws in record
+order, so nothing sorts.
+
+- `unlit({ blend?, prelude?, surface?, params?, textures?,
+  instanceBuffers?, instanceStyle?, label? })` - the atlas texel times
+  the sprite's tint (a distance-field atlas decoded to its fill and
+  outline), times the layer tint, blended with `blend` ("alpha" by
+  default, "add" for glows and additive particles, "multiply" to
+  darken, "none" to overwrite; pipeline state, so per layer). Every
+  layer draws with `unlit()` unless told otherwise. The TIER-2 slot:
+  `surface` declares `void surface(inout Sprite s)`, called with the
+  struct filled and before the layer tint - `color` (the stock result,
+  premultiplied: texel times tint, or the decoded field), `uv`,
+  `frame`, `tint`, `atlas` - rewrite `s.color` or `discard`;
+  `prelude` is file scope after the set (uniforms, each a LAYER PARAM;
+  helpers); `spriteSample(uv)` resamples the fragment's own atlas at
+  another uv (the pick, the frame clamp, the field decode, the tint),
+  so a scroll is `spriteSample(mix(s.frame.xy, s.frame.zw,
+  fract(t)))` - the clamp into the frame still applies, so a wrap is
+  `fract` in FRAME space. One program per distinct source, cached for
+  the app's lifetime like 3d's.
+- PER-SPRITE DATA: `instanceBuffers: [{ attributes: [{ name, format }]
+  }]` on either form declares the material's STYLE record(s), one
+  stream per buffer bound after the layer's own records, any vertex
+  format (a palette index is a `uint8x4` at four bytes, a dissolve
+  amount a `float16x2`), every slot starting as `instanceStyle` (the
+  identity of what the look does with it). On `unlit` the stock
+  vertex stage forwards each attribute unchanged as a flat varying -
+  `iPalette` reaches the prelude and the surface as `vPalette`
+  (`forwardedName`; names follow the layer's own `i` + capital
+  convention) - so a palette swap is one attribute, one surface line
+  and a `setInstanceStyle(layer, sprite, [row])` per sprite. Writes:
+  `setInstanceStyle(layer, sprite, values)` (the first buffer, one
+  value per component as the shader sees them; marks the slot like
+  setSprite), `instanceAttribute(layer, name)` (the accessor: slot in,
+  component values out and in through the format's codec; valid
+  across growth) plus `updateRecords(layer, { stream, first, count
+  })`, or `records(layer, stream)` in bulk (stream 1.. the material's
+  buffers in order; a Float32Array over an all-float layout, bytes
+  otherwise), `<Sprite style>` in the component face, `setTile(...,
+  { style })` on a tile layer. A recycled slot (and a records layer's
+  shifted one) starts blank again.
+- LAYER PARAMS: `layer.setParams({ uFlash: 0.5 })` writes a prelude's
+  uniforms to every view (and every resident chunk of a tile layer,
+  which RE-BAKES on each write like its tint) over the material's own
+  `params`; the `params` option and prop seed them, a view created
+  later inherits the merged record. @solidrt/3d's setMeshParams one
+  dimension down. Material `textures` (a palette LUT, a noise texture)
+  bind beside the atlases and count against the same
+  `limits.maxTextureUnits` budget, checked at layer creation.
+- The class form, `shaderMaterialClass({ vertex, fragment,
+  instanceBuffers?, instanceStyle?, blend?, label? })` with
+  `instance({ params?, textures? })` and `dispose()` on the class
+  (`shaderMaterial(opts)` is a class with one instance): TIER 1 pairs
+  a vertex stage of your own with `unlitFragment(options)` from
+  `@solidrt/2d/glsl` - compose `SPRITE_VARYINGS`, core's
+  `SCREEN_SIZE_GLSL`, your placement into `corner`/`center`/`rot`/
+  `clampScale`, then `SPRITE_VERTEX_BODY`; `SPRITE_VERTEX` is the
+  stock stage, `unlitVertex(forwards)` the stock stage forwarding
+  attributes - and TIER 3 writes a `main` of its own over the layer's
+  SET, which the layer prepends (the varyings, `uAtlasN`, `uTint`, the
+  `Sprite` struct, `spriteOf()`, `spriteSample(uv)`: declare none of
+  them, start with `Sprite s = spriteOf();` since the derivatives
+  every tap uses are taken there, and write premultiplied). One
+  program per ATLAS LIST met (the set is generated per list), one
+  pipeline per instance-layout list met on top - the records and tile
+  layers bind one record buffer, the node layer a pose and a sprite
+  buffer, with the same attribute NAMES on both (iPos, iRot, iScale,
+  iUv, iTint, iScreenPx, iAtlas, iOutline), so one vertex stage
+  serves every layer kind. A vertex stage must declare and use
+  `uCamera`, `uCameraRot` and `uViewport` (checked at creation), an
+  instance attribute may not reuse a layer name
+  (`LAYER_ATTRIBUTE_NAMES`), a texture may not take an atlas sampler's
+  (`uAtlasN`). `tests/materials.test.tsx` pins all three tiers, the
+  style streams through growth and shift, the params, the resample,
+  the tile bake and the throws.
+
+### Pose, sprite and style slots
+
+Node layer ownership split, instance-buffer slots on one pipeline (the
+material's; two materials are two layers): slot 0 is the POSE buffer
+`[x, y, angle, sx, sy]` written ONLY by the core (each sprite node's
+Pose2D record sink; one coalesced buffer write per flush however many
+nodes moved), slot 1 the SPRITE record `[u0, v0, u1, v1, tint rgba,
+renderOrder, minScreenPx, maxScreenPx, atlas, outline rgb,
+outlineWidth]` (`SPRITE_FLOATS`, 16), JS-owned through the sprite verbs
+and published through the zero-copy write lease, and after them the
+material's STYLE streams, one per instance buffer it declares (app-owned
+per-sprite data, Materials above). NEVER write the pose buffer from JS -
+the core's staging mirror owns it and will overwrite.
 
 ### Fixed instance slots
 
@@ -275,14 +374,18 @@ publish itself is the core's record stream (`createRecordStream` in
 the range-or-whole publish, growth into a replacement), the one model
 the 3d instance streams run on too; this file only decides what to
 mark and when to flush. The node layer speaks the same two verbs over
-its STYLE records: `records(spriteLayer)` is the style mirror
-(`STYLE_FLOATS` floats per slot: `[u0, v0, u1, v1, tint rgba,
+its SPRITE records: `records(spriteLayer)` is the sprite mirror
+(`SPRITE_FLOATS` floats per slot: `[u0, v0, u1, v1, tint rgba,
 renderOrder, minScreenPx, maxScreenPx, atlas, outline rgb,
 outlineWidth]`, slot-indexed, poses stay the core's) and
 `updateRecords(spriteLayer, { first?, count? })` publishes the slot
 range, so a bulk restyle (a palette cycle over thousands of sprites) is
 one loop and one range write instead of a setSprite each - the 3d
-`records(instancedMesh)` pairing, one dimension down. It is the
+`records(instancedMesh)` pairing, one dimension down. Both layer
+kinds take a `stream` beyond 0 on the same verbs for the material's
+style streams (`records(layer, 1)`, `updateRecords(layer, { stream: 1
+})`), which grow, publish and (on a records layer) shift with the
+layer's own record. It is the
 escape hatch for motion only JS can compute at scale (measured 30k
 sprites: 12.9ms raw records vs 30.8ms via setSprite; both figures are
 the WRITE path only - whatever computes the motion is excluded and is
@@ -480,7 +583,9 @@ kinds): one `uTint` shared-params write multiplied over every sprite's
 own tint - day/night, a dimmed parallax plane, a fade-in. Cheap to
 animate (no record touches), unlike TileLayer's, which re-renders
 resident chunks. The same contract as TileLayer.setTint, so one signal
-drives a whole scene across layer kinds.
+drives a whole scene across layer kinds. The general form is
+`setParams` (Materials above): the tint is the one param every material
+takes.
 
 ### Views
 
@@ -666,8 +771,10 @@ Static 2D bulk as a few quads: on tiled GPUs the budget is primitive count
 quads per frame. `createTileLayer(cols, rows, tileW, tileH, atlases)`
 bakes the world into CHUNKED `render: "manual"` targets (default ~512px
 of tiles per chunk, `chunkTiles` to tune), each chunk a manual target
-over the layer's ONE sprite pipeline (shaders.ts, compiled once per
-layer for its atlases) with FIXED record slots - an empty tile is a
+over the layer's ONE pipeline (its material's, resolved once per layer
+for its atlases; a cell's style record is `setTile`'s `style`, its
+params re-bake every resident chunk on each write) with FIXED record
+slots - an empty tile is a
 zero-size quad, instance count is constant per chunk. Records hold WORLD
 pixel coordinates; each chunk target's `uCamera` is its pixel origin, so
 the shared vertex stage does the chunk-local mapping. Chunks allocate on
@@ -726,8 +833,11 @@ the whole layer through the shared `uTint` uniform, multiplied over the
 per-cell tints - day/night, a dimmed parallax plane. A layer-tint write
 is not a record write (chunks re-render GPU-side, nothing re-uploads),
 but it does re-render every resident chunk: drive it from slow state,
-not per frame. Not built yet: camera-driven residency (bake far chunks
-on approach, evict) - okf/backlog/2d-baked-layers.md.
+not per frame. `setParams` (a material prelude's uniforms) and a cell's
+`style` (the material's per-cell record, `setTile`/`setTiles` `{ style
+}`) are the same two levels for a custom look, Materials above. Not
+built yet: camera-driven residency (bake far chunks on approach, evict)
+- okf/backlog/2d-baked-layers.md.
 
 ## Components
 
@@ -735,12 +845,12 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | atlases (Atlas[], the sheets bound as one draw; mount-fixed) or layer (an existing createSpriteLayer handle to adopt: the component shows and populates it, keeps only the view and the leaf as its own and leaves the layer's lifetime to its maker, so `<Sprite>`/`<Text2d>` sit over an imperative layer; the creation props atlases/capacity/blend/orderBy then throw), capacity?, blend? (core gpu BlendMode, "alpha" default, "add" for glows; mount-fixed), tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
-| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), minScreenPx?, maxScreenPx? (the screen-size clamp on the smaller axis, view pixels; 0 = off; equal = constant size), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
+| `SpriteLayer` | atlases (Atlas[], the sheets bound as one draw; mount-fixed) or layer (an existing createSpriteLayer handle to adopt: the component shows and populates it, keeps only the view and the leaf as its own and leaves the layer's lifetime to its maker, so `<Sprite>`/`<Text2d>` sit over an imperative layer; the creation props atlases/capacity/material/orderBy then throw), capacity?, material? (the layer's material, `unlit()` default, `unlit({ blend: "add" })` for glows; mount-fixed), params? (layer.setParams as a prop, over the material's own; live, merge semantics), tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
+| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), minScreenPx?, maxScreenPx? (the screen-size clamp on the smaller axis, view pixels; 0 = off; equal = constant size), style? (the sprite's style record under the layer's material, one value per component of its first instance buffer; live), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
 | `Camera2d` | createCamera2d's options (world?, min/maxZoom?, pivot?, follow?, offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?, zoom?, rotation?), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view; its `size()` the viewport) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
 | `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width, height (view pixels, live; fixed-size only for now), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture) (else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
-| `TileLayer` | cols, rows, tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed), frames? (the tileset `setTiles` indices name), chunkClearColor?, blend? (the bake's blend mode, "alpha" default; mount-fixed), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
+| `TileLayer` | cols, rows, tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed), frames? (the tileset `setTiles` indices name), chunkClearColor?, material? (the bake's material, `unlit()` default; mount-fixed), params? (layer.setParams as a prop; live, each change re-bakes), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 ### SpriteLayer and useSpriteLayer
 
@@ -870,11 +980,12 @@ hover, wheel and tap rules headless.
   shading: the same tint triple is a different brightness in the two
   packages, so a palette shared across them needs its own conversion.
 - Tint multiplies the sampled texel (`texture * tint`) and the pipeline
-  blends with the layer's `blend` in record order - "alpha" by default,
-  the premultiplied composite; "add" accumulates (glows, sparks, light
-  cones: two half-alpha whites make opaque white), "multiply" darkens,
-  "none" overwrites. Pipeline state, so it is per layer and fixed at
-  creation; an additive effect layer draws over the scene layer.
+  blends with the material's `blend` in record order - "alpha" by
+  default, the premultiplied composite; "add" accumulates (glows,
+  sparks, light cones: two half-alpha whites make opaque white),
+  "multiply" darkens, "none" overwrites. Pipeline state, so it is per
+  layer (`material: unlit({ blend: "add" })`) and fixed at creation; an
+  additive effect layer draws over the scene layer.
   The atlas is premultiplied because `decodeImage` premultiplies by default;
   an atlas uploaded from straight-alpha pixels (`decodeImage(bytes, { alpha:
   "straight" })` into `createAtlas`) draws color under transparent texels
@@ -909,6 +1020,35 @@ hover, wheel and tap rules headless.
   transform or camera legitimately sweeps the scale. Never fix a shimmer by
   snapping the fit to an integer: the scene should fill its box at any
   ratio.
+
+### Materials
+
+- A `surface` reads the struct, never a local of the generated program:
+  `s.color` is premultiplied and BEFORE the layer tint (`uTint`
+  multiplies after the slot), so a rewrite to an opaque colour is
+  `vec4(rgb, 1.0) * s.color.a` to keep the sprite's coverage.
+- A custom `main` (tier 3) starts with `Sprite s = spriteOf();`: the uv
+  derivatives every tap uses are taken there, in uniform control flow.
+  A `spriteSample` before it reads zero derivatives and picks the
+  sharpest mip everywhere.
+- `spriteSample(uv)` clamps into the FRAME like the stock tap: a uv
+  past the frame's edge lands on the edge texel, never on the next
+  cell. Wrap in frame space (`fract`) before mixing into the frame rect.
+- The stock stage forwards a material's instance attributes as FLAT
+  varyings named `v` + the name without its `i` - `iPalette` is
+  `vPalette` in the surface; a name not spelled `i` + capital throws at
+  `unlit()`. A custom vertex stage forwards what it likes.
+- A material's `textures` and the atlases share one sampler budget
+  (`limits.maxTextureUnits`, 16): a LUT and a noise texture leave room
+  for fourteen sheets, and the layer creation throws past it.
+- A tile layer BAKES: `setParams` on it re-renders every resident chunk,
+  like `setTint`. Animated uniforms belong on a sprite layer, whose
+  params are one shared write per view.
+- The stock material classes are cached for the app's lifetime (one per
+  blend x prelude x surface x layouts, like 3d's unlit); a
+  `shaderMaterialClass` is yours to `dispose()`, and its programs are
+  compiled per atlas LIST met - two layers over the same atlases share
+  the program, two over different lists compile twice.
 
 ### Slots, capacity and order
 

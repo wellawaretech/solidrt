@@ -1,9 +1,9 @@
 import { createImage, createEffect, Loading, Errored, pct } from "@solidrt/core"
-import type { ImageSource, LayoutProps, Pct, PointerProps, TextureProps } from "@solidrt/core"
+import type { ImageSource, InputProps, LayoutProps, Pct, TextureProps } from "@solidrt/core"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
 
-export interface ImageProps extends PointerProps, TransitionProps {
+export interface ImageProps extends InputProps, TransitionProps {
   src: string | Uint8Array
   /**
    * How the image maps into the Image's box (CSS object-fit): "fill"

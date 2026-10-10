@@ -1,6 +1,6 @@
 // Camera-mapping probe: the live guard that the three spellings of the
-// camera mapping agree - projectCamera (camera.ts), the vertex stages'
-// uCameraRot (shaders.ts), and pointer dispatch's unprojectCamera
+// camera mapping agree - projectCamera (camera.ts), the vertex stage's
+// uCameraRot (glsl.ts), and pointer dispatch's unprojectCamera
 // (layer.ts). The headless check (tests/camera.test.ts) ties
 // projectCamera to the <view>-prop oracle but cannot see the shader; this
 // probe closes that gap on a real client. Self-asserting: watch the logs
@@ -11,8 +11,8 @@
 // What it checks, all under one rotated + pivoted camera:
 // 1. The shader implements projectCamera: a probe sprite samples opaque
 //    at its PROJECTED pixel and background at the unrotated position.
-// 2. VERTEX (records) and VERTEX_SPLIT (nodes) agree: pixel parity
-//    between the two layer kinds.
+// 2. The one vertex stage over the two record layouts (records, nodes)
+//    agrees with itself: pixel parity between the two layer kinds.
 // 3. Pointer dispatch round-trips: a pointer at the projected screen
 //    point hits the sprite and reports its world coordinates.
 // 4. Tile chunks bake with the pinned identity camera rotation.

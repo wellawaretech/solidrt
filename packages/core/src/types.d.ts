@@ -421,7 +421,7 @@ export interface NodeProps {
   label?: string
 }
 
-export interface PointerProps extends NodeProps {
+export interface InputProps extends NodeProps {
   onPointerDown?: (event: PointerEvent) => void
   onPointerUp?: (event: PointerEvent) => void
   /**
@@ -762,7 +762,7 @@ export interface TransitionProps {
 
 // Primitives
 
-export interface WindowProps extends LayoutProps, PointerProps, TransitionProps {
+export interface WindowProps extends LayoutProps, InputProps, TransitionProps {
   children?: Children
   title?: string
   fullscreen?: boolean
@@ -817,7 +817,7 @@ export interface WindowShaderProps {
 // Everything a view offers besides layout: d-view uses this directly (a
 // detached view has no taffy presence, so layout props would be rejected at
 // runtime); the layout `view` adds LayoutProps below.
-export interface ViewOwnProps extends TransformProps, PointerProps {
+export interface ViewOwnProps extends TransformProps, InputProps {
   children?: Children
   trace?: boolean
   /**
@@ -970,7 +970,7 @@ export interface ViewProps extends ViewOwnProps, LayoutProps {}
 // the box for a clip to cut. `path` and `line` strokes stay centered on their
 // geometry - there the geometry is the stroke, not a box. A dashed stroke
 // dashes that same inset outline (see DashProps).
-export interface RectProps extends PaintProps, PointerProps, DashProps {
+export interface RectProps extends PaintProps, InputProps, DashProps {
   // Corner radius, measured on the box (the stroke's outer edge). A single
   // number applies to all four corners; an array is [top-left, top-right,
   // bottom-right, bottom-left] (CSS border-radius order).
@@ -979,7 +979,7 @@ export interface RectProps extends PaintProps, PointerProps, DashProps {
 }
 
 // Strokes paint inside the box, same as `RectProps`.
-export interface OvalProps extends PaintProps, PointerProps, DashProps {
+export interface OvalProps extends PaintProps, InputProps, DashProps {
   shadow?: ShadowProps
 }
 
@@ -1036,7 +1036,7 @@ export interface DashProps {
 // fill). On a polyline "fill" and "stroke-and-fill" fill the polygon
 // (nonzero, implicitly closed) and hit-test its interior; on the two-point
 // form fill has no effect, a segment has no interior.
-export interface LineProps extends PaintProps, PointerProps, DashProps {
+export interface LineProps extends PaintProps, InputProps, DashProps {
   /**
    * Polyline vertices as a flat [x0, y0, x1, y1, ...] in the element's local
    * space (the space x1..y2 use). Takes precedence over the endpoints while
@@ -1061,7 +1061,7 @@ export interface LineProps extends PaintProps, PointerProps, DashProps {
  * points) plus the stroke's reach, at a `d-path`'s x/y - not its layout box
  * or the inherited one.
  */
-export interface PathProps extends PaintProps, PointerProps, DashProps {
+export interface PathProps extends PaintProps, InputProps, DashProps {
   d?: string
   fillRule?: "nonzero" | "evenodd"
   /** Shadows the drawn silhouette (fill and/or stroke); `spread` is rejected here. */
@@ -1128,12 +1128,12 @@ export interface TextRunProps {
  * Pointer handlers fire for the boxes of the run's own text on each line it
  * spans and bubble to the enclosing spans and text.
  */
-export interface SpanProps extends TextRunProps, PointerProps {
+export interface SpanProps extends TextRunProps, InputProps {
   children?: Children
   color?: Color | Gradient
 }
 
-export interface TextProps extends PaintProps, PointerProps, TextRunProps {
+export interface TextProps extends PaintProps, InputProps, TextRunProps {
   children?: Children
   textAlign?: TextAlign
   maxLines?: number
@@ -1174,7 +1174,7 @@ export interface TextProps extends PaintProps, PointerProps, TextRunProps {
  * Texture alpha is premultiplied, so additive modes need no manual
  * premultiplication.
  */
-export interface TextureProps extends PaintProps, PointerProps {
+export interface TextureProps extends PaintProps, InputProps {
   src?: TextureId
   /**
    * Corner radius, as on a rect: the image is drawn as a rounded rect filled

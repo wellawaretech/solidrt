@@ -18,14 +18,13 @@
 // a sprite under a minimap gets its ordinary handlers, and the view's
 // listeners are the last stop.
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
-import type { BufferId, DrawId, InstanceOrder, RenderPipelineId, TextureId } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, InstanceOrder, RenderPipelineId, ShaderParams, TextureBindings, TextureId } from "@solidrt/core/gpu"
 import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
 import type { PointerFeed } from "@solidrt/core"
 import type { LayerPointerListener, Sprite, LayerHandlers } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
-import { atlasBindings } from "./shaders.ts"
 
 export type ViewOptions = {
   /** View pixels: the viewport its camera maps the world onto. */
@@ -111,16 +110,20 @@ export type ViewDeps = {
   label: string
   pipeline: RenderPipelineId
   quad: BufferId
-  /** The layer's atlas textures in sampler order (the pipeline was
-   * compiled for exactly this many). */
-  atlases: readonly TextureId[]
+  /** The sampler bindings every view binds: the layer's atlases by
+   * sampler index (the pipeline was compiled for exactly those) and the
+   * material's own textures. */
+  textures: TextureBindings
   /** The layer's current instance buffers, in the pipeline's layout order
-   * after the quad (the pose and style pair on the node layer, the one
-   * record buffer on records). */
+   * after the quad (the pose and sprite pair on the node layer, the one
+   * record buffer on records, the material's style buffers after them). */
   buffers: () => BufferId[]
   /** The instance count as last published. */
   count: () => number
   tint: () => [number, number, number, number]
+  /** The params every view seeds beyond the viewport, the camera and
+   * the tint: the material's, with the layer's own over them. */
+  params: () => ShaderParams
   /** The layer's pick, `zoom` the camera zoom its floors are measured at. */
   pick: (x: number, y: number, zoom: number) => Sprite[]
   /** The layer's key order (`orderBy`), declared by ONE live entry. */
@@ -135,6 +138,8 @@ export type Views = {
   setBuffers(instanceBuffers: BufferId[]): void
   setCount(count: number): void
   setTint(tint: [number, number, number, number]): void
+  /** The layer's params changed: every view's target takes the write. */
+  setParams(params: ShaderParams): void
   dispose(): void
 }
 
@@ -180,8 +185,8 @@ export function createViews(deps: ViewDeps): Views {
       let texture = createDrawTarget(
         width * oversample,
         height * oversample,
-        { uViewport: [width, height], ...cameraParams(cam), uTint: deps.tint() },
-        { textures: atlasBindings(deps.atlases), clearColor: opts.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
+        { uViewport: [width, height], ...cameraParams(cam), uTint: deps.tint(), ...deps.params() },
+        { textures: deps.textures, clearColor: opts.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
       )
       let order = ordered === null ? deps.order : undefined
       let entry = entryFor(texture, order)
@@ -276,6 +281,9 @@ export function createViews(deps: ViewDeps): Views {
     },
     setTint(tint) {
       for (let v of views) setTargetParams(v.texture, { uTint: tint })
+    },
+    setParams(params) {
+      for (let v of views) setTargetParams(v.texture, params)
     },
     dispose() {
       for (let v of [...views]) v.dispose()

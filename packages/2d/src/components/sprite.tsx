@@ -1,6 +1,7 @@
 import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { addSprite, destroySprite, setSprite, setSpriteTimeScale, setSpriteTransition } from "../layer.ts"
+import { setInstanceStyle } from "../records.ts"
 import type { Sprite as SpriteHandle, SpriteOptions, SpritePointerEvent, SpriteTapEvent, SpriteWheelEvent, TransitionEndEvent } from "../layer.ts"
 import type { SpriteTransition } from "../layer.ts"
 import { GroupContext, LayerContext } from "./context.ts"
@@ -48,6 +49,11 @@ export type SpriteProps = SpriteOptions &
      * layer's and the enclosing groups'. Undefined or null inherits. Node
      * layers only. */
     timeScale?: number | null
+    /** The sprite's style record under the layer's material (see
+     * setInstanceStyle): one value per component of the material's first
+     * instance buffer. Absent, the sprite keeps the material's
+     * instanceStyle. */
+    style?: ArrayLike<number>
     ref?: (sprite: SpriteHandle) => void
   }
 
@@ -74,6 +80,14 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
     createEffect(
       () => props.timeScale,
       scale => setSpriteTimeScale(sprite, scale ?? null),
+    )
+  }
+  if ("style" in props) {
+    createEffect(
+      () => props.style,
+      style => {
+        if (style !== undefined) setInstanceStyle(layer, sprite, style)
+      },
     )
   }
   createEffect(

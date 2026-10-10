@@ -82,16 +82,20 @@ export function isAtlas(a: unknown): a is Atlas {
  * Validate a layer's `atlases` list (throws - the dev validation policy):
  * a non-empty array of distinct atlas records, no more than the device
  * binds in one pass (`limits.maxTextureUnits`, 16 on every GLES 3.0
- * device). Returns the texture -> sampler index map the layer resolves
+ * device) once the material's own `samplers` (its textures: a palette
+ * LUT, a noise texture) are counted in - the two lists bind on the same
+ * targets. Returns the texture -> sampler index map the layer resolves
  * frames through; the index is the atlas's position in the list.
  * Internal - every layer kind calls it.
  */
-export function checkAtlases(verb: string, atlases: readonly Atlas[]): Map<TextureId, number> {
+export function checkAtlases(verb: string, atlases: readonly Atlas[], samplers = 0): Map<TextureId, number> {
   if (!Array.isArray(atlases) || atlases.length === 0) {
     throw new Error(`${verb}: atlases must be a non-empty array of atlas records (createAtlas, or { texture, width, height })`)
   }
-  if (atlases.length > limits.maxTextureUnits) {
-    throw new Error(`${verb}: ${atlases.length} atlases exceed the ${limits.maxTextureUnits} sampler inputs one pass may bind (limits.maxTextureUnits); pack sheets together`)
+  if (atlases.length + samplers > limits.maxTextureUnits) {
+    throw new Error(
+      `${verb}: ${atlases.length} atlases${samplers > 0 ? ` plus the material's ${samplers} textures` : ""} exceed the ${limits.maxTextureUnits} sampler inputs one pass may bind (limits.maxTextureUnits); pack sheets together`,
+    )
   }
   let index = new Map<TextureId, number>()
   atlases.forEach((atlas, i) => {

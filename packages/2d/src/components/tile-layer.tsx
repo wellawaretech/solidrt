@@ -1,7 +1,8 @@
 import { createEffect, createSignal, displayScale, For, getBoundingBoxViewport, onLayout, untrack } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
-import type { BlendMode, FilterMode } from "@solidrt/core/gpu"
+import type { FilterMode, ShaderParams } from "@solidrt/core/gpu"
 import type { Atlas } from "../atlas.ts"
+import type { Material } from "../material.ts"
 import type { CameraUpdate } from "../camera.ts"
 import type { Frame } from "../frames.ts"
 import { tileWorldScale } from "../oversample-math.ts"
@@ -35,9 +36,14 @@ export type TileLayerProps = {
    * have no chunk and render nothing, so a full-bleed ground color belongs
    * on the container behind the layer). */
   chunkClearColor?: [number, number, number, number]
-  /** How the cells blend into their chunk bakes (see
-   * TileLayerOptions.blend); default "alpha". Fixed at mount. */
-  blend?: BlendMode
+  /** The material the cells bake with (see TileLayerOptions.material):
+   * its blend, its look, its per-cell style record; default `unlit()`.
+   * Fixed at mount. */
+  material?: Material
+  /** Uniform values written to every resident chunk (layer.setParams as
+   * a prop, over the material's own). Live, merge semantics; each change
+   * re-bakes every resident chunk - slow state, not per frame. */
+  params?: ShaderParams
   /** Sampler filter for the baked chunk textures at composite time; default
    * "linear" (hard pixels belong to the atlas sampler, see TileLayerOptions). */
   filter?: FilterMode
@@ -88,7 +94,8 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
   let layer = untrack(() =>
     createTileLayer(props.cols, props.rows, props.tileW, props.tileH, props.atlases, {
       chunkClearColor: props.chunkClearColor,
-      blend: props.blend,
+      material: props.material,
+      params: props.params,
       filter: props.filter,
       chunkTiles: props.chunkTiles,
       tint: props.tint,
@@ -108,6 +115,13 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
     tint => {
       if (tint !== undefined) layer.setTint(tint)
     },
+  )
+  createEffect(
+    () => props.params,
+    params => {
+      if (params !== undefined) layer.setParams(params)
+    },
+    { defer: true },
   )
   // Auto oversample: the world view's window box, in device pixels, per
   // world pixel. Rotation is not a resolution factor - texels per world

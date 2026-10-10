@@ -39,7 +39,7 @@ transitions, groups, picking and the collision queries reach it with no
 per-frame JS: a sprite write is a target the core animates toward, and
 the core writes the pose buffer itself. For motion only JS can compute at
 scale (a flock, a particle sim), the records layer is the escape hatch:
-sixteen JS-owned floats per sprite in one `Float32Array`, published by
+twenty JS-owned floats per sprite in one `Float32Array`, published by
 dirty range with the same `records`/`updateRecords`/`setRecordCount`
 verbs as `@solidrt/3d`'s record mesh - ten thousand float stores and one
 buffer write, not twenty thousand FFI calls.
@@ -54,8 +54,12 @@ hit-test exact rotated rects, topmost first, with pointer capture.
 
 In the package: atlas creation, slicing and extrusion (`createAtlas`,
 `grid`, `namedFrames`, `fullFrame`, `extrudeGrid`, `extrudeRects`), the
-sprite layer with its views and cameras, sprite pointer events, the baked
-tile layer, frame animation, key ordering, world-space text (a sprite
+sprite layer with its views and cameras, materials (the stock `unlit`
+with its blend and a `surface` slot over the sprite, `shaderMaterial`
+over the layer's GLSL set, per-sprite style records in any vertex format
+- the same three tiers and the same words as `@solidrt/3d`, the material
+on the layer because the layer is the batch), sprite pointer events, the
+baked tile layer, frame animation, key ordering, world-space text (a sprite
 font over the runtime's glyph engine is one more atlas, a run of text a
 group of glyph sprites: `createSpriteFont`, `addText`, `<Text2d>`), and
 the component face. Staged

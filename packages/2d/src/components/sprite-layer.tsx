@@ -1,7 +1,8 @@
 import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack, warnOnce } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
-import type { BlendMode } from "@solidrt/core/gpu"
+import type { ShaderParams } from "@solidrt/core/gpu"
 import type { Atlas } from "../atlas.ts"
+import type { Material } from "../material.ts"
 import { createSpriteLayer } from "../layer.ts"
 import { feedPointer } from "../views.ts"
 import type { LayerPointerEvent, LayerTapEvent, LayerWheelEvent, SpriteLayer as LayerHandle } from "../layer.ts"
@@ -52,16 +53,22 @@ export type SpriteLayerProps = LayerPointerProps & {
    * still its own, `<Sprite>`, `<Group>` and `<Text2d>` children mount
    * into it - and leaves its lifetime to its maker, so the component
    * face sits over an imperative layer. The creation props (atlases,
-   * capacity, blend, orderBy) describe a layer the component makes, so
-   * with `layer` they have nothing to apply to and throw.
+   * capacity, material, orderBy) describe a layer the component makes,
+   * so with `layer` they have nothing to apply to and throw.
    */
   layer?: LayerHandle
   /** Initial record reservation (grows on demand); default 1024. */
   capacity?: number
-  /** How the sprites blend into the layer's views (see
-   * SpriteLayerOptions.blend); default "alpha", "add" for glows and
-   * additive particles. Fixed at mount. */
-  blend?: BlendMode
+  /** The layer's material (see SpriteLayerOptions.material): its blend,
+   * its look, its per-sprite style record; default `unlit()`, `unlit({
+   * blend: "add" })` for glows and additive particles. Fixed at mount. */
+  material?: Material
+  /** Uniform values written to every view of the layer (layer.setParams
+   * as a prop, over the material's own): the material's prelude
+   * uniforms. Live, with merge semantics - a key that disappears keeps
+   * its last value; for per-frame values prefer `ref` + setParams from
+   * onFrame. */
+  params?: ShaderParams
   /** The own view's clear color. */
   clearColor?: [number, number, number, number]
   /** Pan/zoom/rotate the own view over the world (in-shader); a
@@ -157,7 +164,7 @@ const FILL_INITIAL_SIZE = 1
 
 // The props that describe a layer the component creates - meaningless,
 // hence rejected, on an adopted one (`layer`), which was created already.
-const CREATION_PROPS = ["atlases", "capacity", "blend", "orderBy"] as const
+const CREATION_PROPS = ["atlases", "capacity", "material", "orderBy"] as const
 
 // The props that configure the layer's own view - meaningless, hence
 // rejected, on a layer without one (output={false}).
@@ -202,7 +209,8 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     if (props.atlases === undefined) throw new Error("SpriteLayer: give atlases (a layer of its own) or layer (an existing one)")
     return createSpriteLayer(props.atlases, {
       capacity: props.capacity,
-      blend: props.blend,
+      material: props.material,
+      params: props.params,
       tint: props.tint,
       orderBy: props.orderBy,
       stagger: props.stagger,
@@ -215,6 +223,13 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     tint => {
       if (tint !== undefined) layer.setTint(tint)
     },
+  )
+  createEffect(
+    () => props.params,
+    params => {
+      if (params !== undefined) layer.setParams(params)
+    },
+    { defer: true },
   )
   createEffect(
     () => props.stagger,

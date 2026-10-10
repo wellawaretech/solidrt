@@ -1,5 +1,5 @@
 import { createMemo } from "@solidrt/core"
-import type { PointerProps } from "@solidrt/core"
+import type { InputProps } from "@solidrt/core"
 import type { StyleProps, TextLayoutProps, TransitionProps, TransitionViewProp } from "./types"
 import { splitTextLayout, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { theme, type TextVariant } from "./theme"
@@ -10,7 +10,7 @@ import { colorFade } from "./motion"
 // make sense as a text fill; style.color takes raw values for anything else.
 export type TextColor = "text" | "textMuted" | "primary" | "onPrimary" | "danger"
 
-export interface TextProps extends PointerProps, TransitionProps<TransitionViewProp | "color"> {
+export interface TextProps extends InputProps, TransitionProps<TransitionViewProp | "color"> {
   children?: any
   // Typography role from the theme's type scale; defaults to "body". Explicit
   // layout font props override the role's fields individually. fontSize

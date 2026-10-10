@@ -7,7 +7,7 @@
 // px however far in you zoom (maxScreenPx alone), and the selection RING
 // that never shrinks under 48 px however far out (minScreenPx alone), so
 // the selected sprite stays findable at the overview. The glow layer is
-// the same atlas on a `blend: "add"` pipeline: half-lit haloes that
+// the same atlas on an additive material: half-lit haloes that
 // accumulate to white where they overlap, over the transparent clear.
 // Wheel or pinch to zoom, drag empty space to pan, tap a sprite to
 // select it (the ring glides along), tap empty space to deselect.
@@ -21,7 +21,7 @@
 // pixels) and the ring's; `pick` ({ x, y }) returns
 // what the world view hits at those VIEW pixels, as marker kinds.
 import { createEffect, createInputMap, createPointerFeed, decodeImage, displayScale, onFrame, render, windowSize } from "@solidrt/core"
-import { addSprite, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteLayer, feedPointer, fitOversample, grid, setSprite, setSpriteTransition } from "@solidrt/2d"
+import { addSprite, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteLayer, feedPointer, fitOversample, grid, setSprite, setSpriteTransition, unlit } from "@solidrt/2d"
 import type { Camera2dHandle, SpriteHandle, ViewHandle } from "@solidrt/2d"
 import { registerDebug } from "sol:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
@@ -80,7 +80,7 @@ function App() {
   let frames = grid(atlas, 2, 2)
   let win = { width: 1, height: 1 }
   let layer = createSpriteLayer([atlas], { capacity: 128, label: "markers" })
-  let glow = createSpriteLayer([atlas], { capacity: 64, blend: "add", label: "glow" })
+  let glow = createSpriteLayer([atlas], { capacity: 64, material: unlit({ blend: "add" }), label: "glow" })
   world = layer.createView({ width: win.width, height: win.height, clearColor: [0.05, 0.05, 0.09, 1], label: "world" })
   let glowView = glow.createView({ width: win.width, height: win.height, clearColor: [0, 0, 0, 0], label: "glow" })
 

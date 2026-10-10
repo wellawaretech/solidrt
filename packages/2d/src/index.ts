@@ -9,21 +9,29 @@
 // node whose Pose2D record sink writes the pose instance buffer at the
 // core flush, so core producers reach sprites and picking walks the core
 // BVH; style stays a JS-written second instance buffer. The records layer (createRecordLayer)
-// is the raw escape hatch for motion only JS can compute: 16 JS-owned
+// is the raw escape hatch for motion only JS can compute: 20 JS-owned
 // floats per sprite in a mirror, published by dirty range through the
 // 3d record mesh's verbs (records/updateRecords/setRecordCount). The baked
 // tile layer (createTileLayer/TileLayer) is the static sibling: a tile
 // world rendered once into textures and composited as a few quads,
-// re-baked on change. Two faces throughout: the imperative core (usable
-// without Solid components) and the components (SpriteLayer/Sprite/Group/
+// re-baked on change. What any layer's pixels look like is its MATERIAL
+// (material.ts): the stock `unlit()` with its blend and its
+// prelude/surface slot, or a shaderMaterialClass over the layer's GLSL
+// set (`@solidrt/2d/glsl`), with per-sprite style records in any vertex
+// format - the same three tiers and the same words as @solidrt/3d, the
+// material sitting on the layer because the layer is the batch. Two
+// faces throughout: the imperative core (usable without Solid
+// components) and the components (SpriteLayer/Sprite/Group/
 // View2d/TileLayer) on top. Sheets reach the GPU through createAtlas,
 // sliced by grid/namedFrames/fullFrame, and a mipmapped sheet is extruded
 // first (extrudeGrid/extrudeRects). See AGENTS.md for the model and the
 // traps.
 
-export { addGroup, addSprite, createSpriteLayer, getSprite, destroyGroup, destroySprite, setGroup, setGroupTimeScale, setGroupTransition, setSprite, setSpriteParent, setSpriteTimeScale, setSpriteTransition, timeRate, worldPosition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
-export { createRecordLayer, records, setRecordCount, updateRecords, INSTANCE_FLOATS } from "./records.ts"
+export { addGroup, addSprite, createSpriteLayer, getSprite, destroyGroup, destroySprite, setGroup, setGroupTimeScale, setGroupTransition, setSprite, setSpriteParent, setSpriteTimeScale, setSpriteTransition, timeRate, worldPosition, POSE_FLOATS, SPRITE_FLOATS } from "./layer.ts"
+export { createRecordLayer, instanceAttribute, records, setInstanceStyle, setRecordCount, updateRecords, INSTANCE_FLOATS } from "./records.ts"
 export type { RecordLayer as RecordLayerHandle, RecordLayerOptions, UpdateRecordsOptions } from "./records.ts"
+export { shaderMaterial, shaderMaterialClass, unlit } from "./material.ts"
+export type { Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, UnlitOptions } from "./material.ts"
 export { floorReach, pointInSprite } from "./pick.ts"
 export { projectCamera, unprojectCamera } from "./camera.ts"
 export type { CameraState, CameraUpdate } from "./camera.ts"
@@ -70,7 +78,7 @@ export { moveAndSlide } from "./collision.ts"
 export type { MoveLayer } from "./collision.ts"
 export type { ViewHandle, ViewOptions } from "./views.ts"
 export { createTileLayer } from "./tiles.ts"
-export type { TileChunk, TileLayer as TileLayerHandle, TileLayerOptions } from "./tiles.ts"
+export type { TileCellOptions, TileChunk, TileLayer as TileLayerHandle, TileLayerOptions } from "./tiles.ts"
 
 export type { NodeMotionSpec, NodeTransitionSpec } from "flux:spatial"
 export { fullFrame, grid, isFrame, namedFrames } from "./frames.ts"

@@ -1,11 +1,11 @@
 import { createEffect, displayScale, warmText } from "@solidrt/core"
-import type { LayoutProps, PointerProps, WindowShaderProps } from "@solidrt/core"
+import type { InputProps, LayoutProps, WindowShaderProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 import { colorFade } from "./motion"
 import { theme } from "./theme"
 import { typeScaleStyles } from "./typography"
 
-export interface WindowProps extends PointerProps {
+export interface WindowProps extends InputProps {
   children?: any
   title?: string
   fullscreen?: boolean
