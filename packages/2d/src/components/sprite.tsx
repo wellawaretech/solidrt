@@ -1,6 +1,6 @@
 import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
-import { addSprite, destroySprite, setSprite, setSpriteTransition } from "../layer.ts"
+import { addSprite, destroySprite, setSprite, setSpriteTimeScale, setSpriteTransition } from "../layer.ts"
 import type { Sprite as SpriteHandle, SpriteOptions, SpritePointerEvent, SpriteTapEvent, SpriteWheelEvent, TransitionEndEvent } from "../layer.ts"
 import type { SpriteTransition } from "../layer.ts"
 import { GroupContext, LayerContext } from "./context.ts"
@@ -43,6 +43,11 @@ export type SpriteProps = SpriteOptions &
     transition?: SpriteTransition | string | null
     /** A declared transition settled on one component. */
     onTransitionEnd?: (event: TransitionEndEvent) => void
+    /** The rate this sprite's native motion runs at (see
+     * setSpriteTimeScale): 0 freezes it, 1 is app time, overriding the
+     * layer's and the enclosing groups'. Undefined or null inherits. Node
+     * layers only. */
+    timeScale?: number | null
     ref?: (sprite: SpriteHandle) => void
   }
 
@@ -62,6 +67,15 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
     () => props.transition,
     transition => setSpriteTransition(sprite, transition ?? null),
   )
+  // Built only when the prop is present (the compiler emits the getter
+  // only then): a plain sprite pays no effect, and a record layer's
+  // sprite never meets the throw.
+  if ("timeScale" in props) {
+    createEffect(
+      () => props.timeScale,
+      scale => setSpriteTimeScale(sprite, scale ?? null),
+    )
+  }
   createEffect(
     () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerCancel, props.onPointerEnter, props.onPointerLeave, props.onWheel, props.onTap, props.onTransitionEnd] as const,
     ([down, move, up, cancel, enter, leave, wheel, tap, end]) => {

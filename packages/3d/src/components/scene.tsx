@@ -65,6 +65,11 @@ export type SceneProps = ScenePointerProps & {
    * stagger`, the whole-scene form of `<Group transition={{ stagger }}>`
    * (see SceneOptions.stagger). Live (scene.setStagger). */
   stagger?: number
+  /** The rate the scene's native motion runs at (scene.setTimeScale as a
+   * prop): 0 pauses the world while the app's UI keeps moving, 1 is app
+   * time; a `<Group timeScale={1}>` inside keeps running. Undefined or
+   * null is app time. Live. */
+  timeScale?: number | null
   /** Scene-wide fog (scene.setFog): linear `{ color, near, far }` or exp2
    * `{ color, density }`, optionally thinning above `height` by
    * `heightFalloff`; every standard material fades toward `color` by
@@ -187,6 +192,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
       bloom: props.bloom,
       layers: props.layers,
       stagger: props.stagger,
+      timeScale: props.timeScale ?? undefined,
       onError: e => {
         pendingError = e
         setErrorTick(errorTick() + 1)
@@ -259,6 +265,11 @@ export let Scene: ParentComponent<SceneProps> = props => {
   createEffect(
     () => props.stagger,
     ms => scene.setStagger(ms ?? null),
+    { defer: true },
+  )
+  createEffect(
+    () => props.timeScale,
+    scale => scene.setTimeScale(scale ?? null),
     { defer: true },
   )
   untrack(() => props.ref)?.(scene)

@@ -239,6 +239,9 @@ export type SceneNode = {
   _scene: SceneHooks | null
   /** The declared transition, re-applied on every scene enter. */
   _transition: NodeTransition | string | null
+  /** The declared time scale (setTimeScale), re-applied on every scene
+   * enter; null inherits. */
+  _timeScale: number | null
   /** Skin palette rows this node feeds (a model joint carries one per
    * skin): bound to the core at every scene enter, so the flush writes
    * `inverse(anchorWorld) * world * post` - the model-local bone matrix -
@@ -407,6 +410,7 @@ export function makeNode(kind: SceneNode["kind"]): SceneNode {
     _moved: false,
     _scene: null,
     _transition: null,
+    _timeScale: null,
     _palettes: null,
     _morph: null,
     _cullBounds: null,
@@ -548,6 +552,7 @@ export function enterScene(node: SceneNode, scene: SceneHooks): void {
     spatial.setTransition(node._node, node._transition)
     declareTransition(node._node, node)
   }
+  if (node._timeScale !== null) spatial.setTimeScale(node._node, node._timeScale)
   // The parent is in the scene already (add() enters the child only then),
   // and the scene root is the one node without a parent.
   if (node.parent !== null && node.parent._node !== null) spatial.setParent(node._node, node.parent._node)
@@ -797,6 +802,37 @@ export function setTransition(node: SceneNode, transition: NodeTransition | stri
     if (transition === null) declared.delete(node._node)
     else declareTransition(node._node, node)
   }
+}
+
+/**
+ * Declare (null clears) the rate the native motion in the node's subtree
+ * runs at: transitions with their delays, enters, exits and stagger,
+ * morph weight tracks, and the clip players of the models under it
+ * (a mixer's players are clocked on their model's node, so this is also
+ * Three's `mixer.timeScale`). 0 freezes, 1 is app time, other values
+ * are slow or fast motion. The nearest declaring ancestor wins, never a
+ * product: a world at 0 with a group inside it declaring 1 keeps that
+ * group running (a preview on a pause screen). A frozen subtree asks for
+ * no frames; this write brings the one that resumes it. The declaration
+ * lives on the SceneNode and re-applies on every scene enter. What it
+ * does not cover: `onFrame` logic, timers, video and audio stay on app
+ * time - multiply your own step by `timeRate(node)`. For the whole scene,
+ * `scene.setTimeScale` / `<Scene timeScale>` declare it on `scene.root`.
+ */
+export function setTimeScale(node: SceneNode, scale: number | null): void {
+  if (node._destroyed) return
+  node._timeScale = scale
+  if (node._node !== null) spatial.setTimeScale(node._node, scale)
+}
+
+/**
+ * The rate the node's motion runs at (setTimeScale): its own scale, else
+ * the nearest declaring ancestor's, else 1. Null outside a scene, where
+ * nothing runs and no ancestry resolves.
+ */
+export function timeRate(node: SceneNode): number | null {
+  if (node._node === null) return null
+  return spatial.timeRate(node._node)
 }
 
 /**

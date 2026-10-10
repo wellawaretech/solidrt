@@ -47,13 +47,14 @@ declare module "flux:spatial" {
    * The node's lifecycle state, for probing: whether it is leaving, its
    * effective visibility as of the last flush, and the motion in force
    * per component - one entry per running track or held write, `to` the
-   * target lanes, `heldUntil` the animation-clock ms a held write applies
-   * at (null for a running track).
+   * target lanes, `heldFor` the ms of a held write's hold still left on
+   * the node's own time as of the last advance (null for a running
+   * track).
    */
   export function describeNode(node: NodeId): {
     leaving: boolean
     shown: boolean
-    motion: { component: NodeComponent; to: number[]; heldUntil: number | null }[]
+    motion: { component: NodeComponent; to: number[]; heldFor: number | null }[]
   }
   /** Re-parent (null = make a root). Throws on a cycle. */
   export function setParent(node: NodeId, parent: NodeId | null): void
@@ -160,6 +161,31 @@ declare module "flux:spatial" {
    * node's settles feed its free instead (exitNode).
    */
   export function writeTransform(node: NodeId, transform: Float32Array): void
+  /**
+   * Declare (null clears) the rate the native motion in the node's
+   * subtree runs at: node transitions with their delays, enters, exits
+   * and stagger slots, weights tracks, and the clip players clocked on a
+   * node under it (createPlayer's `clock`). 0 freezes, 1 is app time,
+   * other values are slow or fast motion. The nearest declaring ancestor
+   * wins, never a product through nesting (Godot's process_mode shape): a
+   * scene root at 0 freezes the world and a node inside it declaring 1
+   * keeps running - a preview spinning on a pause screen. A frozen track
+   * is not frame demand (a paused scene lets the loop idle; this write
+   * requests the frame that resumes it). Writes while frozen behave as
+   * always: undeclared components snap, declared ones retarget and wait;
+   * a node let go of (exitNode) stays a ghost until its exit can play,
+   * and a node created frozen sits at its `from`. What it does NOT
+   * cover: the app's own frame handlers, timers, video and audio stay on
+   * app time - app code gates itself, with `timeRate` as its reading.
+   * Negative and non-finite values throw (reverse playback is a player's
+   * `speed`). The dev clock (`/clock?scale=`) scales app time underneath
+   * all of this.
+   */
+  export function setTimeScale(node: NodeId, scale: number | null): void
+  /** The rate the node's motion runs at (setTimeScale): its own scale,
+   * else the nearest declaring ancestor's, else 1. What JS-driven motion
+   * inside a scaled subtree multiplies its own frame step by. */
+  export function timeRate(node: NodeId): number
   export function setVisible(node: NodeId, visible: boolean): void
   /** What a draw sink writes and where it sorts (bindDraw). */
   export type BindDrawOptions = {
@@ -634,22 +660,27 @@ declare module "flux:spatial" {
   export function destroyClip(clip: ClipId): void
   /**
    * Start playing `clip`: `targets[slot]` is the node each channel
-   * animates - every target must be a live scene node (throws
-   * otherwise). Players advance on the frame clock BEFORE each frame's
-   * JS, sample and weight-blend every active player per (node, path) -
-   * two players on one node crossfade - and write the blended TRS into
-   * the arena, so frame handlers read and may overwrite freshly posed
-   * nodes (last write wins) and the frame's flush publishes the result.
-   * `speed` scales clip time (1 = as authored); `loop` wraps, else the
-   * player holds its final pose and reports once; `weight`/`fade` start
-   * the crossfade state (weight 0..1, fade = weight change per second -
-   * positive fades in, negative out; past 0 the player is removed).
-   * When a player finishes or is removed without finishing (faded out,
-   * clip or target destroyed), the "spatialClipEnd" engine event
-   * (sol:events) fires with payload { player, reason: "finished" |
-   * "dropped" }, before the same frame's handlers.
+   * animates, `clock` the node whose rate (setTimeScale) the player's
+   * time, fades and root motion run at - a player has one time over many
+   * targets, so the node it is attached to names the clock: the model's
+   * root for a mixer. Every target and the clock must be a live scene
+   * node (throws otherwise). Players advance on the frame clock BEFORE
+   * each frame's JS, sample and weight-blend every active player per
+   * (node, path) - two players on one node crossfade - and write the
+   * blended TRS into the arena, so frame handlers read and may overwrite
+   * freshly posed nodes (last write wins) and the frame's flush
+   * publishes the result. `opts` (the setPlayer field names): `speed`
+   * scales clip time (1 = as authored, the default); `loop` wraps (the
+   * default), else the player holds its final pose and reports once;
+   * `weight`/`fade` start the crossfade state (weight 0..1, default 1;
+   * fade = weight change per second, default 0 - positive fades in,
+   * negative out; past 0 the player is removed). When a player finishes
+   * or is removed without finishing (faded out, clip, clock or target
+   * destroyed), the "spatialClipEnd" engine event (sol:events) fires with
+   * payload { player, reason: "finished" | "dropped" }, before the same
+   * frame's handlers.
    */
-  export function createPlayer(clip: ClipId, targets: NodeId[], speed: number, loop: boolean, weight: number, fade: number): PlayerId
+  export function createPlayer(clip: ClipId, targets: NodeId[], clock: NodeId, opts?: { speed?: number; loop?: boolean; weight?: number; fade?: number }): PlayerId
   /** Write the given fields of a player - the O(changes) crossfade
    * channel. Setting `time` (seconds) also re-arms a finished player's
    * end report. Throws on an id that already dropped. */

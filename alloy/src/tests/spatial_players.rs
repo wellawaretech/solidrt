@@ -98,7 +98,7 @@ fn a_player_writes_the_pose_and_settles_when_frozen() {
   let n = s.create([0.0; 3], Q, ONE, true);
   let clip = slide_clip(&mut s);
   advance_at(&mut s, 0.0);
-  s.create_player(clip, vec![n], 1.0, true, 1.0, 0.0).expect("player");
+  s.create_player(clip, vec![n], n, 1.0, true, 1.0, 0.0).expect("player");
   let tick = advance_at(&mut s, 500.0);
   assert!(tick.active && tick.wrote);
   let (p, _, _) = s.transform_of(n).expect("read");
@@ -120,8 +120,8 @@ fn two_players_crossfade_by_weight() {
     .create_clip(1.0, vec![channel(ChannelPath::Position, ChannelInterpolation::Linear, &[0.0], &[10.0, 0.0, 0.0])])
     .expect("clip");
   advance_at(&mut s, 0.0);
-  s.create_player(a, vec![n], 1.0, true, 1.0, 0.0).expect("player");
-  let pb = s.create_player(b, vec![n], 1.0, true, 0.0, 0.0).expect("player");
+  s.create_player(a, vec![n], n, 1.0, true, 1.0, 0.0).expect("player");
+  let pb = s.create_player(b, vec![n], n, 1.0, true, 0.0, 0.0).expect("player");
   // Equal weights: the average.
   s.set_player(pb, PlayerUpdate { weight: Some(1.0), ..Default::default() }).expect("weight");
   advance_at(&mut s, 16.0);
@@ -148,7 +148,7 @@ fn a_fade_in_at_weight_zero_survives_a_frozen_clock() {
   advance_at(&mut s, 0.0);
   // Fading in from 0: a dt-0 advance (frozen clock, or the same-frame
   // create) must NOT cull it as faded out.
-  let p = s.create_player(clip, vec![n], 1.0, true, 0.0, 2.5).expect("player");
+  let p = s.create_player(clip, vec![n], n, 1.0, true, 0.0, 2.5).expect("player");
   advance_at(&mut s, 0.0);
   assert!(s.take_clip_events().is_empty(), "fade-in dropped at weight 0");
   advance_at(&mut s, 400.0);
@@ -166,7 +166,7 @@ fn once_clips_finish_hold_and_report_once() {
   let n = s.create([0.0; 3], Q, ONE, true);
   let clip = slide_clip(&mut s);
   advance_at(&mut s, 0.0);
-  let p = s.create_player(clip, vec![n], 1.0, false, 1.0, 0.0).expect("player");
+  let p = s.create_player(clip, vec![n], n, 1.0, false, 1.0, 0.0).expect("player");
   advance_at(&mut s, 1500.0);
   assert_eq!(s.take_clip_events(), vec![ClipEvent::Finished(p)]);
   let (pos, _, _) = s.transform_of(n).expect("read");
@@ -187,7 +187,7 @@ fn looping_wraps_continuously() {
   let n = s.create([0.0; 3], Q, ONE, true);
   let clip = slide_clip(&mut s);
   advance_at(&mut s, 0.0);
-  s.create_player(clip, vec![n], 1.0, true, 1.0, 0.0).expect("player");
+  s.create_player(clip, vec![n], n, 1.0, true, 1.0, 0.0).expect("player");
   advance_at(&mut s, 900.0);
   // 1.15 s wraps to 0.15 s - the cursor seeks backwards correctly.
   advance_at(&mut s, 1150.0);
@@ -201,22 +201,24 @@ fn dead_targets_and_dead_clips_drop_players() {
   let n = s.create([0.0; 3], Q, ONE, true);
   let clip = slide_clip(&mut s);
   advance_at(&mut s, 0.0);
-  let p = s.create_player(clip, vec![n], 1.0, true, 1.0, 0.0).expect("player");
+  let p = s.create_player(clip, vec![n], n, 1.0, true, 1.0, 0.0).expect("player");
   s.destroy(n).expect("destroy");
   let tick = advance_at(&mut s, 16.0);
   assert_eq!(s.take_clip_events(), vec![ClipEvent::Dropped(p)]);
   assert!(!tick.active);
   // Same for a destroyed clip.
   let n2 = s.create([0.0; 3], Q, ONE, true);
-  let p2 = s.create_player(clip, vec![n2], 1.0, true, 1.0, 0.0).expect("player");
+  let p2 = s.create_player(clip, vec![n2], n2, 1.0, true, 1.0, 0.0).expect("player");
   s.destroy_clip(clip).expect("destroy clip");
   advance_at(&mut s, 32.0);
   assert_eq!(s.take_clip_events(), vec![ClipEvent::Dropped(p2)]);
-  // Creation-time validation: missing clip, short target table, dead node.
-  assert!(s.create_player(clip, vec![n2], 1.0, true, 1.0, 0.0).is_err());
+  // Creation-time validation: missing clip, short target table, dead
+  // target, dead clock.
+  assert!(s.create_player(clip, vec![n2], n2, 1.0, true, 1.0, 0.0).is_err());
   let clip2 = slide_clip(&mut s);
-  assert!(s.create_player(clip2, vec![], 1.0, true, 1.0, 0.0).is_err());
-  assert!(s.create_player(clip2, vec![n], 1.0, true, 1.0, 0.0).is_err(), "dead target must fail at create");
+  assert!(s.create_player(clip2, vec![], n2, 1.0, true, 1.0, 0.0).is_err());
+  assert!(s.create_player(clip2, vec![n], n, 1.0, true, 1.0, 0.0).is_err(), "dead target must fail at create");
+  assert!(s.create_player(clip2, vec![n2], n, 1.0, true, 1.0, 0.0).is_err(), "dead clock must fail at create");
 }
 
 /// A root that walks +x 10 units while turning 90 degrees about +y over
@@ -247,7 +249,7 @@ fn root_motion_moves_and_turns_the_anchor_continuously() {
   let anchor = s.create([0.0; 3], Q, ONE, true);
   let clip = walk_and_turn_clip(&mut s);
   advance_at(&mut s, 0.0);
-  let player = s.create_player(clip, vec![root], 1.0, true, 1.0, 0.0).expect("player");
+  let player = s.create_player(clip, vec![root], root, 1.0, true, 1.0, 0.0).expect("player");
   s.bind_root_motion(
     player,
     RootMotion { clip, channel: 0, rotation: Some(1), anchor: Some(anchor), up: [0.0, 1.0, 0.0], vertical: true },
@@ -286,7 +288,7 @@ fn root_motion_without_vertical_keeps_the_rise_out_of_the_delta() {
     )
     .expect("clip");
   advance_at(&mut s, 0.0);
-  let player = s.create_player(clip, vec![root], 1.0, false, 1.0, 0.0).expect("player");
+  let player = s.create_player(clip, vec![root], root, 1.0, false, 1.0, 0.0).expect("player");
   s.bind_root_motion(
     player,
     RootMotion { clip, channel: 0, rotation: None, anchor: None, up: [0.0, 1.0, 0.0], vertical: false },
@@ -329,24 +331,62 @@ fn weights_channels_blend_into_the_register() {
   };
   assert!(s.create_clip(1.0, vec![bad]).unwrap_err().contains("elements per key"));
   advance_at(&mut s, 0.0);
-  s.create_player(a, vec![n], 1.0, true, 1.0, 0.0).expect("player a");
+  s.create_player(a, vec![n], n, 1.0, true, 1.0, 0.0).expect("player a");
   let tick = advance_at(&mut s, 500.0);
   assert!(tick.active && tick.wrote);
   assert_eq!(s.weights_of(n).expect("read"), &[0.5, 0.0][..]);
   // A frozen clock rewrites nothing.
   assert!(!advance_at(&mut s, 500.0).wrote, "frozen clock must write nothing");
   // A second player at equal weight: the average, target by target.
-  let pb = s.create_player(b, vec![n], 1.0, true, 1.0, 0.0).expect("player b");
+  let pb = s.create_player(b, vec![n], n, 1.0, true, 1.0, 0.0).expect("player b");
   advance_at(&mut s, 500.0);
   assert_eq!(s.weights_of(n).expect("read"), &[0.25, 0.5][..]);
   // A narrower clip weighs zeros for the targets it lacks; the register
   // keeps the widest width.
   s.destroy_player(pb);
-  let pc = s.create_player(c, vec![n], 1.0, true, 1.0, 0.0).expect("player c");
+  let pc = s.create_player(c, vec![n], n, 1.0, true, 1.0, 0.0).expect("player c");
   advance_at(&mut s, 500.0);
   assert_eq!(s.weights_of(n).expect("read"), &[2.25, 0.0][..]);
   // Gone, the register keeps the last blend until something writes it.
   s.destroy_player(pc);
   advance_at(&mut s, 500.0);
   assert_eq!(s.weights_of(n).expect("read"), &[0.5, 0.0][..]);
+}
+
+#[test]
+fn a_player_runs_at_its_clock_nodes_rate() {
+  // The player's one time follows the node it is clocked on (the model's
+  // root for a mixer), not any of its targets.
+  let mut s = Spatial::new();
+  let model = s.create([0.0; 3], Q, ONE, true);
+  let n = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(n, Some(model)).expect("parent");
+  let clip = slide_clip(&mut s);
+  advance_at(&mut s, 0.0);
+  let p = s.create_player(clip, vec![n], model, 1.0, true, 1.0, 0.0).expect("player");
+  advance_at(&mut s, 500.0);
+  s.set_time_scale(model, Some(0.0)).expect("scale");
+  let tick = advance_at(&mut s, 1000.0);
+  assert!(!tick.active && !tick.wrote, "a frozen player is neither demand nor a write");
+  let (pos, _, _) = s.transform_of(n).expect("read");
+  assert!((pos[0] - 5.0).abs() < 1e-5, "held, got {pos:?}");
+  // Half rate: 200 ms of app time move the clip 100 ms.
+  s.set_time_scale(model, Some(0.5)).expect("scale");
+  let tick = advance_at(&mut s, 1200.0);
+  assert!(tick.active && tick.wrote);
+  let (pos, _, _) = s.transform_of(n).expect("read");
+  assert!((pos[0] - 6.0).abs() < 1e-5, "got {pos:?}");
+  // A fade counts on the same time: 0.5 s of app time at half rate.
+  s.set_player(p, PlayerUpdate { fade: Some(-1.0), ..Default::default() }).expect("fade");
+  advance_at(&mut s, 1700.0);
+  assert!(s.take_clip_events().is_empty(), "weight 0.75: still fading");
+  advance_at(&mut s, 3300.0);
+  assert_eq!(s.take_clip_events(), vec![ClipEvent::Dropped(p)], "faded out on the node's time");
+  // A dead clock drops the player like a dead target.
+  let p2 = s.create_player(clip, vec![n], model, 1.0, true, 1.0, 0.0).expect("player");
+  s.set_time_scale(model, None).expect("scale");
+  s.set_parent(n, None).expect("parent");
+  s.destroy(model).expect("destroy");
+  advance_at(&mut s, 3400.0);
+  assert_eq!(s.take_clip_events(), vec![ClipEvent::Dropped(p2)]);
 }

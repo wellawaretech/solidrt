@@ -562,6 +562,25 @@ never on a cancel, snap or exit; the raw "spatialTransitionEnd" engine
 event (sol:events, node = sprite.node) stays for flux:spatial consumers.
 See examples/springs.tsx (tap a sprite: it leaves through its `exit`).
 
+PAUSE and time scale are declarations on the same nodes:
+`layer.setTimeScale(scale)` / `<SpriteLayer timeScale>` sets the rate
+every sprite and group transition in the layer runs at - with their
+delays, enters, exits and stagger slots - 0 a pause that leaves the
+app's UI moving, 1 app time, 0.5 slow motion; `setGroupTimeScale` /
+`<Group timeScale>` and `setSpriteTimeScale` / `<Sprite timeScale>`
+declare it for a subtree or one sprite. The NEAREST declaring node wins,
+never a product (Godot's process_mode shape): a frozen layer with a
+`<Group timeScale={1}>` inside keeps that group running. A frozen layer
+asks for no frames (the write that resumes it brings the frame), writes
+while frozen retarget and wait, a destroyed sprite with an `exit` stays
+a ghost until its time moves again (the layer's `dispose` still cuts it
+short), and a sprite added frozen sits at its `from`. The scale covers
+the CORE's motion: frame animations follow it only when given a `clock`
+(see Frame animation), and your own `onFrame` logic, timers and audio
+stay on app time - multiply your step by `layer.timeRate()` /
+`timeRate(sprite)`, the effective rate read. The dev clock
+(`/clock?scale=`) scales app time underneath all of this.
+
 ### Frame-rate motion
 
 Frame-rate motion only JS can compute (physics, flocking) bypasses the
@@ -588,7 +607,12 @@ most one animation (add detaches the previous); removed sprites prune
 lazily on the next step. Works on both layer kinds; with `<Sprite>`,
 attach via `ref` and leave the `frame` prop off - the clip owns that
 field (the prop effect passes absent props as undefined, which setSprite
-keeps, so other props stay reactive).
+keeps, so other props stay reactive). A clip is a JS clock, so a layer's
+`setTimeScale` does not reach it by itself: `createAnimation(frames, fps,
+{ clock: layer })` (a group or a sprite works too) runs the clip at that
+handle's `timeRate`, read every frame, so the one pause that freezes the
+world's transitions holds its walk cycles as well, and a slow-motion
+group slows the flipbooks in it.
 
 ### Text runs
 

@@ -63,7 +63,7 @@ import type { EnvironmentOptions, Prefilter } from "./environment.ts"
 
 export type { EnvironmentOptions } from "./environment.ts"
 import type { Material } from "./material.ts"
-import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTransition, worldInto } from "./node.ts"
+import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTimeScale, setTransition, timeRate, worldInto } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
 import { checkInstancePairing, checkMask, checkOrderPairing, drawCount, instanceBinding, localBounds, markLiveRecords, publishRecords, spriteScreenPx } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh, MeshInstances, ResolvedInstanceOrder } from "./mesh.ts"
@@ -474,6 +474,10 @@ export type SceneOptions = {
    * the whole-scene form of a Group's stagger (nested groups declaring
    * their own win for what is under them). See setStagger. */
   stagger?: number
+  /** The rate the scene's native motion runs at - `setTimeScale(scene.root,
+   * scale)` at creation: 0 freezes the world, 1 is app time (nodes
+   * declaring their own win for what is under them). See setTimeScale. */
+  timeScale?: number
   /** `autoFree: false` opts out of owner-scoped auto-dispose (then call dispose yourself). */
   autoFree?: boolean
   filter?: FilterMode
@@ -833,6 +837,16 @@ export type Scene = {
   /** Stagger (ms) on the scene's root node, live (SceneOptions.stagger
    * is its creation form): null removes it. The 2d layer's setStagger. */
   setStagger(ms: number | null): void
+  /** The time scale on the scene's root node, live (SceneOptions.timeScale
+   * is its creation form): the rate every transition, enter, exit and
+   * clip player in the scene runs at, 0 a pause that leaves the app's own
+   * UI moving; null removes it (app time). A node declaring its own keeps
+   * its subtree at that rate (see node setTimeScale). The 2d layer's
+   * setTimeScale. */
+  setTimeScale(scale: number | null): void
+  /** The rate the scene's root runs at (setTimeScale): what the app's own
+   * per-frame logic in this scene multiplies its step by. */
+  timeRate(): number
   /** The level a LOD group draws in the scene's own render (the thing to
    * read while tuning thresholds): the index into its levels, nearest
    * first, `levels.length` when culled past the last one, null before
@@ -2272,6 +2286,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   root._scene = hooks
   root._node = spatial.createNode(fillTransform(root), true)
   if (opts?.stagger !== undefined) setTransition(root, { stagger: opts.stagger })
+  if (opts?.timeScale !== undefined) setTimeScale(root, opts.timeScale)
   // The first light rewrite seeds the (empty) light set and the shadow
   // slots - placeholders, no casts - so receivers draw plain from the
   // first frame.
@@ -2443,6 +2458,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     setStagger(ms) {
       if (disposed) return
       setTransition(root, ms === null ? null : { stagger: ms })
+    },
+    setTimeScale(scale) {
+      if (disposed) return
+      setTimeScale(root, scale)
+    },
+    timeRate() {
+      return timeRate(root) ?? 1
     },
     setParams(params) {
       if (disposed) return

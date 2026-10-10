@@ -670,11 +670,11 @@ fn delayed_write_holds_then_runs_on_schedule() {
   assert!(s.advance_transitions(), "a hold keeps the advance live");
   assert_eq!(pos_x(&s, id), 0.0, "nothing moves during the hold");
   // The full-TRS re-send of the held target keeps the hold: the delay does
-  // not restart from 50.
+  // not restart from 50 (50 of the 100 ms hold are left).
   s.write_transform(id, [10.0, 0.0, 0.0], Q, ONE).expect("write");
   assert_eq!(
     s.motion_of(id).expect("motion"),
-    vec![MotionState { component: Component::Position, to: vec![10.0, 0.0, 0.0], held_until_ms: Some(100.0) }]
+    vec![MotionState { component: Component::Position, to: vec![10.0, 0.0, 0.0], held_for_ms: Some(50.0) }]
   );
   s.set_transition_now(150.0);
   s.advance_transitions();
@@ -881,7 +881,7 @@ fn stagger_counts_per_frame_and_the_nearest_ancestor_wins() {
   let deep1 = make(&mut s, inner);
   let shallow = make(&mut s, outer);
   s.advance_transitions();
-  let held = |s: &Spatial, id: u64| s.motion_of(id).expect("motion")[0].held_until_ms;
+  let held = |s: &Spatial, id: u64| s.motion_of(id).expect("motion")[0].held_for_ms;
   assert_eq!(held(&s, deep0), None, "inner index 0: immediate");
   assert_eq!(held(&s, deep1), Some(10.0), "inner index 1: the inner group's spacing, never the outer's");
   assert_eq!(held(&s, shallow), None, "the outer group's own first item");
@@ -907,10 +907,10 @@ fn stagger_orchestrates_descendants_only() {
   s.set_parent(plain, Some(group)).expect("parent");
   s.set_node_transition(plain, all(LINEAR_100)).expect("config");
   s.advance_transitions();
-  assert_eq!(s.motion_of(group).expect("motion")[0].held_until_ms, None, "its own enter is not staggered by itself");
+  assert_eq!(s.motion_of(group).expect("motion")[0].held_for_ms, None, "its own enter is not staggered by itself");
   // An ordinary write under the group never staggers.
   s.write_transform(plain, [0.0; 3], Q, ONE).expect("write");
-  assert_eq!(s.motion_of(plain).expect("motion")[0].held_until_ms, None);
+  assert_eq!(s.motion_of(plain).expect("motion")[0].held_for_ms, None);
 }
 
 #[test]
@@ -936,7 +936,7 @@ fn staggered_exits_index_by_tree_order_whatever_the_call_order() {
   assert!(s.exit(group).expect("exit"));
   assert!(s.motion_of(kids[0]).expect("motion").is_empty(), "nothing starts before the advance");
   assert!(s.advance_transitions());
-  let held = |s: &Spatial, id: u64| s.motion_of(id).expect("motion")[0].held_until_ms;
+  let held = |s: &Spatial, id: u64| s.motion_of(id).expect("motion")[0].held_for_ms;
   assert_eq!(held(&s, kids[0]), None, "the first child is index 0");
   assert_eq!(held(&s, kids[1]), Some(50.0));
   assert_eq!(held(&s, kids[2]), Some(100.0));
@@ -1081,4 +1081,168 @@ fn write_before_the_first_stamp_starts_at_the_first_advanced_frame() {
   s.set_transition_now(60_050.0);
   s.advance_transitions();
   assert!((pos_x(&s, id) - 5.0).abs() < 1e-4, "halfway 50 ms in, got {}", pos_x(&s, id));
+}
+
+// Time scale (okf/done/native-motion-time-scale.md): a node's `time_scale`
+// is the rate its subtree's motion runs at, the nearest declaring ancestor
+// winning. Time lives on the track, so a rate change or a domain change
+// never rebases anything: the next step is just scaled differently.
+
+#[test]
+fn a_frozen_subtree_holds_and_resumes_from_where_it_was() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let world = s.create([0.0; 3], Q, ONE, true);
+  let id = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(id, Some(world)).expect("parent");
+  s.set_node_transition(id, all(LINEAR_100)).expect("config");
+  s.write_transform(id, [10.0, 0.0, 0.0], Q, ONE).expect("write");
+  assert!(run_to(&mut s, 0.0, 50.0));
+  assert!((pos_x(&s, id) - 5.0).abs() < 1e-4);
+  assert!(s.set_time_scale(world, Some(0.0)).expect("scale"), "the rate changed");
+  assert_eq!(s.time_rate(id).expect("rate"), 0.0, "inherited from the declaring ancestor");
+  // Frozen: the pose holds, and a frozen track is no frame demand.
+  assert!(!run_to(&mut s, 50.0, 400.0), "a frozen scene asks for nothing");
+  assert!((pos_x(&s, id) - 5.0).abs() < 1e-4, "held, got {}", pos_x(&s, id));
+  assert!(s.motion_of(id).expect("motion").len() == 1, "the track is still there");
+  // Resumed: it continues from 5 at app rate, not from where app time is.
+  assert!(s.set_time_scale(world, None).expect("scale"));
+  s.set_transition_now(416.0);
+  assert!(s.advance_transitions(), "live again");
+  assert!((pos_x(&s, id) - 6.6).abs() < 1e-3, "16 ms further, got {}", pos_x(&s, id));
+  assert!(!run_to(&mut s, 416.0, 500.0));
+  assert_eq!(pos_x(&s, id), 10.0);
+  assert_eq!(s.take_settled_transitions(), vec![(id, Component::Position)]);
+}
+
+#[test]
+fn a_declaring_child_keeps_running_inside_a_frozen_parent() {
+  // Godot's process_mode shape: the nearest declaration wins, never a
+  // product, so a preview inside a paused world can spin.
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let world = s.create([0.0; 3], Q, ONE, true);
+  s.set_time_scale(world, Some(0.0)).expect("scale");
+  let frozen = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(frozen, Some(world)).expect("parent");
+  let preview = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(preview, Some(world)).expect("parent");
+  s.set_time_scale(preview, Some(1.0)).expect("scale");
+  let spinner = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(spinner, Some(preview)).expect("parent");
+  for &n in &[frozen, spinner] {
+    s.set_node_transition(n, all(LINEAR_100)).expect("config");
+    s.write_transform(n, [10.0, 0.0, 0.0], Q, ONE).expect("write");
+  }
+  assert_eq!(s.time_rate(frozen).expect("rate"), 0.0);
+  assert_eq!(s.time_rate(spinner).expect("rate"), 1.0, "the declaring child's subtree runs at its own rate");
+  assert!(run_to(&mut s, 0.0, 50.0), "the spinner is demand");
+  assert_eq!(pos_x(&s, frozen), 0.0);
+  assert!((pos_x(&s, spinner) - 5.0).abs() < 1e-4);
+  // Clearing the child's declaration folds it back under the world's.
+  s.set_time_scale(preview, None).expect("scale");
+  assert_eq!(s.time_rate(spinner).expect("rate"), 0.0);
+  assert!(!run_to(&mut s, 50.0, 200.0));
+  assert!((pos_x(&s, spinner) - 5.0).abs() < 1e-4);
+}
+
+#[test]
+fn a_rate_scales_every_step_and_is_refused_when_not_a_rate() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let id = s.create([0.0; 3], Q, ONE, true);
+  s.set_node_transition(id, all(LINEAR_100)).expect("config");
+  s.set_time_scale(id, Some(0.5)).expect("scale");
+  s.write_transform(id, [10.0, 0.0, 0.0], Q, ONE).expect("write");
+  assert!(run_to(&mut s, 0.0, 100.0));
+  assert!((pos_x(&s, id) - 5.0).abs() < 1e-4, "half speed: halfway after the full duration");
+  assert!(!run_to(&mut s, 100.0, 200.0));
+  assert_eq!(pos_x(&s, id), 10.0);
+  assert!(s.set_time_scale(id, Some(-1.0)).is_err(), "reverse is a player's speed");
+  assert!(s.set_time_scale(id, Some(f32::NAN)).is_err());
+  assert!(s.set_time_scale(id, Some(f32::INFINITY)).is_err());
+  assert_eq!(s.time_rate(id).expect("rate"), 0.5, "a refused write changes nothing");
+  assert!(!s.set_time_scale(id, Some(0.5)).expect("scale"), "an unchanged rate reports no change");
+}
+
+#[test]
+fn a_rate_follows_the_node_through_reparenting_and_orphaning() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let slow = s.create([0.0; 3], Q, ONE, true);
+  s.set_time_scale(slow, Some(0.0)).expect("scale");
+  let id = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(id, Some(slow)).expect("parent");
+  s.set_node_transition(id, all(LINEAR_100)).expect("config");
+  s.write_transform(id, [10.0, 0.0, 0.0], Q, ONE).expect("write");
+  assert!(!run_to(&mut s, 0.0, 150.0), "frozen");
+  assert_eq!(pos_x(&s, id), 0.0);
+  // Reparented into app time at 150: the next step is the next frame's,
+  // never the 150 ms the track sat frozen through.
+  s.set_parent(id, None).expect("parent");
+  assert_eq!(s.time_rate(id).expect("rate"), 1.0);
+  s.set_transition_now(166.0);
+  assert!(s.advance_transitions());
+  assert!((pos_x(&s, id) - 1.6).abs() < 1e-3, "one 16 ms step, got {}", pos_x(&s, id));
+  // Back under the frozen node, mid-flight: holds again.
+  s.set_parent(id, Some(slow)).expect("parent");
+  assert!(!run_to(&mut s, 166.0, 300.0));
+  assert!((pos_x(&s, id) - 1.6).abs() < 1e-3);
+  // Destroying the frozen parent orphans the child into app time.
+  s.destroy(slow).expect("destroy");
+  assert_eq!(s.time_rate(id).expect("rate"), 1.0);
+  s.set_transition_now(316.0);
+  assert!(s.advance_transitions());
+  assert!((pos_x(&s, id) - 3.2).abs() < 1e-3, "got {}", pos_x(&s, id));
+}
+
+#[test]
+fn a_hold_under_a_frozen_node_waits_and_catches_up_on_resume() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let world = s.create([0.0; 3], Q, ONE, true);
+  let id = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(id, Some(world)).expect("parent");
+  s.set_node_transition(id, delayed_position(100.0)).expect("config");
+  s.write_transform(id, [10.0, 0.0, 0.0], Q, ONE).expect("write");
+  assert!(run_to(&mut s, 0.0, 50.0), "a hold on a moving node is demand");
+  assert_eq!(s.motion_of(id).expect("motion")[0].held_for_ms, Some(50.0));
+  s.set_time_scale(world, Some(0.0)).expect("scale");
+  assert!(!run_to(&mut s, 50.0, 500.0), "a frozen hold is not");
+  assert_eq!(s.motion_of(id).expect("motion")[0].held_for_ms, Some(50.0), "the hold did not count down");
+  assert_eq!(pos_x(&s, id), 0.0);
+  // Resumed at 500: the slot is at 550; a frame landing at 580 finds the
+  // tween 30 ms in, as if every frame had landed.
+  s.set_time_scale(world, None).expect("scale");
+  s.set_transition_now(580.0);
+  assert!(s.advance_transitions());
+  assert!((pos_x(&s, id) - 3.0).abs() < 1e-3, "got {}", pos_x(&s, id));
+}
+
+#[test]
+fn lifecycle_under_a_frozen_node_waits_for_its_time() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let world = s.create([0.0; 3], Q, ONE, true);
+  s.set_time_scale(world, Some(0.0)).expect("scale");
+  // An exit under a frozen node: the node leaves at once and stays a ghost
+  // where it stands until its time moves again.
+  let going = s.create([10.0, 0.0, 0.0], Q, ONE, true);
+  s.set_parent(going, Some(world)).expect("parent");
+  s.set_node_transition(going, exit_to_x(LINEAR_100, 0.0)).expect("config");
+  assert!(s.exit(going).expect("exit"));
+  // A node created frozen with an enter sits at its `from`.
+  let coming = s.create([10.0, 0.0, 0.0], Q, ONE, true);
+  s.set_parent(coming, Some(world)).expect("parent");
+  s.set_node_transition(coming, enter_from_x(0.0)).expect("config");
+  assert!(!run_to(&mut s, 0.0, 300.0));
+  assert!(s.leaving(going).expect("leaving"), "still a ghost");
+  assert_eq!(pos_x(&s, going), 10.0);
+  assert_eq!(pos_x(&s, coming), 0.0, "parked at its from");
+  assert!(s.take_freed().is_empty());
+  s.set_time_scale(world, Some(1.0)).expect("scale");
+  assert!(!run_to(&mut s, 300.0, 450.0));
+  assert_eq!(s.take_freed(), vec![going]);
+  assert_eq!(pos_x(&s, coming), 10.0);
+  assert_eq!(s.take_settled_transitions(), vec![(coming, Component::Position)]);
 }

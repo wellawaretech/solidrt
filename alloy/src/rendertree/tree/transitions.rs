@@ -5,6 +5,7 @@
 //! map and damage application this drives live in the parent module.
 
 use super::RenderTree;
+use crate::motion::TrackStart;
 use crate::rendertree::transitions::{AnimValue, PendingWrite};
 use crate::rendertree::{AnimProp, Damage, ElementKind, Endpoint, Rect, Size, Slide, Vector};
 use std::collections::HashMap;
@@ -68,10 +69,17 @@ impl RenderTree {
       self.apply_damage(node_id, damage);
       let delay_ms = enter.delay_ms + stagger;
       if delay_ms > 0.0 {
-        let at_ms = now + delay_ms as f64;
-        self.transitions.schedule(PendingWrite { node: node_id, prop, to: target, spec: enter.spec, at_ms });
+        let write = PendingWrite {
+          node: node_id,
+          prop,
+          to: target,
+          spec: enter.spec,
+          remaining_ms: delay_ms as f64,
+          since_ms: now,
+        };
+        self.transitions.schedule(write);
       } else {
-        self.transitions.retarget(node_id, prop, from, target, enter.spec, now);
+        self.transitions.retarget(node_id, prop, from, target, enter.spec, TrackStart::now(now));
       }
     }
   }
@@ -174,11 +182,12 @@ impl RenderTree {
       }
       let delay_ms = exit.delay_ms + stagger;
       if delay_ms > 0.0 {
-        let at_ms = now + delay_ms as f64;
-        self.transitions.schedule(PendingWrite { node: node_id, prop, to, spec: exit.spec, at_ms });
+        let write =
+          PendingWrite { node: node_id, prop, to, spec: exit.spec, remaining_ms: delay_ms as f64, since_ms: now };
+        self.transitions.schedule(write);
         started = true;
       } else {
-        started |= self.transitions.retarget(node_id, prop, current, to, exit.spec, now);
+        started |= self.transitions.retarget(node_id, prop, current, to, exit.spec, TrackStart::now(now));
       }
     }
     started
@@ -330,15 +339,16 @@ impl RenderTree {
     });
     match animate {
       Some((current, to, entry)) => {
+        let now = self.transitions.now_ms;
         if entry.delay_ms > 0.0 {
-          let at_ms = self.transitions.now_ms + entry.delay_ms as f64;
-          self.transitions.schedule(PendingWrite { node: id, prop, to, spec: entry.spec, at_ms });
+          let write =
+            PendingWrite { node: id, prop, to, spec: entry.spec, remaining_ms: entry.delay_ms as f64, since_ms: now };
+          self.transitions.schedule(write);
         } else {
           // Last write wins: an immediate write supersedes a held one (the
           // config may have changed since the hold was scheduled).
           self.transitions.unschedule(id, prop);
-          let now = self.transitions.now_ms;
-          self.transitions.retarget(id, prop, current, to, entry.spec, now);
+          self.transitions.retarget(id, prop, current, to, entry.spec, TrackStart::now(now));
         }
         true
       }
@@ -407,13 +417,20 @@ impl RenderTree {
         self.resizing.insert(id, None);
       }
       let running = if entry.delay_ms > 0.0 {
-        let at_ms = now + entry.delay_ms as f64;
-        let write = PendingWrite { node: id, prop: AnimProp::Layout, to: AnimValue::Box(to), spec: entry.spec, at_ms };
+        let write = PendingWrite {
+          node: id,
+          prop: AnimProp::Layout,
+          to: AnimValue::Box(to),
+          spec: entry.spec,
+          remaining_ms: entry.delay_ms as f64,
+          since_ms: now,
+        };
         self.transitions.schedule(write);
         true
       } else {
         self.transitions.unschedule(id, AnimProp::Layout);
-        self.transitions.retarget(id, AnimProp::Layout, AnimValue::Box(from), AnimValue::Box(to), entry.spec, now)
+        let start = TrackStart::now(now);
+        self.transitions.retarget(id, AnimProp::Layout, AnimValue::Box(from), AnimValue::Box(to), entry.spec, start)
       };
       if !running {
         // Nowhere to move (the painted box is the new box): on it.
@@ -560,12 +577,18 @@ impl RenderTree {
     // this frame would: retarget from the property's present value. State
     // may have shifted during the hold (a gradient took over, the node
     // died); a write that no longer applies is dropped silently.
-    for w in self.transitions.take_due(now) {
+    // A due write whose slot the frame overshot starts its track that far
+    // in: the pass below must write that value even though the track is
+    // advanced to this very stamp.
+    let mut caught_up = false;
+    for (w, lead_ms) in self.transitions.take_due(now) {
       let current = self.nodes.get(&w.node).and_then(|el| el.anim_value(w.prop));
       let mut running = false;
       if let Some(current) = current {
         if current.kind() == w.to.kind() {
-          running = self.transitions.retarget(w.node, w.prop, current, w.to, w.spec, w.at_ms);
+          let start = TrackStart { since_ms: now, lead_ms };
+          running = self.transitions.retarget(w.node, w.prop, current, w.to, w.spec, start);
+          caught_up |= running && lead_ms > 0.0;
         }
       }
       // A due exit write that starts no track (value already there, state
@@ -579,7 +602,7 @@ impl RenderTree {
     let (mut tracks, dt) = self.transitions.begin_advance();
     // Every track started at this very clock: nothing can move yet, and
     // the pass stays active for the next frame.
-    if dt <= 0.0 && !tracks.is_empty() && exit_checks.is_empty() {
+    if dt <= 0.0 && !caught_up && !tracks.is_empty() && exit_checks.is_empty() {
       self.transitions.end_advance(tracks);
       return true;
     }

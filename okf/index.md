@@ -217,6 +217,11 @@ Shaped, not started.
   and there is no output={false}, so an app that renders only through
   <View3d>s carries a full unused scene target; @solidrt/2d took the opposite
   structure on 09-07 and layers render only through views.
+- **[Re-place a casting light's shadow when native motion moves it](backlog/3d-shadow-follows-native-motion.md)** [2026-10-10]
+  A castShadow light moved by the spatial core (a node transition, a clip
+  player, root motion) lights the scene from its animated pose while its
+  shadow map stays where the last JS write left it, because the shadow cameras
+  are placed in the scene's JS sync, which native motion never schedules.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -2008,6 +2013,12 @@ Finished, kept for the reasoning.
   it. Gaps 2-4 implemented 2026-08-06 (crop/scale, clock control incl. virtual
   timers, props/quad, plus server app identity); gap 1 (input injection) stays
   with its own item.
+- **[Pause and time-scale the spatial core's motion](done/native-motion-time-scale.md)** [2026-10-10]
+  An app cannot pause the motion the spatial core runs - node transitions with
+  their delays, enters, exits and stagger, morph weight tracks, clip players -
+  because all of it runs on the one app clock, so a pause screen still lets it
+  finish; the only freeze is the dev control API's whole-app clock, which
+  stops the pause screen too.
 - **["Native transitions: Rust-side animation, JS writes only targets"](done/native-transitions.md)** [2026-08-19]
   A transition prop declares per-property motion (tween with CSS curves, or a
   perceptual spring); the signal path then carries one write per target change
@@ -2918,6 +2929,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   width, and what the shared word cache changes; the numbers under the owned
   text engine's claims (pixel parity, cold shaping a wash, re-layout 14x
   cheaper, edits re-shape only their words).
+- **[Transition time lives on the track, not on a clock](notes/transition-track-time-model.md)** [2026-10-10]
+  Why both transition modules (the render tree's elements and the spatial
+  arena's nodes) keep time per track - a tween's elapsed, a hold's remaining,
+  a spring's step - with the frame stamp only saying what app time it is, and
+  what that buys (a per-node rate with no rebasing, a one-assignment startup
+  anchor, exact catch-up of held writes).
 - **[Postmortem - a bad GPU counter steered a day of TV perf work](notes/tv-gpu-measurement-postmortem.md)** [2026-09-02]
   gpuFrameExecMs on the MediaTek TV produced a plausible-looking "40 ms GPU
   fill" number that spawned a mis-attributed backlog item, a probe

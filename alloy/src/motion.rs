@@ -194,3 +194,31 @@ pub fn spring_step(x: f32, v: f32, omega: f32, zeta: f32, dt: f32) -> (f32, f32)
     (c1 * e1 + c2 * e2, c1 * r1 * e1 + c2 * r2 * e2)
   }
 }
+
+/// Where a track starts: `since_ms`, the stamp it counts as advanced to
+/// (the current one for a write landing now; an earlier one for a motion
+/// let go of before this advance, so the advance makes up the gap), and
+/// `lead_ms`, how far into the motion it already is on its own time (the
+/// overshoot of a held write that came due between frames; zero for a
+/// fresh write). Shared by the element and the spatial node transitions:
+/// time lives on the track, the stamp only says what app time it is.
+#[derive(Clone, Copy, Debug)]
+pub struct TrackStart {
+  pub since_ms: f64,
+  pub lead_ms: f64,
+}
+
+impl TrackStart {
+  pub fn now(since_ms: f64) -> Self {
+    TrackStart { since_ms, lead_ms: 0.0 }
+  }
+}
+
+/// The step a track or hold takes at an advance: the app time since it
+/// was last advanced (`since_ms`, moved to `now_ms`), on its own time -
+/// `rate` 1 for the element tree, a node's rate in the spatial arena.
+pub fn scaled_step(since_ms: &mut f64, now_ms: f64, rate: f32) -> f64 {
+  let dt = (now_ms - *since_ms).max(0.0) * rate as f64;
+  *since_ms = now_ms;
+  dt
+}

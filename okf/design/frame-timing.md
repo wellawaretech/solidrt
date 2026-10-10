@@ -172,6 +172,7 @@ one.
 | input reading | `PacedClock::input_at_ms`, `input_frame_ms` | the `timeStamp` of input events (pointer, wheel, key, pad state) |
 | stepped clock | frame / fps (lattice, `sol render` and `sol test`) | everything above, deterministically, when a headless host steps the frames |
 | audio sink | forge audio position | video streams with audio (master clock; the picture follows) |
+| node time | a spatial node's `timeScale` (alloy spatial, `set_time_scale`) | the native motion under that node: node transitions with their holds, enters, exits and stagger slots, weights tracks, the clip players clocked on it - at `rate` times the animation timeline's step |
 
 Rules that follow, each learned the hard way:
 
@@ -217,9 +218,21 @@ Rules that follow, each learned the hard way:
   step advances both exactly one period. The stepped mode (`sol render`,
   `sol test`) is the same idea taken to determinism: frame `k` is at
   `k / fps`, whatever the machine does.
-- Transitions are stamped once per frame from the animation timeline. A
-  target written before the first frame starts its track at clock 0 and
-  fast-forwards the startup latency; open ([transition-clock-startup-anchor]).
+- Transitions are stamped once per frame from the animation timeline, and
+  time lives on the track, not on a clock: a tween carries how far it has
+  run, a spring integrates a step, a held write counts its hold down. The
+  stamp only says what app time it is; each advance hands every track the
+  app time since it was last advanced. So a target written before the
+  first frame begins its full duration at the first frame that runs (the
+  first stamp is time zero for everything that exists;
+  [transition-clock-startup-anchor]), and a node's `timeScale` is a factor
+  on that step rather than a second clock ([native-motion-time-scale]): a
+  subtree at 0 holds while the rest moves, the nearest declaring ancestor
+  wins (Godot's process_mode shape, never a product), a node changing rate
+  or parent just takes a different step next frame, and nothing is ever
+  rebased. The dev clock scales app time underneath; a node's rate
+  multiplies on top. A frozen track is not frame demand. The element
+  transitions share the track model and run at rate 1.
 
 ## Decisions
 
@@ -529,7 +542,8 @@ Open: listed above.
 [event-timestamp]: ../plans/event-timestamp.md
 [android-refresh-rate-change-unobserved]: ../backlog/android-refresh-rate-change-unobserved.md
 [pacing-budget-samples-swap-throttle]: ../backlog/pacing-budget-samples-swap-throttle.md
-[transition-clock-startup-anchor]: ../backlog/transition-clock-startup-anchor.md
+[transition-clock-startup-anchor]: ../done/transition-clock-startup-anchor.md
+[native-motion-time-scale]: ../done/native-motion-time-scale.md
 [android-main-loop-rarely-sleeps]: ../backlog/android-main-loop-rarely-sleeps.md
 [android-frame-gpu-time-from-egl-timestamps]: ../done/android-frame-gpu-time-from-egl-timestamps.md
 [adaptive-present-fence-depth]: ../backlog/adaptive-present-fence-depth.md

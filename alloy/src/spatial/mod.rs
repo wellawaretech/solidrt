@@ -49,6 +49,7 @@ pub use transitions::{
   Component, Lanes, MotionState, NodeEndpoint, NodeMotion, NodeTransitionConfig, NodeTransitionEntry,
 };
 
+use crate::motion::TrackStart;
 use bvh::Bvh;
 use cull::{union, world_box, Frustum};
 use transitions::{lanes3, targets_match, NodeTransitions, PendingWeights, PendingWrite, COMPONENTS};
@@ -732,6 +733,13 @@ struct Node {
   /// On its way out (`exit`): still painted, invisible to every query,
   /// freed when its exit tracks settle and its leaving children are gone.
   leaving: bool,
+  /// The node's own time scale, when it declares one (`set_time_scale`):
+  /// the rate of its subtree down to the next declaring node.
+  time_scale: Option<f32>,
+  /// The rate the node's motion runs at: its own declaration, else the
+  /// nearest declaring ancestor's, else 1. Kept current by
+  /// `inherit_rate` on every declaration and parent change.
+  rate: f32,
   /// One per target.
   sinks: Vec<BoundSink>,
   /// Local-space tight box; with one the node has a leaf in the index.
@@ -861,6 +869,14 @@ fn generation(id: NodeId) -> u32 {
   (id >> 32) as u32
 }
 
+/// The rate of a live node, None for a dead id (`resolve` over a borrowed
+/// node list, for the transition pass, which holds the arena's
+/// transitions mutably at the same time).
+fn rate_in(nodes: &[Node], id: NodeId) -> Option<f32> {
+  let n = nodes.get(index(id))?;
+  (n.alive && n.generation == generation(id)).then_some(n.rate)
+}
+
 impl Spatial {
   pub fn new() -> Self {
     Self::default()
@@ -901,6 +917,8 @@ impl Spatial {
       visible,
       shown: false,
       leaving: false,
+      time_scale: None,
+      rate: 1.0,
       sinks: Vec::new(),
       bounds: None,
       leaf: None,
@@ -976,7 +994,9 @@ impl Spatial {
         self.nodes[c as usize].parent = None;
         self.free_node(c);
       } else {
+        // A root now: its time runs at its own declaration or at 1.
         self.nodes[c as usize].parent = None;
+        self.inherit_rate(c);
         self.enqueue(c);
       }
     }
@@ -1090,24 +1110,35 @@ impl Spatial {
       let Some((to, motion)) = end else { continue };
       let delay_ms = motion.delay_ms + stagger_ms;
       if delay_ms > 0.0 {
-        let at = at_ms + delay_ms as f64;
-        self.transitions.schedule(PendingWrite { node: id, component, to, spec: motion.spec, at_ms: at });
+        self.transitions.schedule(PendingWrite {
+          node: id,
+          component,
+          to,
+          spec: motion.spec,
+          remaining_ms: delay_ms as f64,
+          since_ms: at_ms,
+        });
         started = true;
       } else {
         self.transitions.unschedule(id, component);
-        started |= self.transitions.apply(id, component, current, to, motion.spec, at_ms);
+        started |= self.transitions.apply(id, component, current, to, motion.spec, TrackStart::now(at_ms));
       }
     }
     if let Some(x) = config.weights.and_then(|e| e.exit) {
       let delay_ms = x.motion.delay_ms + stagger_ms;
       if delay_ms > 0.0 {
-        let at_ms = at_ms + delay_ms as f64;
-        self.transitions.schedule_weights(PendingWeights { node: id, to: x.value, spec: x.motion.spec, at_ms });
+        self.transitions.schedule_weights(PendingWeights {
+          node: id,
+          to: x.value,
+          spec: x.motion.spec,
+          remaining_ms: delay_ms as f64,
+          since_ms: at_ms,
+        });
         started = true;
       } else {
         self.transitions.unschedule_weights(id);
         let current = self.nodes[i as usize].weights.clone();
-        started |= self.transitions.retarget_weights(id, &current, &x.value, x.motion.spec, at_ms);
+        started |= self.transitions.retarget_weights(id, &current, &x.value, x.motion.spec, TrackStart::now(at_ms));
       }
     }
     started
@@ -2770,8 +2801,65 @@ impl Spatial {
     if let Some(p) = p {
       self.nodes[p as usize].children.push(i);
     }
+    self.inherit_rate(i);
     self.enqueue(i);
     Ok(())
+  }
+
+  /// Declare (or with None clear) the node's time scale: the rate the
+  /// native motion in its subtree runs at - node transitions with their
+  /// holds, enters, exits and stagger slots, weight tracks, and the clip
+  /// players clocked on a node under it. 0 freezes, 1 is app time, other
+  /// values are slow or fast motion. The nearest declaring ancestor wins,
+  /// never a product through nesting: a scene root at 0 freezes the world
+  /// and a node inside it declaring 1 keeps running (a preview spinning on
+  /// a pause screen). Takes effect at the next advance; a frozen subtree
+  /// is not frame demand, so the caller requests the frame that resumes
+  /// it. Returns whether the node's effective rate changed. Negative and
+  /// non-finite scales are refused (reverse playback is a player's
+  /// `speed`).
+  pub fn set_time_scale(&mut self, id: NodeId, scale: Option<f32>) -> Result<bool, String> {
+    let i = self.resolve(id)?;
+    if let Some(s) = scale {
+      if !s.is_finite() || s < 0.0 {
+        return Err(format!("time scale must be a finite number >= 0, got {s}"));
+      }
+    }
+    self.nodes[i as usize].time_scale = scale;
+    Ok(self.inherit_rate(i))
+  }
+
+  /// The rate the node's motion runs at (see `set_time_scale`): its own
+  /// scale, else the nearest declaring ancestor's, else 1.
+  pub fn time_rate(&self, id: NodeId) -> Result<f32, String> {
+    Ok(self.nodes[self.resolve(id)? as usize].rate)
+  }
+
+  /// Recompute `rate` for node `i` from its own declaration and its
+  /// parent, and carry it down to every descendant up to the next
+  /// declaring node. Called where the inputs change: a declaration, a
+  /// parent change, a free that orphans children. Returns whether `i`'s
+  /// rate changed.
+  fn inherit_rate(&mut self, i: u32) -> bool {
+    let inherited = match self.nodes[i as usize].parent {
+      Some(p) => self.nodes[p as usize].rate,
+      None => 1.0,
+    };
+    let rate = self.nodes[i as usize].time_scale.unwrap_or(inherited);
+    if self.nodes[i as usize].rate == rate {
+      return false;
+    }
+    self.nodes[i as usize].rate = rate;
+    let mut stack: Vec<u32> = self.nodes[i as usize].children.clone();
+    while let Some(c) = stack.pop() {
+      let n = &mut self.nodes[c as usize];
+      if n.time_scale.is_some() {
+        continue;
+      }
+      n.rate = rate;
+      stack.extend_from_slice(&n.children);
+    }
+    true
   }
 
   /// Replace the local transform. The consumer compares before calling; an
@@ -2882,14 +2970,15 @@ impl Spatial {
     Ok(animated || snapped)
   }
 
-  /// Stamp the animation clock (app-time ms, the paced timeline). Stamped
-  /// once per frame before any frame work runs, so writes and the advance
-  /// agree on time; pause/scale/step semantics ride in with the stamp.
+  /// Stamp the app time (ms, the paced timeline). Stamped once per frame
+  /// before any frame work runs, so writes and the advance agree on time;
+  /// the dev clock's pause/scale/step semantics ride in with the stamp,
+  /// and a node's own `set_time_scale` scales each step on top.
   pub fn set_transition_now(&mut self, now_ms: f64) {
     // The first stamp starts the clock (NodeTransitions::set_now); the clip
-    // players' clock starts with it, or their first advance would integrate
-    // the same gap (a one-shot clip started at mount finished on the spot
-    // after a reload).
+    // players' clock starts with it, or their first advance would take the
+    // same gap as its step (a one-shot clip started at mount finished on
+    // the spot after a reload).
     if self.transitions.set_now(now_ms) {
       self.players.last_ms = now_ms;
     }
@@ -2922,16 +3011,19 @@ impl Spatial {
     }
   }
 
-  /// Advance every running track to the stamped clock, writing the
-  /// interpolated TRS through the ordinary snap path (nodes queue; the
-  /// next flush propagates). Held writes whose delay expired apply first,
-  /// as of their scheduled time. Settled tracks land the target exactly
-  /// and report via `take_settled_transitions`, except on a leaving node,
-  /// whose settles feed its free gate instead (`check_exit`, run after the
-  /// pass; a freed node lands in `take_freed`). Tracks of freed nodes drop
-  /// silently. Returns whether any track still runs or any write still
-  /// waits - the embedder's signal to keep requesting frames. A repeated
-  /// call at an unchanged clock (the paused path) writes nothing.
+  /// Advance every running track by the app time since the last advance,
+  /// each at its node's rate (`set_time_scale`), writing the interpolated
+  /// TRS through the ordinary snap path (nodes queue; the next flush
+  /// propagates). Held writes whose hold ran out apply first, their tracks
+  /// starting as far in as the frame overshot the slot. Settled tracks
+  /// land the target exactly and report via `take_settled_transitions`,
+  /// except on a leaving node, whose settles feed its free gate instead
+  /// (`check_exit`, run after the pass; a freed node lands in
+  /// `take_freed`). Tracks of freed nodes drop silently. Returns whether
+  /// any track still runs or any write still waits on a node whose time
+  /// moves - the embedder's signal to keep requesting frames; a frozen
+  /// subtree asks for nothing. A repeated call at an unchanged stamp (the
+  /// paused path) writes nothing.
   pub fn advance_transitions(&mut self) -> bool {
     self.start_enter_transitions();
     let now = self.transitions.now_ms;
@@ -2943,7 +3035,11 @@ impl Spatial {
     // Due writes apply exactly as a write this frame would, from the
     // component's present value; state may have shifted during the hold
     // (the node died), and a write that no longer applies is dropped.
-    for w in self.transitions.take_due(now) {
+    let nodes = &self.nodes;
+    let rate_of = |id: NodeId| rate_in(nodes, id);
+    let due = self.transitions.take_due(now, &rate_of);
+    let due_weights = self.transitions.take_due_weights(now, &rate_of);
+    for (w, lead_ms) in due {
       let Ok(i) = self.resolve(w.node) else {
         continue;
       };
@@ -2955,19 +3051,21 @@ impl Spatial {
         // Held weights writes live in their own list (take_due_weights).
         Component::Weights => continue,
       };
-      let running = self.transitions.apply(w.node, w.component, current, w.to, w.spec, w.at_ms);
+      let start = TrackStart { since_ms: now, lead_ms };
+      let running = self.transitions.apply(w.node, w.component, current, w.to, w.spec, start);
       // A due exit write that starts nothing (the value already there)
       // may have been the last thing keeping its node around.
       if !running && n.leaving {
         exit_checks.push(w.node);
       }
     }
-    for w in self.transitions.take_due_weights(now) {
+    for (w, lead_ms) in due_weights {
       let Ok(i) = self.resolve(w.node) else {
         continue;
       };
       let current = self.nodes[i as usize].weights.clone();
-      let running = self.transitions.retarget_weights(w.node, &current, &w.to, w.spec, w.at_ms);
+      let start = TrackStart { since_ms: now, lead_ms };
+      let running = self.transitions.retarget_weights(w.node, &current, &w.to, w.spec, start);
       if !running && self.nodes[i as usize].leaving {
         exit_checks.push(w.node);
       }
@@ -2977,7 +3075,8 @@ impl Spatial {
       let Ok(i) = self.resolve(track.node) else {
         return false;
       };
-      let (value, settled) = track.advance(now);
+      let dt = track.elapse(now, self.nodes[i as usize].rate);
+      let (value, settled) = track.step(dt);
       let n = &mut self.nodes[i as usize];
       let slot = match track.component {
         Component::Position => &mut n.position,
@@ -3007,7 +3106,8 @@ impl Spatial {
       let Ok(i) = self.resolve(track.node) else {
         return false;
       };
-      let (value, settled) = track.advance(now);
+      let dt = track.elapse(now, self.nodes[i as usize].rate);
+      let (value, settled) = track.step(dt);
       let n = &mut self.nodes[i as usize];
       if n.rotation != value {
         n.rotation = value;
@@ -3032,7 +3132,8 @@ impl Spatial {
       let Ok(i) = self.resolve(track.node) else {
         return false;
       };
-      let settled = track.advance(now, &mut value);
+      let dt = track.elapse(now, self.nodes[i as usize].rate);
+      let settled = track.step(dt, &mut value);
       if self.nodes[i as usize].weights != value {
         let n = &mut self.nodes[i as usize];
         n.weights.clear();
@@ -3059,7 +3160,8 @@ impl Spatial {
         self.check_exit(i);
       }
     }
-    !self.transitions.is_empty()
+    let nodes = &self.nodes;
+    self.transitions.demand(&|id: NodeId| rate_in(nodes, id))
   }
 
   /// Enter animations: a node created since the last advance whose
@@ -3118,10 +3220,16 @@ impl Spatial {
         snapped = true;
         let delay_ms = motion.delay_ms + stagger.unwrap_or(0.0);
         if delay_ms > 0.0 {
-          let at_ms = now + delay_ms as f64;
-          self.transitions.schedule(PendingWrite { node: id, component, to: target, spec: motion.spec, at_ms });
+          self.transitions.schedule(PendingWrite {
+            node: id,
+            component,
+            to: target,
+            spec: motion.spec,
+            remaining_ms: delay_ms as f64,
+            since_ms: now,
+          });
         } else {
-          self.transitions.apply(id, component, from, target, motion.spec, now);
+          self.transitions.apply(id, component, from, target, motion.spec, TrackStart::now(now));
         }
       }
       if snapped {
@@ -3148,10 +3256,15 @@ impl Spatial {
         self.mark_weights(i);
         let delay_ms = f.motion.delay_ms + stagger.unwrap_or(0.0);
         if delay_ms > 0.0 {
-          let at_ms = now + delay_ms as f64;
-          self.transitions.schedule_weights(PendingWeights { node: id, to: target, spec: f.motion.spec, at_ms });
+          self.transitions.schedule_weights(PendingWeights {
+            node: id,
+            to: target,
+            spec: f.motion.spec,
+            remaining_ms: delay_ms as f64,
+            since_ms: now,
+          });
         } else {
-          self.transitions.retarget_weights(id, &from, &target, f.motion.spec, now);
+          self.transitions.retarget_weights(id, &from, &target, f.motion.spec, TrackStart::now(now));
         }
       }
     }

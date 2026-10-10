@@ -81,6 +81,8 @@ impl ModuleDef for SpatialModule {
     decl.declare("setTransform")?;
     decl.declare("setTransition")?;
     decl.declare("writeTransform")?;
+    decl.declare("setTimeScale")?;
+    decl.declare("timeRate")?;
     decl.declare("setVisible")?;
     decl.declare("bindDraw")?;
     decl.declare("unbindDraw")?;
@@ -142,6 +144,8 @@ impl ModuleDef for SpatialModule {
     exports.export("setTransform", Function::new(ctx.clone(), set_transform)?)?;
     exports.export("setTransition", Function::new(ctx.clone(), set_transition)?)?;
     exports.export("writeTransform", Function::new(ctx.clone(), write_transform)?)?;
+    exports.export("setTimeScale", Function::new(ctx.clone(), set_time_scale)?)?;
+    exports.export("timeRate", Function::new(ctx.clone(), time_rate)?)?;
     exports.export("setVisible", Function::new(ctx.clone(), set_visible)?)?;
     exports.export("bindDraw", Function::new(ctx.clone(), bind_draw)?)?;
     exports.export("unbindDraw", Function::new(ctx.clone(), unbind_draw)?)?;
@@ -230,9 +234,9 @@ fn describe_node<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Object<'js>> {
     let entry = Object::new(ctx.clone())?;
     entry.set("component", component_name(m.component))?;
     entry.set("to", m.to.iter().map(|&x| x as f64).collect::<Vec<f64>>())?;
-    match m.held_until_ms {
-      Some(at) => entry.set("heldUntil", at)?,
-      None => entry.set("heldUntil", rquickjs::Null)?,
+    match m.held_for_ms {
+      Some(left) => entry.set("heldFor", left)?,
+      None => entry.set("heldFor", rquickjs::Null)?,
     }
     list.set(i, entry)?;
   }
@@ -343,6 +347,38 @@ fn write_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs
     st.platform.request_frame();
   }
   Ok(())
+}
+
+/// Declare (null clears) the rate the native motion in the node's subtree
+/// runs at. A changed rate requests a frame: a frozen subtree is not
+/// demand, so the write that resumes it is what brings the next frame.
+fn set_time_scale<'js>(ctx: Ctx<'js>, id: u64, scale: Value<'js>) -> rquickjs::Result<()> {
+  let scale = if scale.is_null() || scale.is_undefined() {
+    None
+  } else {
+    match scale.as_number() {
+      Some(s) => Some(s as f32),
+      None => return Err(throw_str(&ctx, "setTimeScale: scale must be a number or null")),
+    }
+  };
+  let st = super::gui(&ctx);
+  let changed =
+    st.alloy.spatial().set_time_scale(id, scale).map_err(|e| throw_str(&ctx, &format!("setTimeScale: {e}")))?;
+  if changed {
+    st.platform.request_frame();
+  }
+  Ok(())
+}
+
+/// The rate the node's motion runs at: its own time scale, else the
+/// nearest declaring ancestor's, else 1.
+fn time_rate(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<f64> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .time_rate(id)
+    .map(|r| r as f64)
+    .map_err(|e| throw_str(&ctx, &format!("timeRate: {e}")))
 }
 
 fn set_visible(ctx: Ctx<'_>, id: u64, visible: bool) -> rquickjs::Result<()> {
@@ -1135,19 +1171,38 @@ fn destroy_clip(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
 
 /// Start a player: `targets[slot]` is the node each clip channel's target
 /// slot animates. Every target must be a live scene node.
-fn create_player(
-  ctx: Ctx<'_>,
+/// Start a player on `clip` over `targets`, clocked on `clock`; `opts` is
+/// `{ speed?, loop?, weight?, fade? }` (defaults 1, true, 1, 0), the
+/// setPlayer field names.
+fn create_player<'js>(
+  ctx: Ctx<'js>,
   clip: u64,
   targets: Vec<u64>,
-  speed: f64,
-  looped: bool,
-  weight: f64,
-  fade: f64,
+  clock: u64,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<u64> {
+  let mut speed = 1.0f32;
+  let mut looped = true;
+  let mut weight = 1.0f32;
+  let mut fade = 0.0f32;
+  if let Some(o) = opts.0 {
+    if let Some(v) = o.get::<_, Option<f64>>("speed")? {
+      speed = v as f32;
+    }
+    if let Some(v) = o.get::<_, Option<bool>>("loop")? {
+      looped = v;
+    }
+    if let Some(v) = o.get::<_, Option<f64>>("weight")? {
+      weight = v as f32;
+    }
+    if let Some(v) = o.get::<_, Option<f64>>("fade")? {
+      fade = v as f32;
+    }
+  }
   super::gui(&ctx)
     .alloy
     .spatial()
-    .create_player(clip, targets, speed as f32, looped, weight as f32, fade as f32)
+    .create_player(clip, targets, clock, speed, looped, weight, fade)
     .map_err(|e| throw_str(&ctx, &format!("createPlayer: {e}")))
 }
 

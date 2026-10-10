@@ -36,6 +36,13 @@ symptom shows. A heading that outgrows this file splits into its own.
 - `focusable` on the other press controls (Switch, Checkbox, Radio, ...); their activation already works through the nav action registry once declared.
 
 
+## 3d
+
+`packages/3d`.
+
+- Mixer per-clip speed after `play()` (Three's `action.timeScale`): the core takes `setPlayer(player, { speed })` already; the mixer only reads `speed` at play. A `mixer.setSpeed(name, speed)` over the action's player. Pause is covered by the model node's `timeScale` (okf/done/native-motion-time-scale.md).
+
+
 ## DX
 
 The `sol` CLI, the dev server, MCP, debug commands, examples and probes.

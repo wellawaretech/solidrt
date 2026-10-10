@@ -6,21 +6,40 @@
 // nothing - the demand-gate story unchanged. The clock is the app's frame
 // time: the clip freezes and resumes with the dev tools' clock, plays at
 // its own speed under `sol render`, and a step lands on the frame it is
-// due in. The clip
+// due in; with a `clock` it runs at that layer's, group's or sprite's
+// time rate instead, so one setTimeScale pauses the walk cycles with the
+// world. The clip
 // does not own its sprites (destroySprite prunes lazily on the next step),
 // and a sprite belongs to at most one animation. Plain JS over setSprite,
 // so it works on both layer kinds and composes with <Sprite> via ref (leave
 // the frame prop off - the clip owns that field).
 import { getOwner, onCleanup, onFrame, runWithOwner } from "@solidrt/core"
 import type { Frame } from "./frames.ts"
-import type { Sprite } from "./layer.ts"
-import { setSprite } from "./layer.ts"
+import type { Sprite, SpriteGroup, SpriteLayer } from "./layer.ts"
+import { setSprite, timeRate } from "./layer.ts"
 
 export type AnimationOptions = {
   /** Wrap around (default) or play once and hold the last frame. */
   loop?: boolean
+  /**
+   * Run on this layer's, group's or sprite's time (its `timeRate`, read
+   * every frame) instead of plain app time: the clip's step is the frame
+   * step times the rate, so a layer paused with `setTimeScale(0)` holds
+   * the walk cycles too, and a slow-motion group slows the flipbooks in
+   * it. One clock per clip, since every attached sprite shows the same
+   * frame; a destroyed clock reads as app time.
+   */
+  clock?: SpriteLayer | SpriteGroup | Sprite
   /** Skip the owner-scoped auto-dispose (the core resource contract). */
   autoFree?: boolean
+}
+
+/** The rate a clip's clock runs at now: the handle's own, or 1 without a
+ * clock or for one that is gone (a destroyed sprite, a record sprite). */
+function rateOf(clock: SpriteLayer | SpriteGroup | Sprite | undefined): number {
+  if (clock === undefined) return 1
+  if ("_root" in clock) return clock.timeRate()
+  return timeRate(clock) ?? 1
 }
 
 export type SpriteAnimation = {
@@ -66,6 +85,7 @@ export function createAnimation(frames: Frame[], fps: number, opts?: AnimationOp
     throw new Error(`createAnimation: fps must be positive, got ${fps}`)
   }
   let loop = opts?.loop !== false
+  let clock = opts?.clock
   let sprites = new Set<Sprite>()
   let current = 0
   let playing = true
@@ -116,8 +136,9 @@ export function createAnimation(frames: Frame[], fps: number, opts?: AnimationOp
   }
 
   function tick(now: number): void {
-    // Never backward: across a hot reload the frame time restarts.
-    if (lastTick !== null) elapsed += Math.max(0, now - lastTick)
+    // Never backward: across a hot reload the frame time restarts. The
+    // step is the frame step on the clock's time (rateOf: 1 without one).
+    if (lastTick !== null) elapsed += Math.max(0, now - lastTick) * rateOf(clock)
     lastTick = now
     let raw = Math.floor((elapsed * fps) / 1000)
     if (!loop && raw >= frames.length) {

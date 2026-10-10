@@ -1,6 +1,6 @@
 use crate::color::{color_to_oklab, oklab_to_color};
 use crate::impellers::{Color, Point, Rect, Size};
-use crate::motion::spring_step;
+use crate::motion::{scaled_step, spring_step, TrackStart};
 use crate::rendertree::{Damage, Element, ElementKind, OriginCoord, ShadowState};
 use std::cell::Cell;
 
@@ -252,18 +252,23 @@ pub struct Lifecycle {
 }
 
 /// A write held by `delay`: it applies (starts or retargets a track) when
-/// the animation clock reaches `at_ms`, exactly as if JS had written it
-/// then. Until then the element keeps whatever motion or rest it had - a
-/// running track toward an older target keeps going and may settle (and
-/// fire its end event) naturally. A newer write for the pair replaces the
-/// hold; a snap write drops it.
+/// its hold has counted down, exactly as if JS had written it then, and
+/// the track starts that much past its beginning (a frame landing late
+/// past the slot finds the motion already that far along). Until then the
+/// element keeps whatever motion or rest it had - a running track toward
+/// an older target keeps going and may settle (and fire its end event)
+/// naturally. A newer write for the pair replaces the hold; a snap write
+/// drops it. `remaining_ms` is what is left of the hold, `since_ms` the
+/// stamp it was last counted down to (the spatial arena's shape, which
+/// scales the count by a node's rate; the element tree runs at 1).
 #[derive(Clone, Copy, Debug)]
 pub struct PendingWrite {
   pub node: u64,
   pub prop: AnimProp,
   pub to: AnimValue,
   pub spec: TransitionSpec,
-  pub at_ms: f64,
+  pub remaining_ms: f64,
+  pub since_ms: f64,
 }
 
 // Track values are lane vectors: scalars use one lane, colors four (oklab
@@ -306,18 +311,20 @@ fn from_lanes(lanes: Lanes, kind: AnimKind) -> AnimValue {
   }
 }
 
-/// Interpolation state of one running track.
+/// Interpolation state of one running track. Time lives on the track: a
+/// tween carries how far it has run, a spring integrates each step, so
+/// the stamp only says what app time it is and nothing is ever rebased
+/// (the spatial arena's model, where a node's rate scales the step; the
+/// element tree runs every track at 1).
 #[derive(Clone, Copy, Debug)]
 pub enum TrackState {
   Tween {
     from: Lanes,
-    start_ms: f64,
+    /// How far into the tween the track is.
+    elapsed_ms: f64,
   },
   /// Position and velocity (per second), integrated each frame.
-  Spring {
-    pos: Lanes,
-    vel: Lanes,
-  },
+  Spring { pos: Lanes, vel: Lanes },
 }
 
 /// One running animation: a (node, prop) pair moving toward `to`.
@@ -327,10 +334,8 @@ pub struct Track {
   pub prop: AnimProp,
   pub spec: TransitionSpec,
   pub state: TrackState,
-  // The clock `state` is valid at: the scheduled time of a held write when
-  // it starts (so an activating frame that lands late finds the motion
-  // already under way, never a start shifted by the hitch), the previous
-  // advance otherwise. A spring integrates from here to the advance clock.
+  // The stamp the track is advanced to: the step it takes at an advance
+  // is the app time since.
   since_ms: f64,
   to: Lanes,
   // What the lanes encode, for the write-back.
@@ -353,29 +358,26 @@ impl Track {
     from_lanes(self.to, self.kind)
   }
 
-  /// Move the track's time base by `delta` ms (the clock's start, see
-  /// Transitions::set_now): the same motion, started that much later.
-  fn shift(&mut self, delta: f64) {
-    self.since_ms += delta;
-    if let TrackState::Tween { start_ms, .. } = &mut self.state {
-      *start_ms += delta;
-    }
-  }
-
-  /// Advance to `now_ms`. Returns the value to write and whether the track
+  /// Advance to `now_ms`: the track's step is the app time since it was
+  /// last advanced. Returns the value to write and whether the track
   /// settled; a settled track reports the target exactly.
   pub fn advance(&mut self, now_ms: f64) -> (AnimValue, bool) {
+    let dt_ms = scaled_step(&mut self.since_ms, now_ms, 1.0);
+    self.step(dt_ms)
+  }
+
+  /// Step the motion by `dt_ms` (see `advance`).
+  pub fn step(&mut self, dt_ms: f64) -> (AnimValue, bool) {
     let kind = self.kind;
-    let (lanes, settled) = self.advance_lanes(now_ms);
+    let (lanes, settled) = self.step_lanes(dt_ms);
     (from_lanes(lanes, kind), settled)
   }
 
-  fn advance_lanes(&mut self, now_ms: f64) -> (Lanes, bool) {
-    let dt_ms = (now_ms - self.since_ms).max(0.0);
-    self.since_ms = now_ms;
+  fn step_lanes(&mut self, dt_ms: f64) -> (Lanes, bool) {
     match (&mut self.state, self.spec) {
-      (TrackState::Tween { from, start_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
-        let p = ((now_ms - *start_ms) / duration_ms as f64).clamp(0.0, 1.0) as f32;
+      (TrackState::Tween { from, elapsed_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
+        *elapsed_ms += dt_ms;
+        let p = (*elapsed_ms / duration_ms as f64).clamp(0.0, 1.0) as f32;
         if p >= 1.0 {
           return (self.to, true);
         }
@@ -478,12 +480,11 @@ impl Transitions {
     let first = !self.started;
     if first {
       self.started = true;
-      let delta = now_ms - self.now_ms;
       for t in &mut self.tracks {
-        t.shift(delta);
+        t.since_ms = now_ms;
       }
       for w in &mut self.pending {
-        w.at_ms += delta;
+        w.since_ms = now_ms;
       }
     }
     self.now_ms = now_ms;
@@ -491,11 +492,11 @@ impl Transitions {
     first
   }
 
-  /// Hold a delayed write until its activation time. One hold per
+  /// Hold a delayed write until its hold has counted down. One hold per
   /// (node, prop): a newer write replaces it, delay restarted. The write
-  /// applies at the first advance that finds it due, and its track runs as
-  /// if started at `at_ms`: a frame that lands late past the slot finds
-  /// the motion already that far along, so a hitch never shifts a
+  /// applies at the first advance that finds it due, and its track starts
+  /// as far in as that advance overshot the slot: a frame that lands late
+  /// finds the motion already that far along, so a hitch never shifts a
   /// cascade's spacing.
   pub fn schedule(&mut self, write: PendingWrite) {
     self.unschedule(write.node, write.prop);
@@ -506,12 +507,14 @@ impl Transitions {
     self.pending.retain(|w| !(w.node == node && w.prop == prop));
   }
 
-  /// Drain the pending writes whose activation time has arrived.
-  pub fn take_due(&mut self, now_ms: f64) -> Vec<PendingWrite> {
+  /// Count the held writes down to `now_ms` and drain the ones that came
+  /// due, each with its lead: how far past its slot this advance landed.
+  pub fn take_due(&mut self, now_ms: f64) -> Vec<(PendingWrite, f64)> {
     let mut due = Vec::new();
-    self.pending.retain(|w| {
-      if w.at_ms <= now_ms {
-        due.push(*w);
+    self.pending.retain_mut(|w| {
+      w.remaining_ms -= scaled_step(&mut w.since_ms, now_ms, 1.0);
+      if w.remaining_ms <= 0.0 {
+        due.push((*w, -w.remaining_ms));
         false
       } else {
         true
@@ -520,15 +523,15 @@ impl Transitions {
     due
   }
 
-  /// Start or retarget the track for (node, prop), as of `at_ms`: the
-  /// current clock for a write landing now, the scheduled time for a held
-  /// write coming due (see `schedule`). `current` is the property's present
-  /// value (the from-value for a fresh or restarted tween); a running
-  /// spring keeps its position and velocity and only moves its equilibrium.
-  /// `current` and `to` must be the same AnimValue kind (the caller
-  /// guarantees it by reading `current` for the same property). Returns
-  /// whether a track now runs for the pair - false means the value already
-  /// sits on the target and there was nothing to animate.
+  /// Start or retarget the track for (node, prop) from `start` (see
+  /// `TrackStart`: the current stamp and no lead for a write landing now,
+  /// the overshoot as lead for a held write coming due). `current` is the
+  /// property's present value (the from-value for a fresh or restarted
+  /// tween); a running spring keeps its position and velocity and only
+  /// moves its equilibrium. `current` and `to` must be the same AnimValue
+  /// kind (the caller guarantees it by reading `current` for the same
+  /// property). Returns whether a track now runs for the pair - false means
+  /// the value already sits on the target and there was nothing to animate.
   pub fn retarget(
     &mut self,
     node: u64,
@@ -536,32 +539,45 @@ impl Transitions {
     current: AnimValue,
     to: AnimValue,
     spec: TransitionSpec,
-    at_ms: f64,
+    start: TrackStart,
   ) -> bool {
     let (cur, kind) = to_lanes(current);
     let (to, _) = to_lanes(to);
+    let fresh = |t: &mut Track| {
+      t.state = match spec {
+        TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, elapsed_ms: 0.0 },
+        TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: Lanes::default() },
+      };
+      t.since_ms = start.since_ms;
+      if start.lead_ms > 0.0 {
+        t.step(start.lead_ms);
+      }
+    };
     if let Some(t) = self.tracks.iter_mut().find(|t| t.node == node && t.prop == prop) {
       t.to = to;
       t.eps = eps_for(cur, to);
       let keep_spring_state = matches!((&t.state, spec), (TrackState::Spring { .. }, TransitionSpec::Spring { .. }));
       t.spec = spec;
       if !keep_spring_state {
-        t.state = match spec {
-          TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: at_ms },
-          TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: Lanes::default() },
-        };
-        t.since_ms = at_ms;
+        fresh(t);
       }
       return true;
     }
     if to == cur {
       return false;
     }
-    let state = match spec {
-      TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: at_ms },
-      TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: Lanes::default() },
+    let mut t = Track {
+      node,
+      prop,
+      spec,
+      state: TrackState::Spring { pos: cur, vel: Lanes::default() },
+      since_ms: start.since_ms,
+      to,
+      kind,
+      eps: eps_for(cur, to),
     };
-    self.tracks.push(Track { node, prop, spec, state, since_ms: at_ms, to, kind, eps: eps_for(cur, to) });
+    fresh(&mut t);
+    self.tracks.push(t);
     true
   }
 

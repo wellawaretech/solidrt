@@ -1,6 +1,6 @@
 import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { ParentComponent } from "@solidrt/core"
-import { addGroup, destroyGroup, setGroup, setGroupTransition } from "../layer.ts"
+import { addGroup, destroyGroup, setGroup, setGroupTimeScale, setGroupTransition } from "../layer.ts"
 import type { SpriteGroup, TransitionEndEvent } from "../layer.ts"
 import type { SpriteTransition } from "../layer.ts"
 import { GroupContext, LayerContext } from "./context.ts"
@@ -24,6 +24,10 @@ export type GroupProps = BubblingSpritePointerProps & {
   transition?: SpriteTransition | string | null
   /** A declared transition settled on one component. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
+  /** The rate the native motion under this group runs at (see
+   * setGroupTimeScale): 0 freezes the subtree, 1 is app time; the nearest
+   * declaring node wins. Undefined or null inherits. */
+  timeScale?: number | null
   ref?: (group: SpriteGroup) => void
 }
 
@@ -47,6 +51,14 @@ export let Group: ParentComponent<GroupProps> = props => {
     () => props.transition,
     transition => setGroupTransition(group, transition ?? null),
   )
+  // Built only when the prop is present (the compiler emits the getter
+  // only then), so a plain group pays no effect for it.
+  if ("timeScale" in props) {
+    createEffect(
+      () => props.timeScale,
+      scale => setGroupTimeScale(group, scale ?? null),
+    )
+  }
   createEffect(
     () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerCancel, props.onWheel, props.onTap, props.onTransitionEnd] as const,
     ([down, move, up, cancel, wheel, tap, end]) => {

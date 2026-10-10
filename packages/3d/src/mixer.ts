@@ -401,7 +401,12 @@ export function createMixer(model: Model, mixerOpts: MixerOptions = {}): Mixer {
     if (i >= 0) actions.splice(i, 1)
   }
   let start = (clip: ModelClip, opts: MixerPlayOptions, weight: number, fade: number): void => {
-    let player = spatial.createPlayer(clipFor(clip, opts), targetsFor(clip), opts.speed ?? 1, opts.loop ?? true, weight, fade)
+    let targets = targetsFor(clip)
+    // The player's time runs at the model node's rate (setTimeScale on
+    // it or an ancestor): targetsFor threw if the model is not in a scene.
+    let clock = model._node
+    if (clock === null) throw new Error("play: the model must be in a scene (add() it first) before clips can play")
+    let player = spatial.createPlayer(clipFor(clip, opts), targets, clock, { speed: opts.speed, loop: opts.loop, weight, fade })
     let action: Action = { name: clip.name, player, fadingOut: false, finished: false }
     PLAYER_ENDS.set(player, (reason) => {
       if (reason === "finished") {

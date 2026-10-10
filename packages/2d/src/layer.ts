@@ -443,6 +443,10 @@ export type SpriteLayerOptions = {
    * group's `stagger` (a group declaring its own wins for what is under
    * it). See setStagger. */
   stagger?: number
+  /** The rate the layer's native motion runs at (setTimeScale at
+   * creation): 0 freezes every sprite and group transition, 1 is app
+   * time; a group declaring its own wins for what is under it. */
+  timeScale?: number
   /** Skip the owner-scoped auto-dispose (see createSpriteLayer). */
   autoFree?: boolean
   /**
@@ -726,6 +730,20 @@ export type SpriteLayer = LayerBase & {
    * straight under the layer that begin in one frame (SpriteLayerOptions
    * `stagger`). */
   setStagger(ms: number | null): void
+  /** Set (or with null clear) the time scale on the layer's root: the
+   * rate every sprite and group transition in the layer runs at, with
+   * their delays, enters, exits and stagger slots - 0 a pause that leaves
+   * the app's UI moving, 1 app time, other values slow or fast motion
+   * (SpriteLayerOptions `timeScale`). The nearest declaring node wins:
+   * a group or sprite with its own (setGroupTimeScale,
+   * setSpriteTimeScale) keeps its rate inside a frozen layer. A frozen
+   * layer asks for no frames; this write brings the one that resumes it.
+   * Not covered: frame animations (createAnimation), which are JS clocks
+   * on app time unless given this layer as their `clock`, and the app's
+   * own onFrame logic, which multiplies its step by `timeRate()`. */
+  setTimeScale(scale: number | null): void
+  /** The rate the layer's root runs at (setTimeScale); 1 after dispose. */
+  timeRate(): number
   /** The core node every sprite and group of the layer sits under: what
    * scopes the layer's queries in the arena shared with 3d scenes. */
   _root: NodeId
@@ -897,6 +915,7 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
   let root = spatial.createNode(TRANSFORM, true)
   let filter: QueryFilter = { root }
   if (opts?.stagger !== undefined) spatial.setTransition(root, { stagger: opts.stagger })
+  if (opts?.timeScale !== undefined) spatial.setTimeScale(root, opts.timeScale)
   // Refill the layer's one filter for a query: the root always, the
   // include-list as the sprites' nodes when given.
   let queryFilter = (opts: QueryOptions | undefined, site: string): void => {
@@ -1351,6 +1370,13 @@ export function createSpriteLayer(atlases: Atlas[], opts?: SpriteLayerOptions): 
       if (disposed) return
       spatial.setTransition(root, ms === null ? null : { stagger: ms })
     },
+    setTimeScale(scale) {
+      if (disposed) return
+      spatial.setTimeScale(root, scale)
+    },
+    timeRate() {
+      return disposed ? 1 : spatial.timeRate(root)
+    },
     _schedule() {
       if (disposed || scheduled) return
       scheduled = true
@@ -1586,6 +1612,38 @@ export function setGroupTransition(group: SpriteGroup, transition: SpriteTransit
   let node = toNodeTransition(transition)
   spatial.setTransition(group.node, node)
   declareTransition(group.node, group, node)
+}
+
+/**
+ * Declare (null clears) the rate the sprite's own native motion runs at
+ * (its transitions, with their delays, enter and exit): 0 freezes it, 1
+ * is app time, other values slow or fast motion. Overrides the layer's
+ * and the enclosing groups' rate for this sprite alone (the nearest
+ * declaring node wins); see SpriteLayer.setTimeScale. Node layer only.
+ */
+export function setSpriteTimeScale(sprite: Sprite, scale: number | null): void {
+  if (sprite.layer === null) return
+  if (sprite.node === null) throw new Error("setSpriteTimeScale: record sprites have no native motion")
+  spatial.setTimeScale(sprite.node, scale)
+}
+
+/** The group counterpart of setSpriteTimeScale: the rate everything under
+ * the group runs at, down to the next group or sprite declaring its own
+ * - a frozen world with one live group inside it. */
+export function setGroupTimeScale(group: SpriteGroup, scale: number | null): void {
+  if (group.layer === null) return
+  spatial.setTimeScale(group.node, scale)
+}
+
+/**
+ * The rate a sprite's or group's motion runs at: its own time scale, else
+ * the nearest declaring group's, else the layer's, else 1. What JS-driven
+ * motion of the handle multiplies its own frame step by. Null for a
+ * destroyed handle or a record layer's sprite (no native motion).
+ */
+export function timeRate(target: Sprite | SpriteGroup): number | null {
+  if (target.layer === null || target.node === null) return null
+  return spatial.timeRate(target.node)
 }
 
 /** Add a transform group (see SpriteGroup). */

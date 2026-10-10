@@ -21,11 +21,20 @@
 // time; `stagger` on an ancestor spaces the enters and exits beginning
 // under it in one frame, the children order of the arena's hierarchy
 // standing in for the element tree's.
+//
+// Time lives on the track, not on a clock: a tween carries how far it has
+// run, a spring integrates a step, a held write counts its hold down. The
+// arena's stamp (`set_now`) only says what app time it is; each advance
+// hands every track and hold the app time since it was last advanced,
+// scaled by its node's rate (mod.rs `rate`, a node's `time_scale` or the
+// nearest declaring ancestor's), so a subtree at rate 0 holds still while
+// the rest of the arena moves, and a node changing rate or domain just
+// gets a different step next frame - nothing is ever rebased.
 
 use std::collections::HashMap;
 
 use super::NodeId;
-use crate::motion::{spring_step, TransitionSpec};
+use crate::motion::{scaled_step, spring_step, TrackStart, TransitionSpec};
 
 /// Which node register a track animates: a local-TRS component, or the
 /// weights register (morph target weights, one lane per target).
@@ -143,16 +152,19 @@ pub(super) fn lanes3(v: [f32; 3]) -> Lanes {
 }
 
 /// A write held by `delay`: it applies (starts or retargets the pair's
-/// track) when the animation clock reaches `at_ms`, exactly as if written
-/// then, and the track runs as if started at `at_ms` - a frame landing late
-/// past the slot finds the motion already that far along.
+/// track) when its hold has counted down, exactly as if written then, and
+/// the track starts that much past its beginning - a frame landing late
+/// past the slot finds the motion already that far along. `remaining_ms`
+/// is on the node's own time (its rate applies; a frozen hold waits);
+/// `since_ms` is the stamp it was last counted down to.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PendingWrite {
   pub node: NodeId,
   pub component: Component,
   pub to: Lanes,
   pub spec: TransitionSpec,
-  pub at_ms: f64,
+  pub remaining_ms: f64,
+  pub since_ms: f64,
 }
 
 /// A weights write held by `delay` (the `PendingWrite` of the weights
@@ -162,19 +174,24 @@ pub(super) struct PendingWeights {
   pub node: NodeId,
   pub to: Vec<f32>,
   pub spec: TransitionSpec,
-  pub at_ms: f64,
+  pub remaining_ms: f64,
+  pub since_ms: f64,
 }
 
 /// The motion in force on one component, for the node dump: the target
 /// lanes (three for position and scale, four for rotation, one per target
-/// for weights), and the clock a held write applies at when it is still
-/// waiting.
+/// for weights), and for a held write still waiting, the ms of its hold
+/// left on the node's own time as of the last advance.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MotionState {
   pub component: Component,
   pub to: Vec<f32>,
-  pub held_until_ms: Option<f64>,
+  pub held_for_ms: Option<f64>,
 }
+
+/// The rate a node's time runs at, for the advance: None for a node that
+/// is gone since, which drops its tracks and holds.
+pub(super) type RateOf<'a> = &'a dyn Fn(NodeId) -> Option<f32>;
 
 // Settle threshold, scaled to the animated distance so world units and
 // radians both settle promptly (the element transitions' rule).
@@ -187,13 +204,11 @@ fn eps_for(d: f32) -> f32 {
 pub(super) enum LinearState {
   Tween {
     from: [f32; 3],
-    start_ms: f64,
+    /// How far into the tween the track is, on the node's own time.
+    elapsed_ms: f64,
   },
   /// Position and velocity (units/s), integrated each frame.
-  Spring {
-    pos: [f32; 3],
-    vel: [f32; 3],
-  },
+  Spring { pos: [f32; 3], vel: [f32; 3] },
 }
 
 pub(super) struct LinearTrack {
@@ -201,32 +216,27 @@ pub(super) struct LinearTrack {
   pub component: Component,
   spec: TransitionSpec,
   state: LinearState,
-  // The clock `state` is valid at: the scheduled time of a held write when
-  // it starts, the previous advance otherwise. A spring integrates from
-  // here to the advance clock, so a late activating frame catches up.
+  // The stamp the track is advanced to: the step it takes at an advance is
+  // the app time since, at its node's rate.
   since_ms: f64,
   to: [f32; 3],
   eps: f32,
 }
 
 impl LinearTrack {
-  /// Move the track's time base by `delta` ms (the clock's start, see
-  /// NodeTransitions::set_now): the same motion, started that much later.
-  pub(super) fn shift(&mut self, delta: f64) {
-    self.since_ms += delta;
-    if let LinearState::Tween { start_ms, .. } = &mut self.state {
-      *start_ms += delta;
-    }
+  /// The track's step for an advance at `now_ms` (see `scaled_step`).
+  pub(super) fn elapse(&mut self, now_ms: f64, rate: f32) -> f64 {
+    scaled_step(&mut self.since_ms, now_ms, rate)
   }
 
-  /// Advance to `now_ms`. Returns the value to write and whether the track
-  /// settled; a settled track reports the target exactly.
-  pub(super) fn advance(&mut self, now_ms: f64) -> ([f32; 3], bool) {
-    let dt_ms = (now_ms - self.since_ms).max(0.0);
-    self.since_ms = now_ms;
+  /// Step the motion by `dt_ms` of the node's own time. Returns the value
+  /// to write and whether the track settled; a settled track reports the
+  /// target exactly.
+  pub(super) fn step(&mut self, dt_ms: f64) -> ([f32; 3], bool) {
     match (&mut self.state, self.spec) {
-      (LinearState::Tween { from, start_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
-        let p = ((now_ms - *start_ms) / duration_ms as f64).clamp(0.0, 1.0) as f32;
+      (LinearState::Tween { from, elapsed_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
+        *elapsed_ms += dt_ms;
+        let p = (*elapsed_ms / duration_ms as f64).clamp(0.0, 1.0) as f32;
         if p >= 1.0 {
           return (self.to, true);
         }
@@ -269,7 +279,7 @@ impl LinearTrack {
 /// velocity vector - momentum survives, like the linear spring.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum RotationState {
-  Tween { from: [f32; 4], start_ms: f64 },
+  Tween { from: [f32; 4], elapsed_ms: f64 },
   Spring { q: [f32; 4], vel: [f32; 3] },
 }
 
@@ -285,20 +295,15 @@ pub(super) struct RotationTrack {
 }
 
 impl RotationTrack {
-  /// Move the track's time base by `delta` ms (see LinearTrack::shift).
-  pub(super) fn shift(&mut self, delta: f64) {
-    self.since_ms += delta;
-    if let RotationState::Tween { start_ms, .. } = &mut self.state {
-      *start_ms += delta;
-    }
+  pub(super) fn elapse(&mut self, now_ms: f64, rate: f32) -> f64 {
+    scaled_step(&mut self.since_ms, now_ms, rate)
   }
 
-  pub(super) fn advance(&mut self, now_ms: f64) -> ([f32; 4], bool) {
-    let dt_ms = (now_ms - self.since_ms).max(0.0);
-    self.since_ms = now_ms;
+  pub(super) fn step(&mut self, dt_ms: f64) -> ([f32; 4], bool) {
     match (&mut self.state, self.spec) {
-      (RotationState::Tween { from, start_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
-        let p = ((now_ms - *start_ms) / duration_ms as f64).clamp(0.0, 1.0) as f32;
+      (RotationState::Tween { from, elapsed_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
+        *elapsed_ms += dt_ms;
+        let p = (*elapsed_ms / duration_ms as f64).clamp(0.0, 1.0) as f32;
         if p >= 1.0 {
           return (self.to, true);
         }
@@ -331,7 +336,7 @@ impl RotationTrack {
 /// morph target, the linear track's math over a register-sized vector.
 #[derive(Clone, Debug)]
 pub(super) enum WeightsState {
-  Tween { from: Vec<f32>, start_ms: f64 },
+  Tween { from: Vec<f32>, elapsed_ms: f64 },
   Spring { pos: Vec<f32>, vel: Vec<f32> },
 }
 
@@ -345,24 +350,19 @@ pub(super) struct WeightsTrack {
 }
 
 impl WeightsTrack {
-  /// Move the track's time base by `delta` ms (see LinearTrack::shift).
-  pub(super) fn shift(&mut self, delta: f64) {
-    self.since_ms += delta;
-    if let WeightsState::Tween { start_ms, .. } = &mut self.state {
-      *start_ms += delta;
-    }
+  pub(super) fn elapse(&mut self, now_ms: f64, rate: f32) -> f64 {
+    scaled_step(&mut self.since_ms, now_ms, rate)
   }
 
-  /// Advance to `now_ms`, writing the value into `out` (resized to the
-  /// track's lanes). Returns whether the track settled; a settled track
-  /// reports the target exactly.
-  pub(super) fn advance(&mut self, now_ms: f64, out: &mut Vec<f32>) -> bool {
-    let dt_ms = (now_ms - self.since_ms).max(0.0);
-    self.since_ms = now_ms;
+  /// Step the motion by `dt_ms` of the node's own time, writing the value
+  /// into `out` (resized to the track's lanes). Returns whether the track
+  /// settled; a settled track reports the target exactly.
+  pub(super) fn step(&mut self, dt_ms: f64, out: &mut Vec<f32>) -> bool {
     out.clear();
     match (&mut self.state, self.spec) {
-      (WeightsState::Tween { from, start_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
-        let p = ((now_ms - *start_ms) / duration_ms as f64).clamp(0.0, 1.0) as f32;
+      (WeightsState::Tween { from, elapsed_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
+        *elapsed_ms += dt_ms;
+        let p = (*elapsed_ms / duration_ms as f64).clamp(0.0, 1.0) as f32;
         if p >= 1.0 {
           out.extend_from_slice(&self.to);
           return true;
@@ -407,14 +407,14 @@ fn fit_lanes(v: &[f32], len: usize) -> Vec<f32> {
 }
 
 /// Arena-level transition state: the per-node declarations, the running
-/// tracks, the held writes and the animation clock, stamped once per frame
+/// tracks, the held writes and the app-time stamp, taken once per frame
 /// from the app timeline before the frame's JS runs, so writes and the
 /// advance agree on time. Owned by `Spatial`; the write/advance plumbing
 /// lives in mod.rs, where the nodes are.
 #[derive(Default)]
 pub(super) struct NodeTransitions {
-  /// The animation clock the tracks run on: the latest stamp, zero before
-  /// the first one (see `set_now`).
+  /// The latest app-time stamp: what tracks and holds measure their step
+  /// against. Zero before the first one (see `set_now`).
   pub now_ms: f64,
   // Whether a stamp has arrived: the first one starts the clock.
   started: bool,
@@ -453,43 +453,55 @@ pub(super) struct NodeTransitions {
 }
 
 impl NodeTransitions {
-  /// Stamp the clock with this frame's app time. The first stamp starts
-  /// the clock: every track, held write and staggered exit started before
-  /// it, all timed at zero, moves as one to the stamp, so a target written
-  /// before the first frame - scene setup, a node's enter values - begins
-  /// its full duration at the first frame that runs instead of integrating
-  /// the startup latency (or, after a reload, the previous app's whole
-  /// runtime) in one step (okf/done/transition-clock-startup-anchor.md).
-  /// Stagger indices are per frame: each stamp opens a fresh count.
-  /// Returns whether this stamp started the clock, so the clip players
-  /// re-base their clock with it.
+  /// Stamp this frame's app time. The first stamp starts the clock: every
+  /// track, held write and staggered exit started before it counts as
+  /// advanced to it, so a target written before the first frame - scene
+  /// setup, a node's enter values - begins its full duration at the first
+  /// frame that runs instead of taking the startup latency (or, after a
+  /// reload, the previous app's whole runtime) as its first step
+  /// (okf/done/transition-clock-startup-anchor.md). Stagger indices are
+  /// per frame: each stamp opens a fresh count. Returns whether this stamp
+  /// started the clock, so the clip players start theirs with it.
   pub fn set_now(&mut self, now_ms: f64) -> bool {
     let first = !self.started;
     if first {
       self.started = true;
-      let delta = now_ms - self.now_ms;
       for t in &mut self.linear {
-        t.shift(delta);
+        t.since_ms = now_ms;
       }
       for t in &mut self.rotation {
-        t.shift(delta);
+        t.since_ms = now_ms;
       }
       for t in &mut self.weights {
-        t.shift(delta);
+        t.since_ms = now_ms;
       }
       for w in &mut self.pending {
-        w.at_ms += delta;
+        w.since_ms = now_ms;
       }
       for w in &mut self.pending_weights {
-        w.at_ms += delta;
+        w.since_ms = now_ms;
       }
       for (_, at_ms) in &mut self.staggered_exits {
-        *at_ms += delta;
+        *at_ms = now_ms;
       }
     }
     self.now_ms = now_ms;
     self.stagger_counts.clear();
     first
+  }
+
+  /// Whether anything here still wants frames: a track running, a write
+  /// held or an exit waiting for its cascade slot, on a node whose time
+  /// moves. A frozen subtree (rate 0) is not demand - a paused scene lets
+  /// the loop go idle, and the write that resumes it requests the frame.
+  pub fn demand(&self, rate_of: RateOf<'_>) -> bool {
+    let moving = |node: NodeId| rate_of(node).is_some_and(|r| r > 0.0);
+    self.linear.iter().any(|t| moving(t.node))
+      || self.rotation.iter().any(|t| moving(t.node))
+      || self.weights.iter().any(|t| moving(t.node))
+      || self.pending.iter().any(|w| moving(w.node))
+      || self.pending_weights.iter().any(|w| moving(w.node))
+      || self.staggered_exits.iter().any(|(node, _)| moving(*node))
   }
 
   /// The next stagger index for a lifecycle event under `group` this
@@ -514,9 +526,8 @@ impl NodeTransitions {
       && self.staggered_exits.is_empty()
   }
 
-  /// Start or retarget the position/scale track for (node, component), as
-  /// of `at_ms`: the current clock for a write landing now, the scheduled
-  /// time for a held write coming due. `current` is the node's present
+  /// Start or retarget the position/scale track for (node, component)
+  /// from `start` (see `TrackStart`). `current` is the node's present
   /// value (the from-value for a fresh or restarted tween); a running
   /// spring keeps its position and velocity and only moves its
   /// equilibrium. A write matching a running track's target is a no-op -
@@ -530,12 +541,22 @@ impl NodeTransitions {
     current: [f32; 3],
     to: [f32; 3],
     spec: TransitionSpec,
-    at_ms: f64,
+    start: TrackStart,
   ) -> bool {
     let mut d = 0.0f32;
     for i in 0..3 {
       d = d.max((to[i] - current[i]).abs());
     }
+    let fresh = |t: &mut LinearTrack| {
+      t.state = match spec {
+        TransitionSpec::Tween { .. } => LinearState::Tween { from: current, elapsed_ms: 0.0 },
+        TransitionSpec::Spring { .. } => LinearState::Spring { pos: current, vel: [0.0; 3] },
+      };
+      t.since_ms = start.since_ms;
+      if start.lead_ms > 0.0 {
+        t.step(start.lead_ms);
+      }
+    };
     if let Some(t) = self.linear.iter_mut().find(|t| t.node == node && t.component == component) {
       if t.to == to {
         return true;
@@ -545,22 +566,24 @@ impl NodeTransitions {
       let keep_spring_state = matches!((&t.state, spec), (LinearState::Spring { .. }, TransitionSpec::Spring { .. }));
       t.spec = spec;
       if !keep_spring_state {
-        t.state = match spec {
-          TransitionSpec::Tween { .. } => LinearState::Tween { from: current, start_ms: at_ms },
-          TransitionSpec::Spring { .. } => LinearState::Spring { pos: current, vel: [0.0; 3] },
-        };
-        t.since_ms = at_ms;
+        fresh(t);
       }
       return true;
     }
     if to == current {
       return false;
     }
-    let state = match spec {
-      TransitionSpec::Tween { .. } => LinearState::Tween { from: current, start_ms: at_ms },
-      TransitionSpec::Spring { .. } => LinearState::Spring { pos: current, vel: [0.0; 3] },
+    let mut t = LinearTrack {
+      node,
+      component,
+      spec,
+      state: LinearState::Spring { pos: current, vel: [0.0; 3] },
+      since_ms: start.since_ms,
+      to,
+      eps: eps_for(d),
     };
-    self.linear.push(LinearTrack { node, component, spec, state, since_ms: at_ms, to, eps: eps_for(d) });
+    fresh(&mut t);
+    self.linear.push(t);
     true
   }
 
@@ -574,8 +597,18 @@ impl NodeTransitions {
     current: [f32; 4],
     to: [f32; 4],
     spec: TransitionSpec,
-    at_ms: f64,
+    start: TrackStart,
   ) -> bool {
+    let fresh = |t: &mut RotationTrack| {
+      t.state = match spec {
+        TransitionSpec::Tween { .. } => RotationState::Tween { from: current, elapsed_ms: 0.0 },
+        TransitionSpec::Spring { .. } => RotationState::Spring { q: current, vel: [0.0; 3] },
+      };
+      t.since_ms = start.since_ms;
+      if start.lead_ms > 0.0 {
+        t.step(start.lead_ms);
+      }
+    };
     if let Some(t) = self.rotation.iter_mut().find(|t| t.node == node) {
       if same_quat(t.to, to) {
         return true;
@@ -589,29 +622,23 @@ impl NodeTransitions {
       let keep_spring_state = matches!((&t.state, spec), (RotationState::Spring { .. }, TransitionSpec::Spring { .. }));
       t.spec = spec;
       if !keep_spring_state {
-        t.state = match spec {
-          TransitionSpec::Tween { .. } => RotationState::Tween { from: current, start_ms: at_ms },
-          TransitionSpec::Spring { .. } => RotationState::Spring { q: current, vel: [0.0; 3] },
-        };
-        t.since_ms = at_ms;
+        fresh(t);
       }
       return true;
     }
     if same_quat(to, current) {
       return false;
     }
-    let state = match spec {
-      TransitionSpec::Tween { .. } => RotationState::Tween { from: current, start_ms: at_ms },
-      TransitionSpec::Spring { .. } => RotationState::Spring { q: current, vel: [0.0; 3] },
-    };
-    self.rotation.push(RotationTrack {
+    let mut t = RotationTrack {
       node,
       spec,
-      state,
-      since_ms: at_ms,
+      state: RotationState::Spring { q: current, vel: [0.0; 3] },
+      since_ms: start.since_ms,
       to: near_hemisphere(to, current),
       eps: eps_for(angle_between(current, to)),
-    });
+    };
+    fresh(&mut t);
+    self.rotation.push(t);
     true
   }
 
@@ -625,7 +652,7 @@ impl NodeTransitions {
     current: &[f32],
     to: &[f32],
     spec: TransitionSpec,
-    at_ms: f64,
+    start: TrackStart,
   ) -> bool {
     let len = current.len().max(to.len());
     let current = fit_lanes(current, len);
@@ -634,11 +661,21 @@ impl NodeTransitions {
     for i in 0..len {
       d = d.max((to[i] - current[i]).abs());
     }
+    let fresh_state = || match spec {
+      TransitionSpec::Tween { .. } => WeightsState::Tween { from: current.clone(), elapsed_ms: 0.0 },
+      TransitionSpec::Spring { .. } => WeightsState::Spring { pos: current.clone(), vel: vec![0.0; len] },
+    };
+    // A lead steps the fresh motion past its beginning; the value it lands
+    // on is scratch here, the advance writes the next one.
+    let mut scratch = Vec::new();
     if let Some(t) = self.weights.iter_mut().find(|t| t.node == node) {
       if t.to == to {
         return true;
       }
       let keep_spring_state = matches!((&t.state, spec), (WeightsState::Spring { .. }, TransitionSpec::Spring { .. }));
+      t.to = to;
+      t.eps = eps_for(d);
+      t.spec = spec;
       if keep_spring_state {
         if let WeightsState::Spring { pos, vel } = &mut t.state {
           // A wider target grows the lanes; the new ones start at rest
@@ -649,25 +686,22 @@ impl NodeTransitions {
           }
         }
       } else {
-        t.state = match spec {
-          TransitionSpec::Tween { .. } => WeightsState::Tween { from: current, start_ms: at_ms },
-          TransitionSpec::Spring { .. } => WeightsState::Spring { pos: current, vel: vec![0.0; len] },
-        };
-        t.since_ms = at_ms;
+        t.state = fresh_state();
+        t.since_ms = start.since_ms;
+        if start.lead_ms > 0.0 {
+          t.step(start.lead_ms, &mut scratch);
+        }
       }
-      t.to = to;
-      t.eps = eps_for(d);
-      t.spec = spec;
       return true;
     }
     if to == current {
       return false;
     }
-    let state = match spec {
-      TransitionSpec::Tween { .. } => WeightsState::Tween { from: current, start_ms: at_ms },
-      TransitionSpec::Spring { .. } => WeightsState::Spring { pos: current, vel: vec![0.0; len] },
-    };
-    self.weights.push(WeightsTrack { node, spec, state, since_ms: at_ms, to, eps: eps_for(d) });
+    let mut t = WeightsTrack { node, spec, state: fresh_state(), since_ms: start.since_ms, to, eps: eps_for(d) };
+    if start.lead_ms > 0.0 {
+      t.step(start.lead_ms, &mut scratch);
+    }
+    self.weights.push(t);
     true
   }
 
@@ -698,12 +732,13 @@ impl NodeTransitions {
         node,
         to: to.to_vec(),
         spec: motion.spec,
-        at_ms: now + motion.delay_ms as f64,
+        remaining_ms: motion.delay_ms as f64,
+        since_ms: now,
       });
       return true;
     }
     self.unschedule_weights(node);
-    self.retarget_weights(node, current, to, motion.spec, now)
+    self.retarget_weights(node, current, to, motion.spec, TrackStart::now(now))
   }
 
   /// The target a running weights track for the node heads for.
@@ -722,12 +757,19 @@ impl NodeTransitions {
     self.pending_weights.retain(|w| w.node != node);
   }
 
-  /// Drain the held weights writes whose activation time has arrived.
-  pub fn take_due_weights(&mut self, now_ms: f64) -> Vec<PendingWeights> {
+  /// Count the held weights writes down to `now_ms` (each on its node's
+  /// own time) and drain the ones that came due, each with its lead: how
+  /// far past its slot this advance landed, which its track starts at. A
+  /// hold on a node that is gone is dropped.
+  pub fn take_due_weights(&mut self, now_ms: f64, rate_of: RateOf<'_>) -> Vec<(PendingWeights, f64)> {
     let mut due = Vec::new();
-    self.pending_weights.retain(|w| {
-      if w.at_ms <= now_ms {
-        due.push(w.clone());
+    self.pending_weights.retain_mut(|w| {
+      let Some(rate) = rate_of(w.node) else {
+        return false;
+      };
+      w.remaining_ms -= scaled_step(&mut w.since_ms, now_ms, rate);
+      if w.remaining_ms <= 0.0 {
+        due.push((w.clone(), -w.remaining_ms));
         false
       } else {
         true
@@ -772,16 +814,23 @@ impl NodeTransitions {
       } else if unchanged {
         return false;
       }
-      self.schedule(PendingWrite { node, component, to, spec: motion.spec, at_ms: now + motion.delay_ms as f64 });
+      self.schedule(PendingWrite {
+        node,
+        component,
+        to,
+        spec: motion.spec,
+        remaining_ms: motion.delay_ms as f64,
+        since_ms: now,
+      });
       return true;
     }
     // Last write wins: an immediate write supersedes a held one.
     self.unschedule(node, component);
-    self.apply(node, component, current, to, motion.spec, now)
+    self.apply(node, component, current, to, motion.spec, TrackStart::now(now))
   }
 
-  /// Start or retarget the pair's track from `current` toward `to` as of
-  /// `at_ms`, whichever list it lives in.
+  /// Start or retarget the pair's track from `current` toward `to` from
+  /// `start`, whichever list it lives in.
   pub fn apply(
     &mut self,
     node: NodeId,
@@ -789,13 +838,13 @@ impl NodeTransitions {
     current: Lanes,
     to: Lanes,
     spec: TransitionSpec,
-    at_ms: f64,
+    start: TrackStart,
   ) -> bool {
     match component {
-      Component::Rotation => self.retarget_rotation(node, current, to, spec, at_ms),
+      Component::Rotation => self.retarget_rotation(node, current, to, spec, start),
       Component::Weights => false,
       _ => {
-        self.retarget_linear(node, component, [current[0], current[1], current[2]], [to[0], to[1], to[2]], spec, at_ms)
+        self.retarget_linear(node, component, [current[0], current[1], current[2]], [to[0], to[1], to[2]], spec, start)
       }
     }
   }
@@ -820,12 +869,17 @@ impl NodeTransitions {
     self.pending.retain(|w| !(w.node == node && w.component == component));
   }
 
-  /// Drain the held writes whose activation time has arrived.
-  pub fn take_due(&mut self, now_ms: f64) -> Vec<PendingWrite> {
+  /// Count the held TRS writes down to `now_ms` and drain the due ones
+  /// with their leads (see `take_due_weights`).
+  pub fn take_due(&mut self, now_ms: f64, rate_of: RateOf<'_>) -> Vec<(PendingWrite, f64)> {
     let mut due = Vec::new();
-    self.pending.retain(|w| {
-      if w.at_ms <= now_ms {
-        due.push(*w);
+    self.pending.retain_mut(|w| {
+      let Some(rate) = rate_of(w.node) else {
+        return false;
+      };
+      w.remaining_ms -= scaled_step(&mut w.since_ms, now_ms, rate);
+      if w.remaining_ms <= 0.0 {
+        due.push((*w, -w.remaining_ms));
         false
       } else {
         true
@@ -878,20 +932,20 @@ impl NodeTransitions {
   pub fn motion_of(&self, node: NodeId) -> Vec<MotionState> {
     let mut out = Vec::new();
     for t in self.linear.iter().filter(|t| t.node == node) {
-      out.push(MotionState { component: t.component, to: t.to.to_vec(), held_until_ms: None });
+      out.push(MotionState { component: t.component, to: t.to.to_vec(), held_for_ms: None });
     }
     for t in self.rotation.iter().filter(|t| t.node == node) {
-      out.push(MotionState { component: Component::Rotation, to: t.to.to_vec(), held_until_ms: None });
+      out.push(MotionState { component: Component::Rotation, to: t.to.to_vec(), held_for_ms: None });
     }
     for t in self.weights.iter().filter(|t| t.node == node) {
-      out.push(MotionState { component: Component::Weights, to: t.to.clone(), held_until_ms: None });
+      out.push(MotionState { component: Component::Weights, to: t.to.clone(), held_for_ms: None });
     }
     for w in self.pending.iter().filter(|w| w.node == node) {
       let lanes = if w.component == Component::Rotation { 4 } else { 3 };
-      out.push(MotionState { component: w.component, to: w.to[..lanes].to_vec(), held_until_ms: Some(w.at_ms) });
+      out.push(MotionState { component: w.component, to: w.to[..lanes].to_vec(), held_for_ms: Some(w.remaining_ms) });
     }
     for w in self.pending_weights.iter().filter(|w| w.node == node) {
-      out.push(MotionState { component: Component::Weights, to: w.to.clone(), held_until_ms: Some(w.at_ms) });
+      out.push(MotionState { component: Component::Weights, to: w.to.clone(), held_for_ms: Some(w.remaining_ms) });
     }
     out
   }

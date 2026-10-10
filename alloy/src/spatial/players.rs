@@ -81,11 +81,16 @@ struct Clip {
 /// weight change per second (positive in, negative out, 0 steady); a
 /// player fading past 0 is removed (a Dropped event), one reaching 1
 /// stops fading. A non-looping player reaching its end holds the final
-/// pose and reports Finished once.
+/// pose and reports Finished once. `clock` is the node whose rate the
+/// player's time, fades and root motion run at (`Spatial::set_time_scale`):
+/// a player has one time over many targets, so the node it is attached to
+/// names the clock - the model's root for a mixer, Godot's
+/// AnimationPlayer-is-a-node.
 struct Player {
   id: PlayerId,
   clip: ClipId,
   targets: Vec<NodeId>,
+  clock: NodeId,
   time: f64,
   speed: f32,
   weight: f32,
@@ -386,13 +391,15 @@ impl Spatial {
   }
 
   /// Start a player: `targets[slot]` is the node each channel's
-  /// `target_slot` animates. Every target must resolve NOW (animation
+  /// `target_slot` animates, `clock` the node whose rate it runs at (see
+  /// `Player`). Every target and the clock must resolve NOW (animation
   /// binds live arena nodes; a model animates while in a scene) - later
   /// deaths drop the player with a Dropped event instead.
   pub fn create_player(
     &mut self,
     clip: ClipId,
     targets: Vec<NodeId>,
+    clock: NodeId,
     speed: f32,
     looped: bool,
     weight: f32,
@@ -408,12 +415,14 @@ impl Spatial {
     for &t in &targets {
       self.resolve(t)?;
     }
+    self.resolve(clock).map_err(|e| format!("clock: {e}"))?;
     let id = self.players.next_player;
     self.players.next_player += 1;
     self.players.players.push(Player {
       id,
       clip,
       targets,
+      clock,
       time: 0.0,
       speed,
       weight,
@@ -534,38 +543,47 @@ impl Spatial {
     Ok((n.position, n.rotation, n.scale))
   }
 
-  /// Advance every player to the stamped clock (`set_transition_now` - the
-  /// runtime stamps before any frame work) and write the blended poses
-  /// through the snap path. Called once per frame BEFORE the frame's JS;
-  /// the embedder drains `take_clip_events` right after and keeps
-  /// requesting frames while `active`.
+  /// Advance every player by the app time since the last advance
+  /// (`set_transition_now` stamps it before any frame work), each at its
+  /// clock node's rate, and write the blended poses through the snap path.
+  /// Called once per frame BEFORE the frame's JS; the embedder drains
+  /// `take_clip_events` right after and keeps requesting frames while
+  /// `active`.
   pub fn advance_players(&mut self) -> PlayersTick {
     let now = self.transitions.now_ms;
-    let dt = ((now - self.players.last_ms).max(0.0)) / 1000.0;
+    let frame_dt = ((now - self.players.last_ms).max(0.0)) / 1000.0;
     self.players.last_ms = now;
     if self.players.players.is_empty() {
       return PlayersTick::default();
     }
 
-    // Clocks, fades, lifecycle. A player whose clip or any target died
-    // drops here (Dropped); one fading past 0 drops too; a non-looping
-    // one reaching its end reports Finished once and holds.
+    // Clocks, fades, lifecycle. A player whose clip, clock or any target
+    // died drops here (Dropped); one fading past 0 drops too; a
+    // non-looping one reaching its end reports Finished once and holds.
+    // Active = a player that can still progress on a moving clock:
+    // unfinished, or fading.
     self.players.root_deltas.clear();
     let mut anchor_moves: Vec<(NodeId, [f32; 3], f32, [f32; 3])> = Vec::new();
+    let mut active = false;
     let mut i = 0;
     while i < self.players.players.len() {
       let set = &mut self.players;
+      let live = |t: NodeId| {
+        let idx = super::index(t);
+        self.nodes.get(idx).filter(|n| n.alive && n.generation == super::generation(t))
+      };
+      let rate = live(set.players[i].clock).map(|n| n.rate);
       let alive = set.clips.contains_key(&set.players[i].clip)
-        && set.players[i].targets.iter().all(|&t| {
-          let idx = super::index(t);
-          self.nodes.get(idx).is_some_and(|n| n.alive && n.generation == super::generation(t))
-        });
+        && rate.is_some()
+        && set.players[i].targets.iter().all(|&t| live(t).is_some());
       if !alive {
         let id = set.players[i].id;
         set.events.push(ClipEvent::Dropped(id));
         set.players.remove(i);
         continue;
       }
+      let rate = rate.unwrap_or(1.0);
+      let dt = frame_dt * rate as f64;
       let duration = set.clips[&set.players[i].clip].duration;
       let p = &mut set.players[i];
       if p.fade != 0.0 {
@@ -657,6 +675,9 @@ impl Spatial {
             }
           }
         }
+      }
+      if rate > 0.0 && (!p.finished || p.fade != 0.0) {
+        active = true;
       }
       i += 1;
     }
@@ -812,8 +833,6 @@ impl Spatial {
       wrote = true;
     }
 
-    // Active = a player that can still progress: unfinished, or fading.
-    let active = self.players.players.iter().any(|p| !p.finished || p.fade != 0.0);
     PlayersTick { active, wrote }
   }
 

@@ -1,6 +1,6 @@
 import { createEffect, onCleanup, useContext } from "@solidrt/core"
 import { LodContext } from "./context.tsx"
-import { setTransform, setTransition, setVisible } from "../node.ts"
+import { setTimeScale, setTransform, setTransition, setVisible } from "../node.ts"
 import type { HoverHandlers, NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneNode, TransitionEndEvent } from "../node.ts"
 import type { NodeTransition } from "flux:spatial"
 import type { Quat, Vec3 } from "../math.ts"
@@ -19,6 +19,10 @@ export type TransformProps = {
   transition?: NodeTransition | string | null
   /** A declared transition settled on one component. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
+  /** The rate the native motion under this node runs at (see
+   * setTimeScale): 0 freezes the subtree, 1 is app time; the nearest
+   * declaring ancestor wins. Undefined or null inherits. */
+  timeScale?: number | null
   /** Under a `<Lod>`: this node is a level of it, drawn while the group's
    * projected size is at or above this and below the next larger level's
    * (see createLod). Only on a direct child of `<Lod>`; throws elsewhere. */
@@ -104,6 +108,14 @@ export function syncNode(node: SceneNode & HoverHandlers, props: TransformProps 
     () => props.transition,
     transition => setTransition(node, transition ?? null),
   )
+  // Built only when the prop is present (the compiler emits the getter
+  // only then), so a plain node pays no effect for it.
+  if ("timeScale" in props) {
+    createEffect(
+      () => props.timeScale,
+      scale => setTimeScale(node, scale ?? null),
+    )
+  }
   // A level of the enclosing <Lod>, keyed by size; built only when the
   // prop is present (the compiler emits the getter only then), so a plain
   // node pays nothing.

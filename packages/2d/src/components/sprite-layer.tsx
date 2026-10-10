@@ -106,6 +106,13 @@ export type SpriteLayerProps = LayerPointerProps & {
    * under it). Live: a change applies to the next frame's cascade.
    */
   stagger?: number
+  /**
+   * The rate the layer's native motion runs at (layer.setTimeScale as a
+   * prop): 0 pauses every sprite and group transition while the app's UI
+   * keeps moving, 1 is app time; a `<Group timeScale={1}>` inside keeps
+   * running. Undefined or null is app time. Live.
+   */
+  timeScale?: number | null
   label?: string
   /** The layer: sprites, tint, pick, createView. */
   ref?: (layer: LayerHandle) => void
@@ -199,6 +206,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
       tint: props.tint,
       orderBy: props.orderBy,
       stagger: props.stagger,
+      timeScale: props.timeScale ?? undefined,
       label: props.label,
     })
   })
@@ -211,6 +219,11 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   createEffect(
     () => props.stagger,
     ms => layer.setStagger(ms ?? null),
+    { defer: true },
+  )
+  createEffect(
+    () => props.timeScale,
+    scale => layer.setTimeScale(scale ?? null),
     { defer: true },
   )
   untrack(() => props.ref)?.(layer)

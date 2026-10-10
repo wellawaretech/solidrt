@@ -418,6 +418,27 @@ a cancel, snap, leave or exit; the raw "spatialTransitionEnd" engine
 event (sol:events, carrying the CORE node id `_node`) stays for
 flux:spatial consumers.
 
+PAUSE and time scale are a node declaration too: `setTimeScale(node,
+scale)` / the `timeScale` prop sets the rate the native motion under the
+node runs at - transitions with their delays, enters, exits and stagger
+slots, morph weight tracks, and the clip players of the models under it
+(a mixer's players are clocked on their model's node, so this is Three's
+`mixer.timeScale` as well). 0 freezes, 1 is app time, 0.5 is slow
+motion; `scene.setTimeScale` / `<Scene timeScale>` declares it on
+`scene.root`, the whole-world pause. The NEAREST declaring ancestor
+wins, never a product (Godot's process_mode shape): a world at 0 with a
+`<Group timeScale={1}>` inside keeps that group running - the spinning
+preview on a pause screen, which a product could not express. A frozen
+scene asks for no frames (the loop idles; the write that resumes it
+brings the frame), writes while frozen behave as always (undeclared
+components snap, declared ones retarget and wait), a `destroy` with an
+`exit` stays a ghost until its time moves again (a scene `dispose`
+still cuts it short), and a node created frozen sits at its `from`. The
+scale covers the CORE's motion only: your own `onFrame` logic, timers,
+video and audio stay on app time - gate them yourself, multiplying your
+step by `timeRate(node)` / `scene.timeRate()`, the effective rate read.
+The dev clock (`/clock?scale=`) scales app time underneath all of this.
+
 ### Geometry layout, indices and topology
 
 One interleaved vertex buffer per geometry, described by an open layout
@@ -2616,7 +2637,11 @@ sample, weight-blend and write joint TRS natively each frame, so a
 playing character costs zero JS per frame (gate other work on
 `mixer.playing()`). play() requires the model to be IN a scene (players
 bind live arena nodes; removing the model drops them - a re-added model
-plays again from play()). Three traps that follow from core ownership:
+plays again from play()). The players run on the model node's time:
+`setTimeScale(model, 0)` (or on any ancestor, the scene root included)
+pauses every clip and crossfade of the model where it stands and resumes
+it from there - Three's `mixer.timeScale`, Unity's `Animator.speed`
+under `Time.timeScale` (see Retargeted motion). Three traps that follow from core ownership:
 (1) players advance BEFORE your onFrame, which is therefore the
 post-animation hook - read a freshly posed joint and overwrite it
 (root-motion strips, skeleton copies) in plain setTransform, last write

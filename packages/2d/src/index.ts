@@ -21,7 +21,7 @@
 // first (extrudeGrid/extrudeRects). See AGENTS.md for the model and the
 // traps.
 
-export { addGroup, addSprite, createSpriteLayer, getSprite, destroyGroup, destroySprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, worldPosition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
+export { addGroup, addSprite, createSpriteLayer, getSprite, destroyGroup, destroySprite, setGroup, setGroupTimeScale, setGroupTransition, setSprite, setSpriteParent, setSpriteTimeScale, setSpriteTransition, timeRate, worldPosition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
 export { createRecordLayer, records, setRecordCount, updateRecords, INSTANCE_FLOATS } from "./records.ts"
 export type { RecordLayer as RecordLayerHandle, RecordLayerOptions, UpdateRecordsOptions } from "./records.ts"
 export { floorReach, pointInSprite } from "./pick.ts"
