@@ -276,7 +276,7 @@ API: `SafeArea` - typed and commented in [src/safe-area.tsx](./src/safe-area.tsx
 
 ### TextInput
 
-Text input, single-line by default; `multiline` wraps at the field's width and edits across lines (Enter inserts a newline, Up/Down move by line; grows with content up to `maxRows` unless its layout sizes the box, and scrolls to the caret). Controlled via `value`/`onInput`, or uncontrolled via `defaultValue`; `onSubmit` fires on Enter (single-line only). Also `placeholder`, `maxLength`, `autoFocus`, `disabled`, `onFocus`/`onBlur`, and `hints` for IME behavior (keyboard type, capitalization, autocorrect - identifier-like fields want `{ capitalize: "none", autocorrect: false }`). The font fields of `layout` (`fontSize`, `fontFamily`, `lineHeight`, `fontStyle`, `fontWeight`) shape the text as on `Text`, with the rows, caret and scrolling following.
+Text input, single-line by default; `multiline` wraps at the field's width and edits across lines (Enter inserts a newline, Up/Down move by line; grows with content up to `maxRows` unless its layout sizes the box, and scrolls to the caret). Controlled via `value`/`onInput`, or uncontrolled via `defaultValue`; `onSubmit` fires on Enter (single-line only), `onCancel` on Escape or the platform's back, each followed by the blur. Also `placeholder`, `maxLength`, `autoFocus`, `disabled`, `onFocus`/`onBlur`, and `hints` for IME behavior (keyboard type, capitalization, autocorrect - identifier-like fields want `{ capitalize: "none", autocorrect: false }`). The font fields of `layout` (`fontSize`, `fontFamily`, `lineHeight`, `fontStyle`, `fontWeight`) shape the text as on `Text`, with the rows, caret and scrolling following.
 
 ```jsx
 import { TextInput } from "@solidrt/components"
@@ -296,7 +296,11 @@ function NameField() {
 }
 ```
 
-`style` overrides the themed colors, border, and radius (`borderWidth: 0` draws no border at all, and no focus ring). The mouse cursor is the I-beam over the field. `autoFocus` focuses on mount (the on-screen keyboard still waits for a tap). A tap anywhere outside the field blurs it, as does Escape.
+`style` overrides the themed colors, border, and radius (`borderWidth: 0` draws no border at all, and no focus ring). The mouse cursor is the I-beam over the field. `autoFocus` focuses on mount (the on-screen keyboard still waits for a tap). A tap anywhere outside the field blurs it.
+
+Leaving the field: Enter submits (`onSubmit` with the value, then the blur); Escape and the platform's back (the Android button, a pad's back button) cancel (`onCancel`, then the blur). `onCancel` only reports: the value stays as it is, and reverting it is the app's call. `onBlur` runs after either, and on a tap outside.
+
+Keys the focused field keeps for itself, which never reach a parent `onKeyDown` or the window's shortcuts: Backspace, Delete, Left and Right, Home and End, Enter (and a remote's center key), Escape, Ctrl/Cmd+A and Ctrl/Cmd+V, Ctrl/Cmd+C and Ctrl/Cmd+X when text is selected, and every printable key while typing. A multiline field also keeps Up and Down. Everything else bubbles on (Tab, Up and Down in a single-line field, PageUp, function keys, Ctrl+S, ...), so a chat field that wants Up for its history wraps the field in a `View` with an `onKeyDown`.
 
 A multiline field sizes like a flex item. Unconstrained, it grows with its content, up to `maxRows` rows and then scrolls. Sized by its layout it is a fixed box that scrolls to the caret: an explicit `height`, or `flexGrow: 1` in a parent with a height (the field fills what is left and scrolls once the text outgrows it), or a parent too small for the content (the field shrinks to fit rather than overflowing).
 
@@ -705,7 +709,7 @@ API: `Portal`, `PortalProps` - typed and commented in [src/portal.tsx](./src/por
 
 ### Modal
 
-A centered overlay rendered at the window root via core `createPortal`: it fills the window with a dimming backdrop (theme `scrim`; override via `backdropColor`, `"transparent"` for no dim) and centers `children` on top, the whole overlay fading in at mount and out on removal (an exiting modal takes no hits). Control visibility by mounting/unmounting it, e.g. `<Show when={open()}>`; the gating signal must start false since portals cannot mount during the initial render. Pressing the backdrop calls `onClose` (unless `dismissable` is false), pressing the content does not, and while mounted the modal traps `createFocusNav` inside itself.
+A centered overlay rendered at the window root via core `createPortal`: it fills the window with a dimming backdrop (theme `scrim`; override via `backdropColor`, `"transparent"` for no dim) and centers `children` on top, the whole overlay fading in at mount and out on removal (an exiting modal takes no hits). Control visibility by mounting/unmounting it, e.g. `<Show when={open()}>`; the gating signal must start false since portals cannot mount during the initial render. Pressing the backdrop, Escape and the platform's back call `onClose` (unless `dismissable` is false, which keeps the modal up and still stops a back from reaching the screen beneath), pressing the content does not, and while mounted the modal traps `createFocusNav` inside itself.
 
 ```jsx
 import { Modal, Card, Button } from "@solidrt/components"
@@ -737,7 +741,7 @@ API: `Tooltip`, `TooltipProps` - typed and commented in [src/tooltip.tsx](./src/
 
 ### Select
 
-A single-choice picker whose presentation forks on the interaction policy: `desktop`/`hybrid` opens an anchored dropdown under the trigger (flipping above when there is no room), `touch` opens a bottom sheet over a scrim. Same contract either way: `options` is an `Option[]` (`{ value, label }`), controlled via `value`/`onChange` or uncontrolled via `defaultValue`; pressing outside closes without a change. `placeholder` shows in the trigger while nothing is selected. Both presentations fade in and out, the dropdown glows with the theme's overlay glow, and the trigger's chevron flips while open. The option list is not scrollable yet, so keep it short. The chevron is the `theme.icons.chevronDown` slot when a theme sets one.
+A single-choice picker whose presentation forks on the interaction policy: `desktop`/`hybrid` opens an anchored dropdown under the trigger (flipping above when there is no room), `touch` opens a bottom sheet over a scrim. Same contract either way: `options` is an `Option[]` (`{ value, label }`), controlled via `value`/`onChange` or uncontrolled via `defaultValue`; pressing outside, Escape and the platform's back close without a change. `placeholder` shows in the trigger while nothing is selected. Both presentations fade in and out, the dropdown glows with the theme's overlay glow, and the trigger's chevron flips while open. The option list is not scrollable yet, so keep it short. The chevron is the `theme.icons.chevronDown` slot when a theme sets one.
 
 ```jsx
 import { Select } from "@solidrt/components"
@@ -771,7 +775,7 @@ API: `SegmentedControl`, `SegmentedControlProps` - typed and commented in [src/s
 
 ### ContextMenu
 
-Secondary actions on the wrapped content. The opening gesture follows the physical pointer: right-click for a mouse, long-press (500 ms, cancelled by finger travel; core's long-press recognizer) for touch and pen. The long-press wins the finger at its timer: a pressable inside retracts and does not fire on the lift, and a scroll that started first keeps the finger. The presentation forks on the interaction policy: `touch` gets a bottom sheet over a scrim, `desktop`/`hybrid` an anchored menu at the pointer that flips up near the bottom edge. Both presentations fade in and out, and the anchored menu glows with the theme's overlay glow. `items` is a `ContextMenuItem[]` (`{ label, onSelect?, disabled? }`); pressing outside closes without selecting.
+Secondary actions on the wrapped content. The opening gesture follows the physical pointer: right-click for a mouse, long-press (500 ms, cancelled by finger travel; core's long-press recognizer) for touch and pen. The long-press wins the finger at its timer: a pressable inside retracts and does not fire on the lift, and a scroll that started first keeps the finger. The presentation forks on the interaction policy: `touch` gets a bottom sheet over a scrim, `desktop`/`hybrid` an anchored menu at the pointer that flips up near the bottom edge. Both presentations fade in and out, and the anchored menu glows with the theme's overlay glow. `items` is a `ContextMenuItem[]` (`{ label, onSelect?, disabled? }`); pressing outside, Escape and the platform's back close without selecting.
 
 ```jsx
 import { ContextMenu } from "@solidrt/components"

@@ -604,13 +604,15 @@ let backHandlers: ((e: BackEvent) => void)[] = []
 
 /**
  * Calls `fn` on the user's back intent (Android back button/gesture, the
- * desktop dev chord). Call `e.preventDefault()` when back means in-app
- * navigation right now (close a modal, previous screen); unprevented, the
- * event passes to the handler registered before this one, and if none of them
- * prevents it either, to the default action: what the platform does at the
- * root of an app - `background()` on Android, `exit()` elsewhere. Apps
- * without a handler get the platform's behavior, which is the correct
- * zero-effort default.
+ * pad's back button, the desktop dev chord). Call `e.preventDefault()` when
+ * back means in-app navigation right now (close a modal, previous screen);
+ * unprevented, the event passes to the handler registered before this one,
+ * and if none of them prevents it either, to the default action: what the
+ * platform does at the root of an app - `background()` on Android, `exit()`
+ * elsewhere. Apps without a handler get the platform's behavior, which is
+ * the correct zero-effort default. An Escape keydown that no key handler
+ * consumed (`stopPropagation`) runs the same stack without the default
+ * action: Escape closes the topmost overlay and never leaves the app.
  *
  * Handlers form a stack: the most recently registered runs first and the first
  * to prevent ends the dispatch, so each screen or overlay owns one step of the
@@ -806,13 +808,33 @@ export function attachWindow(nodeId: number) {
       }
     })
 
+    // The back stack: top down, stopping at the first handler that prevents.
+    // The native triggers (the Android button, the pad's back, the dev chord)
+    // carry the platform default when none does; an unconsumed Escape runs
+    // the same stack without it, since Escape closes what is open and never
+    // leaves the app.
+    let dispatchBack = (platformDefault: boolean) => {
+      let prevented = false
+      let e: BackEvent = {
+        preventDefault: () => {
+          prevented = true
+        },
+      }
+      // Copy first: a handler may unregister (itself or others) mid-dispatch.
+      let stack = [...backHandlers]
+      for (let i = stack.length - 1; i >= 0 && !prevented; i--) stack[i]!(e)
+      if (!prevented && platformDefault) backDefault()
+    }
+
     // Key events dispatch along the focused node's ancestor chain, leaf->root
     // (the pointer bubbling contract), so a container hears keys from focused
     // descendants and the window root hears everything: <window onKeyDown> is
     // the app-global shortcut point. With nothing focused the path is the
     // window root alone - key events are never dropped. The path is resolved
     // at dispatch time from current focus (nothing to freeze: keyup follows
-    // focus, as in the DOM).
+    // focus, as in the DOM). An Escape keydown that reaches the end of the
+    // chain unconsumed is a back: the web's own default action for the key
+    // (closing a dialog), which a handler suppresses with stopPropagation.
     let dispatchKey = (raw: any, handler: string) => {
       let target = focusedNode() ?? windowRootId
       let stopped = false
@@ -826,25 +848,14 @@ export function attachWindow(nodeId: number) {
         getEventHandler(id, handler)?.(e)
         if (stopped) break
       }
+      if (!stopped && handler === "onKeyDown" && e.key === "Escape") dispatchBack(false)
     }
 
     unsubKeyDown = on("keydown", (raw: any) => dispatchKey(raw, "onKeyDown"))
 
     unsubKeyUp = on("keyup", (raw: any) => dispatchKey(raw, "onKeyUp"))
 
-    unsubBack = on("back", () => {
-      let prevented = false
-      let e: BackEvent = {
-        preventDefault: () => {
-          prevented = true
-        },
-      }
-      // Copy first: a handler may unregister (itself or others) mid-dispatch.
-      // Top of the stack down, stopping as soon as one takes the event.
-      let stack = [...backHandlers]
-      for (let i = stack.length - 1; i >= 0 && !prevented; i--) stack[i]!(e)
-      if (!prevented) backDefault()
-    })
+    unsubBack = on("back", () => dispatchBack(true))
 
     unsubTextInput = on("textInput", (e: any) => {
       let id = focusedNode()

@@ -1,4 +1,4 @@
-import { createSignal, createPortal, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
+import { createEffect, createSignal, createPortal, onBack, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
@@ -33,7 +33,8 @@ let margin = () => theme.spacing.sm
  * A single-choice picker whose presentation forks on the interaction policy:
  * desktop/hybrid opens an anchored dropdown under the trigger (flipping above
  * when there is no room), touch opens a bottom sheet over a scrim. Same
- * value/onChange contract either way; pressing outside closes without a change.
+ * value/onChange contract either way; pressing outside, Escape and the user's
+ * back close without a change.
  * The option list is not scrollable yet, so keep it short.
  */
 export function Select<T>(props: SelectProps<T>) {
@@ -50,6 +51,19 @@ export function Select<T>(props: SelectProps<T>) {
     if (props.value === undefined) setInternal(() => v)
     props.onChange?.(v)
   }
+
+  // Open, the picker is one step of core's back stack: Escape and the user's
+  // back close it as a press outside does, without a change.
+  createEffect(
+    () => open(),
+    (isOpen) => {
+      if (!isOpen) return
+      return onBack((e) => {
+        e.preventDefault()
+        setOpen(false)
+      })
+    },
+  )
 
   let bodyText = (color: string) => ({ ...typeStyle("body"), color, maxLines: 1 })
 

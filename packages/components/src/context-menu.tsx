@@ -1,4 +1,4 @@
-import { createSignal, createLongPress, createPortal, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
+import { createEffect, createSignal, createLongPress, createPortal, onBack, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
@@ -33,7 +33,8 @@ let margin = () => theme.spacing.sm
  * pressable inside retracts and never fires, and a scroll that started
  * first keeps it). The presentation forks on the interaction policy: touch
  * gets a bottom sheet over a scrim, desktop/hybrid an anchored menu at the
- * pointer. Pressing outside closes without selecting.
+ * pointer. Pressing outside, Escape and the user's back close without
+ * selecting.
  */
 export function ContextMenu(props: ContextMenuProps) {
   let [open, setOpen] = createSignal(false)
@@ -54,6 +55,19 @@ export function ContextMenu(props: ContextMenuProps) {
     setOpen(false)
     item.onSelect?.()
   }
+
+  // Open, the menu is one step of core's back stack: Escape and the user's
+  // back close it as a press outside does, selecting nothing.
+  createEffect(
+    () => open(),
+    (isOpen) => {
+      if (!isOpen) return
+      return onBack((e) => {
+        e.preventDefault()
+        setOpen(false)
+      })
+    },
+  )
 
   let bodyText = (color: string) => ({ ...typeStyle("body"), color, maxLines: 1 })
 

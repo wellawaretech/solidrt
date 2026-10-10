@@ -156,6 +156,21 @@ fn wheel_and_text_events() {
   assert_eq!(text, "hello");
 }
 
+// The user's back is one event, the one alloy makes of the native triggers,
+// after its delay; holdMs is a tap's and a pad set's alone.
+#[test]
+fn back_is_one_event() {
+  let seq = parse(json!([{ "type": "back", "delayMs": 20 }])).expect("back parses");
+  assert_eq!(seq.len(), 1);
+  let (ms, e) = event(&seq[0]);
+  assert_eq!(ms, 20);
+  assert!(matches!(e, AlloyEvent::Back), "the step must be a Back");
+  let Err(err) = parse(json!([{ "type": "back", "holdMs": 100 }])) else {
+    panic!("back takes no holdMs");
+  };
+  assert!(err.contains("holdMs"), "{err}");
+}
+
 #[test]
 fn gamepad_session_parses_to_commands() {
   let seq = parse(json!([

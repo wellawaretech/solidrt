@@ -12,6 +12,7 @@ import {
   createSignal,
   onCleanup,
   focusedNode,
+  onBack,
   setFocus,
   startTextInput,
   textInputActive,
@@ -63,6 +64,8 @@ export interface EditorFieldProps extends TransitionProps {
   renderLine: (r: LineRender) => Element
 
   onSubmit?: (value: string) => void
+  /** The user backed out of the field (Escape, or the platform's back): fires, then the field blurs. The value is left as it is. */
+  onCancel?: () => void
   onFocus?: () => void
   onBlur?: () => void
   placeholder?: string
@@ -91,7 +94,8 @@ export interface EditorFieldProps extends TransitionProps {
 // range replace it (the buffer's own behavior). Ctrl/Cmd+C/X/V go through
 // navigator.clipboard (copy and cut need a range; single-line paste flattens
 // line breaks). A tap outside the field blurs it (core's outside-tap blur in
-// window.ts), as does Escape.
+// window.ts). Escape and the user's back (core's onBack stack: the Android
+// button, the pad's back) cancel: onCancel fires, then the field blurs.
 // Font options compared field by field: the same keys with the same values.
 function sameFont(a: MeasureTextOptions, b: MeasureTextOptions): boolean {
   let ka = Object.keys(a) as (keyof MeasureTextOptions)[]
@@ -324,7 +328,7 @@ export function EditorField(props: EditorFieldProps) {
       // The remote center key's `key` is "Unidentified"; match its code.
       activateField()
     } else if (e.key === "Escape") {
-      if (node) setFocus(null)
+      cancel()
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && textInputActive()) {
       // A printable key is this field's text (it arrives as a text-input
       // event); consumed here so a typed Space never reaches the window as
@@ -370,6 +374,28 @@ export function EditorField(props: EditorFieldProps) {
       setFocus(null)
     }
   }
+
+  // Cancel mirrors submit: the callback, then the blur. Escape reaches it
+  // through the key handler (the focused field consumes the key, so a window
+  // shortcut on Escape never fires on the same press); the user's back
+  // through the back stack, where the field is a step while focused. Focus
+  // comes after any enclosing overlay mounted, so the field tops the stack
+  // and a back leaves the field before it closes the overlay.
+  let cancel = () => {
+    props.onCancel?.()
+    setFocus(null)
+  }
+
+  createEffect(
+    () => focused(),
+    (isFocused) => {
+      if (!isFocused) return
+      return onBack((e) => {
+        e.preventDefault()
+        cancel()
+      })
+    },
+  )
 
   let unregisterNav: (() => void) | null = null
 

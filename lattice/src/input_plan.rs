@@ -302,7 +302,11 @@ pub(crate) fn plan(events: Option<&serde_json::Value>, frame_ms: f64) -> Result<
         let at = if ev.get("holdMs").is_some() { hold } else { delay };
         out.push(Step { wait: Wait::ms(at), inject: Injected::Gamepad(cmd) });
       }
-      _ => return Err(format!("events[{i}]: type must be key, pointer, wheel, text or gamepad")),
+      // The user's back intent, as alloy normalizes it from the Android
+      // button, the pad's back button and the dev chord: straight into the
+      // app's onBack stack, never a key.
+      "back" => push(Wait::ms(delay), AlloyEvent::Back),
+      _ => return Err(format!("events[{i}]: type must be key, pointer, wheel, text, gamepad or back")),
     }
     total += delay + hold;
     if total > INPUT_TOTAL_MAX_MS {

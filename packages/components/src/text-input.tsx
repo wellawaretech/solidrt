@@ -10,6 +10,13 @@ export interface TextInputProps extends TransitionProps {
   defaultValue?: string
   onInput?: (value: string) => void
   onSubmit?: (value: string) => void
+  /**
+   * The user backed out of the field: Escape, or the platform's back (the
+   * Android button, a pad's back). Fires, then the field blurs, as `onSubmit`
+   * does on Enter; `onBlur` follows either. Reports only: the value stays as
+   * it is, reverting it is the app's call.
+   */
+  onCancel?: () => void
   onFocus?: () => void
   onBlur?: () => void
 
@@ -75,6 +82,7 @@ export function TextInput(props: TextInputProps) {
         </d-text>
       )}
       onSubmit={props.onSubmit}
+      onCancel={props.onCancel}
       onFocus={props.onFocus}
       onBlur={props.onBlur}
       placeholder={props.placeholder}

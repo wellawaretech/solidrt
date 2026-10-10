@@ -381,7 +381,9 @@ export interface WheelEvent extends PointerEvent {
 // Routing: keydown/keyup dispatch along the focused node's ancestor chain,
 // leaf->root, always ending at the window root; with nothing focused they go
 // to the window root alone. <window onKeyDown> is therefore the app-global
-// shortcut point.
+// shortcut point. An Escape keydown nobody consumed then runs the back
+// handler stack (onBack) without its platform default, so a control that
+// takes Escape itself calls stopPropagation.
 export interface KeyEvent {
   /** When the key event happened, in milliseconds, on the clock of
    * `PointerEvent.timeStamp`. */

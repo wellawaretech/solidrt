@@ -34,6 +34,7 @@ symptom shows. A heading that outgrows this file splits into its own.
 - Focus nav: scroll a focused off-screen candidate into view (the nav has the candidate's box; the enclosing ScrollView is the target).
 - Focus nav: pressed-state visuals on `select` activation; the focus ring is the only feedback today.
 - `focusable` on the other press controls (Switch, Checkbox, Radio, ...); their activation already works through the nav action registry once declared.
+- A pad's east button (B) as a cancel: consoles close menus and leave fields with it, but the only pad back trigger today is the back/select button (alloy's `take_back_edge`), and east is a game action on most pads, so it needs a decision (a `uiBindings` entry the app can drop, or nothing) rather than a default.
 
 
 ## 3d

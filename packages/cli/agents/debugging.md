@@ -334,6 +334,11 @@ when exactly one client is connected.
   "disconnect", "slot": 0 }` frees the slot. Synthetic pads take slots
   next to physical ones and reach `gamepads()` and everything on it; the
   mute leaves them alone.
+  `{ "type": "back" }` is the user's back intent: the one event the
+  Android back button, a pad's back button and the desktop dev chord
+  become, into the app's `onBack` stack (a focused TextInput cancels, an
+  open Modal, Select or ContextMenu closes, the router pops) and never a
+  key.
 - `/settle` (`?max=<ms>`, default 5000, at most 30000) - waits until the
   app is at rest and says whether it got there: `{ settled, waitedMs,
   demand, inFlight, timerDue, idleDue }`. At rest means nothing the app

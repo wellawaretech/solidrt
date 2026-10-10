@@ -37,7 +37,8 @@ agents/testing.md.
   `.record` (the `/tree` record).
 - Input is the real pipeline: `app.tap(locator)`, `app.drag(from, to, {
   durationMs })`, `app.key("Enter")`, `app.type("text")` (to the focused
-  node), `app.input([...])` for raw events in the `send_input` shape. A tap
+  node), `app.back()` (the user's back, into the `onBack` stack),
+  `app.input([...])` for raw events in the `send_input` shape. A tap
   on a node that something covers at its center throws and names the
   cover; a point (`{ x, y }`) lands on whatever is there. Each verb returns
   after the frame its last event landed in, so the tree is current.

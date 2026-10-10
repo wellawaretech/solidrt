@@ -85,8 +85,9 @@ test("a tap increments", async app => {
   used, so it stays valid across frames, and names exactly one node:
   `findAll` for the plural, `.exists` for a yes/no that never throws.
 - Act through the real pipeline: `app.tap(locator)`, `app.drag(from, to, {
-  durationMs })`, `app.key("Enter")`, `app.type("text")`, `app.input([...])`
-  in the control API's `send_input` shape. A tap on a node that something
+  durationMs })`, `app.key("Enter")`, `app.type("text")`, `app.back()` (the
+  user's back, into the `onBack` stack), `app.input([...])` in the control
+  API's `send_input` shape. A tap on a node that something
   covers at its center throws and names the cover (a modal left open is a
   real bug, not a test problem); `app.tap({ x, y })` lands on whatever is
   there. Each verb returns after the frame its last event landed in, so

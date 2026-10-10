@@ -145,7 +145,7 @@ export interface Pixels {
 export type RefLocator = Locator & ((node: { id: number }) => void)
 
 /** One event in the control API's `/input` shape. */
-export type InputEvent = Record<string, unknown> & { type: "pointer" | "key" | "wheel" | "text" | "gamepad" }
+export type InputEvent = Record<string, unknown> & { type: "pointer" | "key" | "wheel" | "text" | "gamepad" | "back" }
 
 export interface PointerOptions {
   /** "mouse" (the default) or "touch". */
@@ -280,6 +280,12 @@ export interface TestApp {
   key(key: string, options?: { holdMs?: number; shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean }): Promise<void>
   /** Text as an input method commits it, to the focused node. */
   type(text: string): Promise<void>
+  /**
+   * The user's back intent, the event the Android button, a pad's back
+   * button and the desktop dev chord become: into the `onBack` stack,
+   * never a key.
+   */
+  back(): Promise<void>
   /**
    * Events in the control API's `/input` shape, as `send_input` takes them.
    * `delayMs` and `holdMs` are app time: frames run to cover them. One
@@ -546,6 +552,9 @@ let app: TestApp = {
   },
   type(text) {
     return app.input([{ type: "text", text }])
+  },
+  back() {
+    return app.input([{ type: "back" }])
   },
   async input(events) {
     let waits = inputPlan(JSON.stringify(events))
