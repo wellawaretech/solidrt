@@ -18,7 +18,7 @@
   ],
   "dependencies": {
     "@babel/core": "^7.0.0",
-    "@babel/plugin-syntax-jsx": "^7.0.0",
+    "@babel/plugin-syntax-jsx": "^8.0.1",
     "@babel/preset-typescript": "^7.0.0",
     "@clack/prompts": "^1.7.0",
     "@jridgewell/remapping": "^2.3.0",
