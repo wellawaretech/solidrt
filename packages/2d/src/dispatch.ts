@@ -12,9 +12,11 @@
 // drag from empty space keeps delivering to the layer as it crosses
 // sprites, exactly as a drag from a sprite keeps naming that sprite.
 // Enter/leave pair on the sprite alone. Taps are synthesized here (DOM's
-// click, Unity's IPointerClickHandler): a press that releases on the same
-// target within the slop, the only pointer down for its whole press,
-// counted up for repeats (DOM's detail, Unity's clickCount).
+// click, which is primary-button only; Unity's IPointerClickHandler fires
+// for every button and reports it, we do not): a primary-button press
+// that releases on the same target within the slop, the only pointer
+// down for its whole press, counted up for repeats (DOM's detail,
+// Unity's clickCount).
 //
 // Pure BY DESIGN (types and camera.ts, nothing with GPU imports) so
 // tests/dispatch.test.ts drives it headless with a fake pick.
@@ -197,9 +199,11 @@ export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: num
         }
         presses.delete(e.pointerId)
         walk("onPointerUp", makeEvent(press.target, x, y, e), !press.claimed)
-        // The tap rule: no travel past the slop, alone for the whole
-        // press, released over the target it pressed (empty space for the
-        // layer itself).
+        // The tap rule: the primary button (DOM click; core's press and
+        // long-press gate the same way), no travel past the slop, alone
+        // for the whole press, released over the target it pressed (empty
+        // space for the layer itself).
+        if (e.button != null && e.button !== 0) return
         if (press.moved || !press.alone || topmost(x, y) !== press.target) return
         let time = e.timeStamp
         let repeat =

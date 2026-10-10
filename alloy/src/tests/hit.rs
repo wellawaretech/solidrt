@@ -503,3 +503,52 @@ fn all_captures_nothing_outside_its_box() {
   assert_eq!(ids_at(&tree, 90.0, 90.0), vec![1]);
   assert_eq!(ids_at(&tree, 40.0, 40.0), vec![1, 2]);
 }
+
+fn set_pointer_events(tree: &mut RenderTree, id: u64, value: hit::PointerEvents) {
+  tree.node_mut(id).interaction = Some(hit::HitConfig { pointer_events: Some(value), ..Default::default() });
+}
+
+// A click-through container (node 2, None) over the root with two children in
+// its box: 3 leaves pointerEvents unset, 4 opts back in with Auto.
+fn tree_with_click_through_container() -> RenderTree {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, attached());
+  tree.create_node(4, attached());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.insert_node(2, 4, None).expect("insert");
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 200.0, 100.0);
+  place(&mut tree, 3, 10.0, 10.0, 50.0, 50.0);
+  place(&mut tree, 4, 100.0, 10.0, 50.0, 50.0);
+  set_pointer_events(&mut tree, 2, hit::PointerEvents::None);
+  set_pointer_events(&mut tree, 4, hit::PointerEvents::Auto);
+  tree
+}
+
+#[test]
+fn none_cascades_to_unset_children() {
+  let tree = tree_with_click_through_container();
+  // Over the unset child: it inherits None, so the container and the child
+  // are both transparent and the root alone is hit.
+  assert_eq!(ids_at(&tree, 30.0, 30.0), vec![1]);
+  // The container's own box, beside its children: never a target itself.
+  assert_eq!(ids_at(&tree, 30.0, 80.0), vec![1]);
+}
+
+#[test]
+fn auto_child_opts_back_in_under_none_and_skips_it_on_the_path() {
+  let tree = tree_with_click_through_container();
+  assert_eq!(ids_at(&tree, 120.0, 30.0), vec![1, 4]);
+}
+
+#[test]
+fn all_hits_its_box_as_one_target_and_never_descends() {
+  let mut tree = tree_with_click_through_container();
+  set_pointer_events(&mut tree, 2, hit::PointerEvents::All);
+  assert_eq!(ids_at(&tree, 30.0, 30.0), vec![1, 2]);
+  assert_eq!(ids_at(&tree, 120.0, 30.0), vec![1, 2]);
+}

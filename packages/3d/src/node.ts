@@ -217,8 +217,9 @@ export type SceneNode = {
   /** The wheel over the node (NodeWheelEvent: `deltaX`/`deltaY`), bubbling
    * like down/move/up. */
   onWheel?: (event: NodeWheelEvent) => void
-  /** A press released on this node within the slop, alone for its whole
-   * press (NodeTapEvent: `tapCount`); bubbles like down/move/up. */
+  /** A primary-button press (a right click never taps) released on this
+   * node within the slop, alone for its whole press (NodeTapEvent:
+   * `tapCount`); bubbles like down/move/up. */
   onTap?: (event: NodeTapEvent) => void
   /** A declared transition (setTransition) settled naturally on one
    * component; a cancel, snap, scene leave or exit never fires. */
@@ -292,6 +293,9 @@ export type SceneEventBase = {
   predicted: boolean
   pointerId: number
   pointerType: string
+  /** The pressed button on a down, up or tap (0 = primary, 2 = secondary;
+   * touch is always 0), as the element event carries it; absent on a
+   * move, cancel or wheel. */
   button?: number
   shiftKey: boolean
   ctrlKey: boolean

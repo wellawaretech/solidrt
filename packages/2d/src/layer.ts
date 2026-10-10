@@ -332,6 +332,9 @@ export type LayerEventBase = {
   predicted: boolean
   pointerId: number
   pointerType: string
+  /** The pressed button on a down, up or tap (0 = primary, 2 = secondary;
+   * touch is always 0), as the element event carries it; absent on a
+   * move, cancel or wheel. */
   button?: number
   shiftKey: boolean
   ctrlKey: boolean
@@ -390,10 +393,10 @@ type TapFields = {
 export type SpriteWheelEvent = SpritePointerEvent & WheelFields
 export type LayerWheelEvent = LayerPointerEvent & WheelFields
 /**
- * A press that released on the target it pressed without travelling past
- * the slop, the only pointer down for its whole press (a pinch never taps).
- * Dispatched after the up, bubbling the same way; `x`/`y` are the release
- * point.
+ * A primary-button press (DOM click: a right click never taps) that
+ * released on the target it pressed without travelling past the slop, the
+ * only pointer down for its whole press (a pinch never taps). Dispatched
+ * after the up, bubbling the same way; `x`/`y` are the release point.
  */
 export type SpriteTapEvent = SpritePointerEvent & TapFields
 export type LayerTapEvent = LayerPointerEvent & TapFields

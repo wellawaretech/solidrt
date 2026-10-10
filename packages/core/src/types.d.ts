@@ -456,6 +456,15 @@ export interface InputProps extends NodeProps {
    * still moves through setFocus.
    */
   focusable?: boolean
+  /**
+   * Hit testing, with CSS pointer-events inheritance: unset inherits the
+   * nearest ancestor's value (root: "auto"). "none" makes the element and
+   * its subtree transparent and drops it from the bubble path; a descendant
+   * that sets "auto" or "all" opts back in. "auto" hits the element's box
+   * with children deepest-first. "all" (not CSS's) hits the box as one
+   * target and never descends: the whole element is the target whatever its
+   * children's shapes, nothing outside the box is captured.
+   */
   pointerEvents?: "auto" | "none" | "all"
   /**
    * The mouse cursor while this element is hovered: a platform shape by its

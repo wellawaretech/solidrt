@@ -1133,11 +1133,14 @@ the root as it crosses meshes; a drag from a mesh keeps naming it, with
 `point`/`distance` null while the ray misses it). Enter/leave fire on
 the struck node alone - a group never receives them - while the root
 sees every move, so "hovering empty space" is a root move with `mesh`
-null. Taps are synthesized by the dispatch (DOM click, Unity's click
-handler): `onTap` fires after the up when the press released on the
-target it pressed within the slop (8 window px, core's recognizer slop,
-so a press is never both a tap and a drag), was the only pointer down
-for its whole press (a pinch never taps), with `tapCount` counting
+null. Taps are synthesized by the dispatch, as DOM click (Unity's click
+handler fires for every button; ours, like DOM's, for the primary alone):
+`onTap` fires after the up when a PRIMARY-button press (a right click
+walks its down and up with `button` 2 but never taps, like core's press;
+read `button` on the down to act on it) released on the target it
+pressed within the slop (8 window px, core's recognizer slop, so a press
+is never both a tap and a drag), was the only pointer down for its whole
+press (a pinch never taps), with `tapCount` counting
 repeats within 300 ms and 20 px on the same target (a double tap is
 `tapCount === 2`); a release on another instance of the same mesh is no
 tap. Wheel walks like a move with `deltaX/deltaY` (a node stopping it

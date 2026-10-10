@@ -12,11 +12,12 @@
 // turns. Capture is per pointer to the press target, the root included: a
 // drag from empty space keeps delivering to the root as it crosses meshes,
 // exactly as a drag from a mesh keeps naming that mesh. Enter/leave pair
-// on the struck node alone. Taps are synthesized here (DOM's click,
-// Unity's IPointerClickHandler): a press that releases on the same target
-// within the slop, the only pointer down for its whole press, counted up
-// for repeats (DOM's detail, Unity's clickCount). @solidrt/2d's
-// dispatch.ts is the same model one dimension down.
+// on the struck node alone. Taps are synthesized here (DOM's click, which
+// is primary-button only; Unity's IPointerClickHandler fires for every
+// button and reports it, we do not): a primary-button press that releases
+// on the same target within the slop, the only pointer down for its whole
+// press, counted up for repeats (DOM's detail, Unity's clickCount).
+// @solidrt/2d's dispatch.ts is the same model one dimension down.
 //
 // Pure BY DESIGN (types only, nothing with GPU imports) so
 // tests/dispatch.test.ts drives it headless with a fake pick.
@@ -240,9 +241,11 @@ export function makePointerInput(deps: PointerInputDeps): PointerInput {
         presses.delete(e.pointerId)
         let under = hitOn(press.target, x, y)
         walk("onPointerUp", makeEvent(e, press.target, x, y, under), !press.claimed)
-        // The tap rule: no travel past the slop, alone for the whole
-        // press, released over the target it pressed (empty space for the
-        // root itself).
+        // The tap rule: the primary button (DOM click; core's press and
+        // long-press gate the same way), no travel past the slop, alone
+        // for the whole press, released over the target it pressed (empty
+        // space for the root itself).
+        if (e.button != null && e.button !== 0) return
         if (press.moved || !press.alone) return
         let release = nearest(x, y)
         if (press.target === null ? release !== null : release === null || !sameHit(release, press.target)) return

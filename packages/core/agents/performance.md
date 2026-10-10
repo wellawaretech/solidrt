@@ -24,7 +24,13 @@ Rules, in order of leverage:
    use them for anything interactive), `{ duration, curve }` is a tween
    (`linear | ease | ease-in | ease-out | ease-in-out` or a cubic-bezier
    array; tweens restart from the current value on retarget, CSS
-   semantics). Keys are property names plus `all` as catch-all; a string
+   semantics). Keys are the animatable property names (the
+   TransitionPropName set: opacity, transform components, color, shadow,
+   and x/y/w/h on the detached primitives), `all` as catch-all, and
+   `layout`: a layout property (width, height, padding, flex, order)
+   never takes an entry of its own; whatever layout does to the
+   element's box animates through `layout`, which slides it from its
+   painted box to its new one. A string
    is shorthand (`transition="300ms ease-out"`); `delay` holds each
    write, `from` animates the first attach in (enter), `exit` animates
    removal out before the node frees, `stagger` on a parent cascades its

@@ -309,7 +309,10 @@ that reads exactly like Solid fallout.
 
 - Events: there is NO `onClick`/`onPress`. A "button" is a `<view>`/`<rect>`
   with `onPointerDown`. Handlers: onPointerDown/Up/Move/Enter/Leave, onWheel,
-  onKeyDown/Up, onTextInput, onFocus/onBlur. Text entry: focus a node with an
+  onKeyDown/Up, onTextInput, onFocus/onBlur. `pointerEvents` gates hit
+  testing and cascades like CSS: "none" on a container also disables its
+  subtree until a descendant sets "auto" (or "all", which makes the element
+  one target and skips its children). Text entry: focus a node with an
   `onTextInput` handler. Focus alone never raises the on-screen keyboard: a
   tap on the focused node (or explicit startTextInput()) does, and never
   while a physical keyboard is attached; on keyboard-equipped platforms the

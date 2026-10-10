@@ -235,6 +235,11 @@ test("tap rules: slop, release off the target, repeats, restarts", () => {
   leaf.onPointerDown(ev(119, 100))
   leaf.onPointerUp(ev(124, 100))
   expect("release off target", logged(), ["S:down(S)", "G:down(S)", "root:down(S)", "S:up(S)", "G:up(S)", "root:up(S)"])
+  // A secondary button walks its down and up but never taps (DOM click
+  // is primary-only), and leaves no tap history for the next left tap.
+  leaf.onPointerDown(ev(100, 100, 1, { button: 2 }))
+  leaf.onPointerUp(ev(100, 100, 1, { button: 2 }))
+  expect("right click is no tap", logged(), ["S:down(S)", "G:down(S)", "root:down(S)", "S:up(S)", "G:up(S)", "root:up(S)"])
   // A tap at (x, y) whose down and up carry the time `at`, ms.
   let tapAt = (at: number, x: number, y: number) => {
     leaf.onPointerDown(ev(x, y, 1, { timeStamp: at }))
