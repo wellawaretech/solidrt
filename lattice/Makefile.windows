@@ -10,31 +10,11 @@ ANGLE_GLES    = $(HOST_DIST)/libGLESv2.dll
 
 PKG_WIN := $(CURDIR)/../packages/win32-x64-msvc
 
-# The prebuilt impeller libs link the static CRT (/MT). Force Rust std + cc-built
-# code (+crt-static) and whisper.cpp (built by whisper-rs-sys via its own cmake
-# project, which defaults to /MD) to /MT too, or link.exe rejects the
-# RuntimeLibrary mismatch. whisper-rs-sys forwards CMAKE_* env vars as cmake -D
-# defines; CMP0091=NEW is required so CMAKE_MSVC_RUNTIME_LIBRARY is honored on
-# whisper.cpp's old cmake_minimum_required.
-# Do NOT append /OPT flags here: rustc already passes /OPT:REF,ICF and a
-# later /OPT:NOREF,NOICF would win, re-enabling incremental-style layout
-# (~7 MB of int3 padding, no COMDAT folding: solidrt.exe 52.7 -> 38.5 MB
-# when the override was removed, 2026-07-19).
-WIN_RUSTFLAGS := -Ctarget-feature=+crt-static
-# The two plain env vars only reach whisper-rs-sys, which forwards CMAKE_* env
-# as -D defines. Deps built through the cmake crate (sdl3-sys; cmake 0.1.58
-# passes no MSVC runtime setting) never see them, and under CMP0091=NEW cmake
-# appends its /MD default after the injected -MT, so the last flag wins and SDL
-# objects silently come out /MD. The big client graph still links (UCRT import
-# libs satisfy the __imp_* refs) but it is a static/DLL CRT mix, and small
-# graphs (alloy examples) fail to link outright. The toolchain file is the one
-# channel the cmake crate reads from the env, forcing /MT on every cmake dep;
-# native Windows cmake needs a C:/ path, hence cygpath.
-WIN_CMAKE_ENV := CMAKE_POLICY_DEFAULT_CMP0091=NEW CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
-  CMAKE_TOOLCHAIN_FILE=$(shell cygpath -m $(CURDIR))/msvc-static-crt.cmake
-
 .PHONY: client runtime dist angle-windows
 
+# The ANGLE libraries beside the binaries, from an Electron release. A
+# custom runtime takes them from the platform package instead (runtime.mk,
+# GL_SRC); this is where the package's own come from.
 angle-windows:
 	@mkdir -p $(HOST_DIST)
 	@cur=$$(cat $(HOST_DIST)/$(ANGLE_STAMP_FILE) 2>/dev/null); \
@@ -50,24 +30,11 @@ angle-windows:
 	unzip -jo $(ANGLE_WIN_ZIP) "libEGL.dll" "libGLESv2.dll" -d $(HOST_DIST); \
 	echo "$(ELECTRON_VERSION)" > $(HOST_DIST)/$(ANGLE_STAMP_FILE)
 
-# $(1)=target subdir (go|runtime), $(2)=profile (release|debug), $(3)=binary name (no .exe)
-define stage-windows
-	@mkdir -p $(HOST_DIST)
-	$(call replace-bin,target/$(1)/$(2)/$(3).exe,$(HOST_DIST)/$(3).exe)
-	@echo "Staged $(3).exe into $(HOST_DIST)/"
-endef
-
 client: $(PLAYER_JS) $(BSOD_JS) angle-windows
-	@echo "Building SOLIDRT-GO Windows ($(PROFILE)) $(VERSION)"
-	RUSTFLAGS="$(WIN_RUSTFLAGS)" $(WIN_CMAKE_ENV) \
-	$(SOLIDRT_VERSION) cargo build -p solidrt $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
-	$(call stage-windows,go,$(PROFILE),solidrt-go)
+	$(RUNTIME_MAKE) client
 
-runtime: angle-windows
-	@echo "Building RUNTIME Windows ($(PROFILE)) $(VERSION)"
-	RUSTFLAGS="$(WIN_RUSTFLAGS)" $(WIN_CMAKE_ENV) \
-	$(SOLIDRT_VERSION) cargo build -p solidrt $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
-	$(call stage-windows,runtime,$(PROFILE),solidrt)
+runtime: $(BSOD_JS) angle-windows
+	$(RUNTIME_MAKE) runtime
 
 dist:
 	$(MAKE) client

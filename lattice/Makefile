@@ -1,128 +1,51 @@
 # lattice/Makefile
+#
+# The two host binaries (solidrt-go, the client; solidrt, the runtime) and
+# their Android .so files are built and staged by the stock program's own
+# Makefile, runtime/Makefile, which includes packages/cli/runtime/runtime.mk:
+# the same file a custom runtime includes from its node_modules, so the
+# checkout and an app build a runtime one way. The goals here wrap that call
+# with what is the checkout's: the player bundles the program embeds, the
+# ANGLE libraries on Windows and macOS, the Gradle APKs, the flux binaries,
+# the platform packages and their notices.
+#
+# The build flags are the runtime's (PROFILE, SPEECH, VIDEO, KTX2,
+# WASM_NATIVE, TEST, ANDROID_ABI, NDK_HOME, documented by `make -C runtime
+# help`); a value on this command line reaches it.
 
-VERSION         ?= $(shell git describe --tags --always --dirty | sed 's/^v//')
-SOLIDRT_VERSION  = SOLIDRT_VERSION="$(VERSION)"
-
-# The cargo profile of every binary a goal builds, dist and android-dist
-# included (a command-line PROFILE reaches the recursive makes, flux's too).
-# release, the default, is the fast build that keeps symbols; release-opt
-# (root Cargo.toml: fat LTO, one codegen unit, stripped) is the much slower
-# publish build, which the release workflow passes.
-PROFILE ?= release
-ifeq ($(PROFILE),release)
-  CARGO_PROFILE_FLAG = --release
-else ifeq ($(PROFILE),debug)
-  CARGO_PROFILE_FLAG =
-else
-  CARGO_PROFILE_FLAG = --profile $(PROFILE)
-endif
+VERSION ?= $(shell git describe --tags --always --dirty | sed 's/^v//')
 
 # Dist (production) builds are always speech-free. This is the single source
-# of truth: any packaging goal sets DIST=1, exports it to the recursive client/
-# runtime makes, and the override beats even a command-line SPEECH=1. The
-# goals are spelled out (not `dist-%`) so `dist` itself is covered.
+# of truth: any packaging goal sets DIST=1 and exports it to the recursive
+# makes (the runtime's forces SPEECH=0 on it, beating even a command-line
+# SPEECH=1). The goals are spelled out (not `dist-%`) so `dist` itself is
+# covered.
 ifneq ($(filter dist android-dist android-dist-armeabi-v7a,$(MAKECMDGOALS)),)
 DIST = 1
 endif
 export DIST
-ifeq ($(DIST),1)
-override SPEECH = 0
-endif
-
-# Speech recognition (Whisper + wake word) is an opt-in cargo feature (not in
-# lattice's `default`), so a plain `cargo build` stays voice-free. The same
-# holds for every Makefile target: speech is off unless explicitly requested
-# with SPEECH=1 (no whisper-rs / livekit-wakeword / ort-tract otherwise), and
-# dist builds force it off regardless (see DIST above). GO_FEATURES /
-# RUNTIME_FEATURES are the resulting cargo feature flags for the two binaries
-# (go = client, which already pulls flux/compile; runtime = default minus go).
-#
-# Note SPEECH=1 is impractical on 32-bit Android ABIs (armeabi-v7a, x86):
-# whisper.cpp has no reliable NEON fp16 path there and the address space is
-# too tight for model + inference buffers.
-SPEECH ?= 0
-ifeq ($(SPEECH),0)
-GO_FEATURES      = --no-default-features --features go
-RUNTIME_FEATURES = --no-default-features --features compile
-else
-GO_FEATURES      = --features go,speech
-RUNTIME_FEATURES = --features speech
-endif
-
-# Video playback (forge::video + flux:video + @solidrt/core/video) is on for
-# every goal, dist included; VIDEO=0 leaves the decoder, the flux:video module
-# and the `video` capability out. It stays a non-default cargo feature so a
-# plain `cargo build` needs neither the forge/vendor submodules nor nasm. The
-# codec is VP9 (royalty-free): MediaCodec on Android, the vendored libvpx
-# elsewhere, so nothing here carries a codec license. See
-# okf/backlog/video-playback.md.
-VIDEO ?= 1
-ifeq ($(VIDEO),0)
-VIDEO_FEATURES =
-else
-VIDEO_FEATURES = ,video
-endif
-GO_FEATURES      := $(GO_FEATURES)$(VIDEO_FEATURES)
-RUNTIME_FEATURES := $(RUNTIME_FEATURES)$(VIDEO_FEATURES)
-
-# Compressed textures (forge::ktx2 + flux:image transcodeTexture /
-# encodeTexture + the `ktx2` capability) are on for every goal, dist
-# included; KTX2=0 leaves them out. A non-default cargo feature like video,
-# so a plain `cargo build` needs no forge/vendor submodule. See
-# okf/plans/gpu-compressed-textures.md.
-KTX2 ?= 1
-ifeq ($(KTX2),0)
-KTX2_FEATURES =
-else
-KTX2_FEATURES = ,ktx2
-endif
-GO_FEATURES      := $(GO_FEATURES)$(KTX2_FEATURES)
-RUNTIME_FEATURES := $(RUNTIME_FEATURES)$(KTX2_FEATURES)
-
-# The native wasm lane (forge::wasm on wasmtime with Cranelift, the
-# `wasm-native` capability): flux:wasm modules compile to machine code on the
-# device instead of running on the wasmi interpreter. On for every goal where
-# a Cranelift backend exists; WASM_NATIVE=0 leaves it out and the build runs
-# wasmi alone, which is what the 32-bit Android ABIs (no 32-bit backend) get
-# regardless, and which is how a desktop exercises the interpreted lane: one
-# engine per build, never both. Measured at +7.8 MB of runtime. See
-# okf/design/wasm.md.
-ifeq ($(filter armeabi-v7a x86,$(ANDROID_ABI)),)
-WASM_NATIVE ?= 1
-else
-WASM_NATIVE ?= 0
-endif
-ifeq ($(WASM_NATIVE),0)
-WASM_NATIVE_FEATURES =
-else
-WASM_NATIVE_FEATURES = ,wasm-native
-endif
-GO_FEATURES      := $(GO_FEATURES)$(WASM_NATIVE_FEATURES)
-RUNTIME_FEATURES := $(RUNTIME_FEATURES)$(WASM_NATIVE_FEATURES)
-
-# Test mode (the `--test` runner, sol:test, flux:test) is in the dev client,
-# which is what `sol test` runs app tests on, and never in the runtime. On
-# in dist builds too: an installed project's `sol test` runs its app tests
-# on the shipped dev client. TEST=0 leaves it out.
-TEST ?= 1
-ifneq ($(TEST),0)
-GO_FEATURES := $(GO_FEATURES),test
-endif
 
 SOLIDRT_HOME ?= $(abspath $(CURDIR)/..)
 
+# The runtime's build, staged into the checkout's dist/ (the SOLIDRT_HOME
+# layout sol reads), reporting this checkout's version. GL_SRC= because the
+# ANGLE libraries are staged here (angle-darwin, angle-windows), not taken
+# from a platform package.
+RUNTIME_MAKE = $(MAKE) -C $(SOLIDRT_HOME)/runtime DIST_DIR=$(SOLIDRT_HOME)/dist VERSION=$(VERSION) GL_SRC=
+
 # The player app sources live in apps/player like any regular app; the
-# generated bundles land in runtime/resources/ because the stock program
-# crate is what embeds them (include_str! in runtime/src/lib.rs).
+# generated bundles land in packages/cli/player/, where every runtime embeds
+# them from (include_str! in runtime/src/lib.rs through node_modules) and
+# where the CLI package ships them for a custom runtime.
 PLAYER_DIR = $(SOLIDRT_HOME)/apps/player
 PLAYER_SRC = $(PLAYER_DIR)/src/index.tsx
-PLAYER_JS  = $(SOLIDRT_HOME)/runtime/resources/player/index.sol.js
+PLAYER_JS  = $(SOLIDRT_HOME)/packages/cli/player/index.sol.js
 
 # The BSOD screen shown when an app fails to start.
 BSOD_SRC = $(PLAYER_DIR)/src/bsod.tsx
-BSOD_JS  = $(SOLIDRT_HOME)/runtime/resources/bsod/bsod.sol.js
+BSOD_JS  = $(SOLIDRT_HOME)/packages/cli/player/bsod.sol.js
 
-include $(SOLIDRT_HOME)/platform.mk
+include $(SOLIDRT_HOME)/packages/cli/runtime/platform.mk
 
 # The notices a distributed binary owes (the license texts of everything in
 # it that is not ours), generated for the build they ship with and written
@@ -158,11 +81,11 @@ lattice: client runtime
 BUNDLE_DEPS = $(wildcard $(SOLIDRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SOLIDRT_HOME)/packages/components/src/*.ts*) $(wildcard $(SOLIDRT_HOME)/bun.lock)
 
 $(PLAYER_JS): $(wildcard $(PLAYER_DIR)/src/*.ts*) $(wildcard $(PLAYER_DIR)/src/parts/*.ts*) $(BUNDLE_DEPS)
-	@echo "Bundling player (index.tsx -> resources/player/)..."
+	@echo "Bundling player (index.tsx -> packages/cli/player/)..."
 	cd $(PLAYER_DIR) && bun run sol bundle $(PLAYER_SRC) --project -o $(dir $(PLAYER_JS))
 
 $(BSOD_JS): $(BSOD_SRC) $(BUNDLE_DEPS)
-	@echo "Bundling BSOD screen (bsod.tsx -> resources/bsod/)..."
+	@echo "Bundling BSOD screen (bsod.tsx -> packages/cli/player/)..."
 	cd $(PLAYER_DIR) && bun run sol bundle $(BSOD_SRC) --project -o $(dir $(BSOD_JS))
 
 help:
@@ -188,13 +111,8 @@ help:
 	@echo "  ANDROID_ABI=x86_64 builds for the emulator; it has no platform"
 	@echo "  package, so the APKs stay in dist/android/ where sol android finds them."
 	@echo ""
-	@echo "Pass PROFILE=debug for a debug build (default: release)."
-	@echo "Pass PROFILE=release-opt for the publish build: fat LTO and stripped, for"
-	@echo "every binary of the goal (dist and android-dist included), much slower."
-	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
-	@echo "Pass VIDEO=0 to build without video playback (default: on)."
-	@echo "Pass KTX2=0 to build without compressed textures (default: on)."
-	@echo "Pass WASM_NATIVE=0 to build without the native wasm engine (default: on; always off on 32-bit Android ABIs)."
+	@echo "The build flags (PROFILE=debug|release|release-opt, SPEECH=1, VIDEO=0, KTX2=0,"
+	@echo "WASM_NATIVE=0, TEST=0, NDK_HOME) are the runtime's: make -C runtime help."
 	@echo "dist targets always build speech-free."
 	@echo ""
 	@echo "Player:"
@@ -206,9 +124,9 @@ help:
 
 # -- Player -----------------------------------------
 #
-# The stock program (runtime/) embeds the bundles at compile time via
-# include_str!. The file targets rebuild them when any .tsx source in
-# apps/player changes. Run `make player-bundle` to force a rebuild.
+# Every runtime embeds the bundles at compile time via include_str!. The
+# file targets rebuild them when any .tsx source in apps/player changes. Run
+# `make player-bundle` to force a rebuild.
 
 player-bundle: $(PLAYER_JS) $(BSOD_JS)
 
@@ -233,6 +151,9 @@ download-fonts:
 dist-clean:
 	rm -rf $(SOLIDRT_HOME)/dist
 
+# The runtime's clean covers its target/ (where the four builds go); the
+# checkout's dist/ and the Gradle outputs are this file's.
 clean:
-	rm -rf target $(SOLIDRT_HOME)/dist
+	$(MAKE) -C $(SOLIDRT_HOME)/runtime clean
+	rm -rf $(SOLIDRT_HOME)/dist
 	rm -rf android/app/build android/build android/.gradle

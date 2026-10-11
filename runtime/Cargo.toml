@@ -1,7 +1,7 @@
 # The stock SolidRT program: lattice with no modules of its own, built as
 # the `solidrt` production runtime, the `solidrt-go` dev client and the
-# Android cdylib of each (lattice/Makefile). A custom runtime (docs/runtime,
-# "A custom runtime") is this crate beside an app, with its modules.
+# Android cdylib of each (Makefile). A custom runtime (docs/runtime, "A
+# custom runtime") is this crate beside an app, with its modules.
 [package]
 name = "solidrt"
 version = "0.0.0"
@@ -16,16 +16,11 @@ crate-type = ["cdylib", "lib"]
 name = "solidrt-go"
 required-features = ["go"]
 
-# Every feature forwards to lattice's; the Makefile picks the set per binary.
+# The one feature of the crate's own: the player, for the solidrt-go binary
+# to require. Every other feature is lattice's, named lattice/<feature> on
+# the command line (the Makefile), so none is repeated here.
 [features]
-default = ["compile"]
-compile = ["lattice/compile"]
 go = ["lattice/go"]
-speech = ["lattice/speech"]
-test = ["lattice/test"]
-video = ["lattice/video"]
-ktx2 = ["lattice/ktx2"]
-wasm-native = ["lattice/wasm-native"]
 
 [dependencies]
-lattice = { path = "../lattice", default-features = false }
+lattice = { path = "../lattice" }

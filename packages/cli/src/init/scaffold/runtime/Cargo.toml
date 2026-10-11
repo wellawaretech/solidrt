@@ -1,0 +1,32 @@
+# The app's own runtime: SolidRT's lattice with the modules in src/
+# (docs/runtime, "A custom runtime"). `make` builds and stages it into
+# dist/, which package.json names as the app's runtime.
+[package]
+name = "{{crate}}"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Its own cargo workspace, not a member of one above it.
+[workspace]
+
+# The Android .so, and the library the two binaries link.
+[lib]
+crate-type = ["cdylib", "lib"]
+
+# The binaries are src/bin/solidrt.rs and src/bin/solidrt-go.rs (cargo finds
+# them by name); the player is the same program behind the `go` feature.
+[[bin]]
+name = "solidrt-go"
+required-features = ["go"]
+
+# The one feature of the crate's own: the player, for the solidrt-go binary
+# to require. Every other feature is lattice's, named lattice/<feature> on
+# the command line (the Makefile), so none is repeated here.
+[features]
+go = ["lattice/go"]
+
+[dependencies]
+# The SolidRT release the app's @solidrt packages are at (sol --version);
+# the build refuses a tag that differs from the installed @solidrt/cli.
+lattice = { git = "https://github.com/wellawaretech/solidrt", tag = "v{{version}}" }

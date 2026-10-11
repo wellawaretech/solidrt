@@ -23,7 +23,8 @@ export function printUsage() {
 const USAGE = `Usage: sol <command> [options] [file]
 
 Commands:
-  init <dir>             Scaffold a new SolidRT project into a new (empty) folder
+  init [<dir>]           Scaffold a new SolidRT project into a new (empty) folder
+                         (--runtime: with the app's own runtime, or added to the project here)
   run [file]             Start dev server + local solidrt-go client
   server [file]          Start dev server only
   client                 Start solidrt-go client only
@@ -47,6 +48,11 @@ Commands:
 Global options:
       --help             Print this usage and exit
       --version          Print the sol version and exit
+
+init options:
+      --runtime          The app's own runtime too: runtime/, a cargo project over lattice with a
+                         starter module (runtime:hello), built with make -C runtime; with no <dir>,
+                         added to the project in the current directory
 
 run/server/bundle/pack/render: what the command works on
   sol run                In a project root (package.json): the project, entry from

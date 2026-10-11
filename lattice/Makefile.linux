@@ -6,23 +6,11 @@ PKG_LINUX := $(CURDIR)/../packages/$(HOST_PLATFORM)
 
 .PHONY: client runtime dist
 
-# Stage a binary into dist/<host-platform>/.
-# $(1) = target subdir (go|runtime), $(2) = profile (release|debug), $(3) = binary name
-define stage-bin
-	@mkdir -p $(HOST_DIST)
-	$(call replace-bin,target/$(1)/$(2)/$(3),$(HOST_DIST)/$(3))
-	@echo "Staged $(3) into $(HOST_DIST)/"
-endef
-
 client: $(PLAYER_JS) $(BSOD_JS)
-	@echo "Building SOLIDRT-GO ($(PROFILE)) $(VERSION)"
-	$(SOLIDRT_VERSION) cargo build -p solidrt $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
-	$(call stage-bin,go,$(PROFILE),solidrt-go)
+	$(RUNTIME_MAKE) client
 
-runtime:
-	@echo "Building RUNTIME ($(PROFILE)) $(VERSION)"
-	$(SOLIDRT_VERSION) cargo build -p solidrt $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
-	$(call stage-bin,runtime,$(PROFILE),solidrt)
+runtime: $(BSOD_JS)
+	$(RUNTIME_MAKE) runtime
 
 dist:
 	$(MAKE) client

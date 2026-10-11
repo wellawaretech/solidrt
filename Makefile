@@ -22,8 +22,9 @@ apps:
 	$(MAKE) -C packages/cli console
 	$(MAKE) -C lattice player-bundle
 
-# lattice's clean covers lattice/target and dist/; flux's covers the
-# workspace-root target/ that alloy, forge and flux build into.
+# lattice's clean covers runtime/target (the four runtime builds) and dist/;
+# flux's covers the workspace-root target/ that alloy, forge and flux build
+# into.
 clean:
 	$(MAKE) -C lattice clean
 	$(MAKE) -C flux clean

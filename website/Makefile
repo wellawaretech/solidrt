@@ -4,7 +4,7 @@
 
 SOLIDRT_HOME ?= $(abspath $(CURDIR)/..)
 
-include $(SOLIDRT_HOME)/platform.mk
+include $(SOLIDRT_HOME)/packages/cli/runtime/platform.mk
 
 build:
 	bun install

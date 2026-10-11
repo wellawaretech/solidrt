@@ -9,9 +9,10 @@ Differences because this app lives in the solidrt monorepo:
 - Dependencies are `workspace:*`; `bun install` at the repo root wires them.
   There is nothing to install here.
 - `sol` is the in-repo CLI; run it as `bun run sol`.
-- The production bundles are generated into `../../runtime/resources/` (not
-  tracked), because the stock program crate embeds them into the binaries at
-  compile time via `include_str!`. Rebuild them with `make player-bundle`
-  from the repo root after changing any source here.
+- The production bundles are generated into `../../packages/cli/player/`
+  (not tracked), because every runtime (the stock program crate in
+  `runtime/`, a custom one) embeds them into its binaries at compile time
+  via `include_str!`, and the CLI package ships them. Rebuild them with
+  `make player-bundle` from the repo root after changing any source here.
 - `src/bsod.tsx` is a second entry point, bundled separately: the error
   screen the client shows when an app fails to start.

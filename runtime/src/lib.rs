@@ -2,22 +2,23 @@
 //! own, behind the two binaries (`solidrt`, the production runtime, and
 //! `solidrt-go`, the dev client) and the Android cdylib of each. A custom
 //! runtime (docs/runtime, "A custom runtime") is this crate with its
-//! modules in `modules()`, and its screens taken from the `@solidrt/cli`
-//! package instead of `resources/`.
+//! modules in `modules()`.
 
 /// The modules beside lattice's built-ins: none in the stock program.
 pub fn modules() -> lattice::Modules {
   lattice::Modules::new()
 }
 
-/// The program: the modules and the screens lattice embeds, bundled from
-/// apps/player into `resources/` by `make -C lattice player-bundle`.
+/// The program: the modules, and the two screens the runtime embeds (the
+/// failure screen in every build, the player in the dev client), from the
+/// @solidrt/cli package: bundled there from apps/player by `make
+/// player-bundle` in the checkout, shipped in the package for an app.
 pub fn program() -> lattice::Program {
   lattice::Program {
     modules: modules(),
-    bsod: include_str!("../resources/bsod/bsod.sol.js"),
+    bsod: include_str!("../../node_modules/@solidrt/cli/player/bsod.sol.js"),
     #[cfg(feature = "go")]
-    player: include_str!("../resources/player/index.sol.js"),
+    player: include_str!("../../node_modules/@solidrt/cli/player/index.sol.js"),
   }
 }
 

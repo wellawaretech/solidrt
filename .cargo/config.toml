@@ -23,8 +23,10 @@ rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
 
 # Android: force >=16 KB ELF LOAD-segment alignment on libmain (libsolidrt) so it
 # does not depend on the NDK linker default (16 KB only since NDK r27). Matches
-# CMAKE_SHARED_LINKER_FLAGS_INIT in lattice/android/cmake/android-abi.toolchain.cmake,
+# CMAKE_SHARED_LINKER_FLAGS in packages/cli/runtime/android-abi.toolchain.cmake,
 # which covers libSDL3 and other cmake-built shared libs.
+# This file is also packages/cli/runtime/config.toml, the copy a runtime's
+# build passes with --config (runtime.mk there); keep the two the same.
 [target.aarch64-linux-android]
 rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
 
@@ -33,3 +35,36 @@ rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
 
 [target.x86_64-linux-android]
 rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+# -- Profiles ------------------------------------------------------------
+#
+# The profiles live here, not in Cargo.toml, so a custom runtime (a cargo
+# project over lattice beside an app) builds with the same ones: its make
+# passes this file with --config (packages/cli/runtime/runtime.mk, which
+# ships a copy of it).
+
+# QuickJS compiled optimized in the dev profile too, the Rust above it at
+# the profile's own level. Unoptimized, the engine runs JS 5x slower on
+# Linux and 15x under MSVC (the tiles property test of packages/2d: 1.9 s
+# on release, 10.6 s on a Linux debug build, over 30 s on a Windows one,
+# 1.96 s on a debug build with this override), and nothing debugs into the
+# engine's C; the debug assertions that a debug build is for are the
+# Rust's.
+[profile.dev.package.rquickjs-sys]
+opt-level = 3
+
+[profile.release]
+
+# Build scripts and proc-macros stay unstripped. With Xcode 27 the strip that
+# cargo's release default (strip = "debuginfo") runs on a proc-macro dylib
+# leaves rustc unable to load it, and its dependents fail with E0463 "can't
+# find crate for `futures_macro`". The shipped binaries are not build-time
+# crates, so they are stripped as before. release-opt inherits this.
+[profile.release.build-override]
+strip = "none"
+
+[profile.release-opt]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true

@@ -91,11 +91,10 @@ pub(crate) fn well_formed_module_name(rest: &str) -> bool {
 /// What a program hands the runtime: its modules and the two screens the
 /// runtime embeds, as bundles `sol bundle` made from apps/player. The
 /// screens are made by the JavaScript side, so a program embeds them with
-/// `include_str!` from where its SolidRT version ships them: the checkout
-/// bundles them into `runtime/resources/` (`make -C lattice
-/// player-bundle`), a custom runtime takes them from the `@solidrt/cli`
-/// package in its node_modules (`player/index.sol.js`, `player/bsod.sol.js`),
-/// which is at the same version as the lattice tag it depends on.
+/// `include_str!` from the `@solidrt/cli` package in its node_modules
+/// (`player/index.sol.js`, `player/bsod.sol.js`): bundled there by `make
+/// player-bundle` in the checkout, shipped in the package at the same
+/// version as the lattice tag a custom runtime depends on.
 pub struct Program {
   pub modules: Modules,
   /// The screen shown when an app fails to start; every build.

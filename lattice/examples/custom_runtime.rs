@@ -73,10 +73,10 @@ fn digest<'js>(ctx: Ctx<'js>, bytes: TypedArray<'js, u8>) -> flux::rquickjs::Res
 fn main() {
   lattice::main(lattice::Program {
     modules: Modules::new().add("runtime:whoami", WhoamiModule),
-    // The screens from the checkout's stock program; a custom runtime takes
-    // them from the @solidrt/cli package in its node_modules instead.
-    bsod: include_str!("../../runtime/resources/bsod/bsod.sol.js"),
+    // The screens from the @solidrt/cli package, as any runtime takes them
+    // (the checkout bundles them there with `make player-bundle`).
+    bsod: include_str!("../../packages/cli/player/bsod.sol.js"),
     #[cfg(feature = "go")]
-    player: include_str!("../../runtime/resources/player/index.sol.js"),
+    player: include_str!("../../packages/cli/player/index.sol.js"),
   });
 }

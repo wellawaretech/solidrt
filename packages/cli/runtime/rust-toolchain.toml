@@ -1,0 +1,21 @@
+# rusqlite 0.40 (-> libsqlite3-sys 0.38) has a build.rs that uses the cfg_select!
+# macro, stabilized in Rust 1.96. Pinning here makes rustup auto-install a known
+# good toolchain so older local Rust versions upgrade instead of failing to build
+# flux with an obscure "unstable feature cfg_select" error. Bump when adopting a
+# newer Rust across the project.
+#
+# These are the Android ABIs the `make android-dist*` targets (cargo ndk) build:
+# aarch64-linux-android (arm64-v8a, real devices), x86_64-linux-android (x86_64,
+# emulator) and armv7-linux-androideabi (armeabi-v7a, 32-bit). Listing them here
+# so rustup auto-installs their std for the pinned toolchain on a fresh
+# checkout/CI, without a manual `rustup target add`. A channel pin means rustup
+# only installs the targets named here, not whatever a CI action added to a
+# different toolchain; keep this in sync with ANDROID_ABIS.
+#
+# The same holds for components: rustup auto-installs the pinned toolchain with
+# the minimal profile, which has no rustfmt, so `make format-check` (CI, the
+# pre-commit hook) needs it named here.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt"]
+targets = ["aarch64-linux-android", "x86_64-linux-android", "armv7-linux-androideabi"]

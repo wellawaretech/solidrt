@@ -334,3 +334,8 @@ jobs:
 
       - name: Check components docs
         run: bun scripts/build-components-docs.ts --check
+
+      # The toolchain pin and cargo config the CLI package ships for a
+      # runtime's build are copies of the checkout's own.
+      - name: Check the runtime build base
+        run: bun scripts/check-runtime-base.ts

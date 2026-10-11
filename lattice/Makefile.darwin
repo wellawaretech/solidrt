@@ -13,19 +13,11 @@ ANGLE_GLES       = $(DARWIN_DIST)/libGLESv2.dylib
 
 PKG_DARWIN := $(CURDIR)/../packages/darwin-$(DARWIN_ARCH)
 
-# Statically linked SDL contains @available checks that compile to
-# ___isPlatformVersionAtLeast calls. That symbol lives in clang's compiler-rt
-# builtins, which rustc's -nodefaultlibs link never pulls in; plain release
-# builds get it from Rust's compiler-builtins instead, but fat LTO
-# (release-opt) internalizes it away since no Rust code references it. Link
-# the archive explicitly so both profiles resolve it. Note RUSTFLAGS replaces
-# .cargo/config.toml's target rustflags entirely, so the @executable_path
-# rpath from there must be repeated here.
-CLANG_RT_OSX   := $(shell clang -print-resource-dir)/lib/darwin/libclang_rt.osx.a
-DARWIN_RUSTFLAGS = RUSTFLAGS="-C link-arg=-Wl,-rpath,@executable_path -C link-arg=$(CLANG_RT_OSX)"
-
 .PHONY: client runtime dist angle-darwin
 
+# The ANGLE libraries beside the binaries, from an Electron release. A
+# custom runtime takes them from the platform package instead (runtime.mk,
+# GL_SRC); this is where the package's own come from.
 angle-darwin:
 	@mkdir -p $(DARWIN_DIST)
 	@cur=$$(cat $(DARWIN_DIST)/$(ANGLE_STAMP_FILE) 2>/dev/null); \
@@ -41,27 +33,11 @@ angle-darwin:
 	unzip -jo $(ANGLE_DARWIN_ZIP) "*/libEGL.dylib" "*/libGLESv2.dylib" -d $(DARWIN_DIST); \
 	echo "$(ELECTRON_VERSION)" > $(DARWIN_DIST)/$(ANGLE_STAMP_FILE)
 
-# Stage the binary into HOST_DIST. Impeller is linked statically on macOS
-# (alloy/Cargo.toml), so the only dylibs next to it are ANGLE's, which the
-# angle-darwin target places there.
-# $(1) = target subdir (go|runtime), $(2) = profile (release|debug), $(3) = binary name
-define stage-darwin
-	@mkdir -p $(HOST_DIST)
-	@cp target/$(1)/$(2)/$(3) $(HOST_DIST)/$(3).tmp
-	@codesign --force --sign - $(HOST_DIST)/$(3).tmp
-	@mv -f $(HOST_DIST)/$(3).tmp $(HOST_DIST)/$(3)
-	@echo "Staged $(3) into $(HOST_DIST)/"
-endef
-
 client: $(PLAYER_JS) $(BSOD_JS) angle-darwin
-	@echo "Building SOLIDRT-GO macOS ($(PROFILE)) $(VERSION)"
-	$(SOLIDRT_VERSION) $(DARWIN_RUSTFLAGS) cargo build -p solidrt $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
-	$(call stage-darwin,go,$(PROFILE),solidrt-go)
+	$(RUNTIME_MAKE) client
 
-runtime: angle-darwin
-	@echo "Building RUNTIME macOS ($(PROFILE)) $(VERSION)"
-	$(SOLIDRT_VERSION) $(DARWIN_RUSTFLAGS) cargo build -p solidrt $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
-	$(call stage-darwin,runtime,$(PROFILE),solidrt)
+runtime: $(BSOD_JS) angle-darwin
+	$(RUNTIME_MAKE) runtime
 
 dist:
 	$(MAKE) client

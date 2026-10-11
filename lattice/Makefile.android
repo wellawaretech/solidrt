@@ -7,43 +7,21 @@
 #   - dist: android-dist builds both APKs for one ABI and stages them into
 #     packages/android-<abi>/, mirroring the desktop `dist` goal.
 #
+# The .so files themselves (libmain.so with SDL, impeller and, when a lib
+# links it, the NDK's C++ runtime beside it, 16 KB page aligned) are the
+# runtime's build (RUNTIME_MAKE android-client / android-runtime), staged
+# into dist/android/<abi>/ and dist/android-runtime/<abi>/ for the Gradle
+# project here to pick up.
+#
 # There is no fat APK: every consumer resolves per ABI. `sol android --install`
 # picks the APK matching the device's ro.product.cpu.abi, and `sol pack --apk`
 # patches a per-ABI runner. Play Store publishing is a separate future artifact
 # (an AAB, split per device at delivery), not a fat APK - see
 # okf/backlog/standalone-android-apk.md.
 
-NDK_HOME    ?= /opt/android-ndk
-ANDROID_ABI ?= arm64-v8a
-
 # The platform package for the ABI being built. Not every ABI has one (x86_64
 # is a dev-only artifact), so the dist goals stage into it only when it exists.
 PKG_ANDROID = $(CURDIR)/../packages/android-$(ANDROID_ABI)
-
-RUST_TARGET_arm64-v8a   = aarch64-linux-android
-RUST_TARGET_armeabi-v7a = armv7-linux-androideabi
-RUST_TARGET_x86_64      = x86_64-linux-android
-RUST_TARGET_x86         = i686-linux-android
-ANDROID_TARGET          = $(RUST_TARGET_$(ANDROID_ABI))
-
-# NDK sysroot lib dir names (clang triples; armv7 and x86 differ from rust's).
-CLANG_TRIPLE_arm64-v8a   = aarch64-linux-android
-CLANG_TRIPLE_armeabi-v7a = arm-linux-androideabi
-CLANG_TRIPLE_x86_64      = x86_64-linux-android
-CLANG_TRIPLE_x86         = i686-linux-android
-ANDROID_CLANG_TRIPLE     = $(CLANG_TRIPLE_$(ANDROID_ABI))
-
-# armv7 needs impellers' bindgen_live (see alloy/Cargo.toml) to point at the
-# real 32-bit target. Use the bindgen-recognized BINDGEN_EXTRA_CLANG_ARGS_<target>
-# suffix (matching Cargo's TARGET env var, hyphens to underscores) rather than
-# the plain var: bindgen also runs for host-targeted build units in the same
-# build (e.g. rquickjs-macro, a proc-macro crate that always builds for the
-# host), and an unscoped value corrupts those instead of just armv7.
-# --sysroot is required too: without it, clang's implicit host glibc fallback
-# search path still gets appended after the NDK paths, and bionic's headers
-# pull in incompatible glibc macros (__GLIBC_USE) through it.
-BINDGEN_VAR_armeabi-v7a   = BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi
-BINDGEN_ARGS_armeabi-v7a  = --target=armv7a-linux-androideabi26 --sysroot=$(NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/sysroot
 
 ANDROID_DIST       = $(SOLIDRT_HOME)/dist/android/$(ANDROID_ABI)
 APK_PLAYER_DEBUG   = android/app/build/outputs/apk/player/debug/app-player-debug.apk
@@ -69,54 +47,8 @@ DEV_SERVER ?= $(if $(HOST_LAN_IP),$(HOST_LAN_IP):$(DEV_PORT))
 
 .PHONY: android-client android-run android-run-armeabi-v7a android-dist android-dist-armeabi-v7a
 
-# Cross-compile the engine .so via cargo-ndk.
-# $(1) = label, $(2) = env vars, $(3) = cargo flags
-define ndk-build
-	@echo "Building ANDROID $(1) $(VERSION)"
-	ANDROID_NDK_HOME=$(NDK_HOME) ANDROID_NDK_ROOT=$(NDK_HOME) \
-	  CMAKE_TOOLCHAIN_FILE_$(subst -,_,$(ANDROID_TARGET))=$(CURDIR)/android/cmake/android-abi.toolchain.cmake \
-	  CMAKE_ANDROID_ARCH_ABI=$(ANDROID_ABI) \
-	  $(if $(BINDGEN_VAR_$(ANDROID_ABI)),$(BINDGEN_VAR_$(ANDROID_ABI))="$(BINDGEN_ARGS_$(ANDROID_ABI))") \
-	  $(2) \
-	  $(SOLIDRT_VERSION) cargo ndk -t $(ANDROID_ABI) build -p solidrt --lib $(3)
-endef
-
-# Fail the build when a staged .so is not 16 KB page aligned: Android 15+
-# flags such libs as incompatible, and the linker flags that prevent it
-# (.cargo/config.toml, android/cmake/android-abi.toolchain.cmake) have
-# regressed silently before. Only the 64-bit ABIs are held to it; the NDK's
-# own 32-bit libc++_shared.so is 4 KB aligned.
-# $(1) = directory holding the staged .so files
-ELF_MIN_ALIGN = 16384
-ALIGNED_ABIS  = arm64-v8a x86_64
-READELF       = $(firstword $(wildcard $(NDK_HOME)/toolchains/llvm/prebuilt/*/bin/llvm-readelf))
-define check-elf-align
-	$(if $(filter $(ANDROID_ABI),$(ALIGNED_ABIS)),@for so in $(1)/*.so; do \
-	  for align in $$($(READELF) -lW $$so | awk '$$1 == "LOAD" { print $$NF }'); do \
-	    if [ $$(($$align)) -lt $(ELF_MIN_ALIGN) ]; then \
-	      echo "$$so: LOAD segment aligned to $$align; need >= $(ELF_MIN_ALIGN)"; exit 1; \
-	    fi; \
-	  done; \
-	done; echo "Checked 16 KB ELF alignment in $(1)/")
-endef
-
-# Stage .so files into dist/android/ for the Gradle project to pick up.
-# $(1) = profile (release|debug)
-define ndk-stage
-	mkdir -p $(ANDROID_DIST)
-	cp target/go/$(ANDROID_TARGET)/$(1)/libsolidrt.so $(ANDROID_DIST)/libmain.so
-	cp target/go/$(ANDROID_TARGET)/$(1)/libSDL3.so $(ANDROID_DIST)/
-	# copy newest if there are multiple
-	cp "$$(ls -t target/go/$(ANDROID_TARGET)/$(1)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_DIST)/
-	# whisper-rs links the NDK's shared C++ runtime, so the APK must carry it
-	cp $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so $(ANDROID_DIST)/
-	@echo "Staged Android .so files into $(ANDROID_DIST)/"
-	$(call check-elf-align,$(ANDROID_DIST))
-endef
-
 android-client: $(PLAYER_JS) $(BSOD_JS)
-	$(call ndk-build,SOLIDRT-GO ($(PROFILE)),,$(CARGO_PROFILE_FLAG) $(GO_FEATURES) --target-dir target/go)
-	$(call ndk-stage,$(PROFILE))
+	$(RUNTIME_MAKE) android-client
 
 # Bootstrap Gradle wrapper if missing.
 $(GRADLE_WRAPPER_JAR):
@@ -126,9 +58,7 @@ $(GRADLE_WRAPPER_JAR):
 # that staged copy, launch, and stream logcat. Staging keeps dist/android
 # current with what the device runs, so `sol android --install` (which takes
 # the APK from there in a checkout) installs this build, not an older one.
-# $(1) = profile (release|debug) matching the staged .so
 define apk-run
-	$(call ndk-stage,$(1))
 	# gradle's jniLibs.srcDir bundles every ABI staged under dist/android, so
 	# -PsolAbi pins the APK to the one this loop just built.
 	cd android && ./gradlew assemblePlayerDebug -PsolAbi=$(ANDROID_ABI)
@@ -142,11 +72,11 @@ define apk-run
 endef
 
 android-run: android-client $(GRADLE_WRAPPER_JAR)
-	$(call apk-run,$(PROFILE))
+	$(call apk-run)
 
 # The same dev loop against the 32-bit ABI.
 android-run-armeabi-v7a:
-	$(MAKE) android-run ANDROID_ABI=armeabi-v7a PROFILE=$(PROFILE)
+	$(MAKE) android-run ANDROID_ABI=armeabi-v7a
 
 # Copy a staged APK into the ABI's platform package, when that ABI has one.
 # $(1) = staged APK, $(2) = name inside the package
@@ -180,7 +110,7 @@ android-dist: android-client $(GRADLE_WRAPPER_JAR)
 
 # The same, for the 32-bit ABI.
 android-dist-armeabi-v7a:
-	$(MAKE) android-dist ANDROID_ABI=armeabi-v7a PROFILE=$(PROFILE)
+	$(MAKE) android-dist ANDROID_ABI=armeabi-v7a
 
 # -- Production runtime APK ---------------------------
 
@@ -205,13 +135,7 @@ APK_RUNNER_RELEASE = android/app/build/outputs/apk/runner/release/app-runner-rel
 # (okf/done/packed-apk-data-on-device.md); the release type signs with the
 # same checked-in debug keystore.
 android-runtime: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
-	$(call ndk-build,SOLIDRT RUNTIME ($(PROFILE)),,$(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --target-dir target/runtime-android)
-	mkdir -p $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)
-	cp target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/libsolidrt.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/libmain.so
-	cp target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/libSDL3.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
-	cp "$$(ls -t target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
-	cp $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
-	$(call check-elf-align,$(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI))
+	$(RUNTIME_MAKE) android-runtime
 	cd android && ./gradlew assembleRunnerRelease -PsolAbi=$(ANDROID_ABI)
 	cp $(APK_RUNNER_RELEASE) $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/solidrt.apk
 	@echo "Staged solidrt.apk ($(ANDROID_ABI)) into $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/"

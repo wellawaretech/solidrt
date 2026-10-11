@@ -1,7 +1,9 @@
-# platform.mk - shared host-platform mapping, included by the flux, lattice,
-# and website Makefiles (include $(SOLIDRT_HOME)/platform.mk, after SOLIDRT_HOME is
-# set). The PLATFORM_* map is the single source of truth for which host
-# triples have a native platform package under packages/<platform>/.
+# platform.mk - shared host-platform mapping, included by runtime.mk beside
+# it (a runtime's build, in the checkout and in an app) and by the flux,
+# lattice and website Makefiles ($(SOLIDRT_HOME)/packages/cli/runtime/platform.mk,
+# after SOLIDRT_HOME is set). The PLATFORM_* map is the single source of
+# truth for which host triples have a native platform package under
+# packages/<platform>/.
 
 HOST_TARGET := $(shell rustc -vV | sed -n 's/host: //p')
 
@@ -12,10 +14,15 @@ PLATFORM_x86_64-pc-windows-msvc    = win32-x64-msvc
 
 HOST_PLATFORM := $(PLATFORM_$(HOST_TARGET))
 
+# Where the host binaries are staged: <DIST_DIR>/<platform>/. DIST_DIR is the
+# checkout's dist/ for its Makefiles; runtime.mk sets its own before
+# including this file.
+DIST_DIR ?= $(SOLIDRT_HOME)/dist
+
 # Deferred (=, not :=) so an unmapped host aborts at the point of use with a
 # real message instead of silently staging into "dist//". Targets that never
 # expand HOST_DIST (e.g. Android cross builds) still work on unmapped hosts.
-HOST_DIST = $(if $(HOST_PLATFORM),$(SOLIDRT_HOME)/dist/$(HOST_PLATFORM),$(error Unsupported host target $(HOST_TARGET): add it to platform.mk))
+HOST_DIST = $(if $(HOST_PLATFORM),$(DIST_DIR)/$(HOST_PLATFORM),$(error Unsupported host target $(HOST_TARGET): add it to platform.mk))
 
 HOST_EXT := $(if $(findstring windows,$(HOST_TARGET)),.exe,)
 
@@ -44,3 +51,23 @@ define replace-bin
 	@mv -f $(2).tmp $(2)
 endef
 endif
+
+# -- Android ---------------------------------------------------------------
+#
+# Every Android build is single-ABI, selected by ANDROID_ABI (arm64-v8a for
+# devices, armeabi-v7a for the 32-bit ones, x86_64 for the emulator). The
+# rust target and the clang triple (the NDK sysroot's lib dir name; armv7
+# and x86 differ from rust's) of each.
+ANDROID_ABI ?= arm64-v8a
+
+RUST_TARGET_arm64-v8a   = aarch64-linux-android
+RUST_TARGET_armeabi-v7a = armv7-linux-androideabi
+RUST_TARGET_x86_64      = x86_64-linux-android
+RUST_TARGET_x86         = i686-linux-android
+ANDROID_TARGET          = $(RUST_TARGET_$(ANDROID_ABI))
+
+CLANG_TRIPLE_arm64-v8a   = aarch64-linux-android
+CLANG_TRIPLE_armeabi-v7a = arm-linux-androideabi
+CLANG_TRIPLE_x86_64      = x86_64-linux-android
+CLANG_TRIPLE_x86         = i686-linux-android
+ANDROID_CLANG_TRIPLE     = $(CLANG_TRIPLE_$(ANDROID_ABI))

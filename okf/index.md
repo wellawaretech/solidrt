@@ -341,14 +341,6 @@ Shaped, not started.
   The router side of the cursor prop is covered in alloy, but the flux decode
   (21 accepted names, the handle form, the two rejection messages) has no test
   in the existing apply_jsx harness.
-- **[Make a custom runtime cheap to set up and ship](backlog/custom-runtime-authoring.md)** [2026-10-11]
-  Every custom runtime repeats the same boilerplate (manifest, entries,
-  toolchain, page flags, Android environment, staging) that sol's own hint
-  assumes but nothing writes, the stock program's four build goals live in
-  lattice's Makefiles where a custom runtime cannot share them, and the Native
-  code docs leave out the staging folder names, C++ on Android, build cost and
-  stripping; a runtime scaffold, one Makefile for the stock program and a
-  custom one, and the missing docs.
 - **[Deep links](backlog/deep-links.md)** [2026-07-26]
   "Opening the app at a link from outside: the app half (onLink, the launch
   link, the dev-side link injection) and the OS registration half (the scheme
@@ -1439,6 +1431,14 @@ Finished, kept for the reasoning.
   understanding; parseColor/mixColors/brightness become flux:rendertree
   bindings backed by the same oklab math the transitions use, and
   @solidrt/core loses its only runtime npm dependency.
+- **[Make a custom runtime cheap to set up and ship](done/custom-runtime-authoring.md)** [2026-10-11]
+  Every custom runtime repeated the same boilerplate (manifest, entries,
+  toolchain, page flags, Android environment, staging) that sol's own hint
+  assumed but nothing wrote, the stock program's four build goals lived in
+  lattice's Makefiles where a custom runtime could not share them, and the
+  Native code docs left out the staging folder names, C++ on Android, build
+  cost and stripping; now one build base in the CLI package that every
+  runtime's one-line Makefile includes, sol init --runtime, and the docs.
 - **[Reactive SQLite queries](done/data-reactive-sqlite.md)** [2026-08-19]
   A SQLite query as a reactive value - it re-runs when any table it reads is
   written on this connection, with SQLite's own authorizer and update hook

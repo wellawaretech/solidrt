@@ -73,6 +73,7 @@ const OPTIONS = {
     durations: { type: "boolean", default: false },
     settle: { type: "boolean", default: false },
     strict: { type: "boolean", default: false },
+    runtime: { type: "boolean", default: false },
 } as const
 
 export let { values, positionals } = parse()
@@ -235,6 +236,10 @@ export function validateArgs() {
   // --settle and --strict shape a render.
   if ((values.settle || values.strict) && command !== "render") {
     usage("sol render [--settle] [--strict]  (--settle and --strict are only valid with the render command)")
+  }
+  // --runtime scaffolds the app's own runtime.
+  if (values.runtime && command !== "init") {
+    usage("sol init [<dir>] --runtime  (--runtime is only valid with the init command)")
   }
   // --only runs one layer of the tests.
   if (values.only !== undefined && command !== "test") {

@@ -84,6 +84,11 @@ them from the program:
 - [x] release.yml stages the bundles into `packages/cli/player/`; the
       package's `files` list and `.gitignore` carry the folder; the
       version loop covers the new crate.
+- [x] Then (custom-runtime-authoring, the same day): `runtime/resources/`
+      went away. `make player-bundle` writes into `packages/cli/player/`
+      and the stock program embeds from there through node_modules, the
+      same `include_str!` lines as a custom runtime; release.yml only
+      bundles.
 - [x] docs/runtime "A custom runtime" (the `program()` shape, the
       include_str lines, the bundle rule), apps/player/AGENTS.md,
       CLAUDE.md's project list.

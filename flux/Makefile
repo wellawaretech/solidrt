@@ -11,7 +11,7 @@ endif
 
 SOLIDRT_HOME ?= $(abspath $(CURDIR)/..)
 
-include $(SOLIDRT_HOME)/platform.mk
+include $(SOLIDRT_HOME)/packages/cli/runtime/platform.mk
 
 # $(1) = binary name (no extension)
 define stage-bin

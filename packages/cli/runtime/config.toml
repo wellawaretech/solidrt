@@ -1,0 +1,70 @@
+# Fetch git dependencies with the system git instead of libgit2: libgit2 on
+# macOS goes through SecureTransport, which has dropped the clone of the
+# libyuv submodule behind livekit-wakeword on the CI runner three releases
+# running. The system git is what the runner's own checkout uses and is the
+# more robust client; `retry` is the attempts cargo makes on a network error
+# it recognises as spurious (its default is 3).
+[net]
+git-fetch-with-cli = true
+retry = 5
+
+# macOS builds target macOS 14, the CI runner's version, wherever they are
+# built. Without it rustc defaults to 11.0 and the C builds (SDL through cmake,
+# libvpx, opus) to the build host's own macOS, so a binary built on a newer
+# Mac would not start on an older one. A value set in the environment wins.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "14.0"
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
+
+# Android: force >=16 KB ELF LOAD-segment alignment on libmain (libsolidrt) so it
+# does not depend on the NDK linker default (16 KB only since NDK r27). Matches
+# CMAKE_SHARED_LINKER_FLAGS in packages/cli/runtime/android-abi.toolchain.cmake,
+# which covers libSDL3 and other cmake-built shared libs.
+# This file is also packages/cli/runtime/config.toml, the copy a runtime's
+# build passes with --config (runtime.mk there); keep the two the same.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.armv7-linux-androideabi]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+# -- Profiles ------------------------------------------------------------
+#
+# The profiles live here, not in Cargo.toml, so a custom runtime (a cargo
+# project over lattice beside an app) builds with the same ones: its make
+# passes this file with --config (packages/cli/runtime/runtime.mk, which
+# ships a copy of it).
+
+# QuickJS compiled optimized in the dev profile too, the Rust above it at
+# the profile's own level. Unoptimized, the engine runs JS 5x slower on
+# Linux and 15x under MSVC (the tiles property test of packages/2d: 1.9 s
+# on release, 10.6 s on a Linux debug build, over 30 s on a Windows one,
+# 1.96 s on a debug build with this override), and nothing debugs into the
+# engine's C; the debug assertions that a debug build is for are the
+# Rust's.
+[profile.dev.package.rquickjs-sys]
+opt-level = 3
+
+[profile.release]
+
+# Build scripts and proc-macros stay unstripped. With Xcode 27 the strip that
+# cargo's release default (strip = "debuginfo") runs on a proc-macro dylib
+# leaves rustc unable to load it, and its dependents fail with E0463 "can't
+# find crate for `futures_macro`". The shipped binaries are not build-time
+# crates, so they are stripped as before. release-opt inherits this.
+[profile.release.build-override]
+strip = "none"
+
+[profile.release-opt]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { styleText } from "node:util"
@@ -5,6 +6,7 @@ import { source, values } from "../lib/args"
 import { CLI_VERSION } from "../lib/project"
 import { abort, intro, multiselect, outro, spinner, step, text } from "../lib/prompt"
 import { runQuiet } from "../lib/util"
+import { RUNTIME_DIR, RUNTIME_TYPES, renderRuntime, withRuntime, withRuntimeIgnore, withRuntimeTypes } from "./runtime"
 
 const DEFAULT_NAME = "solidrt-app"
 
@@ -24,6 +26,20 @@ const TEMPLATE_FILES: Array<{ from: string; to: string }> = [
   { from: "mcp.json", to: ".mcp.json" },
   { from: "AGENTS.md", to: "AGENTS.md" },
   { from: "app.test.tsx", to: "tests/app.test.tsx" },
+]
+
+// The app's own runtime (--runtime): a cargo project over lattice with a
+// starter module, from scaffold/runtime/. The test goes into the app's
+// tests/ (stored outside a tests/ folder here, like app.test.tsx).
+const RUNTIME_FILES: Array<{ from: string; to: string }> = [
+  { from: "Makefile", to: `${RUNTIME_DIR}/Makefile` },
+  { from: "Cargo.toml", to: `${RUNTIME_DIR}/Cargo.toml` },
+  { from: "lib.rs", to: `${RUNTIME_DIR}/src/lib.rs` },
+  { from: "hello.rs", to: `${RUNTIME_DIR}/src/hello.rs` },
+  { from: "solidrt.rs", to: `${RUNTIME_DIR}/src/bin/solidrt.rs` },
+  { from: "solidrt-go.rs", to: `${RUNTIME_DIR}/src/bin/solidrt-go.rs` },
+  { from: "hello.d.ts", to: `${RUNTIME_TYPES}/hello.d.ts` },
+  { from: "runtime.test.tsx", to: "tests/runtime.test.tsx" },
 ]
 
 // A valid npm package name derived from the target directory.
@@ -92,7 +108,47 @@ function resolveTemplate(extensions: Extension[]): string {
   return templates.join("+") || DEFAULT_TEMPLATE
 }
 
+// Write the runtime into the project at `dir` (its package.json read for
+// the app's name) and wire it in: the runtime key, the types in tsconfig,
+// the target dir ignored. What cannot be edited is said, not skipped.
+async function writeRuntime(dir: string): Promise<void> {
+  let pkgPath = join(dir, "package.json")
+  let pkg = JSON.parse(await readFile(pkgPath, "utf8"))
+  let templates: Record<string, string> = {}
+  for (let { from, to } of RUNTIME_FILES) {
+    templates[to] = await readFile(join(SCAFFOLD_DIR, "runtime", from), "utf8")
+  }
+  for (let [to, body] of Object.entries(renderRuntime(templates, pkg.name ?? basename(resolve(dir)), CLI_VERSION))) {
+    let dest = join(dir, to)
+    await mkdir(dirname(dest), { recursive: true })
+    await writeFile(dest, body)
+  }
+  await writeFile(pkgPath, withRuntime(await readFile(pkgPath, "utf8")))
+  let tsconfigPath = join(dir, "tsconfig.json")
+  let tsconfig = existsSync(tsconfigPath) ? withRuntimeTypes(await readFile(tsconfigPath, "utf8")) : null
+  if (tsconfig) await writeFile(tsconfigPath, tsconfig)
+  else console.log(`Add "${RUNTIME_TYPES}" to the "include" of tsconfig.json for the module types`)
+  let ignorePath = join(dir, ".gitignore")
+  await writeFile(ignorePath, withRuntimeIgnore(existsSync(ignorePath) ? await readFile(ignorePath, "utf8") : null))
+  if (!pkg.devDependencies?.["@solidrt/test"] && !pkg.dependencies?.["@solidrt/test"]) {
+    console.log("tests/runtime.test.tsx imports @solidrt/test: add it with `bun add -d @solidrt/test`")
+  }
+  step(`Wrote ${RUNTIME_DIR}/ (runtime:hello, built with make -C ${RUNTIME_DIR})`)
+}
+
+// `sol init --runtime` with no folder: add a runtime to the project here.
+async function addRuntime(): Promise<void> {
+  intro(`Add a runtime to this SolidRT app ${styleText("dim", CLI_VERSION)}`)
+  if (!existsSync("package.json")) abort("No package.json here; run it in an app, or `sol init <dir> --runtime` for a new one")
+  if (existsSync(RUNTIME_DIR)) abort(`${resolve(RUNTIME_DIR)} already exists`)
+  await writeRuntime(".")
+  outro(`Done. Next: make -C ${RUNTIME_DIR}, then bun run dev`)
+  process.exit()
+}
+
 export async function main() {
+  if (values.runtime && !source) return addRuntime()
+
   intro(`Create a SolidRT app ${styleText("dim", CLI_VERSION)}`)
 
   // The target folder comes from the positional arg, or an interactive prompt
@@ -150,6 +206,8 @@ export async function main() {
   await writeFile(pkgPath, JSON.stringify(pkg, null, 2) + "\n")
   step(`Scaffolded ${resolve(dir)} (${summary})`)
 
+  if (values.runtime) await writeRuntime(dir)
+
   // Deps are declared in scaffold/package.json (Solid peers resolve via
   // @solidrt/core's peerDependencies), so a plain install is enough. Its
   // output only matters when it fails, so it is held until then.
@@ -164,6 +222,7 @@ export async function main() {
   progress.stop("Installed dependencies")
 
   let prefix = dir === "." ? "" : `cd ${dir} && `
-  outro(`Done. Next: ${prefix}bun run dev`)
+  let build = values.runtime ? `make -C ${RUNTIME_DIR} && ` : ""
+  outro(`Done. Next: ${prefix}${build}bun run dev`)
   process.exit()
 }
