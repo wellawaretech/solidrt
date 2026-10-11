@@ -101,4 +101,4 @@ mdns-sd = "=0.20.2"
 # registerProtocolHandler (src/links.rs), through Microsoft's safe registry
 # binding; already in the graph (ipconfig, the resolver's Windows DNS config).
 [target.'cfg(windows)'.dependencies]
-windows-registry = "=0.6.1"
+windows-registry = "=0.100.0"
