@@ -1,4 +1,4 @@
-import { ANDROID_PKG_MAP, DEFAULT_ANDROID_ABI, resolveApk, resolveRunnerApk } from "./artifacts"
+import { ANDROID_PKG_MAP, DEFAULT_ANDROID_ABI, hasAndroidTarget } from "./artifacts"
 import { CLI_VERSION } from "./project"
 import { abort, confirm, multiselect, spinner } from "./prompt"
 import { runQuiet } from "./util"
@@ -26,9 +26,13 @@ function packageSpec(abi: string): string {
   return RELEASE_VERSION.test(CLI_VERSION) && CLI_VERSION !== "0.0.0" ? `${pkg}@${CLI_VERSION}` : pkg
 }
 
-// The installed targets: the ABIs whose runner or Player resolves.
+// The installed targets: the ABIs with a stock runner or Player, or the
+// project runtime's libs. A probe (lib/artifacts.ts hasAndroidTarget), not a
+// resolution: it derives no APK and prints nothing, so listing targets has
+// no side effects and the resolvers' notices and errors come from the
+// commands that actually resolve one.
 export function installedTargets(): string[] {
-  return Object.keys(ANDROID_PKG_MAP).filter((abi) => resolveRunnerApk(abi) || resolveApk(abi))
+  return Object.keys(ANDROID_PKG_MAP).filter(hasAndroidTarget)
 }
 
 // Add the targets' packages as dev dependencies of the project in `dir`.

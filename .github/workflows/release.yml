@@ -473,7 +473,11 @@ jobs:
       # 0.0.0 placeholder in source. Pin it here too so a scaffolded project
       # installs the exact @solidrt/* version the CLI was published with (and so
       # prereleases, which do not get the `latest` dist-tag, scaffold a matching
-      # version).
+      # version). The scaffold also pins solid-js and its two @solidjs peers,
+      # so an app upgrades them by editing package.json (bun neither follows a
+      # moved peer pin nor re-resolves one, packages/core/AGENTS.md); those
+      # pins are taken from core's peerDependencies, the one place the Solid
+      # version is decided.
       - name: Pin intra-monorepo dependency versions
         env:
           VERSION: ${{ steps.flags.outputs.version }}
@@ -482,9 +486,17 @@ jobs:
             const fs = require("fs");
             const VERSION = process.env.VERSION;
             const files = process.env.PUBLISH_DIRS.trim().split(/\s+/).map(d => d + "/package.json");
-            files.push("packages/cli/src/init/scaffold/package.json");
+            const scaffold = "packages/cli/src/init/scaffold/package.json";
+            files.push(scaffold);
+            const solidPeers = JSON.parse(fs.readFileSync("packages/core/package.json", "utf8")).peerDependencies;
             for (const file of files) {
               const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+              if (file === scaffold) {
+                for (const name of ["solid-js", "@solidjs/signals", "@solidjs/universal"]) {
+                  if (!solidPeers[name]) throw new Error(`packages/core/package.json names no peer ${name}`);
+                  pkg.dependencies[name] = solidPeers[name];
+                }
+              }
               for (const field of ["dependencies", "optionalDependencies", "peerDependencies", "devDependencies"]) {
                 const deps = pkg[field];
                 if (!deps) continue;

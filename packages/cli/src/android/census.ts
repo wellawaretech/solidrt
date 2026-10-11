@@ -12,35 +12,9 @@
 // scratch script per device session.
 
 import { values } from "../lib/args"
+import { chooseLayer, INTERVAL_BIN_MAX, layerName, summarize, type Census } from "./surfaceflinger"
 
 let sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-// An unfilled history slot: SurfaceFlinger reports 0 for a column it has no
-// value for and INT64_MAX for a present that has not happened.
-const UNSET = 0n
-const NEVER = 9223372036854775807n
-
-// Present intervals this many refreshes and longer are one histogram bin:
-// past it the frame count is what matters, not the exact length.
-const INTERVAL_BIN_MAX = 4
-
-type Row = { queued: bigint; present: bigint; ready: bigint }
-
-export type Census = {
-  layer: string
-  periodMs: number
-  presents: number
-  spanS: number
-  /// Present interval in refreshes, rounded: index 1..INTERVAL_BIN_MAX (the
-  /// last bin holds everything at or past it), count per bin.
-  intervals: number[]
-  intervalMsP50: number
-  intervalMsP90: number
-  /// frameReady minus queue time, per present.
-  gpuMsP50: number
-  gpuMsP90: number
-  gpuMsMax: number
-}
 
 function sh(adb: string, target: string, args: string[]): string {
   let res = Bun.spawnSync([adb, "-s", target, "shell", ...args], { stdout: "pipe", stderr: "pipe" })
@@ -51,79 +25,31 @@ function sh(adb: string, target: string, args: string[]): string {
   return res.stdout.toString().replace(/\r/g, "")
 }
 
-// The layer to census: `--layer` matched as a substring of the compositor's
-// layer list, else the client's own SurfaceView layer (the BLAST layer that
-// carries its buffers, which is what --latency reports on; the activity's
-// other layers hold none and would census as zero presents). Exits naming
-// the candidates when none matches.
-function resolveLayer(adb: string, target: string, packageName: string): string {
+// The layer's frame history: the refresh period, then one row per history
+// slot (queued, present, frameReady).
+function latency(adb: string, target: string, layer: string): string {
+  return sh(adb, target, ["dumpsys", "SurfaceFlinger", "--latency", `'${layer}'`])
+}
+
+// The layer to census (surfaceflinger.ts chooseLayer) among the candidates:
+// the layers `--layer` matches as a substring, else the layers of the first
+// of `packages` (the package followed by its activity) with any on screen.
+// Exits naming the layers when nothing matches.
+function resolveLayer(adb: string, target: string, packages: string[]): string {
   let layers = sh(adb, target, ["dumpsys", "SurfaceFlinger", "--list"])
     .split("\n")
-    .map((l) => l.trim())
+    .map((l) => layerName(l.trim()))
     .filter(Boolean)
-  let pick = (test: (l: string) => boolean) => layers.find(test)
-  // The BLAST child is the one with buffers; its parent SurfaceView layer
-  // (listed first) holds none. Older releases without BLAST name the
-  // buffer layer plainly.
-  let surface = (l: string) => l.startsWith("SurfaceView") && l.includes(packageName)
-  let layer = values.layer
-    ? pick((l) => l.includes(values.layer!))
-    : (pick((l) => surface(l) && l.includes("(BLAST)")) ?? pick(surface))
-  if (layer) return layer
-  let asked = values.layer ? `--layer "${values.layer}"` : `package ${packageName}`
-  console.error(`No SurfaceFlinger layer matches ${asked}; is the app on screen? Layers:`)
-  for (let l of layers) console.error(`  ${l}`)
-  process.exit(1)
-}
-
-function parseLatency(text: string): { periodNs: bigint; rows: Row[] } {
-  let lines = text.split("\n").map((l) => l.trim()).filter(Boolean)
-  let periodNs = BigInt(lines[0] ?? "0")
-  let rows: Row[] = []
-  for (let line of lines.slice(1)) {
-    let cols = line.split(/\s+/)
-    if (cols.length < 3) continue
-    let [queued, present, ready] = cols.map((c) => BigInt(c)) as [bigint, bigint, bigint]
-    if (queued === UNSET || present === UNSET || present === NEVER || ready === UNSET || ready === NEVER) continue
-    rows.push({ queued, present, ready })
+  let candidates = values.layer
+    ? layers.filter((l) => l.includes(values.layer!))
+    : (packages.map((pkg) => layers.filter((l) => l.includes(pkg + "/"))).find((c) => c.length > 0) ?? [])
+  if (candidates.length === 0) {
+    let asked = values.layer ? `--layer "${values.layer}"` : `package ${packages.join(" or ")}`
+    console.error(`No SurfaceFlinger layer matches ${asked}; is the app on screen? Layers:`)
+    for (let l of layers) console.error(`  ${l}`)
+    process.exit(1)
   }
-  rows.sort((a, b) => (a.present < b.present ? -1 : a.present > b.present ? 1 : 0))
-  return { periodNs, rows }
-}
-
-let ms = (ns: bigint) => Number(ns) / 1e6
-
-function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0
-  return sorted[Math.min(sorted.length - 1, Math.round((sorted.length - 1) * p))]!
-}
-
-export function summarize(layer: string, text: string): Census {
-  let { periodNs, rows } = parseLatency(text)
-  let periodMs = ms(periodNs)
-  let intervals = new Array<number>(INTERVAL_BIN_MAX + 1).fill(0)
-  let intervalMs: number[] = []
-  for (let i = 1; i < rows.length; i++) {
-    let delta = ms(rows[i]!.present - rows[i - 1]!.present)
-    intervalMs.push(delta)
-    let refreshes = periodMs > 0 ? Math.max(1, Math.round(delta / periodMs)) : 1
-    intervals[Math.min(refreshes, INTERVAL_BIN_MAX)]! += 1
-  }
-  let gpuMs = rows.map((r) => ms(r.ready - r.queued)).sort((a, b) => a - b)
-  intervalMs.sort((a, b) => a - b)
-  let spanS = rows.length >= 2 ? ms(rows[rows.length - 1]!.present - rows[0]!.present) / 1000 : 0
-  return {
-    layer,
-    periodMs,
-    presents: rows.length,
-    spanS,
-    intervals,
-    intervalMsP50: percentile(intervalMs, 0.5),
-    intervalMsP90: percentile(intervalMs, 0.9),
-    gpuMsP50: percentile(gpuMs, 0.5),
-    gpuMsP90: percentile(gpuMs, 0.9),
-    gpuMsMax: gpuMs[gpuMs.length - 1] ?? 0,
-  }
+  return chooseLayer(candidates, (layer) => latency(adb, target, layer))
 }
 
 function print(c: Census) {
@@ -145,8 +71,8 @@ function print(c: Census) {
 // API) drives the app, then read and summarize the layer's history. Without
 // --clear the history is whatever the compositor kept (its ring is short, a
 // few seconds of presents), which is the "what just happened" reading.
-export async function census(adb: string, target: string, packageName: string) {
-  let layer = resolveLayer(adb, target, packageName)
+export async function census(adb: string, target: string, packages: string[]) {
+  let layer = resolveLayer(adb, target, packages)
   if (values.clear) {
     sh(adb, target, ["dumpsys", "SurfaceFlinger", "--latency-clear"])
   }
@@ -160,8 +86,7 @@ export async function census(adb: string, target: string, packageName: string) {
     console.error(`[cli] Collecting ${seconds} s of presents on ${layer}`)
     await sleep(seconds * 1000)
   }
-  let text = sh(adb, target, ["dumpsys", "SurfaceFlinger", "--latency", `'${layer}'`])
-  let summary = summarize(layer, text)
+  let summary = summarize(layer, latency(adb, target, layer))
   if (values.json) {
     console.log(JSON.stringify(summary))
   } else {

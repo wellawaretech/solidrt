@@ -59,7 +59,7 @@ agents/testing.md.
   app registered with `registerDebug` and returns its value: the way to
   put a loaded app into a state its UI reaches slowly. A `gamepad` event
   in `app.input` seats and drives a synthetic pad, as `send_input` does.
-- `await app.camera({ width, height, pixels })` makes an RGBA8 image (a
+- `await app.camera({ width, height, data })` makes an RGBA8 image (a
   `decodeImage` result, or pixels the test builds) what the camera sees:
   every camera the app opens shows it, with no device and no prompt, and
   an open one shows it from the next frame. Call it before the app opens

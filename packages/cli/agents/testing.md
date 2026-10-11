@@ -147,7 +147,8 @@ the state another way, and the test uses it:
 - `await app.link("myapp://item/42")` delivers a link the way the OS does
   (throws when the app has no `onLink`); with a router, that renders the
   screen the link names.
-- `await app.camera(image)` makes an RGBA8 image what the camera sees,
+- `await app.camera(image)` makes an RGBA8 image (a `decodeImage` result,
+  or `{ width, height, data }` the test builds) what the camera sees,
   before the app opens its camera: the viewfinder shows it and a QR code
   in it is decoded, with no device and no prompt. `settle()` after the
   open waits for the decode.

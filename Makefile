@@ -32,8 +32,21 @@ clean:
 help client runtime player-bundle dist android-client android-run android-run-armeabi-v7a android-runtime android-dist android-dist-armeabi-v7a dist-clean download-fonts:
 	$(MAKE) -C lattice $@
 
-test:
+test: manifests-check
 	cargo test --workspace
+
+# Every manifest in the repository, read as cargo reads them when a project
+# depends on lattice by git: cargo parses each Cargo.toml in the checkout
+# (the scaffold's `sol init --runtime` does exactly that), so one it rejects,
+# a template with placeholders or a stray scratch crate, breaks every such
+# build while the workspace here builds fine. --no-deps --offline reads the
+# manifest alone, in milliseconds; tracked and untracked-unignored files, so
+# a new one is caught before it is committed.
+manifests-check:
+	@for m in $$(git ls-files --cached --others --exclude-standard -- 'Cargo.toml' '*/Cargo.toml'); do \
+	  [ -f "$$m" ] || continue; \
+	  cargo metadata --no-deps --offline --format-version 1 --manifest-path "$$m" > /dev/null || exit 1; \
+	done
 
 # The whole workspace, each crate at its own edition. The workspace is
 # rustfmt-clean, so this touches only what you changed.
@@ -45,4 +58,4 @@ format-check:
 	cargo fmt --all --check -- -l
 
 # lattice, flux, apps and dist are also directory names at the repo root.
-.PHONY: all lattice flux apps clean help client runtime player-bundle dist android-client android-run android-run-armeabi-v7a android-runtime android-dist android-dist-armeabi-v7a dist-clean download-fonts test format format-check
+.PHONY: all lattice flux apps clean help client runtime player-bundle dist android-client android-run android-run-armeabi-v7a android-runtime android-dist android-dist-armeabi-v7a dist-clean download-fonts test format format-check manifests-check

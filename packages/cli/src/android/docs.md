@@ -43,7 +43,10 @@ can be wrong about them. `--clear` empties the history first and
 --clear --seconds 5` while you drive the app (by hand, or over the control
 API) measures exactly that interaction; without them the reading is
 whatever the compositor's short ring still holds. `--layer` picks a layer
-by substring (a packed app, another surface); the default is the client's
-SurfaceView layer, which exists only while the app is on screen.
+by substring (another surface); the default is the layer of the project's
+packed app when the cwd is a project, else the client's, which exists only
+while the app is on screen. An app has several layers and only one carries
+its buffers, so among the matches the one whose history holds presents is
+read (checked on Android 12 and 17, whose layer lists differ in form).
 
 adb is a system tool (Android Platform Tools) and is never bundled.

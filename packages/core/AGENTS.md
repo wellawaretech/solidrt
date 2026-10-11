@@ -118,16 +118,21 @@ tsconfig.json - the two load-bearing lines are jsx + jsxImportSource:
 Peer deps @solidjs/signals and @solidjs/universal must match (currently
 2.0.0-rc.14); bun resolves them from peerDependencies. On a version bump,
 `bun install` only warns ("incorrect peer dependency") and keeps the old
-ones, and `bun update solid-js @solidjs/signals @solidjs/universal` does
-not read the pin either: it adds all three to package.json at registry
-latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works
-deletes the installed copies and leaves the lockfile alone:
-`rm -rf node_modules/solid-js node_modules/@solidjs && bun install`
-(delete any nested `node_modules/@solidjs` too, or the old copy keeps
-resolving). Removing the directories is what forces re-resolution. Do not
-delete `bun.lock` to force it: that re-resolves every unrelated dependency
-as well, and a package that floats elsewhere fails the typecheck in a way
-that reads exactly like Solid fallout.
+ones, and so does deleting their node_modules copies first (bun 1.3.14
+reinstalls them from bun.lock). `bun update solid-js @solidjs/signals
+@solidjs/universal` does not read the pin either: it adds all three to
+package.json at registry latest (solid-js 1.x, off Solid 2.0 entirely).
+The recipe that works pins all three explicitly at the new version:
+`bun add solid-js@2.0.0-rc.14 @solidjs/signals@2.0.0-rc.14 @solidjs/universal@2.0.0-rc.14`.
+It moves exactly those three lock entries and nothing else. An app `sol
+init` wrote has the three pinned in package.json already (the scaffold
+carries them, and release.yml takes the pins from core's peerDependencies
+at publish), so there the upgrade is the pins edited and `bun install`.
+Do not delete `bun.lock` or its entries to force it: bun then re-resolves
+every dependency, and a package that floats elsewhere fails the typecheck
+in a way that reads exactly like Solid fallout. A Solid bump in this repo
+moves core's peerDependencies and the scaffold's pins
+(packages/cli/src/init/scaffold/package.json) together.
 
 ## Element model (the parts that are easy to get wrong)
 

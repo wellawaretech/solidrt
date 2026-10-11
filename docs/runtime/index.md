@@ -127,8 +127,10 @@ and in package.json `"solidrt": { "runtime": "runtime/dist" }`, the folder
 `sol run`, `sol test`, `sol pack` and `sol android` take the app runtime
 from. The build is the one line in the Makefile: everything a runtime's
 build needs beyond the crate comes from the `@solidrt/cli` package and
-moves with it, so an upgrade is the lattice tag and the `@solidrt` packages
-bumped together, and no file the scaffold wrote goes stale. From there:
+moves with it, so an upgrade is the lattice tag, the `@solidrt` packages
+and the Solid pins in package.json (solid-js and the two @solidjs
+packages, which `sol init` writes) bumped together, and no file the
+scaffold wrote goes stale. From there:
 
 ```sh
 make -C runtime           # the player and the runtime for this host

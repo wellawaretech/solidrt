@@ -7,6 +7,7 @@ import { values, port, source } from "../lib/args"
 import { devDir } from "../lib/dev-dir"
 import { fail } from "../lib/fail"
 import { projectEntry } from "../lib/mode"
+import { loadAppIdentity } from "../lib/project"
 import { projectRuntime } from "../lib/runtime"
 import { confirm, multiselect } from "../lib/prompt"
 import { runQuiet } from "../lib/util"
@@ -343,6 +344,16 @@ function playerId(abi: string, needed: string | null = null): string {
   return apk ? apkAppId(apk) : PUBLISHED_PLAYER
 }
 
+// The packages whose surface a census reads, first match wins: the
+// project's app (its packed app on screen) when the cwd is a project, then
+// the Player an `abi` device gets (the dev client).
+function censusPackages(abi: string): string[] {
+  let packages: string[] = []
+  if (existsSync("package.json")) packages.push(loadAppIdentity(projectEntry(process.cwd()), process.cwd()).appId)
+  packages.push(playerId(abi))
+  return [...new Set(packages)]
+}
+
 // A module of the project's own runtime the app imports, or null: the
 // device's Player must then be the project's, so an ABI the project did not
 // build is an error (lib/runtime.ts) rather than the stock Player and a
@@ -489,7 +500,7 @@ export async function main() {
   if (values.apk) return packAndInstall()
   if (values.census) {
     let adb = await requireAdb()
-    for (let { target, abi } of await resolveTargets(adb)) await census(adb, target, playerId(abi))
+    for (let { target, abi } of await resolveTargets(adb)) await census(adb, target, censusPackages(abi))
     return
   }
   let server = await resolveServer()

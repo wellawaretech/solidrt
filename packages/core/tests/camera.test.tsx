@@ -41,14 +41,14 @@ const MODULE = 6
 const QUIET = 4
 const SIDE = (QR.length + 2 * QUIET) * MODULE
 
-function flat(width: number, height: number, rgba: number[]): { width: number; height: number; pixels: Uint8Array } {
-  let pixels = new Uint8Array(width * height * 4)
-  for (let i = 0; i < width * height; i++) pixels.set(rgba, i * 4)
-  return { width, height, pixels }
+function flat(width: number, height: number, rgba: number[]): { width: number; height: number; data: Uint8Array } {
+  let data = new Uint8Array(width * height * 4)
+  for (let i = 0; i < width * height; i++) data.set(rgba, i * 4)
+  return { width, height, data }
 }
 
 // The QR code drawn black on white, a module `MODULE` pixels square.
-function qrImage(): { width: number; height: number; pixels: Uint8Array } {
+function qrImage(): { width: number; height: number; data: Uint8Array } {
   let image = flat(SIDE, SIDE, [255, 255, 255, 255])
   for (let r = 0; r < QR.length; r++) {
     for (let c = 0; c < QR.length; c++) {
@@ -57,7 +57,7 @@ function qrImage(): { width: number; height: number; pixels: Uint8Array } {
         for (let x = 0; x < MODULE; x++) {
           let px = (QUIET + c) * MODULE + x
           let py = (QUIET + r) * MODULE + y
-          image.pixels.set([0, 0, 0, 255], (py * SIDE + px) * 4)
+          image.data.set([0, 0, 0, 255], (py * SIDE + px) * 4)
         }
       }
     }
@@ -99,7 +99,7 @@ test("the installed image is the camera the app opens, and it shows in the textu
 test("a QR code in the image is decoded and reaches the barcode signal", async app => {
   let image = qrImage()
   // The fixture itself decodes: a failure below is the stream path.
-  expect(scanImage(image.pixels, image.width, image.height)).toEqual([{ data: "solidrt", format: "qr" }])
+  expect(scanImage(image.data, image.width, image.height)).toEqual([{ data: "solidrt", format: "qr" }])
   await app.camera(image)
   let cam!: CameraStream
   await app.mount(() => {

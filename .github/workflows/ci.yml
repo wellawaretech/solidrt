@@ -45,6 +45,14 @@ jobs:
       - name: Format
         run: make format-check
 
+      # A project that depends on lattice by git makes cargo read every
+      # Cargo.toml in the checkout, and one it rejects breaks that build while
+      # the workspace here builds fine: v0.0.73 shipped the runtime
+      # scaffold's manifest template, with its placeholders, that way. The
+      # sweep reads each manifest as cargo would.
+      - name: Manifests
+        run: make manifests-check
+
       # --all-targets so tests, examples and bins compile too: without it a
       # broken test or probe example passes CI untouched. Video is not a
       # cargo default (see lattice/Makefile) but every shipped build carries

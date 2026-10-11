@@ -142,6 +142,15 @@ export function resolveRunnerApk(abi: string = DEFAULT_ANDROID_ABI, needed: stri
   return runtime?.runnerApk(abi, stock, needed) ?? stock
 }
 
+// Whether `abi` has anything to resolve to: a stock runner or Player (a
+// platform package, or a checkout's staged build) or the project runtime's
+// libs for it. The probe behind the target list, so it neither derives an
+// APK nor prints a notice; resolving, with its errors, is the caller's step.
+export function hasAndroidTarget(abi: string): boolean {
+  if (stockRunnerApk(abi) !== null || stockApk(abi) !== null) return true
+  return projectRuntime()?.hasLibs(abi) ?? false
+}
+
 function stockRunnerApk(abi: string): string | null {
   let solRoot = process.env.SOLIDRT_HOME
   if (solRoot) {

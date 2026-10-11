@@ -158,11 +158,11 @@ export interface PointerOptions {
   meta?: boolean
 }
 
-/** An RGBA8 image, tightly packed rows top to bottom: what `decodeImage` returns. */
+/** An RGBA8 image, tightly packed rows top to bottom: the shape `decodeImage` returns (and the web's `ImageData`). */
 export interface CameraImage {
   width: number
   height: number
-  pixels: Uint8Array
+  data: Uint8Array
 }
 
 /** The app under test, as a test's function receives it. */
@@ -206,7 +206,7 @@ export interface TestApp {
    * it; call it again to show the app another image. A QR code in the
    * image is decoded like one in front of a real camera: `settle()` after
    * the open and the app's barcode handler has run. Pass a `decodeImage`
-   * result, or pixels the test builds.
+   * result, or an image the test builds.
    *
    * @example
    * await app.camera(decodeImage(png))
@@ -522,12 +522,12 @@ let app: TestApp = {
     await app.frame()
   },
   async camera(image) {
-    let ok = image !== null && typeof image === "object" && image.pixels instanceof Uint8Array
-    if (!ok) throw new TypeError("camera: pass { width, height, pixels }, with the pixels a Uint8Array of RGBA8")
-    let { width, height, pixels } = image
+    let ok = image !== null && typeof image === "object" && image.data instanceof Uint8Array
+    if (!ok) throw new TypeError("camera: pass { width, height, data }, with data a Uint8Array of RGBA8 (what decodeImage returns)")
+    let { width, height, data } = image
     if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new TypeError(`camera: the size must be positive integers, got ${width} x ${height}`)
-    if (pixels.length !== width * height * RGBA) throw new TypeError(`camera: ${width} x ${height} RGBA8 is ${width * height * RGBA} bytes, got ${pixels.length}`)
-    installCamera(width, height, pixels)
+    if (data.length !== width * height * RGBA) throw new TypeError(`camera: ${width} x ${height} RGBA8 is ${width * height * RGBA} bytes, got ${data.length}`)
+    installCamera(width, height, data)
     await app.frame()
   },
   async debug(name, args) {

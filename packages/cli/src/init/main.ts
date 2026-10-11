@@ -30,10 +30,13 @@ const TEMPLATE_FILES: Array<{ from: string; to: string }> = [
 
 // The app's own runtime (--runtime): a cargo project over lattice with a
 // starter module, from scaffold/runtime/. The test goes into the app's
-// tests/ (stored outside a tests/ folder here, like app.test.tsx).
+// tests/ (stored outside a tests/ folder here, like app.test.tsx). The
+// manifest is stored as Cargo.toml.template: cargo parses every Cargo.toml
+// in this repository when it resolves the scaffold's git dependency on
+// lattice, and one with placeholders fails that parse.
 const RUNTIME_FILES: Array<{ from: string; to: string }> = [
   { from: "Makefile", to: `${RUNTIME_DIR}/Makefile` },
-  { from: "Cargo.toml", to: `${RUNTIME_DIR}/Cargo.toml` },
+  { from: "Cargo.toml.template", to: `${RUNTIME_DIR}/Cargo.toml` },
   { from: "lib.rs", to: `${RUNTIME_DIR}/src/lib.rs` },
   { from: "hello.rs", to: `${RUNTIME_DIR}/src/hello.rs` },
   { from: "solidrt.rs", to: `${RUNTIME_DIR}/src/bin/solidrt.rs` },

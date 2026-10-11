@@ -39,6 +39,8 @@ export type ProjectRuntime = {
   apk(abi: string, base: string | null, needed?: string | null): string | null
   /** The project's runner APK for `abi`, likewise. */
   runnerApk(abi: string, base: string | null, needed?: string | null): string | null
+  /** Whether the project built Player or runner libs for `abi`: a probe that derives nothing and prints nothing. */
+  hasLibs(abi: string): boolean
 }
 
 const PLAYER_APK = "solidrt-go.apk"
@@ -59,10 +61,13 @@ function load(): ProjectRuntime | null {
   let dir = resolve(project.dir, declared)
   let noticed = new Set<string>()
   // A target the project did not build: the error when a module of the
-  // runtime is needed, else a notice, once per path, and the stock one.
-  let missing = (what: string, path: string, needed: string | null | undefined): null => {
+  // runtime is needed, else null, with a notice (once per path) when a
+  // stock one stands in. Without a stock one for the target either (an
+  // Android ABI with no platform package installed) there is nothing to
+  // say: the target is simply not there.
+  let missing = (what: string, path: string, needed: string | null | undefined, stock: boolean): null => {
     if (needed) fail(missingRuntimeBinary(what, path, needed, declared))
-    if (!noticed.has(path)) {
+    if (stock && !noticed.has(path)) {
       noticed.add(path)
       console.log(stockRuntimeNotice(what, path, declared))
     }
@@ -72,17 +77,25 @@ function load(): ProjectRuntime | null {
     dir,
     binary(name, triple, ext, needed) {
       let path = join(dir, triple, name + ext)
-      return existsSync(path) ? path : missing(`${name} for ${triple}`, path, needed)
+      return existsSync(path) ? path : missing(`${name} for ${triple}`, path, needed, true)
     },
     apk(abi, base, needed) {
       let libDir = join(dir, "android", abi)
-      return derive("Player", libDir, PLAYER_APK, abi, base) ?? missing(`Player libs for ${abi}`, libDir, needed)
+      return derive("Player", libDir, PLAYER_APK, abi, base) ?? missing(`Player libs for ${abi}`, libDir, needed, base !== null)
     },
     runnerApk(abi, base, needed) {
       let libDir = join(dir, "android-runtime", abi)
-      return derive("runner", libDir, RUNNER_APK, abi, base) ?? missing(`runner libs for ${abi}`, libDir, needed)
+      return derive("runner", libDir, RUNNER_APK, abi, base) ?? missing(`runner libs for ${abi}`, libDir, needed, base !== null)
+    },
+    hasLibs(abi) {
+      return libNames(join(dir, "android", abi)).length > 0 || libNames(join(dir, "android-runtime", abi)).length > 0
     },
   }
+}
+
+// The .so files in `libDir`, sorted; none when the directory is not there.
+function libNames(libDir: string): string[] {
+  return existsSync(libDir) ? readdirSync(libDir).filter((name) => name.endsWith(".so")).sort() : []
 }
 
 /**
@@ -97,7 +110,7 @@ export function failNoRuntimeFor(needed: string): never {
 // The derived APK at <libDir>/<out>: the base with every .so in libDir
 // swapped in, rebuilt when any of them or the base is newer than it.
 function derive(what: string, libDir: string, out: string, abi: string, base: string | null): string | null {
-  let names = existsSync(libDir) ? readdirSync(libDir).filter((name) => name.endsWith(".so")).sort() : []
+  let names = libNames(libDir)
   if (names.length === 0) return null
   if (!base) fail(`No stock ${what} APK for ${abi} to derive the project's from; add the @solidrt/android-${abi} dev dependency`)
   let outPath = join(libDir, out)

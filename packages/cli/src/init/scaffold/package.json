@@ -34,6 +34,9 @@
     "test": "sol test"
   },
   "dependencies": {
+    "solid-js": "2.0.0-rc.14",
+    "@solidjs/signals": "2.0.0-rc.14",
+    "@solidjs/universal": "2.0.0-rc.14",
     "@solidrt/core": "0.0.0",
     "@solidrt/components": "0.0.0",
     "@solidrt/2d": "0.0.0",
