@@ -34,7 +34,7 @@ pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
 pub use plugins::add_capability;
 pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use plugins::js_error::JsResult;
-pub use plugins::marshal::OptArg;
+pub use plugins::marshal::{CopyBytes, OptArg};
 pub use plugins::seekable::{SeekableOpener, SeekableSource};
 pub use rquickjs;
 pub use standards_plugins::body::{attach_body, JsBytes, JsonValue};

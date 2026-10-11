@@ -28,4 +28,6 @@ return <Window {...input.handlers}>...</Window>
 
 When the focused control disappears (an action replacing it, a screen change), focus lands on the nearest candidate to where it sat as soon as the successor is laid out - the ring follows a Disconnect button into the Connect button that replaces it. A deliberate blur (tapping outside, dismissing the keyboard) stays blurred; the next press resumes at the nearest candidate.
 
-An open `Modal` traps navigation inside itself with no extra wiring (topmost wins when stacked); pass `scope: () => nodeOrNull` to trap into some other subtree instead. `move`/`tab`/`activate` are exposed for custom triggers.
+An open `Modal`, `Select` or its sheet traps navigation inside itself with no extra wiring (topmost wins when stacked); pass `scope: () => nodeOrNull` to trap into some other subtree instead. `move`/`tab`/`activate` are exposed for custom triggers.
+
+A candidate the nav focuses is brought into view: every `ScrollView` above it scrolls by the amount its box overshoots the viewport, with the view's own motion, so a list longer than its box can be walked blind. A custom scroller built on `createScroll` joins in with `registerScrollViewport(viewportNodeId, scroll)`.

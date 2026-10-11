@@ -1,7 +1,8 @@
-import { callRef, createPan, createScroll, createSignal, getBoundingBoxViewport, getLayoutBox } from "@solidrt/core"
+import { callRef, createPan, createScroll, createSignal, getBoundingBoxViewport, getLayoutBox, onCleanup } from "@solidrt/core"
 import type { InputProps, LayoutProps, PointerEvent, Scroll, TransitionCurve, TransitionEndEvent, WheelEvent } from "@solidrt/core"
 import type { StyleProps, TransitionProps, TransitionScrollProp, TransitionStyleProp, TransitionViewProp } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
+import { registerScrollViewport } from "./focus-nav"
 
 export interface ScrollViewProps
   extends InputProps,
@@ -73,6 +74,10 @@ export function ScrollView(props: ScrollViewProps) {
     { axis: props.horizontal ? "horizontal" : "vertical" },
   )
   callRef(() => props.scrollRef, scroll)
+  // The focus navigation brings a control it focuses in the viewport into
+  // view; registered from the viewport's ref, released with the component.
+  let unregister: (() => void) | undefined
+  onCleanup(() => unregister?.())
 
   // Content follows the finger: it moves opposite to scroll offsets, which
   // grow toward the bottom/right. The lift's velocity (parent-frame px/s,
@@ -208,7 +213,10 @@ export function ScrollView(props: ScrollViewProps) {
           an instant write needs the withdrawn declaration to land before the
           value in the same flush, or the value starts a spring anyway. */}
       <view
-        ref={(n: { id: number }) => (viewport = n)}
+        ref={(n: { id: number }) => {
+          viewport = n
+          unregister = registerScrollViewport(n.id, scroll)
+        }}
         flex={1}
         overflow="hidden"
         clipRadius={props.style?.borderRadius}

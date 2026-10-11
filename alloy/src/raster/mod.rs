@@ -126,6 +126,13 @@ pub struct RasterStats {
   /// nothing due for: the producer missed its lead, and a cached boundary
   /// over the texture lags one frame.
   pub(crate) video_late: AtomicU64,
+  /// Camera frames uploaded into a stream texture at a frame (see
+  /// camera/tap.rs).
+  pub(crate) camera_uploaded: AtomicU64,
+  /// Camera frames the camera thread published that no upload showed: the
+  /// seq gaps between consecutive uploads (the raster take fell behind the
+  /// camera, or the loop ran below the camera's rate).
+  pub(crate) camera_skipped: AtomicU64,
   /// Wall time spent executing non-Frame raster commands, in microseconds:
   /// texture uploads, readbacks, offscreen rasterizations, compiles, param
   /// writes, and the pass flushes those commands trigger. This is the work
@@ -198,6 +205,9 @@ pub struct RasterCounters {
   pub video_latched: u64,
   pub video_skipped: u64,
   pub video_late: u64,
+  /// Camera frames uploaded and skipped (see `RasterStats`).
+  pub camera_uploaded: u64,
+  pub camera_skipped: u64,
 }
 
 impl RasterStats {
@@ -225,6 +235,8 @@ impl RasterStats {
       video_latched: self.video_latched.load(Ordering::Relaxed),
       video_skipped: self.video_skipped.load(Ordering::Relaxed),
       video_late: self.video_late.load(Ordering::Relaxed),
+      camera_uploaded: self.camera_uploaded.load(Ordering::Relaxed),
+      camera_skipped: self.camera_skipped.load(Ordering::Relaxed),
     }
   }
 
@@ -247,6 +259,8 @@ impl RasterStats {
       video_latched: AtomicU64::new(0),
       video_skipped: AtomicU64::new(0),
       video_late: AtomicU64::new(0),
+      camera_uploaded: AtomicU64::new(0),
+      camera_skipped: AtomicU64::new(0),
       targets: std::sync::Mutex::new(std::sync::Arc::new(Vec::new())),
     }
   }
@@ -333,6 +347,13 @@ pub(crate) struct YuvLatchEntry {
   pub(crate) frame_size: usize,
 }
 
+/// The raster side of one camera stream texture: its tap and the seq of
+/// the frame the texture holds.
+pub(crate) struct CameraTapEntry {
+  pub(crate) tap: crate::camera::FrameTap,
+  pub(crate) uploaded_seq: u64,
+}
+
 pub(crate) struct RasterState {
   gl: glow::Context,
   impeller_ctx: ImpellerContext,
@@ -411,6 +432,9 @@ pub(crate) struct RasterState {
   // YUV outputs with a latch (see yuv.rs): the frame due at each Frame is
   // taken here, uploaded into the back plane set and the target rebound.
   yuv_latches: HashMap<u64, YuvLatchEntry>,
+  // Camera stream textures with a tap (see camera/tap.rs): the newest frame
+  // is uploaded here at each Frame.
+  camera_taps: HashMap<u64, CameraTapEntry>,
   /// 2D names Impeller never adopted (draw targets of a format other than
   /// rgba8: sampler-only, never displayed): this thread's to delete, like
   /// every cube map's (see `release_texture`).
@@ -653,6 +677,7 @@ impl RasterState {
       staging: gl::UploadStaging::new(),
       textures: HashMap::new(),
       yuv_latches: HashMap::new(),
+      camera_taps: HashMap::new(),
       unadopted: HashSet::new(),
       shaders: HashMap::new(),
       node_shader_passes: 0,
@@ -746,6 +771,9 @@ impl RasterState {
             if let Err(e) = self.update_texture_rects(id, &rects) {
               log::warn!("[alloy] texture rect update failed: {e}");
             }
+          }
+          RasterCmd::AttachCameraTap { id, tap, uploaded_seq } => {
+            self.camera_taps.insert(id, CameraTapEntry { tap, uploaded_seq });
           }
           RasterCmd::AttachYuvLatch { id, latch, sets, frame_size } => {
             self.yuv_latches.insert(id, YuvLatchEntry { latch, sets, front: 0, frame_size });

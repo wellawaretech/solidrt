@@ -5,6 +5,7 @@ import {
   gamepad,
   getBoundingBoxViewport,
   getFocusables,
+  getLayoutBox,
   focusedNode,
   getNodePath,
   keyboard,
@@ -13,7 +14,7 @@ import {
   setFocus,
   untrack,
 } from "@solidrt/core"
-import type { Binding, GamepadDevice, InputMap, KeyboardDevice, Vec2 } from "@solidrt/core"
+import type { Binding, GamepadDevice, InputMap, KeyboardDevice, Scroll, Vec2 } from "@solidrt/core"
 
 // Focus navigation: the pointer-free control path, so a TV remote, a
 // keyboard, or a gamepad can drive an app. Two movement types over the same
@@ -145,6 +146,47 @@ export function registerNavAction(nodeId: number, action: () => void): () => voi
   }
 }
 
+// Scroll viewports, by node id, with the handle that moves them: ScrollView
+// registers its own. The nav consults them to bring a candidate it focuses
+// into view, so a list longer than its box can be walked blind (a pad or
+// remote has no pointer to scroll with).
+let scrollViewports = new Map<number, Scroll>()
+
+/**
+ * Registers a scroll viewport node and its handle with the focus
+ * navigation; returns the unregister. ScrollView does this for itself, so
+ * a custom scroller built on createScroll needs it only to have the nav
+ * reveal the controls it focuses inside.
+ */
+export function registerScrollViewport(nodeId: number, scroll: Scroll): () => void {
+  scrollViewports.set(nodeId, scroll)
+  return () => {
+    if (scrollViewports.get(nodeId) === scroll) scrollViewports.delete(nodeId)
+  }
+}
+
+// Scrolls every registered viewport above the node, innermost first, by the
+// amount the node's box overshoots the viewport's (window-relative boxes;
+// the delta is scaled back to box pixels through the viewport's untransformed
+// layout box, as ScrollView does for a finger). The viewport's own motion
+// applies: the list springs to the candidate.
+function revealInScrollViews(nodeId: number): void {
+  for (let id of getNodePath(nodeId)) {
+    let scroll = scrollViewports.get(id)
+    if (!scroll) continue
+    let nb = getBoundingBoxViewport({ id: nodeId })
+    let vb = getBoundingBoxViewport({ id })
+    let lb = getLayoutBox({ id })
+    if (!nb || !vb || !lb || vb.width === 0 || vb.height === 0) continue
+    // Past the start wins over past the end: a node taller than the viewport
+    // shows its top.
+    let overshoot = (lo: number, hi: number, vlo: number, vhi: number) => (lo < vlo ? lo - vlo : hi > vhi ? hi - vhi : 0)
+    let dx = overshoot(nb.x, nb.x + nb.width, vb.x, vb.x + vb.width) * (lb.width / vb.width)
+    let dy = overshoot(nb.y, nb.y + nb.height, vb.y, vb.y + vb.height) * (lb.height / vb.height)
+    if (dx !== 0 || dy !== 0) scroll.scrollBy({ x: dx, y: dy })
+  }
+}
+
 // Open modals register their container here, most recent on top; the top of
 // the stack is every nav's default scope, so modals trap navigation with no
 // per-app wiring (see Modal). An explicit `scope` option overrides the stack.
@@ -230,6 +272,7 @@ export function createFocusNav(options?: FocusNavOptions) {
   let focusCandidate = (p: Placed) => {
     lastPos = { x: p.x, y: p.y }
     setFocus(p.id)
+    revealInScrollViews(p.id)
   }
 
   // Entry focus with no history (very first press) or where predictability

@@ -361,7 +361,7 @@ import { For } from "@solidrt/core"
 </ScrollView>
 ```
 
-`scrollRef` hands out the scroll handle from `createScroll`: `offset()` and `range()` (the largest reachable offset, refreshed each layout) are reactive; `scrollTo({ x, y, behavior })` and `scrollBy({ x, y, behavior })` clamp to the range, an omitted axis stays put, and `behavior: "instant"` writes without the spring (the web's word; `"auto"` and `"smooth"` are the default motion). Scroll policies are written against it in the app. A transcript that opens at its newest message and then follows growth, without yanking a reader who has scrolled back:
+`scrollRef` hands out the scroll handle from `createScroll`: `offset()` and `range()` (the largest reachable offset, refreshed each layout) are reactive; `scrollTo({ x, y, behavior })` and `scrollBy({ x, y, behavior })` clamp to the range, an omitted axis stays put, and `behavior: "instant"` writes without the spring (the web's word; `"auto"` and `"smooth"` are the default motion). Scroll policies are written against it in the app. The focus navigation needs none: a control it focuses inside the view is scrolled into view by the view itself (see `createFocusNav`). A transcript that opens at its newest message and then follows growth, without yanking a reader who has scrolled back:
 
 ```tsx
 let [scroll, setScroll] = createSignal<Scroll>()
@@ -521,9 +521,11 @@ return <Window {...input.handlers}>...</Window>
 
 When the focused control disappears (an action replacing it, a screen change), focus lands on the nearest candidate to where it sat as soon as the successor is laid out - the ring follows a Disconnect button into the Connect button that replaces it. A deliberate blur (tapping outside, dismissing the keyboard) stays blurred; the next press resumes at the nearest candidate.
 
-An open `Modal` traps navigation inside itself with no extra wiring (topmost wins when stacked); pass `scope: () => nodeOrNull` to trap into some other subtree instead. `move`/`tab`/`activate` are exposed for custom triggers.
+An open `Modal`, `Select` or its sheet traps navigation inside itself with no extra wiring (topmost wins when stacked); pass `scope: () => nodeOrNull` to trap into some other subtree instead. `move`/`tab`/`activate` are exposed for custom triggers.
 
-API: `createFocusNav`, `registerNavAction`, `uiActions`, `uiBindings`, `FocusNavOptions`, `UiActions`, `UiDevices` - typed and commented in [src/focus-nav.ts](./src/focus-nav.ts).
+A candidate the nav focuses is brought into view: every `ScrollView` above it scrolls by the amount its box overshoots the viewport, with the view's own motion, so a list longer than its box can be walked blind. A custom scroller built on `createScroll` joins in with `registerScrollViewport(viewportNodeId, scroll)`.
+
+API: `createFocusNav`, `registerNavAction`, `registerScrollViewport`, `uiActions`, `uiBindings`, `FocusNavOptions`, `UiActions`, `UiDevices` - typed and commented in [src/focus-nav.ts](./src/focus-nav.ts).
 
 ### Switch
 
@@ -727,7 +729,7 @@ API: `Modal`, `ModalProps` - typed and commented in [src/modal.tsx](./src/modal.
 
 ### Tooltip
 
-A hover-only affordance: under the `desktop`/`hybrid` interaction policies, resting a mouse pointer on the wrapped content shows a bubble near it after `delay` (default 500ms). Under the `touch` policy it never shows, so tooltip content must stay non-essential. The bubble is portal-mounted at the window root, clamped to the window edges, takes no pointer events, fades in and out, hides on leave and on press, and glows with the theme's overlay glow. A string/number `content` renders as themed body text; anything else as-is. `placement` picks the side (`"top"`, the default, or `"bottom"`).
+A hover-only affordance: under the `desktop`/`hybrid` interaction policies, resting a mouse pointer on the wrapped content shows a bubble near it after `delay` (default 500ms). Under the `touch` policy it never shows, so tooltip content must stay non-essential. The bubble is portal-mounted at the window root, clamped to the window edges, takes no pointer events, fades in and out, hides on leave and on press, and glows with the theme's overlay glow. A string/number `content` renders as themed body text; anything else as-is. `placement` picks the preferred side (`"top"`, the default, or `"bottom"`); the other side is taken when only it has the room.
 
 ```jsx
 import { Tooltip, Button } from "@solidrt/components"
@@ -741,7 +743,7 @@ API: `Tooltip`, `TooltipProps` - typed and commented in [src/tooltip.tsx](./src/
 
 ### Select
 
-A single-choice picker whose presentation forks on the interaction policy: `desktop`/`hybrid` opens an anchored dropdown under the trigger (flipping above when there is no room), `touch` opens a bottom sheet over a scrim. Same contract either way: `options` is an `Option[]` (`{ value, label }`), controlled via `value`/`onChange` or uncontrolled via `defaultValue`; pressing outside, Escape and the platform's back close without a change. `placeholder` shows in the trigger while nothing is selected. Both presentations fade in and out, the dropdown glows with the theme's overlay glow, and the trigger's chevron flips while open. The option list is not scrollable yet, so keep it short. The chevron is the `theme.icons.chevronDown` slot when a theme sets one.
+A single-choice picker whose presentation forks on the interaction policy: `desktop`/`hybrid` opens an anchored dropdown under the trigger (above it when only that side has the room), `touch` opens a bottom sheet over a scrim. Same contract either way: `options` is an `Option[]` (`{ value, label }`), controlled via `value`/`onChange` or uncontrolled via `defaultValue`; pressing outside, Escape and the platform's back close without a change. `placeholder` shows in the trigger while nothing is selected. A list taller than the room it has scrolls, opening with the selected option in view, and while open the options are the focus navigation's scope (as a Modal's content is). Both presentations fade in and out, the dropdown glows with the theme's overlay glow, and the trigger's chevron flips while open. The chevron is the `theme.icons.chevronDown` slot when a theme sets one.
 
 ```jsx
 import { Select } from "@solidrt/components"
@@ -775,7 +777,7 @@ API: `SegmentedControl`, `SegmentedControlProps` - typed and commented in [src/s
 
 ### ContextMenu
 
-Secondary actions on the wrapped content. The opening gesture follows the physical pointer: right-click for a mouse, long-press (500 ms, cancelled by finger travel; core's long-press recognizer) for touch and pen. The long-press wins the finger at its timer: a pressable inside retracts and does not fire on the lift, and a scroll that started first keeps the finger. The presentation forks on the interaction policy: `touch` gets a bottom sheet over a scrim, `desktop`/`hybrid` an anchored menu at the pointer that flips up near the bottom edge. Both presentations fade in and out, and the anchored menu glows with the theme's overlay glow. `items` is a `ContextMenuItem[]` (`{ label, onSelect?, disabled? }`); pressing outside, Escape and the platform's back close without selecting.
+Secondary actions on the wrapped content. The opening gesture follows the physical pointer: right-click for a mouse, long-press (500 ms, cancelled by finger travel; core's long-press recognizer) for touch and pen. The long-press wins the finger at its timer: a pressable inside retracts and does not fire on the lift, and a scroll that started first keeps the finger. The presentation forks on the interaction policy: `touch` gets a bottom sheet over a scrim, `desktop`/`hybrid` an anchored menu at the pointer, on the side of it with room. A list taller than the room it has scrolls. Both presentations fade in and out, and the anchored menu glows with the theme's overlay glow. `items` is a `ContextMenuItem[]` (`{ label, onSelect?, disabled? }`); pressing outside, Escape and the platform's back close without selecting.
 
 ```jsx
 import { ContextMenu } from "@solidrt/components"

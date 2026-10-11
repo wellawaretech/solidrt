@@ -174,7 +174,9 @@ impl Context {
   }
 
   /// Create (or replace) the texture stored at `id`, e.g. to resize a stream
-  /// texture without invalidating the id handed out to consumers. Lookups pick
+  /// texture without invalidating the id handed out to consumers. Empty
+  /// `pixels` allocate the storage only, for a stream whose producer fills
+  /// it before the first draw (a camera's tap). Lookups pick
   /// up the new texture immediately; in-flight users of the old entry keep it
   /// alive until released. A `label` of None on a replace keeps the existing
   /// entry's label (the id-stable resize contract). Errs on a size over the
@@ -511,9 +513,19 @@ impl Context {
   }
 
   /// Whether any YUV texture's producer is playing: standing frame demand,
-  /// so the loop ticks on the refresh grid while video streams.
+  /// so the loop ticks on the refresh grid while video streams (a streaming
+  /// camera is the same demand, reported apart: `camera_streaming`).
   pub fn streaming_textures(&self) -> bool {
     self.yuv_groups.borrow().values().any(|group| group.latch.playing())
+  }
+
+  /// Hand the raster thread the tap of the camera streaming into `id`, the
+  /// texture just created (storage only) for the frames after
+  /// `uploaded_seq`: from here it uploads every newer frame itself at each
+  /// `Frame` (see `RasterCmd::AttachCameraTap`). Sent again after every
+  /// recreate at the id, since the entry's seq restarts there.
+  pub(crate) fn attach_camera_tap(&self, id: u64, tap: crate::camera::FrameTap, uploaded_seq: u64) {
+    self.send(RasterCmd::AttachCameraTap { id, tap, uploaded_seq });
   }
 
   /// Recreate a render target of any kind at a new size under the same id:

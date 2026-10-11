@@ -191,17 +191,19 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
   // particular when the raster thread samples it at present time to tell a
   // missed present from an idle gap (alloy's `demand_at_present`), and so
   // an animating app's intervals are judged.
-  // A streaming texture (a playing video) is standing demand alloy holds:
-  // the loop ticks on the refresh grid while it plays. A module's tick
+  // A streaming texture (a playing video, an open camera) is standing demand
+  // alloy holds: the loop ticks on the refresh grid while it streams. A
+  // module's tick
   // that asked for the next frame (`on_advance`) is standing demand too,
   // and so is the native motion `advance` found running (its reasons are
   // already in) or the spatial starts just set running.
   let on_frame = s.gui.platform.take_standing_demand();
   let streaming = s.gui.alloy.streaming_textures();
+  let camera = s.gui.alloy.camera_streaming();
   let raf = super::raf::has_pending(ctx);
   let ticking = std::mem::take(&mut *s.gui.ticking.borrow_mut());
   let motion = s.gui.motion.replace(super::NativeMotion::default());
-  if anim_active || motion.any() || spatial.active || on_frame || streaming || raf || !ticking.is_empty() {
+  if anim_active || motion.any() || spatial.active || on_frame || streaming || camera || raf || !ticking.is_empty() {
     s.gui.platform.request_frame();
   }
   {
@@ -229,6 +231,9 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
     }
     if streaming {
       reasons.push("a playing video".to_string());
+    }
+    if camera {
+      reasons.push("a streaming camera".to_string());
     }
   }
   f(Some(Frame { pending, tree: &s.tree, platform: &s.gui.platform, atx: &s.gui.alloy, present_at }))

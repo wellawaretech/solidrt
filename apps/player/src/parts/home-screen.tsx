@@ -5,7 +5,7 @@
 // The home route's layout (routes.ts): its child routes (settings, connect, an
 // app's detail) each take one pane through <Outlet>. Shared state is module
 // state in ./app-state and ./dev-connection.
-import { createSignal, createEffect, onBack, Logo } from "@solidrt/core"
+import { createSignal, createEffect, Logo } from "@solidrt/core"
 import { For, Show, createMemo } from "solid-js"
 import {
   View,
@@ -209,15 +209,6 @@ function AppDetail(props: {
       setConfirming(false)
     },
   )
-  // The confirm dialog is the top of the back stack while it is open, so it
-  // takes the next back press for itself; otherwise the event travels on to the
-  // detail's own step (the list) and eventually to App's.
-  onBack((e) => {
-    if (confirming()) {
-      e.preventDefault()
-      setConfirming(false)
-    }
-  })
   // Usage details, re-read per app and after a cache clear (the bump signal
   // is the only local mutation that changes what info() reports). Null when
   // the store entry vanished mid-view (e.g. replaced by a dev push);

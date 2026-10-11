@@ -252,7 +252,12 @@ when exactly one client is connected.
   gate saw nothing due, so a cached boundary over the texture lagged one
   frame): a fluency verdict on a `<texture>` showing video is these three
   over a run (skipped and late both 0) plus the app's `currentTime()`
-  stepping at the content interval, never a present census; `slowFrames`,
+  stepping at the content interval, never a present census;
+  `cameraUploaded` and `cameraSkipped` are the camera path's: frames the
+  raster thread uploaded into a camera texture, and frames the camera
+  produced that no upload showed (gaps in the frame sequence), so a camera
+  verdict is uploads per second at the camera's rate with skipped at 0;
+  `slowFrames`,
   `gpuFrameExecMsPerFrame`, `fenceTimeoutsPerSec` and `rasterCmdMsPerSec`
   say why. A snapshot capture stalls the frame it lands in (a blocking
   readback inside the paint): those frames are `captureFrames`, left out
@@ -390,7 +395,9 @@ The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
   you will want repeatedly (a pose, a mode, a counter), bind a debug key that
   logs it and read it back via get_logs.
 - Better than debug keys when driving the app over MCP: register debug
-  COMMANDS - `registerDebug(name, fn)` from `sol:dev`, invoked via the
+  COMMANDS - `registerDebug(name, fn)` from `sol:dev` (it returns the
+  unregister: a command over one screen's state is registered at the
+  screen's mount and unregistered in its onCleanup), invoked via the
   list_debug/call_debug tools. Use them to SET UP state (jump to a level,
   force a mode, seed a scenario); then the runtime-level tools take over -
   set_time_scale 0 freezes the result for as many snapshots as you need,

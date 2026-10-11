@@ -303,6 +303,10 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     { defer: true },
   )
   callRef(() => props.viewRef, view)
+  // An adopted layer outlives the component, so its own view must not: a
+  // layer of the component's own takes the view with it (createSpriteLayer's
+  // owner-scoped dispose), an adopted one frees nothing of the component's.
+  if (untrack(() => props.layer)) onCleanup(() => view.dispose())
   let pointer = untrack(() => props.pointer) ?? null
   if (pointer) onCleanup(feedPointer(view, pointer))
   // The view's own handlers at the root of the walk; the props are read

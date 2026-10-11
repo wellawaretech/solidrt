@@ -57,7 +57,9 @@ declare module "flux:camera" {
   /**
    * List the available camera devices. The first call also starts the camera
    * subsystem, which comes up asynchronously: expect an empty list until the
-   * initial cameraDeviceChange events arrive.
+   * initial cameraDeviceChange events arrive. Under a test that installed an
+   * image as the camera (`app.camera` of `@solidrt/test`) the list is that
+   * one camera, id 0, and every open shows the image.
    */
   export function listCameras(): CameraDevice[]
   /**

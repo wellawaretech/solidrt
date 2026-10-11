@@ -500,10 +500,13 @@ pub fn camera_format(camera: *mut SDL_Camera) -> Option<SDL_CameraSpec> {
   }
 }
 
-/// The latest frame, or null when no new frame is available. Must be returned
-/// with `camera_release_frame` (do not free or hold across pumps).
-pub fn camera_acquire_frame(camera: *mut SDL_Camera) -> *mut SDL_Surface {
-  unsafe { SDL_AcquireCameraFrame(camera, std::ptr::null_mut()) }
+/// The oldest queued frame and its capture timestamp (SDL tick timeline,
+/// nanoseconds), or a null surface when no new frame is available. Must be
+/// returned with `camera_release_frame` (do not free or hold across polls).
+pub fn camera_acquire_frame(camera: *mut SDL_Camera) -> (*mut SDL_Surface, u64) {
+  let mut timestamp_ns: u64 = 0;
+  let surface = unsafe { SDL_AcquireCameraFrame(camera, &mut timestamp_ns) };
+  (surface, timestamp_ns)
 }
 
 pub fn camera_release_frame(camera: *mut SDL_Camera, frame: *mut SDL_Surface) {

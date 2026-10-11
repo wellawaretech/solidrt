@@ -71,6 +71,7 @@ impl RasterState {
     // The video frames due for this present go into their textures first,
     // so the flush below converts them and the frame samples the result.
     self.latch_video(present_at);
+    self.latch_cameras();
     // The frame samples shader targets (directly via <texture src>, or through
     // the window-shader layer); resolve every pending target write first.
     self.flush_dirty();
@@ -387,6 +388,40 @@ impl RasterState {
 }
 
 impl RasterState {
+  /// For every camera stream texture with a tap, upload the slot's newest
+  /// frame when it is newer than the one the texture holds. A frame of
+  /// another size is the UI side's to act on (it recreates the texture at
+  /// the new size and re-attaches the tap), so it is left for that.
+  fn latch_cameras(&mut self) {
+    if self.camera_taps.is_empty() {
+      return;
+    }
+    let mut due = Vec::new();
+    for (id, entry) in self.camera_taps.iter() {
+      if let Some(frame) = entry.tap.latest() {
+        if frame.seq > entry.uploaded_seq {
+          due.push((*id, frame));
+        }
+      }
+    }
+    for (id, frame) in due {
+      let fits = self.textures.get(&id).is_some_and(|gpu| gpu.width == frame.width && gpu.height == frame.height);
+      if !fits {
+        continue;
+      }
+      if let Err(e) = self.update_texture(id, &frame.pixels) {
+        log::warn!("[alloy] camera frame upload failed: {e}");
+        continue;
+      }
+      if let Some(entry) = self.camera_taps.get_mut(&id) {
+        self.stats.camera_uploaded.fetch_add(1, Ordering::Relaxed);
+        self.stats.camera_skipped.fetch_add(frame.seq - entry.uploaded_seq - 1, Ordering::Relaxed);
+        entry.uploaded_seq = frame.seq;
+      }
+      self.content_dirty = true;
+    }
+  }
+
   /// For every YUV output with a latch, take the frame due for the present
   /// at `present_at` (the newest due at or before the deadline plus the
   /// lookahead, see yuv.rs), upload it into the back plane set, flip the set

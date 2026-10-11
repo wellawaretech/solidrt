@@ -9,7 +9,7 @@ impl Context {
   /// `content_closure`). Inserting an already-noted id is a no-op, so a
   /// per-frame write burst on one target costs one closure walk. Drained by
   /// `take_content_changes`.
-  pub(super) fn note_content(&self, id: u64) {
+  pub(crate) fn note_content(&self, id: u64) {
     // A sub-target's pixels are its parent's.
     let id = self.parent_of(id).unwrap_or(id);
     let mut changes = self.content_changes.borrow_mut();

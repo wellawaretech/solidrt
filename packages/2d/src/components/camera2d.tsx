@@ -1,4 +1,4 @@
-import { callRef, createEffect, merge, onFrame, untrack } from "@solidrt/core"
+import { callRef, createEffect, merge, onFrame, onLayout, untrack } from "@solidrt/core"
 import type { InputMap, VoidComponent } from "@solidrt/core"
 import { createCamera2d } from "../camera2d.ts"
 import type { Camera2d as Camera2dHandle, Camera2dAxes, Camera2dOptions } from "../camera2d.ts"
@@ -33,9 +33,10 @@ const MAX_CAMERA_DT = 0.1
  * the follow's zones, the offset lane or a rate follows its prop, and a
  * bounds, pivot or offset change re-clamps and pushes the pose at once -
  * the `<OrbitCamera>` rule. The view's `size()` is the viewport (live: a
- * fill layer's box, a setSize, a `<View2d>` resize). Frames run only
- * while the camera moves (`active()`), so a resting camera leaves the
- * app demand-driven idle.
+ * fill layer's box, a setSize, a `<View2d>` resize), re-read after every
+ * layout so a resting camera's pivot follows a resize too. Frames run
+ * only while the camera moves (`active()`), so a resting camera leaves
+ * the app demand-driven idle.
  */
 export let Camera2d: VoidComponent<Camera2dProps> = props => {
   let target = useSpriteLayer().viewport
@@ -61,6 +62,14 @@ export let Camera2d: VoidComponent<Camera2dProps> = props => {
       })
     },
   )
+  // The viewport follows layout: a fill layer's first box replaces its
+  // creation size, a <View2d> or window resize changes it, and a camera at
+  // rest runs no frame to notice, so its pivot (a viewport fraction) would
+  // sit where the old size put it until it next moved. A child mounts after
+  // its layer, so this handler runs after the one that sizes the view;
+  // update(0) re-reads the viewport and pushes only when it changed.
+  // Untracked: the control reads its options through the props getters.
+  onLayout(() => untrack(() => cam.update(0)))
   // A bounds, pivot or offset prop change re-clamps and pushes the pose
   // at once (set({}) applies the clamps and the lanes). Deferred: the
   // creation already clamped and pushed the initial pose. Untracked: the

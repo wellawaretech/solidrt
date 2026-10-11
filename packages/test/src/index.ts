@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, painted as paintFrame, setFrameRate, settle, time, windowReady } from "sol:test"
+import { camera as installCamera, capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, painted as paintFrame, setFrameRate, settle, time, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -158,6 +158,13 @@ export interface PointerOptions {
   meta?: boolean
 }
 
+/** An RGBA8 image, tightly packed rows top to bottom: what `decodeImage` returns. */
+export interface CameraImage {
+  width: number
+  height: number
+  pixels: Uint8Array
+}
+
 /** The app under test, as a test's function receives it. */
 export interface TestApp {
   /**
@@ -191,6 +198,23 @@ export interface TestApp {
    * `settle()` after it.
    */
   link(link: string): Promise<void>
+  /**
+   * Makes `image` what the camera sees: every camera the app opens from
+   * now on shows it (a `createCamera` or `open` resolves at once, no device
+   * and no permission prompt), and a camera already open shows it from the
+   * next frame. Call it before `mount` or `load` so the app's own open finds
+   * it; call it again to show the app another image. A QR code in the
+   * image is decoded like one in front of a real camera: `settle()` after
+   * the open and the app's barcode handler has run. Pass a `decodeImage`
+   * result, or pixels the test builds.
+   *
+   * @example
+   * await app.camera(decodeImage(png))
+   * let cam = createCamera({ scan: ["qr"] })
+   * await app.settle()
+   * expect(cam.barcode()?.data).toBe("solidrt")
+   */
+  camera(image: CameraImage): Promise<void>
   /**
    * Calls a debug command the app registered (`registerDebug` of
    * `sol:dev`), runs a frame, and returns what the command returned. The
@@ -495,6 +519,15 @@ let app: TestApp = {
   async link(target) {
     if (typeof target !== "string" || target === "") throw new TypeError("link: pass the link as a non-empty string")
     if (!link(target)) throw new Error(`link: the app does not listen for links (no onLink handler), so ${JSON.stringify(target)} went nowhere`)
+    await app.frame()
+  },
+  async camera(image) {
+    let ok = image !== null && typeof image === "object" && image.pixels instanceof Uint8Array
+    if (!ok) throw new TypeError("camera: pass { width, height, pixels }, with the pixels a Uint8Array of RGBA8")
+    let { width, height, pixels } = image
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new TypeError(`camera: the size must be positive integers, got ${width} x ${height}`)
+    if (pixels.length !== width * height * RGBA) throw new TypeError(`camera: ${width} x ${height} RGBA8 is ${width * height * RGBA} bytes, got ${pixels.length}`)
+    installCamera(width, height, pixels)
     await app.frame()
   },
   async debug(name, args) {

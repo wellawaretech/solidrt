@@ -34,7 +34,11 @@ impl RasterState {
       GpuTexture::new_compressed(&self.gl, size, pixels, sampler, format)?
     } else {
       let gpu = GpuTexture::new(&self.gl, size, sampler, format);
-      gpu.upload(&self.gl, pixels, size);
+      // An empty create allocates only: a camera's stream texture, which
+      // its tap fills at the next Frame before anything draws it.
+      if !pixels.is_empty() {
+        gpu.upload(&self.gl, pixels, size);
+      }
       gpu
     };
     // A replace-at-id with no new label is an id-stable resize: labels are
@@ -84,6 +88,7 @@ impl RasterState {
   pub(super) fn release_texture(&mut self, id: u64) {
     let unadopted = self.unadopted.remove(&id);
     self.yuv_latches.remove(&id);
+    self.camera_taps.remove(&id);
     if let Some(gpu) = self.textures.remove(&id) {
       if gpu.shape == TextureShape::Cube || unadopted {
         unsafe { glow::HasContext::delete_texture(&self.gl, gpu.gl_texture) };

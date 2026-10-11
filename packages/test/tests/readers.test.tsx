@@ -38,6 +38,20 @@ test("a debug command is called with its args and returns its value", async app 
   expect(await failure(() => app.debug("warp"))).toContain("no debug command 'warp' (registered: level)")
 })
 
+test("a debug command's unregister removes it, and only its own registration", async app => {
+  let off = registerDebug("probe", () => 1)
+  registerDebug("keep", () => 2)
+  await app.mount(() => <text>probe</text>)
+  expect(await app.debug("probe")).toBe(1)
+  off()
+  expect(await failure(() => app.debug("probe"))).toContain("no debug command 'probe' (registered: keep)")
+  // A stale unregister: the name has been registered again since.
+  let stale = registerDebug("again", () => 1)
+  registerDebug("again", () => 2)
+  stale()
+  expect(await app.debug("again")).toBe(2)
+})
+
 test("a synthetic gamepad connects, holds a state and leaves", async app => {
   await app.mount(() => <text>{gamepads().map(pad => (pad ? pad.buttons.join("+") || "idle" : "none")).join(",") || "no pads"}</text>)
   expect(app.find({ text: "no pads" }).exists).toBe(true)

@@ -1,6 +1,8 @@
-import { createEffect, createSignal, createPortal, onBack, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
-import type { LayoutProps } from "@solidrt/core"
+import { createEffect, createSignal, createPortal, onBack, onCleanup, onLayout, getBoundingBox, Show, For, env, untrack } from "@solidrt/core"
+import type { BoundingBox, LayoutProps, Scroll } from "@solidrt/core"
 import { createPress } from "./press"
+import { pushNavScope } from "./focus-nav"
+import { placePopup, PopupList } from "./popup"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -8,7 +10,7 @@ import { typeStyle } from "./typography"
 import type { Option, StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
 import { Icon } from "./icon"
-import { colorFade, popupFade, popupFadeOut, PressFeedback, travelMotion } from "./motion"
+import { colorFade, popupFadeOut, PressFeedback, travelMotion } from "./motion"
 import { Surface } from "./surface"
 
 export interface SelectProps<T = unknown> extends TransitionProps {
@@ -24,21 +26,22 @@ export interface SelectProps<T = unknown> extends TransitionProps {
   style?: StyleProps
 }
 
-// Distance between the trigger and the dropdown.
-let gap = () => theme.spacing.sm
-// Minimum distance kept between the dropdown and the window edges.
-let margin = () => theme.spacing.sm
+// Scrim kept visible above a bottom sheet at its tallest.
+let sheetClearance = () => theme.spacing.xl
 
 /**
  * A single-choice picker whose presentation forks on the interaction policy:
- * desktop/hybrid opens an anchored dropdown under the trigger (flipping above
- * when there is no room), touch opens a bottom sheet over a scrim. Same
- * value/onChange contract either way; pressing outside, Escape and the user's
- * back close without a change.
- * The option list is not scrollable yet, so keep it short.
+ * desktop/hybrid opens an anchored dropdown under the trigger (above it when
+ * only that side has the room), touch opens a bottom sheet over a scrim.
+ * Same value/onChange contract either way; pressing outside, Escape and the
+ * user's back close without a change. A list taller than the room scrolls,
+ * opening with the selected option in view, and while open the options are
+ * the focus navigation's scope.
  */
 export function Select<T>(props: SelectProps<T>) {
   let trigger: { id: number } | undefined
+  // The selected option's row while a presentation is open.
+  let selectedRow: { id: number } | undefined
   let [open, setOpen] = createSignal(false)
   // The value overload: as far as TypeScript knows T could be a function,
   // which createSignal would read as a compute; the cast picks the value form.
@@ -73,7 +76,11 @@ export function Select<T>(props: SelectProps<T>) {
     let press = createPress({ onPress: () => choose(p.option.value) })
     return (
       <view
-        ref={press.ref}
+        ref={(n: { id: number }) => {
+          press.ref(n)
+          // A mount-time snapshot: the row that is selected as the list opens.
+          if (p.option.value === untrack(value)) selectedRow = n
+        }}
         repaintBoundary
         flexDirection="row"
         alignItems="center"
@@ -94,30 +101,64 @@ export function Select<T>(props: SelectProps<T>) {
     )
   }
 
-  // Anchored under the trigger, sized at least as wide as it. Positioned like
-  // Tooltip: portal at the window root, pinned at 0,0 and moved with the x/y
-  // paint transforms after measuring, so tracking the anchor never reflows.
-  // Glows with theme.glow.overlay (the sheet sits on a scrim and does not).
+  // Once per opening, once the list has its final size (the scroll range
+  // matches the rows' overflow, so the write is not clamped against a stale
+  // range): the selected row to the middle of the list, without motion.
+  let createReveal = () => {
+    let done = false
+    return (scroll: Scroll | undefined, list: BoundingBox, height: number) => {
+      if (done || !scroll) return
+      let overflow = Math.max(0, list.height - height)
+      if (overflow === 0) {
+        done = true
+        return
+      }
+      if (scroll.range().y !== overflow) return
+      let row = selectedRow && getBoundingBox(selectedRow)
+      done = true
+      if (row) scroll.scrollTo({ y: row.y - list.y - (height - row.height) / 2, behavior: "instant" })
+    }
+  }
+
+  // Anchored under the trigger, sized at least as wide as it, on the side
+  // with room (placePopup): portal at the window root, pinned at 0,0 and
+  // moved with the x/y paint transforms after measuring, so tracking the
+  // anchor never reflows. The rows scroll once taller than the room. Glows
+  // with theme.glow.overlay (the sheet sits on a scrim and does not).
   let Dropdown = () => {
     let menu: { id: number } | undefined
+    let list: { id: number } | undefined
+    let scroll: Scroll | undefined
     let [pos, setPos] = createSignal<{ x: number; y: number } | null>(null)
     let [minWidth, setMinWidth] = createSignal(0)
+    let [listHeight, setListHeight] = createSignal<number | null>(null)
+    let reveal = createReveal()
+    selectedRow = undefined
+    // The padding above and below the rows: the popup's height beyond the list's.
+    let chrome = () => 2 * theme.spacing.sm
     onLayout(() => {
       let a = trigger && getBoundingBox(trigger)
       let b = menu && getBoundingBox(menu)
-      if (!a || !b) return
+      let l = list && getBoundingBox(list)
+      if (!a || !b || !l) return
       if (a.width !== minWidth()) setMinWidth(a.width)
-      let x = Math.round(Math.min(Math.max(a.x, margin()), env.windowSize.width - b.width - margin()))
-      let below = a.y + a.height + gap()
-      let y = Math.round(below + b.height > env.windowSize.height - margin() ? a.y - b.height - gap() : below)
+      let p = placePopup(a, { width: b.width, height: l.height + chrome() })
+      let h = Math.min(l.height, p.room - chrome())
+      if (h !== listHeight()) setListHeight(h)
       let cur = pos()
-      if (!cur || cur.x !== x || cur.y !== y) setPos({ x, y })
+      if (!cur || cur.x !== p.x || cur.y !== p.y) setPos({ x: p.x, y: p.y })
+      reveal(scroll, l, h)
     })
+    // Open, the options are the focus navigation's scope (as a Modal is), so
+    // a pad or keyboard cannot walk onto the screen behind the dropdown.
+    let popScope: (() => void) | undefined
+    onCleanup(() => popScope?.())
     // The fade is driven by the position write, not a mount-time `from`: the
     // menu parks offscreen until measured, so a `from` would play unseen.
     // The exit fade lives on this root (the node the close unmounts).
     return createPortal(
       <view
+        ref={(n: { id: number }) => (popScope = pushNavScope(n))}
         position="absolute"
         top={0}
         left={0}
@@ -148,19 +189,50 @@ export function Select<T>(props: SelectProps<T>) {
             glow={styled().glow}
             outline={{ color: theme.color.border, width: theme.borderWidth.sm }}
           />
-          <For each={props.options}>
-            {(o: Option<T>) => <OptionRow option={o} padY={space("sm")} />}
-          </For>
+          <PopupList height={listHeight()} listRef={(n) => (list = n)} scrollRef={(s) => (scroll = s)}>
+            <For each={props.options}>
+              {(o: Option<T>) => <OptionRow option={o} padY={space("sm")} />}
+            </For>
+          </PopupList>
         </view>
       </view>,
     )
   }
 
   // Bottom sheet over a scrim; the content is a sibling of the scrim (Modal's
-  // trick) so pressing an option never has the scrim on its hit path.
-  let Sheet = () =>
-    createPortal(
-      <view position="absolute" top={0} left={0} right={0} bottom={0} opacity={1} transition={popupFade()}>
+  // trick) so pressing an option never has the scrim on its hit path. The
+  // rows scroll once the sheet would reach the clearance under the top safe
+  // area; hidden until measured, as the dropdown is, so the full-height
+  // list of the measuring frame is never seen.
+  let Sheet = () => {
+    let list: { id: number } | undefined
+    let scroll: Scroll | undefined
+    let [listHeight, setListHeight] = createSignal<number | null>(null)
+    let reveal = createReveal()
+    selectedRow = undefined
+    // The padding above and below the rows: the sheet's height beyond the list's.
+    let chrome = () => 2 * theme.spacing.md + env.safeArea.bottom
+    onLayout(() => {
+      let l = list && getBoundingBox(list)
+      if (!l) return
+      let room = env.windowSize.height - env.safeArea.top - sheetClearance() - chrome()
+      let h = Math.min(l.height, room)
+      if (h !== listHeight()) setListHeight(h)
+      reveal(scroll, l, h)
+    })
+    let popScope: (() => void) | undefined
+    onCleanup(() => popScope?.())
+    return createPortal(
+      <view
+        ref={(n: { id: number }) => (popScope = pushNavScope(n))}
+        position="absolute"
+        top={0}
+        left={0}
+        right={0}
+        bottom={0}
+        opacity={listHeight() != null ? 1 : 0}
+        transition={popupFadeOut()}
+      >
         <view position="absolute" top={0} left={0} right={0} bottom={0} onPointerDown={() => setOpen(false)}>
           <d-rect transition={colorFade()} color={theme.color.scrim} />
         </view>
@@ -174,12 +246,15 @@ export function Select<T>(props: SelectProps<T>) {
           paddingBottom={theme.spacing.md + env.safeArea.bottom}
         >
           <Surface role="overlay" fill={theme.color.surface} radius={theme.radius.sm} material={styled().material} glow={null} />
-          <For each={props.options}>
-            {(o: Option<T>) => <OptionRow option={o} padY={Math.round(theme.spacing.md * 1.5)} />}
-          </For>
+          <PopupList height={listHeight()} listRef={(n) => (list = n)} scrollRef={(s) => (scroll = s)}>
+            <For each={props.options}>
+              {(o: Option<T>) => <OptionRow option={o} padY={Math.round(theme.spacing.md * 1.5)} />}
+            </For>
+          </PopupList>
         </view>
       </view>,
     )
+  }
 
   let press = createPress({
     onPress: () => {

@@ -107,8 +107,9 @@ fn facing_str(facing: CameraFacing) -> &'static str {
 }
 
 fn list_impl(ctx: Ctx<'_>) -> rquickjs::Result<Array<'_>> {
+  let state = ctx.userdata::<CameraPluginState>().expect("camera state");
   let arr = Array::new(ctx.clone())?;
-  for (i, cam) in alloy::camera::list_cameras().iter().enumerate() {
+  for (i, cam) in state.0.gui.alloy.list_cameras().iter().enumerate() {
     let obj = Object::new(ctx.clone())?;
     obj.set("id", cam.id)?;
     obj.set("name", cam.name.as_str())?;
@@ -184,6 +185,12 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
         }
         drop(hold);
       });
+      if scan_qr {
+        // Held from the open on: the first frame is in the scanner's hands
+        // before any settle can look, not from the task's first poll.
+        let scan_hold = crate::pending::PendingOps::of(&ctx).in_flight("barcode scan");
+        watch_scan(&ctx, &state, session, scan_hold);
+      }
     }
     Err(e) => {
       let error = Exception::from_message(ctx.clone(), &format!("openCamera: {e}"))?;
@@ -191,6 +198,40 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
     }
   }
   Ok(promise)
+}
+
+/// Hold the engine while the scanner of `session` has a frame it has not
+/// examined (a payload may be on its way), and demand a frame when it has
+/// caught up, so the payload reaches `dispatch_barcodes`: what lets a test
+/// `settle` on a decode. Polled on the task's own cadence like the open
+/// wait; the task ends with the session.
+fn watch_scan(ctx: &Ctx<'_>, state: &CameraPluginState, session: u64, first: crate::pending::Hold) {
+  let ops = crate::pending::PendingOps::of(ctx);
+  let latch = state.0.gui.platform.frame_request_handle();
+  let wake = state.0.gui.alloy.frame_wake();
+  let gui = state.0.gui.clone();
+  ctx.spawn(async move {
+    let mut hold: Option<crate::pending::Hold> = Some(first);
+    loop {
+      match gui.alloy.camera_scan_pending(session) {
+        None => break,
+        Some(true) => {
+          if hold.is_none() {
+            hold = Some(ops.in_flight("barcode scan"));
+          }
+        }
+        Some(false) => {
+          if hold.take().is_some() {
+            latch.store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(wake) = &wake {
+              wake();
+            }
+          }
+        }
+      }
+      tokio::time::sleep(std::time::Duration::from_millis(OPEN_POLL_MS)).await;
+    }
+  });
 }
 
 fn close_impl(ctx: Ctx<'_>, session: u64) {
@@ -203,9 +244,13 @@ fn close_impl(ctx: Ctx<'_>, session: u64) {
 /// Register (or replace) the JS callback receiving decoded barcodes for a
 /// session opened with a scan option. The callback's lifetime unifies with the
 /// stored Persistent because this is a named generic fn, not a closure.
+/// Register the session's barcode handler, and demand a frame: payloads
+/// decoded before a handler existed wait in the session, and the next
+/// `tick` delivers them.
 fn set_barcode_impl<'js>(ctx: Ctx<'js>, session: u64, callback: Function<'js>) {
   let state = ctx.userdata::<CameraPluginState>().expect("camera state");
   state.0.barcode_handlers.borrow_mut().insert(session, Persistent::save(&ctx, callback));
+  super::request_frame(&ctx);
 }
 
 /// One-shot scan of an RGBA8 pixel buffer (e.g. decodeImage output); returns
@@ -281,8 +326,17 @@ pub(crate) fn tick(ctx: &Ctx<'_>) -> bool {
           log::warn!("[camera] resolve call failed: {e}");
         }
       }
-      Some(CameraStatus::Denied) => reject_with(ctx, entry.reject, "camera permission denied"),
-      Some(CameraStatus::Failed(message)) => reject_with(ctx, entry.reject, &message),
+      // A rejected open hands JS nothing to close, so the session goes
+      // here: its registry entry and its texture id, the device being
+      // released already.
+      Some(CameraStatus::Denied) => {
+        close_impl(ctx.clone(), entry.session);
+        reject_with(ctx, entry.reject, "camera permission denied");
+      }
+      Some(CameraStatus::Failed(message)) => {
+        close_impl(ctx.clone(), entry.session);
+        reject_with(ctx, entry.reject, &message);
+      }
       None => reject_with(ctx, entry.reject, "camera closed"),
     }
   }

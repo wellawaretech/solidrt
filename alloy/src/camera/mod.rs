@@ -1,27 +1,64 @@
 //! Camera capture via the SDL camera subsystem.
 //!
 //! A session opens an SDL camera at an uncompressed native format near the
-//! requested size (frames are converted to RGBA32 in the pump) and exposes
-//! them through a registry texture (see `Context::pump_cameras`), so a camera
-//! view is just a texture draw for whatever sits on top. Opening triggers the
-//! OS permission prompt; sessions start `Pending` and become `Ready` (texture
-//! created at the delivered format), `Denied`, or `Failed` (deadlines, see
-//! `INIT_DEADLINE` and `PENDING_DEADLINE`). A session opened while the camera
-//! subsystem is still starting waits for it first: the pump opens the device
-//! once the subsystem reports in. The pump is driven once per frame from the
-//! UI thread; `SDL_AcquireCameraFrame` is non-blocking, so no camera thread
-//! is needed. The device never signals: it is polled, so a waiter on an open
+//! requested size and streams it two ways from one slot: the session's
+//! `FrameTap`, filled by a camera thread of its own (`producer`) with every
+//! frame converted to RGBA32 and rotated upright, and the registry texture
+//! the raster thread uploads that slot into at each frame, so a camera view
+//! is just a texture draw for whatever sits on top, and a module reads the
+//! same frames on its own thread (`Context::camera_frame_tap`). Opening
+//! triggers the OS permission prompt; sessions start `Pending` and become
+//! `Ready` (texture created at the first frame's upright size), `Denied`, or
+//! `Failed` (deadlines, see `INIT_DEADLINE` and `PENDING_DEADLINE`). A
+//! session opened while the camera subsystem is still starting waits for it
+//! first: the pump opens the device once the subsystem reports in. The pump
+//! runs once per frame on the UI thread and does no pixel work: it polls the
+//! permission while Pending, starts the producer once approved, and from
+//! then on reads the slot's seq and size to note content and resize the
+//! texture. The device never signals: it is polled, so a waiter on an open
 //! pumps its one session between frames too (`pump_camera`), on its own
 //! cadence, and the answer does not wait for a frame.
+//!
+//! A test installs a still image as the camera (`install_still_camera`):
+//! from then on the device list is that one camera, every open shows the
+//! image, approved at once with no SDL subsystem, and a later install
+//! publishes the new image into every open session. No thread runs for it
+//! and it demands no frames, so an app test settles.
+
+pub(crate) mod producer;
+mod tap;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use sdl3::sys::camera::{SDL_Camera, SDL_CameraPosition, SDL_CameraSpec};
 use sdl3::sys::pixels::{SDL_COLORSPACE_SRGB, SDL_PIXELFORMAT_MJPG, SDL_PIXELFORMAT_RGBA32};
 
 use crate::sdl_utils;
+
+pub use tap::{CameraFrame, FrameTap, TapWait};
+
+/// The device id of the still camera a test installs: never an SDL id
+/// (those start at 1).
+pub const STILL_CAMERA_ID: u32 = 0;
+
+/// The image a test installed as the camera (see `install_still_camera`).
+struct StillFrame {
+  width: u32,
+  height: u32,
+  pixels: Vec<u8>,
+}
+
+/// What fills a session's tap once it is approved.
+enum Producer {
+  /// The `sol-camera` thread over an SDL device (see producer.rs).
+  Device(JoinHandle<()>),
+  /// A test's still image, published into the tap at open and at every
+  /// later install.
+  Still,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CameraFacing {
@@ -63,7 +100,8 @@ struct OpenRequest {
 }
 
 struct Session {
-  /// Null while `request` is pending.
+  /// Null while `request` is pending, and null again once the producer
+  /// owns the device.
   camera: *mut SDL_Camera,
   status: CameraStatus,
   /// The open still to perform, for a session opened while the subsystem was
@@ -72,32 +110,25 @@ struct Session {
   /// When the session was opened (restarted when a deferred open gets its
   /// device); drives `INIT_DEADLINE` and the Linux `PENDING_DEADLINE`.
   opened_at: std::time::Instant,
-  /// Permission granted; streaming starts and the texture is created on the
-  /// first frame, since the upright size depends on the per-frame rotation.
+  /// Permission granted; the producer starts and the texture is created on
+  /// the first frame, since the upright size depends on the per-frame
+  /// rotation.
   approved: bool,
   /// Registry id the stream texture is (re)created at, allocated up front so
   /// it survives size changes when the device rotates.
   texture_id: u64,
-  /// Upright-frame buffer (pitch repack and/or rotation output).
-  scratch: Vec<u8>,
-  /// RGBA32 conversion buffer for frames delivered in a native format.
-  convert: Vec<u8>,
-  /// Decode QR codes from the stream (opt-in at open).
-  scan_qr: bool,
-  /// Greyscale scratch for the QR decoder.
-  gray: Vec<u8>,
-  /// Uploaded frames since the last decode attempt (decode every Nth frame).
-  frames_since_scan: u32,
-  /// Last time a decode was reported, for the 1s re-report throttle.
-  last_emit: Option<std::time::Instant>,
-  /// Decoded payloads waiting for `take_camera_barcodes`.
-  barcodes: Vec<String>,
+  /// The session's frame slot: the producer fills it, the raster thread and
+  /// every tap holder read it.
+  tap: FrameTap,
+  /// The tap's producer, from the permission grant to the close.
+  producer: Option<Producer>,
+  /// The newest frame seq the UI side has acted on (texture created or
+  /// content noted).
+  noted_seq: u64,
+  /// The QR scanner over the tap, shared with its thread; None for a
+  /// session opened without scan.
+  scanner: Option<Arc<crate::barcode::StreamScanner>>,
 }
-
-/// Try a QR decode every Nth uploaded frame (~3/s at 30fps); decoding costs
-/// around a millisecond per attempt (several when a code is present) and runs
-/// on the UI thread.
-const SCAN_INTERVAL_FRAMES: u32 = 10;
 
 /// How long a session may sit `Pending` before it is failed and the device
 /// released. Linux only: neither Linux backend ever shows a consent prompt, so
@@ -123,12 +154,33 @@ const PENDING_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10)
 const INIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl Session {
-  /// Release the device; a deferred open that never got one has nothing to
-  /// close.
-  fn close_device(&self) {
-    if !self.camera.is_null() {
-      sdl_utils::camera_close(self.camera);
+  /// Release the device and end the session's threads: close the tap (every
+  /// waiter wakes with `Closed`, the scanner ends on its own) and join the
+  /// producer, which closes the device on its way out; a device the producer
+  /// never took is closed here. A deferred open that never got one has
+  /// nothing to close. Idempotent.
+  fn stop(&mut self) {
+    self.tap.close();
+    match self.producer.take() {
+      Some(Producer::Device(thread)) => {
+        if thread.join().is_err() {
+          log::warn!("[camera] camera thread ended in a panic");
+        }
+      }
+      Some(Producer::Still) => {}
+      None => {
+        if !self.camera.is_null() {
+          sdl_utils::camera_close(self.camera);
+        }
+      }
     }
+    self.camera = std::ptr::null_mut();
+  }
+}
+
+impl Drop for Session {
+  fn drop(&mut self) {
+    self.stop();
   }
 }
 
@@ -136,6 +188,9 @@ impl Session {
 pub struct CameraRegistry {
   sessions: RefCell<HashMap<u64, Session>>,
   next_id: RefCell<u64>,
+  /// The still image standing in for every camera while a test has one
+  /// installed.
+  still: RefCell<Option<Arc<StillFrame>>>,
 }
 
 enum InitState {
@@ -238,7 +293,7 @@ fn facing_of(position: SDL_CameraPosition) -> CameraFacing {
   }
 }
 
-pub fn list_cameras() -> Vec<CameraInfo> {
+fn list_devices() -> Vec<CameraInfo> {
   // "Starting" is the normal first-call state (a real failure already warned
   // from the init worker); the list refreshes via CameraDeviceChange when the
   // subsystem comes up.
@@ -263,7 +318,7 @@ fn open_device(req: &OpenRequest) -> Result<*mut SDL_Camera, String> {
   let id = match req.device {
     Some(d) => d,
     None => {
-      let cams = list_cameras();
+      let cams = list_devices();
       // Default to the back camera: viewfinders and scanning overwhelmingly
       // want it on phones, and desktop webcams (facing Unknown) fall through
       // to "first camera" either way.
@@ -296,11 +351,41 @@ fn open_device(req: &OpenRequest) -> Result<*mut SDL_Camera, String> {
 }
 
 impl crate::context::Context {
+  /// The camera devices: the SDL list (the first call also starts the
+  /// subsystem, so expect an empty list until the device events arrive),
+  /// or the one still camera while a test has one installed.
+  pub fn list_cameras(&self) -> Vec<CameraInfo> {
+    if self.cameras.still.borrow().is_some() {
+      return vec![CameraInfo { id: STILL_CAMERA_ID, name: "test camera".to_string(), facing: CameraFacing::Unknown }];
+    }
+    list_devices()
+  }
+
+  /// Install `pixels` (RGBA8, `width` x `height`, tightly packed) as the
+  /// camera, for a test: from now on every open shows this image, and every
+  /// open still session shows it from its next frame. Errs on a size that
+  /// does not match the pixels.
+  pub fn install_still_camera(&self, width: u32, height: u32, pixels: Vec<u8>) -> Result<(), String> {
+    let expected = (width as usize) * (height as usize) * 4;
+    if width == 0 || height == 0 || pixels.len() != expected {
+      return Err(format!("{width}x{height} RGBA8 is {expected} bytes, got {}", pixels.len()));
+    }
+    let still = Arc::new(StillFrame { width, height, pixels });
+    for session in self.cameras.sessions.borrow().values() {
+      if matches!(session.producer, Some(Producer::Still)) {
+        session.tap.publish(0, still.width, still.height, still.pixels.clone());
+      }
+    }
+    *self.cameras.still.borrow_mut() = Some(still);
+    Ok(())
+  }
+
   /// Open a camera session (see `open_device` for the device choice). Returns
   /// the session id; the session is `Pending` until the OS permission
   /// resolves. While the subsystem is still starting the open is deferred:
   /// the pump performs it once the subsystem reports in, or fails the session
-  /// at `INIT_DEADLINE`, so a first open never has to be retried.
+  /// at `INIT_DEADLINE`, so a first open never has to be retried. With a
+  /// still camera installed the session is the still, approved at once.
   pub fn open_camera(
     &self,
     device: Option<u32>,
@@ -308,11 +393,17 @@ impl crate::context::Context {
     size: Option<(u32, u32)>,
     scan_qr: bool,
   ) -> Result<u64, String> {
-    let request = OpenRequest { device, facing, size };
-    let (camera, request) = match ensure_init() {
-      InitStatus::Ready => (open_device(&request)?, None),
-      InitStatus::Starting => (std::ptr::null_mut(), Some(request)),
-      InitStatus::Failed(e) => return Err(e),
+    let still = self.cameras.still.borrow().clone();
+    let (camera, request, producer) = match still {
+      Some(_) => (std::ptr::null_mut(), None, Some(Producer::Still)),
+      None => {
+        let request = OpenRequest { device, facing, size };
+        match ensure_init() {
+          InitStatus::Ready => (open_device(&request)?, None, None),
+          InitStatus::Starting => (std::ptr::null_mut(), Some(request), None),
+          InitStatus::Failed(e) => return Err(e),
+        }
+      }
     };
 
     let sid = {
@@ -320,6 +411,11 @@ impl crate::context::Context {
       *next += 1;
       *next
     };
+    let tap = FrameTap::new();
+    if let Some(still) = &still {
+      tap.publish(0, still.width, still.height, still.pixels.clone());
+    }
+    let scanner = scan_qr.then(|| crate::barcode::spawn_stream_scanner(tap.clone()));
     self.cameras.sessions.borrow_mut().insert(
       sid,
       Session {
@@ -327,15 +423,12 @@ impl crate::context::Context {
         status: CameraStatus::Pending,
         request,
         opened_at: std::time::Instant::now(),
-        approved: false,
+        approved: still.is_some(),
         texture_id: self.borrow_texture_id(),
-        scratch: Vec::new(),
-        convert: Vec::new(),
-        scan_qr,
-        gray: Vec::new(),
-        frames_since_scan: 0,
-        last_emit: None,
-        barcodes: Vec::new(),
+        tap,
+        producer,
+        noted_seq: 0,
+        scanner,
       },
     );
     Ok(sid)
@@ -343,38 +436,64 @@ impl crate::context::Context {
 
   /// Drain the QR payloads decoded since the last call.
   pub fn take_camera_barcodes(&self, sid: u64) -> Vec<String> {
-    match self.cameras.sessions.borrow_mut().get_mut(&sid) {
-      Some(session) => std::mem::take(&mut session.barcodes),
+    let sessions = self.cameras.sessions.borrow();
+    match sessions.get(&sid).and_then(|session| session.scanner.as_ref()) {
+      Some(scanner) => scanner.take(),
       None => Vec::new(),
     }
+  }
+
+  /// Whether the scanning session `sid` holds a frame its scanner has not
+  /// examined yet, so a payload may still be on its way: what a settle
+  /// waits on. None for a closed session or one opened without scan.
+  pub fn camera_scan_pending(&self, sid: u64) -> Option<bool> {
+    let sessions = self.cameras.sessions.borrow();
+    let session = sessions.get(&sid)?;
+    let scanner = session.scanner.as_ref()?;
+    Some(scanner.pending(&session.tap))
   }
 
   pub fn camera_status(&self, sid: u64) -> Option<CameraStatus> {
     self.cameras.sessions.borrow().get(&sid).map(|s| s.status.clone())
   }
 
-  /// Close the session and release the device and its texture id. The id
-  /// takes the deferred-destroy path, so a `<texture>` still showing it
-  /// keeps the last frame until it lets go.
+  /// A tap on the open camera streaming into `texture_id` (the id JS holds
+  /// as `cam.texture`); None when no open session owns that id. Usable from
+  /// any thread; it reports `Closed` once the session closes.
+  pub fn camera_frame_tap(&self, texture_id: u64) -> Option<FrameTap> {
+    self.cameras.sessions.borrow().values().find(|s| s.texture_id == texture_id).map(|s| s.tap.clone())
+  }
+
+  /// Whether a camera is streaming: standing frame demand like a playing
+  /// video (`streaming_textures`), so the loop ticks on the refresh grid
+  /// and the raster take sees every frame within one refresh.
+  pub fn camera_streaming(&self) -> bool {
+    self.cameras.sessions.borrow().values().any(|s| matches!(s.producer, Some(Producer::Device(_))))
+  }
+
+  /// Close the session: end its threads, release the device and its texture
+  /// id. The id takes the deferred-destroy path, so a `<texture>` still
+  /// showing it keeps the last frame until it lets go.
   pub fn close_camera(&self, sid: u64) {
     if let Some(session) = self.cameras.sessions.borrow_mut().remove(&sid) {
-      session.close_device();
-      self.release_borrowed(session.texture_id);
+      let texture_id = session.texture_id;
+      drop(session);
+      self.release_borrowed(texture_id);
     }
   }
 
-  /// Advance all sessions: resolve pending permission prompts and upload the
-  /// latest frame of each ready session into its texture. Run once per frame
-  /// on the UI thread; does nothing when no sessions are open. Returns true
-  /// when at least one texture received a new frame, so callers can schedule
-  /// a redraw.
+  /// Advance all sessions: resolve pending permission prompts, start the
+  /// producer of each approved session, and note each new frame on its
+  /// texture. Run once per frame on the UI thread; does nothing when no
+  /// sessions are open. Returns true when at least one texture received a
+  /// new frame, so callers can schedule a redraw.
   pub fn pump_cameras(&self) -> bool {
     let mut sessions = self.cameras.sessions.borrow_mut();
-    let mut uploaded = false;
+    let mut noted = false;
     for session in sessions.values_mut() {
-      uploaded |= self.pump_session(session);
+      noted |= self.pump_session(session);
     }
-    uploaded
+    noted
   }
 
   /// Advance one session, for a waiter on its open polling between frames:
@@ -391,8 +510,9 @@ impl crate::context::Context {
   }
 
   /// One session's step: a deferred open once the subsystem is up, the
-  /// permission answer and then the first frame while Pending, the latest
-  /// frame while Ready. Returns true when a frame was uploaded.
+  /// permission answer and then the producer start while Pending, the
+  /// slot's newest frame from then on. Returns true when a new frame was
+  /// noted on the texture.
   fn pump_session(&self, session: &mut Session) -> bool {
     match session.status {
       CameraStatus::Pending if session.request.is_some() => {
@@ -403,7 +523,10 @@ impl crate::context::Context {
         if !session.approved {
           Self::pump_permission(session);
         }
-        let uploaded = session.approved && self.pump_frame(session);
+        if session.approved && session.producer.is_none() {
+          Self::start_producer(session);
+        }
+        let noted = session.producer.is_some() && self.pump_tap(session);
         // Still Pending covers both "no permission" and "approved but no
         // first frame": either way the backend never delivered.
         #[cfg(target_os = "linux")]
@@ -412,12 +535,12 @@ impl crate::context::Context {
             "[camera] start timed out after {}s (backend delivered neither permission nor a frame); closing",
             PENDING_DEADLINE.as_secs()
           );
-          sdl_utils::camera_close(session.camera);
+          session.stop();
           session.status = CameraStatus::Failed("camera start timed out".to_string());
         }
-        uploaded
+        noted
       }
-      CameraStatus::Ready { .. } => self.pump_frame(session),
+      CameraStatus::Ready { .. } => self.pump_tap(session),
       CameraStatus::Denied | CameraStatus::Failed(_) => false,
     }
   }
@@ -455,126 +578,68 @@ impl crate::context::Context {
       P::APPROVED => session.approved = true,
       P::DENIED => {
         log::warn!("[camera] permission denied");
-        sdl_utils::camera_close(session.camera);
+        session.stop();
         session.status = CameraStatus::Denied;
       }
       _ => {}
     }
   }
 
-  /// Upload the latest frame, rotated upright per SDL's per-frame rotation
-  /// (mobile sensor + display orientation). The texture is created on the
-  /// first frame and recreated at the same id when the upright size changes
-  /// (device rotated between portrait and landscape). Returns true when a
-  /// frame was uploaded.
-  fn pump_frame(&self, session: &mut Session) -> bool {
-    let frame = sdl_utils::camera_acquire_frame(session.camera);
-    if frame.is_null() {
-      return false;
-    }
-    let surface = unsafe { &*frame };
-    let (frame_w, frame_h) = (surface.w as u32, surface.h as u32);
-    let rotation = sdl_utils::surface_rotation_degrees(frame);
-    let (width, height) = if rotation == 90 || rotation == 270 { (frame_h, frame_w) } else { (frame_w, frame_h) };
-
-    let pitch = surface.pitch as usize;
-    let row_bytes = (frame_w as usize) * 4;
-    let rgba_src = surface.format == SDL_PIXELFORMAT_RGBA32;
-    if !rgba_src {
-      // Camera opened at a native format (e.g. YUY2); convert to RGBA32.
-      session.convert.resize(row_bytes * frame_h as usize, 0);
-      if !sdl_utils::surface_to_rgba(surface, &mut session.convert) {
-        log::warn!("[camera] frame conversion failed: {}", sdl_utils::sdl_error());
-        sdl_utils::camera_release_frame(session.camera, frame);
-        return false;
+  /// Hand the device to the camera thread. A thread that cannot start fails
+  /// the session; the device is released with it.
+  fn start_producer(session: &mut Session) {
+    match producer::spawn(session.camera, session.tap.clone()) {
+      Ok(handle) => {
+        session.camera = std::ptr::null_mut();
+        session.producer = Some(Producer::Device(handle));
+      }
+      Err(e) => {
+        log::warn!("[camera] {e}");
+        session.stop();
+        session.status = CameraStatus::Failed(e);
       }
     }
-    let pixels: &[u8] = if rgba_src && rotation == 0 && pitch == row_bytes {
-      unsafe { std::slice::from_raw_parts(surface.pixels as *const u8, row_bytes * frame_h as usize) }
-    } else if !rgba_src && rotation == 0 {
-      &session.convert
-    } else {
-      let (src, src_pitch) =
-        if rgba_src { (surface.pixels as *const u8, pitch) } else { (session.convert.as_ptr(), row_bytes) };
-      upright_into(src, src_pitch, frame_w as usize, frame_h as usize, rotation, &mut session.scratch);
-      &session.scratch
-    };
+  }
 
+  /// The UI side's per-frame read of the slot: a new size creates the
+  /// texture (the first frame) or recreates it at the same id (the device
+  /// rotated between portrait and landscape), storage only, and attaches
+  /// the tap to it, so the raster thread uploads this frame and every
+  /// later one itself at its next `Frame`, before anything draws the
+  /// texture; a new seq at the same size notes content on the texture.
+  /// Returns true when a new frame was noted.
+  fn pump_tap(&self, session: &mut Session) -> bool {
+    let Some(frame) = session.tap.latest() else {
+      return false;
+    };
+    if frame.seq <= session.noted_seq {
+      return false;
+    }
+    session.noted_seq = frame.seq;
     let recreate = match session.status {
-      CameraStatus::Ready { width: w, height: h, .. } => w != width || h != height,
+      CameraStatus::Ready { width, height, .. } => width != frame.width || height != frame.height,
       _ => true,
     };
     if recreate {
       if let Err(e) = self.create_texture_at(
         session.texture_id,
-        width,
-        height,
-        pixels,
+        frame.width,
+        frame.height,
+        &[],
         Default::default(),
         crate::gpu::TextureFormat::Rgba8,
         None,
       ) {
         log::warn!("[camera] frame texture create failed: {e}");
-        sdl_utils::camera_release_frame(session.camera, frame);
         return false;
       }
-      log::info!("[camera] streaming {width}x{height} (rotation {rotation}) -> texture {}", session.texture_id);
-      session.status = CameraStatus::Ready { texture_id: session.texture_id, width, height };
+      self.attach_camera_tap(session.texture_id, session.tap.clone(), frame.seq - 1);
+      self.note_content(session.texture_id);
+      log::info!("[camera] streaming {}x{} -> texture {}", frame.width, frame.height, session.texture_id);
+      session.status = CameraStatus::Ready { texture_id: session.texture_id, width: frame.width, height: frame.height };
     } else {
-      let _ = self.update_texture(session.texture_id, pixels, 0);
+      self.note_content(session.texture_id);
     }
-
-    if session.scan_qr {
-      session.frames_since_scan += 1;
-      if session.frames_since_scan >= SCAN_INTERVAL_FRAMES {
-        session.frames_since_scan = 0;
-        crate::barcode::to_greyscale(pixels, &mut session.gray);
-        if let Some(content) = crate::barcode::decode_qr(&session.gray, width, height) {
-          // Re-report the (still visible) code at most once a second, matching
-          // typical scanner behavior; consumers connect/dedupe on their side.
-          let due = session.last_emit.map_or(true, |t| t.elapsed() >= std::time::Duration::from_secs(1));
-          if due {
-            session.last_emit = Some(std::time::Instant::now());
-            session.barcodes.push(content);
-          }
-        }
-      }
-    }
-    sdl_utils::camera_release_frame(session.camera, frame);
     true
-  }
-}
-
-/// Copy a `pitch`-strided RGBA8 image into `dst` rotated clockwise by
-/// `rotation` degrees, tightly packed (also flattens any pitch padding).
-fn upright_into(base: *const u8, pitch: usize, w: usize, h: usize, rotation: u32, dst: &mut Vec<u8>) {
-  dst.resize(w * h * 4, 0);
-  for r in 0..h {
-    let row = unsafe { std::slice::from_raw_parts(base.add(r * pitch), w * 4) };
-    match rotation {
-      // (r, c) -> (c, h-1-r); rotated row length is h
-      90 => {
-        for c in 0..w {
-          let di = (c * h + (h - 1 - r)) * 4;
-          dst[di..di + 4].copy_from_slice(&row[c * 4..c * 4 + 4]);
-        }
-      }
-      // (r, c) -> (h-1-r, w-1-c)
-      180 => {
-        for c in 0..w {
-          let di = ((h - 1 - r) * w + (w - 1 - c)) * 4;
-          dst[di..di + 4].copy_from_slice(&row[c * 4..c * 4 + 4]);
-        }
-      }
-      // (r, c) -> (w-1-c, r); rotated row length is h
-      270 => {
-        for c in 0..w {
-          let di = ((w - 1 - c) * h + r) * 4;
-          dst[di..di + 4].copy_from_slice(&row[c * 4..c * 4 + 4]);
-        }
-      }
-      // Pitch repack only.
-      _ => dst[r * w * 4..(r + 1) * w * 4].copy_from_slice(row),
-    }
   }
 }

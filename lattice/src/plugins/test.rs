@@ -2,7 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
-use flux::rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Persistent, Promise};
+use flux::rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Persistent, Promise, TypedArray};
+use flux::CopyBytes;
 
 use crate::input_plan::{self, Injected};
 use crate::settle::Cap;
@@ -231,6 +232,19 @@ fn debug(ctx: Ctx<'_>, name: String, args: Option<String>) -> flux::rquickjs::Re
   crate::plugins::dev::call_debug(&ctx, &name, args).map(|value| value.to_string()).map_err(throw)
 }
 
+/// `camera(width, height, pixels)`: install an RGBA8 image as the camera
+/// (`alloy::Context::install_still_camera`): every camera the app opens
+/// from now on shows it, approved at once, and an open one shows it from
+/// its next frame. Throws on a size that does not match the pixels.
+fn camera<'js>(ctx: Ctx<'js>, width: u32, height: u32, pixels: TypedArray<'js, u8>) -> flux::rquickjs::Result<()> {
+  stepper(&ctx, "camera()")?;
+  let throw = |message: &str| Exception::throw_message(&ctx, &format!("sol:test camera: {message}"));
+  let Some(alloy) = flux::gui::alloy_context(&ctx) else {
+    return Err(throw("no gui in this engine"));
+  };
+  alloy.install_still_camera(width, height, pixels.copy_bytes()).map_err(|e| throw(&e))
+}
+
 /// `capture(node)`: the pixels the node's subtree paints, as `{ width,
 /// height, data }` (RGBA8, premultiplied, rows top to bottom, at the
 /// display scale). Drawn now, with the tree as it is: no frame runs and no
@@ -326,6 +340,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("debug")?;
     decl.declare("capture")?;
     decl.declare("painted")?;
+    decl.declare("camera")?;
     Ok(())
   }
 
@@ -351,6 +366,7 @@ impl ModuleDef for SolTestModule {
     exports.export("debug", Function::new(ctx.clone(), debug)?)?;
     exports.export("capture", Function::new(ctx.clone(), capture)?)?;
     exports.export("painted", Function::new(ctx.clone(), painted)?)?;
+    exports.export("camera", Function::new(ctx.clone(), camera)?)?;
     Ok(())
   }
 }

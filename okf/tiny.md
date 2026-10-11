@@ -31,7 +31,6 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 `packages/components`.
 
-- Focus nav: scroll a focused off-screen candidate into view (the nav has the candidate's box; the enclosing ScrollView is the target).
 - Focus nav: pressed-state visuals on `select` activation; the focus ring is the only feedback today.
 - `focusable` on the other press controls (Switch, Checkbox, Radio, ...); their activation already works through the nav action registry once declared.
 - A pad's east button (B) as a cancel: consoles close menus and leave fields with it, but the only pad back trigger today is the back/select button (alloy's `take_back_edge`), and east is a game action on most pads, so it needs a decision (a `uiBindings` entry the app can drop, or nothing) rather than a default.
@@ -55,6 +54,7 @@ The `sol` CLI, the dev server, MCP, debug commands, examples and probes.
 - Nothing checks the code blocks of the website docs (`docs/**/*.md`): `docs/extensions/index.md`'s 2d snippet carried a `grid(cols, rows, size)` signature and a `createAtlas(bytes)` call that had been gone for weeks before the atlases change caught it by accident. Extract the fenced `tsx` blocks into a staged entry per page and run them through `sol check` in CI, so a snippet drifts no further than the API it shows.
 - No scriptable cold start of a device client: a `/reload` is an engine swap and hides startup bugs (okf/done/android-cold-start-shadow-loss.md was found that way), and the only true cold start is `am start -S` by hand; add a `sol android --restart` (force-stop and relaunch the installed Player at the server) and the matching control endpoint so startup behaviour is testable from a script.
 - Derived Players (`solidrt.runtime` projects) are re-signed with sol's development key, so switching between a gradle-built Player.dev and a derived one costs `adb uninstall` and the app's data every time; sign with the Android debug keystore (`~/.android/debug.keystore`) when it exists, so the checkout dev loop stays uninstall-free.
+- `sol android --census` reads 0 presents for a packed app on Android 16: `resolveLayer` (packages/cli/src/android/census.ts) defaults to the dev Player's package (`playerId`), `--layer` takes the first substring match (the activity's input sink before the SurfaceView), and the match requires lines starting with `SurfaceView` while `--list` now prints `RequestedLayerState{...}` records that `--latency` does not answer to; take the `<name>#<id>` out of the record, prefer the BLAST SurfaceView among `--layer` matches too, and default the package to the project's appId when one is in scope.
 - tower-toppling demo (outside the repo): `publish()` in `src/index.tsx` still draws only the count the previous publish uploaded, the workaround from its FEEDBACK.md issue 1 that the sync-before-paint fix (2ebf397b) made unnecessary; drop it and the `uploaded` bookkeeping.
 
 ## Runtime

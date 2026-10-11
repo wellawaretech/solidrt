@@ -1,5 +1,6 @@
-import { createSignal, onCleanup, createPortal, onLayout, getBoundingBox, Show, env, children } from "@solidrt/core"
+import { createSignal, onCleanup, createPortal, onLayout, getBoundingBox, Show, children } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
+import { placePopup } from "./popup"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -17,16 +18,13 @@ export interface TooltipProps extends TransitionProps {
   children?: any
   // Hover delay in milliseconds before showing.
   delay?: number
-  // Which side of the anchor the bubble appears on.
+  // Which side of the anchor the bubble prefers; the other side is taken
+  // when only it has the room.
   placement?: "top" | "bottom"
   layout?: LayoutProps
 }
 
 const DELAY = 500
-// Distance between the anchor and the bubble.
-let gap = () => theme.spacing.sm
-// Minimum distance kept between the bubble and the window edges.
-let margin = () => theme.spacing.sm
 
 /**
  * A hover-only affordance: under desktop/hybrid interaction policies, resting a
@@ -57,8 +55,8 @@ export function Tooltip(props: TooltipProps) {
   // The bubble sits at the window root's origin and is placed with the x/y
   // paint transforms, so repositioning never reflows. Measured after its first
   // layout (parked offscreen until then), then pinned to the anchor's current
-  // box; recomputed each layout so it stays attached when the anchor moves
-  // (scrolling, resizes).
+  // box (placePopup, centered on the anchor); recomputed each layout so it
+  // stays attached when the anchor moves (scrolling, resizes).
   let Bubble = () => {
     let bubble: { id: number } | undefined
     let [pos, setPos] = createSignal<{ x: number; y: number } | null>(null)
@@ -66,11 +64,9 @@ export function Tooltip(props: TooltipProps) {
       let a = anchor && getBoundingBox(anchor)
       let b = bubble && getBoundingBox(bubble)
       if (!a || !b) return
-      let x = a.x + a.width / 2 - b.width / 2
-      x = Math.round(Math.min(Math.max(x, margin()), env.windowSize.width - b.width - margin()))
-      let y = Math.round(props.placement === "bottom" ? a.y + a.height + gap() : a.y - b.height - gap())
+      let p = placePopup(a, b, { side: props.placement ?? "top", align: "center" })
       let cur = pos()
-      if (!cur || cur.x !== x || cur.y !== y) setPos({ x, y })
+      if (!cur || cur.x !== p.x || cur.y !== p.y) setPos({ x: p.x, y: p.y })
     })
     // Resolved once via children(): the typeof probe and the mount sites must
     // share one build - reading the raw getter again would orphan native nodes.

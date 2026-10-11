@@ -1171,6 +1171,8 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
     put("videoLatched", rc.video_latched.into());
     put("videoSkipped", rc.video_skipped.into());
     put("videoLateLatches", rc.video_late.into());
+    put("cameraUploaded", rc.camera_uploaded.into());
+    put("cameraSkipped", rc.camera_skipped.into());
     put("fenceTimeouts", rc.fence_timeouts.into());
     put("missedPresents", rc.missed_presents.into());
     put("cadenceHold", rc.cadence_hold.into());

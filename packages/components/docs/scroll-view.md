@@ -11,7 +11,7 @@ import { For } from "@solidrt/core"
 </ScrollView>
 ```
 
-`scrollRef` hands out the scroll handle from `createScroll`: `offset()` and `range()` (the largest reachable offset, refreshed each layout) are reactive; `scrollTo({ x, y, behavior })` and `scrollBy({ x, y, behavior })` clamp to the range, an omitted axis stays put, and `behavior: "instant"` writes without the spring (the web's word; `"auto"` and `"smooth"` are the default motion). Scroll policies are written against it in the app. A transcript that opens at its newest message and then follows growth, without yanking a reader who has scrolled back:
+`scrollRef` hands out the scroll handle from `createScroll`: `offset()` and `range()` (the largest reachable offset, refreshed each layout) are reactive; `scrollTo({ x, y, behavior })` and `scrollBy({ x, y, behavior })` clamp to the range, an omitted axis stays put, and `behavior: "instant"` writes without the spring (the web's word; `"auto"` and `"smooth"` are the default motion). Scroll policies are written against it in the app. The focus navigation needs none: a control it focuses inside the view is scrolled into view by the view itself (see `createFocusNav`). A transcript that opens at its newest message and then follows growth, without yanking a reader who has scrolled back:
 
 ```tsx
 let [scroll, setScroll] = createSignal<Scroll>()

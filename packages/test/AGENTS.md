@@ -59,6 +59,13 @@ agents/testing.md.
   app registered with `registerDebug` and returns its value: the way to
   put a loaded app into a state its UI reaches slowly. A `gamepad` event
   in `app.input` seats and drives a synthetic pad, as `send_input` does.
+- `await app.camera({ width, height, pixels })` makes an RGBA8 image (a
+  `decodeImage` result, or pixels the test builds) what the camera sees:
+  every camera the app opens shows it, with no device and no prompt, and
+  an open one shows it from the next frame. Call it before the app opens
+  its camera; call it again to show another image. A QR code in it is
+  decoded as from a real camera, so `settle()` after the open and read
+  the app's barcode state.
 - Past a node's record: `locator.outline()` is the subtree as an outline
   (kind, label, text, box per line, no ids) to pin a layout or print it;
   `locator.pixel(x, y)` is `[r, g, b, a]` at a point of the node and

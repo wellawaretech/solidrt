@@ -54,7 +54,21 @@ pub fn install(ctx: &Ctx<'_>, control: DevControl) {
 /// re-registers. Registration works in every build; only go builds ever call
 /// anything, so elsewhere the registry is a write nothing reads.
 #[derive(Clone, Default, JsLifetime)]
-pub struct DebugRegistry(#[qjs(skip_trace)] Rc<RefCell<HashMap<String, Persistent<Function<'static>>>>>);
+pub struct DebugRegistry(#[qjs(skip_trace)] Rc<RefCell<DebugCommands>>);
+
+/// A registered command with the id of its registration, so the unregister
+/// one `registerDebug` call returned removes nothing once the name has been
+/// registered again.
+struct DebugEntry {
+  id: u64,
+  func: Persistent<Function<'static>>,
+}
+
+#[derive(Default)]
+struct DebugCommands {
+  next_id: u64,
+  by_name: HashMap<String, DebugEntry>,
+}
 
 // The readers are `call_debug` below and go::connection's listing; see the
 // struct doc - elsewhere the registry is a write nothing reads.
@@ -62,14 +76,14 @@ pub struct DebugRegistry(#[qjs(skip_trace)] Rc<RefCell<HashMap<String, Persisten
 impl DebugRegistry {
   /// Registered command names, sorted.
   pub fn names(&self) -> Vec<String> {
-    let mut names: Vec<String> = self.0.borrow().keys().cloned().collect();
+    let mut names: Vec<String> = self.0.borrow().by_name.keys().cloned().collect();
     names.sort();
     names
   }
 
   /// The command's function, if registered.
   pub fn get(&self, name: &str) -> Option<Persistent<Function<'static>>> {
-    self.0.borrow().get(name).cloned()
+    self.0.borrow().by_name.get(name).map(|e| e.func.clone())
   }
 }
 
@@ -157,9 +171,13 @@ fn report_location_impl<'js>(ctx: Ctx<'js>, location: Value<'js>) -> flux::rquic
   Ok(())
 }
 
-/// `registerDebug(name, fn)`: duplicate names replace. Fetches the registry
-/// from userdata itself so the export needs no captured state.
-fn register_debug_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) -> flux::rquickjs::Result<()> {
+/// `registerDebug(name, fn)`: duplicate names replace. Returns the
+/// unregister, which removes the command while this registration is still
+/// the one under the name. Fetches the registry from userdata itself so the
+/// export needs no captured state; the unregister captures the registry
+/// handle, the name and the id only (never a JS value: a native closure
+/// alive at teardown would keep it from being finalized).
+fn register_debug_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) -> flux::rquickjs::Result<Function<'js>> {
   // A command's return value is JSON-encoded for the caller, so an async
   // function's Promise would encode as `{}` with nothing said: refuse it
   // here, where the throw names the registration.
@@ -176,8 +194,19 @@ fn register_debug_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) ->
   }
   let registry = ctx.userdata::<DebugRegistry>().expect("debug registry installed").clone();
   let persistent = Persistent::save(&ctx, func);
-  registry.0.borrow_mut().insert(name, persistent);
-  Ok(())
+  let id = {
+    let mut commands = registry.0.borrow_mut();
+    let id = commands.next_id;
+    commands.next_id += 1;
+    commands.by_name.insert(name.clone(), DebugEntry { id, func: persistent });
+    id
+  };
+  Function::new(ctx.clone(), move || {
+    let mut commands = registry.0.borrow_mut();
+    if commands.by_name.get(&name).is_some_and(|e| e.id == id) {
+      commands.by_name.remove(&name);
+    }
+  })
 }
 
 pub struct SolDevModule;

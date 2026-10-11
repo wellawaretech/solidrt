@@ -129,9 +129,16 @@ required-features = ["go"]
 go = ["lattice/go", "lattice/test"]   # the dev client, with the test host
 
 [dependencies]
-lattice = { git = "https://github.com/wellawaretech/solidrt", tag = "v0.0.68", default-features = false, features = ["compile", "video", "ktx2", "wasm-native"] }
-rquickjs = { version = "=0.14.0", features = ["macro"] }
+lattice = { git = "https://github.com/wellawaretech/solidrt", tag = "v<version>", default-features = false, features = ["compile", "video", "ktx2", "wasm-native"] }
 ```
+
+`<version>` is the SolidRT release the app's `@solidrt` packages are at,
+which `sol --version` prints, so the runtime moves with the app. A module
+written with rquickjs's `class` or `methods` macros also names `rquickjs`
+here, with the `macro` feature, at the exact version lattice pins (the
+`rquickjs` line in the root `Cargo.toml` at that tag): the macros resolve
+their crate by name. Without them, `lattice::flux::rquickjs` is all a
+module needs.
 
 ```rust
 // runtime/src/lib.rs
@@ -164,7 +171,13 @@ step hold and drive it and a headless render replays it; returning true
 demands the next frame, the way a running animation does. A module that
 works with the renderer's state, a texture or a camera, gets alloy's
 `Context` from `lattice::flux::gui::alloy_context(ctx)` and names alloy's
-types through `lattice::flux::alloy`.
+types through `lattice::flux::alloy`. A module that reads camera frames
+(inference, hand tracking, OCR) takes a tap on the open camera with
+`camera_frame_tap(textureId)`, keyed by the texture id the app holds as
+`cam.texture`, and waits on it from a thread of its own: `wait_newer`
+hands it the newest upright RGBA8 frame with SDL's capture timestamp,
+newest wins when the module is slower than the camera, and the wait ends
+with `Closed` when the camera closes or the engine reloads.
 
 Build the two binaries one cargo run each, `--features go` for the player
 and none for the runtime (features unify within one build), and stage them

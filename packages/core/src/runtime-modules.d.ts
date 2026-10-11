@@ -123,11 +123,14 @@ declare module "sol:dev" {
    * (the list_debug / call_debug MCP tools). `args` arrives JSON-parsed; the
    * return value must be JSON-serializable and synchronous (an async command's
    * Promise is not awaited - the call errors). Re-registering a name replaces
-   * it; registrations reset on hot
-   * reload, so register at module init. Callable in every build, but only dev
-   * clients ever invoke commands.
+   * it; registrations reset on hot reload, so a command over app-wide state
+   * is registered at module init. Returns the unregister: a command that
+   * reads one screen's state is registered when the screen mounts and
+   * unregistered in its onCleanup, so a caller never reads a dead screen.
+   * A stale unregister (the name registered again since) removes nothing.
+   * Callable in every build, but only dev clients ever invoke commands.
    */
-  export function registerDebug(name: string, fn: (args?: any) => unknown): void
+  export function registerDebug(name: string, fn: (args?: any) => unknown): () => void
   /**
    * Report where the app is, for tooling: a string naming the current
    * location (a router's path; an app routing by hand may report its own),
@@ -248,6 +251,13 @@ declare module "sol:render" {
 // anywhere else. App time there is frame / frameRate and nothing else: no
 // frame runs unless one is asked for.
 declare module "sol:test" {
+  /**
+   * Installs an RGBA8 image (`width` x `height`, tightly packed) as the
+   * camera: every camera the app opens from now on shows it, approved at
+   * once with no device, and an open one shows it from its next frame.
+   * Throws on a size that does not match the pixels.
+   */
+  export function camera(width: number, height: number, pixels: Uint8Array): void
   /**
    * Runs one frame: timers due by its time fire, then frame callbacks and
    * the flush, then the draw if anything demanded one. Fulfills once the

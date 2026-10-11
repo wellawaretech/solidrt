@@ -557,7 +557,7 @@ pub enum AlloyEvent {
     pads: Vec<Option<GamepadState>>,
   },
   // Camera hotplug. Carries no device id (subscribers re-enumerate via
-  // camera::list_cameras()). SDL only delivers these once the camera
+  // Context::list_cameras()). SDL only delivers these once the camera
   // subsystem is initialized, i.e. after the first list/open call.
   //
   // SDL 3.4.8 hotplug coverage is uneven; this arm handles both add and remove

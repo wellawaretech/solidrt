@@ -309,9 +309,9 @@ Shaped, not started.
   alloy's camera pump holds every frame as upright RGBA on the CPU and hands
   it only to the texture upload and the QR decoder, so a custom runtime module
   (inference, hand tracking, OCR) can reach frames only by reading the camera
-  texture back from the GPU; a latest-frame tap on the session, keyed by the
-  texture id JS already holds, gives a module frames on its own thread, and QR
-  decoding moves onto it off the UI thread.
+  texture back from the GPU; a camera thread fills a latest-frame tap keyed by
+  the texture id JS already holds, the raster upload, the QR decoder and any
+  module read from it, and the UI thread does no per-frame pixel work.
 - **[Make sol check honor solidrt.entry](backlog/check-honors-project-entry.md)** [2026-09-29]
   Folder-mode sol check discovers the app entry from a hardcoded src/index.tsx
   glob and never reads solidrt.entry, so a project with a declared entry is
@@ -334,6 +334,22 @@ Shaped, not started.
   The router side of the cursor prop is covered in alloy, but the flux decode
   (21 accepted names, the handle form, the two rejection messages) has no test
   in the existing apply_jsx harness.
+- **[Give custom runtime modules a namespace of their own](backlog/custom-module-namespace.md)** [2026-10-11]
+  A custom runtime can register a module only under a flux:* name, so an app's
+  native module reads as a platform module, would collide with a built-in
+  SolidRT ships later, and shows in Flux.capabilities under a short name a
+  built-in could share; custom runtime modules move to one fixed scheme,
+  custom: (custom:physics, custom:acme/physics), reported by full name,
+  external to every bundle, with flux: and sol: reserved for the platform.
+- **[Make a custom runtime cheap to set up, write and ship](backlog/custom-runtime-authoring.md)** [2026-10-11]
+  Every custom runtime repeats the same boilerplate (manifest, entries,
+  toolchain, page flags, Android environment, staging) that sol's own hint
+  assumes but nothing writes, every native module rebuilds flux's unexported
+  promise-with-hold helpers, a missing binary falls back to the stock player
+  with one quiet line, sol test sweeps up a vendored checkout's suites, and
+  the Native code docs leave out the staging folder names, C++ and OpenMP on
+  Android, build cost and stripping; a runtime scaffold, an exported module
+  toolkit and the missing docs.
 - **[Deep links](backlog/deep-links.md)** [2026-07-26]
   "Opening the app at a link from outside: the app half (onLink, the launch
   link, the dev-side link injection) and the OS registration half (the scheme
@@ -480,6 +496,13 @@ Shaped, not started.
   transfer() was parked on the rquickjs quickjs-ng bump, and the workspace is
   on rquickjs 0.14.0 since, so check whether the steal is now the safe
   from_source over a slot-holding source and build stages 1+2 together.
+- **[Make a lattice git dependency build at a release tag](backlog/lattice-tag-dependency-bundles.md)** [2026-10-11]
+  A custom runtime depends on lattice by git tag, but since v0.0.71 a tag
+  carries no player or BSOD bundle (untracked because every make client
+  rewrote them) and lattice/build.rs panics, so the documented dependency
+  cannot build and a custom runtime has to vendor the tag and bundle the
+  player itself; the release should make a tag that carries the bundles,
+  leaving main untracked.
 - **[Content damage for live-sampled textures](backlog/live-texture-content-damage.md)** [2026-09-12]
   A texture whose pixels change behind an unchanged id produces no damage,
   because nodes displaying it hold a live reference and need none to show the

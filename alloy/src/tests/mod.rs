@@ -1,6 +1,8 @@
 mod audio;
 mod box_dash;
 mod cadence;
+mod camera_tap;
+mod camera_upright;
 mod color;
 mod composite;
 mod cull;
