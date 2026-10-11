@@ -100,8 +100,8 @@ the native compiler in correctness or features. Until one of those, the
 Babel path is the cheaper correct choice.
 
 If it is picked up, the cheap proof that a swap is behaviour-preserving is
-the one used for the rc.3 migration: copy the two checked-in bundles
-(`lattice/resources/player/index.sol.js`, `lattice/resources/bsod/bsod.sol.js`),
+the one used for the rc.3 migration: copy the two generated bundles
+(`runtime/resources/player/index.sol.js`, `runtime/resources/bsod/bsod.sol.js`),
 rebuild with `make player-bundle -B`, and `cmp`. Byte equality there
 exercises the real pipeline over real app code. A compiler swap will not be
 byte-identical the way the plugin rename was, so the diff has to be read

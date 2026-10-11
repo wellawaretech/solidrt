@@ -78,7 +78,7 @@ define ndk-build
 	  CMAKE_ANDROID_ARCH_ABI=$(ANDROID_ABI) \
 	  $(if $(BINDGEN_VAR_$(ANDROID_ABI)),$(BINDGEN_VAR_$(ANDROID_ABI))="$(BINDGEN_ARGS_$(ANDROID_ABI))") \
 	  $(2) \
-	  $(SOLIDRT_VERSION) cargo ndk -t $(ANDROID_ABI) build --lib $(3)
+	  $(SOLIDRT_VERSION) cargo ndk -t $(ANDROID_ABI) build -p solidrt --lib $(3)
 endef
 
 # Fail the build when a staged .so is not 16 KB page aligned: Android 15+
@@ -104,7 +104,7 @@ endef
 # $(1) = profile (release|debug)
 define ndk-stage
 	mkdir -p $(ANDROID_DIST)
-	cp target/go/$(ANDROID_TARGET)/$(1)/liblattice.so $(ANDROID_DIST)/libmain.so
+	cp target/go/$(ANDROID_TARGET)/$(1)/libsolidrt.so $(ANDROID_DIST)/libmain.so
 	cp target/go/$(ANDROID_TARGET)/$(1)/libSDL3.so $(ANDROID_DIST)/
 	# copy newest if there are multiple
 	cp "$$(ls -t target/go/$(ANDROID_TARGET)/$(1)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_DIST)/
@@ -207,7 +207,7 @@ APK_RUNNER_RELEASE = android/app/build/outputs/apk/runner/release/app-runner-rel
 android-runtime: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
 	$(call ndk-build,SOLIDRT RUNTIME ($(PROFILE)),,$(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --target-dir target/runtime-android)
 	mkdir -p $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)
-	cp target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/liblattice.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/libmain.so
+	cp target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/libsolidrt.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/libmain.so
 	cp target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/libSDL3.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
 	cp "$$(ls -t target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
 	cp $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/

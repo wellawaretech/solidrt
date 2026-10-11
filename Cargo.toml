@@ -4,6 +4,7 @@ members = [
   "forge",
   "flux",
   "lattice",
+  "runtime",
 ]
 resolver = "2"
 

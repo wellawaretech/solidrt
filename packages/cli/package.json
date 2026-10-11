@@ -13,6 +13,7 @@
     "src/",
     "dist/",
     "fonts/",
+    "player/",
     "AGENTS.md",
     "agents/"
   ],

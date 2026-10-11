@@ -42,11 +42,11 @@ endif
 # too tight for model + inference buffers.
 SPEECH ?= 0
 ifeq ($(SPEECH),0)
-GO_FEATURES      = --no-default-features --features go,android-entry
-RUNTIME_FEATURES = --no-default-features --features compile,android-entry
+GO_FEATURES      = --no-default-features --features go
+RUNTIME_FEATURES = --no-default-features --features compile
 else
-GO_FEATURES      = --features go,speech,android-entry
-RUNTIME_FEATURES = --features speech,android-entry
+GO_FEATURES      = --features go,speech
+RUNTIME_FEATURES = --features speech
 endif
 
 # Video playback (forge::video + flux:video + @solidrt/core/video) is on for
@@ -112,15 +112,15 @@ endif
 SOLIDRT_HOME ?= $(abspath $(CURDIR)/..)
 
 # The player app sources live in apps/player like any regular app; the
-# generated bundles land here in resources/ because lattice is what embeds
-# them (include_str! in src/lib.rs).
+# generated bundles land in runtime/resources/ because the stock program
+# crate is what embeds them (include_str! in runtime/src/lib.rs).
 PLAYER_DIR = $(SOLIDRT_HOME)/apps/player
 PLAYER_SRC = $(PLAYER_DIR)/src/index.tsx
-PLAYER_JS  = $(CURDIR)/resources/player/index.sol.js
+PLAYER_JS  = $(SOLIDRT_HOME)/runtime/resources/player/index.sol.js
 
 # The BSOD screen shown when an app fails to start.
 BSOD_SRC = $(PLAYER_DIR)/src/bsod.tsx
-BSOD_JS  = $(CURDIR)/resources/bsod/bsod.sol.js
+BSOD_JS  = $(SOLIDRT_HOME)/runtime/resources/bsod/bsod.sol.js
 
 include $(SOLIDRT_HOME)/platform.mk
 
@@ -206,8 +206,8 @@ help:
 
 # -- Player -----------------------------------------
 #
-# The go client embeds resources/player/index.sol.js at compile time via
-# include_str!. The file target rebuilds it when any .tsx source in
+# The stock program (runtime/) embeds the bundles at compile time via
+# include_str!. The file targets rebuild them when any .tsx source in
 # apps/player changes. Run `make player-bundle` to force a rebuild.
 
 player-bundle: $(PLAYER_JS) $(BSOD_JS)

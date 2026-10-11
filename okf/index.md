@@ -89,6 +89,13 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   entries that raise or exempt files, glob matching and a scan in flux); next
   are compressed textures outside a model, after the build stage is designed,
   then the memory a load leaves behind.
+- **[Make a lattice git dependency build at a release tag](plans/lattice-tag-dependency-bundles.md)** [2026-10-11]
+  A custom runtime depends on lattice by git tag, but the library embedded two
+  bundles the JavaScript toolchain generates (untracked since v0.0.71), so
+  lattice/build.rs panicked in cargo's checkout and the documented dependency
+  could not build; the embed moves to a program crate (runtime/, the stock
+  program and the shape of every custom one), the CLI package ships the
+  bundles, and a custom runtime embeds them from its node_modules.
 - **[Fonts as pack-time payload](plans/packaged-fonts.md)** [2026-07-20]
   The solidrt runtime goes font-free and sol pack appends fonts as trailer
   sections, with the three Noto role defaults declared through the
@@ -496,13 +503,6 @@ Shaped, not started.
   transfer() was parked on the rquickjs quickjs-ng bump, and the workspace is
   on rquickjs 0.14.0 since, so check whether the steal is now the safe
   from_source over a slot-holding source and build stages 1+2 together.
-- **[Make a lattice git dependency build at a release tag](backlog/lattice-tag-dependency-bundles.md)** [2026-10-11]
-  A custom runtime depends on lattice by git tag, but since v0.0.71 a tag
-  carries no player or BSOD bundle (untracked because every make client
-  rewrote them) and lattice/build.rs panics, so the documented dependency
-  cannot build and a custom runtime has to vendor the tag and bundle the
-  player itself; the release should make a tag that carries the bundles,
-  leaving main untracked.
 - **[Content damage for live-sampled textures](backlog/live-texture-content-damage.md)** [2026-09-12]
   A texture whose pixels change behind an unchanged id produces no damage,
   because nodes displaying it hold a live reference and need none to show the

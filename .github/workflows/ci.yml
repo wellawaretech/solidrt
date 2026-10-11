@@ -34,9 +34,9 @@ jobs:
 
       - uses: ./.github/actions/js-install
 
-      # The player and BSOD bundles lattice embeds are generated, not
-      # tracked (lattice/build.rs), so every lattice compile below needs
-      # them bundled first.
+      # The player and BSOD bundles the stock program (runtime/) embeds are
+      # generated, not tracked (runtime/build.rs), so every workspace compile
+      # below needs them bundled first.
       - name: Bundle the player
         run: make -C lattice player-bundle
 

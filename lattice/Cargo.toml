@@ -3,32 +3,12 @@ name = "lattice"
 version = "0.0.0"
 edition = "2021"
 
-[lib]
-path = "src/lib.rs"
-crate-type = ["cdylib", "lib"]
-
-[[bin]]
-name = "solidrt-go"
-# Same program as `solidrt` below; the shim exists only because cargo warns
-# when two targets share one source file. The real difference is the feature.
-path = "src/main_go.rs"
-required-features = ["go"]
-
-[[bin]]
-name = "solidrt"
-path = "src/main.rs"
-
 [features]
 #TODO drop the default compile
 default = ["compile"]
 # The bytecode compiler (see flux). Every stock build has it; named here so a
 # custom runtime can ask for it (a dependent cannot spell `flux/compile`).
 compile = ["flux/compile"]
-# The stock Android entry: `SDL_main` over `android_main` (src/entry.rs). On
-# for the stock cdylib (the Makefile), off for a custom runtime, which
-# defines its own with `android_entry!`: a dependency's #[no_mangle] symbols
-# are exported from its cdylib too, so the two cannot coexist.
-android-entry = []
 go = ["compile", "dep:tokio-websockets", "dep:futures-util", "dep:http", "dep:reqwest", "dep:base64", "dep:sha2", "dep:resvg"]
 # Speech recognition: Whisper transcription (whisper.cpp via whisper-rs, CPU
 # inference) plus wake word detection (livekit-wakeword, ONNX via tract).

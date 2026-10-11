@@ -10,7 +10,7 @@ created: 2026-10-11
 custom runtime possible, and deferred `sol init` scaffolding of `runtime/`
 "until a second project wants it". The gaps below are what setting one up,
 writing a module and shipping it still run into. The tag dependency itself is
-[lattice-tag-dependency-bundles](lattice-tag-dependency-bundles.md), the
+[lattice-tag-dependency-bundles](../plans/lattice-tag-dependency-bundles.md), the
 module names are [custom-module-namespace](custom-module-namespace.md).
 
 ## Setup: no scaffold
@@ -44,6 +44,25 @@ starts in step with the app.
   `#[rquickjs::class(crate = "rquickjs")]` may make the dependency and its
   pin unnecessary; check the class, methods and trace macros that way and
   document whichever works.
+
+## Building it: one Makefile for the stock program and a custom one
+
+The stock program is `runtime/` in the checkout, the crate a custom runtime
+is a copy of, but its four build-and-stage goals (desktop player and
+runtime, Android player and runtime: one cargo build or cargo ndk run, a
+strip and a copy into the dist layout sol reads) still live in
+`lattice/Makefile` and its platform files, mixed with the checkout's release
+machinery around them (the Gradle APK assembly, staging into the platform
+packages, the flux binaries, notices, the font download, the player
+bundling). The feature-flag plumbing (PROFILE, SPEECH, VIDEO, KTX2,
+WASM_NATIVE, TEST, DIST) is what keeps them there.
+
+Shape: the four goals move into `runtime/Makefile` with that plumbing, and
+lattice's Makefiles call it for the cargo and staging steps. The scaffold
+then writes the same Makefile with the modules slot empty, so the stock
+program and a custom one build the same way, and the one sol's hint names
+("build it with `make -C runtime`") exists. Pick this up right after
+[lattice-tag-dependency-bundles](../plans/lattice-tag-dependency-bundles.md).
 
 ## Running it: the fallback is quiet
 

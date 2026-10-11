@@ -148,16 +148,33 @@ pub fn modules() -> lattice::Modules {
   lattice::Modules::new().add("flux:physics", physics::PhysicsModule)
 }
 
+// The program: the modules, and the two screens the runtime embeds (the
+// failure screen in every build, the player in the dev client), from the
+// @solidrt/cli package beside the app.
+pub fn program() -> lattice::Program {
+  lattice::Program {
+    modules: modules(),
+    bsod: include_str!("../../node_modules/@solidrt/cli/player/bsod.sol.js"),
+    #[cfg(feature = "go")]
+    player: include_str!("../../node_modules/@solidrt/cli/player/index.sol.js"),
+  }
+}
+
 // The Android .so's entry; nothing on other targets.
-lattice::android_entry!(crate::modules());
+lattice::android_entry!(crate::program());
 ```
 
 ```rust
 // runtime/src/bin/solidrt.rs, and solidrt-go.rs the same
 fn main() {
-  lattice::main(my_runtime::modules());
+  lattice::main(my_runtime::program());
 }
 ```
+
+The two screens are apps of SolidRT's own (`apps/player` in the checkout),
+bundled at release by the CLI and shipped in the `@solidrt/cli` package
+under `player/`. That is the other reason the lattice tag and the `@solidrt`
+packages stay at one version: the bundles are made for that runtime.
 
 A module is an rquickjs `ModuleDef` (`lattice::flux::rquickjs`), registered
 under a `flux:*` name on every engine the runtime builds. `Flux.capabilities`
@@ -214,8 +231,10 @@ its own needs) as `CMAKE_TOOLCHAIN_FILE_<rust target with underscores>`, and
 the project (`types/physics.d.ts`, a `declare module "flux:physics"`,
 included by `tsconfig.json`).
 
-`lattice/examples/custom_runtime.rs` in the checkout is the shape at its
-smallest: one module with a tick, run as any custom runtime is.
+`runtime/` in the checkout is the stock program: this crate with no modules,
+its screens bundled into `runtime/resources/` by `make client`.
+`lattice/examples/custom_runtime.rs` is the shape at its smallest: one
+module with a tick, run as any custom runtime is.
 
 ## Capabilities, not platforms
 

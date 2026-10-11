@@ -39,14 +39,12 @@ use test_host::TestRun;
 #[cfg(test)]
 mod tests;
 
-pub use entry::{main, Modules};
+pub use entry::{main, Modules, Program};
 // What a custom runtime writes its modules against (`flux::gui::frame`,
 // `flux::rquickjs`, `flux::alloy`), through the one dependency it names.
 #[cfg(target_os = "android")]
 pub use entry::android_main;
 pub use flux;
-#[cfg(feature = "android-entry")]
-crate::android_entry!(crate::Modules::new());
 
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 enum EngineCmd {
@@ -300,12 +298,6 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeTouch(
 
 // --- End Android entry point ------------------------------
 
-// The player is the go client's home; the production runtime never
-// shows it (it always boots a provided app source), so only go builds embed it.
-#[cfg(feature = "go")]
-const PLAYER_SOURCE: &str = include_str!("../resources/player/index.sol.js");
-const BSOD_SOURCE: &str = include_str!("../resources/bsod/bsod.sol.js");
-
 /// The dev client's built-in fonts: the three Noto role defaults, matching what
 /// a default packed app carries in its trailer. The dev loop (player,
 /// BSOD, HUD, `sol render` golden frames) needs deterministic text without a
@@ -409,8 +401,9 @@ struct RunOptions {
   test_passed: Arc<AtomicBool>,
   // The render host (render_host.rs), on a stepped run that renders.
   render: Option<RenderSetup>,
-  // The runtime's own modules (entry.rs), registered on every engine.
-  modules: Modules,
+  // The program (entry.rs): its modules, registered on every engine, and
+  // the screens the runtime boots on its own.
+  program: Program,
 }
 
 /// What `--strict` gates a capture on: the error-level lines the engine
@@ -647,8 +640,11 @@ fn ui_thread(
     test,
     test_passed,
     render,
-    modules,
+    program,
   } = opts;
+  #[cfg(feature = "go")]
+  let player = program.player;
+  let Program { modules, bsod, .. } = program;
   #[cfg(not(feature = "test"))]
   let _ = (&test, &test_passed);
   #[cfg(not(feature = "go"))]
@@ -707,7 +703,7 @@ fn ui_thread(
   // it (sol:dev launchAddress) and the server's latched push provides the app;
   // installed apps are launched from the player's list, never auto-booted.
   #[cfg(feature = "go")]
-  let mut current_app = app.unwrap_or_else(|| AppSource::Text(PLAYER_SOURCE.to_string()));
+  let mut current_app = app.unwrap_or_else(|| AppSource::Text(player.to_string()));
   #[cfg(not(feature = "go"))]
   let mut current_app = app.expect("runtime builds must provide an app source");
   // The running app's argument vector (flux:process argv), per app start:
@@ -1403,7 +1399,7 @@ fn ui_thread(
       engine_generation.fetch_add(1, Ordering::Relaxed);
       #[cfg(feature = "go")]
       player_active.store(
-        matches!(&current_app, AppSource::Text(src) if src.as_str() == PLAYER_SOURCE),
+        matches!(&current_app, AppSource::Text(src) if src.as_str() == player),
         Ordering::Relaxed,
       );
       *query_exec.lock().expect("query exec lock poisoned") = Some(engine.exec_handle());
@@ -1502,7 +1498,7 @@ fn ui_thread(
                 }
                 #[cfg(feature = "go")]
                 EngineCmd::Stop => {
-                  next_app = Some(AppSource::Text(PLAYER_SOURCE.to_string()));
+                  next_app = Some(AppSource::Text(player.to_string()));
                   next_run_id = Some(default_app_id.clone());
                   current_args = Vec::new();
                   // Back to the player: release the stopped app's sandbox
@@ -1558,7 +1554,7 @@ fn ui_thread(
         // Engine exited on its own (a module/startup error means render() never
         // ran, so nothing kept it alive). Show the BSOD instead of a frozen
         // frame; it stays live until a fixed app reloads.
-        current_app = AppSource::Text(BSOD_SOURCE.to_string());
+        current_app = AppSource::Text(bsod.to_string());
         next_link = None;
         showing_bsod = true;
       } else {
@@ -1580,7 +1576,7 @@ fn ui_thread(
           }
           #[cfg(feature = "go")]
           Some(EngineCmd::Stop) => {
-            current_app = AppSource::Text(PLAYER_SOURCE.to_string());
+            current_app = AppSource::Text(player.to_string());
             current_args = Vec::new();
             run_id = Some(default_app_id.clone());
             next_link = None;
@@ -1627,7 +1623,7 @@ pub(crate) fn start(
   fonts: Vec<FontPayload>,
   storage: storage::StorageSpec,
   args: Vec<String>,
-  modules: Modules,
+  program: Program,
 ) {
   let hosts = Hosts { test: None, render: None, errors: None };
   let _ = start_with(
@@ -1643,7 +1639,7 @@ pub(crate) fn start(
     storage,
     args,
     hosts,
-    modules,
+    program,
   );
 }
 
@@ -1665,13 +1661,13 @@ pub(crate) fn start_render(
   fonts: Vec<FontPayload>,
   storage: storage::StorageSpec,
   args: Vec<String>,
-  modules: Modules,
+  program: Program,
 ) -> Result<(), String> {
   let mode = alloy::Mode::Stepped(alloy::SteppedConfig { fps: run.fps });
   let host = render_host::RenderHost::new(run);
   let outcome = host.outcome.clone();
   let hosts = Hosts { test: None, render: Some(host), errors: strict.then(|| Arc::new(ErrorTally::default())) };
-  start_with(rt, Some(app), launch, None, mode, size, stats, None, fonts, storage, args, hosts, modules)?;
+  start_with(rt, Some(app), launch, None, mode, size, stats, None, fonts, storage, args, hosts, program)?;
   let outcome = outcome.lock().expect("render outcome lock poisoned").take();
   outcome.unwrap_or_else(|| Err("the render ended before it started".to_string()))
 }
@@ -1688,12 +1684,12 @@ pub(crate) fn start_tests(
   fonts: Vec<FontPayload>,
   storage: storage::StorageSpec,
   args: Vec<String>,
-  modules: Modules,
+  program: Program,
 ) -> Result<(), String> {
   let mode = alloy::Mode::Stepped(alloy::SteppedConfig { fps: stepped::DEFAULT_FPS });
   let launch = Launch { restored: false, link: None };
   let hosts = Hosts { test: Some(run), render: None, errors: None };
-  start_with(rt, Some(app), launch, None, mode, size, false, None, fonts, storage, args, hosts, modules)
+  start_with(rt, Some(app), launch, None, mode, size, false, None, fonts, storage, args, hosts, program)
 }
 
 /// The headless hosts a run may carry, and the error tally of `--strict`.
@@ -1717,7 +1713,7 @@ fn start_with(
   storage: storage::StorageSpec,
   args: Vec<String>,
   hosts: Hosts,
-  modules: Modules,
+  program: Program,
 ) -> Result<(), String> {
   forge::process::return_large_allocations();
   alloy::install_logger();
@@ -1748,7 +1744,7 @@ fn start_with(
     test,
     test_passed: test_passed.clone(),
     render,
-    modules,
+    program,
   };
   let resampler = app.resampler();
   let user_input_muted = app.user_input_mute();

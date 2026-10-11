@@ -60,13 +60,13 @@ endef
 client: $(PLAYER_JS) $(BSOD_JS) angle-windows
 	@echo "Building SOLIDRT-GO Windows ($(PROFILE)) $(VERSION)"
 	RUSTFLAGS="$(WIN_RUSTFLAGS)" $(WIN_CMAKE_ENV) \
-	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
+	$(SOLIDRT_VERSION) cargo build -p solidrt $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
 	$(call stage-windows,go,$(PROFILE),solidrt-go)
 
 runtime: angle-windows
 	@echo "Building RUNTIME Windows ($(PROFILE)) $(VERSION)"
 	RUSTFLAGS="$(WIN_RUSTFLAGS)" $(WIN_CMAKE_ENV) \
-	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
+	$(SOLIDRT_VERSION) cargo build -p solidrt $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
 	$(call stage-windows,runtime,$(PROFILE),solidrt)
 
 dist:

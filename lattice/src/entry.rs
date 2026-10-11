@@ -1,8 +1,9 @@
 //! The program over the runtime: the desktop command line and the Android
-//! entry that `start` the app with, and `Modules`, what a custom runtime
-//! adds beside the built-in modules. The stock binaries are one call into
-//! here with no modules; a custom runtime (a cargo project over lattice,
-//! see docs/runtime "Native code") is the same call with its own, and on
+//! entry that `start` the app with, and `Program`, what a program brings:
+//! its `Modules` beside the built-in ones and the screens the runtime
+//! embeds. The stock program (the `runtime` crate) is one call into here
+//! with no modules; a custom runtime (a cargo project over lattice, see
+//! docs/runtime "A custom runtime") is the same call with its own, and on
 //! Android the `android_entry!` line in its cdylib.
 
 use flux::rquickjs::module::ModuleDef;
@@ -61,20 +62,37 @@ impl Modules {
   }
 }
 
+/// What a program hands the runtime: its modules and the two screens the
+/// runtime embeds, as bundles `sol bundle` made from apps/player. The
+/// screens are made by the JavaScript side, so a program embeds them with
+/// `include_str!` from where its SolidRT version ships them: the checkout
+/// bundles them into `runtime/resources/` (`make -C lattice
+/// player-bundle`), a custom runtime takes them from the `@solidrt/cli`
+/// package in its node_modules (`player/index.sol.js`, `player/bsod.sol.js`),
+/// which is at the same version as the lattice tag it depends on.
+pub struct Program {
+  pub modules: Modules,
+  /// The screen shown when an app fails to start; every build.
+  pub bsod: &'static str,
+  /// The dev client's home, booted when no app source is given; the
+  /// production runtime has none.
+  #[cfg(feature = "go")]
+  pub player: &'static str,
+}
+
 /// The Android entry of a runtime's cdylib: expands to the `SDL_main` the
-/// SDL shell calls, over `android_main` with the given modules. Nothing on
+/// SDL shell calls, over `android_main` with the given program. Nothing on
 /// other targets, so a custom runtime's lib.rs carries the line
-/// unconditionally. The stock cdylib's entry is this macro behind the
-/// `android-entry` feature, which a custom runtime leaves off: a
-/// dependency's `#[no_mangle]` symbols are exported from its cdylib too,
-/// so the two cannot coexist.
+/// unconditionally. lattice itself defines no entry: a dependency's
+/// `#[no_mangle]` symbols are exported from a cdylib too, so the one
+/// `SDL_main` is the program crate's.
 #[macro_export]
 macro_rules! android_entry {
-  ($modules:expr) => {
+  ($program:expr) => {
     #[cfg(target_os = "android")]
     #[no_mangle]
     pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
-      $crate::android_main(argc, argv, $modules)
+      $crate::android_main(argc, argv, $program)
     }
   };
 }
@@ -83,7 +101,7 @@ macro_rules! android_entry {
 /// the go dev client boots the player (no app source) and auto-dials a dev
 /// server when the launch intent carries one.
 #[cfg(all(target_os = "android", feature = "go"))]
-pub fn android_main(argc: i32, argv: *mut *mut i8, modules: Modules) -> i32 {
+pub fn android_main(argc: i32, argv: *mut *mut i8, program: Program) -> i32 {
   let args = android_args(argc, argv);
   let dev_server = dev_server_arg(&args);
   let launch = launch_arg(&args);
@@ -103,7 +121,7 @@ pub fn android_main(argc: i32, argv: *mut *mut i8, modules: Modules) -> i32 {
     crate::embedded_fonts(),
     storage,
     Vec::new(),
-    modules,
+    program,
   );
   0
 }
@@ -120,7 +138,7 @@ const PACKED_PAYLOAD_ASSET: &str = "app.solapp";
 /// via SDL's stderr redirect when it does at all - primarily this exit code
 /// is for the packager's bring-up.
 #[cfg(all(target_os = "android", not(feature = "go")))]
-pub fn android_main(argc: i32, argv: *mut *mut i8, modules: Modules) -> i32 {
+pub fn android_main(argc: i32, argv: *mut *mut i8, program: Program) -> i32 {
   let launch = launch_arg(&android_args(argc, argv));
   let Some((apk, offset, len)) = alloy::sdl_utils::packed_asset_location(PACKED_PAYLOAD_ASSET) else {
     eprintln!("[sol] no {PACKED_PAYLOAD_ASSET} asset in this APK; nothing to run");
@@ -149,7 +167,7 @@ pub fn android_main(argc: i32, argv: *mut *mut i8, modules: Modules) -> i32 {
     payload.fonts,
     storage,
     Vec::new(),
-    modules,
+    program,
   );
   0
 }
@@ -212,9 +230,9 @@ fn usage(msg: &str) -> ! {
 
 /// The stock program: the desktop command line (a source path, a .solapp,
 /// `--render`, `--test` and their flags), or the packed payload this binary
-/// carries. What the `solidrt` and `solidrt-go` binaries call with no modules,
-/// and a custom runtime's `main` with its own.
-pub fn main(modules: Modules) {
+/// carries. What the stock binaries (the `runtime` crate) call with no
+/// modules, and a custom runtime's `main` with its own.
+pub fn main(program: Program) {
   // A distribution owns its entire command line (fluxrt parity): when this
   // binary carries a packed payload - embedded trailer or adjacent folder -
   // everything after the executable is the app's argument vector, and none of
@@ -256,7 +274,7 @@ pub fn main(modules: Modules) {
       payload.fonts,
       storage,
       app_args,
-      modules,
+      program,
     );
     return;
   }
@@ -426,7 +444,7 @@ pub fn main(modules: Modules) {
   }
   let storage = crate::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
   if test {
-    run_tests(TestArgs { app, filter, seed, failures, size, fonts, storage, app_args, modules });
+    run_tests(TestArgs { app, filter, seed, failures, size, fonts, storage, app_args, program });
   }
   let launch = crate::Launch { restored: false, link };
   if render {
@@ -445,11 +463,11 @@ pub fn main(modules: Modules) {
       fonts,
       storage,
       app_args,
-      modules,
+      program,
     });
   }
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  crate::start(&rt, app, launch, display_name, size, stats, dev_server, fonts, storage, app_args, modules);
+  crate::start(&rt, app, launch, display_name, size, stats, dev_server, fonts, storage, app_args, program);
 }
 
 /// What `--test` runs with (see `run_tests`).
@@ -463,7 +481,7 @@ struct TestArgs {
   fonts: Vec<alloy::rendertree::FontPayload>,
   storage: crate::storage::StorageSpec,
   app_args: Vec<String>,
-  modules: Modules,
+  program: Program,
 }
 
 /// What `--render` runs with (see `run_render`).
@@ -483,7 +501,7 @@ struct RenderArgs {
   fonts: Vec<alloy::rendertree::FontPayload>,
   storage: crate::storage::StorageSpec,
   app_args: Vec<String>,
-  modules: Modules,
+  program: Program,
 }
 
 // `--render`: render the app headless and exit with the outcome. It exits
@@ -516,7 +534,7 @@ fn run_render(args: RenderArgs) -> ! {
     args.fonts,
     args.storage,
     args.app_args,
-    args.modules,
+    args.program,
   );
   match outcome {
     Ok(()) => std::process::exit(0),
@@ -548,7 +566,7 @@ fn run_tests(args: TestArgs) -> ! {
   let run = crate::TestRun { options, failures };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let passed =
-    crate::start_tests(&rt, app, run, args.size, args.fonts, args.storage, args.app_args, args.modules).is_ok();
+    crate::start_tests(&rt, app, run, args.size, args.fonts, args.storage, args.app_args, args.program).is_ok();
   std::process::exit(if passed { 0 } else { 1 })
 }
 

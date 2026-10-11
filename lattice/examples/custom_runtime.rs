@@ -39,5 +39,12 @@ impl ModuleDef for WhoamiModule {
 }
 
 fn main() {
-  lattice::main(Modules::new().add("flux:whoami", WhoamiModule));
+  lattice::main(lattice::Program {
+    modules: Modules::new().add("flux:whoami", WhoamiModule),
+    // The screens from the checkout's stock program; a custom runtime takes
+    // them from the @solidrt/cli package in its node_modules instead.
+    bsod: include_str!("../../runtime/resources/bsod/bsod.sol.js"),
+    #[cfg(feature = "go")]
+    player: include_str!("../../runtime/resources/player/index.sol.js"),
+  });
 }

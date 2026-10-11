@@ -9,8 +9,8 @@ Differences because this app lives in the solidrt monorepo:
 - Dependencies are `workspace:*`; `bun install` at the repo root wires them.
   There is nothing to install here.
 - `sol` is the in-repo CLI; run it as `bun run sol`.
-- The production bundles are generated into `../../lattice/resources/`
-  (committed there), because lattice embeds them into the client binary at
+- The production bundles are generated into `../../runtime/resources/` (not
+  tracked), because the stock program crate embeds them into the binaries at
   compile time via `include_str!`. Rebuild them with `make player-bundle`
   from the repo root after changing any source here.
 - `src/bsod.tsx` is a second entry point, bundled separately: the error

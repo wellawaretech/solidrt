@@ -397,7 +397,7 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: |
           VERSION="${{ steps.flags.outputs.version }}"
-          for crate in flux alloy lattice; do
+          for crate in flux alloy lattice runtime; do
             (cd "$crate" && cargo set-version "$VERSION")
           done
 
@@ -440,6 +440,17 @@ jobs:
           cp alloy/assets/fonts/NotoSans.ttf alloy/assets/fonts/NotoSerif.ttf \
              alloy/assets/fonts/NotoSansMono.ttf alloy/assets/fonts/OFL.txt \
              packages/cli/fonts/
+
+      # The CLI package also ships the player and BSOD bundles (player/): the
+      # two screens a custom runtime embeds (docs/runtime, "A custom runtime"),
+      # made here by this release's CLI from this release's apps/player so they
+      # match the lattice tag of the same version. The checkout's own program
+      # takes them from runtime/resources/ instead.
+      - name: Stage the player bundles into the CLI package
+        run: |
+          make -C lattice player-bundle
+          mkdir -p packages/cli/player
+          cp runtime/resources/player/index.sol.js runtime/resources/bsod/bsod.sol.js packages/cli/player/
 
       # The CLI package also ships the dev console pre-compiled
       # (dist/console.solapp, see packages/cli/Makefile): `sol pack --app`
