@@ -114,7 +114,7 @@ lru = "=0.18.5"
 # engine) rasterizes coverage masks, etagere allocates the glyph atlas (the
 # shelf allocator behind WebRender's texture cache).
 harfrust = "=0.14.0"
-skrifa = "=0.44.0"
+skrifa = "=0.48.0"
 zeno = "=0.3.3"
 etagere = "=0.3.0"
 # f32 -> f16 packing for rgba16f uploads (gpu/texture.rs `f16_bytes`).
