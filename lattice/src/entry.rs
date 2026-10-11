@@ -12,13 +12,19 @@ use flux::FluxEngineBuilder;
 /// The window a run opens when nothing sizes it (`--size`, a packed app).
 const DEFAULT_WINDOW_SIZE: (u32, u32) = (1280, 720);
 
-/// The `flux:*` modules a runtime adds beside the built-ins: what a custom
-/// runtime registers in its `main`. Each is registered on every engine the
-/// runtime builds (a reload builds a new one) and listed in
-/// `Flux.capabilities` by its short name, so an app checks
-/// `Flux.capabilities.includes("physics3d")` the way it checks a built-in,
-/// and the dev client reports it beside flux's own. The stock binaries pass
-/// `Modules::new()`.
+/// The scheme every module a runtime adds registers under: `runtime:physics`,
+/// or `runtime:acme/physics` with a scope, so two crates do not both claim
+/// one name. `flux:` and `sol:` are the platform's, so an import says who
+/// ships the module and a built-in SolidRT adds later cannot collide with it.
+pub const RUNTIME_SCHEME: &str = "runtime:";
+
+/// The modules a runtime adds beside the built-ins: what a custom runtime
+/// registers in its `main`, each under a `runtime:*` name. Each is
+/// registered on every engine the runtime builds (a reload builds a new
+/// one) and listed in `Flux.capabilities` by its full name, so an app checks
+/// `Flux.capabilities.includes("runtime:physics")` and cannot mistake it for
+/// a built-in, and the dev client reports it beside flux's own. The stock
+/// binaries pass `Modules::new()`.
 #[derive(Default)]
 pub struct Modules {
   installs: Vec<Box<dyn Fn(FluxEngineBuilder) -> FluxEngineBuilder + Send>>,
@@ -30,16 +36,24 @@ impl Modules {
     Self::default()
   }
 
-  /// Register `def` as the module `name`, a `flux:*` name (the one
-  /// namespace; anything else is a programming error and panics here).
-  /// `def` is cloned per engine.
+  /// Register `def` as the module `name`: a `runtime:*` name whose rest is
+  /// lowercase letters, digits, `-`, `_` and `.`, with at most one `/`
+  /// between a scope and the name. Any other name, a `flux:*` or `sol:*`
+  /// one included, and a name registered twice are programming errors and
+  /// panic here. `def` is cloned per engine.
   pub fn add<D: ModuleDef + Clone + Send + 'static>(mut self, name: &'static str, def: D) -> Self {
-    let Some(capability) = name.strip_prefix("flux:") else {
-      panic!("a runtime module registers under a flux:* name, not {name}");
+    let Some(rest) = name.strip_prefix(RUNTIME_SCHEME) else {
+      panic!("A runtime module registers under a runtime:* name (runtime:physics, runtime:acme/physics), not {name}");
     };
-    self.capabilities.push(capability);
+    if !well_formed_module_name(rest) {
+      panic!("A runtime module name is lowercase letters, digits, '-', '_' and '.', with at most one '/' between scope and name, not {name}");
+    }
+    if self.capabilities.contains(&name) {
+      panic!("The module {name} is registered twice");
+    }
+    self.capabilities.push(name);
     self.installs.push(Box::new(move |builder| {
-      builder.module(name, def.clone()).plugin(move |ctx| flux::add_capability(&ctx, capability))
+      builder.module(name, def.clone()).plugin(move |ctx| flux::add_capability(&ctx, name))
     }));
     self
   }
@@ -51,7 +65,7 @@ impl Modules {
     self
   }
 
-  /// The capability names `add` registered, for the dev client's report.
+  /// The module names `add` registered, for the dev client's report.
   #[cfg_attr(not(feature = "go"), allow(dead_code))]
   pub(crate) fn capabilities(&self) -> Vec<&'static str> {
     self.capabilities.clone()
@@ -60,6 +74,18 @@ impl Modules {
   pub(crate) fn install(&self, builder: FluxEngineBuilder) -> FluxEngineBuilder {
     self.installs.iter().fold(builder, |builder, install| install(builder))
   }
+}
+
+/// Whether `rest`, a module name without its scheme, has the shape `add`
+/// requires: `name` or `scope/name`, each of lowercase letters, digits, `-`,
+/// `_` and `.`, and neither empty.
+pub(crate) fn well_formed_module_name(rest: &str) -> bool {
+  let parts: Vec<&str> = rest.split('/').collect();
+  parts.len() <= 2
+    && parts.iter().all(|part| {
+      !part.is_empty()
+        && part.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'))
+    })
 }
 
 /// What a program hands the runtime: its modules and the two screens the

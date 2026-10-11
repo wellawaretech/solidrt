@@ -186,8 +186,8 @@ export function isolateAssetPath(id: string, ext: "js" | "bin"): string {
 // unset, which is the source root for an app entry. A build whose entry is
 // not the app's (an app test, bundled from its test file) passes the app's.
 // `target` is the platform the bundle resolves builtins for: "browser" (the
-// default) for app code and flux scripts, whose builtins are the flux: and
-// sol: externals; "bun" for a bun program (the CLI's own commands, which
+// default) for app code and flux scripts, whose builtins are the runtime
+// module externals; "bun" for a bun program (the CLI's own commands, which
 // `sol check` covers), whose node: imports are bun's.
 export type BundleOptions = {
   entry: string
@@ -197,6 +197,12 @@ export type BundleOptions = {
   isolateRoot?: string
   target?: "browser" | "bun"
 }
+
+// The modules an app bundle leaves to the runtime it runs on: the platform's
+// flux: and sol: modules and a custom runtime's runtime: ones (lattice's
+// Modules::add). One fixed rule, the same in the test bundle and in the
+// bytecode compiler's resolver (flux); never a per-app list.
+export const RUNTIME_MODULES = ["flux:*", "sol:*", "runtime:*"]
 
 // The `sol bundle --json` stdout contract doubles as the in-process result.
 export type BundleResult = BundleOutput
@@ -245,7 +251,7 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
         target: opts.target ?? "browser",
         format: "esm",
         minify: opts.minify,
-        external: ["flux:*", "sol:*"],
+        external: RUNTIME_MODULES,
         define,
         loader: { ".svg": "text" },
         sourcemap: babelMaps ? "external" : "none",

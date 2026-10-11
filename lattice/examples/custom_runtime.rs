@@ -1,5 +1,5 @@
 //! A custom runtime: the stock program plus one module, the shape a cargo
-//! project over lattice takes (docs/runtime, "Native code"). `flux:whoami`
+//! project over lattice takes (docs/runtime, "Native code"). `runtime:whoami`
 //! exports `whoami()` and `frames()`, how many frame ticks the module has
 //! seen through the frame protocol (`frame::on_advance`).
 //!
@@ -40,7 +40,7 @@ impl ModuleDef for WhoamiModule {
 
 fn main() {
   lattice::main(lattice::Program {
-    modules: Modules::new().add("flux:whoami", WhoamiModule),
+    modules: Modules::new().add("runtime:whoami", WhoamiModule),
     // The screens from the checkout's stock program; a custom runtime takes
     // them from the @solidrt/cli package in its node_modules instead.
     bsod: include_str!("../../runtime/resources/bsod/bsod.sol.js"),

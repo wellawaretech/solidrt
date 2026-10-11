@@ -145,7 +145,7 @@ module needs.
 mod physics;
 
 pub fn modules() -> lattice::Modules {
-  lattice::Modules::new().add("flux:physics", physics::PhysicsModule)
+  lattice::Modules::new().add("runtime:physics", physics::PhysicsModule)
 }
 
 // The program: the modules, and the two screens the runtime embeds (the
@@ -177,10 +177,21 @@ under `player/`. That is the other reason the lattice tag and the `@solidrt`
 packages stay at one version: the bundles are made for that runtime.
 
 A module is an rquickjs `ModuleDef` (`lattice::flux::rquickjs`), registered
-under a `flux:*` name on every engine the runtime builds. `Flux.capabilities`
-lists it by its short name, `physics` here, so an app checks for it the way
-it checks a built-in, and the dev client reports it to the dev server beside
-the stock capabilities. A module that paces work by the frame (a physics
+under a `runtime:*` name on every engine the runtime builds. `runtime:` is
+the scheme of every module a runtime adds; `flux:` and `sol:` are the
+platform's, so the import says who ships the module and a built-in SolidRT
+adds later cannot collide with it. A crate that several apps link scopes its
+name, `runtime:acme/physics`, so two crates do not both claim one. The name
+after the scheme is lowercase letters, digits, `-`, `_` and `.`, with at
+most that one `/`; `Modules::add` panics on any other name, on a platform
+scheme and on a name registered twice. `Flux.capabilities` lists the module
+by its full name, `runtime:physics` here, so an app checks for it the way it
+checks a built-in and cannot mistake one for the other, and the dev client
+reports it to the dev server beside the stock capabilities. An app bundle
+leaves every `runtime:*` import to the runtime, as it does `flux:*` and
+`sol:*`, so no build configuration names your modules; a test that imports
+one runs on your runtime's dev client under `sol test`. A module that paces
+work by the frame (a physics
 world stepping on a fixed timestep, a device read per frame) registers a
 tick with `lattice::flux::gui::frame::on_advance`: it runs every frame with
 the app time, before the frame's callbacks, so the dev clock's pause and
@@ -228,7 +239,7 @@ sets for `cargo ndk`: `ANDROID_NDK_HOME` and `ANDROID_NDK_ROOT`, a copy of
 the ABI defaulted from the environment, which a build that passes no ABI of
 its own needs) as `CMAKE_TOOLCHAIN_FILE_<rust target with underscores>`, and
 `CMAKE_ANDROID_ARCH_ABI`. The module's types live in
-the project (`types/physics.d.ts`, a `declare module "flux:physics"`,
+the project (`types/physics.d.ts`, a `declare module "runtime:physics"`,
 included by `tsconfig.json`).
 
 `runtime/` in the checkout is the stock program: this crate with no modules,

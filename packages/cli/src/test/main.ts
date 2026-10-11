@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { bundleWith, writeIsolates } from "../bundle/bundler"
+import { bundleWith, RUNTIME_MODULES, writeIsolates } from "../bundle/bundler"
 import { appArgs, source, values } from "../lib/args"
 import { collectAssets } from "../lib/project"
 import { fail } from "../lib/fail"
@@ -33,10 +33,11 @@ const ENTRY_MODULE = "main"
 // What a stack frame inside the harness cites; those frames are dropped
 // from a report, since they say nothing about the test.
 const HARNESS_FRAME = "(flux:test:"
-// The runtime modules the `flux` binary does not have: lattice's builtins
-// and flux's gui layer. A test file whose bundle imports one runs on the
-// dev client.
-const APP_MODULE = /^sol:|^flux:(rendertree|camera|microphone|audio|gpu|spatial|video|test\/gui)$/
+// The runtime modules the `flux` binary does not have: lattice's builtins,
+// flux's gui layer and a custom runtime's own modules (runtime:*, which only
+// the project's runtime has). A test file whose bundle imports one runs on
+// the dev client, the project's own when it has one (lib/runtime.ts).
+const APP_MODULE = /^sol:|^runtime:|^flux:(rendertree|camera|microphone|audio|gpu|spatial|video|test\/gui)$/
 // Where an app test's staged bundle and its data root live, under the
 // project's build output, and the folder in it a failed test's snapshot
 // lands in.
@@ -108,7 +109,7 @@ type Bundled = { code: string; map: string | null; app: boolean }
 
 // The runtime modules a bundle imports: what the bundler left external.
 function runtimeImports(code: string): string[] {
-  return [...code.matchAll(/^import\s(?:[^"']*?\sfrom\s*)?["']((?:flux|sol):[^"']+)["']/gm)].map((match) => match[1]!)
+  return [...code.matchAll(/^import\s(?:[^"']*?\sfrom\s*)?["']((?:flux|sol|runtime):[^"']+)["']/gm)].map((match) => match[1]!)
 }
 
 // A flux program's bundle: plain TypeScript, the runtime modules external.
@@ -126,7 +127,7 @@ async function bundleFlux(file: string): Promise<Bundled | string> {
       entrypoints: [file],
       target: "browser",
       format: "esm",
-      external: ["flux:*", "sol:*"],
+      external: RUNTIME_MODULES,
       sourcemap: "external",
       throw: false,
       plugins: [

@@ -341,13 +341,6 @@ Shaped, not started.
   The router side of the cursor prop is covered in alloy, but the flux decode
   (21 accepted names, the handle form, the two rejection messages) has no test
   in the existing apply_jsx harness.
-- **[Give custom runtime modules a namespace of their own](backlog/custom-module-namespace.md)** [2026-10-11]
-  A custom runtime can register a module only under a flux:* name, so an app's
-  native module reads as a platform module, would collide with a built-in
-  SolidRT ships later, and shows in Flux.capabilities under a short name a
-  built-in could share; custom runtime modules move to one fixed scheme,
-  custom: (custom:physics, custom:acme/physics), reported by full name,
-  external to every bundle, with flux: and sol: reserved for the platform.
 - **[Make a custom runtime cheap to set up, write and ship](backlog/custom-runtime-authoring.md)** [2026-10-11]
   Every custom runtime repeats the same boilerplate (manifest, entries,
   toolchain, page flags, Android environment, staging) that sol's own hint
@@ -2262,6 +2255,14 @@ Finished, kept for the reasoning.
   from the stock ones; the tower-toppling demo's Rapier physics
   (flux:physics3d and flux:physics2d, stepping in the frame tick) is the
   worked example.
+- **[Give runtime modules a namespace of their own](done/runtime-module-namespace.md)** [2026-10-11]
+  A custom runtime could register a module only under a flux:* name, so an
+  app's own module read as a platform module, would collide with a built-in
+  SolidRT ships later, and showed in Flux.capabilities under a short name a
+  built-in could share; the modules a runtime adds now register under one
+  fixed scheme, runtime: (runtime:physics, runtime:acme/physics), reported by
+  full name, external to every app bundle, with flux: and sol: reserved for
+  the platform.
 - **[A zoom debug command in the scaffold](done/scaffold-zoom-debug-command.md)** [2026-08-06]
   Snapshots reach an agent downscaled, so small hand-authored geometry needs
   magnified inspection; a ~15-line viewBox-shrinking registerDebug("zoom")
