@@ -11,7 +11,7 @@
 import { serve } from "flux:http"
 import type { FluxRequest, Server, ServerWebSocket } from "flux:http"
 import { file, realpath } from "flux:fs"
-import { on as onSignal } from "flux:process"
+import { exit, on as onSignal } from "flux:process"
 import { join, resolveWithin } from "flux:path"
 import { command } from "flux:subprocess"
 import { interfaces, probe } from "flux:net"
@@ -46,7 +46,6 @@ if (running) {
 }
 
 let sol = solCommand()
-let runner = args.client !== null ? await requireBinary("solidrt-go", mode.runtime) : null
 let serverDir = await serverDirFor(mode.key)
 
 // The LAN address (for --lan): the IPv4 of the interface holding the default
@@ -93,7 +92,7 @@ let config: ServerConfig = {
   capture: args.capture,
   stats: args.stats,
   tunnel: args.tunnel,
-  client: runner ? { cmd: runner, args: clientArgs } : null,
+  client: args.client !== null ? { args: clientArgs } : null,
 }
 state.config = config
 state.stats = config.stats
@@ -508,8 +507,21 @@ if (!config.entry.endsWith(".sol.js")) {
 }
 
 if (config.client) {
+  // The client's binary, now that the bundle says whether the project's own
+  // is required (binaries.ts): a project binary that is missing while the
+  // app imports a module of its runtime ends the server here, in order,
+  // instead of leaving the app to fail at that import.
+  let runner
+  try {
+    runner = await requireBinary("solidrt-go", mode.runtime, state.projectModules[0] ?? null)
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e))
+    await shutdown()
+    exit(1)
+  }
+  state.stockClientFor = runner.missing
   // The local client dials the port bound above; sol could not know it.
-  let child = command(config.client.cmd, [...config.client.args, "--dev-server", `127.0.0.1:${server.port}`]).spawn()
+  let child = command(runner.path, [...config.client.args, "--dev-server", `127.0.0.1:${server.port}`]).spawn()
   localClient = child
   pump(child.stdout, (line) => console.log(line))
   pump(child.stderr, (line) => {

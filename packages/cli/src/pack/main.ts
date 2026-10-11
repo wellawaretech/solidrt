@@ -114,7 +114,10 @@ async function buildApp(mode: Mode) {
   let isolates = []
   for (let i of bundled.isolates) isolates.push({ id: i.id, bytecode: await compileToBytecode(i.code, i.id) })
   if (isolates.length) console.log(`>> isolates: ${isolates.map((i) => i.id).join(", ")}`)
-  return { bytecode, folder: buildPackFolder(mode, bytecode, isolates) }
+  // A module only the project's runtime has: the runner packed must be the
+  // project's, so a target it did not build is an error (lib/runtime.ts).
+  let needed = bundled.projectModules[0] ?? null
+  return { bytecode, folder: buildPackFolder(mode, bytecode, isolates), needed }
 }
 
 // --apk patches the app into one installable Android APK per installed
@@ -134,9 +137,10 @@ export async function packApks(): Promise<Map<string, string>> {
     )
     process.exit(1)
   }
+  let { bytecode, folder, needed } = await buildApp(mode)
   let targets: string[] = []
   for (let abi of await ensureTargets([], mode.projectDir)) {
-    if (resolveRunnerApk(abi)) targets.push(abi)
+    if (resolveRunnerApk(abi, needed)) targets.push(abi)
     else console.log(`>> note: no ${abi} runner APK; skipped (in a checkout: make android-runtime ANDROID_ABI=${abi})`)
   }
   if (targets.length === 0) {
@@ -144,7 +148,6 @@ export async function packApks(): Promise<Map<string, string>> {
     process.exit(1)
   }
 
-  let { bytecode, folder } = await buildApp(mode)
   let project = loadProject(mode.projectDir)
   let config = project?.config ?? {}
   let android = config.android ?? {}
@@ -162,7 +165,7 @@ export async function packApks(): Promise<Map<string, string>> {
 
   let written = new Map<string, string>()
   for (let abi of targets) {
-    let base = resolveRunnerApk(abi)!
+    let base = resolveRunnerApk(abi, needed)!
     console.log(`>> base (${abi}): ${base}`)
     let apk: Buffer
     try {
@@ -213,11 +216,11 @@ export async function main() {
   }
 
   let { mode, distRoot, baseName } = packTarget()
-  let { bytecode, folder } = await buildApp(mode)
+  let { bytecode, folder, needed } = await buildApp(mode)
 
   if (values.folder) {
     let outDir = values.output ?? join(distRoot, "pack")
-    writePackFolder(outDir, requireBinary("solidrt"), bytecode, folder)
+    writePackFolder(outDir, requireBinary("solidrt", needed), bytecode, folder)
     console.log(`>> wrote pack folder to ${resolve(outDir)}`)
     process.exit()
   }
@@ -231,6 +234,6 @@ export async function main() {
   }
 
   let outfile = exeName(values.output ?? join(distRoot, baseName))
-  await writeExecutable(packSolid(folder, bytecode), outfile)
+  await writeExecutable(packSolid(folder, bytecode, needed), outfile)
   process.exit()
 }

@@ -34,9 +34,19 @@ pub use pending::{describe_in_flight, hold_engine, in_flight, settled, Hold};
 pub use plugins::add_capability;
 pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use plugins::js_error::JsResult;
-pub use plugins::marshal::{CopyBytes, OptArg};
+// The marshalling toolkit a module over flux uses as its plugins do (a
+// custom runtime's `runtime:*` module, docs/runtime "Native code"): the
+// promise-with-hold shape of every async binding, the bytes of a JS buffer,
+// the Rust-backed async iterator, and an options object's fields.
+pub use plugins::marshal::{
+  attach_async_iterator, bytes_of, elements_mut_of, elements_of, iter_result, string_opt, with_in_flight,
+  with_standing, CopyBytes, OptArg, Step,
+};
 pub use plugins::seekable::{SeekableOpener, SeekableSource};
 pub use rquickjs;
+// The async runtime the engine's futures run on, for a module's own channels,
+// blocking work and timers (`tokio::task::spawn_blocking`, `sync::oneshot`),
+// named through flux like rquickjs rather than pinned again by the module.
 pub use standards_plugins::body::{attach_body, JsBytes, JsonValue};
 pub use standards_plugins::fetch::{request_body_from_value, JsResponseData};
 pub use standards_plugins::headers::header_pairs_from_init;
@@ -45,6 +55,7 @@ pub use standards_plugins::time::{
   advance_virtual_time, advance_virtual_time_to_now, freeze_wall, idle_due, install_idle_periods, install_virtual_time,
   set_virtual_now_source, timeline_now_ms, timer_due, Timeline,
 };
+pub use tokio;
 
 /// Feature names this build provides, as surfaced to JS via `Flux.capabilities`.
 /// Native callers (e.g. a dev client introspecting the runtime) get the same

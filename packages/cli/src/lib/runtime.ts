@@ -5,8 +5,11 @@
 // solidrt, solidrt-go and the Android APKs (lib/artifacts.ts); the tooling
 // binaries (flux, fluxc, fluxrt) stay sol's own. A target the project did
 // not build falls back to the stock binary with a notice: an app that
-// checks Flux.capabilities runs either way, and one that imports the module
-// fails at the import, which the notice explains.
+// checks Flux.capabilities runs either way. One that imports a module of
+// the runtime (a `runtime:*` import, `BundleOutput.projectModules`) cannot,
+// so a caller that knows the bundle names the module as `needed`, and the
+// missing binary is then an error naming the path, before the app fails at
+// its first import as if the module were at fault.
 //
 // Android: the project builds its cdylib into android/<abi>/libmain.so (and
 // android-runtime/<abi>/ for the runner), with any further .so its modules
@@ -18,18 +21,24 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { join, resolve } from "node:path"
 import { swapLibs } from "../pack/android/apk"
 import { elfLoadAlignment, MIN_LOAD_ALIGN } from "../pack/android/elf"
+import { missingRuntimeBinary, noRuntimeDeclared, stockRuntimeNotice } from "../server/runtime-messages"
 import { fail } from "./fail"
 import { loadProject } from "./project"
 
+/**
+ * Each resolver takes `needed`: a `runtime:*` module the app imports, or
+ * null. With it, a target the project did not build is an error naming the
+ * path (the stock binary has no such module); without it, a notice and null.
+ */
 export type ProjectRuntime = {
   /** The runtime directory, absolute. */
   dir: string
   /** `<dir>/<triple>/<name><ext>` when the project built it, else null. */
-  binary(name: string, triple: string, ext: string): string | null
+  binary(name: string, triple: string, ext: string, needed?: string | null): string | null
   /** The project's Player APK for `abi`, derived from `base` (the stock one), or null when the project built no libs for it. */
-  apk(abi: string, base: string | null): string | null
+  apk(abi: string, base: string | null, needed?: string | null): string | null
   /** The project's runner APK for `abi`, likewise. */
-  runnerApk(abi: string, base: string | null): string | null
+  runnerApk(abi: string, base: string | null, needed?: string | null): string | null
 }
 
 const PLAYER_APK = "solidrt-go.apk"
@@ -48,25 +57,41 @@ function load(): ProjectRuntime | null {
   let declared = project?.config.runtime
   if (!project || !declared) return null
   let dir = resolve(project.dir, declared)
-  if (!existsSync(dir)) {
-    console.log(`[cli] No project runtime at ${dir} yet; using the stock binaries (build it with make -C ${declared.split("/")[0]})`)
+  let noticed = new Set<string>()
+  // A target the project did not build: the error when a module of the
+  // runtime is needed, else a notice, once per path, and the stock one.
+  let missing = (what: string, path: string, needed: string | null | undefined): null => {
+    if (needed) fail(missingRuntimeBinary(what, path, needed, declared))
+    if (!noticed.has(path)) {
+      noticed.add(path)
+      console.log(stockRuntimeNotice(what, path, declared))
+    }
     return null
   }
-  let noticed = new Set<string>()
   return {
     dir,
-    binary(name, triple, ext) {
+    binary(name, triple, ext, needed) {
       let path = join(dir, triple, name + ext)
-      if (existsSync(path)) return path
-      if (!noticed.has(path)) {
-        noticed.add(path)
-        console.log(`[cli] No ${name} for ${triple} in ${dir}; using the stock one`)
-      }
-      return null
+      return existsSync(path) ? path : missing(`${name} for ${triple}`, path, needed)
     },
-    apk: (abi, base) => derive("Player", join(dir, "android", abi), PLAYER_APK, abi, base),
-    runnerApk: (abi, base) => derive("runner", join(dir, "android-runtime", abi), RUNNER_APK, abi, base),
+    apk(abi, base, needed) {
+      let libDir = join(dir, "android", abi)
+      return derive("Player", libDir, PLAYER_APK, abi, base) ?? missing(`Player libs for ${abi}`, libDir, needed)
+    },
+    runnerApk(abi, base, needed) {
+      let libDir = join(dir, "android-runtime", abi)
+      return derive("runner", libDir, RUNNER_APK, abi, base) ?? missing(`runner libs for ${abi}`, libDir, needed)
+    },
   }
+}
+
+/**
+ * The error for an app that imports `needed`, a module only a project
+ * runtime has, in a project that declares no runtime: no binary anywhere
+ * carries it.
+ */
+export function failNoRuntimeFor(needed: string): never {
+  fail(noRuntimeDeclared(needed))
 }
 
 // The derived APK at <libDir>/<out>: the base with every .so in libDir

@@ -49,6 +49,8 @@ export type ServerConfig = {
   stats: boolean
   /** Accept ticket-paired clients through the p2p tunnel. */
   tunnel: boolean
-  /** The local client to spawn once the port is bound, or null. */
-  client: { cmd: string; args: string[] } | null
+  /** The arguments of the local client to spawn once the first bundle is
+   * known (its binary is resolved then: the project's own when the bundle
+   * needs it, binaries.ts), or null for no local client. */
+  client: { args: string[] } | null
 }

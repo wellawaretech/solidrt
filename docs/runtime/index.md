@@ -133,12 +133,18 @@ lattice = { git = "https://github.com/wellawaretech/solidrt", tag = "v<version>"
 ```
 
 `<version>` is the SolidRT release the app's `@solidrt` packages are at,
-which `sol --version` prints, so the runtime moves with the app. A module
-written with rquickjs's `class` or `methods` macros also names `rquickjs`
-here, with the `macro` feature, at the exact version lattice pins (the
-`rquickjs` line in the root `Cargo.toml` at that tag): the macros resolve
-their crate by name. Without them, `lattice::flux::rquickjs` is all a
-module needs.
+which `sol --version` prints, so the runtime moves with the app. It is the
+only dependency: rquickjs comes as `lattice::flux::rquickjs`, its macros
+included, and tokio as `lattice::flux::tokio`, so the runtime pins neither.
+The macros look their crate up by the name in your manifest, so with no
+`rquickjs` line each one is told the alias instead: `use lattice::flux::rquickjs;`
+once per module body, then `#[rquickjs::class(crate = "rquickjs")]`,
+`#[rquickjs::methods(crate = "rquickjs")]`, `#[rquickjs::function(crate =
+"rquickjs")]`, `#[rquickjs::module(crate = "rquickjs")]`, and `#[qjs(crate =
+"rquickjs")]` under a `derive(Trace, JsLifetime, FromJs, IntoJs)`. A
+`#[rquickjs::module]` body is a scope of its own: it repeats the `use`, and a
+function inside it carries the option too, since the module does not pass it
+on. The module it makes is `js_<name>`, a `ModuleDef` for `Modules::add`.
 
 ```rust
 // runtime/src/lib.rs
@@ -207,6 +213,56 @@ hands it the newest upright RGBA8 frame with SDL's capture timestamp,
 newest wins when the module is slower than the camera, and the wait ends
 with `Closed` when the camera closes or the engine reloads.
 
+Bindings use flux's marshalling toolkit, exported through `lattice::flux`
+the way flux's own plugins use it. `bytes_of(&ctx, &array, "name")` is a
+JS buffer's bytes in place (`elements_of` the typed view, `elements_mut_of`
+one to write into), valid during the call and no longer: once JS runs again
+the buffer may change, so bytes that outlive the call are copied.
+`with_in_flight(&ctx, "name", future)` is the async binding: it returns the
+promise for a future of `Result<T, String>`, holds the engine as work in
+flight until it settles (a reload and the test host's settle wait for it),
+and rejects an `Err` with its message; `with_standing` is the same for a
+wait with no bound, a socket read, which nothing waits for. `Step`,
+`iter_result` and `attach_async_iterator` make an object a Rust-backed async
+iterable (`for await`), `string_opt` reads a field of an options object,
+`OptArg<T>` is an optional argument that takes `undefined` for absent. With
+`use lattice::flux;`, the two shapes a binding takes
+(`lattice/examples/custom_runtime.rs`, where they run):
+
+```rust
+/// checksum(bytes: Uint8Array): number
+fn checksum<'js>(ctx: Ctx<'js>, bytes: TypedArray<'js, u8>) -> rquickjs::Result<f64> {
+  let data = flux::bytes_of(&ctx, &bytes, "checksum")?;
+  Ok(data.iter().map(|&b| b as u64).sum::<u64>() as f64)
+}
+
+/// digest(bytes: Uint8Array): Promise<number>, the sum on a thread of its own
+fn digest<'js>(ctx: Ctx<'js>, bytes: TypedArray<'js, u8>) -> rquickjs::Result<impl IntoJs<'js>> {
+  let data = flux::bytes_of(&ctx, &bytes, "digest")?.to_vec();
+  Ok(flux::with_in_flight(&ctx, "digest", async move {
+    let (send, recv) = flux::tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+      let _ = send.send(data.iter().map(|&b| b as u64).sum::<u64>());
+    });
+    recv.await.map(|sum| sum as f64).map_err(|_| "digest: the worker ended early".to_string())
+  }))
+}
+```
+
+exported with `Function::new(ctx.clone(), checksum)`. Both are named
+functions on purpose: in rquickjs a closure cannot take both `Ctx<'_>` and a
+value parameter, the lifetimes do not unify, so a binding with arguments is
+a named generic function, and one with several arguments takes one options
+object (a `FromJs` struct) rather than a parameter list.
+
+A module that brings a native library decides its threads with the library
+in mind. On Android, a library built with `-fopenmp -static-openmp` (most
+prebuilt NDK inference libraries) carries a libomp of its own that shuts
+down when the last thread that ran OpenMP exits, and aborts when a new
+thread starts it again (in `__kmp_create_affinity_none_places`). Run such a
+library on one thread that lives as long as the process, never a thread per
+job or per object.
+
 Build the two binaries one cargo run each, `--features go` for the player
 and none for the runtime (features unify within one build), and stage them
 in a directory laid out like a checkout's `dist/`: `<triple>/solidrt` and
@@ -223,8 +279,11 @@ package.json:
 and `sol run`, `sol test`, `sol pack` and `sol android` take the app runtime
 from it: the binaries directly, the Android APKs derived from the stock ones
 with your `.so` files swapped in, so the Android shell is never yours to
-carry. A target you did not build falls back to the stock binary, with a
-notice.
+carry. A target you did not build falls back to the stock binary with a
+notice, as long as the app imports none of your modules; once its bundle
+imports a `runtime:*` module, a missing binary for the target is an error
+naming the path sol looked for, from `sol run`, `sol test`, `sol pack` and
+`sol android` alike, since the stock binary would fail at that import.
 
 A dependency does not carry its workspace's settings, so the project repeats
 four of the checkout's: the toolchain pin (`rust-toolchain.toml`, the channel
@@ -245,7 +304,8 @@ included by `tsconfig.json`).
 `runtime/` in the checkout is the stock program: this crate with no modules,
 its screens bundled into `runtime/resources/` by `make client`.
 `lattice/examples/custom_runtime.rs` is the shape at its smallest: one
-module with a tick, run as any custom runtime is.
+module with a tick, a bytes binding and an async one, run as any custom
+runtime is.
 
 ## Capabilities, not platforms
 

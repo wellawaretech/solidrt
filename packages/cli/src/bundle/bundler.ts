@@ -203,6 +203,59 @@ export type BundleOptions = {
 // Modules::add). One fixed rule, the same in the test bundle and in the
 // bytecode compiler's resolver (flux); never a per-app list.
 export const RUNTIME_MODULES = ["flux:*", "sol:*", "runtime:*"]
+// The same list as the resolver sees an import.
+const RUNTIME_MODULE = /^(flux|sol|runtime):/
+// The scheme of the modules only a project's own runtime has (lib/runtime.ts).
+export const PROJECT_MODULE_SCHEME = "runtime:"
+
+/**
+ * Bun build plugin that records in `seen` every runtime module the build
+ * imports, static or dynamic, as the resolver meets it. This is where a
+ * build learns which ones it needs (the layer a test runs on,
+ * `BundleOutput.projectModules`): Bun's metafile lists no externals. The
+ * `external` option stays beside it, in every build that uses the plugin:
+ * externals marked by a plugin alone make Bun (1.3) emit a `__require` shim
+ * at the top of the bundle, the option alone gives clean output.
+ */
+export function runtimeModulesPlugin(seen: Set<string>): BunPlugin {
+  return {
+    name: "runtime modules",
+    setup(build) {
+      build.onResolve({ filter: RUNTIME_MODULE }, (args) => {
+        seen.add(args.path)
+        return { path: args.path, external: true }
+      })
+    },
+  }
+}
+
+/** The `runtime:*` names among `seen`, sorted: `BundleOutput.projectModules`. */
+export function projectModulesOf(seen: Set<string>): string[] {
+  return [...seen].filter((name) => name.startsWith(PROJECT_MODULE_SCHEME)).sort()
+}
+
+/**
+ * The project modules a prebuilt bundle (a `.sol.js`) imports, found the way
+ * a build finds them: Bun resolves the file's imports with the plugin above
+ * and the output is dropped. Null when the file does not parse, with the
+ * errors printed.
+ */
+export async function prebuiltProjectModules(file: string): Promise<string[] | null> {
+  let seen = new Set<string>()
+  let result = await Bun.build({
+    entrypoints: [file],
+    target: "browser",
+    format: "esm",
+    external: RUNTIME_MODULES,
+    plugins: [runtimeModulesPlugin(seen)],
+    throw: false,
+  })
+  if (!result.success) {
+    for (let msg of result.logs) console.error(msg)
+    return null
+  }
+  return projectModulesOf(seen)
+}
 
 // The `sol bundle --json` stdout contract doubles as the in-process result.
 export type BundleResult = BundleOutput
@@ -243,6 +296,7 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
   // loaded or inlined, plus every module in the build's sourcemap, which is
   // where dependency code (node_modules, workspace packages) shows up.
   let inputs = new Set<string>()
+  let runtimeModules = new Set<string>()
   let build = async (entry: string, babelMaps?: Map<string, object>, isolateEntry?: string) => {
     let result = null
     try {
@@ -255,7 +309,7 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
         define,
         loader: { ".svg": "text" },
         sourcemap: babelMaps ? "external" : "none",
-        plugins: [solidPlugin(inputs, babelMaps, isolateEntry)],
+        plugins: [solidPlugin(inputs, babelMaps, isolateEntry), runtimeModulesPlugin(runtimeModules)],
       })
     } catch (e) {
       console.error("[cli] compile error:\n", e)
@@ -302,6 +356,7 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
     manifest: buildManifest(code, opts.entry, isolateManifestAssets(isolates), opts.project),
     isolates,
     inputs: [...inputs].sort(),
+    projectModules: projectModulesOf(runtimeModules),
   }
 }
 

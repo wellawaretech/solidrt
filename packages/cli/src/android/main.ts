@@ -5,6 +5,9 @@ import { resolveApk, ANDROID_PKG_MAP } from "../lib/artifacts"
 import { ensureTargets } from "../lib/android-targets"
 import { values, port, source } from "../lib/args"
 import { devDir } from "../lib/dev-dir"
+import { fail } from "../lib/fail"
+import { projectEntry } from "../lib/mode"
+import { projectRuntime } from "../lib/runtime"
 import { confirm, multiselect } from "../lib/prompt"
 import { runQuiet } from "../lib/util"
 import { apkApplicationId, apkVersionName } from "../pack/android/apk"
@@ -334,19 +337,37 @@ async function resolveTargets(adb: string): Promise<Device[]> {
 
 // The Player for an `abi` device: the application id its Player APK (the
 // project's package, or a checkout's staged build) names in its manifest,
-// else the published Player.
-function playerId(abi: string): string {
-  let apk = resolveApk(abi)
+// else the published Player. `needed` as in `prepare`.
+function playerId(abi: string, needed: string | null = null): string {
+  let apk = resolveApk(abi, needed)
   return apk ? apkAppId(apk) : PUBLISHED_PLAYER
+}
+
+// A module of the project's own runtime the app imports, or null: the
+// device's Player must then be the project's, so an ABI the project did not
+// build is an error (lib/runtime.ts) rather than the stock Player and a
+// failed first import. Known from the app's bundle, built in memory here,
+// and only asked when the project declares a runtime: the stock Player has
+// nothing to check, and the bundler is loaded on demand so that run stays
+// light.
+async function neededModule(): Promise<string | null> {
+  if (!projectRuntime()) return null
+  let entry = projectEntry(process.cwd())
+  if (!existsSync(entry)) return null
+  let { bundleWith } = await import("../bundle/bundler")
+  let result = await bundleWith({ entry, dev: true, minify: false, project: process.cwd() })
+  if (!result) fail("See the compile error above")
+  return result.projectModules[0] ?? null
 }
 
 // Put the Player on `target` when it needs one: none installed yet, or
 // --install. An installed Player whose version is not the one the project's
 // APK carries (its package's, or its own runtime's, which a rebuild
 // re-versions) is updated after asking. Returns the Player's id, the one
-// to launch.
-async function prepare(adb: string, { target, abi }: Device): Promise<string> {
-  let apk = resolveApk(abi)
+// to launch. `needed` is a module of the project's runtime the app imports,
+// when it does (neededModule).
+async function prepare(adb: string, { target, abi }: Device, needed: string | null): Promise<string> {
+  let apk = resolveApk(abi, needed)
   if (!apk) {
     console.error(`Could not find a Player APK for ${target} (ABI "${abi}").`)
     process.exit(1)
@@ -473,13 +494,14 @@ export async function main() {
   }
   let server = await resolveServer()
   let adb = await requireAdb()
+  let needed = await neededModule()
 
   // Only a device that gets the Player installed needs a target for its ABI.
   let devices = await resolveTargets(adb)
-  let installing = devices.filter((d) => values.install || installedVersion(adb, d.target, playerId(d.abi)) === null)
+  let installing = devices.filter((d) => values.install || installedVersion(adb, d.target, playerId(d.abi, needed)) === null)
   if (installing.length) await ensureTargets(installing.map((d) => d.abi), process.cwd())
   let players = new Map<string, string>()
-  for (let device of devices) players.set(device.target, await prepare(adb, device))
+  for (let device of devices) players.set(device.target, await prepare(adb, device, needed))
 
   let before = new Set(server ? (await connectedClients(server)).map((c) => c.id) : [])
   for (let device of devices) await launch(adb, device, players.get(device.target)!, server)

@@ -2,7 +2,7 @@ import { createRequire } from "node:module"
 import { existsSync } from "node:fs"
 import { resolve, dirname, join } from "node:path"
 import process from "node:process"
-import { projectRuntime } from "./runtime"
+import { failNoRuntimeFor, projectRuntime } from "./runtime"
 
 let require = createRequire(import.meta.url)
 
@@ -24,14 +24,22 @@ let PKG_MAP: Record<string, string> = {
 // tooling binaries (flux, fluxc, fluxrt) are always sol's own.
 const RUNTIME_BINARIES = new Set(["solidrt", "solidrt-go"])
 
-export function resolveBinary(name: string) {
+/**
+ * The binary `name`, or null. `needed` is a `runtime:*` module the app
+ * imports, when the caller has the bundle: only the project's own runtime
+ * has it, so a project binary that is missing, or a project with no
+ * runtime, fails here with the reason (lib/runtime.ts).
+ */
+export function resolveBinary(name: string, needed: string | null = null) {
   let key = `${process.platform}-${process.arch}`
   let ext = process.platform === "win32" ? ".exe" : ""
   let triple = TRIPLE_MAP[key]
 
   // 1. The project's own runtime (lib/runtime.ts)
   if (RUNTIME_BINARIES.has(name) && triple) {
-    let own = projectRuntime()?.binary(name, triple, ext)
+    let runtime = projectRuntime()
+    if (!runtime && needed) failNoRuntimeFor(needed)
+    let own = runtime?.binary(name, triple, ext, needed)
     if (own) return own
   }
 
@@ -127,9 +135,11 @@ function androidPackageDir(abi: string): string | null {
 // @solidrt/android-<abi> platform package next to solidrt-go.apk. Runners
 // are per-ABI by decision - a shipped app carries one ABI, never a fat APK
 // (okf/backlog/standalone-android-apk.md).
-export function resolveRunnerApk(abi: string = DEFAULT_ANDROID_ABI): string | null {
+export function resolveRunnerApk(abi: string = DEFAULT_ANDROID_ABI, needed: string | null = null): string | null {
   let stock = stockRunnerApk(abi)
-  return projectRuntime()?.runnerApk(abi, stock) ?? stock
+  let runtime = projectRuntime()
+  if (!runtime && needed) failNoRuntimeFor(needed)
+  return runtime?.runnerApk(abi, stock, needed) ?? stock
 }
 
 function stockRunnerApk(abi: string): string | null {
@@ -148,9 +158,11 @@ function stockRunnerApk(abi: string): string | null {
 
 // The Player APK `sol android` installs: the project's own (lib/runtime.ts),
 // else the stock one.
-export function resolveApk(abi: string = DEFAULT_ANDROID_ABI) {
+export function resolveApk(abi: string = DEFAULT_ANDROID_ABI, needed: string | null = null) {
   let stock = stockApk(abi)
-  return projectRuntime()?.apk(abi, stock) ?? stock
+  let runtime = projectRuntime()
+  if (!runtime && needed) failNoRuntimeFor(needed)
+  return runtime?.apk(abi, stock, needed) ?? stock
 }
 
 function stockApk(abi: string): string | null {

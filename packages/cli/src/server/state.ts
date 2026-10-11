@@ -36,6 +36,20 @@ export let state = {
    * maps clears them so frames are never remapped against a stale map.
    */
   currentMaps: null as Record<string, string> | null,
+  /**
+   * The `runtime:*` modules the running bundle imports
+   * (BundleOutput.projectModules), set by every rebuild: what only the
+   * project's own runtime has, so the local client must be the project's.
+   */
+  projectModules: [] as string[],
+  /**
+   * The project's path the local client was expected at, when the stock
+   * client runs in its place (the project did not build one for this host,
+   * binaries.ts); null when the client is the project's or there is none. A
+   * reload whose bundle imports a module of the project's runtime then says
+   * so (rebuild.ts), since the stock client cannot run it.
+   */
+  stockClientFor: null as string | null,
   /** The address clients reach this server on (host:port), set once bound. */
   serverUrl: "",
   /** The p2p tunnel's ticket, when the tunnel is on (--tunnel); else null. */

@@ -62,9 +62,11 @@ function appSections(folder: PackFolder, bytecode: Buffer): Section[] {
 // The single-file solidrt executable: the runner image plus the app sections.
 // GL libraries ride along as kind-3 sections (runtime freight, deliberately
 // outside the manifest); the runner extracts those to its cache and preloads
-// them before window setup.
-export function packSolid(folder: PackFolder, bytecode: Buffer): Buffer {
-  let runnerPath = requireBinary("solidrt")
+// them before window setup. `needed` is a module of the project's runtime
+// the app imports, if any (lib/runtime.ts): the runner is then the project's
+// or an error.
+export function packSolid(folder: PackFolder, bytecode: Buffer, needed: string | null = null): Buffer {
+  let runnerPath = requireBinary("solidrt", needed)
   let sections: Section[] = [
     ...appSections(folder, bytecode),
     ...runnerGlLibs(runnerPath).map((lib) => ({ kind: SECTION_GL_LIB, bytes: readFileSync(lib.path), name: lib.name })),

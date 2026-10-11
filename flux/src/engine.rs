@@ -377,7 +377,7 @@ impl FluxEngine {
         match loaded {
           Ok(module) => match module.eval().map(|(_, promise)| promise).catch(&ctx) {
             Ok(promise) => report_rejection(&ctx, promise),
-            Err(e) => report_error(&ctx, &format!("module error: {e:?}")),
+            Err(e) => report_error(&ctx, &format!("module error: {e}")),
           },
           Err(e) => report_error(&ctx, &format!("bytecode load error: {e}")),
         }
@@ -394,7 +394,7 @@ impl FluxEngine {
         use rquickjs::{CatchResultExt, Module};
         match Module::evaluate(ctx.clone(), ENTRY_MODULE, code).catch(&ctx) {
           Ok(promise) => report_rejection(&ctx, promise),
-          Err(e) => report_error(&ctx, &format!("module error: {e:?}")),
+          Err(e) => report_error(&ctx, &format!("module error: {e}")),
         }
       })
       .await;
@@ -433,14 +433,14 @@ impl FluxEngine {
           }
           #[cfg(feature = "compile")]
           ModuleCode::Source(source) => {
-            Module::declare(ctx.clone(), name, source).catch(&ctx).map_err(|e| format!("module error: {e:?}"))
+            Module::declare(ctx.clone(), name, source).catch(&ctx).map_err(|e| format!("module error: {e}"))
           }
           #[cfg(not(feature = "compile"))]
           ModuleCode::Source(_) => {
             Err(format!("this build cannot evaluate source module '{name}' (compile feature off)"))
           }
         };
-        let evaluated = declared.and_then(|m| m.eval().catch(&ctx).map_err(|e| format!("module error: {e:?}")));
+        let evaluated = declared.and_then(|m| m.eval().catch(&ctx).map_err(|e| format!("module error: {e}")));
         let (module, promise) = match evaluated {
           Ok(pair) => pair,
           Err(msg) => {

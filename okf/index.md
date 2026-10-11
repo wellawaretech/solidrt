@@ -341,15 +341,14 @@ Shaped, not started.
   The router side of the cursor prop is covered in alloy, but the flux decode
   (21 accepted names, the handle form, the two rejection messages) has no test
   in the existing apply_jsx harness.
-- **[Make a custom runtime cheap to set up, write and ship](backlog/custom-runtime-authoring.md)** [2026-10-11]
+- **[Make a custom runtime cheap to set up and ship](backlog/custom-runtime-authoring.md)** [2026-10-11]
   Every custom runtime repeats the same boilerplate (manifest, entries,
   toolchain, page flags, Android environment, staging) that sol's own hint
-  assumes but nothing writes, every native module rebuilds flux's unexported
-  promise-with-hold helpers, a missing binary falls back to the stock player
-  with one quiet line, sol test sweeps up a vendored checkout's suites, and
-  the Native code docs leave out the staging folder names, C++ and OpenMP on
-  Android, build cost and stripping; a runtime scaffold, an exported module
-  toolkit and the missing docs.
+  assumes but nothing writes, the stock program's four build goals live in
+  lattice's Makefiles where a custom runtime cannot share them, and the Native
+  code docs leave out the staging folder names, C++ on Android, build cost and
+  stripping; a runtime scaffold, one Makefile for the stock program and a
+  custom one, and the missing docs.
 - **[Deep links](backlog/deep-links.md)** [2026-07-26]
   "Opening the app at a link from outside: the app half (onLink, the launch
   link, the dev-side link injection) and the OS registration half (the scheme

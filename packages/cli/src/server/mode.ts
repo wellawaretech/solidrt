@@ -19,10 +19,11 @@ import { join } from "flux:path"
 import { fail } from "./args"
 
 // `runtime`: the project's own runtime directory (`"solidrt": { "runtime" }`,
-// see lib/runtime.ts), absolute; the client spawns from it when it holds one
-// for this host.
+// see lib/runtime.ts), absolute as `dir` and as package.json names it as
+// `declared`; the client spawns from it when it holds one for this host.
+export type ProjectRuntime = { dir: string; declared: string }
 export type Mode =
-  | { mode: "project"; key: string; projectDir: string; entry: string; runtime: string | null }
+  | { mode: "project"; key: string; projectDir: string; entry: string; runtime: ProjectRuntime | null }
   | { mode: "file"; key: string; projectDir: null; entry: string; runtime: null }
 
 const DEFAULT_ENTRY = "src/index.tsx"
@@ -83,8 +84,8 @@ async function declaredConfig(dir: string): Promise<{ entry?: string; runtime?: 
   return { entry: config.entry ?? undefined, runtime: config.runtime ?? undefined }
 }
 
-function runtimeDir(cwd: string, declared: { runtime?: string }): string | null {
-  return declared.runtime ? join(cwd, declared.runtime) : null
+function runtimeDir(cwd: string, declared: { runtime?: string }): ProjectRuntime | null {
+  return declared.runtime ? { dir: join(cwd, declared.runtime), declared: declared.runtime } : null
 }
 
 /** The directory the file routes serve: the entry's directory. */

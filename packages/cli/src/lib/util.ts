@@ -17,8 +17,9 @@ let BUILD_HINTS: Record<string, string> = {
   fluxrt: "make -C flux fluxrt",
 }
 
-export function requireBinary(name: string) {
-  let path = resolveBinary(name)
+/** `resolveBinary`, or a failed command; `needed` as there. */
+export function requireBinary(name: string, needed: string | null = null) {
+  let path = resolveBinary(name, needed)
   if (path) return path
   let hint = BUILD_HINTS[name]
   console.error(`Could not find ${name} binary.`)

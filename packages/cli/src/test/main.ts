@@ -1,12 +1,13 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { bundleWith, RUNTIME_MODULES, writeIsolates } from "../bundle/bundler"
+import { bundleWith, PROJECT_MODULE_SCHEME, RUNTIME_MODULES, runtimeModulesPlugin, writeIsolates } from "../bundle/bundler"
 import { appArgs, source, values } from "../lib/args"
 import { collectAssets } from "../lib/project"
 import { fail } from "../lib/fail"
 import { projectEntry } from "../lib/mode"
 import { requireBinary } from "../lib/util"
 import { remapPositions } from "../server/remap"
+import { discover, TEST_FILE, TESTS_DIR, type Tree } from "./discover"
 
 // sol test: run the test files of a project on the runtime the code ships
 // on (okf/done/test-harness.md). Each `tests/*.test.ts` is bundled on its
@@ -18,15 +19,6 @@ import { remapPositions } from "../server/remap"
 // dev client (`solidrt-go --test`, headless and stepped by frames) for a
 // file that imports the app runtime. This command is the only reporter.
 
-// Where tests live, and what a test file is called: one tests/ folder per
-// package or project, never beside the sources. A fixture project under a
-// tests/ folder (tests/fixtures/<app>/, with a tests/ folder of its own) is
-// a project like any other, so the walk goes on below a tests/ folder.
-const TESTS_DIR = "tests"
-const TEST_FILE = /\.test\.tsx?$/
-// Folders never searched for a tests/ folder: dependencies and build
-// output. Dot folders are skipped as well.
-const SKIPPED_DIRS = ["node_modules", "dist", "target"]
 // The module name the test host evaluates the file under, which is what
 // its stack frames cite and so what the bundle's sourcemap is keyed by.
 const ENTRY_MODULE = "main"
@@ -87,30 +79,49 @@ type FileOutcome = {
 
 // -- Discovery --
 
-function testFilesIn(dir: string): string[] {
-  return readdirSync(dir)
-    .filter((name) => TEST_FILE.test(name))
-    .sort()
-    .map((name) => join(dir, name))
+// The filesystem behind discover.ts: the real reads, and a project's
+// workspace members by its package.json `workspaces` globs (the array, or
+// the `{ packages }` form; a `!` pattern excludes), matched on the member's
+// path relative to the project.
+let workspaceGlobs = new Map<string, { include: Bun.Glob[]; exclude: Bun.Glob[] }>()
+function workspacesOf(root: string): { include: Bun.Glob[]; exclude: Bun.Glob[] } {
+  let known = workspaceGlobs.get(root)
+  if (known) return known
+  let pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
+  let declared: unknown = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages
+  let patterns = Array.isArray(declared) ? declared.filter((p): p is string => typeof p === "string") : []
+  let globs = {
+    include: patterns.filter((p) => !p.startsWith("!")).map((p) => new Bun.Glob(p)),
+    exclude: patterns.filter((p) => p.startsWith("!")).map((p) => new Bun.Glob(p.slice(1))),
+  }
+  workspaceGlobs.set(root, globs)
+  return globs
 }
 
-function discover(dir: string): string[] {
-  let files = basename(dir) === TESTS_DIR ? testFilesIn(dir) : []
-  for (let entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-    if (!entry.isDirectory() || entry.name.startsWith(".") || SKIPPED_DIRS.includes(entry.name)) continue
-    files.push(...discover(join(dir, entry.name)))
-  }
-  return files
+const tree: Tree = {
+  dirs: (dir) =>
+    readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort(),
+  isProject: (dir) => existsSync(join(dir, "package.json")),
+  isWorkspaceMember(root, dir) {
+    let rel = relative(root, dir).split("\\").join("/")
+    let { include, exclude } = workspacesOf(root)
+    return include.some((glob) => glob.match(rel)) && !exclude.some((glob) => glob.match(rel))
+  },
+  testFiles: (dir) =>
+    readdirSync(dir)
+      .filter((name) => TEST_FILE.test(name))
+      .sort()
+      .map((name) => join(dir, name)),
 }
 
 // -- One file --
 
-type Bundled = { code: string; map: string | null; app: boolean }
-
-// The runtime modules a bundle imports: what the bundler left external.
-function runtimeImports(code: string): string[] {
-  return [...code.matchAll(/^import\s(?:[^"']*?\sfrom\s*)?["']((?:flux|sol|runtime):[^"']+)["']/gm)].map((match) => match[1]!)
-}
+// `projectModules`: the `runtime:*` modules the file imports, which only
+// the project's own runtime has (BundleOutput.projectModules).
+type Bundled = { code: string; map: string | null; app: boolean; projectModules: string[] }
 
 // A flux program's bundle: plain TypeScript, the runtime modules external.
 // JSX needs the Solid transform, which this bundle does not run (Bun's own
@@ -121,6 +132,7 @@ function runtimeImports(code: string): string[] {
 // @solidrt/test or @solidrt/core.
 async function bundleFlux(file: string): Promise<Bundled | string> {
   let jsx = false
+  let imported = new Set<string>()
   let result
   try {
     result = await Bun.build({
@@ -131,6 +143,7 @@ async function bundleFlux(file: string): Promise<Bundled | string> {
       sourcemap: "external",
       throw: false,
       plugins: [
+        runtimeModulesPlugin(imported),
         {
           name: "jsx settles the layer",
           setup(build) {
@@ -145,12 +158,17 @@ async function bundleFlux(file: string): Promise<Bundled | string> {
   } catch (e) {
     return String(e)
   }
-  if (jsx) return { code: "", map: null, app: true }
+  if (jsx) return { code: "", map: null, app: true, projectModules: [] }
   if (!result.success) return result.logs.map(String).join("\n")
   let entry = result.outputs.find((o) => o.kind === "entry-point")
   if (!entry) return "The bundler produced no output"
-  let code = await entry.text()
-  return { code, map: entry.sourcemap ? await entry.sourcemap.text() : null, app: runtimeImports(code).some((name) => APP_MODULE.test(name)) }
+  let names = [...imported]
+  return {
+    code: await entry.text(),
+    map: entry.sourcemap ? await entry.sourcemap.text() : null,
+    app: names.some((name) => APP_MODULE.test(name)),
+    projectModules: names.filter((name) => name.startsWith(PROJECT_MODULE_SCHEME)).sort(),
+  }
 }
 
 // An app's bundle (JSX through the Solid transform), staged like a render:
@@ -160,8 +178,10 @@ async function bundleFlux(file: string): Promise<Bundled | string> {
 // directory of its entry) and named as `sol run` names them, so
 // `isolate("mesher")` works from the app and from the test. A package with
 // no app entry (a library) has no source root: the test file's own folder
-// is searched, as for any entry.
-async function stageApp(file: string): Promise<{ path: string; stage: string; map: string | null } | string> {
+// is searched, as for any entry. `projectModules` as in Bundled.
+async function stageApp(
+  file: string,
+): Promise<{ path: string; stage: string; map: string | null; projectModules: string[] } | string> {
   let dir = workingDir(file)
   let project = existsSync(join(dir, "package.json")) ? dir : null
   let entry = project === null ? null : projectEntry(project)
@@ -179,7 +199,7 @@ async function stageApp(file: string): Promise<{ path: string; stage: string; ma
     mkdirSync(dirname(dest), { recursive: true })
     cpSync(join(project!, asset.path), dest)
   }
-  return { path, stage, map: result.map }
+  return { path, stage, map: result.map, projectModules: result.projectModules }
 }
 
 // The directory a test file runs in: the package or project that holds its
@@ -212,7 +232,7 @@ async function runFile(file: string, filter: string | undefined, seed: number | 
   // JSX needs the Solid transform, so a .tsx file is an app test as it
   // stands; a .ts file is one when its bundle imports the app runtime or
   // reaches JSX.
-  let bundled: Bundled | string = file.endsWith(".tsx") ? { code: "", map: null, app: true } : await bundleFlux(file)
+  let bundled: Bundled | string = file.endsWith(".tsx") ? { code: "", map: null, app: true, projectModules: [] } : await bundleFlux(file)
   if (typeof bundled === "string") return unbundled(bundled)
   if (only !== undefined && (only === "app") !== bundled.app) {
     outcome.skipped = true
@@ -244,7 +264,8 @@ async function runFile(file: string, filter: string | undefined, seed: number | 
       staged.path,
       ...appArgs,
     ]
-    proc = Bun.spawn([await testHost("solidrt-go"), ...client], {
+    // The project's own dev client when the file imports one of its modules.
+    proc = Bun.spawn([await testHost("solidrt-go", staged.projectModules[0] ?? null), ...client], {
       cwd: workingDir(file),
       env: { ...process.env, TZ: "UTC" },
       stdout: "pipe",
@@ -391,27 +412,29 @@ function report(name: string, outcome: FileOutcome, durations: boolean) {
   if (outcome.error || outcome.tests.some((t) => !t.ok || t.output.length > 0) || outcome.output.length > 0) console.log("")
 }
 
-// The host binaries, resolved and checked on first use: a `flux` built
-// without the `test` feature has no flux:test and takes `--test` for a
-// script path, and a client built without it refuses the flag.
-let hosts = new Map<string, string>()
+// The host binaries. `flux` is checked on first use: one built without the
+// `test` feature has no flux:test and takes `--test` for a script path (a
+// client built without it refuses the flag). The client is resolved per
+// file, since the file decides whether the project's own is required
+// (`needed`, lib/runtime.ts): a file that imports a module of the project's
+// runtime fails here when the project did not build the client for this
+// host, instead of at its first import on the stock one.
+let checkedFlux: string | null = null
 
-async function testHost(name: "flux" | "solidrt-go"): Promise<string> {
-  let known = hosts.get(name)
-  if (known) return known
+async function testHost(name: "flux" | "solidrt-go", needed: string | null = null): Promise<string> {
+  if (name === "solidrt-go") return requireBinary(name, needed)
+  if (checkedFlux) return checkedFlux
   let path = requireBinary(name)
-  if (name === "flux") {
-    let proc = Bun.spawn([path, "-"], {
-      stdin: new Blob([`console.log(Flux.capabilities.includes("test"))`]),
-      stdout: "pipe",
-      stderr: "inherit",
-    })
-    let [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
-    if (out.trim() !== "true") {
-      fail(`The flux binary at ${path} was built without flux:test. Build it with the test feature: make -C flux flux, in a SolidRT checkout.`)
-    }
+  let proc = Bun.spawn([path, "-"], {
+    stdin: new Blob([`console.log(Flux.capabilities.includes("test"))`]),
+    stdout: "pipe",
+    stderr: "inherit",
+  })
+  let [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+  if (out.trim() !== "true") {
+    fail(`The flux binary at ${path} was built without flux:test. Build it with the test feature: make -C flux flux, in a SolidRT checkout.`)
   }
-  hosts.set(name, path)
+  checkedFlux = path
   return path
 }
 
@@ -438,9 +461,12 @@ function seedOption(): number | undefined {
 export async function main() {
   let target = resolve(source ?? ".")
   if (!existsSync(target)) fail(`No such file or folder: ${source} (resolved from ${process.cwd()})`)
-  let files = statSync(target).isDirectory() ? discover(target) : [target]
+  let { files, skipped } = statSync(target).isDirectory() ? discover(target, tree) : { files: [target], skipped: [] }
   if (files.length === 0) {
-    fail(`No test files found under ${target} (looked for ${TESTS_DIR}/*.test.ts and ${TESTS_DIR}/*.test.tsx)`)
+    // Other projects are left to their own `sol test`; a run that found
+    // nothing names them, since that is the likely answer.
+    let passedOver = skipped.length === 0 ? "" : ` Projects of their own were not entered, run sol test in one: ${skipped.map((dir) => relative(process.cwd(), dir)).join(", ")}.`
+    fail(`No test files found under ${target} (looked for ${TESTS_DIR}/*.test.ts and ${TESTS_DIR}/*.test.tsx).${passedOver}`)
   }
 
   let filter = values.filter

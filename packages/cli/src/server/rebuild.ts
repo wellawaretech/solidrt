@@ -101,6 +101,15 @@ export async function rebuildAndBroadcast(): Promise<string | null> {
     if (isolate.map) maps[isolate.id] = isolate.map
   }
   state.currentMaps = Object.keys(maps).length ? maps : null
+  state.projectModules = bundle.projectModules ?? []
+  // The local client was resolved against an earlier bundle (main.ts): a
+  // bundle that now imports a module of the project's runtime cannot run
+  // on the stock one, which is what the first import will report.
+  if (state.stockClientFor && state.projectModules.length > 0) {
+    console.error(
+      `[cli] The app imports ${state.projectModules[0]}, which only the project's runtime has, and the local client is the stock one (no solidrt-go at ${state.stockClientFor}). Build the runtime and restart the client with sol client.`,
+    )
+  }
   latchAndSend(JSON.stringify(buildReload(bundle.code ?? "", bundle.manifest)))
   return null
 }

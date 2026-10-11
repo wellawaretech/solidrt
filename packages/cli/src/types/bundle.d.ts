@@ -21,4 +21,11 @@ export type BundleOutput = {
    * watches for reload-on-save.
    */
   inputs: string[]
+  /**
+   * The `runtime:*` modules the bundle imports (the app and its isolates,
+   * static and dynamic imports alike), sorted: the modules only the
+   * project's own runtime has, so a run on a binary the project did not
+   * build is an error rather than a failed first import (lib/runtime.ts).
+   */
+  projectModules: string[]
 }

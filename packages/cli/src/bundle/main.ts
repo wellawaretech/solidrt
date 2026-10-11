@@ -6,6 +6,7 @@ import {
   compileToBytecode,
   findFluxIsolates,
   isolateManifestAssets,
+  prebuiltProjectModules,
   readPrebuiltIsolates,
   walkFiles,
   writeIsolates,
@@ -126,13 +127,18 @@ export async function main() {
     if (mode.entry.endsWith(".sol.js")) {
       let code = await Bun.file(mode.entry).text()
       let isolates = readPrebuiltIsolates(mode.entry).map((i) => ({ ...i, map: null }))
-      result = {
-        code,
-        map: null,
-        manifest: buildManifest(code, mode.entry, isolateManifestAssets(isolates), mode.projectDir),
-        isolates,
-        inputs: [mode.entry],
-      }
+      let projectModules = await prebuiltProjectModules(mode.entry)
+      result =
+        projectModules === null
+          ? null
+          : {
+              code,
+              map: null,
+              manifest: buildManifest(code, mode.entry, isolateManifestAssets(isolates), mode.projectDir),
+              isolates,
+              inputs: [mode.entry],
+              projectModules,
+            }
     } else {
       result = await bundleWith({
         entry: mode.entry,
