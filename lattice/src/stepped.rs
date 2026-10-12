@@ -20,7 +20,9 @@ use crate::runtime::EventSender;
 
 /// The frame rate a stepped host runs at unless told another: what apps run
 /// at. The frame is the time resolution of a test, so one that asserts a
-/// threshold to the millisecond sets 1000.
+/// threshold to the millisecond sets 1000. The test host's: a render names
+/// its own rate.
+#[cfg(feature = "test")]
 pub const DEFAULT_FPS: u32 = 60;
 /// Where the calendar starts in a stepped engine: 2000-01-01T00:00:00Z. Any
 /// fixed instant does; what matters is that it is the same on every run.

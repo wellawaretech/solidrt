@@ -62,6 +62,13 @@ declare module "flux:font" {
      * stems to whole pixels as well, which a grid of cells drawn at whole
      * pixels (a terminal) wants; false (default) keeps the outline as the
      * font draws it. An msdf atlas is never hinted.
+     *
+     * "full" rounds every stem on its own, so it suits outline fonts, not
+     * pixel fonts: a font whose glyphs are pixel rectangles, drawn where a
+     * font pixel is a fraction of a device pixel (1.6 px, say), gets each
+     * row rounded to one pixel at the wider pitch and reads as dashes with
+     * blank rows between. Draw a pixel font unhinted at a whole-pixel
+     * scale instead.
      */
     hint?: boolean | "light" | "full"
     /** Debug label of the atlas texture. */

@@ -4,12 +4,7 @@ version = "0.0.0"
 edition = "2021"
 
 [features]
-#TODO drop the default compile
-default = ["compile"]
-# The bytecode compiler (see flux). Every stock build has it; named here so a
-# custom runtime can ask for it (a dependent cannot spell `flux/compile`).
-compile = ["flux/compile"]
-go = ["compile", "dep:tokio-websockets", "dep:futures-util", "dep:http", "dep:reqwest", "dep:base64", "dep:sha2", "dep:resvg"]
+go = ["dep:tokio-websockets", "dep:futures-util", "dep:http", "dep:reqwest", "dep:base64", "dep:sha2", "dep:resvg"]
 # Speech recognition: Whisper transcription (whisper.cpp via whisper-rs, CPU
 # inference) plus wake word detection (livekit-wakeword, ONNX via tract).
 # Opt-in: not part of `default` so a plain `cargo build` stays voice-free.
@@ -29,9 +24,10 @@ wasm-native = ["flux/wasm-native"]
 alloy = { workspace = true }
 log = { workspace = true }
 # gui is always on: lattice is the renderer, so the alloy-backed flux::gui
-# bindings are needed in every build config (incl. the --no-default-features
-# runtime and go builds). `compile` is selected per-build via --features.
-flux = { workspace = true, default-features = false, features = ["gui"] }
+# bindings are needed in every build config. compile too: every build
+# evaluates app source (a source path on the command line, the dev client's
+# pushes), which is behind flux's bytecode compiler.
+flux = { workspace = true, default-features = false, features = ["gui", "compile"] }
 # Every build: the assets mount (forge::fs::set_assets_base) plus, for the go
 # client, the p2p tunnel core flux:p2p marshals. Already in the tree via flux.
 forge = { workspace = true }

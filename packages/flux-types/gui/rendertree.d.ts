@@ -258,6 +258,12 @@ declare module "flux:rendertree" {
      * size: a 1x screen read from a distance) or `false` (the outline as
      * the font draws it). null restores the default: light below 2x,
      * off above.
+     *
+     * "full" rounds every stem on its own, so it suits outline fonts, not
+     * pixel fonts: a font whose glyphs are pixel rectangles, drawn where a
+     * font pixel is a fraction of a device pixel, gets each row rounded to
+     * one pixel at the wider pitch and reads as dashes with blank rows
+     * between. Draw a pixel font unhinted at a whole-pixel scale instead.
      */
     hint?: boolean | "light" | "full" | null
   }

@@ -75,6 +75,12 @@ pub enum Hint {
   /// Stem widths and positions onto whole pixels as well, at the cost of
   /// letterforms rounded per size; a cell is made at one phase and placed
   /// at a whole pixel. A terminal grid, a 1x screen read from a distance.
+  /// Every stem is rounded on its own, as FreeType's mono target does:
+  /// an outline font's stems land on solid columns and rows, but a pixel
+  /// font (each pixel row its own rectangle) at a fractional scale has
+  /// rows rounded to one pixel at a wider pitch, and comes out as dashes
+  /// with blank rows between. A pixel font wants `Off` at whole-pixel
+  /// scales.
   Full,
 }
 

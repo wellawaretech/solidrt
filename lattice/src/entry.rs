@@ -342,7 +342,15 @@ pub fn main(program: Program) {
   let mut source_path: Option<String> = None;
   let mut app_args: Vec<String> = Vec::new();
   while let Some(arg) = args.next() {
-    if arg == "--render" {
+    if arg == "--fonts" {
+      // The aliases of the program's font set, one per line: what the
+      // runtime build (runtime.mk) lists beside the staged binaries for sol
+      // to check an app's `solidrt.fonts` against and to report at pack.
+      for alias in program.fonts.aliases() {
+        println!("{alias}");
+      }
+      std::process::exit(0);
+    } else if arg == "--render" {
       render = true;
     } else if arg == "--data-root" {
       data_root = Some(args.next().unwrap_or_else(|| usage("--data-root requires a directory path")));

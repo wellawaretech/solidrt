@@ -1,7 +1,8 @@
 import { values, source } from "../lib/args"
 import { bundleFlux, bundleSolid, compileToBytecode, findFluxIsolates } from "../bundle/bundler"
-import type { ManifestFont } from "../lib/project"
-import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, resolveCapabilities, type Capability, type Project } from "../lib/project"
+import { STOCK_FONT_ROLES } from "../lib/fonts"
+import { projectRuntime } from "../lib/runtime"
+import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, resolveCapabilities, type Capability, type ManifestFont, type Project } from "../lib/project"
 import { resolveMode, type Mode } from "../lib/mode"
 import { packApp, packFlux, packSolid } from "./trailer"
 import { buildPackFolder, writePackFolder } from "./layout"
@@ -103,12 +104,16 @@ function packTarget() {
 // bare runner; --app writes it alone as one .solapp for a runner to load;
 // --apk patches it into APKs; the default single-file exe carries it as
 // trailer sections.
-// What the pack does about fonts, for the report: the runtime carries the
-// defaults, so only what the app binds or drops is worth a word.
-function describeFonts(fonts: ManifestFont[]): string {
-  if (fonts.length === 0) return "the runtime's"
+// What the pack does about fonts, for the report: what the app binds or
+// drops, then what the runtime it is packed for carries (`runtime` is its
+// listed set; null when the project's runtime has not been built here).
+function describeFonts(fonts: ManifestFont[], runtime: string[] | null): string {
+  let claimed = fonts.map((f) => f.alias)
+  let rest = runtime?.filter((alias) => !claimed.includes(alias))
+  let runtimes = rest === undefined ? "the runtime's" : `the runtime's (${rest.length ? rest.join(", ") : "none"})`
+  if (fonts.length === 0) return runtimes
   let own = fonts.map((f) => (f.path ? `${f.alias} from ${f.path}` : `${f.alias} dropped`))
-  return `${own.join(", ")}; the rest the runtime's`
+  return `${own.join(", ")}; the rest ${runtimes}`
 }
 
 async function buildApp(mode: Mode) {
@@ -121,7 +126,8 @@ async function buildApp(mode: Mode) {
   // project's, so a target it did not build is an error (lib/runtime.ts).
   let needed = bundled.projectModules[0] ?? null
   let folder = buildPackFolder(mode, bytecode, isolates)
-  console.log(`>> fonts: ${describeFonts(folder.fonts)}`)
+  let runtime = projectRuntime()
+  console.log(`>> fonts: ${describeFonts(folder.fonts, runtime ? runtime.fonts() : STOCK_FONT_ROLES)}`)
   return { bytecode, folder, needed }
 }
 

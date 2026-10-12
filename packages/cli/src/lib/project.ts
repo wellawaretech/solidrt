@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fail } from "./fail"
-import { checkFontsMap } from "./fonts"
+import { checkFontsMap, STOCK_FONT_ROLES } from "./fonts"
 
 // Project configuration lives in the `solidrt` key of the project's
 // package.json (okf/plans/client-storage-updates.md):
@@ -164,7 +164,23 @@ export type Project = { dir: string; name: string | undefined; version: string |
 // Every key the `solidrt` object accepts (the ProjectConfig fields).
 const PROJECT_KEYS = ["entry", "appId", "org", "displayName", "icon", "iconBackground", "capabilities", "backup", "fonts", "textures", "android", "runtime"]
 
-function parseProjectConfig(raw: unknown): ProjectConfig {
+/**
+ * The font aliases a runtime binds, as its build listed them beside its
+ * binaries (`<runtimeDir>/fonts.txt`, one alias per line, written by
+ * runtime.mk from `solidrt --fonts`); null when the listing is not there
+ * (the runtime was not built on this host).
+ */
+export function runtimeFontAliases(runtimeDir: string): string[] | null {
+  let path = resolve(runtimeDir, "fonts.txt")
+  if (!existsSync(path)) return null
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+// `dir` is the project's, for the listing of its runtime's fonts.
+function parseProjectConfig(raw: unknown, dir: string): ProjectConfig {
   if (raw === undefined) return {}
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail('"solidrt" in package.json must be an object')
   let config = raw as Record<string, unknown>
@@ -200,7 +216,8 @@ function parseProjectConfig(raw: unknown): ProjectConfig {
   }
   if ("android" in config) config.android = parseAndroidConfig(config.android)
   if ("fonts" in config) {
-    let error = checkFontsMap(config.fonts, "runtime" in config)
+    let runtime = typeof config.runtime === "string" ? runtimeFontAliases(resolve(dir, config.runtime)) : STOCK_FONT_ROLES
+    let error = checkFontsMap(config.fonts, runtime)
     if (error) fail(error)
   }
   return config as ProjectConfig
@@ -217,7 +234,7 @@ export function loadProject(dir: string | null): Project | null {
     dir,
     name: typeof pkg.name === "string" ? pkg.name : undefined,
     version: typeof pkg.version === "string" ? pkg.version : undefined,
-    config: parseProjectConfig(pkg.solidrt),
+    config: parseProjectConfig(pkg.solidrt, dir),
   }
 }
 

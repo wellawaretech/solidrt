@@ -141,10 +141,25 @@ copy (release.yml stopped staging `packages/cli/fonts/`).
   packed payload yields `AppFonts` through `Manifest::fonts_with`, the one
   reading behind the folder boot and the trailer, so a dropped role in a
   pack claims its alias as a dev push does.
-- Validation: the CLI checks a `true`/`false` against the stock roles in a
-  project without a runtime; with one, lattice warns at run time on a
-  dropped alias the runtime does not bind. The pack report line says
-  which fonts the app binds or drops; the rest are the runtime's.
+- Validation: the CLI checks a `true`/`false` against the runtime's set:
+  the stock roles for a project without a runtime, else the listing the
+  runtime's host build writes beside its binaries (`dist/fonts.txt`, from
+  `solidrt --fonts`; the first open question, answered by runtime.mk from
+  the staged binary, since the set is per program and not per target).
+  Without the listing the alias goes through, and lattice warns at run
+  time on a dropped alias the runtime does not bind. The pack report line
+  says which fonts the app binds or drops and which the runtime carries,
+  and `merge_fonts` logs the registered set by origin at every start and
+  app switch.
+- Measured (Linux x64, release, 2026-10-12): the stock `solidrt` is
+  83.28 MB, the same program with `Fonts::none()` 77.63 MB. The 5.65 MB
+  difference is the three Notos, so a runtime that carries none does not
+  pay for `stock()`: the unreferenced bytes are dropped at link.
+- Beside it: `fail()` in the CLI throws a `UsageError` that main.ts
+  catches once, so a config rule is testable where it lives; lattice's
+  `compile` feature is gone (every build evaluates source, so flux's
+  `compile` is unconditional and runtime.mk's feature list starts empty);
+  `stepped::DEFAULT_FPS` is gated on `test`, its only user.
 - Pack: `layout.ts` takes the dev manifest's font annotations
   (`collectAssets`); `lib/fonts.ts` and the materialization under
   `assets/fonts/` are gone.

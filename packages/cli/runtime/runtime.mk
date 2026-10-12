@@ -29,6 +29,12 @@
 #   android/<abi>/libmain.so                      the player .so and the libs
 #   android-runtime/<abi>/libmain.so              beside it (sol derives the
 #                                                 APKs from the stock ones)
+#   fonts.txt                                     the aliases of the program's
+#                                                 font set, one per line
+#                                                 (`solidrt --fonts`), written
+#                                                 by the host goals; sol checks
+#                                                 an app's solidrt.fonts
+#                                                 against it
 #
 # Variables, all overridable on the command line:
 #   PROFILE      release (default: fast, keeps symbols), debug, or release-opt:
@@ -55,8 +61,6 @@ include $(BASE)/platform.mk
 # A path for a native Windows program (cargo, cmake) from the MSYS2 shell
 # make runs in there.
 native = $(if $(findstring windows,$(HOST_TARGET)),$(shell cygpath -m $(1)),$(1))
-
-comma := ,
 
 # -- The project ----------------------------------------------------------
 
@@ -136,21 +140,21 @@ endif
 # which is what sol test runs app tests on, never in the runtime.
 TEST ?= 1
 
-FEATURES := lattice/compile
+FEATURES :=
 ifeq ($(SPEECH),1)
-FEATURES := $(FEATURES),lattice/speech
+FEATURES += lattice/speech
 endif
 ifneq ($(VIDEO),0)
-FEATURES := $(FEATURES),lattice/video
+FEATURES += lattice/video
 endif
 ifneq ($(KTX2),0)
-FEATURES := $(FEATURES),lattice/ktx2
+FEATURES += lattice/ktx2
 endif
 ifneq ($(WASM_NATIVE),0)
-FEATURES := $(FEATURES),lattice/wasm-native
+FEATURES += lattice/wasm-native
 endif
-GO_FEATURES      := --features go,$(FEATURES)$(if $(filter 0,$(TEST)),,$(comma)lattice/test)
-RUNTIME_FEATURES := --features $(FEATURES)
+GO_FEATURES      := --features "go $(FEATURES)$(if $(filter 0,$(TEST)),, lattice/test)"
+RUNTIME_FEATURES := $(if $(strip $(FEATURES)),--features "$(FEATURES)",)
 
 # One target dir per feature set, so the player and the runtime never
 # rebuild each other's lattice; the Android player shares the desktop
@@ -225,12 +229,17 @@ endif
 GL_SRC  ?= $(PACKAGE)/../$(HOST_PLATFORM)
 GL_LIBS  = $(wildcard $(GL_SRC)/libEGL.* $(GL_SRC)/libGLESv2.*)
 
+# The font set is the program's, the same in both binaries and on every
+# target, so a host build lists it from the binary it just staged (the
+# Android goals cannot run theirs).
 # $(1) = label, $(2) = binary name, $(3) = features, $(4) = target dir
 define host-build
 	@echo "Building $(1) ($(PROFILE)) $(VERSION)"
 	$(HOST_ENV) SOLIDRT_VERSION="$(VERSION)" cargo build $(CONFIG) $(CARGO_PROFILE_FLAG) $(3) --bin $(2) --target-dir $(4)
 	$(call stage-host,$(4),$(2))
 	$(if $(GL_LIBS),@cp $(GL_LIBS) $(HOST_DIST)/)
+	@$(HOST_DIST)/$(2)$(HOST_EXT) --fonts > $(DIST_DIR)/fonts.txt
+	@echo "Listed the program's fonts in $(DIST_DIR)/fonts.txt"
 endef
 
 # -- Android ---------------------------------------------------------------

@@ -80,6 +80,8 @@ impl Fonts {
 /// itself is gone; the glyph engine draws registered faces only, nothing
 /// comes from the system). An alias dropped with nothing under it is
 /// warned about: the app meant to drop a font the runtime does not have.
+/// The set registered is logged, by where each font came from, so a wrong
+/// face is a log read.
 /// Two fonts under one alias would form one family style set in which style
 /// matching keeps the first registered on a tie, so a project's "sans"
 /// override would lose to the base Noto Sans (the glyph engine's font set
@@ -93,6 +95,27 @@ pub(crate) fn merge_fonts(base: &[FontPayload], app: AppFonts) -> Vec<FontPayloa
     }
   }
   let mut fonts: Vec<FontPayload> = base.iter().filter(|font| !claimed(font)).cloned().collect();
+  let names = |fonts: &[FontPayload]| fonts.iter().filter_map(|font| font.alias.clone()).collect::<Vec<_>>().join(", ");
+  let dropped: Vec<&str> = app
+    .aliases
+    .iter()
+    .filter(|alias| !app.fonts.iter().any(|font| font.alias.as_ref() == Some(alias)))
+    .map(String::as_str)
+    .collect();
+  let mut parts = Vec::new();
+  if !fonts.is_empty() {
+    parts.push(format!("{} from the runtime", names(&fonts)));
+  }
+  if !app.fonts.is_empty() {
+    parts.push(format!("{} from the app", names(&app.fonts)));
+  }
+  if !dropped.is_empty() {
+    parts.push(format!("{} dropped", dropped.join(", ")));
+  }
+  if parts.is_empty() {
+    parts.push("none registered".to_string());
+  }
+  log::info!("[sol] Fonts: {}", parts.join("; "));
   fonts.extend(app.fonts);
   fonts
 }

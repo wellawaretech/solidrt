@@ -15,6 +15,7 @@ import { printUsage, printVersion, hint } from "./lib/usage"
 import { requireBinary } from "./lib/util"
 import { buildServerBundle } from "./lib/server-bundle"
 import { fluxScriptEnv } from "./lib/flux-script"
+import { UsageError } from "./lib/fail"
 
 // -- Help and version --
 
@@ -123,17 +124,25 @@ async function launchServer(withClient: boolean, demo?: { cwd: string; entry: st
 const COMMANDS = ["init", "bundle", "check", "test", "pack", "render", "client", "console", "android", "mcp", "tool"] as const
 type Command = (typeof COMMANDS)[number]
 
-if (command === "server") {
-  await launchServer(false)
-} else if (command === "run") {
-  await launchServer(true)
-} else if (command === "demo") {
-  let { main } = await import("./demo/main")
-  let target = await main()
-  if (target) await launchServer(true, target)
-} else if (command !== undefined && (COMMANDS as readonly string[]).includes(command)) {
-  let { main } = await import(`./${command as Command}/main`)
-  await main()
-} else {
-  hint(command === undefined ? undefined : `Unknown command "${command}"`)
+// A usage or configuration error anywhere below (lib/fail.ts) ends here: its
+// message, exit code 1.
+try {
+  if (command === "server") {
+    await launchServer(false)
+  } else if (command === "run") {
+    await launchServer(true)
+  } else if (command === "demo") {
+    let { main } = await import("./demo/main")
+    let target = await main()
+    if (target) await launchServer(true, target)
+  } else if (command !== undefined && (COMMANDS as readonly string[]).includes(command)) {
+    let { main } = await import(`./${command as Command}/main`)
+    await main()
+  } else {
+    hint(command === undefined ? undefined : `Unknown command "${command}"`)
+  }
+} catch (e) {
+  if (!(e instanceof UsageError)) throw e
+  console.error(e.message)
+  process.exit(1)
 }

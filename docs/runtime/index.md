@@ -150,6 +150,8 @@ dist/<platform>/solidrt-go, solidrt     platform: linux-x64-gnu, linux-arm64-gnu
                                         platform package name, not the Rust triple)
 dist/android/<abi>/libmain.so           the player .so, with libSDL3.so, libimpeller.so
 dist/android-runtime/<abi>/libmain.so   the runtime .so, the same beside it
+dist/fonts.txt                          the aliases of the program's font set, one per
+                                        line (`solidrt --fonts`), written by the host goals
 ```
 
 On Windows and macOS the ANGLE libraries from the platform package are
@@ -207,6 +209,15 @@ they draw. One face per alias: `with` on an alias already in the set
 replaces it, and `without` on one that is not panics at startup, since
 the set is the program's own code. Dropping a role from the runtime drops
 it for its apps too: nothing ships a stock font back in.
+
+The host goals list the set in `dist/fonts.txt` from the binary they
+staged (`solidrt --fonts` prints the aliases, one per line), and sol reads
+it: a `true` or `false` in an app's `solidrt.fonts` on an alias the
+runtime does not bind fails the command, and `sol pack` reports which
+fonts the app binds and which the runtime carries. Without the listing
+(the runtime not built on this host) sol lets the alias through, and the
+runtime says at startup which fonts it registered and warns on a dropped
+alias it did not bind.
 
 #### Writing a module
 

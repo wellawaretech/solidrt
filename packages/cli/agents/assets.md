@@ -40,8 +40,11 @@ preparing a build for distribution.
   runtime's). Only registered faces draw: there is no system font fallback.
   The dev client, `sol render` and a pack all apply the same map over the
   same runtime set, and a pack ships only the files the app binds: a
-  default app packs no font. A newly added or changed font registers on
-  the next reload.
+  default app packs no font. A `true`/`false` on an alias the runtime does
+  not bind fails the command (the stock roles, or the `fonts.txt` a custom
+  runtime's build lists); the client logs at startup which fonts it
+  registered and where each came from. A newly added or changed font
+  registers on the next reload.
 - The `solidrt` key in package.json is the app's identity: set a stable
   reverse-DNS `appId` before distributing - it keys the app's storage
   folder, defaults from the package name in dev, and `sol pack` warns
