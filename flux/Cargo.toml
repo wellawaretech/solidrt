@@ -64,4 +64,4 @@ tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
-libc = "=0.2.189"
+libc = "=0.2.190"

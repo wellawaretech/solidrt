@@ -29,7 +29,7 @@ ndk-sys = "=0.6.0"
 # threads run at display priority so background processes stop preempting
 # frames mid-flight.
 [target.'cfg(unix)'.dependencies]
-libc = "=0.2.189"
+libc = "=0.2.190"
 
 # impellers ships pre-generated bindings sized for 64-bit hosts; on 32-bit
 # armv7 the pointer-sized struct fields don't line up, so re-run bindgen
@@ -129,4 +129,4 @@ libloading = "=0.8.9"
 [build-dependencies]
 # Compiles the vendored msdfgen core and the C shim over it (build.rs), the
 # glyph engine's distance-field generator; forge's pin.
-cc = "=1.5.1"
+cc = "=1.6.0"
