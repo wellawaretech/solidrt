@@ -63,6 +63,7 @@ const OPTIONS = {
     port: { type: "string" },
     device: { type: "string" },
     install: { type: "boolean" },
+    force: { type: "boolean", default: false },
     census: { type: "boolean", default: false },
     layer: { type: "string" },
     clear: { type: "boolean", default: false },
@@ -194,6 +195,9 @@ export function validateArgs() {
   }
   if (values.apk && command !== "pack" && command !== "android") {
     usage("sol <pack|android> --apk  (--apk is only valid with the pack and android commands)")
+  }
+  if (values.force && command !== "android") {
+    usage("sol android --force  (--force is only valid with the android command)")
   }
   if ([values.folder, values.app, values.apk].filter(Boolean).length > 1) {
     usage("sol pack --folder|--app|--apk  (--folder, --app and --apk exclude each other)")

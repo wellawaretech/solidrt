@@ -27,7 +27,8 @@ import type { LiveRecord } from "../types/registry"
 // version is not the one that package carries is updated after asking, so a
 // client built and installed by hand stays unless you say so. --install
 // reinstalls regardless. --apk runs `sol pack --apk` and installs the
-// packed app instead.
+// packed app instead. --force uninstalls an installed app that blocks an
+// install (adbInstall) without asking.
 
 // The published Player's application id. Every build from a checkout
 // without PUBLISH=1 is the dev Player, com.solidrt.player.dev, installed
@@ -259,15 +260,20 @@ const BLOCKED_INSTALLS: Record<string, string> = {
 
 // Install `file` on `target`, exiting on failure. When the installed
 // `packageId` blocks it, offer to uninstall that first: it clears the app's
-// data, so it is asked, and a non-TTY only says how.
+// data, so it is asked (--force uninstalls without asking), and a non-TTY
+// only says how.
 async function adbInstall(adb: string, target: string, file: string, packageId: string) {
   let install = await runQuiet([adb, "-s", target, "install", "-r", file], process.cwd())
   if (install.code === 0) return
   let blocked = Object.keys(BLOCKED_INSTALLS).find((code) => install.output.includes(code))
   if (blocked) {
     let reason = `${packageId} on ${target} ${BLOCKED_INSTALLS[blocked]}`
-    if (!(await confirm(`${reason}. Uninstall it first? This clears its data.`, false))) {
-      console.error(`${reason}; uninstall it first with adb -s ${target} uninstall ${packageId} (this clears its data)`)
+    if (values.force) {
+      console.log(`[cli] ${reason}; uninstalling it first (--force), which clears its data`)
+    } else if (!(await confirm(`${reason}. Uninstall it first? This clears its data.`, false))) {
+      console.error(
+        `${reason}; uninstall it first with adb -s ${target} uninstall ${packageId}, or pass --force (either clears its data)`,
+      )
       process.exit(1)
     }
     let uninstall = await runQuiet([adb, "-s", target, "uninstall", packageId], process.cwd())

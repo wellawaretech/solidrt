@@ -93,6 +93,8 @@ android options:
       --apk              Pack the app (sol pack --apk), then install and launch on each device the APK
                          built for its ABI
       --install          Reinstall the client first, even when it is current
+      --force            Where the installed app blocks the install (signed with another key, or newer),
+                         uninstall it without asking; this clears its data
       --port <N>         Point it at the local dev server on this port
       --device <serial>  Target a specific adb device by serial or unique prefix
       --census           Read the compositor's present census for the client on screen instead of launching:

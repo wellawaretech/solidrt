@@ -27,6 +27,11 @@ the one the project's package carries is updated after asking - a client
 you built and installed yourself stays unless you say so. `--install`
 reinstalls regardless.
 
+An install the device refuses because the installed app is signed with
+another key, or is a newer version, needs that app uninstalled first,
+which clears its data: `sol android` asks, and `--force` uninstalls
+without asking.
+
 `--apk` works on the app instead of the client: it packs it (`sol pack
 --apk`, one APK per target) and installs and launches on each device the
 APK built for its ABI, nothing dev-flavored. `sol android <file.apk>`
