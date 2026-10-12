@@ -39,10 +39,14 @@ export function renderRuntime(templates: Record<string, string>, appName: string
   return Object.fromEntries(Object.entries(templates).map(([path, text]) => [path, fill(text)]))
 }
 
-/** package.json with `"solidrt": { "runtime": "runtime/dist" }` set. */
-export function withRuntime(packageJson: string): string {
+/**
+ * package.json with `"solidrt": { "appId": <appId>, "runtime": "runtime/dist" }`
+ * set: the runtime's Player is named after the app (lib/runtime.ts), so a
+ * project with a runtime pins its identity.
+ */
+export function withRuntime(packageJson: string, appId: string): string {
   let pkg = JSON.parse(packageJson)
-  pkg.solidrt = { ...(pkg.solidrt ?? {}), runtime: RUNTIME_DIST }
+  pkg.solidrt = { ...(pkg.solidrt ?? {}), appId, runtime: RUNTIME_DIST }
   return JSON.stringify(pkg, null, 2) + "\n"
 }
 

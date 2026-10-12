@@ -125,7 +125,10 @@ tests/runtime.test.tsx  imports runtime:hello; runs on the app's own player
 
 and in package.json `"solidrt": { "runtime": "runtime/dist" }`, the folder
 `sol run`, `sol test`, `sol pack` and `sol android` take the app runtime
-from. The build is the one line in the Makefile: everything a runtime's
+from, and `"appId"`, which a runtime needs as an Android application id
+(reverse-DNS, `com.example.app`): the runtime's player is named after it,
+so `sol init` asks for one when package.json has none. The build is the
+one line in the Makefile: everything a runtime's
 build needs beyond the crate comes from the `@solidrt/cli` package and
 moves with it, so an upgrade is the lattice tag, the `@solidrt` packages
 and the Solid pins in package.json (solid-js and the two @solidjs
@@ -158,7 +161,12 @@ vendor SDK) puts it there and it ships. The NDK's C++ runtime,
 with speech recognition and any C++ module alike, and left out otherwise.
 Every staged lib must be 16 KB page aligned (Android 15+ refuses others);
 the build links it so and checks the result, and sol checks again before
-it derives an APK.
+it derives an APK. The derived player is an app of its own on the device,
+`<appId>.player` labelled "<displayName> Player", so it installs beside
+the stock Player and beside the players of your other projects instead of
+replacing them, and sits apart from your packed app under its own name;
+the derived runner keeps the stock placeholders, which `sol pack --apk`
+rewrites to the app's.
 
 A target you did not build falls back to the stock binary with a notice,
 as long as the app imports none of your modules; once its bundle imports a

@@ -1,7 +1,7 @@
 import { values, source } from "../lib/args"
 import { bundleFlux, bundleSolid, compileToBytecode, findFluxIsolates } from "../bundle/bundler"
 import { resolvePackFonts } from "../lib/fonts"
-import { loadAppIdentity, loadProject, resolveCapabilities, type Capability, type Project } from "../lib/project"
+import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, resolveCapabilities, type Capability, type Project } from "../lib/project"
 import { resolveMode, type Mode } from "../lib/mode"
 import { packApp, packFlux, packSolid } from "./trailer"
 import { buildPackFolder, writePackFolder } from "./layout"
@@ -13,9 +13,6 @@ import { ensureTargets } from "../lib/android-targets"
 import { existsSync, readFileSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 
-// Android package names are stricter than a general appId: at least two
-// dot-separated segments, each starting with a letter.
-const ANDROID_APP_ID = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/
 // Where an unconfigured APK starts on Android's update ordering.
 const DEFAULT_VERSION_CODE = 1
 // Display version when package.json declares none (matches the runner base).
@@ -132,9 +129,7 @@ async function buildApp(mode: Mode) {
 export async function packApks(): Promise<Map<string, string>> {
   let { mode, identity, distRoot, baseName } = packTarget()
   if (!ANDROID_APP_ID.test(identity.appId)) {
-    console.error(
-      `"solidrt": "appId" ("${identity.appId}") is not a valid Android application id: use reverse-DNS with at least two dot-separated segments, each starting with a letter (e.g. "com.example.app")`,
-    )
+    console.error(`"solidrt": "appId" ("${identity.appId}") is not a valid Android application id: use ${ANDROID_APP_ID_HINT}`)
     process.exit(1)
   }
   let { bytecode, folder, needed } = await buildApp(mode)

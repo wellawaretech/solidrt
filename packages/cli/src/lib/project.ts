@@ -238,6 +238,15 @@ export function findProject(sourcePath: string): Project | null {
 
 export type AppIdentity = { appId: string; org: string; displayName: string; defaulted: boolean }
 
+/**
+ * An Android application id, stricter than a general appId: at least two
+ * dot-separated segments, each starting with a letter. What a packed APK
+ * (pack/main.ts) and a custom runtime (lib/runtime.ts, its Player is named
+ * after the app) need the appId to be.
+ */
+export const ANDROID_APP_ID = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/
+export const ANDROID_APP_ID_HINT = 'reverse-DNS with at least two dot-separated segments, each starting with a letter (e.g. "com.example.app")'
+
 // Storage directory component (matches the runtime's safe_component check).
 let APP_ID_PATTERN = /^[A-Za-z0-9._-]+$/
 

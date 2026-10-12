@@ -65,7 +65,11 @@ layout as a checkout's `dist/`. `pack`, `run`, `android` and `test` take the
 app runtime from there first, `solidrt`, `solidrt-go` and the Android APKs
 alike, and fall back to the stock binary for a target the project did not
 build. The APKs are derived from the stock ones with the project's `.so`
-files swapped in, so the project never carries the Android shell.
+files swapped in, so the project never carries the Android shell; the
+derived Player is `<appId>.player` labelled "<displayName> Player", its
+own app beside the stock Player, which is why a project with a runtime
+needs `appId` to be an Android application id (`sol init --runtime` sets
+one).
 
 `iconBackground` is the ground behind the icon's transparent foreground
 (the adaptive icon's background layer behind `assets/icon.png`).

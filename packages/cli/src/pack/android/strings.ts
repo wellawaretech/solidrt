@@ -231,6 +231,23 @@ export function applicationFlagOffset(file: Buffer, name: string): number {
   throw new Error("No <application> element in the manifest")
 }
 
+// The pool indices of the literal launcher labels: the string-typed label
+// attributes of <application> and every <activity>. The Player's label is
+// a manifest placeholder resolved at build time, so it is a literal here
+// (the runner's is a resource reference, rewritten in resources.arsc
+// instead). One index when the pool deduplicates the value, more when not.
+export function labelIndices(file: Buffer): number[] {
+  let pool = parsePool(file, XML_POOL_OFFSET)
+  let indices = new Set<number>()
+  for (let el of elements(file, pool)) {
+    if (el.end || (el.name !== "application" && el.name !== "activity")) continue
+    let attr = el.attrs.find((a) => a.name === "label")
+    if (attr?.type === TYPE_STRING) indices.add(attr.data)
+  }
+  if (indices.size === 0) throw new Error("The manifest has no literal label; is the base a Player build?")
+  return [...indices]
+}
+
 // Declare permissions: one <uses-permission android:name="..."/> per name
 // not already declared, inserted right before <application>. The runner
 // declares none itself, so the element chunks are built here: the name

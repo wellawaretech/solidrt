@@ -19,6 +19,7 @@ import {
   manifestInfo,
   applicationFlagOffset,
   addUsesPermissions,
+  labelIndices,
   replacePoolStrings,
   poolStrings,
   BOOL_TRUE,
@@ -200,10 +201,18 @@ function libsHash(libs: { name: string; bytes: Buffer }[]): string {
 // or runner) with `lib/<abi>/<name>` replaced, or added, for each lib, each
 // entry keeping the base's packing (deflated in the runner, stored and
 // page-aligned in the Player), the versionName suffixed with the libs'
-// digest, the zip re-aligned and re-signed with the development key. The
+// digest, the application id and launcher label replaced by `identity`
+// when one is given (the project's Player, which installs beside the stock
+// one under the app's name; the runner keeps its placeholders for pack to
+// rewrite), the zip re-aligned and re-signed with the development key. The
 // shell (dex, resources, the other libs) is the base's byte for byte: a
 // custom runtime differs from the stock one in its native code alone.
-export function swapLibs(base: Buffer, abi: string, libs: { name: string; bytes: Buffer }[]): Buffer {
+export function swapLibs(
+  base: Buffer,
+  abi: string,
+  libs: { name: string; bytes: Buffer }[],
+  identity: { appId: string; label: string } | null,
+): Buffer {
   let entries = parseZip(base)
   let prefix = `lib/${abi}/`
   let template = entries.find((e) => e.name.toString("latin1").startsWith(prefix))
@@ -222,7 +231,12 @@ export function swapLibs(base: Buffer, abi: string, libs: { name: string; bytes:
   // A base that is itself derived keeps one suffix.
   let stem = poolStrings(axml, XML_POOL_OFFSET)[info.versionNameIndex]!.split("+")[0]!
   let version = `${stem}+r${libsHash(libs)}`
-  replaceData(entry, replacePoolStrings(axml, XML_POOL_OFFSET, new Map([[info.versionNameIndex, version]])))
+  let replacements = new Map([[info.versionNameIndex, version]])
+  if (identity) {
+    replacements.set(info.packageIndex, identity.appId)
+    for (let index of labelIndices(axml)) replacements.set(index, identity.label)
+  }
+  replaceData(entry, replacePoolStrings(axml, XML_POOL_OFFSET, replacements))
   let { local, cd } = writeZip(entries)
   return signApk(local, cd, entries.length)
 }

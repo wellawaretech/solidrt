@@ -15,7 +15,13 @@
 // android-runtime/<abi>/ for the runner), with any further .so its modules
 // need beside it; the APK is derived from the stock one with those libs
 // swapped in (pack/android/apk.ts swapLibs), written beside them and
-// rebuilt when a lib or the base is newer.
+// rebuilt when a lib or the base is newer. The project's Player is its own
+// app on the device, `<appId>.player` labelled "<displayName> Player"
+// (playerIdentity), installed beside the stock Player and beside other
+// projects' rather than over them, and told apart from the project's packed
+// app by the suffix; so a project with a runtime needs an appId that is a
+// valid Android id. `sol init --runtime` sets one, and a project without is
+// refused here.
 
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
@@ -23,7 +29,13 @@ import { swapLibs } from "../pack/android/apk"
 import { elfLoadAlignment, MIN_LOAD_ALIGN } from "../pack/android/elf"
 import { missingRuntimeBinary, noRuntimeDeclared, stockRuntimeNotice } from "../server/runtime-messages"
 import { fail } from "./fail"
-import { loadProject } from "./project"
+import { projectEntry } from "./mode"
+import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, type AppIdentity } from "./project"
+
+/** The application id and launcher label of the Player of the app `identity`, a custom runtime's. */
+export function playerIdentity(identity: AppIdentity): { appId: string; label: string } {
+  return { appId: `${identity.appId}.player`, label: `${identity.displayName} Player` }
+}
 
 /**
  * Each resolver takes `needed`: a `runtime:*` module the app imports, or
@@ -58,7 +70,14 @@ function load(): ProjectRuntime | null {
   let project = loadProject(existsSync("package.json") ? process.cwd() : null)
   let declared = project?.config.runtime
   if (!project || !declared) return null
+  let appId = project.config.appId
+  if (appId === undefined || !ANDROID_APP_ID.test(appId)) {
+    fail(
+      `"solidrt": "runtime" needs "appId" to be an Android application id (the runtime's player is named after it, ${appId === undefined ? "none is set" : `"${appId}" is not one`}): use ${ANDROID_APP_ID_HINT}`,
+    )
+  }
   let dir = resolve(project.dir, declared)
+  let player = playerIdentity(loadAppIdentity(projectEntry(project.dir), project.dir))
   let noticed = new Set<string>()
   // A target the project did not build: the error when a module of the
   // runtime is needed, else null, with a notice (once per path) when a
@@ -81,11 +100,11 @@ function load(): ProjectRuntime | null {
     },
     apk(abi, base, needed) {
       let libDir = join(dir, "android", abi)
-      return derive("Player", libDir, PLAYER_APK, abi, base) ?? missing(`Player libs for ${abi}`, libDir, needed, base !== null)
+      return derive("Player", libDir, PLAYER_APK, abi, base, player) ?? missing(`Player libs for ${abi}`, libDir, needed, base !== null)
     },
     runnerApk(abi, base, needed) {
       let libDir = join(dir, "android-runtime", abi)
-      return derive("runner", libDir, RUNNER_APK, abi, base) ?? missing(`runner libs for ${abi}`, libDir, needed, base !== null)
+      return derive("runner", libDir, RUNNER_APK, abi, base, null) ?? missing(`runner libs for ${abi}`, libDir, needed, base !== null)
     },
     hasLibs(abi) {
       return libNames(join(dir, "android", abi)).length > 0 || libNames(join(dir, "android-runtime", abi)).length > 0
@@ -108,8 +127,16 @@ export function failNoRuntimeFor(needed: string): never {
 }
 
 // The derived APK at <libDir>/<out>: the base with every .so in libDir
-// swapped in, rebuilt when any of them or the base is newer than it.
-function derive(what: string, libDir: string, out: string, abi: string, base: string | null): string | null {
+// swapped in and, for the Player, the application id and label set to
+// `identity`, rebuilt when any of them or the base is newer than it.
+function derive(
+  what: string,
+  libDir: string,
+  out: string,
+  abi: string,
+  base: string | null,
+  identity: { appId: string; label: string } | null,
+): string | null {
   let names = libNames(libDir)
   if (names.length === 0) return null
   if (!base) fail(`No stock ${what} APK for ${abi} to derive the project's from; add the @solidrt/android-${abi} dev dependency`)
@@ -123,7 +150,7 @@ function derive(what: string, libDir: string, out: string, abi: string, base: st
       fail(`${join(libDir, lib.name)} has a LOAD segment aligned to ${align} bytes; Android needs ${MIN_LOAD_ALIGN} (link with -z max-page-size=${MIN_LOAD_ALIGN})`)
     }
   }
-  writeFileSync(outPath, swapLibs(readFileSync(base), abi, libs))
-  console.log(`[cli] Derived ${outPath} from ${base} with ${names.join(", ")}`)
+  writeFileSync(outPath, swapLibs(readFileSync(base), abi, libs, identity))
+  console.log(`[cli] Derived ${outPath}${identity ? ` (${identity.appId}, "${identity.label}")` : ""} from ${base} with ${names.join(", ")}`)
   return outPath
 }
