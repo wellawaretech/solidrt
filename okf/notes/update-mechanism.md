@@ -369,8 +369,7 @@ startup plus role metadata. The version manifest gains a `fonts` array
 (asset entries annotated with an optional register-alias). Fonts ship
 FIRST, ahead of this work, via packed trailer sections with in-memory
 registration; the migration to version-store files and the manifest
-annotation are specified in okf/plans/packaged-fonts.md (Alignment
-section). When dev push carries fonts as assets, custom fonts become
+annotation are recorded in okf/done/packaged-fonts.md. When dev push carries fonts as assets, custom fonts become
 visible in dev and solidrt-go's embedded Notos degrade to the
 no-app-loaded fallback.
 

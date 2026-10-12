@@ -4,7 +4,7 @@ import { loadProject } from "./project"
 import { fail } from "./fail"
 
 // The fonts `sol pack` appends to a solidrt binary (see
-// okf/plans/packaged-fonts.md). By default the three Noto role defaults;
+// okf/done/packaged-fonts.md). By default the three Noto role defaults;
 // the project's package.json can override them via the `solidrt.fonts` map
 // (alias -> font file path, false to drop a default, true to keep one - the
 // scaffold ships the roles as explicit trues so disabling is a one-word

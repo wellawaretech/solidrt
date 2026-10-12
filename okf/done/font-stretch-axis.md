@@ -24,7 +24,7 @@ Open questions when picked up:
 - Weight interaction: condensed weights are where variable fonts shine
   (headline typography); worth a components/typography-system angle.
 
-Tension to resolve with okf/plans/packaged-fonts.md: the size finding
+Tension to resolve with okf/done/packaged-fonts.md: the size finding
 that motivated this note is that the wdth axis is 30-40% of each Noto
 file (gvar deltas) while being unreachable from the API - instancing
 wdth out of the shipped defaults (2.0 -> 1.4 MB per font, zero runtime

@@ -96,10 +96,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   could not build; the embed moves to a program crate (runtime/, the stock
   program and the shape of every custom one), the CLI package ships the
   bundles, and a custom runtime embeds them from its node_modules.
-- **[Fonts as pack-time payload](plans/packaged-fonts.md)** [2026-07-20]
-  The solidrt runtime goes font-free and sol pack appends fonts as trailer
-  sections, with the three Noto role defaults declared through the
-  package.json solidrt fonts key.
 - **[Reactivity halt containment](plans/reactivity-halt-containment.md)** [2026-07-17]
   One unclaimed error used to halt the whole app for good; decided and built
   as a root error boundary around the app's window (error window with reset)
@@ -694,6 +690,11 @@ Shaped, not started.
   "Back to a list screen remounts it, so its scroll offset and focused row are
   lost; each stack entry should own a keyed store that lives while the entry
   is on the stack, with ScrollView opting in and focus restored on pop."
+- **[Default fonts in the runtime, packs ship only what it lacks](backlog/runtime-default-fonts.md)** [2026-10-12]
+  Every pack carries the three Noto role defaults (5.6 MB) because the
+  production runtime registers no fonts; the runtime should carry them,
+  droppable and replaceable in a custom runtime, and a pack should ship only
+  the fonts its runtime does not have.
 - **[Runtime optimization - what the binary weighs and how to shrink it](backlog/runtime-optimization.md)** [2026-09-29]
   The runtime is 61 MB at release (about 40 MB at release-opt) and size
   already decides what ships - speech recognition is compiled out of every
@@ -2123,6 +2124,10 @@ Finished, kept for the reasoning.
   package.json, tsconfig and assets/, one src/*.tsx per demo); sol demo lists
   them numbered and runs one by number or qualified name, by starting the
   ordinary dev server with its cwd set to that project.
+- **[Fonts as pack-time payload](done/packaged-fonts.md)** [2026-07-20]
+  The production runtime went font-free and every pack carries its fonts as
+  manifest assets, the three Noto role defaults included, bound to role
+  aliases by the package.json solidrt.fonts map.
 - **[Keep a packed APK's data on the device, and let it declare permissions](done/packed-apk-data-on-device.md)** [2026-09-25]
   Every APK from sol pack --apk was debuggable (the runner was a Gradle debug
   build, so adb run-as read the app's private files), backed up everything
