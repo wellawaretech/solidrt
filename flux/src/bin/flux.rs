@@ -83,7 +83,21 @@ async fn main() {
   };
 
   #[cfg(feature = "test")]
-  if let Some((options, sandbox)) = test {
+  if let Some(TestRun { options, sandbox, assets }) = test {
+    // The project's files, mounted as an app's are: `assets/...` reads the
+    // project's assets folder, read-only, while the cwd is the sandbox.
+    // Absolutized ahead of entering the sandbox, like the sandbox itself.
+    if let Some(dir) = assets {
+      let dir = std::path::absolute(&dir).unwrap_or_else(|e| {
+        eprintln!("flux: --assets path '{}' is unusable: {e}", dir.display());
+        std::process::exit(2);
+      });
+      if !dir.is_dir() {
+        eprintln!("flux: --assets path '{}' is not a directory", dir.display());
+        std::process::exit(2);
+      }
+      forge::fs::set_assets_base(Some(forge::fs::AssetsBase::Dir(dir)));
+    }
     // The sandbox is the working directory, emptied ahead of every engine
     // (okf/done/test-harness.md, D38): a test starts from no stored state,
     // whatever the tests before it wrote, and writes relative paths.
@@ -134,17 +148,28 @@ fn empty_dir(dir: &Path) {
   }
 }
 
-// The test flags, which come ahead of the script path: `--test`, then
-// `--filter <text>`, `--seed <n>` and `--data-root <dir>` in any order.
-// None without `--test`. The data root is the sandbox the tests run in.
+// A test run as the command line asks for it: the host's options, the
+// sandbox the tests run in (`--data-root`) and the project directory whose
+// `assets/` they read (`--assets`).
 #[cfg(feature = "test")]
-fn test_options(
-  args: &mut std::iter::Peekable<impl Iterator<Item = String>>,
-) -> Option<(flux::test::RunOptions, Option<PathBuf>)> {
+struct TestRun {
+  options: flux::test::RunOptions,
+  sandbox: Option<PathBuf>,
+  assets: Option<PathBuf>,
+}
+
+// The test flags, which come ahead of the script path: `--test`, then
+// `--filter <text>`, `--seed <n>`, `--data-root <dir>` and `--assets <dir>`
+// in any order. None without `--test`.
+#[cfg(feature = "test")]
+fn test_options(args: &mut std::iter::Peekable<impl Iterator<Item = String>>) -> Option<TestRun> {
   args.next_if(|arg| arg == "--test")?;
   let mut options = flux::test::RunOptions::default();
   let mut sandbox = None;
-  while let Some(flag) = args.next_if(|arg| arg == "--filter" || arg == "--seed" || arg == "--data-root") {
+  let mut assets = None;
+  while let Some(flag) =
+    args.next_if(|arg| arg == "--filter" || arg == "--seed" || arg == "--data-root" || arg == "--assets")
+  {
     let Some(value) = args.next() else {
       eprintln!("flux: {flag} requires a value");
       std::process::exit(2);
@@ -152,6 +177,7 @@ fn test_options(
     match flag.as_str() {
       "--filter" => options.filter = Some(value),
       "--data-root" => sandbox = Some(PathBuf::from(value)),
+      "--assets" => assets = Some(PathBuf::from(value)),
       _ => {
         options.seed = value.parse().unwrap_or_else(|_| {
           eprintln!("flux: --seed value must be a non-negative integer");
@@ -160,5 +186,5 @@ fn test_options(
       }
     }
   }
-  Some((options, sandbox))
+  Some(TestRun { options, sandbox, assets })
 }

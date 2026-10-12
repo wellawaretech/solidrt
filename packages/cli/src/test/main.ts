@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { bundleWith, PROJECT_MODULE_SCHEME, RUNTIME_MODULES, runtimeModulesPlugin, writeIsolates } from "../bundle/bundler"
+import { bundleWith, composeMap, inlinePlugin, PROJECT_MODULE_SCHEME, RUNTIME_MODULES, runtimeModulesPlugin, writeIsolates } from "../bundle/bundler"
 import { appArgs, source, values } from "../lib/args"
 import { collectAssets } from "../lib/project"
 import { fail } from "../lib/fail"
@@ -123,7 +123,9 @@ const tree: Tree = {
 // the project's own runtime has (BundleOutput.projectModules).
 type Bundled = { code: string; map: string | null; app: boolean; projectModules: string[] }
 
-// A flux program's bundle: plain TypeScript, the runtime modules external.
+// A flux program's bundle: plain TypeScript, the runtime modules external,
+// binary and text imports inlined as the app bundle inlines them, with the
+// sourcemap composed over that step so a failure cites the source line.
 // JSX needs the Solid transform, which this bundle does not run (Bun's own
 // would import a jsx runtime core does not ship), so a .tsx anywhere in the
 // closure settles the layer by itself: the file is an app test and the app
@@ -133,6 +135,7 @@ type Bundled = { code: string; map: string | null; app: boolean; projectModules:
 async function bundleFlux(file: string): Promise<Bundled | string> {
   let jsx = false
   let imported = new Set<string>()
+  let babelMaps = new Map<string, object>()
   let result
   try {
     result = await Bun.build({
@@ -144,6 +147,7 @@ async function bundleFlux(file: string): Promise<Bundled | string> {
       throw: false,
       plugins: [
         runtimeModulesPlugin(imported),
+        inlinePlugin(new Set(), babelMaps),
         {
           name: "jsx settles the layer",
           setup(build) {
@@ -165,7 +169,7 @@ async function bundleFlux(file: string): Promise<Bundled | string> {
   let names = [...imported]
   return {
     code: await entry.text(),
-    map: entry.sourcemap ? await entry.sourcemap.text() : null,
+    map: await composeMap(result.outputs, babelMaps),
     app: names.some((name) => APP_MODULE.test(name)),
     projectModules: names.filter((name) => name.startsWith(PROJECT_MODULE_SCHEME)).sort(),
   }
@@ -275,11 +279,13 @@ async function runFile(file: string, filter: string | undefined, seed: number | 
     // The sandbox: a folder under the package's build output that the host
     // enters and empties before every engine, so a test writes relative
     // paths and starts from no stored state. One per package: files run
-    // one after another, and the wipe is per engine.
+    // one after another, and the wipe is per engine. The package's own
+    // files are mounted as an app's are: `assets/...` reads its assets
+    // folder, read-only, wherever the cwd is.
     let sandbox = join(workingDir(file), STAGE_DIR, "data")
     mkdirSync(sandbox, { recursive: true })
     // "-": the bundle on stdin.
-    proc = Bun.spawn([await testHost("flux"), ...hostArgs, "--data-root", sandbox, "-", ...appArgs], {
+    proc = Bun.spawn([await testHost("flux"), ...hostArgs, "--data-root", sandbox, "--assets", workingDir(file), "-", ...appArgs], {
       cwd: workingDir(file),
       stdin: new Blob([bundled.code]),
       stdout: "pipe",

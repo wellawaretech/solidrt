@@ -43,9 +43,14 @@ A test runs on real time: its timers, `performance.now()` and `Date.now()`
 are the wall clock's. Logic with a timeout is tested by waiting for it, or
 takes its delay as a parameter, so a test can pass a short one.
 
-Each file runs in a fresh process, one file after another, with the folder
-that holds its `tests/` folder as the working directory, so a relative path
-in a test means the same wherever the command was started. Inside it the
+Each file runs in a fresh process, one file after another. Its working
+directory is a sandbox of its own under the `dist/test/` of the package or
+project that holds its `tests/` folder, emptied before every test, so a
+test writes relative paths and starts from no stored state. The project's
+own files are reached as an app reaches them: a path under `assets/` reads
+the project's `assets/` folder (read-only), and a file imported `with
+{ type: "binary" }` or `with { type: "text" }` is inlined in the bundle as
+a `Uint8Array` or a string. Inside the process the
 file is evaluated once to list its tests and once more for every test, in
 a fresh engine: a test starts from the file's freshly evaluated state, so
 what one test changed, registered or left running is not there for the

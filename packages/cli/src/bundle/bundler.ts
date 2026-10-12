@@ -1,4 +1,4 @@
-import { transformAsync } from "@babel/core"
+import { transformAsync, type PluginItem } from "@babel/core"
 import jsx from "@babel/plugin-syntax-jsx"
 import ts from "@babel/preset-typescript"
 import remapping from "@jridgewell/remapping"
@@ -76,6 +76,22 @@ async function codeFromOutputs(outputs: BuildArtifact[]): Promise<string> {
   return code
 }
 
+// Run one project module through Babel for a Bun onLoad: the TS preset plus
+// `plugins`, the file recorded in `inputs` and, with `babelMaps`, its
+// transform map (original -> babel output) kept there by absolute path for
+// sourcemap composition later (composeMap).
+async function babelLoad(path: string, code: string, plugins: PluginItem[], inputs: Set<string>, babelMaps?: Map<string, object>) {
+  inputs.add(path)
+  let transforms = await transformAsync(code, {
+    filename: path,
+    sourceMaps: !!babelMaps,
+    presets: [[ts]],
+    plugins,
+  })
+  if (babelMaps && transforms?.map) babelMaps.set(path, transforms.map)
+  return { contents: transforms?.code ?? "", loader: "js" as const }
+}
+
 // Bun build plugin that runs JSX/TSX through @solidjs/babel-plugin (universal
 // generate, targeting @solidrt/core) plus the TS preset. `moduleName` only ends
 // up as an import specifier in the emitted code, resolved from the app's tree at
@@ -85,34 +101,43 @@ async function codeFromOutputs(outputs: BuildArtifact[]): Promise<string> {
 // modules take the same path (solid is a no-op without JSX) so inlineImport
 // can rewrite their `with { type: "binary" }` imports too; dependency code
 // (node_modules) skips the babel detour and keeps Bun's native loaders.
-// With `babelMaps`, each file's transform map (original -> babel output) is
-// collected there, keyed by absolute path, for sourcemap composition later.
 // `isolateEntry` is the one "use isolate" module this build may load (its own
 // entry); loading any other one means a by-value import of an isolate module,
 // which is a build error (see isolate modules below). Every file the plugin
-// loads or inlines is recorded in `inputs`.
+// loads or inlines is recorded in `inputs`; `babelMaps` as in babelLoad.
 function solidPlugin(inputs: Set<string>, babelMaps?: Map<string, object>, isolateEntry?: string): BunPlugin {
   return {
     name: "bun-plugin-solid",
     setup: (build) => {
       build.onLoad({ filter: /\.(js|ts)x?$/ }, async (args) => {
         if (!/\.(js|ts)x$/.test(args.path) && args.path.includes("node_modules")) return
-        inputs.add(args.path)
-        let file = Bun.file(args.path)
-        let code = await file.text()
+        let code = await Bun.file(args.path).text()
         if (args.path !== isolateEntry && hasIsolateDirective(code)) {
           throw new Error(
             `${args.path} is a "use isolate" module: import its types only (import type * as W from "../...") and call it through isolate() from flux:isolate`,
           )
         }
-        let transforms = await transformAsync(code, {
-          filename: args.path,
-          sourceMaps: !!babelMaps,
-          presets: [[ts]],
-          plugins: [jsx, [solid, { moduleName: "@solidrt/core", generate: "universal" }], inlineImport(inputs)],
-        })
-        if (babelMaps && transforms?.map) babelMaps.set(args.path, transforms.map)
-        return { contents: transforms?.code ?? "", loader: "js" }
+        let plugins = [jsx, [solid, { moduleName: "@solidrt/core", generate: "universal" }], inlineImport(inputs)]
+        return babelLoad(args.path, code, plugins, inputs, babelMaps)
+      })
+    },
+  }
+}
+
+/**
+ * The import-attribute rewrite on its own, for a bundle that runs no JSX (a
+ * flux program, a flux test): the project's .js/.ts modules go through
+ * Babel's TS preset plus inlineImport, so `with { type: "binary" }` and
+ * `"text"` imports inline as in an app bundle; dependency code (node_modules)
+ * keeps Bun's native loaders. `inputs` and `babelMaps` as in solidPlugin.
+ */
+export function inlinePlugin(inputs: Set<string>, babelMaps?: Map<string, object>): BunPlugin {
+  return {
+    name: "bun-plugin-inline",
+    setup: (build) => {
+      build.onLoad({ filter: /\.(js|ts)$/ }, async (args) => {
+        if (args.path.includes("node_modules")) return
+        return babelLoad(args.path, await Bun.file(args.path).text(), [inlineImport(inputs)], inputs, babelMaps)
       })
     },
   }
@@ -392,7 +417,7 @@ export function writeIsolates(dir: string, isolates: { id: string; code: string 
 // sources. Bun ignores sourcemaps in plugin onLoad contents, so this second
 // hop has to happen here. Only a single-artifact build gets a map: code
 // splitting is off, and concatenated artifacts would invalidate offsets.
-async function composeMap(outputs: BuildArtifact[], babelMaps?: Map<string, object>): Promise<string | null> {
+export async function composeMap(outputs: BuildArtifact[], babelMaps?: Map<string, object>): Promise<string | null> {
   if (!babelMaps) return null
   let js = outputs.filter((o) => o.kind === "entry-point" || o.kind === "chunk")
   if (js.length !== 1 || !js[0]!.sourcemap) return null
@@ -457,7 +482,8 @@ export function readPrebuiltIsolates(bundlePath: string): { id: string; code: st
   return out
 }
 
-// Bundle for the bare Flux runtime: no Solid plugin, flux: modules stay external.
+// Bundle for the bare Flux runtime: no Solid plugin, flux: modules stay
+// external, binary and text imports inline as in an app bundle.
 export async function bundleFlux(entry: string): Promise<string> {
   let result = await Bun.build({
     entrypoints: [entry],
@@ -465,6 +491,7 @@ export async function bundleFlux(entry: string): Promise<string> {
     format: "esm",
     minify: values.minify,
     external: ["flux:*"],
+    plugins: [inlinePlugin(new Set())],
   })
   if (!result.success) {
     for (let msg of result.logs) console.error(msg)

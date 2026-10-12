@@ -47,22 +47,22 @@ test("watch throws for a missing directory", () => {
 test("glob lists the matching files from cwd", async () => {
   // glob(pattern, { cwd }) lists the files a pattern matches, as seen from
   // cwd, sorted; directories are walked and never listed.
-  await dir("assets/ui").create()
-  for (let path of ["assets/lion_head.png", "assets/lion_tail.png", "assets/ui/icon.png", "assets/base.jpg"]) {
+  await dir("sprites/ui").create()
+  for (let path of ["sprites/lion_head.png", "sprites/lion_tail.png", "sprites/ui/icon.png", "sprites/base.jpg"]) {
     await file(path).write(path)
   }
   let cwd = "."
   // The pattern is written with "/"; the listed paths carry the platform's
   // separator, as flux:path's join does.
-  expect(await glob("assets/lion_*.png", { cwd })).toEqual([join("assets", "lion_head.png"), join("assets", "lion_tail.png")])
-  expect(await glob("assets/**", { cwd })).toEqual([
-    join("assets", "base.jpg"),
-    join("assets", "lion_head.png"),
-    join("assets", "lion_tail.png"),
-    join("assets", "ui", "icon.png"),
+  expect(await glob("sprites/lion_*.png", { cwd })).toEqual([join("sprites", "lion_head.png"), join("sprites", "lion_tail.png")])
+  expect(await glob("sprites/**", { cwd })).toEqual([
+    join("sprites", "base.jpg"),
+    join("sprites", "lion_head.png"),
+    join("sprites", "lion_tail.png"),
+    join("sprites", "ui", "icon.png"),
   ])
-  expect(await glob("assets/tiger_*.png", { cwd })).toEqual([])
-  expect(() => glob("assets/[", { cwd })).toThrow(/^glob: the pattern "assets\/\[" is malformed at character 7: invalid range pattern$/)
+  expect(await glob("sprites/tiger_*.png", { cwd })).toEqual([])
+  expect(() => glob("sprites/[", { cwd })).toThrow(/^glob: the pattern "sprites\/\[" is malformed at character 8: invalid range pattern$/)
   // @ts-expect-error not a cwd; glob has to say so at runtime too
-  expect(() => glob("assets/*", { cwd: 7 })).toThrow(/^glob: cwd must be a string$/)
+  expect(() => glob("sprites/*", { cwd: 7 })).toThrow(/^glob: cwd must be a string$/)
 })
