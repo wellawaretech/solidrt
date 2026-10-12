@@ -666,10 +666,9 @@ Shaped, not started.
   hide both so an app binds select, navigate and back once.
 - **[Keep sol render off the dev client's data and the user's files](backlog/render-data-and-output-safety.md)** [2026-10-08]
   sol render runs in the dev client's own data tree (client 0) even while that
-  client is up, so a render reads and writes the live app's saved state; it
-  wipes dist/render/ for its staging, taking any frames a user wrote there
-  with -o; and a missing -o directory fails only after every frame has
-  rendered.
+  client is up, so a render reads and writes the live app's saved state; and
+  it wipes dist/render/ for its staging, taking any frames a user wrote there
+  with -o.
 - **[Node lifetime is a deferred sweep, not reference lifetime](backlog/renderer-node-lifetime.md)** [2026-08-14]
   removeNode detaches and a microtask sweep frees, so control-flow reuse
   inside one tick survives but a node re-inserted in a later async tick is
@@ -2255,6 +2254,11 @@ Finished, kept for the reasoning.
   mid-load; closed by sol render --strict (errors logged fail the render) and
   --settle (the app is run to rest before the first frame, the settle
   condition of the test harness, not a wall sleep).
+- **[Bound the frames sol render holds for its PNG writer](done/render-frame-queue-bound.md)** [2026-10-12]
+  sol render queued every read-back frame for a single PNG writer thread with
+  no bound, so at 4K, where rendering outpaces encoding, memory grew by one
+  raw frame per frame of backlog for the whole render; now a few writers take
+  frames from a bounded queue the driver waits on.
 - **[sol render should be headless, unscaled and able to choose its output folder](done/render-headless-determinism.md)** [2026-08-05]
   Playback mode opened a hidden SDL window on the real display, laid out at
   the host's display scale, and wrote frames into the data sandbox; closed by

@@ -1,6 +1,6 @@
 ---
 title: Keep sol render off the dev client's data and the user's files
-description: sol render runs in the dev client's own data tree (client 0) even while that client is up, so a render reads and writes the live app's saved state; it wipes dist/render/ for its staging, taking any frames a user wrote there with -o; and a missing -o directory fails only after every frame has rendered.
+description: sol render runs in the dev client's own data tree (client 0) even while that client is up, so a render reads and writes the live app's saved state; and it wipes dist/render/ for its staging, taking any frames a user wrote there with -o.
 created: 2026-10-08
 ---
 
@@ -41,15 +41,3 @@ deletes them. `sol bundle -o` already refuses a directory it does not own.
 
 **Done when:** render refuses an `-o` inside its staging dir with a message
 naming the dir, before anything is wiped.
-
-## 3. A missing output directory fails after the whole render
-
-The PNG writer runs on its own thread, and the driver only joins it after
-the last frame (`drive` in [render_host.rs](../../lattice/src/render_host.rs)).
-So `-o dist/frames/f` with no `dist/frames/` renders every frame and then
-fails on the first write ("could not write ...f-000000.png").
-
-**Done when:** the CLI creates the prefix's directory before it launches the
-runtime (an output path is a request to write there), and the runtime checks
-the directory before the first frame and stops at the first failed write,
-for callers that pass `--out` directly.

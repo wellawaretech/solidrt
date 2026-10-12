@@ -118,10 +118,9 @@ fn snapshot(ctx: &Ctx<'_>, path: &Path) -> Result<PathBuf, String> {
   flux::gui::request_frame(ctx);
   crate::plugins::draw::render_now(ctx);
   let (width, height, pixels) = alloy.read_window()?;
-  let png = forge::image::encode_png(&pixels, width, height, false)?;
   if let Some(dir) = path.parent() {
     std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
   }
-  std::fs::write(path, png).map_err(|e| format!("could not write {}: {e}", path.display()))?;
+  forge::image::write_png(path, &pixels, width, height, false)?;
   Ok(path.to_path_buf())
 }

@@ -6,13 +6,17 @@
 // its size, the driver runs in a task of the engine: optionally settles the
 // app first (the condition of settle.rs, not a sleep), then for each frame
 // injects the scripted input due, demands a frame, steps, waits for it to
-// have run and reads the window back, handing the pixels to a writer thread
-// that encodes the PNGs. Frame k is the app's state after its (k + 1)th
-// frame callback, at (k + 1) / fps.
+// have run and reads the window back, handing the pixels to the frame
+// writers (FrameWriters: a few threads on one bounded queue, each encoding
+// and writing PNGs in whatever order it takes them; the file name carries
+// the index). The queue bound is what holds the render back when encoding
+// falls behind, so a long render holds a fixed number of raw frames. Frame
+// k is the app's state after its (k + 1)th frame callback, at (k + 1) / fps.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use flux::rquickjs::Ctx;
@@ -24,6 +28,20 @@ use crate::stepped::{Stepper, WindowReady};
 /// on it: the in-flight wait passes no app time, so the app-time cap of
 /// settle.rs does not bound it, and a render has no test cap above it.
 const SETTLE_WALL_CAP: Duration = Duration::from_secs(30);
+
+/// Frames encoded at once: PNG's filter and deflate run on one thread per
+/// frame, and at 4K one thread falls behind the stepped render. Fewer on a
+/// machine with fewer cores to spare (see `RENDER_THREADS`).
+const PNG_WRITERS: usize = 4;
+
+/// Cores the render itself keeps busy while frames are written: the engine
+/// thread and the raster thread. The writers take the rest.
+const RENDER_THREADS: usize = 2;
+
+/// Frames read back and waiting for a writer: absorbs the jitter between
+/// render and encode. The raw frames a render holds are at most this, plus
+/// one per writer, plus the one being handed over.
+const QUEUED_FRAMES: usize = 2;
 
 /// What a render is started with (see `start_render`).
 pub struct RenderRun {
@@ -87,12 +105,106 @@ impl RenderHost {
   }
 }
 
-/// One frame read back, for the writer: its index and pixels.
-struct Frame {
-  index: u64,
-  width: u32,
-  height: u32,
-  pixels: Vec<u8>,
+/// One frame read back, for the writers: its index and pixels.
+pub(crate) struct Frame {
+  pub(crate) index: u64,
+  pub(crate) width: u32,
+  pub(crate) height: u32,
+  pub(crate) pixels: Vec<u8>,
+}
+
+/// What the writer threads share: the queue they take frames from, and the
+/// first write that failed, which stops the driver at its next frame.
+struct Shared {
+  frames: Mutex<tokio::sync::mpsc::Receiver<Frame>>,
+  failed: OnceLock<String>,
+}
+
+/// The frame writers of one render: `PNG_WRITERS` threads (fewer on a small
+/// machine) on one queue of `QUEUED_FRAMES`. `send` waits while the queue is
+/// full, so the driver renders no further ahead than the bound; `finish`
+/// drains the queue and reports the frames written or the first failure.
+pub(crate) struct FrameWriters {
+  queue: tokio::sync::mpsc::Sender<Frame>,
+  shared: Arc<Shared>,
+  threads: Vec<JoinHandle<u64>>,
+}
+
+impl FrameWriters {
+  /// Start the writers for `<prefix>-NNNNNN.png`. The prefix's directory is
+  /// created first: an output path is a request to write there, and a
+  /// render into a directory nobody can create fails here, before a frame
+  /// is rendered.
+  pub(crate) fn start(prefix: &str) -> Result<Self, String> {
+    if let Some(dir) = Path::new(prefix).parent().filter(|dir| !dir.as_os_str().is_empty()) {
+      std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    }
+    let (queue, frames) = tokio::sync::mpsc::channel::<Frame>(QUEUED_FRAMES);
+    let shared = Arc::new(Shared { frames: Mutex::new(frames), failed: OnceLock::new() });
+    let cores = std::thread::available_parallelism().map(|cores| cores.get()).unwrap_or(PNG_WRITERS);
+    let threads = (0..PNG_WRITERS.min(cores.saturating_sub(RENDER_THREADS)).max(1))
+      .map(|index| {
+        let shared = shared.clone();
+        let prefix = prefix.to_string();
+        std::thread::Builder::new()
+          .name(format!("png-writer-{index}"))
+          .spawn(move || write_frames(&shared, &prefix))
+          .map_err(|e| format!("could not start the frame writer {index}: {e}"))
+      })
+      .collect::<Result<Vec<_>, _>>()?;
+    Ok(Self { queue, shared, threads })
+  }
+
+  /// Hand a frame over, waiting for room in the queue. False when the
+  /// writers are gone (every one of them failed or panicked).
+  pub(crate) async fn send(&self, frame: Frame) -> bool {
+    self.queue.send(frame).await.is_ok()
+  }
+
+  /// The first write that failed, once one has.
+  pub(crate) fn failed(&self) -> Option<&str> {
+    self.shared.failed.get().map(String::as_str)
+  }
+
+  /// Close the queue, let the writers drain it and join them: the frames
+  /// written, or the first failure.
+  pub(crate) fn finish(self) -> Result<u64, String> {
+    drop(self.queue);
+    let mut written = 0;
+    for thread in self.threads {
+      written += thread.join().map_err(|_| "a frame writer panicked".to_string())?;
+    }
+    match self.shared.failed.get() {
+      Some(failed) => Err(failed.clone()),
+      None => Ok(written),
+    }
+  }
+}
+
+/// One writer thread: encode and write frames until the queue closes or a
+/// write fails. Returns the frames it wrote.
+fn write_frames(shared: &Shared, prefix: &str) -> u64 {
+  let mut written = 0;
+  loop {
+    // The lock is held for the wait and released at the end of the
+    // statement, before the encode, so the other writers take the next
+    // frames meanwhile (a `while let` would hold it through the body). A
+    // poisoned lock means a writer panicked mid-wait; this one ends too.
+    let Ok(next) = shared.frames.lock().map(|mut frames| frames.blocking_recv()) else {
+      return written;
+    };
+    let Some(frame) = next else {
+      return written;
+    };
+    let path = PathBuf::from(format!("{prefix}-{:06}.png", frame.index));
+    match forge::image::write_png(&path, &frame.pixels, frame.width, frame.height, false) {
+      Ok(()) => written += 1,
+      Err(e) => {
+        let _ = shared.failed.set(e);
+        return written;
+      }
+    }
+  }
 }
 
 async fn drive(ctx: &Ctx<'_>, mut run: RenderRun, stop: &AtomicBool) -> Result<(), String> {
@@ -110,26 +222,20 @@ async fn drive(ctx: &Ctx<'_>, mut run: RenderRun, stop: &AtomicBool) -> Result<(
     settle_first(ctx, &stepper).await?;
   }
 
-  // The PNGs are encoded off this thread, in order; the driver only hands
-  // over pixels and waits for the writer at the end.
-  let (tx, rx) = mpsc::channel::<Frame>();
-  let prefix = run.output_prefix.clone();
-  let writer = std::thread::spawn(move || -> Result<u64, String> {
-    let mut written = 0;
-    for frame in rx {
-      let path = PathBuf::from(format!("{}-{:06}.png", prefix, frame.index));
-      let png = forge::image::encode_png(&frame.pixels, frame.width, frame.height, false)?;
-      std::fs::write(&path, png).map_err(|e| format!("could not write {}: {e}", path.display()))?;
-      written += 1;
-    }
-    Ok(written)
-  });
+  // The PNGs are encoded off this thread; the driver hands over pixels,
+  // waits when the writers are behind, and joins them at the end.
+  let writers = FrameWriters::start(&run.output_prefix)?;
 
   let mut asked = 0;
   let mut outcome = Ok(());
   for frame in 0..run.frames {
     if stop.load(Ordering::Relaxed) {
       log::info!("[sol] the app ended the render after {frame} frames");
+      break;
+    }
+    // A failed write ends the render here, one frame on; `finish` reports
+    // it.
+    if writers.failed().is_some() {
       break;
     }
     // Scripted input due for this frame reaches the UI loop ahead of the
@@ -150,7 +256,7 @@ async fn drive(ctx: &Ctx<'_>, mut run: RenderRun, stop: &AtomicBool) -> Result<(
         break;
       }
     };
-    if tx.send(Frame { index: frame, width, height, pixels }).is_err() {
+    if !writers.send(Frame { index: frame, width, height, pixels }).await {
       break;
     }
     asked += 1;
@@ -158,8 +264,7 @@ async fn drive(ctx: &Ctx<'_>, mut run: RenderRun, stop: &AtomicBool) -> Result<(
       log::info!("[sol] rendered {asked} frames");
     }
   }
-  drop(tx);
-  let written = writer.join().map_err(|_| "the frame writer panicked".to_string())??;
+  let written = writers.finish()?;
   outcome?;
   log::info!("[sol] render complete ({written} of {} frames)", run.frames);
   // An incomplete render means the app failed to produce some frame; the

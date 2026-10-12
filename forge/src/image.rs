@@ -8,6 +8,9 @@
 //! unpremultiplies on the way out, each behind a flag the caller sets when it
 //! wants the file's bytes verbatim.
 
+use std::io::Write;
+use std::path::Path;
+
 use image::ImageEncoder as _;
 
 /// Decoded pixels: tightly-packed RGBA8 plus the pixel dimensions.
@@ -76,6 +79,25 @@ fn check_len(data: &[u8], width: u32, height: u32) -> Result<(), String> {
 /// alpha, so premultiplied input (`unpremultiply`) is converted first; straight
 /// input is written verbatim.
 pub fn encode_png(data: &[u8], width: u32, height: u32, unpremultiply: bool) -> Result<Vec<u8>, String> {
+  let mut out = Vec::new();
+  encode_png_into(&mut out, data, width, height, unpremultiply)?;
+  Ok(out)
+}
+
+/// `encode_png` straight into the file at `path`: the same bytes, streamed,
+/// so the compressed image never sits in memory beside the pixels. The file
+/// is created before anything is encoded, so a path that cannot be written
+/// (no such directory, no permission) fails at once rather than after the
+/// encode. A failed write leaves whatever reached the file.
+pub fn write_png(path: &Path, data: &[u8], width: u32, height: u32, unpremultiply: bool) -> Result<(), String> {
+  let could_not = |e: &dyn std::fmt::Display| format!("could not write {}: {e}", path.display());
+  let file = std::fs::File::create(path).map_err(|e| could_not(&e))?;
+  let mut out = std::io::BufWriter::new(file);
+  encode_png_into(&mut out, data, width, height, unpremultiply).map_err(|e| could_not(&e))?;
+  out.flush().map_err(|e| could_not(&e))
+}
+
+fn encode_png_into<W: Write>(out: W, data: &[u8], width: u32, height: u32, unpremultiply: bool) -> Result<(), String> {
   check_len(data, width, height)?;
   let straight;
   let pixels = if unpremultiply {
@@ -86,11 +108,9 @@ pub fn encode_png(data: &[u8], width: u32, height: u32, unpremultiply: bool) -> 
   } else {
     data
   };
-  let mut out = Vec::new();
-  image::codecs::png::PngEncoder::new(&mut out)
+  image::codecs::png::PngEncoder::new(out)
     .write_image(pixels, width, height, image::ExtendedColorType::Rgba8)
-    .map_err(|e| e.to_string())?;
-  Ok(out)
+    .map_err(|e| e.to_string())
 }
 
 /// Encode RGBA8 pixels as JPEG at `quality` (clamped to 1..=100). JPEG has no
