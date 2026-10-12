@@ -259,6 +259,13 @@ declare module "sol:test" {
    */
   export function camera(width: number, height: number, pixels: Uint8Array): void
   /**
+   * Installs a mono float clip at `sampleRate` Hz as the microphone: every
+   * microphone the app opens at that rate from now on holds it from the
+   * open, with no device, and an open one hears it now. Throws on a rate of
+   * 0 or one that differs from an open test microphone's.
+   */
+  export function microphone(sampleRate: number, samples: Float32Array): void
+  /**
    * Runs one frame: timers due by its time fire, then frame callbacks and
    * the flush, then the draw if anything demanded one. Fulfills once the
    * frame has run. One frame at a time: throws while the previous one is

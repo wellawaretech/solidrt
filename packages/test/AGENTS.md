@@ -66,6 +66,13 @@ agents/testing.md.
   its camera; call it again to show another image. A QR code in it is
   decoded as from a real camera, so `settle()` after the open and read
   the app's barcode state.
+- `await app.microphone({ sampleRate, samples })` makes a mono float clip
+  what the microphone hears: every microphone the app opens at that rate
+  holds it from the open, with no device and no prompt (`settle()` after
+  the mount, the open resolves through the engine), and an open one hears it now
+  (a runtime module reading the session included). Call it before the
+  app opens its microphone; call it again to say more. An open at another
+  rate fails naming both rates.
 - Past a node's record: `locator.outline()` is the subtree as an outline
   (kind, label, text, box per line, no ids) to pin a layout or print it;
   `locator.pixel(x, y)` is `[r, g, b, a]` at a point of the node and

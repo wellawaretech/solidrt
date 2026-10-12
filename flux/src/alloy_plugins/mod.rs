@@ -126,6 +126,12 @@ impl Teardown {
   }
 }
 
+/// How often a waiter on a device open (a camera, a microphone) polls its
+/// session between frames, ms: a frame period, so the answer lands about
+/// when a client's own tick would have found it, while the poll stays
+/// cheap (a non-blocking SDL read or two).
+pub(crate) const OPEN_POLL_MS: u64 = 16;
+
 #[derive(Clone, JsLifetime)]
 struct GuiState(#[qjs(skip_trace)] Rc<Gui>);
 

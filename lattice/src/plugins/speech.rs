@@ -1,9 +1,10 @@
 //! JS bindings for speech recognition: a thin marshaling layer over
-//! crate::speech. `speech.start()` opens a microphone session and spawns a
-//! Recognizer; the returned promise settles from `tick` once the worker
-//! reports Ready (models loaded) or Error. Each tick also pumps mic samples
-//! into the worker and forwards its events to the session's callbacks:
-//! results as `{ text, final }`, plus speech start/end notifications.
+//! crate::speech. `speech.start()` opens a microphone session, takes a tap
+//! on it for the Recognizer's worker, and drains the worker's events from a
+//! task on the engine's executor, so they land whether or not a frame runs:
+//! the returned promise settles once the worker reports Ready (models
+//! loaded) or Error, and the session's callbacks get results as `{ text,
+//! final }` plus speech start/end notifications.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -13,16 +14,22 @@ use std::sync::Arc;
 use flux::rquickjs::promise::Promise;
 use flux::rquickjs::{Ctx, Exception, FromJs, Function, JsLifetime, Object, Persistent, TypedArray, Value};
 
-use crate::speech::{Recognizer, RecognizerConfig, RecognizerEvent, SAMPLE_RATE};
+use crate::speech::{Recognizer, RecognizerConfig, RecognizerEvent, TapSource, SAMPLE_RATE};
+use alloy::microphone::MicrophoneStatus;
+
+/// How often the wait on the microphone's permission answer polls the
+/// session, ms: a frame period, cheap (one atomic read), and the answer
+/// lands about when a frame would have found it.
+const MICROPHONE_POLL_MS: u64 = 16;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> flux::rquickjs::Error {
   ctx.throw(flux::rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
 }
 
 struct Session {
-  /// alloy microphone session feeding this recognizer.
+  /// alloy microphone session the recognizer's worker reads; closing it
+  /// ends the worker and with it the event task.
   mic: u64,
-  recognizer: Recognizer,
   /// Close after the first final result (continuous=false without a wake
   /// word; with one, the worker re-arms instead and the session stays open).
   close_on_final: bool,
@@ -46,6 +53,16 @@ struct Inner {
   pending: RefCell<Vec<PendingStart>>,
 }
 
+impl Drop for Inner {
+  // Engine teardown: the app's handles died with it, so nothing else will
+  // ever close its sessions' microphones (and so end their workers).
+  fn drop(&mut self) {
+    for (_, session) in self.sessions.get_mut().drain() {
+      self.atx.close_microphone(session.mic);
+    }
+  }
+}
+
 #[derive(Clone, JsLifetime)]
 struct SpeechPluginState(#[qjs(skip_trace)] Rc<Inner>);
 
@@ -58,10 +75,6 @@ pub fn init(ctx: Ctx<'_>, atx: Arc<alloy::Context>) {
       pending: RefCell::new(Vec::new()),
     })))
     .expect("store speech state");
-  flux::gui::frame::on_advance(&ctx, "speech", |ctx, _now_ms| {
-    tick(ctx);
-    false
-  });
 
   let start = Function::new(ctx.clone(), start_impl).expect("create speech.start");
   let set_callback = Function::new(ctx.clone(), set_callback_impl).expect("create speech.setResultCallback");
@@ -133,18 +146,30 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
       return Ok(promise);
     }
   };
+  let tap = match state.0.atx.microphone_tap(mic) {
+    Ok(tap) => tap,
+    Err(e) => {
+      state.0.atx.close_microphone(mic);
+      let error = Exception::from_message(ctx.clone(), &format!("startRecognition: {e}"))?;
+      reject.call::<_, ()>((error,))?;
+      return Ok(promise);
+    }
+  };
   let single = !continuous.unwrap_or(true);
   let close_on_final = single && wake_model.is_none();
-  let recognizer = Recognizer::start(RecognizerConfig {
-    model,
-    vad_model,
-    language: language.unwrap_or_else(|| "en".to_string()),
-    interim: interim.unwrap_or(false),
-    wake_model,
-    wake_threshold: wake_threshold.unwrap_or(0.5) as f32,
-    realtime: true,
-    single_utterance: single,
-  });
+  let mut recognizer = Recognizer::start(
+    RecognizerConfig {
+      model,
+      vad_model,
+      language: language.unwrap_or_else(|| "en".to_string()),
+      interim: interim.unwrap_or(false),
+      wake_model,
+      wake_threshold: wake_threshold.unwrap_or(0.5) as f32,
+      realtime: true,
+      single_utterance: single,
+    },
+    TapSource::new(tap),
+  );
 
   let sid = {
     let mut next = state.0.next_id.borrow_mut();
@@ -153,21 +178,51 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
   };
   state.0.sessions.borrow_mut().insert(
     sid,
-    Session {
-      mic,
-      recognizer,
-      close_on_final,
-      callback: None,
-      on_speech_start: None,
-      on_speech_end: None,
-      on_wake: None,
-    },
+    Session { mic, close_on_final, callback: None, on_speech_start: None, on_speech_end: None, on_wake: None },
   );
 
   state.0.pending.borrow_mut().push(PendingStart {
     session: sid,
     resolve: Persistent::save(&ctx, resolve),
     reject: Persistent::save(&ctx, reject),
+  });
+
+  // The worker's events reach JS from a task on the engine's executor, so a
+  // result lands whether or not a frame runs. The task ends with the worker,
+  // which ends when the session's microphone closes.
+  let (task_ctx, task_state) = (ctx.clone(), (*state).clone());
+  ctx.spawn(async move {
+    while let Some(event) = recognizer.next().await {
+      handle_event(&task_ctx, &task_state, sid, event);
+    }
+  });
+
+  // The microphone's permission answer (Android's prompt; at once elsewhere)
+  // arrives by polling: a task waits on it holding the engine, and a
+  // denial or a device that failed to open ends the session, rejecting the
+  // start if it is still pending (the worker's Ready may have beaten the
+  // user's answer; then the session just ends).
+  let hold = flux::hold_engine(&ctx, "microphone open");
+  let (task_ctx, task_state) = (ctx.clone(), (*state).clone());
+  ctx.spawn(async move {
+    let status = loop {
+      match task_state.0.atx.pump_microphone(mic) {
+        Some(MicrophoneStatus::Pending) => {
+          tokio::time::sleep(std::time::Duration::from_millis(MICROPHONE_POLL_MS)).await
+        }
+        other => break other,
+      }
+    };
+    let failure = match status {
+      Some(MicrophoneStatus::Denied) => Some("microphone permission denied".to_string()),
+      Some(MicrophoneStatus::Failed(message)) => Some(message),
+      Some(MicrophoneStatus::Ready { .. }) | Some(MicrophoneStatus::Pending) | None => None,
+    };
+    if let Some(message) = failure {
+      settle_pending(&task_ctx, &task_state, sid, Err(message));
+      close_session(&task_state, sid);
+    }
+    drop(hold);
   });
   Ok(promise)
 }
@@ -227,55 +282,33 @@ fn reject_with(ctx: &Ctx<'_>, reject: Persistent<Function<'static>>, msg: &str) 
   }
 }
 
-/// The per-frame tick (`frame::on_advance`): pump mic samples into each
-/// worker, then dispatch worker events.
-fn tick(ctx: &Ctx<'_>) {
-  let Some(state) = ctx.userdata::<SpeechPluginState>() else {
-    return;
-  };
-  if state.0.sessions.borrow().is_empty() {
-    return;
-  }
-
-  // (session, event) pairs collected first: dispatching may close sessions,
-  // which needs the sessions map unborrowed.
-  let mut events: Vec<(u64, RecognizerEvent)> = Vec::new();
-  for (sid, session) in state.0.sessions.borrow().iter() {
-    match state.0.atx.read_microphone(session.mic) {
-      Ok(samples) => session.recognizer.feed(samples),
-      Err(e) => log::warn!("[speech] mic read failed: {e}"),
+/// Dispatch one worker event: settle the start promise, call the session's
+/// callbacks, close the session where the event says so.
+fn handle_event(ctx: &Ctx<'_>, state: &SpeechPluginState, sid: u64, event: RecognizerEvent) {
+  match event {
+    RecognizerEvent::Ready => settle_pending(ctx, state, sid, Ok(())),
+    RecognizerEvent::Error(msg) => {
+      settle_pending(ctx, state, sid, Err(msg.clone()));
+      close_session(state, sid);
     }
-    for event in session.recognizer.take_events() {
-      events.push((*sid, event));
+    RecognizerEvent::SpeechStart => {
+      let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_speech_start.clone());
+      notify(ctx, callback, "speech start");
     }
-  }
-
-  for (sid, event) in events {
-    match event {
-      RecognizerEvent::Ready => settle_pending(ctx, &state, sid, Ok(())),
-      RecognizerEvent::Error(msg) => {
-        settle_pending(ctx, &state, sid, Err(msg.clone()));
-        close_session(&state, sid);
-      }
-      RecognizerEvent::SpeechStart => {
-        let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_speech_start.clone());
-        notify(ctx, callback, "speech start");
-      }
-      RecognizerEvent::SpeechEnd => {
-        let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_speech_end.clone());
-        notify(ctx, callback, "speech end");
-      }
-      RecognizerEvent::Wake => {
-        let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_wake.clone());
-        notify(ctx, callback, "wake");
-      }
-      RecognizerEvent::Interim(text) => dispatch_result(ctx, &state, sid, &text, false),
-      RecognizerEvent::Final(text) => {
-        dispatch_result(ctx, &state, sid, &text, true);
-        let close = state.0.sessions.borrow().get(&sid).map_or(false, |s| s.close_on_final);
-        if close {
-          close_session(&state, sid);
-        }
+    RecognizerEvent::SpeechEnd => {
+      let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_speech_end.clone());
+      notify(ctx, callback, "speech end");
+    }
+    RecognizerEvent::Wake => {
+      let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_wake.clone());
+      notify(ctx, callback, "wake");
+    }
+    RecognizerEvent::Interim(text) => dispatch_result(ctx, state, sid, &text, false),
+    RecognizerEvent::Final(text) => {
+      dispatch_result(ctx, state, sid, &text, true);
+      let close = state.0.sessions.borrow().get(&sid).map_or(false, |s| s.close_on_final);
+      if close {
+        close_session(state, sid);
       }
     }
   }

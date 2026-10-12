@@ -152,6 +152,11 @@ the state another way, and the test uses it:
   before the app opens its camera: the viewfinder shows it and a QR code
   in it is decoded, with no device and no prompt. `settle()` after the
   open waits for the decode.
+- `await app.microphone({ sampleRate, samples })` makes a mono float clip
+  what the microphone hears, before the app opens its microphone: the
+  open resolves at once with no prompt (`settle()` after the mount), its
+  `read()` returns the clip, and a later install is heard by every open
+  microphone (a runtime module reading one included).
 - Arguments after `--` on `sol test` reach the file as `flux:process`
   argv.
 

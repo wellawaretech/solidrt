@@ -367,6 +367,12 @@ pub fn finger_cancel(raw: &sdl3::sys::events::SDL_Event) -> Option<FingerCancel>
   Some(FingerCancel { timestamp_ns: finger.timestamp, finger_id: finger.fingerID.into(), x: finger.x, y: finger.y })
 }
 
+/// Now on SDL's tick timeline, ns since `ticks_epoch`: what SDL stamps
+/// camera frames with, and what a session's open is stamped with.
+pub fn ticks_ns() -> u64 {
+  unsafe { sdl3::sys::timer::SDL_GetTicksNS() }
+}
+
 /// SDL's tick base as an Instant: the instant SDL_GetTicksNS counts from.
 pub fn ticks_epoch() -> std::time::Instant {
   let now = std::time::Instant::now();
@@ -525,10 +531,10 @@ pub fn camera_close(camera: *mut SDL_Camera) {
 // crate::microphone.
 
 use sdl3::sys::audio::{
-  SDL_AudioDeviceID, SDL_AudioSpec, SDL_AudioStream, SDL_ClearAudioStream, SDL_DestroyAudioStream,
-  SDL_GetAudioDeviceName, SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable, SDL_GetAudioStreamData,
-  SDL_GetAudioStreamQueued, SDL_OpenAudioDeviceStream, SDL_PauseAudioStreamDevice, SDL_PutAudioStreamData,
-  SDL_ResumeAudioStreamDevice, SDL_SetAudioStreamGain, SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+  SDL_AudioDeviceID, SDL_AudioSpec, SDL_AudioStream, SDL_AudioStreamCallback, SDL_ClearAudioStream,
+  SDL_DestroyAudioStream, SDL_GetAudioDeviceName, SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable,
+  SDL_GetAudioStreamData, SDL_GetAudioStreamQueued, SDL_OpenAudioDeviceStream, SDL_PauseAudioStreamDevice,
+  SDL_PutAudioStreamData, SDL_ResumeAudioStreamDevice, SDL_SetAudioStreamGain, SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
   SDL_AUDIO_DEVICE_DEFAULT_RECORDING, SDL_AUDIO_F32,
 };
 use sdl3::sys::init::SDL_INIT_AUDIO;
@@ -556,14 +562,37 @@ pub fn audio_device_name(id: u32) -> String {
   unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned()
 }
 
+/// Ask Android for a runtime permission (`android.permission.RECORD_AUDIO`
+/// and the like) without waiting for the answer: `callback` runs once, on
+/// the activity's thread, with `granted`, at once when the permission is
+/// already held. SDL's own audio recording open asks for RECORD_AUDIO with
+/// a blocking callback (SDL_aaudio.c spins until the answer), so a caller
+/// asks here first and opens once granted, when SDL's own request answers
+/// at once. False when the request could not be made.
+#[cfg(target_os = "android")]
+pub fn request_android_permission(
+  permission: &std::ffi::CStr,
+  callback: sdl3::sys::system::SDL_RequestAndroidPermissionCallback,
+  userdata: *mut std::ffi::c_void,
+) -> bool {
+  unsafe { sdl3::sys::system::SDL_RequestAndroidPermission(permission.as_ptr(), callback, userdata) }
+}
+
 /// Open a recording device (None = system default) bound to a new stream
 /// delivering mono f32 at `sample_rate` on the app side (SDL converts from
-/// the device format). The stream starts paused; destroying it also closes
-/// the device it opened.
-pub fn audio_open_recording_stream(device: Option<u32>, sample_rate: u32) -> *mut SDL_AudioStream {
+/// the device format). `callback` is the stream's put callback: SDL calls it
+/// on its audio thread, with the stream's lock held, each time the device
+/// put data in, and the callback may read the stream right there. The
+/// stream starts paused; destroying it also closes the device it opened.
+pub fn audio_open_recording_stream(
+  device: Option<u32>,
+  sample_rate: u32,
+  callback: SDL_AudioStreamCallback,
+  userdata: *mut std::ffi::c_void,
+) -> *mut SDL_AudioStream {
   let spec = SDL_AudioSpec { format: SDL_AUDIO_F32, channels: 1, freq: sample_rate as std::ffi::c_int };
   let devid = device.map(SDL_AudioDeviceID).unwrap_or(SDL_AUDIO_DEVICE_DEFAULT_RECORDING);
-  unsafe { SDL_OpenAudioDeviceStream(devid, &spec, None, std::ptr::null_mut()) }
+  unsafe { SDL_OpenAudioDeviceStream(devid, &spec, callback, userdata) }
 }
 
 /// Open the default playback device bound to a new stream taking interleaved

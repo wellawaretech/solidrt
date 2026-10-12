@@ -232,7 +232,19 @@ tracking, OCR) takes a tap on the open camera with
 `cam.texture`, and waits on it from a thread of its own: `wait_newer` hands
 it the newest upright RGBA8 frame with SDL's capture timestamp, newest wins
 when the module is slower than the camera, and the wait ends with `Closed`
-when the camera closes or the engine reloads.
+when the camera closes or the engine reloads. A module that reads
+microphone audio (speech recognition, a keyword spotter) takes a reader of
+its own on the open session with `microphone_tap(id)`, keyed by the id the
+app holds as the session's `id`, and waits on it from a thread of its own:
+`wait` blocks until a chunk is buffered, `read_into` drains every sample
+since the reader's last read, so a module and the app's own `read()` both
+hear everything, and a reader slower than the session's 10 s window is
+told how many samples it lost. The wait ends with `Closed` when the
+session closes or the engine reloads. A camera module's results ride the
+frame tick because a streaming camera demands frames; a microphone does
+not, so its results come back as an async iterable
+(`attach_async_iterator`) or a promise (`with_in_flight`), which wake JS
+without a frame.
 
 Bindings use flux's marshalling toolkit, exported through `lattice::flux`
 the way flux's own plugins use it. `bytes_of(&ctx, &array, "name")` is a

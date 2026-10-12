@@ -14,8 +14,10 @@ Three plugin layers, crate-level siblings under `flux/src/`, named for what
 they marshal:
 
 - `standards_plugins/`: web-standard JS APIs installed as globals (`console`,
-  `fetch`, the Fetch types `Headers`/`Request`/`Response`/`Body`, timers,
-  `WebSocket` client, `TextEncoder`/`Decoder`), whatever backs them.
+  `fetch`, the Fetch types `Headers`/`Request`/`Response`/`Body`, the streams
+  `ReadableStream`/`WritableStream`/`TransformStream` (plain JS in
+  `streams.js`, like `test.js`), timers, `WebSocket` client,
+  `TextEncoder`/`Decoder`), whatever backs them.
 - `forge_plugins/`: the `flux:*` capability modules, imported as `flux:http`,
   `flux:sqlite`, `flux:subprocess`, ... - marshalling over the forge capability
   cores.
@@ -23,11 +25,14 @@ they marshal:
   to pair with the feature name): the alloy-backed render-tree, capture, media
   and input bindings. The runner (lattice) supplies the host instances via
   `gui::install`; flux owns which plugins exist and their registration order,
-  and `gui::frame` owns the frame protocol: `advance` and `deliver` fix the
-  order the per-frame hooks run in, `draw` runs the transition ticks, the
-  demand gate and the draw phases over the tree, `idle` runs the idle
-  period after the frame. A runner drives a frame with those four calls,
-  never the per-plugin hooks or the tree handle (both crate-private).
+  and `gui::frame` owns the frame protocol: `advance` steps the native
+  motion (clip players, node transitions) ahead of the frame's JS and fixes
+  the order the per-frame hooks run in, `deliver` hands the frame to JS,
+  `draw` runs the transition ticks (the render tree's, and the spatial
+  starts and flush), the demand gate and the draw phases over the tree,
+  `idle` runs the idle period after the frame. A runner drives a frame with
+  those four calls, never the per-plugin hooks or the tree handle (both
+  crate-private).
 
 A fourth layer, `test_plugins/` (behind the `test` feature, which only the
 `flux` binary turns on): `flux:test`, which is no web standard and marshals

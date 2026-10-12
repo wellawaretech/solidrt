@@ -25,6 +25,7 @@ mod layout_slides;
 mod line;
 mod link;
 mod liveness;
+mod microphone_ring;
 mod paint;
 mod path;
 mod present;

@@ -304,6 +304,12 @@ Shaped, not started.
   incremental) removes the step, and must be designed before compressed
   textures outside a model are built because it decides how an app names a
   baked file.
+- **[JS cannot stream PCM to the audio output](backlog/audio-pcm-sink-js.md)** [2026-10-11]
+  flux:audio plays whole clips only (load, loadPcm, stream), so speech
+  synthesis and live processing have no way to play samples as they are
+  produced; alloy's PCM sink exists for the video plugin, and a createSink in
+  flux:audio over it, with an id a runtime module pushes into from its own
+  thread, closes the loop the microphone ring opened on the input side.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
@@ -737,6 +743,12 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
+- **[Speech recognition leaves the tree for a runtime module](backlog/speech-out-of-tree.md)** [2026-10-11]
+  The in-tree Whisper, VAD and wake word lane (lattice speech feature,
+  whisper-rs, livekit-wakeword and its crates-io patch, the SPEECH build knob,
+  @solidrt/core/speech-recognition) ships nowhere and exists for testing; once
+  speech runs as an external runtime module over the microphone ring, the lane
+  and everything built only for it come out.
 - **[The engine holds a full 32-byte record copy of a splat cloud when the sort needs 12](backlog/splat-key-copy.md)** [2026-09-27]
   An indexed instance order keys on the record's position, but the hand-off
   mirror the core sorts is the whole record block (32 bytes per splat, 32 MB
@@ -2046,6 +2058,20 @@ Finished, kept for the reasoning.
   it. Gaps 2-4 implemented 2026-08-06 (crop/scale, clock control incl. virtual
   timers, props/quad, plus server app identity); gap 1 (input injection) stays
   with its own item.
+- **[The microphone open freezes the UI behind the Android prompt](done/microphone-permission-state.md)** [2026-10-12]
+  SDL requests RECORD_AUDIO with a blocking callback inside the recording
+  open, so the synchronous flux:microphone open() holds the UI thread while
+  the system dialog is up and reports a denial as an error; the microphone
+  gets the camera's permission flow, an open that is Pending until the grant,
+  Denied or Ready, with open() a promise and createMicrophone carrying the
+  state.
+- **[Native modules cannot read the microphone off the UI thread](done/microphone-tap.md)** [2026-10-12]
+  alloy's microphone registry is a RefCell read on the UI thread and the JS
+  session hides its id, so a custom runtime module (speech recognition beside
+  a detector) gets samples only through a JS pump that keeps the app from
+  resting; a bounded ring per session, filled from SDL's put callback, read by
+  cursor from any thread (JS, a module's worker, the speech recognizer), keyed
+  by a session id the app passes, with a test source under sol test.
 - **[Pause and time-scale the spatial core's motion](done/native-motion-time-scale.md)** [2026-10-10]
   An app cannot pause the motion the spatial core runs - node transitions with
   their delays, enters, exits and stagger, morph weight tracks, clip players -

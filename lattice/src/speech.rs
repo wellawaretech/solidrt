@@ -2,18 +2,24 @@
 //! (whisper.cpp via whisper-rs) and wake word detection (livekit-wakeword)
 //! on a dedicated worker thread.
 //!
-//! The owner feeds mono f32 16 kHz samples through `feed` (e.g. once per
-//! frame from a microphone session) and polls `take_events`. The worker
-//! keeps a rolling pre-roll while idle; when VAD detects speech it
+//! The worker reads mono f32 16 kHz samples from its `SampleSource` (a tap
+//! on a microphone session, or a channel a batch test feeds) and reports
+//! through `Recognizer`'s events, polled or awaited. The worker keeps a
+//! rolling pre-roll while idle; when VAD detects speech it
 //! accumulates the utterance, and once the tail goes silent (or the
 //! utterance hits the length cap) it transcribes the whole utterance and
 //! emits `Final`. With a wake model the worker starts armed: only the wake
 //! detector runs (no VAD/Whisper) over a rolling window until a classifier
 //! score crosses the threshold, which emits `Wake` and switches to the
-//! recognition flow above. Dropping the `Recognizer` disconnects the sample
-//! channel and the worker exits.
+//! recognition flow above. The worker exits when its source ends: the
+//! microphone session closes, or the channel's sender drops.
 
+use std::collections::VecDeque;
 use std::sync::mpsc;
+use std::time::Duration;
+
+use alloy::microphone::{MicWait, MicrophoneTap};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use livekit_wakeword::WakeWordModel;
 use whisper_rs::{
@@ -91,37 +97,124 @@ pub enum RecognizerEvent {
   Final(String),
 }
 
-pub struct Recognizer {
-  samples_tx: mpsc::Sender<Vec<f32>>,
-  events_rx: mpsc::Receiver<RecognizerEvent>,
+/// Where a recognizer's samples come from: a live microphone (a tap on its
+/// session) or a channel a batch test feeds. Both deliver mono f32 at
+/// `SAMPLE_RATE`.
+pub trait SampleSource: Send + 'static {
+  /// Block until at least `min` more samples are available, then append
+  /// every available sample to `dst`. False once the source has ended (the
+  /// session closed, the sender dropped): the worker exits.
+  fn fill(&mut self, dst: &mut VecDeque<f32>, min: usize) -> bool;
+  /// Append what is available now, without blocking.
+  fn drain(&mut self, dst: &mut VecDeque<f32>);
 }
 
-impl Recognizer {
-  /// Spawn the worker and start loading the models; readiness (or failure)
-  /// arrives as an event. Samples fed before `Ready` are buffered.
-  pub fn start(config: RecognizerConfig) -> Self {
-    let (samples_tx, samples_rx) = mpsc::channel::<Vec<f32>>();
-    let (events_tx, events_rx) = mpsc::channel::<RecognizerEvent>();
-    std::thread::Builder::new()
-      .name("speech-recognizer".into())
-      .spawn(move || worker(config, samples_rx, events_tx))
-      .expect("spawn speech-recognizer thread");
-    Recognizer { samples_tx, events_rx }
+impl SampleSource for mpsc::Receiver<Vec<f32>> {
+  fn fill(&mut self, dst: &mut VecDeque<f32>, min: usize) -> bool {
+    let mut added = 0;
+    while added < min {
+      match self.recv() {
+        Ok(chunk) => {
+          added += chunk.len();
+          dst.extend(chunk);
+        }
+        Err(_) => return false,
+      }
+      while let Ok(more) = self.try_recv() {
+        added += more.len();
+        dst.extend(more);
+      }
+    }
+    true
   }
 
-  pub fn feed(&self, samples: Vec<f32>) {
-    if !samples.is_empty() {
-      let _ = self.samples_tx.send(samples);
+  fn drain(&mut self, dst: &mut VecDeque<f32>) {
+    while let Ok(more) = self.try_recv() {
+      dst.extend(more);
+    }
+  }
+}
+
+/// How long one wait on the microphone lasts before the worker looks again.
+/// A close wakes the wait at once, so this only sets how often an idle
+/// worker turns.
+const TAP_WAIT: Duration = Duration::from_secs(1);
+
+/// A microphone session's tap as a sample source, with the buffer its reads
+/// land in.
+pub struct TapSource {
+  tap: MicrophoneTap,
+  chunk: Vec<f32>,
+}
+
+impl TapSource {
+  pub fn new(tap: MicrophoneTap) -> Self {
+    TapSource { tap, chunk: Vec::new() }
+  }
+
+  /// Move everything the tap holds into `dst`; false once the session closed.
+  fn take(&mut self, dst: &mut VecDeque<f32>) -> bool {
+    self.chunk.clear();
+    let Ok(read) = self.tap.read_into(&mut self.chunk) else {
+      return false;
+    };
+    if read.dropped > 0 {
+      log::debug!("[speech] microphone window overrun: {} samples lost", read.dropped);
+    }
+    dst.extend(self.chunk.iter().copied());
+    true
+  }
+}
+
+impl SampleSource for TapSource {
+  fn fill(&mut self, dst: &mut VecDeque<f32>, min: usize) -> bool {
+    loop {
+      match self.tap.wait(min, TAP_WAIT) {
+        MicWait::Samples(_) => return self.take(dst),
+        MicWait::Timeout => {}
+        MicWait::Closed => return false,
+      }
     }
   }
 
-  /// Drain the events emitted since the last call.
-  pub fn take_events(&self) -> Vec<RecognizerEvent> {
-    self.events_rx.try_iter().collect()
+  fn drain(&mut self, dst: &mut VecDeque<f32>) {
+    self.take(dst);
   }
 }
 
-fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events_tx: mpsc::Sender<RecognizerEvent>) {
+pub struct Recognizer {
+  events_rx: UnboundedReceiver<RecognizerEvent>,
+}
+
+impl Recognizer {
+  /// Spawn the worker over `source` and start loading the models; readiness
+  /// (or failure) arrives as an event. Samples that arrive before `Ready`
+  /// are buffered. The worker ends when the source ends.
+  pub fn start(config: RecognizerConfig, source: impl SampleSource) -> Self {
+    let (events_tx, events_rx) = unbounded_channel::<RecognizerEvent>();
+    std::thread::Builder::new()
+      .name("speech-recognizer".into())
+      .spawn(move || worker(config, source, events_tx))
+      .expect("spawn speech-recognizer thread");
+    Recognizer { events_rx }
+  }
+
+  /// Drain the events emitted since the last call.
+  pub fn take_events(&mut self) -> Vec<RecognizerEvent> {
+    let mut events = Vec::new();
+    while let Ok(event) = self.events_rx.try_recv() {
+      events.push(event);
+    }
+    events
+  }
+
+  /// The next event, awaited; None once the worker has ended.
+  pub async fn next(&mut self) -> Option<RecognizerEvent> {
+    self.events_rx.recv().await
+  }
+}
+
+fn worker(config: RecognizerConfig, mut source: impl SampleSource, events_tx: UnboundedSender<RecognizerEvent>) {
   // Route whisper.cpp/ggml stderr chatter into the log crate (idempotent).
   whisper_rs::install_logging_hooks();
 
@@ -160,16 +253,11 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
 
   // Ingest exactly CHECK_INTERVAL samples per iteration so segmentation works
   // the same whether audio arrives in real time or all at once; the blocking
-  // recv paces the loop and its disconnect ends the worker.
+  // fill paces the loop and the source's end ends the worker.
   loop {
-    while queue.len() < CHECK_INTERVAL {
-      match samples_rx.recv() {
-        Ok(chunk) => queue.extend(chunk),
-        Err(_) => return,
-      }
-      while let Ok(more) = samples_rx.try_recv() {
-        queue.extend(more);
-      }
+    let short = CHECK_INTERVAL.saturating_sub(queue.len());
+    if short > 0 && !source.fill(&mut queue, short) {
+      return;
     }
     audio.extend(queue.drain(..CHECK_INTERVAL));
 
@@ -185,9 +273,7 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
       // worker the queue holds under a frame of audio and this is the normal
       // window slide; after CPU starvation it erases the accumulated lag.
       if config.realtime {
-        while let Ok(more) = samples_rx.try_recv() {
-          queue.extend(more);
-        }
+        source.drain(&mut queue);
         if audio.len() + queue.len() > WAKE_WINDOW {
           let dropped = audio.len() + queue.len() - WAKE_WINDOW;
           if dropped > SAMPLE_RATE as usize {

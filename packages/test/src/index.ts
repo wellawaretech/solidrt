@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, painted as paintFrame, setFrameRate, settle, time, windowReady } from "sol:test"
+import { camera as installCamera, capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, microphone as installMicrophone, painted as paintFrame, setFrameRate, settle, time, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -165,6 +165,13 @@ export interface CameraImage {
   data: Uint8Array
 }
 
+/** A mono clip: float samples at a sample rate, the shape `read()` of a microphone session delivers. */
+export interface MicrophoneClip {
+  /** Hz; the rate the app opens its microphone at. */
+  sampleRate: number
+  samples: Float32Array
+}
+
 /** The app under test, as a test's function receives it. */
 export interface TestApp {
   /**
@@ -215,6 +222,23 @@ export interface TestApp {
    * expect(cam.barcode()?.data).toBe("solidrt")
    */
   camera(image: CameraImage): Promise<void>
+  /**
+   * Makes `clip` what the microphone hears: every microphone the app opens
+   * at the clip's rate from now on holds it from the open (a
+   * `createMicrophone` or `open` resolves at once, no device, no prompt), and a
+   * microphone already open hears it now, so a module reading the session
+   * on its own thread gets it too. Call it before `mount` or `load` so the
+   * app's own open finds a microphone; call it again to say something else
+   * to an open one. An open at another rate than the clip's fails naming
+   * both rates. Results a module or recognizer produces land through the
+   * engine: `settle()` after the install.
+   *
+   * @example
+   * await app.microphone({ sampleRate: 16000, samples: tone })
+   * let mic = createMicrophone()
+   * expect(mic.read()).toEqual(tone)
+   */
+  microphone(clip: MicrophoneClip): Promise<void>
   /**
    * Calls a debug command the app registered (`registerDebug` of
    * `sol:dev`), runs a frame, and returns what the command returned. The
@@ -529,6 +553,13 @@ let app: TestApp = {
     if (data.length !== width * height * RGBA) throw new TypeError(`camera: ${width} x ${height} RGBA8 is ${width * height * RGBA} bytes, got ${data.length}`)
     installCamera(width, height, data)
     await app.frame()
+  },
+  async microphone(clip) {
+    let ok = clip !== null && typeof clip === "object" && clip.samples instanceof Float32Array
+    if (!ok) throw new TypeError("microphone: pass { sampleRate, samples }, with samples a Float32Array of mono samples")
+    let { sampleRate, samples } = clip
+    if (!Number.isInteger(sampleRate) || sampleRate <= 0) throw new TypeError(`microphone: the sample rate must be a positive integer, got ${sampleRate}`)
+    installMicrophone(sampleRate, samples)
   },
   async debug(name, args) {
     let result = debug(name, args === undefined ? null : JSON.stringify(args))

@@ -245,6 +245,21 @@ fn camera<'js>(ctx: Ctx<'js>, width: u32, height: u32, pixels: TypedArray<'js, u
   alloy.install_still_camera(width, height, pixels.copy_bytes()).map_err(|e| throw(&e))
 }
 
+/// `microphone(sampleRate, samples)`: install a mono f32 clip as the
+/// microphone (`alloy::Context::install_test_microphone`): every microphone
+/// the app opens at that rate from now on holds it from the open, and an
+/// open one hears it now. Throws on a rate of 0, or one that differs from
+/// an open test microphone's.
+fn microphone<'js>(ctx: Ctx<'js>, sample_rate: u32, samples: TypedArray<'js, f32>) -> flux::rquickjs::Result<()> {
+  stepper(&ctx, "microphone()")?;
+  let throw = |message: &str| Exception::throw_message(&ctx, &format!("sol:test microphone: {message}"));
+  let Some(alloy) = flux::gui::alloy_context(&ctx) else {
+    return Err(throw("no gui in this engine"));
+  };
+  let samples = flux::elements_of(&ctx, &samples, "sol:test microphone")?.to_vec();
+  alloy.install_test_microphone(sample_rate, samples).map_err(|e| throw(&e))
+}
+
 /// `capture(node)`: the pixels the node's subtree paints, as `{ width,
 /// height, data }` (RGBA8, premultiplied, rows top to bottom, at the
 /// display scale). Drawn now, with the tree as it is: no frame runs and no
@@ -341,6 +356,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("capture")?;
     decl.declare("painted")?;
     decl.declare("camera")?;
+    decl.declare("microphone")?;
     Ok(())
   }
 
@@ -367,6 +383,7 @@ impl ModuleDef for SolTestModule {
     exports.export("capture", Function::new(ctx.clone(), capture)?)?;
     exports.export("painted", Function::new(ctx.clone(), painted)?)?;
     exports.export("camera", Function::new(ctx.clone(), camera)?)?;
+    exports.export("microphone", Function::new(ctx.clone(), microphone)?)?;
     Ok(())
   }
 }

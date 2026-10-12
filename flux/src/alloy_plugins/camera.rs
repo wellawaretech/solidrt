@@ -27,11 +27,6 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
 }
 
-/// How often a waiter on an open polls its session between frames, ms: a
-/// frame period, so the answer lands about when a client's own tick would
-/// have found it, while the poll stays cheap (two non-blocking SDL reads).
-const OPEN_POLL_MS: u64 = 16;
-
 struct PendingOpen {
   session: u64,
   resolve: Persistent<Function<'static>>,
@@ -177,7 +172,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
       let gui = state.0.gui.clone();
       ctx.spawn(async move {
         while matches!(gui.alloy.pump_camera(session), Some(CameraStatus::Pending)) {
-          tokio::time::sleep(std::time::Duration::from_millis(OPEN_POLL_MS)).await;
+          tokio::time::sleep(std::time::Duration::from_millis(super::OPEN_POLL_MS)).await;
         }
         latch.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(wake) = &wake {
@@ -229,7 +224,7 @@ fn watch_scan(ctx: &Ctx<'_>, state: &CameraPluginState, session: u64, first: cra
           }
         }
       }
-      tokio::time::sleep(std::time::Duration::from_millis(OPEN_POLL_MS)).await;
+      tokio::time::sleep(std::time::Duration::from_millis(super::OPEN_POLL_MS)).await;
     }
   });
 }
