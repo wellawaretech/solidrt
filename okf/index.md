@@ -690,11 +690,6 @@ Shaped, not started.
   "Back to a list screen remounts it, so its scroll offset and focused row are
   lost; each stack entry should own a keyed store that lives while the entry
   is on the stack, with ScrollView opting in and focus restored on pop."
-- **[Default fonts in the runtime, packs ship only what it lacks](backlog/runtime-default-fonts.md)** [2026-10-12]
-  Every pack carries the three Noto role defaults (5.6 MB) because the
-  production runtime registers no fonts; the runtime should carry them,
-  droppable and replaceable in a custom runtime, and a pack should ship only
-  the fonts its runtime does not have.
 - **[Runtime optimization - what the binary weighs and how to shrink it](backlog/runtime-optimization.md)** [2026-09-29]
   The runtime is 61 MB at release (about 40 MB at release-opt) and size
   already decides what ships - speech recognition is compiled out of every
@@ -2280,6 +2275,11 @@ Finished, kept for the reasoning.
   on a non-first tab's root goes to the first tab, links land in their tab.
   The model every native router shares (React Navigation, Expo Router,
   go_router, UIKit/SwiftUI, Jetpack); web routers have nothing here."
+- **[Default fonts in the runtime, packs ship only what it lacks](done/runtime-default-fonts.md)** [2026-10-12]
+  Every pack carries the three Noto role defaults (5.6 MB) because the
+  production runtime registers no fonts; the runtime should carry them,
+  droppable and replaceable in a custom runtime, and a pack should ship only
+  the fonts its runtime does not have.
 - **[Register app-specific native modules without forking the runtime](done/runtime-extension-modules.md)** [2026-10-06]
   The route for native code is a custom runtime build, but lattice built its
   engine with no way to hand modules in, the stock main was not reusable and

@@ -1,7 +1,7 @@
 //! The program over the runtime: the desktop command line and the Android
 //! entry that `start` the app with, and `Program`, what a program brings:
-//! its `Modules` beside the built-in ones and the screens the runtime
-//! embeds. The stock program (the `runtime` crate) is one call into here
+//! its `Modules` beside the built-in ones, its `Fonts` and the screens the
+//! runtime embeds. The stock program (the `runtime` crate) is one call into here
 //! with no modules; a custom runtime (a cargo project over lattice, see
 //! docs/runtime "A custom runtime") is the same call with its own, and on
 //! Android the `android_entry!` line in its cdylib.
@@ -88,8 +88,8 @@ pub(crate) fn well_formed_module_name(rest: &str) -> bool {
     })
 }
 
-/// What a program hands the runtime: its modules and the two screens the
-/// runtime embeds, as bundles `sol bundle` made from apps/player. The
+/// What a program hands the runtime: its modules, its fonts and the two
+/// screens the runtime embeds, as bundles `sol bundle` made from apps/player. The
 /// screens are made by the JavaScript side, so a program embeds them with
 /// `include_str!` from the `@solidrt/cli` package in its node_modules
 /// (`player/index.sol.js`, `player/bsod.sol.js`): bundled there by `make
@@ -97,6 +97,10 @@ pub(crate) fn well_formed_module_name(rest: &str) -> bool {
 /// version as the lattice tag a custom runtime depends on.
 pub struct Program {
   pub modules: Modules,
+  /// The fonts every app on this runtime starts from (`Fonts::stock()` in
+  /// the stock program): an app's own fonts layer over them, in the player
+  /// and in a pack alike, so a pack ships only what the app binds itself.
+  pub fonts: crate::Fonts,
   /// The screen shown when an app fails to start; every build.
   pub bsod: &'static str,
   /// The dev client's home, booted when no app source is given; the
@@ -143,7 +147,7 @@ pub fn android_main(argc: i32, argv: *mut *mut i8, program: Program) -> i32 {
     DEFAULT_WINDOW_SIZE,
     false,
     dev_server,
-    crate::embedded_fonts(),
+    crate::manifest::AppFonts::default(),
     storage,
     Vec::new(),
     program,
@@ -420,10 +424,9 @@ pub fn main(program: Program) {
   // convention, the magic is the contract): identity, fonts and assets come
   // from the file, and the flags above still apply, so `sol console` runs a
   // packed app under the dev runner's controls. Anything else is JS source on
-  // the bare runtime: no fonts (text falls back to the platform font
-  // manager), no identity.
+  // the bare runtime: the program's fonts, no identity.
   #[cfg(not(feature = "go"))]
-  let (app, mut fonts, mut app_id): (_, Vec<alloy::rendertree::FontPayload>, Option<String>) =
+  let (app, mut fonts, mut app_id): (_, crate::manifest::AppFonts, Option<String>) =
     match source_path.as_deref().and_then(|p| crate::payload::load_path(std::path::PathBuf::from(p))) {
       Some(payload) => {
         crate::gl_libs::provision(&payload.app_id, &payload.gl_libs);
@@ -434,7 +437,7 @@ pub fn main(program: Program) {
         if let Some(p) = source_path.as_deref().filter(|p| p.ends_with(".solapp")) {
           usage(&format!("'{p}' is not a SolidRT app pack (no valid payload at its end)"));
         }
-        (source_path.map(path_app), Vec::new(), None)
+        (source_path.map(path_app), crate::manifest::AppFonts::default(), None)
       }
     };
   // The runtime has no built-in screen to fall back to (the player is
@@ -445,7 +448,8 @@ pub fn main(program: Program) {
     std::process::exit(2);
   }
   #[cfg(feature = "go")]
-  let (app, mut fonts, mut app_id): (_, _, Option<String>) = (source_path.map(path_app), crate::embedded_fonts(), None);
+  let (app, mut fonts, mut app_id): (_, crate::manifest::AppFonts, Option<String>) =
+    (source_path.map(path_app), crate::manifest::AppFonts::default(), None);
   // `--assets <dir>`: mount a directory holding an assets/ tree so
   // `assets/...` resolves through it instead of the data-sandbox cwd - what a
   // packed app or a go-installed version gets from its payload. `sol render`
@@ -459,9 +463,9 @@ pub fn main(program: Program) {
     // A manifest in the mount (the staged dir `sol render` builds has the
     // installed-version shape) is the app's identity and font bindings, as
     // a version-store boot reads them: the app runs in its own sandbox with
-    // its fonts registered over the base set.
+    // its fonts registered over the program's set.
     if let Some(manifest) = crate::manifest::Manifest::load(&dir) {
-      fonts = crate::merge_fonts(&fonts, manifest.load_fonts(&dir));
+      fonts = manifest.load_fonts(&dir);
       app_id = app_id.or(Some(manifest.app_id));
       display_name = manifest.display_name;
     }
@@ -503,7 +507,7 @@ struct TestArgs {
   seed: Option<u64>,
   failures: Option<String>,
   size: (u32, u32),
-  fonts: Vec<alloy::rendertree::FontPayload>,
+  fonts: crate::manifest::AppFonts,
   storage: crate::storage::StorageSpec,
   app_args: Vec<String>,
   program: Program,
@@ -523,7 +527,7 @@ struct RenderArgs {
   launch: crate::Launch,
   size: (u32, u32),
   stats: bool,
-  fonts: Vec<alloy::rendertree::FontPayload>,
+  fonts: crate::manifest::AppFonts,
   storage: crate::storage::StorageSpec,
   app_args: Vec<String>,
   program: Program,

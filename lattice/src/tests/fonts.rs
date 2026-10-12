@@ -68,3 +68,40 @@ fn load_fonts_reads_bound_files_and_claims_every_alias() {
   assert_eq!(app.aliases, ["sans", "mono", "serif", "evil"]);
   let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn stock_set_edits_by_alias() {
+  use crate::Fonts;
+  assert_eq!(Fonts::stock().aliases(), ["sans", "serif", "mono"]);
+  // A replaced role keeps its place and takes the new bytes; a dropped role
+  // leaves; an added alias appends.
+  let fonts = Fonts::stock().without("mono").with("sans", &b"brand-sans"[..]).with("display", &b"display"[..]);
+  assert_eq!(fonts.aliases(), ["sans", "serif", "display"]);
+  let payloads = fonts.into_payloads();
+  assert_eq!(payloads[0].bytes.as_ref(), b"brand-sans");
+  assert_eq!(Fonts::none().aliases(), Vec::<&str>::new());
+}
+
+#[test]
+#[should_panic(expected = "bind no 'mono' to drop")]
+fn dropping_an_unbound_alias_is_a_programming_error() {
+  let _ = crate::Fonts::none().with("sans", &b"sans"[..]).without("mono");
+}
+
+#[test]
+fn payload_fonts_claim_every_alias_and_read_bound_files() {
+  let manifest = Manifest::parse(
+    r#"{"appId":"com.example.app","runtimeVersion":1,"bundle":{"sha256":"","size":0},
+        "fonts":[{"alias":"sans","path":"assets/fonts/Custom.ttf"},{"alias":"mono"},
+                 {"alias":"serif","path":"assets/fonts/Missing.ttf"}]}"#,
+  )
+  .expect("manifest parses");
+  // The packed payload reads bound files through the trailer index: a file
+  // not in it registers nothing but its alias stays claimed, like a
+  // dropped role, so the program's font never fills it.
+  let app = manifest.fonts_with(|path| (path == "assets/fonts/Custom.ttf").then(|| b"custom-bytes".to_vec()));
+  assert_eq!(aliases(&app.fonts), ["sans"]);
+  assert_eq!(app.aliases, ["sans", "mono", "serif"]);
+  let base = [font("sans", b"noto-sans"), font("serif", b"noto-serif"), font("mono", b"noto-mono")];
+  assert_eq!(aliases(&merge_fonts(&base, app)), ["sans"]);
+}

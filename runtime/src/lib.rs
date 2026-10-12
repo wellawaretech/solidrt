@@ -9,13 +9,22 @@ pub fn modules() -> lattice::Modules {
   lattice::Modules::new()
 }
 
-/// The program: the modules, and the two screens the runtime embeds (the
-/// failure screen in every build, the player in the dev client), from the
-/// @solidrt/cli package: bundled there from apps/player by `make
-/// player-bundle` in the checkout, shipped in the package for an app.
+/// The fonts every app on the stock runtime starts from: Noto Sans, Noto
+/// Serif and Noto Sans Mono under the role aliases `sans`, `serif` and
+/// `mono`. A custom runtime edits this set (docs/runtime, "The fonts").
+pub fn fonts() -> lattice::Fonts {
+  lattice::Fonts::stock()
+}
+
+/// The program: the modules, the fonts, and the two screens the runtime
+/// embeds (the failure screen in every build, the player in the dev
+/// client), from the @solidrt/cli package: bundled there from apps/player
+/// by `make player-bundle` in the checkout, shipped in the package for an
+/// app.
 pub fn program() -> lattice::Program {
   lattice::Program {
     modules: modules(),
+    fonts: fonts(),
     bsod: include_str!("../../node_modules/@solidrt/cli/player/bsod.sol.js"),
     #[cfg(feature = "go")]
     player: include_str!("../../node_modules/@solidrt/cli/player/index.sol.js"),

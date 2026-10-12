@@ -1,6 +1,6 @@
 import { values, source } from "../lib/args"
 import { bundleFlux, bundleSolid, compileToBytecode, findFluxIsolates } from "../bundle/bundler"
-import { resolvePackFonts } from "../lib/fonts"
+import type { ManifestFont } from "../lib/project"
 import { ANDROID_APP_ID, ANDROID_APP_ID_HINT, loadAppIdentity, loadProject, resolveCapabilities, type Capability, type Project } from "../lib/project"
 import { resolveMode, type Mode } from "../lib/mode"
 import { packApp, packFlux, packSolid } from "./trailer"
@@ -99,13 +99,19 @@ function packTarget() {
 }
 
 // All solidrt outputs are the same canonical pack: manifest + bundle.fluxbc +
-// assets (fonts included). --folder writes it as a flat folder next to a
+// assets (the app's own fonts included). --folder writes it as a flat folder next to a
 // bare runner; --app writes it alone as one .solapp for a runner to load;
 // --apk patches it into APKs; the default single-file exe carries it as
 // trailer sections.
+// What the pack does about fonts, for the report: the runtime carries the
+// defaults, so only what the app binds or drops is worth a word.
+function describeFonts(fonts: ManifestFont[]): string {
+  if (fonts.length === 0) return "the runtime's"
+  let own = fonts.map((f) => (f.path ? `${f.alias} from ${f.path}` : `${f.alias} dropped`))
+  return `${own.join(", ")}; the rest the runtime's`
+}
+
 async function buildApp(mode: Mode) {
-  let fonts = resolvePackFonts(mode.projectDir)
-  console.log(`>> fonts: ${fonts.length ? fonts.map((f) => f.alias).join(", ") : "none"}`)
   let bundled = await bundleSolid(mode)
   let bytecode = await compileToBytecode(bundled.code)
   let isolates = []
@@ -114,7 +120,9 @@ async function buildApp(mode: Mode) {
   // A module only the project's runtime has: the runner packed must be the
   // project's, so a target it did not build is an error (lib/runtime.ts).
   let needed = bundled.projectModules[0] ?? null
-  return { bytecode, folder: buildPackFolder(mode, bytecode, isolates), needed }
+  let folder = buildPackFolder(mode, bytecode, isolates)
+  console.log(`>> fonts: ${describeFonts(folder.fonts)}`)
+  return { bytecode, folder, needed }
 }
 
 // --apk patches the app into one installable Android APK per installed

@@ -1,4 +1,5 @@
 mod entry;
+mod fonts;
 mod frame;
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 mod frame_history;
@@ -40,6 +41,8 @@ use test_host::TestRun;
 mod tests;
 
 pub use entry::{main, Modules, Program};
+use fonts::merge_fonts;
+pub use fonts::Fonts;
 // What a custom runtime writes its modules against (`flux::gui::frame`,
 // `flux::rquickjs`, `flux::alloy`), through the one dependency it names.
 #[cfg(target_os = "android")]
@@ -217,7 +220,9 @@ async fn run_hook(exec: Option<ExecHandle>, name: &'static str, deadline: std::t
 }
 
 use alloy::impellers::ISize;
-use alloy::rendertree::{FontPayload, PlatformContext, RenderTree};
+#[cfg(feature = "go")]
+use alloy::rendertree::FontPayload;
+use alloy::rendertree::{PlatformContext, RenderTree};
 use alloy::{AlloyEvent, InputState};
 use flux::{ExecHandle, FluxEngine};
 use runtime::UiRuntime;
@@ -298,30 +303,6 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTSurface_nativeTouch(
 
 // --- End Android entry point ------------------------------
 
-/// The dev client's built-in fonts: the three Noto role defaults, matching what
-/// a default packed app carries in its trailer. The dev loop (player,
-/// BSOD, HUD, `sol render` golden frames) needs deterministic text without a
-/// packed payload, so these stay compiled in; the production runtime ships no
-/// font data and registers whatever the trailer carries.
-#[cfg(feature = "go")]
-pub(crate) fn embedded_fonts() -> Vec<FontPayload> {
-  use std::borrow::Cow;
-  vec![
-    FontPayload {
-      alias: Some("sans".to_string()),
-      bytes: Cow::Borrowed(include_bytes!("../../alloy/assets/fonts/NotoSans.ttf")),
-    },
-    FontPayload {
-      alias: Some("serif".to_string()),
-      bytes: Cow::Borrowed(include_bytes!("../../alloy/assets/fonts/NotoSerif.ttf")),
-    },
-    FontPayload {
-      alias: Some("mono".to_string()),
-      bytes: Cow::Borrowed(include_bytes!("../../alloy/assets/fonts/NotoSansMono.ttf")),
-    },
-  ]
-}
-
 pub const VERSION: &str = match option_env!("SOLIDRT_VERSION") {
   Some(v) => v,
   None => "0.0.0-dev",
@@ -384,9 +365,9 @@ struct RunOptions {
   stats: bool,
   // Dev-server address to auto-connect on launch (go client only; see plugins::dev).
   dev_server: Option<String>,
-  // Fonts to register at startup (see FontPayload): the go client's embedded
-  // Notos, or a packed binary's trailer fonts.
-  fonts: Vec<FontPayload>,
+  // The app's own fonts (a packed payload's, a `--assets` manifest's; none
+  // for bare source), registered over the program's set (see merge_fonts).
+  fonts: manifest::AppFonts,
   // Data-root resolution inputs (see storage::resolve).
   storage: storage::StorageSpec,
   // The app's argument vector (everything after the source path or a bare
@@ -470,25 +451,7 @@ fn mount_assets(app_id: &str) {
   forge::fs::set_assets_base(go::store::current_version_dir(app_id).map(forge::fs::AssetsBase::Dir));
 }
 
-/// The font set an app runs on: the runner's base fonts plus the app's own,
-/// where every alias the app's manifest binds is the app's alone: a base
-/// entry under it is dropped, whether the app binds a file (its override) or
-/// nothing (a dropped default: the role then resolves like an unknown
-/// family, to the sans role, or to the first registered face when sans
-/// itself is gone; the glyph engine draws registered faces only, nothing
-/// comes from the system).
-/// Two fonts under one alias would form one family style set in which style
-/// matching keeps the first registered on a tie, so a project's "sans"
-/// override would lose to the base Noto Sans (the glyph engine's font set
-/// keeps the first registration per name).
-pub(crate) fn merge_fonts(base: &[FontPayload], app: manifest::AppFonts) -> Vec<FontPayload> {
-  let claimed = |font: &FontPayload| font.alias.as_ref().is_some_and(|alias| app.aliases.contains(alias));
-  let mut fonts: Vec<FontPayload> = base.iter().filter(|font| !claimed(font)).cloned().collect();
-  fonts.extend(app.fonts);
-  fonts
-}
-
-// Register the font set for `app_id`: the client's base fonts plus the
+// Register the font set for `app_id`: the program's fonts plus the
 // current installed version's manifest fonts, replacing whatever the previous
 // app registered. Rebuilt from scratch on every app switch so fonts are
 // per-app like the assets mount and the data sandbox - nothing accumulates
@@ -644,7 +607,7 @@ fn ui_thread(
   } = opts;
   #[cfg(feature = "go")]
   let player = program.player;
-  let Program { modules, bsod, .. } = program;
+  let Program { modules, bsod, fonts: base_fonts, .. } = program;
   #[cfg(not(feature = "test"))]
   let _ = (&test, &test_passed);
   #[cfg(not(feature = "go"))]
@@ -678,12 +641,14 @@ fn ui_thread(
   // naming a different app re-anchors (see anchor_app).
   let mut current_app_id: Option<String> = Some(default_app_id.clone());
 
-  // The client's own fonts (embedded Notos or a packed trailer), kept so app
-  // switches can rebuild the font set from scratch (see apply_app_fonts).
-  // Embedded font bytes are borrowed Cows, so this clone copies no font data.
-  #[cfg(feature = "go")]
-  let base_fonts = fonts.clone();
-  let platform = Arc::new(PlatformContext::new(fonts));
+  // The program's fonts, with the app's own over them. The dev client keeps
+  // the program's so app switches rebuild the set from scratch (see
+  // apply_app_fonts); embedded font bytes are borrowed Cows, so a clone of
+  // the set copies no font data.
+  let base_fonts = base_fonts.into_payloads();
+  let platform = Arc::new(PlatformContext::new(merge_fonts(&base_fonts, fonts)));
+  #[cfg(not(feature = "go"))]
+  drop(base_fonts);
   overlay::warm(&platform);
   // Hand alloy's loop the demand gate's latch so it can self-schedule the
   // repaints its surface lifecycle requires (expose, resize settling,
@@ -1620,7 +1585,7 @@ pub(crate) fn start(
   size: (u32, u32),
   stats: bool,
   dev_server: Option<String>,
-  fonts: Vec<FontPayload>,
+  fonts: manifest::AppFonts,
   storage: storage::StorageSpec,
   args: Vec<String>,
   program: Program,
@@ -1658,7 +1623,7 @@ pub(crate) fn start_render(
   strict: bool,
   size: (u32, u32),
   stats: bool,
-  fonts: Vec<FontPayload>,
+  fonts: manifest::AppFonts,
   storage: storage::StorageSpec,
   args: Vec<String>,
   program: Program,
@@ -1681,7 +1646,7 @@ pub(crate) fn start_tests(
   app: AppSource,
   run: TestRun,
   size: (u32, u32),
-  fonts: Vec<FontPayload>,
+  fonts: manifest::AppFonts,
   storage: storage::StorageSpec,
   args: Vec<String>,
   program: Program,
@@ -1709,7 +1674,7 @@ fn start_with(
   size: (u32, u32),
   stats: bool,
   dev_server: Option<String>,
-  fonts: Vec<FontPayload>,
+  fonts: manifest::AppFonts,
   storage: storage::StorageSpec,
   args: Vec<String>,
   hosts: Hosts,

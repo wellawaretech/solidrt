@@ -15,9 +15,9 @@ sections in the pack trailer registered from memory; the storage stages of
 into manifest assets the same day.
 
 Superseded in part by
-[runtime-default-fonts](../backlog/runtime-default-fonts.md): with custom
-runtimes, the defaults move back into the runtime and a pack ships only
-the fonts its runtime lacks.
+[runtime-default-fonts](runtime-default-fonts.md) (2026-10-12): the
+defaults are the runtime's again, `lattice::Fonts` on the program, and a
+pack ships only the fonts its app binds.
 
 ## What landed
 

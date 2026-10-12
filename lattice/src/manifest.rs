@@ -70,8 +70,8 @@ pub struct FontRef {
 }
 
 /// An app's fonts as its manifest binds them: the files to register, and
-/// every alias the manifest speaks for, bound or dropped, which a runner's
-/// base set must not fill (see lattice::merge_fonts).
+/// every alias the manifest speaks for, bound or dropped, which the
+/// program's font set must not fill (see fonts::merge_fonts).
 #[derive(Default)]
 pub struct AppFonts {
   pub fonts: Vec<FontPayload>,
@@ -116,17 +116,28 @@ impl Manifest {
   /// rather than failing the boot; its alias stays claimed either way, as
   /// the manifest bound it.
   pub fn load_fonts(&self, dir: &Path) -> AppFonts {
+    self.fonts_with(|path| match std::fs::read(dir.join(path)) {
+      Ok(bytes) => Some(bytes),
+      Err(e) => {
+        log::warn!("[sol] Could not read font {path}: {e}");
+        None
+      }
+    })
+  }
+
+  /// The fonts this manifest annotates, each bound file read by `read` (a
+  /// manifest-listed asset path; None when it cannot be read, which leaves
+  /// the alias claimed with nothing under it). The one reading behind the
+  /// folder boot (`load_fonts`) and the packed payload (the trailer index).
+  pub fn fonts_with(&self, mut read: impl FnMut(&str) -> Option<Vec<u8>>) -> AppFonts {
     let mut app = AppFonts::default();
     for font in &self.fonts {
       app.aliases.push(font.alias.clone());
       let Some(path) = font.path.as_deref().filter(|p| safe_asset_path(p)) else {
         continue;
       };
-      match std::fs::read(dir.join(path)) {
-        Ok(bytes) => {
-          app.fonts.push(FontPayload { alias: Some(font.alias.clone()), bytes: std::borrow::Cow::Owned(bytes) })
-        }
-        Err(e) => log::warn!("[sol] Could not read font {path}: {e}"),
+      if let Some(bytes) = read(path) {
+        app.fonts.push(FontPayload { alias: Some(font.alias.clone()), bytes: std::borrow::Cow::Owned(bytes) });
       }
     }
     app

@@ -5,9 +5,10 @@
 // runner (`sol pack --folder`). One shape behind all
 // (okf/plans/client-storage-updates.md, stage 3): the manifest defines the
 // version's file set (the runner is deliberately unlisted) and carries the app
-// identity; a .js bundle is JS source, anything else QuickJS bytecode; fonts
-// come from the manifest annotations; assets resolve through the mount (a
-// dir, or ranges inside the packed image).
+// identity; a .js bundle is JS source, anything else QuickJS bytecode; the
+// app's fonts come from the manifest annotations and layer over the
+// program's set; assets resolve through the mount (a dir, or ranges inside
+// the packed image).
 //
 // Trailer parsing lives in forge::trailer (shared with fluxrt); the layout is
 // documented there and written by packages/cli/src/pack/trailer.ts. Sections
@@ -24,7 +25,8 @@ pub const EMBED_MAGIC: &[u8; 9] = b"SOLIDRT\x88\x44";
 
 pub struct FactoryPayload {
   pub app: crate::AppSource,
-  pub fonts: Vec<alloy::rendertree::FontPayload>,
+  /// The app's own fonts, to register over the program's (see fonts::merge_fonts).
+  pub fonts: crate::manifest::AppFonts,
   pub app_id: String,
   // The manifest's displayName: what the OS shows for the app where the
   // runtime names it (a registered scheme handler, links.rs).
@@ -78,14 +80,7 @@ pub fn load(trailer: forge::trailer::Trailer) -> Option<FactoryPayload> {
   };
   let bundle_name = plain_bundle_name(&manifest)?;
   let app = app_from_bundle(bundle_name, read_file(bundle_name)?)?;
-  let fonts = manifest
-    .fonts
-    .iter()
-    .filter_map(|font| {
-      let bytes = read_file(font.path.as_deref()?)?;
-      Some(alloy::rendertree::FontPayload { alias: Some(font.alias.clone()), bytes: std::borrow::Cow::Owned(bytes) })
-    })
-    .collect();
+  let fonts = manifest.fonts_with(read_file);
   // Section order, which gl_libs.rs relies on for preload order.
   let gl_libs = trailer
     .sections
@@ -118,7 +113,7 @@ pub fn load_adjacent_folder() -> Option<FactoryPayload> {
   warn_version_mismatch(&manifest);
   let bundle_name = plain_bundle_name(&manifest)?;
   let app = app_from_bundle(bundle_name, std::fs::read(dir.join(bundle_name)).ok()?)?;
-  let fonts = manifest.load_fonts(&dir).fonts;
+  let fonts = manifest.load_fonts(&dir);
   Some(FactoryPayload {
     app,
     fonts,

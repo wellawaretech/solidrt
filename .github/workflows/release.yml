@@ -430,17 +430,6 @@ jobs:
       - name: Build the CLI dev server bundle
         run: make -C packages/cli dist/server.js
 
-      # The CLI package ships its own copy of the default fonts: `sol pack`
-      # appends them to packed solidrt binaries (see packages/cli/src/fonts.ts).
-      # They are platform-independent, so the CLI package is the channel, not
-      # the per-platform binary packages.
-      - name: Stage default fonts into the CLI package
-        run: |
-          mkdir -p packages/cli/fonts
-          cp alloy/assets/fonts/NotoSans.ttf alloy/assets/fonts/NotoSerif.ttf \
-             alloy/assets/fonts/NotoSansMono.ttf alloy/assets/fonts/OFL.txt \
-             packages/cli/fonts/
-
       # The CLI package also ships the player and BSOD bundles (player/): the
       # two screens every runtime embeds (docs/runtime, "A custom runtime"),
       # made here by this release's CLI from this release's apps/player so they
@@ -451,7 +440,7 @@ jobs:
 
       # The CLI package also ships the dev console pre-compiled
       # (dist/console.solapp, see packages/cli/Makefile): `sol pack --app`
-      # needs the platform fluxc and the staged fonts, so it runs after both.
+      # needs the platform fluxc, so it runs after it.
       # The package demos ride along pre-bundled (dist/demos/, `sol demo`).
       - name: Build the console app pack and the demos
         run: make -C packages/cli dist/console.solapp demos

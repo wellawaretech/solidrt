@@ -1,7 +1,6 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
-import { basename, dirname, join, resolve } from "node:path"
-import { assetPathFor, collectAssets, loadAppIdentity, RUNTIME_VERSION, SOLIDRT_VERSION, type ManifestFont } from "../lib/project"
-import { resolvePackFonts } from "../lib/fonts"
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
+import { collectAssets, loadAppIdentity, RUNTIME_VERSION, SOLIDRT_VERSION, type ManifestFont } from "../lib/project"
 import type { Mode } from "../lib/mode"
 import { runnerGlLibs } from "../lib/artifacts"
 import { fail } from "../lib/fail"
@@ -11,8 +10,10 @@ import { isolateAssetPath } from "../bundle/bundler"
 // output): runner + manifest.json + bundle.fluxbc + assets/. The manifest
 // enumerates exactly the files belonging to the version - the runner is
 // deliberately unlisted - and, unlike dev manifests, carries the full app
-// identity (org, displayName) and the complete font set with the default
-// fonts materialized under assets/fonts/.
+// identity (org, displayName). Fonts are the dev manifest's: the files the
+// app binds in `solidrt.fonts` and its dropped aliases, which the runner
+// layers over the fonts its program carries (lattice::Fonts); the defaults
+// live in the runtime, so a default app packs no font file at all.
 
 function hashHex(bytes: Uint8Array): string {
   return new Bun.CryptoHasher("sha256").update(bytes).digest("hex")
@@ -25,6 +26,8 @@ export type PackFolder = {
   copies: Array<{ from: string; to: string }>
   /** Build outputs to place in the folder (isolate bytecode): folder-relative path + bytes. */
   files: Array<{ to: string; bytes: Buffer }>
+  /** The font annotations the manifest carries, for the pack report. */
+  fonts: ManifestFont[]
 }
 
 // `isolates` are the app's isolate bundles compiled to bytecode; they ship as
@@ -35,35 +38,10 @@ export function buildPackFolder(mode: Mode, bytecode: Buffer, isolates: { id: st
   // File mode collects no assets, so the dir is only ever joined in project
   // mode; the entry's dir stands in to keep the paths absolute.
   let projectDir = mode.projectDir ?? dirname(mode.entry)
-  let { assets, icon } = collectAssets(mode.projectDir)
+  let { assets, fonts, icon } = collectAssets(mode.projectDir)
   let copies = assets.map((a) => ({ from: join(projectDir, a.path), to: a.path }))
   let files = isolates.map((i) => ({ to: isolateAssetPath(i.id, "bin"), bytes: i.bytecode }))
   for (let f of files) assets.push({ path: f.to, sha256: hashHex(f.bytes), size: f.bytes.length })
-
-  // The full resolved font set: custom fonts are already collected assets;
-  // defaults materialize under assets/fonts/ (a user file already at that
-  // path must be the same bytes, otherwise the layout is ambiguous).
-  let fonts: ManifestFont[] = []
-  for (let font of resolvePackFonts(mode.projectDir)) {
-    if (font.isDefault) {
-      let path = "assets/fonts/" + basename(font.path)
-      let bytes = readFileSync(font.path)
-      let existing = assets.find((a) => a.path === path)
-      if (existing) {
-        if (existing.sha256 !== hashHex(bytes)) {
-          fail(`${path} collides with the packed default font; rename it or bind it via "solidrt.fonts"`)
-        }
-      } else {
-        assets.push({ path, sha256: hashHex(bytes), size: bytes.length })
-        copies.push({ from: font.path, to: path })
-      }
-      fonts.push({ path, alias: font.alias })
-    } else {
-      let path = assetPathFor(projectDir, font.path)
-      if (!path) fail(`"solidrt.fonts": "${font.alias}": ${font.path} must live under assets/`)
-      fonts.push({ path, alias: font.alias })
-    }
-  }
   assets.sort((a, b) => (a.path < b.path ? -1 : 1))
 
   let manifest = JSON.stringify({
@@ -77,7 +55,7 @@ export function buildPackFolder(mode: Mode, bytecode: Buffer, isolates: { id: st
     ...(assets.length ? { assets } : {}),
     ...(fonts.length ? { fonts } : {}),
   })
-  return { manifest, copies, files }
+  return { manifest, copies, files, fonts }
 }
 
 /**

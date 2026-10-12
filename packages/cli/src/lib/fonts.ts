@@ -1,83 +1,54 @@
-import { existsSync } from "node:fs"
-import { resolve } from "node:path"
-import { loadProject } from "./project"
-import { fail } from "./fail"
-
-// The fonts `sol pack` appends to a solidrt binary (see
-// okf/done/packaged-fonts.md). By default the three Noto role defaults;
-// the project's package.json can override them via the `solidrt.fonts` map
-// (alias -> font file path, false to drop a default, true to keep one - the
-// scaffold ships the roles as explicit trues so disabling is a one-word
-// edit):
+// The `solidrt.fonts` map in package.json: what an app says about fonts on
+// top of the ones its runtime carries (lattice::Fonts; the stock runtime
+// binds the three roles below, a custom runtime whatever its lib.rs says).
+// Each key is a registration alias:
 //
 //   "solidrt": {
 //     "fonts": {
-//       "sans": "./fonts/Inter.ttf",   // replaces the sans default
-//       "serif": true,                 // keeps the serif default
-//       "mono": false,                 // drops the mono default
-//       "display": "./fonts/F.ttf"     // adds a font under a custom alias
+//       "sans": "./assets/fonts/Inter.ttf",  // the app's face under sans, replacing the runtime's
+//       "serif": true,                       // the runtime's (the same as leaving the key out)
+//       "mono": false,                       // drops the runtime's mono: the role resolves like sans
+//       "display": "./assets/fonts/F.ttf"    // adds a face, selectable as fontFamily "display"
 //     }
 //   }
+//
+// The dev client, `sol render` and a pack apply the same map over the same
+// runtime set (collectAssets turns it into the manifest's font annotations),
+// and a pack ships only the files the app binds. Pure: the shape rules, with
+// no file system, so they are testable on flux (tests/project-fonts.test.ts).
 
-/** A resolved font source: the file behind an alias. */
-export type ResolvedFont = { alias: string; path: string; isDefault: boolean }
+/**
+ * The role aliases the stock runtime binds (Noto Sans, Noto Serif, Noto
+ * Sans Mono): what a boolean in the map can toggle in a project without a
+ * runtime of its own. A custom runtime's set is its lib.rs's, so there the
+ * runtime checks at run time (lattice warns on a dropped alias it does not
+ * bind).
+ */
+export const STOCK_FONT_ROLES = ["sans", "serif", "mono"]
 
-let DEFAULT_FONTS: Record<string, string> = {
-  sans: "NotoSans.ttf",
-  serif: "NotoSerif.ttf",
-  mono: "NotoSansMono.ttf",
-}
+/** The longest alias the manifest and the trailer carry, in bytes. */
+const MAX_ALIAS_BYTES = 255
 
-// Where the default Noto files live: a contributor checkout via SOLIDRT_HOME, the
-// fonts/ copy shipped inside the published CLI package (staged at release
-// time), or the monorepo relative to this source file.
-function defaultFontsDir(): string | null {
-  let candidates: string[] = []
-  if (process.env.SOLIDRT_HOME) candidates.push(resolve(process.env.SOLIDRT_HOME, "alloy/assets/fonts"))
-  candidates.push(resolve(import.meta.dir, "../../fonts"))
-  candidates.push(resolve(import.meta.dir, "../../../../alloy/assets/fonts"))
-  for (let dir of candidates) {
-    if (existsSync(resolve(dir, "NotoSans.ttf"))) return dir
+/**
+ * The first thing wrong with `fonts`, the map as package.json has it, or
+ * null when it is well-formed: a map of alias to a file path, true or false,
+ * where a boolean names a font of the runtime, so without a runtime of the
+ * project's own it must be a stock role.
+ */
+export function checkFontsMap(fonts: unknown, hasRuntime: boolean): string | null {
+  if (typeof fonts !== "object" || fonts === null || Array.isArray(fonts)) {
+    return 'The "solidrt.fonts" key in package.json must be a map of alias to font file path (or true/false)'
+  }
+  for (let [alias, value] of Object.entries(fonts)) {
+    if (typeof value !== "boolean" && typeof value !== "string") {
+      return `"solidrt.fonts": "${alias}" must be a font file path, true or false, got ${JSON.stringify(value)}`
+    }
+    if (new TextEncoder().encode(alias).length > MAX_ALIAS_BYTES) {
+      return `"solidrt.fonts": alias "${alias}" is too long (max ${MAX_ALIAS_BYTES} bytes)`
+    }
+    if (typeof value === "boolean" && !hasRuntime && !STOCK_FONT_ROLES.includes(alias)) {
+      return `"solidrt.fonts": "${alias}": ${value} toggles a font of the runtime, but the stock runtime binds only ${STOCK_FONT_ROLES.join("/")}`
+    }
   }
   return null
-}
-
-// Resolve the font set for a pack as file paths: role defaults merged with the
-// project's `solidrt.fonts` map (shape-checked by loadProject; file mode has
-// no project, so defaults only). Order is roles first (sans, serif, mono),
-// then added aliases in config order.
-export function resolvePackFonts(projectDir: string | null): ResolvedFont[] {
-  let project = loadProject(projectDir)
-  let overrides = project?.config.fonts ?? {}
-
-  // alias -> path relative to the project dir, or null for a role default.
-  let selected = new Map<string, string | null>()
-  for (let role of Object.keys(DEFAULT_FONTS)) selected.set(role, null)
-  for (let [alias, value] of Object.entries(overrides)) {
-    if (typeof value === "boolean") {
-      if (!(alias in DEFAULT_FONTS)) {
-        fail(`"solidrt.fonts": "${alias}": ${value} toggles a default, but "${alias}" is not one of ${Object.keys(DEFAULT_FONTS).join("/")}`)
-      }
-      // true keeps the role default already selected above; false drops it.
-      if (!value) selected.delete(alias)
-    } else {
-      selected.set(alias, resolve(project!.dir, value))
-    }
-  }
-
-  let defaultsDir: string | null = null
-  let fonts: ResolvedFont[] = []
-  for (let [alias, path] of selected) {
-    let isDefault = path === null
-    if (path === null) {
-      defaultsDir ??= defaultFontsDir() ?? fail(
-        "Could not find the default fonts (NotoSans.ttf and friends).\n" +
-          "Point SOLIDRT_HOME at your SolidRT checkout (and run `make download-fonts` there if needed).",
-      )
-      path = resolve(defaultsDir, DEFAULT_FONTS[alias]!)
-    }
-    if (!existsSync(path)) fail(`"solidrt.fonts": "${alias}": no such file: ${path}`)
-    fonts.push({ alias, path, isDefault })
-  }
-  return fonts
 }

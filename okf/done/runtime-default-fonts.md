@@ -2,9 +2,13 @@
 title: Default fonts in the runtime, packs ship only what it lacks
 description: Every pack carries the three Noto role defaults (5.6 MB) because the production runtime registers no fonts; the runtime should carry them, droppable and replaceable in a custom runtime, and a pack should ship only the fonts its runtime does not have.
 created: 2026-10-12
+completed: 2026-10-12
 ---
 
 # Default fonts in the runtime, packs ship only what it lacks
+
+Done 2026-10-12; see Outcome at the end for where the build departs from
+the shape below.
 
 `sol pack` writes the three Noto role defaults into every pack: Noto Sans
 (2.0 MB), Noto Serif (1.9 MB) and Noto Sans Mono (1.7 MB), materialized
@@ -111,3 +115,39 @@ and in a custom runtime that drops a role.
   set (lattice), pack font resolution against a runtime's set (CLI).
 - Docs: `packages/cli/agents/assets.md` (where the defaults come from),
   the custom-runtime docs (the font set in `lib.rs`).
+
+## Outcome
+
+Built 2026-10-12 as shaped, with one rule changed: **the runtime owns the
+defaults outright.** The shape above had pack ship the stock Noto for a
+role the runtime dropped unless the app said `false`, which made a
+runtime's "replace" authoritative but its "drop" not, needed every app to
+repeat the drop before dropping a role saved a byte (the second open
+question), and needed pack to learn the runtime's set across targets
+(the first). Now `true` or a role left out is the runtime's font, whatever
+the runtime bound or dropped; `false` drops the runtime's; a path binds the
+app's file. Pack never needs the runtime's set and never ships a stock
+font, so both open questions dissolve and the CLI package carries no Noto
+copy (release.yml stopped staging `packages/cli/fonts/`).
+
+- `lattice::Fonts` on `Program`: `stock()`, `none()`, `.with(alias,
+  bytes)` (replaces the font under the alias, else adds), `.without(alias)`
+  (panics on an alias not bound: the set is the program's code). The stock
+  program and the scaffold's `lib.rs` have `fonts()` returning
+  `Fonts::stock()`. `embedded_fonts()` is gone.
+- Every entry (desktop, Android, test, render) passes the app's own fonts
+  as `manifest::AppFonts`; `ui_thread` merges them over the program's set
+  with `merge_fonts`, the production runtime now like the dev client. The
+  packed payload yields `AppFonts` through `Manifest::fonts_with`, the one
+  reading behind the folder boot and the trailer, so a dropped role in a
+  pack claims its alias as a dev push does.
+- Validation: the CLI checks a `true`/`false` against the stock roles in a
+  project without a runtime; with one, lattice warns at run time on a
+  dropped alias the runtime does not bind. The pack report line says
+  which fonts the app binds or drops; the rest are the runtime's.
+- Pack: `layout.ts` takes the dev manifest's font annotations
+  (`collectAssets`); `lib/fonts.ts` and the materialization under
+  `assets/fonts/` are gone.
+- Tests: `lattice/src/tests/fonts.rs` (set edits, payload claim over the
+  program's set), `packages/cli/tests/project-fonts.test.ts` (the role
+  check with and without a runtime).

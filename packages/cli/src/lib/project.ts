@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fail } from "./fail"
+import { checkFontsMap } from "./fonts"
 
 // Project configuration lives in the `solidrt` key of the project's
 // package.json (okf/plans/client-storage-updates.md):
@@ -59,7 +60,7 @@ import { fail } from "./fail"
 //
 // The key is read in one place, loadProject, which checks every field's
 // shape (throw-in-dev policy: a bad value fails the command); the readers
-// (mode.ts, fonts.ts, and the identity and asset collectors below) take
+// (mode.ts, and the identity and asset collectors below) take
 // their fields from the result and only check what is specific to them.
 //
 // Which project an entry belongs to is the caller's decision (mode.ts: the
@@ -73,8 +74,11 @@ export type ProjectConfig = {
   org?: string
   displayName?: string
   /**
-   * alias -> font file path, false to drop a role default, or true to keep
-   * one (the scaffold's explicit "on"; fonts.ts).
+   * alias -> font file path (the app's own face under that alias, replacing
+   * the runtime's), false to drop the runtime's font under it, or true for
+   * the runtime's (the scaffold's explicit "on", the same as leaving the
+   * key out). The runtime owns the defaults: the stock one binds the three
+   * roles, a custom runtime whatever its lib.rs says (fonts.ts).
    */
   fonts?: Record<string, string | boolean>
   /** How textures are compressed at bake time; read and checked by
@@ -196,16 +200,8 @@ function parseProjectConfig(raw: unknown): ProjectConfig {
   }
   if ("android" in config) config.android = parseAndroidConfig(config.android)
   if ("fonts" in config) {
-    let fonts = config.fonts
-    if (typeof fonts !== "object" || fonts === null || Array.isArray(fonts)) {
-      fail('The "solidrt.fonts" key in package.json must be a map of alias to font file path (or true/false)')
-    }
-    for (let [alias, value] of Object.entries(fonts)) {
-      if (typeof value !== "boolean" && typeof value !== "string") {
-        fail(`"solidrt.fonts": "${alias}" must be a font file path, true or false, got ${JSON.stringify(value)}`)
-      }
-      if (Buffer.byteLength(alias, "utf8") > 255) fail(`"solidrt.fonts": alias "${alias}" is too long (max 255 bytes)`)
-    }
+    let error = checkFontsMap(config.fonts, "runtime" in config)
+    if (error) fail(error)
   }
   return config as ProjectConfig
 }
@@ -354,9 +350,10 @@ function walkAssets(assetsDir: string, dir: string, out: ManifestAsset[]) {
 // manifest bytes are deterministic. Fonts and the icon are annotations
 // pointing into that set: `solidrt.fonts` path entries and `solidrt.icon`
 // must live under assets/ so they reach dev clients and the version store.
-// A `false` font entry is an annotation without a path: the role is bound
-// to nothing, so a runner with built-in defaults (the dev client, render)
-// drops its own; `true` keeps the default and needs no entry. The icon is
+// A `false` font entry is an annotation without a path: the alias is bound
+// to nothing, so the runtime (the dev client, render, a packed app alike)
+// drops its own font under it; `true` is the runtime's font and needs no
+// entry. The icon is
 // SVG-only for now: the player renders SVG natively,
 // and the raster surfaces (window icon, OS embedding) come with later stages
 // (okf/backlog/app-icons.md). An undeclared assets/icon.svg is picked up by
@@ -380,7 +377,7 @@ export function collectAssets(dir: string | null): {
 
   let fonts: ManifestFont[] = []
   for (let [alias, value] of Object.entries(project.config.fonts ?? {})) {
-    // Booleans toggle role defaults (fonts.ts), which are not project assets.
+    // Booleans toggle the runtime's fonts, which are not project assets.
     if (value === true) continue
     if (value === false) {
       fonts.push({ alias })

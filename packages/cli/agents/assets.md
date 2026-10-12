@@ -29,13 +29,19 @@ preparing a build for distribution.
 
 ## Fonts, identity and distribution
 
-- Custom fonts go in `assets/fonts/` and are declared in the `solidrt.fonts`
-  map in package.json (alias -> file path; role aliases `sans`/`serif`/`mono`
-  replace the built-in defaults, `false` drops one so that role resolves to
-  `sans` like an unknown family, other keys add fonts selectable via
-  fontFamily). Only registered faces draw: there is no system font fallback.
-  The dev client, `sol render` and a pack all apply the same map: a newly
-  added or changed font registers on the next reload.
+- The default fonts are the runtime's: the stock runtime carries Noto Sans,
+  Noto Serif and Noto Sans Mono under the role aliases `sans`/`serif`/`mono`,
+  and a custom runtime sets its own in `runtime/src/lib.rs` (`fonts()`:
+  drop a role, replace one with its file, add faces). Custom fonts of the
+  app go in `assets/fonts/` and are declared in the `solidrt.fonts` map in
+  package.json (alias -> file path replaces the runtime's font under that
+  alias or adds one selectable via fontFamily; `false` drops the runtime's
+  so that role resolves to `sans` like an unknown family; `true` is the
+  runtime's). Only registered faces draw: there is no system font fallback.
+  The dev client, `sol render` and a pack all apply the same map over the
+  same runtime set, and a pack ships only the files the app binds: a
+  default app packs no font. A newly added or changed font registers on
+  the next reload.
 - The `solidrt` key in package.json is the app's identity: set a stable
   reverse-DNS `appId` before distributing - it keys the app's storage
   folder, defaults from the package name in dev, and `sol pack` warns

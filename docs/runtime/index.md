@@ -115,7 +115,7 @@ What it writes is the project's own and nothing else:
 runtime/
   Makefile              one line: include ../node_modules/@solidrt/cli/runtime/runtime.mk
   Cargo.toml            the crate, its two binaries, lattice at the release tag
-  src/lib.rs            modules() and program(): the modules, the embedded screens
+  src/lib.rs            modules(), fonts() and program(): the modules, the fonts, the embedded screens
   src/hello.rs          runtime:hello, the starter module (hello(): string)
   src/bin/solidrt.rs    the production runtime: lattice::main(program())
   src/bin/solidrt-go.rs the player, the same program behind the `go` feature
@@ -182,6 +182,31 @@ release, and `lib.rs` includes them from there. The build refuses a tag
 that differs from the installed `@solidrt/cli` and names both versions, so
 an upgrade cannot be half done. `lattice::VERSION`, what the client reports
 and every log line carries, is that tag.
+
+#### The fonts
+
+The runtime carries the fonts every app on it starts from, registered
+in the player and in a packed app alike; an app's `solidrt.fonts` map
+layers over them (a file replaces the font under its alias or adds one,
+`false` drops one), and `sol pack` ships only the files the app binds.
+The stock set is Noto Sans, Noto Serif and Noto Sans Mono under the role
+aliases `sans`, `serif` and `mono`; `fonts()` in `lib.rs` edits it:
+
+```rust
+// runtime/src/lib.rs
+pub fn fonts() -> lattice::Fonts {
+  lattice::Fonts::stock()
+    .without("mono")                                        // no mono role: it resolves like sans
+    .with("sans", include_bytes!("../fonts/Brand.ttf"))     // the brand face is the default
+    .with("display", include_bytes!("../fonts/Display.ttf")) // selectable as fontFamily "display"
+}
+```
+
+`Fonts::none()` starts empty, for a runtime whose apps bring every face
+they draw. One face per alias: `with` on an alias already in the set
+replaces it, and `without` on one that is not panics at startup, since
+the set is the program's own code. Dropping a role from the runtime drops
+it for its apps too: nothing ships a stock font back in.
 
 #### Writing a module
 

@@ -16,9 +16,6 @@ scripts/**/*.sol.js
 # render still writes PNG frames into the cwd.
 examples/**/*.sol.js
 examples/**/frame-*.png
-# Default fonts staged into the CLI package at release time (release.yml);
-# in-repo the CLI resolves them from alloy/assets/fonts instead.
-packages/cli/fonts/
 # The player and BSOD bundles every runtime embeds, the stock program in
 # runtime/ included: generated from apps/player by `make player-bundle`
 # (make client runs it; runtime/build.rs says so when they are missing) and
