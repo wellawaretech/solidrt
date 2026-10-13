@@ -1,0 +1,457 @@
+// The residency gate: explicit regions and grids wanted per viewer with
+// hysteresis, wanted by any viewer, reported once per change, enters paced
+// nearest first under one budget.
+
+use crate::spatial::RegionEvent::{Enter, Leave};
+use crate::spatial::RegionRef::{Cell, Node};
+use crate::spatial::{
+  compose, GridSpec, Mat4, RegionEvent, RegionMargins, SinkWriter, Spatial, DEFAULT_RESIDENCY_BUDGET, IDENTITY,
+  VIEW_KEY_BASE,
+};
+
+const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+const ONE: [f32; 3] = [1.0, 1.0, 1.0];
+const UNIT: [f32; 6] = [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5];
+
+/// Nothing the gate does reaches a sink; the writer only has to exist.
+struct Sink;
+
+impl SinkWriter for Sink {
+  fn write_params(&mut self, _: u64, _: u64, _: &Mat4, _: Option<&Mat4>) -> bool {
+    true
+  }
+  fn write_count(&mut self, _: u64, _: u64, _: u32) -> bool {
+    true
+  }
+  fn write_fade(&mut self, _: u64, _: u64, _: [f32; 2]) -> bool {
+    true
+  }
+  fn write_order(&mut self, _: u64, _: &[u64]) -> bool {
+    true
+  }
+  fn write_order_direction(&mut self, _: u64, _: u64, _: [f32; 3]) -> bool {
+    true
+  }
+  fn write_shared(&mut self, _: u64, _: &str, _: &[f32]) -> bool {
+    true
+  }
+  fn write_instances(&mut self, _: u64, _: u32, _: u32, _: &[f32]) -> bool {
+    true
+  }
+  fn write_texture(&mut self, _: u64, _: &[f32]) -> bool {
+    true
+  }
+}
+
+/// One flush and the events it produced (one delivery per flush, as the
+/// frame does).
+fn step(s: &mut Spatial) -> Vec<RegionEvent> {
+  s.flush(&mut Sink);
+  s.take_region_events()
+}
+
+fn margins(enter: f32, leave: f32) -> Option<RegionMargins> {
+  Some(RegionMargins { enter, leave })
+}
+
+/// Under an identity projection the view alone is the view-projection and
+/// an identity one is the unit cube in world space (x, y, z in -1..1), so
+/// `(cube_at(x), IDENTITY)` is a viewer whose volume spans x-1..x+1 with
+/// its eye at (x, 0, 0) looking down -z.
+fn cube_at(x: f32) -> Option<(Mat4, Mat4)> {
+  Some((compose([-x, 0.0, 0.0], Q, ONE), IDENTITY))
+}
+
+/// A unit-box region at `x` with the given margins.
+fn region_at(s: &mut Spatial, x: f32, enter: f32, leave: f32) -> u64 {
+  let n = s.create([x, 0.0, 0.0], Q, ONE, true);
+  s.set_bounds(n, Some(UNIT)).expect("bounds");
+  s.set_region(n, margins(enter, leave)).expect("region");
+  n
+}
+
+/// An orthographic 2d camera over `w` x `h` world units with its top-left
+/// at (`x`, `y`), looking down -z from z = 0 (the plane z in -1..1): the
+/// view a tile layer's composite pushes.
+fn camera_2d(x: f32, y: f32, w: f32, h: f32) -> Option<(Mat4, Mat4)> {
+  let mut proj = [0.0f32; 16];
+  proj[0] = 2.0 / w;
+  proj[5] = -2.0 / h;
+  proj[10] = -1.0;
+  proj[15] = 1.0;
+  // Clip x = 2 (vx - x) / w - 1: the view translates the rect's center to
+  // the origin.
+  let view = compose([-(x + w / 2.0), -(y + h / 2.0), 0.0], Q, ONE);
+  Some((view, proj))
+}
+
+/// A perspective viewer at `eye` looking down -z with a 90 degree fov,
+/// near 0.1 and far `far`.
+fn perspective_at(eye: [f32; 3], far: f32) -> Option<(Mat4, Mat4)> {
+  let near = 0.1;
+  let mut proj = [0.0f32; 16];
+  proj[0] = 1.0;
+  proj[5] = 1.0;
+  proj[10] = -(far + near) / (far - near);
+  proj[11] = -1.0;
+  proj[14] = -2.0 * far * near / (far - near);
+  let view = compose([-eye[0], -eye[1], -eye[2]], Q, ONE);
+  Some((view, proj))
+}
+
+/// The grid a 2d tile layer declares: 10 x 10 chunks in its plane, z
+/// unbounded, origin at the world's top-left.
+fn plane_grid(enter: f32, leave: f32) -> GridSpec {
+  GridSpec {
+    origin: [0.0, 0.0, 0.0],
+    cell: [10.0, 10.0, 0.0],
+    margins: RegionMargins { enter, leave },
+    bounds: None,
+    wrap: None,
+    label: None,
+  }
+}
+
+fn cells(events: &[RegionEvent], grid: u64, entered: bool) -> Vec<[i32; 3]> {
+  let mut out: Vec<[i32; 3]> = events
+    .iter()
+    .filter_map(|e| match (e, entered) {
+      (Enter(Cell { grid: g, cell }), true) | (Leave(Cell { grid: g, cell }), false) if *g == grid => Some(*cell),
+      _ => None,
+    })
+    .collect();
+  out.sort();
+  out
+}
+
+#[test]
+fn a_region_enters_within_enter_and_leaves_beyond_leave_with_hysteresis() {
+  let mut s = Spatial::new();
+  let r = region_at(&mut s, 0.0, 1.0, 3.0);
+  // The volume spans 9..11, the box 8.5 away from its near edge: beyond enter.
+  s.set_view(1, cube_at(10.0));
+  assert!(step(&mut s).is_empty());
+  // Volume 1.5..3.5: the box's far edge at 0.5 is 1.0 away: within enter.
+  s.set_view(1, cube_at(2.5));
+  assert_eq!(step(&mut s), vec![Enter(Node(r))]);
+  // 2.0 away: past enter, inside leave - the band holds it.
+  s.set_view(1, cube_at(3.5));
+  assert!(step(&mut s).is_empty());
+  // 3.5 away: beyond leave.
+  s.set_view(1, cube_at(5.0));
+  assert_eq!(step(&mut s), vec![Leave(Node(r))]);
+  // Back into the band only: not re-entered (hysteresis is one-sided).
+  s.set_view(1, cube_at(3.5));
+  assert!(step(&mut s).is_empty());
+}
+
+#[test]
+fn a_still_world_reports_nothing() {
+  let mut s = Spatial::new();
+  let r = region_at(&mut s, 0.0, 1.0, 2.0);
+  s.set_view(1, cube_at(0.0));
+  assert_eq!(step(&mut s), vec![Enter(Node(r))]);
+  for _ in 0..3 {
+    assert!(step(&mut s).is_empty());
+  }
+  // The same view written again is no change either.
+  s.set_view(1, cube_at(0.0));
+  assert!(step(&mut s).is_empty());
+}
+
+#[test]
+fn a_region_is_wanted_while_any_viewer_wants_it() {
+  let mut s = Spatial::new();
+  let r = region_at(&mut s, 0.0, 0.5, 0.5);
+  s.set_view(1, cube_at(0.0));
+  s.set_view(2, cube_at(0.5));
+  assert_eq!(step(&mut s), vec![Enter(Node(r))]);
+  // The first viewer turns away; the second still sees it.
+  s.set_view(1, cube_at(20.0));
+  assert!(step(&mut s).is_empty());
+  // The second viewer stops: nobody wants it.
+  s.set_view(2, None);
+  assert_eq!(step(&mut s), vec![Leave(Node(r))]);
+}
+
+#[test]
+fn a_region_moves_with_its_parent() {
+  let mut s = Spatial::new();
+  let parent = s.create([0.0; 3], Q, ONE, true);
+  let r = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(r, Some(parent)).expect("parent");
+  s.set_bounds(r, Some(UNIT)).expect("bounds");
+  s.set_region(r, margins(0.5, 1.0)).expect("region");
+  s.set_view(1, cube_at(0.0));
+  assert_eq!(step(&mut s), vec![Enter(Node(r))]);
+  s.set_transform(parent, [10.0, 0.0, 0.0], Q, ONE).expect("move");
+  assert_eq!(step(&mut s), vec![Leave(Node(r))]);
+  s.set_transform(parent, [1.0, 0.0, 0.0], Q, ONE).expect("move back");
+  assert_eq!(step(&mut s), vec![Enter(Node(r))]);
+}
+
+#[test]
+fn ending_or_destroying_a_region_leaves_only_if_it_entered() {
+  let mut s = Spatial::new();
+  let a = region_at(&mut s, 0.0, 0.5, 1.0);
+  let b = region_at(&mut s, 0.0, 0.5, 1.0);
+  s.set_view(1, cube_at(0.0));
+  let mut first = step(&mut s);
+  first.sort_by_key(|e| format!("{e:?}"));
+  assert_eq!(first.len(), 2);
+  s.set_region(a, None).expect("end");
+  assert_eq!(s.take_region_events(), vec![Leave(Node(a))]);
+  s.destroy(b).expect("destroy");
+  assert_eq!(s.take_region_events(), vec![Leave(Node(b))]);
+  // A region still pending (budget 0 holds every enter) goes silently.
+  s.set_residency_budget(0);
+  let c = region_at(&mut s, 0.0, 0.5, 1.0);
+  assert!(step(&mut s).is_empty());
+  s.destroy(c).expect("destroy pending");
+  assert!(step(&mut s).is_empty());
+  // Ending and re-declaring a region that never entered: still nothing.
+  s.set_residency_budget(DEFAULT_RESIDENCY_BUDGET);
+  let d = region_at(&mut s, 0.0, 0.5, 1.0);
+  assert_eq!(step(&mut s), vec![Enter(Node(d))]);
+}
+
+#[test]
+fn set_region_validates() {
+  let mut s = Spatial::new();
+  let boxless = s.create([0.0; 3], Q, ONE, true);
+  assert!(s.set_region(boxless, margins(1.0, 2.0)).is_err(), "a region needs a box");
+  let n = s.create([0.0; 3], Q, ONE, true);
+  s.set_bounds(n, Some(UNIT)).expect("bounds");
+  assert!(s.set_region(n, margins(2.0, 1.0)).is_err(), "leave below enter");
+  assert!(s.set_region(n, margins(-1.0, 1.0)).is_err(), "negative enter");
+  assert!(s.set_region(n, margins(f32::NAN, 1.0)).is_err(), "nan");
+  assert!(s.set_region(n, margins(1.0, 1.0)).is_ok(), "leave == enter is a hard edge, allowed");
+  assert!(s.set_region(n, None).is_ok());
+  assert!(s.set_region(n, None).is_ok(), "ending twice is a no-op");
+  s.destroy(n).expect("destroy");
+  assert!(s.set_region(n, margins(1.0, 2.0)).is_err(), "a dead node");
+}
+
+#[test]
+fn grid_cells_under_an_orthographic_view_enter_and_a_pan_swaps_them() {
+  let mut s = Spatial::new();
+  let g = s.create_grid(plane_grid(0.0, 0.0)).expect("grid");
+  let key = s.alloc_view_key();
+  // A 20 x 20 viewport over the world's corner: cells 0..1 x 0..1.
+  s.set_view(key, camera_2d(0.0, 0.0, 20.0, 20.0));
+  let events = step(&mut s);
+  assert_eq!(cells(&events, g, true), vec![[0, 0, 0], [0, 1, 0], [1, 0, 0], [1, 1, 0]]);
+  assert!(cells(&events, g, false).is_empty());
+  // Pan one cell right: column 0 leaves, column 2 enters.
+  s.set_view(key, camera_2d(10.0, 0.0, 20.0, 20.0));
+  let events = step(&mut s);
+  assert_eq!(cells(&events, g, false), vec![[0, 0, 0], [0, 1, 0]]);
+  assert_eq!(cells(&events, g, true), vec![[2, 0, 0], [2, 1, 0]]);
+  // Leaves come before enters in a pass.
+  let first_enter = events.iter().position(|e| matches!(e, Enter(_))).expect("an enter");
+  assert!(events[..first_enter].iter().all(|e| matches!(e, Leave(_))));
+  // The viewer stops: everything leaves.
+  s.set_view(key, None);
+  let events = step(&mut s);
+  assert_eq!(cells(&events, g, false), vec![[1, 0, 0], [1, 1, 0], [2, 0, 0], [2, 1, 0]]);
+}
+
+#[test]
+fn grid_margins_reach_past_the_view_with_hysteresis() {
+  let mut s = Spatial::new();
+  // Enter reaches 5 past the view (half a cell), leave 15 (a cell and a half).
+  let g = s.create_grid(plane_grid(5.0, 15.0)).expect("grid");
+  let key = s.alloc_view_key();
+  // View 10..20: cells 1 in view, 0 and 2 within enter.
+  s.set_view(key, camera_2d(10.0, 10.0, 10.0, 10.0));
+  let events = step(&mut s);
+  let xs: Vec<i32> = cells(&events, g, true).iter().map(|c| c[0]).collect();
+  assert!(xs.contains(&0) && xs.contains(&1) && xs.contains(&2) && !xs.contains(&3), "{xs:?}");
+  // Pan right by one cell: cell 0 is now 10 past the view's left edge:
+  // past enter, within leave, kept. Cell 4 at 10 past the right edge:
+  // beyond enter, not taken.
+  s.set_view(key, camera_2d(20.0, 10.0, 10.0, 10.0));
+  let events = step(&mut s);
+  assert!(cells(&events, g, false).is_empty(), "{events:?}");
+  let xs: Vec<i32> = cells(&events, g, true).iter().map(|c| c[0]).collect();
+  assert!(xs.contains(&3) && !xs.contains(&4), "{xs:?}");
+  // Pan again: cell 0 is 20 past: beyond leave.
+  s.set_view(key, camera_2d(30.0, 10.0, 10.0, 10.0));
+  let events = step(&mut s);
+  let left: Vec<i32> = cells(&events, g, false).iter().map(|c| c[0]).collect();
+  assert_eq!(left, vec![0, 0, 0]);
+}
+
+#[test]
+fn grid_cells_beyond_the_depth_reach_stay_out_under_a_perspective_view() {
+  let mut s = Spatial::new();
+  // Many cells at once: the pacing is another test's.
+  s.set_residency_budget(u32::MAX);
+  // Columns over XZ, 10 wide, y unbounded; load 25 deep, keep to 35.
+  let g = s
+    .create_grid(GridSpec {
+      origin: [0.0, 0.0, 0.0],
+      cell: [10.0, 0.0, 10.0],
+      margins: RegionMargins { enter: 25.0, leave: 35.0 },
+      bounds: None,
+      wrap: None,
+      label: None,
+    })
+    .expect("grid");
+  // Eye at z = 100 looking down -z with a far plane at 1000: the frustum
+  // covers the whole grid, the depth reach does not.
+  s.set_view(1, perspective_at([5.0, 0.0, 100.0], 1000.0));
+  let events = step(&mut s);
+  let entered = cells(&events, g, true);
+  let zs: Vec<i32> = entered.iter().map(|c| c[2]).collect();
+  // The nearest column ahead starts at z = 90 (index 9), 10 deep: within
+  // 25. Index 7 (z 70..80) is 20 deep: in. Index 6 (60..70) is 30: out.
+  assert!(zs.contains(&9) && zs.contains(&7) && !zs.contains(&6), "{entered:?}");
+  // Nothing behind the eye beyond the margin: index 12 (120..130) is 20
+  // behind, the near plane pushed out by 25 reaches it; 13 does not.
+  assert!(zs.contains(&12) && !zs.contains(&13), "{entered:?}");
+  // Every entered cell is within reach along y (unbounded: index 0).
+  assert!(entered.iter().all(|c| c[1] == 0));
+  // Step forward by 5: index 6 is now 25 deep, enters; 12 is 25 behind
+  // and still within the near reach (the test is <=), nothing leaves yet.
+  s.set_view(1, perspective_at([5.0, 0.0, 95.0], 1000.0));
+  let events = step(&mut s);
+  assert!(cells(&events, g, true).iter().any(|c| c[2] == 6), "{events:?}");
+}
+
+#[test]
+fn grid_bounds_exclude_cells_and_wrap_reports_canonical_cells_once() {
+  let mut s = Spatial::new();
+  let mut spec = plane_grid(0.0, 0.0);
+  spec.bounds = Some([0, 0, 0, 1, 0, 0]);
+  let bounded = s.create_grid(spec).expect("bounded grid");
+  let mut spec = plane_grid(0.0, 0.0);
+  spec.wrap = Some([3, 0, 0]);
+  let wrapped = s.create_grid(spec).expect("wrapped grid");
+  let key = s.alloc_view_key();
+  // 60 wide: raw columns 0..5 of the plane, rows 0..1.
+  s.set_view(key, camera_2d(0.0, 0.0, 60.0, 20.0));
+  let events = step(&mut s);
+  assert_eq!(cells(&events, bounded, true), vec![[0, 0, 0], [1, 0, 0]]);
+  assert_eq!(
+    cells(&events, wrapped, true),
+    vec![[0, 0, 0], [0, 1, 0], [1, 0, 0], [1, 1, 0], [2, 0, 0], [2, 1, 0]],
+    "six raw columns fold onto three canonical ones, each once"
+  );
+  // Pan to raw columns 3..8: the canonical set is unchanged, nothing moves.
+  s.set_view(key, camera_2d(30.0, 0.0, 60.0, 20.0));
+  let events = step(&mut s);
+  assert!(cells(&events, wrapped, true).is_empty() && cells(&events, wrapped, false).is_empty(), "{events:?}");
+  // A viewer entirely outside the bounds wants no bounded cell.
+  assert_eq!(cells(&events, bounded, false), vec![[0, 0, 0], [1, 0, 0]]);
+}
+
+#[test]
+fn destroying_a_grid_leaves_every_resident_cell() {
+  let mut s = Spatial::new();
+  let g = s.create_grid(plane_grid(0.0, 0.0)).expect("grid");
+  let key = s.alloc_view_key();
+  s.set_view(key, camera_2d(0.0, 0.0, 20.0, 10.0));
+  assert_eq!(cells(&step(&mut s), g, true), vec![[0, 0, 0], [1, 0, 0]]);
+  s.destroy_grid(g).expect("destroy");
+  assert_eq!(cells(&s.take_region_events(), g, false), vec![[0, 0, 0], [1, 0, 0]]);
+  assert!(s.destroy_grid(g).is_err(), "gone");
+  assert!(step(&mut s).is_empty());
+}
+
+#[test]
+fn create_grid_validates() {
+  let mut s = Spatial::new();
+  let mut spec = plane_grid(1.0, 2.0);
+  spec.cell = [-1.0, 10.0, 0.0];
+  assert!(s.create_grid(spec).is_err(), "negative cell");
+  let mut spec = plane_grid(2.0, 1.0);
+  spec.cell = [10.0, 10.0, 0.0];
+  assert!(s.create_grid(spec).is_err(), "leave below enter");
+  let mut spec = plane_grid(1.0, 2.0);
+  spec.bounds = Some([2, 0, 0, 1, 0, 0]);
+  assert!(s.create_grid(spec).is_err(), "inverted bounds");
+  let mut spec = plane_grid(1.0, 2.0);
+  spec.wrap = Some([-1, 0, 0]);
+  assert!(s.create_grid(spec).is_err(), "negative period");
+  assert!(s.create_grid(plane_grid(1.0, 2.0)).is_ok());
+  assert!(s.destroy_grid(99).is_err(), "unknown grid");
+}
+
+#[test]
+fn enters_are_paced_nearest_first_under_one_budget() {
+  let mut s = Spatial::new();
+  s.set_residency_budget(2);
+  // Five regions along x; the eye at the origin.
+  let ids: Vec<u64> = [4.0, 1.0, 3.0, 0.0, 2.0].iter().map(|&x| region_at(&mut s, x, 10.0, 10.0)).collect();
+  s.set_view(1, cube_at(0.0));
+  assert_eq!(step(&mut s), vec![Enter(Node(ids[3])), Enter(Node(ids[1]))], "the two nearest first");
+  assert!(s.residency_demand(), "enters still pending");
+  assert_eq!(step(&mut s), vec![Enter(Node(ids[4])), Enter(Node(ids[2]))]);
+  assert_eq!(step(&mut s), vec![Enter(Node(ids[0]))]);
+  assert!(!s.residency_demand());
+  assert!(step(&mut s).is_empty());
+}
+
+#[test]
+fn the_budget_spans_every_flush_between_two_deliveries() {
+  let mut s = Spatial::new();
+  s.set_residency_budget(2);
+  for x in 0..5 {
+    region_at(&mut s, x as f32, 10.0, 10.0);
+  }
+  s.set_view(1, cube_at(0.0));
+  // Three flushes (a JS-side flush, the frame's, another) before one take.
+  s.flush(&mut Sink);
+  s.flush(&mut Sink);
+  s.flush(&mut Sink);
+  assert_eq!(s.take_region_events().len(), 2);
+  assert_eq!(step(&mut s).len(), 2);
+  assert_eq!(step(&mut s).len(), 1);
+}
+
+#[test]
+fn a_pending_region_the_viewer_turned_away_from_never_enters() {
+  let mut s = Spatial::new();
+  s.set_residency_budget(1);
+  let near = region_at(&mut s, 0.0, 0.5, 0.5);
+  let far = region_at(&mut s, 1.0, 0.5, 0.5);
+  s.set_view(1, cube_at(0.0));
+  assert_eq!(step(&mut s), vec![Enter(Node(near))]);
+  // Before the far one's turn, the viewer leaves both behind: one leave
+  // for the entered one, nothing for the pending one.
+  s.set_view(1, cube_at(20.0));
+  assert_eq!(step(&mut s), vec![Leave(Node(near))]);
+  assert!(step(&mut s).is_empty());
+  let _ = far;
+}
+
+#[test]
+fn pending_grid_cells_sort_by_their_center_distance() {
+  let mut s = Spatial::new();
+  s.set_residency_budget(1);
+  let g = s.create_grid(plane_grid(0.0, 0.0)).expect("grid");
+  let key = s.alloc_view_key();
+  // A viewport over cells 0..2 x 0, the eye at x = 25: cell 2 is nearest.
+  s.set_view(key, camera_2d(10.0, 0.0, 30.0, 10.0));
+  assert_eq!(cells(&step(&mut s), g, true), vec![[2, 0, 0]]);
+  // Then 1 and 3 at equal distance, then nothing.
+  let next = cells(&step(&mut s), g, true);
+  assert!(next == vec![[1, 0, 0]] || next == vec![[3, 0, 0]], "{next:?}");
+  let next = cells(&step(&mut s), g, true);
+  assert_eq!(next.len(), 1);
+  assert!(step(&mut s).is_empty());
+}
+
+#[test]
+fn view_keys_count_up_from_the_reserved_base() {
+  let mut s = Spatial::new();
+  let a = s.alloc_view_key();
+  let b = s.alloc_view_key();
+  assert_eq!(a, VIEW_KEY_BASE);
+  assert_eq!(b, VIEW_KEY_BASE + 1);
+  // A key is a viewer like any target.
+  let r = region_at(&mut s, 0.0, 0.5, 0.5);
+  s.set_view(a, cube_at(0.0));
+  assert_eq!(step(&mut s), vec![Enter(Node(r))]);
+}

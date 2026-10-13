@@ -293,6 +293,56 @@ visible only through the gaps - and tiny lights kept in the MIDDLE
 level bring the speckle back one level closer. `examples/lod.tsx` is
 the shape; `probes/3d-lod-bench.tsx` the cost.
 
+### Residency
+
+RESIDENCY is the core's third gate beside culling and LOD, and the one
+that gates MEMORY instead of drawing: which regions of a world should
+EXIST right now, given every viewer's view volume, told only when that
+changes (`alloy/src/spatial/residency.rs`, the contract in
+okf/plans/spatial-residency-gate.md). Culling and LOD leave everything
+resident; a world larger than memory - an open map, a long track, a
+city - streams by this gate instead of by camera distances recomputed
+in `onFrame`. The 3d package has NO region API of its own yet
+(okf/backlog/3d-world-residency.md is that item: a region as a scene
+node kind, pooled creates, the hitch-free load path); today an app
+reaches the gate through `flux:spatial` directly. Two region forms.
+EXPLICIT: `setRegion(node, { enter, leave })` marks a bounded core
+node (a mesh's `_node` with its bounds, or an undrawn node with
+`setBounds`) as a region: a level section, a building interior. GRID:
+`createGrid({ origin, cell, enter, leave, bounds?, wrap?, label? })`
+is a lattice of cells that exist only while approached, `cell` per
+axis with 0 meaning unbounded along it - `[32, 0, 32]` is a
+Minecraft-style column grid over XZ, `[32, 32, 32]` a voxel world
+(Unreal's World Partition and Minecraft's chunk columns are this
+form). Viewers are what the scene already pushes: every camera write
+(`setView`) is a viewer, so the scene, each view and each shadow tile
+want regions, and a region is wanted if ANY of them wants it (a
+minimap beside the main view, a shadow camera). The test is the cull
+test with hysteresis: a region is wanted within `enter` of the view
+volume (the frustum planes pushed out by `enter`, as `cullMargin`
+widens the cull test) and stays wanted until beyond `leave` (`leave >=
+enter`), so a camera on a border never thrashes. An explicit region
+tests the full frustum, so a far region in view is wanted; a grid
+cell tests the side and near planes plus a depth cap of the margin
+along the view direction, the far plane ignored, so for a grid
+`enter`/`leave` read as LOAD DISTANCES (a draw distance is the
+camera's far plane, a load distance the grid's). Changes arrive as the
+engine events `spatialRegionEnter` and `spatialRegionLeave`
+(`sol:events` `on`), payload `{ node }` or `{ grid, cell: [i, j, k] }`,
+in the frame's event slot ahead of the frame callbacks, so a handler's
+creates land in the same frame. Leaves are immediate; enters are PACED
+nearest-eye-first under one scene-wide `setResidencyBudget(n)` (default
+16 regions started per frame, every grid and region in the scene
+spending the same budget), and a region still pending when the camera
+turns away never enters - no event, nothing to cancel. The gate knows
+wanted or not; what a region holds (a model, procedural geometry,
+instance records) and whether it is ready are the HANDLER's, and a
+handler still loading when the leave arrives cancels its own work.
+Spreading one region's many GPU creates over frames, pooling a freed
+region's buffers for the next enter, and the HLOD question (a far
+proxy as an LOD level that loads, or its own gate) are the backlog
+item's. A world that declares no region loads and draws exactly as now.
+
 ### Shadows
 
 SHADOWS are a view: `<DirectionalLight castShadow shadow={{ mapSize?,

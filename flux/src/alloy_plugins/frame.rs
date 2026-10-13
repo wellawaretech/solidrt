@@ -179,7 +179,7 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
     log::warn!("[render] nested draw ignored: a frame is already being built");
     return f(None);
   };
-  let demand = extra_demand || anim_active || spatial.active || spatial.wrote || video_due;
+  let demand = extra_demand || anim_active || spatial.active || spatial.wrote || spatial.regions || video_due;
   let Some(pending) = driver.begin(&s.gui.platform, demand) else {
     return f(None);
   };
@@ -203,7 +203,16 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
   let raf = super::raf::has_pending(ctx);
   let ticking = std::mem::take(&mut *s.gui.ticking.borrow_mut());
   let motion = s.gui.motion.replace(super::NativeMotion::default());
-  if anim_active || motion.any() || spatial.active || on_frame || streaming || camera || raf || !ticking.is_empty() {
+  if anim_active
+    || motion.any()
+    || spatial.active
+    || spatial.regions
+    || on_frame
+    || streaming
+    || camera
+    || raf
+    || !ticking.is_empty()
+  {
     s.gui.platform.request_frame();
   }
   {
@@ -222,6 +231,9 @@ pub fn draw<R>(ctx: &Ctx<'_>, extra_demand: bool, present_at: Instant, f: impl F
     // may have set the first one running since.
     if spatial.active && !motion.transitions {
       reasons.push("a spatial transition".to_string());
+    }
+    if spatial.regions {
+      reasons.push("a spatial region change".to_string());
     }
     if on_frame {
       reasons.push("onFrame".to_string());

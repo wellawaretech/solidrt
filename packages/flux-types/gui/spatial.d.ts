@@ -15,6 +15,12 @@ declare module "flux:spatial" {
   import type { BufferId, DrawId, TextureId } from "flux:gpu"
 
   export type NodeId = number & { readonly __spatialNode: unique symbol }
+  /** A viewer key for a view with no target of its own (allocViewKey): a
+   * 2d camera pushes its view under one. Counts up from a range the core
+   * reserves above any texture id, so it never collides with a target. */
+  export type ViewKey = number & { readonly __viewKey: unique symbol }
+  /** A residency grid (createGrid). */
+  export type GridId = number & { readonly __spatialGrid: unique symbol }
 
   /** A new root node. `visible: false` hides the node's whole subtree. */
   export function createNode(transform: Float32Array, visible: boolean): NodeId
@@ -311,11 +317,94 @@ declare module "flux:spatial" {
    * node, and comes back with a fresh params write; nodes without a box,
    * or with culling off, are never gated), the LOD view (eye, forward,
    * vertical focal factor, orthographic or not - setLod) and the view the
-   * draw sort measures depth against (setDrawSort). Read at flush: set it
-   * before the flush that should see it, on every camera move.
+   * draw sort measures depth against (setDrawSort), and the viewer the
+   * residency gate tests regions against (setRegion, createGrid). Read at
+   * flush: set it before the flush that should see it, on every camera
+   * move. A target is a texture id, or a key from allocViewKey for a view
+   * without a target (a 2d camera, whose composite pushes its
+   * orthographic view and projection on camera change); a viewer that
+   * stops (null) wants no region.
    */
-  export function setView(target: TextureId, view: Float32Array, proj: Float32Array): void
-  export function setView(target: TextureId, view: null): void
+  export function setView(target: TextureId | ViewKey, view: Float32Array, proj: Float32Array): void
+  export function setView(target: TextureId | ViewKey, view: null): void
+  /** A viewer key for setView, for a view with no target of its own. */
+  export function allocViewKey(): ViewKey
+  /** The hysteresis band of a residency region: wanted by a viewer while
+   * within `enter` of its view volume (world units), kept until beyond
+   * `leave` (`leave >= enter`, else throws), so a camera on a border never
+   * thrashes. */
+  export type RegionMargins = { enter: number; leave: number }
+  /**
+   * Make the node a residency region, or with null end it. The gate
+   * beside culling and LOD that gates MEMORY: which regions of a world
+   * should exist right now, per viewer, reported only on change. The
+   * node's box (setCullBounds, else setBounds: a boxless node throws),
+   * carried through its world matrix as the cull box is, is wanted by a
+   * viewer while within `enter` of the viewer's view volume (every plane
+   * pushed out by `enter`, the way a cull margin widens the test; a far
+   * region in view is wanted) and stays wanted until beyond `leave`; it is
+   * wanted overall if ANY viewer wants it (a minimap beside the main view,
+   * a shadow camera, a split screen). The region moves with its parent
+   * like any node; visibility is not consulted (a hidden region still
+   * exists). One "spatialRegionEnter" engine event (payload `{ node }`)
+   * when it becomes wanted, one "spatialRegionLeave" when it stops, both
+   * delivered in the frame's event slot ahead of the frame's callbacks, so
+   * a handler's creates land in the same frame. Leaves are immediate;
+   * enters are paced (setResidencyBudget). Ending the region, or
+   * destroying the node, reports a leave if its enter went out; a region
+   * still pending reports nothing. What a region holds is its handler's:
+   * the gate knows wanted or not, and a handler still loading when the
+   * leave arrives cancels its own work.
+   */
+  export function setRegion(node: NodeId, margins: RegionMargins | null): void
+  /**
+   * A grid of regions: `origin` the world corner of cell [0, 0, 0], `cell`
+   * the size per axis with 0 meaning unbounded along that axis (the index
+   * is 0 there and the test ignores the axis: a 2d tile world's chunks are
+   * `[chunkW, chunkH, 0]` in the layer's plane, a column grid over XZ
+   * `[32, 0, 32]`, a voxel world `[32, 32, 32]`), `enter`/`leave` as
+   * RegionMargins, `bounds` an optional inclusive cell-index box
+   * `[minI, minJ, minK, maxI, maxJ, maxK]` outside which no cell exists,
+   * `wrap` an optional period in cells per axis (0 = none; a torus:
+   * indices modulo the period, the canonical cell reported once however
+   * many images a viewer sees - the handler's composite places the
+   * images), `label` the name the stats group the grid's footprint under.
+   */
+  export type GridSpec = {
+    origin: [number, number, number]
+    cell: [number, number, number]
+    enter: number
+    leave: number
+    bounds?: [number, number, number, number, number, number]
+    wrap?: [number, number, number]
+    label?: string
+  }
+  /**
+   * Create a grid of regions (GridSpec); returns its id. A cell is wanted
+   * by a viewer while within `enter` of the viewer's view volume and kept
+   * until beyond `leave`, where "within m" means reaching into the
+   * volume's side and near planes pushed out by m and lying no deeper
+   * than m along the view direction - the far plane is a draw distance and
+   * is not consulted, so the margins read as load distances in 3d and as
+   * margins around an orthographic 2d view. A cell touching the margin
+   * only does not count, so a camera aligned to the grid never loads the
+   * ring beyond its edge. Cells have no state in the core until
+   * approached: an unbounded or procedural world costs what it has near a
+   * viewer. Events as setRegion's, payload `{ grid, cell: [i, j, k] }`.
+   */
+  export function createGrid(spec: GridSpec): GridId
+  /** End a grid: every cell whose enter went out leaves. */
+  export function destroyGrid(grid: GridId): void
+  /**
+   * The region enters delivered per frame scene-wide (default 16): every
+   * region form and consumer spends the one budget, nearest to a viewer's
+   * eye first, and the pending set re-sorts every frame, so a fast camera
+   * streams what it is heading for and a region it turned away from never
+   * enters (no event, nothing to cancel). Leaves are never budgeted. A
+   * handler's own readiness (a chunk baked, a model parsed) is the
+   * handler's; the budget bounds how many regions START per frame.
+   */
+  export function setResidencyBudget(enters: number): void
   /** Whether frustums gate the node's draw sinks (default true), and the
    * world-unit margin the test grows its box by (default 0). */
   export function setCull(node: NodeId, enabled: boolean, margin: number): void

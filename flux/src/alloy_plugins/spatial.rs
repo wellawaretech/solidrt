@@ -16,9 +16,9 @@ use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::{elements_mut_of, elements_of, OptArg};
 use alloy::spatial::{
   vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawOrder,
-  DrawQueue, DrawSink, InstanceProjection, InstanceRecordSink, LodLevel, MoveOptions, NodeEndpoint, NodeMotion,
-  NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RootMotion, Shape, SharedSlotSink,
-  TextureSlotSink, Volume,
+  DrawQueue, DrawSink, GridSpec, InstanceProjection, InstanceRecordSink, LodLevel, MoveOptions, NodeEndpoint,
+  NodeMotion, NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RegionEvent,
+  RegionMargins, RegionRef, RootMotion, Shape, SharedSlotSink, TextureSlotSink, Volume,
 };
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -101,6 +101,11 @@ impl ModuleDef for SpatialModule {
     decl.declare("setCull")?;
     decl.declare("setCullBounds")?;
     decl.declare("setCullGroup")?;
+    decl.declare("allocViewKey")?;
+    decl.declare("setRegion")?;
+    decl.declare("createGrid")?;
+    decl.declare("destroyGrid")?;
+    decl.declare("setResidencyBudget")?;
     decl.declare("setLod")?;
     decl.declare("createShape")?;
     decl.declare("updateShape")?;
@@ -165,6 +170,11 @@ impl ModuleDef for SpatialModule {
     exports.export("setCull", Function::new(ctx.clone(), set_cull)?)?;
     exports.export("setCullBounds", Function::new(ctx.clone(), set_cull_bounds)?)?;
     exports.export("setCullGroup", Function::new(ctx.clone(), set_cull_group)?)?;
+    exports.export("allocViewKey", Function::new(ctx.clone(), alloc_view_key)?)?;
+    exports.export("setRegion", Function::new(ctx.clone(), set_region)?)?;
+    exports.export("createGrid", Function::new(ctx.clone(), create_grid)?)?;
+    exports.export("destroyGrid", Function::new(ctx.clone(), destroy_grid)?)?;
+    exports.export("setResidencyBudget", Function::new(ctx.clone(), set_residency_budget)?)?;
     exports.export("setLod", Function::new(ctx.clone(), set_lod)?)?;
     exports.export("createShape", Function::new(ctx.clone(), create_shape)?)?;
     exports.export("updateShape", Function::new(ctx.clone(), update_shape)?)?;
@@ -493,7 +503,8 @@ fn shown(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<bool> {
 
 fn flush(ctx: Ctx<'_>) -> rquickjs::Result<()> {
   let st = super::gui(&ctx);
-  if st.alloy.spatial_flush() {
+  // A residency change the flush produced waits for the frame's delivery.
+  if st.alloy.spatial_flush() || st.alloy.spatial().residency_demand() {
     st.platform.request_frame();
   }
   Ok(())
@@ -629,6 +640,80 @@ fn set_cull_group(ctx: Ctx<'_>, id: u64, members: Vec<u64>) -> rquickjs::Result<
 /// objects, nearest first (see `Spatial::set_lod`); an empty array
 /// clears. `fade` is the cross-fade band fraction, `reference` the target
 /// population levels measure by.
+/// A viewer key for a view without a target of its own (a 2d camera).
+fn alloc_view_key(ctx: Ctx<'_>) -> u64 {
+  super::gui(&ctx).alloy.spatial().alloc_view_key()
+}
+
+/// The `{ enter, leave }` margins of a region, from a JS object.
+fn margins_arg(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Result<RegionMargins> {
+  let enter: Option<f64> = obj.get("enter")?;
+  let leave: Option<f64> = obj.get("leave")?;
+  match (enter, leave) {
+    (Some(enter), Some(leave)) => Ok(RegionMargins { enter: enter as f32, leave: leave as f32 }),
+    _ => Err(throw_str(ctx, &format!("{api}: enter and leave are required numbers"))),
+  }
+}
+
+/// Make the node a residency region (`{ enter, leave }`), or with null end
+/// it.
+fn set_region<'js>(ctx: Ctx<'js>, id: u64, margins: Value<'js>) -> rquickjs::Result<()> {
+  let m = if margins.is_null() || margins.is_undefined() {
+    None
+  } else {
+    let obj =
+      margins.as_object().ok_or_else(|| throw_str(&ctx, "setRegion: margins must be { enter, leave } or null"))?;
+    Some(margins_arg(&ctx, obj, "setRegion")?)
+  };
+  super::gui(&ctx).alloy.spatial().set_region(id, m).map_err(|e| throw_str(&ctx, &format!("setRegion: {e}")))
+}
+
+/// A fixed-length numeric array field of a JS object, `None` when absent.
+fn array_field<T: for<'a> FromJs<'a> + Copy + Default, const N: usize>(
+  ctx: &Ctx<'_>,
+  obj: &Object<'_>,
+  key: &str,
+  api: &str,
+) -> rquickjs::Result<Option<[T; N]>> {
+  let Some(values) = obj.get::<_, Option<Vec<T>>>(key)? else {
+    return Ok(None);
+  };
+  if values.len() != N {
+    return Err(throw_str(ctx, &format!("{api}: {key} must be an array of {N}")));
+  }
+  let mut out = [T::default(); N];
+  out.copy_from_slice(&values);
+  Ok(Some(out))
+}
+
+/// A grid of regions from `{ origin, cell, enter, leave, bounds?, wrap?,
+/// label? }`; returns its id.
+fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
+  let origin = array_field::<f32, 3>(&ctx, &spec, "origin", "createGrid")?
+    .ok_or_else(|| throw_str(&ctx, "createGrid: origin is required"))?;
+  let cell = array_field::<f32, 3>(&ctx, &spec, "cell", "createGrid")?
+    .ok_or_else(|| throw_str(&ctx, "createGrid: cell is required"))?;
+  let margins = margins_arg(&ctx, &spec, "createGrid")?;
+  let bounds = array_field::<i32, 6>(&ctx, &spec, "bounds", "createGrid")?;
+  let wrap = array_field::<i32, 3>(&ctx, &spec, "wrap", "createGrid")?;
+  let label: Option<String> = spec.get("label")?;
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .create_grid(GridSpec { origin, cell, margins, bounds, wrap, label })
+    .map_err(|e| throw_str(&ctx, &format!("createGrid: {e}")))
+}
+
+fn destroy_grid(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().destroy_grid(id).map_err(|e| throw_str(&ctx, &format!("destroyGrid: {e}")))
+}
+
+/// The region enters delivered per frame scene-wide.
+fn set_residency_budget(ctx: Ctx<'_>, budget: u32) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_residency_budget(budget);
+  Ok(())
+}
+
 fn set_lod<'js>(ctx: Ctx<'js>, id: u64, levels: Array<'js>, fade: f64, reference: OptArg<u64>) -> rquickjs::Result<()> {
   let mut out = Vec::with_capacity(levels.len());
   for entry in levels.iter::<Object<'js>>() {
@@ -1358,6 +1443,9 @@ pub(crate) struct SpatialTick {
   pub active: bool,
   /// The flush sent sink writes: this frame must paint.
   pub wrote: bool,
+  /// The residency gate owes a delivery (region events waiting) or has
+  /// enters still to pace: the next frame must run.
+  pub regions: bool,
 }
 
 /// What a frame's clip-player advance produced (see `advance_players`).
@@ -1405,10 +1493,15 @@ pub(crate) fn advance_transitions(ctx: &Ctx<'_>) -> bool {
 /// payload `{ player, reason }` (reason "finished" or "dropped"), one
 /// "spatialRootMotion" per bound player's delta, payload `{ player, x,
 /// y, z, yaw }`, and one "spatialTransitionEnd" per settled track,
-/// payload `{ node, component }`. The frame module calls this in
-/// `deliver`, after the frame's clock reached JS ("frameStart") and
-/// ahead of the frame's callbacks, so a handler sees the frame's stepped
-/// poses and its clock, and its follow-up write lands in the same frame.
+/// payload `{ node, component }`, then the residency gate's changes: one
+/// "spatialRegionEnter" or "spatialRegionLeave" per region whose wanted
+/// state flipped, payload `{ node }` for an explicit region (setRegion) and
+/// `{ grid, cell: [i, j, k] }` for a grid cell (createGrid), the leaves of
+/// a pass before its enters. The frame module calls this in `deliver`,
+/// after the frame's clock reached JS ("frameStart") and ahead of the
+/// frame's callbacks, so a handler sees the frame's stepped poses and its
+/// clock, and its follow-up write (a region's creates) lands in the same
+/// frame.
 pub(crate) fn deliver_motion(ctx: &Ctx<'_>) {
   let Some(st) = super::try_gui(ctx) else {
     return;
@@ -1418,6 +1511,7 @@ pub(crate) fn deliver_motion(ctx: &Ctx<'_>) {
   let clips = st.alloy.spatial().take_clip_events();
   let root_motion = st.alloy.spatial().take_root_motion();
   let settled = st.alloy.spatial().take_settled_transitions();
+  let regions = st.alloy.spatial().take_region_events();
   for event in clips {
     let obj = Object::new(ctx.clone()).expect("create spatialClipEnd object");
     let (player, reason) = match event {
@@ -1443,6 +1537,21 @@ pub(crate) fn deliver_motion(ctx: &Ctx<'_>) {
     obj.set("component", component_name(component)).expect("set component");
     crate::emit_event(ctx, "spatialTransitionEnd", obj);
   }
+  for event in regions {
+    let (name, region) = match event {
+      RegionEvent::Enter(r) => ("spatialRegionEnter", r),
+      RegionEvent::Leave(r) => ("spatialRegionLeave", r),
+    };
+    let obj = Object::new(ctx.clone()).expect("create spatial region event object");
+    match region {
+      RegionRef::Node(node) => obj.set("node", node).expect("set node"),
+      RegionRef::Cell { grid, cell } => {
+        obj.set("grid", grid).expect("set grid");
+        obj.set("cell", cell.to_vec()).expect("set cell");
+      }
+    }
+    crate::emit_event(ctx, name, obj);
+  }
 }
 
 /// The draw-side half of the node transitions, after the frame's JS:
@@ -1460,16 +1569,17 @@ pub(crate) fn deliver_motion(ctx: &Ctx<'_>) {
 /// before the frame's demand gate.
 pub(crate) fn tick(ctx: &Ctx<'_>) -> SpatialTick {
   let Some(st) = super::try_gui(ctx) else {
-    return SpatialTick { active: false, wrote: false };
+    return SpatialTick { active: false, wrote: false, regions: false };
   };
   st.alloy.spatial().start_transitions();
   let active = st.alloy.spatial().check_exits();
   let freed = st.alloy.spatial().take_freed();
   let wrote = st.alloy.spatial_flush();
+  let regions = st.alloy.spatial().residency_demand();
   for node in freed {
     let obj = Object::new(ctx.clone()).expect("create spatialNodeFreed object");
     obj.set("node", node).expect("set node");
     crate::emit_event(ctx, "spatialNodeFreed", obj);
   }
-  SpatialTick { active, wrote }
+  SpatialTick { active, wrote, regions }
 }

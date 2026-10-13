@@ -20,6 +20,7 @@ mod mover;
 mod normals;
 mod pick;
 mod players;
+mod residency;
 mod transitions;
 
 use std::collections::HashMap;
@@ -42,6 +43,7 @@ pub(crate) use pick::{ray_shape, BVH_MIN_TRIANGLES};
 pub use players::{
   ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, ClipId, PlayerId, PlayerUpdate, PlayersTick, RootMotion,
 };
+pub use residency::{GridId, GridSpec, RegionEvent, RegionMargins, RegionRef, DEFAULT_RESIDENCY_BUDGET, VIEW_KEY_BASE};
 // The pure sampler, for the differential tests.
 #[cfg(test)]
 pub(crate) use players::sample as sample_channel;
@@ -798,6 +800,9 @@ struct Node {
   /// Moved this flush: the LOD pass re-measures it (a group, or a node
   /// with population levels).
   lod_check: bool,
+  /// The residency region this node is (`set_region`): wanted while
+  /// within its margins of a viewer's view volume.
+  region: Option<Box<residency::Region>>,
 }
 
 #[derive(Default)]
@@ -856,6 +861,14 @@ pub struct Spatial {
   order_feeds: Vec<u32>,
   /// Bind order counter: every draw sink bound takes the next value.
   bind_seq: u64,
+  /// The residency gate: viewers, grids, the pending enters and the
+  /// events owed (`residency.rs`).
+  residency: residency::Residency,
+  /// The nodes carrying a region (dead ones drop at the next pass).
+  region_nodes: Vec<u32>,
+  /// A region moved or was declared this flush: the pass re-tests it
+  /// against every viewer.
+  regions_moved: bool,
 }
 
 /// The layer mask a node starts with: layer 0 alone, Three's default.
@@ -942,6 +955,7 @@ impl Spatial {
       lod_level: None,
       lod_scope: None,
       lod_check: false,
+      region: None,
     };
     let i = match self.free.pop() {
       Some(i) => {
@@ -1016,6 +1030,7 @@ impl Spatial {
       self.release_record(&record);
     }
     self.clear_lod(i);
+    self.residency.end_region(i, &mut self.nodes[i as usize]);
     self.transitions.configs.remove(&id);
     self.transitions.cancel_node(id);
     let n = &mut self.nodes[i as usize];
@@ -1290,15 +1305,16 @@ impl Spatial {
   /// Read at flush: set it before the flush that should see it. None
   /// forgets the target: its view, its LOD bias and its LOD reference.
   pub fn set_view(&mut self, target: u64, view: Option<(Mat4, Mat4)>) {
-    let (frustum, lod) = match view {
+    let (frustum, lod, view_proj) = match view {
       Some((v, p)) => {
         let bias = self.lod_bias.get(&target).copied().unwrap_or(1.0);
-        (Some(Frustum::from_view_proj(&multiply(p, v))), Some(derive_lod_view(&v, &p, bias)))
+        let vp = multiply(p, v);
+        (Some(Frustum::from_view_proj(&vp)), Some(derive_lod_view(&v, &p, bias)), Some(vp))
       }
       None => {
         self.lod_bias.remove(&target);
         self.lod_references.remove(&target);
-        (None, None)
+        (None, None, None)
       }
     };
     let frustum_changed = match frustum {
@@ -1307,6 +1323,15 @@ impl Spatial {
     };
     if frustum_changed && !self.frustum_dirty.contains(&target) {
       self.frustum_dirty.push(target);
+    }
+    if frustum_changed {
+      // The gate's viewer: the same volume, plus the eye the enters are
+      // paced by and the matrix a grid enumerates under.
+      let viewer = match (view_proj, frustum, lod) {
+        (Some(vp), Some(f), Some(l)) => Some((vp, f, l)),
+        _ => None,
+      };
+      self.residency.set_view(target, viewer);
     }
     let lod_changed = match lod {
       Some(v) => self.lod_views.insert(target, v) != Some(v),
@@ -1379,6 +1404,82 @@ impl Spatial {
   fn lod_view_of(&self, target: u64) -> Option<LodView> {
     let source = self.lod_references.get(&target).copied().unwrap_or(target);
     self.lod_views.get(&source).copied()
+  }
+
+  /// A viewer key for a view with no target of its own (a 2d camera): the
+  /// keys count up from `VIEW_KEY_BASE`, above any texture id, so a key
+  /// never collides with a target in `set_view`.
+  pub fn alloc_view_key(&mut self) -> u64 {
+    self.residency.alloc_view_key()
+  }
+
+  /// Make the node a residency region (None ends it): its world box (the
+  /// box culling carries, `set_cull_bounds` else `set_bounds`, so a boxless
+  /// node is refused) is wanted by a viewer while within `enter` of the
+  /// viewer's view volume (every plane pushed out by `enter`, as a cull
+  /// margin widens the test) and stays wanted until beyond `leave`
+  /// (`leave >= enter`, the hysteresis that keeps a camera on a border from
+  /// thrashing). Wanted overall if ANY viewer wants it. The region moves
+  /// with the node; ending it, or destroying the node, reports a leave if
+  /// its enter had gone out. Visibility is not consulted: the gate gates
+  /// memory, and a hidden region still exists. See `take_region_events`.
+  pub fn set_region(&mut self, id: NodeId, margins: Option<RegionMargins>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    let node = &mut self.nodes[i as usize];
+    if margins.is_some() && node.bounds.or(node.cull_bounds).is_none() {
+      return Err("a region needs a box (set_bounds or set_cull_bounds)".to_string());
+    }
+    let declared = self.residency.set_region(i, node, margins)?;
+    if declared {
+      node.region.as_mut().expect("the region was just declared").moved = true;
+      self.regions_moved = true;
+      if !self.region_nodes.contains(&i) {
+        self.region_nodes.push(i);
+      }
+    }
+    Ok(())
+  }
+
+  /// A grid of regions (see `GridSpec`): a cell is wanted by a viewer
+  /// while within `enter` of the viewer's view volume and kept until
+  /// beyond `leave`, where "within m" means reaching into the volume's
+  /// side and near planes pushed out by m and lying no deeper than m
+  /// along the view direction - the far plane is a draw distance and is
+  /// not consulted, so the margins read as load distances in 3d and as
+  /// margins around an orthographic 2d view. Cells have no state until
+  /// approached; an unbounded or procedural world costs what it has
+  /// near a viewer. Returns the grid's id.
+  pub fn create_grid(&mut self, spec: GridSpec) -> Result<GridId, String> {
+    self.residency.create_grid(spec)
+  }
+
+  /// End a grid: every cell whose enter went out leaves.
+  pub fn destroy_grid(&mut self, id: GridId) -> Result<(), String> {
+    self.residency.destroy_grid(id)
+  }
+
+  /// The enters delivered per frame scene-wide (default
+  /// `DEFAULT_RESIDENCY_BUDGET`): every region form and consumer spends
+  /// the one budget, nearest to a viewer's eye first, and the pending set
+  /// re-sorts every pass, so a fast camera streams what it is heading for
+  /// and a region it turned away from never enters. Leaves are never
+  /// budgeted. Counted between two `take_region_events`, so every flush
+  /// in a frame spends the same budget.
+  pub fn set_residency_budget(&mut self, budget: u32) {
+    self.residency.set_budget(budget);
+  }
+
+  /// The residency changes since the last take, leaves of a pass before
+  /// its enters (a handler gives back before it takes). Taking them
+  /// starts the next budget window.
+  pub fn take_region_events(&mut self) -> Vec<RegionEvent> {
+    self.residency.take_events()
+  }
+
+  /// Whether the gate wants another flush and delivery: events waiting,
+  /// or enters still to pace.
+  pub fn residency_demand(&self) -> bool {
+    self.residency.demand()
   }
 
   /// Whether frustums gate the node's draw sinks, and the world-unit
@@ -3488,6 +3589,10 @@ impl Spatial {
     if !self.touched.is_empty() || !self.frustum_dirty.is_empty() {
       self.cull_pass(out);
     }
+    if self.residency.needs_pass(self.regions_moved) {
+      self.regions_moved = false;
+      self.residency.pass(&mut self.nodes, &mut self.region_nodes);
+    }
     // After the walk (worlds fresh) and unconditionally: the feed reacts
     // to view writes and node rotations alike, and its own epsilon gate
     // is the cheap early-out.
@@ -3592,6 +3697,12 @@ impl Spatial {
     let touched = changed || shown != n.shown || n.queued || scope != n.lod_scope;
     n.shown = shown;
     n.lod_scope = scope;
+    if changed {
+      if let Some(r) = n.region.as_mut() {
+        r.moved = true;
+        self.regions_moved = true;
+      }
+    }
     if changed && !n.lod_check && (n.lod.is_some() || n.records.len() > 1) {
       n.lod_check = true;
       self.lod_moved.push(i);

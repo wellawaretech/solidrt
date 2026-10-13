@@ -50,16 +50,31 @@ impl Frustum {
   /// beyond a frustum corner pass (the classic false positive), which only
   /// costs a draw, never a missing one.
   pub fn intersects(&self, b: &Box3, margin: f32) -> bool {
-    for p in &self.planes {
-      let x = if p[0] >= 0.0 { b[3] } else { b[0] };
-      let y = if p[1] >= 0.0 { b[4] } else { b[1] };
-      let z = if p[2] >= 0.0 { b[5] } else { b[2] };
-      if p[0] * x + p[1] * y + p[2] * z + p[3] < -margin {
-        return false;
-      }
-    }
-    true
+    self.planes.iter().all(|p| reach(p, b) >= -margin)
   }
+
+  /// The residency gate's grid test: whether the box reaches strictly
+  /// INSIDE the side and near planes pushed out by `margin`. The far
+  /// plane is left out (a draw distance; the gate's depth reach is the
+  /// margin itself, see `residency`), and touching a pushed-out plane at
+  /// a face does not count, so a camera aligned to a grid never loads the
+  /// ring just beyond its edge.
+  pub fn reaches_sides(&self, b: &Box3, margin: f32) -> bool {
+    self.planes[..FAR_PLANE].iter().all(|p| reach(p, b) > -margin)
+  }
+}
+
+/// The index of the far plane in `Frustum::planes` (left, right, bottom,
+/// top, near, far - the order `from_view_proj` extracts them in).
+const FAR_PLANE: usize = 5;
+
+/// How far the box's corner farthest along the plane normal lies inside
+/// the plane (negative: the whole box is behind it).
+fn reach(p: &[f32; 4], b: &Box3) -> f32 {
+  let x = if p[0] >= 0.0 { b[3] } else { b[0] };
+  let y = if p[1] >= 0.0 { b[4] } else { b[1] };
+  let z = if p[2] >= 0.0 { b[5] } else { b[2] };
+  p[0] * x + p[1] * y + p[2] * z + p[3]
 }
 
 /// The world-axis box enclosing a local box carried through a world
