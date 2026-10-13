@@ -205,7 +205,12 @@ type ActiveMap = Rc<RefCell<HashMap<u32, (oneshot::Sender<()>, Hold)>>>;
 // The scheduling state of a context, one id space for everything it hands
 // out (timers, immediates, idle callbacks): an id lives in exactly one
 // store, so a cancel can try each in turn. In context userdata so the frame
-// protocol reaches the idle queue.
+// protocol reaches the idle queue, and so do the globals and the functions
+// they arm: they look it up per call rather than hold a clone. The idle
+// queue keeps its callbacks as Persistents, and a native function alive at
+// teardown (a global, a pending timer's) that shared this state would keep
+// them past the userdata drop, into the runtime's leak check, which aborts
+// the process.
 #[derive(Clone, JsLifetime)]
 pub(crate) struct Timers {
   #[qjs(skip_trace)]
@@ -384,8 +389,16 @@ impl Timers {
     let id = self.alloc_id();
     let timeout_timer = match timeout_ms {
       Some(ms) => {
-        let timers = self.clone();
-        let timed_out = Function::new(ctx.clone(), MutFn::from(move |ctx: Ctx<'_>| timers.idle_timed_out(&ctx, id)))?;
+        // The timer's function reaches the timers through userdata, like
+        // the globals: a clone held here would pin the idle queue's
+        // callbacks past the userdata drop (see `Timers`).
+        let timed_out = Function::new(
+          ctx.clone(),
+          MutFn::from(move |ctx: Ctx<'_>| {
+            let timers = ctx.userdata::<Timers>().expect("timers installed");
+            timers.idle_timed_out(&ctx, id);
+          }),
+        )?;
         Some(self.set_timeout(ctx, timed_out, ms))
       }
       None => None,
@@ -553,29 +566,24 @@ fn delay_ms(ms: OptArg<f64>) -> u64 {
 }
 
 fn init_timers(ctx: &Ctx<'_>) {
-  let timers = Timers::new(ctx);
+  ctx.store_userdata(Timers::new(ctx)).expect("store timers");
   let globals = ctx.globals();
 
   let set_timeout = Function::new(
     ctx.clone(),
-    MutFn::from({
-      let timers = timers.clone();
-      move |cb: Function<'_>, ms: OptArg<f64>| -> u32 {
-        let ctx = cb.ctx().clone();
-        timers.set_timeout(&ctx, cb, delay_ms(ms))
-      }
+    MutFn::from(|cb: Function<'_>, ms: OptArg<f64>| -> u32 {
+      let ctx = cb.ctx().clone();
+      let timers = ctx.userdata::<Timers>().expect("timers installed");
+      timers.set_timeout(&ctx, cb, delay_ms(ms))
     }),
   )
   .unwrap();
 
   let clear_timeout = Function::new(
     ctx.clone(),
-    MutFn::from({
-      let timers = timers.clone();
-      move |ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
-        if let Some(id) = timer_id(id) {
-          timers.cancel(&ctx, id);
-        }
+    MutFn::from(|ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
+      if let Some(id) = timer_id(id) {
+        ctx.userdata::<Timers>().expect("timers installed").cancel(&ctx, id);
       }
     }),
   )
@@ -583,24 +591,19 @@ fn init_timers(ctx: &Ctx<'_>) {
 
   let set_interval = Function::new(
     ctx.clone(),
-    MutFn::from({
-      let timers = timers.clone();
-      move |cb: Function<'_>, ms: OptArg<f64>| -> u32 {
-        let ctx = cb.ctx().clone();
-        timers.set_interval(&ctx, cb, delay_ms(ms))
-      }
+    MutFn::from(|cb: Function<'_>, ms: OptArg<f64>| -> u32 {
+      let ctx = cb.ctx().clone();
+      let timers = ctx.userdata::<Timers>().expect("timers installed");
+      timers.set_interval(&ctx, cb, delay_ms(ms))
     }),
   )
   .unwrap();
 
   let clear_interval = Function::new(
     ctx.clone(),
-    MutFn::from({
-      let timers = timers.clone();
-      move |ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
-        if let Some(id) = timer_id(id) {
-          timers.cancel(&ctx, id);
-        }
+    MutFn::from(|ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
+      if let Some(id) = timer_id(id) {
+        ctx.userdata::<Timers>().expect("timers installed").cancel(&ctx, id);
       }
     }),
   )
@@ -608,12 +611,10 @@ fn init_timers(ctx: &Ctx<'_>) {
 
   let set_immediate = Function::new(
     ctx.clone(),
-    MutFn::from({
-      let timers = timers.clone();
-      move |cb: Function<'_>| -> u32 {
-        let ctx = cb.ctx().clone();
-        timers.set_immediate(&ctx, cb)
-      }
+    MutFn::from(|cb: Function<'_>| -> u32 {
+      let ctx = cb.ctx().clone();
+      let timers = ctx.userdata::<Timers>().expect("timers installed");
+      timers.set_immediate(&ctx, cb)
     }),
   )
   .unwrap();
@@ -621,12 +622,9 @@ fn init_timers(ctx: &Ctx<'_>) {
   // clearImmediate: the one cancel serves every id the context hands out.
   let clear_immediate = Function::new(
     ctx.clone(),
-    MutFn::from({
-      let timers = timers.clone();
-      move |ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
-        if let Some(id) = timer_id(id) {
-          timers.cancel(&ctx, id);
-        }
+    MutFn::from(|ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
+      if let Some(id) = timer_id(id) {
+        ctx.userdata::<Timers>().expect("timers installed").cancel(&ctx, id);
       }
     }),
   )
@@ -634,30 +632,23 @@ fn init_timers(ctx: &Ctx<'_>) {
 
   let request_idle_callback = Function::new(
     ctx.clone(),
-    MutFn::from({
-      let timers = timers.clone();
-      move |cb: Function<'_>, opts: OptArg<Value<'_>>| -> rquickjs::Result<u32> {
-        let ctx = cb.ctx().clone();
-        timers.request_idle_callback(&ctx, cb, idle_timeout_ms(opts))
-      }
+    MutFn::from(|cb: Function<'_>, opts: OptArg<Value<'_>>| -> rquickjs::Result<u32> {
+      let ctx = cb.ctx().clone();
+      let timers = ctx.userdata::<Timers>().expect("timers installed");
+      timers.request_idle_callback(&ctx, cb, idle_timeout_ms(opts))
     }),
   )
   .unwrap();
 
   let cancel_idle_callback = Function::new(
     ctx.clone(),
-    MutFn::from({
-      let timers = timers.clone();
-      move |ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
-        if let Some(id) = timer_id(id) {
-          timers.cancel_idle_callback(&ctx, id);
-        }
+    MutFn::from(|ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
+      if let Some(id) = timer_id(id) {
+        ctx.userdata::<Timers>().expect("timers installed").cancel_idle_callback(&ctx, id);
       }
     }),
   )
   .unwrap();
-
-  ctx.store_userdata(timers).expect("store timers");
 
   // Stash the engine's native queueMicrotask before the global is overwritten
   // below - reading it afterwards would recurse into our wrapper.

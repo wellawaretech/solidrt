@@ -322,3 +322,24 @@ async fn a_runtime_without_a_resolver_rejects() {
   let out = sink.captured();
   assert!(out.log().contains("no resolver: true this runtime cannot spawn isolates"), "log: {}", out.log());
 }
+
+// A method pulled off the handle is a native function the trap built; held
+// past the engine's end (here in a cycle, which only the runtime's final
+// collection reaches), it must not keep the handle object from being
+// released ahead of the leak check that ends JS_FreeRuntime, which aborts
+// the process. The process surviving the engine's drop is the assertion.
+#[tokio::test]
+async fn a_detached_method_held_at_teardown_does_not_abort() {
+  let (out, _) = run_with_worker(
+    r#"
+    import { isolate } from "flux:isolate"
+    let w = isolate("worker")
+    let ring = { call: w.echoCount, stop: w.terminate }
+    ring.self = ring
+    console.log("count:", await ring.call(1, 2))
+    ring.stop()
+    "#,
+  )
+  .await;
+  assert!(out.log().contains("count: 2"), "log: {}", out.log());
+}

@@ -173,10 +173,13 @@ fn report_location_impl<'js>(ctx: Ctx<'js>, location: Value<'js>) -> flux::rquic
 
 /// `registerDebug(name, fn)`: duplicate names replace. Returns the
 /// unregister, which removes the command while this registration is still
-/// the one under the name. Fetches the registry from userdata itself so the
-/// export needs no captured state; the unregister captures the registry
-/// handle, the name and the id only (never a JS value: a native closure
-/// alive at teardown would keep it from being finalized).
+/// the one under the name. Both fetch the registry from userdata when
+/// called: the unregister captures the name and the id only, never the
+/// registry handle. A native closure alive at teardown (an unregister held
+/// in a cleanup list, the documented pattern) is finalized after the
+/// runtime's leak check, so a handle it shares with the registry would keep
+/// every command's function alive past that check, and QuickJS aborts the
+/// process on it (`JS_FreeRuntime: list_empty(&rt->gc_obj_list)`).
 fn register_debug_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) -> flux::rquickjs::Result<Function<'js>> {
   // A command's return value is JSON-encoded for the caller, so an async
   // function's Promise would encode as `{}` with nothing said: refuse it
@@ -201,7 +204,8 @@ fn register_debug_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) ->
     commands.by_name.insert(name.clone(), DebugEntry { id, func: persistent });
     id
   };
-  Function::new(ctx.clone(), move || {
+  Function::new(ctx.clone(), move |ctx: Ctx<'_>| {
+    let Some(registry) = ctx.userdata::<DebugRegistry>() else { return };
     let mut commands = registry.0.borrow_mut();
     if commands.by_name.get(&name).is_some_and(|e| e.id == id) {
       commands.by_name.remove(&name);

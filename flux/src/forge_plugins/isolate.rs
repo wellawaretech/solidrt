@@ -324,18 +324,23 @@ impl CallState {
 #[rquickjs::class(rename = "Isolate")]
 pub struct Isolate {
   #[qjs(skip_trace)]
+  inner: Rc<IsolateInner>,
+}
+
+/// The handle's state, shared by the class instance and the functions its
+/// `get` trap hands out. Those capture this, Rust state only, never the
+/// class object: a method pulled off the handle and still alive at teardown
+/// would release a captured object from its finalizer, after the runtime's
+/// leak check, which aborts the process (flux/CLAUDE.md, Persistent handles).
+struct IsolateInner {
   id: String,
-  #[qjs(skip_trace)]
   args: Vec<String>,
-  #[qjs(skip_trace)]
   memory_limit: Option<usize>,
-  #[qjs(skip_trace)]
   instance: RefCell<Option<Arc<Instance>>>,
-  #[qjs(skip_trace)]
   terminated: RefCell<bool>,
 }
 
-impl Isolate {
+impl IsolateInner {
   /// Call export `name` in the child with `args`: what `handle.name(...args)`
   /// does. Returns the call's promise, which doubles as an async iterator for
   /// stream results (see `attach_iterator`). An `AbortSignal` among the
@@ -729,10 +734,8 @@ fn isolate<'js>(ctx: Ctx<'js>, id: String, opts: OptArg<Object<'js>>) -> rquickj
     }
     None => (Vec::new(), None),
   };
-  let handle = Class::instance(
-    ctx.clone(),
-    Isolate { id, args, memory_limit, instance: RefCell::new(None), terminated: RefCell::new(false) },
-  )?;
+  let inner = IsolateInner { id, args, memory_limit, instance: RefCell::new(None), terminated: RefCell::new(false) };
+  let handle = Class::instance(ctx.clone(), Isolate { inner: Rc::new(inner) })?;
   let traps = Object::new(ctx.clone())?;
   traps.set("get", Function::new(ctx.clone(), proxy_get)?)?;
   let proxy: Constructor = ctx.globals().get("Proxy")?;
@@ -749,14 +752,13 @@ fn proxy_get<'js>(ctx: Ctx<'js>, handle: Class<'js, Isolate>, prop: JsValue<'js>
     Some(s) => s.to_string()?,
     None => return handle.as_inner().get(prop),
   };
+  let inner = handle.borrow().inner.clone();
   match name.as_str() {
     "then" => Ok(JsValue::new_undefined(ctx)),
-    "terminate" => Function::new(ctx, move || handle.borrow().terminate()).map(|f| f.into_value()),
-    "exited" => handle.borrow().exited_promise(ctx),
-    _ => {
-      Function::new(ctx, move |ctx: Ctx<'js>, args: Rest<JsValue<'js>>| handle.borrow().call(ctx, name.clone(), args.0))
-        .map(|f| f.into_value())
-    }
+    "terminate" => Function::new(ctx, move || inner.terminate()).map(|f| f.into_value()),
+    "exited" => inner.exited_promise(ctx),
+    _ => Function::new(ctx, move |ctx: Ctx<'js>, args: Rest<JsValue<'js>>| inner.call(ctx, name.clone(), args.0))
+      .map(|f| f.into_value()),
   }
 }
 
