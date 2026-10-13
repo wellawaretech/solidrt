@@ -175,8 +175,8 @@ fn build_basis() {
     build.define(name, *value);
   }
   // Android links the NDK's shared C++ runtime (cc's default there), the one
-  // runtime every C++ library in the process shares: whisper links it too,
-  // and lattice/Makefile.android stages libc++_shared.so into every APK.
+  // runtime every C++ library in the process shares; lattice/Makefile.android
+  // stages libc++_shared.so into an APK whose libs link it.
   for file in BASIS_SOURCES {
     build.file(src.join(file));
   }

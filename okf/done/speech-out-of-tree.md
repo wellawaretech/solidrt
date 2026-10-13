@@ -32,7 +32,7 @@ lane whole:
 
 - lattice: the `speech` feature and both source files, the two
   dependencies, the crates-io patch in the workspace `Cargo.toml`,
-  `tests/speech.rs`, the cmake toolchain wrapper if nothing else needs it.
+  `tests/speech.rs`.
 - Build: the `SPEECH` knob everywhere it is read or passed.
 - core: `speech-recognition.ts`, its package export and the `speech`
   global type.
@@ -53,7 +53,40 @@ documented in the runtime docs for the module that replaces it.
   has no speech export.
 - An app that wants speech imports a `runtime:*` module.
 
-## Open
+## Closed 2026-10-13
 
-- When: after the first external speech module exists and has been run
-  on a device, so the ring has a consumer before the in-tree one goes.
+Speech runs as a custom runtime module over the microphone ring, so the
+lane came out whole: the lattice feature, both source files, the test, the
+two dependencies and the crates-io fork, the `SPEECH` knob in
+`runtime.mk`, `lattice/Makefile` (with the `DIST` switch, which existed
+only to force it off), `Makefile.android` and the three workflows, the
+`whisper_rs` branch of alloy's log filter, `@solidrt/core/speech-recognition`
+with its export and the `speech` global type, and the mentions in
+docs/runtime and the core docs. [wakeword-detector-cost](wakeword-detector-cost.md)
+closed with it.
+
+Three things looked speech-only and stay, with their comments made general:
+
+- `packages/cli/runtime/android-abi.toolchain.cmake`, added for
+  whisper-rs-sys: it forces 16 KB page alignment on every cmake-built `.so`
+  (libSDL3 included), and its ABI default is what lets an out-of-tree module
+  build whisper-rs-sys for Android.
+- The MSVC runtime-library env vars in `runtime.mk`
+  (`CMAKE_POLICY_DEFAULT_CMP0091`, `CMAKE_MSVC_RUNTIME_LIBRARY`): any crate
+  that runs its own cmake project needs them, a custom runtime building
+  whisper on Windows included.
+- The `libc++_shared.so` staging on Android: it applies to any C++ module.
+
+The microphone ring and tap, the session id, `install_test_microphone` and
+`app.microphone` are the ring's, not the lane's, and the external module is
+built on them.
+
+The recognizer's segmentation constants, for a module that wants a starting
+point (all at 16 kHz mono f32, Whisper's rate): a VAD check at most every
+100 ms of new audio and only once 0.5 s is buffered; a 1 s pre-roll kept
+while idle so an utterance includes its onset; 1.5 s inspected for trailing
+silence while speaking, 700 ms of it ending the utterance, 200 ms kept after
+the last speech when trimming; a forced cut at 30 s; interim re-transcription
+at most once per 1 s of new audio; a 2.2 s rolling window for the wake word
+detector, which needs about 1.96 s to produce its full embedding sequence
+and silently scores zero on less.

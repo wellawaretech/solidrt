@@ -100,6 +100,6 @@ Open questions, both because nobody has ever built these that way:
 
 - **`android-run-armeabi-v7a` could be `android-run
   ANDROID_ABI=armeabi-v7a`.** The target is already just a forwarder, and
-  `ANDROID_ABI` is the documented knob alongside `PROFILE=` and `SPEECH=`.
+  `ANDROID_ABI` is the documented knob alongside `PROFILE=` and `VIDEO=`.
   `android-dist-armeabi-v7a` is a real second target (a 32-bit-only APK,
   since `ANDROID_ABIS` excludes v7a) and keeps its own name.

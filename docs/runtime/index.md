@@ -159,8 +159,8 @@ copied beside the binaries. On Android the APKs are never yours to carry:
 sol derives them from the stock ones with every `.so` in the folder swapped
 in, so a module that brings a shared library of its own (a C++ library, a
 vendor SDK) puts it there and it ships. The NDK's C++ runtime,
-`libc++_shared.so`, is staged when a staged lib links it, the stock build
-with speech recognition and any C++ module alike, and left out otherwise.
+`libc++_shared.so`, is staged when a staged lib links it, as any C++
+module does, and left out otherwise.
 Every staged lib must be 16 KB page aligned (Android 15+ refuses others);
 the build links it so and checks the result, and sol checks again before
 it derives an APK. The derived player is an app of its own on the device,
@@ -349,9 +349,9 @@ one codegen unit, stripped, much slower. The Android libs are staged
 stripped at every profile, since the folder is what the APK carries and
 sol swaps the libs in as they are: the player `.so` goes from 70 MB to 52
 MB, the prebuilt impeller from 228 MB to 7 MB; the symbols stay in
-`target/` for ndk-stack. `SPEECH=1` builds speech recognition in,
-`VIDEO=0`, `KTX2=0` and `WASM_NATIVE=0` leave video playback, compressed
-textures and the native wasm engine out, `TEST=0` builds the player
+`target/` for ndk-stack. `VIDEO=0`, `KTX2=0` and `WASM_NATIVE=0` leave
+video playback, compressed textures and the native wasm engine out,
+`TEST=0` builds the player
 without the test host. Features are lattice's, named `lattice/<feature>`
 on cargo's command line by the Makefile, so the manifest declares none of
 them.

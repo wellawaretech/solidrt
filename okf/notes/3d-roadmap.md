@@ -262,8 +262,8 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     `packages/3d/AGENTS.md` (Collision) with `examples/collision.tsx`
     and the `collision-check` rig. Record in
     [spatial-collision-queries](../done/spatial-collision-queries.md);
-    rigid-body dynamics stay with
-    [physics-core](../backlog/physics-core.md).
+    rigid-body dynamics are a custom runtime module
+    ([physics-core](../done/physics-core.md)).
 
 ## Not in scope
 

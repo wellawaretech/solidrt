@@ -572,21 +572,6 @@ Shaped, not started.
   group opacity and group transforms; add an opt-in tree output (groups with
   id/opacity/transform, paths in local space) backed by a `transform` matrix
   prop on views, keeping the flat list as the default.
-- **[Physics core - an embedded engine as a producer into the spatial arena](backlog/physics-core.md)** [2026-08-24]
-  Rigid-body physics is per-body-per-frame and per-contact work, below the
-  interpreter line, and nothing provides it, so games needing dynamics are
-  blocked or hand-roll it badly. Embed a proven Rust engine (Rapier) behind a
-  thin core module that steps on a fixed timestep and writes body poses into
-  spatial nodes, with JS sending intent (bodies, impulses, joints) and
-  collision events returning frame-batched; learn the API shape in a real game
-  at rung 2/3 first.
-- **[Vehicle controller on the physics core](backlog/physics-vehicle-controller.md)** [2026-08-30]
-  physics-core stops at rigid bodies, primitive colliders and (stage 2) a
-  character controller; a driving game needs a raycast vehicle - a chassis
-  body with wheel rays, suspension springs, engine and brake forces and tyre
-  friction stepped inside the solver, which is per-wheel-per-substep work no
-  app can do in JS. Rapier has no vehicle module of its own; shape it as the
-  physics core's first higher-level controller after the core lands.
 - **[Make the fence wait over a video plane adaptive](backlog/plane-adaptive-fence-wait.md)** [2026-09-12]
   An app animating over a playing video plane runs at 16 fps because every
   window present waits for its GPU work while a plane exists; wait only for
@@ -738,12 +723,6 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
-- **[Speech recognition leaves the tree for a runtime module](backlog/speech-out-of-tree.md)** [2026-10-11]
-  The in-tree Whisper, VAD and wake word lane (lattice speech feature,
-  whisper-rs, livekit-wakeword and its crates-io patch, the SPEECH build knob,
-  @solidrt/core/speech-recognition) ships nowhere and exists for testing; once
-  speech runs as an external runtime module over the microphone ring, the lane
-  and everything built only for it come out.
 - **[The engine holds a full 32-byte record copy of a splat cloud when the sort needs 12](backlog/splat-key-copy.md)** [2026-09-27]
   An indexed instance order keys on the record's position, but the hand-off
   mirror the core sorts is the whole record block (32 bytes per splat, 32 MB
@@ -868,11 +847,6 @@ Shaped, not started.
   frames, and there is no seek/rate/step. Fullscreen on Android goes through
   android-video-punch-through.md instead; this path is not being fixed while
   that round runs.
-- **[The armed wake-word detector burns ~40% of a core while idle](backlog/wakeword-detector-cost.md)** [2026-08-14]
-  Every 100ms the armed speech worker scores a 2.2s window with the stateless
-  livekit-wakeword predict, ~35-40ms a check whether or not anyone is
-  speaking; VAD gating cuts idle cost ~30x for ten lines, a streaming detector
-  fixes it properly but needs upstream surgery.
 - **[An asset-generating script reloads the app on every write](backlog/watch-settle-asset-write-bursts.md)** [2026-09-08]
   The dev server watches the assets/ tree with a 100 ms debounce, so a
   data-prep script writing hundreds of MB over two minutes rebuilds and pushes
@@ -2184,6 +2158,21 @@ Finished, kept for the reasoning.
   line (kinds/dash.rs), the fill keeps the true curve, the pattern restarts at
   each subpath, and a d-path's bounds count dashes as caps; pathLength (SVG)
   on both kinds makes the pattern fractional for partial draws.
+- **[Physics core - an embedded engine as a producer into the spatial arena](done/physics-core.md)** [2026-10-13]
+  Rigid-body physics is per-body-per-frame and per-contact work, below the
+  interpreter line, and nothing provides it, so games needing dynamics are
+  blocked or hand-roll it badly. Embed a proven Rust engine (Rapier) behind a
+  thin core module that steps on a fixed timestep and writes body poses into
+  spatial nodes, with JS sending intent (bodies, impulses, joints) and
+  collision events returning frame-batched; learn the API shape in a real game
+  at rung 2/3 first.
+- **[Vehicle controller on the physics core](done/physics-vehicle-controller.md)** [2026-10-13]
+  physics-core stops at rigid bodies, primitive colliders and (stage 2) a
+  character controller; a driving game needs a raycast vehicle - a chassis
+  body with wheel rays, suspension springs, engine and brake forces and tyre
+  friction stepped inside the solver, which is per-wheel-per-substep work no
+  app can do in JS. Rapier has no vehicle module of its own; shape it as the
+  physics core's first higher-level controller after the core lands.
 - **[Pipeline target resize from a 1x1 creation leaves the framebuffer incomplete](done/pipeline-target-resize-incomplete.md)** [2026-09-02]
   A createPipelineTexture target created at 1x1 (the size a 0x0 startup window
   clamps to) fails its first real setTargetSize with "shader framebuffer
@@ -2429,6 +2418,12 @@ Finished, kept for the reasoning.
   route settles to the target's onTransitionEnd handler; the packages should
   offer the same - an onTransitionEnd per sprite handle / SceneNode - the
   first thing anyone chaining animations will reach for.
+- **[Speech recognition leaves the tree for a runtime module](done/speech-out-of-tree.md)** [2026-10-11]
+  The in-tree Whisper, VAD and wake word lane (lattice speech feature,
+  whisper-rs, livekit-wakeword and its crates-io patch, the SPEECH build knob,
+  @solidrt/core/speech-recognition) ships nowhere and exists for testing; once
+  speech runs as an external runtime module over the microphone ring, the lane
+  and everything built only for it come out.
 - **[Standalone APK for a packed app](done/standalone-android-apk.md)** [2026-09-01]
   Shipped 2026-09-01: sol pack --apk patches a per-ABI production runner APK
   (no Android SDK at pack time) with the app's payload, id, label, versionCode
@@ -2655,6 +2650,11 @@ Finished, kept for the reasoning.
   vsync-released signal - so a 25 fps app on the Pixel 7 runs two JS frames
   per present, with honest but ragged tick deltas (1 and 6 periods alongside
   the compositor's 3 and 4).
+- **[The armed wake-word detector burns ~40% of a core while idle](done/wakeword-detector-cost.md)** [2026-08-14]
+  Every 100ms the armed speech worker scores a 2.2s window with the stateless
+  livekit-wakeword predict, ~35-40ms a check whether or not anyone is
+  speaking; VAD gating cuts idle cost ~30x for ten lines, a streaming detector
+  fixes it properly but needs upstream surgery.
 - **[Compile wasm to native on the device](done/wasm-native-execution.md)** [2026-10-04]
   flux:wasm runs on an interpreter, so it is a portability tool and not a
   speed tool; put wasmtime with Cranelift behind the forge API wherever the

@@ -2,9 +2,22 @@
 title: Physics core - an embedded engine as a producer into the spatial arena
 description: Rigid-body physics is per-body-per-frame and per-contact work, below the interpreter line, and nothing provides it, so games needing dynamics are blocked or hand-roll it badly. Embed a proven Rust engine (Rapier) behind a thin core module that steps on a fixed timestep and writes body poses into spatial nodes, with JS sending intent (bodies, impulses, joints) and collision events returning frame-batched; learn the API shape in a real game at rung 2/3 first.
 created: 2026-08-24
+completed: 2026-10-13
 ---
 
 # Physics core
+
+Closed unfinished 2026-10-13: superseded by custom runtimes
+([runtime-extension-modules](runtime-extension-modules.md)). Physics is a
+module an app's own runtime crate adds, not a core one, and the tower-toppling
+demo's `runtime:physics3d` / `runtime:physics2d` (Rapier, outside the repo) is
+the working instance. Both decisions below dissolve: the module lives in the
+app's crate, and only an app that links it pays its binary size. The world
+steps in the frame protocol on a fixed timestep, and the one per-frame call is
+`group.poses(target, ...)`, every body's pose written into the app's own record
+layout. That differs from the shape below on purpose: poses reach records
+through one JS call per group, not spatial nodes through a native binding.
+[physics-vehicle-controller](physics-vehicle-controller.md) closed with it.
 
 ## Symptom
 
@@ -57,7 +70,7 @@ bodies.
   use is deferred. Settle this before code; it decides the crate graph.
 - **Binary size.** Most solidrt apps are not games. Measure what Rapier
   adds to a dist build; if it is not noise, it becomes a cargo feature
-  like SPEECH, with the default set by the measurement.
+  like VIDEO, with the default set by the measurement.
 
 ## Staging
 

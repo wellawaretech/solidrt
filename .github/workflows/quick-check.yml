@@ -76,4 +76,4 @@ jobs:
           frozen: 'false'
 
       - name: Build
-        run: NDK_HOME="$ANDROID_NDK_ROOT" make ${{ matrix.target }} VERSION=0.0.0-check PROFILE=debug SPEECH=0
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make ${{ matrix.target }} VERSION=0.0.0-check PROFILE=debug

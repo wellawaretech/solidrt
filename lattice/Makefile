@@ -9,21 +9,11 @@
 # ANGLE libraries on Windows and macOS, the Gradle APKs, the flux binaries,
 # the platform packages and their notices.
 #
-# The build flags are the runtime's (PROFILE, SPEECH, VIDEO, KTX2,
+# The build flags are the runtime's (PROFILE, VIDEO, KTX2,
 # WASM_NATIVE, TEST, ANDROID_ABI, NDK_HOME, documented by `make -C runtime
 # help`); a value on this command line reaches it.
 
 VERSION ?= $(shell git describe --tags --always --dirty | sed 's/^v//')
-
-# Dist (production) builds are always speech-free. This is the single source
-# of truth: any packaging goal sets DIST=1 and exports it to the recursive
-# makes (the runtime's forces SPEECH=0 on it, beating even a command-line
-# SPEECH=1). The goals are spelled out (not `dist-%`) so `dist` itself is
-# covered.
-ifneq ($(filter dist android-dist android-dist-armeabi-v7a,$(MAKECMDGOALS)),)
-DIST = 1
-endif
-export DIST
 
 SOLIDRT_HOME ?= $(abspath $(CURDIR)/..)
 
@@ -111,9 +101,8 @@ help:
 	@echo "  ANDROID_ABI=x86_64 builds for the emulator; it has no platform"
 	@echo "  package, so the APKs stay in dist/android/ where sol android finds them."
 	@echo ""
-	@echo "The build flags (PROFILE=debug|release|release-opt, SPEECH=1, VIDEO=0, KTX2=0,"
+	@echo "The build flags (PROFILE=debug|release|release-opt, VIDEO=0, KTX2=0,"
 	@echo "WASM_NATIVE=0, TEST=0, NDK_HOME) are the runtime's: make -C runtime help."
-	@echo "dist targets always build speech-free."
 	@echo ""
 	@echo "Player:"
 	@echo "  player-bundle      Regenerate the player and BSOD bundles"

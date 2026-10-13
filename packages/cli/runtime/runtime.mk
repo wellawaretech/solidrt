@@ -42,7 +42,6 @@
 #                you ship
 #   ANDROID_ABI  arm64-v8a (default), armeabi-v7a, x86_64 (the emulator)
 #   NDK_HOME     the Android NDK (default: /opt/android-ndk)
-#   SPEECH=1     speech recognition in (default: out; DIST=1 forces it out)
 #   VIDEO=0, KTX2=0, WASM_NATIVE=0   leave video playback, compressed
 #                textures, the native wasm engine out (default: in; the
 #                native wasm engine is always out on the 32-bit Android ABIs)
@@ -109,22 +108,10 @@ else
   CARGO_PROFILE_FLAG = --profile $(PROFILE)
 endif
 
-# Dist (production) builds are always speech-free: the checkout's packaging
-# goals set DIST=1, and it beats even a command-line SPEECH=1.
-DIST ?= 0
-ifeq ($(DIST),1)
-override SPEECH = 0
-endif
-
 # The features are lattice's, named on the command line as lattice/<name>,
 # so the manifest declares none of them and a feature lattice adds later
 # needs no edit here. The crate's own `go` feature (the player) is the one
 # the manifest has, for the solidrt-go binary to require.
-#
-# Speech recognition (Whisper + wake word) is opt-in: off unless SPEECH=1,
-# and impractical on the 32-bit Android ABIs (no reliable NEON fp16 path in
-# whisper.cpp, too little address space for model and inference buffers).
-SPEECH ?= 0
 # Video playback (VP9, royalty-free: MediaCodec on Android, the vendored
 # libvpx elsewhere), compressed textures (ktx2) and the native wasm lane
 # (wasmtime with Cranelift) are on unless switched off; the native wasm lane
@@ -141,9 +128,6 @@ endif
 TEST ?= 1
 
 FEATURES :=
-ifeq ($(SPEECH),1)
-FEATURES += lattice/speech
-endif
 ifneq ($(VIDEO),0)
 FEATURES += lattice/video
 endif
@@ -188,17 +172,17 @@ define stage-host
 endef
 else ifeq ($(findstring windows,$(HOST_TARGET)),windows)
 # The prebuilt impeller libs link the static CRT (/MT). Force Rust std +
-# cc-built code (+crt-static) and whisper.cpp (built by whisper-rs-sys via
-# its own cmake project, which defaults to /MD) to /MT too, or link.exe
-# rejects the RuntimeLibrary mismatch. whisper-rs-sys forwards CMAKE_* env
-# vars as cmake -D defines; CMP0091=NEW is required so
-# CMAKE_MSVC_RUNTIME_LIBRARY is honored on whisper.cpp's old
+# cc-built code (+crt-static) and every -sys crate that runs its own cmake
+# project (cmake defaults to /MD; a runtime module's whisper-rs-sys, say)
+# to /MT too, or link.exe rejects the RuntimeLibrary mismatch. Such crates
+# forward CMAKE_* env vars as cmake -D defines; CMP0091=NEW is required so
+# CMAKE_MSVC_RUNTIME_LIBRARY is honored on a project with an old
 # cmake_minimum_required.
 # Do NOT append /OPT flags here: rustc already passes /OPT:REF,ICF and a
 # later /OPT:NOREF,NOICF would win, re-enabling incremental-style layout
 # (~7 MB of int3 padding, no COMDAT folding: solidrt.exe 52.7 -> 38.5 MB
 # when the override was removed, 2026-07-19).
-# The two plain env vars only reach whisper-rs-sys. Deps built through the
+# The two plain env vars only reach crates that run cmake themselves. Deps built through the
 # cmake crate (sdl3-sys; cmake 0.1.58 passes no MSVC runtime setting) never
 # see them, and under CMP0091=NEW cmake appends its /MD default after the
 # injected -MT, so the last flag wins and SDL objects silently come out /MD.
@@ -353,7 +337,6 @@ help:
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo "Pass PROFILE=release-opt for the publish build: fat LTO and stripped, much slower; what you ship."
-	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
 	@echo "Pass VIDEO=0 to build without video playback (default: on)."
 	@echo "Pass KTX2=0 to build without compressed textures (default: on)."
 	@echo "Pass WASM_NATIVE=0 to build without the native wasm engine (default: on; always off on 32-bit Android ABIs)."

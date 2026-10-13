@@ -5,7 +5,7 @@
 //! a `SampleRing` (ring.rs): SDL's audio thread drains the stream into it
 //! from the stream's put callback, and every consumer reads the ring by a
 //! cursor of its own - the session's own reader behind JS `read()`, and the
-//! `MicrophoneTap`s a module or the speech recognizer take on any thread.
+//! `MicrophoneTap`s a module (a speech recognizer, say) takes on any thread.
 //! The ring holds a bounded window, so an unread session costs a fixed
 //! amount of memory, not a growing one, and nobody has to pump for samples.
 //!
@@ -314,8 +314,8 @@ impl crate::context::Context {
   }
 
   /// A new reader on the session, hearing from now on, for any thread: a
-  /// module's worker, the speech recognizer. Err for a session that is not
-  /// open.
+  /// module's worker (a speech recognizer, say). Err for a session that is
+  /// not open.
   pub fn microphone_tap(&self, sid: u64) -> Result<MicrophoneTap, String> {
     let sessions = self.microphones.sessions.borrow();
     let session = sessions.get(&sid).ok_or_else(|| "microphone closed".to_string())?;

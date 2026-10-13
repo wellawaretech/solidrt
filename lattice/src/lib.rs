@@ -24,8 +24,6 @@ mod render_host;
 mod runtime;
 #[cfg(any(feature = "go", feature = "test"))]
 mod settle;
-#[cfg(feature = "speech")]
-pub mod speech;
 mod stats;
 #[cfg(any(feature = "go", feature = "test"))]
 mod stepped;
@@ -1172,8 +1170,6 @@ fn ui_thread(
 
       let draw_platform = platform.clone();
       let draw_atx = atx.clone();
-      #[cfg(feature = "speech")]
-      let speech_atx = atx.clone();
       let builder = FluxEngine::builder()
         .stack_size(JS_STACK_SIZE)
         .user_agent(format!("SolidRT/{VERSION}"))
@@ -1311,8 +1307,6 @@ fn ui_thread(
       // so a module's init finds the gui state, before the hosts' stepping
       // setup below, so a test or render engine carries them too.
       let builder = modules.install(builder);
-      #[cfg(feature = "speech")]
-      let builder = builder.plugin(move |ctx| plugins::speech::init(ctx, speech_atx));
       // The player's app-management surface over the version store; the
       // launch closure feeds the same reload path a dev push uses.
       #[cfg(feature = "go")]

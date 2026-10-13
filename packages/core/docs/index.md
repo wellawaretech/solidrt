@@ -157,7 +157,7 @@ let camera = createCamera()
 ```
 
 The same pattern covers `@solidrt/core/microphone`, `/sound`,
-`/speech-recognition`, `/text-input`, `/image`, `/color`, and `/gpu`.
+`/text-input`, `/image`, `/color`, and `/gpu`.
 
 ## Lifecycle
 

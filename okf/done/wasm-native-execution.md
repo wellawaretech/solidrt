@@ -182,4 +182,4 @@ interpreter, parse 26.8 ms, the loop 436 ms, same result, no pre-warm and no
 cache directory written. iOS runs wasmi, so no wasmtime question arises for
 the iOS port.
 
-Consumers that would use it: [physics-core](../backlog/physics-core.md).
+Consumers that would use it: [physics-core](physics-core.md).

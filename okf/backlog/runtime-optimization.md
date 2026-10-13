@@ -13,15 +13,12 @@ stripped; 39.7 MB measured 2026-07-19). Every capability added lands in
 every app's download on every platform, and size has already started
 deciding what ships:
 
-- **Speech recognition is not compiled in.** Whisper plus the wake-word
-  stack (whisper.cpp, tract, the ONNX models the wake-word crate embeds)
-  is about 12 MB of code. `SPEECH ?= 0` in lattice/Makefile for every
-  goal, dist builds force it off even against `SPEECH=1`, and nothing
-  that ships can use `@solidrt/core/speech`. The feature works, and size is
-  one reason it is out rather than the only one: the stack puts two
-  inference engines in one build, which model ships by default was never
-  settled, and the wake-word path needs a livekit fork. So the 12 MB is not
-  a size threshold anything else can be judged against.
+- **Speech recognition is a runtime module, not a build knob.** It runs
+  out of tree over the microphone ring
+  ([speech-out-of-tree](../done/speech-out-of-tree.md)). The in-tree
+  Whisper plus wake-word lane it replaced was about 12 MB of code and put
+  two inference engines in one build, so that 12 MB is not a size
+  threshold anything else can be judged against.
 - **Video ships a decoder only.** libvpx's VP9 encoder is 1.28 MB of
   linked binary (1732 KiB with it, 448 KiB without) and is configured out
   in forge/build.rs.

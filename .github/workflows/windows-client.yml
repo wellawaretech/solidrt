@@ -42,7 +42,7 @@ jobs:
 
       - name: Build client
         shell: bash
-        run: make client PROFILE=${{ inputs.profile }} SPEECH=0 VERSION=0.0.0-check
+        run: make client PROFILE=${{ inputs.profile }} VERSION=0.0.0-check
 
       - name: Upload client
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

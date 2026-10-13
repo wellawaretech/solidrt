@@ -23,8 +23,6 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-# Dist builds are always speech-free (no Whisper / wake word): lattice/Makefile
-# forces SPEECH=0 for every dist-* goal, so this workflow does not pass SPEECH.
 # Every build here passes PROFILE=release-opt, the publish profile (fat LTO,
 # one codegen unit, stripped) for all the binaries; a plain `make dist` builds
 # them at release.
@@ -64,11 +62,9 @@ jobs:
 
       - uses: ./.github/actions/js-install
 
-      # Every dependency, git ones included, comes down here before the build:
-      # dist is speech-free but cargo still clones the livekit-wakeword git
-      # source (a git dependency has no index to resolve from), and that
-      # clone is the one network step that has failed release builds. Its
-      # own step, retried, so a failure is a minute and a rerun of this job.
+      # Every dependency comes down here before the build: the download is
+      # the one network step that has failed release builds. Its own step,
+      # retried, so a failure is a minute and a rerun of this job.
       - uses: ./.github/actions/cargo-fetch
 
       - name: Build

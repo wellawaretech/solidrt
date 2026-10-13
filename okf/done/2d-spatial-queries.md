@@ -83,7 +83,7 @@ a rect and returns what `pickRect` returned.
 Tile-layer collision: tiles are baked records, not nodes, so a tile world
 needs its own collision surface (a solid-cell grid query) rather than the
 sprite index. Physics-core producers moving sprites
-(okf/backlog/physics-core.md) are the layer above this one.
+(okf/done/physics-core.md) are the layer above this one.
 
 ## Done 2026-09-07
 

@@ -6,11 +6,6 @@ impl log::Log for SdlLogger {
     if t.starts_with("alloy") || t.starts_with("flux") || t.starts_with("forge") || t.starts_with("lattice") {
       // Our own crates log at every level.
       true
-    } else if t.starts_with("whisper_rs") {
-      // whisper.cpp/ggml route through the whisper_rs log hooks and are chatty
-      // at info: full model dumps on load plus several lines per VAD call
-      // (every 100ms while a recognizer listens).
-      metadata.level() <= log::Level::Warn
     } else {
       // Third-party crates (notably the iroh p2p stack: magicsock, quinn, relay,
       // net-report, portmapper) are very chatty at info; keep only their warnings.

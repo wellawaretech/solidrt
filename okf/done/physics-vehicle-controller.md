@@ -2,9 +2,14 @@
 title: Vehicle controller on the physics core
 description: physics-core stops at rigid bodies, primitive colliders and (stage 2) a character controller; a driving game needs a raycast vehicle - a chassis body with wheel rays, suspension springs, engine and brake forces and tyre friction stepped inside the solver, which is per-wheel-per-substep work no app can do in JS. Rapier has no vehicle module of its own; shape it as the physics core's first higher-level controller after the core lands.
 created: 2026-08-30
+completed: 2026-10-13
 ---
 
 # Vehicle controller on the physics core
+
+Closed unfinished 2026-10-13 with [physics-core](physics-core.md): physics is a
+custom runtime module now, so a raycast vehicle is part of the module a driving
+game's own runtime adds, not a core controller.
 
 ## Symptom
 

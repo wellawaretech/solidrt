@@ -2,7 +2,7 @@
 // and capture devices, kept here (behind the `gui` feature) rather than in
 // lattice so any flux + alloy app can use them and a second engine re-binds
 // them symmetrically. Generic GUI capabilities only; app-specific features
-// (e.g. speech, dev tooling) keep their core + binding in lattice.
+// (e.g. the app surface, dev tooling) keep their core + binding in lattice.
 
 pub mod audio;
 pub mod camera;

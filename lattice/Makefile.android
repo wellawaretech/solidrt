@@ -91,8 +91,8 @@ endef
 
 # Both distributable APKs for one ABI: the client (solidrt-go.apk) and the
 # production runner (solidrt.apk), both at PROFILE like the desktop `dist`
-# goal (PROFILE=release-opt for the publish build). SPEECH is forced off (see
-# Makefile). The client is the Gradle release build type, not debuggable.
+# goal (PROFILE=release-opt for the publish build). The client is the Gradle
+# release build type, not debuggable.
 # PUBLISH=1 (the release workflow) makes it the published Player,
 # com.solidrt.player signed with the Player key from the environment;
 # without it, it is the dev Player (com.solidrt.player.dev, debug key), like

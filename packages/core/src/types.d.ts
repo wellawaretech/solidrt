@@ -23,18 +23,6 @@ declare global {
      */
     readonly env: { readonly DEV: boolean }
   }
-
-  let speech: {
-    start(options: {
-      model: Uint8Array, vadModel: Uint8Array, lang?: string, microphone?: number,
-      continuous?: boolean, interimResults?: boolean, wakeWord?: Uint8Array | string | string[], wakeThreshold?: number,
-    }): Promise<{ handle: number }>
-    setResultCallback(handle: number, callback: (result: { transcript: string, isFinal: boolean }) => void): void
-    setSpeechStartCallback(handle: number, callback: () => void): void
-    setSpeechEndCallback(handle: number, callback: () => void): void
-    setWakeCallback(handle: number, callback: () => void): void
-    stop(handle: number): void
-  }
 }
 
 // JSX value model. The element type is solid-js's (its control-flow components

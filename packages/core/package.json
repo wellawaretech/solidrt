@@ -17,7 +17,6 @@
     "./input": "./src/input.ts",
     "./audio": "./src/audio.ts",
     "./microphone": "./src/microphone.ts",
-    "./speech-recognition": "./src/speech-recognition.ts",
     "./text-input": "./src/text-input.ts",
     "./textures": "./src/textures.ts",
     "./video": "./src/video.ts",

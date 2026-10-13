@@ -35,8 +35,7 @@ import { fileURLToPath } from "node:url"
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 
 // The cargo features a dist build links, per root package: what
-// lattice/Makefile and flux/Makefile pass for the `dist` goals (speech is
-// off in every dist build).
+// lattice/Makefile and flux/Makefile pass for the `dist` goals.
 const ROOTS: { manifest: string; features: string }[] = [
   { manifest: "lattice/Cargo.toml", features: "go,video,ktx2,flux/compile" },
   { manifest: "flux/Cargo.toml", features: "compile,ktx2" },

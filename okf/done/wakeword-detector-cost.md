@@ -6,10 +6,14 @@ created: 2026-08-14
 
 # The armed wake-word detector burns ~40% of a core while idle
 
+Closed 2026-10-13: the armed worker left the tree with the speech lane
+([speech-out-of-tree](speech-out-of-tree.md)); a wake word detector is a
+runtime module's concern now, and the two fixes below are its options.
+
 Parked, and worth raising with the LiveKit folks first - ask what they plan
 upstream before building (b) ourselves.
 
-The armed speech worker ([lattice/src/speech.rs](../../lattice/src/speech.rs))
+The armed speech worker (lattice/src/speech.rs, since removed)
 scores a 2.2s window every 100ms through livekit-wakeword's stateless `predict`.
 That is ~35-40ms per check, about 40% of one core on a desktop laptop at full
 power, and it costs the same whether the room is silent or not. On a phone that

@@ -77,7 +77,7 @@ sanctioned answer. That is a docs task, not an engineering one.
   what was removed.
 - The APK packaging item deleted rather
   than moved to `done/`: it describes work on a module that no longer exists.
-- [physics-core](../backlog/physics-core.md) updated, since it names `flux:ffi` on
+- [physics-core](physics-core.md) updated, since it names `flux:ffi` on
   desktop as the route for learning the API shape in a real game. That becomes
   a wasm module, which the instance stream mirror serves better anyway.
 

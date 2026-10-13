@@ -1,8 +1,8 @@
 //! A microphone session's one output: a bounded window of samples the
 //! producer appends to (SDL's audio thread for a device, the test verb for
 //! an installed clip) and every reader drains by a cursor of its own - the
-//! session's own reader behind JS `read()`, a module's worker, the speech
-//! recognizer. Audio cannot be latest-wins like a camera frame, since a
+//! session's own reader behind JS `read()`, a module's worker (a speech
+//! recognizer, say). Audio cannot be latest-wins like a camera frame, since a
 //! consumer needs every sample, so the window keeps `RING_SECONDS` of audio:
 //! a reader further behind loses the oldest samples and is told how many,
 //! and one that polls at all never gets near the edge. Closing the session

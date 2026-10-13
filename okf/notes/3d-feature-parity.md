@@ -196,9 +196,9 @@ the engine is in the way any more.
 | Graph traversal by name, userData | yes | yes: Find, name | yes: find_child, metadata | no | untracked |
 | Triangle-accurate picking | yes | yes: mesh collider | yes | yes | core-side |
 | Overlap / sweep / move-and-slide | no | yes | yes | yes | |
-| Rigid-body physics | no | yes | yes | no | [physics-core](../backlog/physics-core.md) |
-| Joints, character controller | no | yes | yes | no | physics-core stage 2 |
-| Vehicle | no | yes: WheelCollider | yes: VehicleBody3D | no | [physics-vehicle-controller](../backlog/physics-vehicle-controller.md) |
+| Rigid-body physics | no | yes | yes | no | non-goal: a custom runtime module ([physics-core](../done/physics-core.md)) |
+| Joints, character controller | no | yes | yes | no | non-goal: a custom runtime module ([physics-core](../done/physics-core.md)) |
+| Vehicle | no | yes: WheelCollider | yes: VehicleBody3D | no | non-goal: a custom runtime module ([physics-vehicle-controller](../done/physics-vehicle-controller.md)) |
 | Navigation mesh / pathfinding | no | yes | yes | no | untracked |
 | Spatial audio (emitter, listener) | yes: PositionalAudio | yes | yes: AudioStreamPlayer3D | no | [spatial-audio-emitters](../backlog/spatial-audio-emitters.md) |
 | Declarative transitions on nodes | no | no | yes: Tween | yes | |

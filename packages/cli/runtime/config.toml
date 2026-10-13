@@ -1,7 +1,8 @@
 # Fetch git dependencies with the system git instead of libgit2: libgit2 on
-# macOS goes through SecureTransport, which has dropped the clone of the
-# libyuv submodule behind livekit-wakeword on the CI runner three releases
-# running. The system git is what the runner's own checkout uses and is the
+# macOS goes through SecureTransport, which dropped the clone of a git
+# dependency's submodule on the CI runner three releases running (the tree
+# has no git dependency today; a custom runtime may). The system git is
+# what the runner's own checkout uses and is the
 # more robust client; `retry` is the attempts cargo makes on a network error
 # it recognises as spurious (its default is 3).
 [net]
