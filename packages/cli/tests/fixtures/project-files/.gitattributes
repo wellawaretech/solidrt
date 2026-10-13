@@ -1,0 +1,4 @@
+# The assets check out byte-for-byte on every platform: files.test.ts
+# compares the imported and read text against the file's exact bytes, which
+# a CRLF conversion on a Windows checkout would break.
+assets/** -text

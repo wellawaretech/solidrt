@@ -523,12 +523,12 @@ Shaped, not started.
   responder (advertise) exposed as a flux capability, and its feasibility next
   to system responders is unproven.
 - **[Put every optional flux module behind a cargo feature](backlog/module-feature-flags.md)** [2026-10-06]
-  A custom runtime build can only leave out what is a cargo feature all the
-  way down, and today that is video, ktx2, wasm-native, speech and test; p2p
-  (iroh), wasm, sqlite, subprocess and mdns are unconditional in forge, flux
-  and the capability list, so a custom player carries them whether it wants
-  them or not; give each optional module the video pattern, with the stock
-  binaries turning them all on.
+  A custom runtime can only leave out what is a cargo feature all the way
+  down, and today p2p, wasm, sqlite, subprocess, mdns and QR scanning are
+  unconditional while video, ktx2 and the wasm lane are Makefile knobs; make
+  each optional module a lattice feature, chosen in the runtime crate's
+  Cargo.toml with the stock set as default and the player carrying all of
+  them, starting with wasm.
 - **[Move JSX compilation to the native Oxc compiler](backlog/native-jsx-compiler.md)** [2026-08-28]
   Solid 2.0 ships @solidjs/compiler (native, ~30x faster than Babel) alongside
   the Babel plugin, but it only lowers JSX, so adopting it means finding new

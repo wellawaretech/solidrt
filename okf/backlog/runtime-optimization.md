@@ -103,22 +103,15 @@ published `release-opt` build gains; that figure is not measured yet.
 
 ### Speech recognition
 
-The engine cannot shrink to fit (the models are the feature), so the way
-back in is not to make it smaller but to stop carrying it in every
-runtime:
-
-- **A capability shipped beside the runtime, loaded on demand.** The
-  runtime stays speech-free; an app that declares the capability gets the
-  engine as a separate library in its package, loaded at first use. This
-  is the general shape for anything heavy and rare, and the first thing
-  to design here, because it also answers the encoder, a future VP9
-  encoder, and whatever comes next. Open: where the library lives per
-  platform (Android packages native libraries its own way), how the
-  capability is declared, how `Flux.capabilities` reports something
-  present but not loaded.
-- **Its home is undecided** (lattice/src/plugins/speech.rs is outside the
-  forge/flux layering). Moving it and making it loadable are one piece of
-  work.
+The engine cannot shrink to fit (the models are the feature), so it leaves
+the tree and comes back as an external runtime module in the custom
+runtime of an app that wants it
+([speech-out-of-tree](speech-out-of-tree.md)). A custom runtime is the
+route for anything heavy and rare: it adds what one app needs and, once
+modules are features ([module-feature-flags](module-feature-flags.md)),
+leaves out what it does not. Loading a capability on demand beside the
+stock runtime stays open only if an app must reach one without a runtime
+of its own.
 
 ### Build configuration
 
@@ -129,10 +122,9 @@ runtime:
 - Feature unification: audit every dependency's default features the way
   rxing was (`default-features = false` plus the features named), since
   one crate's defaults are paid by the workspace.
-- Per-capability build knobs exist (`VIDEO=0`, `SPEECH=1`); they are for
-  us, not for an app. An app cannot ask for a runtime without a
-  capability it does not use, which is the same question as loading on
-  demand, seen from the other side.
+- A runtime chooses its capabilities as lattice cargo features in its
+  own Cargo.toml, the stock set by default and the player carrying all of
+  them: [module-feature-flags](module-feature-flags.md), wasm first.
 
 ## Not the goal
 

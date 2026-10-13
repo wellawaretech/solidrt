@@ -73,6 +73,7 @@ fn digest<'js>(ctx: Ctx<'js>, bytes: TypedArray<'js, u8>) -> flux::rquickjs::Res
 fn main() {
   lattice::main(lattice::Program {
     modules: Modules::new().add("runtime:whoami", WhoamiModule),
+    fonts: lattice::Fonts::stock(),
     // The screens from the @solidrt/cli package, as any runtime takes them
     // (the checkout bundles them there with `make player-bundle`).
     bsod: include_str!("../../packages/cli/player/bsod.sol.js"),
