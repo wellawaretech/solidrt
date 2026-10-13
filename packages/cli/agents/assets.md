@@ -14,9 +14,12 @@ preparing a build for distribution.
   imports. An import attribute picks the form and works on any extension:
   `import src from "./effect.glsl" with { type: "text" }` yields the file's
   contents as a string, `with { type: "binary" }` yields a Uint8Array. `.svg`
-  is text-loaded with no attribute needed. Shader sources (`.glsl`/`.vert`/
-  `.frag`) are declared as text modules out of the box, so they typecheck
-  without setup. Inlining trades update granularity for zero I/O - keep big or
+  is text-loaded with no attribute needed. The types come from `@solidrt/cli`
+  (its `assets.d.ts`, named in tsconfig `types` next to `@solidrt/flux-types`):
+  the common extensions (`.svg`/`.glsl`/`.vert`/`.frag` as text, `.png`/`.jpg`/
+  `.wav`/`.ogg`/`.glb`/`.wasm`/... as bytes) typecheck without setup, and any
+  other extension gets a `declare module "*.ext"` of the same shape in a `.d.ts`
+  of the project. Inlining trades update granularity for zero I/O - keep big or
   streamable files (audio, images) in `assets/`.
 - `bun run sol bundle` writes `dist/bundle/` (or `--output <dir>`):
   `<name>.sol.js` plus the app's isolate modules as `isolates/<id>.js`; with

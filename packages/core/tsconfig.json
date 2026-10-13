@@ -17,7 +17,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
-    "types": ["@solidrt/flux-types"]
+    "types": ["@solidrt/flux-types", "@solidrt/cli"]
   },
   "include": ["."],
   // Underscore-prefixed files are scratch/probes, not part of the package.

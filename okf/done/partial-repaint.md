@@ -246,7 +246,7 @@ the two-probe comparison.
   but stage 1's damage-rect accumulation rides exactly that
   invalidate_paint walk - the batched form with a shared visited set is
   where old + new bounds would be unioned per frame.
-- [2d-baked-layers](../backlog/2d-baked-layers.md) - the app-level mitigation for
+- [2d-baked-layers](../plans/2d-baked-layers.md) - the app-level mitigation for
   static 2D bulk; this item is the engine-level answer for the general
   rendertree.
 - MSAA interacts: the resolve is per-frame full-target today; with a

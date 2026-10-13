@@ -20,7 +20,7 @@ have none short of a variant cell per colour in the atlas.
 [tiles.ts](../../packages/2d/src/tiles.ts) `setTile(col, row, frame)` writes
 the frame's UV rect into the chunk record and leaves the rest at defaults.
 The chunk records ARE the full 13-float sprite layout with rot and tint
-(see [2d-baked-layers](2d-baked-layers.md)), so the shader already
+(see [2d-baked-layers](../plans/2d-baked-layers.md)), so the shader already
 multiplies by a tint; the layer just never lets anyone set it.
 
 ## Shape

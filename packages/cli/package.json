@@ -8,7 +8,9 @@
   "bin": {
     "sol": "./bin/sol"
   },
+  "types": "assets.d.ts",
   "files": [
+    "assets.d.ts",
     "bin/",
     "src/",
     "dist/",

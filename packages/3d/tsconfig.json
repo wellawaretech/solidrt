@@ -18,7 +18,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
-    "types": ["@solidrt/flux-types"]
+    "types": ["@solidrt/flux-types", "@solidrt/cli"]
   },
   // tools/ runs under bun (sol tool), not flux: it is not part of this
   // program, the way the cli keeps its flux-targeted subtrees out of its

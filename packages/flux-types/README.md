@@ -40,7 +40,10 @@ not provide, and they collide with the web-standard globals declared here.
 
 If you already maintain a `types` array, add to it rather than replacing it:
 listing `types` disables TypeScript's automatic inclusion, so every package you
-rely on must be named.
+rely on must be named. A project built by the sol bundler also names
+`@solidrt/cli`, which declares the inlined asset imports (`with { type:
+"binary" }` and friends); those are the bundler's contract, not the runtime's,
+so they are not in this package.
 
 ## What's covered
 

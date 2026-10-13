@@ -168,7 +168,7 @@ chunk-streaming games; the comparison first, since it decides the shape.
   wider than the view radius (hysteresis), a generate callback, a
   prioritized queue under a per-frame budget. The residency DECISION as a
   primitive is the gap both this item and
-  [3d-world-residency](3d-world-residency.md) fill, with one gate.
+  [3d-world-residency](../backlog/3d-world-residency.md) fill, with one gate.
 - **Cells are unbounded.** Unity grows on write (`cellBounds`,
   `CompressBounds`), Godot has `get_used_rect`, Tiled's infinite maps are
   stored as chunks. Only Unreal Paper2D and Defold fix the size at
@@ -195,7 +195,8 @@ chunk-streaming games; the comparison first, since it decides the shape.
 
 Seven parts that land together; the first three are one record-layout
 and API change, the fourth and fifth are the shared core pieces (the gate
-and the pool, both 3d-world-residency's too), the sixth is memory, the
+and the pool, [spatial-residency-gate](spatial-residency-gate.md), built
+once for this item and 3d-world-residency), the sixth is memory, the
 seventh is the sprite-layer half. The split that keeps 2d and 3d
 symmetric: the GATE decides, paces and pools, a HANDLER acts. The tile
 layer is a built-in handler (its content is engine-owned: the bake and
@@ -216,7 +217,7 @@ too. Nothing streaming-shaped is private to tiles.ts except the bake.
    CHUNK-LOCAL pixel coordinates; the per-chunk `uCamera` origin places
    the chunk, so float32 precision is per chunk and a world 10^7 px from
    the origin does not shimmer (the 2d side of
-   [3d-large-world-precision](3d-large-world-precision.md)). A frame
+   [3d-large-world-precision](../backlog/3d-large-world-precision.md)). A frame
    draws at its own pixel size anchored to the cell's bottom-left (Tiled's
    rule for tiles larger than the grid; a `Frame` pivot offsets it), so
    oversized, isometric and hex tiles are expressible. Overhang is baked
@@ -229,8 +230,9 @@ too. Nothing streaming-shaped is private to tiles.ts except the bake.
    On LEAVE a chunk's buffer and target go back to the shared pool (part
    5) and its records stay on the CPU (~5KB a chunk, ~180x cheaper than
    the texture). On ENTER a chunk takes buffer and target from the pool,
-   uploads its records, bakes, and reports complete; the gate paces
-   enters (part 4), the layer never decides when. `opts.retain:
+   uploads its records and bakes; the gate paces enters (part 4), the
+   layer never decides when, and a leave that arrives mid-bake cancels
+   the bake. `opts.retain:
    "records" | "none"`: with `"none"` records go too and `opts.fill(chunk)`
    regenerates the chunk's cells on enter (the procedural-world shape,
    Minecraft's generate), the `setTiles` over the chunk rect that costs
@@ -255,42 +257,21 @@ too. Nothing streaming-shaped is private to tiles.ts except the bake.
    each resident chunk at EVERY image of itself that intersects the view,
    so a view wider than the world shows the world repeated and the seam
    is two leaves of the same texture. This closes the "wrapping tile
-   world" case of [2d-wrap-around](2d-wrap-around.md).
-4. **The residency gate, in the spatial core, one for 2d and 3d.** The
-   decision is [3d-world-residency](3d-world-residency.md)'s gate: per
-   target, a spatial test in Rust, events to JS only on change, nothing
-   per frame for a still camera. It has two REGION FORMS, both for both
-   packages: EXPLICIT regions (a node with bounds and a load distance: a
-   3d level section, a 2d platformer's room) and a GRID region set
-   (origin, cell size, margin, optional bounds or wrap period), the form
-   an unbounded or procedural world needs because its cells do not exist
-   until approached - Unreal's World Partition and Minecraft's chunk
-   columns are 2d grids streaming 3d content, so the grid form is not the
-   2d form. A grid needs no BVH: the cells under a view volume are floor
-   divisions. The input per target is a view volume: in 2d the AABB of
-   the rotated view rect (the way Unity culls on an AABB), in 3d the
-   frustum clipped at the load distance, read from the tree (the
-   composite's viewport node and camera transform, a target's frustum),
-   not pushed from JS. A region seen by several targets (a minimap beside
-   the main view, [2d-layer-views](../done/2d-layer-views.md); a shadow
-   camera or a split screen in 3d) is resident where ANY target wants
-   it. Hysteresis is two radii: enter inside the smaller, leave outside
-   the larger, so a camera on a chunk border never thrashes. The gate
-   also PACES: enters come out prioritized by distance to the view
-   centre under ONE per-frame budget shared by every consumer in the
-   scene (a frame-time budget: two tile layers and a 3d region set beside
-   them spend it together, never each their own), leaves come out
-   immediately, and a region counts as resident when its handler reports
-   complete. The handler is whoever listens: the tile layer (part 2) or
-   the app.
-5. **The pool, shared.** A free list over GPU buffers and render targets
-   by size class, in the core beside the gate: a leaving region's
-   resources go in, an entering region's come out, no create and destroy
-   per approach (allocation is 1-2 ms on a desktop GPU per
-   [2d-tile-bulk-writes](../done/2d-tile-bulk-writes.md)). Capped;
-   beyond the cap resources are destroyed. The tile layer's handler takes
-   chunk buffers and targets from it, a 3d region handler takes geometry
-   from it, the 3d note's "pooling as the engine's".
+   world" case of [2d-wrap-around](../backlog/2d-wrap-around.md).
+4. **The residency gate**, shared with 3d and specified in
+   [spatial-residency-gate](spatial-residency-gate.md): the tile layer
+   registers its chunk grid with `createGrid({ origin, cell: [chunkW,
+   chunkH, 0], enter, leave, bounds?, wrap? })`, the component pushes its
+   camera as an orthographic view and projection under a key from
+   `allocViewKey()` on every camera change (what the 3d scene does per
+   target; a layer seen by several views, a minimap beside the main view,
+   is wanted where any of them wants it), and the enter and leave events
+   drive part 2. Hysteresis, the union over viewers, and the pacing of
+   enters under one scene-wide budget are the gate's; the layer never
+   decides when a chunk comes or goes.
+5. **The pool**, shared and specified in the same note: the tile layer's
+   handler takes chunk buffers and targets from `createResourcePool` and
+   gives them back on leave, no free list of its own.
 6. **Memory legible, then bounded.** `get_gpu_resources` groups a layer's
    chunk textures and buffers under the layer's label with a per-layer
    total, so the number is readable before eviction exists. Then

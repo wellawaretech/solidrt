@@ -64,6 +64,6 @@ target.
 ## Not in this item
 
 Post effects on views, camera-driven chunk residency
-([2d-baked-layers](2d-baked-layers.md)). The `<View2d>` component and a
+([2d-baked-layers](../plans/2d-baked-layers.md)). The `<View2d>` component and a
 layer without a view of its own (`<SpriteLayer output={false}>`, views
 only) landed with [2d-layer-views](../done/2d-layer-views.md).

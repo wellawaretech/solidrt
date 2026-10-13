@@ -94,22 +94,21 @@ the three has that gate in the engine.
 
 To settle while shaping:
 
-- **One primitive for 2d and 3d.** Settled 2026-10-13 with
-  [2d-baked-layers](2d-baked-layers.md) stage B2, parts 4 and 5: one gate,
-  two region forms, both for both packages. EXPLICIT regions (the node
-  with bounds and a load distance above: a level section, a 2d room) and a
-  GRID region set (origin, cell size, margin, optional bounds or wrap
-  period), the form an unbounded or procedural world needs because its
-  cells do not exist until approached; Unreal's World Partition and
-  Minecraft's chunk columns are 2d grids streaming 3d content, so the grid
-  form is not 2d's. The gate decides, paces (one per-frame enter budget
-  shared by every consumer in the scene, prioritized by distance) and
-  pools (a free list over buffers and targets by size class); a HANDLER
-  acts, and a region is resident when its handler reports complete. The
-  tile layer is a built-in handler because its content is engine-owned
-  (the bake, the records); a 3d region's handler is the app's because its
-  content is the app's models. That asymmetry is in who owns the content,
-  not in the mechanism, and the mechanism is built once.
+- **One primitive for 2d and 3d.** Settled 2026-10-13, specified in
+  [spatial-residency-gate](../plans/spatial-residency-gate.md): one gate, two
+  region forms, both for both packages. EXPLICIT regions (the node with
+  bounds and a load distance above: a level section, a 2d room) and a
+  GRID region set, the form an unbounded or procedural world needs
+  because its cells do not exist until approached; Unreal's World
+  Partition and Minecraft's chunk columns are 2d grids streaming 3d
+  content, so the grid form is not 2d's. The gate decides and paces (one
+  per-frame enter budget shared by every consumer in the scene, nearest
+  first), the pool is shared, and a HANDLER acts: the tile layer is a
+  built-in handler because its content is engine-owned (the bake, the
+  records); a 3d region's handler is the app's because its content is
+  the app's models. That asymmetry is in who owns the content, not in the
+  mechanism, and the mechanism is built once. This item is the second
+  handler over the gate, after 2d stage B2.
 - **HLOD.** [3d-lod](../done/3d-lod.md) left HLOD out deliberately. A
   region whose far level is a merged proxy and whose near level is the
   loaded content is residency and LOD as one gate; decide whether the gate

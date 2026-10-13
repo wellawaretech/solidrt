@@ -1,5 +1,6 @@
-// The project's asset imports: bytes with `with { type: "binary" }`, text
-// with `with { type: "text" }`.
+// The project's own asset extensions, beyond the common ones @solidrt/cli
+// declares: bytes with `with { type: "binary" }`, text with `with { type:
+// "text" }`.
 declare module "*.bin" {
   const bytes: Uint8Array
   export default bytes

@@ -11,7 +11,7 @@
     "strict": true,
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
-    "types": ["@solidrt/flux-types"]
+    "types": ["@solidrt/flux-types", "@solidrt/cli"]
   },
   "include": ["."]
 }

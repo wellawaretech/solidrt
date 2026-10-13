@@ -106,7 +106,7 @@ Design points to settle:
   say so.
 - Depth range is the other half of large worlds and a separate item:
   [gpu-depth-func](gpu-depth-func.md) (reversed-z).
-- The 2d side: [2d-baked-layers](2d-baked-layers.md) stage B2 part 4
+- The 2d side: [2d-baked-layers](../plans/2d-baked-layers.md) stage B2 part 4
   fixes the same limit for tiles with chunk-local record coordinates. If
   the render origin lands in the spatial core, the 2d sprite layer's
   camera can take it too.
