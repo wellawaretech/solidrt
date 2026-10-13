@@ -52,6 +52,7 @@ export type { LitOptions, Material, PhongOptions, ShaderMaterialClass, ShaderMat
 export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedLod, InstancedMesh, Lod, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SplatMesh, SpotLight, Sprite, View3d, useScene, Shot, Shots } from "./components/index.ts"
 export type {
   CameraTarget,
+  DensityProps,
   DirectionalLightProps,
   FirstPersonCameraProps,
   HemisphereLightProps,
@@ -74,6 +75,7 @@ export type {
   SpriteProps,
   TransformProps,
   View3dProps,
+  OutputLeaf,
   ShotProps,
   ShotsProps,
 } from "./components/index.ts"

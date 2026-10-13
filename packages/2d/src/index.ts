@@ -99,4 +99,4 @@ export type { GlyphPlacement, TextAlign, TextAnchor, TextAnchorY, TextLayout, Te
 export { addText, destroyText, setText } from "./text.ts"
 export type { AddTextOptions, TextPose, TextRun, TextStyle } from "./text.ts"
 export { Camera2d, Group, Sprite, SpriteLayer, Text2d, TileLayer, View2d, useSpriteLayer, Shot, Shots } from "./components/index.ts"
-export type { BubblingSpritePointerProps, Camera2dProps, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps, ShotProps, ShotsProps } from "./components/index.ts"
+export type { BubblingSpritePointerProps, Camera2dProps, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps, DensityProps, OutputLeaf, ShotProps, ShotsProps } from "./components/index.ts"

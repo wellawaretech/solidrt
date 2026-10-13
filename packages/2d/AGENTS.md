@@ -616,8 +616,9 @@ handlers, `view.listen` is the last stop (a tap there with `e.x`/`e.y`
 in world pixels is "glide the main camera here"), and
 a camera bound to a feed `feedPointer(view, feed)` bridges drives any
 view. `<View2d>` is the
-component form; the `<SpriteLayer>`'s built-in leaf is a view too, and
-`<SpriteLayer output={false}>` has none, showing only through its
+component form, filling its box like the `<SpriteLayer>`'s own view
+when given no size; the `<SpriteLayer>`'s built-in leaf is a view too,
+and `<SpriteLayer output={false}>` has none, showing only through its
 `<View2d>` children (examples/split-screen.tsx). examples/views.tsx is
 the live guard. Not yet, all additive: tile-layer views, a `layers`
 bitmask (a markers-only minimap), `into` tiling, per-view tint, and a
@@ -845,11 +846,11 @@ built yet: camera-driven residency (bake far chunks on approach, evict)
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | atlases (Atlas[], the sheets bound as one draw; mount-fixed) or layer (an existing createSpriteLayer handle to adopt: the component shows and populates it, keeps only the view and the leaf as its own and leaves the layer's lifetime to its maker, so `<Sprite>`/`<Text2d>` sit over an imperative layer; the creation props atlases/capacity/material/orderBy then throw), capacity?, material? (the layer's material, `unlit()` default, `unlit({ blend: "add" })` for glows; mount-fixed), params? (layer.setParams as a prop, over the material's own; live, merge semantics), tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
+| `SpriteLayer` | atlases (Atlas[], the sheets bound as one draw; mount-fixed) or layer (an existing createSpriteLayer handle to adopt: the component shows and populates it, keeps only the view and the leaf as its own and leaves the layer's lifetime to its maker, so `<Sprite>`/`<Text2d>` sit over an imperative layer; the creation props atlases/capacity/material/orderBy then throw), capacity?, material? (the layer's material, `unlit()` default, `unlit({ blend: "add" })` for glows; mount-fixed), params? (layer.setParams as a prop, over the material's own; live, merge semantics), tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, stagger? (ms, the layer root's enter/exit spacing), label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, maxPixels? (a cap on the view target's texel count under the auto pick, the budget form of maxOversample: one cost on every display; the same name on `<TileLayer>` and the 3d `<Scene>`), viewRef?(view), output? (a function `(texture, leaf)` composes the leaf from the texture id: `ref={leaf.ref}` makes a fill view follow your leaf, `{...leaf.handlers}` routes sprite events through it scaled to its layout, `leaf.size()` (the target's texels, view pixels times oversample) and `leaf.deviceSize()` are reactive reads a post chain sizes from, applied before the paint - the same contract as the 3d `<Scene>`'s; `events` then throws; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), minScreenPx?, maxScreenPx? (the screen-size clamp on the smaller axis, view pixels; 0 = off; equal = constant size), style? (the sprite's style record under the layer's material, one value per component of its first instance buffer; live), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
 | `Camera2d` | createCamera2d's options (world?, min/maxZoom?, pivot?, follow?, offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?, zoom?, rotation?), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view; its `size()` the viewport) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
-| `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width, height (view pixels, live; fixed-size only for now), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture) (else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
+| `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width?, height? (view pixels, live - both, or neither = FILL exactly as SpriteLayer's own view: the leaf fills its sized parent and the view sizes to that box), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample?, maxPixels? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture, leaf) (as SpriteLayer's; else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
 | `TileLayer` | cols, rows, tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed), frames? (the tileset `setTiles` indices name), chunkClearColor?, material? (the bake's material, `unlit()` default; mount-fixed), params? (layer.setParams as a prop; live, each change re-bakes), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 ### SpriteLayer and useSpriteLayer
@@ -859,16 +860,23 @@ owning only what follows) and its own view, rendered as the built-in
 `<texture>` leaf carrying the view's pointer handlers (opt out with
 `events={false}`, which throws at mount together with a `pointer` feed -
 the feed would listen at a root no event reaches; the same on `<View2d>`;
-compose yourself with `output`, then spread
-`useSpriteLayer().viewport.handlers` onto your leaf; `output={false}` for
-no own view at all). `useSpriteLayer()` returns `{ layer, parent,
-viewport, pointer }` - the same shape as `useScene()` in `@solidrt/3d` -
-where `parent` is the enclosing `<Group>`'s handle (null at the layer
+compose yourself with `output={(texture, leaf) => ...}`, `ref={leaf.ref}`
+on your leaf so a fill view follows it and `{...leaf.handlers}` so sprite
+events route through it scaled to its layout, the view's size and
+oversample following the ref'd leaf as they follow the built-in one
+(components/fill.ts, shared with `<View2d>`, which fills by the same
+rule); `output={false}` for no own view at all). `useSpriteLayer()` returns `{ layer, parent,
+viewport, pointer, viewportSize }` - the same shape as `useScene()` in
+`@solidrt/3d` - where `parent` is the enclosing `<Group>`'s handle (null at the layer
 root), so imperative `addSprite(layer, { parent })` mounts where the JSX
 sits, `viewport` is the nearest view (the `<SpriteLayer>`'s own, or
 inside a `<View2d>` that view), what a `<Camera2d>` drives, and
 `pointer` that view's feed (the owner's `pointer` prop, null without
-one); read under `output={false}` outside a `<View2d>` `viewport` throws. A FILL-mode
+one), and `viewportSize` that view's size in view pixels as a signal
+(`viewport.size()` reactive: a fill view's follows its leaf); read under
+`output={false}` outside a `<View2d>` `viewport` and `viewportSize`
+throw. `events` wires the built-in leaf only and throws with a function
+`output`. A FILL-mode
 leaf is size-contained (`contain="size"`, the CSS layout prop every
 element takes): it adds nothing to its ancestors' sizes, exactly as an
 empty `<view>` at 100% would, so a column of header, layer pane

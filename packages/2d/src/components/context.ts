@@ -13,8 +13,21 @@ export let ViewportContext = createContext<ViewHandle | null>(null)
 // The nearest view's pointer feed (its owner's `pointer` prop), null when
 // none was handed in.
 export let PointerContext = createContext<PointerFeed | null>(null)
+// The nearest view's size in view pixels as a signal (view.size(),
+// reactive); null where ViewportContext is.
+export let ViewportSizeContext = createContext<(() => { width: number; height: number }) | null>(null)
 
-type LayerCtx = { layer: LayerHandle; parent: SpriteGroup | null; readonly viewport: ViewHandle; pointer: PointerFeed | null }
+type LayerCtx = {
+  layer: LayerHandle
+  parent: SpriteGroup | null
+  readonly viewport: ViewHandle
+  pointer: PointerFeed | null
+  /** The nearest view's size in view pixels, reactive - `viewport.size()`
+   * as a signal: a fill view's follows its leaf, a fixed one's its props.
+   * What a HUD or a view-space effect sizes from without polling; the
+   * same throw as `viewport` where there is no view. */
+  readonly viewportSize: () => { width: number; height: number }
+}
 
 /**
  * The enclosing layer, parent group, view and pointer feed - the
@@ -34,15 +47,20 @@ export function useSpriteLayer(): LayerCtx {
   let parent = useContext(GroupContext)
   let viewport = useContext(ViewportContext)
   let pointer = useContext(PointerContext)
+  let viewportSize = useContext(ViewportSizeContext)
+  let noView = () =>
+    new Error("useSpriteLayer: no view here - a <SpriteLayer output={false}> shows only through its <View2d> children; put camera controls and leaves inside one")
   return {
     layer,
     parent,
     pointer,
     get viewport() {
-      if (viewport === null) {
-        throw new Error("useSpriteLayer: no view here - a <SpriteLayer output={false}> shows only through its <View2d> children; put camera controls and leaves inside one")
-      }
+      if (viewport === null) throw noView()
       return viewport
+    },
+    get viewportSize() {
+      if (viewportSize === null) throw noView()
+      return viewportSize
     },
   }
 }

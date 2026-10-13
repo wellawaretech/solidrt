@@ -169,7 +169,7 @@ geometry has no fix and decals are blocked on it.
 | Frustum culling | yes | yes | yes | yes | core-side |
 | Level of detail | yes | yes | yes | yes | core-side |
 | Occlusion culling | no | yes | yes: occluders | no | untracked |
-| XR | yes: WebXR | yes | yes | no | untracked; needs an explicit yes or no |
+| XR | yes: WebXR | yes | yes | no | [vr-openxr](../backlog/vr-openxr.md) |
 | Decals | addon: DecalGeometry | yes: Decal Projector (v) | yes: Decal node | no | untracked; blocked on polygon offset |
 | Planar reflection / water | addon | HDRP only | no: SSR only | no | Three-only at runtime; cheap for us (a view with a mirrored camera) |
 | 3D text / world-space labels | addon: TextGeometry, CSS2DRenderer | yes: TextMeshPro | yes: Label3D, TextMesh | no | [2d-world-space-text](../done/2d-world-space-text.md) is the 2d half (sprite-font text runs); the 3d half is untracked |
@@ -323,5 +323,5 @@ Three/Godot/Unity comparison in the proposal, per `packages/3d/CLAUDE.md`.
 7. Texture arrays and 3D textures.
 8. Clearcoat first among the physical extras; toon; shadow catcher.
 9. SSAO, then the rest of the post effects over the scene buffer.
-10. XR, occlusion culling, navigation, MRT, compute: each wants an explicit
+10. Occlusion culling, navigation, MRT, compute: each wants an explicit
     yes or no before it is a backlog file.

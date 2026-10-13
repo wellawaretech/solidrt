@@ -1,4 +1,4 @@
-import { callRef, createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack, warnOnce } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import type { ShaderParams } from "@solidrt/core/gpu"
 import type { Atlas } from "../atlas.ts"
@@ -8,8 +8,9 @@ import { feedPointer } from "../views.ts"
 import type { LayerPointerEvent, LayerTapEvent, LayerWheelEvent, SpriteLayer as LayerHandle } from "../layer.ts"
 import type { CameraUpdate } from "../camera.ts"
 import type { ViewHandle } from "../views.ts"
-import { LayerContext, PointerContext, ViewportContext } from "./context.ts"
-import { applyOversample } from "./auto-oversample.ts"
+import { LayerContext, PointerContext, ViewportContext, ViewportSizeContext } from "./context.ts"
+import { createViewFill, FILL_INITIAL_SIZE } from "./fill.ts"
+import type { OutputLeaf } from "./fill.ts"
 
 /**
  * A view's own pointer events, the root of the walk: every event arrives
@@ -35,10 +36,10 @@ export type SpriteLayerProps = LayerPointerProps & {
    * box, so view pixels are the leaf's own coordinates and sprites place
    * in element units - the auto oversample still supplies display density
    * on top. Fill or fixed is decided at mount, and matches @solidrt/3d's
-   * `<Scene>` one dimension down. A function `output` needs explicit
-   * sizes (the view cannot follow a leaf it does not own); the leaf's own
-   * width/height are then layout, so render size and display size
-   * separate.
+   * `<Scene>` one dimension down. With a function `output` the view
+   * follows the leaf you `ref` (OutputLeaf). Fixed, the leaf's own
+   * width/height are layout, so render size and display size separate by
+   * hand.
    */
   width?: number
   height?: number
@@ -98,6 +99,15 @@ export type SpriteLayerProps = LayerPointerProps & {
    */
   maxOversample?: number
   /**
+   * Cap on the own view's target texel count under the auto pick, the
+   * budget form of `maxOversample`: one cost across devices, where an
+   * integer cap means a different cost on every panel (the window's own
+   * pixel count caps the pick always). Ignored when `oversample` is set.
+   * The same name and meaning as the 3d `<Scene>`'s `maxPixels`, which
+   * caps a fractional render scale where 2d keeps the integer oversample.
+   */
+  maxPixels?: number
+  /**
    * Draw sprites in key order instead of slot order, produced by core at
    * every publish: `"y"` orders by world y (back-to-front for a
    * perspective scene, zero JS per frame even under native transitions),
@@ -130,22 +140,26 @@ export type SpriteLayerProps = LayerPointerProps & {
   /**
    * The own view's leaf. Absent: a built-in `<texture>` leaf carrying the
    * view's handlers. A function: compose the leaf yourself - called once
-   * (untracked) with the view's texture id, its return renders in place
-   * of the built-in leaf; sprite pointer events then need the view's
-   * handlers on your leaf: `<texture src={texture}
-   * {...useSpriteLayer().viewport.handlers} />`. `false`: NO view of its
+   * (untracked) with the view's texture id and the leaf contract, its
+   * return renders in place of the built-in leaf; `ref={leaf.ref}` on the
+   * leaf you render makes a fill-mode view follow it,
+   * `{...leaf.handlers}` routes sprite pointer events through it scaled
+   * to its layout, and `leaf.size()` sizes a post chain's targets.
+   * `false`: NO view of its
    * own - the layer shows only through its `<View2d>` children, each a
    * full view with its own camera (split-screen: two side by side, a
    * game with its minimap and nothing else). The view props (width,
    * height, camera, clearColor, oversample, maxOversample, events,
    * viewRef, the pointer props) then have nothing to apply to and throw.
    */
-  output?: ((texture: TextureId) => Element) | false
+  output?: ((texture: TextureId, leaf: OutputLeaf) => Element) | false
   /**
    * Pointer events (default on): the built-in leaf carries the view's
    * handlers, so sprites, groups, the view's own handlers and a
    * `<Camera2d>` child receive input. `false` detaches them - the leaf
-   * then costs no pointer routing at all.
+   * then costs no pointer routing at all. Built-in leaf only: with a
+   * function `output` the leaf is yours and so is the spread, and the
+   * prop throws.
    */
   events?: boolean
   /**
@@ -157,10 +171,6 @@ export type SpriteLayerProps = LayerPointerProps & {
    */
   pointer?: PointerFeed
 }
-
-// Creation size of a fill-mode view: the first onLayout replaces it
-// before the first paint, so it only has to be a valid target size.
-const FILL_INITIAL_SIZE = 1
 
 // The props that describe a layer the component creates - meaningless,
 // hence rejected, on an adopted one (`layer`), which was created already.
@@ -175,6 +185,7 @@ const VIEW_PROPS = [
   "clearColor",
   "oversample",
   "maxOversample",
+  "maxPixels",
   "events",
   "pointer",
   "viewRef",
@@ -261,9 +272,6 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     if ((props.width === undefined) !== (props.height === undefined)) {
       throw new Error("SpriteLayer: width and height come together - give both (fixed view) or neither (fill)")
     }
-    if (props.width === undefined && output) {
-      throw new Error("SpriteLayer: fill needs the built-in leaf - with output, give width and height")
-    }
     return props.width === undefined
   })
   // The layer's own view: the initial props seed it, the effects follow
@@ -322,78 +330,47 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     }),
   )
   let events = untrack(() => props.events) !== false
+  // `events` wires the built-in leaf; with output the leaf and its spread
+  // are the app's, so the prop has nothing to apply to and throws (the
+  // dev validation policy), like the view props under output={false}.
+  if (output && untrack(() => props.events) !== undefined) {
+    throw new Error("SpriteLayer: events applies to the built-in leaf - with output, spread leaf.handlers on your leaf, or leave them off")
+  }
   // A feed on a built-in leaf carrying no handlers listens at a root no
-  // event reaches: a contradiction, so it throws (the dev validation
-  // policy) instead of feeding nothing.
+  // event reaches: a contradiction, so it throws instead of feeding
+  // nothing.
   if (pointer !== null && !events && !output) {
     throw new Error(
-      "SpriteLayer: a pointer feed with events={false} receives nothing - the feed listens at the view's root, which only the leaf's handlers reach; keep events on, or compose the leaf with output and spread useSpriteLayer().viewport.handlers on it",
+      "SpriteLayer: a pointer feed with events={false} receives nothing - the feed listens at the view's root, which only the leaf's handlers reach; keep events on, or compose the leaf with output and spread leaf.handlers on it",
     )
   }
-  let leaf: { id: number } | undefined
-  // The view's pixel size: the props in fixed mode, the built-in leaf's
-  // laid-out box in fill mode (getLayoutBox, the untransformed read, so a
-  // designSize fit or ancestor transform never enters the world space -
-  // display density rides on the oversample pick below). Null before the
-  // first layout.
-  let viewSize = (): { width: number; height: number } | null => {
-    if (!fill) return { width: props.width!, height: props.height! }
-    let box = leaf && getLayoutBox(leaf)
-    if (!box || box.width <= 0 || box.height <= 0) return null
-    return { width: Math.max(1, Math.round(box.width)), height: Math.max(1, Math.round(box.height)) }
-  }
-  // Fill: the view follows the leaf's box. Registered before the pick, so
-  // one onLayout applies size then oversample in order; setSize no-ops
-  // when nothing changed.
-  if (fill) {
-    let warnEmpty = warnOnce()
-    onLayout(() => {
-      // The leaf adds no size of its own (contain="size" below), so a
-      // parent with no size leaves it empty: nothing renders, and nothing
-      // on screen says why.
-      let box = leaf && getLayoutBox(leaf)
-      if (box && (box.width <= 0 || box.height <= 0)) {
-        warnEmpty(
-          `SpriteLayer: the fill leaf laid out ${box.width} x ${box.height}, so the view is invisible. ` +
-            `It adds no size of its own: give its parent a size (width/height, or flexGrow in a sized column), as on the web.`,
-        )
-      }
-      let size = viewSize()
-      if (size) view.setSize(size.width, size.height)
-    })
-  }
-  // Auto oversample: the built-in leaf's window box, in device pixels, per
-  // view pixel. Picked after every layout, and again when the display scale
-  // changes: the first layout runs before the resize event that reports the
-  // scale, and a scale change alone lays nothing out. pick runs as an
-  // onLayout handler and as an effect apply, both untracked scopes, so its
-  // prop reads are wrapped in an explicit untrack.
-  let pick = () =>
-    untrack(() => {
-      if (!leaf || props.oversample !== undefined) return
-      let box = getBoundingBoxViewport(leaf)
-      let size = viewSize()
-      if (!box || !size) return
-      let scale = displayScale() * Math.max(box.width / size.width, box.height / size.height)
-      applyOversample(view, scale, size.width, size.height, props.maxOversample)
-    })
-  onLayout(pick)
-  createEffect(() => [displayScale(), props.maxOversample], pick)
-  // Sprite events on the built-in leaf: at view size the plain handlers,
-  // in fill mode scaled from the laid-out box (the box can be fractional,
-  // the view size never is).
-  let viewHandlers = fill
-    ? view.handlersFor(() => (leaf && getLayoutBox(leaf)) || { width: 0, height: 0 })
-    : view.handlers
+  let leafNode: { id: number } | undefined
+  // The view follows the leaf (fill.ts): its size from the leaf's layout
+  // box in fill mode, its auto oversample from the leaf's on-screen box in
+  // both - the built-in leaf, or the one `output` refs.
+  let follow = createViewFill(
+    "SpriteLayer",
+    view,
+    () => leafNode,
+    fill ? null : () => ({ width: props.width!, height: props.height! }),
+    () => ({ oversample: props.oversample, maxOversample: props.maxOversample, maxPixels: props.maxPixels }),
+    output !== undefined,
+  )
+  // Sprite events on the leaf: the built-in fixed leaf is laid out at the
+  // view size, so the plain handlers (no layout read per event); otherwise
+  // scaled from the laid-out box per event.
+  let viewHandlers = fill || output ? view.handlersFor(follow.layout) : view.handlers
+  let leaf: OutputLeaf = { ref: (n: { id: number }) => (leafNode = n), handlers: viewHandlers, size: follow.size, deviceSize: follow.deviceSize }
   return (
     <LayerContext value={layer}>
       <ViewportContext value={view}>
+        <ViewportSizeContext value={follow.viewportSize}>
         <PointerContext value={pointer}>
           {output ? (
-            untrack(() => output(view.texture))
+            untrack(() => output(view.texture, leaf))
           ) : (
             <texture
-              ref={(n: { id: number }) => (leaf = n)}
+              ref={leaf.ref}
               src={view.texture}
               width={fill ? "100%" : props.width}
               height={fill ? "100%" : props.height}
@@ -408,6 +385,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
           )}
           {props.children}
         </PointerContext>
+        </ViewportSizeContext>
       </ViewportContext>
     </LayerContext>
   )

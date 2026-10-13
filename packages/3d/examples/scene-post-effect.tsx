@@ -1,20 +1,27 @@
-// The `output` prop: Scene hands you its texture id and you compose the
-// leaf yourself, in place of the built-in `<texture>`. Here a fragment
-// pass samples the scene and adds chromatic aberration plus a vignette,
-// and the scene renders at 2x display size - the post pass doubles as the
-// downsample (the default linear sampler box-averages the 2x2 quad), so
-// the same chain is also free supersampling. Sampled textures are live
-// dependencies: the post pass re-renders exactly when the scene target
-// does, and a static scene still costs zero passes.
+// The `output` prop on a fill scene: Scene hands you its texture id and
+// the leaf contract, and you compose the leaf yourself in place of the
+// built-in `<texture>`. Here a fragment pass samples the scene and adds
+// chromatic aberration plus a vignette. The scene fills its pane at
+// `renderScale={2}` (four times the device pixels) and the post target is
+// sized at display density from `leaf.deviceSize()`, so the post pass
+// doubles as the downsample (the linear sampler box-averages the 2x2
+// quad): the same chain is free supersampling. `ref={leaf.ref}` is what
+// lets the target follow the leaf, and `leaf.handlers` would route pointer
+// events through it. Sampled textures are live dependencies: the post pass
+// re-renders exactly when the scene target does, and a static scene still
+// costs zero passes; createShaderTextureMemo resizes the post target in
+// place when the pane or the display scale changes.
 //
 // The same slot takes a `<d-texture>`, a leaf with blendMode/fit/pointer
 // props, or `() => null` (headless - composite scene.texture elsewhere).
+// A `maxPixels` next to `renderScale` would hold the scene's cost on any
+// display; scene-views.tsx shows the fixed-size form.
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
-import { createShaderTexture } from "@solidrt/core/gpu"
+import { createShaderTextureMemo } from "@solidrt/core/gpu"
 import { box, Group, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit } from "@solidrt/3d"
 
-const SIZE = 720 // display pixels (the leaf)
-const RENDER = SIZE * 2 // target pixels (the scene)
+// Device pixels the scene renders per on-screen pixel, each axis.
+const RENDER_SCALE = 2
 
 // vUV, iResolution, and fragColor come from the standard shader-texture
 // preamble; uSource is bound via the `textures` option.
@@ -44,17 +51,21 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
+      <view width={pct(100)} height={pct(100)}>
         <Scene
-          width={RENDER}
-          height={RENDER}
+          renderScale={RENDER_SCALE}
           clearColor={[0.07, 0.07, 0.1, 1]}
           label="scene-post"
-          output={tex => {
+          output={(tex, leaf) => {
             // Created inside the callback, the post target disposes with
-            // the Scene.
-            let post = createShaderTexture(POST, SIZE, SIZE, null, { textures: { uSource: tex } })
-            return <texture src={post} width={SIZE} height={SIZE} />
+            // the Scene; its size follows the leaf's on-screen size.
+            let post = createShaderTextureMemo(() => ({
+              fragmentSrc: POST,
+              width: leaf.deviceSize().width,
+              height: leaf.deviceSize().height,
+              textures: { uSource: tex },
+            }))
+            return <texture ref={leaf.ref} src={post()} width={pct(100)} height={pct(100)} contain="size" />
           }}
         >
           <PerspectiveCamera fov={55} position={[0, 1.6, 3.6]} lookAt={[0, 0.3, 0]} />

@@ -214,10 +214,6 @@ Shaped, not started.
   so the only diagnosis is a screenshot and a guess; worse, the engine's
   per-entry switch can disagree with the node (a visible, in-view mesh left at
   instanceCount 0), and nothing can show that disagreement.
-- **[A View3d is fixed-size](backlog/3d-scene-views-additive.md)** [2026-09-07]
-  A <View3d> takes width and height only, so a second view cannot fill a box
-  the way <Scene> does; the 2d <View2d> has the same gap, and whichever side
-  moves first settles the shape for both.
 - **[A scene always owns a draw target, so a split-screen app pays for one it never shows](backlog/3d-scene-without-own-target.md)** [2026-09-11]
   createScene allocates its buffer, depth and resolve chain unconditionally,
   and there is no output={false}, so an app that renders only through
@@ -690,9 +686,6 @@ Shaped, not started.
   Remap stack frames in the runtime itself so the local terminal and logcat
   show tsx positions too; explicitly not to be done unless server-only
   remapping proves insufficient.
-- **[Extend Scene/SpriteLayer fill mode with a resolution multiplier and output support](backlog/scene-fill-extensions.md)** [2026-09-02]
-  Two additive follow-ups to fill-by-default - a dpr/resolution prop for
-  supersampling on top of fill, and fill composed with a custom output leaf.
 - **[Nothing can set a default text style for a subtree](backlog/scoped-text-defaults.md)** [2026-07-26]
   Every <text> carries its own props because the rendertree is flat
   per-element writes with no cascade, so an app dropping to a raw <text>
@@ -847,6 +840,11 @@ Shaped, not started.
   frames, and there is no seek/rate/step. Fullscreen on Android goes through
   android-video-punch-through.md instead; this path is not being fixed while
   that round runs.
+- **[Render to a VR headset through OpenXR](backlog/vr-openxr.md)** [2026-10-13]
+  solidrt has no XR path; an OpenXR display backend in alloy, a pose-driven
+  stereo camera in @solidrt/3d, the 2d tree as a compositor quad layer and
+  controllers as an input source would run apps on standalone Android headsets
+  (Meta Quest), with a desktop OpenXR runtime for development.
 - **[An asset-generating script reloads the app on every write](backlog/watch-settle-asset-write-bursts.md)** [2026-09-08]
   The dev server watches the assets/ tree with a 100 ms debounce, so a
   data-prep script writing hundreds of MB over two minutes rebuilds and pushes
@@ -1172,6 +1170,10 @@ Finished, kept for the reasoning.
   every event, with claiming by stopPropagation, capture to the root, wheel,
   synthesized taps and the feed listening at the root - the 2d layer's model
   one dimension up.
+- **[A View3d is fixed-size](done/3d-scene-views-additive.md)** [2026-10-13]
+  A <View3d> takes width and height only, so a second view cannot fill a box
+  the way <Scene> does; the 2d <View2d> has the same gap, and whichever side
+  moves first settles the shape for both.
 - **[A transient shadow-slot overlap during a subtree swap kills the app](done/3d-shadow-budget-mount-overlap.md)** [2026-09-11]
   Shadow placement runs synchronously at light attach, so a declarative swap
   whose incoming branch attaches before the outgoing one detaches sums both
@@ -2291,6 +2293,9 @@ Finished, kept for the reasoning.
   magnified inspection; a ~15-line viewBox-shrinking registerDebug("zoom")
   turns "look closely at X" into one call, worth shipping in the
   create-solidrt scaffold.
+- **[Extend Scene/SpriteLayer fill mode with a resolution multiplier and output support](done/scene-fill-extensions.md)** [2026-10-13]
+  Two additive follow-ups to fill-by-default - a dpr/resolution prop for
+  supersampling on top of fill, and fill composed with a custom output leaf.
 - **[A headless render is not reproducible when the app draws random numbers](done/seeded-random-headless-render.md)** [2026-10-01]
   sol render stepped time deterministically but left Math.random on the
   engine's clock-seeded generator, so an app with particles, a shake or a

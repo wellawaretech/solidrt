@@ -33,12 +33,10 @@ still lacks, each a separate additive step on that contract:
   that wants its own (a dimmed minimap) needs the 3d rule - names the
   view writes itself become view-owned and the layer's fan-out skips
   them.
-- Fill mode. `<View2d width height>` is the only shape, so a second view
-  cannot say "fill this box" and follow it at device density the way
-  `<SpriteLayer>` does (both or neither, mount-fixed; `output` needs
-  explicit sizes). Exactly the `<View3d>` half of
-  [3d-scene-views-additive](3d-scene-views-additive.md), and the fill
-  branch is shared code in both packages.
+- Fill mode landed 2026-10-13 with
+  [scene-fill-extensions](../done/scene-fill-extensions.md): `<View2d>`
+  fills like `<SpriteLayer>` (both or neither), the follow shared in
+  components/fill.ts.
 - `view.pick(x, y)` landed 2026-10-05 with
   [2d-screen-space-sprite-size](../done/2d-screen-space-sprite-size.md):
   the view pixel unprojected and the layer's pick at this camera's zoom,

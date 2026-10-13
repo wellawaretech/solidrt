@@ -16,6 +16,7 @@
 export { useSpriteLayer } from "./context.ts"
 export { SpriteLayer } from "./sprite-layer.tsx"
 export type { LayerPointerProps, SpriteLayerProps } from "./sprite-layer.tsx"
+export type { DensityProps, OutputLeaf } from "./fill.ts"
 export { Group } from "./group.tsx"
 export type { GroupProps } from "./group.tsx"
 export { Sprite } from "./sprite.tsx"

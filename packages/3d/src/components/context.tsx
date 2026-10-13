@@ -19,17 +19,28 @@ export type CameraTarget = {
   raycast(origin: Vec3, direction: Vec3, opts?: QueryOptions): Hit[]
 }
 
-export type SceneCtx = { scene: SceneHandle; parent: SceneNode; viewport: CameraTarget; pointer: PointerFeed | null }
+export type SceneCtx = {
+  scene: SceneHandle
+  parent: SceneNode
+  viewport: CameraTarget
+  pointer: PointerFeed | null
+  /** The nearest owner's target size in pixels, reactive - `viewport.size()`
+   * as a signal: a fill owner's follows its leaf, a fixed one's its props.
+   * What a HUD or a per-pixel material under the owner sizes from without
+   * polling. */
+  viewportSize: () => { width: number; height: number }
+}
 export let SceneContext = createContext<SceneCtx>()
 
 /**
- * The enclosing scene, parent node, viewport and pointer feed - the
- * imperative escape hatch inside a component subtree (throws outside a
- * `<Scene>`). `viewport` and `pointer` are the nearest OWNER's: the
- * scene, or inside a `<View3d>` that view - what the camera-control
- * components drive, and the feed the owner's `pointer` prop handed in
- * (null when none was: the owner's leaf then feeds no gestures). The
- * same shape as @solidrt/2d's useSpriteLayer.
+ * The enclosing scene, parent node, viewport, pointer feed and reactive
+ * viewport size - the imperative escape hatch inside a component subtree
+ * (throws outside a `<Scene>`). `viewport`, `pointer` and `viewportSize`
+ * are the nearest OWNER's: the scene, or inside a `<View3d>` that view -
+ * what the camera-control components drive, the feed the owner's
+ * `pointer` prop handed in (null when none was: the owner's leaf then
+ * feeds no gestures), and the owner's target size as a signal. The same
+ * shape as @solidrt/2d's useSpriteLayer.
  */
 export function useScene(): SceneCtx {
   return useContext(SceneContext)
@@ -42,7 +53,7 @@ export function useScene(): SceneCtx {
 // (probes/3d-instance-mount-bench.tsx has the per-row cost).
 export function provide(ctx: SceneCtx, parent: SceneNode, props: { children?: Element }): Element | undefined {
   if (!("children" in props)) return undefined
-  return <SceneContext value={{ scene: ctx.scene, parent, viewport: ctx.viewport, pointer: ctx.pointer }}>{props.children}</SceneContext>
+  return <SceneContext value={{ scene: ctx.scene, parent, viewport: ctx.viewport, pointer: ctx.pointer, viewportSize: ctx.viewportSize }}>{props.children}</SceneContext>
 }
 
 /** What a `<Lod>` hands its children: a direct child with `lodSize`

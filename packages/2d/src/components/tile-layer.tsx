@@ -61,6 +61,14 @@ export type TileLayerProps = {
    * without giving up adaptivity. Ignored when `oversample` is set.
    */
   maxOversample?: number
+  /**
+   * Cap on a baked chunk's texel count under the auto pick, the budget
+   * form of `maxOversample`: the pick stays under it on any display
+   * (the window's own pixel count caps it always). Ignored when
+   * `oversample` is set; same name and meaning as `<SpriteLayer>`'s and
+   * the 3d `<Scene>`'s.
+   */
+  maxPixels?: number
   /** Chunk edge in tiles (default ~512px worth); see TileLayerOptions. */
   chunkTiles?: number
   /**
@@ -145,10 +153,10 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       if (!box) return
       let r = props.camera?.rotation ?? 0
       let scale = displayScale() * tileWorldScale(box.width, box.height, layer.width, layer.height, r)
-      applyOversample(layer, scale, layer.chunkW, layer.chunkH, props.maxOversample)
+      applyOversample("TileLayer", layer, scale, layer.chunkW, layer.chunkH, props.maxOversample, props.maxPixels)
     })
   onLayout(pick)
-  createEffect(() => [displayScale(), props.maxOversample], pick)
+  createEffect(() => [displayScale(), props.maxOversample, props.maxPixels], pick)
   // Chunk allocations arrive through the layer's hook; the signal carries a
   // fresh array so <For> sees the growth.
   let [chunks, setChunks] = createSignal<TileChunk[]>(layer.chunks.slice())

@@ -1,18 +1,22 @@
-import { callRef, createEffect, displayScale, getBoundingBoxViewport, onCleanup, onLayout, untrack, useContext } from "@solidrt/core"
+import { callRef, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import type { CameraUpdate } from "../camera.ts"
 import { feedPointer } from "../views.ts"
 import type { ViewHandle, ViewOptions } from "../views.ts"
-import { LayerContext, PointerContext, ViewportContext } from "./context.ts"
+import { LayerContext, PointerContext, ViewportContext, ViewportSizeContext } from "./context.ts"
 import type { LayerPointerProps } from "./sprite-layer.tsx"
-import { applyOversample } from "./auto-oversample.ts"
+import { createViewFill, FILL_INITIAL_SIZE } from "./fill.ts"
+import type { OutputLeaf } from "./fill.ts"
 
 export type View2dProps = LayerPointerProps &
   Pick<ViewOptions, "clearColor" | "label"> & {
-    /** View pixels, live (view.setSize). Fixed only, for now: a fill mode
-     * like SpriteLayer's is a later, additive step. */
-    width: number
-    height: number
+    /** View pixels, live (view.setSize) - give both, or neither. Omitted,
+     * the view FILLS exactly as a `<SpriteLayer>` does: the leaf lays out
+     * at 100% of its sized parent, the view sizes to that box, the auto
+     * oversample supplies display density, and the leaf `output` refs is
+     * followed the same way. Fill or fixed is decided at mount. */
+    width?: number
+    height?: number
     /** Partial camera update on the view's own camera (view.setCamera):
      * absent keys keep their values. Live. A `<Camera2d>` child writes the
      * same state - use one form, not both. */
@@ -25,17 +29,21 @@ export type View2dProps = LayerPointerProps &
     oversample?: number
     /** Cap on the auto-picked oversample (see SpriteLayerProps). */
     maxOversample?: number
+    /** Cap on the target's texel count under the auto pick (see
+     * SpriteLayerProps). */
+    maxPixels?: number
     ref?: (view: ViewHandle) => void
     /**
-     * Compose the leaf yourself: called once (untracked) with view.texture,
-     * and its return renders in place of the built-in `<texture>` leaf.
-     * Sprite pointer events through the view then need its handlers on
-     * your leaf: `<texture src={texture} {...view.handlers} />` (the view
-     * from `ref`).
+     * Compose the leaf yourself: called once (untracked) with view.texture
+     * and the leaf contract (see SpriteLayer's `output`), and its return
+     * renders in place of the built-in `<texture>` leaf. `ref={leaf.ref}`
+     * makes a fill-mode view follow your leaf, `{...leaf.handlers}` routes
+     * sprite pointer events through the view scaled to the leaf's layout.
      */
-    output?: (texture: TextureId) => Element
+    output?: (texture: TextureId, leaf: OutputLeaf) => Element
     /** Pointer events (default on): the built-in leaf carries the view's
-     * handlers. `false` detaches them. */
+     * handlers. `false` detaches them. Built-in leaf only: with `output`
+     * the prop throws, as SpriteLayer's. */
     events?: boolean
     /** The pointer feed of this view (createPointerFeed), fed from the
      * view's root - the events the sprites let through - so a map bound
@@ -64,13 +72,21 @@ export type View2dProps = LayerPointerProps &
  */
 export let View2d: ParentComponent<View2dProps> = props => {
   let layer = useContext(LayerContext)
+  // Fill vs fixed view is decided at mount, as SpriteLayer's: both width
+  // and height (fixed view pixels) or neither (fill).
+  let fill = untrack(() => {
+    if ((props.width === undefined) !== (props.height === undefined)) {
+      throw new Error("View2d: width and height come together - give both (fixed view) or neither (fill)")
+    }
+    return props.width === undefined
+  })
   // The initial props seed createView, so `ref` hands out a configured
   // view and the first frame draws it whole; the effects follow changes
   // only (`defer`).
   let view = untrack(() =>
     layer.createView({
-      width: props.width,
-      height: props.height,
+      width: props.width ?? FILL_INITIAL_SIZE,
+      height: props.height ?? FILL_INITIAL_SIZE,
       camera: props.camera,
       oversample: props.oversample,
       clearColor: props.clearColor,
@@ -79,7 +95,12 @@ export let View2d: ParentComponent<View2dProps> = props => {
   )
   createEffect(
     () => [props.width, props.height] as const,
-    ([w, h]) => view.setSize(w, h),
+    ([w, h]) => {
+      if ((w === undefined) !== (h === undefined) || (w === undefined) !== fill) {
+        throw new Error("View2d: fill/fixed is mount-fixed - width/height cannot appear or disappear")
+      }
+      if (!fill) view.setSize(w!, h!)
+    },
     { defer: true },
   )
   createEffect(
@@ -114,48 +135,57 @@ export let View2d: ParentComponent<View2dProps> = props => {
   )
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
+  // `events` wires the built-in leaf; with output the spread is the
+  // app's, so the prop throws (see SpriteLayer).
+  if (output && untrack(() => props.events) !== undefined) {
+    throw new Error("View2d: events applies to the built-in leaf - with output, spread leaf.handlers on your leaf, or leave them off")
+  }
   // A feed on a built-in leaf carrying no handlers listens at a root no
   // event reaches: a contradiction, so it throws (the dev validation
   // policy) instead of feeding nothing.
   if (pointer !== null && !events && !output) {
     throw new Error(
-      "View2d: a pointer feed with events={false} receives nothing - the feed listens at the view's root, which only the leaf's handlers reach; keep events on, or compose the leaf with output and spread view.handlers on it",
+      "View2d: a pointer feed with events={false} receives nothing - the feed listens at the view's root, which only the leaf's handlers reach; keep events on, or compose the leaf with output and spread leaf.handlers on it",
     )
   }
-  let leaf: { id: number } | undefined
-  // Auto oversample from the built-in leaf's window box, in device pixels,
-  // per view pixel: the same pick as SpriteLayer's fixed mode.
-  let pick = () =>
-    untrack(() => {
-      if (!leaf || props.oversample !== undefined) return
-      let box = getBoundingBoxViewport(leaf)
-      if (!box) return
-      let scale = displayScale() * Math.max(box.width / props.width, box.height / props.height)
-      applyOversample(view, scale, props.width, props.height, props.maxOversample)
-    })
-  onLayout(pick)
-  createEffect(() => [displayScale(), props.maxOversample], pick)
+  let leafNode: { id: number } | undefined
+  // The view follows the leaf (fill.ts), exactly as SpriteLayer's own.
+  let follow = createViewFill(
+    "View2d",
+    view,
+    () => leafNode,
+    fill ? null : () => ({ width: props.width!, height: props.height! }),
+    () => ({ oversample: props.oversample, maxOversample: props.maxOversample, maxPixels: props.maxPixels }),
+    output !== undefined,
+  )
+  let viewHandlers = fill || output ? view.handlersFor(follow.layout) : view.handlers
+  let leaf: OutputLeaf = { ref: (n: { id: number }) => (leafNode = n), handlers: viewHandlers, size: follow.size, deviceSize: follow.deviceSize }
+  // The fill leaf is size-contained, as SpriteLayer's: it adds nothing to
+  // its ancestors, so the view's pixels never pin them.
   return (
     <ViewportContext value={view}>
+      <ViewportSizeContext value={follow.viewportSize}>
       <PointerContext value={pointer}>
       {output ? (
-        untrack(() => output(view.texture))
+        untrack(() => output(view.texture, leaf))
       ) : (
         <texture
-          ref={(n: { id: number }) => (leaf = n)}
+          ref={leaf.ref}
           src={view.texture}
-          width={props.width}
-          height={props.height}
-          onPointerDown={events ? view.handlers.onPointerDown : undefined}
-          onPointerMove={events ? view.handlers.onPointerMove : undefined}
-          onPointerUp={events ? view.handlers.onPointerUp : undefined}
-          onPointerCancel={events ? view.handlers.onPointerCancel : undefined}
-          onPointerLeave={events ? view.handlers.onPointerLeave : undefined}
-          onWheel={events ? view.handlers.onWheel : undefined}
+          width={fill ? "100%" : props.width}
+          height={fill ? "100%" : props.height}
+          contain={fill ? "size" : undefined}
+          onPointerDown={events ? viewHandlers.onPointerDown : undefined}
+          onPointerMove={events ? viewHandlers.onPointerMove : undefined}
+          onPointerUp={events ? viewHandlers.onPointerUp : undefined}
+          onPointerCancel={events ? viewHandlers.onPointerCancel : undefined}
+          onPointerLeave={events ? viewHandlers.onPointerLeave : undefined}
+          onWheel={events ? viewHandlers.onWheel : undefined}
         />
       )}
       {props.children}
       </PointerContext>
+      </ViewportSizeContext>
     </ViewportContext>
   )
 }

@@ -617,8 +617,8 @@ through its debug commands, and `camera-components.test.tsx` drives
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (FogOptions: linear `{ color, near, far }` or exp2 `{ color, density }`, either plus `height`/`heightFalloff` - see Fog), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
-| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width`, `height` (target pixels, live; fixed-size only for now), `x?`, `y?` (the tile's top-left in `into`, live), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture)` (else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `resolve?` (as Scene's; not with `into`), `bloom?` (BloomOptions overrides the scene's, null turns it off in this view, absent follows the scene; not with `into`), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `renderScale?`, `maxPixels?` (fill-mode density: a scale over the tracked device pixels and a cap on their count, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (FogOptions: linear `{ color, near, far }` or exp2 `{ color, density }`, either plus `height`/`heightFalloff` - see Fog), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture, leaf)` (compose the leaf yourself; `leaf.ref`, `leaf.handlers`, `leaf.size()`, `leaf.deviceSize()` - see Output composition; `events` then throws), `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
+| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width?`, `height?` (target pixels, live - both, or neither = FILL exactly as Scene's: the leaf fills its sized parent and the view follows it; a tile of `into` gives both), `renderScale?`, `maxPixels?` (fill-mode density, as Scene's), `x?`, `y?` (the tile's top-left in `into`, live; throw without `into`), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture, leaf)` (as Scene's; else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `resolve?` (as Scene's; not with `into`), `bloom?` (BloomOptions overrides the scene's, null turns it off in this view, absent follows the scene; not with `into`), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, the bubbling pointer events (below: down/move/up/wheel/tap from a hit descendant; a group is never the struck node, so it takes no `onPointerEnter`/`onPointerLeave` - `Lod` likewise), `ref?(node)` |
 | `Lod` | a Group whose direct children carrying `lodSize` (a prop every node component takes: the projected size below which that child hands over, see Level of detail) are its levels, sorted by size, never by JSX position; plus `fade?` (the cross-fade band fraction, default 0); a child without `lodSize` is drawn always |
 | `InstancedLod` | as InstancedMesh minus `material`, plus `levels` (`[{ geometry, material, size }]` nearest first, fixed at creation; instanced materials as InstancedMesh's), `castShadow?` (every level); `<Instance>` children populate it as under `InstancedMesh`, each drawing the level its own projected size picks |
@@ -635,18 +635,39 @@ through its debug commands, and `camera-components.test.tsx` drives
 ### Output composition
 
 Output composition: without `output`, `Scene` emits a minimal
-`<texture width height>` leaf and nothing else is forwarded - anything
-more goes through `output(texture)`, which renders in place of that leaf:
-a `<d-texture>`, a leaf with blendMode/fit/pointer/layout props, or a
+`<texture>` leaf and nothing else is forwarded - anything more goes
+through `output(texture, leaf)`, which renders in place of that leaf: a
+`<d-texture>`, a leaf with blendMode/fit/pointer/layout props, or a
 post-effect chain (`createShaderTarget` sampling the id with a
 covering-triangle pass; created in the callback it disposes with the
 Scene). Return null for no leaf at all and compose `scene.texture`
 elsewhere. Called once, untracked, inside the scene context. `output`
 composes the DISPLAYED texture, the resolve's output: an LDR effect
-lives here; one that needs the scene's radiance is a `resolve` (Color). Scene
+lives here; one that needs the scene's radiance is a `resolve` (Color).
+
+`leaf` (OutputLeaf) is the contract between your leaf and the scene:
+`ref={leaf.ref}` hands the scene the leaf you render, so a fill-mode
+target follows it exactly as it follows the built-in one (give it the
+built-in leaf's layout, `width/height={pct(100)}` and `contain="size"`,
+or any layout you want followed); `{...leaf.handlers}` routes pointer
+events through it, scaled to the ref'd leaf's layout box per event, so
+one spread carries the node events, the scene's own and the `pointer`
+feed whatever size the leaf lays out at; `leaf.size()` is the target's
+size and `leaf.deviceSize()` the leaf's on-screen size in device pixels,
+both reactive and applied before the frame that follows a resize paints
+(core flushes pending writes once the layout handlers have run), so a
+post chain sizes its own targets from them - `createShaderTextureMemo`
+takes the read directly and resizes in place. A post pass that should
+run at display density (its sampler doubling as the downsample of a
+supersampled scene) sizes from `deviceSize`; one that works in scene
+pixels (a depth-reading effect) from `size`. `examples/scene-post-effect.tsx`
+is the shape: a fill scene at `renderScale={2}` under an aberration pass
+at display density. The fixed form still composes by hand: Scene
 `width`/`height` are target pixels and the leaf's own width/height are
-layout, so render and display size separate - render at 2x and display
-smaller for supersampling.
+layout, so render and display size separate; `ref` then only scales
+`leaf.handlers` to the leaf's layout. A fill `output` that never refs a
+leaf leaves the target at its 1 x 1 creation size, and the first layout
+warns once.
 
 ### Fill and fixed sizes
 
@@ -659,10 +680,42 @@ frame draws at a stale size). A bare `<Scene>` in a pane renders at
 native density on any display, mesh events are wired automatically
 (event scaling reads the leaf's untransformed box back with
 `getLayoutBox`), the `pointer` feed you hand in is spread on the leaf,
-and the camera aspect follows the box. Fill
-or fixed is decided at mount; `output` requires explicit sizes (the
-target cannot follow a leaf it does not own), and giving exactly one of
-width/height throws.
+and the camera aspect follows the box. Fill or fixed is decided at
+mount, and giving exactly one of width/height throws. `<View3d>` fills
+by the same rule (both or neither; a tile of `into` has its rect, so it
+gives both), so a split-screen pane or a picture-in-picture follows its
+box at device density like the scene does; the fill branch is one piece
+of code for both (components/fill.ts over core's `followBox`, the size
+decision in fill-math.ts, pure and pinned headless). `x`/`y` place a
+tile in `into` and throw without one.
+
+Two knobs scale the tracked size, reactive, fill mode only (with
+`width`/`height` the target IS the pixels, and either throws):
+`renderScale` (default 1) multiplies it on each axis - 2 renders four
+times the pixels and the leaf's linear sampler box-averages them down
+(supersampling, cheap anti-aliasing beyond `samples`), 0.5 renders a
+quarter (a heavy scene on a weak GPU); Unity's render scale, Godot's
+`scaling_3d_scale`, r3f's `dpr`. `maxPixels` caps the target's pixel
+count after the scale: both axes shrink by one factor, so the aspect
+holds, and one number holds one cost on every device, which a scale
+cannot (a 0.7 that suits a laptop panel is wasted on a phone and too
+much on a 4K screen); a fill-rate-bound main pass of ~11 ms at 3.4 Mpx
+on an iGPU drops to ~5 ms capped at ~1.9 Mpx with no visible loss under
+a HUD. The default is native density with no cap, as Unity and Godot
+default (r3f clamps its dpr to 2): the runtime picks no budget, because
+only the app knows its scene's cost, so a weak 3x phone renders nine
+pixels per logical one until the app says `maxPixels`. Neither knob
+touches the leaf's layout, pointer events or the camera controls:
+`handlersFor` scales events by target over layout box and the orbit
+control divides by `size().height`, both invariant under the scale. The
+2d packages' knobs are `oversample` (an integer, so the resample stays
+clean) and the same `maxPixels`.
+
+With `output`, the target follows the leaf you `ref` (Output composition
+above); without a ref it stays at its creation size and the first
+layout warns once. The `output` leaf is yours to lay out: the built-in
+leaf's `contain="size"` keeps the target's pixels out of the flex
+automatic minimum (below), and a leaf you compose wants the same.
 
 The fill leaf is size-contained (`contain="size"`, the CSS layout prop
 every element takes): it adds nothing to its ancestors' sizes, exactly as
@@ -680,15 +733,18 @@ scene composited at a size unrelated to its layout. `width`/`height` are
 DEVICE pixels and the leaf's layout is LOGICAL - a fixed 720-pixel scene
 under a HiDPI `designSize` fit is stretched across ~1100 device pixels
 and looks soft, and nothing warns; that trap is what fill removes (the
-examples fill; scene-views and scene-post-effect keep fixed sizes to
-show multi-view composition and supersampling). A custom `output` leaf
-whose layout differs from the target
-takes `handlersFor` (below), not `handlers`; `useScene()` works inside
-`output` because it runs in the scene context. One spread carries
-everything: the `pointer` feed listens at the scene's root, so
-`{...useScene().scene.handlers}` feeds the nodes, the scene's own
-handlers and the feed alike (a detached leaf gives its feed a `layout`,
-it has no layout box to normalize by).
+examples fill; scene-views keeps fixed sizes to show multi-view
+composition, and supersampling is `renderScale`). A custom `output` leaf
+spreads `leaf.handlers`, scaled to its layout box per event, so a leaf
+laid out at any size routes right; `useScene()` works inside `output`
+because it runs in the scene context. One spread carries everything:
+the `pointer` feed listens at the scene's root, so `leaf.handlers` feeds
+the nodes, the scene's own handlers and the feed alike (a detached leaf
+gives its feed a `layout`, it has no layout box to normalize by).
+`events` wires the built-in leaf only: given together with `output` it
+throws, the leaf and its spread being yours. `useScene().viewportSize`
+is the owner's target size as a signal, for a HUD or a per-pixel
+material under it.
 
 ### Input
 
@@ -1155,12 +1211,13 @@ nothing is left to claim). Wiring: the built-in `<Scene>` leaf carries
 `scene.handlers` automatically (opt out: `events={false}`, which throws
 at mount together with a `pointer` feed - the feed would listen at a root
 no event reaches; the same on `<View3d>`); an `output`
-leaf or imperative composition spreads `{...scene.handlers}` onto the
-element showing the texture. `scene.handlers` assumes that leaf is LAID
-OUT at the target size - true for the built-in leaf and a d-texture at
-natural size, under any ancestor transforms or design-size fits (the hit
-test undoes them; localX/localY arrive in the leaf's layout frame). A
-leaf laid out at a different size (the supersampling pattern) uses
+leaf spreads `{...leaf.handlers}` (scaled to the ref'd leaf's layout
+box per event) and an imperative composition `{...scene.handlers}` onto
+the element showing the texture. `scene.handlers` assumes that leaf is
+LAID OUT at the target size - true for the built-in leaf and a d-texture
+at natural size, under any ancestor transforms or design-size fits (the
+hit test undoes them; localX/localY arrive in the leaf's layout frame).
+A leaf laid out at a different size uses
 `scene.handlersFor(() => ({ width, height }))` with its layout size.
 tests/dispatch.test.ts pins the walk, claiming, capture, hover, wheel
 and tap rules headless; examples/pick.tsx is the live guard.
@@ -3312,9 +3369,10 @@ successors) as ordinary content, the model-loading split repeated:
   undone by the element hit test). `handlers` therefore assumes leaf
   layout == target pixels; scaling by `getBoundingBox` would be WRONG -
   the box composes transforms, and it would double-correct the built-in
-  leaf under a design size. Only a leaf whose layout size deliberately
-  differs from the target (supersampling) needs `handlersFor`, fed the
-  layout size the app itself set.
+  leaf under a design size. Only a leaf whose layout size differs from
+  the target needs `handlersFor`, fed the layout size the app itself
+  set - which `leaf.handlers` from `output` does per event from the
+  ref'd leaf's box.
 - Hover (enter/leave) reacts to pointer MOTION only: a mesh animating
   under a still pointer fires nothing until the next move - the same
   limit the element hit test has (hit-test-per-frame is an open platform

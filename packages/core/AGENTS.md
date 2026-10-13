@@ -262,7 +262,20 @@ moves core's peerDependencies and the scaffold's pins
   a bar. Two rules keep it one pass: write the measurement only to props
   that do not affect layout (a `d` string, a d-* position, a transform), and
   call `flush()` after the write so it lands in this frame's display list.
-  See examples/on-layout-connect.tsx.
+  See examples/on-layout-connect.tsx. A draw target that sizes to the
+  element showing it (a scene or a 2d view filling its pane, a shader
+  backdrop behind a card) is this pattern with one more input, the
+  display scale, which changes without a layout: `followBox(what, () =>
+  leaf, box => ..., { deps?, missing? })` measures the leaf after every
+  layout and again when the display scale or `deps` change, and hands
+  `apply` the box in the leaf's own units (`layout`) and in device pixels
+  (`device`, unrounded: display scale, designSize fits and ancestor
+  transforms composed), so the consumer keeps only its size decision
+  (`setTargetSize(tex, round(device.width), round(device.height))`). It
+  warns once, naming `what`, for a leaf laid out at zero size (a
+  size-contained leaf under an unsized parent) and, with `missing`, for a
+  leaf that never arrives. @solidrt/3d's and @solidrt/2d's fill modes are
+  built on it.
 
 - A flex item never shrinks below its content on its own (CSS `min-height:
   auto`, the same here): in a column, a content-sized child - a paragraph, a

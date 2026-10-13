@@ -13,15 +13,28 @@ function windowTexels(): number {
   return win.width * scale * (win.height * scale)
 }
 
-// The auto-pick apply: the decision itself (cap, shrink hysteresis,
-// validation) is pure and lives in oversample-math.ts.
+// The auto-pick apply: the decision itself (cap, shrink hysteresis) is
+// pure and lives in oversample-math.ts. `maxPixels` is the app's texel
+// budget for the target, under the window's own (a target beyond the
+// window buys nothing on screen). The props are validated here, where
+// they enter, named for the component `what` (throws - the dev policy);
+// the pure decision guards its own inputs again for direct callers.
 export function applyOversample(
+  what: string,
   layer: { readonly oversample: number; setOversample(n: number): void },
   scale: number,
   targetW: number,
   targetH: number,
   max: number | undefined,
+  maxPixels: number | undefined,
 ): void {
-  let n = pickOversample(layer.oversample, scale, targetW, targetH, windowTexels(), limits.maxTextureSize, max)
+  if (max !== undefined && !(Number.isInteger(max) && max >= 1)) {
+    throw new Error(`${what}: maxOversample must be a positive integer, got ${max}`)
+  }
+  if (maxPixels !== undefined && !(Number.isFinite(maxPixels) && maxPixels > 0)) {
+    throw new Error(`${what}: maxPixels must be a positive number, got ${maxPixels}`)
+  }
+  let budget = maxPixels === undefined ? windowTexels() : Math.min(windowTexels(), maxPixels)
+  let n = pickOversample(layer.oversample, scale, targetW, targetH, budget, limits.maxTextureSize, max)
   if (n !== null) layer.setOversample(n)
 }

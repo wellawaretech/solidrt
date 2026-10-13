@@ -2,6 +2,7 @@
 title: A View3d is fixed-size
 description: A <View3d> takes width and height only, so a second view cannot fill a box the way <Scene> does; the 2d <View2d> has the same gap, and whichever side moves first settles the shape for both.
 created: 2026-09-07
+completed: 2026-10-13
 ---
 
 # A View3d is fixed-size
@@ -29,3 +30,12 @@ mount-fixed; `output` needs explicit sizes).
 
 Involves: view3d.tsx and view2d.tsx (the fill branch of scene.tsx and
 sprite-layer.tsx, shared), the docs tables.
+
+## Outcome (2026-10-13)
+
+Landed with [scene-fill-extensions](scene-fill-extensions.md), whose
+shared follow (one fill.ts per package) made both views a few lines:
+`<View3d>` and `<View2d>` take width/height both-or-neither, fill the
+same way their owners do, take the same `output` leaf contract, and the
+3d view the same `renderScale`/`maxPixels`. A tile of `into` keeps its
+rect. Tests in both packages' fill-knobs.test.tsx.
