@@ -433,6 +433,13 @@ Shaped, not started.
   srt_pixel6 emulator (FORTIFY, destroyed mutex inside libhwui's CommonPool);
   an older build installed on the same AVD launches fine, so this is a
   regression in the artifact, not an emulator setup problem.
+- **[3D and 2D array textures in flux:gpu](backlog/gpu-3d-and-array-textures.md)** [2026-10-14]
+  flux:gpu creates only 2D textures and cube maps, so a volume sampled by
+  world position (a sparse brick pool for mesh paint, a 3D LUT, density
+  fields) must be faked as slices in a 2D atlas with two taps, manual
+  trilinear and guard borders; TextureShape gains D3 and D2Array (both GLES
+  3.0 core), with sampler3D/sampler2DArray bindings, box uploads and two new
+  limits.
 - **[Async shader compile and readback](backlog/gpu-async-compile-readback.md)** [2026-07-31]
   Compile/link and readTexture are the two GPU calls whose cost class differs
   from everything else on the surface - both block the JS thread and the
@@ -807,6 +814,12 @@ Shaped, not started.
   ascent and descent and the baseline snaps to whole pixels; a half-leading
   placement only moves the error around, so the candidate is cap-band
   centering, to be simulated before it is built.
+- **[Keep text layer rasters from stalling paint](backlog/text-layer-raster-stalls-paint.md)** [2026-10-14]
+  A frame that re-rasterizes a text layer while the GPU is busy with a heavy
+  scene paints in 16-19 ms instead of under 1 ms; the layer raster is a
+  blocking round trip to the raster thread, and its glyph pass likely syncs on
+  GPU work still in flight. Measure which, then take it off paint's critical
+  path.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -868,6 +881,12 @@ Shaped, not started.
   A broken site build goes unnoticed until someone runs make build locally;
   the components theme.ts headless-import break sat undetected from the colord
   removal until the next manual rebuild.
+- **[Embed a webview](backlog/webview.md)** [2026-10-14]
+  Apps cannot show web content inside their UI; the first lane is the OS
+  webview as a native plane at an element's rect (Android by the video-plane
+  pattern, Windows and macOS through wry), Linux on Wayland has no plane and
+  needs either "unavailable" or a WPE texture lane, and the use case decides
+  the scope.
 - **[Dev-tooling storage in XDG base directories instead of one home dotdir](backlog/xdg-storage-layout.md)** [2026-08-13]
   Dev state lives in ~/.solidrt/ (servers/<port>/, clients/client<M>/), chosen
   2026-08-13 for one rule on every platform. XDG splits by purpose instead -
