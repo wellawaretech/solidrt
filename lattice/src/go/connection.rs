@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
+use crate::stats_query::{stats_data, StatsQuery, STATS_WINDOW_DEFAULT_MS};
+
 /// The dialed address of the dev server the proxy should route to. Resettable
 /// (not write-once) so reconnecting to a different server repoints the proxy;
 /// `None` until the first successful connect.
@@ -861,14 +863,26 @@ async fn try_serve(
                       // Read live, not from the frame-latched snapshot: a
                       // backlogged raster thread produces no frames, so the
                       // latch goes stale exactly when these matter.
-                      let raster = flux::gui::alloy_context(&ctx).map(|atx| atx.raster_counters());
-                      let reply =
-                        StatsReply { snap, time_ms: now_ms, latest_frame_age_ms, ask, window: window.as_ref(), counts, raster };
+                      let atx = flux::gui::alloy_context(&ctx);
+                      let raster = atx.as_ref().map(|atx| atx.raster_counters());
+                      let residency = atx.as_ref().map(|atx| atx.spatial().residency_stats());
+                      let app = Some(crate::plugins::dev::read_stats(&ctx));
+                      let reply = StatsQuery {
+                        snap,
+                        time_ms: now_ms,
+                        latest_frame_age_ms,
+                        ask,
+                        window: window.as_ref(),
+                        counts,
+                        raster,
+                        residency,
+                        app,
+                      };
                       let _ = reply_tx.send(stats_reply(id, reply));
                     });
                   }
                   None => {
-                    let reply = StatsReply {
+                    let reply = StatsQuery {
                       snap,
                       time_ms: now_ms,
                       latest_frame_age_ms,
@@ -876,6 +890,8 @@ async fn try_serve(
                       window: window.as_ref(),
                       counts: None,
                       raster: None,
+                      residency: None,
+                      app: None,
                     };
                     let _ = client.send(tokio_websockets::Message::text(stats_reply(id, reply))).await;
                   }
@@ -1071,12 +1087,6 @@ async fn try_serve(
   true
 }
 
-/// Round to two decimals for the JSON payloads: raw f32s serialize with float
-/// noise (0.1 -> 0.10000000149...) that only bloats the wire format.
-fn round2(v: f32) -> f64 {
-  (v as f64 * 100.0).round() / 100.0
-}
-
 fn error_reply(id: u64, message: &str) -> String {
   serde_json::json!({"type": "result", "id": id, "error": message}).to_string()
 }
@@ -1086,9 +1096,6 @@ fn error_reply(id: u64, message: &str) -> String {
 /// for. A faster display only gets its moves resampled.
 const CONTROL_FRAME_MS: f64 = 1000.0 / 60.0;
 
-/// Default window the stats summary covers when the query names none.
-const STATS_WINDOW_DEFAULT_MS: f64 = 5000.0;
-
 // The clock query's wait for its stepped frames to run: one per frame at
 // the client's frame rate, so this long per step on top of the base, and
 // the reply then reports whatever is still pending. Re-read at the poll
@@ -1097,214 +1104,8 @@ const CLOCK_STEP_WAIT_MS: u64 = 50;
 const CLOCK_STEP_WAIT_BASE_MS: u64 = 1000;
 const CLOCK_STEP_POLL_MS: u64 = 4;
 
-/// Everything a stats reply is built from. `snap` is the draw loop's latched
-/// figures; `clock` the client's own clock at query time (`timeMs` on its
-/// monotonic origin, the latest present index) so two samples can be
-/// differenced; `ask` the (clamped) window the query asked for and
-/// `window` the frame-history summary over it (None when no frame changed
-/// the picture inside it; the reply then says so with `frames: 0`);
-/// `counts` (mounted, total) from the live tree when the query could run on
-/// the JS thread - the reply then carries mountedNodes and orphanNodes
-/// (total - mounted: nodes unreachable from the root, i.e. leaked or
-/// intentionally kept detached); `raster` the live raster counters. Without an
-/// engine the last two are simply absent.
-struct StatsReply<'a> {
-  snap: crate::stats::StatsSnapshot,
-  time_ms: f64,
-  /// Age of the newest frame record, the frame the top-level figures
-  /// describe; None while the history is empty.
-  latest_frame_age_ms: Option<f64>,
-  ask: crate::frame_history::Window,
-  window: Option<&'a crate::frame_history::WindowSummary>,
-  counts: Option<(usize, usize)>,
-  raster: Option<alloy::RasterCounters>,
-}
-
-fn round2_64(v: f64) -> f64 {
-  (v * 100.0).round() / 100.0
-}
-
-fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
-  let s = r.snap;
-  let mut data = serde_json::Map::new();
-  let mut put = |k: &str, v: serde_json::Value| {
-    data.insert(k.into(), v);
-  };
-  put("timeMs", round2_64(r.time_ms).into());
-  put("frame", s.frame.into());
-  if let Some(age) = r.latest_frame_age_ms {
-    put("latestFrameAgeMs", round2_64(age).into());
-  }
-  put("fps", s.fps.into());
-  put("cpuPct", round2(s.cpu_pct).into());
-  put("memBytes", s.mem_bytes.into());
-  put("jsMs", round2(s.js_ms).into());
-  put("frameMs", round2(s.frame_ms).into());
-  put("setPropsPerFrame", round2(s.set_count).into());
-  put("layoutMs", round2(s.layout_ms).into());
-  put("postLayoutMs", round2(s.post_ms).into());
-  put("paintMs", round2(s.paint_ms).into());
-  put("hoverMs", round2(s.hover_ms).into());
-  put("reusedPerSec", s.reused.into());
-  put("skippedPerSec", s.skipped.into());
-  put("textures", s.textures.into());
-  put("nodes", s.node_count.into());
-  put("measureCalls", s.measure_calls.into());
-  put("wordShapes", s.word_shapes.into());
-  put("wordHits", s.word_hits.into());
-  put("dirtiedNodes", s.dirtied.into());
-  put("cacheGets", s.cache_gets.into());
-  put("cacheHits", s.cache_hits.into());
-  put("nodesPainted", s.paint.nodes_painted.into());
-  put("backdropsPrepainted", s.paint.backdrops_prepainted.into());
-  put("damagePx", (s.paint.damage_px.round() as i64).into());
-  put("paintOps", paint_ops_json(&s.counters));
-  put("window", window_json(r.window, r.time_ms, r.ask));
-  if let Some((mounted, total)) = r.counts {
-    put("mountedNodes", mounted.into());
-    put("orphanNodes", total.saturating_sub(mounted).into());
-  }
-  if let Some(rc) = r.raster {
-    put("rasterQueue", rc.queue.into());
-    put("idleTicks", rc.idle_ticks.into());
-    put("partialPresents", rc.partial_presents.into());
-    put("videoLatched", rc.video_latched.into());
-    put("videoSkipped", rc.video_skipped.into());
-    put("videoLateLatches", rc.video_late.into());
-    put("cameraUploaded", rc.camera_uploaded.into());
-    put("cameraSkipped", rc.camera_skipped.into());
-    put("fenceTimeouts", rc.fence_timeouts.into());
-    put("missedPresents", rc.missed_presents.into());
-    put("cadenceHold", rc.cadence_hold.into());
-    put("frameWorkMeanMs", round2(rc.work_mean_ms).into());
-    put("frameWorkMaxMs", round2(rc.work_max_ms).into());
-    put("gpuPasses", rc.passes.into());
-    // Integer ms: sub-ms increments accumulate in the microsecond counters
-    // before this division, so the cumulative rounding loss stays under 1ms.
-    put("gpuPassIssueMs", (rc.pass_issue_micros / 1000).into());
-    // Absent (not 0) when the context has no timer queries.
-    if let Some(exec) = rc.pass_exec_micros {
-      put("gpuPassExecMs", (exec / 1000).into());
-    }
-    if let Some(exec) = rc.frame_exec_micros {
-      put("gpuFrameExecMs", (exec / 1000).into());
-    }
-    put("rasterCmdMs", (rc.cmd_micros / 1000).into());
-  }
-  serde_json::json!({"type": "result", "id": id, "data": data}).to_string()
-}
-
-/// The window block: percentiles of the JS-thread critical path over the
-/// rebuilt frames in the window, the count over the refresh period, and the
-/// worst frame with its phase breakdown and layout activity - the frame the
-/// smoothed figures average away. Raster rates ride along when the window
-/// spans two or more frames. `now_ms` is the query instant the worst frame's
-/// age is measured from; `ask` the window asked for, echoed even when no
-/// frame fell inside it (the summary then has no window of its own).
-fn window_json(
-  window: Option<&crate::frame_history::WindowSummary>,
-  now_ms: f64,
-  ask: crate::frame_history::Window,
-) -> serde_json::Value {
-  let Some(w) = window else {
-    return match ask {
-      crate::frame_history::Window::Ms(ms) => serde_json::json!({ "windowMs": ms, "frames": 0 }),
-      crate::frame_history::Window::Frames(n) => serde_json::json!({ "windowFrames": n, "frames": 0 }),
-    };
-  };
-  let worst = &w.worst;
-  let mut data = serde_json::Map::new();
-  let mut put = |k: &str, v: serde_json::Value| {
-    data.insert(k.into(), v);
-  };
-  put("windowMs", round2_64(w.window_ms).into());
-  if let Some(n) = w.window_frames {
-    put("windowFrames", n.into());
-  }
-  put("frames", w.frames.into());
-  put("p50Ms", round2(w.p50_ms).into());
-  put("p95Ms", round2(w.p95_ms).into());
-  put("maxMs", round2(w.max_ms).into());
-  put("slowFrames", w.slow_frames.into());
-  put("captureFrames", w.capture_frames.into());
-  put("periodMs", round2(worst.period_ms).into());
-  put("backdropsPrepainted", w.backdrops_prepainted.into());
-  put("textLayers", w.text_layers.into());
-  put("nodesPaintedMax", w.nodes_painted_max.into());
-  put(
-    "worst",
-    serde_json::json!({
-      "ageMs": round2_64(now_ms - worst.at_ms),
-      "frame": worst.frame,
-      "totalMs": round2(worst.total_ms),
-      "jsMs": round2(worst.js_ms),
-      "layoutMs": round2(worst.layout_ms),
-      "postLayoutMs": round2(worst.post_ms),
-      "paintMs": round2(worst.paint_ms),
-      "hoverMs": round2(worst.hover_ms),
-      "measureCalls": worst.counters.measure_calls,
-      "wordShapes": worst.counters.word_shapes,
-      "wordHits": worst.counters.word_hits,
-      "dirtiedNodes": worst.counters.dirtied,
-      "cacheGets": worst.counters.cache_gets,
-      "cacheHits": worst.counters.cache_hits,
-      "nodesPainted": worst.nodes_painted,
-      "backdropsPrepainted": worst.backdrops_prepainted,
-      "paintOps": paint_ops_json(&worst.counters),
-    }),
-  );
-  if let Some(r) = &w.raster_rates {
-    put("missedPresents", r.missed_presents.into());
-    put("fenceTimeoutsPerSec", round2(r.fence_timeouts_per_sec).into());
-    put("gpuPassesPerFrame", round2(r.passes_per_frame).into());
-    put("gpuPassIssueMsPerFrame", round2(r.pass_issue_ms_per_frame).into());
-    if let Some(exec) = r.pass_exec_ms_per_frame {
-      put("gpuPassExecMsPerFrame", round2(exec).into());
-    }
-    if let Some(exec) = r.frame_exec_ms_per_frame {
-      put("gpuFrameExecMsPerFrame", round2(exec).into());
-    }
-    put("rasterCmdMsPerSec", round2(r.cmd_ms_per_sec).into());
-  }
-  if !w.target_rates.is_empty() {
-    let targets: Vec<serde_json::Value> = w
-      .target_rates
-      .iter()
-      .map(|t| {
-        let mut obj = serde_json::json!({
-          "id": t.id,
-          "passesPerFrame": round2(t.passes_per_frame),
-          "gpuPassIssueMsPerFrame": round2(t.issue_ms_per_frame),
-          "verticesPerFrame": round2(t.vertices_per_frame),
-        });
-        flux::gui::inspect::insert_label(&mut obj, &t.label);
-        if let Some(exec) = t.exec_ms_per_frame {
-          obj
-            .as_object_mut()
-            .expect("target json is an object")
-            .insert("gpuPassExecMsPerFrame".into(), round2(exec).into());
-        }
-        obj
-      })
-      .collect();
-    put("targets", targets.into());
-  }
-  data.into()
-}
-
-/// The display-list ops one rebuild's paint walk recorded (see
-/// alloy::rendertree::counters), the per-frame counts that name a paint
-/// cost on a tiled GPU without a reload per hypothesis.
-fn paint_ops_json(c: &alloy::rendertree::counters::LayoutCounters) -> serde_json::Value {
-  serde_json::json!({
-    "draws": c.draws,
-    "textLayers": c.text_layers,
-    "clips": c.clips,
-    "roundedClips": c.rounded_clips,
-    "saveLayers": c.save_layers,
-    "blends": c.blends,
-    "gradients": c.gradients,
-  })
+fn stats_reply(id: u64, r: StatsQuery<'_>) -> String {
+  serde_json::json!({"type": "result", "id": id, "data": stats_data(r)}).to_string()
 }
 
 // Search results are for locating nodes, not dumping the app: enough for a

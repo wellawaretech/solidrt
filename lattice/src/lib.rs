@@ -26,6 +26,8 @@ mod runtime;
 mod settle;
 mod stats;
 #[cfg(any(feature = "go", feature = "test"))]
+mod stats_query;
+#[cfg(any(feature = "go", feature = "test"))]
 mod stepped;
 mod storage;
 #[cfg(feature = "test")]

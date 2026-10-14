@@ -137,6 +137,16 @@ pub fn store_state(
 /// snapshot captures and damage-driven presents keep working while the render
 /// event is gated; the demand gate inside makes an idle call free. No-op
 /// before `store_state` ran.
+/// The draw loop's stats latch and the frame history, for a reader on the
+/// JS thread (an app test's `stats()`); None before the draw plugin's
+/// state is stored.
+#[cfg_attr(not(feature = "test"), allow(dead_code))]
+pub(crate) fn stats_handles(
+  ctx: &QuickJsContext<'_>,
+) -> Option<(Arc<Mutex<stats::StatsSnapshot>>, Arc<Mutex<FrameHistory>>)> {
+  ctx.userdata::<RenderState>().map(|s| (s.0.stats_snapshot.clone(), s.0.history.clone()))
+}
+
 pub fn render_now(ctx: &QuickJsContext<'_>) {
   if let Some(state) = ctx.userdata::<RenderState>() {
     state.0.render(ctx);
@@ -320,6 +330,7 @@ impl RenderInner {
               total_ms: js_ms,
               raster: atx.raster_counters(),
               targets: atx.target_counters(),
+              residency: atx.spatial().residency_stats(),
               ..FrameRecord::default()
             });
           }
@@ -380,6 +391,7 @@ impl RenderInner {
           backdrops_prepainted: paint_stats.backdrops_prepainted,
           raster: atx.raster_counters(),
           targets: atx.target_counters(),
+          residency: atx.spatial().residency_stats(),
           captures: paint_stats.captures,
         };
         // A frame over its refresh period is jank a human feels; say so through

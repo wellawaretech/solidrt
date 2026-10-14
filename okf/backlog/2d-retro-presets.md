@@ -30,7 +30,7 @@ showcase) as much as function.
 
 The tile layer these build on ships (`createTileLayer` / `<TileLayer>`);
 only its streaming-worlds stage B2 is still open in
-okf/plans/2d-baked-layers.md, and nothing here needs it.
+okf/done/2d-baked-layers.md, and nothing here needs it.
 
 ## What is actually package work here
 

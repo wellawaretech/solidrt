@@ -74,6 +74,21 @@ declare module "sol:dev" {
    */
   export function registerDebug(name: string, fn: (args?: any) => unknown): () => void
   /**
+   * Register a named counter the dev server's stats query reads (the
+   * `app` block of `/stats` and the get_stats MCP tool): Godot's
+   * `Performance.add_custom_monitor`, Unity's ProfilerCounter. `read` is
+   * called synchronously at query time and returns the current number; a
+   * throw or a non-number reads as null under the name, so a broken reader
+   * stays visible. The same registry contract as registerDebug: a
+   * re-registered name replaces, registrations reset on hot reload, the
+   * returned unregister removes the name while this registration still
+   * holds it. The core's resource pools register theirs (poolHits,
+   * poolMisses, poolHeld); an app registers what it streams or simulates
+   * (entities alive, regions loading). Callable in every build, but only
+   * dev clients ever read it.
+   */
+  export function registerStat(name: string, read: () => number): () => void
+  /**
    * Report where the app is, for tooling: a string naming the current
    * location (a router's path; an app routing by hand may report its own),
    * called again on every change. The runtime stores the value and never
@@ -259,6 +274,9 @@ declare module "sol:test" {
    * name, a throwing command and a result JSON cannot carry.
    */
   export function debug(name: string, args: string | null): string
+  /** The performance statistics as `/stats` reports them, JSON text; the
+   * window in ms (null = default) or in frames (wins when given). */
+  export function stats(windowMs: number | null, windowFrames: number | null): string
   /**
    * The pixels a node's subtree paints: RGBA8, premultiplied, rows top to
    * bottom, at the display scale. Drawn at once from the tree as it is; no

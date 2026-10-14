@@ -97,7 +97,7 @@ export let InstancedLod: ParentComponent<InstancedLodProps> = props => {
     disposeInstances(mesh)
   })
   return (
-    <SceneContext value={{ scene: ctx.scene, parent: mesh, viewport: ctx.viewport, pointer: ctx.pointer }}>
+    <SceneContext value={{ scene: ctx.scene, parent: mesh, viewport: ctx.viewport, pointer: ctx.pointer, viewportSize: ctx.viewportSize }}>
       <InstancedMeshContext value={mesh}>{props.children}</InstancedMeshContext>
     </SceneContext>
   )

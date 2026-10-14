@@ -95,7 +95,7 @@ the three has that gate in the engine.
 To settle while shaping:
 
 - **One primitive for 2d and 3d.** Settled 2026-10-13, specified in
-  [spatial-residency-gate](../plans/spatial-residency-gate.md): one gate, two
+  [spatial-residency-gate](../done/spatial-residency-gate.md): one gate, two
   region forms, both for both packages. EXPLICIT regions (the node with
   bounds and a load distance above: a level section, a 2d room) and a
   GRID region set, the form an unbounded or procedural world needs

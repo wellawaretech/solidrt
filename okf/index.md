@@ -48,10 +48,6 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
-- **[Baked layers and tilemaps for @solidrt/2d](plans/2d-baked-layers.md)** [2026-08-19]
-  Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
-  drawn as ONE quad, with incremental re-bake - the primitive-count answer for
-  tiled GPUs
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -105,12 +101,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
-- **[A residency gate in the spatial core, one for 2d chunks and 3d regions](plans/spatial-residency-gate.md)** [2026-10-14]
-  Culling and LOD gate drawing, not memory; the residency decision (which
-  regions of a world should exist right now, per viewer, with hysteresis and
-  pacing) is the same primitive for a 2d tile world's chunks and a 3d open
-  world's regions, so it is built once in the spatial core and both packages
-  are handlers over it
 - **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
   Client-initiated streaming - open(url) plays a WebM served over HTTP on the
   Android plane with buffering, seek by Range and a cancel-safe close, built
@@ -157,6 +147,20 @@ Shaped, not started.
   though the core machinery - arena bones, the TextureSlot palette sink, the
   coming native clip evaluator - already exists or is planned with zero
   2d-specific core work.
+- **[Record compaction for the live sprite layer, a view mask on the ordered gather](backlog/2d-sprite-record-compaction.md)** [2026-10-14]
+  A sprite layer draws every record whether or not any view sees it (an
+  off-screen record is one degenerate quad in the vertex stage), which stops
+  being free at hundreds of thousands of records; the fix is a mask on the
+  core's ordered gather so instanceCount shrinks to the visible prefix,
+  re-evaluated whenever the camera or any pose moved, switched on past a
+  measured record count
+- **[The tile layer renders through views, so a minimap minifies the bake correctly](backlog/2d-tile-views.md)** [2026-10-14]
+  A tile layer composites its chunk textures as d-texture leaves, which
+  Impeller samples at level 0 only, so a second composite well below the bake
+  density (a minimap at a tenth of the main view's zoom) aliases; the sprite
+  layer and the 3d scene already render through views (one draw target per
+  camera with its own oversample), and the tile layer should too, sampling
+  mip-chained chunk targets in its own pipeline
 - **[Wrap-around worlds in 2d - recipes exist but live nowhere, and a wrapping tile world has no seam answer](backlog/2d-wrap-around.md)** [2026-08-31]
   A toroidal world (Asteroids screen wrap, an endlessly repeating tile map) is
   expressible today only by app-side recipes nothing documents - position
@@ -908,6 +912,10 @@ Finished, kept for the reasoning.
   createAtlas only decodes an already-packed sheet, so a second sheet costs a
   second full-size render target and runtime-supplied images have no way in at
   all.
+- **[Baked layers and tilemaps for @solidrt/2d](done/2d-baked-layers.md)** [2026-08-19]
+  Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
+  drawn as ONE quad, with incremental re-bake - the primitive-count answer for
+  tiled GPUs
 - **[A 2d camera controller - fit, clamp, zoom-at-cursor, pinch, glide](done/2d-camera-controller.md)** [2026-09-02]
   Every pannable/zoomable app re-derived the same hundred lines of camera math
   (fit-to-world min zoom, pan clamping, wheel zoom anchored under the cursor
@@ -2426,6 +2434,12 @@ Finished, kept for the reasoning.
   TRS in core (rendertree transition math reused, quaternion tracks the one
   new piece), making JS write targets once; the linchpin of
   2d-spatial-citizenship and the smaller sibling of animation-core.
+- **[A residency gate in the spatial core, one for 2d chunks and 3d regions](done/spatial-residency-gate.md)** [2026-10-14]
+  Culling and LOD gate drawing, not memory; the residency decision (which
+  regions of a world should exist right now, per viewer, with hysteresis and
+  pacing) is the same primitive for a 2d tile world's chunks and a 3d open
+  world's regions, so it is built once in the spatial core and both packages
+  are handlers over it
 - **[Route spatial transition settles to package-level handles](done/spatial-settled-event-routing.md)** [2026-08-24]
   The "spatialTransitionEnd" engine event carries the raw core NodeId, so a
   2d/3d app wanting an "arrived" callback per sprite or mesh must keep its own

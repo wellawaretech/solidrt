@@ -151,3 +151,44 @@ gains the region fields and `residency_pass` in `flush` after
 the new surface, `/stats` and `get_gpu_resources` grouping, the Culling
 and Level of detail sections of `packages/3d/AGENTS.md` gaining a
 Residency sibling, and the two consumer items.
+
+## Findings
+
+Landed 2026-10-14 in four steps (the gate, the pool, the tile layer as
+first handler, then memory legible and bounded).
+
+- **Limits are weighted and urgency-ordered, not a cell cap.** The first
+  shape for `maxTexels` was a per-grid cell count; against Unreal's
+  streaming pool (one budget, priority eviction) it became a per-grid
+  `weight` (the handler's cost of one cell, any unit) under the grid's
+  own `limit` and a scene-wide `setResidencyLimit`, with eviction by
+  URGENCY, the distance to the nearest wanting eye in the grid's own
+  `leave`s, so grids in different units share one scene limit. The tile
+  layer's `maxTexels` is the grid's limit with the chunk's texels as
+  weight, re-pushed on `setOversample`.
+- **Victims are a minimal set after a feasibility check.** The first
+  eviction scan took every less-urgent resident in order until the
+  candidate fit; a test caught it evicting a light cell uselessly before
+  a heavy one and re-admitting it next pass. Now nothing is evicted
+  unless the evictable weight covers the need, and once the least-urgent
+  set is picked the unnecessary members are dropped most-urgent-first.
+  An evicted cell goes back to pending and may re-enter when the slack
+  fits it; it then stays, since it fits without an eviction.
+- **Stalled is a third state in effect.** A cell a limit holds back is
+  wanted and pending but demands no frame and no pass (`pending >
+  stalled` is the gate's demand), or a still camera at a full budget
+  would spin frames forever. Recounted by every pass.
+- **A limit counts cells, not content**: a resident chunk without cells
+  holds no texture but weighs a chunk, so a sparse world sits below its
+  budget. Documented, not fixed; a per-cell weight is additive later.
+- **Memory legible**: `/gpu` `groups` by exact label (the tile layer
+  labels every chunk resource with the layer's label), `/stats` reads the
+  gate live (`regionsWanted/Resident/Pending/Stalled`, cumulative
+  `regionEnters/Leaves` with the window's pair, `residentWeight`), and
+  the pools reach `/stats` through `sol:dev` `registerStat`, the
+  user-counter registry Godot (`add_custom_monitor`) and Unity
+  (ProfilerCounter) have, under `app`. The pool module stays pure (its
+  test runs on bare flux); core's gpu module registers its counters.
+- **Not built**: the sprite layer's record compaction (part 7 of the 2d
+  note) - its "one query per camera move" premise fails for moving
+  sprites; shaped in okf/backlog/2d-sprite-record-compaction.md.

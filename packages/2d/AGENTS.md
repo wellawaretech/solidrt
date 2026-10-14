@@ -798,9 +798,10 @@ exist.
 The layer is a HANDLER over the core's residency gate (the Residency
 section of @solidrt/3d's AGENTS.md; flux:spatial `createGrid`): its
 chunk grid is a grid of regions (`cell: [chunkW, chunkH, 0]`), a VIEWER
-(`layer.addViewer()`, `setCamera(camera, width, height)` on every camera
-or viewport change; `<TileLayer>` adds one for its camera) pushes an
-orthographic view of its viewport, and the gate's `spatialRegionEnter` /
+(`layer.addViewer()`, `setCamera(camera, width, height, deviceScale)` on
+every camera or viewport change; `<TileLayer>` adds one for its camera)
+pushes an orthographic view of its viewport, flushed to the core at the
+layer's own flush (the frame's publish pass) like a sprite layer's sync, and the gate's `spatialRegionEnter` /
 `spatialRegionLeave` events drive the GPU side. A chunk is wanted while
 within `enter` of any viewer's view (default half a chunk) and kept until
 beyond `leave` (default one and a half chunks; both in world pixels, the
@@ -809,10 +810,10 @@ is strict, so a camera aligned to the grid never loads the ring beyond
 its edge). On ENTER a chunk with cells takes a records buffer and a
 target from the resource pool (`createResourcePool` in
 @solidrt/core/gpu: the layer's own, 16 chunks deep, or `opts.pool`
-shared with other layers and handlers; its classes are `"texture:<pipeline>"`
-and `"buffer:<bytes>"`, which a shared pool's `free` destroys by prefix),
-uploads its records and bakes in the same frame's publish pass, so a chunk
-shows complete or not at all. On LEAVE the target and buffers go back to
+shared with other layers and handlers; the layer registers the
+destroyers of its two kinds on whichever pool it uses, so a shared pool
+needs nothing from its maker), uploads its records and bakes in the same
+frame's publish pass, so a chunk shows complete or not at all. On LEAVE the target and buffers go back to
 the pool and the records stay on the CPU (~5 KB a chunk, ~180x cheaper
 than its texture; `retain: "records"`, the default), or go too under
 `retain: "none"`, where `opts.fill(chunk)` regenerates the chunk's cells
@@ -830,6 +831,29 @@ scene-wide `setResidencyBudget`); the layer never does, and a layer with
 no viewer bakes nothing. Unity and Godot cull chunks but never evict
 them; the bake moves memory from bytes per cell to texels, which is why
 residency is the default here, not an option.
+
+Memory is legible, then bounded. Every chunk target and buffer carries
+the LAYER's label, so `/gpu?label=<layer>` lists the layer's resources
+and the reply's `groups.<layer>` is its footprint in one number
+(textures, buffers, bytes: what is allocated under the label, pooled
+idle targets included); `/stats` reports the gate (`regionsWanted`,
+`regionsResident`, `regionsPending`, `regionsStalled`, cumulative
+`regionEnters`/`regionLeaves` and the window's pair, `residentWeight`)
+and the pools' traffic (`app.poolHits`, `app.poolMisses`,
+`app.poolHeld`, every pool summed). `maxTexels` is the layer's texture
+budget: the grid's cells weigh a chunk's texels at the current
+oversample (re-weighed on `setOversample`) and the budget is the grid's
+limit, so past it the gate evicts the chunk least needed - furthest from
+any viewer in `leave`s - for one more needed, the eviction's leave
+before the enter so the pool hands the target straight over, and a chunk
+nothing can make room for waits, wanted and stalled, until a view moves
+(Unreal's streaming pool, one grid at a time; `setResidencyLimit` is the
+scene-wide form over every grid). The budget bounds the resident COUNT,
+never the quality: a world that fills it shows holes at its far edge
+rather than blur everywhere, and a resident chunk with no cells holds no
+texture but still weighs a chunk, so a sparse world sits below its
+budget. It must hold at least one chunk at the oversample in force
+(throws otherwise, at creation and at `setOversample`).
 
 ### Cells: frames, symmetry, overhang
 
@@ -879,7 +903,20 @@ view wider than the world shows it repeated and the seam is two leaves
 of one texture (the wrapping tile world of okf/backlog/2d-wrap-around.md).
 A second composite of the same world (a minimap) is `<TileLayer
 layer={handle}>` under a camera of its own: it adds a viewer, and the
-world is resident where any viewer wants it. Tiles are data, not
+world is resident where any viewer wants it. One layer has ONE bake
+density (`oversample`, texels per world pixel): every viewer reports its
+device pixels per world pixel with its camera (`setCamera`'s
+`deviceScale` times the zoom, what the component measures off its
+viewport) and the layer bakes at the largest wish, rounded up with the
+shrink hysteresis and bounded by `maxOversample`, `maxPixels` and
+`maxTexels` (a chunk must fit the budget, so the pick is clamped, never
+thrown; only a pin past the budget throws). `oversample` pins it, and
+`setOversample(null)` hands it back to the viewers. A composite below the
+density minifies the bake at its leaves at level 0 (Impeller samples no
+mip chain), which aliases past about 2x under - a minimap at a tenth of
+the main zoom shows it at its edges; the answer is the tile layer
+rendering through views like the sprite layer,
+okf/backlog/2d-tile-views.md. Tiles are data, not
 children: there is no `<Tile>` component on purpose - write cells
 through `ref` with `setTile`.
 
@@ -918,9 +955,9 @@ but it does re-render every resident chunk: drive it from slow state,
 not per frame. `setParams` (a material prelude's uniforms) and a cell's
 `style` (the material's per-cell record, `setTile`/`setTiles` `{ style
 }`) are the same two levels for a custom look, Materials above. Not
-built yet (okf/plans/2d-baked-layers.md, parts 6 and 7): the per-layer
-memory readout and `maxTexels` budget, and record compaction for the
-live sprite layer.
+built: record compaction for the live sprite layer (a gather restricted
+to the records the views see; okf/backlog/2d-sprite-record-compaction.md
+holds the design and the condition it waits on).
 
 ## Components
 
@@ -933,7 +970,7 @@ live sprite layer.
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
 | `Camera2d` | createCamera2d's options (world?, min/maxZoom?, pivot?, follow?, offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?, zoom?, rotation?), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view; its `size()` the viewport) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
 | `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width?, height? (view pixels, live - both, or neither = FILL exactly as SpriteLayer's own view: the leaf fills its sized parent and the view sizes to that box), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample?, maxPixels? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture, leaf) (as SpriteLayer's; else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
-| `TileLayer` | tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed) or layer (an existing createTileLayer handle to show again under a camera of its own, a minimap: the component adds a viewer and the leaves, the layer's lifetime, cells and hooks stay its maker's, so the creation props and onEnter/onLeave throw), frames? (the tileset `setTiles` indices name), chunkClearColor?, material? (the bake's material, `unlit()` default; mount-fixed), params? (layer.setParams as a prop; live, each change re-bakes), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), bounds?, wrap?, overhang?, enter?, leave?, retain?, fill?, pool? (TileLayerOptions, creation-fixed), oversample?, maxOversample?, maxPixels?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY; the composite transform and the viewer), width?, height? (the viewport's layout size; neither = FILL the parent's box), onEnter?, onLeave? (the layer's residency hooks), label?, ref?(layer) |
+| `TileLayer` | tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed) or layer (an existing createTileLayer handle to show again under a camera of its own, a minimap: the component adds a viewer and the leaves, the layer's lifetime, cells and hooks stay its maker's, so the creation props and onEnter/onLeave throw), frames? (the tileset `setTiles` indices name), chunkClearColor?, material? (the bake's material, `unlit()` default; mount-fixed), params? (layer.setParams as a prop; live, each change re-bakes), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), bounds?, wrap?, overhang?, enter?, leave?, retain?, fill?, pool?, maxTexels?, oversample? (pin the bake density), maxOversample?, maxPixels? (TileLayerOptions, creation-fixed; with `layer` they are its maker's), camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY; the composite transform and the viewer), width?, height? (the viewport's layout size; neither = FILL the parent's box), onEnter?, onLeave? (the layer's residency hooks), label?, ref?(layer) |
 
 ### SpriteLayer and useSpriteLayer
 

@@ -42,9 +42,12 @@ Prefer the cheapest reader that proves the behavior, and stop there:
 2. The outline. `locator.outline()` is the subtree one node per line
    (kind, label, text, box; `{ props: true }` adds props), with no ids:
    pin a whole layout against a string, or print it while writing a test.
-3. The GPU inventory. `app.gpu({ label })` says what draws and with what
-   (counts, uniforms, formats). "Does the shadow pass run" is a count, not
-   a lighting experiment.
+3. The GPU inventory and the statistics. `app.gpu({ label })` says what
+   draws and with what (counts, uniforms, formats); `app.stats()` is the
+   `/stats` payload (the residency gate's regions, the pools' hits and
+   misses, the app's own `registerStat` counters, the frame window).
+   "Does the shadow pass run" is a count, not a lighting experiment;
+   "did the chunk come from the pool" is a hit count, not a timing.
 4. Pixels. `locator.pixel(x, y)` and `locator.pixels()`, drawn now with no
    time passing. The last resort, for what only the picture shows (a
    shader, a gradient, a blend); they depend on the GPU.

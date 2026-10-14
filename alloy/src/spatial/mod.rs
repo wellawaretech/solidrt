@@ -43,7 +43,9 @@ pub(crate) use pick::{ray_shape, BVH_MIN_TRIANGLES};
 pub use players::{
   ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, ClipId, PlayerId, PlayerUpdate, PlayersTick, RootMotion,
 };
-pub use residency::{GridId, GridSpec, RegionEvent, RegionMargins, RegionRef, DEFAULT_RESIDENCY_BUDGET, VIEW_KEY_BASE};
+pub use residency::{
+  GridId, GridSpec, RegionEvent, RegionMargins, RegionRef, ResidencyStats, DEFAULT_RESIDENCY_BUDGET, VIEW_KEY_BASE,
+};
 // The pure sampler, for the differential tests.
 #[cfg(test)]
 pub(crate) use players::sample as sample_channel;
@@ -455,18 +457,31 @@ fn projected_size(view: &LodView, center: [f32; 3], radius: f32) -> f32 {
 /// `proj[5]` (positive whatever clip flip the projection bakes in), and
 /// an orthographic projection is told by its constant w (`proj[15]`).
 pub(crate) fn derive_lod_view(view: &Mat4, proj: &Mat4, bias: f32) -> LodView {
+  // The eye is the camera's world position, the inverse view's
+  // translation, and forward its -z axis there: exact for any invertible
+  // view, a 2d camera whose view matrix carries its zoom as a scale
+  // included (the transpose shortcut for a rigid view put that eye a
+  // zoom's worth short of the camera, 10^6 px off for a world 10^7 px
+  // out, and a grid enumerated the gap). A singular view keeps the rigid
+  // reading rather than no eye at all.
   let v = view;
-  LodView {
-    eye: [
-      -(v[0] * v[12] + v[1] * v[13] + v[2] * v[14]),
-      -(v[4] * v[12] + v[5] * v[13] + v[6] * v[14]),
-      -(v[8] * v[12] + v[9] * v[13] + v[10] * v[14]),
-    ],
-    forward: [-v[2], -v[6], -v[10]],
-    focal: proj[5].abs(),
-    ortho: proj[15] != 0.0,
-    bias,
-  }
+  let (eye, forward) = match math::invert(view) {
+    Some(inv) => {
+      let f = [-inv[8], -inv[9], -inv[10]];
+      let len = (f[0] * f[0] + f[1] * f[1] + f[2] * f[2]).sqrt();
+      let forward = if len > 0.0 { [f[0] / len, f[1] / len, f[2] / len] } else { f };
+      ([inv[12], inv[13], inv[14]], forward)
+    }
+    None => (
+      [
+        -(v[0] * v[12] + v[1] * v[13] + v[2] * v[14]),
+        -(v[4] * v[12] + v[5] * v[13] + v[6] * v[14]),
+        -(v[8] * v[12] + v[9] * v[13] + v[10] * v[14]),
+      ],
+      [-v[2], -v[6], -v[10]],
+    ),
+  };
+  LodView { eye, forward, focal: proj[5].abs(), ortho: proj[15] != 0.0, bias }
 }
 
 /// The level a target draws for a sink without fade support: the band's
@@ -1469,9 +1484,29 @@ impl Spatial {
     self.residency.set_budget(budget);
   }
 
-  /// The residency changes since the last take, leaves of a pass before
-  /// its enters (a handler gives back before it takes). Taking them
-  /// starts the next budget window.
+  /// The scene-wide cap on resident weight over every grid (None = none;
+  /// see `GridSpec::weight`): past it the most urgent pending cell
+  /// displaces the least urgent resident one, urgency being the distance
+  /// to the nearest wanting eye in the grid's own `leave`s.
+  pub fn set_residency_limit(&mut self, limit: Option<f64>) -> Result<(), String> {
+    self.residency.set_limit(limit)
+  }
+
+  /// A grid's weight per resident cell (the handler's cost of one cell in
+  /// its own unit), re-weighed against the limits at the next pass.
+  pub fn set_grid_weight(&mut self, id: GridId, weight: f64) -> Result<(), String> {
+    self.residency.set_grid_weight(id, weight)
+  }
+
+  /// The gate's figures for the stats query (`ResidencyStats`).
+  pub fn residency_stats(&self) -> ResidencyStats {
+    self.residency.stats(&self.nodes, &self.region_nodes)
+  }
+
+  /// The residency changes since the last take, the leaves of a pass
+  /// before its enters, and a limit's eviction (a leave of a cell still
+  /// wanted) before the enter it made room for, so a handler gives back
+  /// before it takes. Taking them starts the next budget window.
   pub fn take_region_events(&mut self) -> Vec<RegionEvent> {
     self.residency.take_events()
   }

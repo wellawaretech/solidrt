@@ -1601,6 +1601,19 @@ fn a_view_derives_its_lod_view_from_the_matrices() {
   assert!(close(v.eye, [4.0, -1.0, 10.0]), "{:?}", v.eye);
   assert!(close(v.forward, [1.0, 0.0, 0.0]), "{:?}", v.forward);
   assert!(v.ortho);
+  // A view carrying a zoom as a scale (a 2d camera's): the eye is still
+  // the camera's position and forward a unit vector. With the rigid
+  // transpose reading the eye came out a zoom's worth short.
+  let zoom = 0.5f32;
+  // S(zoom, zoom, 1) after the rigid view: rows 0 and 1 scale.
+  let mut scaled = view_at([200.0, 300.0, 0.0], [0.0, 0.0, -1.0]);
+  for col in 0..4 {
+    scaled[col * 4] *= zoom;
+    scaled[col * 4 + 1] *= zoom;
+  }
+  let v = derive_lod_view(&scaled, &proj(1.0, true), 1.0);
+  assert!(close(v.eye, [200.0, 300.0, 0.0]), "{:?}", v.eye);
+  assert!(close(v.forward, [0.0, 0.0, -1.0]), "{:?}", v.forward);
 }
 
 #[test]

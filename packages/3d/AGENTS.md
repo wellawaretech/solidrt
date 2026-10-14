@@ -299,7 +299,7 @@ RESIDENCY is the core's third gate beside culling and LOD, and the one
 that gates MEMORY instead of drawing: which regions of a world should
 EXIST right now, given every viewer's view volume, told only when that
 changes (`alloy/src/spatial/residency.rs`, the contract in
-okf/plans/spatial-residency-gate.md). Culling and LOD leave everything
+okf/done/spatial-residency-gate.md). Culling and LOD leave everything
 resident; a world larger than memory - an open map, a long track, a
 city - streams by this gate instead of by camera distances recomputed
 in `onFrame`. The 3d package has NO region API of its own yet
@@ -341,11 +341,29 @@ handler still loading when the leave arrives cancels its own work.
 A freed region's buffers and targets wait in a resource pool for the
 next enter instead of being destroyed and created (`createResourcePool`
 in @solidrt/core/gpu: one JS free list over GPU ids, classed by a
-consumer-built string, LRU past its cap; the 2d tile layer's chunks go
-through it, a 3d region handler's geometry will). Spreading one
-region's many GPU creates over frames and the HLOD question (a far
-proxy as an LOD level that loads, or its own gate) are the backlog
-item's. A world that declares no region loads and draws exactly as now.
+consumer-built `kind:detail` string with the kind's destroyer registered
+by the consumer on the pool it uses, LRU past its cap; the 2d tile
+layer's chunks go through it, a 3d region handler's geometry will). Memory is BOUNDED by
+limits over a grid's `weight`, the handler's cost of one resident cell
+in a unit of its choosing (`createGrid({ weight, limit? })`,
+`setGridWeight` when it changes): the grid's own `limit` and the
+scene-wide `setResidencyLimit(total)`, Unreal's streaming pool size.
+Past a limit the most urgent pending cell displaces the least urgent
+resident ones, urgency being the distance to the nearest wanting eye in
+the grid's own `leave`s (dimensionless, so a 2d layer in pixels and a
+3d grid in metres share one scene limit), the eviction's leave before
+the enter it made room for; a cell nothing can make room for is wanted
+and STALLED, no event and no frame demanded until a view moves. A limit
+counts resident cells, not what a handler put in them. Explicit regions
+weigh nothing. `/stats` reports the gate (`regionsWanted`,
+`regionsResident`, `regionsPending`, `regionsStalled`, cumulative
+`regionEnters`/`regionLeaves` and the window's pair, `residentWeight`)
+and the pools (`app.poolHits`/`poolMisses`/`poolHeld`); `/gpu` groups
+a handler's resources by label (`groups`), so a region's footprint is a
+number before and after eviction. Spreading one region's many GPU
+creates over frames and the HLOD question (a far proxy as an LOD level
+that loads, or its own gate) are the backlog item's. A world that
+declares no region loads and draws exactly as now.
 
 ### Shadows
 

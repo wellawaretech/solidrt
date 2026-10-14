@@ -59,7 +59,7 @@ beyond the camera writes; the sprite-layer example gains the inset.
 Post effects on views, per-view tint (layer tint already fans out;
 follow the 3d view-owned-params rule if a consumer wants a per-view
 override), camera-driven chunk residency
-([2d-baked-layers](../plans/2d-baked-layers.md)).
+([2d-baked-layers](../done/2d-baked-layers.md)).
 
 ## Done
 

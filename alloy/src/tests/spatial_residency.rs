@@ -108,6 +108,8 @@ fn plane_grid(enter: f32, leave: f32) -> GridSpec {
     margins: RegionMargins { enter, leave },
     bounds: None,
     wrap: None,
+    weight: 1.0,
+    limit: None,
     label: None,
   }
 }
@@ -295,6 +297,8 @@ fn grid_cells_beyond_the_depth_reach_stay_out_under_a_perspective_view() {
       margins: RegionMargins { enter: 25.0, leave: 35.0 },
       bounds: None,
       wrap: None,
+      weight: 1.0,
+      limit: None,
       label: None,
     })
     .expect("grid");
@@ -454,4 +458,116 @@ fn view_keys_count_up_from_the_reserved_base() {
   let r = region_at(&mut s, 0.0, 0.5, 0.5);
   s.set_view(a, cube_at(0.0));
   assert_eq!(step(&mut s), vec![Enter(Node(r))]);
+}
+
+/// A grid of 10 x 10 cells with its own limit in cells (weight 1).
+fn limited_grid(limit: f64) -> GridSpec {
+  GridSpec { limit: Some(limit), ..plane_grid(0.0, 10.0) }
+}
+
+#[test]
+fn a_grid_limit_evicts_the_least_urgent_resident_for_a_more_urgent_candidate() {
+  let mut s = Spatial::new();
+  let g = s.create_grid(limited_grid(2.0)).expect("grid");
+  let key = s.alloc_view_key();
+  // A viewport over x 10..35 (cells 1, 2 and half of 3), the eye at
+  // x = 22.5: cells 2 and 1 enter, the furthest (cell 3) stalls.
+  s.set_view(key, camera_2d(10.0, 0.0, 25.0, 10.0));
+  let events = step(&mut s);
+  assert_eq!(cells(&events, g, true), vec![[1, 0, 0], [2, 0, 0]]);
+  assert!(!s.residency_demand(), "a stalled cell demands no frame");
+  let stats = s.residency_stats();
+  assert_eq!((stats.resident, stats.pending, stats.stalled, stats.wanted), (2, 1, 1, 3));
+  assert_eq!(stats.weight, 2.0);
+  assert!(step(&mut s).is_empty(), "nothing changes for a still view");
+  // The eye moves to x = 5 (cell 0's center): cell 0 is now the most
+  // urgent and cell 2, within leave, the least; the limit evicts cell 2
+  // before cell 0 enters, and cell -1 (a leave away) stalls behind cell 1.
+  s.set_view(key, camera_2d(-7.5, 0.0, 25.0, 10.0));
+  let events = step(&mut s);
+  assert_eq!(events, vec![Leave(Cell { grid: g, cell: [2, 0, 0] }), Enter(Cell { grid: g, cell: [0, 0, 0] })]);
+  let stats = s.residency_stats();
+  assert_eq!((stats.enters, stats.leaves, stats.stalled), (3, 1, 1));
+}
+
+#[test]
+fn the_scene_limit_weighs_every_grid_with_a_minimal_eviction_and_a_weight_change_re_weighs() {
+  let mut s = Spatial::new();
+  s.set_residency_limit(Some(30.0)).expect("limit");
+  // Two grids over the same plane: a cheap one, and one at ten per cell
+  // whose band is twice as wide, so its cells are twice as urgent at the
+  // same distance (no ties below).
+  let cheap = s.create_grid(plane_grid(0.0, 10.0)).expect("grid");
+  let dear = s.create_grid(GridSpec { weight: 10.0, ..plane_grid(0.0, 20.0) }).expect("grid");
+  let key = s.alloc_view_key();
+  // A viewport over cells 0..1 x 0: four cells wanted, weighing 22 in all.
+  s.set_view(key, camera_2d(0.0, 0.0, 20.0, 10.0));
+  let events = step(&mut s);
+  assert_eq!(cells(&events, cheap, true).len() + cells(&events, dear, true).len(), 4);
+  assert_eq!(s.residency_stats().weight, 22.0);
+  // The dear grid's cells now weigh 20 each: 42 resident over a cap of 30.
+  // The next pass re-weighs: the resident set only changes when a more
+  // urgent candidate arrives, so nothing leaves yet.
+  s.set_grid_weight(dear, 20.0).expect("weight");
+  assert!(step(&mut s).is_empty());
+  // Pan one cell right (eye at x = 20): cell 2 of each grid wants in. The
+  // dear one needs 32 freed and the cells less urgent than it weigh 22:
+  // it stalls, nothing evicted for it. The cheap one needs 13: the least
+  // urgent residents are cheap 0 (1) then dear 0 (20), and with both
+  // picked cheap 0 turns out unnecessary, so dear 0 alone leaves.
+  s.set_view(key, camera_2d(10.0, 0.0, 20.0, 10.0));
+  let events = step(&mut s);
+  assert!(cells(&events, cheap, false).is_empty());
+  assert_eq!(cells(&events, dear, false), vec![[0, 0, 0]]);
+  assert_eq!(cells(&events, cheap, true), vec![[2, 0, 0]]);
+  assert!(cells(&events, dear, true).is_empty());
+  assert_eq!(s.residency_stats().weight, 23.0);
+  // The evicted cell is pending again (within leave of the view); the
+  // next pass finds it and the dear cell 2 both unplaceable: stalled,
+  // no frame demanded.
+  assert!(s.residency_demand());
+  assert!(step(&mut s).is_empty());
+  assert_eq!(s.residency_stats().stalled, 2);
+  assert!(!s.residency_demand());
+}
+
+#[test]
+fn limits_validate() {
+  let mut s = Spatial::new();
+  assert!(s.create_grid(GridSpec { weight: -1.0, ..plane_grid(0.0, 0.0) }).is_err());
+  assert!(s.create_grid(GridSpec { limit: Some(0.0), ..plane_grid(0.0, 0.0) }).is_err());
+  assert!(s.set_residency_limit(Some(f64::NAN)).is_err());
+  let g = s.create_grid(plane_grid(0.0, 0.0)).expect("grid");
+  assert!(s.set_grid_weight(g, f64::INFINITY).is_err());
+  assert!(s.set_grid_weight(g + 1, 1.0).is_err());
+}
+
+#[test]
+fn a_zoomed_orthographic_viewer_far_from_the_origin_enumerates_only_the_cells_under_it() {
+  // A 2d camera's view matrix carries its zoom as a scale: the eye must
+  // still be the camera's position, or the enumeration box spans from a
+  // zoom's worth short of it (10^5 units here) to the view.
+  let mut s = Spatial::new();
+  s.set_residency_budget(u32::MAX);
+  let g = s.create_grid(plane_grid(0.0, 0.0)).expect("grid");
+  let key = s.alloc_view_key();
+  // Zoom 0.5 over a 20 x 20 viewport at (10^6, 0): 40 x 40 world units,
+  // cells 100000..100003 x 0..3, sixteen of them.
+  let zoom = 0.5f32;
+  let mut view = [0.0f32; 16];
+  view[0] = zoom;
+  view[5] = zoom;
+  view[10] = 1.0;
+  view[12] = -zoom * 1_000_000.0 - 10.0;
+  view[13] = -10.0;
+  view[15] = 1.0;
+  let mut proj = [0.0f32; 16];
+  proj[0] = 2.0 / 20.0;
+  proj[5] = -2.0 / 20.0;
+  proj[10] = -1.0;
+  proj[15] = 1.0;
+  s.set_view(key, Some((view, proj)));
+  let entered = cells(&step(&mut s), g, true);
+  assert_eq!(entered.len(), 16, "{entered:?}");
+  assert!(entered.iter().all(|c| (100_000..100_004).contains(&c[0]) && (0..4).contains(&c[1])), "{entered:?}");
 }

@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, microphone as installMicrophone, painted as paintFrame, setFrameRate, settle, time, windowReady } from "sol:test"
+import { camera as installCamera, capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, microphone as installMicrophone, painted as paintFrame, setFrameRate, settle, stats as queryStats, time, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -255,6 +255,18 @@ export interface TestApp {
    * draw, and with what" is read here, not off pixels.
    */
   gpu(options?: { label?: string; draw?: number }): Record<string, unknown>
+  /**
+   * The performance statistics, as the control API's `/stats` reports
+   * them (agents/debugging.md): the latest frame's figures, the `window`
+   * summary over the frames the test ran (`windowMs`, or `windowFrames`
+   * for the last n frames that changed the picture, the window to use
+   * under the test's stepped clock), the live counters (raster, the
+   * residency gate's regions*, and `app`, what the app registered with
+   * `sol:dev` registerStat, the resource pools' poolHits/poolMisses among
+   * them). What a test asserts about cost and streaming is read here,
+   * not inferred from pixels.
+   */
+  stats(options?: { windowMs?: number; windowFrames?: number }): Record<string, unknown>
   /** The node the query names, anywhere in the app. */
   find(query: Query): Locator
   /** Every node the query matches, as the tree is now. */
@@ -567,6 +579,7 @@ let app: TestApp = {
     return JSON.parse(result)
   },
   gpu: (options = {}) => JSON.parse(gui.gpu(options.label ?? null, options.draw ?? null)),
+  stats: (options = {}) => JSON.parse(queryStats(options.windowMs ?? null, options.windowFrames ?? null)),
   find: query => findIn(() => null, query),
   findAll: query => search(null, query).map(found => fixed(found.id, `${describeQuery(query)} (${describeNode(found)})`)),
   ref() {

@@ -29,7 +29,7 @@ architecture:
    where tier 1's limit - two setProperty FFI calls per moved sprite per
    frame - is the bottleneck (QuickJS measured ~8us per call; native
    transitions cover retarget-style motion but not per-frame physics).
-3. **Baked layers** (staged, okf/plans/2d-baked-layers.md): static bulk as
+3. **Baked layers** (staged, okf/done/2d-baked-layers.md): static bulk as
    ONE quad. On tiled GPUs the budget is primitive count, not pixels or draw
    calls (@solidrt/core agents/performance.md, "Where GPU work stops being
    free"), so a tilemap is not ten thousand quads - it is a texture.
@@ -106,7 +106,7 @@ Closed 2026-09-29: items 1, 2, 3 and 6 landed; baked layers and atlas limits
    sprite population wants behind a demo kit. Shipped 2026-08-31
    (`packages/2d/src/animation.ts`, recorded in
    okf/backlog/2d-retro-presets.md).
-4. **Baked layers** (okf/plans/2d-baked-layers.md), unchanged in substance
+4. **Baked layers** (okf/done/2d-baked-layers.md), unchanged in substance
    and still the big one: primitive count is the budget on tiled GPUs. Now
    also carries the spatial index, since culling and picking want the same
    grid the chunking already implies.

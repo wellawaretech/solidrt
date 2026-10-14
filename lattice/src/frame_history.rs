@@ -72,6 +72,9 @@ pub struct FrameRecord {
   /// them (a shared snapshot, one Arc clone per record); two records give
   /// each target's passes, time and vertices over the frames between them.
   pub targets: Arc<Vec<TargetCounters>>,
+  /// The residency gate's figures as the frame was recorded; its enters
+  /// and leaves are cumulative, so two records give the window's.
+  pub residency: alloy::spatial::ResidencyStats,
   /// Snapshot captures serviced in the frame's paint (a blocking readback
   /// each): a frame with any is tooling time, kept out of the window's
   /// timing figures and counted in `capture_frames` instead.
@@ -104,6 +107,10 @@ pub struct WindowSummary {
   pub text_layers: u32,
   /// The widest paint walk in the window.
   pub nodes_painted_max: u32,
+  /// Region enters and leaves the residency gate delivered between the
+  /// window's first and last record (0 with one record).
+  pub region_enters: u64,
+  pub region_leaves: u64,
   /// Rates over the window's span, derived from the raster samples of its
   /// first and last record; per-frame figures divide by the frames presented
   /// between them (the frame index), not by rebuilds. None with fewer than
@@ -278,6 +285,8 @@ impl FrameHistory {
       backdrops_prepainted: frames.iter().map(|r| r.backdrops_prepainted).sum(),
       text_layers: frames.iter().map(|r| r.counters.text_layers).sum(),
       nodes_painted_max: frames.iter().map(|r| r.nodes_painted).max().unwrap_or(0),
+      region_enters: frames.last().map_or(0, |l| l.residency.enters.saturating_sub(frames[0].residency.enters)),
+      region_leaves: frames.last().map_or(0, |l| l.residency.leaves.saturating_sub(frames[0].residency.leaves)),
       raster_rates,
       target_rates,
     })

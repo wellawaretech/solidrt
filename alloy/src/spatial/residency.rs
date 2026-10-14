@@ -9,6 +9,15 @@
 // ANY viewer wants it. Changes are reported, never polled: leaves at
 // once, enters paced nearest-eye-first under one scene-wide budget. The
 // gate knows wanted or not; what a region holds is its handler's.
+//
+// Memory is bounded by LIMITS over a grid's WEIGHT (the handler's cost of
+// one cell, in a unit of its choosing: a tile layer's chunk texels): a
+// grid's own limit and a scene-wide one. Past a limit the nearest pending
+// cell displaces the resident cell least needed, Unreal's streaming pool
+// in our costume, where "needed" is URGENCY: the distance to the nearest
+// wanting eye over the grid's own `leave`, dimensionless, so grids in
+// different units compare. A cell held back by a limit is wanted and
+// STALLED: no event, and no frame demanded for it until a view moves.
 
 use std::collections::{HashMap, HashSet};
 
@@ -64,6 +73,17 @@ impl RegionMargins {
       self.enter
     }
   }
+
+  /// How needed a region at `distance` from its nearest wanting eye is,
+  /// as a number comparable across regions of different units: the
+  /// distance in `leave`s (a region with no band compares raw distance).
+  fn urgency(&self, distance: f32) -> f32 {
+    if self.leave > 0.0 {
+      distance / self.leave
+    } else {
+      distance
+    }
+  }
 }
 
 /// A grid of cells: `origin` the corner of cell (0, 0, 0), `cell` the
@@ -71,8 +91,10 @@ impl RegionMargins {
 /// there and the test ignores the axis), `bounds` an optional inclusive
 /// cell-index box outside which no cell exists, `wrap` an optional period
 /// in cells per axis (0 = none: indices modulo the period, the canonical
-/// cell reported once however many images a viewer sees), `label` the name
-/// the stats group the grid's footprint under.
+/// cell reported once however many images a viewer sees), `weight` the
+/// handler's cost of one resident cell (any unit, default 1; 0 = free
+/// under every limit), `limit` the grid's own cap on resident weight,
+/// `label` the name the stats group the grid's footprint under.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridSpec {
   pub origin: [f32; 3],
@@ -80,12 +102,33 @@ pub struct GridSpec {
   pub margins: RegionMargins,
   pub bounds: Option<[i32; 6]>,
   pub wrap: Option<[i32; 3]>,
+  pub weight: f64,
+  pub limit: Option<f64>,
   pub label: Option<String>,
+}
+
+/// A weight or limit must be finite and not negative; a limit positive.
+fn validate_weight(weight: f64) -> Result<(), String> {
+  if !(weight.is_finite() && weight >= 0.0) {
+    return Err("weight must be finite and not negative".to_string());
+  }
+  Ok(())
+}
+
+fn validate_limit(limit: Option<f64>) -> Result<(), String> {
+  if let Some(l) = limit {
+    if !(l.is_finite() && l > 0.0) {
+      return Err("limit must be finite and positive".to_string());
+    }
+  }
+  Ok(())
 }
 
 impl GridSpec {
   fn validate(&self) -> Result<(), String> {
     self.margins.validate()?;
+    validate_weight(self.weight)?;
+    validate_limit(self.limit)?;
     if self.origin.iter().any(|v| !v.is_finite()) {
       return Err("origin must be finite".to_string());
     }
@@ -190,6 +233,34 @@ struct Grid {
   cells: HashMap<[i32; 3], Cell>,
 }
 
+impl Grid {
+  /// Cells whose enter went out (and no leave since): what the limits
+  /// weigh. Counted off the cells, which are the wanted ones only.
+  fn resident(&self) -> usize {
+    self.cells.values().filter(|c| c.resident).count()
+  }
+
+  fn resident_weight(&self) -> f64 {
+    self.resident() as f64 * self.spec.weight
+  }
+}
+
+/// The gate's figures for the stats query: regions wanted by any viewer
+/// (resident plus pending), the resident ones, the pending ones (enters
+/// not yet delivered, the stalled among them held back by a limit), the
+/// enters and leaves delivered so far (cumulative), and the resident
+/// weight summed over every grid.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ResidencyStats {
+  pub wanted: usize,
+  pub resident: usize,
+  pub pending: usize,
+  pub stalled: usize,
+  pub enters: u64,
+  pub leaves: u64,
+  pub weight: f64,
+}
+
 /// A viewer as the gate sees it (`Spatial::set_view`).
 struct Viewer {
   frustum: Frustum,
@@ -211,6 +282,15 @@ pub(super) struct Residency {
   enters_since_take: u32,
   /// Regions wanted whose enter has not gone out yet.
   pending: usize,
+  /// Of the pending, those the last pass held back by a limit: wanted,
+  /// but nothing can change for them until a view moves, so they demand
+  /// no frame and no pass. Recomputed by every pass.
+  stalled: usize,
+  /// The scene-wide cap on resident weight over every grid.
+  limit: Option<f64>,
+  /// Enters and leaves delivered so far, for the stats.
+  enters_total: u64,
+  leaves_total: u64,
   events: Vec<RegionEvent>,
 }
 
@@ -225,9 +305,22 @@ impl Default for Residency {
       budget: DEFAULT_RESIDENCY_BUDGET,
       enters_since_take: 0,
       pending: 0,
+      stalled: 0,
+      limit: None,
+      enters_total: 0,
+      leaves_total: 0,
       events: Vec::new(),
     }
   }
+}
+
+/// A resident cell as the eviction scan sees it: its urgency, its grid
+/// and index, and whether the scan already evicted it.
+struct Resident {
+  urgency: f32,
+  grid: GridId,
+  cell: [i32; 3],
+  evicted: bool,
 }
 
 /// The index of a candidate for a paced enter: the node's arena index, or
@@ -264,6 +357,62 @@ impl Residency {
     self.budget = budget;
   }
 
+  /// The scene-wide cap on resident weight (None = none). A lower cap
+  /// takes effect at the next pass: the viewers are marked dirty so it
+  /// runs even for a still world.
+  pub(super) fn set_limit(&mut self, limit: Option<f64>) -> Result<(), String> {
+    validate_limit(limit)?;
+    self.limit = limit;
+    self.mark_all_dirty();
+    Ok(())
+  }
+
+  /// A grid's weight per resident cell changed (a chunk re-baked at a new
+  /// oversample): the limits re-weigh at the next pass.
+  pub(super) fn set_grid_weight(&mut self, id: GridId, weight: f64) -> Result<(), String> {
+    validate_weight(weight)?;
+    let grid = self.grids.get_mut(&id).ok_or_else(|| format!("grid {id} not found"))?;
+    grid.spec.weight = weight;
+    self.mark_all_dirty();
+    Ok(())
+  }
+
+  /// Every viewer re-tests at the next pass: a limit or weight changed,
+  /// or a grid was made, so the resident set may have to change without
+  /// a view moving.
+  fn mark_all_dirty(&mut self) {
+    for &v in self.viewers.keys() {
+      if !self.dirty.contains(&v) {
+        self.dirty.push(v);
+      }
+    }
+  }
+
+  /// The gate's figures (`ResidencyStats`); the explicit regions are
+  /// counted off their nodes.
+  pub(super) fn stats(&self, nodes: &[Node], region_nodes: &[u32]) -> ResidencyStats {
+    let mut resident = 0;
+    let mut weight = 0.0;
+    for grid in self.grids.values() {
+      resident += grid.resident();
+      weight += grid.resident_weight();
+    }
+    for &i in region_nodes {
+      if nodes[i as usize].region.as_ref().is_some_and(|r| r.resident) {
+        resident += 1;
+      }
+    }
+    ResidencyStats {
+      wanted: resident + self.pending,
+      resident,
+      pending: self.pending,
+      stalled: self.stalled,
+      enters: self.enters_total,
+      leaves: self.leaves_total,
+      weight,
+    }
+  }
+
   pub(super) fn create_grid(&mut self, spec: GridSpec) -> Result<GridId, String> {
     spec.validate()?;
     let id = self.next_grid;
@@ -283,6 +432,7 @@ impl Residency {
     let grid = self.grids.remove(&id).ok_or_else(|| format!("grid {id} not found"))?;
     for (cell, state) in grid.cells {
       if state.resident {
+        self.leaves_total += 1;
         self.events.push(RegionEvent::Leave(RegionRef::Cell { grid: id, cell }));
       } else {
         self.pending -= 1;
@@ -319,6 +469,7 @@ impl Residency {
       return;
     };
     if r.resident {
+      self.leaves_total += 1;
       self.events.push(RegionEvent::Leave(RegionRef::Node(node_id(i, node))));
     } else if !r.wanted_by.is_empty() {
       self.pending -= 1;
@@ -330,14 +481,15 @@ impl Residency {
     std::mem::take(&mut self.events)
   }
 
-  /// Something waits on a frame: events to deliver, or enters to pace.
+  /// Something waits on a frame: events to deliver, or enters to pace
+  /// (the stalled ones wait on a view, not a frame).
   pub(super) fn demand(&self) -> bool {
-    !self.events.is_empty() || self.pending > 0
+    !self.events.is_empty() || self.pending > self.stalled
   }
 
   /// Whether the pass has anything to do this flush.
   pub(super) fn needs_pass(&self, regions_moved: bool) -> bool {
-    regions_moved || !self.dirty.is_empty() || self.pending > 0
+    regions_moved || !self.dirty.is_empty() || self.pending > self.stalled
   }
 
   /// The pass, after the flush's walk (world boxes fresh) and the cull
@@ -348,6 +500,9 @@ impl Residency {
   /// here of the dead.
   pub(super) fn pass(&mut self, nodes: &mut [Node], region_nodes: &mut Vec<u32>) {
     let dirty = std::mem::take(&mut self.dirty);
+    // The pacer recounts what a limit holds back; until it ran, every
+    // pending region counts as one a frame may deliver.
+    self.stalled = 0;
     region_nodes.retain(|&i| nodes[i as usize].alive && nodes[i as usize].region.is_some());
     self.test_regions(nodes, region_nodes, &dirty);
     if !dirty.is_empty() {
@@ -384,6 +539,7 @@ impl Residency {
       if was_wanted && !now_wanted {
         if region.resident {
           region.resident = false;
+          self.leaves_total += 1;
           self.events.push(RegionEvent::Leave(RegionRef::Node(id)));
         } else {
           self.pending -= 1;
@@ -395,7 +551,7 @@ impl Residency {
   }
 
   fn enumerate_grids(&mut self, dirty: &[u64]) {
-    let Residency { viewers, grids, events, pending, .. } = self;
+    let Residency { viewers, grids, events, pending, leaves_total, .. } = self;
     for (&gid, grid) in grids.iter_mut() {
       for &v in dirty {
         // Forget the viewer everywhere first, remembering where it was:
@@ -452,6 +608,7 @@ impl Residency {
           return true;
         }
         if state.resident {
+          *leaves_total += 1;
           events.push(RegionEvent::Leave(RegionRef::Cell { grid: gid, cell }));
         } else {
           *pending -= 1;
@@ -461,8 +618,15 @@ impl Residency {
     }
   }
 
-  /// Deliver the pending enters nearest to a wanting viewer's eye first,
-  /// as many as the budget still allows since the last delivery.
+  /// Deliver the pending enters most urgent first (nearest to a wanting
+  /// viewer's eye, in the region's own `leave`s), as many as the budget
+  /// still allows since the last delivery. A grid cell enters only while
+  /// its grid's limit and the scene limit hold; past one, the resident
+  /// cells less urgent than the candidate leave, least urgent first,
+  /// until it fits (the leave precedes the enter, so a handler's pool
+  /// hands the freed resources straight over), and a candidate nothing
+  /// can make room for is STALLED until a view moves. Explicit regions
+  /// weigh nothing.
   fn pace_enters(&mut self, nodes: &mut [Node], region_nodes: &[u32]) {
     if self.pending == 0 || self.enters_since_take >= self.budget {
       return;
@@ -475,20 +639,30 @@ impl Residency {
         continue;
       }
       let center = node.world_box.map(center_of).unwrap_or([node.world[12], node.world[13], node.world[14]]);
-      candidates.push((self.nearest(&region.wanted_by, |_| center), Candidate::Node(i)));
+      let urgency = region.margins.urgency(self.nearest(&region.wanted_by, |_| center));
+      candidates.push((urgency, Candidate::Node(i)));
     }
+    let limited = self.limit.is_some() || self.grids.values().any(|g| g.spec.limit.is_some());
+    // The resident cells, least urgent first: what the eviction scan
+    // takes from. Built only under a limit.
+    let mut residents: Vec<Resident> = Vec::new();
     for (&gid, grid) in &self.grids {
+      let spec = &grid.spec;
       for (&cell, state) in &grid.cells {
+        let urgency = spec.margins.urgency(self.nearest(&state.wanted_by, |eye| spec.cell_center(cell, eye)));
         if state.resident {
-          continue;
+          if limited {
+            residents.push(Resident { urgency, grid: gid, cell, evicted: false });
+          }
+        } else {
+          candidates.push((urgency, Candidate::Cell(gid, cell)));
         }
-        let spec = &grid.spec;
-        candidates
-          .push((self.nearest(&state.wanted_by, |eye| spec.cell_center(cell, eye)), Candidate::Cell(gid, cell)));
       }
     }
     candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for (_, candidate) in candidates {
+    residents.sort_by(|a, b| b.urgency.total_cmp(&a.urgency));
+    let mut scene_weight: f64 = self.grids.values().map(Grid::resident_weight).sum();
+    for (urgency, candidate) in candidates {
       if self.enters_since_take >= self.budget {
         break;
       }
@@ -500,15 +674,99 @@ impl Residency {
           RegionRef::Node(id)
         }
         Candidate::Cell(gid, cell) => {
-          let state = self.grids.get_mut(&gid).and_then(|g| g.cells.get_mut(&cell)).expect("a candidate cell exists");
-          state.resident = true;
+          if limited && !self.make_room(gid, urgency, &mut residents, &mut scene_weight) {
+            self.stalled += 1;
+            continue;
+          }
+          let grid = self.grids.get_mut(&gid).expect("a candidate's grid exists");
+          grid.cells.get_mut(&cell).expect("a candidate cell exists").resident = true;
+          scene_weight += grid.spec.weight;
           RegionRef::Cell { grid: gid, cell }
         }
       };
       self.pending -= 1;
       self.enters_since_take += 1;
+      self.enters_total += 1;
       self.events.push(RegionEvent::Enter(region));
     }
+  }
+
+  /// Make the limits hold for one more cell of grid `gid` at `urgency`,
+  /// evicting resident cells less urgent than it: the grid's own for its
+  /// limit, any weighing grid's for the scene's. Returns whether the cell
+  /// fits. The victims are the least urgent that together free what is
+  /// needed, minus any that turn out unnecessary once the set is complete
+  /// (dropped most urgent first, so a heavy far cell goes and a light
+  /// nearer one stays), and nothing is evicted when the evictable weight
+  /// cannot cover the need: an eviction is a leave of a cell still
+  /// wanted, which goes back to pending, so an eviction that does not
+  /// admit the candidate would only churn. An evicted cell lighter than
+  /// the slack its eviction left re-enters at the next pass and then
+  /// stays, since it fits without an eviction.
+  fn make_room(&mut self, gid: GridId, urgency: f32, residents: &mut [Resident], scene_weight: &mut f64) -> bool {
+    let weight = self.grids[&gid].spec.weight;
+    if weight == 0.0 {
+      return true;
+    }
+    let grid_need = self.grids[&gid].spec.limit.map_or(0.0, |l| self.grids[&gid].resident_weight() + weight - l);
+    let scene_need = self.limit.map_or(0.0, |l| *scene_weight + weight - l);
+    if grid_need <= 0.0 && scene_need <= 0.0 {
+      return true;
+    }
+    // Least urgent first (the list is sorted so), taking only victims that
+    // serve a need still open.
+    let mut picked: Vec<usize> = Vec::new();
+    let mut grid_freed = 0.0;
+    let mut scene_freed = 0.0;
+    for (i, r) in residents.iter().enumerate() {
+      if grid_freed >= grid_need && scene_freed >= scene_need {
+        break;
+      }
+      if r.evicted || r.urgency <= urgency {
+        continue;
+      }
+      let w = self.grids[&r.grid].spec.weight;
+      let serves_grid = r.grid == gid && grid_freed < grid_need;
+      let serves_scene = scene_freed < scene_need;
+      if w == 0.0 || !(serves_grid || serves_scene) {
+        continue;
+      }
+      picked.push(i);
+      scene_freed += w;
+      if r.grid == gid {
+        grid_freed += w;
+      }
+    }
+    if grid_freed < grid_need || scene_freed < scene_need {
+      return false;
+    }
+    // Drop what the set does not need, most urgent (last picked) first.
+    for k in (0..picked.len()).rev() {
+      let r = &residents[picked[k]];
+      let w = self.grids[&r.grid].spec.weight;
+      let same = r.grid == gid;
+      if scene_freed - w >= scene_need && (!same || grid_freed - w >= grid_need) {
+        scene_freed -= w;
+        if same {
+          grid_freed -= w;
+        }
+        picked[k] = usize::MAX;
+      }
+    }
+    for &i in &picked {
+      if i == usize::MAX {
+        continue;
+      }
+      let victim = &mut residents[i];
+      victim.evicted = true;
+      let grid = self.grids.get_mut(&victim.grid).expect("a resident's grid exists");
+      grid.cells.get_mut(&victim.cell).expect("a resident cell exists").resident = false;
+      *scene_weight -= grid.spec.weight;
+      self.pending += 1;
+      self.leaves_total += 1;
+      self.events.push(RegionEvent::Leave(RegionRef::Cell { grid: victim.grid, cell: victim.cell }));
+    }
+    true
   }
 
   /// The distance from the nearest of these viewers' eyes to the point

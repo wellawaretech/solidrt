@@ -52,7 +52,7 @@ no recipe - it wants either duplicated seam-adjacent chunk leaves or
 modular chunk addressing in a camera-anchored composite. That composite is
 exactly the shape the unbounded-world extension already sketches
 ([2d-tile-world-bounds](../done/2d-tile-world-bounds.md) kept it additive,
-landing with [2d-baked-layers](../plans/2d-baked-layers.md) stage B2's residency) -
+landing with [2d-baked-layers](../done/2d-baked-layers.md) stage B2's residency) -
 a torus is "unbounded with modular coordinates", so wrap should be decided
 WITH that work, not bolted on after.
 

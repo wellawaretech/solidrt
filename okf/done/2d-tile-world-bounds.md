@@ -31,7 +31,7 @@ Options:
    pays nothing for empty chunks, it just has to pick a big number.
 2. Additive unbounded mode: keep the bounded form as-is and add an
    unbounded creation form later whose composite anchors on the camera.
-   Intersects with camera-driven chunk residency (../plans/2d-baked-layers.md, the
+   Intersects with camera-driven chunk residency (../done/2d-baked-layers.md, the
    bake-on-approach/evict item) - an unbounded world without eviction is a
    memory leak with a scenic route, so the two land together.
 
@@ -48,6 +48,6 @@ because the grid bound is bookkeeping, not allocation.
 
 Unbounded stays reachable exactly as sketched above: an additive creation
 form whose composite anchors on the camera, landing together with
-camera-driven chunk residency (../plans/2d-baked-layers.md stage B2) - an unbounded
+camera-driven chunk residency (../done/2d-baked-layers.md stage B2) - an unbounded
 world without eviction is a memory leak with a scenic route. Nothing
 promised today blocks that; the current API survives it unchanged.

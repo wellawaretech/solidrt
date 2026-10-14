@@ -81,7 +81,7 @@ test("chunks under the view enter and bake; the ones the camera leaves behind le
   let first = layer.resident()
   for (let c of first) expect(c.texture === null).toBe(false)
   let before = texturesOf(first)
-  expect((app.gpu({ label: "res-chunk" }).textures as unknown[]).length).toBe(4)
+  expect((app.gpu({ label: "res" }).textures as unknown[]).length).toBe(4)
   // The bake landed: the chunk's texture is white where its cells are.
   expect(pixel(first[0]!.texture!, TILE / 2, TILE / 2)).toEqual(WHITE)
   // Two chunks to the right: the old four are a chunk past leave.
@@ -90,7 +90,7 @@ test("chunks under the view enter and bake; the ones the camera leaves behind le
   expect(left.sort()).toEqual(["0,0", "0,2", "2,0", "2,2"])
   expect(cellsOf(layer.resident())).toEqual(["10,0", "10,2", "8,0", "8,2"])
   expect(texturesOf(layer.resident())).toEqual(before)
-  expect((app.gpu({ label: "res-chunk" }).textures as unknown[]).length).toBe(4)
+  expect((app.gpu({ label: "res" }).textures as unknown[]).length).toBe(4)
   // Half a chunk back: the chunk now under the view's left edge enters,
   // the ones a chunk away stay out (inside the leave band or not, a
   // chunk that left is not re-entered until it is within enter again).
@@ -117,7 +117,7 @@ test("a chunk written while resident re-bakes; an empty resident chunk holds no 
   // Nothing seeded: resident and empty, so no targets.
   expect(layer.resident().length).toBe(4)
   for (let c of layer.resident()) expect(c.texture).toBe(null)
-  expect((app.gpu({ label: "res-chunk" }).textures as unknown[]).length).toBe(0)
+  expect((app.gpu({ label: "res" }).textures as unknown[]).length).toBe(0)
   let white = fullFrame(layer.atlases[0]!)
   layer.setTile(0, 0, white)
   await app.settle()
@@ -346,4 +346,129 @@ test("unbounded addressing: negative and far cells, bounds as a clamp, usedRect 
   expect(() => clamped.setTiles(2, 2, 3, 1, [frame, frame, frame])).toThrow()
   expect(() => clamped.getTile(4, 4)).toThrow()
   expect(clamped.bounds).toEqual({ col: -4, row: -4, cols: 8, rows: 8 })
+})
+
+test("maxTexels caps the resident chunks: the gate evicts the chunk furthest from the view for a nearer one, leave before enter, and the inventory groups the layer under its label", async app => {
+  // One chunk's texels at oversample 1 (16 x 16, no overhang): a budget of
+  // exactly one chunk.
+  let { layer } = await mounted(app, { maxTexels: CHUNK * CHUNK })
+  let log: string[] = []
+  layer.onEnter = c => log.push(`enter ${c.col},${c.row}`)
+  layer.onLeave = c => log.push(`leave ${c.col},${c.row}`)
+  let viewer = layer.addViewer()
+  // A 48 x 16 viewport over the chunks at cell columns 0, 2 and 4, the
+  // eye over the middle one: it alone is resident, the other two wait on
+  // the budget.
+  viewer.setCamera({}, 3 * CHUNK, CHUNK)
+  await app.settle()
+  expect(cellsOf(layer.resident())).toEqual(["2,0"])
+  expect(log).toEqual(["enter 2,0"])
+  let first = layer.resident()[0]!.texture
+  let group = (app.gpu({ label: "res" }).groups as Record<string, { textures: number; buffers: number; bytes: number }>)["res"]!
+  expect(group.textures).toBe(1)
+  expect(group.buffers).toBe(1)
+  expect(group.bytes > 0).toBe(true)
+  // The gate as /stats reports it: one resident, two wanted but stalled
+  // behind the budget, the resident weight one chunk's texels.
+  let stats = app.stats() as { regionsResident: number; regionsStalled: number; regionsWanted: number; residentWeight: number; app: { poolMisses: number; poolHits: number } }
+  expect([stats.regionsResident, stats.regionsStalled, stats.regionsWanted]).toEqual([1, 2, 3])
+  expect(stats.residentWeight).toBe(CHUNK * CHUNK)
+  let misses = stats.app.poolMisses
+  // Pan a chunk right: the chunk at column 4 is now under the eye and more
+  // needed than the one at column 2, which the budget evicts first, so its
+  // target is handed over.
+  viewer.setCamera({ x: CHUNK }, 3 * CHUNK, CHUNK)
+  await app.settle()
+  expect(log).toEqual(["enter 2,0", "leave 2,0", "enter 4,0"])
+  expect(cellsOf(layer.resident())).toEqual(["4,0"])
+  expect(layer.resident()[0]!.texture).toBe(first)
+  expect((app.gpu({ label: "res" }).textures as unknown[]).length).toBe(1)
+  // The handover was two pool hits (the target and the records buffer),
+  // no create.
+  let after = app.stats() as { app: { poolMisses: number; poolHits: number } }
+  expect(after.app.poolMisses).toBe(misses)
+  expect(after.app.poolHits >= 2).toBe(true)
+})
+
+test("maxTexels must hold a chunk, at creation and at a new oversample", async app => {
+  await app.mount(() => {
+    let atlas = createAtlas(solid([255, 255, 255], TILE, TILE), { label: "res-atlas" })
+    expect(() => createTileLayer(TILE, TILE, [atlas], { chunkTiles: CHUNK_TILES, maxTexels: CHUNK * CHUNK - 1 })).toThrow(/at least one chunk/)
+    let layer = createTileLayer(TILE, TILE, [atlas], { chunkTiles: CHUNK_TILES, maxTexels: CHUNK * CHUNK })
+    expect(() => layer.setOversample(2)).toThrow(/holds no chunk/)
+    return <view width={VIEW} height={VIEW} />
+  })
+})
+
+test("the layer bakes at the largest density its viewers ask for, shrinks when that viewer goes, and a budget clamps the pick instead of throwing", async app => {
+  let { layer } = await mounted(app)
+  let main = layer.addViewer()
+  let mini = layer.addViewer()
+  // A main view at device scale 1 and a minimap zoomed out: density 1.
+  main.setCamera({}, VIEW, VIEW, 1)
+  mini.setCamera({ zoom: 0.25 }, VIEW, VIEW, 1)
+  await app.settle()
+  expect(layer.oversample).toBe(1)
+  // The main view moves to a 2.3x display: the bake follows it up to 3.
+  main.setCamera({}, VIEW, VIEW, 2.3)
+  await app.settle()
+  expect(layer.oversample).toBe(3)
+  let chunk = layer.resident().find(c => c.texture !== null)!
+  expect(readTexture(chunk.texture!).width).toBe(CHUNK * 3)
+  // The main view goes: the minimap's wish (0.25) is what is left.
+  main.dispose()
+  await app.settle()
+  expect(layer.oversample).toBe(1)
+  // A pin overrides the viewers; null hands the pick back (the minimap's
+  // wish of 0.25 is far enough under 2 for the shrink hysteresis to let
+  // go).
+  layer.setOversample(2)
+  mini.setCamera({ zoom: 0.25 }, VIEW, VIEW, 4)
+  await app.settle()
+  expect(layer.oversample).toBe(2)
+  mini.setCamera({ zoom: 0.25 }, VIEW, VIEW, 1)
+  layer.setOversample(null)
+  await app.settle()
+  expect(layer.oversample).toBe(1)
+})
+
+test("under maxTexels the viewers' pick is clamped to what the budget holds; only a pin past it throws", async app => {
+  // Two chunks' worth at density 1: one chunk at density 1 only.
+  let { layer } = await mounted(app, { maxTexels: 2 * CHUNK * CHUNK })
+  let viewer = layer.addViewer()
+  viewer.setCamera({}, VIEW, VIEW, 3)
+  await app.settle()
+  expect(layer.oversample).toBe(1)
+  expect(() => layer.setOversample(2)).toThrow(/holds no chunk/)
+})
+
+test("<TileLayer layer> shows an existing layer again under a camera of its own: one more viewer, leaves of its own, the maker's props and hooks refused", async app => {
+  let layer!: TileLayerHandle
+  let [camera, setCamera] = createSignal<TileCamera>({ x: 2 * VIEW })
+  let win = await app.mount(() => {
+    let atlas = createAtlas(solid([255, 255, 255], TILE, TILE), { label: "adopt-atlas" })
+    layer = createTileLayer(TILE, TILE, [atlas], { chunkTiles: CHUNK_TILES, frames: [fullFrame(atlas)], label: "adopt", ...BAND })
+    layer.setTiles(SEED.col, SEED.row, SEED.cols, SEED.rows, new Uint16Array(SEED.cols * SEED.rows).fill(0))
+    return (
+      <view flexDirection="row">
+        <TileLayer layer={layer} width={VIEW} height={VIEW} camera={{}} label="main" />
+        <TileLayer layer={layer} width={VIEW} height={VIEW} camera={camera()} label="mini" />
+      </view>
+    )
+  })
+  await app.settle()
+  // Resident where either composite looks: the first quadrant under the
+  // main camera, two viewports to the right under the minimap's.
+  expect(cellsOf(layer.resident())).toEqual(["0,0", "0,2", "2,0", "2,2", "8,0", "8,2", "10,0", "10,2"].sort())
+  // Each composite shows every resident chunk (the clip does the rest).
+  expect(win.find({ label: "main" }).findAll({ kind: "texture" }).length).toBe(8)
+  expect(win.find({ label: "mini" }).findAll({ kind: "texture" }).length).toBe(8)
+  expect(win.find({ label: "main" }).pixel(TILE / 2, TILE / 2)).toEqual(WHITE)
+  // The minimap's camera moves on: its chunks leave, the main view's stay.
+  setCamera({ x: 20 * VIEW })
+  await app.settle()
+  expect(cellsOf(layer.resident())).toEqual(["0,0", "0,2", "2,0", "2,2", "80,0", "80,2", "82,0", "82,2"].sort())
+  // The maker's props and hooks are refused with `layer`.
+  expect(() => TileLayer({ layer, tileW: TILE } as never)).toThrow(/creation props/)
+  expect(() => TileLayer({ layer, onEnter: () => {} } as never)).toThrow(/hooks/)
 })

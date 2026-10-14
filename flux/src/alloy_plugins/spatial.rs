@@ -105,7 +105,9 @@ impl ModuleDef for SpatialModule {
     decl.declare("setRegion")?;
     decl.declare("createGrid")?;
     decl.declare("destroyGrid")?;
+    decl.declare("setGridWeight")?;
     decl.declare("setResidencyBudget")?;
+    decl.declare("setResidencyLimit")?;
     decl.declare("setLod")?;
     decl.declare("createShape")?;
     decl.declare("updateShape")?;
@@ -174,7 +176,9 @@ impl ModuleDef for SpatialModule {
     exports.export("setRegion", Function::new(ctx.clone(), set_region)?)?;
     exports.export("createGrid", Function::new(ctx.clone(), create_grid)?)?;
     exports.export("destroyGrid", Function::new(ctx.clone(), destroy_grid)?)?;
+    exports.export("setGridWeight", Function::new(ctx.clone(), set_grid_weight)?)?;
     exports.export("setResidencyBudget", Function::new(ctx.clone(), set_residency_budget)?)?;
+    exports.export("setResidencyLimit", Function::new(ctx.clone(), set_residency_limit)?)?;
     exports.export("setLod", Function::new(ctx.clone(), set_lod)?)?;
     exports.export("createShape", Function::new(ctx.clone(), create_shape)?)?;
     exports.export("updateShape", Function::new(ctx.clone(), update_shape)?)?;
@@ -687,7 +691,7 @@ fn array_field<T: for<'a> FromJs<'a> + Copy + Default, const N: usize>(
 }
 
 /// A grid of regions from `{ origin, cell, enter, leave, bounds?, wrap?,
-/// label? }`; returns its id.
+/// weight?, limit?, label? }`; returns its id.
 fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
   let origin = array_field::<f32, 3>(&ctx, &spec, "origin", "createGrid")?
     .ok_or_else(|| throw_str(&ctx, "createGrid: origin is required"))?;
@@ -696,11 +700,13 @@ fn create_grid<'js>(ctx: Ctx<'js>, spec: Object<'js>) -> rquickjs::Result<u64> {
   let margins = margins_arg(&ctx, &spec, "createGrid")?;
   let bounds = array_field::<i32, 6>(&ctx, &spec, "bounds", "createGrid")?;
   let wrap = array_field::<i32, 3>(&ctx, &spec, "wrap", "createGrid")?;
+  let weight: Option<f64> = spec.get("weight")?;
+  let limit: Option<f64> = spec.get("limit")?;
   let label: Option<String> = spec.get("label")?;
   super::gui(&ctx)
     .alloy
     .spatial()
-    .create_grid(GridSpec { origin, cell, margins, bounds, wrap, label })
+    .create_grid(GridSpec { origin, cell, margins, bounds, wrap, weight: weight.unwrap_or(1.0), limit, label })
     .map_err(|e| throw_str(&ctx, &format!("createGrid: {e}")))
 }
 
@@ -708,10 +714,28 @@ fn destroy_grid(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
   super::gui(&ctx).alloy.spatial().destroy_grid(id).map_err(|e| throw_str(&ctx, &format!("destroyGrid: {e}")))
 }
 
+/// A grid's weight per resident cell.
+fn set_grid_weight(ctx: Ctx<'_>, id: u64, weight: f64) -> rquickjs::Result<()> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_grid_weight(id, weight)
+    .map_err(|e| throw_str(&ctx, &format!("setGridWeight: {e}")))
+}
+
 /// The region enters delivered per frame scene-wide.
 fn set_residency_budget(ctx: Ctx<'_>, budget: u32) -> rquickjs::Result<()> {
   super::gui(&ctx).alloy.spatial().set_residency_budget(budget);
   Ok(())
+}
+
+/// The scene-wide cap on resident grid weight (null = none).
+fn set_residency_limit(ctx: Ctx<'_>, limit: Option<f64>) -> rquickjs::Result<()> {
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_residency_limit(limit)
+    .map_err(|e| throw_str(&ctx, &format!("setResidencyLimit: {e}")))
 }
 
 fn set_lod<'js>(ctx: Ctx<'js>, id: u64, levels: Array<'js>, fade: f64, reference: OptArg<u64>) -> rquickjs::Result<()> {

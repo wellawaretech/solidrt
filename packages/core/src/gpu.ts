@@ -59,6 +59,8 @@
 
 import { createEffect, createSignal, getOwner, onCleanup, untrack } from "@solidjs/signals"
 import * as gpu from "flux:gpu"
+import { registerStat } from "sol:dev"
+import { poolStats } from "./pool.ts"
 
 // The create* helpers accept { autoFree: false } to opt out of the
 // owner-scoped auto-free, for resources whose lifetime is managed by hand
@@ -179,12 +181,21 @@ export { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDr
 
 // The resource pool (pool.ts): GPU ids a residency handler frees on a leave
 // and takes again on the next enter instead of destroying and creating -
-// one JS free list over bare ids, classed by the consumer's string (a
-// target's pipeline, a buffer's byte size), LRU past its cap, drained with
-// its owner. The 2d tile layer's chunks and a 3d region's geometry both
-// go through it; no consumer keeps a free list of its own.
-export { createResourcePool } from "./pool.ts"
+// one JS free list over bare ids, classed by the consumer's `kind:detail`
+// string (a target's pipeline, a buffer's byte size) with the destroyer
+// per kind registered by the consumer on the pool it uses (destroyWith),
+// LRU past its cap, drained with its owner. The 2d tile layer's chunks and
+// a 3d region's geometry both go through it, a shared pool needs nothing
+// from its maker, and no consumer keeps a free list of its own.
+export { createResourcePool, poolStats } from "./pool.ts"
 export type { ResourcePool, ResourcePoolOptions } from "./pool.ts"
+// The pools' traffic in the stats query's `app` block (sol:dev
+// registerStat), summed over every pool: a world's reuse rate as one
+// number. Registered once per engine, here, since the pool module itself
+// stays pure (its test runs on bare flux).
+registerStat("poolHits", () => poolStats().hits)
+registerStat("poolMisses", () => poolStats().misses)
+registerStat("poolHeld", () => poolStats().held)
 
 // The device ceilings (max texture/target size, sampler inputs per pass,
 // vertex attributes per pipeline), queried once at startup. Creates and binds

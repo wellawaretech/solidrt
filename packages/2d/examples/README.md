@@ -18,16 +18,21 @@ copy one and adapt it.
   smearing the neighbour in. Wheel/pinch zooms, drag pans. Debug
   commands `zoom` and `atlases` drive it headless.
 - `tiles.tsx` - the baked tile layer as a streaming world: a ring road
-  around the origin (negative cells included) seeded by ONE `setTiles`
-  rect write over a Uint32Array of frame indices with flip and transpose
-  bits (the layer's `frames` table; -1 where the world is empty, and
-  those chunks never hold records), flown over by a ship-style camera
-  (fixed screen pivot, the world panning and ROTATING under it via the
-  `<TileLayer>` camera prop - transform writes, never a re-bake) while
-  the residency gate brings the chunks near the view in and takes the far
-  ones out (their targets through the resource pool), and a timer editing
-  tiles to show that a `setTile` batch re-bakes only the resident chunks
-  it touches. Debug commands `state` and `cell`.
+  10^7 px from the origin seeded by ONE `setTiles` rect write over a
+  Uint32Array of frame indices with flip and transpose bits (the layer's
+  `frames` table; -1 where the world is empty, and those chunks never
+  hold records), flown over by a ship-style camera (fixed screen pivot,
+  the world panning and ROTATING under it via the `<TileLayer>` camera
+  prop - transform writes, never a re-bake) while the residency gate
+  brings the chunks near the view in and takes the far ones out (their
+  targets through the resource pool), a north-up minimap as a second
+  composite of the same layer (`<TileLayer layer>`, a second viewer), a
+  `maxTexels` budget of 40 chunks that the gate evicts past (the minimap's
+  far chunks stall, holes rather than blur), and a timer editing tiles to
+  show that a `setTile` batch re-bakes only the resident chunks it
+  touches. Read `/gpu?label=tile-world` (the `groups` footprint) and
+  `/stats` (regionsResident, residentWeight, app.poolHits) while it
+  flies. Debug commands `state` and `cell`.
 - `anim.tsx` - frame animation with `createAnimation`: three sprites share
   one looping clip (one clock, stepped by wall time independent of display
   rate) and a one-shot clip holds its last frame and fires `onEnd`.

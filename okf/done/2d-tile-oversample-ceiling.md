@@ -34,7 +34,7 @@ Resolution, two parts:
   quality dependent on content volume is worse than a documented cap.
   The remaining total-memory legibility gap (a per-layer total in
   `get_gpu_resources`) is noted with chunk eviction in
-  [2d-baked-layers](../plans/2d-baked-layers.md) B2, where residency
+  [2d-baked-layers](../done/2d-baked-layers.md) B2, where residency
   is actually managed.
 
 Verified on the tiles example: the auto-pick holds chunks at 960 square

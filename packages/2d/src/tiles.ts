@@ -37,7 +37,7 @@
 // a microtask outside a frame) publishes and re-bakes ONLY dirty resident
 // chunks. A layer nobody edits and nobody moves over costs nothing per
 // frame.
-import { getOwner, onBeforeRender, onCleanup, runWithOwner } from "@solidrt/core"
+import { displayScale, getOwner, onBeforeRender, onCleanup, runWithOwner, windowSize } from "@solidrt/core"
 import {
   beginBufferWrite,
   createBuffer,
@@ -71,6 +71,7 @@ import { atlasBindings, RECORD_ATTRIBUTES } from "./glsl.ts"
 import { checkParams, checkTint } from "./layer.ts"
 import { materialBlank, materialSamplers, unlit } from "./material.ts"
 import type { Material } from "./material.ts"
+import { pickOversample } from "./oversample-math.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import { INSTANCE_FLOATS } from "./records.ts"
 import { cellSymmetry, checkCell, checkRect, checkTileRect, chunkKey, eachChunkSlice, flagsOf, floorDiv, footprint, indexOf, isClearIndex, mod, slotOf } from "./tiles-math.ts"
@@ -129,11 +130,34 @@ export type TileLayerOptions = {
    * TileLayer.setParams. */
   params?: ShaderParams
   /**
-   * Target texels per world pixel in the baked chunks (positive integer,
-   * default 1); see TileLayer.setOversample. `<TileLayer>` picks it from
-   * its viewport's on-screen size and the camera zoom.
+   * Pin the bake density: target texels per world pixel in the chunks
+   * (positive integer). Absent (the default), the layer picks it from its
+   * VIEWERS: the largest device pixels per world pixel any viewer reports
+   * with its camera (`setCamera`'s `deviceScale` times the camera zoom),
+   * rounded up, with a shrink hysteresis, bounded by `maxOversample`, by
+   * `maxPixels` and the window's own pixel count per chunk, and by
+   * `maxTexels` (a chunk must fit the budget). One density serves every
+   * composite of the layer: a composite below it minifies the bake at
+   * the leaf (level 0, linear), which aliases past about 2x under. See
+   * TileLayer.setOversample.
    */
   oversample?: number
+  /**
+   * Cap on the auto-picked density (integer >= 1): chunks stay adaptive
+   * up to it, never above. A tile world's texture memory is resident
+   * chunks x n squared, so this is the lever that bounds it on
+   * high-scale displays without giving up adaptivity. Ignored under a
+   * pinned `oversample`.
+   */
+  maxOversample?: number
+  /**
+   * Cap on a chunk target's texel count under the auto pick, the budget
+   * form of `maxOversample`: the pick stays under it on any display (the
+   * window's own pixel count caps it always). Ignored under a pinned
+   * `oversample`; the same name and meaning as `<SpriteLayer>`'s and the
+   * 3d `<Scene>`'s.
+   */
+  maxPixels?: number
   /**
    * Chunk edge in TILES; default sized so a chunk is ~512px (under `wrap`,
    * the largest divisor of both periods not above that). The tuning knob
@@ -189,6 +213,20 @@ export type TileLayerOptions = {
   enter?: number
   leave?: number
   /**
+   * The layer's texture budget in texels: the most its resident chunks
+   * may hold at once, counted as chunk targets at the current oversample
+   * (a resident chunk with no cells holds no texture but counts as one).
+   * Past it the residency gate evicts the chunk least needed, the
+   * furthest from any viewer in `leave`s, for one more needed; a chunk
+   * nothing can make room for waits, wanted, until a view moves
+   * (flux:spatial setResidencyLimit). Must hold at least one chunk
+   * (throws otherwise); the default is no budget. A budget bounds the
+   * resident COUNT, not the quality: oversample stays what the viewport
+   * asks (`maxOversample` / `maxPixels` bound that), so a world that fills
+   * the budget shows holes at its far edge rather than blur everywhere.
+   */
+  maxTexels?: number
+  /**
    * What a chunk keeps when it leaves: `"records"` (default) keeps its
    * cells on the CPU (~5 KB a chunk, ~180x cheaper than its texture) so
    * the next enter re-uploads and bakes; `"none"` drops them too, and
@@ -206,9 +244,9 @@ export type TileLayerOptions = {
    * The resource pool chunk buffers and targets are taken from on enter
    * and given back to on leave (createResourcePool): the layer's own by
    * default, sized for 16 chunks; share one across layers and other
-   * residency handlers by passing it. Its `free` must destroy by the
-   * class prefix the handlers build: `"texture:"` a texture
-   * (destroyTexture), `"buffer:"` a buffer (destroyBuffer).
+   * residency handlers by passing it - the layer registers the
+   * destroyers of its own kinds on it (destroyWith), so a shared pool
+   * needs nothing from its maker.
    */
   pool?: ResourcePool
   label?: string
@@ -268,11 +306,16 @@ export type TileCellOptions = {
 export type TileViewer = {
   /**
    * The camera over a `width` x `height` viewport (world pixels at zoom
-   * 1), pushed to the residency gate as an orthographic view: call it on
-   * every camera or viewport change. Absent camera fields read as the
-   * defaults (projectCamera's rule).
+   * 1), pushed to the residency gate as an orthographic view at the
+   * layer's flush (the frame's publish pass, a microtask outside one):
+   * call it on every camera or viewport change. Absent camera fields read as the
+   * defaults (projectCamera's rule). `deviceScale` is the device pixels
+   * one viewport pixel covers (display scale times any ancestor fit,
+   * default 1): times the camera zoom it is this viewer's wish for the
+   * bake density, and the layer bakes at the largest wish (see
+   * TileLayerOptions.oversample).
    */
-  setCamera(camera: CameraUpdate, width: number, height: number): void
+  setCamera(camera: CameraUpdate, width: number, height: number, deviceScale?: number): void
   /** Stop viewing: chunks only this viewer wanted leave. */
   dispose(): void
 }
@@ -298,16 +341,18 @@ export type TileLayer = {
   /** The cell bounds and the wrap periods, as given at creation. */
   readonly bounds: TileRect | null
   readonly wrap: { cols: number; rows: number } | null
-  /** Target texels per world pixel; see setOversample. */
+  /** Target texels per world pixel, the bake density in force (pinned, or
+   * the viewers' pick); see setOversample. */
   readonly oversample: number
   /**
-   * Re-bake at `n` target texels per world pixel (positive integer): every
-   * resident chunk resizes in place and re-bakes once; world pixels, records
-   * and the camera are untouched. Pick `n` as the ceiling of the device
-   * pixels one world pixel covers on screen (display scale times camera
-   * zoom times any designSize fit), which `<TileLayer>` does per layout.
+   * Pin the bake density at `n` target texels per world pixel (positive
+   * integer): every resident chunk resizes in place and re-bakes once;
+   * world pixels, records and the camera are untouched, and the viewers'
+   * wishes stop applying. Throws past `maxTexels` (a chunk must fit the
+   * budget). `null` returns the density to the viewers' pick
+   * (TileLayerOptions.oversample).
    */
-  setOversample(n: number): void
+  setOversample(n: number | null): void
   /**
    * Add a viewer: a camera over a viewport whose nearby chunks the gate
    * keeps resident. `<TileLayer>` adds one for its camera; imperative use
@@ -412,6 +457,23 @@ type ChunkStyle = { bytes: Uint8Array; buffer: BufferId | null; fields: Attribut
 // One style stream of the material as the tile layer keeps it: the
 // layout, the blank record, and the stride.
 type StyleShape = { layout: VertexAttribute[]; blank: Uint8Array; stride: number }
+
+// The pool kinds the layer gives and takes under: a target is
+// interchangeable with any over the same pipeline (setTargetSize resizes
+// it id-stable), a buffer with any of its byte size. The size each pooled
+// target holds is kept by id across every layer (ids are unique), so a
+// take at the same size skips the resize and the target's destroyer,
+// registered on whichever pool a layer uses, forgets it.
+const TARGET_KIND = "tile-target"
+const BUFFER_KIND = "tile-buffer"
+let targetSizes = new Map<TextureId, number>()
+function freeTarget(id: number): void {
+  targetSizes.delete(id as TextureId)
+  destroyTexture(id as TextureId)
+}
+function freeBuffer(id: number): void {
+  destroyBuffer(id as BufferId)
+}
 
 // The gate's events are routed to the layer owning the grid: one lazy
 // subscription per event, keyed by grid id.
@@ -558,11 +620,28 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
   }
   let oversample = opts?.oversample ?? 1
   checkOversample("createTileLayer", oversample, targetW, targetH)
+  // Pinned by the option (and by setOversample), else the viewers' pick.
+  let pinned = opts?.oversample !== undefined
+  let maxOversample = opts?.maxOversample
+  let maxPixels = opts?.maxPixels
+  if (maxOversample !== undefined && !(Number.isInteger(maxOversample) && maxOversample >= 1)) {
+    throw new Error(`createTileLayer: maxOversample must be a positive integer, got ${maxOversample}`)
+  }
+  if (maxPixels !== undefined && !(Number.isFinite(maxPixels) && maxPixels > 0)) {
+    throw new Error(`createTileLayer: maxPixels must be a positive number, got ${maxPixels}`)
+  }
   let thrash = thrashSentinel(`tile layer "${label}"`)
   let enter = opts?.enter ?? DEFAULT_ENTER_CHUNKS * Math.max(chunkW, chunkH)
   let leave = opts?.leave ?? Math.max(enter, DEFAULT_LEAVE_CHUNKS * Math.max(chunkW, chunkH))
   if (!(Number.isFinite(enter) && enter >= 0 && Number.isFinite(leave) && leave >= enter)) {
     throw new Error(`createTileLayer: enter must be non-negative and leave at least enter, got ${enter} and ${leave}`)
+  }
+  // A chunk's cost to the residency limits: its target's texels at the
+  // current oversample (the grid's weight, re-pushed on setOversample).
+  let chunkTexels = (n: number) => targetW * n * (targetH * n)
+  let maxTexels = opts?.maxTexels
+  if (maxTexels !== undefined && !(Number.isFinite(maxTexels) && maxTexels >= chunkTexels(oversample))) {
+    throw new Error(`createTileLayer: maxTexels must hold at least one chunk (${chunkTexels(oversample)} texels at oversample ${oversample}), got ${maxTexels}`)
   }
   let retain = opts?.retain ?? "records"
   if (retain !== "records" && retain !== "none") throw new Error(`createTileLayer: retain must be "records" or "none", got ${JSON.stringify(retain)}`)
@@ -578,30 +657,22 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
   // rotation to identity (the tile camera rotates the COMPOSITE, never
   // the bake).
   let targetParams = (): ShaderParams => ({ uViewport: [targetW, targetH], uCamera: [-overhang, -overhang, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: tint, ...params })
-  // The pool, and the classes the layer builds: a target is
-  // interchangeable with any over the same pipeline (setTargetSize
-  // resizes it id-stable; the size each pooled target holds is kept so a
-  // take at the same size skips the resize), a buffer with any of its
-  // byte size.
+  // The pool: the layer's own, or the one given, with the layer's two
+  // kinds registered on it either way (TARGET_KIND, BUFFER_KIND).
   let ownPool = opts?.pool === undefined
-  let targetSizes = new Map<TextureId, number>()
-  let pool: ResourcePool =
-    opts?.pool ??
-    createResourcePool({
-      cap: POOL_CHUNKS * (2 + shapes.length),
-      free: (id, cls) => {
-        if (cls.startsWith("texture:")) {
-          targetSizes.delete(id as TextureId)
-          destroyTexture(id as TextureId)
-        } else destroyBuffer(id as BufferId)
-      },
-      autoFree: false,
-    })
-  let targetClass = `texture:${gpu.pipeline}`
-  let bufferClass = (bytes: number) => `buffer:${bytes}`
+  let pool: ResourcePool = opts?.pool ?? createResourcePool({ cap: POOL_CHUNKS * (2 + shapes.length), autoFree: false })
+  pool.destroyWith(TARGET_KIND, freeTarget)
+  pool.destroyWith(BUFFER_KIND, freeBuffer)
+  let targetClass = `${TARGET_KIND}:${gpu.pipeline}`
+  let bufferClass = (bytes: number) => `${BUFFER_KIND}:${bytes}`
 
   let disposed = false
   let scheduled = false
+  // A viewer's view changed since the last flush: the spatial core is
+  // flushed there, once, so the residency pass runs in the frame's
+  // publish pass beside the bakes (as a sprite layer's sync flushes it),
+  // never once per camera write.
+  let viewsDirty = false
   // The publish pass of every frame runs the pending flush ahead of the
   // paint, so a tile set anywhere in the frame's JS is baked for that
   // frame's picture; the microtask stays for writes made outside a frame.
@@ -626,9 +697,20 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
   let notify = () => {
     for (let w of watchers) w()
   }
+  let schedule = () => {
+    if (scheduled) return
+    scheduled = true
+    RESOLVED.then(flush)
+  }
   let flush = () => {
     scheduled = false
     if (disposed) return
+    if (viewsDirty) {
+      viewsDirty = false
+      // The pass runs at the flush; its events arrive with the next
+      // frame, which the flush requests when something changed.
+      spatial.flush()
+    }
     let baked = dirtyChunks
     dirtyChunks = []
     for (let chunk of baked) {
@@ -651,9 +733,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     if (chunk.dirty) return
     chunk.dirty = true
     dirtyChunks.push(chunk)
-    if (scheduled) return
-    scheduled = true
-    RESOLVED.then(flush)
+    schedule()
   }
 
   // The chunk at canonical chunk indices, made on first contact: no
@@ -705,11 +785,13 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
   let acquire = (chunk: Chunk) => {
     if (chunk.texture !== null || chunk.records === null) return
     let bytes = chunk.records.byteLength
-    let buffer = (pool.take(bufferClass(bytes)) as BufferId | undefined) ?? createBuffer(bytes, { label: `${label}-chunk-records`, autoFree: false })
+    // Every chunk resource carries the LAYER's label, so the inventory's
+    // group under it (/gpu `groups`) is the layer's footprint.
+    let buffer = (pool.take(bufferClass(bytes)) as BufferId | undefined) ?? createBuffer(bytes, { label, autoFree: false })
     chunk.buffer = buffer
-    chunk.styles.forEach((style, i) => {
-      style.buffer = (pool.take(bufferClass(style.bytes.byteLength)) as BufferId | undefined) ?? createBuffer(style.bytes.byteLength, { label: `${label}-chunk-style${i}`, autoFree: false })
-    })
+    for (let style of chunk.styles) {
+      style.buffer = (pool.take(bufferClass(style.bytes.byteLength)) as BufferId | undefined) ?? createBuffer(style.bytes.byteLength, { label, autoFree: false })
+    }
     let buffers = [gpu.quad, buffer, ...chunk.styles.map(s => s.buffer!)]
     let w = targetW * oversample
     let h = targetH * oversample
@@ -720,7 +802,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
       setDraw(texture, { buffers, instanceCount: perChunk })
     } else {
       texture = createShaderTarget(gpu.pipeline, w, h, targetParams(), {
-        label: `${label}-chunk`,
+        label,
         buffers,
         vertexCount: 4,
         instanceCount: perChunk,
@@ -794,6 +876,8 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
         ? undefined
         : [floorDiv(bounds.col, chunkTiles), floorDiv(bounds.row, chunkTiles), 0, floorDiv(bounds.col + bounds.cols - 1, chunkTiles), floorDiv(bounds.row + bounds.rows - 1, chunkTiles), 0],
     wrap: wrap === null ? undefined : [wrap.cols / chunkTiles, wrap.rows / chunkTiles, 0],
+    weight: chunkTexels(oversample),
+    limit: maxTexels,
     label,
   })
   handlers.set(grid, { enter: enterChunk, leave: leaveChunk })
@@ -889,6 +973,44 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
     }
   }
 
+  // Re-bake every resident chunk at density `n`: resizing a target
+  // re-renders it, but a manual target's content is its last bake, so
+  // each resident chunk is marked for the flush; pooled targets resize on
+  // their next take. The limits weigh a chunk at its new size.
+  let applyDensity = (n: number) => {
+    if (n === oversample) return
+    thrash()
+    oversample = n
+    for (let chunk of chunks.values()) {
+      if (chunk.texture === null) continue
+      setTargetSize(chunk.texture, targetW * n, targetH * n)
+      targetSizes.set(chunk.texture, targetW * n * (targetH * n))
+      touch(chunk, false)
+    }
+    spatial.setGridWeight(grid, chunkTexels(n))
+  }
+  // Each viewer's wish for the density: device pixels per world pixel.
+  let wishes = new Map<TileViewer, number>()
+  // The viewers' pick: the largest wish, rounded up, bounded by the caps
+  // and the window's pixel count per chunk, with the shrink hysteresis
+  // (oversample-math.ts); under `maxTexels` the pick is clamped so a
+  // chunk always fits the budget (the fit rounds up and could not
+  // otherwise). Nothing to pick from before the first viewer reports.
+  let resolve = () => {
+    if (pinned || wishes.size === 0) return
+    let scale = 0
+    for (let w of wishes.values()) scale = Math.max(scale, w)
+    let win = windowSize()
+    let ds = displayScale()
+    let budget = win.width * ds * (win.height * ds)
+    if (maxPixels !== undefined) budget = Math.min(budget, maxPixels)
+    if (maxTexels !== undefined) budget = Math.min(budget, maxTexels)
+    let n = pickOversample(oversample, scale, targetW, targetH, budget, limits.maxTextureSize, maxOversample)
+    if (n === null) return
+    if (maxTexels !== undefined) n = Math.max(1, Math.min(n, Math.floor(Math.sqrt(maxTexels / (targetW * targetH)))))
+    applyDensity(n)
+  }
+
   let layer: TileLayer = {
     atlases,
     material,
@@ -904,20 +1026,18 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
       return oversample
     },
     setOversample(n) {
-      if (disposed || n === oversample) return
-      checkOversample("setOversample", n, targetW, targetH)
-      thrash()
-      oversample = n
-      // Resizing a target re-renders it, but a manual target's content is
-      // its last bake: mark every resident chunk so the flush bakes it at
-      // the new size. Pooled targets resize on their next take.
-      for (let chunk of chunks.values()) {
-        if (chunk.texture === null) continue
-        setTargetSize(chunk.texture, targetW * n, targetH * n)
-        targetSizes.set(chunk.texture, targetW * n * (targetH * n))
-        // The records are unchanged; the resized target just needs a bake.
-        touch(chunk, false)
+      if (disposed) return
+      if (n === null) {
+        pinned = false
+        resolve()
+        return
       }
+      checkOversample("setOversample", n, targetW, targetH)
+      if (maxTexels !== undefined && maxTexels < chunkTexels(n)) {
+        throw new Error(`setOversample: maxTexels ${maxTexels} holds no chunk at oversample ${n} (${chunkTexels(n)} texels); raise it or pin lower`)
+      }
+      pinned = true
+      applyDensity(n)
     },
     addViewer() {
       if (disposed) throw new Error("addViewer: the layer is disposed")
@@ -925,24 +1045,31 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
       let view = new Float32Array(16)
       let proj = new Float32Array(16)
       let viewer: TileViewer = {
-        setCamera(camera, width, height) {
+        setCamera(camera, width, height, deviceScale = 1) {
           if (key === null || disposed) return
           checkCamera(camera)
           if (!(width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height))) {
             throw new Error(`setCamera: the viewport must be a positive size, got ${width} x ${height}`)
           }
+          if (!(Number.isFinite(deviceScale) && deviceScale > 0)) {
+            throw new Error(`setCamera: deviceScale must be a positive number, got ${deviceScale}`)
+          }
           viewMatrices(camera, width, height, view, proj)
           spatial.setView(key, view, proj)
-          // The pass runs at the flush; its events arrive with the next
-          // frame, which the flush requests when something changed.
-          spatial.flush()
+          viewsDirty = true
+          schedule()
+          wishes.set(viewer, deviceScale * (camera.zoom ?? 1))
+          resolve()
         },
         dispose() {
           if (key === null) return
           viewers.delete(viewer)
+          wishes.delete(viewer)
           if (!disposed) {
             spatial.setView(key, null)
-            spatial.flush()
+            viewsDirty = true
+            schedule()
+            resolve()
           }
           key = null
         },
@@ -1169,7 +1296,7 @@ export function createTileLayer(tileW: number, tileH: number, atlases: Atlas[], 
       // is not the place for a dying layer's resources.
       for (let chunk of chunks.values()) {
         if (chunk.texture === null) continue
-        destroyTexture(chunk.texture)
+        freeTarget(chunk.texture)
         destroyBuffer(chunk.buffer!)
         for (let style of chunk.styles) destroyBuffer(style.buffer!)
         chunk.texture = null

@@ -339,6 +339,44 @@ fn time(ctx: Ctx<'_>) -> flux::rquickjs::Result<f64> {
   Ok(stepper(&ctx, "time()")?.time_ms())
 }
 
+/// `stats(windowMs, windowFrames)`: the performance statistics as the
+/// control API's `/stats` reports them (stats_query.rs), as JSON text:
+/// the draw loop's latch, the window summary over the frames the test
+/// ran, and the live reads (node counts, raster counters, the residency
+/// gate, the app's registered stats). Either window argument null means
+/// the default; `windowFrames` wins when both are given, as on the wire.
+fn stats(ctx: Ctx<'_>, window_ms: Option<f64>, window_frames: Option<u32>) -> flux::rquickjs::Result<String> {
+  stepper(&ctx, "stats()")?;
+  let throw = |message: &str| Exception::throw_message(&ctx, &format!("sol:test stats: {message}"));
+  let Some((snapshot, history)) = crate::plugins::draw::stats_handles(&ctx) else {
+    return Err(throw("no window in this test; mount the app first"));
+  };
+  let snap = *snapshot.lock().expect("stats snapshot lock poisoned");
+  let ask = match window_frames {
+    Some(n) => crate::frame_history::Window::Frames(n as usize),
+    None => crate::frame_history::Window::Ms(window_ms.unwrap_or(crate::stats_query::STATS_WINDOW_DEFAULT_MS)),
+  }
+  .clamped();
+  let now_ms = crate::frame_history::now_ms();
+  let (window, latest_frame_age_ms) = {
+    let history = history.lock().expect("frame history lock poisoned");
+    (history.summarize(ask, now_ms), history.reach(now_ms).map(|(_, _, newest_ms)| newest_ms))
+  };
+  let atx = flux::gui::alloy_context(&ctx);
+  let data = crate::stats_query::stats_data(crate::stats_query::StatsQuery {
+    snap,
+    time_ms: now_ms,
+    latest_frame_age_ms,
+    ask,
+    window: window.as_ref(),
+    counts: flux::gui::tree::node_counts(&ctx),
+    raster: atx.as_ref().map(|atx| atx.raster_counters()),
+    residency: atx.as_ref().map(|atx| atx.spatial().residency_stats()),
+    app: Some(crate::plugins::dev::read_stats(&ctx)),
+  });
+  Ok(serde_json::Value::Object(data).to_string())
+}
+
 pub struct SolTestModule;
 
 impl ModuleDef for SolTestModule {
@@ -353,6 +391,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("settle")?;
     decl.declare("link")?;
     decl.declare("debug")?;
+    decl.declare("stats")?;
     decl.declare("capture")?;
     decl.declare("painted")?;
     decl.declare("camera")?;
@@ -380,6 +419,7 @@ impl ModuleDef for SolTestModule {
     }
     exports.export("link", Function::new(ctx.clone(), link)?)?;
     exports.export("debug", Function::new(ctx.clone(), debug)?)?;
+    exports.export("stats", Function::new(ctx.clone(), stats)?)?;
     exports.export("capture", Function::new(ctx.clone(), capture)?)?;
     exports.export("painted", Function::new(ctx.clone(), painted)?)?;
     exports.export("camera", Function::new(ctx.clone(), camera)?)?;

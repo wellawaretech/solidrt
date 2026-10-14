@@ -217,7 +217,13 @@ when exactly one client is connected.
   per target, so pair it with `label`) reported in full. An entry carries
   its own `label` when the add gave one (a 3d mesh reports its geometry's
   label, so a model part's entry is found by the part's name), beside its
-  `indexCount`/`instanceCount`.
+  `indexCount`/`instanceCount`. `groups` sums the textures and buffers by
+  exact label (`textures`, `textureBytes`, `buffers`, `bufferBytes`,
+  `bytes`): a consumer that labels every resource it creates (a tile
+  layer's chunks under the layer's label) reads its footprint as one
+  number before and after a residency change; it is what is ALLOCATED
+  under the label, pooled idle targets included (`/stats` `app.poolHeld`
+  says how many ids wait in pools).
 - `/buffer?id=<bufferId>&offset=<n>&length=<n>&as=<f32|u16|u8>` - vertex
   buffer contents (default f32; reads cap at 64 KiB).
 - `/stats?window=<ms>` (or `?frames=<n>`, the last n frames that changed
@@ -257,6 +263,20 @@ when exactly one client is connected.
   raster thread uploaded into a camera texture, and frames the camera
   produced that no upload showed (gaps in the frame sequence), so a camera
   verdict is uploads per second at the camera's rate with skipped at 0;
+  the residency gate's figures are `regionsWanted` (resident plus
+  pending), `regionsResident`, `regionsPending` (enters not delivered
+  yet) of which `regionsStalled` (held back by a limit, waiting on a view
+  move, not a frame), `regionEnters`/`regionLeaves` (cumulative; the
+  window's own `regionEnters`/`regionLeaves` are the pair over its span)
+  and `residentWeight` (every grid's resident cells times its weight: a
+  tile layer's resident texels), so a streaming world's verdict is a flat
+  `regionsResident` and `residentWeight` while the camera roams with the
+  window's enters and leaves saying how much it churned; `app` is the
+  counters the app registered with `sol:dev` `registerStat` (name to
+  number, null where a reader failed), the core's resource pools among
+  them (`poolHits`, `poolMisses`, cumulative takes that found an id or
+  created one, so hits over the two is the reuse rate; `poolHeld`, ids
+  waiting in pools now);
   `slowFrames`,
   `gpuFrameExecMsPerFrame`, `fenceTimeoutsPerSec` and `rasterCmdMsPerSec`
   say why. A snapshot capture stalls the frame it lands in (a blocking

@@ -368,7 +368,11 @@ declare module "flux:spatial" {
    * `wrap` an optional period in cells per axis (0 = none; a torus:
    * indices modulo the period, the canonical cell reported once however
    * many images a viewer sees - the handler's composite places the
-   * images), `label` the name the stats group the grid's footprint under.
+   * images), `weight` the handler's cost of one resident cell in a unit of
+   * its choosing (a tile layer's chunk texels; default 1, 0 = free under
+   * every limit), `limit` the grid's own cap on resident weight (see
+   * setResidencyLimit for how a cap evicts), `label` the name the stats
+   * group the grid's footprint under.
    */
   export type GridSpec = {
     origin: [number, number, number]
@@ -377,6 +381,8 @@ declare module "flux:spatial" {
     leave: number
     bounds?: [number, number, number, number, number, number]
     wrap?: [number, number, number]
+    weight?: number
+    limit?: number
     label?: string
   }
   /**
@@ -395,6 +401,26 @@ declare module "flux:spatial" {
   export function createGrid(spec: GridSpec): GridId
   /** End a grid: every cell whose enter went out leaves. */
   export function destroyGrid(grid: GridId): void
+  /** A grid's weight per resident cell (GridSpec.weight), re-weighed
+   * against the limits at the next pass: a tile layer re-baking at a new
+   * oversample reports its new chunk texel count here. */
+  export function setGridWeight(grid: GridId, weight: number): void
+  /**
+   * The scene-wide cap on resident grid weight, null for none (default):
+   * Unreal's streaming pool size in our costume, every grid's cells
+   * weighed by their grid's `weight`, beside each grid's own `limit`.
+   * Past a cap the most urgent pending cell displaces the least urgent
+   * resident ones until it fits, urgency being the distance to the
+   * nearest wanting eye in the grid's own `leave`s (dimensionless, so a
+   * 2d layer in pixels and a 3d grid in metres compare); the eviction's
+   * leave precedes the enter it made room for, so a handler's pool hands
+   * the freed resources straight over. A cell nothing can make room for
+   * is wanted and STALLED: no event, and no frame demanded for it until
+   * a view moves. Explicit regions (setRegion) weigh nothing. A cap
+   * counts resident cells, not what a handler put in them: a resident
+   * chunk a tile layer holds no texture for still weighs a chunk.
+   */
+  export function setResidencyLimit(limit: number | null): void
   /**
    * The region enters delivered per frame scene-wide (default 16): every
    * region form and consumer spends the one budget, nearest to a viewer's

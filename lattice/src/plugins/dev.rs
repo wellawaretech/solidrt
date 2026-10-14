@@ -213,6 +213,70 @@ fn register_debug_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) ->
   })
 }
 
+/// Counters the app registered via `registerStat`, read into the stats
+/// query's `app` block (Godot's `Performance.add_custom_monitor`, Unity's
+/// ProfilerCounter): a name and a function returning the current number.
+/// Context userdata like the debug registry: a hot reload's fresh engine
+/// starts empty and module init re-registers; go builds read it, elsewhere
+/// it is a write nothing reads.
+#[derive(Clone, Default, JsLifetime)]
+pub struct StatRegistry(#[qjs(skip_trace)] Rc<RefCell<DebugCommands>>);
+
+/// Read every registered stat now: a name to its number, null where the
+/// reader threw or returned something other than a finite number (the
+/// name still shows, so a broken reader is visible). Runs on the JS
+/// thread.
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
+pub fn read_stats(ctx: &Ctx<'_>) -> serde_json::Map<String, serde_json::Value> {
+  let mut out = serde_json::Map::new();
+  let Some(registry) = ctx.userdata::<StatRegistry>() else {
+    return out;
+  };
+  let readers: Vec<(String, Persistent<Function<'static>>)> =
+    registry.0.borrow().by_name.iter().map(|(name, e)| (name.clone(), e.func.clone())).collect();
+  for (name, persistent) in readers {
+    // A failed reader reads as null AND says why through the engine
+    // logger (what get_logs shows), so the cause is named, not guessed.
+    let value = match persistent.restore(ctx).and_then(|f| f.call::<_, Value>(())) {
+      Ok(v) => match v.as_number().filter(|n| n.is_finite()) {
+        Some(n) => serde_json::Value::from(n),
+        None => {
+          log::warn!("[stats] registered stat '{name}' returned something other than a finite number");
+          serde_json::Value::Null
+        }
+      },
+      Err(e) => {
+        log::warn!("[stats] registered stat '{name}' threw: {}", flux::rquickjs::CaughtError::from_error(ctx, e));
+        serde_json::Value::Null
+      }
+    };
+    out.insert(name, value);
+  }
+  out
+}
+
+/// `registerStat(name, fn)`: the same registry contract as `registerDebug`
+/// (duplicate names replace, the unregister captures the name and the id
+/// only), for a reader the stats query calls.
+fn register_stat_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) -> flux::rquickjs::Result<Function<'js>> {
+  let registry = ctx.userdata::<StatRegistry>().expect("stat registry installed").clone();
+  let persistent = Persistent::save(&ctx, func);
+  let id = {
+    let mut stats = registry.0.borrow_mut();
+    let id = stats.next_id;
+    stats.next_id += 1;
+    stats.by_name.insert(name.clone(), DebugEntry { id, func: persistent });
+    id
+  };
+  Function::new(ctx.clone(), move |ctx: Ctx<'_>| {
+    let Some(registry) = ctx.userdata::<StatRegistry>() else { return };
+    let mut stats = registry.0.borrow_mut();
+    if stats.by_name.get(&name).is_some_and(|e| e.id == id) {
+      stats.by_name.remove(&name);
+    }
+  })
+}
+
 pub struct SolDevModule;
 
 impl ModuleDef for SolDevModule {
@@ -225,17 +289,22 @@ impl ModuleDef for SolDevModule {
     decl.declare("recents")?;
     decl.declare("launchAddress")?;
     decl.declare("registerDebug")?;
+    decl.declare("registerStat")?;
     decl.declare("reportLocation")?;
     Ok(())
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> flux::rquickjs::Result<()> {
-    // The debug registry exists in every build (unlike the go-only control),
+    // The registries exist in every build (unlike the go-only control),
     // installed on first import of this module.
     if ctx.userdata::<DebugRegistry>().is_none() {
       ctx.store_userdata(DebugRegistry::default()).expect("store debug registry");
     }
+    if ctx.userdata::<StatRegistry>().is_none() {
+      ctx.store_userdata(StatRegistry::default()).expect("store stat registry");
+    }
     exports.export("registerDebug", Function::new(ctx.clone(), register_debug_impl)?)?;
+    exports.export("registerStat", Function::new(ctx.clone(), register_stat_impl)?)?;
     // The location slot is the engine loop's, installed at engine build.
     exports.export("reportLocation", Function::new(ctx.clone(), report_location_impl)?)?;
 

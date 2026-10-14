@@ -70,9 +70,9 @@ pub use event::{
 };
 pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand, Gamepads};
 pub use gpu::{
-  check_cube_faces, mip_levels, mip_size, GpuBufferLayoutInfo, SamplerFilter, SamplerOptions, SamplerOverride,
-  SamplerState, SamplerWrap, TextureEntry, TextureFormat, TextureRect, TextureRegistry, TextureShape, CUBE_FACES,
-  MIN_ANISOTROPY,
+  check_cube_faces, mip_levels, mip_size, GpuBufferLayoutInfo, GpuResources, SamplerFilter, SamplerOptions,
+  SamplerOverride, SamplerState, SamplerWrap, TextureEntry, TextureFormat, TextureRect, TextureRegistry, TextureShape,
+  CUBE_FACES, MIN_ANISOTROPY,
 };
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferLayout, BufferUpdate, CullMode, DepthState,

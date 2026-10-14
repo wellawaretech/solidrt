@@ -8,7 +8,6 @@ import type { CameraUpdate } from "../camera.ts"
 import type { Frame } from "../frames.ts"
 import { createTileLayer } from "../tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle, TileRect } from "../tiles.ts"
-import { applyOversample } from "./auto-oversample.ts"
 
 /**
  * The tile layer's camera - the same CameraUpdate vocabulary as the sprite
@@ -58,25 +57,29 @@ export type TileLayerProps = {
    * "linear" (hard pixels belong to the atlas sampler, see TileLayerOptions). */
   filter?: FilterMode
   /**
-   * Target texels per world pixel in the baked chunks. Absent, the component
-   * picks it every layout from its viewport's on-screen size (display
-   * scale, any designSize fit) times the camera zoom, so tiles resample
-   * properly at any scale.
+   * Pin the bake density, target texels per world pixel (live for a
+   * layer of the component's own). Absent, the LAYER picks it from its
+   * viewers: every composite reports its device pixels per world pixel
+   * (its viewport's on-screen scale times the camera zoom) and the layer
+   * bakes at the largest, so a main view and a minimap of one world
+   * never contend (TileLayerOptions.oversample). Creation-fixed with the
+   * two caps below; with `layer` they belong to its maker.
    */
   oversample?: number
   /**
-   * Cap on the auto-picked oversample (integer >= 1): tiles stay adaptive
-   * up to it, never above. A tile world's texture memory is resident chunks
-   * x n squared, so this is the lever that bounds it on high-scale displays
-   * without giving up adaptivity. Ignored when `oversample` is set.
+   * Cap on the auto-picked density (integer >= 1): chunks stay adaptive
+   * up to it, never above. A tile world's texture memory is resident
+   * chunks x n squared, so this is the lever that bounds it on
+   * high-scale displays without giving up adaptivity. Ignored under a
+   * pinned `oversample`.
    */
   maxOversample?: number
   /**
    * Cap on a baked chunk's texel count under the auto pick, the budget
-   * form of `maxOversample`: the pick stays under it on any display
-   * (the window's own pixel count caps it always). Ignored when
-   * `oversample` is set; same name and meaning as `<SpriteLayer>`'s and
-   * the 3d `<Scene>`'s.
+   * form of `maxOversample`: the pick stays under it on any display (the
+   * window's own pixel count caps it always). Ignored under a pinned
+   * `oversample`; same name and meaning as `<SpriteLayer>`'s and the 3d
+   * `<Scene>`'s.
    */
   maxPixels?: number
   /** Chunk edge in tiles (default ~512px worth); see TileLayerOptions. */
@@ -89,12 +92,14 @@ export type TileLayerProps = {
    */
   tint?: [number, number, number, number]
   /** The world's cell bounds, wrap periods, overhang margin, residency
-   * band, retention and fill (TileLayerOptions). Fixed at creation. */
+   * band, texture budget, retention and fill (TileLayerOptions). Fixed
+   * at creation. */
   bounds?: TileRect
   wrap?: { cols: number; rows: number }
   overhang?: number
   enter?: number
   leave?: number
+  maxTexels?: number
   retain?: "records" | "none"
   fill?: (chunk: TileChunk) => void
   /** The resource pool the layer's chunks take their buffers and targets
@@ -114,6 +119,9 @@ export type TileLayerProps = {
    * layer of the component's own. */
   onEnter?: (chunk: TileChunk) => void
   onLeave?: (chunk: TileChunk) => void
+  /** The layer's label for a layer of the component's own (its chunk
+   * resources in the inventory), and the viewport view's `label` either
+   * way. */
   label?: string
   ref?: (layer: TileLayerHandle) => void
 }
@@ -144,8 +152,8 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
   let own = untrack(() => props.layer === undefined)
   let layer = untrack(() => {
     if (props.layer !== undefined) {
-      if (props.tileW !== undefined || props.tileH !== undefined || props.atlases !== undefined || props.frames !== undefined || props.material !== undefined || props.chunkTiles !== undefined || props.bounds !== undefined || props.wrap !== undefined || props.fill !== undefined) {
-        throw new Error("TileLayer: `layer` adopts an existing layer, so the creation props (tileW, tileH, atlases, frames, material, chunkTiles, bounds, wrap, fill) have nothing to apply to")
+      if (props.tileW !== undefined || props.tileH !== undefined || props.atlases !== undefined || props.frames !== undefined || props.material !== undefined || props.chunkTiles !== undefined || props.bounds !== undefined || props.wrap !== undefined || props.fill !== undefined || props.oversample !== undefined || props.maxOversample !== undefined || props.maxPixels !== undefined) {
+        throw new Error("TileLayer: `layer` adopts an existing layer, so the creation props (tileW, tileH, atlases, frames, material, chunkTiles, bounds, wrap, fill, oversample, maxOversample, maxPixels) have nothing to apply to")
       }
       if (props.onEnter !== undefined || props.onLeave !== undefined) throw new Error("TileLayer: with `layer` the residency hooks belong to the layer's maker (layer.onEnter / onLeave)")
       return props.layer
@@ -156,6 +164,9 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       material: props.material,
       params: props.params,
       filter: props.filter,
+      oversample: props.oversample,
+      maxOversample: props.maxOversample,
+      maxPixels: props.maxPixels,
       chunkTiles: props.chunkTiles,
       tint: props.tint,
       frames: props.frames,
@@ -164,6 +175,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       overhang: props.overhang,
       enter: props.enter,
       leave: props.leave,
+      maxTexels: props.maxTexels,
       retain: props.retain,
       fill: props.fill,
       pool: props.pool,
@@ -175,13 +187,14 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
     layer.onLeave = chunk => untrack(() => props.onLeave)?.(chunk)
   }
   callRef(() => props.ref, layer)
-  createEffect(
-    () => props.oversample,
-    n => {
-      if (n !== undefined) layer.setOversample(n)
-    },
-  )
   if (own) {
+    // A pin given later pins; taking it away hands the density back to
+    // the viewers' pick (the creation option is the initial pin).
+    createEffect(
+      () => props.oversample,
+      n => layer.setOversample(n ?? null),
+      { defer: true },
+    )
     createEffect(
       () => props.tint,
       tint => {
@@ -199,34 +212,27 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
   let margin = layer.overhang
   let leafW = layer.chunkW + 2 * margin
   let leafH = layer.chunkH + 2 * margin
-  // The viewport: the root's layout box, followed. Its device box over its
-  // layout box is the display scale times any ancestor fit; times the
-  // camera zoom that is the device pixels one world pixel covers, the
-  // auto oversample's input (a zoom change re-runs the pick through deps).
-  // Rotation is not a resolution factor and never enters.
+  // The viewport: the root's layout box, followed, and its device pixels
+  // per layout pixel (the display scale times any ancestor fit), which
+  // with the camera zoom is this composite's wish for the bake density;
+  // the layer picks the largest wish over its viewers. Rotation is not a
+  // resolution factor and never enters.
   let root: { id: number } | undefined
   let sameSize = (a: { width: number; height: number }, b: { width: number; height: number }) => a.width === b.width && a.height === b.height
   let [viewport, setViewport] = createSignal({ width: 0, height: 0 }, { equals: sameSize })
-  followBox(
-    "TileLayer",
-    () => root,
-    box => {
-      setViewport({ width: box.layout.width, height: box.layout.height })
-      if (props.oversample !== undefined || box.layout.width <= 0 || box.layout.height <= 0) return
-      let zoom = props.camera?.zoom ?? 1
-      let scale = Math.max(box.device.width / box.layout.width, box.device.height / box.layout.height) * zoom
-      applyOversample("TileLayer", layer, scale, leafW, leafH, props.maxOversample, props.maxPixels)
-    },
-    { deps: () => [props.camera?.zoom, props.maxOversample, props.maxPixels] },
-  )
-  // The viewer: the camera over the viewport, pushed on every change of
-  // either; the gate does the rest.
+  let [deviceScale, setDeviceScale] = createSignal(1)
+  followBox("TileLayer", () => root, box => {
+    setViewport({ width: box.layout.width, height: box.layout.height })
+    if (box.layout.width > 0 && box.layout.height > 0) setDeviceScale(Math.max(box.device.width / box.layout.width, box.device.height / box.layout.height))
+  })
+  // The viewer: the camera over the viewport and the scale, pushed on
+  // every change of any; the gate and the density pick do the rest.
   let viewer = layer.addViewer()
   onCleanup(() => viewer.dispose())
   createEffect(
-    () => [props.camera, viewport()] as const,
-    ([camera, size]) => {
-      if (size.width > 0 && size.height > 0) viewer.setCamera(camera ?? {}, size.width, size.height)
+    () => [props.camera, viewport(), deviceScale()] as const,
+    ([camera, size, scale]) => {
+      if (size.width > 0 && size.height > 0) viewer.setCamera(camera ?? {}, size.width, size.height, scale)
     },
   )
   // The resident chunks with a texture, row-major: the layer says when the
@@ -295,7 +301,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
   // rotates and scales them about its own origin and sits at the pivot.
   // tests/camera.test.ts holds the two spellings together.
   return (
-    <view ref={(n: { id: number }) => (root = n)} width={props.width ?? pct(100)} height={props.height ?? pct(100)} overflow="clip" flexShrink={0}>
+    <view ref={(n: { id: number }) => (root = n)} label={props.label} width={props.width ?? pct(100)} height={props.height ?? pct(100)} overflow="clip" flexShrink={0}>
       <view position="absolute" originX={0} originY={0} rotate={props.camera?.rotation ?? 0} scale={props.camera?.zoom ?? 1} x={props.camera?.pivotX ?? 0} y={props.camera?.pivotY ?? 0}>
         <For each={images()} keyed={im => im.key}>
           {im => <d-texture src={im().texture} x={im().x - camX()} y={im().y - camY()} w={leafW} h={leafH} />}

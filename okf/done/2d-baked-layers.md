@@ -321,3 +321,36 @@ top); a wrapped world's seam snapshot (two images of one chunk); a
 minimap view holding chunks resident that the main view left; a world
 written 10^7 px from the origin, crisp; the pool's hit rate and the
 per-frame create count under the budget from `/stats`.
+
+## Findings, stage B2
+
+Landed 2026-10-14 over the shared gate ([spatial-residency-gate](spatial-residency-gate.md),
+whose Findings hold the gate-side decisions). Parts 1-6 built; part 7
+split out to okf/backlog/2d-sprite-record-compaction.md, since its
+one-query-per-camera-move premise does not hold for moving sprites and
+its threshold is unmeasured.
+
+- Frames bake at their OWN size anchored bottom-left (a 1-texel atlas no
+  longer fills a cell); the default overhang is the frames table's max as
+  frames lie, so a transposed non-square frame needs an explicit
+  `overhang`; indices stay 0-based with -1 clear (a Tiled import
+  subtracts firstgid); no `Frame.pivot` (additive later).
+- `maxTexels` is the grid's limit with chunk texels as weight: the gate
+  evicts the least needed chunk (furthest from any viewer in `leave`s)
+  for one more needed, leave before enter so the pool hands the target
+  over; past the budget chunks stall rather than the world blurring. It
+  must hold a chunk at the oversample in force (throws at creation and
+  at `setOversample`). A resident chunk with no cells still weighs one.
+- Every chunk resource carries the layer's label: `/gpu?label=<layer>`
+  and `groups.<layer>` are the layer's footprint; the pools' hits and
+  misses reach `/stats` under `app` through `sol:dev` `registerStat`.
+- The example flies a ring 10^7 px from the origin with a minimap as a
+  second composite of one layer under a 40-chunk budget.
+- One layer has one bake density, so the composites must not each push
+  their own: every viewer reports its device scale with its camera and
+  the LAYER picks the largest wish (the caps `maxOversample`, `maxPixels`
+  and `maxTexels` bound the pick, so the auto path never throws). A
+  composite below the density minifies the bake at the leaf at level 0,
+  Impeller's C API sampling no mip chain, which aliases past about 2x
+  under: the proper answer is the tile layer rendering through VIEWS like
+  the sprite layer, okf/backlog/2d-tile-views.md.

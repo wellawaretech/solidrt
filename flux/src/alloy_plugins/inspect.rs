@@ -240,6 +240,46 @@ pub fn insert_label(obj: &mut serde_json::Value, label: &Option<String>) {
   }
 }
 
+/// The textures and buffers grouped by their exact create label, with a
+/// count and byte total per kind and the group's total: a consumer that
+/// labels every resource it creates (a tile layer's chunks, a model's
+/// parts) reads its footprint as one number, before and after a
+/// residency change. Unlabelled resources form no group; `label` keeps
+/// the one group, like the lists. Pooled idle resources keep their label,
+/// so a group is what is ALLOCATED under it (the stats' pool figures say
+/// how much of that waits in a pool).
+fn label_groups(res: &alloy::GpuResources, label: Option<&str>) -> serde_json::Value {
+  let mut groups: std::collections::BTreeMap<&str, (u64, u64, u64, u64)> = std::collections::BTreeMap::new();
+  for t in &res.textures {
+    if let Some(l) = t.label.as_deref().filter(|l| label.is_none_or(|want| want == *l)) {
+      let g = groups.entry(l).or_default();
+      g.0 += 1;
+      g.1 += t.byte_length as u64;
+    }
+  }
+  for b in &res.buffers {
+    if let Some(l) = b.label.as_deref().filter(|l| label.is_none_or(|want| want == *l)) {
+      let g = groups.entry(l).or_default();
+      g.2 += 1;
+      g.3 += b.byte_length as u64;
+    }
+  }
+  groups
+    .into_iter()
+    .map(|(l, (textures, texture_bytes, buffers, buffer_bytes))| {
+      (
+        l.to_string(),
+        serde_json::json!({
+          "textures": textures, "textureBytes": texture_bytes,
+          "buffers": buffers, "bufferBytes": buffer_bytes,
+          "bytes": texture_bytes + buffer_bytes,
+        }),
+      )
+    })
+    .collect::<serde_json::Map<_, _>>()
+    .into()
+}
+
 /// Inventory alloy's GPU bookkeeping (textures, buffers, pipelines, programs)
 /// as the record the control API's `/gpu` answers with and a test reads
 /// (`flux:test/gui` `gpu`): shaped here once, like the node record above.
@@ -495,6 +535,7 @@ pub fn gpu_record(
   let mut data = serde_json::json!({
     "textures": keep(textures), "buffers": keep(buffers), "pipelines": keep(pipelines),
     "renderPipelines": keep(render_pipelines), "programs": keep(programs),
+    "groups": label_groups(&res, label),
   });
   if let (Some(ws), None) = (&res.window_shader, label) {
     data["windowShader"] = serde_json::json!({

@@ -82,7 +82,10 @@ agents/testing.md.
   the node, the capture riding the frame - the probe for a write made in
   a frame being in that frame, where `pixels()` paints afresh after the
   fact; `app.gpu({ label })` is the GPU inventory `/gpu` reports, where
-  "does it draw" is a count.
+  "does it draw" is a count, and `app.stats({ windowFrames })` the
+  statistics `/stats` reports (the residency gate's `regions*`, the
+  pools' `app.poolHits`/`poolMisses`, what the app registered with
+  `registerStat`), where "did it stream" is a count too.
 - The data folder and the fetch cache are empty at the start of every
   test, and no gamepad is seated.
 - A failure prints the app time and frame, what still demanded frames,

@@ -13,7 +13,7 @@ An app filling a world from a generator wrote it cell by cell: 18,096
 `setTile` calls for a modest two-world demo, each running `locate()` and
 copying one frame's four UVs. Fine at that size (the flush batches to one
 microtask), but the shape did not scale to a streaming world
-([2d-baked-layers](../plans/2d-baked-layers.md) B2, a re-fill callback
+([2d-baked-layers](../done/2d-baked-layers.md) B2, a re-fill callback
 regenerating a chunk's cells on approach), which would pay it per chunk,
 per approach, and a worker-generated world had no typed array to hand
 over. Not having a `<Tile>` component was the right call and stays; this
@@ -91,4 +91,4 @@ not a large speedup. The first seed is dominated by chunk allocation at
 - Chunk allocation (createBuffer + createPipelineTexture) is 1-2 ms per
   chunk here, so the streaming stage must pool chunk resources rather than
   create and destroy them per approach; noted on
-  [2d-baked-layers](../plans/2d-baked-layers.md) B2.
+  [2d-baked-layers](../done/2d-baked-layers.md) B2.

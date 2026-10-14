@@ -24,7 +24,7 @@ around the spatial arena:
   Tier 1 (`d-texture`) has shipped native transitions; tier 2 lost them.
 - **Picking is an O(n) reverse walk in JS** per pointer move, and every
   live record draws whether or not the camera sees it - the two
-  O(population) costs [2d-baked-layers](../plans/2d-baked-layers.md) planned to fix
+  O(population) costs [2d-baked-layers](../done/2d-baked-layers.md) planned to fix
   with a hand-rolled JS uniform grid.
 - **The layer is flat.** A dragged stack, a ship with turrets, a panning
   group: all composition is app JS, recomputed per child per move in the
@@ -274,7 +274,7 @@ without the regression caveat.
 
 ## Not in this item
 
-Baked/tile layers ([2d-baked-layers](../plans/2d-baked-layers.md) stages A/B) are
+Baked/tile layers ([2d-baked-layers](../done/2d-baked-layers.md) stages A/B) are
 untouched: tiles are static arithmetic, not nodes. Bitmap fonts, the frame
 animation helper and atlas growth are orthogonal. Frustum-style visible-set
 COMPACTION of instances (as opposed to per-entry 0/N visibility) is a
