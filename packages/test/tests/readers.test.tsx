@@ -114,6 +114,6 @@ test("pixel reads what a node paints, where a transition stands", async app => {
 test("gpu is the inventory the control API reports", async app => {
   await app.mount(() => <text>plain</text>)
   let inventory = app.gpu()
-  expect(Object.keys(inventory).sort()).toEqual(["buffers", "pipelines", "programs", "renderPipelines", "textures"])
+  expect(Object.keys(inventory).sort()).toEqual(["buffers", "groups", "pipelines", "programs", "renderPipelines", "textures"])
   expect(app.gpu({ label: "no such label" }).textures).toEqual([])
 })
