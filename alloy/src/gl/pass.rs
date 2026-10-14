@@ -23,27 +23,48 @@ pub struct PassInput {
 }
 
 impl PassInput {
-  /// A 2D input (every internal texture, and every registered texture that
-  /// is not a cube map).
+  /// A 2D input (every internal texture, and every registered texture of
+  /// the 2D shape).
   pub fn d2(name: impl Into<String>, texture: glow::Texture, sampler: Option<glow::Sampler>) -> Self {
     PassInput { name: name.into(), texture, sampler, shape: TextureShape::D2 }
   }
 
   fn target(&self) -> u32 {
-    match self.shape {
-      TextureShape::D2 => glow::TEXTURE_2D,
-      TextureShape::Cube => glow::TEXTURE_CUBE_MAP,
-    }
+    bind_target(self.shape)
   }
 }
 
-/// A texture unit's bindings as found before a pass touched it: the 2D and
-/// cube map texture names and the sampler object, restored when the pass
-/// ends.
+/// The GL bind target of a texture shape: every use of a name (creation,
+/// upload, mip generation, the pass bind) goes through its shape's target.
+pub(crate) fn bind_target(shape: TextureShape) -> u32 {
+  match shape {
+    TextureShape::D2 => glow::TEXTURE_2D,
+    TextureShape::Cube => glow::TEXTURE_CUBE_MAP,
+    TextureShape::D3 => glow::TEXTURE_3D,
+    TextureShape::D2Array => glow::TEXTURE_2D_ARRAY,
+  }
+}
+
+/// The `TEXTURE_BINDING_*` query of a shape's target, for the save/restore
+/// around any bind on it.
+pub(crate) fn binding_query(shape: TextureShape) -> u32 {
+  match shape {
+    TextureShape::D2 => glow::TEXTURE_BINDING_2D,
+    TextureShape::Cube => glow::TEXTURE_BINDING_CUBE_MAP,
+    TextureShape::D3 => glow::TEXTURE_BINDING_3D,
+    TextureShape::D2Array => glow::TEXTURE_BINDING_2D_ARRAY,
+  }
+}
+
+/// A texture unit's bindings as found before a pass touched it: the texture
+/// name on each of the four targets a pass may bind on and the sampler
+/// object, restored when the pass ends.
 struct SavedUnit {
   unit: u32,
   texture_2d: i32,
   texture_cube: i32,
+  texture_3d: i32,
+  texture_2d_array: i32,
   sampler: i32,
 }
 
@@ -179,6 +200,10 @@ fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, sl
       | UniformKind::Sampler2DShadow
       | UniformKind::SamplerCube
       | UniformKind::USampler2D
+      | UniformKind::Sampler3D
+      | UniformKind::Sampler2DArray
+      | UniformKind::USampler3D
+      | UniformKind::USampler2DArray
       | UniformKind::Inactive
       | UniformKind::Other(_) => {}
     }
@@ -260,6 +285,8 @@ fn bind_inputs(
           unit,
           texture_2d: gl.get_parameter_i32(glow::TEXTURE_BINDING_2D),
           texture_cube: gl.get_parameter_i32(glow::TEXTURE_BINDING_CUBE_MAP),
+          texture_3d: gl.get_parameter_i32(glow::TEXTURE_BINDING_3D),
+          texture_2d_array: gl.get_parameter_i32(glow::TEXTURE_BINDING_2D_ARRAY),
           sampler: gl.get_parameter_i32(glow::SAMPLER_BINDING),
         });
       }
@@ -662,6 +689,8 @@ pub(super) fn run_pass(
       gl.active_texture(glow::TEXTURE0 + s.unit);
       gl.bind_texture(glow::TEXTURE_2D, prev_texture(s.texture_2d));
       gl.bind_texture(glow::TEXTURE_CUBE_MAP, prev_texture(s.texture_cube));
+      gl.bind_texture(glow::TEXTURE_3D, prev_texture(s.texture_3d));
+      gl.bind_texture(glow::TEXTURE_2D_ARRAY, prev_texture(s.texture_2d_array));
       gl.bind_sampler(s.unit, prev_sampler(s.sampler));
     }
     gl.active_texture(prev_active as u32);

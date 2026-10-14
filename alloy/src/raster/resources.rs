@@ -11,8 +11,8 @@ use crate::gl;
 use crate::gl::{GpuTexture, RenderPipeline, ShaderProgram, Timed};
 use crate::gpu::{
   AttributeTable, BufferLayout, GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo,
-  GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, PipelineDesc, SamplerState, TextureFormat,
-  TextureRect, TextureShape, UniformTable, CUBE_FACES,
+  GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, PipelineDesc, SamplerState, TextureBox,
+  TextureFormat, TextureRect, TextureShape, UniformTable,
 };
 use std::rc::Rc;
 
@@ -81,16 +81,39 @@ impl RasterState {
     Ok(())
   }
 
-  /// Forget texture `id`, deleting its GL name when the name is ours (a
-  /// cube map, or a 2D draw target Impeller never adopted; every other 2D
-  /// name is Impeller-owned and dies with its adopted handle). The one
-  /// removal doorway for the texture map.
+  /// A volume (see `GpuTexture::new_volume`), registered without an
+  /// Impeller adoption like a cube map: the name stays this thread's to
+  /// delete.
+  #[allow(clippy::too_many_arguments)]
+  pub(super) fn create_volume_texture(
+    &mut self,
+    id: u64,
+    shape: TextureShape,
+    width: u32,
+    height: u32,
+    depth: u32,
+    pixels: &[u8],
+    sampler: SamplerState,
+    format: TextureFormat,
+    label: Option<String>,
+  ) -> Result<(), String> {
+    let mut gpu = GpuTexture::new_volume(&self.gl, shape, width, height, depth, pixels, sampler, format)?;
+    gpu.label = label;
+    self.release_texture(id);
+    self.textures.insert(id, gpu);
+    Ok(())
+  }
+
+  /// Forget texture `id`, deleting its GL name when the name is ours (any
+  /// non-2D shape - cube map, 3D, array - or a 2D draw target Impeller
+  /// never adopted; every other 2D name is Impeller-owned and dies with its
+  /// adopted handle). The one removal doorway for the texture map.
   pub(super) fn release_texture(&mut self, id: u64) {
     let unadopted = self.unadopted.remove(&id);
     self.yuv_latches.remove(&id);
     self.camera_taps.remove(&id);
     if let Some(gpu) = self.textures.remove(&id) {
-      if gpu.shape == TextureShape::Cube || unadopted {
+      if gpu.shape != TextureShape::D2 || unadopted {
         unsafe { glow::HasContext::delete_texture(&self.gl, gpu.gl_texture) };
       }
     }
@@ -101,7 +124,7 @@ impl RasterState {
     // borrowed as the separate fields they are.
     let Self { gl, staging, textures, dirty, .. } = self;
     let gpu = textures.get(&id).ok_or_else(|| format!("texture {id} not found"))?;
-    let expected = gpu.format.byte_len(gpu.width, gpu.height);
+    let expected = gpu.format.byte_len(gpu.width, gpu.height) * gpu.depth as usize;
     if pixels.len() != expected {
       return Err(format!(
         "texture {} update is {} bytes, expected {expected} ({})",
@@ -161,6 +184,53 @@ impl RasterState {
       }
       gpu.upload_rect(gl, &rect.pixels, rect.x, rect.y, rect.width, rect.height);
     }
+    gpu.regenerate_mipmaps(gl);
+    dirty.insert(id);
+    Ok(())
+  }
+
+  /// Upload one box into a volume, from client memory into its place in
+  /// level 0, and regenerate the mip chain after it. The UI side validated
+  /// bounds and size; this rejects what it cannot upload so a mismatch is
+  /// a warning, never a GL error.
+  pub(super) fn update_texture_box(&mut self, id: u64, b: &TextureBox) -> Result<(), String> {
+    let Self { gl, textures, dirty, .. } = self;
+    let gpu = textures.get(&id).ok_or_else(|| format!("texture {id} not found"))?;
+    if !gpu.shape.is_volume() {
+      return Err(format!(
+        "texture {} is {}: a box is a volume upload",
+        describe(id, &gpu.label),
+        gpu.shape.describe()
+      ));
+    }
+    let inside = b.x.checked_add(b.width).is_some_and(|right| right <= gpu.width)
+      && b.y.checked_add(b.height).is_some_and(|bottom| bottom <= gpu.height)
+      && b.z.checked_add(b.depth).is_some_and(|back| back <= gpu.depth);
+    if !inside {
+      return Err(format!(
+        "texture {} box {}x{}x{} at ({}, {}, {}) is outside its {}x{}x{}",
+        describe(id, &gpu.label),
+        b.width,
+        b.height,
+        b.depth,
+        b.x,
+        b.y,
+        b.z,
+        gpu.width,
+        gpu.height,
+        gpu.depth
+      ));
+    }
+    let expected = gpu.format.byte_len(b.width, b.height) * b.depth as usize;
+    if b.pixels.len() != expected {
+      return Err(format!(
+        "texture {} box update is {} bytes, expected {expected} ({})",
+        describe(id, &gpu.label),
+        b.pixels.len(),
+        gpu.format.name()
+      ));
+    }
+    gpu.upload_box(gl, &b.pixels, b.x, b.y, b.z, b.width, b.height, b.depth);
     gpu.regenerate_mipmaps(gl);
     dirty.insert(id);
     Ok(())
@@ -267,19 +337,12 @@ impl RasterState {
         id: *id,
         width: gpu.width,
         height: gpu.height,
+        depth: gpu.depth,
         target: self.shaders.contains_key(id),
         format: gpu.format.name(),
         shape: gpu.shape.name(),
         sampler: gpu.sampler,
-        byte_length: {
-          let faces = if gpu.shape == TextureShape::Cube { CUBE_FACES } else { 1 };
-          let level_bytes = if gpu.sampler.mipmap {
-            gpu.format.chain_byte_len(gpu.width, gpu.height)
-          } else {
-            gpu.format.byte_len(gpu.width, gpu.height)
-          };
-          faces * level_bytes
-        },
+        byte_length: gpu.shape.storage_byte_len(gpu.format, gpu.width, gpu.height, gpu.depth, gpu.sampler.mipmap),
         label: gpu.label.clone(),
       })
       .collect();

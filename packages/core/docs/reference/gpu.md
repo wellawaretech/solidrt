@@ -61,6 +61,10 @@ the dev tooling's GPU inventory and in engine log messages.
 
 {{ decl packages/core/src/gpu.ts createCubeTexture }}
 
+{{ decl packages/core/src/gpu.ts createTexture3D }}
+
+{{ decl packages/core/src/gpu.ts createArrayTexture }}
+
 {{ decl packages/core/src/gpu.ts createMutableTexture }}
 
 {{ decl packages/core/src/gpu.ts createShaderTexture }}
@@ -157,6 +161,26 @@ map is sampler-only: nothing displays, reads back, copies or re-uploads it.
 `wrap` does not apply to it (cube filtering is seamless across faces);
 `filter`, `mipmap` and `anisotropy` do.
 
+A 3D texture (`createTexture3D`) and an array texture
+(`createArrayTexture`) follow the same rule with `sampler3D` and
+`sampler2DArray`: the declared sampler type is checked at the bind, both
+ways, and both are sampler-only. They differ in what the third coordinate
+means. A 3D texture is sampled by position - `texture(uVolume, p)` with
+`p` in 0..1 on all three axes - and `"linear"` filters across all three
+(hardware trilinear), so a value stored once per texel reads smoothly
+between slices: a brick pool, a color LUT (map the input `v` to
+`(v * (size - 1) + 0.5) / size` to land on texel centres), a density
+field. An array texture is sampled by layer - `texture(uLayers, vec3(uv,
+layer))` with `layer` an unnormalized index, rounded and clamped, never
+divided by the count - and filters within a layer only: many equal-size
+maps behind one sampler with no bleeding between them, which an atlas
+cannot promise. Both are mutable: `uploadTexture(id, data)` rewrites the
+whole volume, and a box `{ x, y, z, width, height, depth }` as the third
+argument writes one brick or one layer in place (`z` is the slice or the
+layer). The 3D ceiling is its own and low - `limits.max3DTextureSize` is
+guaranteed only 256 per axis, and a 256^3 `rgba8` volume is 64 MB - so
+size volumes to the limit, not to the 2D one.
+
 ## Blending
 
 Combining passes is a render-tree job: stack `<texture>` elements and set
@@ -212,7 +236,8 @@ instead - for a UI subtree, `snapshotTexture`.
 ## Limits
 
 `limits` holds the device ceilings queried at startup: maximum texture and
-target size, cube map face size, sampler inputs per pass, vertex attributes
-per pipeline. Creates
+target size, cube map face size, 3D texture size per axis and array
+texture layer count (both guaranteed only 256 in GLES 3.0), sampler
+inputs per pass, vertex attributes per pipeline. Creates
 and binds validate against them and throw naming the limit; read them to
 size within the device instead.

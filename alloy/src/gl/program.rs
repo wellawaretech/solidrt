@@ -31,10 +31,17 @@ void main() {
 // silently stuck at 0. sampler2DShadow gets a default precision because ES
 // 3.0 gives it NONE (unlike sampler2D's lowp), so a comparison-sampler
 // uniform would otherwise fail to compile without a per-declaration
-// qualifier - a trap, not a choice the app should have to make.
+// qualifier - a trap, not a choice the app should have to make. The same
+// holds for sampler3D and sampler2DArray (ES 3.0 defaults only sampler2D
+// and samplerCube), so a volume binding compiles without a qualifier; the
+// integer samplers stay the source's own, qualified at the declaration
+// (`uniform highp usampler2D u`), as every integer-sampling source here
+// already does.
 const FRAGMENT_PREAMBLE: &str = r"#version 300 es
 precision highp float;
 precision highp sampler2DShadow;
+precision highp sampler3D;
+precision highp sampler2DArray;
 in vec2 vUV;
 out vec4 fragColor;
 uniform vec2 iResolution;
@@ -48,12 +55,16 @@ uniform vec2 iResolution;
 const PIPELINE_VERTEX_PREAMBLE: &str = r"#version 300 es
 precision highp float;
 precision highp sampler2DShadow;
+precision highp sampler3D;
+precision highp sampler2DArray;
 uniform vec2 iResolution;
 ";
 
 const PIPELINE_FRAGMENT_PREAMBLE: &str = r"#version 300 es
 precision highp float;
 precision highp sampler2DShadow;
+precision highp sampler3D;
+precision highp sampler2DArray;
 out vec4 fragColor;
 uniform vec2 iResolution;
 ";

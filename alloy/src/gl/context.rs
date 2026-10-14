@@ -195,6 +195,8 @@ pub(crate) fn query_limits(gl: &glow::Context) -> GpuLimits {
   unsafe {
     let tex = gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE);
     let cube = gl.get_parameter_i32(glow::MAX_CUBE_MAP_TEXTURE_SIZE);
+    let tex_3d = gl.get_parameter_i32(glow::MAX_3D_TEXTURE_SIZE);
+    let layers = gl.get_parameter_i32(glow::MAX_ARRAY_TEXTURE_LAYERS);
     let rb = gl.get_parameter_i32(glow::MAX_RENDERBUFFER_SIZE);
     let units = gl.get_parameter_i32(glow::MAX_TEXTURE_IMAGE_UNITS);
     let attribs = gl.get_parameter_i32(glow::MAX_VERTEX_ATTRIBS);
@@ -225,6 +227,8 @@ pub(crate) fn query_limits(gl: &glow::Context) -> GpuLimits {
     GpuLimits {
       max_texture_size: tex.min(rb).max(floor.max_texture_size as i32) as u32,
       max_cube_map_size: cube.max(floor.max_cube_map_size as i32) as u32,
+      max_3d_texture_size: tex_3d.max(floor.max_3d_texture_size as i32) as u32,
+      max_array_texture_layers: layers.max(floor.max_array_texture_layers as i32) as u32,
       max_texture_units: units.max(floor.max_texture_units as i32) as u32,
       max_vertex_attribs: attribs.max(floor.max_vertex_attribs as i32) as u32,
       max_anisotropy: anisotropy.max(floor.max_anisotropy as i32) as u32,

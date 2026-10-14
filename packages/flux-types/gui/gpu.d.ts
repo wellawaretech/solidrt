@@ -158,8 +158,11 @@ declare module "flux:gpu" {
   /**
    * Sampler inputs by uniform name; see {@link TextureBinding}. The uniform's
    * declared type picks what may bind: a `sampler2D` takes any 2D texture,
-   * a `samplerCube` a cube map ({@link createCubeTexture}), a
-   * `sampler2DShadow` a draw target's depth texture; a mismatch throws. An
+   * a `samplerCube` a cube map ({@link createCubeTexture}), a `sampler3D`
+   * a 3D texture ({@link createTexture3D}), a `sampler2DArray` an array
+   * texture ({@link createArrayTexture}), a `sampler2DShadow` a draw
+   * target's depth texture, and the `usampler*` of each shape an
+   * "rgba32ui" texture of that shape; a mismatch throws. An
    * `undefined` (or `null`) binding is skipped, like a param; an id must be
    * a non-negative integer (a negative or fractional value throws).
    */
@@ -279,6 +282,18 @@ declare module "flux:gpu" {
     /** Largest face edge of a cube map, in pixels (>= 2048); its own GL ceiling. */
     maxCubeMapSize: number
     /**
+     * Largest width, height AND depth of a 3D texture, in texels: its own
+     * ceiling, and a low one - GLES 3.0 guarantees only 256 (against 2048
+     * for 2D), because a volume's cost is cubic. Size volumes within it;
+     * a create over it throws naming the limit.
+     */
+    max3DTextureSize: number
+    /**
+     * Most layers of an array texture (>= 256); a layer's width and
+     * height are bounded by `maxTextureSize`.
+     */
+    maxArrayTextureLayers: number
+    /**
      * Sampler inputs one pass may bind (>= 16): a target's `textures`
      * entries; on a window shader the runtime-filled `uSource` (and
      * `uPrevious` when declared) count toward it too.
@@ -351,6 +366,48 @@ declare module "flux:gpu" {
    */
   export function createCubeTexture(faces: (Uint8Array | Float32Array | Uint32Array)[] | (Uint8Array | Float32Array | Uint32Array)[][], size: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**
+   * Create a 3D texture: `depth` slices of `width` x `height` texels at
+   * the declared format, `data` holding exactly the whole volume
+   * slice-major - texel (x, y, z) at index `(z * height + y) * width + x`,
+   * rows top-down like a 2D upload, slice 0 first - in the view type the
+   * format takes (see {@link createTexture}; uncompressed formats only).
+   * Returns an ordinary texture id that only a `uniform sampler3D` (or
+   * `usampler3D` for "rgba32ui") consumes, sampled by position:
+   * `texture(uVolume, p)` with `p` in 0..1 on all three axes, filtered
+   * across all three (hardware trilinear with `filter: "linear"`) - the
+   * storage of a brick pool, a 3D LUT or a density field. Texel i's centre
+   * is at `(i + 0.5) / size` on each axis: a LUT lookup maps its input to
+   * `(v * (size - 1) + 0.5) / size`. `wrap` applies on all three axes;
+   * `mipmap: true` generates a chain that halves depth with width and
+   * height (the generated-chain rule on the format holds, see
+   * `halfFloatRenderable`). Mutable: {@link uploadTexture} rewrites the
+   * whole volume (`data` of the same size) or one box of it. Sampler-only:
+   * `<texture src>` cannot display it, and readTexture, copyTexture and
+   * resizeTexture throw. Every axis is bounded by `limits.max3DTextureSize`
+   * (a 256-texel floor); a 256^3 "rgba8" volume is 64 MB plus a seventh
+   * for its chain, so size volumes deliberately.
+   */
+  export function createTexture3D(data: Uint8Array | Float32Array | Uint32Array, width: number, height: number, depth: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  /**
+   * Create an array texture: `layers` same-size layers of `width` x
+   * `height` texels at the declared format, `data` holding exactly every
+   * layer back to back (layer 0 first; each layer laid out like a 2D
+   * upload) in the view type the format takes (uncompressed formats only).
+   * Returns an ordinary texture id that only a `uniform sampler2DArray`
+   * (or `usampler2DArray` for "rgba32ui") consumes, sampled by layer:
+   * `texture(uLayers, vec3(uv, layer))`, where `layer` is an UNNORMALIZED
+   * index (0, 1, 2, ... - rounded to the nearest layer and clamped, never
+   * divided by the count), and filtering, `wrap` and the mip chain apply
+   * within a layer only (no bleeding between layers, unlike an atlas; no
+   * blending across layers, unlike a 3D texture). Terrain splat sets, decal
+   * and sprite sheets of equal size: many maps behind one sampler and one
+   * draw. Mutable: {@link uploadTexture} rewrites the whole array or one box
+   * of it (`z` the layer, `depth` the layer count written). Sampler-only
+   * like a 3D texture. A layer is bounded by `limits.maxTextureSize`, the
+   * layer count by `limits.maxArrayTextureLayers` (a 256-layer floor).
+   */
+  export function createArrayTexture(data: Uint8Array | Float32Array | Uint32Array, width: number, height: number, layers: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  /**
    * Create a texture intended to be updated later via {@link uploadTexture}. The
    * seed buffer must hold at least one frame at the declared format's size
    * and may hold more (uploadTexture selects a frame by offset); like
@@ -358,20 +415,31 @@ declare module "flux:gpu" {
    * for byte formats, Float32Array for float formats).
    */
   export function createMutableTexture(data: Uint8Array | Float32Array | Uint32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
-  /** A rect of a texture, in texels from its top-left: the third argument of {@link uploadTexture}. */
+  /** A rect of a 2D texture, in texels from its top-left: the third argument of {@link uploadTexture}. */
   export type TextureRect = { x: number, y: number, width: number, height: number }
+  /**
+   * A box of a 3D or array texture, in texels from its top-left-front
+   * corner (`z` the first slice of a 3D texture or the first layer of an
+   * array, `depth` how many): the third argument of {@link uploadTexture}
+   * for a volume. WebGPU's writeTexture origin and size.
+   */
+  export type TextureBox = { x: number, y: number, z: number, width: number, height: number, depth: number }
   /**
    * Replace a mutable texture's pixels; the frame size and required view
    * type (Uint8Array for byte formats, Float32Array for float formats)
-   * follow the format the id was created with. `data` may hold several
-   * frames; a numeric `at` (default 0) selects which frame to upload. A
-   * rect `at` uploads `data` as exactly that rect of the texture instead -
-   * `data` then holds `width * height` pixels - and the rect must lie
-   * inside the texture (GL's texSubImage2D with an offset): how a runtime
-   * atlas writes one cell without re-sending the sheet. A mip chain
-   * regenerates after either form.
+   * follow the format the id was created with, and a 3D or array texture's
+   * frame is its whole volume. `data` may hold several frames; a numeric
+   * `at` (default 0) selects which frame to upload. A rect `at` uploads
+   * `data` as exactly that rect of a 2D texture instead - `data` then
+   * holds `width * height` pixels - and the rect must lie inside the
+   * texture (GL's texSubImage2D with an offset): how a runtime atlas writes
+   * one cell without re-sending the sheet. A box `at` is the same for a 3D
+   * or array texture ({@link TextureBox}; `data` holds `width * height *
+   * depth` texels, slice-major): one brick of a pool, one layer of an
+   * array. A rect on a volume id, or a box on a 2D id, throws naming the
+   * form the id takes. A mip chain regenerates after every form.
    */
-  export function uploadTexture(id: TextureId, data: Uint8Array | Float32Array | Uint32Array, at?: number | TextureRect): void
+  export function uploadTexture(id: TextureId, data: Uint8Array | Float32Array | Uint32Array, at?: number | TextureRect | TextureBox): void
   /**
    * Replace a texture's storage with a new size at the same id (an id-stable
    * resize): `<texture src>` references and shader sampler bindings keep

@@ -274,6 +274,58 @@ fn limits_texture_size_names_the_limit() {
   assert!(err.contains("0x720") && err.contains("at least 1"), "{err}");
 }
 
+// The volume ceilings: every axis of a 3D texture against the one 3D
+// size, an array's layers against the layer count with its width and
+// height against the 2D size, each error naming the limit.
+#[test]
+fn limits_volume_sizes_name_their_limits() {
+  let l =
+    GpuLimits { max_texture_size: 4096, max_3d_texture_size: 256, max_array_texture_layers: 512, ..GpuLimits::FLOOR };
+  assert_eq!(l.check_texture_3d_size(256, 256, 256), Ok(()));
+  assert_eq!(l.check_texture_3d_size(1, 1, 1), Ok(()));
+  let err = l.check_texture_3d_size(257, 16, 16).expect_err("oversize 3D width must error");
+  assert!(err.contains("257x16x16") && err.contains("max 3D texture size (256"), "{err}");
+  let err = l.check_texture_3d_size(16, 16, 300).expect_err("oversize depth must error");
+  assert!(err.contains("16x16x300") && err.contains("256"), "{err}");
+  let err = l.check_texture_3d_size(16, 0, 16).expect_err("zero height must error");
+  assert!(err.contains("at least 1"), "{err}");
+  // A 3D texture never gets the 2D ceiling, even where that is higher.
+  let err = l.check_texture_3d_size(1024, 1, 1).expect_err("the 2D size is not the 3D one");
+  assert!(err.contains("256"), "{err}");
+  assert_eq!(l.check_array_texture_size(4096, 4096, 512), Ok(()));
+  let err = l.check_array_texture_size(64, 64, 513).expect_err("over the layer cap must error");
+  assert!(err.contains("513 layers") && err.contains("max array texture layers (512)"), "{err}");
+  let err = l.check_array_texture_size(4097, 64, 2).expect_err("oversize layer must error");
+  assert!(err.contains("4097x64") && err.contains("max texture size (4096)"), "{err}");
+  let err = l.check_array_texture_size(64, 64, 0).expect_err("zero layers must error");
+  assert!(err.contains("at least 1 layer"), "{err}");
+}
+
+// The chain and storage arithmetic per shape: a 3D chain halves depth
+// with the edges (and depth alone can set the level count), an array
+// chain keeps every layer at every level, a cube map counts six faces.
+#[test]
+fn shape_storage_counts_slices_and_layers() {
+  let rgba = TextureFormat::Rgba8;
+  assert_eq!(TextureShape::D3.mip_levels(4, 4, 16), 5);
+  assert_eq!(TextureShape::D2Array.mip_levels(4, 4, 16), 3);
+  assert_eq!(TextureShape::D2.mip_levels(4, 2, 1), 3);
+  // 4x4x4 rgba8: 256 bytes; its chain adds 2x2x2 (32) and 1x1x1 (4).
+  assert_eq!(TextureShape::D3.storage_byte_len(rgba, 4, 4, 4, false), 256);
+  assert_eq!(TextureShape::D3.storage_byte_len(rgba, 4, 4, 4, true), 256 + 32 + 4);
+  // 4x4 x 4 layers: 256 bytes; its chain adds 2x2 x 4 (64) and 1x1 x 4 (16).
+  assert_eq!(TextureShape::D2Array.storage_byte_len(rgba, 4, 4, 4, false), 256);
+  assert_eq!(TextureShape::D2Array.storage_byte_len(rgba, 4, 4, 4, true), 256 + 64 + 16);
+  assert_eq!(TextureShape::Cube.storage_byte_len(rgba, 4, 4, 1, false), CUBE_FACES * 64);
+  assert_eq!(TextureShape::Cube.storage_byte_len(rgba, 4, 4, 1, true), CUBE_FACES * (64 + 16 + 4));
+  assert_eq!(TextureShape::D2.storage_byte_len(TextureFormat::R8, 8, 2, 1, true), 16 + 4 + 2 + 1);
+  assert!(TextureShape::D3.is_volume() && TextureShape::D2Array.is_volume());
+  assert!(!TextureShape::D2.is_volume() && !TextureShape::Cube.is_volume());
+  assert_eq!(TextureShape::D2Array.name(), "2d-array");
+  assert_eq!(TextureShape::D3.sampler_name(), "sampler3D");
+  assert_eq!(TextureShape::D2Array.integer_sampler_name(), "usampler2DArray");
+}
+
 #[test]
 fn limits_texture_units_names_the_limit() {
   let l = GpuLimits::FLOOR;
@@ -426,14 +478,18 @@ fn bound(shape: TextureShape, format: TextureFormat) -> BoundTexture {
   BoundTexture { shape, format }
 }
 
-/// A registry of four ids: 1 a 2D rgba8, 2 a cube map, 3 a depth texture,
-/// 4 an integer (rgba32ui) texture.
+/// A registry of seven ids: 1 a 2D rgba8, 2 a cube map, 3 a depth texture,
+/// 4 an integer (rgba32ui) texture, 5 a 3D texture, 6 an array texture, 7
+/// an integer 3D texture.
 fn lookup(id: u64) -> Option<BoundTexture> {
   match id {
     1 => Some(bound(TextureShape::D2, TextureFormat::Rgba8)),
     2 => Some(bound(TextureShape::Cube, TextureFormat::Rgba8)),
     3 => Some(bound(TextureShape::D2, TextureFormat::Depth24)),
     4 => Some(bound(TextureShape::D2, TextureFormat::Rgba32ui)),
+    5 => Some(bound(TextureShape::D3, TextureFormat::Rgba8)),
+    6 => Some(bound(TextureShape::D2Array, TextureFormat::Rgba8)),
+    7 => Some(bound(TextureShape::D3, TextureFormat::Rgba32ui)),
     _ => None,
   }
 }
@@ -460,6 +516,68 @@ fn binding_shapes_reject_cross_shape_both_ways() {
   assert!(err.contains("texture 2 is a cube map") && err.contains("samplerCube"), "{err}");
   let err = validate_binding_shapes(&t, &[TextureBinding::new("uEnv", 1)], lookup).expect_err("2D on cube must error");
   assert!(err.contains("uEnv") && err.contains("createCubeTexture"), "{err}");
+}
+
+// The volume shapes bind their own samplers and nothing else's: a 3D
+// texture behind a sampler3D, an array behind a sampler2DArray, each
+// refused by the 2D sampler and by the other volume sampler, with the
+// message naming the create that makes the wanted shape and the sampler
+// the bound shape takes.
+#[test]
+fn binding_shapes_pair_volumes_with_their_samplers() {
+  let t = table(&[
+    ("uTex", UniformKind::Sampler2D),
+    ("uVolume", UniformKind::Sampler3D),
+    ("uLayers", UniformKind::Sampler2DArray),
+  ]);
+  let ok = [TextureBinding::new("uTex", 1), TextureBinding::new("uVolume", 5), TextureBinding::new("uLayers", 6)];
+  assert_eq!(validate_binding_shapes(&t, &ok, lookup), Ok(()));
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uTex", 5)], lookup).expect_err("3D on 2D must error");
+  assert!(
+    err.contains("texture 5 is a 3D texture") && err.contains("sampler3D") && err.contains("createTexture"),
+    "{err}"
+  );
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uVolume", 1)], lookup).expect_err("2D on 3D must error");
+  assert!(err.contains("uVolume") && err.contains("createTexture3D"), "{err}");
+  let err =
+    validate_binding_shapes(&t, &[TextureBinding::new("uVolume", 6)], lookup).expect_err("array on 3D must error");
+  assert!(err.contains("an array texture") && err.contains("sampler2DArray"), "{err}");
+  let err =
+    validate_binding_shapes(&t, &[TextureBinding::new("uLayers", 5)], lookup).expect_err("3D on array must error");
+  assert!(err.contains("createArrayTexture") && err.contains("sampler3D"), "{err}");
+  let err =
+    validate_binding_shapes(&t, &[TextureBinding::new("uLayers", 2)], lookup).expect_err("cube on array must error");
+  assert!(err.contains("a cube map") && err.contains("samplerCube"), "{err}");
+}
+
+// The integer rule holds per shape: an rgba32ui volume binds only behind
+// the usampler of its shape, and that sampler takes nothing else.
+#[test]
+fn binding_shapes_pair_integer_volumes_with_integer_samplers() {
+  let t = table(&[("uBricks", UniformKind::USampler3D), ("uVolume", UniformKind::Sampler3D)]);
+  assert_eq!(validate_binding_shapes(&t, &[TextureBinding::new("uBricks", 7)], lookup), Ok(()));
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uBricks", 5)], lookup)
+    .expect_err("rgba8 volume on usampler3D must error");
+  assert!(err.contains("usampler3D") && err.contains("rgba32ui"), "{err}");
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uVolume", 7)], lookup)
+    .expect_err("rgba32ui volume on sampler3D must error");
+  assert!(err.contains("integer texels") && err.contains("declare it usampler3D"), "{err}");
+  // A 2D integer texture on a usampler3D fails the shape rule first,
+  // naming the integer sampler of the bound shape.
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uBricks", 4)], lookup)
+    .expect_err("2D integer texture on usampler3D must error");
+  assert!(err.contains("a 2D texture") && err.contains("usampler2D"), "{err}");
+  for kind in
+    [UniformKind::Sampler3D, UniformKind::Sampler2DArray, UniformKind::USampler3D, UniformKind::USampler2DArray]
+  {
+    assert!(kind.is_sampler());
+    assert_eq!(kind.components(), None);
+  }
+  assert_eq!(UniformKind::Sampler3D.sampler_shape(), Some(TextureShape::D3));
+  assert_eq!(UniformKind::USampler3D.sampler_shape(), Some(TextureShape::D3));
+  assert_eq!(UniformKind::Sampler2DArray.sampler_shape(), Some(TextureShape::D2Array));
+  assert_eq!(UniformKind::USampler2DArray.sampler_shape(), Some(TextureShape::D2Array));
+  assert!(UniformKind::USampler2DArray.is_integer_sampler() && !UniformKind::Sampler2DArray.is_integer_sampler());
 }
 
 #[test]

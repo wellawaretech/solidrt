@@ -1573,6 +1573,16 @@ disappears from the object keeps its old value; for per-frame values
 prefer `ref` + setMeshParams from onFrame, the setTransform split).
 Scene-wide values (a clock, a sun direction, fog) go through
 `scene.setParams({ uTime })` instead - one write for every mesh.
+`textures` binds by the declared sampler type, every shape core's GPU
+layer has: a `sampler2D` takes a 2D texture, a `samplerCube` a cube map,
+a `sampler3D` a 3D texture (`createTexture3D` from `@solidrt/core/gpu`:
+sampled by position with hardware trilinear filtering - a brick pool of
+paint, a color LUT, a density field) and a `sampler2DArray` an array
+texture (`createArrayTexture`: many equal-size maps behind one sampler,
+picked by an unnormalized layer index); a shape mismatch throws at the
+bind. Volumes re-upload in place with `uploadTexture` and a box. Do not
+name an array sampler `uLayers`: that is the scene's layer mask (see
+Lights), seeded as an int param on every material that mentions it.
 
 #### shaderMaterialClass
 

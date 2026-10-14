@@ -209,8 +209,10 @@ when exactly one client is connected.
   only the resources created with exactly that label (ids change on reload,
   labels do not). Each texture carries its `format` and declared `sampler`
   (`filter`/`wrap`/`mipmap`/`anisotropy`), the creation-time state a soft
-  or aliased map is usually missing, and its `byteLength`: the texel
-  storage at that format, mip chain and cube faces included, so summing
+  or aliased map is usually missing, its `shape` (`2d`, `cube`, `3d`,
+  `2d-array`; a volume's `depth` is its slices or layers), and its
+  `byteLength`: the texel storage at that format, mip chain, cube faces
+  and volume slices included, so summing
   it over the textures is a scene's texture memory (a compressed format
   is a quarter of rgba8). A draw target's entries report uniforms wider than a vec4
   (matrices) as their length, `"[16]"`; `draw` names the one entry (ids are

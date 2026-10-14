@@ -162,7 +162,7 @@ geometry has no fix and decals are blocked on it.
 | Multiple render targets | yes | yes | no: compositor sees the color buffer (v) | no | untracked |
 | Compute shaders | yes: WebGPU only | yes | yes: RenderingDevice | no | untracked; GLES 3.1 compute is the native option [3d-differentiators](3d-differentiators.md) lists |
 | Indirect / multi-draw indirect | yes: WebGPU only | yes | yes: RenderingDevice | no | untracked |
-| 2D array and 3D textures | yes | yes | yes | no | [gpu-3d-and-array-textures](../backlog/gpu-3d-and-array-textures.md) |
+| 2D array and 3D textures | yes | yes | yes | yes | [gpu-3d-and-array-textures](../done/gpu-3d-and-array-textures.md) |
 | Compressed textures (ETC2 / BC / Basis) | yes | yes | yes | no | [gpu-compressed-textures](../plans/gpu-compressed-textures.md) |
 | Render / draw introspection | yes: renderer.info | yes: stats, frame debugger | yes: monitors | no | [3d-scene-draw-introspection](../backlog/3d-scene-draw-introspection.md) |
 | Views: multiple cameras, render to texture | yes | yes | yes: SubViewport | yes | |
@@ -320,8 +320,7 @@ Three/Godot/Unity comparison in the proposal, per `packages/3d/CLAUDE.md`.
 4. A stock points material; a particle tier after it.
 5. Curves and splines in front of `tube`/`sweep`.
 6. Graph traversal helpers, a `Color` type and `MathUtils`.
-7. Texture arrays and 3D textures.
-8. Clearcoat first among the physical extras; toon; shadow catcher.
-9. SSAO, then the rest of the post effects over the scene buffer.
-10. Occlusion culling, navigation, MRT, compute: each wants an explicit
-    yes or no before it is a backlog file.
+7. Clearcoat first among the physical extras; toon; shadow catcher.
+8. SSAO, then the rest of the post effects over the scene buffer.
+9. Occlusion culling, navigation, MRT, compute: each wants an explicit
+   yes or no before it is a backlog file.

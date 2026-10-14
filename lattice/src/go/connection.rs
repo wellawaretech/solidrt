@@ -571,6 +571,8 @@ async fn try_serve(
       "limits": {
         "maxTextureSize": gpu.limits.max_texture_size,
         "maxCubeMapSize": gpu.limits.max_cube_map_size,
+        "max3DTextureSize": gpu.limits.max_3d_texture_size,
+        "maxArrayTextureLayers": gpu.limits.max_array_texture_layers,
         "maxTextureUnits": gpu.limits.max_texture_units,
         "maxVertexAttribs": gpu.limits.max_vertex_attribs,
         "maxAnisotropy": gpu.limits.max_anisotropy,

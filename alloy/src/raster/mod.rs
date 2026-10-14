@@ -772,6 +772,25 @@ impl RasterState {
               log::warn!("[alloy] texture rect update failed: {e}");
             }
           }
+          RasterCmd::CreateVolumeTexture {
+            id,
+            shape,
+            width,
+            height,
+            depth,
+            pixels,
+            sampler,
+            format,
+            label,
+            reply: tx,
+          } => {
+            reply(tx, self.create_volume_texture(id, shape, width, height, depth, &pixels, sampler, format, label));
+          }
+          RasterCmd::UpdateTextureBox { id, box_ } => {
+            if let Err(e) = self.update_texture_box(id, &box_) {
+              log::warn!("[alloy] texture box update failed: {e}");
+            }
+          }
           RasterCmd::AttachCameraTap { id, tap, uploaded_seq } => {
             self.camera_taps.insert(id, CameraTapEntry { tap, uploaded_seq });
           }
@@ -917,6 +936,7 @@ impl RasterState {
                   gl_texture,
                   width,
                   height,
+                  depth: 1,
                   shape: TextureShape::D2,
                   sampler: SamplerState::default(),
                   format: TextureFormat::Rgba8,

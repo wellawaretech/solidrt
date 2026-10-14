@@ -2,6 +2,7 @@
 title: 3D and 2D array textures in flux:gpu
 description: flux:gpu creates only 2D textures and cube maps, so a volume sampled by world position (a sparse brick pool for mesh paint, a 3D LUT, density fields) must be faked as slices in a 2D atlas with two taps, manual trilinear and guard borders; TextureShape gains D3 and D2Array (both GLES 3.0 core), with sampler3D/sampler2DArray bindings, box uploads and two new limits.
 created: 2026-10-14
+completed: 2026-10-14
 ---
 
 # 3D and 2D array textures
@@ -98,3 +99,76 @@ layer, a box upload changes exactly the written texels (read back through
 a shader target, since `readTexture` stays 2D), the shape mismatch and
 limit errors throw at the call site, and the alloy validation tests and a
 flux test cover both shapes.
+
+## Landed 2026-10-14
+
+Shape as proposed, with these decisions taken against Three, Unity, Godot
+and WebGPU:
+
+- **One create each, mutable**: `createTexture3D(data, w, h, depth, opts)`
+  and `createArrayTexture(data, w, h, layers, opts)` in flux:gpu and
+  `@solidrt/core/gpu` (auto-freed). `data` is exactly one volume
+  (slice-major, rows top-down, slice 0 first), not the "at least" of
+  `createMutableTexture`: a wrong-size volume is the likelier bug. No
+  separate immutable create; nothing asks for one.
+- **Box upload in the first cut**: Three had to add per-layer updates to
+  `DataArrayTexture` after users re-uploaded whole arrays, so
+  `uploadTexture(id, data, { x, y, z, width, height, depth })` (WebGPU's
+  `writeTexture` origin and size) shipped with the creates. The plugin
+  tells a box from a rect by its `z`/`depth` fields; a rect on a volume
+  and a box on a 2D id throw naming the form the id takes. The whole-volume
+  form and its offset keep the 2D contract.
+- **Immutable storage**: volumes allocate with `glTexStorage3D` (every
+  level at once, complete by construction) and fill through
+  `glTexSubImage3D`; whole-volume uploads go through the pixel-unpack
+  staging like 2D ones. The 2D path is untouched.
+- **Sampling defaults stay linear/clamp** like every create. `wrap` sets
+  `TEXTURE_WRAP_R` on every cached sampler object (ignored by the other
+  shapes). A 3D chain halves depth; an array chain keeps every layer.
+- **Bindings**: `UniformKind` gained `Sampler3D`, `Sampler2DArray`,
+  `USampler3D`, `USampler2DArray`; the shape rule in
+  `validate_binding_shapes` is now one generic check whose message names
+  the bound shape, the wanted shape's create, and the sampler to declare
+  instead; the integer rule holds per shape. Passes save and restore the
+  3D and array bindings of every unit they touch, so Impeller's state
+  contract is whole.
+- **Limits**: `max3DTextureSize` and `maxArrayTextureLayers` (GLES 3.0
+  floors 256), checked at the create; also reported by the go client's
+  device record.
+- **Precision**: the fragment, pipeline vertex and pipeline fragment
+  preambles give `sampler3D` and `sampler2DArray` a default precision
+  (ES 3.0 defaults only `sampler2D` and `samplerCube`), the
+  `sampler2DShadow` precedent. Integer samplers stay qualified at the
+  declaration.
+- **Inventory**: a `depth` field and the shape names `"3d"` and
+  `"2d-array"`; `byteLength` counts slices and layers through
+  `TextureShape::storage_byte_len`, which also absorbed the cube face
+  arithmetic.
+
+Verified: alloy unit tests (volume binding shapes both ways, integer
+volumes, both limit checks, chain and storage arithmetic per shape), the
+flux plugin tests, and two app tests on the dev client:
+`packages/core/tests/gpu-volume.test.tsx` (hardware trilinear between
+slices read through a shader target, array layers read unblended with
+rounding and clamping of the layer index, a box upload changing exactly
+its texel and a whole slice, every throw: form mismatch, out of bounds,
+wrong byte count, empty box, over each limit, readback and resize on a
+volume, shape mismatch at bind in every direction) and
+`packages/3d/tests/volume-material.test.tsx` (a `shaderMaterial` sampling
+each shape by position and by layer through the scene, and a mismatch
+throwing at the add, with no change to the package). The core, 2d and
+3d suites stay green.
+
+Findings live next to what they govern: the missing default precision in
+the preamble comment (`alloy/src/gl/program.rs`), the volume layout,
+texel-centre and unnormalized-layer rules in the flux-types and core doc
+comments and the gpu reference page, and the `uLayers` name clash in the
+3d guide; the clearer error for that clash is a line in `tiny.md`.
+
+Not done on purpose (each throws at the call site with the shape and its
+sampler named): `<texture src>` display, `readTexture`, `copyTexture`,
+`resizeTexture`, draw targets over a slice or layer (render-to-layer),
+compressed volumes, explicit mip chains for volumes, cube map arrays, and
+`sampler2DArrayShadow` (needs render-to-layer; it reflects as an
+unsupported kind). Each is additive if a consumer arrives.
+

@@ -433,13 +433,6 @@ Shaped, not started.
   srt_pixel6 emulator (FORTIFY, destroyed mutex inside libhwui's CommonPool);
   an older build installed on the same AVD launches fine, so this is a
   regression in the artifact, not an emulator setup problem.
-- **[3D and 2D array textures in flux:gpu](backlog/gpu-3d-and-array-textures.md)** [2026-10-14]
-  flux:gpu creates only 2D textures and cube maps, so a volume sampled by
-  world position (a sparse brick pool for mesh paint, a 3D LUT, density
-  fields) must be faked as slices in a 2D atlas with two taps, manual
-  trilinear and guard borders; TextureShape gains D3 and D2Array (both GLES
-  3.0 core), with sampler3D/sampler2DArray bindings, box uploads and two new
-  limits.
 - **[Async shader compile and readback](backlog/gpu-async-compile-readback.md)** [2026-07-31]
   Compile/link and readTexture are the two GPU calls whose cost class differs
   from everything else on the surface - both block the JS thread and the
@@ -1710,6 +1703,13 @@ Finished, kept for the reasoning.
   "The default app becomes the client's compiled-in launcher: version-store
   apps with tap-to-launch and delete, manual address entry, and a boot rule
   that drops the auto-boot."
+- **[3D and 2D array textures in flux:gpu](done/gpu-3d-and-array-textures.md)** [2026-10-14]
+  flux:gpu creates only 2D textures and cube maps, so a volume sampled by
+  world position (a sparse brick pool for mesh paint, a 3D LUT, density
+  fields) must be faked as slices in a 2D atlas with two taps, manual
+  trilinear and guard borders; TextureShape gains D3 and D2Array (both GLES
+  3.0 core), with sampler3D/sampler2DArray bindings, box uploads and two new
+  limits.
 - **[Alpha translucency (sorted blending)](done/gpu-alpha-translucency.md)** [2026-08-11]
   DONE 2026-08-17 both halves - engine blend "alpha" (premultiplied over,
   order-dependent) and the @solidrt/3d library half (transparent materials,

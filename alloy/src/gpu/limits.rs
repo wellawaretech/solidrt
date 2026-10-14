@@ -20,6 +20,15 @@ pub struct GpuLimits {
   /// Largest face edge of a cube map (GL_MAX_CUBE_MAP_TEXTURE_SIZE): its
   /// own ceiling in GL, often but not always the 2D one.
   pub max_cube_map_size: u32,
+  /// Largest width, height AND depth of a 3D texture
+  /// (GL_MAX_3D_TEXTURE_SIZE): its own ceiling, independent of the 2D one
+  /// and low in GLES 3.0 - the floor is 256 against 2048 for 2D - because
+  /// a volume's cost is cubic.
+  pub max_3d_texture_size: u32,
+  /// Most layers of an array texture (GL_MAX_ARRAY_TEXTURE_LAYERS); a
+  /// layer's width and height are bounded by `max_texture_size`. The GLES
+  /// 3.0 floor is 256.
+  pub max_array_texture_layers: u32,
   /// Sampler inputs one pass may bind (GL_MAX_TEXTURE_IMAGE_UNITS): the
   /// fragment-stage unit count `run_pass` assigns by enumeration index.
   pub max_texture_units: u32,
@@ -60,6 +69,8 @@ impl GpuLimits {
   pub const FLOOR: GpuLimits = GpuLimits {
     max_texture_size: 2048,
     max_cube_map_size: 2048,
+    max_3d_texture_size: 256,
+    max_array_texture_layers: 256,
     max_texture_units: 16,
     max_vertex_attribs: 16,
     max_anisotropy: 1,
@@ -131,6 +142,34 @@ impl GpuLimits {
     let max = self.max_cube_map_size;
     if size > max {
       return Err(format!("face size {size} exceeds this device's max cube map size ({max})"));
+    }
+    Ok(())
+  }
+
+  /// Check a 3D texture's extent against the device ceiling: every axis of
+  /// a volume is bounded by the one 3D size (and by zero, like every
+  /// create).
+  pub fn check_texture_3d_size(&self, width: u32, height: u32, depth: u32) -> Result<(), String> {
+    if width == 0 || height == 0 || depth == 0 {
+      return Err(format!("{width}x{height}x{depth}: width, height and depth must be at least 1"));
+    }
+    let max = self.max_3d_texture_size;
+    if width > max || height > max || depth > max {
+      return Err(format!("{width}x{height}x{depth} exceeds this device's max 3D texture size ({max} per axis)"));
+    }
+    Ok(())
+  }
+
+  /// Check an array texture's extent against the device: a layer is a 2D
+  /// texture (`check_texture_size`), the layer count has its own ceiling.
+  pub fn check_array_texture_size(&self, width: u32, height: u32, layers: u32) -> Result<(), String> {
+    self.check_texture_size(width, height)?;
+    if layers == 0 {
+      return Err("an array texture takes at least 1 layer".to_string());
+    }
+    let max = self.max_array_texture_layers;
+    if layers > max {
+      return Err(format!("{layers} layers exceed this device's max array texture layers ({max})"));
     }
     Ok(())
   }

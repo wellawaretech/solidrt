@@ -32,19 +32,22 @@ pub struct GpuTextureInfo {
   pub id: u64,
   pub width: u32,
   pub height: u32,
+  /// The slices of a 3D texture or the layers of an array; 1 otherwise.
+  pub depth: u32,
   /// A shader or pipeline renders into this texture (vs a sampled upload).
   pub target: bool,
   /// Pixel format name: "rgba8" or "r8" for uploads, "rgba8" for a target's
   /// color, "depth24" for a draw target's depth texture id.
   pub format: &'static str,
-  /// "2d" or "cube" (see `TextureShape`).
+  /// "2d", "cube", "3d" or "2d-array" (see `TextureShape`).
   pub shape: &'static str,
   /// The id's declared sampling (filter, wrap, mip chain, anisotropy): the
   /// other creation-time state beside `format`, so a soft or aliased map
   /// can be diagnosed from the inventory instead of the create call.
   pub sampler: SamplerState,
   /// The texel storage at the declared format, in bytes: every level of the
-  /// mip chain when the sampling keeps one, all six faces of a cube map.
+  /// mip chain when the sampling keeps one, all six faces of a cube map,
+  /// every slice or layer of a volume (`TextureShape::storage_byte_len`).
   /// What the id costs in GPU memory as declared (a driver that expands a
   /// compressed format it lacks in hardware holds more; multisample and
   /// depth attachments of a target are not part of it).

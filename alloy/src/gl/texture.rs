@@ -8,6 +8,7 @@ use glow::HasContext;
 use impellers::ISize;
 use std::num::NonZeroU32;
 
+use super::pass::{bind_target, binding_query};
 use crate::gpu::texture::{
   check_cube_faces, mip_levels, mip_size, SamplerFilter, SamplerState, SamplerWrap, TextureFormat, TextureShape,
   ANISOTROPY_LEVELS, CUBE_FACES, MIN_ANISOTROPY,
@@ -65,6 +66,9 @@ impl SamplerCache {
               gl.sampler_parameter_i32(sampler, glow::TEXTURE_MAG_FILTER, mag as i32);
               gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_S, wrap_st as i32);
               gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_T, wrap_st as i32);
+              // The third axis of a 3D texture; ignored on every other
+              // shape, so one object serves them all.
+              gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_R, wrap_st as i32);
               // The parameter is only legal with the extension; a device
               // without it reports a maximum of 1 and the write is skipped.
               if device_level > 1 {
@@ -205,14 +209,18 @@ pub(crate) fn warm_compare_sampler(gl: &glow::Context, samplers: &SamplerCache) 
 /// takes ownership of the GL name and deletes it when its Texture drops, so
 /// GpuTexture deliberately does NOT delete the name (no Drop impl) - doing so
 /// would double-free the name and corrupt whatever live texture reuses it.
-/// The one exception is a cube map (`shape == Cube`): Impeller adopts 2D
-/// names only, so a cube name stays ours and the raster thread deletes it
-/// on destroy. Raster-thread-only: creation and uploads are GL work.
+/// The exception is every non-2D shape (a cube map, a 3D texture, an array
+/// texture): Impeller adopts 2D names only, so such a name stays ours and
+/// the raster thread deletes it on destroy. Raster-thread-only: creation
+/// and uploads are GL work.
 pub struct GpuTexture {
   pub gl_texture: glow::Texture,
   pub width: u32,
   pub height: u32,
-  /// 2D or cube map; picks the bind target of every use of the name.
+  /// The slices of a 3D texture or the layers of an array; 1 for every
+  /// other shape.
+  pub depth: u32,
+  /// The shape; picks the bind target of every use of the name.
   pub shape: TextureShape,
   /// Declared sampling for this id; shader passes resolve it to a sampler
   /// object at bind time. The texture-object parameters set below are only a
@@ -312,7 +320,7 @@ impl GpuTexture {
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
-      GpuTexture { gl_texture, width, height, shape: TextureShape::D2, sampler, format, label: None }
+      GpuTexture { gl_texture, width, height, depth: 1, shape: TextureShape::D2, sampler, format, label: None }
     }
   }
 
@@ -368,7 +376,7 @@ impl GpuTexture {
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
-      Ok(GpuTexture { gl_texture, width, height, shape: TextureShape::D2, sampler, format, label: None })
+      Ok(GpuTexture { gl_texture, width, height, depth: 1, shape: TextureShape::D2, sampler, format, label: None })
     }
   }
 
@@ -422,7 +430,66 @@ impl GpuTexture {
         gl.generate_mipmap(glow::TEXTURE_CUBE_MAP);
       }
       gl.bind_texture(glow::TEXTURE_CUBE_MAP, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
-      Ok(GpuTexture { gl_texture, width: size, height: size, shape: TextureShape::Cube, sampler, format, label: None })
+      Ok(GpuTexture {
+        gl_texture,
+        width: size,
+        height: size,
+        depth: 1,
+        shape: TextureShape::Cube,
+        sampler,
+        format,
+        label: None,
+      })
+    }
+  }
+
+  /// A volume (`TextureShape::D3` or `D2Array`): `depth` slices or layers
+  /// of `width` x `height` at `format`, allocated as immutable storage
+  /// (glTexStorage3D: every level of the chain at once when the sampling
+  /// declares one, complete by construction) and filled from `pixels`,
+  /// slice-major (`depth` x `format.byte_len(width, height)` bytes,
+  /// checked UI-side, backstopped here) through the box upload path. The
+  /// chain, when declared, is generated from the volume. Mutable: the
+  /// whole volume (`upload`) or a box of it (`upload_box`) re-uploads in
+  /// place. Restores the shape's binding it touches.
+  pub fn new_volume(
+    gl: &glow::Context,
+    shape: TextureShape,
+    width: u32,
+    height: u32,
+    depth: u32,
+    pixels: &[u8],
+    sampler: SamplerState,
+    format: TextureFormat,
+  ) -> Result<Self, String> {
+    if !shape.is_volume() {
+      return Err(format!("{} is not a volume shape", shape.name()));
+    }
+    let expected = format.byte_len(width, height) * depth as usize;
+    if pixels.len() != expected {
+      return Err(format!("{} {width}x{height}x{depth} takes {expected} bytes, got {}", format.name(), pixels.len()));
+    }
+    if upload_layout(format).is_none() {
+      return Err(format!("{} is not a volume upload format", format.name()));
+    }
+    let levels = if sampler.mipmap { shape.mip_levels(width, height, depth) } else { 1 };
+    let (internal, _, _) = gl_storage(format);
+    let target = bind_target(shape);
+    unsafe {
+      let prev = gl.get_parameter_i32(binding_query(shape));
+      let gl_texture = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
+      gl.bind_texture(target, Some(gl_texture));
+      gl.tex_storage_3d(target, levels as i32, internal, width as i32, height as i32, depth as i32);
+      // Immutable storage sizes the chain itself; the fallback filter keeps
+      // the object sampling-complete like `new` (the declared sampling is
+      // applied through sampler objects at bind).
+      let filter = fallback_filter(format);
+      gl.tex_parameter_i32(target, glow::TEXTURE_MIN_FILTER, filter as i32);
+      gl.tex_parameter_i32(target, glow::TEXTURE_MAG_FILTER, filter as i32);
+      gl.bind_texture(target, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+      let texture = GpuTexture { gl_texture, width, height, depth, shape, sampler, format, label: None };
+      texture.upload_inner(gl, Some(pixels), ISize::new(width as i64, height as i64));
+      Ok(texture)
     }
   }
 
@@ -444,8 +511,10 @@ impl GpuTexture {
   /// several rects (a glyph atlas flush) regenerates it once after, with
   /// `regenerate_mipmaps`. No pixel-unpack buffer may be bound.
   pub fn upload_rect(&self, gl: &glow::Context, data: &[u8], x: u32, y: u32, width: u32, height: u32) {
-    if self.shape == TextureShape::Cube {
-      log::warn!("[alloy] rect upload into a cube map ignored: cube maps are create-once");
+    if self.shape != TextureShape::D2 {
+      // Gated UI-side (a cube map is create-once, a volume takes a box);
+      // backstop.
+      log::warn!("[alloy] rect upload into {} ignored: a rect is a 2D upload", self.shape.describe());
       return;
     }
     let Some((gl_format, ty, alignment)) = upload_layout(self.format) else {
@@ -475,20 +544,78 @@ impl GpuTexture {
     }
   }
 
+  /// Upload `data` from client memory into the `width` x `height` x `depth`
+  /// box at (`x`, `y`, `z`) of level 0 of a volume (`z` a slice of a 3D
+  /// texture, a layer of an array), slice-major and tightly packed,
+  /// leaving the mip chain alone like `upload_rect`: the caller writing
+  /// several boxes (a brick pool's dirty bricks) regenerates it once after,
+  /// with `regenerate_mipmaps`. No pixel-unpack buffer may be bound.
+  #[allow(clippy::too_many_arguments)]
+  pub fn upload_box(
+    &self,
+    gl: &glow::Context,
+    data: &[u8],
+    x: u32,
+    y: u32,
+    z: u32,
+    width: u32,
+    height: u32,
+    depth: u32,
+  ) {
+    if !self.shape.is_volume() {
+      // Gated UI-side (a 2D texture takes a rect); backstop.
+      log::warn!("[alloy] box upload into {} ignored: a box is a volume upload", self.shape.describe());
+      return;
+    }
+    let Some((gl_format, ty, alignment)) = upload_layout(self.format) else {
+      log::warn!("[alloy] box upload into a {} texture ignored: it is not an upload format", self.format.name());
+      return;
+    };
+    let target = bind_target(self.shape);
+    unsafe {
+      let prev = gl.get_parameter_i32(binding_query(self.shape));
+      gl.bind_texture(target, Some(self.gl_texture));
+      gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, alignment);
+      gl.tex_sub_image_3d(
+        target,
+        0,
+        x as i32,
+        y as i32,
+        z as i32,
+        width as i32,
+        height as i32,
+        depth as i32,
+        gl_format,
+        ty,
+        glow::PixelUnpackData::Slice(Some(data)),
+      );
+      // Shared context state (see upload_inner): back to the GL default.
+      if alignment != 4 {
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+      }
+      gl.bind_texture(target, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+    }
+  }
+
   /// Rebuild the mip chain from level 0, when the id keeps one; a no-op
-  /// otherwise. The whole-frame uploads do this themselves.
+  /// otherwise (and on a cube map, whose chain is fixed at creation). The
+  /// whole-frame and whole-volume uploads do this themselves.
   pub fn regenerate_mipmaps(&self, gl: &glow::Context) {
     if !self.sampler.mipmap || self.shape == TextureShape::Cube {
       return;
     }
+    let target = bind_target(self.shape);
     unsafe {
-      let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
-      gl.bind_texture(glow::TEXTURE_2D, Some(self.gl_texture));
-      gl.generate_mipmap(glow::TEXTURE_2D);
-      gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+      let prev = gl.get_parameter_i32(binding_query(self.shape));
+      gl.bind_texture(target, Some(self.gl_texture));
+      gl.generate_mipmap(target);
+      gl.bind_texture(target, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
     }
   }
 
+  /// The whole-frame (2D) or whole-volume (3D, array) upload of level 0,
+  /// from client memory or from the bound pixel-unpack buffer, followed by
+  /// the chain regeneration when the id keeps one.
   fn upload_inner(&self, gl: &glow::Context, data: Option<&[u8]>, size: ISize) {
     if self.shape == TextureShape::Cube {
       // Gated UI-side (a cube map is create-once); backstop.
@@ -508,33 +635,29 @@ impl GpuTexture {
       log::warn!("[alloy] upload into a {} texture ignored: it is not an upload format", self.format.name());
       return;
     };
+    let target = bind_target(self.shape);
     unsafe {
-      let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
-      gl.bind_texture(glow::TEXTURE_2D, Some(self.gl_texture));
+      let prev = gl.get_parameter_i32(binding_query(self.shape));
+      gl.bind_texture(target, Some(self.gl_texture));
       gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, alignment);
-      gl.tex_sub_image_2d(
-        glow::TEXTURE_2D,
-        0,
-        0,
-        0,
-        width,
-        height,
-        gl_format,
-        ty,
-        match data {
-          Some(pixels) => glow::PixelUnpackData::Slice(Some(pixels)),
-          None => glow::PixelUnpackData::BufferOffset(0),
-        },
-      );
+      let pixels = match data {
+        Some(pixels) => glow::PixelUnpackData::Slice(Some(pixels)),
+        None => glow::PixelUnpackData::BufferOffset(0),
+      };
+      if self.shape.is_volume() {
+        gl.tex_sub_image_3d(target, 0, 0, 0, 0, width, height, self.depth as i32, gl_format, ty, pixels);
+      } else {
+        gl.tex_sub_image_2d(target, 0, 0, 0, width, height, gl_format, ty, pixels);
+      }
       // Unpack alignment is context state shared with Impeller's own uploads
       // (glyph atlas), which assume the GL default of 4; restore it.
       if alignment != 4 {
         gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
       }
       if self.sampler.mipmap {
-        gl.generate_mipmap(glow::TEXTURE_2D);
+        gl.generate_mipmap(target);
       }
-      gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+      gl.bind_texture(target, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
       // No glFinish: the texture is sampled later on this same (single) GL
       // context, so program order already sequences the upload first.
     }

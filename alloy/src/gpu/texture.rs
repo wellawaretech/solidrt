@@ -328,13 +328,6 @@ impl TextureFormat {
 const BLOCK_EDGE: usize = 4;
 const BLOCK_BYTES: usize = 16;
 
-/// The dimensionality of a texture id, declared at creation like `format`.
-/// `Cube` is a cube map: six square faces behind one id, sampled with a
-/// `samplerCube` by direction. Sampling-only - the `<texture>` display draw,
-/// `readTexture` and `copyTexture` are 2D-shaped and reject a cube id at
-/// the call site, and there is no upload or resize after creation (a cube
-/// map is create-once). Render-to-face (cube draw targets) is a later,
-/// additive shape.
 /// The face count of a cube map, in GL (and app-facing) order: +X, -X, +Y,
 /// -Y, +Z, -Z.
 pub const CUBE_FACES: usize = 6;
@@ -385,11 +378,30 @@ pub fn check_cube_faces(size: u32, faces: &[Vec<u8>], format: TextureFormat) -> 
   Ok(levels)
 }
 
+/// The dimensionality of a texture id, declared at creation like `format`.
+/// Everything but `D2` is sampling-only: the `<texture>` display draw,
+/// `readTexture`, `copyTexture` and the id-stable resize are 2D-shaped and
+/// reject the id at the call site, naming the shape and its sampler.
+/// `Cube` is a cube map: six square faces behind one id, sampled with a
+/// `samplerCube` by direction, create-once (no upload after creation;
+/// render-to-face is the cube draw target). `D3` is a volume: `depth`
+/// slices of `width` x `height`, sampled with a `sampler3D` by position
+/// and filtered across all three axes (hardware trilinear), the storage of
+/// a brick pool, a 3D LUT or a density field. `D2Array` is an array of
+/// `depth` same-size layers behind one `sampler2DArray`, filtered within a
+/// layer only and picked by an unnormalized layer index (terrain splat
+/// sets, equal-size sprite sheets). Both volumes are mutable: the whole
+/// volume or a box of it (`TextureBox`) re-uploads in place, and the mip
+/// chain regenerates after either (a 3D chain halves depth too, an array
+/// chain never halves layers). Render-to-slice, compressed volumes and
+/// explicit chains are not shapes of the contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum TextureShape {
   #[default]
   D2,
   Cube,
+  D3,
+  D2Array,
 }
 
 impl TextureShape {
@@ -398,8 +410,99 @@ impl TextureShape {
     match self {
       TextureShape::D2 => "2d",
       TextureShape::Cube => "cube",
+      TextureShape::D3 => "3d",
+      TextureShape::D2Array => "2d-array",
     }
   }
+
+  /// The shape as an error message names it, with its article.
+  pub fn describe(self) -> &'static str {
+    match self {
+      TextureShape::D2 => "a 2D texture",
+      TextureShape::Cube => "a cube map",
+      TextureShape::D3 => "a 3D texture",
+      TextureShape::D2Array => "an array texture",
+    }
+  }
+
+  /// The GLSL float sampler that binds this shape, for error messages.
+  pub fn sampler_name(self) -> &'static str {
+    match self {
+      TextureShape::D2 => "sampler2D",
+      TextureShape::Cube => "samplerCube",
+      TextureShape::D3 => "sampler3D",
+      TextureShape::D2Array => "sampler2DArray",
+    }
+  }
+
+  /// The GLSL integer sampler that binds this shape (an rgba32ui id), for
+  /// error messages; a cube map has no integer sampler in the contract.
+  pub fn integer_sampler_name(self) -> &'static str {
+    match self {
+      TextureShape::D2 => "usampler2D",
+      TextureShape::Cube => "usamplerCube",
+      TextureShape::D3 => "usampler3D",
+      TextureShape::D2Array => "usampler2DArray",
+    }
+  }
+
+  /// The app-facing create that makes an id of this shape, for error
+  /// messages that say what to bind instead.
+  pub fn create_name(self) -> &'static str {
+    match self {
+      TextureShape::D2 => "createTexture",
+      TextureShape::Cube => "createCubeTexture",
+      TextureShape::D3 => "createTexture3D",
+      TextureShape::D2Array => "createArrayTexture",
+    }
+  }
+
+  /// Whether the shape is one of the two volumes (`D3`, `D2Array`): the
+  /// shapes that allocate 3D storage, upload by box and carry a depth.
+  pub fn is_volume(self) -> bool {
+    matches!(self, TextureShape::D3 | TextureShape::D2Array)
+  }
+
+  /// The level count of a full mip chain over a `width` x `height` x
+  /// `depth` level 0 of this shape: a 3D chain halves all three axes, so
+  /// its depth counts; every other shape's chain is over the face.
+  pub fn mip_levels(self, width: u32, height: u32, depth: u32) -> u32 {
+    match self {
+      TextureShape::D3 => mip_levels(width.max(height).max(depth)),
+      _ => mip_levels(width.max(height)),
+    }
+  }
+
+  /// The texel storage of an id of this shape at `format`, in bytes: every
+  /// level of the chain when `mipmap`, all six faces of a cube map, every
+  /// slice or layer of a volume (a 3D level's depth halves with its edges,
+  /// an array level keeps every layer). What the inventory reports.
+  pub fn storage_byte_len(self, format: TextureFormat, width: u32, height: u32, depth: u32, mipmap: bool) -> usize {
+    let levels = if mipmap { self.mip_levels(width, height, depth) } else { 1 };
+    (0..levels)
+      .map(|level| {
+        let level_depth = if self == TextureShape::D3 { mip_size(depth, level) } else { depth };
+        format.byte_len(mip_size(width, level), mip_size(height, level)) * level_depth as usize
+      })
+      .sum::<usize>()
+      * if self == TextureShape::Cube { CUBE_FACES } else { 1 }
+  }
+}
+
+/// One box of an upload into an existing volume (`update_texture_box`):
+/// where it lands in level 0, in texels (`z` is the slice of a 3D texture
+/// or the layer of an array), and exactly its `width` x `height` x `depth`
+/// texels at the texture's format, slice-major. WebGPU's `writeTexture`
+/// origin and size; GL's `texSubImage3D` with offsets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextureBox {
+  pub x: u32,
+  pub y: u32,
+  pub z: u32,
+  pub width: u32,
+  pub height: u32,
+  pub depth: u32,
+  pub pixels: Vec<u8>,
 }
 
 /// The app-facing sampling options as written at a create call, before
@@ -547,26 +650,43 @@ pub struct TextureEntry {
   /// and resize validation. Display of an r8 texture shows the red channel
   /// only (Impeller samples it as `(v, 0, 0, 1)` like any shader would).
   pub format: TextureFormat,
-  /// 2D or cube map (the face edge is `width` == `height`), creation-time
-  /// state like `format`.
+  /// The shape (a cube map's face edge is `width` == `height`),
+  /// creation-time state like `format`.
   pub shape: TextureShape,
+  /// The slices of a 3D texture or the layers of an array; 1 for every
+  /// other shape.
+  pub depth: u32,
 }
 
 impl TextureEntry {
   /// An ordinary 2D entry over its adopted Impeller handle.
   pub fn d2(impeller: Texture, width: u32, height: u32, sampler: SamplerState, format: TextureFormat) -> Self {
-    TextureEntry { impeller: Some(impeller), width, height, sampler, format, shape: TextureShape::D2 }
+    TextureEntry { impeller: Some(impeller), width, height, sampler, format, shape: TextureShape::D2, depth: 1 }
   }
 
   /// A 2D entry with no Impeller handle: a draw target of a format other
   /// than rgba8, sampler-only.
   pub fn d2_sampler_only(width: u32, height: u32, sampler: SamplerState, format: TextureFormat) -> Self {
-    TextureEntry { impeller: None, width, height, sampler, format, shape: TextureShape::D2 }
+    TextureEntry { impeller: None, width, height, sampler, format, shape: TextureShape::D2, depth: 1 }
   }
 
   /// A cube map entry: `size` x `size` faces, no Impeller handle.
   pub fn cube(size: u32, sampler: SamplerState, format: TextureFormat) -> Self {
-    TextureEntry { impeller: None, width: size, height: size, sampler, format, shape: TextureShape::Cube }
+    TextureEntry { impeller: None, width: size, height: size, sampler, format, shape: TextureShape::Cube, depth: 1 }
+  }
+
+  /// A volume entry (`TextureShape::D3` or `D2Array`): `depth` slices or
+  /// layers of `width` x `height`, no Impeller handle.
+  pub fn volume(
+    shape: TextureShape,
+    width: u32,
+    height: u32,
+    depth: u32,
+    sampler: SamplerState,
+    format: TextureFormat,
+  ) -> Self {
+    debug_assert!(shape.is_volume(), "a volume entry takes a volume shape");
+    TextureEntry { impeller: None, width, height, sampler, format, shape, depth }
   }
 
   pub fn width(&self) -> u32 {
@@ -574,6 +694,12 @@ impl TextureEntry {
   }
   pub fn height(&self) -> u32 {
     self.height
+  }
+
+  /// The byte length of one whole upload at the id's format: a frame of a
+  /// 2D texture, the full volume of a 3D or array one (`depth` slices).
+  pub fn byte_len(&self) -> usize {
+    self.format.byte_len(self.width, self.height) * self.depth as usize
   }
   pub fn sampler(&self) -> SamplerState {
     self.sampler

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::gpu::{
-  check_cube_faces, SamplerState, TextureBinding, TextureEntry, TextureFormat, TextureRect, TextureShape,
+  check_cube_faces, SamplerState, TextureBinding, TextureBox, TextureEntry, TextureFormat, TextureRect, TextureShape,
 };
 use crate::raster::RasterCmd;
 use crate::yuv::{self, LatchedFrame, YuvLatchShared, YuvLayout, YuvMatrix, YuvRange};
@@ -258,6 +258,78 @@ impl Context {
     Ok(id)
   }
 
+  /// Create a volume: a 3D texture (`TextureShape::D3`, `depth` slices,
+  /// sampled by position through a `sampler3D` with hardware trilinear
+  /// filtering) or an array texture (`TextureShape::D2Array`, `depth`
+  /// layers, sampled by layer through a `sampler2DArray`), from `pixels`
+  /// holding exactly the whole volume slice-major
+  /// (`depth` x `format.byte_len(width, height)`), with the given sampling
+  /// (resolved against the format by the caller; `wrap` applies on all
+  /// three axes of a 3D texture and within a layer of an array; a chain
+  /// is generated from the volume, halving depth for 3D and never the
+  /// layers) and an optional label. Returns the registry id, an ordinary
+  /// texture id that only its shape's sampler consumes: the `<texture>`
+  /// display, `readTexture`, `copyTexture` and `resize_texture` reject it;
+  /// `update_texture` (the whole volume) and `update_texture_box` write it
+  /// in place. Errs on a zero or over-limit extent (the 3D size and the
+  /// layer count are their own, low ceilings - see `GpuLimits`), a
+  /// compressed or non-upload format, a mip request the format cannot
+  /// generate, or a byte count other than the volume's.
+  #[allow(clippy::too_many_arguments)]
+  pub fn create_volume_texture(
+    &self,
+    shape: TextureShape,
+    width: u32,
+    height: u32,
+    depth: u32,
+    pixels: &[u8],
+    sampler: SamplerState,
+    format: TextureFormat,
+    label: Option<String>,
+  ) -> Result<u64, String> {
+    if !shape.is_volume() {
+      return Err(format!("{} is not a volume shape", shape.name()));
+    }
+    if format.is_compressed() {
+      return Err(format!(
+        "{} is a 2D upload format; {} takes the uncompressed formats",
+        format.name(),
+        shape.describe()
+      ));
+    }
+    let limits = self.gpu_limits();
+    match shape {
+      TextureShape::D3 => limits.check_texture_3d_size(width, height, depth)?,
+      _ => limits.check_array_texture_size(width, height, depth)?,
+    }
+    limits.check_upload_format(format)?;
+    limits.check_mipmap(format, sampler.mipmap)?;
+    let expected = format.byte_len(width, height) * depth as usize;
+    if pixels.len() != expected {
+      return Err(format!(
+        "need {expected} bytes for {width}x{height}x{depth} {} ({} slices of {width}x{height}), got {}",
+        format.name(),
+        depth,
+        pixels.len()
+      ));
+    }
+    let id = self.textures.allocate_id();
+    self.rpc(|reply| RasterCmd::CreateVolumeTexture {
+      id,
+      shape,
+      width,
+      height,
+      depth,
+      pixels: pixels.to_vec(),
+      sampler,
+      format,
+      label,
+      reply,
+    })??;
+    self.textures.insert(id, TextureEntry::volume(shape, width, height, depth, sampler, format));
+    Ok(id)
+  }
+
   /// The error an upload-shaped verb returns for a compressed id: like a
   /// cube map it is create-once (its chain is uploaded at creation and
   /// compressed storage takes no partial rewrite).
@@ -268,39 +340,110 @@ impl Context {
     Ok(())
   }
 
-  /// The error a 2D-shaped verb returns for a cube map id, or None for
-  /// any other id (unknown ids fall through to the caller's own lookup).
-  pub(super) fn reject_cube(&self, id: u64, verb: &str) -> Result<(), String> {
+  /// The error a 2D-shaped verb returns for an id of any other shape (a
+  /// cube map, a 3D texture, an array texture: all sampler-only), or Ok
+  /// for a 2D or unknown id (unknown ids fall through to the caller's own
+  /// lookup). `verb` says what the verb cannot do with it.
+  pub(super) fn reject_non_2d(&self, id: u64, verb: &str) -> Result<(), String> {
+    match self.textures.get(id) {
+      Some(entry) if entry.shape != TextureShape::D2 => Err(format!(
+        "texture {id} is {}: sampler-only (bind it to a {}); {verb}",
+        entry.shape.describe(),
+        entry.shape.sampler_name()
+      )),
+      _ => Ok(()),
+    }
+  }
+
+  /// The error a cube map id returns from an upload verb (a cube map is
+  /// create-once), or Ok for any other id.
+  fn reject_cube_upload(&self, id: u64) -> Result<(), String> {
     match self.textures.get(id) {
       Some(entry) if entry.shape == TextureShape::Cube => {
-        Err(format!("texture {id} is a cube map: sampler-only (bind it to a samplerCube); {verb}"))
+        Err(format!("texture {id} is a cube map: create-once, there is no upload into it"))
       }
       _ => Ok(()),
     }
   }
 
-  /// Re-upload pixels into an existing texture, sized by the id's format
-  /// (`TextureFormat::byte_len`). `pixels` may be a
-  /// larger buffer holding multiple frames; `offset` selects the frame start.
-  /// The frame must match the texture's dimensions exactly.
+  /// Re-upload pixels into an existing texture, sized by the id's shape and
+  /// format (`TextureEntry::byte_len`: one frame of a 2D texture, the whole
+  /// volume of a 3D or array one). `pixels` may be a larger buffer holding
+  /// multiple frames; `offset` selects the frame start. The frame must
+  /// match the texture's dimensions exactly.
   pub fn update_texture(&self, id: u64, pixels: &[u8], offset: usize) -> Result<(), String> {
     if let Some(owner) = self.depth_owner(id) {
       return Err(format!("texture {id} is target {owner}'s depth texture: render-written, not uploadable"));
     }
-    self.reject_cube(id, "a cube map is create-once, there is no upload into it")?;
+    self.reject_cube_upload(id)?;
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
-    let (width, height, format) = (entry.width(), entry.height(), entry.format);
+    let (width, height, depth, format) = (entry.width(), entry.height(), entry.depth, entry.format);
     self.reject_compressed(id, format, "there is no upload into it")?;
-    let frame_size = format.byte_len(width, height);
+    let frame_size = entry.byte_len();
     let end = offset.checked_add(frame_size).ok_or_else(|| "offset overflow".to_string())?;
     if end > pixels.len() {
+      let extent =
+        if entry.shape.is_volume() { format!("{width}x{height}x{depth}") } else { format!("{width}x{height}") };
       return Err(format!(
-        "need {frame_size} bytes at offset {offset} for {width}x{height} {}, buffer has {}",
+        "need {frame_size} bytes at offset {offset} for {extent} {}, buffer has {}",
         format.name(),
         pixels.len()
       ));
     }
     self.send(RasterCmd::UpdateTexture { id, pixels: pixels[offset..end].to_vec() });
+    self.note_content(id);
+    Ok(())
+  }
+
+  /// Upload one box into a volume (GL's `texSubImage3D` with offsets;
+  /// WebGPU's `writeTexture` origin): the box's `pixels` hold exactly its
+  /// `width` x `height` x `depth` texels at the id's format, slice-major,
+  /// and the box lies inside the volume (`z` a slice of a 3D texture, a
+  /// layer of an array). The mip chain regenerates after it. What a brick
+  /// pool writes one brick with, and an array one layer with, without
+  /// re-sending the volume. A 2D id takes a rect (`update_texture_rects`),
+  /// never a box.
+  pub fn update_texture_box(&self, id: u64, b: TextureBox) -> Result<(), String> {
+    if let Some(owner) = self.depth_owner(id) {
+      return Err(format!("texture {id} is target {owner}'s depth texture: render-written, not uploadable"));
+    }
+    let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
+    if !entry.shape.is_volume() {
+      return Err(format!(
+        "texture {id} is {}: a box {{ x, y, z, width, height, depth }} uploads into a 3D or array texture; {}",
+        entry.shape.describe(),
+        if entry.shape == TextureShape::D2 {
+          "a 2D texture takes a rect { x, y, width, height }"
+        } else {
+          "a cube map is create-once, there is no upload into it"
+        }
+      ));
+    }
+    let (width, height, depth, format) = (entry.width(), entry.height(), entry.depth, entry.format);
+    let inside = b.x.checked_add(b.width).is_some_and(|right| right <= width)
+      && b.y.checked_add(b.height).is_some_and(|bottom| bottom <= height)
+      && b.z.checked_add(b.depth).is_some_and(|back| back <= depth);
+    if !inside {
+      return Err(format!(
+        "box {}x{}x{} at ({}, {}, {}) is outside the {width}x{height}x{depth} texture",
+        b.width, b.height, b.depth, b.x, b.y, b.z
+      ));
+    }
+    if b.width == 0 || b.height == 0 || b.depth == 0 {
+      return Err(format!("box {}x{}x{}: width, height and depth must be at least 1", b.width, b.height, b.depth));
+    }
+    let expected = format.byte_len(b.width, b.height) * b.depth as usize;
+    if b.pixels.len() != expected {
+      return Err(format!(
+        "need {expected} bytes for a {}x{}x{} {} box, got {}",
+        b.width,
+        b.height,
+        b.depth,
+        format.name(),
+        b.pixels.len()
+      ));
+    }
+    self.send(RasterCmd::UpdateTextureBox { id, box_: b });
     self.note_content(id);
     Ok(())
   }
@@ -316,7 +459,10 @@ impl Context {
     if let Some(owner) = self.depth_owner(id) {
       return Err(format!("texture {id} is target {owner}'s depth texture: render-written, not uploadable"));
     }
-    self.reject_cube(id, "a cube map is create-once, there is no upload into it")?;
+    self.reject_non_2d(
+      id,
+      "a rect { x, y, width, height } is a 2D upload (a volume takes a box { x, y, z, width, height, depth })",
+    )?;
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
     let (width, height, format) = (entry.width(), entry.height(), entry.format);
     self.reject_compressed(id, format, "there is no upload into it")?;
@@ -368,7 +514,7 @@ impl Context {
         "texture {id} is target {owner}'s depth texture; it resizes with the target (setTargetSize)"
       ));
     }
-    self.reject_cube(id, "a cube map is create-once, there is no resize")?;
+    self.reject_non_2d(id, "there is no resize")?;
     // Sampling and format are properties of the id and survive the id-stable
     // resize, as does the label (None here = keep, applied raster-side).
     let (sampler, format) = (entry.sampler(), entry.format);
@@ -582,8 +728,8 @@ impl Context {
         "texture {src} is target {owner}'s depth texture: sampler-only, sample it from a pass instead"
       ));
     }
-    self.reject_cube(src, "render it through a pass instead of copying")?;
-    self.reject_cube(dst, "nothing renders into it")?;
+    self.reject_non_2d(src, "render it through a pass instead of copying")?;
+    self.reject_non_2d(dst, "nothing renders into it")?;
     let src_entry = self.textures.get(src).ok_or_else(|| format!("texture {src} not found"))?;
     let dst_entry = self.textures.get(dst).ok_or_else(|| format!("texture {dst} not found"))?;
     if src_entry.format.sample_only() {

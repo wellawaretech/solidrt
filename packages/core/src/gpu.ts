@@ -79,7 +79,8 @@ export type SamplerOptions = { filter?: gpu.FilterMode; wrap?: gpu.WrapMode; mip
 export type { FilterMode, WrapMode, TextureBinding, TextureBindings } from "flux:gpu"
 
 // Pixel format option for the pixel-upload creates (createTexture,
-// createCubeTexture, createMutableTexture), fixed for the id's lifetime like
+// createCubeTexture, createTexture3D, createArrayTexture,
+// createMutableTexture), fixed for the id's lifetime like
 // the sampler state. "rgba8" (default), "rgba8-srgb" (decodes to linear
 // light on sample), "r8", the float data-texture formats "r32f"/"rgba32f"
 // (Float32Array payload, nearest/texelFetch sampling only, no readback), the
@@ -99,7 +100,7 @@ export type { TextureFormat } from "flux:gpu"
 // runtime, distinct types to the checker, so a cross-space slip like
 // destroyBuffer(textureId) fails to compile. Exported so apps can annotate
 // storage (`let ids: TextureId[]`).
-export type { BufferId, DrawId, ProgramId, RenderPipelineId, ShaderStageId, TextureId, TextureRect } from "flux:gpu"
+export type { BufferId, DrawId, ProgramId, RenderPipelineId, ShaderStageId, TextureBox, TextureId, TextureRect } from "flux:gpu"
 
 // Re-exported so callers that depend on @solidrt/core -- like @solidrt/components
 // -- need not import flux directly: destroyTexture for the manual-cleanup path
@@ -303,6 +304,70 @@ export function createCubeTexture(
   opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
 ): gpu.TextureId {
   let id = gpu.createCubeTexture(faces, size, opts)
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  return id
+}
+
+/**
+ * Uploads a 3D texture: `depth` slices of `width * height` texels, `data`
+ * the whole volume slice-major (texel (x, y, z) at `(z * height + y) *
+ * width + x`, rows top-down, slice 0 first) in the view type matching the
+ * declared format like `createTexture` (uncompressed formats only), and
+ * returns its id. Sampled by POSITION from a `uniform sampler3D` in a
+ * shader (`texture(uVolume, p)`, p in 0..1 on all three axes) and
+ * filtered across all three - hardware trilinear with `filter: "linear"` -
+ * the primitive behind a sparse brick pool for painting, a 3D color LUT,
+ * a density or fog field. Texel i's centre sits at `(i + 0.5) / size` on
+ * each axis (a LUT maps its input v to `(v * (size - 1) + 0.5) / size`).
+ * `wrap` applies on all three axes; `mipmap: true` generates a chain that
+ * halves depth with the other axes. Mutable: `uploadTexture(id, data)`
+ * (from flux:gpu) rewrites the whole volume, `uploadTexture(id, brick,
+ * { x, y, z, width, height, depth })` one box of it without re-sending the
+ * rest. Sampler-only: `<texture src>` cannot display it, and
+ * `readTexture`, `copyTexture` and `resizeTexture` throw. Every axis is
+ * bounded by `limits.max3DTextureSize`, whose GLES 3.0 floor is 256; a
+ * 256^3 "rgba8" volume is 64 MB (plus a seventh for its chain), so size
+ * volumes deliberately. Freed like `createTexture` (auto-free under a
+ * reactive owner, `{ autoFree: false }` or `destroyTexture` otherwise).
+ */
+export function createTexture3D(
+  data: Uint8Array | Float32Array | Uint32Array,
+  width: number,
+  height: number,
+  depth: number,
+  opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
+): gpu.TextureId {
+  let id = gpu.createTexture3D(data, width, height, depth, opts)
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  return id
+}
+
+/**
+ * Uploads an array texture: `layers` same-size layers of `width * height`
+ * texels, `data` every layer back to back (layer 0 first, each laid out
+ * like a 2D upload) in the view type matching the declared format
+ * (uncompressed formats only), and returns its id. Sampled by LAYER from a
+ * `uniform sampler2DArray` in a shader: `texture(uLayers, vec3(uv,
+ * layer))`, where `layer` is an unnormalized index (0, 1, 2, ... rounded
+ * to the nearest layer and clamped - never divided by the count), and
+ * filtering, `wrap` and the mip chain apply within a layer only: no
+ * bleeding between layers as an atlas has, and no blending across them as
+ * a 3D texture does. Many equal-size maps behind one sampler and one draw:
+ * terrain splat sets, decal and sprite sheets. Mutable like a 3D texture:
+ * `uploadTexture(id, data)` rewrites the whole array, `uploadTexture(id,
+ * layer, { x: 0, y: 0, z: i, width, height, depth: 1 })` one layer.
+ * Sampler-only like a 3D texture. A layer is bounded by
+ * `limits.maxTextureSize`, the layer count by
+ * `limits.maxArrayTextureLayers` (floor 256). Freed like `createTexture`.
+ */
+export function createArrayTexture(
+  data: Uint8Array | Float32Array | Uint32Array,
+  width: number,
+  height: number,
+  layers: number,
+  opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
+): gpu.TextureId {
+  let id = gpu.createArrayTexture(data, width, height, layers, opts)
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }

@@ -41,6 +41,7 @@ symptom shows. A heading that outgrows this file splits into its own.
 `packages/3d`.
 
 - Mixer per-clip speed after `play()` (Three's `action.timeScale`): the core takes `setPlayer(player, { speed })` already; the mixer only reads `speed` at play. A `mixer.setSpeed(name, speed)` over the action's player. Pause is covered by the model node's `timeScale` (okf/done/native-motion-time-scale.md).
+- `shaderMaterialClass` should throw when a source declares `uLayers` as anything but `int`: a `sampler2DArray uLayers` today fails at `add()` with "param 'uLayers' is a sampler2DArray; bind it via textures", although it was bound via textures (the scene seeds its layer mask under that name). Name it in the error at the class.
 
 
 ## DX

@@ -9,7 +9,7 @@ use rquickjs::{Array, ArrayBuffer, Ctx, Exception, Function, JsLifetime, Object,
 use super::properties::{decode_params, decode_texture_bindings};
 use super::tree::to_prop_value;
 use crate::plugins::marshal::{array_buffer_over, bytes_of, OptArg};
-use alloy::{CaptureInfo, TextureRect};
+use alloy::{CaptureInfo, TextureBox, TextureRect, TextureShape};
 
 // Per-engine texture bookkeeping, held in context userdata so engine teardown
 // (which clears userdata while the runtime is still alive) destroys the GPU
@@ -859,6 +859,8 @@ impl ModuleDef for GpuModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("createTexture")?;
     decl.declare("createCubeTexture")?;
+    decl.declare("createTexture3D")?;
+    decl.declare("createArrayTexture")?;
     decl.declare("createMutableTexture")?;
     decl.declare("uploadTexture")?;
     decl.declare("resizeTexture")?;
@@ -905,6 +907,8 @@ impl ModuleDef for GpuModule {
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     exports.export("createTexture", Function::new(ctx.clone(), create_texture)?)?;
     exports.export("createCubeTexture", Function::new(ctx.clone(), create_cube_texture)?)?;
+    exports.export("createTexture3D", Function::new(ctx.clone(), create_texture_3d)?)?;
+    exports.export("createArrayTexture", Function::new(ctx.clone(), create_array_texture)?)?;
     exports.export("createMutableTexture", Function::new(ctx.clone(), create_mutable_texture)?)?;
     exports.export("uploadTexture", Function::new(ctx.clone(), upload_texture)?)?;
     exports.export("resizeTexture", Function::new(ctx.clone(), resize_texture)?)?;
@@ -953,6 +957,8 @@ impl ModuleDef for GpuModule {
     let limits_obj = Object::new(ctx.clone())?;
     limits_obj.set("maxTextureSize", limits.max_texture_size)?;
     limits_obj.set("maxCubeMapSize", limits.max_cube_map_size)?;
+    limits_obj.set("max3DTextureSize", limits.max_3d_texture_size)?;
+    limits_obj.set("maxArrayTextureLayers", limits.max_array_texture_layers)?;
     limits_obj.set("maxTextureUnits", limits.max_texture_units)?;
     limits_obj.set("maxVertexAttribs", limits.max_vertex_attribs)?;
     limits_obj.set("maxAnisotropy", limits.max_anisotropy)?;
@@ -1089,6 +1095,79 @@ fn collect_faces(
   Ok(())
 }
 
+// A 3D texture: `depth` slices of `width` x `height` at the declared
+// format, `data` the whole volume slice-major (texel (x, y, z) at
+// ((z * height + y) * width + x) texels; same view-type rule as
+// createTexture), sampled by position through a `sampler3D` with hardware
+// trilinear filtering. Mutable: uploadTexture rewrites the whole volume or
+// a box of it. Sampler options are the createTexture set; `wrap` applies on
+// all three axes; a chain halves depth too.
+fn create_texture_3d(
+  ctx: Ctx<'_>,
+  data: Value<'_>,
+  width: u32,
+  height: u32,
+  depth: u32,
+  opts: OptArg<Object<'_>>,
+) -> rquickjs::Result<u64> {
+  create_volume(ctx, TextureShape::D3, data, width, height, depth, opts, "createTexture3D")
+}
+
+// An array texture: `layers` same-size layers of `width` x `height` at the
+// declared format, `data` the layers back to back (layer-major; same
+// view-type rule as createTexture), sampled by layer through a
+// `sampler2DArray` (the layer coordinate is an unnormalized index). Mutable
+// like a 3D texture: uploadTexture rewrites the whole array or a box of it
+// (`z` the layer). `wrap` applies within a layer; a chain is per layer.
+fn create_array_texture(
+  ctx: Ctx<'_>,
+  data: Value<'_>,
+  width: u32,
+  height: u32,
+  layers: u32,
+  opts: OptArg<Object<'_>>,
+) -> rquickjs::Result<u64> {
+  create_volume(ctx, TextureShape::D2Array, data, width, height, layers, opts, "createArrayTexture")
+}
+
+// The one create behind both volume shapes: exactly one volume of pixels
+// (`depth` x the frame size - a wrong size is the likelier bug, so no
+// "at least" like createMutableTexture; alloy sizes it), the shared
+// sampler, format and label options, alloy's limit and shape validation.
+#[allow(clippy::too_many_arguments)]
+fn create_volume(
+  ctx: Ctx<'_>,
+  shape: TextureShape,
+  data: Value<'_>,
+  width: u32,
+  height: u32,
+  depth: u32,
+  opts: OptArg<Object<'_>>,
+  api: &str,
+) -> rquickjs::Result<u64> {
+  let format = collect_format(&ctx, &opts.0, api)?;
+  if format.is_compressed() {
+    return Err(throw_str(
+      &ctx,
+      &format!("{api}: {} is a 2D format; {} takes the uncompressed formats", format.name(), shape.describe()),
+    ));
+  }
+  let data = PixelData::collect(&ctx, data, format, api)?;
+  let pixels = data.bytes(&ctx, api)?;
+  let sampler = collect_sampler(&ctx, &opts.0, format, api)?;
+  // The byte count is alloy's check, after the extent: an over-limit depth
+  // names the limit, not the byte count it implies.
+  let label = collect_label(&opts.0)?;
+  let st = state(&ctx);
+  let id = st
+    .gui
+    .alloy
+    .create_volume_texture(shape, width, height, depth, pixels, sampler, format, label)
+    .map_err(|e| throw_str(&ctx, &format!("{api}: {e}")))?;
+  st.created.borrow_mut().insert(id);
+  Ok(id)
+}
+
 // A mutable texture is created exactly like an immutable one; "mutable" only
 // signals intent to update it later via uploadTexture. The seed buffer may be
 // larger than one frame (uploadTexture takes an offset), so only require that
@@ -1132,36 +1211,66 @@ fn create_mutable_texture(
   Ok(id)
 }
 
+// The region an upload's third argument names: a rect of a 2D texture or
+// a box of a volume (a 3D or array texture), told apart by the box's own
+// fields (`z`, `depth`); alloy rejects the form that does not fit the id.
+enum UploadRegion {
+  Rect { x: u32, y: u32, width: u32, height: u32 },
+  Box { x: u32, y: u32, z: u32, width: u32, height: u32, depth: u32 },
+}
+
+// Decode a rect `{ x, y, width, height }` or a box `{ x, y, z, width,
+// height, depth }`: every field a non-negative integer.
+fn collect_upload_region(ctx: &Ctx<'_>, obj: &Object<'_>) -> rquickjs::Result<UploadRegion> {
+  let is_box = obj.contains_key("z")? || obj.contains_key("depth")?;
+  let kind = if is_box { "box" } else { "rect" };
+  let field = |name: &str| -> rquickjs::Result<u32> {
+    let v: f64 =
+      obj.get(name).map_err(|_| throw_str(ctx, &format!("uploadTexture: the {kind} needs a numeric {name}")))?;
+    if v.fract() != 0.0 || v < 0.0 || v > u32::MAX as f64 {
+      return Err(throw_str(ctx, &format!("uploadTexture: {kind} {name} must be a non-negative integer, got {v}")));
+    }
+    Ok(v as u32)
+  };
+  if is_box {
+    Ok(UploadRegion::Box {
+      x: field("x")?,
+      y: field("y")?,
+      z: field("z")?,
+      width: field("width")?,
+      height: field("height")?,
+      depth: field("depth")?,
+    })
+  } else {
+    Ok(UploadRegion::Rect { x: field("x")?, y: field("y")?, width: field("width")?, height: field("height")? })
+  }
+}
+
 // The caller passes the pixel buffer on every upload (it already holds it),
-// so nothing is pinned on the Rust side. `data` may hold multiple frames;
-// a numeric `at` selects the one to upload by offset. A rect `at` (`{ x,
-// y, width, height }`) uploads `data` as exactly that rect of the texture
-// instead (GL's texSubImage2D with an offset): what a runtime atlas packer
-// writes a cell with. Reading the buffer is zero-copy.
+// so nothing is pinned on the Rust side. `data` may hold multiple frames
+// (or volumes); a numeric `at` selects the one to upload by offset. A rect
+// `at` (`{ x, y, width, height }`) uploads `data` as exactly that rect of
+// a 2D texture instead (GL's texSubImage2D with an offset): what a runtime
+// atlas packer writes a cell with. A box `at` (`{ x, y, z, width, height,
+// depth }`) is the same for a 3D or array texture (texSubImage3D; `z` the
+// slice or layer): one brick of a pool, one layer of an array. Reading the
+// buffer is zero-copy.
 fn upload_texture<'js>(ctx: Ctx<'js>, id: u64, data: Value<'js>, at: OptArg<Value<'js>>) -> rquickjs::Result<()> {
   let st = state(&ctx);
   let format = st.gui.alloy.texture_format(id).map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
   let data = PixelData::collect(&ctx, data, format, "uploadTexture")?;
   let pixels = data.bytes(&ctx, "uploadTexture")?;
-  let rect = match at.0 {
+  let region = match at.0 {
     Some(value) if value.is_object() => {
       let obj = value.into_object().expect("checked is_object");
-      let field = |name: &str| -> rquickjs::Result<u32> {
-        let v: f64 =
-          obj.get(name).map_err(|_| throw_str(&ctx, &format!("uploadTexture: the rect needs a numeric {name}")))?;
-        if v.fract() != 0.0 || v < 0.0 || v > u32::MAX as f64 {
-          return Err(throw_str(&ctx, &format!("uploadTexture: rect {name} must be a non-negative integer, got {v}")));
-        }
-        Ok(v as u32)
-      };
-      Some((field("x")?, field("y")?, field("width")?, field("height")?))
+      Some(collect_upload_region(&ctx, &obj)?)
     }
     Some(value) if value.is_undefined() => None,
     Some(value) => {
       let offset: f64 = value.as_number().ok_or_else(|| {
         throw_str(
           &ctx,
-          "uploadTexture: the third argument is a frame offset (number) or a rect ({ x, y, width, height })",
+          "uploadTexture: the third argument is a frame offset (number), a rect ({ x, y, width, height }) or a box ({ x, y, z, width, height, depth })",
         )
       })?;
       if offset.fract() != 0.0 || offset < 0.0 {
@@ -1176,11 +1285,16 @@ fn upload_texture<'js>(ctx: Ctx<'js>, id: u64, data: Value<'js>, at: OptArg<Valu
     }
     None => None,
   };
-  match rect {
-    Some((x, y, width, height)) => st
+  match region {
+    Some(UploadRegion::Rect { x, y, width, height }) => st
       .gui
       .alloy
       .update_texture_rects(id, vec![TextureRect { x, y, width, height, pixels: pixels.to_vec() }])
+      .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?,
+    Some(UploadRegion::Box { x, y, z, width, height, depth }) => st
+      .gui
+      .alloy
+      .update_texture_box(id, TextureBox { x, y, z, width, height, depth, pixels: pixels.to_vec() })
       .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?,
     None => st.gui.alloy.update_texture(id, pixels, 0).map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?,
   }

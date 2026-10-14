@@ -1,6 +1,6 @@
 use impellers::{DisplayList, Texture};
 
-use crate::gpu::{validate_params, validate_texture_bindings, NodeShader};
+use crate::gpu::{validate_params, validate_texture_bindings, NodeShader, TextureShape};
 use crate::raster::RasterCmd;
 
 use super::Context;
@@ -237,7 +237,12 @@ impl Context {
       ));
     }
     let Some(impeller) = &entry.impeller else {
-      return Err(format!("texture {id} is sampler-only (a cube map, or a draw target of a format other than rgba8): render it through a pass to read it"));
+      let what = if entry.shape == TextureShape::D2 {
+        "a draw target of a format other than rgba8".to_string()
+      } else {
+        format!("{}, bind it to a {}", entry.shape.describe(), entry.shape.sampler_name())
+      };
+      return Err(format!("texture {id} is sampler-only ({what}): render it through a pass to read it"));
     };
     let (width, height) = (entry.width(), entry.height());
     let pixels = self.read_texture(impeller, width, height)?;

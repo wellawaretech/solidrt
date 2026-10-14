@@ -21,7 +21,7 @@ pub struct TargetHandles {
   pub color: Option<Texture>,
   pub depth: Option<Texture>,
 }
-use crate::gpu::{SamplerState, TextureFormat, TextureRect};
+use crate::gpu::{SamplerState, TextureBox, TextureFormat, TextureRect, TextureShape};
 
 // Outset applied when converting logical damage to physical pixels: absorbs
 // the logical->physical scale rounding at the patch edges.
@@ -155,12 +155,31 @@ pub(crate) enum RasterCmd {
     label: Option<String>,
     reply: mpsc::Sender<Result<(), String>>,
   },
-  /// Re-upload pixels into an existing texture; `pixels` is exactly one frame
-  /// (the UI side slices multi-frame buffers before sending).
+  /// Create a volume at `id` (`shape` D3 or D2Array): `depth` slices or
+  /// layers of `width` x `height`, `pixels` the whole volume slice-major.
+  /// Never adopted into Impeller like a cube map, so the reply is bare.
+  CreateVolumeTexture {
+    id: u64,
+    shape: TextureShape,
+    width: u32,
+    height: u32,
+    depth: u32,
+    pixels: Vec<u8>,
+    sampler: SamplerState,
+    format: TextureFormat,
+    label: Option<String>,
+    reply: mpsc::Sender<Result<(), String>>,
+  },
+  /// Re-upload pixels into an existing texture; `pixels` is exactly one
+  /// frame, or one whole volume (the UI side slices multi-frame buffers
+  /// before sending).
   UpdateTexture { id: u64, pixels: Vec<u8> },
   /// Upload rects into an existing texture (validated UI-side), the mip
   /// chain regenerated once after the lot.
   UpdateTextureRects { id: u64, rects: Vec<TextureRect> },
+  /// Upload a box into an existing volume (validated UI-side), the mip
+  /// chain regenerated after it.
+  UpdateTextureBox { id: u64, box_: TextureBox },
   /// Give a YUV output `id` its latch (see yuv.rs) and its two plane sets,
   /// each plane as (uniform name, texture id, byte offset in a packed frame
   /// of `frame_size` bytes). From here the raster thread takes the due frame

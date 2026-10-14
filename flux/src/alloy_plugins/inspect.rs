@@ -324,6 +324,7 @@ pub fn gpu_record(
         "id": t.id,
         "width": t.width,
         "height": t.height,
+        "depth": t.depth,
         "target": t.target,
         "format": t.format,
         "shape": t.shape,
