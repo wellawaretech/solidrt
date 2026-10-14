@@ -14,6 +14,7 @@ import { test, expect } from "@solidrt/test"
 import type { TestApp } from "@solidrt/test"
 import { readTexture } from "@solidrt/core/gpu"
 import type { BlendMode, TextureId } from "@solidrt/core/gpu"
+import type { TileLayerHandle } from "../src/index.ts"
 import { addGroup, addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, destroySprite, fullFrame, getSprite, setSprite, unlit } from "../src/index.ts"
 
 const SIZE = 64
@@ -167,16 +168,19 @@ test("blend: \"add\" accumulates overlapping sprites to opaque white", async app
 })
 
 test("a tile layer takes the material too, baking its cells with its blend", async app => {
-  let { layer } = await mounted(app, () => {
-    let atlas = createAtlas(ATLAS, { label: "tiles-add-atlas" })
-    let layer = createTileLayer(2, 2, 8, 8, [atlas], { material: unlit({ blend: "add" }), label: "tiles-add" })
+  let layer!: TileLayerHandle
+  await app.mount(() => {
+    let atlas = createAtlas({ width: 8, height: 8, data: new Uint8Array(8 * 8 * 4).fill(255) }, { label: "tiles-add-atlas" })
+    layer = createTileLayer(8, 8, [atlas], { chunkTiles: 2, material: unlit({ blend: "add" }), label: "tiles-add" })
     layer.setTile(0, 0, fullFrame(atlas), { tint: HALF })
-    return { layer, texture: layer.chunks[0]!.texture }
+    layer.addViewer().setCamera({}, 16, 16)
+    return <view width={SIZE} height={SIZE} />
   })
-  await app.frame()
+  await app.settle()
+  let chunk = layer.resident().find(c => c.texture !== null)!.texture!
   // Over the transparent clear, "add" leaves the cell's own half alpha.
-  expectPixel(pixel(layer.chunks[0]!.texture, 4, 4), [128, 128, 128, 128])
-  expect(pixel(layer.chunks[0]!.texture, 12, 12)).toEqual([0, 0, 0, 0])
+  expectPixel(pixel(chunk, 4, 4), [128, 128, 128, 128])
+  expect(pixel(chunk, 12, 12)).toEqual([0, 0, 0, 0])
 })
 
 test("a floored sprite destroyed, or its floor cleared, lets the search bound shrink back", async app => {

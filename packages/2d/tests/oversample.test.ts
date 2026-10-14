@@ -1,15 +1,12 @@
 // Tests for the oversample auto-pick math (oversample-math.ts): fit
 // rounding and bounds, the shrink hysteresis and maxOversample cap in
-// pickOversample, and the rotation divide-out in tileWorldScale - asserted
-// with a full-turn camera sweep against an AABB oracle, so the class of bug
-// where a rotating camera re-bakes every chunk cannot come back silently.
-// Pure-module input only (oversample-math.ts imports nothing), so it runs
+// pickOversample. Pure-module input only (oversample-math.ts imports nothing), so it runs
 // headless on flux: `sol test packages/2d`. The random inputs come from
 // Math.random, which `sol test` seeds: the same on every run, and `--seed
 // <n>` tries others.
 
 import { test } from "flux:test"
-import { fitOversampleWithin, pickOversample, tileWorldScale } from "../src/oversample-math.ts"
+import { fitOversampleWithin, pickOversample } from "../src/oversample-math.ts"
 
 function range(lo: number, hi: number): number {
   return lo + Math.random() * (hi - lo)
@@ -75,38 +72,4 @@ test("pickOversample: hysteresis, cap, validation", () => {
   }
 })
 
-// Oracle: the AABB of a worldW x worldH rect scaled by zoom and rotated -
-// what getBoundingBoxViewport measures for the world view.
-function rotatedBox(worldW: number, worldH: number, zoom: number, r: number): [number, number] {
-  let cos = Math.abs(Math.cos(r))
-  let sin = Math.abs(Math.sin(r))
-  return [zoom * (worldW * cos + worldH * sin), zoom * (worldW * sin + worldH * cos)]
-}
 
-test("tileWorldScale: the divide-out recovers the zoom at any rotation, and a full turn never re-picks", () => {
-  // The divide-out must recover the zoom exactly (up to float noise) at any
-  // rotation, and the pick must therefore never change over a full turn - the
-  // rotating-camera re-bake bug, asserted dead.
-  const SWEEPS = 500
-  const TURN_STEPS = 360
-  const SCALE_TOLERANCE = 1e-9 // relative: pure float noise, no geometry slack
-  for (let i = 0; i < SWEEPS; i++) {
-    let worldW = range(256, 8192)
-    let worldH = range(256, 8192)
-    let zoom = range(0.2, 5)
-    let changes = 0
-    let current = 0
-    for (let step = 0; step <= TURN_STEPS; step++) {
-      let r = (step / TURN_STEPS) * 2 * Math.PI
-      let [boxW, boxH] = rotatedBox(worldW, worldH, zoom, r)
-      let scale = tileWorldScale(boxW, boxH, worldW, worldH, r)
-      if (Math.abs(scale - zoom) > zoom * SCALE_TOLERANCE) fail(`divide-out at rot ${r}: scale ${scale}, want zoom ${zoom} (world ${worldW} x ${worldH})`)
-      let n = pickOversample(current, scale, 512, 512, BIG_BUDGET, BIG_MAX_SIZE, undefined)
-      if (n !== null) {
-        current = n
-        changes++
-      }
-    }
-    if (changes > 1) fail(`full-turn sweep re-picked ${changes} times (world ${worldW} x ${worldH}, zoom ${zoom})`)
-  }
-})

@@ -17,14 +17,17 @@ copy one and adapt it.
   repacked sheet): zoom out and the cells' rims stay crisp instead of
   smearing the neighbour in. Wheel/pinch zooms, drag pans. Debug
   commands `zoom` and `atlases` drive it headless.
-- `tiles.tsx` - the baked tile layer: a 128x128 world (6144px - bigger than
-  one texture may be) baked into lazily-allocated chunks, flown over by a
-  ship-style camera (fixed screen pivot, the world panning and ROTATING
-  under it via the `<TileLayer>` camera prop - transform writes, never a
-  re-bake), seeded by ONE `setTiles` rect write over a Uint16Array of
-  frame indices (the layer's `frames` table; -1 where the world is
-  empty, and those chunks never allocate), and a timer editing tiles to
-  show that a `setTile` batch re-bakes only the chunks it touches.
+- `tiles.tsx` - the baked tile layer as a streaming world: a ring road
+  around the origin (negative cells included) seeded by ONE `setTiles`
+  rect write over a Uint32Array of frame indices with flip and transpose
+  bits (the layer's `frames` table; -1 where the world is empty, and
+  those chunks never hold records), flown over by a ship-style camera
+  (fixed screen pivot, the world panning and ROTATING under it via the
+  `<TileLayer>` camera prop - transform writes, never a re-bake) while
+  the residency gate brings the chunks near the view in and takes the far
+  ones out (their targets through the resource pool), and a timer editing
+  tiles to show that a `setTile` batch re-bakes only the resident chunks
+  it touches. Debug commands `state` and `cell`.
 - `anim.tsx` - frame animation with `createAnimation`: three sprites share
   one looping clip (one clock, stepped by wall time independent of display
   rate) and a one-shot clip holds its last frame and fires `onEnd`.

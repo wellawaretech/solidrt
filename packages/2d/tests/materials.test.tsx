@@ -35,7 +35,7 @@ import {
   unlit,
   updateRecords,
 } from "../src/index.ts"
-import type { Material, ViewHandle } from "../src/index.ts"
+import type { Material, ViewHandle, TileLayerHandle } from "../src/index.ts"
 import { SPRITE_VARYINGS, SPRITE_VERTEX, SPRITE_VERTEX_BODY, unlitFragment } from "../src/glsl.ts"
 
 const SIZE = 64
@@ -287,8 +287,9 @@ test("a custom vertex stage under the stock fragment, and a fragment of its own 
 })
 
 test("a tile layer bakes with the material: a per-cell style, and a param change re-bakes every resident chunk", async app => {
-  let { layer } = await mounted(app, () => {
-    let atlas = createAtlas(ATLAS, { label: "tiles-palette-atlas" })
+  let layer!: TileLayerHandle
+  await app.mount(() => {
+    let atlas = createAtlas({ width: 8, height: 8, data: new Uint8Array(8 * 8 * 4).fill(255) }, { label: "tiles-palette-atlas" })
     let material = unlit({
       prelude: FLASH_PRELUDE,
       instanceBuffers: [{ attributes: [{ name: "iPalette", format: "float32" }] }],
@@ -302,14 +303,15 @@ test("a tile layer bakes with the material: a per-cell style, and a param change
       params: { uFlash: 0 },
       label: "tiles-palette",
     })
-    let layer = createTileLayer(2, 2, 8, 8, [atlas], { material, label: "tiles-palette" })
+    layer = createTileLayer(8, 8, [atlas], { chunkTiles: 2, material, label: "tiles-palette" })
     layer.setTile(0, 0, fullFrame(atlas), { style: [1] })
     layer.setTile(1, 0, fullFrame(atlas))
     layer.setTiles(0, 1, 2, 1, [fullFrame(atlas), fullFrame(atlas)], { style: [1] })
-    return { layer, texture: layer.chunks[0]!.texture }
+    layer.addViewer().setCamera({}, 16, 16)
+    return <view width={SIZE} height={SIZE} />
   })
-  await app.frame()
-  let chunk = layer.chunks[0]!.texture
+  await app.settle()
+  let chunk = layer.resident().find(c => c.texture !== null)!.texture!
   expectPixel(pixel(chunk, 4, 4), GREEN)
   expectPixel(pixel(chunk, 12, 4), WHITE)
   expectPixel(pixel(chunk, 4, 12), GREEN)
@@ -318,7 +320,7 @@ test("a tile layer bakes with the material: a per-cell style, and a param change
   await app.frame()
   expectPixel(pixel(chunk, 4, 4), WHITE)
   expectPixel(pixel(chunk, 12, 12), WHITE)
-  let plain = createTileLayer(2, 2, 8, 8, layer.atlases as never, { label: "tiles-plain" })
+  let plain = createTileLayer(8, 8, layer.atlases as never, { label: "tiles-plain" })
   expect(() => plain.setTile(0, 0, fullFrame(layer.atlases[0]!), { style: [1] })).toThrow()
 })
 
@@ -373,7 +375,7 @@ test("creation throws name the mistake: the camera contract, reserved names, the
     let hungry = unlit({ textures, label: "hungry" })
     expect(() => createSpriteLayer([atlas], { material: hungry, label: "over-budget" })).toThrow()
     expect(() => createRecordLayer([atlas], { material: hungry, label: "over-budget-records" })).toThrow()
-    expect(() => createTileLayer(1, 1, 8, 8, [atlas], { material: hungry, label: "over-budget-tiles" })).toThrow()
+    expect(() => createTileLayer(8, 8, [atlas], { material: hungry, label: "over-budget-tiles" })).toThrow()
     // No instance buffer, no style record.
     expect(() => setInstanceStyle(layer, addSprite(layer, square(MID)), [1])).toThrow()
     let view = layer.createView({ width: SIZE, height: SIZE, label: "throws" })

@@ -55,19 +55,3 @@ export function pickOversample(
   if (!capped && n < current && scale > current - 1 - SHRINK_MARGIN) return null
   return n === current ? null : n
 }
-
-/**
- * The device-pixels-per-world-pixel factor of a tile world measured through
- * a rotated camera, before the display scale: the measured box is the AABB
- * of the ROTATED world view, which swells by up to sqrt(2) as the camera
- * turns, but texels per world pixel do not change with rotation - so the
- * swell is divided back out for the known rotation, leaving the camera zoom
- * and any ancestor fit.
- */
-export function tileWorldScale(boxW: number, boxH: number, worldW: number, worldH: number, rotation: number): number {
-  let cos = Math.abs(Math.cos(rotation))
-  let sin = Math.abs(Math.sin(rotation))
-  let rotW = worldW * cos + worldH * sin
-  let rotH = worldW * sin + worldH * cos
-  return Math.max(boxW / rotW, boxH / rotH)
-}

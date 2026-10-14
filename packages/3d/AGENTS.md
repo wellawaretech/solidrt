@@ -338,8 +338,12 @@ turns away never enters - no event, nothing to cancel. The gate knows
 wanted or not; what a region holds (a model, procedural geometry,
 instance records) and whether it is ready are the HANDLER's, and a
 handler still loading when the leave arrives cancels its own work.
-Spreading one region's many GPU creates over frames, pooling a freed
-region's buffers for the next enter, and the HLOD question (a far
+A freed region's buffers and targets wait in a resource pool for the
+next enter instead of being destroyed and created (`createResourcePool`
+in @solidrt/core/gpu: one JS free list over GPU ids, classed by a
+consumer-built string, LRU past its cap; the 2d tile layer's chunks go
+through it, a 3d region handler's geometry will). Spreading one
+region's many GPU creates over frames and the HLOD question (a far
 proxy as an LOD level that loads, or its own gate) are the backlog
 item's. A world that declares no region loads and draws exactly as now.
 

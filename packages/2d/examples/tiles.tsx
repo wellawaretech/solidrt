@@ -1,35 +1,46 @@
-// The baked tile layer: a world of tiles baked into lazily-allocated chunk
-// textures and composited as a few quads, so scrolling and rotating cost
-// transform writes and an unchanged world costs nothing per frame. The
-// world here is BIGGER than one texture is allowed to be (6144px), which is
-// the chunking at work; sparse regions never allocate a chunk at all.
-//
-// The camera flies a ship-style path: a fixed screen pivot near the bottom
+// The baked tile layer as a STREAMING world: an unbounded grid of cells
+// (negative cells included) baked into chunk textures that the core's
+// residency gate brings in as the camera approaches and takes out as it
+// leaves, composited as a few quads under a clipping viewport. The
+// camera flies a ship-style path - a fixed screen pivot near the bottom
 // of the viewport, the world panning and ROTATING under it so the flight
-// heading always points up - the <TileLayer> camera prop with rotation and
-// pivot (a leaf transform, never a re-bake). The world is seeded by ONE
-// setTiles rect write over a Uint16Array of frame indices (-1 where the
-// world is empty), the shape a generator or a worker produces; a timer
-// edits tiles while it runs: beacon markers along the road's center line
-// blink, and each blink's batch of setTile calls re-bakes only the chunks
-// the beacons land in.
+// heading always points up (the <TileLayer> camera prop with rotation and
+// pivot: a transform write, never a re-bake) - around a ring road many
+// times larger than the viewport, so at any moment only the chunks near
+// the view are resident; the rest are records on the CPU, taken again
+// from the resource pool when the ship comes back round.
 //
-// The atlas is the core logo sliced 2x2 by grid(); a real game would slice
-// a tileset sheet the same way, and the array is the layer's `frames`
+// The world is seeded by ONE setTiles rect write over a Uint16Array of
+// frame indices (-1 where the world is empty; those chunks never allocate
+// records), the shape a generator or a worker produces, with a few cells
+// flipped and transposed through the index bits. A timer edits tiles
+// while it runs: beacon markers along the road's center line blink, and
+// each blink's batch of setTile calls re-bakes only the RESIDENT chunks
+// the beacons land in - a beacon in a chunk that left is a record write
+// and bakes when the chunk comes back.
+//
+// The atlas is the core logo sliced 2x2 by grid() into 48 px frames, the
+// cell size (a frame bakes at its own size); a real game would slice a
+// tileset sheet the same way, and the array is the layer's `frames`
 // table the indices name.
 //
-// Debug commands: `state` (resident chunk count) and `cell` ({ col, row }:
-// the frame at a cell, null when empty).
+// Debug commands: `state` (the resident chunk count, the enters and
+// leaves so far, the used rect) and `cell` ({ col, row }: the frame at a
+// cell, null when empty).
 import { createSignal, decodeImage, onFrame, pct, render, windowSize } from "@solidrt/core"
-import { createAtlas, grid, TileLayer } from "@solidrt/2d"
+import { createAtlas, grid, TileLayer, TILE_FLIP_X, TILE_TRANSPOSE } from "@solidrt/2d"
 import type { TileCamera, TileLayerHandle } from "@solidrt/2d"
 import { registerDebug } from "sol:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
 
-const COLS = 128
-const ROWS = 128
+// The logo is 96 px: 2 x 2 frames of 48 px, the cell size.
 const TILE = 48
-const WORLD = COLS * TILE
+// The ring road in cells: centered on the origin, so the world spans
+// negative cells too, between these radii.
+const ROAD_INNER = 40
+const ROAD_OUTER = 52
+// The seeded rect, in cells: one chunk beyond the road each way.
+const SEED_REACH = 64
 
 // onFrame tick gap that logs as a hitch, as a factor of the display's
 // refresh period (onFrame's rate argument, so any refresh rate works):
@@ -41,24 +52,31 @@ function App() {
   let frames = grid(atlas, 2, 2)
 
   let layer!: TileLayerHandle
+  let enters = 0
+  let leaves = 0
   let seed = (l: TileLayerHandle) => {
     layer = l
-    // A solid ring "road" around the world center: continuous under the
-    // flight path, empty everywhere else - the empty regions are the point,
-    // their chunks never allocate, since a rect write allocates a chunk
-    // only for the first frame it carries there. -1 is the clear (a
-    // Uint16Array holds it as 0xffff, the same bits).
-    let c = COLS / 2
-    let cells = new Uint16Array(COLS * ROWS).fill(-1)
-    for (let row = 0; row < ROWS; row++) {
-      for (let col = 0; col < COLS; col++) {
-        let d = Math.hypot(col - c, row - c)
-        if (d > 40 && d < 52) cells[row * COLS + col] = (col ^ row) % 4
+    // A solid ring "road" around the origin: continuous under the flight
+    // path, empty everywhere else - the empty regions are the point,
+    // their chunks never hold records, since a rect write makes records
+    // only for a chunk the first frame lands in. -1 is the clear (a
+    // Uint16Array holds it as 0xffff, the same bits). Every eighth road
+    // cell is flipped, every ninth transposed, through the index bits.
+    let size = 2 * SEED_REACH
+    let cells = new Uint32Array(size * size).fill(-1)
+    for (let row = -SEED_REACH; row < SEED_REACH; row++) {
+      for (let col = -SEED_REACH; col < SEED_REACH; col++) {
+        let d = Math.hypot(col, row)
+        if (!(d > ROAD_INNER && d < ROAD_OUTER)) continue
+        let index = (col ^ row) & 3
+        if ((col + row) % 8 === 0) index |= TILE_FLIP_X
+        if ((col - row) % 9 === 0) index |= TILE_TRANSPOSE
+        cells[(row + SEED_REACH) * size + (col + SEED_REACH)] = index >>> 0
       }
     }
-    l.setTiles(0, 0, COLS, ROWS, cells)
+    l.setTiles(-SEED_REACH, -SEED_REACH, size, size, cells)
   }
-  registerDebug("state", () => ({ chunks: layer.chunks.length }))
+  registerDebug("state", () => ({ resident: layer.resident().length, enters, leaves, used: layer.usedRect() }))
   registerDebug("cell", (args?: { col?: number; row?: number }) => layer.getTile(args?.col ?? 0, args?.row ?? 0))
 
   // Beacon cells on the road's center line every 7.5 degrees; the interval
@@ -66,13 +84,13 @@ function App() {
   let beacons: [number, number][] = []
   for (let k = 0; k < 48; k++) {
     let a = (k * Math.PI) / 24
-    beacons.push([Math.round(COLS / 2 + Math.cos(a) * 46), Math.round(ROWS / 2 + Math.sin(a) * 46)])
+    beacons.push([Math.round(Math.cos(a) * 46), Math.round(Math.sin(a) * 46)])
   }
 
   // The ship flies the ring: camera x/y follow the circle, rotation keeps
   // the heading pointing screen-up, the pivot pins the ship's world point
   // near the viewport bottom. Per-frame camera motion is one signal write
-  // feeding the transform - never a re-bake.
+  // feeding the transform and the viewer - never a re-bake.
   let [camera, setCamera] = createSignal<TileCamera>({})
   let lastTick = 0
   onFrame((tick, _frame, rate) => {
@@ -80,12 +98,12 @@ function App() {
     lastTick = tick
     let t = tick / 6000
     let radius = 46 * TILE
-    // The path C + r(cos t, sin t) has tangent heading t + pi/2; the
-    // camera convention renders a heading h upward at rotation -h - pi/2.
+    // The path r(cos t, sin t) has tangent heading t + pi/2; the camera
+    // convention renders a heading h upward at rotation -h - pi/2.
     let heading = t + Math.PI / 2
     setCamera({
-      x: WORLD / 2 + Math.cos(t) * radius,
-      y: WORLD / 2 + Math.sin(t) * radius,
+      x: Math.cos(t) * radius,
+      y: Math.sin(t) * radius,
       rotation: -heading - Math.PI / 2,
       zoom: 0.9,
       pivotX: windowSize().width / 2,
@@ -94,27 +112,28 @@ function App() {
   })
 
   // Blink the beacons: each 500 ms batch of setTile calls re-bakes only the
-  // chunks the beacons land in - live edits next to the free scrolling.
+  // resident chunks the beacons land in - live edits next to the free
+  // scrolling; the rest are record writes.
   let lit = false
   setInterval(() => {
     lit = !lit
-    for (let [col, row] of beacons) layer.setTile(col, row, lit ? frames[3]! : frames[(col ^ row) % 4]!)
+    for (let [col, row] of beacons) layer.setTile(col, row, lit ? frames[3]! : frames[(col ^ row) & 3]!)
   }, 500)
 
   return (
     <window fullscreen>
-      <view width={pct(100)} height={pct(100)} overflow="clip">
-        {/* Ground color: never-written regions render nothing, so the
+      <view width={pct(100)} height={pct(100)}>
+        {/* Ground color: regions with no cell render nothing, so the
             full-bleed backdrop is the container's, not the layer's. */}
         <d-rect x={0} y={0} w={windowSize().width} h={windowSize().height} color="#0d0d17" />
         <TileLayer
-          cols={COLS}
-          rows={ROWS}
           tileW={TILE}
           tileH={TILE}
           atlases={[atlas]}
           frames={frames}
           camera={camera()}
+          onEnter={() => enters++}
+          onLeave={() => leaves++}
           label="tile-world"
           ref={seed}
         />

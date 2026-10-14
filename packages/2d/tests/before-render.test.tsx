@@ -11,7 +11,8 @@ import { test, expect } from "@solidrt/test"
 import type { Pixels, RefLocator, TestApp } from "@solidrt/test"
 import { onFrame } from "@solidrt/core"
 import type { TextureId } from "@solidrt/core/gpu"
-import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, createTileLayer, fullFrame } from "../src/index.ts"
+import { addSprite, createAtlas, createRecordLayer, createSpriteLayer, fullFrame, TileLayer } from "../src/index.ts"
+import type { TileLayerHandle } from "../src/index.ts"
 
 const SIZE = 64
 // The atlas: one opaque white texel.
@@ -79,18 +80,23 @@ test("a record sprite added from onFrame is drawn in that frame", async app => {
 })
 
 test("a tile set from onFrame is baked for that frame's paint", async app => {
-  let { layer, leaf } = await mounted(app, () => {
-    let atlas = createAtlas(ATLAS, { label: "before-render-tiles-atlas" })
-    let layer = createTileLayer(TILES, TILES, TILE, TILE, [atlas], { chunkTiles: TILES, label: "before-render-tiles" })
-    // The chunk exists once a cell in it is set; setting then clearing one
-    // leaves an allocated, empty chunk for the leaf to show.
-    layer.setTile(0, 0, fullFrame(layer.atlases[0]!))
-    layer.setTile(0, 0, null)
-    return { layer, texture: layer.chunks[0]!.texture }
+  let leaf = app.ref()
+  let layer!: TileLayerHandle
+  await app.mount(() => {
+    let atlas = createAtlas({ width: TILE, height: TILE, data: new Uint8Array(TILE * TILE * 4).fill(255) }, { label: "before-render-tiles-atlas" })
+    return (
+      <view ref={leaf} width={SIZE} height={SIZE}>
+        <TileLayer ref={l => (layer = l)} tileW={TILE} tileH={TILE} atlases={[atlas]} chunkTiles={TILES} camera={{}} label="before-render-tiles" />
+      </view>
+    )
   })
+  // One cell gives the chunk under the camera content, so it is resident
+  // and baked before the probe frames.
+  layer.setTile(0, 0, fullFrame(layer.atlases[0]!))
+  await app.settle()
   let before = await painted(app, leaf, () => {})
-  expect(at(before, 0.25, 0.25)).toEqual(TRANSPARENT)
-  let frame = await painted(app, leaf, () => layer.setTile(0, 0, fullFrame(layer.atlases[0]!)))
-  expect(at(frame, 0.25, 0.25)).toEqual(WHITE)
-  expect(at(frame, 0.75, 0.75)).toEqual(TRANSPARENT)
+  expect(at(before, 0.25, 0.25)).toEqual(WHITE)
+  expect(at(before, 0.75, 0.75)).toEqual(TRANSPARENT)
+  let frame = await painted(app, leaf, () => layer.setTile(1, 1, fullFrame(layer.atlases[0]!)))
+  expect(at(frame, 0.75, 0.75)).toEqual(WHITE)
 })

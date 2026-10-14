@@ -40,6 +40,8 @@ Contents:
   - [Pure pieces](#pure-pieces)
 - [The baked tile layer (tiles.ts)](#the-baked-tile-layer-tilests)
   - [Chunks](#chunks)
+  - [Residency](#residency)
+  - [Cells: frames, symmetry, overhang](#cells-frames-symmetry-overhang)
   - [Scrolling and the camera](#scrolling-and-the-camera)
   - [Bulk writes](#bulk-writes)
   - [Tinting](#tinting)
@@ -620,7 +622,8 @@ component form, filling its box like the `<SpriteLayer>`'s own view
 when given no size; the `<SpriteLayer>`'s built-in leaf is a view too,
 and `<SpriteLayer output={false}>` has none, showing only through its
 `<View2d>` children (examples/split-screen.tsx). examples/views.tsx is
-the live guard. Not yet, all additive: tile-layer views, a `layers`
+the live guard. `<TileLayer layer>` is the tile-layer
+form (a second composite under its own camera). Not yet, all additive: a `layers`
 bitmask (a markers-only minimap), `into` tiling, per-view tint, and a
 viewport over SEVERAL layers under one camera (their scene-level
 camera) - okf/backlog/2d-layer-views-additive.md.
@@ -769,60 +772,138 @@ that way.
 
 Static 2D bulk as a few quads: on tiled GPUs the budget is primitive count
 (core agents/performance.md), so a 100x100 tile world must not be 10,000
-quads per frame. `createTileLayer(cols, rows, tileW, tileH, atlases)`
-bakes the world into CHUNKED `render: "manual"` targets (default ~512px
-of tiles per chunk, `chunkTiles` to tune), each chunk a manual target
-over the layer's ONE pipeline (its material's, resolved once per layer
-for its atlases; a cell's style record is `setTile`'s `style`, its
-params re-bake every resident chunk on each write) with FIXED record
-slots - an empty tile is a
-zero-size quad, instance count is constant per chunk. Records hold WORLD
-pixel coordinates; each chunk target's `uCamera` is its pixel origin, so
-the shared vertex stage does the chunk-local mapping. Chunks allocate on
-the first `setTile` that reaches them - an empty chunk costs nothing, a
-sparse world is bounded by its content, and world size is bounded by
-memory, not `maxTextureSize`. `setTile` batches to the frame's publish
-pass (the microtask, outside a frame), whose flush publishes and re-bakes
-ONLY dirty chunks. After that the layer is static
-textures: zero per-frame cost however many tiles exist.
+quads per frame. `createTileLayer(tileW, tileH, atlases, opts)` bakes
+the world into CHUNKED `render: "manual"` targets (default ~512px of
+tiles per chunk, `chunkTiles` to tune), each chunk a manual target over
+the layer's ONE pipeline (its material's, resolved once per layer for its
+atlases; a cell's style record is `setTile`'s `style`, its params re-bake
+every resident chunk on each write) with FIXED record slots - an empty
+cell is a zero-size quad, instance count is constant per chunk. Records
+hold CHUNK-LOCAL pixel coordinates and every chunk target's `uCamera`
+sits at minus the overhang margin, so float32 precision is per chunk and
+a world 10^7 px from the origin bakes as crisp as one at the origin.
+Cells are UNBOUNDED: any integer `(col, row)`, negative included, in a
+sparse map of chunks keyed by chunk coordinates (Unity's growing
+`cellBounds`, Godot's `get_used_rect`, Tiled's infinite maps); a world
+finite by design passes `bounds` (a cell rect; writes outside throw), a
+torus `wrap` (periods in cells, modular coordinates; the two exclude
+each other), and `usedRect()` reports the written extent. `setTile`
+batches to the frame's publish pass (the microtask, outside a frame),
+whose flush publishes and re-bakes ONLY dirty resident chunks. After that
+the layer is static textures: zero per-frame cost however many tiles
+exist.
+
+### Residency
+
+The layer is a HANDLER over the core's residency gate (the Residency
+section of @solidrt/3d's AGENTS.md; flux:spatial `createGrid`): its
+chunk grid is a grid of regions (`cell: [chunkW, chunkH, 0]`), a VIEWER
+(`layer.addViewer()`, `setCamera(camera, width, height)` on every camera
+or viewport change; `<TileLayer>` adds one for its camera) pushes an
+orthographic view of its viewport, and the gate's `spatialRegionEnter` /
+`spatialRegionLeave` events drive the GPU side. A chunk is wanted while
+within `enter` of any viewer's view (default half a chunk) and kept until
+beyond `leave` (default one and a half chunks; both in world pixels, the
+hysteresis that keeps a camera on a chunk border from thrashing; the test
+is strict, so a camera aligned to the grid never loads the ring beyond
+its edge). On ENTER a chunk with cells takes a records buffer and a
+target from the resource pool (`createResourcePool` in
+@solidrt/core/gpu: the layer's own, 16 chunks deep, or `opts.pool`
+shared with other layers and handlers; its classes are `"texture:<pipeline>"`
+and `"buffer:<bytes>"`, which a shared pool's `free` destroys by prefix),
+uploads its records and bakes in the same frame's publish pass, so a chunk
+shows complete or not at all. On LEAVE the target and buffers go back to
+the pool and the records stay on the CPU (~5 KB a chunk, ~180x cheaper
+than its texture; `retain: "records"`, the default), or go too under
+`retain: "none"`, where `opts.fill(chunk)` regenerates the chunk's cells
+on the next enter with one `setTiles` over `chunk.col, chunk.row,
+chunk.cols, chunk.rows` - the procedural world, Minecraft's generate
+(`fill` also runs on the first approach of a never-written chunk under
+`"records"`). A chunk written while not resident is records only; a
+resident chunk emptied gives its target back; a leave that arrives before
+a bake cancels it. `resident()` is the wanted set (a resident chunk with
+no cell holds no texture), `onEnter(chunk)` / `onLeave(chunk)` bracket
+it, and `TileChunk` is one object for the chunk's whole life (its cell
+rect, its world rect, `texture` while resident). The gate decides WHEN
+(hysteresis, the union over viewers, enters paced nearest first under the
+scene-wide `setResidencyBudget`); the layer never does, and a layer with
+no viewer bakes nothing. Unity and Godot cull chunks but never evict
+them; the bake moves memory from bytes per cell to texels, which is why
+residency is the default here, not an option.
+
+### Cells: frames, symmetry, overhang
+
+A cell is a frame plus its symmetry, a tint and a style record. A frame
+draws at its OWN pixel size anchored to the cell's bottom-left (Tiled's
+rule for tiles larger than the grid, Unity's and Godot's own-size
+sprites): a frame the cell's size fills it, a taller one reaches up, a
+wider one right, so oversized, isometric and hex tiles are expressible.
+The three symmetry flags `flipX`, `flipY`, `transpose` (`setTile`'s
+options, or the top three bits of a `setTiles` index cell: `TILE_FLIP_X`,
+`TILE_FLIP_Y`, `TILE_TRANSPOSE`, Tiled's gid layout, so a Tiled layer's
+cells are these minus its firstgid) compose in Tiled's order (transpose,
+then the flips) into the eight symmetries of a square with no record
+layout change: the flips are UV swaps and the transpose a quarter-turn
+rotation with the flips remapped (tiles-math.ts `cellSymmetry`; a
+transposed frame covers `fh x fw`). `getTile` reads the canonical frame
+back. Overhang is baked into the OWNING chunk: every chunk target is
+chunk size plus the layer's `overhang` on every side (default the
+largest overhang in the `frames` table as its frames lie, else 0; a
+frame exceeding the cell plus the margin throws at the write, a
+transposed non-square frame included, so give `overhang` to transpose
+one), the composite overlaps leaves
+by that margin and draws them row-major, so a lower row's overhang draws
+over the row above - Tiled's and Godot's y-order for overhanging tiles.
+A cell dirties exactly one chunk. Animated cells are a documented limit:
+a bake re-renders a chunk per frame change, so animated tiles live in a
+sprite layer.
 
 ### Scrolling and the camera
 
 Scrolling never re-bakes: the `<TileLayer>` camera prop (`TileCamera`, an
-alias of the shared `CameraUpdate`) is a transform on the composited world
-view - the world point (x, y) pinned to the viewport point (pivotX,
-pivotY), scaled by zoom, ROTATED by rotation about the pivot. The type IS
-the sprite layer's camera type, so one signal drives a whole rotating
-scene across both layers (sprites ride the same rotation in-shader);
-rotation is the ship-flies-over-the-map camera and costs the same
-transform write. A tile
-world is FINITE, sized at creation - the contract, not a provisional
-limit (recreate to resize; a huge sparse world just picks big numbers,
-empty chunks cost nothing). Tiles are data, not
-children: there is no `<Tile>` component on purpose - write cells through
-`ref` with `setTile`.
+alias of the shared `CameraUpdate`) is a transform on the composite - the
+world point (x, y) pinned to the viewport point (pivotX, pivotY), scaled
+by zoom, ROTATED by rotation about the pivot - and the view the gate
+keeps chunks resident around. The type IS the sprite layer's camera type,
+so one signal drives a whole rotating scene across both layers (sprites
+ride the same rotation in-shader); rotation is the
+ship-flies-over-the-map camera and costs the same transform write. The
+component owns a clipping `<view>` sized to its box (the viewport,
+filling its parent when unsized) and places each resident chunk's
+`d-texture` leaf RELATIVE to the camera (world minus camera in JS, so the
+transform's float32 stays small however far the world reaches) inside a
+carrier `<view>` with the pivot, rotation and zoom; the `<For>` over the
+resident set is already the pruned set. Under `wrap` the composite
+places every image of a resident chunk that intersects the view, so a
+view wider than the world shows it repeated and the seam is two leaves
+of one texture (the wrapping tile world of okf/backlog/2d-wrap-around.md).
+A second composite of the same world (a minimap) is `<TileLayer
+layer={handle}>` under a camera of its own: it adds a viewer, and the
+world is resident where any viewer wants it. Tiles are data, not
+children: there is no `<Tile>` component on purpose - write cells
+through `ref` with `setTile`.
 
 ### Bulk writes
 
 Bulk writes: `setTiles(col, row, cols, rows, cells)` writes a rect at
 once - `cells` row-major, `cols * rows` long, either frames (null clears)
 or, with a `frames` table given at creation (`createTileLayer(..., {
-frames })`, the `<TileLayer frames>` prop: a tileset, `grid()`'s array,
-up to 65534 entries), indices into it (-1 clears; a Uint16Array holds -1
-as 0xffff, the same bits) - Unity's SetTilesBlock, Phaser's putTilesAt
+frames })`, the `<TileLayer frames>` prop: a tileset, `grid()`'s array),
+indices into it with the symmetry flags in the top three bits (-1
+clears; a Uint16Array holds -1 as 0xffff and a Uint32Array as
+0xffffffff, the same bits) - Unity's SetTilesBlock, Phaser's putTilesAt
 over the map's tileset. One locate and one dirty mark per chunk the rect
 touches, the per-cell loop inside the layer, the same flush; a chunk the
 rect only clears never allocates, so a whole-world write of a sparse
 world allocates exactly the chunks the per-cell seed would. A generated
-or worker-built world is a Uint16Array of indices, transferable, never an
-array of frame objects; a fill is `new Uint16Array(n).fill(i)`. `tint`
-in the options applies to every cell set. Every entry is validated before
-the first write, so a bad one changes nothing; the table is copied at
-creation. The rect form is the shape for worker transfer and chunk
-re-fill, not a large speedup: the per-cell floor is the record write
-itself, so a 16k-cell solid rect re-writes in ~14 ms against ~25 ms as a
-setTile loop and a sparse rect is at parity with the loop, while a first
-seed is dominated by chunk allocation at 1-2 ms per chunk.
+or worker-built world is a Uint16Array or Uint32Array of indices,
+transferable, never an array of frame objects; a fill is `new
+Uint16Array(n).fill(i)`. `tint`, `style` and the frame-form flags in the
+options apply to every cell set. Every entry is validated before the
+first write, so a bad one changes nothing; the table is copied at
+creation. Under `wrap` a rect may cross the seam but not exceed a period.
+The rect form is the shape for worker transfer and chunk fill, not a
+large speedup: the per-cell floor is the record write itself.
 
 ### Tinting
 
@@ -837,8 +918,9 @@ but it does re-render every resident chunk: drive it from slow state,
 not per frame. `setParams` (a material prelude's uniforms) and a cell's
 `style` (the material's per-cell record, `setTile`/`setTiles` `{ style
 }`) are the same two levels for a custom look, Materials above. Not
-built yet: camera-driven residency (bake far chunks on approach, evict)
-- okf/backlog/2d-baked-layers.md.
+built yet (okf/plans/2d-baked-layers.md, parts 6 and 7): the per-layer
+memory readout and `maxTexels` budget, and record compaction for the
+live sprite layer.
 
 ## Components
 
@@ -851,7 +933,7 @@ built yet: camera-driven residency (bake far chunks on approach, evict)
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
 | `Camera2d` | createCamera2d's options (world?, min/maxZoom?, pivot?, follow?, offset?, panSpeed?, zoomSpeed?, rollSpeed?, damping?, inertia?, x?, y?, zoom?, rotation?), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view; its `size()` the viewport) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
 | `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width?, height? (view pixels, live - both, or neither = FILL exactly as SpriteLayer's own view: the leaf fills its sized parent and the view sizes to that box), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample?, maxPixels? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture, leaf) (as SpriteLayer's; else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
-| `TileLayer` | cols, rows, tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed), frames? (the tileset `setTiles` indices name), chunkClearColor?, material? (the bake's material, `unlit()` default; mount-fixed), params? (layer.setParams as a prop; live, each change re-bakes), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
+| `TileLayer` | tileW, tileH, atlases (Atlas[], the tilesets bound as one bake; mount-fixed) or layer (an existing createTileLayer handle to show again under a camera of its own, a minimap: the component adds a viewer and the leaves, the layer's lifetime, cells and hooks stay its maker's, so the creation props and onEnter/onLeave throw), frames? (the tileset `setTiles` indices name), chunkClearColor?, material? (the bake's material, `unlit()` default; mount-fixed), params? (layer.setParams as a prop; live, each change re-bakes), filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), bounds?, wrap?, overhang?, enter?, leave?, retain?, fill?, pool? (TileLayerOptions, creation-fixed), oversample?, maxOversample?, maxPixels?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY; the composite transform and the viewer), width?, height? (the viewport's layout size; neither = FILL the parent's box), onEnter?, onLeave? (the layer's residency hooks), label?, ref?(layer) |
 
 ### SpriteLayer and useSpriteLayer
 
@@ -1181,30 +1263,41 @@ hover, wheel and tap rules headless.
 
 ### Tile layer
 
-- `<TileLayer>`'s world view is WORLD sized (cols * tileW) and takes that
-  much layout space: put it inside a clipping container (`overflow="clip"`)
-  sized to the viewport, or camera panning shows the world hanging out of
-  the box. Both layers render LAID-OUT elements (`<TileLayer>` a `<view>`,
-  `<SpriteLayer>` a `<texture>` leaf) and take no position props, so to
-  overlay sprites on tiles wrap each in a `<view position="absolute">`
-  inside that container - as plain flex siblings they stack side by side
-  instead.
-  Both are LAYOUT components: neither can live inside a d-* subtree (the
-  insert throws); for a detached parent, `<SpriteLayer output>` hands out
-  the texture id for a `<d-texture>` of your own.
-- `chunkClearColor` is PER CHUNK, as named: never-written regions have no
-  chunk and render nothing, so a full-bleed ground color belongs on the
-  container behind the layer (a `d-rect` under it), not here. The flip side is FREE
-  TRANSPARENCY: with the default `[0,0,0,0]` clear, a mostly-unwritten
-  tile layer stacked over another composites with no mask, no alpha pass,
-  no shader - a sparse upper world (floating clouds over a sea) just
-  works, and per-cell alpha in the written cells carries through the
-  chunk (transparent clear + alpha blend).
+- `<TileLayer>` is sized like a `<SpriteLayer>`: its root `<view>` is the
+  VIEWPORT, filling its parent when unsized (give it a sized parent) or
+  `width`/`height`; it clips. Both layers render LAID-OUT elements
+  (`<TileLayer>` a `<view>`, `<SpriteLayer>` a `<texture>` leaf) and take
+  no position props, so to overlay sprites on tiles wrap each in a `<view
+  position="absolute">` inside one container - as plain flex siblings
+  they stack side by side instead. Neither can live inside a d-* subtree
+  (the insert throws).
+- A layer with NO VIEWER bakes nothing: imperative use (no `<TileLayer>`)
+  adds one with `layer.addViewer()` and pushes the camera and viewport,
+  or every chunk stays records on the CPU. `resident()` is empty, and a
+  chunk's `texture` null, until the gate's enter arrives with a frame -
+  a test settles or steps a frame before reading a chunk's target.
+- A frame bakes at its OWN size, anchored to the cell's bottom-left: a
+  one-texel atlas no longer fills an 8 px cell (the sprite layers stretch
+  a frame to the sprite's size; the tile layer does not). A frame larger
+  than the cell plus `overhang` throws at the write; the `frames` table's
+  largest frame sets the default margin, so a Tiled tileset with
+  oversized tiles works unconfigured.
+- `chunkClearColor` is PER CHUNK, as named: regions with no cell have no
+  texture and render nothing, so a full-bleed ground color belongs on the
+  container behind the layer (a `d-rect` under it), not here. The flip
+  side is FREE TRANSPARENCY: with the default `[0,0,0,0]` clear, a
+  mostly-empty tile layer stacked over another composites with no mask,
+  no alpha pass, no shader - a sparse upper world (floating clouds over
+  a sea) just works, and per-cell alpha in the written cells carries
+  through the chunk (transparent clear + alpha blend).
 - A dirty chunk flush publishes and re-bakes that chunk in full. Fine on
   change-only cadence; per-frame setTile churn re-bakes chunks per frame -
-  that is sprite-layer work, not tile work.
-- Chunk allocation is MONOTONIC: nothing evicts, so texture memory is
-  proportional to the touched area (~920KB per resident chunk at the
-  default size) and every resident chunk keeps a composited leaf. Bounded
-  worlds only; streaming/infinite is stage B2 in
-  okf/backlog/2d-baked-layers.md.
+  that is sprite-layer work, not tile work. An animated tile is a sprite.
+- Memory is the RESIDENT set times the chunk texture (~1 MB at the
+  default size and oversample 1, more with the overhang margin and the
+  oversample squared), not the touched area: a leave gives the texture to
+  the pool, and the pool's cap bounds what waits there. The per-layer
+  readout and `maxTexels` budget are not built yet.
+- Under `wrap` the periods must be whole chunks: the default `chunkTiles`
+  is picked to divide them, an explicit one that does not throws. A rect
+  write wider than a period throws too.

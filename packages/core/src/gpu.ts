@@ -177,6 +177,15 @@ export type { AttributeAccess, FormatCodec, FormatKind } from "./vertex.ts"
 // orderDirection.
 export { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu"
 
+// The resource pool (pool.ts): GPU ids a residency handler frees on a leave
+// and takes again on the next enter instead of destroying and creating -
+// one JS free list over bare ids, classed by the consumer's string (a
+// target's pipeline, a buffer's byte size), LRU past its cap, drained with
+// its owner. The 2d tile layer's chunks and a 3d region's geometry both
+// go through it; no consumer keeps a free list of its own.
+export { createResourcePool } from "./pool.ts"
+export type { ResourcePool, ResourcePoolOptions } from "./pool.ts"
+
 // The device ceilings (max texture/target size, sampler inputs per pass,
 // vertex attributes per pipeline), queried once at startup. Creates and binds
 // validate against them and throw naming the limit; read these to size within

@@ -85,10 +85,14 @@ function App() {
   let probe: SpriteHandle = addSprite(nodes, { x: 320, y: 320, w: 40, h: 40, frame: fullFrame(atlas) })
   addSprite(records, { x: 320, y: 320, w: 40, h: 40, frame: fullFrame(atlas) })
 
-  // A small tile layer: the bake path with the pinned identity rotation.
-  // The checked tile (2, 2) gets the full frame (opaque center texel).
-  let tiles = createTileLayer(8, 8, 16, 16, [atlas], { label: "cam-tiles" })
-  for (let i = 0; i < 8; i++) tiles.setTile(i, i, i === 2 ? fullFrame(atlas) : frames[i % 4]!)
+  // A small tile layer: the bake path with the pinned identity rotation,
+  // its cells the logo's size (a frame bakes at its own size). The checked
+  // tile (2, 2) gets the full frame (opaque center texel); a viewer over
+  // the first chunk keeps it resident.
+  const LOGO = 96
+  let tiles = createTileLayer(LOGO, LOGO, [atlas], { chunkTiles: 4, label: "cam-tiles" })
+  for (let i = 0; i < 4; i++) tiles.setTile(i, i, i === 2 ? fullFrame(atlas) : frames[i % 4]!)
+  tiles.addViewer().setCamera({}, 4 * LOGO, 4 * LOGO)
 
   let failures: string[] = []
   let check = (ok: boolean, what: string) => {
@@ -167,16 +171,16 @@ function App() {
   }
 
   let tileBake = () => {
-    let chunk = tiles.chunks[0]
+    let chunk = tiles.resident().find(c => c.texture !== null)
     if (!chunk) {
-      check(false, "tile chunk allocated")
+      check(false, "tile chunk resident")
       return
     }
-    let img = readTexture(chunk.texture)
+    let img = readTexture(chunk.texture!)
     let n = tiles.oversample
-    // Tile (2, 2) center at world (40, 40), chunk origin (0, 0).
-    check(alphaAt(img, 40, 40, n) > 0, "tile bakes opaque with the pinned identity camera rotation")
-    check(alphaAt(img, 40, 8, n) === 0, "empty cell stays clear")
+    // Tile (2, 2) center at (240, 240) of the chunk's own pixels.
+    check(alphaAt(img, 2.5 * LOGO, 2.5 * LOGO, n) > 0, "tile bakes opaque with the pinned identity camera rotation")
+    check(alphaAt(img, 2.5 * LOGO, 0.5 * LOGO, n) === 0, "empty cell stays clear")
   }
 
   let frame = 0

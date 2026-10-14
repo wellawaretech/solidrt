@@ -82,6 +82,13 @@ const RED = [255, 0, 0, 255]
 const GREEN = [0, 255, 0, 255]
 const BLUE = [0, 0, 255, 255]
 
+/** A solid w x h sheet as an atlas. */
+function sheet(rgb: [number, number, number], w: number, h: number, label: string): Atlas {
+  let data = new Uint8Array(w * h * 4)
+  for (let i = 0; i < w * h; i++) data.set([rgb[0], rgb[1], rgb[2], 255], i * 4)
+  return createAtlas({ width: w, height: h, data }, { label })
+}
+
 function threeAtlases(label: string): [Atlas, Atlas, Atlas] {
   return [createAtlas(texel(255, 0, 0), { label: `${label}-red` }), createAtlas(texel(0, 255, 0), { label: `${label}-green` }), createAtlas(texel(0, 0, 255), { label: `${label}-blue` })]
 }
@@ -112,28 +119,31 @@ test("a sprite layer draws from several atlases in one draw, sprites from differ
 })
 
 test("the record layer and the tile layer draw from several atlases too", async app => {
-  let { view, tiles, atlases } = await mounted(app, () => {
+  let { view, tiles, sheets } = await mounted(app, () => {
     let atlases = threeAtlases("multi-records")
     let [red, green, blue] = atlases
     let layer = createRecordLayer(atlases, { capacity: 8, label: "multi-records" })
     let view = layer.createView({ width: SIZE, height: SIZE, clearColor: [0, 0, 0, 0], label: "multi-records" })
     for (let [i, atlas] of [blue, green, red].entries()) addSprite(layer, { x: STEP / 2 + i * STEP, y: SIZE / 2, w: SPRITE, h: SPRITE, frame: fullFrame(atlas) })
-    // A 2 x 1 tile world in one chunk, each cell from another sheet, and a
-    // frames table spanning two sheets for the index form.
-    let tiles = createTileLayer(2, 1, SIZE / 2, SIZE, atlases, { chunkTiles: 2, frames: [fullFrame(red), fullFrame(blue)], label: "multi-tiles" })
-    tiles.setTile(0, 0, fullFrame(green))
+    // A 2 x 1 tile world in one chunk, each cell from another sheet (cell
+    // sized, since a frame bakes at its own size), and a frames table
+    // spanning two sheets for the index form.
+    let sheets = [sheet([255, 0, 0], SIZE / 2, SIZE, "tiles-red"), sheet([0, 255, 0], SIZE / 2, SIZE, "tiles-green"), sheet([0, 0, 255], SIZE / 2, SIZE, "tiles-blue")]
+    let tiles = createTileLayer(SIZE / 2, SIZE, sheets, { chunkTiles: 2, frames: [fullFrame(sheets[0]!), fullFrame(sheets[2]!)], label: "multi-tiles" })
+    tiles.setTile(0, 0, fullFrame(sheets[1]!))
     tiles.setTiles(1, 0, 1, 1, [1])
-    return { layer, view, tiles, atlases, texture: view.texture }
+    tiles.addViewer().setCamera({}, SIZE, SIZE)
+    return { layer, view, tiles, atlases, sheets, texture: view.texture }
   })
-  await app.frame()
+  await app.settle()
   expectPixel(pixel(view.texture, STEP / 2, SIZE / 2), BLUE)
   expectPixel(pixel(view.texture, STEP / 2 + STEP, SIZE / 2), GREEN)
   expectPixel(pixel(view.texture, STEP / 2 + 2 * STEP, SIZE / 2), RED)
-  let chunk = tiles.chunks[0]!.texture
+  let chunk = tiles.resident().find(c => c.texture !== null)!.texture!
   expectPixel(pixel(chunk, SIZE / 4, SIZE / 2), GREEN)
   expectPixel(pixel(chunk, (SIZE * 3) / 4, SIZE / 2), BLUE)
-  expect(tiles.getTile(0, 0)!.texture).toBe(atlases[1].texture)
-  expect(tiles.getTile(1, 0)!.texture).toBe(atlases[2].texture)
+  expect(tiles.getTile(0, 0)!.texture).toBe(sheets[1]!.texture)
+  expect(tiles.getTile(1, 0)!.texture).toBe(sheets[2]!.texture)
 })
 
 test("a frame from a sheet the layer did not declare throws at the write and changes nothing, on every layer kind", async app => {
@@ -142,7 +152,7 @@ test("a frame from a sheet the layer did not declare throws at the write and cha
     let stranger = createAtlas(texel(0, 255, 0), { label: "undeclared" })
     let nodes = createSpriteLayer([red], { capacity: 8, label: "strict" })
     let records = createRecordLayer([red], { capacity: 8, label: "strict-records" })
-    let tiles = createTileLayer(2, 2, 8, 8, [red], { label: "strict-tiles" })
+    let tiles = createTileLayer(8, 8, [red], { label: "strict-tiles" })
     let view = nodes.createView({ width: SIZE, height: SIZE, label: "strict" })
     return { nodes, records, tiles, stranger, red, texture: view.texture }
   })
@@ -157,7 +167,7 @@ test("a frame from a sheet the layer did not declare throws at the write and cha
   expect(() => tiles.setTile(0, 0, fullFrame(stranger))).toThrow()
   expect(() => tiles.setTiles(0, 0, 2, 1, [fullFrame(red), fullFrame(stranger)])).toThrow()
   expect(tiles.getTile(0, 0)).toBe(null)
-  expect(() => createTileLayer(2, 2, 8, 8, [red], { frames: [fullFrame(stranger)], label: "strict-table" })).toThrow()
+  expect(() => createTileLayer(8, 8, [red], { frames: [fullFrame(stranger)], label: "strict-table" })).toThrow()
 })
 
 test("the atlas list is validated: empty, a duplicate, past the device's sampler units", async app => {
