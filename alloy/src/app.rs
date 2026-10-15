@@ -100,6 +100,13 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   let resampler = crate::resample::SharedResampler::new();
   let user_input_muted = Arc::new(AtomicBool::new(false));
   if mode.is_headless() {
+    // No sound either: SDL's dummy audio driver takes the mix at the
+    // device rate and drops it, so the mixer runs (positions advance,
+    // playbacks end) on a box without a sound card, and a test run plays
+    // nothing through the speakers of one that has. Read when the audio
+    // subsystem is first initialized (audio/device.rs), so it is set here,
+    // ahead of every path below.
+    sdl3::hint::set("SDL_AUDIO_DRIVER", "dummy");
     sdl3::hint::set("SDL_VIDEO_DRIVER", "offscreen");
     match setup_video(&sdl_context, title, (width, height), &mode) {
       Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler, user_input_muted },

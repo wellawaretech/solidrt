@@ -148,6 +148,11 @@ fn main() {
     let opus = build_libopus();
     let ogg = build_libogg();
     build_libopusfile(&opus, &ogg, &target_os);
+    // After opusfile, which calls into both: GNU ld resolves static
+    // archives left to right (lld and ld64 do not care, so only an
+    // aarch64 Linux link shows the order).
+    println!("cargo:rustc-link-lib=static=opus");
+    println!("cargo:rustc-link-lib=static=ogg");
   }
   if std::env::var_os("CARGO_FEATURE_KTX2").is_some() {
     build_basis();
@@ -212,7 +217,8 @@ fn vendored(name: &str, marker: &str) -> PathBuf {
   src
 }
 
-/// Build libopus into its install dir (lib/ and include/opus/) and link it.
+/// Build libopus into its install dir (lib/ and include/opus/) and add its
+/// lib dir to the link search path; main links it, after opusfile.
 fn build_libopus() -> PathBuf {
   let src = vendored("opus", "CMakeLists.txt");
   // The library only: no programs, tests, docs or install modules, and a
@@ -234,12 +240,12 @@ fn build_libopus() -> PathBuf {
   }
   let dst = config.build();
   println!("cargo:rustc-link-search=native={}", dst.join("lib").display());
-  println!("cargo:rustc-link-lib=static=opus");
   dst
 }
 
 /// Build libogg into its install dir (lib/ and include/ogg/, the generated
-/// config_types.h among the headers) and link it.
+/// config_types.h among the headers) and add its lib dir to the link search
+/// path; main links it, after opusfile.
 fn build_libogg() -> PathBuf {
   let src = vendored("ogg", "CMakeLists.txt");
   // The library only: no docs, no pkg-config or CMake package files, and a
@@ -258,7 +264,6 @@ fn build_libogg() -> PathBuf {
   }
   let dst = config.build();
   println!("cargo:rustc-link-search=native={}", dst.join("lib").display());
-  println!("cargo:rustc-link-lib=static=ogg");
   dst
 }
 
