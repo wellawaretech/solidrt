@@ -100,10 +100,10 @@ published `release-opt` build gains; that figure is not measured yet.
 
 ### Speech recognition
 
-The engine cannot shrink to fit (the models are the feature), so it leaves
+The engine cannot shrink to fit (the models are the feature), so it left
 the tree and comes back as an external runtime module in the custom
 runtime of an app that wants it
-([speech-out-of-tree](speech-out-of-tree.md)). A custom runtime is the
+([speech-out-of-tree](../done/speech-out-of-tree.md)). A custom runtime is the
 route for anything heavy and rare: it adds what one app needs and, once
 modules are features ([module-feature-flags](module-feature-flags.md)),
 leaves out what it does not. Loading a capability on demand beside the

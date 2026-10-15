@@ -48,6 +48,14 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
+- **[Audio unification - one mixer for clips, streams, sinks and video](plans/audio-unification.md)** [2026-10-15]
+  Replace SDL3_mixer with an own mixer rendered in SDL's device callback
+  (sample-accurate gain, pan and fade automation, buses with gain, pause and
+  position, loops without seams) fed by engine-free decoders in forge (WAV
+  own, .opus via vendored libopusfile, WebM/Opus via the existing reader), so
+  clip audio, streamed tracks, PCM sinks and video audio share one PCM path
+  under one master; implements the declared setBusGain, pause/resume,
+  position, duration, setLoop and the JS PCM sink.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -401,6 +409,12 @@ Shaped, not started.
   stages reduce it - createNode with a props object, a one-call-per-flush
   drain, interned prop ids with table dispatch, and a command buffer whose
   props land in a shared buffer Rust reads directly.
+- **[System open and save dialogs](backlog/file-dialogs.md)** [2026-10-14]
+  An app can only read and write inside its own storage folder or at absolute
+  paths it already knows; there is no native open/save dialog, so a user
+  cannot open a document from anywhere or save an export where another program
+  will find it. SDL 3.4 has the dialogs; the open questions are the JS
+  surface, Android content URIs, and how tests and agents answer a dialog.
 - **[Decide whether flex items keep the web's automatic minimum size](backlog/flex-automatic-minimum-default.md)** [2026-10-08]
   A flex item's automatic minimum is its content size, so a child larger than
   its share pins every ancestor until someone writes minHeight 0; Yoga has no
@@ -2401,6 +2415,12 @@ Finished, kept for the reasoning.
   line says its runtime (bun for node-ecosystem adapters, flux for the dev
   server), bin/sol only routes, and a server is one process the console can
   spawn or embed directly.
+- **[Declare the sol:* runner modules in @solidrt/flux-types](done/sol-module-types.md)** [2026-10-15]
+  The sol:* module declarations lived in core's runtime-modules.d.ts and
+  reached a program only through core's index; a bare type import of a core
+  subpath (@solidrt/core/gpu from a bare-flux test) failed with TS2307 on
+  sol:dev. They now ship in @solidrt/flux-types under lattice/, so they arrive
+  through tsconfig types like the flux:* ones.
 - **[sol run exits immediately when stdin is not a terminal](done/sol-run-exits-on-stdin-eof.md)** [2026-08-20]
   The repl bound readline close to full shutdown, so any non-interactive
   launch (background shell, supervisor, CI) tore down the server, the client

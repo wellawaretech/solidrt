@@ -2,12 +2,13 @@
 
 TypeScript type definitions for the [SolidRT](https://github.com/wellawaretech/solidrt)
 `flux` runtime: the `Flux` global, the `flux:*` capability modules, the
-web-standard globals flux provides, and the GUI globals.
+web-standard globals flux provides, and the GUI globals; plus the `sol:*`
+modules of the SolidRT runner (lattice) that runs an app over flux.
 
 The runtime is QuickJS, not a browser or Node, so it ships neither `lib.dom` nor
 the Bun/Node libraries. This package is the single source of truth for everything
 the flux runtime exposes, including web standards like `fetch`, `Response`,
-`WebSocket`, `console`, and timers.
+`WebSocket`, `console`, and timers, and for what the runner adds on top.
 
 ## Installation
 
@@ -61,6 +62,12 @@ so they are not in this package.
   These are deliberate subsets matching exactly what the runtime implements.
 - GUI globals (gui-enabled runtime only): `requestAnimationFrame` /
   `cancelAnimationFrame` (web-standard names, so kept global).
+- `sol:*` modules of the SolidRT runner (lattice), absent on the bare `flux`
+  binary: `sol:events`, `sol:app` and `sol:render` in every runner build,
+  `sol:dev` and `sol:apps` live on dev and go clients (no-ops elsewhere, see
+  their `available`), `sol:test` in a test host (`sol test`). Apps reach these
+  through `@solidrt/core` and `@solidrt/test`; the modules are for the layers
+  that build them.
 
 ## License
 

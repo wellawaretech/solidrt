@@ -1,5 +1,4 @@
 /// <reference types="@solidrt/flux-types" />
-/// <reference path="./runtime-modules.d.ts" />
 
 import type { Gradient } from "./color"
 import type { CursorId, CursorName } from "./cursor"
@@ -9,9 +8,10 @@ import type { Element } from "solid-js"
 
 export type { TextInputHints }
 
-// The "sol:*" lattice runner modules are declared in ./runtime-modules.d.ts
-// (referenced above) - ambient `declare module` only reaches consumers from a
-// non-module declaration file, and this file is a module.
+// The "sol:*" lattice runner modules are declared by @solidrt/flux-types
+// (its lattice/ files), which every project names in its tsconfig `types`,
+// so they reach a program whatever it imports first - also a bare type import
+// of one core subpath such as @solidrt/core/gpu.
 
 declare global {
   interface ImportMeta {

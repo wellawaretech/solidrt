@@ -14,7 +14,7 @@ The custom runtime route
 lattice as a crate, and it can leave out only what is a cargo feature at
 every layer: the dependency, the forge (or alloy) module, the flux plugin
 registration and the entry in `BASE_CAPABILITIES`. Today that holds for
-`video`, `ktx2`, `wasm-native`, `speech` and `test`, and even those are
+`video`, `ktx2`, `wasm-native` and `test`, and even those are
 chosen by Makefile knobs (`VIDEO=0`, `KTX2=0`, `WASM_NATIVE=0` in
 `packages/cli/runtime/runtime.mk`) passed as `lattice/<feature>` on cargo's
 command line, not in the runtime's manifest.
@@ -157,5 +157,5 @@ before a trimmed runtime is used in earnest.
   lattice is the renderer, and a headless flux without `gui` already
   exists. The spatial core in particular stays: both `@solidrt/2d` and
   `@solidrt/3d` stand on it.
-- Speech: it leaves the tree instead of becoming a feature
-  ([speech-out-of-tree](speech-out-of-tree.md)).
+- Speech: it left the tree instead of becoming a feature
+  ([speech-out-of-tree](../done/speech-out-of-tree.md)).

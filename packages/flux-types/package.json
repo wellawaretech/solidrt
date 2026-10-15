@@ -9,6 +9,7 @@
     "index.d.ts",
     "modules",
     "gui",
+    "lattice",
     "standards",
     "README.md",
     "LICENSE"

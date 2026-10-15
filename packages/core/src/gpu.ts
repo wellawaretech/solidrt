@@ -1,5 +1,3 @@
-/// <reference path="./runtime-modules.d.ts" />
-
 // GPU textures and shaders, reactive (SolidJS) layer: the create* helpers free
 // their texture automatically when the reactive owner is disposed. Drive a
 // target's uniforms declaratively with `<texture src={id} params={{...}} />`

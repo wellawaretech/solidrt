@@ -34,7 +34,7 @@
 // microphone/gpu are flux:* modules like the rest; requestAnimationFrame stays a
 // global (web-standard name). flux:rendertree is the render-tree bridge the
 // renderer drives; displaying the built tree (renderFrame) is the runner's
-// concern (sol:render in lattice), not part of flux.
+// concern: sol:render, below.
 /// <reference path="./gui/rendertree.d.ts" />
 /// <reference path="./gui/camera.d.ts" />
 /// <reference path="./gui/microphone.d.ts" />
@@ -45,6 +45,21 @@
 /// <reference path="./gui/video.d.ts" />
 /// <reference path="./gui/raf.d.ts" />
 /// <reference path="./gui/test.d.ts" />
+
+// The SolidRT runner's modules (the "sol:*" surface), provided by lattice, the
+// layer over flux that runs an app: present on the solidrt client and on any
+// custom runtime built over lattice, absent on the bare flux binary, where an
+// import of one fails to resolve. Declared here rather than in a package of
+// their own: every lattice-targeted project already names this package in its
+// tsconfig `types`, and the gui section above already declares surface a given
+// build may lack, so a second package would buy only a name boundary. Each
+// file's header says which builds have its module.
+/// <reference path="./lattice/events.d.ts" />
+/// <reference path="./lattice/app.d.ts" />
+/// <reference path="./lattice/dev.d.ts" />
+/// <reference path="./lattice/apps.d.ts" />
+/// <reference path="./lattice/render.d.ts" />
+/// <reference path="./lattice/test.d.ts" />
 
 declare let Flux: {
   /** The flux runtime version. */

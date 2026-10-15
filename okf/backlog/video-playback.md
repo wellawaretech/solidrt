@@ -637,15 +637,13 @@ Two bugs fixed the same session, both in the player:
 6. DONE 2026-09-12: frame scheduling (timeline clock + half-period
    lookahead + standing demand) ships unconditionally; the feature flag is
    deleted. Stage 3 of that chain, audio-clock smoothing, is open (above).
-7. Audio unification (after the video PCM path is proven on desktop and
-   the TV): replace SDL3_mixer with symphonia decode (Vorbis + WAV, and
-   MP3/FLAC/AAC clips become feature flags) feeding one SDL3 audio
-   stream per voice, SDL3 device mixing, per-stream gain via
-   SDL_SetAudioStreamGain and panning as a multiply on push. Deletes the
-   vendored sdl3-mixer-sys C dependency and unifies clip and video audio
-   on one PCM path. Own verification pass: all clip-audio behavior on
-   desktop AND Android targets. The audio surface's open pieces land
-   here too: `setBusGain` (declared 2026-08-20, throws until implemented;
-   three multipliers in an own mix loop), position/duration, setLoop and
-   pause/resume, from
-   [flux-audio-mix-control](../done/flux-audio-mix-control.md).
+7. Audio unification: IN PLANS since 2026-10-15,
+   [audio-unification](../plans/audio-unification.md). The sketch here
+   (symphonia decode, one SDL3 stream per voice, SDL device mixing, pan
+   on push) was rejected in shaping: SDL3 streams have gain and ratio
+   only, so pan, fades, loops and pause would sit a lookahead behind the
+   speaker; the plan renders an own mix in SDL's device callback and
+   decodes Opus and WAV in forge with no new crate. Deletes
+   sdl3-mixer-sys, puts video audio under the master, and lands
+   `setBusGain`, position/duration, setLoop, pause/resume and the JS PCM
+   sink.
