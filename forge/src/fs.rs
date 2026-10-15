@@ -10,7 +10,6 @@
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::RwLock;
 
 use crate::seek::SeekableReader;
@@ -118,64 +117,60 @@ pub enum OpenMode {
   Append,
 }
 
-/// A platform's documents behind URIs instead of paths (Android's content
-/// providers, where a file dialog answers with a `content://` URI): what a
-/// `content://` location resolves through, installed once by the platform
-/// (`set_content_provider`). Everything here is synchronous and may block on
-/// the provider (an IPC per call); the async fs operations run it off the
-/// runtime's threads. Opening yields a plain file on the provider's
-/// descriptor, so reads and writes are ordinary from there; the rest is
-/// what a path has for free and a URI does not: its name, its metadata, a
-/// folder's children (each with the URI that opens it), its removal. What
-/// has no meaning on a URI (rename, canonicalize, create a directory) is
-/// not here and errors as "not a path".
-pub trait ContentProvider: Send + Sync {
-  fn open(&self, uri: &str, mode: OpenMode) -> Result<std::fs::File, String>;
-  fn stat(&self, uri: &str) -> Result<StatInfo, String>;
-  fn display_name(&self, uri: &str) -> Result<String, String>;
-  fn list(&self, uri: &str) -> Result<Vec<DirEntry>, String>;
-  fn remove(&self, uri: &str) -> Result<(), String>;
-}
-
-static CONTENT_PROVIDER: RwLock<Option<Arc<dyn ContentProvider>>> = RwLock::new(None);
-
 /// The scheme of a location a content provider resolves.
 const CONTENT_SCHEME: &str = "content://";
 
-/// Install (or clear) the platform's content provider.
-pub fn set_content_provider(provider: Option<Arc<dyn ContentProvider>>) {
-  *CONTENT_PROVIDER.write().expect("content provider lock") = provider;
-}
-
-/// Whether `path` is a content URI rather than a path.
+/// Whether `path` is a content URI (Android's content providers, where a
+/// file dialog answers with a `content://` URI) rather than a path. A
+/// content URI resolves through the platform's ContentResolver (`content`):
+/// opening yields a plain file on the provider's descriptor, so reads and
+/// writes are ordinary from there; the rest is what a path has for free and
+/// a URI does not: its name, its metadata, a folder's children (each with
+/// the URI that opens it), its removal. What has no meaning on a URI
+/// (rename, canonicalize, create a directory) errors as "not a path".
+/// Everything in `content` is synchronous and may block on the provider (an
+/// IPC per call); the async operations run it off the runtime's threads.
 pub fn is_content_uri(path: &str) -> bool {
   path.starts_with(CONTENT_SCHEME)
 }
 
-// The provider a content URI resolves through: None for a path, an error
-// for a URI on a platform without one.
-fn content_of(path: &str) -> Option<Result<Arc<dyn ContentProvider>, String>> {
-  if !is_content_uri(path) {
-    return None;
+#[cfg(target_os = "android")]
+mod content;
+
+// Off Android there is no content provider: a content URI resolves nowhere.
+#[cfg(not(target_os = "android"))]
+mod content {
+  use super::{DirEntry, OpenMode, StatInfo};
+
+  fn unavailable(uri: &str) -> String {
+    format!("{uri}: content URIs are not available on this platform")
   }
-  Some(
-    CONTENT_PROVIDER
-      .read()
-      .expect("content provider lock")
-      .clone()
-      .ok_or_else(|| format!("{path}: content URIs are not available on this platform")),
-  )
+
+  pub(super) fn open(uri: &str, _mode: OpenMode) -> Result<std::fs::File, String> {
+    Err(unavailable(uri))
+  }
+
+  pub(super) fn stat(uri: &str) -> Result<StatInfo, String> {
+    Err(unavailable(uri))
+  }
+
+  pub(super) fn display_name(uri: &str) -> Result<String, String> {
+    Err(unavailable(uri))
+  }
+
+  pub(super) fn list(uri: &str) -> Result<Vec<DirEntry>, String> {
+    Err(unavailable(uri))
+  }
+
+  pub(super) fn remove(uri: &str) -> Result<(), String> {
+    Err(unavailable(uri))
+  }
 }
 
-// Run a provider operation off the async runtime's threads (it blocks on
-// the provider).
-async fn with_content<T: Send + 'static>(
-  provider: Arc<dyn ContentProvider>,
-  op: impl FnOnce(&dyn ContentProvider) -> Result<T, String> + Send + 'static,
-) -> Result<T, String> {
-  tokio::task::spawn_blocking(move || op(provider.as_ref()))
-    .await
-    .unwrap_or_else(|e| Err(format!("content provider call failed: {e}")))
+// Run a content provider operation off the async runtime's threads (it
+// blocks on the provider).
+async fn with_content<T: Send + 'static>(op: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+  tokio::task::spawn_blocking(op).await.unwrap_or_else(|e| Err(format!("content provider call failed: {e}")))
 }
 
 fn read_all(mut file: std::fs::File, path: &str) -> Result<Vec<u8>, String> {
@@ -221,8 +216,8 @@ fn missing(path: &str, what: &str) -> String {
 /// string when it has none, a root). Sync: a handle carries it from
 /// construction.
 pub fn display_name(path: &str) -> String {
-  if let Some(Ok(provider)) = content_of(path) {
-    if let Ok(name) = provider.display_name(path) {
+  if is_content_uri(path) {
+    if let Ok(name) = content::display_name(path) {
       return name;
     }
   }
@@ -233,8 +228,8 @@ pub fn display_name(path: &str) -> String {
 /// context (a module resolver called from a synchronous binding); everything
 /// else uses `read`.
 pub fn read_sync(path: &str) -> Result<Vec<u8>, String> {
-  if let Some(provider) = content_of(path) {
-    return provider.and_then(|p| p.open(path, OpenMode::Read)).and_then(|file| read_all(file, path));
+  if is_content_uri(path) {
+    return content::open(path, OpenMode::Read).and_then(|file| read_all(file, path));
   }
   match resolve(path) {
     Resolved::Plain(p) => std::fs::read(p).map_err(|e| format!("read {path}: {e}")),
@@ -252,10 +247,9 @@ pub fn read_sync(path: &str) -> Result<Vec<u8>, String> {
 
 /// Read a file's whole contents.
 pub async fn read(path: &str) -> Result<Vec<u8>, String> {
-  if let Some(provider) = content_of(path) {
+  if is_content_uri(path) {
     let path = path.to_string();
-    return with_content(provider?, move |p| p.open(&path, OpenMode::Read).and_then(|file| read_all(file, &path)))
-      .await;
+    return with_content(move || content::open(&path, OpenMode::Read).and_then(|file| read_all(file, &path))).await;
   }
   match resolve(path) {
     Resolved::Plain(p) => tokio::fs::read(p).await.map_err(|e| format!("read {path}: {e}")),
@@ -268,11 +262,11 @@ pub async fn read(path: &str) -> Result<Vec<u8>, String> {
 /// end-of-file is an error, not a short read (callers clamp against
 /// `stat().size` first, which is what HTTP 206 needs anyway).
 pub async fn read_range(path: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
-  if let Some(provider) = content_of(path) {
+  if is_content_uri(path) {
     let path = path.to_string();
-    return with_content(provider?, move |p| {
+    return with_content(move || {
       let err = |e| format!("read {path} at {offset}+{length}: {e}");
-      let mut file = p.open(&path, OpenMode::Read)?;
+      let mut file = content::open(&path, OpenMode::Read)?;
       file.seek(SeekFrom::Start(offset)).map_err(err)?;
       let mut buf = vec![0u8; usize::try_from(length).map_err(|_| format!("read {path}: length {length} too large"))?];
       file.read_exact(&mut buf).map_err(err)?;
@@ -302,10 +296,10 @@ pub async fn read_range(path: &str, offset: u64, length: u64) -> Result<Vec<u8>,
 
 /// Write bytes to a file, truncating any existing contents.
 pub async fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
-  if let Some(provider) = content_of(path) {
+  if is_content_uri(path) {
     let (path, bytes) = (path.to_string(), bytes.to_vec());
-    return with_content(provider?, move |p| {
-      p.open(&path, OpenMode::Write).and_then(|file| write_all(file, &bytes, &path, "write"))
+    return with_content(move || {
+      content::open(&path, OpenMode::Write).and_then(|file| write_all(file, &bytes, &path, "write"))
     })
     .await;
   }
@@ -347,9 +341,9 @@ pub async fn write_atomic(path: &str, bytes: &[u8]) -> Result<(), String> {
 /// Remove a file. Missing is not an error: the caller wants it gone, and it
 /// is (a record dropped twice, a cleanup after a crash).
 pub async fn remove(path: &str) -> Result<(), String> {
-  if let Some(provider) = content_of(path) {
+  if is_content_uri(path) {
     let path = path.to_string();
-    return with_content(provider?, move |p| p.remove(&path)).await;
+    return with_content(move || content::remove(&path)).await;
   }
   check_writable(path, "remove")?;
   match tokio::fs::remove_file(path).await {
@@ -375,10 +369,10 @@ pub async fn rename(from: &str, to: &str) -> Result<(), String> {
 /// Append bytes to a file, creating it if missing.
 pub async fn append(path: &str, bytes: &[u8]) -> Result<(), String> {
   use tokio::io::AsyncWriteExt;
-  if let Some(provider) = content_of(path) {
+  if is_content_uri(path) {
     let (path, bytes) = (path.to_string(), bytes.to_vec());
-    return with_content(provider?, move |p| {
-      p.open(&path, OpenMode::Append).and_then(|file| write_all(file, &bytes, &path, "append"))
+    return with_content(move || {
+      content::open(&path, OpenMode::Append).and_then(|file| write_all(file, &bytes, &path, "append"))
     })
     .await;
   }
@@ -398,8 +392,8 @@ pub async fn append(path: &str, bytes: &[u8]) -> Result<(), String> {
 /// because the handle is read from a foreign decode thread, not the tokio
 /// runtime.
 pub fn open_seekable(path: &str) -> Result<SeekableReader, String> {
-  if let Some(provider) = content_of(path) {
-    let file = provider?.open(path, OpenMode::Read)?;
+  if is_content_uri(path) {
+    let file = content::open(path, OpenMode::Read)?;
     return Ok(Box::new(file));
   }
   match resolve(path) {
@@ -430,9 +424,9 @@ pub async fn file_exists(path: &str) -> bool {
 
 /// Stat a path. Errors if it does not exist or cannot be read.
 pub async fn stat(path: &str) -> Result<StatInfo, String> {
-  if let Some(provider) = content_of(path) {
+  if is_content_uri(path) {
     let path = path.to_string();
-    return with_content(provider?, move |p| p.stat(&path)).await;
+    return with_content(move || content::stat(&path)).await;
   }
   match resolve(path) {
     Resolved::Plain(p) => {
@@ -564,9 +558,9 @@ fn scan(pattern: &str, root: Option<PathBuf>) -> Result<Vec<String>, String> {
 /// List a directory's entries; `DirEntry::kind` is the same set as
 /// `StatInfo::file_type`.
 pub async fn read_dir(path: &str) -> Result<Vec<DirEntry>, String> {
-  if let Some(provider) = content_of(path) {
+  if is_content_uri(path) {
     let path = path.to_string();
-    return with_content(provider?, move |p| p.list(&path)).await;
+    return with_content(move || content::list(&path)).await;
   }
   match resolve(path) {
     Resolved::Plain(p) => {

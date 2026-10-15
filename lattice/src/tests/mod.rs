@@ -1,3 +1,5 @@
+#[cfg(any(feature = "go", feature = "test"))]
+mod dialog;
 mod fonts;
 mod frame_history;
 mod frame_signal;

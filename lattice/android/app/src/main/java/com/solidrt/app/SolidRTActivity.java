@@ -189,8 +189,8 @@ public class SolidRTActivity extends SDLActivity {
         nativeDialogResult(pendingDialogId, uris, names);
     }
 
-    // The content helpers behind forge's ContentProvider (alloy
-    // android_content.rs), called by native over JNI on any thread.
+    // The content helpers behind forge's content URIs (forge/src/fs/content.rs),
+    // called by native over JNI on any thread.
 
     // The document behind `uri`, opened in a ContentResolver mode ("r",
     // "wt", "wa"), as a detached descriptor native owns from here; -1 when

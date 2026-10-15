@@ -271,9 +271,27 @@ fn dialog<'js>(ctx: Ctx<'js>, answer: String) -> flux::rquickjs::Result<Promise<
   let throw = |message: &str| Exception::throw_message(&ctx, &format!("sol:test dialog: {message}"));
   let picked = serde_json::from_str::<serde_json::Value>(&answer)
     .map_err(|e| throw(&format!("the answer is not JSON: {e}")))
-    .and_then(|json| flux::gui::dialog::parse_answer(&json).map_err(|e| throw(&e)))?;
+    .and_then(|json| crate::dialog::parse_answer(&json).map_err(|e| throw(&e)))?;
+  let Some(dialogs) = flux::gui::dialog::dialogs(&ctx) else {
+    return Err(throw("no gui in this engine"));
+  };
   let (promise, resolve, _reject) = ctx.promise()?;
-  flux::gui::dialog::answer(&ctx, picked, Some(Persistent::save(&ctx, resolve)))?;
+  // The session tells of the consumption with the request, on the thread
+  // that consumed it; the promise settles on the JS thread from there.
+  let (tx, rx) = tokio::sync::oneshot::channel();
+  let consumed = Box::new(move |request| {
+    tx.send(crate::dialog::request_json(&request).to_string()).ok();
+  });
+  dialogs.answer(picked, Some(consumed));
+  let task_ctx = ctx.clone();
+  ctx.spawn(async move {
+    let Ok(json) = rx.await else {
+      return;
+    };
+    if let Err(e) = resolve.call::<_, ()>((json,)) {
+      flux::report_uncaught(&task_ctx, e, "sol:test dialog()");
+    }
+  });
   Ok(promise)
 }
 

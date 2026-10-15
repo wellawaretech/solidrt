@@ -255,6 +255,11 @@ Shaped, not started.
   On a touch-only Android device the capability layer gains "keyboard" as soon
   as the virtual keyboard opens, so any keyboard-first behavior gated on it
   would switch on for users who have no keyboard.
+- **[Control-API queries stall after the Android picker returns a pick](backlog/android-query-stall-after-picker.md)** [2026-10-15]
+  On the tablet, after a file dialog pick that kept the app behind DocumentsUI
+  for minutes, queries to the client (dialog state, debug list, settle) timed
+  out for tens of seconds and then recovered; a BACK-cancelled picker and
+  content reads alone did not stall; seen twice, cause not found.
 - **[Android TV on Google Play](backlog/android-tv-play-distribution.md)** [2026-09-27]
   Play offers an app on TVs only after a form-factor opt-in and a TV quality
   review, not by app category; a `tv` key in package.json makes TV an explicit

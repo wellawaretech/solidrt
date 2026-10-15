@@ -64,34 +64,41 @@ grant on what it picked and has no folder picker (checked in
 and keeps every file pickable when it does not know one, instead of
 silently dropping the type as SDL does.
 
-**forge** (`fs.rs`): a `ContentProvider` trait (open with a mode, stat,
-display name, list children, remove) installed once by the platform, which
-every `content://` location resolves through; `read`, `read_range`,
-`write`, `append`, `remove`, `stat`, `exists`, `read_dir`,
-`open_seekable` and `display_name` route to it, and what has no meaning on
-a URI (`rename`, `realpath`, `create_dir`) errors as "not a path". The
-Android implementation is `alloy::AndroidContent` (JNI into the activity's
-`contentOpen`/`contentStat`/`contentDisplayName`/`contentChildren`/
-`contentDelete`), adapted to the trait in `lattice/src/android_content.rs`,
-so alloy stays forge-free.
+**forge** (`fs.rs`, `fs/content.rs`): a `content://` location resolves
+through the platform's ContentResolver, on Android a `cfg` arm of forge's
+own (JNI into the activity's `contentOpen`/`contentStat`/
+`contentDisplayName`/`contentChildren`/`contentDelete`, over the
+process-wide JavaVM and activity alloy publishes in ndk-context at
+startup); `read`, `read_range`, `write`, `append`, `remove`, `stat`,
+`exists`, `read_dir`, `open_seekable` and `display_name` route to it, and
+what has no meaning on a URI (`rename`, `realpath`, `create_dir`) errors as
+"not a path". Off Android a content URI resolves nowhere. Built first as a
+`ContentProvider` trait in forge, implemented by an `alloy::AndroidContent`
+and adapted in lattice; folded into forge the same day under the
+alloy/forge placement rule now in CLAUDE.md (Projects): the resolver needs
+no SDL, so it is forge's, and the trait, the global and the adapter went.
 
 **Atomic saves**: `write(data, { atomic: true })` writes a temporary file
 beside the target and renames it over; in place stays the default and the
 primitive. On a content URI there is no rename, so `atomic` writes in place
 with truncation (`wt`), as documented on the type.
 
-**Tests and agents**, one mechanism: the dialog plugin keeps an answer
-queue; an answer queued ahead is consumed by the next call instead of a
-dialog, an answer arriving while a call waits settles it at once (a native
-dialog still open then has its own answer dropped, since SDL cannot dismiss
-it), and under a test host (`set_answers_only`) a call never shows anything
-but waits on the queue, holding the engine as work in flight so `settle`
-reports it. `app.dialog(answer)` in `@solidrt/test` resolves, once the app's
-call took the answer, to the request the app made (kind and options), so a
-test asserts what the app asked for. The control API has `/dialog` (GET the
-pending request, the last one with its answer, the queue length and the
-availability; POST an answer) and the MCP tools `get_dialog` and
-`answer_dialog`.
+**Tests and agents**, one mechanism: `alloy::Dialogs`, the session the
+plugin keeps per engine (where a test takes the platform's place, as with
+a test microphone or a still camera), holds the answer queue; an answer
+queued ahead is consumed by the next call instead of a dialog, an answer
+arriving while a call waits settles it at once (a native dialog still open
+then has its own answer dropped, since SDL cannot dismiss it), and under a
+test host (`set_answers_only`) a call never shows anything but waits on the
+queue, holding the engine as work in flight so `settle` reports it. The
+plugin marshals only: options in, handles out, a rejection named for the
+session's refusal. The JSON of the control API and the test verb is
+lattice's (`lattice/src/dialog.rs`). `app.dialog(answer)` in `@solidrt/test`
+resolves, once the app's call took the answer, to the request the app made
+(kind and options), so a test asserts what the app asked for. The control
+API has `/dialog` (GET the pending request, the last one with its answer,
+the queue length and the availability; POST an answer) and the MCP tools
+`get_dialog` and `answer_dialog`.
 
 ## Verified
 
@@ -108,8 +115,10 @@ availability; POST an answer) and the MCP tools `get_dialog` and
   the answer, named answers, save and write back (atomic), folder entries
   with paths, one at a time, option validation, no capability under the
   headless test client. `flux/tests/write.test.ts` covers the atomic write,
-  `flux/tests/dir.test.ts` the entry paths, `flux/src/tests/dialog.rs` the
-  answer parser, `alloy/src/tests/dialog.rs` the filter pattern and names.
+  `flux/tests/dir.test.ts` the entry paths, `lattice/src/tests/dialog.rs`
+  the answer parser and the request and status JSON,
+  `alloy/src/tests/dialog.rs` the filter pattern, the names and the
+  session (queue ahead, wait, refuse, the platform's late answer dropped).
 - Android (SM-T500, Android 12, dev client over adb reverse): the
   capability listed; `openFiles` showing DocumentsUI, a pick from Downloads
   coming back as a `content://` URI named by the provider, read and stat'd

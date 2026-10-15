@@ -1,11 +1,17 @@
-//! Engine-free capability cores.
+//! Capability cores for a headless process.
 //!
-//! `forge` holds the scripting-engine-independent foundations that the host's
-//! marshalling layer builds on. Code here names no `rquickjs` / `'js` types; a
-//! pure-Rust host could use it directly. It carries the HTTP server core, the
-//! engine-free halves of sqlite/p2p/subprocess/fetch/fs/path/process/events/
-//! websocket, the shared byte-stream primitive, and the logging sink. The
-//! scripting host (flux) depends on this crate and supplies all the marshalling.
+//! `forge` holds what a process can do without a window or a platform loop:
+//! the HTTP server core, the engine-free halves of sqlite/p2p/subprocess/
+//! fetch/fs/path/process/events/websocket, the decoders, the shared
+//! byte-stream primitive, and the logging sink. OS-specific code lives here
+//! too when it needs no SDL (AMediaCodec in `video`, the content providers in
+//! `fs`, the terminal in `tty`): forge reaches the OS directly, on Android
+//! through the process-wide JavaVM and activity the platform (alloy)
+//! publishes in ndk-context at startup. What needs SDL (the window, the loop
+//! thread, a device subsystem) is alloy's; see CLAUDE.md, Projects. Code
+//! here names no `rquickjs` / `'js` types; a pure-Rust host could use it
+//! directly. The scripting host (flux) depends on this crate and supplies
+//! all the marshalling.
 
 #[cfg(feature = "audio")]
 pub mod audio;

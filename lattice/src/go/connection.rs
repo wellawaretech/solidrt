@@ -1482,17 +1482,21 @@ fn link_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, link: String) -> String {
   serde_json::json!({"type": "result", "id": id, "data": {"delivered": delivered}}).to_string()
 }
 
-/// The file dialog state (flux::gui::dialog::status). Runs on the JS thread.
+/// The file dialog state (the engine's `alloy::Dialogs` session, as
+/// dialog.rs spells it). Runs on the JS thread.
 fn dialog_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
-  serde_json::json!({"type": "result", "id": id, "data": flux::gui::dialog::status(ctx)}).to_string()
+  let status = flux::gui::dialog::dialogs(ctx).map(|dialogs| dialogs.status()).unwrap_or_default();
+  serde_json::json!({"type": "result", "id": id, "data": crate::dialog::status_json(&status)}).to_string()
 }
 
-/// Answer the file dialog (flux::gui::dialog::answer): `answered` says a
-/// call was waiting and took it, else it is queued for the next call.
-/// Runs on the JS thread.
+/// Answer the file dialog: `answered` says a call was waiting and took it,
+/// else it is queued for the next call. Runs on the JS thread.
 fn dialog_answer_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, answer: serde_json::Value) -> String {
-  let outcome = flux::gui::dialog::parse_answer(&answer)
-    .and_then(|picked| flux::gui::dialog::answer(ctx, picked, None).map_err(|e| e.to_string()));
+  let outcome = crate::dialog::parse_answer(&answer).and_then(|picked| {
+    flux::gui::dialog::dialogs(ctx)
+      .map(|dialogs| dialogs.answer(picked, None))
+      .ok_or_else(|| "no gui in this engine".to_string())
+  });
   match outcome {
     Ok(answered) => {
       serde_json::json!({"type": "result", "id": id, "data": {"answered": answered, "queued": !answered}}).to_string()

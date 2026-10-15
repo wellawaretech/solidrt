@@ -2,8 +2,6 @@ pub mod color;
 mod gl;
 pub mod sdl_utils;
 
-#[cfg(target_os = "android")]
-mod android_content;
 mod app;
 pub mod audio;
 mod backend;
@@ -63,15 +61,16 @@ mod tests;
 pub use impellers;
 pub use sdl3;
 
-#[cfg(target_os = "android")]
-pub use android_content::{AndroidContent, ContentEntry, ContentOpen, ContentStat};
 pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use cadence::CadenceHold;
 pub use context::{CaptureDone, CaptureInfo, Context, Overlay, YuvFrameSink};
 #[cfg(target_os = "android")]
 pub use dialog::android_result_raw;
-pub use dialog::{dialogs_available, DialogFilter, DialogKind, DialogRequest, DialogResponder, Picked};
+pub use dialog::{
+  dialogs_available, Consumed, DialogAnswer, DialogError, DialogFilter, DialogKind, DialogRequest, DialogResponder,
+  DialogStatus, Dialogs, Picked,
+};
 pub use event::{
   AlloyCommand, AlloyEvent, Arrival, Cursor, CursorFrame, CursorImage, CursorShape, EventSender, GamepadState,
   Modifiers, Orientation, PointerType, SuspendHold, TextCapitalization, TextInputOptions, TextInputType,

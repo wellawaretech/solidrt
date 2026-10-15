@@ -16,10 +16,24 @@
 //! a Linux session with neither the portal nor zenity, and on an Android
 //! without a document picker (a TV). An embedder lists the capability from
 //! it, so an app can hide its Open and Save buttons up front.
+//!
+//! `Dialogs` is the session an embedder keeps per engine: one dialog at a
+//! time (the platform's are modal), the request waiting for its answer, the
+//! last request made with its answer, and the answers a test or an agent
+//! gives in the user's place. An answer given ahead is what the next
+//! request takes instead of showing a dialog; an answer arriving while a
+//! request waits settles it at once, and a native dialog still open then
+//! has its own answer dropped (SDL cannot dismiss one it showed); a session
+//! set to answers only never shows anything but waits on the queue, as a
+//! test host's engine does. Like a test microphone or a still camera, the
+//! session is where a test takes the platform's place.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// Which dialog to show.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogKind {
   /// Pick one file, or several when `multiple`.
   OpenFile { multiple: bool },
@@ -31,11 +45,13 @@ pub enum DialogKind {
 
 /// A file type the dialog offers to narrow the listing to: a label and the
 /// extensions (without the dot) it covers. No filters means every file.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DialogFilter {
   pub name: String,
   pub extensions: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DialogRequest {
   pub kind: DialogKind,
   pub filters: Vec<DialogFilter>,
@@ -54,10 +70,37 @@ pub struct Picked {
   pub name: String,
 }
 
-/// The answer: the picked entries, empty when the user cancelled (a cancel
-/// is an outcome, never an error); Err when the platform could not show or
-/// finish the dialog.
-pub type DialogResponder = Box<dyn FnOnce(Result<Vec<Picked>, String>) + Send>;
+/// Why a request got no picks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DialogError {
+  /// A dialog is already open: the platform's are modal, one at a time.
+  Busy,
+  /// This platform (or surface) cannot show a dialog.
+  Unavailable,
+  /// The platform could not show or finish the dialog.
+  Failed(String),
+}
+
+impl std::fmt::Display for DialogError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      DialogError::Busy => f.write_str("a dialog is already open"),
+      DialogError::Unavailable => f.write_str("no file dialog on this platform"),
+      DialogError::Failed(message) => f.write_str(message),
+    }
+  }
+}
+
+/// A request's outcome: the picked entries, empty when the user cancelled
+/// (a cancel is an outcome, never an error), or why there are none.
+pub type DialogAnswer = Result<Vec<Picked>, DialogError>;
+
+/// What a request is answered through, once, from whatever thread the
+/// answer arrives on.
+pub type DialogResponder = Box<dyn FnOnce(DialogAnswer) + Send>;
+
+/// Told, with the request, once a request took an answer given ahead.
+pub type Consumed = Box<dyn FnOnce(DialogRequest) + Send>;
 
 static AVAILABLE: AtomicBool = AtomicBool::new(false);
 
@@ -71,7 +114,10 @@ pub fn dialogs_available() -> bool {
 /// Probe the platform once the window exists; `headless` means a surface
 /// no dialog could attach to.
 pub(crate) fn probe(headless: bool) {
-  let available = !headless && platform_available();
+  set_available(!headless && platform_available());
+}
+
+pub(crate) fn set_available(available: bool) {
   AVAILABLE.store(available, Ordering::Relaxed);
 }
 
@@ -131,24 +177,200 @@ pub(crate) fn sdl_pattern(filter: &DialogFilter) -> String {
   filter.extensions.join(";")
 }
 
+// The request waiting for its answer: parked on the queue (answers only),
+// or on the platform's dialog, whose own answer carries the id and is
+// dropped if an outside answer settled the request first.
+struct Pending {
+  id: u64,
+  request: DialogRequest,
+  respond: DialogResponder,
+}
+
+// An answer given ahead, with whom to tell once a request took it.
+struct Queued {
+  picked: Vec<Picked>,
+  consumed: Option<Consumed>,
+}
+
+struct Session {
+  answers_only: bool,
+  queue: VecDeque<Queued>,
+  pending: Option<Pending>,
+  /// The last request made, with its answer once it has one.
+  last: Option<(DialogRequest, Option<DialogAnswer>)>,
+  next_id: u64,
+}
+
+/// What an embedder's control surface reports about a session.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DialogStatus {
+  /// Whether this platform can show a dialog (`dialogs_available`).
+  pub available: bool,
+  /// The request waiting for an answer.
+  pub pending: Option<DialogRequest>,
+  /// The last request made, with its answer once it has one.
+  pub last: Option<(DialogRequest, Option<DialogAnswer>)>,
+  /// How many answers given ahead wait for a request.
+  pub queued: usize,
+}
+
+/// The dialog session of one engine (see the module doc).
+pub struct Dialogs {
+  session: Mutex<Session>,
+}
+
+// What `begin` decided under the lock, acted on outside it (a responder may
+// reach back into the session).
+enum Next {
+  Refuse(DialogResponder, DialogError),
+  Consumed(DialogResponder, Vec<Picked>, Option<Consumed>),
+  Parked(Option<u64>),
+}
+
+impl Dialogs {
+  pub fn new() -> Arc<Dialogs> {
+    Arc::new(Dialogs {
+      session: Mutex::new(Session {
+        answers_only: false,
+        queue: VecDeque::new(),
+        pending: None,
+        last: None,
+        next_id: 1,
+      }),
+    })
+  }
+
+  fn lock(&self) -> std::sync::MutexGuard<'_, Session> {
+    self.session.lock().unwrap_or_else(PoisonError::into_inner)
+  }
+
+  /// Never show a dialog in this session: every request waits on the queue
+  /// (a test host's engine, which has no surface to show one on and whose
+  /// test answers through the harness).
+  pub fn set_answers_only(&self) {
+    self.lock().answers_only = true;
+  }
+
+  /// Begin a request: refuse it while another waits, answer it from the
+  /// queue, park it for an answer (answers only), or hand it to `show`,
+  /// the platform's dialog, with the responder its answer goes through.
+  /// `respond` is called once, with the picks or why there are none, from
+  /// whatever thread the answer arrives on.
+  pub fn begin(
+    self: &Arc<Self>,
+    request: DialogRequest,
+    respond: DialogResponder,
+    show: impl FnOnce(DialogRequest, DialogResponder),
+  ) {
+    let next = {
+      let mut s = self.lock();
+      if s.pending.is_some() {
+        Next::Refuse(respond, DialogError::Busy)
+      } else if let Some(queued) = s.queue.pop_front() {
+        s.last = Some((request.clone(), Some(Ok(queued.picked.clone()))));
+        Next::Consumed(respond, queued.picked, queued.consumed)
+      } else if !s.answers_only && !dialogs_available() {
+        s.last = Some((request.clone(), Some(Err(DialogError::Unavailable))));
+        Next::Refuse(respond, DialogError::Unavailable)
+      } else {
+        let id = s.next_id;
+        s.next_id += 1;
+        let shown = !s.answers_only;
+        s.last = Some((request.clone(), None));
+        s.pending = Some(Pending { id, request: request.clone(), respond });
+        Next::Parked(shown.then_some(id))
+      }
+    };
+    match next {
+      Next::Refuse(respond, error) => respond(Err(error)),
+      Next::Consumed(respond, picked, consumed) => {
+        respond(Ok(picked));
+        if let Some(consumed) = consumed {
+          consumed(request);
+        }
+      }
+      Next::Parked(None) => {}
+      Next::Parked(Some(id)) => {
+        let session = self.clone();
+        show(request, Box::new(move |answer| session.settle(id, answer)));
+      }
+    }
+  }
+
+  // The platform's answer to request `id`: taken if that request still
+  // waits, dropped if an outside answer settled it (or a later request
+  // waits under another id).
+  fn settle(&self, id: u64, answer: DialogAnswer) {
+    let taken = {
+      let mut s = self.lock();
+      if s.pending.as_ref().map_or(false, |p| p.id == id) {
+        record(&mut s, &answer);
+        s.pending.take()
+      } else {
+        None
+      }
+    };
+    if let Some(pending) = taken {
+      (pending.respond)(answer);
+    }
+  }
+
+  /// Answer the waiting request, or keep the answer for the next one.
+  /// `consumed` is told with the request once one took the answer (at once
+  /// when one is waiting). Returns whether a request was waiting.
+  pub fn answer(&self, picked: Vec<Picked>, consumed: Option<Consumed>) -> bool {
+    let pending = {
+      let mut s = self.lock();
+      match s.pending.take() {
+        Some(pending) => {
+          record(&mut s, &Ok(picked.clone()));
+          pending
+        }
+        None => {
+          s.queue.push_back(Queued { picked, consumed });
+          return false;
+        }
+      }
+    };
+    (pending.respond)(Ok(picked));
+    if let Some(consumed) = consumed {
+      consumed(pending.request);
+    }
+    true
+  }
+
+  pub fn status(&self) -> DialogStatus {
+    let s = self.lock();
+    DialogStatus {
+      available: dialogs_available(),
+      pending: s.pending.as_ref().map(|p| p.request.clone()),
+      last: s.last.clone(),
+      queued: s.queue.len(),
+    }
+  }
+}
+
+fn record(s: &mut Session, answer: &DialogAnswer) {
+  if let Some((_, slot)) = s.last.as_mut() {
+    *slot = Some(answer.clone());
+  }
+}
+
 /// Show the dialog on the loop thread (desktop: SDL, with the app window as
 /// the parent; Android: the activity's intents). The responder runs on
 /// whatever thread the platform answers from, once.
 #[cfg(not(target_os = "android"))]
 pub(crate) fn show(window: &sdl3::video::Window, request: DialogRequest, respond: DialogResponder) {
-  use sdl3::dialog::{
-    show_open_file_dialog, show_open_folder_dialog, show_save_file_dialog, DialogError, DialogFileFilter,
-  };
-  use std::sync::Mutex;
+  use sdl3::dialog::{show_open_file_dialog, show_open_folder_dialog, show_save_file_dialog, DialogFileFilter};
 
   // SDL's callback type is `Fn`, called once; the responder is `FnOnce`.
   // It stays reachable from here too: when SDL refuses the request before
   // showing anything, the callback is dropped unrun and the caller is
   // answered directly.
-  let respond = std::sync::Arc::new(Mutex::new(Some(respond)));
+  let respond = Arc::new(Mutex::new(Some(respond)));
   let callback_respond = respond.clone();
   let callback: sdl3::dialog::DialogCallback = Box::new(move |result, _filter| {
-    let Some(respond) = callback_respond.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() else {
+    let Some(respond) = callback_respond.lock().unwrap_or_else(PoisonError::into_inner).take() else {
       return;
     };
     respond(match result {
@@ -161,8 +383,8 @@ pub(crate) fn show(window: &sdl3::video::Window, request: DialogRequest, respond
           })
           .collect(),
       ),
-      Err(DialogError::Canceled) => Ok(Vec::new()),
-      Err(e) => Err(format!("dialog: {e}")),
+      Err(sdl3::dialog::DialogError::Canceled) => Ok(Vec::new()),
+      Err(e) => Err(DialogError::Failed(format!("dialog: {e}"))),
     });
   });
 
@@ -196,15 +418,15 @@ pub(crate) fn show(window: &sdl3::video::Window, request: DialogRequest, respond
   if let Err(e) = shown {
     // The request never reached SDL (a NUL in a filter) and the callback
     // will not run; SDL reports every other failure through the callback.
-    if let Some(respond) = respond.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() {
-      respond(Err(format!("dialog: {e}")));
+    if let Some(respond) = respond.lock().unwrap_or_else(PoisonError::into_inner).take() {
+      respond(Err(DialogError::Failed(format!("dialog: {e}"))));
     }
   }
 }
 
 #[cfg(target_os = "android")]
 mod android {
-  use super::{DialogKind, DialogRequest, DialogResponder, Picked};
+  use super::{DialogError, DialogKind, DialogRequest, DialogResponder, Picked};
   use std::collections::HashMap;
   use std::sync::atomic::{AtomicU64, Ordering};
   use std::sync::Mutex;
@@ -269,7 +491,7 @@ mod android {
     };
     if let Some(message) = failed {
       if let Some(respond) = take(id) {
-        respond(Err(message));
+        respond(Err(DialogError::Failed(message)));
       }
     }
   }
@@ -304,7 +526,7 @@ mod android {
       Err(e) => {
         log::warn!("[alloy] dialog result for request {id} could not be read: {e}");
         if let Some(respond) = take(id as u64) {
-          respond(Err(format!("dialog: the result could not be read: {e}")));
+          respond(Err(DialogError::Failed(format!("dialog: the result could not be read: {e}"))));
         }
       }
     }

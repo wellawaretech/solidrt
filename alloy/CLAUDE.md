@@ -7,6 +7,11 @@ GLES is the single backend by design, translated per platform by ANGLE where
 no native GL exists; native Vulkan/Metal backends are deliberately out (see
 okf/research/graphics-backend-strategy.md before proposing one).
 
+What belongs here is what needs SDL: the window, the loop thread, GL, the
+device subsystems (audio, camera, clipboard, dialogs) and SDL's handles (the
+Android activity). A piece that needs none of those belongs in forge, however
+OS-specific it is (the root CLAUDE.md, Projects, has the rule).
+
 # Threads and frame loop
 Three threads: main pumps SDL events and does frame bookkeeping, sol-ui runs
 JS/layout/paint and builds display lists (zero GL), sol-raster owns the

@@ -5,8 +5,8 @@ mod frame;
 mod frame_history;
 // The packed-payload pieces (gl_libs, links): nothing in the go client, and
 // links nothing on Android either (the activity is singleInstance).
-#[cfg(target_os = "android")]
-mod android_content;
+#[cfg(any(feature = "go", feature = "test"))]
+mod dialog;
 #[cfg_attr(feature = "go", allow(dead_code))]
 mod gl_libs;
 #[cfg(feature = "go")]

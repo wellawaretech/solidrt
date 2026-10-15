@@ -30,9 +30,8 @@ pub(crate) fn run_stepped_loop(
           event_tx.send(event).ok();
         }
       }
-      AlloyCommand::ShowDialog { respond, .. } => {
-        respond(Err("dialog: no surface to show one on (headless)".to_string()))
-      }
+      // No surface to show one on.
+      AlloyCommand::ShowDialog { respond, .. } => respond(Err(crate::dialog::DialogError::Unavailable)),
       _ => {}
     }
   }
