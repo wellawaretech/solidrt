@@ -121,6 +121,24 @@ impl PlatformContext {
     self.request_frame();
   }
 
+  /// The GPU side of the platform's text state is void (the GL context was
+  /// lost and recovered, okf/done/gpu-context-loss.md): the atlas uploads
+  /// whole at the next flush, and every text layer - a texture of the dead
+  /// context - redraws, through the same generation that a rendering
+  /// change uses. Requests the frame that does it.
+  pub fn gpu_reset(&self) {
+    self.text_atlas.borrow_mut().forget_gpu();
+    self.text_rendering_generation.set(self.text_rendering_generation.get() + 1);
+    self.text_rendering_dirty.set(true);
+    self.request_frame();
+  }
+
+  /// The text atlas's registry texture id, once it exists: the engine's
+  /// own, which no app event names.
+  pub fn text_atlas_texture_id(&self) -> Option<u64> {
+    self.text_atlas.borrow().texture_id()
+  }
+
   /// The number of `set_text_rendering` changes so far: what a text layer
   /// records to know it was drawn under the current policy.
   pub fn text_rendering_generation(&self) -> u64 {

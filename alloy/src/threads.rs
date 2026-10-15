@@ -87,6 +87,9 @@ pub(crate) fn run_context(
     // (the raster thread owns the present deadline).
     crate::sdl_utils::frame_thread_priority(false);
     closure(Arc::new(Context::new(raster_tx, stats, context_wake)));
+    // The embedder's producer returned: the run loop winds the process
+    // down once it notices, so say so here, where the cause lives.
+    log::info!("[alloy] UI thread finished: the embedder's producer returned");
   });
   spawn_ui.expect("failed to spawn UI thread");
   main_tx

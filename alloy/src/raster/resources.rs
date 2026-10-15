@@ -110,6 +110,7 @@ impl RasterState {
   /// adopted handle). The one removal doorway for the texture map.
   pub(super) fn release_texture(&mut self, id: u64) {
     let unadopted = self.unadopted.remove(&id);
+    self.adopted_snapshots.remove(&id);
     self.yuv_latches.remove(&id);
     self.camera_taps.remove(&id);
     if let Some(gpu) = self.textures.remove(&id) {

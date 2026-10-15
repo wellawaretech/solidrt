@@ -210,6 +210,12 @@ when exactly one client is connected.
   clock running it is refused: pause first.
 - `/texture?id=<textureId>` - same shape and options as `/snapshot`, at the
   texture's native size (a scene or shader target behind a `<texture>` leaf).
+- `/gpu?lose=1` - force a GPU context loss (ANGLE's test hook, so Windows,
+  macOS and the Android emulator; `{ forced: false }` elsewhere): the
+  client logs the loss and the recovery, `/stats` counts it in
+  `contextLosses`, the app's `onContextRestored` fires, and the next frame
+  draws on the rebuilt context. The way to see an app survive a driver
+  reset without one.
 - `/gpu?label=<text>&draw=<id>` - the GPU resource inventory; `label` keeps
   only the resources created with exactly that label (ids change on reload,
   labels do not). Each texture carries its `format` and declared `sampler`

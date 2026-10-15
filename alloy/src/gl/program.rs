@@ -130,15 +130,30 @@ pub fn compile_stage(gl: &glow::Context, stage: ShaderStage, src: &str, header: 
     };
     compile_failure(stage.name(), &log, hint, src)
   })?;
-  Ok(CompiledStage { shader, declared: declared_uniform_names(src) })
+  Ok(CompiledStage { shader, declared: declared_uniform_names(src), stage, source: src.to_string() })
 }
 
 /// A compiled stage with the uniform names its source declares, kept so a
 /// program linked from raw stages can tell declared-but-inactive uniforms
-/// from never-declared ones (`linkProgram` no longer sees sources).
+/// from never-declared ones (`linkProgram` no longer sees sources), and the
+/// source as compiled (header included), so the stage can be compiled again
+/// on a new context after a context loss (see `recompile`).
 pub struct CompiledStage {
   pub shader: glow::Shader,
   pub declared: Vec<String>,
+  pub stage: ShaderStage,
+  pub source: String,
+}
+
+impl CompiledStage {
+  /// The same stage compiled on the current context: the context-loss
+  /// rebuild (okf/done/gpu-context-loss.md). The source compiled once, so a
+  /// failure here is the new context refusing what the old one took.
+  pub fn recompile(&self, gl: &glow::Context) -> Result<CompiledStage, String> {
+    let shader = compile_shader(gl, self.stage.gl_kind(), &self.source)
+      .map_err(|log| compile_failure(self.stage.name(), &log, "", &self.source))?;
+    Ok(CompiledStage { shader, declared: self.declared.clone(), stage: self.stage, source: self.source.clone() })
+  }
 }
 
 /// The uniform names a GLSL source declares, by text scan: comments are
@@ -261,6 +276,19 @@ pub struct ShaderProgram {
   /// inventory. None on the fused paths, whose anonymous program is covered
   /// by its target's label.
   label: Option<String>,
+  /// The two sources as compiled (preamble or header included), so the
+  /// program can be linked again on a new context after a context loss
+  /// (`relink`). Text only: the cost is the source, never a second copy of
+  /// anything GL holds.
+  sources: ProgramSources,
+}
+
+/// A program's sources as compiled: what `ShaderProgram::relink` compiles
+/// again on a new context.
+#[derive(Clone)]
+pub struct ProgramSources {
+  pub vertex: String,
+  pub fragment: String,
 }
 
 impl ShaderProgram {
@@ -272,7 +300,8 @@ impl ShaderProgram {
     let program = link_program(gl, VERTEX_SRC, &fragment_full)?;
     let uniforms = reflect_uniforms(gl, program);
     let inactive = inactive_names(&uniforms, declared_uniform_names(&fragment_full));
-    Ok(ShaderProgram { program, uniforms, inactive, attributes: Vec::new(), pipeline: false, label: None })
+    let sources = ProgramSources { vertex: VERTEX_SRC.to_string(), fragment: fragment_full };
+    Ok(ShaderProgram { program, uniforms, inactive, attributes: Vec::new(), pipeline: false, label: None, sources })
   }
 
   /// Compile a vertex+fragment pipeline program. Attribute locations are
@@ -287,7 +316,8 @@ impl ShaderProgram {
     declared.extend(declared_uniform_names(&fragment_full));
     let inactive = inactive_names(&uniforms, declared);
     let attributes = reflect_attributes(gl, program)?;
-    Ok(ShaderProgram { program, uniforms, inactive, attributes, pipeline: true, label: None })
+    let sources = ProgramSources { vertex: vertex_full, fragment: fragment_full };
+    Ok(ShaderProgram { program, uniforms, inactive, attributes, pipeline: true, label: None, sources })
   }
 
   /// Link two already-compiled stages into a program: the raw path, no
@@ -298,6 +328,7 @@ impl ShaderProgram {
   pub fn from_stages(gl: &glow::Context, vertex: &CompiledStage, fragment: &CompiledStage) -> Result<Self, String> {
     let mut declared = vertex.declared.clone();
     declared.extend(fragment.declared.iter().cloned());
+    let sources = ProgramSources { vertex: vertex.source.clone(), fragment: fragment.source.clone() };
     let (vertex, fragment) = (vertex.shader, fragment.shader);
     unsafe {
       let program = gl.create_program().map_err(|e| format!("glCreateProgram failed: {e}"))?;
@@ -320,8 +351,42 @@ impl ShaderProgram {
           return Err(e);
         }
       };
-      Ok(ShaderProgram { program, uniforms, inactive, attributes, pipeline: true, label: None })
+      Ok(ShaderProgram { program, uniforms, inactive, attributes, pipeline: true, label: None, sources })
     }
+  }
+
+  /// The same program linked on the current context, from the sources as
+  /// they compiled the first time: the context-loss rebuild
+  /// (okf/done/gpu-context-loss.md). Uniform locations are reflected
+  /// afresh (they are the new program's); the names, the inactive set, the
+  /// kind and the label carry over. Every target that held the old program
+  /// by Rc is rebuilt over the new one by the same pass.
+  pub fn relink(&self, gl: &glow::Context) -> Result<ShaderProgram, String> {
+    let program = link_program(gl, &self.sources.vertex, &self.sources.fragment)?;
+    let uniforms = reflect_uniforms(gl, program);
+    let mut declared = declared_uniform_names(&self.sources.vertex);
+    declared.extend(declared_uniform_names(&self.sources.fragment));
+    let inactive = inactive_names(&uniforms, declared);
+    let attributes = if self.pipeline {
+      match reflect_attributes(gl, program) {
+        Ok(attributes) => attributes,
+        Err(e) => {
+          unsafe { gl.delete_program(program) };
+          return Err(e);
+        }
+      }
+    } else {
+      Vec::new()
+    };
+    Ok(ShaderProgram {
+      program,
+      uniforms,
+      inactive,
+      attributes,
+      pipeline: self.pipeline,
+      label: self.label.clone(),
+      sources: self.sources.clone(),
+    })
   }
 
   /// Set the debug label (builder-style, right after construction).
@@ -519,6 +584,23 @@ impl RenderPipeline {
 
   pub fn program_id(&self) -> Option<u64> {
     self.program_id
+  }
+
+  /// The same pipeline over `program`, linked on the current context: the
+  /// context-loss rebuild of a registered pipeline, whose program is the
+  /// registry's (rebuilt ahead of it, shared like before).
+  pub fn rebuilt_over(&self, program: Rc<ShaderProgram>) -> Result<RenderPipeline, String> {
+    RenderPipeline::new(program, self.program_id, self.desc.clone())
+      .map(|p| p.with_label(self.label.clone()))
+      .map_err(|(_, e)| e)
+  }
+
+  /// The same pipeline with its anonymous program linked again on the
+  /// current context: the context-loss rebuild of a fused create's
+  /// pipeline, which no registry shares.
+  pub fn relink(&self, gl: &glow::Context) -> Result<RenderPipeline, String> {
+    let program = Rc::new(self.program.relink(gl)?);
+    self.rebuilt_over(program)
   }
 
   pub fn desc(&self) -> &PipelineDesc {

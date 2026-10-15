@@ -228,6 +228,14 @@ impl<K: CellKey> AtlasPacker<K> {
     }
   }
 
+  /// The GPU side is void (its context was lost and the texture came back
+  /// with undefined content): the whole mirror uploads at the next flush.
+  pub fn mark_whole(&mut self) {
+    if self.whole.is_none() {
+      self.whole = Some(false);
+    }
+  }
+
   /// Note a use of `key`'s cell in the current frame. False when the cell
   /// is not in the atlas.
   pub fn touch(&mut self, key: K) -> bool {

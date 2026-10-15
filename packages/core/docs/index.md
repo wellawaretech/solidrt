@@ -177,6 +177,14 @@ launch the user started. Whether to load what `onSuspend` saved is the app's
 call. `env.visibility` is only whether anything is on screen, for pausing
 animation and audio, not the persistence moment.
 
+A GPU context loss (a driver reset or update, the GPU hung by another
+process) is the runtime's to survive: it rebuilds every GPU resource behind
+the same ids and the app keeps running. `onContextRestored` then names what
+only the app can bring back - textures it created from pixels, buffers,
+manual render targets - which draw empty until re-supplied; images from
+`createImage` and everything the runtime renders itself come back on their
+own.
+
 A link from outside (a custom scheme link the OS routed to the app, or one
 a dev tool sent) arrives raw: `env.launchLink` is the one this run of the
 app was started with (null without; a hot reload starts at the location

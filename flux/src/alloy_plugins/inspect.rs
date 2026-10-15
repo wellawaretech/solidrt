@@ -306,6 +306,20 @@ fn param_json(v: &alloy::ParamValue, elide: bool) -> serde_json::Value {
 /// `label` keeps only the resources created with that label; `draw` is the
 /// draw entry id (target-scoped, so pair it with `label` to pin one target)
 /// whose params are reported in full instead of elided.
+/// Force a GL context loss (the dev tools' `/gpu?lose=1`; see
+/// `alloy::Context::lose_context`) and request the frame whose present finds
+/// it. Ok(false) where the driver has no such hook (every driver but ANGLE).
+pub fn gpu_lose_context(ctx: &rquickjs::Ctx<'_>) -> Result<bool, String> {
+  let Some(atx) = super::alloy_context(ctx) else {
+    return Err("no alloy context".to_string());
+  };
+  let forced = atx.lose_context()?;
+  if forced {
+    super::request_frame(ctx);
+  }
+  Ok(forced)
+}
+
 pub fn gpu_record(
   ctx: &rquickjs::Ctx<'_>,
   label: Option<&str>,

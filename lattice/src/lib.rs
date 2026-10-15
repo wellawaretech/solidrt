@@ -876,7 +876,10 @@ fn ui_thread(
         // consume them into the resampler (see alloy's resample.rs) and the
         // frame verb samples one position per pointer per signal, so a
         // stalled drain replays no stale positions either.
-        let Some(first) = ev_rx.recv().await else { break };
+        let Some(first) = ev_rx.recv().await else {
+          log::info!("[sol] event task ended: every event sender is gone");
+          break;
+        };
         let mut events: Vec<runtime::Arrived> = Vec::new();
         let mut frame_signal: Option<runtime::Arrived> = None;
         let mut incoming = Some(first);

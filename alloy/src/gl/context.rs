@@ -8,7 +8,7 @@ use crate::gpu::GpuLimits;
 use crate::DisplayContext;
 use glow::HasContext;
 use impellers::{Context as ImpellerContext, ISize, Texture};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 struct SendablePtr(*mut std::ffi::c_void);
@@ -75,6 +75,10 @@ impl GlBinding for SdlGlBinding {
     unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(crate::sdl_utils::WINDOW_SWAP_INTERVAL) }
   }
 
+  fn release(&self) -> bool {
+    unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(self.window(), std::ptr::null_mut()) }
+  }
+
   fn proc_address(&self, name: &std::ffi::CStr) -> *const std::ffi::c_void {
     unsafe { sdl3::sys::video::SDL_GL_GetProcAddress(name.as_ptr()) }
       .map(|f| f as *const std::ffi::c_void)
@@ -84,6 +88,69 @@ impl GlBinding for SdlGlBinding {
   fn error(&self) -> String {
     crate::sdl_utils::sdl_error()
   }
+}
+
+// EGL_EXT_create_context_robustness: the context attribute that asks for
+// reset notification, and the strategy that loses the context on a reset.
+// Without it the reset status reads no-error forever (the robustness spec
+// requires it), and a context-level loss on ANGLE is invisible: the swap
+// keeps succeeding (measured, okf/done/gpu-context-loss.md). SDL's EGL
+// backend never asks for it; its attribute callback appends these to the
+// eglCreateContext attributes.
+const EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY_EXT: sdl3::sys::video::SDL_EGLint = 0x3138;
+const EGL_LOSE_CONTEXT_ON_RESET_EXT: sdl3::sys::video::SDL_EGLint = 0x31BF;
+const EGL_NONE: sdl3::sys::video::SDL_EGLint = 0x3038;
+
+// Whether EGL granted the reset-notification attribute: 0 = not asked yet,
+// 1 = granted (the callback stays installed for every later context), 2 =
+// refused (the callback was removed; contexts are created without it).
+static RESET_NOTIFICATION: AtomicU8 = AtomicU8::new(RESET_NOTIFICATION_UNTRIED);
+const RESET_NOTIFICATION_UNTRIED: u8 = 0;
+const RESET_NOTIFICATION_GRANTED: u8 = 1;
+const RESET_NOTIFICATION_REFUSED: u8 = 2;
+
+/// SDL's EGL context-attribute hook: the array (SDL frees it) is appended
+/// to the eglCreateContext attributes.
+unsafe extern "C" fn reset_notification_attribs(
+  _userdata: *mut std::ffi::c_void,
+  _display: sdl3::sys::video::SDL_EGLDisplay,
+  _config: sdl3::sys::video::SDL_EGLConfig,
+) -> *mut sdl3::sys::video::SDL_EGLint {
+  let attribs = [EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY_EXT, EGL_LOSE_CONTEXT_ON_RESET_EXT, EGL_NONE];
+  let out = sdl3::sys::stdinc::SDL_malloc(std::mem::size_of_val(&attribs)) as *mut sdl3::sys::video::SDL_EGLint;
+  if !out.is_null() {
+    std::ptr::copy_nonoverlapping(attribs.as_ptr(), out, attribs.len());
+  }
+  out
+}
+
+fn set_reset_notification_callback(install: bool) {
+  let callback = if install { Some(reset_notification_attribs as _) } else { None };
+  unsafe { sdl3::sys::video::SDL_EGL_SetAttributeCallbacks(None, None, callback, std::ptr::null_mut()) };
+}
+
+/// The window's GL context, with reset notification where EGL grants it:
+/// the first creation asks, and a refusal (an EGL without
+/// EGL_EXT_create_context_robustness fails the create with the attribute
+/// present) is remembered, so every later context - the context-loss
+/// recovery's included - is created the way the first one succeeded. The
+/// context is current on the calling thread afterwards, as SDL leaves it.
+pub(crate) fn create_window_gl_context(window: &sdl3::video::Window) -> Result<sdl3::video::GLContext, String> {
+  if RESET_NOTIFICATION.load(Ordering::Relaxed) == RESET_NOTIFICATION_UNTRIED {
+    set_reset_notification_callback(true);
+    match window.gl_create_context() {
+      Ok(context) => {
+        RESET_NOTIFICATION.store(RESET_NOTIFICATION_GRANTED, Ordering::Relaxed);
+        return Ok(context);
+      }
+      Err(e) => {
+        log::info!("[alloy] GL context without reset notification: EGL refused the attribute ({e})");
+        set_reset_notification_callback(false);
+        RESET_NOTIFICATION.store(RESET_NOTIFICATION_REFUSED, Ordering::Relaxed);
+      }
+    }
+  }
+  window.gl_create_context().map_err(|e| format!("Failed to create GL context: {e}"))
 }
 
 /// Load GLES bindings through the binding's proc-address. Must be called on
@@ -120,8 +187,40 @@ pub(crate) fn adopt_texture(gpu_texture: &GpuTexture, impeller_ctx: &ImpellerCon
   unsafe { impeller_ctx.adopt_opengl_texture(width, height, 1, gl_handle) }
 }
 
+/// Keep ANGLE's libraries loaded for the process life. SDL loads them for
+/// the first GL window and frees them when the last one goes, and a
+/// context-loss recovery on these platforms recreates the window
+/// (okf/done/gpu-context-loss.md): the unload tears down ANGLE's D3D and
+/// DXCore state and the reload makes it anew, after which the D3D runtime
+/// fast-fails on a corrupted internal list on the first frame (measured on
+/// Windows: FAST_FAIL_CORRUPT_LIST_ENTRY in dxcore.dll under the raster
+/// thread). With a reference of our own the free never unmaps them, and the
+/// recovery is what ANGLE designed for: eglTerminate and eglInitialize on
+/// one loaded library. Resolved by name, which finds the modules SDL will
+/// load (beside the executable, or already loaded by the packed runner's
+/// provisioning); GLES before EGL, since EGL imports it and a name lookup
+/// must find it loaded. A library that is not found is SDL's problem to
+/// report at window creation, not this one's.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn pin_gl_libraries() {
+  #[cfg(target_os = "windows")]
+  const LIBRARIES: [&str; 2] = ["libGLESv2.dll", "libEGL.dll"];
+  #[cfg(target_os = "macos")]
+  const LIBRARIES: [&str; 2] = ["libGLESv2.dylib", "libEGL.dylib"];
+  for name in LIBRARIES {
+    // Safety: loading ANGLE's libraries runs their initializers, which SDL
+    // runs the same way a moment later.
+    match unsafe { libloading::Library::new(name) } {
+      Ok(library) => std::mem::forget(library),
+      Err(e) => log::debug!("[alloy] GL library {name} not pinned: {e}"),
+    }
+  }
+}
+
 /// Must be called before window creation so SDL selects ANGLE (EGL) on macOS.
 pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
+  #[cfg(any(target_os = "windows", target_os = "macos"))]
+  pin_gl_libraries();
   sdl3::hint::set("SDL_OPENGL_ES_DRIVER", "1");
   let gl_attr = video.gl_attr();
   gl_attr.set_context_profile(sdl3::video::GLProfile::GLES);
@@ -173,7 +272,7 @@ pub(crate) fn setup_opengl_platform(
   // The process's single GL context. Creating it makes it current on this
   // (main) thread; release it right away so the UI thread - the only GL user -
   // can bind it (a GL context can be current on at most one thread).
-  let gl_context = window.gl_create_context().map_err(|e| format!("Failed to create GL context: {}", e))?;
+  let gl_context = create_window_gl_context(window)?;
   if !unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window.raw(), std::ptr::null_mut()) } {
     return Err(format!("Failed to release GL context on main thread: {}", crate::sdl_utils::sdl_error()).into());
   }

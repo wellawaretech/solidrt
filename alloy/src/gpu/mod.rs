@@ -30,7 +30,7 @@ pub use order::{
 };
 pub use resources::{
   GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo,
-  GpuResources, GpuTextureInfo, GpuWindowShaderInfo,
+  GpuResources, GpuTextureInfo, GpuWindowShaderInfo, LostContent,
 };
 pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use texture::{

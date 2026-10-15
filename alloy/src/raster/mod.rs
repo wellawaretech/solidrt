@@ -23,12 +23,16 @@ mod cmd;
 mod compose;
 mod frame;
 mod offscreen;
+mod recover;
 mod repaint;
 mod resources;
 mod targets;
 
 pub(crate) use cmd::RasterCmd;
 pub use cmd::{DamageRect, PresentDamage};
+#[cfg(test)]
+pub(crate) use frame::is_context_lost_error;
+use frame::FrameExit;
 use repaint::DamageTracker;
 pub(crate) use repaint::WindowRoute;
 #[cfg(test)]
@@ -71,6 +75,10 @@ pub struct RasterStats {
   /// within the fence timeout, i.e. the GPU is over budget and pacing was
   /// lost for that frame.
   pub(crate) fence_timeouts: AtomicU64,
+  /// GL contexts lost and recovered in process (okf/done/gpu-context-loss.md):
+  /// a device removal, a driver reset, a forced loss. Each one rebuilt
+  /// every GPU resource and asked the app for the content it alone holds.
+  pub(crate) context_losses: AtomicU64,
   /// Presents the screen missed while a next frame was demanded: for each
   /// present that follows a demanded one, the display refreshes of the
   /// interval beyond the first (counted by the frame loop from the refresh
@@ -176,6 +184,8 @@ pub struct RasterCounters {
   pub idle_ticks: u64,
   /// Present-fence timeouts: frames where the GPU was over budget.
   pub fence_timeouts: u64,
+  /// GL contexts lost and recovered in process.
+  pub context_losses: u64,
   /// Presents missed while a next frame was demanded - the direct jank
   /// count (see `RasterStats::missed_presents`).
   pub missed_presents: u64,
@@ -216,6 +226,7 @@ impl RasterStats {
       queue: self.queue_depth.load(Ordering::Acquire),
       idle_ticks: self.idle_ticks.load(Ordering::Relaxed),
       fence_timeouts: self.fence_timeouts.load(Ordering::Relaxed),
+      context_losses: self.context_losses.load(Ordering::Relaxed),
       missed_presents: self.missed_presents.load(Ordering::Relaxed),
       cadence_hold: self.cadence_hold.load(Ordering::Relaxed),
       work_mean_ms: self.work_mean_micros.load(Ordering::Relaxed) as f32 / 1000.0,
@@ -245,6 +256,7 @@ impl RasterStats {
       queue_depth: AtomicUsize::new(0),
       idle_ticks: AtomicU64::new(0),
       fence_timeouts: AtomicU64::new(0),
+      context_losses: AtomicU64::new(0),
       missed_presents: AtomicU64::new(0),
       cadence_hold: AtomicU32::new(1),
       work_mean_micros: AtomicU32::new(0),
@@ -360,6 +372,19 @@ pub(crate) struct RasterState {
   // The context binding this thread draws through: bind/rebind, present,
   // proc-address (see backend::GlBinding).
   binding: Box<dyn GlBinding>,
+  // The context's reset status and the forced-loss hook (see gl/robustness.rs).
+  robustness: gl::Robustness,
+  // The GPU device behind the context, asked why it went away when a loss
+  // is reported (see gl/device_loss.rs).
+  device: gl::DeviceProbe,
+  // Set by a context recovery, cleared by the UI thread's Resync: while
+  // set, frames and handle-carrying commands are refused, since what they
+  // carry belongs to the dead context (okf/done/gpu-context-loss.md).
+  awaiting_resync: bool,
+  // Texture ids registered through AdoptTexture (a snapshot boundary's
+  // rasterization, Impeller-owned on the UI side): a recovery drops them,
+  // the paint walk re-publishes them after its next rasterization.
+  adopted_snapshots: HashSet<u64>,
   // Physical framebuffer size (see backend::pack_size), published by the main
   // thread on resize and read when wrapping FBO 0.
   surface_size: Arc<AtomicU64>,
@@ -652,10 +677,16 @@ impl RasterState {
     let pass_timer = PassTimer::new(&gl);
     stats.timer_queries.store(pass_timer.supported(), Ordering::Relaxed);
     let glyph_rig = gl::GlyphRig::new(&gl);
+    let robustness = gl::Robustness::load(&*binding);
+    let device = gl::DeviceProbe::resolve();
     RasterState {
       gl,
       impeller_ctx,
       binding,
+      robustness,
+      device,
+      awaiting_resync: false,
+      adopted_snapshots: HashSet::new(),
       surface_size,
       samplers,
       pass_timer,
@@ -722,6 +753,17 @@ impl RasterState {
         if cmd.invalidates_resolved_content() {
           self.content_dirty = true;
         }
+        // A recovered context awaiting the UI thread's resync refuses what
+        // was made for the dead one (see RasterCmd::carries_handles); a
+        // refused frame keeps its damage for the frame that follows.
+        if self.awaiting_resync && cmd.carries_handles() {
+          if let RasterCmd::Frame { damage, .. } = &cmd {
+            self.damage.fold(*damage);
+          }
+          cmd.refuse("GPU context restored; awaiting the frame producer's resync");
+          self.stats.queue_depth.fetch_sub(1, Ordering::Release);
+          continue;
+        }
         // Frames are excluded from cmd_micros (see RasterStats); everything
         // else the loop executes is otherwise invisible to timing.
         let timed = !matches!(cmd, RasterCmd::Frame { .. });
@@ -737,9 +779,34 @@ impl RasterState {
             // A shed frame's damage folds into the frame that draws in its
             // place, so its changes still reach the screen.
             self.damage.fold(damage);
-            if (self.sink.headless() || Some(i) == last_frame) && self.frame(dl, present_at).is_err() {
-              break 'outer; // main loop is gone
+            if self.sink.headless() || Some(i) == last_frame {
+              match self.frame(dl, present_at) {
+                Ok(()) => {}
+                Err(FrameExit::MainGone) => break 'outer,
+                // The context is gone: rebuild everything behind the same
+                // ids on a fresh one (recover.rs), or end the process the
+                // way a confirmed loss always did when that is impossible.
+                Err(FrameExit::ContextLost(detail)) => {
+                  self = match self.recover(detail) {
+                    Ok(state) => state,
+                    Err(e) => {
+                      log::error!("[alloy] GPU context lost and not recoverable: {e}; exiting");
+                      std::process::exit(1);
+                    }
+                  };
+                }
+              }
             }
+          }
+          RasterCmd::Resync => {
+            self.awaiting_resync = false;
+          }
+          RasterCmd::LoseContext { reply: tx } => {
+            let forced = self.robustness.lose_context();
+            if forced {
+              log::warn!("[alloy] GPU context loss forced (GL_CHROMIUM_lose_context)");
+            }
+            reply(tx, forced);
           }
           RasterCmd::SetDemandLatch { latch } => {
             self.demand_latch = Some(latch);
@@ -930,6 +997,7 @@ impl RasterState {
           RasterCmd::AdoptTexture { id, texture, width, height } => match offscreen::gl_name(&texture) {
             Ok(gl_texture) => {
               let label = Some("snapshot".to_string());
+              self.adopted_snapshots.insert(id);
               self.textures.insert(
                 id,
                 GpuTexture {

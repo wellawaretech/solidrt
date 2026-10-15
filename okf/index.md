@@ -167,6 +167,12 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
+- **[Contact-hardening soft shadows from a light's angular size](backlog/3d-contact-hardening-shadows.md)** [2026-10-15]
+  A shadow edge is either uniformly hard (radius 1) or uniformly blurred
+  (radius above 1), so softening it blurs the contact where a caster meets its
+  receiver as much as the far tip and the caster looks like it floats; an
+  angular size on the directional light (a source radius on spot and point)
+  turning on a blocker-search lookup (PCSS) in SHADOW_LOOKUP.
 - **[Environment tier leftovers - SH9, aoMap, packed .sol3e, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes); what Three, Unity and Godot ship on top of the
@@ -446,11 +452,6 @@ Shaped, not started.
   raster thread, i.e. the frame loop - and both are calls the standards
   eventually grew an async-only form for; invisible while compiles happen at
   startup, real for live-coding and any per-frame readback consumer.
-- **[GPU context loss](backlog/gpu-context-loss.md)** [2026-07-27]
-  A lost GL context used to leave the app running against a dead swapchain;
-  swap-result checking, exit after two failed presents and the Android
-  background case (no window work while backgrounded) shipped; real recreation
-  after a genuine loss still open.
 - **[Depth func option](backlog/gpu-depth-func.md)** [2026-08-11]
   The depth comparison is fixed at LESS with no override, which blocks
   equal-depth multi-pass tricks (LEQUAL) and reversed-z; Three's
@@ -1763,6 +1764,11 @@ Finished, kept for the reasoning.
   warns on the raster thread where no app can see it, while a draw count past
   the buffer end is undefined-behaviour vertex fetch; both are validatable
   synchronously at the JS call site from state the UI thread already mirrors.
+- **[GPU context loss](done/gpu-context-loss.md)** [2026-07-27]
+  A lost GL context is recovered in-process - the platform side gives the
+  raster thread a fresh context, the raster thread rebuilds every GPU object
+  behind the same ids, and the app is told only what it alone can re-supply;
+  exit stays the outcome when recovery itself fails.
 - **[Cube map textures](done/gpu-cube-maps.md)** [2026-09-02]
   No TEXTURE_CUBE_MAP support anywhere (upload, sampling, or render target),
   so environment/reflection mapping, skyboxes and cube shadow maps have no
@@ -2946,6 +2952,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   The /proc fdinfo probe that unravelled the idle-GPU burn, its three caveats,
   and the compositor knock-on rule - every client present makes the OS
   recomposite, so an app's idle burn is charged twice.
+- **[GPU context loss findings](notes/gpu-context-loss-findings.md)** [2026-10-15]
+  What a lost GL context looks like on ANGLE/D3D11 and what in-process
+  recovery needs, measured on the Windows box (probe example and the built
+  recovery, 2026-09/10).
 - **[GPU stack review](notes/gpu-review.md)** [2026-07-30]
   "Merged review of the GPU stack: where it stands (retro-class 3D feasible,
   statuses refreshed), how its shape compares to WebGL2 and WebGPU (a retained

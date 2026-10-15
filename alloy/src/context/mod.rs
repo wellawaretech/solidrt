@@ -243,6 +243,31 @@ impl Context {
     self.raster_tx.drain();
   }
 
+  /// The UI side of a context recovery (okf/done/gpu-context-loss.md),
+  /// from the `ContextRestored` event: take the raster thread's new
+  /// adoptions into the texture registry (the entries' old handles belong
+  /// to the dead context), mark every target's content changed (its pixels
+  /// are new, so a baked snapshot over one re-bakes), and tell the raster
+  /// thread the handles it refuses frames over are gone (`RasterCmd::Resync`).
+  /// The caller drops the render tree's paint caches and the text atlas's
+  /// GPU side around this, then requests a frame.
+  pub fn restore_handles(&self, handles: Vec<(u64, impellers::Texture)>) {
+    for (id, handle) in handles {
+      self.textures.replace_handle(id, handle);
+    }
+    let targets: Vec<u64> = self.targets.borrow().keys().copied().collect();
+    self.content_changes.borrow_mut().extend(targets);
+    self.send(RasterCmd::Resync);
+  }
+
+  /// Force a context loss (GL_CHROMIUM_lose_context, ANGLE's test hook):
+  /// the next presented frame finds the reset status and recovers. Ok(false)
+  /// where the driver has no such hook (every driver but ANGLE); Err when
+  /// the raster thread is gone.
+  pub fn lose_context(&self) -> Result<bool, String> {
+    self.rpc(|reply| RasterCmd::LoseContext { reply })
+  }
+
   /// Blocking RPC: send a command carrying a reply sender and wait for the
   /// reply. Err only when the raster thread is gone (engine shutdown).
   fn rpc<T>(&self, make: impl FnOnce(mpsc::Sender<T>) -> RasterCmd) -> Result<T, String> {

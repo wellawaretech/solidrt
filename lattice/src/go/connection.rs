@@ -956,14 +956,29 @@ async fn try_serve(
               Some("gpu") => {
                 // Alloy's GPU bookkeeping lives on the JS thread (its GL context
                 // is current there); snapshot it there like the render tree.
+                // `lose` is the dev tools' forced context loss instead
+                // (okf/done/gpu-context-loss.md): the reply says whether the
+                // driver has the hook, and the recovery shows in the log and
+                // in the stats' contextLosses.
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     let label = json.get("label").and_then(|l| l.as_str()).map(str::to_string);
                     let draw = json.get("draw").and_then(|d| d.as_u64());
+                    let lose = json.get("lose").and_then(|l| l.as_bool()).unwrap_or(false);
                     eh.exec(move |ctx| {
-                      let _ = reply_tx.send(gpu_reply(&ctx, id, label.as_deref(), draw));
+                      let reply = if lose {
+                        match flux::gui::inspect::gpu_lose_context(&ctx) {
+                          Ok(forced) => {
+                            serde_json::json!({"type": "result", "id": id, "data": {"forced": forced}}).to_string()
+                          }
+                          Err(e) => error_reply(id, &e),
+                        }
+                      } else {
+                        gpu_reply(&ctx, id, label.as_deref(), draw)
+                      };
+                      let _ = reply_tx.send(reply);
                     });
                   }
                   None => {

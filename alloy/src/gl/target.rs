@@ -6,8 +6,10 @@
 
 use glow::HasContext;
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
+use super::buffer::GpuBuffer;
 use super::entry::{
   build_vao, check_entry_buffers, merge_record, release_entry_buffers, DrawEntry, EntryBuffers, MeshState,
 };
@@ -39,6 +41,14 @@ pub struct Region {
   pub x: i32,
   pub y: i32,
   pub label: Option<String>,
+}
+
+/// The registries a target rebuild resolves its registered pipelines and
+/// buffers from: the new ones, rebuilt ahead of the targets (see
+/// `ShaderTexture::rebuild`).
+pub struct RebuildRegistries<'a> {
+  pub pipelines: &'a HashMap<u64, Rc<RenderPipeline>>,
+  pub buffers: &'a HashMap<u64, Rc<GpuBuffer>>,
 }
 
 /// Which kind of pass renders this target.
@@ -941,6 +951,175 @@ impl ShaderTexture {
       }
     }
     unsafe { gl.delete_framebuffer(self.fbo) };
+  }
+
+  /// The same target over fresh storage on the current context, content
+  /// undefined: the context-loss rebuild (okf/done/gpu-context-loss.md).
+  /// Every retained fact carries over - kind, size, format, sampling, modes,
+  /// clear color, depth storage kind, sample count, the draw list with each
+  /// entry's pipeline, buffers, range, params and bindings, the pass
+  /// counters - and the GL objects are made again: storage, VAOs, and the
+  /// anonymous programs the fused creates linked (relinked from their
+  /// sources); registered pipelines and buffers resolve to the rebuilt
+  /// registries. A sub-target rebuilds over its rebuilt parent instead
+  /// (`rebuild_sub`).
+  pub fn rebuild(&self, gl: &glow::Context, registries: &RebuildRegistries) -> Result<ShaderTexture, String> {
+    if self.region.is_some() {
+      return Err("a sub-target rebuilds over its parent".to_string());
+    }
+    let (width, height, format) = (self.width, self.height, self.format);
+    let mesh = match &self.kind {
+      TargetKind::Fragment { program, params, bindings } => {
+        let program = Rc::new(program.relink(gl)?);
+        let MeshStorage { target, fbo, .. } = create_mesh_storage(gl, width, height, DepthStorage::None, 1, format)?;
+        let kind = TargetKind::Fragment { program, params: params.clone(), bindings: bindings.clone() };
+        return Ok(self.rebuilt(kind, target, fbo));
+      }
+      TargetKind::Mesh(mesh) => mesh,
+    };
+    let depth = match mesh.depth {
+      None => DepthStorage::None,
+      Some(DepthAttachment::Buffer(_)) => DepthStorage::Buffer,
+      Some(DepthAttachment::Texture(_)) => DepthStorage::Texture,
+    };
+    let storage = if self.cube {
+      create_cube_storage(gl, width, depth, self.sampler.mipmap, format)?
+    } else {
+      create_mesh_storage(gl, width, height, depth, self.samples(), format)?
+    };
+    let entries = match self.rebuild_entries(gl, mesh, registries) {
+      Ok(entries) => entries,
+      Err(e) => {
+        unsafe { storage.delete(gl) };
+        return Err(e);
+      }
+    };
+    let MeshStorage { target, fbo, depth, msaa } = storage;
+    let kind = TargetKind::Mesh(MeshState {
+      entries,
+      shared_params: mesh.shared_params.clone(),
+      shared_bindings: mesh.shared_bindings.clone(),
+      depth,
+      msaa,
+      clear_color: mesh.clear_color,
+      load: mesh.load,
+      fixed: mesh.fixed,
+    });
+    Ok(self.rebuilt(kind, target, fbo))
+  }
+
+  /// `rebuild` for a sub-target: over the rebuilt `parent` (the storage it
+  /// renders into), with its rectangle, modes and draw list carried over.
+  pub fn rebuild_sub(
+    &self,
+    gl: &glow::Context,
+    parent: &ShaderTexture,
+    registries: &RebuildRegistries,
+  ) -> Result<ShaderTexture, String> {
+    let Some(region) = &self.region else {
+      return Err("target is not a sub-target".to_string());
+    };
+    let TargetKind::Mesh(mesh) = &self.kind else {
+      return Err("sub-target without a draw list".to_string());
+    };
+    let mut sub = ShaderTexture::new_sub_target(
+      parent,
+      region.parent,
+      region.x,
+      region.y,
+      self.width,
+      self.height,
+      mesh.clear_color,
+      region.label.clone(),
+    )?;
+    let entries = self.rebuild_entries(gl, mesh, registries)?;
+    if let TargetKind::Mesh(built) = &mut sub.kind {
+      built.entries = entries;
+      built.shared_params = mesh.shared_params.clone();
+      built.shared_bindings = mesh.shared_bindings.clone();
+      built.load = mesh.load;
+      built.fixed = mesh.fixed;
+    }
+    sub.sampler = self.sampler;
+    sub.manual = self.manual;
+    sub.passes.set(self.passes.get());
+    sub.vertices.set(self.vertices.get());
+    sub.pass_issue_micros.set(self.pass_issue_micros.get());
+    sub.pass_exec_micros.set(self.pass_exec_micros.get());
+    Ok(sub)
+  }
+
+  /// This target's retained facts around a rebuilt kind and storage.
+  fn rebuilt(&self, kind: TargetKind, target: glow::Texture, fbo: glow::Framebuffer) -> ShaderTexture {
+    ShaderTexture {
+      kind,
+      fbo,
+      target,
+      width: self.width,
+      height: self.height,
+      sampler: self.sampler,
+      manual: self.manual,
+      passes: Cell::new(self.passes.get()),
+      vertices: Cell::new(self.vertices.get()),
+      pass_issue_micros: Cell::new(self.pass_issue_micros.get()),
+      pass_exec_micros: Cell::new(self.pass_exec_micros.get()),
+      cube: self.cube,
+      region: None,
+      format: self.format,
+    }
+  }
+
+  /// `mesh`'s draw list built again on the current context: a registered
+  /// pipeline or buffer is the rebuilt registry's, a fused pipeline is
+  /// relinked, and every entry gets a fresh VAO. On a failure the entries
+  /// built so far are released.
+  fn rebuild_entries(
+    &self,
+    gl: &glow::Context,
+    mesh: &MeshState,
+    registries: &RebuildRegistries,
+  ) -> Result<Vec<DrawEntry>, String> {
+    let mut entries: Vec<DrawEntry> = Vec::with_capacity(mesh.entries.len());
+    let lookup = |id: u64| registries.buffers.get(&id).cloned().ok_or_else(|| format!("buffer {id} not found"));
+    for entry in &mesh.entries {
+      let built = (|| -> Result<DrawEntry, String> {
+        let pipeline = match entry.pipeline_id {
+          Some(id) => registries.pipelines.get(&id).cloned().ok_or_else(|| format!("pipeline {id} not found"))?,
+          None => Rc::new(entry.pipeline.relink(gl)?),
+        };
+        let mut buffers = EntryBuffers::default();
+        for (_, id) in &entry.buffers.buffers {
+          buffers.buffers.push((lookup(*id)?, *id));
+        }
+        if let Some((_, id, format)) = &entry.buffers.index {
+          buffers.index = Some((lookup(*id)?, *id, *format));
+        }
+        let vao = build_vao(gl, &pipeline.program, &pipeline.desc, &buffers)?;
+        Ok(DrawEntry {
+          id: entry.id,
+          pipeline,
+          pipeline_id: entry.pipeline_id,
+          vao,
+          buffers,
+          draw: entry.draw,
+          params: entry.params.clone(),
+          bindings: entry.bindings.clone(),
+          label: entry.label.clone(),
+        })
+      })();
+      match built {
+        Ok(entry) => entries.push(entry),
+        Err(e) => {
+          for entry in entries {
+            unsafe { gl.delete_vertex_array(entry.vao) };
+            release_pipeline(gl, entry.pipeline);
+            release_entry_buffers(gl, entry.buffers);
+          }
+          return Err(e);
+        }
+      }
+    }
+    Ok(entries)
   }
 
   /// The active uniforms of this target's program (fragment, or entry 0 -

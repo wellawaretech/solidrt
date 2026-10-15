@@ -5,6 +5,21 @@
 use super::vocab::{ParamValue, TextureBinding};
 use super::SamplerState;
 
+/// What a context recovery could not bring back (okf/done/gpu-context-loss.md):
+/// the ids whose content only the app holds, reported to it once the engine
+/// has rebuilt everything else behind the same ids. `textures` are the
+/// uploaded ones (every shape), now undefined; `buffers` are zeroed;
+/// `targets` are the manual render targets, now cleared, whose next render
+/// is the app's to issue. Flush-rendered targets re-render themselves, and
+/// the engine refills what it owns (the text atlas, camera and video
+/// textures, snapshot boundaries).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LostContent {
+  pub textures: Vec<u64>,
+  pub buffers: Vec<u64>,
+  pub targets: Vec<u64>,
+}
+
 pub struct GpuResources {
   pub textures: Vec<GpuTextureInfo>,
   pub buffers: Vec<GpuBufferInfo>,

@@ -895,6 +895,12 @@ impl Text {
     self.chosen_scale.get()
   }
 
+  /// Drop the layer texture now: it belongs to a GL context that is gone
+  /// (RenderTree::drop_paint_caches). The next build makes a new one.
+  pub(crate) fn drop_layer(&self) {
+    self.layer.borrow_mut().take();
+  }
+
   /// Release the layer texture once the text has gone unbuilt for the
   /// release age by `frame` (the composite walk asks every text holding
   /// one). Returns whether a layer is still held.

@@ -15,7 +15,30 @@ use super::{
 };
 use crate::backend::FrameOutput;
 use crate::gl;
-use crate::gl::Timed;
+use crate::gl::{ResetStatus, Timed};
+
+/// Why a frame could not complete: the main loop is gone (the thread winds
+/// down), or the GL context is lost (the thread recovers, see recover.rs).
+pub(super) enum FrameExit {
+  MainGone,
+  ContextLost(String),
+}
+
+/// What a present did: swapped, failed to swap (the surface is gone or the
+/// driver hiccupped; the rebind-and-retry and the failure threshold apply),
+/// or found the context lost, with the detail for the log.
+enum Presented {
+  Yes,
+  No,
+  Lost(String),
+}
+
+/// Whether an SDL error names a lost context: SDL's text carries the EGL
+/// error (`EGL_CONTEXT_LOST`, the swap's and make-current's answer once a
+/// device is gone under ANGLE or a context was reset under Mesa).
+pub(crate) fn is_context_lost_error(error: &str) -> bool {
+  error.contains("CONTEXT_LOST")
+}
 
 impl RasterState {
   /// Publish the per-target pass counters (RasterStats::targets): one row
@@ -64,7 +87,14 @@ impl RasterState {
   /// headless mode. Then notify the main loop, which only does frame
   /// bookkeeping (fps, FrameRendered). Err means the main loop is gone and
   /// this thread should exit.
-  pub(super) fn frame(&mut self, dl: DisplayList, present_at: std::time::Instant) -> Result<(), ()> {
+  pub(super) fn frame(&mut self, dl: DisplayList, present_at: std::time::Instant) -> Result<(), FrameExit> {
+    // A context lost since the last present fails every allocation the
+    // frame makes, so the draw never reaches the swap where the loss would
+    // otherwise be found: ask first (a flag read).
+    let status = self.robustness.reset_status();
+    if status.is_reset() {
+      return Err(FrameExit::ContextLost(self.loss_detail("before the frame", status)));
+    }
     // The frame's GPU span starts here, ahead of the pass flush: on a tiler
     // the passes execute in the same submission as the window draw.
     self.frame_timestamps.frame_begin();
@@ -126,21 +156,29 @@ impl RasterState {
       let present_start = std::time::Instant::now();
       let mut presented = false;
       if drawn {
-        if self.present() {
-          presented = true;
-        } else if !crate::window_backgrounded() && self.rebind_window_surface() {
-          // The failed swap's frame is lost with the dead binding (Android
-          // replaces the EGL surface across background/resume, and a frame
-          // latched by resize or expose can reach this thread before the
-          // event-driven rebind). Redraw against the rebound surface and
-          // present again; the retry's outcome feeds the failure threshold
-          // honestly (fail, rebind, fail again = confirmed loss). The fresh
-          // surface preserves nothing, so the retry draws in full.
-          self.damage.invalidated();
-          own_damage = PresentDamage::Full;
-          route = WindowRoute::whole(fast_path);
-          if self.draw_to_window(&dl, size, route) {
-            presented = self.present();
+        match self.present() {
+          Presented::Yes => presented = true,
+          Presented::Lost(detail) => return Err(FrameExit::ContextLost(detail)),
+          Presented::No => {
+            if !crate::window_backgrounded() && self.rebind_window_surface() {
+              // The failed swap's frame is lost with the dead binding (Android
+              // replaces the EGL surface across background/resume, and a frame
+              // latched by resize or expose can reach this thread before the
+              // event-driven rebind). Redraw against the rebound surface and
+              // present again; the retry's outcome feeds the failure threshold
+              // honestly (fail, rebind, fail again = a dead swapchain). The
+              // fresh surface preserves nothing, so the retry draws in full.
+              self.damage.invalidated();
+              own_damage = PresentDamage::Full;
+              route = WindowRoute::whole(fast_path);
+              if self.draw_to_window(&dl, size, route) {
+                match self.present() {
+                  Presented::Yes => presented = true,
+                  Presented::Lost(detail) => return Err(FrameExit::ContextLost(detail)),
+                  Presented::No => {}
+                }
+              }
+            }
           }
         }
       }
@@ -188,7 +226,7 @@ impl RasterState {
           gpu_micros: self.last_frame_gpu_micros,
           demanded,
         })
-        .map_err(|_| ())?;
+        .map_err(|_| FrameExit::MainGone)?;
     }
     // Wake only after the frame is in the channel, so the woken loop finds it.
     if let Some(wake) = &self.wake {
@@ -281,12 +319,15 @@ impl RasterState {
     }
   }
 
-  /// Swap the window's backbuffer; true on success. Without the failure
-  /// check a lost context / removed device leaves the app running normally
-  /// while nothing reaches the screen (a frozen window with no message). A
-  /// failed swap gets one rebind-and-redraw recovery attempt (see `frame`);
-  /// a confirmed loss exits instead: see okf/backlog/gpu-context-loss.md.
-  fn present(&mut self) -> bool {
+  /// Swap the window's backbuffer. Without the failure check a lost context
+  /// / removed device leaves the app running normally while nothing reaches
+  /// the screen (a frozen window with no message). A failed swap gets one
+  /// rebind-and-redraw recovery attempt (see `frame`), and a swapchain that
+  /// keeps failing for a reason that is not a loss exits; a lost context -
+  /// the swap's EGL error names it, or the reset status does, which is the
+  /// only signal when a context-level loss keeps swapping (ANGLE, measured)
+  /// - is reported for recovery: see okf/done/gpu-context-loss.md.
+  fn present(&mut self) -> Presented {
     // A video plane beneath the window is composited with it in one atomic
     // commit, and that commit waits for every buffer in it to be ready. A
     // window buffer queued with GPU work still outstanding therefore holds
@@ -323,23 +364,45 @@ impl RasterState {
         // alloy/examples/present_fence_probe.rs (phases A vs D).
         unsafe { glow::HasContext::flush(&self.gl) };
       }
-      return true;
+      // A context-level loss keeps swapping: the reset status is its only
+      // signal, asked once per presented frame (a flag read).
+      let status = self.robustness.reset_status();
+      if status.is_reset() {
+        return Presented::Lost(self.loss_detail("the swap succeeded", status));
+      }
+      return Presented::Yes;
     }
     // The surface went away under this swap (the window was backgrounded
     // while the frame was drawing): expected, not evidence of a loss.
     if crate::window_backgrounded() {
       log::debug!("[alloy] present skipped: window backgrounded ({})", self.binding.error());
-      return false;
+      return Presented::No;
+    }
+    let error = self.binding.error();
+    let status = self.robustness.reset_status();
+    if status.is_reset() || is_context_lost_error(&error) {
+      return Presented::Lost(self.loss_detail(&format!("present failed: {error}"), status));
     }
     self.present_failures += 1;
     if self.present_failures == 1 {
-      log::error!("[alloy] present failed: {}", self.binding.error());
+      log::error!("[alloy] present failed: {error}");
     }
     if self.present_failures >= PRESENT_FAILURE_EXIT_THRESHOLD {
-      log::error!("[alloy] GPU context lost ({} consecutive failed presents), exiting", self.present_failures);
+      log::error!("[alloy] GPU presents keep failing ({} in a row: {error}), exiting", self.present_failures);
       std::process::exit(1);
     }
-    false
+    Presented::No
+  }
+
+  /// The loss as the log reports it: what was observed, the reset status,
+  /// and on Windows why the device went away.
+  fn loss_detail(&self, observed: &str, status: ResetStatus) -> String {
+    let mut detail = format!("{observed}; {}", status.name());
+    if let Some(reason) = self.device.removed_reason() {
+      detail.push_str("; ");
+      detail.push_str(&reason);
+    }
+    detail
   }
 
   /// Block until the work drawn into this frame has completed on the GPU, so

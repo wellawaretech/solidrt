@@ -630,6 +630,26 @@ impl RenderTree {
     self.text_layers.borrow().iter().copied().collect()
   }
 
+  /// Drop every retained paint result and text layer: they are textures
+  /// and display lists of a GL context that is gone (the context-loss
+  /// restore, okf/done/gpu-context-loss.md). Snapshot caches go whole,
+  /// allocation included (a stale snapshot otherwise keeps its texture for
+  /// the next raster to reuse), and the revision moves so the next frame
+  /// rebuilds rather than re-presenting the retained display list. The
+  /// vended snapshot texture ids stand: the next raster publishes the new
+  /// backing under them.
+  pub fn drop_paint_caches(&mut self) {
+    for element in self.nodes.values() {
+      element.paint_cache.borrow_mut().take();
+      element.envelope.clear();
+      if let ElementKind::Text(text) = &element.kind {
+        text.drop_layer();
+      }
+    }
+    self.text_layers.borrow_mut().clear();
+    self.bump_revision();
+  }
+
   /// Release the layer textures of texts that went unbuilt long enough
   /// (Text::release_stale_layer) as of text atlas frame `frame`: the walk
   /// never enters a culled, hidden or scrolled-out text, so its stamp ages

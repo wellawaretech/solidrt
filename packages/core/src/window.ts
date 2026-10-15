@@ -5,6 +5,7 @@ import { renderFrame } from "sol:render"
 import { on, once } from "sol:events"
 import { exit as nativeExit, background as nativeBackground, registerProtocolHandler as nativeRegisterProtocolHandler } from "sol:app"
 import { platform } from "flux:process"
+import type { BufferId, TextureId } from "flux:gpu"
 import { getEventHandler, focusedNode, setFocus, activateTextInput, setInterestRoot } from "./core"
 import { scanForOrphans, getNodePath } from "./renderer"
 
@@ -113,6 +114,34 @@ export function onSuspend(fn: LifecycleHandler) {
  */
 export function onQuit(fn: LifecycleHandler) {
   return registerLifecycle(quitHandlers, fn)
+}
+
+/** What a restored GPU context could not bring back (see `onContextRestored`). */
+export type ContextRestoredEvent = {
+  /** Textures created from pixels (every shape), now undefined: upload them again. */
+  textures: TextureId[]
+  /** Vertex buffers, now zeroed: write them again. */
+  buffers: BufferId[]
+  /** Manual render targets, now cleared: render them again. */
+  targets: TextureId[]
+}
+
+/**
+ * Calls `fn` after the GPU context was lost (a driver reset or update, the
+ * GPU hung by another process) and the runtime restored it. Everything the
+ * runtime can recreate it has by then: shader targets re-rendered from
+ * their state, text, images loaded through `createImage` re-uploaded. What
+ * it cannot know is yours: the event names the textures you created from
+ * pixels, the buffers and the manual targets, and until you re-supply them
+ * they draw as transparent black, zeros, or cleared. The app keeps running
+ * throughout; an app that listens to nothing only loses those pixels.
+ *
+ * Returns a cleanup function; also auto-cleans within an owned scope.
+ */
+export function onContextRestored(fn: (e: ContextRestoredEvent) => void) {
+  let unsubscribe = on("contextRestored", fn)
+  if (getOwner()) onCleanup(unsubscribe)
+  return unsubscribe
 }
 
 /**

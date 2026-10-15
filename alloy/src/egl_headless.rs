@@ -163,6 +163,11 @@ impl GlBinding for HeadlessEglBinding {
     true
   }
 
+  fn release(&self) -> bool {
+    let h = &self.0;
+    h.egl.make_current(h.display, None, None, None).is_ok()
+  }
+
   fn set_swap_interval(&self) -> bool {
     true
   }

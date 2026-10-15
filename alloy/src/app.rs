@@ -3,11 +3,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-use crate::backend::{DisplayContext, FrameOutput};
+use crate::backend::{DisplayContext, FrameOutput, GlBinding};
 use crate::context::Context;
 use crate::event::{
   current_input_devices_event, current_orientation_event, current_resize_event, current_system_theme_event,
-  translate_event, AlloyCommand, AlloyEvent,
+  translate_event, AlloyCommand, AlloyEvent, TextInputOptions,
 };
 use crate::gl;
 use crate::liveness::SurfaceLiveness;
@@ -315,6 +315,112 @@ impl PlatformWatch {
   }
 }
 
+/// The run loop's window, in a slot the context-loss recovery can empty and
+/// refill (see `recover_gl`); everywhere else it reads as the window.
+struct HeldWindow(Option<sdl3::video::Window>);
+
+impl HeldWindow {
+  fn take(mut self) -> sdl3::video::Window {
+    self.0.take().expect("the window is held for the loop's life")
+  }
+
+  /// Replace the window through `f`, which takes the old one (and destroys
+  /// it before making the new, where that order matters). On an error the
+  /// slot stays empty: the caller ends the process.
+  fn replace_with(
+    &mut self,
+    f: impl FnOnce(sdl3::video::Window) -> Result<sdl3::video::Window, String>,
+  ) -> Result<(), String> {
+    let old = self.0.take().expect("the window is held for the loop's life");
+    self.0 = Some(f(old)?);
+    Ok(())
+  }
+}
+
+impl std::ops::Deref for HeldWindow {
+  type Target = sdl3::video::Window;
+  fn deref(&self) -> &sdl3::video::Window {
+    self.0.as_ref().expect("the window is held for the loop's life")
+  }
+}
+
+impl std::ops::DerefMut for HeldWindow {
+  fn deref_mut(&mut self) -> &mut sdl3::video::Window {
+    self.0.as_mut().expect("the window is held for the loop's life")
+  }
+}
+
+// Where ANGLE translates GL (Windows over D3D11, macOS over Metal), a device
+// loss marks the whole EGL display lost and every later EGL call fails with
+// EGL_CONTEXT_LOST until eglTerminate, which SDL issues when the last GL
+// window goes (measured, okf/done/gpu-context-loss.md): recovery recreates
+// the window. On Mesa and Android a loss is per context, and a new context
+// on the same window recovers it.
+const RECOVERY_RECREATES_WINDOW: bool = cfg!(any(target_os = "windows", target_os = "macos"));
+
+/// A fresh GL context for the raster thread after a loss, on this window or
+/// a recreated one (see RECOVERY_RECREATES_WINDOW): the old context is
+/// destroyed (the raster thread released it), the new one created and
+/// released for the raster thread to bind, the surface size republished.
+/// Interactive runs only: a headless surface has nothing to recreate.
+fn recover_gl(
+  sdl_context: &sdl3::Sdl,
+  window: &mut HeldWindow,
+  platform: &mut Option<DisplayContext>,
+  surface_size: &Arc<AtomicU64>,
+) -> Result<Box<dyn GlBinding>, String> {
+  match platform.take() {
+    Some(DisplayContext::Gl { .. }) => {}
+    Some(DisplayContext::EglPbuffer { .. }) | None => {
+      return Err("the headless surface has no GL context to recreate".to_string());
+    }
+  }
+  // The old context went with the display context just dropped
+  // (SDL_GL_DestroyContext; it was current nowhere).
+  if RECOVERY_RECREATES_WINDOW {
+    let video = sdl_context.video().map_err(|e| format!("video subsystem: {e}"))?;
+    window.replace_with(|old| {
+      let title = old.title().to_string();
+      let (width, height) = old.size();
+      let (x, y) = old.position();
+      let fullscreen = old.fullscreen_state() != sdl3::video::FullscreenType::Off;
+      let maximized = old.is_maximized();
+      // SDL_DestroyWindow: the last GL window unloads the GL library, which
+      // terminates the lost EGL display; the next GL window initializes it
+      // afresh.
+      drop(old);
+      let mut builder = video.window(&title, width, height);
+      builder.opengl().position(x, y).high_pixel_density().resizable();
+      let mut window = builder.build().map_err(|e| format!("window recreation: {e}"))?;
+      if maximized && !window.maximize() {
+        log::warn!("[alloy] recreated window: maximize failed: {}", crate::sdl_utils::sdl_error());
+      }
+      if fullscreen {
+        if let Err(e) = window.set_fullscreen(true) {
+          log::warn!("[alloy] recreated window: set_fullscreen failed: {e}");
+        }
+      }
+      Ok(window)
+    })?;
+  }
+  let gl_context = gl::create_window_gl_context(window)?;
+  if !unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window.raw(), std::ptr::null_mut()) } {
+    return Err(format!(
+      "Failed to release the recovered GL context on the main thread: {}",
+      crate::sdl_utils::sdl_error()
+    ));
+  }
+  let (w, h) = window.size_in_pixels();
+  surface_size.store(crate::backend::pack_size(w, h), Ordering::Release);
+  let binding: Box<dyn GlBinding> = Box::new(gl::SdlGlBinding::new(window.raw(), &gl_context));
+  *platform = Some(DisplayContext::Gl { window_raw: window.raw(), gl_context, surface_size: surface_size.clone() });
+  log::info!(
+    "[alloy] GL context recreated{} at {w}x{h}",
+    if RECOVERY_RECREATES_WINDOW { " with the window" } else { "" }
+  );
+  Ok(binding)
+}
+
 impl App {
   /// Handle onto the resampler the run loop feeds. Grab a clone before
   /// run(): the UI consumer samples it once per frame signal, and
@@ -337,7 +443,11 @@ impl App {
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<crate::Arrival>) + Send + 'static,
   ) {
-    let App { sdl_context, mut window, platform, mode, resampler, user_input_muted } = self;
+    let App { sdl_context, window, platform, mode, resampler, user_input_muted } = self;
+    // Both held in slots the context-loss recovery can empty and refill
+    // (recover_gl): the window where the GL stack needs a new one, the
+    // display context always.
+    let mut window = HeldWindow(Some(window));
     let surface_size = platform.surface_size_handle();
 
     let (tx, rx) = mpsc::channel::<FrameOutput>();
@@ -371,8 +481,10 @@ impl App {
     // AlloyCommand::SetFrameRequestLatch.
     let mut liveness = SurfaceLiveness::new();
 
+    let mut platform = Some(platform);
+
     if let Mode::Stepped(stepped) = mode {
-      run_stepped_loop(window, cmd_rx, event_tx, stepped);
+      run_stepped_loop(window.take(), cmd_rx, event_tx, stepped);
       // Nothing may be drawing when the window drops: dropping it unloads
       // the EGL library, and the embedder exits the process right after,
       // which would pull the driver out from under a draw still encoding.
@@ -549,6 +661,11 @@ impl App {
     // cursors on CreateCursor), owned here for as long as SDL may show them.
     let mut cursors = crate::cursor::Cursors::default();
     let mut last_mouse: (f32, f32) = (0.0, 0.0);
+    // Window state a context-loss recovery carries into a recreated window
+    // (recover_gl): the icon as last set, and the text input session while
+    // one is active, with the options it was started with.
+    let mut window_icon: Option<(u32, u32, Vec<u8>)> = None;
+    let mut text_input: Option<TextInputOptions> = None;
 
     // Instant of the last frame signal (FrameRendered or Tick). When the UI
     // thread submits nothing for a full refresh period, an idle Tick keeps its
@@ -651,6 +768,48 @@ impl App {
               }
             }
           }
+          // The raster thread lost its context and waits for a fresh one
+          // (okf/done/gpu-context-loss.md). Answered right here: nothing
+          // else runs until it draws again. A None answer ends the process
+          // on the raster side, as a confirmed loss always did.
+          Ok(FrameOutput::ContextLost { detail, reply }) => {
+            let recovered = recover_gl(&sdl_context, &mut window, &mut platform, &surface_size);
+            let binding = match recovered {
+              Ok(binding) => Some(binding),
+              Err(e) => {
+                log::error!("[alloy] GPU context recovery failed: {e} (after: {detail})");
+                None
+              }
+            };
+            let recovered = binding.is_some();
+            reply.send(binding).ok();
+            if recovered {
+              // The window the raster thread draws into now may be a new
+              // one: re-apply what the loop set on the old (the icon, the
+              // text input session, the pointer lock), and let the liveness
+              // policy repaint it like any surface that came back.
+              if let Some((w, h, rgba)) = &window_icon {
+                if let Err(e) = crate::sdl_utils::set_window_icon(&window, *w, *h, rgba) {
+                  log::debug!("set_window_icon failed: {e}");
+                }
+              }
+              if let Some(options) = &text_input {
+                crate::sdl_utils::start_text_input_with_options(&window, options);
+              }
+              if pointer_lock_frozen.is_some() {
+                sdl_context.mouse().set_relative_mouse_mode(&window, true);
+              }
+              let e = current_resize_event(&window);
+              apply_main_thread_effects(&e, &surface_size);
+              if liveness.on_event(&e, Instant::now()) {
+                raster.send(RasterCmd::RebindWindowSurface).ok();
+              }
+              event_tx.send(e).ok();
+            }
+          }
+          Ok(FrameOutput::ContextRestored { handles, lost }) => {
+            event_tx.send(AlloyEvent::ContextRestored { handles, lost }).ok();
+          }
           Err(mpsc::TryRecvError::Empty) => break,
           Err(mpsc::TryRecvError::Disconnected) => {
             disconnected = true;
@@ -659,6 +818,7 @@ impl App {
         }
       }
       if disconnected {
+        log::info!("[alloy] raster thread gone; ending the run loop");
         break;
       }
 
@@ -731,6 +891,7 @@ impl App {
             grid: grid_instant(counted),
           };
           if event_tx.send(signal).is_err() {
+            log::info!("[alloy] event receiver gone at the idle tick; ending the run loop");
             break 'run;
           }
           stats.idle_ticks.fetch_add(1, Ordering::Relaxed);
@@ -763,6 +924,10 @@ impl App {
         // it happened (the platform's event time, a touch sample's time).
         // False when the embedder is gone.
         let mut deliver = |mut e: AlloyEvent, at: Instant| -> bool {
+          // A failed send below means the embedder's event receiver is
+          // gone (its producer finished); named here, since the loop then
+          // winds the process down without another word.
+
           // Mouse position bookkeeping and the pointer-lock freeze: while
           // locked, mouse events carry the lock point (see
           // pointer_lock_frozen); unlocked, remember the real position as
@@ -800,7 +965,11 @@ impl App {
           // consumed here - the UI side dispatches one position per pointer
           // per frame - while a down seeds the history and an up flushes it
           // before the event travels.
-          resampler.feed(e, at, |e, at| event_tx.send_at(e, at)).is_ok()
+          let delivered = resampler.feed(e, at, |e, at| event_tx.send_at(e, at)).is_ok();
+          if !delivered {
+            log::info!("[alloy] event receiver gone; ending the run loop");
+          }
+          delivered
         };
         for raw in first_event.into_iter().chain(std::iter::from_fn(crate::sdl_utils::poll_raw_event)) {
           if let Some(cancel) = crate::sdl_utils::finger_cancel(&raw) {
@@ -1001,6 +1170,7 @@ impl App {
             if let Err(e) = crate::sdl_utils::set_window_icon(&window, width, height, &rgba) {
               log::debug!("set_window_icon failed: {e}");
             }
+            window_icon = Some((width, height, rgba));
           }
           AlloyCommand::SetFullscreen(fs) => {
             if let Err(e) = window.set_fullscreen(fs) {
@@ -1037,6 +1207,7 @@ impl App {
             event_tx.send(AlloyEvent::PointerLock { locked: applied }).ok();
           }
           AlloyCommand::SetTextInputActive(active, options) => {
+            text_input = active.then_some(options);
             if let Ok(video) = sdl_context.video() {
               if active {
                 // SDL's default policy ("auto": show the screen keyboard

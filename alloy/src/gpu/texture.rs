@@ -747,6 +747,29 @@ impl TextureRegistry {
     self.generation.get()
   }
 
+  /// Give `id`'s entry a new Impeller adoption, every other fact unchanged:
+  /// the context-loss restore (okf/done/gpu-context-loss.md), where the
+  /// raster thread rebuilt the id's storage on a fresh context and the
+  /// handle the entry held belongs to the dead one. A fresh entry (the
+  /// `Rc` holders of the old one read it per build), and a generation bump
+  /// so a retained display list over the old handles is rebuilt. An id the
+  /// registry no longer knows is skipped.
+  pub fn replace_handle(&self, id: u64, impeller: Texture) {
+    let mut entries = self.entries.borrow_mut();
+    let Some(old) = entries.get(&id) else { return };
+    let entry = TextureEntry {
+      impeller: Some(impeller),
+      width: old.width,
+      height: old.height,
+      sampler: old.sampler,
+      format: old.format,
+      shape: old.shape,
+      depth: old.depth,
+    };
+    entries.insert(id, Rc::new(entry));
+    self.generation.set(self.generation.get().wrapping_add(1));
+  }
+
   pub fn allocate_id(&self) -> u64 {
     let mut id = self.next_id.borrow_mut();
     let result = *id;

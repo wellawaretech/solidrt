@@ -5,6 +5,7 @@ mod camera_tap;
 mod camera_upright;
 mod color;
 mod composite;
+mod context_loss;
 mod cull;
 mod damage;
 mod dialog;

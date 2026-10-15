@@ -7,7 +7,8 @@
 import { createMemo, onCleanup } from "@solidjs/signals"
 import { decodeImage, type DecodedImage } from "flux:image"
 import type { TextureCodec } from "flux:image"
-import { createTexture, destroyTexture, type TextureId } from "./gpu"
+import { on } from "sol:events"
+import { createTexture, destroyTexture, uploadTexture, type TextureId } from "./gpu"
 import type { TextureCodec as SettingsCodec } from "./textures"
 
 export { decodeImage, encodeImage, encodeTexture, transcodeTexture } from "flux:image"
@@ -48,6 +49,30 @@ async function loadImage(url: string): Promise<TextureId> {
     throw new Error(`Image decode failed for ${url} (first bytes: ${sniffBytes(bytes)}): ${e}`)
   }
   return createTexture(decoded.data, decoded.width, decoded.height)
+}
+
+// A restored GPU context brings every uploaded texture back empty (see
+// onContextRestored): the shared URL images reload from their source into the
+// same id, so their mounts see nothing. A byte-sourced mount re-decodes its
+// own bytes (registered per mount in createImage).
+on("contextRestored", (e: { textures: TextureId[] }) => {
+  let lost = new Set(e.textures)
+  for (let [url, entry] of imageCache) {
+    if (entry.texture !== undefined && lost.has(entry.texture)) reloadImage(url, entry.texture)
+  }
+})
+
+async function reloadImage(url: string, id: TextureId): Promise<void> {
+  try {
+    let res = await fetch(url, { cache: "force-cache" })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    let decoded = decodeImage(await res.bytes())
+    // Still the live texture of this entry (a release and remount in the
+    // meantime made a new one, which loaded fresh).
+    if (imageCache.get(url)?.texture === id) uploadTexture(id, decoded.data)
+  } catch (e) {
+    console.error(`Image reload after GPU context loss failed for ${url}: ${e}`)
+  }
 }
 
 function acquireImage(url: string): ImageEntry {
@@ -146,6 +171,15 @@ export function createImage(src: ImageSource | (() => ImageSource)): () => Textu
       throw new Error(`Image decode failed (first bytes: ${sniffBytes(source)}): ${e}`)
     }
     holder.id = createTexture(decoded.data, decoded.width, decoded.height)
+    // After a GPU context loss the texture is empty again: decode and
+    // upload once more, for as long as this mount owns it.
+    onCleanup(
+      on("contextRestored", (e: { textures: TextureId[] }) => {
+        if (holder.id !== undefined && e.textures.includes(holder.id)) {
+          uploadTexture(holder.id, decodeImage(source).data)
+        }
+      }),
+    )
     return holder.id
   })
 }

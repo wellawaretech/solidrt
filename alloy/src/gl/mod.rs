@@ -11,6 +11,7 @@
 
 mod buffer;
 mod context;
+mod device_loss;
 mod draw;
 mod entry;
 mod glyphs;
@@ -18,6 +19,7 @@ mod pass;
 mod program;
 mod readback;
 mod rig;
+mod robustness;
 mod staging;
 mod storage;
 mod target;
@@ -26,9 +28,10 @@ mod timing;
 
 pub(crate) use buffer::{release_buffer, GpuBuffer};
 pub(crate) use context::{
-  adopt_texture, configure_opengl, create_gl_context, create_impeller_context, query_limits, setup_opengl_platform,
-  SdlGlBinding,
+  adopt_texture, configure_opengl, create_gl_context, create_impeller_context, create_window_gl_context, query_limits,
+  setup_opengl_platform, SdlGlBinding,
 };
+pub(crate) use device_loss::DeviceProbe;
 pub(crate) use draw::{
   render_display_list_into_texture, render_display_list_to_layer, render_display_list_to_texture,
   render_display_list_to_window,
@@ -46,9 +49,10 @@ pub(crate) use program::{
 };
 pub(crate) use readback::{flip_rows, read_fbo0_pixels, read_texture_pixels};
 pub(crate) use rig::{forget_window_samples, msrtt, supports_invalidate, window_fast_path, MsrttFns, OffscreenRig};
+pub(crate) use robustness::{ResetStatus, Robustness};
 pub(crate) use staging::UploadStaging;
 pub(crate) use storage::create_layer_target;
-pub(crate) use target::ShaderTexture;
+pub(crate) use target::{RebuildRegistries, ShaderTexture};
 pub(crate) use texture::{warm_compare_sampler, GpuTexture, SamplerCache};
 pub(crate) use timing::{PassTimer, Timed};
 

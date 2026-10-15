@@ -160,6 +160,30 @@ pub fn alloy_context(ctx: &Ctx<'_>) -> Option<Arc<alloy::Context>> {
   try_gui(ctx).map(|g| g.alloy.clone())
 }
 
+/// The UI side of a GL context recovery (okf/done/gpu-context-loss.md),
+/// from alloy's `ContextRestored` event: the render tree's paint caches and
+/// text layers go (textures of the dead context), the platform's text
+/// state forgets its GPU side, the texture registry takes the new handles
+/// and the raster thread is resynced, and a frame is requested to rebuild
+/// everything. `lost` is trimmed of what the engine refills itself (the
+/// text atlas) before the app hears it. No-op before the GUI is installed.
+pub(crate) fn restore_context(
+  ctx: &Ctx<'_>,
+  handles: Vec<(u64, alloy::impellers::Texture)>,
+  lost: &mut alloy::LostContent,
+) {
+  let Some(gui) = try_gui(ctx) else { return };
+  if let Some(tree) = ctx.userdata::<tree::SharedRenderTree>() {
+    tree.0.borrow_mut().drop_paint_caches();
+  }
+  gui.platform.gpu_reset();
+  gui.alloy.restore_handles(handles);
+  if let Some(atlas) = gui.platform.text_atlas_texture_id() {
+    lost.textures.retain(|id| *id != atlas);
+  }
+  gui.platform.request_frame();
+}
+
 /// The host instances the GUI bindings need, owned by the runner (lattice) and
 /// lent to flux at engine-build time. flux owns which plugins exist and the
 /// order they register in; the runner only supplies the instances. Grows a

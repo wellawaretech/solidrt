@@ -597,6 +597,79 @@ impl GpuTexture {
     }
   }
 
+  /// Storage like `like`'s on the current context, content undefined: the
+  /// context-loss rebuild (okf/done/gpu-context-loss.md), where every id
+  /// must exist again at its declared size, shape, format and sampling
+  /// before anything draws, and the content is the owner's to re-supply.
+  /// Every level a mip-sampled id samples is allocated, so the object is
+  /// complete; a chain the uploads regenerate is regenerated at the next
+  /// upload as always. Compressed storage, which no upload ever
+  /// respecifies, is immutable (glTexStorage2D), as a volume's is.
+  pub fn allocate_like(gl: &glow::Context, like: &GpuTexture) -> Result<GpuTexture, String> {
+    let (width, height, depth, format, sampler, shape) =
+      (like.width, like.height, like.depth, like.format, like.sampler, like.shape);
+    let (internal, layout, ty) = gl_storage(format);
+    let filter = fallback_filter(format);
+    let size = ISize::new(width as i64, height as i64);
+    let texture = match shape {
+      TextureShape::D2 if !format.is_compressed() => {
+        let texture = GpuTexture::new(gl, size, sampler, format);
+        texture.regenerate_mipmaps(gl);
+        texture
+      }
+      TextureShape::D2 => unsafe {
+        let levels = if sampler.mipmap { mip_levels(width.max(height)) } else { 1 };
+        let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
+        let gl_texture = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
+        gl.bind_texture(glow::TEXTURE_2D, Some(gl_texture));
+        gl.tex_storage_2d(glow::TEXTURE_2D, levels as i32, internal, width as i32, height as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
+        gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+        GpuTexture { gl_texture, width, height, depth: 1, shape, sampler, format, label: None }
+      },
+      TextureShape::Cube => unsafe {
+        let levels = if sampler.mipmap { mip_levels(width) } else { 1 };
+        let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_CUBE_MAP);
+        let gl_texture = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
+        gl.bind_texture(glow::TEXTURE_CUBE_MAP, Some(gl_texture));
+        for level in 0..levels {
+          let edge = mip_size(width, level) as i32;
+          for face in 0..CUBE_FACES as u32 {
+            gl.tex_image_2d(
+              glow::TEXTURE_CUBE_MAP_POSITIVE_X + face,
+              level as i32,
+              internal as i32,
+              edge,
+              edge,
+              0,
+              layout,
+              ty,
+              glow::PixelUnpackData::Slice(None),
+            );
+          }
+        }
+        gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MIN_FILTER, filter as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MAG_FILTER, filter as i32);
+        gl.bind_texture(glow::TEXTURE_CUBE_MAP, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+        GpuTexture { gl_texture, width, height, depth: 1, shape, sampler, format, label: None }
+      },
+      TextureShape::D3 | TextureShape::D2Array => unsafe {
+        let levels = if sampler.mipmap { shape.mip_levels(width, height, depth) } else { 1 };
+        let target = bind_target(shape);
+        let prev = gl.get_parameter_i32(binding_query(shape));
+        let gl_texture = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
+        gl.bind_texture(target, Some(gl_texture));
+        gl.tex_storage_3d(target, levels as i32, internal, width as i32, height as i32, depth as i32);
+        gl.tex_parameter_i32(target, glow::TEXTURE_MIN_FILTER, filter as i32);
+        gl.tex_parameter_i32(target, glow::TEXTURE_MAG_FILTER, filter as i32);
+        gl.bind_texture(target, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+        GpuTexture { gl_texture, width, height, depth, shape, sampler, format, label: None }
+      },
+    };
+    Ok(GpuTexture { label: like.label.clone(), ..texture })
+  }
+
   /// Rebuild the mip chain from level 0, when the id keeps one; a no-op
   /// otherwise (and on a cube map, whose chain is fixed at creation). The
   /// whole-frame and whole-volume uploads do this themselves.

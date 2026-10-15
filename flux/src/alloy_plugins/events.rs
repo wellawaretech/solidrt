@@ -204,6 +204,22 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent, time_stamp_ms: f64) -> boo
         emit_event(&ctx, "powerStatus", obj);
       });
     }
+    // The GL context was lost and the engine rebuilt every GPU resource on
+    // a fresh one: the UI side swaps its handles (super::restore_context),
+    // then the app hears which content it has to re-supply. Not sticky: a
+    // late subscriber has nothing to restore.
+    AlloyEvent::ContextRestored { handles, lost } => {
+      let handles = handles.clone();
+      let mut lost = lost.clone();
+      exec.exec(move |ctx| {
+        super::restore_context(&ctx, handles, &mut lost);
+        let obj = Object::new(ctx.clone()).expect("create object");
+        obj.set("textures", id_array(&ctx, &lost.textures)).expect("set textures");
+        obj.set("buffers", id_array(&ctx, &lost.buffers)).expect("set buffers");
+        obj.set("targets", id_array(&ctx, &lost.targets)).expect("set targets");
+        emit_event(&ctx, "contextRestored", obj);
+      });
+    }
     // Runner-owned: pointer dispatch is hit testing, not marshalling; the
     // frame signals, Quit and Exposed are the run loop's own (see lattice's
     // event loop). No wildcard - a new variant must be placed above or here.
@@ -306,4 +322,13 @@ fn emit_key(
     obj.set("timeStamp", time_stamp_ms).expect("set timeStamp");
     emit_event(&ctx, name, obj);
   });
+}
+
+/// Registry ids as a JS array of numbers.
+fn id_array<'js>(ctx: &rquickjs::Ctx<'js>, ids: &[u64]) -> Array<'js> {
+  let arr = Array::new(ctx.clone()).expect("create id array");
+  for (i, id) in ids.iter().enumerate() {
+    arr.set(i, *id as f64).expect("set id");
+  }
+  arr
 }

@@ -359,6 +359,16 @@ impl EventSender {
 
 #[derive(Clone)]
 pub enum AlloyEvent {
+  // The GL context was lost and the engine rebuilt every GPU resource on a
+  // fresh one (okf/done/gpu-context-loss.md): `handles` are the new
+  // Impeller adoptions per texture id for the UI thread's registry (its old
+  // ones belong to the dead context), `lost` the ids whose content the app
+  // alone can re-supply. The UI thread installs the handles, drops its paint
+  // caches, resyncs the raster thread, and tells the app.
+  ContextRestored {
+    handles: Vec<(u64, crate::impellers::Texture)>,
+    lost: crate::gpu::LostContent,
+  },
   // The platform is ending this app instance: desktop window close or
   // SIGTERM, Android onDestroy, iOS applicationWillTerminate. A command, not
   // a request (compare Back): the embedder runs the app's quit hook under a

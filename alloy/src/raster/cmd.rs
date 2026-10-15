@@ -474,6 +474,17 @@ pub(crate) enum RasterCmd {
   /// The device ceilings, queried once at thread startup (see `GpuLimits`).
   /// The Context caches the reply, so this crosses once per process.
   Limits { reply: mpsc::Sender<GpuLimits> },
+  /// The UI thread has taken the restored context's handles (see
+  /// `FrameOutput::ContextRestored`): frames and handle-carrying commands
+  /// run again from here on. Until it arrives after a recovery they are
+  /// refused, since what they carry belongs to the dead context
+  /// (okf/done/gpu-context-loss.md).
+  Resync,
+  /// Mark the context lost as if its own work had reset the device
+  /// (GL_CHROMIUM_lose_context, ANGLE's test hook): the next presented
+  /// frame finds the reset status and recovers. The reply says whether the
+  /// hook exists on this driver.
+  LoseContext { reply: mpsc::Sender<bool> },
   /// Fence: answered when the thread reaches it, which (commands execute in
   /// order) is when everything queued before it has executed and nothing is
   /// drawing. See RasterSender::drain.
@@ -495,6 +506,56 @@ impl RasterCmd {
         | RasterCmd::SetWindowShader { .. }
         | RasterCmd::SetOverlay { .. }
         | RasterCmd::Drain { .. }
+        | RasterCmd::Resync
+        | RasterCmd::LoseContext { .. }
     )
+  }
+
+  /// Whether this command carries an Impeller handle or a display list of
+  /// the UI thread's making: what a recovered context must refuse until the
+  /// UI thread has resynced to it (see `Resync`). Everything else works by
+  /// registry id, which recovery keeps.
+  pub(crate) fn carries_handles(&self) -> bool {
+    matches!(
+      self,
+      RasterCmd::Frame { .. }
+        | RasterCmd::SetOverlay { .. }
+        | RasterCmd::AdoptTexture { .. }
+        | RasterCmd::RasterizeDl { .. }
+        | RasterCmd::RasterizeDlInto { .. }
+        | RasterCmd::RasterizeGlyphs { into: Some(_), .. }
+        | RasterCmd::RasterizeDlShaded { .. }
+        | RasterCmd::RerunNodeShader { .. }
+        | RasterCmd::RasterizeReadback { .. }
+        | RasterCmd::ReadTexture { .. }
+    )
+  }
+
+  /// Answer a refused command's reply, where it has one, with `error`: the
+  /// requester is blocked on it. Fire-and-forget commands have nothing to
+  /// answer; a refused frame folds its damage into the next (the caller's
+  /// job, since the damage is the frame's).
+  pub(crate) fn refuse(self, error: &str) {
+    match self {
+      RasterCmd::RasterizeDl { reply, .. } => {
+        reply.send(Err(error.to_string())).ok();
+      }
+      RasterCmd::RasterizeDlInto { reply, .. } => {
+        reply.send(Err(error.to_string())).ok();
+      }
+      RasterCmd::RasterizeGlyphs { reply, .. } => {
+        reply.send(Err(error.to_string())).ok();
+      }
+      RasterCmd::RasterizeDlShaded { reply, .. } => {
+        reply.send(Err(error.to_string())).ok();
+      }
+      RasterCmd::RasterizeReadback { reply, .. } => {
+        reply.send(Err(error.to_string())).ok();
+      }
+      RasterCmd::ReadTexture { reply, .. } => {
+        reply.send(Err(error.to_string())).ok();
+      }
+      _ => {}
+    }
   }
 }

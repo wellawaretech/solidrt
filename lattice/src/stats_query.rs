@@ -98,6 +98,7 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
     put("cameraUploaded", rc.camera_uploaded.into());
     put("cameraSkipped", rc.camera_skipped.into());
     put("fenceTimeouts", rc.fence_timeouts.into());
+    put("contextLosses", rc.context_losses.into());
     put("missedPresents", rc.missed_presents.into());
     put("cadenceHold", rc.cadence_hold.into());
     put("frameWorkMeanMs", round2(rc.work_mean_ms).into());

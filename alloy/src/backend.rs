@@ -23,6 +23,19 @@ pub enum FrameOutput {
   /// late), None without timer queries. Both feed the cadence hold
   /// (cadence.rs).
   Presented { at: std::time::Instant, ready_at: std::time::Instant, gpu_micros: Option<u64>, demanded: bool },
+  /// The GL context is lost and the raster thread has released it
+  /// (okf/done/gpu-context-loss.md): the platform side destroys it and
+  /// answers with a binding onto a fresh one (a new context on the same
+  /// window, or a recreated window where the GL stack marks the whole
+  /// display lost), or None when it cannot, which ends the process. The
+  /// raster thread blocks on the reply.
+  ContextLost { detail: String, reply: mpsc::Sender<Option<Box<dyn GlBinding>>> },
+  /// The raster thread rebuilt every GPU resource on the fresh context:
+  /// `handles` are the new Impeller adoptions per texture id, for the UI
+  /// thread's registry (its old ones belong to the dead context), and
+  /// `lost` what the app has to re-supply. Forwarded to the UI thread as
+  /// `AlloyEvent::ContextRestored`.
+  ContextRestored { handles: Vec<(u64, impellers::Texture)>, lost: crate::gpu::LostContent },
 }
 
 /// Physical framebuffer size packed for atomic hand-off from the main thread
@@ -49,6 +62,11 @@ pub(crate) trait GlBinding: Send {
   fn bind(&self) -> bool;
   /// Present the backbuffer; false with the detail in `error()`.
   fn swap(&self) -> bool;
+  /// Make no context current on the calling thread: the step before the
+  /// platform side destroys the context (a context-loss recovery), since a
+  /// context current on another thread cannot be destroyed. False with the
+  /// detail in `error()`.
+  fn release(&self) -> bool;
   /// Assert the swap interval on the current binding; a surface that never
   /// presents reports true and does nothing.
   fn set_swap_interval(&self) -> bool;
