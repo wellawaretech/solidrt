@@ -168,6 +168,41 @@ without a size. The default sun size stays 0 until those numbers exist.
 The two caps (`SHADOW_MAX_TEXELS`, `SHADOW_SLOPE_MAX`) are the tuning
 constants.
 
+## Where to pick up (2026-10-15)
+
+Built, headless-tested and tablet-measured (see Findings). Open before the
+item can move to `done/`:
+
+1. **Look at `examples/first-person.tsx` on a device.** It is the one
+   app with `shadow.radius` above 1, so it now filters through the disc:
+   the grid's banding became per-pixel grain at the medium tier, exactly
+   where a first-person eye over a floor looks. A human judgment; if the
+   grain reads badly, the answer is a tier or a radius, not the grid.
+2. **Decide the softness cap.** `SHADOW_MAX_TEXELS` (8) caps the penumbra
+   in map texels, so a finer map gives a narrower maximum and the same
+   `angularSize` means less on a sharper map; the real sun's 0.53 degrees
+   barely shows at ordinary map sizes (the example exaggerates to 10).
+   Options: a cap in world units, or a higher texel cap with the tiers'
+   tap counts raised to hold the grain. Decide after item 1.
+3. **Close the test gaps.** `tests/soft-shadows.test.tsx` measures the
+   sun (box and two cascades) and the spot, not a point light with
+   `sourceRadius` and not a probe row inside a cascade blend band. Add
+   both to the example's layout and the test.
+4. **Measure the other devices.** The TV (armeabi-v7a, its own GPU) and
+   the Pixel 7 at hard, low, medium and high on the example, with the
+   protocol in Findings (a fixed idle or a thermal-zone cooldown before
+   each row).
+5. **Optional: a tighter contact under a sized light.** The blocker
+   search averages the caster's own side, so a sized light's foot
+   measures 0.10 to 0.14 world units against 0.04 for a point source.
+   A search region that shrinks near the receiver would tighten it at
+   the cost of missing far blockers. Every PCSS has this; only pursue it
+   if item 1 shows it.
+
+Then `git mv` to `done/` and cut Findings into a note. The specular
+half of the light size is its own item:
+[3d-light-size-specular](../backlog/3d-light-size-specular.md).
+
 ## Findings
 
 - **A sized light's contact is near-hard, not hard.** The blocker search

@@ -41,6 +41,7 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 `packages/3d`.
 
+- A casting light whose `layers` share no bit with the scene's own `layers` casts nothing, silently: its shadow view draws the scene's meshes filtered by the light's mask (scene-shadows.ts makeView). Warn once per light at the sync that finds it, naming the light's and the scene's masks.
 - Mixer per-clip speed after `play()` (Three's `action.timeScale`): the core takes `setPlayer(player, { speed })` already; the mixer only reads `speed` at play. A `mixer.setSpeed(name, speed)` over the action's player. Pause is covered by the model node's `timeScale` (okf/done/native-motion-time-scale.md).
 - `shaderMaterialClass` should throw when a source declares `uLayers` as anything but `int`: a `sampler2DArray uLayers` today fails at `add()` with "param 'uLayers' is a sampler2DArray; bind it via textures", although it was bound via textures (the scene seeds its layer mask under that name). Name it in the error at the class.
 
@@ -51,6 +52,8 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 The `sol` CLI, the dev server, MCP, debug commands, examples and probes.
 
+- No control-API way to make a still scene draw N frames for a timing: a bench has to nudge a param through a debug command (the soft-shadows example's `sun({ intensity })`). Add `/frames?count=n` (and the MCP tool) that demands n frames and answers when they presented, so `/stats?window=` covers exactly them.
+- `packages/cli/agents/debugging.md` has no protocol for GPU timings on an Android device: on the SM-T500 every kgsl clock node is permission-denied, the `gpu-usr` thermal zone is readable over adb, and the same build read 240 and 335 ms a frame minutes apart as it warmed from 33 to 40 C. Add the rule: cool below a threshold (or idle a fixed 100 s) before each row, and say which.
 - `alloy/examples/draw_instanced.rs`, `alloy/examples/draw_ordered.rs` and `alloy/examples/text_layout_bench.rs` (untracked probes) no longer compile: the first two predate the pipeline vocabulary (`PipelineDesc.buffers` layouts for `attributes`/`instance_attributes`, `DrawSpec.buffers` for `buffer`/`instance_buffers`, the seven-argument instance-order call, `BufferUpdate`), the bench shapes through Impeller's `TypographyContext` where `WordCache::get_or_shape` now takes a `FontSet` and a `Fallback`; rewrite against the current API or drop them (`cargo check -p alloy --examples` lists the sites).
 - The scaffold AGENTS.md "FIRST check whether a dev server ... is already running" line (`packages/cli/src/init/scaffold/AGENTS.md`) does not say how, so an agent greps `ps` and misses the server; name the check in the line: `list_clients` (its `key` is this project) or `~/.solidrt/servers/*/live.json`.
 - `lattice/src/lib.rs:216` (the Android `start` call) warns on an unused `Result` in every Android build.

@@ -201,6 +201,12 @@ Shaped, not started.
   jitter and slow motion steps; a snapped per-target render origin plus f64
   stored translations would fix it with no API change and keep the one-write
   camera move.
+- **[Specular highlights from a light's size](backlog/3d-light-size-specular.md)** [2026-10-15]
+  A light's angularSize / sourceRadius softens its shadows but not its
+  highlight, so a sized sun still draws the pinpoint highlight of a point
+  source on glossy surfaces; widen the specular lobe from the same light size
+  (the representative-point or roughness-widening approximation), as Unreal,
+  Godot and HDRP do off the one value.
 - **[3D fill and pass count put low-end Android GPUs far off 60 fps](backlog/3d-low-end-gpu-performance.md)** [2026-08-27]
   The third-dimension demo ran at 13 fps on an Adreno 610 tablet: ~44 ms
   fragment work, ~13 ms flat per-pass overhead, ~2 ms composite. The shadow

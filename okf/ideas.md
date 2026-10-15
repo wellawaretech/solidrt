@@ -8,6 +8,7 @@ Substance is the bar: an idea here needs a decision, a design or an
 investigation before anyone could start. Work where the fix is already obvious
 is not an idea, it goes in [tiny.md](tiny.md).
 
+- `/stats?window=5000&client=<android>` answered an empty body for every row of one bench run on the SM-T500 (2026-10-15) and a well-formed one on the next run with a 30 s client timeout, while the tablet stayed connected over Wi-Fi; find out whether the stats query outlives a default curl timeout on a busy device, or the server drops the reply, before a missing row is read as a client crash.
 - The dev Player's connecting screen reads 0 presents in `sol android --census` on a Pixel 7 (Android 17) though alloy logs its first frame completed, while an app that keeps drawing (vision) reads its full ring; find out whether the compositor's per-layer history skips a layer's first frame, or the frame went through the starting window, before a 0 from a static screen is read as a bug.
 - `sol upgrade`: move the `@solidrt/*` packages and their Solid peers (solid-js, @solidjs/signals, @solidjs/universal) to a release together; today the peers need a `bun add` at the exact pin by hand (packages/core/AGENTS.md), the trap every app upgrade hits.
 - Evaluate `changesets` for release management: version bumps, changelogs and dist-tag selection across `@solidrt/*`, replacing the hand-rolled bash in release.yml. Only worth it once release cadence picks up or version drift hurts.

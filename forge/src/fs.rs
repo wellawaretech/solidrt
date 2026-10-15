@@ -569,19 +569,25 @@ pub async fn read_dir(path: &str) -> Result<Vec<DirEntry>, String> {
       while let Some(entry) = entries.next_entry().await.map_err(|e| format!("read dir {path}: {e}"))? {
         let name = entry.file_name().to_string_lossy().into_owned();
         let ft = entry.file_type().await.map_err(|e| format!("read dir {path}: {e}"))?;
-        let entry_path = entry.path().to_string_lossy().into_owned();
-        out.push(DirEntry { name, kind: type_str(ft), path: entry_path });
+        out.push(DirEntry { path: entry_path(path, &name), name, kind: type_str(ft) });
       }
       Ok(out)
     }
     Resolved::Slice(..) => Err(format!("read dir {path}: not a directory")),
     Resolved::Missing => match packed_dir_entries(path) {
       Some(entries) if !entries.is_empty() => {
-        Ok(entries.into_iter().map(|(name, kind)| DirEntry { path: format!("{path}/{name}"), name, kind }).collect())
+        Ok(entries.into_iter().map(|(name, kind)| DirEntry { path: entry_path(path, &name), name, kind }).collect())
       }
       _ => Err(missing(path, "read dir")),
     },
   }
+}
+
+// A directory entry's path: the directory's path as the caller spelled it,
+// joined with `/` on every OS (Windows accepts it), so an entry lists the
+// same on disk and in a pack.
+fn entry_path(dir: &str, name: &str) -> String {
+  format!("{}/{name}", dir.trim_end_matches('/'))
 }
 
 // Synthesize a packed-index directory listing: the immediate children of
