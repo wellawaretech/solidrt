@@ -159,6 +159,16 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   the plain box widened to cover the field: one map's texels spread over
   it, blocky everywhere) and the `cascades`/`fly` debug commands set the
   count and the shadow distance and park the flight.
+- `soft-shadows.tsx` - contact-hardening soft shadows from a light's
+  SIZE: a sun with an `angularSize` (exaggerated to 10 degrees) throws a
+  wall's shadow razor sharp at the wall's foot and wide under its top
+  edge, a spot with a `sourceRadius` does the same for a post through
+  its perspective map, and a plank leaning on the wall shows the
+  gradient along one caster; light layers keep the post out of the sun.
+  A click cycles the scene's `shadows.quality` (hard -> low -> medium ->
+  high); the `sun`/`spot`/`quality` debug commands set the lights and
+  the tier, `layout` and `samples` locate the edges for a pixel probe
+  (`tests/soft-shadows.test.tsx` measures the foot-to-tip widening).
 - `lamps.tsx` - spot and point lights in a dark courtyard: a warm SOFT
   spot (penumbra 0.4) swinging from a parent group, a fixed HARD spot
   (penumbra 0.05) aimed by `direction` at a knot on a pedestal, and a

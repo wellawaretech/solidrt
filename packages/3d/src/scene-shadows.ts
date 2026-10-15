@@ -9,9 +9,9 @@
 
 import { createDrawTarget, depthTexture, destroyTexture, limits, setTargetRect, setTargetSize } from "@solidrt/core/gpu"
 import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
-import { cascadeBoundary, copy, frustumSliceSphere, lookAt as lookAtMatrix, mat4, snapToGrid, transformVector } from "./math.ts"
+import { cascadeBoundary, copy, frustumSliceSphere, lookAt as lookAtMatrix, mat4, shadowMetric, snapToGrid, transformVector } from "./math.ts"
 import type { Mat4, Vec3 } from "./math.ts"
-import { MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
+import { MAX_LIGHTS, MAX_SHADOW_MAPS, MAX_SHADOW_TAPS } from "./glsl.ts"
 import { shadowDepthMaterial } from "./material.ts"
 import type { Material } from "./material.ts"
 import { updateCamera } from "./camera.ts"
@@ -30,6 +30,24 @@ const VERTICAL_LIGHT = 0.99
 // A perspective shadow camera's far plane (spot cone, point face) when
 // the light has no `distance` cutoff - the directional box default.
 const PERSPECTIVE_SHADOW_FAR = 500
+
+/** The soft shadow kernel's quality tier, a scene setting (Godot's soft
+ * shadow filter quality, a project setting there): how many taps the
+ * blocker search and the compare filter spend per receiving fragment per
+ * casting light whose kernel is wider than one tap. `hard` is the one
+ * hardware tap for every light, sizes and radii ignored - the low-end
+ * profile's switch. Default `medium`. */
+export type ShadowQuality = "hard" | "low" | "medium" | "high"
+
+// The tap counts per tier (search, filter), at most MAX_SHADOW_TAPS each:
+// the rotation noise falls with the square root of the count, the cost
+// with the count.
+export const SHADOW_QUALITY_TAPS: Record<ShadowQuality, { search: number; filter: number }> = {
+  hard: { search: 0, filter: 0 },
+  low: { search: 8, filter: 8 },
+  medium: { search: 16, filter: 16 },
+  high: { search: 24, filter: MAX_SHADOW_TAPS },
+}
 
 // Degrees added to a point-light face map's 90-degree fov: the guard
 // band that keeps a face-seam fragment's occluder inside the map it
@@ -138,8 +156,10 @@ export type ShadowSystem = {
   /** The slot deal changed (writeLights) or a map camera wrote
    * (a shadow view's pending camera): the uShadowMatrix array is owed. */
   markMatricesDirty(): void
-  /** Write the uShadowMatrix array through `write` if owed - the
-   * matrices that render the maps are the ones receivers look up with. */
+  /** Write the uShadowMatrix and uShadowMetric arrays through `write` if
+   * owed - the matrices that render the maps are the ones receivers look
+   * up with, and each map's metric (near, far, texel, range) is read off
+   * the same camera at the same time. */
   flushMatrices(write: (params: ShaderParams) => void): void
   /** The uShadowAtlas binding while nothing casts: the depth texture of a
    * one-texel target that renders nothing (its clear leaves depth 1, never
@@ -429,6 +449,8 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
   // any shadow camera move rewrites all MAX_SHADOW_MAPS matrices, identity
   // in the slots that are not dealt.
   let shadowMatrices: number[] = new Array(MAX_SHADOW_MAPS * 16).fill(0)
+  // Each map's uShadowMetric beside its matrix; zeros in an undealt slot.
+  let shadowMetrics: number[] = new Array(MAX_SHADOW_MAPS * 4).fill(0)
   let shadowMatricesDirty = false
   return {
     atlas: () => shadowAtlas,
@@ -446,12 +468,17 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
       shadowMatricesDirty = false
       let dealt = 0
       eachSlot((slot, _i, shadow, c) => {
-        let m = shadow.views[c]!.camera.viewProj
+        let view = shadow.views[c]!
+        let m = view.camera.viewProj
         for (let k = 0; k < 16; k++) shadowMatrices[slot * 16 + k] = m[k]!
+        shadowMetric(shadowMetrics, slot * 4, view.camera.near, view.camera.far, view.camera.fov, view.camera.ortho, view.width)
         dealt = slot + 1
       })
-      for (let slot = dealt; slot < MAX_SHADOW_MAPS; slot++) for (let k = 0; k < 16; k++) shadowMatrices[slot * 16 + k] = IDENTITY[k]!
-      write({ uShadowMatrix: shadowMatrices })
+      for (let slot = dealt; slot < MAX_SHADOW_MAPS; slot++) {
+        for (let k = 0; k < 16; k++) shadowMatrices[slot * 16 + k] = IDENTITY[k]!
+        for (let k = 0; k < 4; k++) shadowMetrics[slot * 4 + k] = 0
+      }
+      write({ uShadowMatrix: shadowMatrices, uShadowMetric: shadowMetrics })
     },
     placeholder() {
       if (placeholderTarget === null) {

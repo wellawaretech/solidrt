@@ -44,6 +44,24 @@ export const MAX_CASCADES = 4
  * every light is a fully cascaded sun. */
 export const MAX_SHADOW_MAPS = 8
 
+/** The most taps the soft shadow kernel takes (the size of SHADOW's disc
+ * table; the scene's quality tier sets the live counts up to it through
+ * `uShadowSearchTaps` / `uShadowFilterTaps`). The `high` tier's filter
+ * count. A power of two: the kernel masks its table index with it. */
+export const MAX_SHADOW_TAPS = 32
+
+// The Vogel disc the kernels draw from: MAX_SHADOW_TAPS points of a
+// golden-angle spiral on the unit disc, as a GLSL constant table. Tap k of
+// n is entry k scaled by sqrt(MAX / n), which is the n-tap spiral exactly
+// (its radii are sqrt((k + 0.5) / n)), so one table serves every tier and
+// the shader spends no sine, cosine or root per tap.
+const GOLDEN_ANGLE = 2.39996323
+const SHADOW_DISC_TABLE = Array.from({ length: MAX_SHADOW_TAPS }, (_, k) => {
+  let r = Math.sqrt((k + 0.5) / MAX_SHADOW_TAPS)
+  let a = k * GOLDEN_ANGLE
+  return `vec2(${(r * Math.cos(a)).toFixed(6)}, ${(r * Math.sin(a)).toFixed(6)})`
+}).join(", ")
+
 /** The record layout an instanced mesh's material declares as its first
  * instance buffer (`shaderMaterialClass({ instanceBuffers: [{ attributes:
  * INSTANCE_MATRIX_ATTRIBUTES }] })`): the four vec4 columns of the
@@ -876,8 +894,19 @@ export const ENVIRONMENT = glsl`
  * count 0 = it does not cast; a box light has one map, a cascaded light
  * `shadow.cascades` of them tightest first, a point light six face maps
  * in +X, -X, +Y, -Y, +Z, -Z order), `uShadowBias[N]`,
- * `uShadowNormalBias[N]` and `uShadowRadius[N]` (the filter radius in
- * map texels, 1 = one tap). The scene binds and writes all of it on every
+ * `uShadowNormalBias[N]`, `uShadowRadius[N]` (the filter radius in map
+ * texels, 1 = the one hardware tap; the floor under a sized light) and
+ * `uShadowSize[N]` (the light's size: the tangent of half a directional
+ * light's `angularSize`, a spot's or point's `sourceRadius` in world
+ * units; 0 = a point source). The atlas binds a second time as the plain
+ * `uShadowDepth` (raw depth at nearest, the blocker search's view of the
+ * same texture), and every map slot carries `uShadowMetric[M]` (near,
+ * far, texel, range: the map camera's planes in world units, the world
+ * size of one of its texels - fixed for an orthographic map, per unit of
+ * view depth for a perspective one - and far - near). The scene's
+ * quality tier writes `uShadowSearchTaps` / `uShadowFilterTaps`, the
+ * kernel's tap counts (0 = the hard tier: one tap for every light). The
+ * scene binds and writes all of it on every
  * target a receiving material can draw into; a custom material composes
  * LIGHT_SLOTS, this, SHADOW, then SHADOW_LOOKUP (in that order - the
  * lookup reads the light type and position for a point light's face
@@ -889,43 +918,90 @@ export const ENVIRONMENT = glsl`
  */
 export const SHADOW_SLOTS = glsl`
   uniform sampler2DShadow uShadowAtlas;
+  uniform sampler2D uShadowDepth;
   uniform vec4 uShadowRect[${MAX_SHADOW_MAPS}];
   uniform mat4 uShadowMatrix[${MAX_SHADOW_MAPS}];
+  uniform vec4 uShadowMetric[${MAX_SHADOW_MAPS}];
   uniform int uShadowFirst[${MAX_LIGHTS}];
   uniform int uShadowCount[${MAX_LIGHTS}];
   uniform float uShadowBias[${MAX_LIGHTS}];
   uniform float uShadowNormalBias[${MAX_LIGHTS}];
   uniform float uShadowRadius[${MAX_LIGHTS}];
+  uniform float uShadowSize[${MAX_LIGHTS}];
+  uniform int uShadowSearchTaps;
+  uniform int uShadowFilterTaps;
 `
 
 /**
- * The shadow lookup in three steps plus their composition, one map at a
- * time. `vec3 shadowPoint(vec4 coord)` takes a world point carried into a
- * casting light's clip space by that map's `uShadowMatrix[j]` to its map
- * point: xy in 0..1 across the map, z the depth to compare. `bool
- * shadowInside(vec3 p)` is whether the map has it at all (xy in 0..1, z
- * not past the far plane) - the cascade select. `float shadowSample(
- * sampler2DShadow map, vec4 rect, vec3 p, float bias, float radius)` is
- * the factor (1 lit, 0 shadowed) of a point the map has. At `radius` 1
- * it is ONE comparison tap - the sampler compares `p.z - bias` against
- * the map in hardware (LEQUAL) and LINEAR-weights the four neighbours'
- * results, the 2x2 PCF a shader loop cannot match (it weights the
- * compare, not the depth). Above 1 it averages a 3x3 grid of those taps
- * `radius` texels apart (Three's PCF kernel: the edge softens over about
- * 2 * radius texels; past ~3 the taps separate and the edge bands). A tap
- * lands in the map's tile `rect` (x, y, width, height in the atlas's 0..1
- * UV; `vec4(0, 0, 1, 1)` is a whole map), clamped to the tile inset by
- * half a texel so the footprint never reads a neighbouring map's tile.
- * `float shadow(sampler2DShadow map, vec4 rect, vec4 coord, float bias,
- * float radius)` composes the three: 1 (lit) outside the map, else the
- * sample - `shadow(uShadowAtlas, uShadowRect[0], uShadowMatrix[0] *
- * vec4(vWorldPos, 1.0), uShadowBias[0], uShadowRadius[0])`.
- * SHADOW_LOOKUP uses the steps, so it projects each map once. The engine
- * binds the comparison sampler wherever a program declares the uniform
- * as sampler2DShadow; a program declaring plain `sampler2D uShadowAtlas`
- * (hand-rolled old GLSL) still reads raw depth values at nearest.
+ * The shadow lookup of one map, in steps. `vec3 shadowPoint(vec4 coord)`
+ * takes a world point carried into a casting light's clip space by that
+ * map's `uShadowMatrix[j]` to its map point: xy in 0..1 across the map,
+ * z the depth to compare. `bool shadowInside(vec3 p)` is whether the map
+ * has it at all (xy in 0..1, z not past the far plane) - the cascade
+ * select. `float shadowSample(sampler2DShadow map, sampler2D depth,
+ * mat4 m, vec4 rect, vec4 metric, bool perspective, vec4 coord, vec3 p,
+ * vec3 n, float bias, float radius, float size, int searchTaps, int
+ * filterTaps)` is the factor (1 lit, 0 shadowed) of a point the map has:
+ * the map's two bindings (the comparison view and the raw depth view of
+ * the same texture), its matrix, tile `rect` (x, y, width, height in the
+ * atlas's 0..1 UV; `vec4(0, 0, 1, 1)` is a whole map), its
+ * `uShadowMetric`, whether its camera is perspective (a spot's or
+ * point's; a directional map is orthographic), the point's clip
+ * coordinate and map point, the receiver normal, then the light's knobs
+ * and the scene's tap counts.
+ *
+ * ONE kernel, three regimes. `radius` 1 without a `size` (or the hard
+ * tier, `filterTaps` 0) is ONE comparison tap: the sampler compares
+ * `p.z - bias` against the map in hardware (LEQUAL) and LINEAR-weights
+ * the four neighbours' results, the 2x2 PCF a shader loop cannot match
+ * (it weights the compare, not the depth). A `radius` above 1 is a disc
+ * of `filterTaps` such taps spread over `radius` texels - a Vogel spiral
+ * (even coverage at any count; a constant table, rotated per pixel by
+ * interleaved gradient noise of `gl_FragCoord` through one matrix), so
+ * the kernel never bands; the noise is the trade, as in Godot's soft
+ * shadows. A `size` above 0 is contact
+ * hardening (percentage-closer soft shadows): a search over the raw
+ * depth of the occluders within the cone from the point to the light's
+ * disc (its radius at the map's near plane, in texels, capped at
+ * SHADOW_MAX_TEXELS - a cascade's far-back near plane always reaches the
+ * cap), none found is lit, all found is umbra (the one tap), else the
+ * penumbra's half width at the receiver from the mean blocker distance
+ * times the light's size (over the blocker's distance for a perspective
+ * map: similar triangles from a disc of radius `size`), in texels at the
+ * receiver's depth, floored by `radius` and capped at SHADOW_MAX_TEXELS,
+ * sets the disc's radius. So a contact is as hard as the one tap and a
+ * far tip as wide as the light allows. Depths convert through `metric`:
+ * an orthographic map's window depth is linear in its range, a
+ * perspective map's is linearised with near and far. Every tap wider
+ * than one compares against the RECEIVER PLANE's depth at its offset
+ * (`shadowSlope`: the plane through the point with normal `n`, carried
+ * into the map and linearised at `coord`, capped at SHADOW_SLOPE_MAX
+ * per texel), so a wide kernel on a tilted receiver does not shadow
+ * itself; `bias` and the caller's normal offset apply underneath. Taps
+ * clamp to the tile inset by half a texel so the footprint never reads
+ * a neighbouring map's tile. `gl_FragCoord` makes this chunk
+ * fragment-only (which the comparison sampler made it in practice).
+ * SHADOW_LOOKUP threads the scene's slots through it; a hand-rolled
+ * program over one map passes its own. The engine binds the comparison
+ * sampler wherever a program declares the uniform as sampler2DShadow
+ * and the texture's own NEAREST state behind a plain `sampler2D`.
  */
 export const SHADOW = glsl`
+  // The widest kernel in map texels, search and filter alike: the cap on
+  // softness. Past it the disc's taps sit too far apart for the tap
+  // counts and the rotation noise shows; a blocker farther out is not
+  // found, so a shadow edge wider than this stays hard.
+  const float SHADOW_MAX_TEXELS = 8.0;
+  // The cap on the receiver plane's depth gradient, window depth per
+  // texel: a receiver seen edge-on by the light would otherwise bias its
+  // taps across the whole map.
+  const float SHADOW_SLOPE_MAX = 0.01;
+  // The interleaved gradient noise constants that turn a fragment
+  // position into the disc's rotation.
+  const vec3 IGN = vec3(0.06711056, 0.00583715, 52.9829189);
+  // The unit Vogel disc, MAX_SHADOW_TAPS taps (see SHADOW_DISC_TABLE).
+  const vec2 SHADOW_DISC[${MAX_SHADOW_TAPS}] = vec2[${MAX_SHADOW_TAPS}](${SHADOW_DISC_TABLE});
+
   vec3 shadowPoint(vec4 coord) {
     return coord.xyz / coord.w * 0.5 + 0.5;
   }
@@ -934,26 +1010,129 @@ export const SHADOW = glsl`
     return all(greaterThanEqual(p.xy, vec2(0.0))) && all(lessThanEqual(p, vec3(1.0)));
   }
 
-  float shadowSample(sampler2DShadow map, vec4 rect, vec3 p, float bias, float radius) {
+  // Window depth to the map camera's view depth in world units.
+  float shadowDepth(float z, vec4 metric, bool perspective) {
+    if (!perspective) return metric.x + z * metric.w;
+    float ndc = z * 2.0 - 1.0;
+    return 2.0 * metric.x * metric.y / (metric.y + metric.x - ndc * (metric.y - metric.x));
+  }
+
+  // World units per map texel at view depth d.
+  float shadowTexelWorld(float d, vec4 metric, bool perspective) {
+    return perspective ? metric.z * d : metric.z;
+  }
+
+  float shadowRotation(vec2 fragCoord) {
+    return 6.28318530 * fract(IGN.z * fract(dot(fragCoord, IGN.xy)));
+  }
+
+  // The disc's frame for one kernel: the table's first taps entries,
+  // scaled to the n-tap spiral of radius texels and rotated by phi, as
+  // one matrix applied per tap.
+  mat2 shadowDisc(int taps, float phi, float radius) {
+    float scale = radius * sqrt(float(${MAX_SHADOW_TAPS}) / float(taps));
+    float c = cos(phi);
+    float s = sin(phi);
+    return mat2(c, s, -s, c) * scale;
+  }
+
+  // The receiver plane's depth change per texel step on the map, in x
+  // and y: two tangents of the plane through the point with normal n,
+  // carried into the map by m as directions and linearised at coord
+  // (exact for an orthographic map), solved for the gradient.
+  vec2 shadowSlope(mat4 m, vec4 coord, vec3 n, vec2 tileTexels) {
+    vec3 axis = abs(n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    vec3 t1 = normalize(cross(n, axis));
+    vec3 t2 = cross(n, t1);
+    vec4 d1 = m * vec4(t1, 0.0);
+    vec4 d2 = m * vec4(t2, 0.0);
+    float w2 = coord.w * coord.w;
+    vec3 e1 = (d1.xyz * coord.w - coord.xyz * d1.w) / w2;
+    vec3 e2 = (d2.xyz * coord.w - coord.xyz * d2.w) / w2;
+    vec2 u1 = e1.xy * 0.5 * tileTexels;
+    vec2 u2 = e2.xy * 0.5 * tileTexels;
+    float z1 = e1.z * 0.5;
+    float z2 = e2.z * 0.5;
+    float det = u1.x * u2.y - u1.y * u2.x;
+    if (abs(det) < 1e-8) return vec2(0.0);
+    vec2 s = vec2(z1 * u2.y - z2 * u1.y, u1.x * z2 - u2.x * z1) / det;
+    float len = length(s);
+    return len > SHADOW_SLOPE_MAX ? s * (SHADOW_SLOPE_MAX / len) : s;
+  }
+
+  // The mean window depth of the occluders within search texels of base
+  // (a texel closer than the receiver plane at that tap) and how many
+  // taps found one; 0 found means nothing shades the point.
+  // The loops run to the tap-count UNIFORM itself, with the table index
+  // masked to the table's length, and never to a bound the compiler can
+  // cap (a constant, or min(taps, MAX)): a known cap gets both loops
+  // unrolled to the table's full length with every iteration predicated,
+  // and each pixel then pays all MAX taps twice per light whatever the
+  // tier (measured on an Adreno 610: the tiers cost the same, twice the
+  // medium tier's real cost). The scene's tiers never exceed the table.
+  float shadowBlockers(sampler2D depth, vec2 base, vec2 lo, vec2 hi, vec2 texel, float z, vec2 slope,
+                       float search, int taps, float phi, out int found) {
+    mat2 disc = shadowDisc(taps, phi, search);
+    float sum = 0.0;
+    found = 0;
+    for (int k = 0; k < taps; k++) {
+      vec2 o = disc * SHADOW_DISC[k & ${MAX_SHADOW_TAPS - 1}];
+      float d = texture(depth, clamp(base + o * texel, lo, hi)).r;
+      if (d < z + dot(o, slope)) {
+        sum += d;
+        found++;
+      }
+    }
+    return found > 0 ? sum / float(found) : 0.0;
+  }
+
+  // The compare filter: the mean of taps hardware taps on a disc of
+  // radius texels, each against the receiver plane's depth at its offset.
+  float shadowFilter(sampler2DShadow map, vec2 base, vec2 lo, vec2 hi, vec2 texel, float z, vec2 slope,
+                     float radius, int taps, float phi) {
+    mat2 disc = shadowDisc(taps, phi, radius);
+    float sum = 0.0;
+    for (int k = 0; k < taps; k++) {
+      vec2 o = disc * SHADOW_DISC[k & ${MAX_SHADOW_TAPS - 1}];
+      sum += texture(map, vec3(clamp(base + o * texel, lo, hi), z + dot(o, slope)));
+    }
+    return sum / float(taps);
+  }
+
+  float shadowSample(sampler2DShadow map, sampler2D depth, mat4 m, vec4 rect, vec4 metric, bool perspective,
+                     vec4 coord, vec3 p, vec3 n, float bias, float radius, float size, int searchTaps, int filterTaps) {
     vec2 texel = 1.0 / vec2(textureSize(map, 0));
     vec2 lo = rect.xy + 0.5 * texel;
     vec2 hi = rect.xy + rect.zw - 0.5 * texel;
     vec2 base = rect.xy + p.xy * rect.zw;
     float z = p.z - bias;
-    if (radius <= 1.0) return texture(map, vec3(clamp(base, lo, hi), z));
-    vec2 step = texel * radius;
-    float sum = 0.0;
-    for (int y = -1; y <= 1; y++) {
-      for (int x = -1; x <= 1; x++) {
-        sum += texture(map, vec3(clamp(base + vec2(float(x), float(y)) * step, lo, hi), z));
+    if (filterTaps == 0 || (radius <= 1.0 && size <= 0.0)) return texture(map, vec3(clamp(base, lo, hi), z));
+    vec2 slope = shadowSlope(m, coord, n, rect.zw / texel);
+    float phi = shadowRotation(gl_FragCoord.xy);
+    float r = radius;
+    if (size > 0.0) {
+      // The search cone from the point toward the light's disc is widest
+      // at the map's near plane; its radius there, in texels, bounds the
+      // region whose occluders can soften this point.
+      float receiver = shadowDepth(p.z, metric, perspective);
+      float search = size * (receiver - metric.x) / (perspective ? receiver * shadowTexelWorld(metric.x, metric, true) : metric.z);
+      search = min(search, SHADOW_MAX_TEXELS);
+      if (search >= 1.0) {
+        int found;
+        float zb = shadowBlockers(depth, base, lo, hi, texel, z, slope, search, searchTaps, phi, found);
+        if (found == 0) return 1.0;
+        if (found == searchTaps) return texture(map, vec3(clamp(base, lo, hi), z));
+        float blocker = shadowDepth(zb, metric, perspective);
+        // The penumbra's half width at the receiver: the blocker-to-
+        // receiver distance times the light's size, over the blocker's
+        // distance for a perspective map, in texels at the receiver's
+        // depth. Never above the search radius, so all found is umbra.
+        float penumbra = size * (receiver - blocker) / (perspective ? blocker : 1.0) / shadowTexelWorld(receiver, metric, perspective);
+        r = clamp(penumbra, radius, SHADOW_MAX_TEXELS);
       }
     }
-    return sum / 9.0;
-  }
-
-  float shadow(sampler2DShadow map, vec4 rect, vec4 coord, float bias, float radius) {
-    vec3 p = shadowPoint(coord);
-    return shadowInside(p) ? shadowSample(map, rect, p, bias, radius) : 1.0;
+    if (r <= 1.0) return texture(map, vec3(clamp(base, lo, hi), z));
+    return shadowFilter(map, base, lo, hi, texel, z, slope, r, filterTaps, phi);
   }
 `
 
@@ -970,17 +1149,29 @@ export const SHADOW = glsl`
  * light is looked up in the FIRST of its maps that has the point (a box
  * light has one; a cascaded light's maps come tightest first, so the
  * sharpest cascade that has the point wins and a point past the last is
- * lit) with that map's `uShadowMatrix[j]`, its tile, `uShadowBias[i]`
- * and `uShadowRadius[i]`. Inside the outer SHADOW_BLEND of a map (in map 0..1
+ * lit) with that map's `uShadowMatrix[j]`, its tile and metric,
+ * `uShadowBias[i]`, `uShadowRadius[i]` and `uShadowSize[i]`, perspective
+ * for every light but a directional one (`float shadowAt(int j, vec4
+ * coord, vec3 p, vec3 n, float bias, float radius, float size, bool
+ * perspective)` is that one-map step over the slots). Inside the outer
+ * SHADOW_BLEND of a map (in map 0..1
  * units, so 0.1 is its outer 10% on each side) the factor fades into
  * the next cascade's, so the hand-over is a band and not a seam; the
  * last map, a box light's only one, and any rim the next cascade does
- * not reach (the near side, at the camera's feet) have no band.
+ * not reach (the near side, at the camera's feet) have no band. A
+ * penumbra is estimated in world units and converted per map, so it is
+ * continuous across the band.
  * Position and normal are arguments, so no varying name is pinned and a
- * custom vertex stage composes freely.
+ * custom vertex stage composes freely; the normal also sets the receiver
+ * plane the wide kernels bias against.
  */
 export const SHADOW_LOOKUP = glsl`
   const float SHADOW_BLEND = 0.1;
+
+  float shadowAt(int j, vec4 coord, vec3 p, vec3 n, float bias, float radius, float size, bool perspective) {
+    return shadowSample(uShadowAtlas, uShadowDepth, uShadowMatrix[j], uShadowRect[j], uShadowMetric[j], perspective,
+                        coord, p, n, bias, radius, size, uShadowSearchTaps, uShadowFilterTaps);
+  }
 
   float lightShadow(int i, vec3 worldPos, vec3 n) {
     int count = uShadowCount[i];
@@ -988,7 +1179,13 @@ export const SHADOW_LOOKUP = glsl`
     vec4 w = vec4(worldPos + n * uShadowNormalBias[i], 1.0);
     float bias = uShadowBias[i];
     float radius = uShadowRadius[i];
+    float size = uShadowSize[i];
+    bool perspective = uLightType[i] != LIGHT_DIRECTIONAL;
     int first = uShadowFirst[i];
+    // The maps to scan: a point light's one face by the dominant axis,
+    // else the light's maps tightest first.
+    int start = first;
+    int last = first + count - 1;
     if (uLightType[i] == LIGHT_POINT) {
       // Six 90-degree face frusta partition every direction: the
       // dominant axis IS the face, so no scan and no behind-the-camera
@@ -1000,22 +1197,41 @@ export const SHADOW_LOOKUP = glsl`
       if (ad.x >= ad.y && ad.x >= ad.z) face = dv.x > 0.0 ? 0 : 1;
       else if (ad.y >= ad.z) face = dv.y > 0.0 ? 2 : 3;
       else face = dv.z > 0.0 ? 4 : 5;
-      int j = first + face;
-      return shadow(uShadowAtlas, uShadowRect[j], uShadowMatrix[j] * w, bias, radius);
+      start = first + face;
+      last = start;
     }
-    int last = first + count - 1;
-    for (int j = first; j <= last; j++) {
-      vec3 p = shadowPoint(uShadowMatrix[j] * w);
-      if (!shadowInside(p)) continue;
-      float s = shadowSample(uShadowAtlas, uShadowRect[j], p, bias, radius);
-      if (j == last) return s;
+    // ONE call of the kernel: the first map that has the point is
+    // sampled, and inside its outer SHADOW_BLEND band the scan goes on
+    // to the next map, sampled through the same call and mixed in
+    // (blend holds the weight from then on, -1 before). Inlined at three
+    // sites (face, cascade, partner) the kernel outgrew an Adreno 610's
+    // instruction cache and every pixel paid: the hard path alone ran
+    // 115 ms a frame against 72 with one copy, the soft tiers two and a
+    // half times their cost. A separate two-pass loop over the chosen
+    // maps did not get there either: a counted one was unrolled into
+    // two predicated copies, a dynamically indexed local array went to
+    // scratch memory, and any state held across the call cost a third.
+    float s = 1.0;
+    float blend = -1.0;
+    for (int j = start; j <= last; j++) {
+      vec4 coord = uShadowMatrix[j] * w;
+      vec3 p = shadowPoint(coord);
+      if (!shadowInside(p)) {
+        if (blend >= 0.0) break;
+        continue;
+      }
+      float v = shadowAt(j, coord, p, n, bias, radius, size, perspective);
+      if (blend >= 0.0) {
+        s = mix(v, s, blend);
+        break;
+      }
+      s = v;
+      if (j == last) break;
       float edge = min(min(p.x, 1.0 - p.x), min(p.y, 1.0 - p.y));
-      if (edge >= SHADOW_BLEND) return s;
-      vec3 q = shadowPoint(uShadowMatrix[j + 1] * w);
-      if (!shadowInside(q)) return s;
-      return mix(shadowSample(uShadowAtlas, uShadowRect[j + 1], q, bias, radius), s, edge / SHADOW_BLEND);
+      if (edge >= SHADOW_BLEND) break;
+      blend = edge / SHADOW_BLEND;
     }
-    return 1.0;
+    return s;
   }
 `
 

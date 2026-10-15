@@ -26,9 +26,12 @@ export type ShadowOptions = {
    * world units (default 0) - the acne fix that keeps contact shadows. */
   normalBias?: number
   /** Filter radius in map texels (default 1): 1 is the single hardware
-   * compare tap (a 2x2 bilinear PCF); above 1 a 3x3 grid of those taps
-   * spread `radius` texels apart, Three's `shadow.radius` - softer edges
-   * for the texel stairs a close receiver shows, at nine taps. */
+   * compare tap (a 2x2 bilinear PCF); above 1 a disc of the scene's
+   * quality tier's taps spread over `radius` texels, Three's
+   * `shadow.radius`, Godot's shadow_blur - a uniform softening for the
+   * texel stairs a close receiver shows. Under a light with a size
+   * (`angularSize`, `sourceRadius`) it is the FLOOR the penumbra never
+   * narrows below (HDRP's min filter size). */
   radius?: number
   /** The light frustum; absent keys keep the defaults +-5, 0.5..500.
    * Ignored by a cascaded light (its frustums follow the scene camera). */
@@ -73,6 +76,14 @@ export type DirectionalLight = SceneNode & {
   /** Linear [r, g, b] 0..1. */
   color: Vec3
   intensity: number
+  /** The light's angular size in DEGREES, its disc's diameter as seen
+   * from the scene (the sun's is about 0.53); default 0, a point source.
+   * Above 0 a casting light's shadows harden where a caster meets its
+   * receiver and widen with the distance between them (contact-hardening
+   * soft shadows): the penumbra grows by the distance times the size.
+   * Godot's light_angular_distance, Unreal's source angle, HDRP's
+   * angular diameter. Write through setLight. */
+  angularSize: number
   /** Layer filter bitmask (default all bits set): the light lights and
    * shadows only the meshes whose `layers` intersect it - Unity's
    * cullingMask, Godot's light_cull_mask. Write through setLight. */
@@ -116,6 +127,12 @@ export type SpotLight = SceneNode & {
   /** Falloff exponent (default 2, physical inverse-square; 0 = no
    * distance falloff). */
   decay: number
+  /** The light source's radius in world units; default 0, a point
+   * source. Above 0 a casting light's shadows harden at a contact and
+   * widen with the caster-to-receiver distance over the light-to-caster
+   * distance (contact-hardening soft shadows). Godot's light_size,
+   * Unreal's source radius, HDRP's shape radius. Write through setLight. */
+  sourceRadius: number
   /** Render a shadow map from this light: the directional machinery
    * with a perspective camera at the light's world position along its
    * world direction, fov = the cone (2 * angle), far = `distance` (or
@@ -138,9 +155,9 @@ export type SpotShadowOptions = {
    * world units (default 0). */
   normalBias?: number
   /** Filter radius in map texels (default 1): 1 is the single hardware
-   * compare tap (a 2x2 bilinear PCF); above 1 a 3x3 grid of those taps
-   * spread `radius` texels apart, Three's `shadow.radius` - softer edges
-   * for the texel stairs a close receiver shows, at nine taps. */
+   * compare tap (a 2x2 bilinear PCF); above 1 a disc of the scene's
+   * quality tier's taps spread over `radius` texels (ShadowOptions.radius
+   * is the contract); the floor under a light with a `sourceRadius`. */
   radius?: number
   /** The shadow camera's near plane in world units (default 0.5); its
    * far is the light's `distance` (or the directional default, 500,
@@ -165,6 +182,9 @@ export type PointLight = SceneNode & {
   distance: number
   /** Falloff exponent (default 2). */
   decay: number
+  /** The light source's radius in world units; default 0, a point
+   * source (SpotLight.sourceRadius is the contract). */
+  sourceRadius: number
   /** Render shadow maps from this light: six 90-degree face maps
    * (perspective, world-axis aligned) as tiles of the scene's shadow
    * atlas, claiming six shadow slots; a receiver picks the face by the
@@ -204,6 +224,8 @@ export type DirectionalLightOptions = {
   direction?: Vec3
   color?: Vec3
   intensity?: number
+  /** Angular size in degrees, default 0 (DirectionalLight.angularSize). */
+  angularSize?: number
   /** Layer filter bitmask, default all bits set (the light lights and
    * shadows only meshes whose `layers` intersect it). */
   layers?: number
@@ -221,6 +243,8 @@ export type SpotLightOptions = {
   angle?: number
   penumbra?: number
   decay?: number
+  /** Source radius in world units, default 0 (SpotLight.sourceRadius). */
+  sourceRadius?: number
   castShadow?: boolean
   /** Shadow-map options, merged key by key (setLight keeps unmentioned ones). */
   shadow?: SpotShadowOptions
@@ -232,6 +256,8 @@ export type PointLightOptions = {
   layers?: number
   distance?: number
   decay?: number
+  /** Source radius in world units, default 0 (SpotLight.sourceRadius). */
+  sourceRadius?: number
   castShadow?: boolean
   /** Shadow-map options, merged key by key (setLight keeps unmentioned ones). */
   shadow?: SpotShadowOptions
@@ -272,6 +298,19 @@ function checkFalloff(update: { distance?: number; decay?: number }): void {
 
 function checkRadius(radius: number): number {
   if (!(radius >= 1)) throw new Error("shadow.radius must be >= 1 (1 = the single hardware tap)")
+  return radius
+}
+
+// A directional light's disc spans less than the whole sky.
+const ANGULAR_SIZE_MAX = 180
+
+function checkAngularSize(size: number): number {
+  if (!(size >= 0 && size < ANGULAR_SIZE_MAX)) throw new Error("Light angularSize must be in [0, 180) degrees (0 = a point source)")
+  return size
+}
+
+function checkSourceRadius(radius: number): number {
+  if (!(radius >= 0)) throw new Error("Light sourceRadius must be >= 0 (0 = a point source)")
   return radius
 }
 
@@ -321,6 +360,7 @@ export function createDirectionalLight(opts: DirectionalLightOptions = {}): Dire
   light.direction = [...(opts.direction ?? [0, -1, 0])] as Vec3
   light.color = [...(opts.color ?? [1, 1, 1])] as Vec3
   light.intensity = opts.intensity ?? 1
+  light.angularSize = opts.angularSize !== undefined ? checkAngularSize(opts.angularSize) : 0
   light.layers = opts.layers !== undefined ? checkMask(opts.layers, "createDirectionalLight") : ALL_LAYERS
   light.castShadow = opts.castShadow === true
   light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: 1, camera: { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500 }, cascades: 1, distance: null, splits: null }
@@ -340,6 +380,7 @@ export function createSpotLight(opts: SpotLightOptions = {}): SpotLight {
   light.angle = opts.angle ?? 60
   light.penumbra = opts.penumbra ?? 0
   light.decay = opts.decay ?? 2
+  light.sourceRadius = opts.sourceRadius !== undefined ? checkSourceRadius(opts.sourceRadius) : 0
   light.castShadow = opts.castShadow === true
   light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: 1, near: 0.5 }
   if (opts.shadow !== undefined) mergeSpotShadow(light.shadow, opts.shadow)
@@ -365,6 +406,7 @@ export function createPointLight(opts: PointLightOptions = {}): PointLight {
   light.layers = opts.layers !== undefined ? checkMask(opts.layers, "createPointLight") : ALL_LAYERS
   light.distance = opts.distance ?? 0
   light.decay = opts.decay ?? 2
+  light.sourceRadius = opts.sourceRadius !== undefined ? checkSourceRadius(opts.sourceRadius) : 0
   light.castShadow = opts.castShadow === true
   light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: 1, near: 0.5 }
   if (opts.shadow !== undefined) mergeSpotShadow(light.shadow, opts.shadow)
@@ -406,6 +448,7 @@ export function setLight(
   if (light.type === "directional") {
     if (update.direction !== undefined) light.direction = [...update.direction] as Vec3
     if (update.color !== undefined) light.color = [...update.color] as Vec3
+    if (update.angularSize !== undefined) light.angularSize = checkAngularSize(update.angularSize)
     let shadowChanged = false
     if (update.castShadow !== undefined && update.castShadow !== light.castShadow) {
       light.castShadow = update.castShadow
@@ -424,6 +467,7 @@ export function setLight(
     if (update.angle !== undefined) light.angle = update.angle
     if (update.penumbra !== undefined) light.penumbra = update.penumbra
     if (update.decay !== undefined) light.decay = update.decay
+    if (update.sourceRadius !== undefined) light.sourceRadius = checkSourceRadius(update.sourceRadius)
     let shadowChanged = false
     if (update.castShadow !== undefined && update.castShadow !== light.castShadow) {
       light.castShadow = update.castShadow
@@ -439,6 +483,7 @@ export function setLight(
     if (update.color !== undefined) light.color = [...update.color] as Vec3
     if (update.distance !== undefined) light.distance = update.distance
     if (update.decay !== undefined) light.decay = update.decay
+    if (update.sourceRadius !== undefined) light.sourceRadius = checkSourceRadius(update.sourceRadius)
     let shadowChanged = false
     if (update.castShadow !== undefined && update.castShadow !== light.castShadow) {
       light.castShadow = update.castShadow

@@ -786,6 +786,23 @@ export function cascadeBoundary(near: number, far: number, index: number, count:
   return near + (far - near) * splits[index]!
 }
 
+/**
+ * A shadow map's metric for the receiving lookup (`uShadowMetric[j]`,
+ * four floats at `at` in `out`): the map camera's near and far in world
+ * units, the world size of one of its `width` texels - an orthographic
+ * map's fixed `(right - left) / width`, a perspective map's
+ * `2 tan(fov / 2) / width` per unit of view depth - and `far - near`,
+ * what an orthographic map's window depth spans. The lookup converts
+ * depth deltas and penumbra widths between world units and texels with
+ * it.
+ */
+export function shadowMetric(out: number[], at: number, near: number, far: number, fov: number, ortho: { left: number; right: number } | null, width: number): void {
+  out[at] = near
+  out[at + 1] = far
+  out[at + 2] = ortho === null ? (2 * Math.tan((fov * Math.PI) / 360)) / width : (ortho.right - ortho.left) / width
+  out[at + 3] = far - near
+}
+
 /** The camera facts a frustum slice depends on: its view matrix (rows are
  * its right, up and back axes), eye, vertical fov in degrees and, for an
  * orthographic camera, the extents (fov ignored then). */

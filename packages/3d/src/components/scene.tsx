@@ -7,6 +7,7 @@ import type { DensityProps } from "./fill-math.ts"
 import { createScene } from "../scene.ts"
 import { feedPointer } from "../scene-pointer.ts"
 import type { BlendSpace, BloomOptions, EnvironmentOptions, FogOptions, ResolveInput, Scene as SceneHandle, SkyboxOptions, ToneMapping } from "../scene.ts"
+import type { ShadowQuality } from "../scene-shadows.ts"
 import type { ScenePointerEvent, SceneTapEvent, SceneWheelEvent } from "../node.ts"
 import type { CameraUpdate } from "../camera.ts"
 
@@ -85,6 +86,11 @@ export type SceneProps = ScenePointerProps &
   toneMapping?: ToneMapping
   /** Output exposure (scene.setExposure), default 1. Reactive. */
   exposure?: number
+  /** Scene-wide shadow settings: `quality` (scene.setShadowQuality) is
+   * the soft shadow kernel's tier, "hard" | "low" | "medium" (default) |
+   * "high" - the tap count every light with a `radius` above 1 or a
+   * size spends, "hard" the one tap for all of them. Reactive. */
+  shadows?: { quality?: ShadowQuality }
   /** The buffer's blend space (SceneOptions.blendSpace), default
    * "linear"; fixed at creation. "display" blends sRGB-encoded values
    * in an rgba8 buffer that is itself the displayed image - the mode a
@@ -191,6 +197,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
       fog: props.fog,
       toneMapping: props.toneMapping,
       exposure: props.exposure,
+      shadows: props.shadows,
       blendSpace: props.blendSpace,
       resolve: props.resolve,
       bloom: props.bloom,
@@ -257,6 +264,11 @@ export let Scene: ParentComponent<SceneProps> = props => {
   createEffect(
     () => props.exposure,
     e => scene.setExposure(e ?? 1),
+    { defer: true },
+  )
+  createEffect(
+    () => props.shadows?.quality,
+    q => scene.setShadowQuality(q ?? "medium"),
     { defer: true },
   )
   createEffect(

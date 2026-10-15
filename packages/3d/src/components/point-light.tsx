@@ -18,12 +18,16 @@ export type PointLightProps = TransformProps & {
   distance?: number
   /** Falloff exponent; default 2 (inverse square). */
   decay?: number
+  /** The light source's radius in world units; default 0, a point
+   * source. Above 0 its shadows harden at a contact and widen with the
+   * caster-to-receiver distance. */
+  sourceRadius?: number
   /** Render shadow maps from this light (six 90-degree face maps, one
    * per cube face; six shadow slots). Far = `distance`, so give a
    * casting bulb one. */
   castShadow?: boolean
-  /** Shadow-map options (mapSize, bias, normalBias, near), merged key
-   * by key. */
+  /** Shadow-map options (mapSize, bias, normalBias, radius, near),
+   * merged key by key. */
   shadow?: SpotShadowOptions
   ref?: (light: PointLightNode) => void
 }
@@ -40,6 +44,7 @@ export let PointLight: VoidComponent<PointLightProps> = props => {
       layers: props.layers,
       distance: props.distance,
       decay: props.decay,
+      sourceRadius: props.sourceRadius,
       castShadow: props.castShadow,
       shadow: props.shadow,
     }),
@@ -47,8 +52,9 @@ export let PointLight: VoidComponent<PointLightProps> = props => {
   add(ctx.parent, light)
   syncNode(light, props)
   createEffect(
-    () => [props.color, props.intensity, props.layers, props.distance, props.decay, props.castShadow, props.shadow] as const,
-    ([color, intensity, layers, distance, decay, castShadow, shadow]) => setLight(light, { color, intensity, layers, distance, decay, castShadow, shadow }),
+    () => [props.color, props.intensity, props.layers, props.distance, props.decay, props.sourceRadius, props.castShadow, props.shadow] as const,
+    ([color, intensity, layers, distance, decay, sourceRadius, castShadow, shadow]) =>
+      setLight(light, { color, intensity, layers, distance, decay, sourceRadius, castShadow, shadow }),
   )
   callRef(() => props.ref, light)
   onCleanup(() => destroy(light))

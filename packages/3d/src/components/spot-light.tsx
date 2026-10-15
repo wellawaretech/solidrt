@@ -26,11 +26,15 @@ export type SpotLightProps = TransformProps & {
   penumbra?: number
   /** Falloff exponent; default 2 (inverse square). */
   decay?: number
+  /** The light source's radius in world units; default 0, a point
+   * source. Above 0 its shadows harden at a contact and widen with the
+   * caster-to-receiver distance. */
+  sourceRadius?: number
   /** Render a shadow map from this light (a perspective map of its
    * cone; one shadow slot). */
   castShadow?: boolean
-  /** Shadow-map options (mapSize, bias, normalBias, near), merged key
-   * by key. */
+  /** Shadow-map options (mapSize, bias, normalBias, radius, near),
+   * merged key by key. */
   shadow?: SpotShadowOptions
   ref?: (light: SpotLightNode) => void
 }
@@ -51,6 +55,7 @@ export let SpotLight: VoidComponent<SpotLightProps> = props => {
       angle: props.angle,
       penumbra: props.penumbra,
       decay: props.decay,
+      sourceRadius: props.sourceRadius,
       castShadow: props.castShadow,
       shadow: props.shadow,
     }),
@@ -59,9 +64,9 @@ export let SpotLight: VoidComponent<SpotLightProps> = props => {
   syncNode(light, props)
   createEffect(
     () =>
-      [props.direction, props.color, props.intensity, props.layers, props.distance, props.angle, props.penumbra, props.decay, props.castShadow, props.shadow] as const,
-    ([direction, color, intensity, layers, distance, angle, penumbra, decay, castShadow, shadow]) =>
-      setLight(light, { direction, color, intensity, layers, distance, angle, penumbra, decay, castShadow, shadow }),
+      [props.direction, props.color, props.intensity, props.layers, props.distance, props.angle, props.penumbra, props.decay, props.sourceRadius, props.castShadow, props.shadow] as const,
+    ([direction, color, intensity, layers, distance, angle, penumbra, decay, sourceRadius, castShadow, shadow]) =>
+      setLight(light, { direction, color, intensity, layers, distance, angle, penumbra, decay, sourceRadius, castShadow, shadow }),
   )
   callRef(() => props.ref, light)
   onCleanup(() => destroy(light))

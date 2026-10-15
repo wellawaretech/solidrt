@@ -13,6 +13,10 @@ export type DirectionalLightProps = TransformProps & {
   direction?: Vec3
   color?: Vec3
   intensity?: number
+  /** The light's angular size in degrees (the sun's is about 0.53);
+   * default 0, a point source. Above 0 its shadows harden at a contact
+   * and widen with the caster-to-receiver distance. */
+  angularSize?: number
   /** Layer filter bitmask, default all bits set: the light lights and
    * shadows only the meshes whose `layers` intersect it. */
   layers?: number
@@ -20,8 +24,8 @@ export type DirectionalLightProps = TransformProps & {
    * each is a pass). Its shadow camera sits at the light's WORLD
    * position, so give a casting light a `position` above the scene. */
   castShadow?: boolean
-  /** Shadow-map options (mapSize, bias, normalBias, camera frustum,
-   * cascades, distance), merged key by key. */
+  /** Shadow-map options (mapSize, bias, normalBias, radius, camera
+   * frustum, cascades, distance), merged key by key. */
   shadow?: ShadowOptions
   ref?: (light: DirectionalLightNode) => void
 }
@@ -35,6 +39,7 @@ export let DirectionalLight: VoidComponent<DirectionalLightProps> = props => {
       direction: props.direction,
       color: props.color,
       intensity: props.intensity,
+      angularSize: props.angularSize,
       layers: props.layers,
       castShadow: props.castShadow,
       shadow: props.shadow,
@@ -43,8 +48,9 @@ export let DirectionalLight: VoidComponent<DirectionalLightProps> = props => {
   add(ctx.parent, light)
   syncNode(light, props)
   createEffect(
-    () => [props.direction, props.color, props.intensity, props.layers, props.castShadow, props.shadow] as const,
-    ([direction, color, intensity, layers, castShadow, shadow]) => setLight(light, { direction, color, intensity, layers, castShadow, shadow }),
+    () => [props.direction, props.color, props.intensity, props.angularSize, props.layers, props.castShadow, props.shadow] as const,
+    ([direction, color, intensity, angularSize, layers, castShadow, shadow]) =>
+      setLight(light, { direction, color, intensity, angularSize, layers, castShadow, shadow }),
   )
   callRef(() => props.ref, light)
   onCleanup(() => destroy(light))

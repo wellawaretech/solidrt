@@ -129,7 +129,7 @@ geometry has no fix and decals are blocked on it.
 | Shadow maps for directional, spot, point | yes | yes | yes | yes | |
 | Cascaded shadows with configurable splits | addon: CSM | yes | yes: PSSM, split_1..3 (v) | yes | landed 2026-09-22 |
 | Soft shadows (PCF radius) | yes | yes | yes (v) | yes | |
-| Contact-hardening (PCSS) | no | HDRP only | yes: light size / angular distance (v) | no | [3d-contact-hardening-shadows](../backlog/3d-contact-hardening-shadows.md) |
+| Contact-hardening (PCSS) | no | HDRP only | yes: light size / angular distance (v) | yes: angularSize / sourceRadius on the light, shadows.quality tier | [3d-contact-hardening-shadows](../plans/3d-contact-hardening-shadows.md) |
 | VSM | yes | no | no | no | Three-only |
 | Light cull mask / layers per light | no | yes: cullingMask | yes: light_cull_mask, shadow_caster_mask (v) | no | [3d-light-layers](../backlog/3d-light-layers.md) |
 | Light count | unbounded (recompiles) | 8 per object Forward, 256 per camera Forward+ (v) | clustered, hundreds | 8, fixed | [app-runtime-config](../backlog/app-runtime-config.md) |

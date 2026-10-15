@@ -48,6 +48,12 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
+- **[Contact-hardening soft shadows from a light's angular size](plans/3d-contact-hardening-shadows.md)** [2026-10-15]
+  A shadow edge is either uniformly hard (radius 1) or uniformly blurred
+  (radius above 1), so softening it blurs the contact where a caster meets its
+  receiver as much as the far tip and the caster looks like it floats; an
+  angular size on the directional light (a source radius on spot and point)
+  turning on a blocker-search lookup (PCSS) in SHADOW_LOOKUP.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -167,12 +173,6 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
-- **[Contact-hardening soft shadows from a light's angular size](backlog/3d-contact-hardening-shadows.md)** [2026-10-15]
-  A shadow edge is either uniformly hard (radius 1) or uniformly blurred
-  (radius above 1), so softening it blurs the contact where a caster meets its
-  receiver as much as the far tip and the caster looks like it floats; an
-  angular size on the directional light (a source radius on spot and point)
-  turning on a blocker-search lookup (PCSS) in SHADOW_LOOKUP.
 - **[Environment tier leftovers - SH9, aoMap, packed .sol3e, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes); what Three, Unity and Godot ship on top of the
@@ -2873,6 +2873,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Architecture strong and dogfoods flux as the dev server; gaps are zero
   tests, a crashing --help, stale README, tsx-only repl reload, watcher races
   and a LAN-open file PUT.
+- **[Context-loss session observations](notes/context-loss-session-observations.md)** [2026-10-15]
+  What the 2026-10-15 GPU context-loss work ran into beside its own scope -
+  box state, engine edges seen on the way, tooling traps, and improvements
+  worth a decision - so the next session does not rediscover them.
 - **[Core package review](notes/core-package-review.md)** [2026-07-15]
   Best docs and layering in the repo; the frame-loop/dispatch fragility and
   silently-black invalid colors are fixed as of 2026-08-06 (see status note).

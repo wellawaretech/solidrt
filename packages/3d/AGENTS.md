@@ -406,12 +406,44 @@ of the same atlas, far from `distance` like a spot - so give a
 casting bulb a distance. No cube map: a receiver picks the face by
 the dominant axis of the light-to-point vector (SHADOW_LOOKUP), one
 projection, one hardware-compare tap - the Three/Godot/Unity-URP
-atlas route. `shadow.radius` (every casting light, default 1 = that
-one tap, a 2x2 bilinear compare) softens the edge: above 1 a 3x3 grid
-of hardware taps `radius` texels apart, Three's `shadow.radius` /
-Godot's `shadow_blur`, nine taps per receiver fragment. A first-person
-eye over a floor shows the texel stairs at any map size; 2 is the
-usual figure, past ~3 the taps separate into bands. Each face map renders a few degrees wider than its face
+atlas route. ONE kernel softens every edge. `shadow.radius` (every
+casting light, default 1 = that one tap, a 2x2 bilinear compare)
+widens it uniformly: above 1 a disc of hardware taps spread over
+`radius` texels, Three's `shadow.radius` / Godot's `shadow_blur` - a
+Vogel spiral rotated per pixel by interleaved gradient noise, so it
+never bands at any radius; the grain is the trade (Godot's too; there
+is no TAA to hide it). A first-person eye over a floor shows the texel
+stairs at any map size; 2 is the usual figure. A light's SIZE makes the
+width follow the geometry instead - contact-hardening soft shadows
+(PCSS: Unreal's source angle, Godot's `light_angular_distance` /
+`light_size`, HDRP's angular diameter / shape radius): `angularSize` on
+a `DirectionalLight` (degrees, the disc's diameter; the sun's is about
+0.53) and `sourceRadius` on a `SpotLight`/`PointLight` (world units), on
+the LIGHT (its shape, as in all three engines; default 0 = a point
+source). With one set, each receiving fragment searches the raw depth
+for the occluders in its cone toward the light's disc (none = lit, all
+= umbra) and sizes the disc from the mean blocker distance times the
+size: razor sharp where a caster meets its receiver, as wide as the
+light allows under a far tip, `radius` the floor the penumbra never
+narrows below (HDRP's min filter size) and `SHADOW_MAX_TEXELS` (8) the
+cap - an edge wider than that stays hard, so a coarse map caps the
+softness; the real sun's 0.53 only shows on a map whose texel is under
+a centimetre per metre of caster height. The scene's `shadows: {
+quality }` ("hard" | "low" | "medium" (default) | "high";
+`setShadowQuality`, live, one light-set write) sets how many taps both
+regimes spend (8/8, 16/16, 24/32 search/filter; `hard` is the one tap
+for every light whatever its radius or size - the low-end profile's
+switch). Every tap wider than one compares against the RECEIVER PLANE
+(the normal `lightShadow` takes, carried into the map), so a wide
+kernel on a tilted floor does not shadow itself; `bias`/`normalBias`
+apply underneath. Cost: the search and filter taps per receiving
+fragment per casting light whose kernel is wider than one tap, twice
+inside a cascade blend band - on the SM-T500 (Adreno 610) at its full
+2000x1092 with two casters over a ground that fills the frame, a hard
+frame is 78 ms of GPU, the low tier 117, medium 140, high 189, so the
+tier is the low-end profile's knob and a default sun size stays 0;
+`examples/soft-shadows.tsx` is the shape
+and `tests/soft-shadows.test.tsx` measures the foot-to-tip widening. Each face map renders a few degrees wider than its face
 (URP's fovBias) so a seam fragment's occluder is inside the map it
 samples - without the guard band every seam shows a lit slit - and
 PCF taps clamp at face-tile edges, so a face seam hardens slightly
@@ -434,21 +466,28 @@ TILE of the scene's one shadow atlas (a `depth: "texture"` draw target,
 a grid of cells the largest `mapSize` wide, scaled down uniformly
 against `limits.maxTextureSize`), so N maps are ONE pass: the atlas
 depth binds as the target-level `uShadowAtlas` of the scene and every
-non-shadow view (a white texel when nothing casts); maps are MAP slots
+non-shadow view (a white texel when nothing casts), and a second time
+as the plain `uShadowDepth` the blocker search reads raw depth through
+(the engine picks the sampler by the declared type); maps are MAP slots
 dealt in light order, a light's cascades consecutive and tightest
 first - `uShadowRect[j]` slot j's tile in atlas UV, `uShadowMatrix[j]`
-its view's own view-projection (the whole array is one write per
+its view's own view-projection, `uShadowMetric[j]` its camera's near,
+far, texel size and depth range (the arrays are one write per
 shadow-camera move) - and per light i `uShadowFirst[i]`/`uShadowCount[i]`
 name its slots (count 0 = it does not cast) with
-`uShadowBias[i]`/`uShadowNormalBias[i]` its knobs; `SHADOW_SLOTS` in
-glsl declares the set. Every `phong` material RECEIVES by default
+`uShadowBias[i]`/`uShadowNormalBias[i]`/`uShadowRadius[i]`/`uShadowSize[i]`
+its knobs and `uShadowSearchTaps`/`uShadowFilterTaps` the scene's tier;
+`SHADOW_SLOTS` in glsl declares the set. Every `phong` material RECEIVES
+by default
 (Godot's and Three's default); `phong({ receiveShadow: false })` opts a
 material out and drops the map from its program - a material option,
 as with vertexColors/triplanar, because the material picks the program
-(Godot's `disable_receive_shadows`). The factor is `SHADOW`'s one
+(Godot's `disable_receive_shadows`). The factor is `SHADOW`'s
+`shadowSample` on each casting light's own term: the one
 hardware-compare tap (sampler2DShadow, LEQUAL, the driver's 2x2 PCF)
-on each casting light's own term. `examples/shadows.tsx` (three
-casting lights) is the shape; `examples/cascades.tsx` the cascaded sun.
+at radius 1 without a size, the disc otherwise. `examples/shadows.tsx`
+(three casting lights) is the shape; `examples/cascades.tsx` the
+cascaded sun; `examples/soft-shadows.tsx` the sized sun and spot.
 
 ### Retargeted motion
 
@@ -689,7 +728,7 @@ through its debug commands, and `camera-components.test.tsx` drives
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `renderScale?`, `maxPixels?` (fill-mode density: a scale over the tracked device pixels and a cap on their count, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (FogOptions: linear `{ color, near, far }` or exp2 `{ color, density }`, either plus `height`/`heightFalloff` - see Fog), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture, leaf)` (compose the leaf yourself; `leaf.ref`, `leaf.handlers`, `leaf.size()`, `leaf.deviceSize()` - see Output composition; `events` then throws), `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `renderScale?`, `maxPixels?` (fill-mode density: a scale over the tracked device pixels and a cap on their count, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (FogOptions: linear `{ color, near, far }` or exp2 `{ color, density }`, either plus `height`/`heightFalloff` - see Fog), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `shadows?` (`{ quality? }`: "hard" | "low" | "medium" | "high", the soft shadow kernel's tap tier, reactive), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture, leaf)` (compose the leaf yourself; `leaf.ref`, `leaf.handlers`, `leaf.size()`, `leaf.deviceSize()` - see Output composition; `events` then throws), `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
 | `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width?`, `height?` (target pixels, live - both, or neither = FILL exactly as Scene's: the leaf fills its sized parent and the view follows it; a tile of `into` gives both), `renderScale?`, `maxPixels?` (fill-mode density, as Scene's), `x?`, `y?` (the tile's top-left in `into`, live; throw without `into`), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture, leaf)` (as Scene's; else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `resolve?` (as Scene's; not with `into`), `bloom?` (BloomOptions overrides the scene's, null turns it off in this view, absent follows the scene; not with `into`), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, the bubbling pointer events (below: down/move/up/wheel/tap from a hit descendant; a group is never the struck node, so it takes no `onPointerEnter`/`onPointerLeave` - `Lod` likewise), `ref?(node)` |
 | `Lod` | a Group whose direct children carrying `lodSize` (a prop every node component takes: the projected size below which that child hands over, see Level of detail) are its levels, sorted by size, never by JSX position; plus `fade?` (the cross-fade band fraction, default 0); a child without `lodSize` is drawn always |
@@ -701,8 +740,8 @@ through its debug commands, and `camera-components.test.tsx` drives
 | `RecordMesh` | as Mesh, plus `records` (the per-instance records in the material's first instance layout, an ArrayBufferView; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks), `instanceOrder?` (draw the records in key order, fixed at creation - see "Instance order"), `transfer?` (hand the records to the engine at creation, the write-once form - a later `records` value then throws; see "Instance order"); the record buffers are component-owned and freed on unmount |
 | `SplatMesh` | as Mesh, plus `data` (a baked SplatData from loadSplat; write-once under the default transfer - swap clouds by remounting), `count?` (splats drawn, default all; records are importance-sorted at bake, so a prefix is the scene at that size), `material?` (a fork of the stock splat class) and `transfer?` (default true: records go to the engine, halving residency; see "Splats"); bounds, the back-to-front instance order and the stock material come from the bake |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
-| `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `castShadow?`, `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
-| `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `castShadow?` (six face maps, six shadow slots), `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
+| `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `sourceRadius?` (world units, default 0 = a point source; above 0 contact-hardening soft shadows), `castShadow?`, `shadow?` (mapSize, bias, normalBias, radius, near), `ref?(light)` |
+| `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `sourceRadius?` (as SpotLight), `castShadow?` (six face maps, six shadow slots), `shadow?` (mapSize, bias, normalBias, radius, near), `ref?(light)` |
 
 ### Output composition
 
@@ -2267,12 +2306,13 @@ instance or every caster move warns about the skipped write.
 ### Lights
 
 Lights and `phong`: lights are graph NODES, like Three. `createDirectionalLight({
-direction?, color?, intensity?, layers? })` / `<DirectionalLight>` is parallel light
+direction?, color?, intensity?, angularSize?, layers? })` / `<DirectionalLight>` is parallel light
 travelling along `direction` in the node's LOCAL space (default `[0, -1,
 0]`, a sun overhead; length ignored), so a parent Group's rotation turns it
 and position/scale do not matter - deliberately a direction, not Three's
-position-minus-target. `createSpotLight({ direction?, color?, intensity?,
-distance?, angle?, penumbra?, decay? })` / `<SpotLight>` is a cone from
+position-minus-target; `angularSize` (degrees, default 0) is its disc,
+the soft shadows' source (see Shadows). `createSpotLight({ direction?, color?, intensity?,
+distance?, angle?, penumbra?, decay?, sourceRadius? })` / `<SpotLight>` is a cone from
 the node's WORLD position along that same LOCAL `direction` (aim by
 `direction` or a parent's rotation; place by setTransform): `angle` is
 the cone half-angle in DEGREES ((0, 90], default 60 - degrees like
@@ -2281,8 +2321,9 @@ camera fov and like Unity/Godot; Three's radians convert as
 0..1 fraction of it fading to the rim (default 0, a hard edge), and the
 strength falls off as `1 / d^decay` (default 2) windowed to zero at
 `distance` (0 = no cutoff) - Three's SpotLight semantics minus the
-target object. `createPointLight({ color?, intensity?, distance?,
-decay? })` / `<PointLight>` is the omnidirectional version: position
+target object; `sourceRadius` (world units, default 0) is its disc.
+`createPointLight({ color?, intensity?, distance?,
+decay?, sourceRadius? })` / `<PointLight>` is the omnidirectional version: position
 only, same falloff, no cone. `createHemisphereLight({ sky?, ground?, intensity?
 })` / `<HemisphereLight>` is the ambient term, a gradient by the WORLD
 normal's tilt (fixed to world up, the node's transform is ignored); one per
@@ -3356,9 +3397,37 @@ successors) as ordinary content, the model-loading split repeated:
   instance shares it) - without one the shadow views
   SKIP instanced meshes, since the plain depth override cannot know
   their records. `examples/instanced.tsx` casts. Every casting light
-  is a full extra pass over the casters plus a sampler unit on every
-  receiving program (MAX_LIGHTS of those are always bound, placeholders
-  included), so cast from the lights that matter, not all of them.
+  is a full extra pass over the casters plus its tiles of the one atlas
+  (two sampler units on every receiving program, however many cast),
+  so cast from the lights that matter, not all of them.
+- SOFT shadows are a light's shape, not a filter knob: `angularSize`
+  (directional, degrees) and `sourceRadius` (spot/point, world units)
+  make the penumbra follow the caster-to-receiver distance; `shadow.radius`
+  is the uniform blur and, under a size, the floor. Both widen through
+  the scene's `shadows.quality` tier, which is where a low-end profile
+  turns every shadow hard in one write. The penumbra is capped at
+  `SHADOW_MAX_TEXELS` map texels, so a coarse map (a wide box camera, a
+  far cascade) caps the softness, and a blocker outside that search
+  radius leaves its edge hard; raise `mapSize` or pull the frustum in
+  before raising the size. The disc is rotated per pixel, so a soft
+  edge has grain that a higher tier reduces; a snapshot test measures a
+  transition's WIDTH across a row, never a single pixel. The receiver
+  plane the wide taps bias against comes from the normal `lightShadow`
+  is given (a normal map bends it slightly); a surface seen edge-on by
+  the light caps the correction (`SHADOW_SLOPE_MAX`), so acne there is
+  `normalBias`'s job as before.
+- The kernel is INSTANTIATED ONCE: `lightShadow` scans the light's maps
+  in one loop and samples the blend partner through the same call on
+  the next iteration. Inlined at three sites the program outgrew an
+  Adreno 610 and every pixel paid, the hard path included (115 ms a
+  frame against 72 with one copy; the soft tiers two and a half times
+  their cost). A counted two-pass loop around the call was unrolled
+  into two predicated copies, a dynamically indexed local array went to
+  scratch memory, and the kernel's own loops run to the tap-count
+  UNIFORM with a masked table index because a bound the compiler can
+  cap gets unrolled to the table's full length. Keep every one of
+  those when touching SHADOW or SHADOW_LOOKUP, and measure on the
+  tablet (`okf/plans/3d-contact-hardening-shadows.md` Findings).
 
 ### Views and scene params
 

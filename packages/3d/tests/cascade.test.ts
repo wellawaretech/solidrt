@@ -2,7 +2,7 @@
 // they claim: `sol test packages/3d`.
 import { expect, test } from "flux:test"
 import { cascadeBoundary, cascadeSplit, frustumSliceSphere, lookAt, mat4 } from "../src/math.ts"
-import { snapToGrid } from "../src/math.ts"
+import { shadowMetric, snapToGrid } from "../src/math.ts"
 import type { FrustumSpec, Mat4, Vec3 } from "../src/math.ts"
 
 let dist = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
@@ -102,4 +102,16 @@ test("snapToGrid: is idempotent and may alias its input", () => {
   expect(again[0]).toBeCloseTo(p[0], 9)
   expect(again[1]).toBeCloseTo(p[1], 9)
   expect(again[2]).toBeCloseTo(p[2], 9)
+})
+
+test("shadowMetric: near, far, the texel's world size (fixed for an orthographic map, per unit depth for a perspective one) and the range", () => {
+  let out = new Array(8).fill(-1)
+  shadowMetric(out, 4, 1, 30, 0, { left: -7, right: 7 }, 512)
+  expect(out.slice(4)).toEqual([1, 30, 14 / 512, 29])
+  shadowMetric(out, 0, 0.5, 20, 90, null, 256)
+  expect(out[0]).toBe(0.5)
+  expect(out[1]).toBe(20)
+  expect(out[2]).toBeCloseTo(2 / 256, 9)
+  expect(out[3]).toBe(19.5)
+  expect(out.slice(4)).toEqual([1, 30, 14 / 512, 29])
 })

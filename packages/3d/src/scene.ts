@@ -50,7 +50,8 @@ import type { Mat4, Quat, Vec3, Vec4 } from "./math.ts"
 import { MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
 import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } from "./camera.ts"
 import type { Camera, CameraState, CameraUpdate } from "./camera.ts"
-import { makeShadowSystem } from "./scene-shadows.ts"
+import { makeShadowSystem, SHADOW_QUALITY_TAPS } from "./scene-shadows.ts"
+import type { ShadowQuality } from "./scene-shadows.ts"
 import { makePointerInput } from "./scene-pointer.ts"
 import { geometryKey, geometryTopology, layoutKey, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
@@ -453,6 +454,12 @@ export type SceneOptions = {
    * over to their far levels sooner (Unity's lodBias). Live via
    * scene.setLodBias; views and shadow tiles follow it. */
   lodBias?: number
+  /** Scene-wide shadow settings. `quality` is the soft shadow kernel's
+   * tier (default "medium"; see ShadowQuality): the taps every casting
+   * light with a `shadow.radius` above 1 or a size (`angularSize`,
+   * `sourceRadius`) spends per receiving fragment, "hard" the one
+   * hardware tap for all of them. Live via scene.setShadowQuality. */
+  shadows?: { quality?: ShadowQuality }
   /** The scene target's layer mask (bitmask, default 1): the scene draws
    * the meshes whose `layers` intersect it. Live via scene.setLayers. */
   layers?: number
@@ -834,6 +841,10 @@ export type Scene = {
    * measured projected size, for the scene, its views and its shadow
    * tiles. Below 1 switches to far levels sooner. */
   setLodBias(bias: number): void
+  /** The soft shadow kernel's quality tier (SceneOptions.shadows.quality):
+   * "hard" | "low" | "medium" | "high". One light-set write
+   * (`uShadowSearchTaps` / `uShadowFilterTaps`); no program recompiles. */
+  setShadowQuality(quality: ShadowQuality): void
   /** Stagger (ms) on the scene's root node, live (SceneOptions.stagger
    * is its creation form): null removes it. The 2d layer's setStagger. */
   setStagger(ms: number | null): void
@@ -1296,6 +1307,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // SPOT_PENUMBRA_MIN floors the cone's inner-outer cosine window so a
   // hard rim (penumbra 0) is still a defined smoothstep edge pair.
   const SPOT_PENUMBRA_MIN = 1e-3
+  let shadowQuality: ShadowQuality = opts?.shadows?.quality ?? "medium"
+  if (SHADOW_QUALITY_TAPS[shadowQuality] === undefined) {
+    throw new Error('createScene: shadows.quality must be "hard", "low", "medium" or "high", got ' + shadowQuality)
+  }
   let writeLights = () => {
     lightsDirty = false
     let sky: Vec3 = [0, 0, 0]
@@ -1306,6 +1321,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let bias: number[] = []
     let normalBias: number[] = []
     let radius: number[] = []
+    // uShadowSize: a directional light's tangent of half its angular
+    // size (unitless, the penumbra per unit of caster-to-receiver
+    // distance), a spot's or point's source radius in world units.
+    let size: number[] = []
     // Layer masks cross to GLSL as signed 32-bit ints (all bits = -1,
     // the no-hemisphere default; the shader only ANDs the bit pattern).
     let masks: number[] = []
@@ -1351,6 +1370,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       bias.push(light.shadow.bias)
       normalBias.push(light.shadow.normalBias)
       radius.push(light.shadow.radius)
+      size.push(light.type === "directional" ? Math.tan((light.angularSize * Math.PI) / 360) : light.sourceRadius)
       masks.push(light.layers | 0)
       count++
     }
@@ -1361,23 +1381,29 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       bias.push(0)
       normalBias.push(0)
       radius.push(1)
+      size.push(0)
       masks.push(0)
     }
     // The shadow set rides with the lights. Per casting light i: its
     // map slots as uShadowFirst[i] + uShadowCount[i] (0 = a receiving
     // material draws that light plain) and its biases; per map slot j its
     // tile of the atlas as uShadowRect[j] in atlas UV (the whole map in
-    // an unused slot - never read). The atlas depth binds once as
-    // uShadowAtlas, the white placeholder when nothing casts, so every
-    // receiving target always has the sampler bound.
+    // an unused slot - never read). The atlas depth binds twice - as the
+    // comparison uShadowAtlas and as the plain uShadowDepth the blocker
+    // search reads raw depth through (the engine picks the sampler by
+    // the declared type) - the white placeholder when nothing casts, so
+    // every receiving target always has both samplers bound.
     let first: number[] = new Array(MAX_LIGHTS).fill(0)
     let counts: number[] = new Array(MAX_LIGHTS).fill(0)
     let rects: number[] = []
     let atlas = shadowSys.atlas()
+    let shadowMap = atlas !== null ? depthTexture(atlas.texture) : shadowSys.placeholder()
     let maps: Record<string, TextureId> = {
-      uShadowAtlas: atlas !== null ? depthTexture(atlas.texture) : shadowSys.placeholder(),
+      uShadowAtlas: shadowMap,
+      uShadowDepth: shadowMap,
       uEnv: environment ?? envPlaceholder,
     }
+    let taps = SHADOW_QUALITY_TAPS[shadowQuality]
     shadowSys.forEachShadowSlot((slot, i, c, r) => {
       if (c === 0) first[i] = slot
       counts[i] = counts[i]! + 1
@@ -1399,6 +1425,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       uShadowBias: bias,
       uShadowNormalBias: normalBias,
       uShadowRadius: radius,
+      uShadowSize: size,
+      uShadowSearchTaps: taps.search,
+      uShadowFilterTaps: taps.filter,
       uShadowRect: rects,
     }
     receivingTargets(t => {
@@ -2512,6 +2541,16 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       spatial.setLodBias(texture, bias)
       // Shadow tiles take the scene's through their LOD reference.
       for (let v of views) if (v.shadowFilter === null && !v.disposed) spatial.setLodBias(v.texture, bias)
+      hooks._schedule()
+    },
+    setShadowQuality(quality) {
+      if (SHADOW_QUALITY_TAPS[quality] === undefined) {
+        throw new Error('scene.setShadowQuality: expected "hard", "low", "medium" or "high", got ' + quality)
+      }
+      if (disposed || quality === shadowQuality) return
+      shadowQuality = quality
+      // The tap counts ride the light set's write.
+      lightsDirty = true
       hooks._schedule()
     },
     lodLevel(group) {

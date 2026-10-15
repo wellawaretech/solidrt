@@ -11,7 +11,8 @@ export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createS
 export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceOrderOptions, InstanceSlots, InstanceStream, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions, UpdateRecordsOptions } from "./mesh.ts"
 export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight } from "./light.ts"
 // The shader-source caps, also on the /glsl subpath next to the sources they size.
-export { MAX_CASCADES, MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
+export { MAX_CASCADES, MAX_LIGHTS, MAX_SHADOW_MAPS, MAX_SHADOW_TAPS } from "./glsl.ts"
+export type { ShadowQuality } from "./scene-shadows.ts"
 export type {
   DirectionalLight as DirectionalLightNode,
   DirectionalLightOptions,
