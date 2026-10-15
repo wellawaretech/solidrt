@@ -157,6 +157,21 @@ fn main() {
   if std::env::var_os("CARGO_FEATURE_KTX2").is_some() {
     build_basis();
   }
+  emit_wasm_native_cfg(&target_os);
+}
+
+/// The `wasm_native` cfg: the `wasm-native` feature on a target that has
+/// wasmtime, which is the manifest's target table for the dependency (64-bit
+/// x86 and arm, not iOS) spelled a second time; the two must agree. The
+/// feature alone cannot be the cfg, since on the other targets it is on but
+/// resolves to nothing, and forge::wasm must then build its wasmi lane.
+fn emit_wasm_native_cfg(target_os: &str) {
+  println!("cargo:rustc-check-cfg=cfg(wasm_native)");
+  let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").expect("CARGO_CFG_TARGET_ARCH not set");
+  let has_backend = matches!(target_arch.as_str(), "x86_64" | "aarch64") && target_os != "ios";
+  if has_backend && std::env::var_os("CARGO_FEATURE_WASM_NATIVE").is_some() {
+    println!("cargo:rustc-cfg=wasm_native");
+  }
 }
 
 fn build_basis() {

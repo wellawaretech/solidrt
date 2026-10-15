@@ -7,12 +7,14 @@
 //!
 //! Two backends implement the same types, and a build carries exactly one
 //! (okf/design/wasm.md, section 5):
-//! - `native` (cargo feature `wasm-native`): wasmtime with Cranelift, compiling
-//!   the module to machine code for the host. The lane wherever a backend
-//!   exists and runtime codegen is allowed (desktop, 64-bit Android).
-//! - `interp` (the feature off): wasmi, a register-based interpreter. The lane
-//!   for targets that cannot run generated code (iOS, 32-bit ARM Android), and
-//!   how a desktop runs that lane for testing: build with the feature off.
+//! - `native` (the `wasm_native` cfg: the `wasm-native` cargo feature on a
+//!   target with a wasmtime backend, see build.rs): wasmtime with Cranelift,
+//!   compiling the module to machine code for the host. The lane wherever a
+//!   backend exists and runtime codegen is allowed (desktop, 64-bit Android).
+//! - `interp` (the cfg off): wasmi, a register-based interpreter. The lane
+//!   for targets that cannot run generated code (iOS, 32-bit ARM Android),
+//!   where `wasm-native` resolves to it, and how a desktop runs that lane for
+//!   testing: build with the `wasm` feature alone.
 //! Both are held to one proposal set (wasmi's, SIMD included), so a module that
 //! validates on one lane validates on every lane; the lanes differ in speed.
 //!
@@ -44,13 +46,13 @@ use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
 
-#[cfg(feature = "wasm-native")]
+#[cfg(wasm_native)]
 mod native;
-#[cfg(feature = "wasm-native")]
+#[cfg(wasm_native)]
 use native as backend;
-#[cfg(not(feature = "wasm-native"))]
+#[cfg(not(wasm_native))]
 mod interp;
-#[cfg(not(feature = "wasm-native"))]
+#[cfg(not(wasm_native))]
 use interp as backend;
 
 /// A scalar wasm value crossing the host boundary.
@@ -141,6 +143,10 @@ pub enum Lane {
   Native,
 }
 
+/// This build's lane, a build fact: what `WasmEngine::lane` answers, for a
+/// host that reports it before any engine exists (flux's capability list).
+pub const LANE: Lane = backend::LANE;
+
 /// The engine modules are parsed and run with. Cheap to clone (a shared
 /// handle); make one per process and hand it around.
 #[derive(Clone)]
@@ -157,7 +163,7 @@ impl WasmEngine {
 
   /// Which lane this build is: a build fact, the same for every engine.
   pub fn lane(&self) -> Lane {
-    backend::LANE
+    LANE
   }
 
   /// Parse and validate a wasm binary (or wat text). Rejects modules with

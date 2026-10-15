@@ -24,6 +24,7 @@ mod texture;
 mod trailer;
 #[cfg(feature = "video")]
 mod video;
+#[cfg(feature = "wasm")]
 mod wasm;
 #[cfg(feature = "video")]
 mod webm;

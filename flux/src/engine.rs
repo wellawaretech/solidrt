@@ -131,6 +131,7 @@ pub struct EngineConfig {
   /// the intended shape (an embedder that also precompiles at install hands
   /// in the same one); left unset, `build` makes one. None only when this
   /// host cannot set one up, and flux:wasm then throws at `new Module`.
+  #[cfg(feature = "wasm")]
   #[qjs(skip_trace)]
   pub wasm: Option<forge::wasm::WasmEngine>,
 }
@@ -145,6 +146,7 @@ pub struct FluxEngineBuilder {
   stack_size: Option<usize>,
   memory_limit: Option<usize>,
   isolate_resolver: Option<IsolateResolver>,
+  #[cfg(feature = "wasm")]
   wasm: Option<forge::wasm::WasmEngine>,
   interrupt: Option<Arc<AtomicBool>>,
   on_uncaught: Option<UncaughtHook>,
@@ -161,7 +163,10 @@ impl FluxEngineBuilder {
     b.user_agent = config.user_agent;
     b.stack_size = config.stack_size;
     b.isolate_resolver = config.isolate_resolver;
-    b.wasm = config.wasm;
+    #[cfg(feature = "wasm")]
+    {
+      b.wasm = config.wasm;
+    }
     b
   }
 
@@ -263,6 +268,7 @@ impl FluxEngineBuilder {
   /// The wasm engine flux:wasm uses (see `EngineConfig::wasm`). An embedder
   /// shares one engine between its runtimes and its install-time precompile
   /// through this; otherwise `build` makes a private one.
+  #[cfg(feature = "wasm")]
   pub fn wasm_engine(mut self, engine: forge::wasm::WasmEngine) -> Self {
     self.wasm = Some(engine);
     self
@@ -282,6 +288,7 @@ impl FluxEngineBuilder {
   }
 
   pub fn build(self) -> FluxEngine {
+    #[cfg(feature = "wasm")]
     let wasm = self.wasm.or_else(|| match forge::wasm::WasmEngine::new() {
       Ok(engine) => Some(engine),
       Err(e) => {
@@ -295,6 +302,7 @@ impl FluxEngineBuilder {
       user_agent: self.user_agent,
       stack_size: self.stack_size,
       isolate_resolver: self.isolate_resolver,
+      #[cfg(feature = "wasm")]
       wasm,
     };
     // The config lands in userdata whole: the fetch and http initializers
@@ -347,6 +355,7 @@ impl FluxEngine {
       stack_size: None,
       memory_limit: None,
       isolate_resolver: None,
+      #[cfg(feature = "wasm")]
       wasm: None,
       interrupt: None,
       on_uncaught: None,

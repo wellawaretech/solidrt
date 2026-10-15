@@ -62,7 +62,7 @@ pub use tokio;
 /// list without a JS context.
 pub fn capabilities() -> Vec<&'static str> {
   #[allow(unused_mut)]
-  let mut caps = plugins::BASE_CAPABILITIES.to_vec();
+  let mut caps = plugins::base_capabilities();
   #[cfg(feature = "gui")]
   caps.extend_from_slice(alloy_plugins::GUI_CAPABILITIES);
   caps

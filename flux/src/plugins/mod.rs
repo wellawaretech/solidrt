@@ -143,8 +143,11 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:image");
   loader.add_module("flux:image", crate::forge_plugins::image::ImageModule);
 
-  resolver.add_module("flux:wasm");
-  loader.add_module("flux:wasm", crate::forge_plugins::wasm::WasmModuleDef);
+  #[cfg(feature = "wasm")]
+  {
+    resolver.add_module("flux:wasm");
+    loader.add_module("flux:wasm", crate::forge_plugins::wasm::WasmModuleDef);
+  }
 
   resolver.add_module("flux:isolate");
   loader.add_module("flux:isolate", crate::forge_plugins::isolate::IsolateModule);
@@ -232,10 +235,13 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
 /// rather than on the OS. A conditionally-compiled feature sits under its
 /// own cfg, so it only appears when actually present: `ktx2` says
 /// flux:image's transcodeTexture and encodeTexture work here (they throw on
-/// a build without it), `test` that flux:test can be imported, `wasm-native`
-/// that flux:wasm compiles modules to machine code here (the wasmtime lane)
-/// instead of interpreting them, so a module runs at the native lane's speed.
-pub const BASE_CAPABILITIES: &[&str] = &[
+/// a build without it), `test` that flux:test can be imported, `wasm` that
+/// flux:wasm can be. `wasm-native` (flux:wasm compiles modules to machine
+/// code here, the wasmtime lane, instead of interpreting them) is the one
+/// entry no cfg of this crate decides: the `wasm-native` feature resolves to
+/// wasmi on a target without a backend, so `base_capabilities` reads the
+/// lane forge was built with.
+const BASE_CAPABILITIES: &[&str] = &[
   "sqlite",
   "fs",
   "http",
@@ -245,21 +251,32 @@ pub const BASE_CAPABILITIES: &[&str] = &[
   "subprocess",
   "svg",
   "image",
+  #[cfg(feature = "wasm")]
   "wasm",
   "isolate",
   "tty",
   #[cfg(feature = "ktx2")]
   "ktx2",
-  #[cfg(feature = "wasm-native")]
-  "wasm-native",
   #[cfg(feature = "test")]
   "test",
 ];
 
+/// The capabilities every flux build provides (see `BASE_CAPABILITIES`);
+/// the gui plugin set and an embedder add theirs on top.
+pub fn base_capabilities() -> Vec<&'static str> {
+  #[allow(unused_mut)]
+  let mut caps = BASE_CAPABILITIES.to_vec();
+  #[cfg(feature = "wasm")]
+  if forge::wasm::LANE == forge::wasm::Lane::Native {
+    caps.push("wasm-native");
+  }
+  caps
+}
+
 fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {
   let arr = Array::new(ctx.clone()).expect("create capabilities array");
-  for (i, name) in BASE_CAPABILITIES.iter().enumerate() {
-    arr.set(i, *name).expect("set capability");
+  for (i, name) in base_capabilities().into_iter().enumerate() {
+    arr.set(i, name).expect("set capability");
   }
   arr
 }

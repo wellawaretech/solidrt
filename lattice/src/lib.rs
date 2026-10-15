@@ -797,6 +797,7 @@ fn ui_thread(
     // One wasm engine for the process: every app engine runs modules on it,
     // and the store precompiles pushed modules with it, so an install fills
     // exactly the cache slots the app will read.
+    #[cfg(feature = "wasm")]
     let wasm_engine = match forge::wasm::WasmEngine::new() {
       Ok(engine) => Some(engine),
       Err(e) => {
@@ -1183,6 +1184,7 @@ fn ui_thread(
         Some(dir) => builder.cache_dir(dir.clone()),
         None => builder,
       };
+      #[cfg(feature = "wasm")]
       let builder = match &wasm_engine {
         Some(engine) => builder.wasm_engine(engine.clone()),
         None => builder,

@@ -13,5 +13,6 @@ pub mod sqlite;
 pub mod subprocess;
 pub mod svg;
 pub mod tty;
+#[cfg(feature = "wasm")]
 pub mod wasm;
 pub mod websocket;

@@ -29,21 +29,12 @@ build-opt:
 	$(MAKE) build PROFILE=release-opt
 
 # The flux binary hosts the dev server and the bake tools, so it carries
-# the texture encoder (flux:image encodeTexture); KTX2=0 leaves it out. It
-# is also what `sol test` runs test files on, so it alone carries flux:test.
-KTX2 ?= 1
-ifeq ($(KTX2),0)
-FLUX_FEATURES = --features test
-else
-FLUX_FEATURES = --features ktx2,test
-endif
-# The native wasm lane (wasmtime with Cranelift behind forge::wasm), on by
-# default like the runtime builds; WASM_NATIVE=0 runs wasmi alone. See
-# lattice/Makefile for the knob's full story.
-WASM_NATIVE ?= 1
-ifneq ($(WASM_NATIVE),0)
-FLUX_FEATURES := $(FLUX_FEATURES),wasm-native
-endif
+# the texture encoder (flux:image encodeTexture) and every module a shipped
+# runtime can (the native wasm lane, like the stock runtime). It is also
+# what `sol test` runs test files on, so it alone carries flux:test. The
+# interpreted wasm lane on a desktop is a cargo line with `wasm` alone
+# (okf/notes/wasm-vs-js-throughput.md).
+FLUX_FEATURES = --features ktx2,wasm-native,test
 
 flux:
 	cargo build $(CARGO_PROFILE_FLAG) $(FLUX_FEATURES) --bin flux

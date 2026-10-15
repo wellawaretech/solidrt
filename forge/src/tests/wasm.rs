@@ -1,6 +1,7 @@
 use crate::wasm::*;
 
-/// This build's engine: the native lane with `wasm-native`, wasmi without.
+/// This build's engine: the native lane under the `wasm_native` cfg (the
+/// `wasm-native` feature on a target with a backend), wasmi without.
 /// Every test runs on whichever it is, so both backends meet the same
 /// contract across the two CI configurations.
 fn engine() -> WasmEngine {
@@ -13,9 +14,9 @@ fn no_host(_: usize, _: Vec<WasmValue>) -> Result<Vec<WasmValue>, String> {
 
 #[test]
 fn lane_matches_the_build() {
-  #[cfg(feature = "wasm-native")]
+  #[cfg(wasm_native)]
   assert_eq!(engine().lane(), Lane::Native);
-  #[cfg(not(feature = "wasm-native"))]
+  #[cfg(not(wasm_native))]
   assert_eq!(engine().lane(), Lane::Interpreter);
 }
 
@@ -254,7 +255,7 @@ fn temp_cache_dir(tag: &str) -> std::path::PathBuf {
 }
 
 /// Every cached artifact under `dir`, sorted: `<dir>/wasm/<engine>/<hash>.cwasm`.
-#[cfg(feature = "wasm-native")]
+#[cfg(wasm_native)]
 fn cached_artifacts(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
   let mut found = Vec::new();
   if let Ok(engines) = std::fs::read_dir(dir.join("wasm")) {
@@ -268,7 +269,7 @@ fn cached_artifacts(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
   found
 }
 
-#[cfg(not(feature = "wasm-native"))]
+#[cfg(not(wasm_native))]
 #[test]
 fn interpreter_never_touches_the_cache_dir() {
   let dir = temp_cache_dir("interp");
@@ -279,7 +280,7 @@ fn interpreter_never_touches_the_cache_dir() {
   assert!(!dir.exists(), "the interpreter has no artifact to cache");
 }
 
-#[cfg(feature = "wasm-native")]
+#[cfg(wasm_native)]
 #[test]
 fn native_cache_round_trip() {
   use std::collections::HashSet;

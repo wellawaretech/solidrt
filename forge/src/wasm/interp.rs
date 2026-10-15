@@ -1,6 +1,7 @@
 //! The interpreter backend: wasmi, a register-based interpreter with no JIT.
 //! Pure Rust, so one `.wasm` runs unmodified on every target; the lane for
-//! targets that cannot run generated code (the `wasm-native` feature off).
+//! targets that cannot run generated code (the `wasm_native` cfg off: the
+//! `wasm-native` feature absent, or on a target without a wasmtime backend).
 //!
 //! Host imports are bridged with wasmi's resumable calls: every function
 //! import is registered as a stub that records its arguments and suspends

@@ -33,14 +33,18 @@ video = ["audio", "dep:ndk", "dep:ndk-sys"]
 # a cargo default, like video: a plain build needs no submodule. See
 # okf/plans/gpu-compressed-textures.md.
 ktx2 = []
-# forge::wasm native lane: wasmtime with Cranelift compiles a module to machine
-# code for the host (okf/design/wasm.md, section 5). Off where no backend
-# exists or runtime codegen is forbidden (armeabi-v7a, iOS); there wasmi is
-# the lane. Exactly one engine is compiled in: with the feature the wasmi
-# module is cfg'd out (the crate stays a dependency so the manifest needs no
-# second feature, and nothing references it, so the linker drops it). The
-# lattice Makefile sets it per target.
-wasm-native = ["dep:wasmtime"]
+# forge::wasm (flux:wasm): wasmi, the pure-Rust interpreter, the lane on every
+# target. See okf/design/wasm.md.
+wasm = ["dep:wasmi"]
+# The native lane on top of it: wasmtime with Cranelift compiles a module to
+# machine code for the host (okf/design/wasm.md, section 5), where a backend
+# exists and runtime codegen is allowed (64-bit x86 and arm, not iOS); the
+# wasmtime dependency is declared for those targets only, so elsewhere
+# (armeabi-v7a, x86 Android, iOS) the feature resolves to wasmi. Exactly one
+# engine is compiled in: build.rs turns the feature plus the target into the
+# `wasm_native` cfg, which picks the backend module and cfg's the other out
+# (wasmi stays a dependency, but unreferenced, so the linker drops it).
+wasm-native = ["wasm", "dep:wasmtime"]
 
 [dependencies]
 log = { workspace = true }
@@ -101,17 +105,13 @@ hickory-proto = "=0.26.3"
 # flux:net interfaces() - the no-subprocess replacement for parsing `ip addr`.
 # Already in the tree (iroh depends on it).
 netdev = "=0.46.3"
-# Pure-Rust, no-JIT wasm interpreter behind forge::wasm (flux:wasm) on the
-# targets that cannot run generated code (`wasm-native` off). No per-platform
-# native build or signing story: one .wasm runs on every target. The default
-# `wat` feature also accepts text-format sources, handy for tests and small
-# inline modules. `simd` (also relaxed-simd) so modules compiled with SIMD
-# validate; v128 still never crosses the host boundary.
-wasmi = { version = "=2.0.0", features = ["simd"] }
-# The native wasm engine behind `wasm-native`. Lean feature set: no component
-# model, async, GC, backtrace symbolication or parallel compilation; `wat` so
-# text sources parse on this lane too. Measured at +7.8 MB of runtime.
-wasmtime = { version = "=49.0.2", default-features = false, features = ["runtime", "std", "cranelift", "wat"], optional = true }
+# Pure-Rust, no-JIT wasm interpreter behind forge::wasm (flux:wasm), the
+# `wasm` feature: the lane on the targets that cannot run generated code. No
+# per-platform native build or signing story: one .wasm runs on every target.
+# The default `wat` feature also accepts text-format sources, handy for tests
+# and small inline modules. `simd` (also relaxed-simd) so modules compiled
+# with SIMD validate; v128 still never crosses the host boundary.
+wasmi = { version = "=2.0.0", features = ["simd"], optional = true }
 # Full SVG document parsing/normalization for forge::svg / parseSvg (resolves
 # CSS, transforms, use/defs, gradients into a flat path tree). default-features
 # off drops the text/font stack (fontdb, rustybuzz, unicode-*); we only emit
@@ -137,6 +137,15 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 [target.'cfg(target_os = "android")'.dependencies]
 ndk = { version = "=0.9.0", default-features = false, features = ["media", "api-level-26"], optional = true }
 ndk-sys = { version = "=0.6.0", optional = true }
+
+# The native wasm engine behind `wasm-native`, on the targets Cranelift has
+# a backend for and that allow runtime codegen; build.rs mirrors this
+# condition as the `wasm_native` cfg, and the two must agree. Lean feature
+# set: no component model, async, GC, backtrace symbolication or parallel
+# compilation; `wat` so text sources parse on this lane too. Measured at
+# +7.8 MB of runtime.
+[target.'cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(target_os = "ios")))'.dependencies]
+wasmtime = { version = "=49.0.2", default-features = false, features = ["runtime", "std", "cranelift", "wat"], optional = true }
 
 # The foreground-job check behind forge::tty::is_terminal (tcgetpgrp /
 # getpgrp, safe wrappers), and CLOCK_MONOTONIC for forge::video's transport

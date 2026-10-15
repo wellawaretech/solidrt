@@ -248,11 +248,15 @@ Lanes per target:
 | iOS | wasmi (store policy forbids runtime codegen) |
 | android-armeabi-v7a | wasmi (no 32-bit ARM backend exists) |
 
-The lane is a build fact: the `wasm-native` cargo feature on forge, set per
-target by the `WASM_NATIVE` knob in `lattice/Makefile`, and off by target
-where there is no backend. The feature selects the engine the build carries;
-the other is compiled out. `Flux.capabilities` lists `wasm-native` on the
-native lane. The engine is one shared handle per process, made by the
+The lane is a build fact: the `wasm-native` cargo feature (lattice's
+default, so the stock runtime's), which forge resolves per target: wasmtime
+is a dependency only where Cranelift has a backend and codegen is allowed
+(64-bit x86 and arm, not iOS), and build.rs mirrors that condition as the
+`wasm_native` cfg that selects the engine the build carries; the other is
+compiled out. `wasm` alone is the interpreter everywhere, and a runtime
+without either has no `flux:wasm`
+([module-feature-flags](../backlog/module-feature-flags.md)).
+`Flux.capabilities` lists `wasm-native` on the native lane. The engine is one shared handle per process, made by the
 embedder and handed to the flux engine builder and to the store's install;
 the plugin reads it off the engine config next to the cache dir.
 

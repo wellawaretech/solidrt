@@ -54,14 +54,18 @@ jobs:
         run: make manifests-check
 
       # --all-targets so tests, examples and bins compile too: without it a
-      # broken test or probe example passes CI untouched. Video is not a
-      # cargo default (see lattice/Makefile) but every shipped build carries
-      # it, so the feature rides along here and in the two test steps: flux's
-      # gui video plugin and lattice's passthrough compile nowhere else. ktx2
-      # (forge's texture encoder and its flux marshalling) is compiled by the
-      # release build alone otherwise, so it rides along here too.
+      # broken test or probe example passes CI untouched. The capabilities
+      # (video, ktx2, wasm-native) are lattice's default features, so the
+      # workspace build carries them through lattice; flux's own are named
+      # so its gui video plugin and texture marshalling compile here too.
       - name: Check
-        run: cargo check --workspace --all-targets --features flux/video,lattice/video,flux/ktx2
+        run: cargo check --workspace --all-targets --features flux/video,flux/ktx2,flux/wasm-native
+
+      # A runtime that trims lattice's capabilities (default-features =
+      # false) must still build: every cfg a feature gates is checked here,
+      # so a break reaches no custom runtime.
+      - name: Check without capabilities
+        run: cargo check -p lattice --no-default-features
 
       # The Linux-only suites: alloy (hit testing, routing, layout cache, GPU
       # graph propagation), flux with the gui feature (unified in through
@@ -70,14 +74,14 @@ jobs:
       # included; flux stays because its headless half is what test-flux runs
       # elsewhere and the gui half has no other home.
       - name: Test
-        run: cargo test --workspace --exclude forge --features flux/video,lattice/video,flux/wasm-native,lattice/wasm-native
+        run: cargo test --workspace --exclude forge --features flux/video,flux/wasm-native
 
       # `go` is not a default feature, so the step above compiles none of the
       # client-only code - including lattice's app-store and dev-server-tunnel
-      # tests. That is the code that actually ships (as go + video +
-      # wasm-native), so test it explicitly.
+      # tests. That is the code that actually ships (the player), so test it
+      # explicitly.
       - name: Test go client
-        run: cargo test -p lattice --features go,video,wasm-native
+        run: cargo test -p lattice --features go
 
   # The engine-free cores, one job, the same command on every platform we
   # ship to (Linux x64 included, so forge is tested exactly once per
@@ -129,12 +133,13 @@ jobs:
       # clock, and on a shared 3-core macOS runner 132 parallel tests made
       # the worker wake 58 ms late. The whole suite takes ~9 s serially.
       # Twice for forge::wasm: with `wasm-native` the tests run on wasmtime
-      # (the native lane), without it on wasmi (the lane the 32-bit and iOS
-      # builds ship), so both engines meet the same contract on every platform.
+      # (the native lane), with `wasm` alone on wasmi (the lane the 32-bit and
+      # iOS builds ship), so both engines meet the same contract on every
+      # platform.
       - name: Test forge
         run: cargo test -p forge --features video,wasm-native -- --test-threads=1
       - name: Test forge, interpreted wasm lane
-        run: cargo test -p forge --features video -- --test-threads=1
+        run: cargo test -p forge --features video,wasm -- --test-threads=1
 
   # The headless flux runtime (QuickJS + the forge marshalling: value, time,
   # marshal, intrinsics) on the same four platforms, same principle as
@@ -208,6 +213,10 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # The vendored Basis Universal behind ktx2, which the flux binary
+        # carries.
+        with:
+          submodules: true
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -228,7 +237,7 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build flux
-        run: make -C flux flux PROFILE=debug KTX2=0
+        run: make -C flux flux PROFILE=debug
 
       - name: Test JS
         env:
@@ -240,8 +249,7 @@ jobs:
   # its headless test mode: Linux only, where the client builds in the same
   # job and SDL's offscreen driver gives the GLES context over Mesa. Same
   # recipe as the release build of the client (system deps, bun for the
-  # player bundle, the retried dependency fetch), in the debug profile and
-  # without ktx2 like test-js.
+  # player bundle, the retried dependency fetch), in the debug profile.
   test-app:
     name: test-app (linux)
     runs-on: ubuntu-24.04
@@ -268,7 +276,7 @@ jobs:
       - uses: ./.github/actions/cargo-fetch
 
       - name: Build client
-        run: make client PROFILE=debug KTX2=0
+        run: make client PROFILE=debug
 
       - name: Test apps
         env:

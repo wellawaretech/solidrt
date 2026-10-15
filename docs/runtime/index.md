@@ -349,12 +349,23 @@ one codegen unit, stripped, much slower. The Android libs are staged
 stripped at every profile, since the folder is what the APK carries and
 sol swaps the libs in as they are: the player `.so` goes from 70 MB to 52
 MB, the prebuilt impeller from 228 MB to 7 MB; the symbols stay in
-`target/` for ndk-stack. `VIDEO=0`, `KTX2=0` and `WASM_NATIVE=0` leave
-video playback, compressed textures and the native wasm engine out,
-`TEST=0` builds the player
-without the test host. Features are lattice's, named `lattice/<feature>`
-on cargo's command line by the Makefile, so the manifest declares none of
-them.
+`target/` for ndk-stack. `TEST=0` builds the player without the test host.
+
+The capabilities are not flags but lattice's cargo features, chosen in
+the runtime's `Cargo.toml`. The plain line the scaffold writes takes
+lattice's default set, the stock runtime's: `video` (playback), `ktx2`
+(compressed textures) and `wasm-native` (`flux:wasm` compiled to machine
+code where the target allows it, interpreted elsewhere; `wasm` alone is
+the interpreter everywhere). A runtime that needs less trims the line and
+names everything it keeps:
+
+```toml
+lattice = { git = "...", tag = "v...", default-features = false, features = ["video", "wasm-native"] }
+```
+
+The player (`solidrt-go`) carries every capability whatever the runtime
+lists, so dev does not catch an import a trimmed runtime lacks: that
+surfaces on the device, where `Flux.capabilities` tells the truth.
 
 Four builds make a release, the player and the runtime for the host and for
 Android, each compiling all of lattice. On a laptop with eight parallel

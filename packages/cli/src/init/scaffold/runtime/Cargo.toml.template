@@ -21,12 +21,14 @@ name = "solidrt-go"
 required-features = ["go"]
 
 # The one feature of the crate's own: the player, for the solidrt-go binary
-# to require. Every other feature is lattice's, named lattice/<feature> on
-# the command line (the Makefile), so none is repeated here.
+# to require. The capabilities (video, ktx2, wasm) are lattice's default
+# features, which the plain dependency line below takes whole: the stock set.
 [features]
 go = ["lattice/go"]
 
 [dependencies]
 # The SolidRT release the app's @solidrt packages are at (sol --version);
 # the build refuses a tag that differs from the installed @solidrt/cli.
+# To leave a capability out, trim the line: `default-features = false,
+# features = ["video", "wasm-native"]`, naming everything the runtime keeps.
 lattice = { git = "https://github.com/wellawaretech/solidrt", tag = "v{{version}}" }

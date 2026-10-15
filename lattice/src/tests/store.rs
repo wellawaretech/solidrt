@@ -287,12 +287,17 @@ fn install_rejects_unsafe_asset_paths() {
 
 /// The native wasm lane precompiles a version's `.wasm` assets into the app
 /// cache at install, after verification, and the cache follows the store's
-/// retention. Needs the lane compiled in (`--features wasm-native`).
+/// retention. Needs the lane compiled in (`--features wasm-native`, on a
+/// target with a wasmtime backend; elsewhere the feature resolves to wasmi,
+/// which precompiles nothing).
 #[cfg(feature = "wasm-native")]
 #[test]
 fn install_precompiles_wasm_assets_and_prunes_them() {
   use crate::go::store::prune_wasm_cache;
 
+  if forge::wasm::LANE != forge::wasm::Lane::Native {
+    return;
+  }
   let app_dir = temp_app_dir("wasm-cache");
   let code = "let w = 1";
   let wasm = br#"(module (func (export "one") (result i32) i32.const 1))"#;

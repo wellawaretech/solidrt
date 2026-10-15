@@ -42,9 +42,6 @@
 #                you ship
 #   ANDROID_ABI  arm64-v8a (default), armeabi-v7a, x86_64 (the emulator)
 #   NDK_HOME     the Android NDK (default: /opt/android-ndk)
-#   VIDEO=0, KTX2=0, WASM_NATIVE=0   leave video playback, compressed
-#                textures, the native wasm engine out (default: in; the
-#                native wasm engine is always out on the 32-bit Android ABIs)
 #   TEST=0       leave the test host out of the player (default: in)
 #   VERSION      what the runtime reports (default: the lattice tag in
 #                Cargo.toml, else git describe)
@@ -108,37 +105,16 @@ else
   CARGO_PROFILE_FLAG = --profile $(PROFILE)
 endif
 
-# The features are lattice's, named on the command line as lattice/<name>,
-# so the manifest declares none of them and a feature lattice adds later
-# needs no edit here. The crate's own `go` feature (the player) is the one
-# the manifest has, for the solidrt-go binary to require.
-# Video playback (VP9, royalty-free: MediaCodec on Android, the vendored
-# libvpx elsewhere), compressed textures (ktx2) and the native wasm lane
-# (wasmtime with Cranelift) are on unless switched off; the native wasm lane
-# has no 32-bit backend, so the 32-bit Android ABIs run the interpreter.
-VIDEO ?= 1
-KTX2  ?= 1
-ifeq ($(filter armeabi-v7a x86,$(ANDROID_ABI)),)
-WASM_NATIVE ?= 1
-else
-WASM_NATIVE ?= 0
-endif
+# The capabilities are the runtime crate's Cargo.toml's: lattice's default
+# set unless its lattice line trims it (lattice/Cargo.toml), so the build
+# passes no capability feature. The crate's own `go` feature (the player) is
+# the one the manifest has, for the solidrt-go binary to require.
 # The test host (the --test runner, sol:test, flux:test) is in the player,
 # which is what sol test runs app tests on, never in the runtime.
 TEST ?= 1
 
-FEATURES :=
-ifneq ($(VIDEO),0)
-FEATURES += lattice/video
-endif
-ifneq ($(KTX2),0)
-FEATURES += lattice/ktx2
-endif
-ifneq ($(WASM_NATIVE),0)
-FEATURES += lattice/wasm-native
-endif
-GO_FEATURES      := --features "go $(FEATURES)$(if $(filter 0,$(TEST)),, lattice/test)"
-RUNTIME_FEATURES := $(if $(strip $(FEATURES)),--features "$(FEATURES)",)
+GO_FEATURES      := --features "go$(if $(filter 0,$(TEST)),, lattice/test)"
+RUNTIME_FEATURES :=
 
 # One target dir per feature set, so the player and the runtime never
 # rebuild each other's lattice; the Android player shares the desktop
@@ -337,10 +313,8 @@ help:
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo "Pass PROFILE=release-opt for the publish build: fat LTO and stripped, much slower; what you ship."
-	@echo "Pass VIDEO=0 to build without video playback (default: on)."
-	@echo "Pass KTX2=0 to build without compressed textures (default: on)."
-	@echo "Pass WASM_NATIVE=0 to build without the native wasm engine (default: on; always off on 32-bit Android ABIs)."
 	@echo "Pass TEST=0 to build the player without the test host (default: on)."
+	@echo "The capabilities (video, ktx2, wasm) are the runtime's Cargo.toml's: lattice's default set, or what its lattice line lists."
 	@echo "Pass VERSION=<v> for what the runtime reports (default: $(VERSION))."
 	@echo ""
 	@echo "  clean            Remove target/ and dist/ here"

@@ -37,6 +37,7 @@ pub mod tty;
 pub mod value;
 #[cfg(feature = "video")]
 pub mod video;
+#[cfg(feature = "wasm")]
 pub mod wasm;
 pub mod websocket;
 pub mod workers;

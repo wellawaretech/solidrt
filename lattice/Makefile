@@ -9,9 +9,10 @@
 # ANGLE libraries on Windows and macOS, the Gradle APKs, the flux binaries,
 # the platform packages and their notices.
 #
-# The build flags are the runtime's (PROFILE, VIDEO, KTX2,
-# WASM_NATIVE, TEST, ANDROID_ABI, NDK_HOME, documented by `make -C runtime
-# help`); a value on this command line reaches it.
+# The build flags are the runtime's (PROFILE, TEST, ANDROID_ABI, NDK_HOME,
+# documented by `make -C runtime help`); a value on this command line
+# reaches it. The capabilities are lattice's default features
+# (lattice/Cargo.toml), not flags.
 
 VERSION ?= $(shell git describe --tags --always --dirty | sed 's/^v//')
 
@@ -101,8 +102,8 @@ help:
 	@echo "  ANDROID_ABI=x86_64 builds for the emulator; it has no platform"
 	@echo "  package, so the APKs stay in dist/android/ where sol android finds them."
 	@echo ""
-	@echo "The build flags (PROFILE=debug|release|release-opt, VIDEO=0, KTX2=0,"
-	@echo "WASM_NATIVE=0, TEST=0, NDK_HOME) are the runtime's: make -C runtime help."
+	@echo "The build flags (PROFILE=debug|release|release-opt, TEST=0, NDK_HOME)"
+	@echo "are the runtime's: make -C runtime help."
 	@echo ""
 	@echo "Player:"
 	@echo "  player-bundle      Regenerate the player and BSOD bundles"

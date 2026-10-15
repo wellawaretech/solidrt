@@ -63,6 +63,11 @@ also what makes those measurable, one build with and one without.
   a build goal's choice, not an app's.
 - **One module at a time, wasm first,** to see how the mechanism works
   before the rest follow.
+- **Video is two features** (2026-10-15): `video`, the decoder, and
+  `video-encode`, the encoder that is coming, which implies `video` (the
+  same libvpx plus a WebM writer); the decoder stands alone. Both in
+  `default`. `video-encode` is declared when the encoder lands, in the same
+  forge/flux/lattice pattern, not before.
 
 ## Shape
 
@@ -96,6 +101,14 @@ on, not optional capabilities. Video decoding and ktx2 already are features
 at every layer; they only move from knobs to `default`.
 
 ## Stage 1: wasm, and the mechanism
+
+Landed 2026-10-15 as written below, with one refinement: the lane cfg is
+`wasm_native` (from forge's build.rs), not the feature, since the feature
+is on everywhere and resolves to wasmi where wasmtime is absent; flux
+reports the `wasm-native` capability from `forge::wasm::LANE` for the same
+reason. The flux binary names `ktx2,wasm-native,test` in its Makefile and
+has no knobs either. Open from "Done looks like": the build-time check in
+`sol pack`, and the size row.
 
 - **forge**: `wasm = ["dep:wasmi"]`, `wasm-native = ["wasm",
   "dep:wasmtime"]`. wasmtime becomes a target-specific optional dependency,

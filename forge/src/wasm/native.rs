@@ -1,6 +1,7 @@
 //! The native backend: wasmtime with Cranelift, compiling a module to machine
 //! code for the host. The lane wherever a backend exists and runtime codegen
-//! is allowed (desktop, 64-bit Android); the `wasm-native` feature.
+//! is allowed (desktop, 64-bit Android); the `wasm_native` cfg, which build.rs
+//! emits for the `wasm-native` feature on those targets.
 //!
 //! Host imports: wasmtime runs a host function synchronously inside the guest
 //! call, holding the store for its whole duration and handing the function a
