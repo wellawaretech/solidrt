@@ -1,14 +1,15 @@
 // The audio track of a playing stream: Opus packets from the demuxer,
 // decoded and pushed into the caller's sink ahead of playback, with the two
 // trims the stream asks for (pre-skip at the start, preroll after a seek)
-// done here by one rule - decoded samples before the discard point are
-// dropped - and the sink's position mapped back to content time for the
-// transport's clock correction. Engine-free and sink-agnostic (`AudioSink`
-// is the caller's).
+// done by the shared discard rule (`audio::trim`), and the sink's position
+// mapped back to content time for the transport's clock correction.
+// Engine-free and sink-agnostic (`AudioSink` is the caller's).
 
 use super::reader::Next;
 use super::transport::AudioSink;
 use super::{AudioInfo, AudioPacket, OpusDecoder};
+use crate::audio::trim::Trim;
+use crate::audio::webm::padding_frames;
 
 // How much decoded audio the sink holds ahead of playback. Small enough to
 // keep pause and seek latency low (a paused sink holds its queue, a seek
@@ -35,10 +36,9 @@ pub struct AudioTrack {
   sample_rate: u32,
   channels: u16,
   pre_skip_us: i64,
-  // Decoded samples before this content time are discarded: the start of
-  // the stream (pre-skip) or a seek target (preroll). None once playback
-  // has passed it.
-  discard_until_us: Option<i64>,
+  // Decoded samples before the stream's start (pre-skip) or a seek target
+  // (preroll) are discarded.
+  trim: Trim,
   // Content time <-> sink position, set at every push: this content time
   // starts playing when the sink's position reaches this value.
   base: Option<(i64, i64)>,
@@ -58,7 +58,7 @@ impl AudioTrack {
       sample_rate: info.sample_rate,
       channels: info.channels,
       pre_skip_us,
-      discard_until_us: Some(start_us.max(0)),
+      trim: Trim::new(Some(start_us.max(0))),
       base: None,
       done: false,
     })
@@ -74,6 +74,9 @@ impl AudioTrack {
         Next::Waiting => return,
         Next::End => {
           self.done = true;
+          // The sink plays out what it holds, then sits silent (not
+          // starved) until a seek clears and refills it.
+          self.sink.end();
           return;
         }
       };
@@ -90,22 +93,14 @@ impl AudioTrack {
         }
       };
       let frames = chunk.samples.len() / self.channels as usize;
-      let mut first = 0usize;
-      let mut pts_us = chunk.pts_us;
-      if let Some(until) = self.discard_until_us {
-        if pts_us < until {
-          let drop = ((until - pts_us) as i128 * self.sample_rate as i128 / 1_000_000) as usize;
-          first = drop.min(frames);
-          pts_us += (first as i64) * 1_000_000 / self.sample_rate as i64;
-        }
-        if first < frames {
-          self.discard_until_us = None;
-        }
-      }
-      if first >= frames {
+      let (first, pts_us) = self.trim.apply(chunk.pts_us, frames, self.sample_rate);
+      // The stream's last packet ends in encoder padding the container
+      // says to discard.
+      let last = frames - padding_frames(packet.discard_padding_us, self.sample_rate).min(frames);
+      if first >= last {
         continue;
       }
-      let samples = &chunk.samples[first * self.channels as usize..];
+      let samples = &chunk.samples[first * self.channels as usize..last * self.channels as usize];
       // Where this chunk lands in the sink: after everything queued now.
       let starts_at = self.sink.position_us() + self.sink.queued_us();
       if let Err(e) = self.sink.push(samples) {
@@ -150,7 +145,7 @@ impl AudioTrack {
   pub fn seek(&mut self, target_us: i64) {
     self.sink.clear();
     self.decoder.reset();
-    self.discard_until_us = Some(target_us.max(0));
+    self.trim = Trim::new(Some(target_us.max(0)));
     self.base = None;
     self.done = false;
   }

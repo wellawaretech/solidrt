@@ -70,7 +70,7 @@ impl OpusDecoder {
   pub fn reset(&mut self) {
     let result = unsafe { ffi::opus_decoder_ctl(self.ptr, ffi::OPUS_RESET_STATE) };
     if result != ffi::OPUS_OK {
-      log::warn!("[forge::video] opus reset: {}", describe(result));
+      log::warn!("[forge::audio] opus reset: {}", describe(result));
     }
   }
 }

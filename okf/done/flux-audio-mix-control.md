@@ -203,7 +203,8 @@ okf/done/flux-audio-voice-control.md), and the ~3 dB step between omitted
       subsystem". Verified end-to-end (probes/audio-mix-probe.tsx 15/15:
       scoped stop leaves other buses playing, bus fade plays through,
       empty-name rejected).
-   b. Bus GAINS: contract decided and DECLARED 2026-08-20 -
+   b. DONE 2026-10-15 with okf/done/audio-unification.md (three
+      multipliers in the own mixer, as foreseen). Bus GAINS: contract decided and DECLARED 2026-08-20 -
       `setBusGain(bus, gain, { rampMs? })`, audible level = voice x bus x
       master with each layer independent, applies to live + future voices,
       resets on reload. The surface is mixer-implementation-neutral, so it
@@ -223,7 +224,8 @@ okf/done/flux-audio-voice-control.md), and the ~3 dB step between omitted
       app-side state looked correct throughout. The .d.ts now warns on both
       stops that stopping is not pausing (added 2026-08-20); the
       non-destructive group control lands with the mixer replacement (stage 4).
-4. Position/duration/setLoop/pause-resume: output rate landed 2026-08-20
+4. DONE 2026-10-15 with audio-unification (position, duration, setLoop,
+   pause/resume per playback and per bus). Position/duration/setLoop/pause-resume: output rate landed 2026-08-20
    (section 7); the rest, with the bus gains of 3b, is folded into the
    mixer replacement, [video-playback](../backlog/video-playback.md)
    stage 7.

@@ -7,6 +7,8 @@
 //! websocket, the shared byte-stream primitive, and the logging sink. The
 //! scripting host (flux) depends on this crate and supplies all the marshalling.
 
+#[cfg(feature = "audio")]
+pub mod audio;
 pub mod cache;
 pub mod compression;
 pub mod crypto;

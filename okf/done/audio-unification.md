@@ -2,6 +2,7 @@
 title: Audio unification - one mixer for clips, streams, sinks and video
 description: Replace SDL3_mixer with an own mixer rendered in SDL's device callback (sample-accurate gain, pan and fade automation, buses with gain, pause and position, loops without seams) fed by engine-free decoders in forge (WAV own, .opus via vendored libopusfile, WebM/Opus via the existing reader), so clip audio, streamed tracks, PCM sinks and video audio share one PCM path under one master; implements the declared setBusGain, pause/resume, position, duration, setLoop and the JS PCM sink.
 created: 2026-10-15
+completed: 2026-10-15
 ---
 
 # Audio unification - one mixer for clips, streams, sinks and video
@@ -256,7 +257,7 @@ the "not implemented" `setBusGain` body and its interim-pattern doc.
 
 ## Stages
 
-1. **`forge::audio`**: `Pcm`, `AudioDecoder`, sniffing `open`/`decode`,
+1. DONE 2026-10-15. **`forge::audio`**: `Pcm`, `AudioDecoder`, sniffing `open`/`decode`,
    the WAV parser, the vendored libogg + libopusfile with build.rs and the
    FFI module, the WebM audio decoder with the shared trim rule, the
    feature split, notices rows. Tests in `forge/src/tests/audio.rs`: a WAV
@@ -266,7 +267,7 @@ the "not implemented" `setBusGain` body and its interim-pattern doc.
    that lands, the existing `video_av.webm` decoded audio-only, Ogg
    Vorbis rejected with the Opus message. Fixtures are small and checked
    in.
-2. **The mixer**, one change: the SPSC ring, the engine core (voices,
+2. DONE 2026-10-15 (desktop; devices at stage 4). **The mixer**, one change: the SPSC ring, the engine core (voices,
    buses, ramps, envelope, pan, rate, loop, pause, position; clip, stream
    and sink voices), the decode thread, the SDL device and callback and the
    converter streams, the alloy API over it, SDL_mixer and the ramp thread
@@ -278,10 +279,10 @@ the "not implemented" `setBusGain` body and its interim-pattern doc.
    stale-slot commands ignored. Then `probes/audio-mix-probe.tsx` (15
    checks) and `examples/audio` pass unchanged, and `avsync.webm` is in
    sync on desktop.
-3. **Surface**: everything under "JS surface", types, core, docs, the
+3. DONE 2026-10-15. **Surface**: everything under "JS surface", types, core, docs, the
    probe extended for bus gain, pause/resume, position/duration, setLoop,
    the sink and the video bus, plus an app test under `sol test`.
-4. **Verification and close**: desktop, the tablet and the TV, release
+4. DONE 2026-10-15. **Verification and close**: desktop, the tablet and the TV, release
    builds: clip audio (overlap, ramps, fades, buses, pause, loop at
    non-unity rate), streams, a JS sink, video under master/bus with
    `avsync.webm` on the TV's speakers, a reload mid-mix, stats read. Then
@@ -289,4 +290,6 @@ the "not implemented" `setBusGain` body and its interim-pattern doc.
 
 ## Findings
 
-(appended during the work)
+Cut to [audio-unification-findings](../notes/audio-unification-findings.md)
+at completion. A/V sync on the TV's own speakers confirmed by eye and ear
+on 2026-10-15 (avsync.webm via examples/video/src/probe/avsync.tsx).

@@ -532,9 +532,10 @@ pub fn camera_close(camera: *mut SDL_Camera) {
 
 use sdl3::sys::audio::{
   SDL_AudioDeviceID, SDL_AudioSpec, SDL_AudioStream, SDL_AudioStreamCallback, SDL_ClearAudioStream,
-  SDL_DestroyAudioStream, SDL_GetAudioDeviceName, SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable,
-  SDL_GetAudioStreamData, SDL_GetAudioStreamQueued, SDL_OpenAudioDeviceStream, SDL_PauseAudioStreamDevice,
-  SDL_PutAudioStreamData, SDL_ResumeAudioStreamDevice, SDL_SetAudioStreamGain, SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+  SDL_CreateAudioStream, SDL_DestroyAudioStream, SDL_FlushAudioStream, SDL_GetAudioDeviceFormat,
+  SDL_GetAudioDeviceName, SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable, SDL_GetAudioStreamData,
+  SDL_GetAudioStreamQueued, SDL_OpenAudioDeviceStream, SDL_PauseAudioStreamDevice, SDL_PutAudioStreamData,
+  SDL_ResumeAudioStreamDevice, SDL_SetAudioStreamFrequencyRatio, SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
   SDL_AUDIO_DEVICE_DEFAULT_RECORDING, SDL_AUDIO_F32,
 };
 use sdl3::sys::init::SDL_INIT_AUDIO;
@@ -595,17 +596,59 @@ pub fn audio_open_recording_stream(
   unsafe { SDL_OpenAudioDeviceStream(devid, &spec, callback, userdata) }
 }
 
+/// The default playback device's own format: (sample rate, channels, the
+/// device's buffer size in frames). None when the device cannot be queried.
+pub fn audio_playback_device_format() -> Option<(u32, u16, u32)> {
+  let mut spec = SDL_AudioSpec { format: SDL_AUDIO_F32, channels: 0, freq: 0 };
+  let mut frames: std::ffi::c_int = 0;
+  if !unsafe { SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &mut spec, &mut frames) } {
+    return None;
+  }
+  Some((spec.freq.max(0) as u32, spec.channels.max(0) as u16, frames.max(0) as u32))
+}
+
 /// Open the default playback device bound to a new stream taking interleaved
 /// f32 at `sample_rate`/`channels` on the app side (SDL converts to the
-/// device format and mixes all bound streams natively). The stream starts
-/// paused; destroying it also closes the device it opened.
-pub fn audio_open_playback_stream(sample_rate: u32, channels: u16) -> *mut SDL_AudioStream {
+/// device format). `callback` is the stream's get callback: SDL calls it on
+/// its audio thread, with the stream's lock held, each time the device
+/// wants more than the stream holds, and the callback may put data right
+/// there. The stream starts paused; destroying it also closes the device
+/// it opened.
+pub fn audio_open_playback_stream(
+  sample_rate: u32,
+  channels: u16,
+  callback: SDL_AudioStreamCallback,
+  userdata: *mut std::ffi::c_void,
+) -> *mut SDL_AudioStream {
   let spec = SDL_AudioSpec {
     format: SDL_AUDIO_F32,
     channels: channels as std::ffi::c_int,
     freq: sample_rate as std::ffi::c_int,
   };
-  unsafe { SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, None, std::ptr::null_mut()) }
+  unsafe { SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, callback, userdata) }
+}
+
+/// An unbound stream converting interleaved f32 from `src` to `dst` (each a
+/// (sample rate, channels) pair): the resampler and channel converter a
+/// voice renders through. Not tied to a device; destroy it when done.
+pub fn audio_stream_create(src: (u32, u16), dst: (u32, u16)) -> *mut SDL_AudioStream {
+  let spec = |(rate, channels): (u32, u16)| SDL_AudioSpec {
+    format: SDL_AUDIO_F32,
+    channels: channels as std::ffi::c_int,
+    freq: rate as std::ffi::c_int,
+  };
+  unsafe { SDL_CreateAudioStream(&spec(src), &spec(dst)) }
+}
+
+/// No more input is coming: convert everything queued so it can be read.
+pub fn audio_stream_flush(stream: *mut SDL_AudioStream) -> bool {
+  unsafe { SDL_FlushAudioStream(stream) }
+}
+
+/// The rate input is consumed at relative to the stream's own conversion
+/// (1.0 = as created; the range is 0.01 to 100).
+pub fn audio_stream_set_frequency_ratio(stream: *mut SDL_AudioStream, ratio: f32) -> bool {
+  unsafe { SDL_SetAudioStreamFrequencyRatio(stream, ratio) }
 }
 
 pub fn audio_stream_resume(stream: *mut SDL_AudioStream) -> bool {
@@ -627,10 +670,6 @@ pub fn audio_stream_put_f32(stream: *mut SDL_AudioStream, samples: &[f32]) -> bo
 /// (in the app-side spec's format).
 pub fn audio_stream_queued_bytes(stream: *mut SDL_AudioStream) -> i32 {
   unsafe { SDL_GetAudioStreamQueued(stream) }
-}
-
-pub fn audio_stream_set_gain(stream: *mut SDL_AudioStream, gain: f32) -> bool {
-  unsafe { SDL_SetAudioStreamGain(stream, gain) }
 }
 
 /// Drop everything queued on the stream (input and converted output).
@@ -958,35 +997,6 @@ pub fn packed_asset_location(name: &str) -> Option<(std::path::PathBuf, u64, u64
 /// `ndk_context::android_context()` call panics ("android context was not
 /// initialized"). Call once, after `SDL_Init`, before any such dependency runs.
 /// The activity reference and VM live for the whole process, so they are not
-// --- SDL_mixer raw-pointer setters (audio ramp driver) ---
-//
-// The sdl3 crate wraps these on Track/Mixer objects, which are !Send, so the
-// ramp thread (alloy::audio) cannot use them. SDL documents every one of
-// these as safe to call from any thread; what the wrappers do NOT guarantee
-// is pointer liveness - callers pass the raw MIX_Track/MIX_Mixer as usize and
-// must keep it alive for the call (see the purge protocol on RampState).
-
-/// MIX_SetTrackGain on a raw track pointer. Returns false on SDL error.
-pub fn mix_track_set_gain_raw(track: usize, gain: f32) -> bool {
-  unsafe { sdl3::mixer::sys::MIX_SetTrackGain(track as *mut sdl3::mixer::sys::MIX_Track, gain) }
-}
-
-/// MIX_SetTrackStereo (forced-stereo pan gains) on a raw track pointer.
-pub fn mix_track_set_stereo_raw(track: usize, left: f32, right: f32) -> bool {
-  let gains = sdl3::mixer::sys::MIX_StereoGains { left, right };
-  unsafe { sdl3::mixer::sys::MIX_SetTrackStereo(track as *mut sdl3::mixer::sys::MIX_Track, &gains) }
-}
-
-/// MIX_SetTrackFrequencyRatio (playback rate) on a raw track pointer.
-pub fn mix_track_set_frequency_ratio_raw(track: usize, ratio: f32) -> bool {
-  unsafe { sdl3::mixer::sys::MIX_SetTrackFrequencyRatio(track as *mut sdl3::mixer::sys::MIX_Track, ratio) }
-}
-
-/// MIX_SetMixerGain (master) on a raw mixer pointer.
-pub fn mix_mixer_set_gain_raw(mixer: usize, gain: f32) -> bool {
-  unsafe { sdl3::mixer::sys::MIX_SetMixerGain(mixer as *mut sdl3::mixer::sys::MIX_Mixer, gain) }
-}
-
 /// released.
 #[cfg(target_os = "android")]
 pub fn init_android_context() {

@@ -49,6 +49,13 @@ declare module "flux:video" {
      * then a no-op.
      */
     seekable: boolean
+    /**
+     * Scale the audio track's volume (1.0 = unchanged, 0 = silent), ramped
+     * over `rampMs` like a flux:audio playback's gain. The track also obeys
+     * flux:audio's master gain and, when opened with `bus`, that bus's gain
+     * and pause. A no-op without an audio track.
+     */
+    setGain(gain: number, options?: { rampMs?: number }): void
     /** Start or resume playback. */
     play(): void
     /** Pause playback (the current frame stays displayed). */
@@ -129,6 +136,12 @@ declare module "flux:video" {
     /** Where the picture goes: a texture (default) or the platform's video plane. */
     present?: "texture"
     /**
+     * The flux:audio bus the audio track plays on (a plain name created by
+     * use), so `setBusGain`, `pause({ bus })` and `stop({ bus })` reach it.
+     * Omitted, the track plays under the master gain alone.
+     */
+    bus?: string
+    /**
      * Aborting it abandons the open: the promise rejects with the signal's
      * reason and the source is closed.
      */
@@ -139,6 +152,8 @@ declare module "flux:video" {
     present: "plane"
     /** How the picture fits the window: letterboxed (default) or cropped to fill. */
     fit?: "contain" | "cover"
+    /** The flux:audio bus the audio track plays on (see VideoOpenOptions). */
+    bus?: string
     /** Aborting it abandons the open (see VideoOpenOptions). */
     signal?: AbortSignal
   }

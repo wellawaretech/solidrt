@@ -95,7 +95,6 @@ dependencies = [
  "objc2-core-video",
  "rxing",
  "sdl3",
- "sdl3-mixer-sys",
  "skrifa",
  "svgtypes",
  "taffy",

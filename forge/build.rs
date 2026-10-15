@@ -11,10 +11,15 @@
 // Ask the target C compiler (the NDK clang wrapper cargo-ndk points
 // CC_<target> at) where its builtins archive is and link it explicitly.
 //
-// Everywhere, with the `video` feature: build the vendored libopus
+// Everywhere, with the `audio` feature: build the vendored libopus
 // (forge/vendor/opus, a submodule pinned to a release tag) through its own
 // CMake project and link it statically; the cmake crate picks up the
-// cross toolchain cargo-ndk exports on Android, as it does for SDL.
+// cross toolchain cargo-ndk exports on Android, as it does for SDL. Then
+// libogg (forge/vendor/ogg, its own CMake project, which also generates
+// the config_types.h its headers need) and libopusfile (forge/vendor/
+// opusfile, four C files plus the http.c whose HTTP half is opt-in and
+// stays off, compiled straight through cc against the two) for the .opus
+// clip decoder (forge/src/audio/opusfile).
 //
 // Everywhere but Android, with the `video` feature: build the vendored libvpx
 // (forge/vendor/libvpx, a submodule pinned to a release tag) and link it
@@ -133,13 +138,16 @@ fn main() {
   let target_os = std::env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
   println!("cargo:rerun-if-changed=build.rs");
   let video = std::env::var_os("CARGO_FEATURE_VIDEO").is_some();
+  let audio = std::env::var_os("CARGO_FEATURE_AUDIO").is_some();
   if target_os == "android" {
     link_android_builtins();
   } else if video {
     build_libvpx(&target_os);
   }
-  if video {
-    build_libopus();
+  if audio {
+    let opus = build_libopus();
+    let ogg = build_libogg();
+    build_libopusfile(&opus, &ogg, &target_os);
   }
   if std::env::var_os("CARGO_FEATURE_KTX2").is_some() {
     build_basis();
@@ -190,15 +198,23 @@ fn build_basis() {
     .compile("basisu_zstd");
 }
 
-fn build_libopus() {
+/// The vendored library source `name` under forge/vendor, checked to be a
+/// fetched submodule by the presence of `marker` in it.
+fn vendored(name: &str, marker: &str) -> PathBuf {
   let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
-  let src = manifest_dir.join("vendor").join("opus");
+  let src = manifest_dir.join("vendor").join(name);
   println!("cargo:rerun-if-changed={}", src.display());
-  if !src.join("CMakeLists.txt").exists() {
+  if !src.join(marker).exists() {
     panic!(
-      "forge/vendor/opus is empty; fetch the opus submodule first:\n  git submodule update --init forge/vendor/opus"
+      "forge/vendor/{name} is empty; fetch the {name} submodule first:\n  git submodule update --init forge/vendor/{name}"
     );
   }
+  src
+}
+
+/// Build libopus into its install dir (lib/ and include/opus/) and link it.
+fn build_libopus() -> PathBuf {
+  let src = vendored("opus", "CMakeLists.txt");
   // The library only: no programs, tests, docs or install modules, and a
   // fixed lib dir so the link search path is the same on every distro.
   let mut config = cmake::Config::new(&src);
@@ -219,6 +235,61 @@ fn build_libopus() {
   let dst = config.build();
   println!("cargo:rustc-link-search=native={}", dst.join("lib").display());
   println!("cargo:rustc-link-lib=static=opus");
+  dst
+}
+
+/// Build libogg into its install dir (lib/ and include/ogg/, the generated
+/// config_types.h among the headers) and link it.
+fn build_libogg() -> PathBuf {
+  let src = vendored("ogg", "CMakeLists.txt");
+  // The library only: no docs, no pkg-config or CMake package files, and a
+  // fixed lib dir so the link search path is the same on every distro.
+  let mut config = cmake::Config::new(&src);
+  config
+    .define("BUILD_SHARED_LIBS", "OFF")
+    .define("INSTALL_DOCS", "OFF")
+    .define("INSTALL_PKG_CONFIG_MODULE", "OFF")
+    .define("INSTALL_CMAKE_PACKAGE_MODULE", "OFF")
+    .define("CMAKE_INSTALL_LIBDIR", "lib");
+  // Release whatever the cargo profile, as for opus: Rust links the release
+  // CRT only and a Debug config would pick the debug one.
+  if msvc() {
+    config.profile("Release");
+  }
+  let dst = config.build();
+  println!("cargo:rustc-link-search=native={}", dst.join("lib").display());
+  println!("cargo:rustc-link-lib=static=ogg");
+  dst
+}
+
+/// The libopusfile sources compiled into forge, relative to the submodule
+/// root: the decoder and its Ogg stream layer. http.c is compiled too: its
+/// HTTP support is opt-in (OP_ENABLE_HTTP, never defined here) and without
+/// it the file holds the stubs opusfile.c's URL openers call.
+const OPUSFILE_SOURCES: &[&str] = &["src/opusfile.c", "src/info.c", "src/internal.c", "src/stream.c", "src/http.c"];
+
+/// Compile libopusfile through cc against the libopus and libogg installs.
+fn build_libopusfile(opus: &std::path::Path, ogg: &std::path::Path, target_os: &str) {
+  let src = vendored("opusfile", "include/opusfile.h");
+  let mut build = cc::Build::new();
+  build
+    .warnings(false)
+    .flag_if_supported("-fvisibility=hidden")
+    .include(src.join("include"))
+    .include(ogg.join("include"))
+    .include(opus.join("include").join("opus"));
+  // opusfile asks for 64-bit file offsets, under which 32-bit Bionic only
+  // declares fseeko/ftello from API 24 (as the *64 renames); the oldest
+  // target is 21. The stdio path they serve (op_fopen) is never used here
+  // (the reader goes through callbacks), so 32-bit offsets cost nothing.
+  let pointer_width = std::env::var("CARGO_CFG_TARGET_POINTER_WIDTH").unwrap_or_default();
+  if target_os == "android" && pointer_width == "32" {
+    build.define("_FILE_OFFSET_BITS", "32");
+  }
+  for file in OPUSFILE_SOURCES {
+    build.file(src.join(file));
+  }
+  build.compile("opusfile");
 }
 
 fn link_android_builtins() {

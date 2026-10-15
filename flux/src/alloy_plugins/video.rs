@@ -95,6 +95,9 @@ impl forge::video::AudioSink for SinkAdapter {
   fn clear(&mut self) {
     self.0.clear()
   }
+  fn end(&mut self) {
+    self.0.end()
+  }
 }
 
 // alloy's YUV latch handle under forge's frame sink contract: the same
@@ -128,11 +131,15 @@ impl forge::video::FrameSink for FrameSinkAdapter {
 // under forge's contract, None when the stream has no audio or no output
 // device could be opened (the video then plays silent rather than
 // failing).
-fn open_sink(gui: &super::Gui, info: &MediaInfo) -> (Option<u64>, Option<Box<dyn forge::video::AudioSink>>) {
+fn open_sink(
+  gui: &super::Gui,
+  info: &MediaInfo,
+  bus: Option<&str>,
+) -> (Option<u64>, Option<Box<dyn forge::video::AudioSink>>) {
   let Some(audio) = info.audio.as_ref() else {
     return (None, None);
   };
-  let sink = match gui.alloy.create_pcm_sink(audio.sample_rate, audio.channels) {
+  let sink = match gui.alloy.create_pcm_sink(audio.sample_rate, audio.channels, bus) {
     Ok(sink) => sink,
     Err(e) => {
       log::warn!("[video] no audio sink, playing silent: {e}");
@@ -285,6 +292,16 @@ fn read_present(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result
   }
 }
 
+/// The `{ bus? }` option: the audio bus the player's sound plays on.
+fn read_bus(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result<Option<String>> {
+  let Some(opts) = options.0.as_ref() else { return Ok(None) };
+  let bus = opts.get::<_, Option<String>>("bus")?;
+  if bus.as_deref().is_some_and(|b| b.is_empty() || b.contains('\0')) {
+    return Err(Exception::throw_type(ctx, "openVideo: bus must be a non-empty string"));
+  }
+  Ok(bus)
+}
+
 /// What `open` was given: a path or URL under the one source rule, or a
 /// `file()` object's own opener (a packed asset reads out of the exe).
 enum MediaSource {
@@ -354,6 +371,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
   // unreadable or unsupported stream, or a platform without a plane, is
   // environmental: reject, never throw (the async-binding contract).
   let present = read_present(&ctx, &options)?;
+  let bus = read_bus(&ctx, &options)?;
   let source = read_source(&ctx, source)?;
   let signal = read_signal(&options)?;
   let (promise, resolve, reject) = Promise::new(&ctx)?;
@@ -412,7 +430,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
     drop(hold);
     let ctx = task_ctx;
     let settled = match outcome {
-      Outcome::Opened(Ok(info)) => match build_player(ctx.clone(), &state, reader, info, present, label) {
+      Outcome::Opened(Ok(info)) => match build_player(ctx.clone(), &state, reader, info, present, bus, label) {
         Ok(obj) => resolve.call::<_, ()>((obj,)),
         Err(e) => video_error(&ctx, &e, "openVideo: ").and_then(|err| reject.call::<_, ()>((err,))),
       },
@@ -463,10 +481,11 @@ fn build_player<'js>(
   reader: Reader,
   info: MediaInfo,
   present: Present,
+  bus: Option<String>,
   label: String,
 ) -> Result<Object<'js>, StreamError> {
   let gui = &state.0.gui;
-  let (sink, audio) = open_sink(gui, &info);
+  let (sink, audio) = open_sink(gui, &info, bus.as_deref());
   let has_audio = sink.is_some();
   let opened = match present {
     Present::Texture => open_texture_player(gui, reader, &info, audio, &label),
@@ -610,6 +629,10 @@ fn build_object<'js>(
     obj.set("currentTime", Function::new(ctx.clone(), move |ctx: Ctx<'_>| current_time_impl(ctx, id))?)?;
     obj.set("finished", Function::new(ctx.clone(), move |ctx: Ctx<'_>| finished_impl(ctx, id))?)?;
     obj.set("buffering", Function::new(ctx.clone(), move |ctx: Ctx<'_>| buffering_impl(ctx, id))?)?;
+    obj.set(
+      "setGain",
+      Function::new(ctx.clone(), gain_builder(move |ctx, gain, options| set_gain_impl(ctx, id, gain, options)))?,
+    )?;
     obj.set("error", Function::new(ctx.clone(), value_builder(move |ctx| error_impl(ctx, id)))?)?;
     // The one-shot: resolves with the failure that stops playback, with
     // undefined when the player closes without one.
@@ -639,6 +662,37 @@ where
   F: for<'js> Fn(Ctx<'js>) -> rquickjs::Result<Value<'js>>,
 {
   f
+}
+
+/// The same coercion for the gain setter, whose `Ctx` and options bag must
+/// share one `'js`.
+fn gain_builder<F>(f: F) -> F
+where
+  F: for<'js> Fn(Ctx<'js>, f32, OptArg<Object<'js>>) -> rquickjs::Result<()>,
+{
+  f
+}
+
+/// setGain(gain, { rampMs? }): the audio track's volume, on its sink. A
+/// no-op for a player without one.
+fn set_gain_impl<'js>(ctx: Ctx<'js>, id: u64, gain: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
+  if !gain.is_finite() || gain < 0.0 {
+    return Err(Exception::throw_type(&ctx, "setGain: gain must be a finite number >= 0"));
+  }
+  let ramp_ms = match options.0.as_ref() {
+    Some(opts) => opts.get::<_, Option<f64>>("rampMs")?.unwrap_or(0.0),
+    None => 0.0,
+  };
+  if !ramp_ms.is_finite() || ramp_ms < 0.0 {
+    return Err(Exception::throw_type(&ctx, "setGain: rampMs must be a finite number >= 0"));
+  }
+  let Some(Some(sink)) = with_entry(&ctx, id, |e| e.sink) else { return Ok(()) };
+  state(&ctx)
+    .0
+    .gui
+    .alloy
+    .set_pcm_sink_gain(sink, gain, ramp_ms)
+    .map_err(|e| Exception::throw_message(&ctx, &format!("setGain: {e}")))
 }
 
 // Run `f` on the entry `id`, None once closed (a late call on a closed

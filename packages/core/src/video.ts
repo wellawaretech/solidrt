@@ -33,6 +33,11 @@ export type VideoOptions = {
   present?: "texture" | "plane"
   /** Plane only: letterboxed (default) or cropped to fill the window. */
   fit?: "contain" | "cover"
+  /**
+   * The flux:audio bus the audio track plays on, so a bus gain, pause or
+   * stop reaches it. Omitted, the track plays under the master gain alone.
+   */
+  bus?: string
 }
 
 /** An opened video as reactive accessors plus playback controls. */
@@ -72,6 +77,12 @@ export type VideoStream = {
   finished(): boolean
   /** Whether playback is held for the source to catch up (plain read, not a signal). */
   buffering(): boolean
+  /**
+   * Scale the audio track's volume (1.0 = unchanged, 0 = silent), ramped
+   * over `rampMs`. Remembered while opening and applied once open; a no-op
+   * without an audio track.
+   */
+  setGain(gain: number, options?: { rampMs?: number }): void
 }
 
 type AnyPlayer = VideoPlayer | VideoPlane
@@ -105,10 +116,13 @@ export function createVideo(source: VideoSource, options: VideoOptions = {}): Vi
   // owner is gone.
   let abort = new AbortController()
 
+  // A gain set while opening, applied once the player exists.
+  let wantGain: number | undefined
+
   let opened: Promise<AnyPlayer> =
     options.present === "plane"
-      ? open(source, { present: "plane", fit: options.fit, signal: abort.signal })
-      : open(source, { signal: abort.signal })
+      ? open(source, { present: "plane", fit: options.fit, bus: options.bus, signal: abort.signal })
+      : open(source, { bus: options.bus, signal: abort.signal })
   opened
     .then((video) => {
       if (disposed) {
@@ -121,6 +135,7 @@ export function createVideo(source: VideoSource, options: VideoOptions = {}): Vi
       setHeight(video.height)
       setDuration(video.duration)
       setReady(true)
+      if (wantGain !== undefined) video.setGain(wantGain)
       if (wantPlay) video.play()
       // A failure that stops playback later lands in the same signal.
       video.failed.then((failure) => {
@@ -163,5 +178,9 @@ export function createVideo(source: VideoSource, options: VideoOptions = {}): Vi
     currentTime: () => player?.currentTime() ?? 0,
     finished: () => player?.finished() ?? false,
     buffering: () => player?.buffering() ?? false,
+    setGain(gain: number, rampOptions?: { rampMs?: number }) {
+      wantGain = gain
+      player?.setGain(gain, rampOptions)
+    },
   }
 }

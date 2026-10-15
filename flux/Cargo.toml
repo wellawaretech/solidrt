@@ -29,7 +29,7 @@ compile = []
 # raf / camera / microphone bindings. Pulls alloy (SDL + Impeller + GL). Off by
 # default so the headless flux runtime and its bins stay GUI-free; lattice turns
 # it on.
-gui = ["dep:alloy", "dep:taffy", "dep:serde_json"]
+gui = ["dep:alloy", "dep:taffy", "dep:serde_json", "forge/audio"]
 # flux:video (behind forge/video): not a cargo default; see forge/Cargo.toml.
 video = ["forge/video"]
 # flux:image transcodeTexture / encodeTexture and the `ktx2` capability

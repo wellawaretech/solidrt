@@ -39,6 +39,8 @@ pub(crate) struct StatsQuery<'a> {
   pub(crate) counts: Option<(usize, usize)>,
   pub(crate) raster: Option<alloy::RasterCounters>,
   pub(crate) residency: Option<alloy::spatial::ResidencyStats>,
+  /// The mixer's counters; None until the audio device has been opened.
+  pub(crate) audio: Option<alloy::audio::AudioStats>,
   pub(crate) app: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
@@ -124,6 +126,19 @@ pub(crate) fn stats_data(r: StatsQuery<'_>) -> serde_json::Map<String, serde_jso
     put("regionEnters", g.enters.into());
     put("regionLeaves", g.leaves.into());
     put("residentWeight", g.weight.into());
+  }
+  // The mixer, read live: voices in the mix, rings outrun since the device
+  // opened, and the longest callback render pass since the last query (the
+  // number that says whether the mix keeps its budget on a device).
+  if let Some(a) = r.audio {
+    put("audioVoices", a.live_voices.into());
+    put("audioUnderruns", a.underruns.into());
+    put("audioRenderMaxMs", round2_64(a.render_max_ms).into());
+    put("audioDeviceRate", a.device_rate.into());
+    put("audioDeviceFrames", a.device_frames.into());
+    // How far the mix runs ahead of the device: rendered audio waiting in
+    // the device stream, in ms at the device rate.
+    put("audioDeviceQueuedMs", round2_64(a.device_queued_frames as f64 * 1000.0 / a.device_rate.max(1) as f64).into());
   }
   if let Some(app) = r.app {
     put("app", app.into());

@@ -1,21 +1,24 @@
 // Sound playback, reactive (SolidJS) layer. `createSound` decodes an encoded
-// clip (Ogg/Vorbis or WAV) once and owns its lifecycle: the decoded clip is
-// released, and any playing voices stopped, when the reactive owner is disposed.
-// Each play() is cheap (no re-decode). `createPcmSound` is the same over raw
-// samples the app generated itself; `createSoundStream` reads a large track
-// from a file path on demand instead of decoding it into memory.
+// clip (WAV, or Opus in Ogg or WebM) once and owns its lifecycle: the decoded
+// clip is released, and any playing voices stopped, when the reactive owner
+// is disposed. Each play() is cheap (no re-decode). `createPcmSound` is the
+// same over raw samples the app generated itself; `createSoundStream` reads
+// a large track from a file on demand instead of decoding it into memory;
+// `createSink` plays samples as the app produces them.
 //
 // The imperative primitive lives in the `flux:audio` module; import
-// { play, load, loadPcm, stream } from "flux:audio" for non-reactive use.
+// { play, load, loadPcm, stream, createSink } from "flux:audio" for
+// non-reactive use.
 
 import { createSignal, onCleanup } from "@solidjs/signals"
-import { load, loadPcm, stream } from "flux:audio"
+import { createSink as openSink, load, loadPcm, stream } from "flux:audio"
 import { file } from "flux:fs"
 
 type FluxFile = ReturnType<typeof file>
 
 type Clip = ReturnType<typeof load>
 type Playback = ReturnType<Clip["play"]>
+type FluxSink = ReturnType<typeof openSink>
 
 export type SoundOptions = {
   /** Repeat the clip until stopped. Defaults to false. */
@@ -87,12 +90,28 @@ export type Sound = {
   play(): void
   /** Stop every voice started from this sound, fading first if asked. */
   stop(options?: SoundStopOptions): void
+  /** Hold every live voice where it is, until resume(). */
+  pause(): void
+  /** Continue every paused voice. */
+  resume(): void
   /** Set the volume of every live voice, and of voices started later. */
   setGain(gain: number, options?: SoundRampOptions): void
   /** Set the stereo position of every live voice, and of voices started later. */
   setPan(pan: number, options?: SoundRampOptions): void
   /** Set the playback rate of every live voice, and of voices started later. */
   setRate(rate: number, options?: SoundRampOptions): void
+  /**
+   * Set whether voices repeat: every live voice (a looping one turned off
+   * finishes its pass and ends), and voices started later.
+   */
+  setLoop(loop: boolean): void
+  /**
+   * Where the most recently started voice is in the clip, in seconds (a
+   * single-voice sound's position); undefined before the first play().
+   */
+  position(): number | undefined
+  /** The clip's length in seconds; undefined while not loaded or unknown. */
+  duration(): number | undefined
   /** True after play() until stop() (does not track natural completion). */
   playing(): boolean
   /** Set if loading failed. */
@@ -154,6 +173,14 @@ function reactiveSound(
       setPlaying(true)
     },
     stop: stopAll,
+    pause() {
+      prune()
+      for (let v of voices) v.pause()
+    },
+    resume() {
+      prune()
+      for (let v of voices) v.resume()
+    },
     setGain(value, options) {
       gain = value
       prune()
@@ -169,7 +196,79 @@ function reactiveSound(
       prune()
       for (let v of voices) v.setRate(value, options)
     },
+    setLoop(value) {
+      loop = value
+      prune()
+      for (let v of voices) v.setLoop(value)
+    },
+    position: () => voices.at(-1)?.position(),
+    duration: () => clip?.duration,
     playing,
+    error,
+  }
+}
+
+/** Options for {@link createSink}: the pushed samples' layout and bus. */
+export type SinkOptions = {
+  /** Sample rate of the pushed samples in Hz (any rate; the mixer resamples). */
+  sampleRate: number
+  /** Channel count, interleaved samples when 2. Defaults to 1 (mono). */
+  channels?: 1 | 2
+  /** Bus the sink plays on (see flux:audio buses). */
+  bus?: string
+}
+
+/** A streaming PCM output with reactive lifecycle. */
+export type Sink = {
+  /** The sink's id, for a runtime module that pushes into it; undefined if opening failed. */
+  id(): number | undefined
+  /** Queue interleaved float samples after what is queued (a no-op if opening failed). */
+  push(samples: Float32Array): void
+  /** Milliseconds pushed and not yet heard: push while this is under your lookahead. */
+  queuedMs(): number
+  /** Milliseconds played since the sink opened. */
+  positionMs(): number
+  /** Hold the sink; the queue holds. */
+  pause(): void
+  /** Continue a paused sink. */
+  resume(): void
+  /** Drop everything queued. */
+  clear(): void
+  /** Scale the sink's volume (1.0 = unchanged), ramped if asked. */
+  setGain(gain: number, options?: SoundRampOptions): void
+  /** Set if opening failed (no audio device). */
+  error(): Error | undefined
+}
+
+/**
+ * Opens a streaming PCM output and owns its lifecycle: closed when the
+ * reactive owner is disposed. Samples pushed as they are produced play
+ * seamlessly, under the master gain and the sink's bus like any voice; a
+ * runtime module can push into it from its own thread by `id()`. On a box
+ * with no audio device `error()` is set and the methods are no-ops. For
+ * imperative use, call createSink() from "flux:audio".
+ */
+export function createSink(options: SinkOptions): Sink {
+  let [error, setError] = createSignal<Error | undefined>(undefined, { ownedWrite: true })
+  let sink: FluxSink | undefined
+  try {
+    sink = openSink(options)
+  } catch (e) {
+    setError(e instanceof Error ? e : new Error(String(e)))
+  }
+  onCleanup(() => {
+    sink?.close()
+    sink = undefined
+  })
+  return {
+    id: () => sink?.id,
+    push: (samples) => sink?.push(samples),
+    queuedMs: () => sink?.queuedMs() ?? 0,
+    positionMs: () => sink?.positionMs() ?? 0,
+    pause: () => sink?.pause(),
+    resume: () => sink?.resume(),
+    clear: () => sink?.clear(),
+    setGain: (gain, rampOptions) => sink?.setGain(gain, rampOptions),
     error,
   }
 }

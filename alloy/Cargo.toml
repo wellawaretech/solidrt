@@ -8,11 +8,7 @@ name = "basic"
 
 [target.'cfg(target_os = "android")'.dependencies]
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys"] }
-sdl3 = { version = "=0.18.4", features = ["build-from-source", "mixer"] }
-# Android's sdl3 uses non-static build-from-source, which forwards only
-# build-from-source (not the vendored static build) to sdl3-mixer-sys, so the
-# vendored static build is requested here explicitly. Ogg/Vorbis + WAV only.
-sdl3-mixer-sys = { version = "=0.6.3", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave", "build-static-vendored"] }
+sdl3 = { version = "=0.18.4", features = ["build-from-source"] }
 # Bridge SDL's JNI env + activity into the process-wide ndk-context that
 # JNI-using deps (e.g. iroh's network monitoring via flux:p2p) read on Android.
 ndk-context = "=0.1.1"
@@ -37,9 +33,7 @@ libc = "=0.2.190"
 [target.'cfg(all(target_os = "android", target_arch = "arm"))'.dependencies]
 impellers = { version = "=0.4.3", features = ["bindgen_live"] }
 
-# Desktop targets build SDL statically (build-from-source-static), which already
-# forwards build-static-vendored to sdl3-mixer-sys, so the format features alone
-# suffice here. Ogg/Vorbis + WAV only.
+# Desktop targets build SDL statically (build-from-source-static).
 [target.'cfg(target_os = "macos")'.dependencies]
 # CVDisplayLink for the macOS swap pacer (display_link.rs): the ANGLE-Metal
 # swap does not block, so the window swap waits for the link's tick, as SDL's
@@ -50,13 +44,11 @@ impellers = { version = "=0.4.3", features = ["bindgen_live"] }
 objc2-core-video = { version = "=0.3.2", default-features = false, features = ["CVBase", "CVReturn", "CVDisplayLink", "CVHostTime"] }
 objc2-core-foundation = { version = "=0.3.2", default-features = false }
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "=0.18.4", features = ["build-from-source-static", "mixer"] }
-sdl3-mixer-sys = { version = "=0.6.3", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
+sdl3 = { version = "=0.18.4", features = ["build-from-source-static"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "=0.18.4", features = ["build-from-source-static", "mixer"] }
-sdl3-mixer-sys = { version = "=0.6.3", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
+sdl3 = { version = "=0.18.4", features = ["build-from-source-static"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # GetCurrentThread/SetThreadPriority for the frame thread priority boost, the
@@ -65,8 +57,7 @@ sdl3-mixer-sys = { version = "=0.6.3", features = ["no-default-formats", "sdlmix
 # enables this feature, so the unified build compiles no extra crate.
 windows-sys = { version = "=0.61.2", features = ["Win32_System_Threading"] }
 impellers = { version = "=0.4.3", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "=0.18.4", features = ["build-from-source-static", "mixer"] }
-sdl3-mixer-sys = { version = "=0.6.3", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
+sdl3 = { version = "=0.18.4", features = ["build-from-source-static"] }
 
 [dependencies]
 log = { workspace = true }

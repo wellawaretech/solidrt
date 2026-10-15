@@ -10,3 +10,9 @@
 [submodule "alloy/vendor/msdfgen"]
 	path = alloy/vendor/msdfgen
 	url = https://github.com/Chlumsky/msdfgen.git
+[submodule "forge/vendor/ogg"]
+	path = forge/vendor/ogg
+	url = https://github.com/xiph/ogg.git
+[submodule "forge/vendor/opusfile"]
+	path = forge/vendor/opusfile
+	url = https://github.com/xiph/opusfile.git

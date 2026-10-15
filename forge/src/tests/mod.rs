@@ -1,3 +1,5 @@
+#[cfg(feature = "audio")]
+mod audio;
 mod cache;
 mod compression;
 mod crypto;

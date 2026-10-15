@@ -67,6 +67,7 @@ const ID_SIMPLE_BLOCK: u32 = 0xA3;
 const ID_BLOCK_GROUP: u32 = 0xA0;
 const ID_BLOCK: u32 = 0xA1;
 const ID_REFERENCE_BLOCK: u32 = 0xFB;
+const ID_DISCARD_PADDING: u32 = 0x75A2;
 
 // The first four bytes of an MP4 are a box size, 0 0 0 <n> for the ftyp box
 // in every muxer's output: named in the error so a stale clip is obvious.
@@ -123,7 +124,8 @@ pub struct WebmDemuxer {
   timestamp_scale_ns: u64,
   // Byte offset of the Segment's data, what cue positions are relative to.
   segment_start: u64,
-  video_track: u64,
+  // None when opened for audio alone (`open_audio`).
+  video_track: Option<u64>,
   audio_track: Option<u64>,
   play_video: bool,
   play_audio: bool,
@@ -167,6 +169,18 @@ impl WebmDemuxer {
   /// A missing or non-Opus audio track is not an error: `info().audio` is
   /// None and playback is silent.
   pub fn open(reader: SeekableReader, facts: Facts) -> Result<Self, StreamError> {
+    Self::open_tracks(reader, facts, true)
+  }
+
+  /// Open a stream for its Opus audio track alone (an audio clip, or the
+  /// sound of a video file): no video track is required, none is played,
+  /// and playback starts at the first packet rather than at a keyframe.
+  /// Errs when the stream is not WebM or has no Opus track.
+  pub fn open_audio(reader: SeekableReader, facts: Facts) -> Result<Self, StreamError> {
+    Self::open_tracks(reader, facts, false)
+  }
+
+  fn open_tracks(reader: SeekableReader, facts: Facts, with_video: bool) -> Result<Self, StreamError> {
     let mut reader = Ebml::new(reader, facts.seekable);
 
     // The magic first, before any EBML interpretation: an MP4 or an empty
@@ -231,28 +245,37 @@ impl WebmDemuxer {
       }
     }
 
-    let video = tracks
-      .iter()
-      .find(|t| t.kind == TRACK_TYPE_VIDEO && t.codec == CODEC_VP9)
-      .ok_or_else(|| StreamError::unsupported("no VP9 video track"))?;
-    let (width, height) = (video.width, video.height);
-    if width == 0 || height == 0 {
-      return Err("VP9 track has no pixel size".into());
-    }
-    let bt709 = match video.matrix {
+    let video = if with_video {
+      let video = tracks
+        .iter()
+        .find(|t| t.kind == TRACK_TYPE_VIDEO && t.codec == CODEC_VP9)
+        .ok_or_else(|| StreamError::unsupported("no VP9 video track"))?;
+      if video.width == 0 || video.height == 0 {
+        return Err("VP9 track has no pixel size".into());
+      }
+      Some(video)
+    } else {
+      None
+    };
+    let (width, height) = video.map_or((0, 0), |v| (v.width, v.height));
+    let bt709 = match video.and_then(|v| v.matrix) {
       Some(MATRIX_BT709) => true,
       Some(MATRIX_BT470BG) | Some(MATRIX_BT601) => false,
       _ => height >= HD_LINES,
     };
-    let full_range = video.range == Some(RANGE_FULL);
+    let full_range = video.is_some_and(|v| v.range == Some(RANGE_FULL));
     let audio_track = tracks.iter().find(|t| t.kind == TRACK_TYPE_AUDIO && t.codec == CODEC_OPUS);
+    // A video plays silent without a usable audio track; an audio-only
+    // open has nothing else to play.
     let audio = match audio_track.map(opus_info) {
       Some(Ok(info)) => Some(info),
-      Some(Err(e)) => {
+      Some(Err(e)) if with_video => {
         log::warn!("[forge::video] ignoring audio track: {e}");
         None
       }
-      None => None,
+      Some(Err(e)) => return Err(StreamError::unsupported(e)),
+      None if with_video => None,
+      None => return Err(StreamError::unsupported("no Opus audio track")),
     };
     // Duration is a fact only when the Segment has a known size: a muxer
     // writing to a pipe leaves a Duration it could not know.
@@ -267,9 +290,9 @@ impl WebmDemuxer {
       info: MediaInfo { width, height, duration_us, start_us: 0, seekable: facts.seekable, bt709, full_range, audio },
       timestamp_scale_ns,
       segment_start,
-      video_track: video.number,
+      video_track: video.map(|v| v.number),
       audio_track: audio_track.map(|t| t.number),
-      play_video: true,
+      play_video: with_video,
       play_audio: true,
       cues: cues.iter().map(|&(t, pos)| (to_us(t), pos)).collect(),
       cues_position,
@@ -278,25 +301,29 @@ impl WebmDemuxer {
       audio_q: VecDeque::new(),
       epoch_target_us: 0,
       resume_us: 0,
-      gating: true,
+      // An audio-only open has no keyframe to wait for: it plays from the
+      // first packet.
+      gating: with_video,
       held_audio: VecDeque::new(),
       audio_skip_until: None,
       ended: false,
       failed: None,
     };
-    // The first keyframe: the stream's start, and the frame whose header
-    // says the profile (WebM does not always carry VP9 codec metadata, the
-    // bitstream always does).
-    while demux.gating && demux.read_block()? {}
-    let first = demux.video_q.front().ok_or("video track has no keyframe")?;
-    let marker = first.data.first().copied().unwrap_or(0);
-    if marker >> 6 != VP9_FRAME_MARKER {
-      return Err(StreamError::unsupported("video track is not VP9 (no frame marker)"));
+    if with_video {
+      // The first keyframe: the stream's start, and the frame whose header
+      // says the profile (WebM does not always carry VP9 codec metadata,
+      // the bitstream always does).
+      while demux.gating && demux.read_block()? {}
+      let first = demux.video_q.front().ok_or("video track has no keyframe")?;
+      let marker = first.data.first().copied().unwrap_or(0);
+      if marker >> 6 != VP9_FRAME_MARKER {
+        return Err(StreamError::unsupported("video track is not VP9 (no frame marker)"));
+      }
+      if marker & VP9_PROFILE_MASK != 0 {
+        return Err(StreamError::unsupported("unsupported VP9 stream: only profile 0 (8-bit 4:2:0) plays"));
+      }
+      demux.info.start_us = demux.resume_us;
     }
-    if marker & VP9_PROFILE_MASK != 0 {
-      return Err(StreamError::unsupported("unsupported VP9 stream: only profile 0 (8-bit 4:2:0) plays"));
-    }
-    demux.info.start_us = demux.resume_us;
     Ok(demux)
   }
 
@@ -347,7 +374,7 @@ impl WebmDemuxer {
         ID_CLUSTER_TIMESTAMP => self.cluster_ts = Some(self.reader.uint(size)?),
         ID_SIMPLE_BLOCK => {
           let data = self.reader.bytes(size)?;
-          if self.queue_block(&data, None)? {
+          if self.queue_block(&data, None, 0)? {
             return Ok(true);
           }
         }
@@ -355,6 +382,9 @@ impl WebmDemuxer {
           let end = self.reader.end_of(size).ok_or("block group of unknown size")?;
           let mut block = None;
           let mut referenced = false;
+          // Encoder padding at the end of the block (nanoseconds), on a
+          // stream's last audio packet.
+          let mut discard_padding_ns = 0i64;
           while self.reader.pos < end {
             let (id, size) = self.reader.header()?.ok_or("truncated block group")?;
             match id {
@@ -363,11 +393,12 @@ impl WebmDemuxer {
                 referenced = true;
                 self.reader.skip(size)?;
               }
+              ID_DISCARD_PADDING => discard_padding_ns = self.reader.sint(size)?,
               _ => self.reader.skip(size)?,
             }
           }
           if let Some(data) = block {
-            if self.queue_block(&data, Some(!referenced))? {
+            if self.queue_block(&data, Some(!referenced), discard_padding_ns / 1000)? {
               return Ok(true);
             }
           }
@@ -393,8 +424,9 @@ impl WebmDemuxer {
   /// Queue one block's frame on its track; true when it was queued (a
   /// block on a track we do not play, a pre-keyframe video block, a held
   /// or dropped audio packet is not). `keyframe` is known for a
-  /// BlockGroup; a SimpleBlock says so in its flags.
-  fn queue_block(&mut self, data: &[u8], keyframe: Option<bool>) -> Result<bool, StreamError> {
+  /// BlockGroup; a SimpleBlock says so in its flags. `discard_padding_us`
+  /// is the group's DiscardPadding (0 for a SimpleBlock).
+  fn queue_block(&mut self, data: &[u8], keyframe: Option<bool>, discard_padding_us: i64) -> Result<bool, StreamError> {
     let (track, rel_ts, flags, header_len) = block_header(data)?;
     if flags & BLOCK_FLAG_LACING != 0 {
       // Lacing packs several frames per block; neither ffmpeg's WebM muxer
@@ -405,7 +437,7 @@ impl WebmDemuxer {
     let cluster_ts = self.cluster_ts.ok_or("block before its cluster timestamp")?;
     let ticks = cluster_ts as i64 + rel_ts as i64;
     let pts_us = (ticks as i128 * self.timestamp_scale_ns as i128 / 1000) as i64;
-    if track == self.video_track {
+    if Some(track) == self.video_track {
       if !self.play_video {
         return Ok(false);
       }
@@ -422,7 +454,7 @@ impl WebmDemuxer {
       if !self.play_audio {
         return Ok(false);
       }
-      let packet = AudioPacket { pts_us, data: data[header_len..].to_vec() };
+      let packet = AudioPacket { pts_us, data: data[header_len..].to_vec(), discard_padding_us };
       if self.gating {
         self.held_audio.push_back(packet);
         while self.held_audio.front().is_some_and(|p| p.pts_us < pts_us - GATING_HOLD_US) {
@@ -872,6 +904,18 @@ impl Ebml {
       return Err("integer element too long".into());
     }
     Ok(bytes.iter().fold(0u64, |v, &b| (v << 8) | b as u64))
+  }
+
+  /// A signed integer element: big-endian two's complement of 1 to 8 bytes.
+  fn sint(&mut self, size: Option<u64>) -> Result<i64, StreamError> {
+    let bytes = self.bytes(size)?;
+    if bytes.is_empty() || bytes.len() > 8 {
+      return Err("signed integer element of bad length".into());
+    }
+    let magnitude = bytes.iter().fold(0u64, |v, &b| (v << 8) | b as u64);
+    // Sign-extend from the element's own width.
+    let shift = 64 - 8 * bytes.len() as u32;
+    Ok(((magnitude << shift) as i64) >> shift)
   }
 
   fn float(&mut self, size: Option<u64>) -> Result<f64, StreamError> {

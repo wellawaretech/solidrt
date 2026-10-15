@@ -2,9 +2,22 @@
 title: JS cannot stream PCM to the audio output
 description: flux:audio plays whole clips only (load, loadPcm, stream), so speech synthesis and live processing have no way to play samples as they are produced; alloy's PCM sink exists for the video plugin, and a createSink in flux:audio over it, with an id a runtime module pushes into from its own thread, closes the loop the microphone ring opened on the input side.
 created: 2026-10-11
+completed: 2026-10-15
 ---
 
 # JS cannot stream PCM to the audio output
+
+DONE 2026-10-15 with [audio-unification](../done/audio-unification.md):
+`createSink({ sampleRate, channels?, bus? })` in `flux:audio` returns
+`{ id, push, queuedMs, positionMs, pause, resume, clear, setGain, close }`
+over alloy's sink voice on the one mixer (so `setMasterGain`, `setBusGain`,
+`pause({ bus })` reach it; `stop()` does not, a sink is closed by its
+owner), `createSink` in `@solidrt/core/audio` owns one reactively, and
+`id` is what a runtime module passes to `pcm_sink_handle`. One pusher per
+sink. Verified on the desktop, the tablet and the TV
+(probes/audio-mix-probe.tsx). The test-clock question below stayed open:
+the mix renders on the device's clock, so the app test asserts what the
+surface answers at once and the probe times the rest.
 
 ## Symptom
 

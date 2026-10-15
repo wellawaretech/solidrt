@@ -32,7 +32,6 @@
 pub(crate) mod audio;
 #[cfg(target_os = "android")]
 mod mediacodec;
-mod opus;
 #[cfg(target_os = "android")]
 mod plane;
 pub mod reader;
@@ -45,7 +44,7 @@ pub mod worker;
 
 use std::fmt;
 
-pub use opus::{OpusDecoder, PcmChunk};
+pub use crate::audio::{OpusDecoder, PcmChunk};
 #[cfg(target_os = "android")]
 pub use plane::open as open_plane;
 pub use texture::open as open_texture;
@@ -187,6 +186,9 @@ pub struct VideoAu {
 pub struct AudioPacket {
   pub pts_us: i64,
   pub data: Vec<u8>,
+  /// How much of the packet's end is encoder padding to discard (the
+  /// container's DiscardPadding, on a stream's last packet); 0 otherwise.
+  pub discard_padding_us: i64,
 }
 
 /// One packet of either track, in the order the container stores them.

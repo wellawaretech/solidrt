@@ -475,6 +475,9 @@ pub trait AudioSink: Send {
   fn set_paused(&mut self, paused: bool);
   /// Drop everything queued.
   fn clear(&mut self);
+  /// Nothing more will be pushed until a `clear`: the track ended. The sink
+  /// plays out what it holds and then sits silent, not starved.
+  fn end(&mut self) {}
 }
 
 /// Where a texture presenter's decoded frames go: the compositor that will

@@ -1,7 +1,28 @@
 # Test fixtures
 
 Files the forge tests read from disk. This file records the origin and
-license of every fixture that was not made in this repository.
+license of every fixture that was not made in this repository, and how
+the generated ones were made.
+
+## audio_* (generated)
+
+`src/tests/audio.rs`. All from ffmpeg's `sine` source (440 Hz, amplitude
+1/8), so every layout decodes to the same signal:
+
+```
+# one per layout: s16 pcm_s16le, s24 pcm_s24le, s32 pcm_s32le, f32 pcm_f32le, u8 pcm_u8
+ffmpeg -f lavfi -i "sine=frequency=440:sample_rate=8000:duration=0.1" -c:a pcm_s16le audio_s16.wav
+# both channels the mono signal (a plain -ac 2 upmix would scale it by -3 dB)
+ffmpeg -f lavfi -i "sine=frequency=440:sample_rate=8000:duration=0.1" -af "pan=stereo|c0=c0|c1=c0" -c:a pcm_s16le audio_s16_stereo.wav
+ffmpeg -f lavfi -i "sine=frequency=440:sample_rate=8000:duration=0.1" -c:a adpcm_ms audio_adpcm.wav
+ffmpeg -f lavfi -i "sine=frequency=440:sample_rate=8000:duration=0.1" -c:a pcm_s16le -rf64 always audio_rf64.wav
+ffmpeg -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=0.5" -c:a libopus -b:a 64k audio_sine.opus
+ffmpeg -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=0.5" -c:a libopus -b:a 64k audio_sine.webm
+ffmpeg -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=0.5" -c:a libvorbis -q:a 2 audio_vorbis.ogg
+```
+
+ffmpeg writes s24 and s32 as WAVE_FORMAT_EXTENSIBLE, f32 as format tag 3,
+the rest as plain PCM; the ADPCM, RF64 and Vorbis files exist to be refused.
 
 ## khronos_uastc_zstd.ktx2
 

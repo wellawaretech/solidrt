@@ -48,14 +48,6 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
-- **[Audio unification - one mixer for clips, streams, sinks and video](plans/audio-unification.md)** [2026-10-15]
-  Replace SDL3_mixer with an own mixer rendered in SDL's device callback
-  (sample-accurate gain, pan and fade automation, buses with gain, pause and
-  position, loops without seams) fed by engine-free decoders in forge (WAV
-  own, .opus via vendored libopusfile, WebM/Opus via the existing reader), so
-  clip audio, streamed tracks, PCM sinks and video audio share one PCM path
-  under one master; implements the declared setBusGain, pause/resume,
-  position, duration, setLoop and the JS PCM sink.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -314,12 +306,10 @@ Shaped, not started.
   incremental) removes the step, and must be designed before compressed
   textures outside a model are built because it decides how an app names a
   baked file.
-- **[JS cannot stream PCM to the audio output](backlog/audio-pcm-sink-js.md)** [2026-10-11]
-  flux:audio plays whole clips only (load, loadPcm, stream), so speech
-  synthesis and live processing have no way to play samples as they are
-  produced; alloy's PCM sink exists for the video plugin, and a createSink in
-  flux:audio over it, with an id a runtime module pushes into from its own
-  thread, closes the loop the microphone ring opened on the input side.
+- **[Audio unification follow-ups - what the mixer work surfaced](backlog/audio-unification-followups.md)** [2026-10-15]
+  Loose ends and improvements met while replacing SDL_mixer with the own mixer
+  (okf/done/audio-unification.md, 2026-10-15), kept in one file at the user's
+  request; split an item out when it is picked up.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
@@ -1341,6 +1331,20 @@ Finished, kept for the reasoning.
   runtime waits for, plus a launch fact saying whether the system killed the
   previous session. Includes making Android exit() finish the activity instead
   of backgrounding it."
+- **[JS cannot stream PCM to the audio output](done/audio-pcm-sink-js.md)** [2026-10-15]
+  flux:audio plays whole clips only (load, loadPcm, stream), so speech
+  synthesis and live processing have no way to play samples as they are
+  produced; alloy's PCM sink exists for the video plugin, and a createSink in
+  flux:audio over it, with an id a runtime module pushes into from its own
+  thread, closes the loop the microphone ring opened on the input side.
+- **[Audio unification - one mixer for clips, streams, sinks and video](done/audio-unification.md)** [2026-10-15]
+  Replace SDL3_mixer with an own mixer rendered in SDL's device callback
+  (sample-accurate gain, pan and fade automation, buses with gain, pause and
+  position, loops without seams) fed by engine-free decoders in forge (WAV
+  own, .opus via vendored libopusfile, WebM/Opus via the existing reader), so
+  clip audio, streamed tracks, PCM sinks and video audio share one PCM path
+  under one master; implements the declared setBusGain, pause/resume,
+  position, duration, setLoop and the JS PCM sink.
 - **[Measure backdropFilter cost on Android](done/backdrop-filter-android-cost.md)** [2026-09-27]
   A backdropFilter forces an offscreen capture-and-filter of the pixels
   beneath per panel; desktop holds 60 fps with four panels over live content,
@@ -2833,6 +2837,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   "Execution-structure review: the JS-decides/Rust-executes split is right;
   ranked costs are per-prop string-keyed FFI writes, per-frame JS animation,
   JS scroll physics, event garbage."
+- **[Audio unification findings - the own mixer, the decoders, the devices](notes/audio-unification-findings.md)** [2026-10-15]
+  What building the SDL-free mixer and the Opus/WAV decoders taught
+  (2026-10-15): WebM DiscardPadding and ffmpeg's timestamp rounding, converter
+  backlog and ring clears, stop semantics against a callback, device blocks
+  and the TV's lead below SDL, 32-bit Bionic stdio, the test harness against a
+  device clock.
 - **[What a frosted panel costs on the small targets](notes/backdrop-filter-cost.md)** [2026-09-27]
   Measured 2026-09-27 on the Pixel 7, the SM-T500 tablet and the Philips TV -
   blur-28 backdrop panels of 320x140 logical px over a bar that moves every

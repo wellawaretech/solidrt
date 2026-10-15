@@ -47,7 +47,11 @@ declare module "*.wav" {
   const bytes: Uint8Array
   export default bytes
 }
-declare module "*.ogg" {
+declare module "*.opus" {
+  const bytes: Uint8Array
+  export default bytes
+}
+declare module "*.weba" {
   const bytes: Uint8Array
   export default bytes
 }

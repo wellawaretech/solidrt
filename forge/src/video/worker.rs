@@ -397,9 +397,17 @@ impl Worker<'_> {
       // queue), so play starts with audio ready and a seek's preroll is
       // decoded while the picture is still held.
       if !self.resume_pending {
+        let mut sound_over = false;
         if let Some(audio) = self.audio.as_mut() {
           let reader = &self.reader;
           audio.feed(|| reader.next_audio());
+          sound_over = audio.ended() && audio.queued_us() == 0;
+        }
+        // The sound is over and heard out: the sink stops consuming, else a
+        // running sink on an empty queue reads as starved for as long as
+        // the player sits at its end. A seek restarts it.
+        if sound_over && self.audio_running {
+          self.stop_audio();
         }
       }
       // The sink learns of a stop before the park below, not after it.

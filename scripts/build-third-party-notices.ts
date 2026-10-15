@@ -70,7 +70,6 @@ const angle = (target: string) => target.includes("windows") || target.includes(
 
 const NATIVE: Native[] = [
   { name: "SDL", what: "windowing, input and audio devices; built from source", crate: "sdl3-src", linkedBy: "sdl3-sys", files: ["SDL/LICENSE.txt"] },
-  { name: "SDL_mixer", what: "audio mixing and decoding; built from source", crate: "sdl3-mixer-src", linkedBy: "sdl3-mixer-sys", files: ["SDL_mixer/LICENSE.txt"] },
   { name: "SDL_image", what: "image loading for SDL; built from source", crate: "sdl3-image-src", linkedBy: "sdl3-image-sys", files: ["SDL_image/LICENSE.txt"] },
   { name: "SDL_ttf", what: "font rendering for SDL; built from source", crate: "sdl3-ttf-src", linkedBy: "sdl3-ttf-sys", files: ["SDL_ttf/LICENSE.txt"] },
   {
@@ -84,6 +83,8 @@ const NATIVE: Native[] = [
   { name: "Zstandard", what: "decompression inside Basis Universal; built from source", files: ["forge/vendor/basis_universal/zstd/LICENSE"] },
   { name: "libvpx", what: "VP9 video decoder; built from source", files: ["forge/vendor/libvpx/LICENSE", "forge/vendor/libvpx/PATENTS"], only: desktop },
   { name: "Opus", what: "audio decoder; built from source", files: ["forge/vendor/opus/COPYING"] },
+  { name: "libogg", what: "the Ogg container reader under libopusfile; built from source", files: ["forge/vendor/ogg/COPYING"] },
+  { name: "libopusfile", what: "Opus-in-Ogg (.opus) file decoding; built from source", files: ["forge/vendor/opusfile/COPYING"] },
   {
     name: "libc++",
     what: "the C++ runtime of the Android NDK; libc++_shared.so shipped in the APK",
@@ -101,10 +102,7 @@ const JS_ROOTS = ["node_modules", "packages/components/node_modules", "packages/
 
 // Compiled in, with no license to reproduce: their authors placed them in
 // the public domain.
-const PUBLIC_DOMAIN = [
-  "SQLite (https://www.sqlite.org/copyright.html), built from source",
-  "stb_vorbis by Sean Barrett (https://github.com/nothings/stb), the Ogg Vorbis decoder inside SDL_mixer",
-]
+const PUBLIC_DOMAIN = ["SQLite (https://www.sqlite.org/copyright.html), built from source"]
 
 type Package = {
   id: string

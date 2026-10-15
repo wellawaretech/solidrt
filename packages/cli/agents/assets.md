@@ -7,7 +7,7 @@ preparing a build for distribution.
 
 - Everything under `assets/` ships with the app: the folder is collected
   wholesale into each build's version manifest (no bundler analysis, no
-  registration step). Reference assets by path - `file("assets/sounds/x.ogg")`
+  registration step). Reference assets by path - `file("assets/sounds/x.opus")`
   from `flux:fs` - and treat them as read-only at runtime; writes belong in
   plain relative paths, which land in the app's private data dir.
 - Small text-like assets (SVG documents, shaders) can instead be inlined via
@@ -17,7 +17,7 @@ preparing a build for distribution.
   is text-loaded with no attribute needed. The types come from `@solidrt/cli`
   (its `assets.d.ts`, named in tsconfig `types` next to `@solidrt/flux-types`):
   the common extensions (`.svg`/`.glsl`/`.vert`/`.frag` as text, `.png`/`.jpg`/
-  `.wav`/`.ogg`/`.glb`/`.wasm`/... as bytes) typecheck without setup, and any
+  `.wav`/`.opus`/`.glb`/`.wasm`/... as bytes) typecheck without setup, and any
   other extension gets a `declare module "*.ext"` of the same shape in a `.d.ts`
   of the project. Inlining trades update granularity for zero I/O - keep big or
   streamable files (audio, images) in `assets/`.

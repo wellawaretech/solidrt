@@ -637,8 +637,8 @@ Two bugs fixed the same session, both in the player:
 6. DONE 2026-09-12: frame scheduling (timeline clock + half-period
    lookahead + standing demand) ships unconditionally; the feature flag is
    deleted. Stage 3 of that chain, audio-clock smoothing, is open (above).
-7. Audio unification: IN PLANS since 2026-10-15,
-   [audio-unification](../plans/audio-unification.md). The sketch here
+7. Audio unification: DONE 2026-10-15,
+   [audio-unification](../done/audio-unification.md). The sketch here
    (symphonia decode, one SDL3 stream per voice, SDL device mixing, pan
    on push) was rejected in shaping: SDL3 streams have gain and ratio
    only, so pan, fades, loops and pause would sit a lookahead behind the

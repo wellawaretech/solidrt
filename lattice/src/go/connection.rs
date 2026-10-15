@@ -868,6 +868,7 @@ async fn try_serve(
                       let atx = flux::gui::alloy_context(&ctx);
                       let raster = atx.as_ref().map(|atx| atx.raster_counters());
                       let residency = atx.as_ref().map(|atx| atx.spatial().residency_stats());
+                      let audio = atx.as_ref().and_then(|atx| atx.audio_stats());
                       let app = Some(crate::plugins::dev::read_stats(&ctx));
                       let reply = StatsQuery {
                         snap,
@@ -878,6 +879,7 @@ async fn try_serve(
                         counts,
                         raster,
                         residency,
+                        audio,
                         app,
                       };
                       let _ = reply_tx.send(stats_reply(id, reply));
@@ -893,6 +895,7 @@ async fn try_serve(
                       counts: None,
                       raster: None,
                       residency: None,
+                      audio: None,
                       app: None,
                     };
                     let _ = client.send(tokio_websockets::Message::text(stats_reply(id, reply))).await;

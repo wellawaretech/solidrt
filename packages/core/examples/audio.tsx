@@ -1,4 +1,4 @@
-// createSound decodes an encoded clip (Ogg/Vorbis or WAV) once, then every
+// createSound decodes an encoded clip (WAV, or Opus in Ogg or WebM) once, then every
 // play() starts a voice with no re-decode - cheap enough for rapid SFX. It is
 // reactive-owned: the decoded clip is released and its voices stopped when the
 // owning component unmounts, so there is nothing to clean up by hand.
