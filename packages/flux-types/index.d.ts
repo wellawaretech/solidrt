@@ -43,6 +43,7 @@
 /// <reference path="./gui/spatial.d.ts" />
 /// <reference path="./gui/font.d.ts" />
 /// <reference path="./gui/video.d.ts" />
+/// <reference path="./gui/dialog.d.ts" />
 /// <reference path="./gui/raf.d.ts" />
 /// <reference path="./gui/test.d.ts" />
 

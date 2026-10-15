@@ -8,7 +8,6 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use ndk::native_window::NativeWindow;
-use sdl3::sys::system::{SDL_GetAndroidActivity, SDL_GetAndroidJNIEnv};
 
 // Set from the activity (JNI) when the system destroyed the plane's surface
 // under us - the activity went to the background. Reset at creation. A
@@ -174,26 +173,8 @@ impl Drop for VideoPlane {
   }
 }
 
-/// Run `f` against SDL's JNI env and the activity object on the current
-/// thread. A JNI failure or a Java exception comes back as the error.
 fn with_activity<T>(
   f: impl FnOnce(&mut jni::Env<'_>, &jni::objects::JObject<'_>) -> Result<T, jni::errors::Error>,
 ) -> Result<T, String> {
-  let env_ptr = unsafe { SDL_GetAndroidJNIEnv() } as *mut jni::sys::JNIEnv;
-  let activity_ptr = unsafe { SDL_GetAndroidActivity() } as jni::sys::jobject;
-  if env_ptr.is_null() || activity_ptr.is_null() {
-    return Err("no JNI env/activity for the video plane".to_string());
-  }
-  let mut unowned = unsafe { jni::EnvUnowned::from_raw(env_ptr) };
-  let outcome = unowned
-    .with_env(|env| {
-      let activity = unsafe { jni::objects::JObject::from_raw(env, activity_ptr) };
-      f(env, &activity)
-    })
-    .into_outcome();
-  match outcome {
-    jni::Outcome::Ok(value) => Ok(value),
-    jni::Outcome::Err(e) => Err(format!("video plane JNI call failed: {e}")),
-    jni::Outcome::Panic(payload) => std::panic::resume_unwind(payload),
-  }
+  crate::sdl_utils::with_android_activity("video plane", f)
 }

@@ -880,6 +880,49 @@ pub fn surface_rotation_degrees(frame: *mut SDL_Surface) -> u32 {
 /// hardware features cannot change at runtime. Errors default to true so a
 /// JNI hiccup can only ever fail toward the touch-device default, never
 /// strip a real touchscreen of its policy.
+/// Run `f` against SDL's JNI env and the activity object on the current
+/// thread (SDL attaches the thread to the JVM). A JNI failure or a Java
+/// exception comes back as the error, prefixed with `what`.
+#[cfg(target_os = "android")]
+pub(crate) fn with_android_activity<T>(
+  what: &str,
+  f: impl FnOnce(&mut jni::Env<'_>, &jni::objects::JObject<'_>) -> Result<T, jni::errors::Error>,
+) -> Result<T, String> {
+  use sdl3::sys::system::{SDL_GetAndroidActivity, SDL_GetAndroidJNIEnv};
+  let env_ptr = unsafe { SDL_GetAndroidJNIEnv() } as *mut jni::sys::JNIEnv;
+  let activity_ptr = unsafe { SDL_GetAndroidActivity() } as jni::sys::jobject;
+  if env_ptr.is_null() || activity_ptr.is_null() {
+    return Err(format!("no JNI env/activity for the {what}"));
+  }
+  let mut unowned = unsafe { jni::EnvUnowned::from_raw(env_ptr) };
+  let outcome = unowned
+    .with_env(|env| {
+      let activity = unsafe { jni::objects::JObject::from_raw(env, activity_ptr) };
+      f(env, &activity)
+    })
+    .into_outcome();
+  match outcome {
+    jni::Outcome::Ok(value) => Ok(value),
+    jni::Outcome::Err(e) => Err(format!("{what} JNI call failed: {e}")),
+    jni::Outcome::Panic(payload) => std::panic::resume_unwind(payload),
+  }
+}
+
+/// The strings of a Java `String[]`, in order.
+#[cfg(target_os = "android")]
+pub(crate) fn java_strings(
+  env: &mut jni::Env<'_>,
+  array: &jni::objects::JObjectArray<'_, jni::objects::JString<'_>>,
+) -> Result<Vec<String>, jni::errors::Error> {
+  let len = array.len(env)?;
+  let mut out = Vec::with_capacity(len);
+  for i in 0..len {
+    let element = array.get_element(env, i)?;
+    out.push(element.mutf8_chars(env)?.to_str().into_owned());
+  }
+  Ok(out)
+}
+
 #[cfg(target_os = "android")]
 pub fn has_touchscreen_feature() -> bool {
   use sdl3::sys::system::{SDL_GetAndroidActivity, SDL_GetAndroidJNIEnv};

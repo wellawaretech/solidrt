@@ -1,9 +1,10 @@
+use rquickjs::object::Accessor;
 use rquickjs::{function::MutFn, promise::Promised, Ctx, Exception, Function, Object, TypedArray, Value};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::pending::PendingOps;
-use crate::plugins::marshal::{with_in_flight, CopyBytes};
+use crate::plugins::marshal::{with_in_flight, CopyBytes, OptArg};
 use crate::plugins::seekable::SeekableSource;
 use crate::plugins::value::Neutral;
 use crate::standards_plugins::body::{attach_body, JsBytes};
@@ -24,9 +25,22 @@ fn data_bytes<'js, 'v>(ctx: &Ctx<'js>, data: &Value<'v>, what: &str) -> rquickjs
 }
 
 fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
+  build_file_named(ctx, path, None)
+}
+
+/// The `file()` reference, with `name` the name to show for it: given by a
+/// dialog that picked it (a content provider's display name), otherwise
+/// what the location itself says (`forge::fs::display_name`), read on the
+/// first access since a content URI asks its provider for it.
+pub(crate) fn build_file_named<'js>(
+  ctx: Ctx<'js>,
+  path: String,
+  name: Option<String>,
+) -> rquickjs::Result<Object<'js>> {
   let path = Rc::new(path);
   let obj = Object::new(ctx.clone())?;
   obj.set("path", path.as_ref().clone())?;
+  attach_name(&obj, path.clone(), name)?;
 
   let pending = PendingOps::of(&ctx);
 
@@ -93,14 +107,26 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   .expect("create read function");
   obj.set("read", read_fn)?;
 
+  // write(data, { atomic }): in place, or through a temporary file renamed
+  // over the target so a reader never sees a half-written one.
   let write_fn = Function::new(
     ctx.clone(),
     MutFn::from({
       let path = path.clone();
-      move |ctx: Ctx<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
+      move |ctx: Ctx<'_>, data: Value<'_>, options: OptArg<Object<'_>>| -> rquickjs::Result<Promised<_>> {
         let bytes = data_bytes(&ctx, &data, "write")?;
+        let atomic = match options.0 {
+          Some(opts) => opts.get::<_, Option<bool>>("atomic")?.unwrap_or(false),
+          None => false,
+        };
         let path = path.clone();
-        Ok(with_in_flight(&ctx, "file", async move { fs::write(&path, &bytes).await }))
+        Ok(with_in_flight(&ctx, "file", async move {
+          if atomic {
+            fs::write_atomic(&path, &bytes).await
+          } else {
+            fs::write(&path, &bytes).await
+          }
+        }))
       }
     }),
   )
@@ -155,6 +181,15 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   SeekableSource::attach(&ctx, &obj, Arc::new(move || fs::open_seekable(&path_for_open)))?;
 
   Ok(obj)
+}
+
+/// The lazy `name` of a `file()` or `dir()` reference: the given name, or
+/// the location's display name resolved on the first read and kept.
+pub(crate) fn attach_name<'js>(obj: &Object<'js>, path: Rc<String>, name: Option<String>) -> rquickjs::Result<()> {
+  let cache = Rc::new(std::cell::RefCell::new(name));
+  let getter =
+    MutFn::from(move || -> String { cache.borrow_mut().get_or_insert_with(|| fs::display_name(&path)).clone() });
+  obj.prop("name", Accessor::new_get(getter).enumerable())
 }
 
 pub(crate) fn file_fn<'js>(ctx: &Ctx<'js>) -> Function<'js> {

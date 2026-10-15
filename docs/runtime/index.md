@@ -68,7 +68,10 @@ rendering modules: `flux:rendertree` (the native tree `@solidrt/core` drives),
 transform hierarchy feeding draw entries), `flux:camera`,
 `flux:microphone`, `flux:audio`, `flux:video` and `flux:font` (the glyph
 engine: a registered font shaped on the runtime's own shaper, its glyphs
-rasterized into an atlas texture a consumer draws from), plus one web-standard
+rasterized into an atlas texture a consumer draws from) and `flux:dialog`
+(the platform's own open, save and folder pickers, resolving to `flux:fs`
+handles; listed under the `dialog` capability only where the platform can
+show one), plus one web-standard
 global that needs a windowing platform: `navigator`, carrying
 `navigator.clipboard` (`readText`/`writeText`, text only). The `create*`
 primitives in Core wrap them with reactivity; the modules are the

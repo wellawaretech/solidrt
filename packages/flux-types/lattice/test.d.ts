@@ -19,6 +19,15 @@ declare module "sol:test" {
    */
   export function microphone(sampleRate: number, samples: Float32Array): void
   /**
+   * Answers the next file dialog (`flux:dialog`) with `answer`, JSON text
+   * of `{ files: [path | { path, name }, ...] }`, `{ directory: path }` or
+   * `{ cancel: true }`: a call waiting on an answer takes it now, the next
+   * call otherwise; no dialog is shown. Fulfills, once a call took it, with
+   * that call's request as JSON text (its kind and options). Throws on an
+   * answer of another shape.
+   */
+  export function dialog(answer: string): Promise<string>
+  /**
    * Runs one frame: timers due by its time fire, then frame callbacks and
    * the flush, then the draw if anything demanded one. Fulfills once the
    * frame has run. One frame at a time: throws while the previous one is

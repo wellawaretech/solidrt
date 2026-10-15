@@ -5,6 +5,8 @@ mod frame;
 mod frame_history;
 // The packed-payload pieces (gl_libs, links): nothing in the go client, and
 // links nothing on Android either (the activity is singleInstance).
+#[cfg(target_os = "android")]
+mod android_content;
 #[cfg_attr(feature = "go", allow(dead_code))]
 mod gl_libs;
 #[cfg(feature = "go")]
@@ -269,6 +271,22 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeVideoPlaneLost(
   _class: *mut core::ffi::c_void,
 ) {
   alloy::video_plane::set_lost();
+}
+
+// Receives a file dialog's answer from SolidRTActivity (the activity's
+// result, on the Android UI thread): the picked document URIs with their
+// display names, both empty on a cancel. The arrays are forwarded opaque;
+// alloy reads them with its JNI binding.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeDialogResult(
+  env: *mut core::ffi::c_void,
+  _class: *mut core::ffi::c_void,
+  id: i64,
+  uris: *mut core::ffi::c_void,
+  names: *mut core::ffi::c_void,
+) {
+  alloy::android_result_raw(env, id, uris, names);
 }
 
 // Receives one Choreographer frame time from the video plane view (every
@@ -1332,7 +1350,12 @@ fn ui_thread(
       let session = test_run.as_ref().map(|run| run.session());
       #[cfg(feature = "test")]
       let builder = match &session {
-        Some(session) => session.install(builder).userdata(stepper.clone()).plugin(|ctx| stepped_engine(&ctx)),
+        Some(session) => session
+          .install(builder)
+          .userdata(stepper.clone())
+          .plugin(|ctx| stepped_engine(&ctx))
+          // A test's dialogs are answered by the harness, never shown.
+          .plugin(|ctx| flux::gui::dialog::set_answers_only(&ctx)),
         None => builder,
       };
       // A render engine: the stepper, the wall taken out and Math.random

@@ -24,10 +24,16 @@ pub(crate) fn run_stepped_loop(
   config: SteppedConfig,
 ) {
   while let Ok(cmd) = cmd_rx.recv() {
-    if let AlloyCommand::EmitInitEvents = cmd {
-      for event in headless_init_events(&window, config.fps) {
-        event_tx.send(event).ok();
+    match cmd {
+      AlloyCommand::EmitInitEvents => {
+        for event in headless_init_events(&window, config.fps) {
+          event_tx.send(event).ok();
+        }
       }
+      AlloyCommand::ShowDialog { respond, .. } => {
+        respond(Err("dialog: no surface to show one on (headless)".to_string()))
+      }
+      _ => {}
     }
   }
 }

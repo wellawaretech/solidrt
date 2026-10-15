@@ -2,6 +2,8 @@ declare module "flux:fs" {
   type DirEntry = {
     name: string
     type: "file" | "directory" | "symlink" | "other"
+    /** What opens the entry: `file(path)` or `dir(path)`. */
+    path: string
   }
 
   type FileStat = {
@@ -11,7 +13,17 @@ declare module "flux:fs" {
   }
 
   type FluxFile = {
+    /**
+     * Where the file is: the path it was opened with, or on Android the
+     * `content://` URI a dialog picked. Store it and `file(path)` opens the
+     * same file later.
+     */
     path: string
+    /**
+     * The name to show for it: the file name of a path; on Android, the
+     * provider's display name of a picked document.
+     */
+    name: string
     /** Read the whole file as UTF-8 text. */
     text(): Promise<string>
     /** Read the whole file as raw bytes. */
@@ -30,8 +42,15 @@ declare module "flux:fs" {
      * `stat()` size first.
      */
     read(offset: number, length: number): Promise<Uint8Array>
-    /** Write `data`, replacing any existing contents. */
-    write(data: string | Uint8Array): Promise<void>
+    /**
+     * Write `data`, replacing any existing contents. In place by default: a
+     * crash mid-write leaves a truncated file. With `atomic`, the bytes go
+     * to a temporary file beside the target that is renamed over it, so a
+     * reader (and a crash) sees the old file or the new one, never a
+     * half-written one; what a user's document wants. On a `content://`
+     * document (Android) there is no rename, so `atomic` writes in place.
+     */
+    write(data: string | Uint8Array, options?: { atomic?: boolean }): Promise<void>
     /** Append `data` to the end of the file, creating it if missing. */
     append(data: string | Uint8Array): Promise<void>
     /** Remove the file. A missing file is not an error. */
@@ -64,7 +83,10 @@ declare module "flux:fs" {
   }
 
   type FluxDir = {
+    /** Where the directory is (see `FluxFile.path`). */
     path: string
+    /** The name to show for it (see `FluxFile.name`). */
+    name: string
     /** List the directory's immediate entries (non-recursive). */
     entries(): Promise<DirEntry[]>
     /** Resolve to whether the directory exists. */

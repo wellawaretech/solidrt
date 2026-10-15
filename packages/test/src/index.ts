@@ -16,7 +16,7 @@
 
 import { test as register, expect } from "flux:test"
 import * as gui from "flux:test/gui"
-import { camera as installCamera, capture, debug, frame as stepFrame, frameRate, inputPlan, inputStep, link, microphone as installMicrophone, painted as paintFrame, setFrameRate, settle, stats as queryStats, time, windowReady } from "sol:test"
+import { camera as installCamera, capture, debug, dialog as answerDialog, frame as stepFrame, frameRate, inputPlan, inputStep, link, microphone as installMicrophone, painted as paintFrame, setFrameRate, settle, stats as queryStats, time, windowReady } from "sol:test"
 import { createElement, insert, render } from "@solidrt/core"
 
 export { expect }
@@ -172,6 +172,22 @@ export interface MicrophoneClip {
   samples: Float32Array
 }
 
+/**
+ * What the next file dialog answers with (`flux:dialog`): files to open or
+ * save to (paths, in the test's sandbox or anywhere the test may write; a
+ * `{ path, name }` names one as a picker would), a directory, or a cancel.
+ */
+export type DialogAnswer =
+  | { files: (string | { path: string; name?: string })[] }
+  | { directory: string }
+  | { cancel: true }
+
+/** A file dialog request the app made: which function, with which options. */
+export type DialogRequest =
+  | { kind: "openFiles"; multiple: boolean; types: { description: string; extensions: string[] }[]; startIn: string | null }
+  | { kind: "saveFile"; suggestedName: string | null; types: { description: string; extensions: string[] }[]; startIn: string | null }
+  | { kind: "openDirectory"; startIn: string | null }
+
 /** The app under test, as a test's function receives it. */
 export interface TestApp {
   /**
@@ -239,6 +255,22 @@ export interface TestApp {
    * expect(mic.read()).toEqual(tone)
    */
   microphone(clip: MicrophoneClip): Promise<void>
+  /**
+   * Answers the app's next file dialog (`openFiles`, `saveFile` or
+   * `openDirectory` of `flux:dialog`) with `answer`, in place of a user
+   * clicking one: no dialog is shown under test, the app's call resolves
+   * to handles on the paths (or an empty list / null on a cancel), exactly
+   * as from a real pick. Resolves once the app's call took the answer, to
+   * the request it made (its kind and options), so a test asserts what
+   * the app asked for. Keep the promise and await it after driving the
+   * app; awaiting it before the app asks waits forever.
+   *
+   * @example
+   * let asked = app.dialog({ files: ["notes.txt"] })
+   * await app.input([{ type: "pointer", action: "tap", x: 100, y: 40 }])
+   * expect(await asked).toMatchObject({ kind: "openFiles", multiple: false })
+   */
+  dialog(answer: DialogAnswer): Promise<DialogRequest>
   /**
    * Calls a debug command the app registered (`registerDebug` of
    * `sol:dev`), runs a frame, and returns what the command returned. The
@@ -572,6 +604,11 @@ let app: TestApp = {
     let { sampleRate, samples } = clip
     if (!Number.isInteger(sampleRate) || sampleRate <= 0) throw new TypeError(`microphone: the sample rate must be a positive integer, got ${sampleRate}`)
     installMicrophone(sampleRate, samples)
+  },
+  async dialog(answer) {
+    let ok = answer !== null && typeof answer === "object" && ("files" in answer || "directory" in answer || "cancel" in answer)
+    if (!ok) throw new TypeError("dialog: pass { files: [path, ...] }, { directory: path } or { cancel: true }")
+    return JSON.parse(await answerDialog(JSON.stringify(answer))) as DialogRequest
   },
   async debug(name, args) {
     let result = debug(name, args === undefined ? null : JSON.stringify(args))

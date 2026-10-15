@@ -260,6 +260,23 @@ fn microphone<'js>(ctx: Ctx<'js>, sample_rate: u32, samples: TypedArray<'js, f32
   alloy.install_test_microphone(sample_rate, samples).map_err(|e| throw(&e))
 }
 
+/// `dialog(answer)`: answer the next file dialog (`flux:dialog`) with
+/// `answer`, JSON text as the harness spells it (`{ files: [...] }`, `{
+/// directory }` or `{ cancel: true }`): a call waiting on an answer takes
+/// it now, the next call otherwise, and never a dialog shown. Fulfills,
+/// once a call took it, with that call's request as JSON text (its kind
+/// and options). Throws on an answer of another shape.
+fn dialog<'js>(ctx: Ctx<'js>, answer: String) -> flux::rquickjs::Result<Promise<'js>> {
+  stepper(&ctx, "dialog()")?;
+  let throw = |message: &str| Exception::throw_message(&ctx, &format!("sol:test dialog: {message}"));
+  let picked = serde_json::from_str::<serde_json::Value>(&answer)
+    .map_err(|e| throw(&format!("the answer is not JSON: {e}")))
+    .and_then(|json| flux::gui::dialog::parse_answer(&json).map_err(|e| throw(&e)))?;
+  let (promise, resolve, _reject) = ctx.promise()?;
+  flux::gui::dialog::answer(&ctx, picked, Some(Persistent::save(&ctx, resolve)))?;
+  Ok(promise)
+}
+
 /// `capture(node)`: the pixels the node's subtree paints, as `{ width,
 /// height, data }` (RGBA8, premultiplied, rows top to bottom, at the
 /// display scale). Drawn now, with the tree as it is: no frame runs and no
@@ -397,6 +414,7 @@ impl ModuleDef for SolTestModule {
     decl.declare("painted")?;
     decl.declare("camera")?;
     decl.declare("microphone")?;
+    decl.declare("dialog")?;
     Ok(())
   }
 
@@ -425,6 +443,7 @@ impl ModuleDef for SolTestModule {
     exports.export("painted", Function::new(ctx.clone(), painted)?)?;
     exports.export("camera", Function::new(ctx.clone(), camera)?)?;
     exports.export("microphone", Function::new(ctx.clone(), microphone)?)?;
+    exports.export("dialog", Function::new(ctx.clone(), dialog)?)?;
     Ok(())
   }
 }

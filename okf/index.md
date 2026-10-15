@@ -399,12 +399,10 @@ Shaped, not started.
   stages reduce it - createNode with a props object, a one-call-per-flush
   drain, interned prop ids with table dispatch, and a command buffer whose
   props land in a shared buffer Rust reads directly.
-- **[System open and save dialogs](backlog/file-dialogs.md)** [2026-10-14]
-  An app can only read and write inside its own storage folder or at absolute
-  paths it already knows; there is no native open/save dialog, so a user
-  cannot open a document from anywhere or save an export where another program
-  will find it. SDL 3.4 has the dialogs; the open questions are the JS
-  surface, Android content URIs, and how tests and agents answer a dialog.
+- **[File dialogs on an Android without a document picker](backlog/file-dialogs-no-picker-device.md)** [2026-10-15]
+  On a device with no DocumentsUI (the TV) Flux.capabilities should omit
+  "dialog" and a flux:dialog call should reject with a NotSupportedError;
+  built that way, not yet seen on such a device.
 - **[Decide whether flex items keep the web's automatic minimum size](backlog/flex-automatic-minimum-default.md)** [2026-10-08]
   A flex item's automatic minimum is its content size, so a child larger than
   its share pins every ancestor until someone writes minHeight 0; Yoga has no
@@ -1580,6 +1578,13 @@ Finished, kept for the reasoning.
   hand-rolled DataView reinterpretation, and every declared symbol must
   resolve so one absent symbol takes down a whole binding; add typed read
   helpers and a per-symbol optional flag.
+- **[System open and save dialogs](done/file-dialogs.md)** [2026-10-15]
+  Built 2026-10-15 as flux:dialog (openFiles, saveFile, openDirectory over
+  SDL's dialogs on desktop and the activity's own document intents on
+  Android), resolving to flux:fs handles that carry a name; a content provider
+  seam in forge reads and writes content URIs; tests and agents answer a
+  dialog through one lattice queue (app.dialog, /dialog,
+  get_dialog/answer_dialog); write(data, { atomic }) for safe saves.
 - **[A fill-mode scene or sprite layer adds no intrinsic size to the layout](done/fill-leaf-intrinsic-size.md)** [2026-10-08]
   The fill leaf of <Scene> and <SpriteLayer> is a <texture> at 100%, and a
   texture measures its pixel size, so flexbox's automatic minimum pins its
@@ -3181,6 +3186,11 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   shown, but the wrapper's Drop calls SDL_DestroyCursor, and SDL reverts to
   the default cursor when the current one is destroyed; the enum also lacks
   the eight directional resize shapes SDL 3.2 added.
+- **[sdl3 dialog callback data leaks per dialog and is typed without Send](upstream/sdl3-dialog-callback-leak-and-send.md)** [2026-10-15]
+  sdl3::dialog boxes its callback data with Box::into_raw and never frees it,
+  one leak per dialog shown; and DialogCallback is Box<dyn Fn> without Send
+  although SDL may invoke it from another thread (Windows IFileDialog runs on
+  a thread SDL spawns).
 - **[sdl3 crate has no Event variant for SDL_EVENT_FINGER_CANCELED](upstream/sdl3-no-finger-cancelled-variant.md)** [2026-10-05]
   The sdl3 crate maps SDL_EVENT_FINGER_DOWN/UP/MOTION to Event variants but
   not SDL_EVENT_FINGER_CANCELED, which arrives as Event::Unknown { type_ }

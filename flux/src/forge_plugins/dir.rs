@@ -100,9 +100,16 @@ fn watch<'js>(
 }
 
 fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
+  build_dir_named(ctx, path, None)
+}
+
+/// The `dir()` reference, with `name` the name to show for it (see
+/// `file::build_file_named`).
+pub(crate) fn build_dir_named<'js>(ctx: Ctx<'js>, path: String, name: Option<String>) -> rquickjs::Result<Object<'js>> {
   let path = Rc::new(path);
   let obj = Object::new(ctx.clone())?;
   obj.set("path", path.as_ref().clone())?;
+  super::file::attach_name(&obj, path.clone(), name)?;
 
   let entries_fn = Function::new(
     ctx.clone(),

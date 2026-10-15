@@ -444,6 +444,25 @@ let TOOLS: {
     },
   },
   {
+    name: "get_dialog",
+    annotations: READ_ONLY,
+    description:
+      "The file dialog state of the running app (flux:dialog): `pending`, the request waiting for an answer (its kind openFiles/saveFile/openDirectory and options: multiple, suggestedName, types, startIn) or null; `last`, the last request made with its `answer` (picked entries, cancelled, or failed); `queued`, how many answers wait for the next request; `available`, whether this client's platform can show a native dialog at all. Read it to verify what the app asked for (the filters, the suggested name), then answer with answer_dialog.",
+    inputSchema: { client: CLIENT_ARG },
+  },
+  {
+    name: "answer_dialog",
+    annotations: DRIVES_APP,
+    description:
+      "Answer the app's file dialog in place of a user clicking it: `files` (paths in the client's own file system, for openFiles or saveFile), `directory` (a path, for openDirectory) or `cancel: true`. A request waiting for an answer takes it at once (`answered: true`); otherwise the answer is queued for the next request the app makes (`queued: true`), so queue it BEFORE triggering the flow that opens the dialog: on a visible client an unanswered request shows the native dialog, which nothing can dismiss remotely, and only the user can finish it. Under the test host no dialog is ever shown. The app gets flux:fs handles on the paths, exactly as from a real pick; a cancel resolves its call with an empty list or null.",
+    inputSchema: {
+      files: z.array(z.string()).describe("Paths to answer an openFiles (any number) or saveFile (the first) request with").optional(),
+      directory: z.string().describe("Path to answer an openDirectory request with").optional(),
+      cancel: z.boolean().describe("true to answer as a cancel").optional(),
+      client: CLIENT_ARG,
+    },
+  },
+  {
     name: "open_link",
     annotations: DRIVES_APP,
     description:
@@ -690,6 +709,16 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     }
     case "get_location":
       return control(`/link${clientParam(args)}`)
+    case "get_dialog":
+      return control(`/dialog${clientParam(args)}`)
+    case "answer_dialog": {
+      let answer: Record<string, unknown> = {}
+      if (Array.isArray(args?.files)) answer.files = args.files
+      else if (typeof args?.directory === "string") answer.directory = args.directory
+      else if (args?.cancel === true) answer.cancel = true
+      else return { ok: false, message: "answer_dialog requires files, directory or cancel: true" }
+      return control(`/dialog${clientParam(args)}`, "POST", answer)
+    }
     case "call_debug": {
       if (typeof args?.name !== "string") return { ok: false, message: "call_debug requires a command name" }
       let params = new URLSearchParams({ name: args.name })

@@ -66,6 +66,12 @@ agents/testing.md.
   its camera; call it again to show another image. A QR code in it is
   decoded as from a real camera, so `settle()` after the open and read
   the app's barcode state.
+- `app.dialog(answer)` answers the app's next file dialog (`flux:dialog`):
+  `{ files: [path, ...] }`, `{ directory: path }` or `{ cancel: true }`; no
+  dialog is shown and the app's call resolves to handles on the paths (an
+  empty list or null on a cancel). It resolves once the app took the
+  answer, to the request the app made: keep the promise, drive the app,
+  then await it to assert the kind and options the app asked with.
 - `await app.microphone({ sampleRate, samples })` makes a mono float clip
   what the microphone hears: every microphone the app opens at that rate
   holds it from the open, with no device and no prompt (`settle()` after

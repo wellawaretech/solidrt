@@ -65,6 +65,10 @@ pub fn capabilities() -> Vec<&'static str> {
   let mut caps = plugins::base_capabilities();
   #[cfg(feature = "gui")]
   caps.extend_from_slice(alloy_plugins::GUI_CAPABILITIES);
+  #[cfg(feature = "gui")]
+  if alloy::dialogs_available() {
+    caps.push(alloy_plugins::DIALOG_CAPABILITY);
+  }
   caps
 }
 

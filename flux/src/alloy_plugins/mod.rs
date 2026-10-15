@@ -6,6 +6,7 @@
 
 pub mod audio;
 pub mod camera;
+pub mod dialog;
 pub mod events;
 pub mod font;
 pub mod frame;
@@ -187,6 +188,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   // navigator.clipboard is a web-standard surface (standards_plugins) that
   // marshals alloy commands, so it installs here at the gui seam.
   let clipboard_cmd_tx = alloy_cmd_tx.clone();
+  let dialog_cmd_tx = alloy_cmd_tx.clone();
   // The render tree and the capture/render devices are all `flux:*` modules
   // (registered below); only the web-standard rAF stays a global. The shared
   // host state goes in first; the plugins with data of their own store it
@@ -217,6 +219,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .plugin(|ctx| spatial::store_state(&ctx))
     .plugin(|ctx| font::store_state(&ctx))
     .plugin(move |ctx| crate::standards_plugins::clipboard::init_clipboard(&ctx, clipboard_cmd_tx))
+    .plugin(move |ctx| dialog::store_state(&ctx, dialog_cmd_tx))
     .plugin(register_capabilities)
     .module("flux:rendertree", tree::RenderTreeModule)
     .module("flux:camera", camera::CameraModule)
@@ -224,7 +227,8 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .module("flux:audio", audio::AudioModule)
     .module("flux:gpu", gpu::GpuModule)
     .module("flux:spatial", spatial::SpatialModule)
-    .module("flux:font", font::FontModule);
+    .module("flux:font", font::FontModule)
+    .module("flux:dialog", dialog::DialogModule);
   #[cfg(feature = "video")]
   let builder = builder.plugin(|ctx| video::store_state(&ctx)).module("flux:video", video::VideoModule);
   builder
@@ -236,10 +240,18 @@ pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", 
 #[cfg(not(feature = "video"))]
 pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial", "font"];
 
+/// The capability the file dialogs are listed under, only where the
+/// platform can show one (`alloy::dialogs_available`): a fact of the
+/// surface, not of the build, so it is not in `GUI_CAPABILITIES`.
+pub const DIALOG_CAPABILITY: &str = "dialog";
+
 /// List the gui capability names in `Flux.capabilities`; a plugin, since
 /// `install` is the gui-feature seam.
 fn register_capabilities(ctx: Ctx<'_>) {
   for name in GUI_CAPABILITIES {
     crate::add_capability(&ctx, name);
+  }
+  if alloy::dialogs_available() {
+    crate::add_capability(&ctx, DIALOG_CAPABILITY);
   }
 }

@@ -7,6 +7,7 @@ mod color;
 mod composite;
 mod cull;
 mod damage;
+mod dialog;
 mod effects;
 mod fonts;
 mod frame;

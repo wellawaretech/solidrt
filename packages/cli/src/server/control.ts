@@ -560,6 +560,20 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       } catch {}
       return handleQuery(query, "debug_call", { name, args })
     }
+    case "/__control__/dialog": {
+      // GET reads the file dialog state (the request waiting for an answer,
+      // the last one with its answer, the queue); POST answers the waiting
+      // dialog or queues the answer for the next one, the JSON body being
+      // { files: [path, ...] }, { directory: path } or { cancel: true }.
+      if (req.method !== "POST") return handleQuery(query, "dialog")
+      let answer: unknown = null
+      try {
+        answer = await req.json()
+      } catch {
+        return Response.json({ error: "Dialog answer requires a JSON body: { files: [...] }, { directory } or { cancel: true }" }, { status: 400 })
+      }
+      return handleQuery(query, "dialog_answer", { answer })
+    }
     case "/__control__/link": {
       // GET reads the location the app reported (reportLocation from
       // sol:dev; null without one); POST ?link=<link> delivers a link to

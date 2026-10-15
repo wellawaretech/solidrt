@@ -5,11 +5,13 @@
 import { expect, test } from "flux:test"
 import { file } from "flux:fs"
 
-test("reads text and exposes the path", async () => {
+test("reads text and exposes the path and the name", async () => {
   await file("hello.txt").write("hello world")
   let f = file("hello.txt")
   expect(f.path).toBe("hello.txt")
+  expect(f.name).toBe("hello.txt")
   expect(await f.text()).toBe("hello world")
+  expect(file("some/dir/notes.md").name).toBe("notes.md")
 })
 
 test("reads bytes as a Uint8Array", async () => {

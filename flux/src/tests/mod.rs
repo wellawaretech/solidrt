@@ -1,3 +1,5 @@
+#[cfg(feature = "gui")]
+mod dialog;
 mod intrinsics;
 mod marshal;
 #[cfg(feature = "gui")]

@@ -14,6 +14,11 @@ guessing at them; the records the tools return are the control API's, and
 their fields are documented once, under "The control API without MCP" below.
 What the individual descriptions cannot tell you:
 
+- A flow that opens a file dialog (`flux:dialog`) needs its answer queued
+  with `answer_dialog` BEFORE the input that triggers it: an unanswered
+  request shows the native dialog on the client, which nothing remote can
+  dismiss. `get_dialog` shows what the app asked for (kind, filters,
+  suggested name) and how the last request was answered.
 - If `list_clients` is empty, no app is running: ask the user to start
   `bun run sol run` rather than starting a second one yourself.
   The bridge needs no port: it resolves the server currently serving this
@@ -327,6 +332,18 @@ when exactly one client is connected.
   checked against.
 - `/debug` - the app's registered debug commands; POST
   `/debug?name=<cmd>` with a JSON body as its args to call one.
+- `/dialog` - the file dialog state (`flux:dialog`): `pending`, the request
+  waiting for an answer (`kind` openFiles/saveFile/openDirectory and its
+  options) or null; `last`, the last request made with its `answer`
+  (`picked` entries, `cancelled`, or `failed`); `queued`, answers waiting
+  for the next request; `available`, whether the client's platform can show
+  a native dialog. POST `/dialog` with a JSON body `{ files: [path, ...] }`,
+  `{ directory: path }` or `{ cancel: true }` answers the waiting request
+  (`answered: true`) or queues the answer for the next one (`queued:
+  true`). Queue BEFORE triggering the flow: on a visible client an
+  unanswered request shows the native dialog, which nothing can dismiss
+  remotely. Paths are in the client's own file system; the app gets
+  `flux:fs` handles on them as from a real pick.
 - `/link` - GET reads the location the app reports (`{ location }`, a
   router's current path, null when the app reports none; a reload of the
   same app starts at the last reported location, so a rebuild comes back

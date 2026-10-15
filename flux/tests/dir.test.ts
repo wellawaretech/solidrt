@@ -11,9 +11,9 @@ test("entries lists names and types", async () => {
   let es = await dir("root").entries()
   es.sort((a, b) => (a.name < b.name ? -1 : 1))
   expect(es).toEqual([
-    { name: "a.txt", type: "file" },
-    { name: "b.txt", type: "file" },
-    { name: "sub", type: "directory" },
+    { name: "a.txt", type: "file", path: "root/a.txt" },
+    { name: "b.txt", type: "file", path: "root/b.txt" },
+    { name: "sub", type: "directory", path: "root/sub" },
   ])
 })
 

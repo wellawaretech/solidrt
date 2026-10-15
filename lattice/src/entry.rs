@@ -131,6 +131,7 @@ macro_rules! android_entry {
 /// server when the launch intent carries one.
 #[cfg(all(target_os = "android", feature = "go"))]
 pub fn android_main(argc: i32, argv: *mut *mut i8, program: Program) -> i32 {
+  crate::android_content::install();
   let args = android_args(argc, argv);
   let dev_server = dev_server_arg(&args);
   let launch = launch_arg(&args);
@@ -168,6 +169,7 @@ const PACKED_PAYLOAD_ASSET: &str = "app.solapp";
 /// is for the packager's bring-up.
 #[cfg(all(target_os = "android", not(feature = "go")))]
 pub fn android_main(argc: i32, argv: *mut *mut i8, program: Program) -> i32 {
+  crate::android_content::install();
   let launch = launch_arg(&android_args(argc, argv));
   let Some((apk, offset, len)) = alloy::sdl_utils::packed_asset_location(PACKED_PAYLOAD_ASSET) else {
     eprintln!("[sol] no {PACKED_PAYLOAD_ASSET} asset in this APK; nothing to run");

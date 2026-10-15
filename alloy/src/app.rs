@@ -108,6 +108,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
     // ahead of every path below.
     sdl3::hint::set("SDL_AUDIO_DRIVER", "dummy");
     sdl3::hint::set("SDL_VIDEO_DRIVER", "offscreen");
+    crate::dialog::probe(true);
     match setup_video(&sdl_context, title, (width, height), &mode) {
       Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler, user_input_muted },
       Err(e) if e.contains("EXT_device_enumeration") || e.contains("eglQueryDevicesEXT") => {
@@ -124,6 +125,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   }
 
   let (window, platform) = setup_video(&sdl_context, title, (width, height), &mode).expect("Failed to set up video");
+  crate::dialog::probe(false);
   App { sdl_context, window, platform, mode, resampler, user_input_muted }
 }
 
@@ -1062,6 +1064,9 @@ impl App {
               .map_err(|e| e.to_string())
               .and_then(|video| video.clipboard().clipboard_text().map_err(|e| e.to_string()));
             respond(result);
+          }
+          AlloyCommand::ShowDialog { request, respond } => {
+            crate::dialog::show(&window, request, respond);
           }
           AlloyCommand::Background => {
             if !window.minimize() {

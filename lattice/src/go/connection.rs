@@ -132,6 +132,8 @@ const QUERY_KINDS: &[&str] = &[
   "debug_call",
   "link",
   "location",
+  "dialog",
+  "dialog_answer",
 ];
 
 #[cfg(not(target_os = "android"))]
@@ -1029,6 +1031,41 @@ async fn try_serve(
                   }
                 }
               }
+              Some("dialog") => {
+                // The file dialog state (flux:dialog): the request waiting
+                // for an answer, the last one made with its answer, the
+                // answers queued, and whether the platform can show one.
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(dialog_reply(&ctx, id));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
+              Some("dialog_answer") => {
+                // Answer the waiting file dialog, or queue the answer for
+                // the next one: the paths (in the client's own file system)
+                // or a cancel, in place of a user clicking the dialog.
+                let answer = json.get("answer").cloned().unwrap_or(serde_json::Value::Null);
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(dialog_answer_reply(&ctx, id, answer));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
               Some("location") => {
                 // The location the app reported through reportLocation
                 // (sol:dev), a plain value shared with the engine loop, so no
@@ -1443,6 +1480,25 @@ fn link_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, link: String) -> String {
   obj.set("link", link).expect("set link");
   flux::emit_event(ctx, "link", obj);
   serde_json::json!({"type": "result", "id": id, "data": {"delivered": delivered}}).to_string()
+}
+
+/// The file dialog state (flux::gui::dialog::status). Runs on the JS thread.
+fn dialog_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+  serde_json::json!({"type": "result", "id": id, "data": flux::gui::dialog::status(ctx)}).to_string()
+}
+
+/// Answer the file dialog (flux::gui::dialog::answer): `answered` says a
+/// call was waiting and took it, else it is queued for the next call.
+/// Runs on the JS thread.
+fn dialog_answer_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, answer: serde_json::Value) -> String {
+  let outcome = flux::gui::dialog::parse_answer(&answer)
+    .and_then(|picked| flux::gui::dialog::answer(ctx, picked, None).map_err(|e| e.to_string()));
+  match outcome {
+    Ok(answered) => {
+      serde_json::json!({"type": "result", "id": id, "data": {"answered": answered, "queued": !answered}}).to_string()
+    }
+    Err(e) => error_reply(id, &e),
+  }
 }
 
 /// List the app's registered debug commands. Runs on the JS thread.

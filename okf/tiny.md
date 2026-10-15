@@ -25,6 +25,7 @@ symptom shows. A heading that outgrows this file splits into its own.
 `flux/` - the JavaScript runtime and its plugins.
 
 - video volume and mute: neither `flux:video` player exposes any, while their PCM sink is a plain SDL3 audio stream (`PcmStream`, alloy/src/audio.rs) that has a gain; add `volume` and `muted` with the web names over `SDL_SetAudioStreamGain` (flux/src/alloy_plugins/video.rs, flux-types gui/video.d.ts).
+- `/dialog` and the `get_dialog`/`answer_dialog` tools have no automated test over the HTTP hop (the plugin and the harness are tested; the route was verified by hand on 2026-10-15): add one beside packages/test/tests/debug.test.tsx.
 
 
 ## Components
@@ -45,6 +46,8 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 
 ## DX
+
+- the dev server binds loopback only: on 2026-10-15 a tablet on the same Wi-Fi could not reach `sol run --port 34899` and `live.json` reported `address: 127.0.0.1` (earlier sessions recorded a LAN address there), so the device had to go through `adb reverse`; check whether LAN binding regressed or needs a flag, and make the Android dev loop notes say which.
 
 The `sol` CLI, the dev server, MCP, debug commands, examples and probes.
 

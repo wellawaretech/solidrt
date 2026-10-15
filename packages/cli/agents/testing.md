@@ -160,6 +160,16 @@ the state another way, and the test uses it:
   open resolves at once with no prompt (`settle()` after the mount), its
   `read()` returns the clip, and a later install is heard by every open
   microphone (a runtime module reading one included).
+- `app.dialog(answer)` answers the app's next file dialog (`flux:dialog`)
+  in place of a user: `{ files: [path, ...] }` (a `{ path, name }` names
+  one as a picker would), `{ directory: path }` or `{ cancel: true }`. No
+  dialog is shown; the app's call resolves to handles on the paths, or an
+  empty list / null on a cancel. The promise resolves once the app's call
+  took the answer, to the request it made (`kind`, `multiple`,
+  `suggestedName`, `types`, `startIn`), so keep it, drive the app, then
+  await it to assert what the app asked for; awaiting it first waits
+  forever. An unanswered call holds the app as work in flight, so
+  `settle()` reports it.
 - Arguments after `--` on `sol test` reach the file as `flux:process`
   argv.
 
