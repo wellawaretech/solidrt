@@ -24,7 +24,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream, TransportAddrUsage, VarInt};
-use iroh::{Endpoint as IrohEndpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+use iroh::{Endpoint as IrohEndpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr, Watcher};
 
 use crate::stream::{holding, read_half, ByteStream, Closing, ReadSlot};
 use crate::Value;
@@ -35,6 +35,10 @@ const READ_CHUNK: usize = 64 * 1024;
 /// The application error code an aborted stream resets its send half with.
 /// Nothing reads it: the peer sees the reset itself.
 const RESET_CODE: u32 = 0;
+
+/// How long `ticket` waits for the addresses it encodes (the relay coming
+/// online, or the first direct address) before encoding what it has.
+const TICKET_WAIT: Duration = Duration::from_secs(3);
 
 /// What a write reports once the stream was closed (not aborted).
 const STREAM_CLOSED: &str = "stream is closed";
@@ -47,16 +51,19 @@ pub struct Endpoint {
   inner: IrohEndpoint,
   /// The 32-byte secret key, kept so it can be read back for persistence.
   secret: [u8; 32],
+  /// Whether a (self-hosted) relay is configured, so `ticket` knows whether a
+  /// home relay can ever come online.
+  relayed: bool,
 }
 
 impl Endpoint {
   /// Bind an endpoint. `secret` is the 32-byte key (generated when `None`);
-  /// `relay_url` selects a self-hosted relay (`None` uses the public n0 relays);
-  /// `alpns` lists the protocols this endpoint will `accept`. `local` binds in
-  /// local-only mode: relay disabled and no address lookup registered, so
-  /// nothing about the endpoint is published anywhere - the ticket (direct IPs
-  /// only) is the sole carrier of addressing, and peers on the same network
-  /// dial it directly. `local` excludes `relay_url`. `bind_port` pins the UDP
+  /// `relay_url` selects a self-hosted relay (`None`: no relay at all);
+  /// `alpns` lists the protocols this endpoint will `accept`. No public
+  /// infrastructure is ever used: no public relay and no address publishing or
+  /// lookup, so nothing about the endpoint leaves the machine except the
+  /// ticket, the sole carrier of addressing (its direct IPs, plus the relay
+  /// when one is configured). `bind_port` pins the UDP
   /// port (IPv4-only) so the ticket's direct address stays fixed across
   /// restarts; paired with a persisted `secret` this makes the whole ticket
   /// stable, so a client can re-dial the old ticket after a restart. `None`
@@ -70,14 +77,11 @@ impl Endpoint {
     secret: Option<[u8; 32]>,
     relay_url: Option<String>,
     alpns: Vec<Vec<u8>>,
-    local: bool,
     bind_port: Option<u16>,
   ) -> Result<Endpoint, String> {
-    if local && relay_url.is_some() {
-      return Err("local excludes relayUrl: a local-only endpoint uses no relay".to_string());
-    }
-    match tokio::spawn(build_endpoint(secret, relay_url, alpns, local, bind_port)).await {
-      Ok(Ok((inner, secret))) => Ok(Endpoint { inner, secret }),
+    let relayed = relay_url.is_some();
+    match tokio::spawn(build_endpoint(secret, relay_url, alpns, bind_port)).await {
+      Ok(Ok((inner, secret))) => Ok(Endpoint { inner, secret, relayed }),
       Ok(Err(e)) => Err(e),
       Err(e) => Err(format!("bind task failed: {e}")),
     }
@@ -95,17 +99,34 @@ impl Endpoint {
   }
 
   /// A self-contained dial token (`id|relay|ips`) carrying this endpoint's id,
-  /// home relay, and direct addresses, so a peer can `connect` without relying on
-  /// discovery. Waits (briefly) for the relay to be assigned before encoding;
-  /// bounded, since a LAN-only endpoint without a relay still yields direct addrs.
+  /// home relay, and direct addresses, so a peer can `connect` without any
+  /// lookup. Waits (bounded) for what makes it dialable: the relay coming
+  /// online when one is configured, else the first direct address (without a
+  /// relay `online` never resolves).
   pub async fn ticket(&self) -> String {
-    let _ = tokio::time::timeout(Duration::from_secs(3), self.inner.online()).await;
+    if self.relayed {
+      let _ = tokio::time::timeout(TICKET_WAIT, self.inner.online()).await;
+    } else {
+      let _ = tokio::time::timeout(TICKET_WAIT, self.direct_addr_known()).await;
+    }
     encode_ticket(&self.inner.addr())
   }
 
-  /// Dial a peer and open one bidirectional stream over `protocol`. `peer` is
-  /// either a `ticket` (connects directly, no discovery) or a bare endpoint `id`
-  /// (needs discovery to resolve the peer's address).
+  /// Resolves once the endpoint knows at least one direct address.
+  async fn direct_addr_known(&self) {
+    let mut watcher = self.inner.watch_addr();
+    let mut addr = watcher.get();
+    while addr.ip_addrs().next().is_none() {
+      addr = match watcher.updated().await {
+        Ok(addr) => addr,
+        Err(_disconnected) => return,
+      };
+    }
+  }
+
+  /// Dial a peer and open one bidirectional stream over `protocol`. `peer` is a
+  /// `ticket`. A bare endpoint `id` parses, but with no address lookup
+  /// registered it only reaches a peer this endpoint already knows a path to.
   pub async fn connect(&self, peer: String, protocol: String) -> Result<Stream, String> {
     let (conn, send, recv) = self.connect_raw(peer, protocol).await?;
     Ok(Stream::open(conn, send, recv))
@@ -399,8 +420,9 @@ fn encode_ticket(addr: &EndpointAddr) -> String {
 }
 
 /// Parse a dial target that is either a bare endpoint id or an `encode_ticket`
-/// string. A bare id (no `|`) yields an id-only addr (needs discovery to
-/// resolve); a ticket carries the relay + direct addresses, so no discovery.
+/// string. A bare id (no `|`) yields an id-only addr (with no lookup registered,
+/// it dials only a peer already known); a ticket carries the relay + direct
+/// addresses.
 fn parse_dial(s: &str) -> Result<EndpointAddr, String> {
   let mut parts = s.split('|');
   let id: EndpointId = parts.next().unwrap_or("").trim().parse().map_err(|e| format!("invalid endpoint id: {e}"))?;
@@ -419,15 +441,14 @@ fn parse_dial(s: &str) -> Result<EndpointAddr, String> {
 /// Build and bind an iroh endpoint. Returns it together with the (possibly
 /// generated) secret-key bytes so the caller can expose them for persistence.
 ///
-/// `local` builds from `presets::Minimal` (crypto provider only) instead of
-/// `presets::N0`: N0 unconditionally registers a pkarr publisher + DNS lookup
-/// against n0's public server, which would announce the endpoint's addresses
-/// off-machine regardless of relay choice.
+/// Always built from `presets::Minimal` (crypto provider only), never
+/// `presets::N0`: N0 uses n0's public relays and registers a pkarr publisher +
+/// DNS lookup against n0's public server, announcing the endpoint's addresses
+/// off-machine. The only relay is the self-hosted one `relay_url` names.
 async fn build_endpoint(
   secret: Option<[u8; 32]>,
   relay_url: Option<String>,
   alpns: Vec<Vec<u8>>,
-  local: bool,
   bind_port: Option<u16>,
 ) -> Result<(IrohEndpoint, [u8; 32]), String> {
   let secret_key = match secret {
@@ -436,12 +457,7 @@ async fn build_endpoint(
   };
   let bytes = secret_key.to_bytes();
 
-  let mut builder = if local {
-    IrohEndpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
-  } else {
-    IrohEndpoint::builder(presets::N0)
-  };
-  builder = builder.secret_key(secret_key).alpns(alpns);
+  let mut builder = IrohEndpoint::builder(presets::Minimal).secret_key(secret_key).alpns(alpns);
   // IPv4 only: `clear_ip_transports` drops the pre-configured unspecified
   // sockets (one per family), then `bind_addr` binds exactly one IPv4 socket,
   // on the pinned port when there is one (so the ticket's direct address is
@@ -454,10 +470,11 @@ async fn build_endpoint(
     .clear_ip_transports()
     .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, bind_port.unwrap_or(0)))
     .map_err(|e| format!("invalid bind port: {e}"))?;
-  if let Some(url) = relay_url {
-    let relay: RelayUrl = url.parse().map_err(|e| format!("invalid relayUrl: {e}"))?;
-    builder = builder.relay_mode(RelayMode::custom([relay]));
-  }
+  let relay_mode = match relay_url {
+    Some(url) => RelayMode::custom([url.parse::<RelayUrl>().map_err(|e| format!("invalid relayUrl: {e}"))?]),
+    None => RelayMode::Disabled,
+  };
+  builder = builder.relay_mode(relay_mode);
   let endpoint = builder.bind().await.map_err(|e| e.to_string())?;
   Ok((endpoint, bytes))
 }

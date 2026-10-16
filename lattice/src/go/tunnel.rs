@@ -70,12 +70,12 @@ fn persist_secret(hex: &str) {
 /// Bind the endpoint and the loopback listener. Returns the address to dial in
 /// place of the dev server, plus the forwarder guard.
 pub async fn start(ticket: String) -> Result<(SocketAddr, Tunnel), String> {
-  // Dial-only and local: the client never accepts, needs no relay of its own,
-  // and must not publish addresses. The ticket carries the server's. An
+  // Dial-only: the client never accepts and needs no relay of its own (no
+  // endpoint publishes addresses). The ticket carries the server's. An
   // ephemeral bind port is fine here - the dialer is never itself dialed.
   // The secret is the client's stable identity (see load_secret).
   let secret = load_secret();
-  let endpoint = forge::p2p::Endpoint::bind(secret, None, Vec::new(), true, None).await?;
+  let endpoint = forge::p2p::Endpoint::bind(secret, None, Vec::new(), None).await?;
   if secret.is_none() {
     persist_secret(&endpoint.secret_key_hex());
   }

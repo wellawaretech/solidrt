@@ -1,9 +1,13 @@
 declare module "flux:p2p" {
   /**
-   * Options for {@link Endpoint.create}. Every endpoint binds one IPv4
-   * socket: no IPv6 path is dialled or advertised (a phone's rotating global
-   * IPv6 addresses stalled streams under a connection, and the local
-   * network every device shares is IPv4).
+   * Options for {@link Endpoint.create}. No public infrastructure is used: no
+   * public relay and no address publishing or lookup, so nothing about the
+   * endpoint leaves the machine except its {@link Endpoint.ticket}, which
+   * peers dial (its direct IPs reach same-network peers; a `relayUrl` adds a
+   * path beyond the local network). Every endpoint binds one IPv4 socket: no
+   * IPv6 path is dialled or advertised (a phone's rotating global IPv6
+   * addresses stalled streams under a connection, and the local network
+   * every device shares is IPv4).
    */
   type EndpointOptions = {
     /**
@@ -11,17 +15,10 @@ declare module "flux:p2p" {
      * ephemeral key.
      */
     secretKey?: string
-    /** A self-hosted relay URL. Omit to use the public n0 relays. */
+    /** A self-hosted relay URL. Omit for no relay: direct paths only. */
     relayUrl?: string
     /** Protocols this endpoint will {@link Endpoint.accept}. */
     protocols?: string[]
-    /**
-     * Bind local-only: no relay and no address publishing/lookup, so nothing
-     * about the endpoint leaves the machine except the ticket itself, whose
-     * direct IPs same-network peers dial. Excludes `relayUrl`; a bare-id
-     * `connect` cannot resolve a local endpoint (tickets only).
-     */
-    local?: boolean
     /**
      * Pin the UDP bind port (IPv4-only). With a persisted `secretKey` this keeps
      * the whole ticket stable across restarts, so a paired client can re-dial
@@ -92,22 +89,23 @@ declare module "flux:p2p" {
     /**
      * Bind an endpoint.
      *
-     * @param opts  secretKey, relayUrl, protocols, local, port.
+     * @param opts  secretKey, relayUrl, protocols, port.
      */
     static create(opts?: EndpointOptions): Promise<Endpoint>
-    /** This endpoint's dial address: the string peers pass to {@link connect}. */
+    /** This endpoint's identity (its public key), as {@link P2pStream.remoteId} reports it to peers. */
     readonly id: string
     /** The secret key as 64 hex chars, for the caller to persist and feed back to {@link create}. */
     readonly secretKey: string
     /**
-     * A self-contained dial token (`id|relay|ips`) so a peer can {@link connect}
-     * without relying on discovery.
+     * A self-contained dial token (`id|relay|ips`): what a peer passes to
+     * {@link connect}.
      */
     ticket(): Promise<string>
     /**
      * Dial a peer and open one bidirectional stream over `protocol`. `peer` is
-     * either a `ticket` (preferred; connects directly) or a bare endpoint `id`
-     * (needs discovery to resolve the address). The peer sees the stream once
+     * its {@link ticket}. A bare endpoint `id` is accepted too, but with no
+     * address lookup it only reaches a peer this endpoint already has a path
+     * to (one it is connected to). The peer sees the stream once
      * this side writes to it (see {@link accept}).
      */
     connect(peer: string, protocol: string): Promise<P2pStream>

@@ -38,7 +38,7 @@ export async function createTunnelEndpoint(port: number | null, keyDir: string):
     if (saved.length === 64) secretKey = saved
   }
 
-  let endpoint = await Endpoint.create({ local: true, protocols: [TUNNEL_PROTOCOL], ...(port !== null ? { port } : {}), secretKey })
+  let endpoint = await Endpoint.create({ protocols: [TUNNEL_PROTOCOL], ...(port !== null ? { port } : {}), secretKey })
 
   // First run (no saved key): persist the freshly generated one so the next run
   // reuses it and the ticket stays the same.

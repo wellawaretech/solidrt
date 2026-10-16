@@ -273,8 +273,8 @@ test("a live recording crosses a p2p stream into a player", async app => {
     </view>
   ))
   await app.settle()
-  let shower = await Endpoint.create({ protocols: [P2P_PROTOCOL], local: true })
-  let caster = await Endpoint.create({ local: true })
+  let shower = await Endpoint.create({ protocols: [P2P_PROTOCOL] })
+  let caster = await Endpoint.create()
   let accepted = (async () => {
     for await (let stream of shower.accept(P2P_PROTOCOL)) return stream
     return undefined

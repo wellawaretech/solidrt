@@ -18,8 +18,8 @@ let sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, m
 const GREETING = "hello"
 
 async function pair() {
-  let server = await Endpoint.create({ local: true, protocols: [PROTOCOL] })
-  let client = await Endpoint.create({ local: true })
+  let server = await Endpoint.create({ protocols: [PROTOCOL] })
+  let client = await Endpoint.create()
   let accepted = server.accept(PROTOCOL)[Symbol.asyncIterator]().next()
   let a = await client.connect(await server.ticket(), PROTOCOL)
   let writer = a.writable.getWriter()

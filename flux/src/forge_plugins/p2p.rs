@@ -8,7 +8,8 @@
 //! Surface (stage 1, deliberately minimal):
 //! - `Endpoint.create(opts)` binds an iroh endpoint. Identity is a keypair; an
 //!   ephemeral one is generated unless `secretKey` (64 hex chars) is supplied.
-//!   `relayUrl` selects a self-hosted relay; `protocols` lists what it `accept`s.
+//!   `relayUrl` selects a self-hosted relay (no public relay or address lookup is
+//!   ever used); `protocols` lists what it `accept`s.
 //! - `endpoint.connect(peer, protocol)` dials a peer (by `ticket` or bare `id`)
 //!   and opens one bidirectional stream.
 //! - `endpoint.accept(protocol)` is an async-iterable of incoming streams.
@@ -71,23 +72,20 @@ impl P2pEndpoint {
     Err(Exception::throw_message(&ctx, "use Endpoint.create() to bind a p2p endpoint"))
   }
 
-  /// Bind an endpoint. `opts`: `{ secretKey?, relayUrl?, protocols?, local?,
-  /// port? }`. `secretKey` is 64 hex chars (omit for an ephemeral key);
-  /// `relayUrl` selects a self-hosted relay (omit for the public n0 relays);
-  /// `protocols` lists the protocols this endpoint will `accept`. `local: true`
-  /// binds local-only: no relay and no address publishing/lookup - nothing
-  /// leaves the machine except the ticket itself, whose direct IPs same-network
-  /// peers dial. Excludes `relayUrl`; a bare-id `connect` cannot resolve a local
-  /// endpoint (tickets only). `port` pins the UDP bind port (IPv4-only) so the
-  /// ticket stays stable across restarts; omit for an ephemeral port.
+  /// Bind an endpoint. `opts`: `{ secretKey?, relayUrl?, protocols?, port? }`.
+  /// `secretKey` is 64 hex chars (omit for an ephemeral key); `relayUrl`
+  /// selects a self-hosted relay (omit for none: direct paths only);
+  /// `protocols` lists the protocols this endpoint will `accept`. `port` pins
+  /// the UDP bind port (IPv4-only) so the ticket stays stable across restarts;
+  /// omit for an ephemeral port. See `forge::p2p::Endpoint::bind`.
   #[qjs(static)]
   pub fn create<'js>(
     ctx: Ctx<'js>,
     opts: OptArg<Object<'js>>,
   ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<P2pEndpoint>>>> {
-    let (secret, relay_url, alpns, local, port) = parse_create_opts(&ctx, opts.0)?;
+    let (secret, relay_url, alpns, port) = parse_create_opts(&ctx, opts.0)?;
     Ok(with_in_flight(&ctx, "p2p", async move {
-      Endpoint::bind(secret, relay_url, alpns, local, port).await.map(|inner| P2pEndpoint { inner })
+      Endpoint::bind(secret, relay_url, alpns, port).await.map(|inner| P2pEndpoint { inner })
     }))
   }
 
@@ -270,13 +268,13 @@ impl ModuleDef for P2pModule {
 }
 
 /// Parsed `create` options: `(secretKey bytes, relayUrl, protocols/alpns,
-/// local, bind port)`, the native config `Endpoint::bind` takes.
-type CreateOpts = (Option<[u8; 32]>, Option<String>, Vec<Vec<u8>>, bool, Option<u16>);
+/// bind port)`, the native config `Endpoint::bind` takes.
+type CreateOpts = (Option<[u8; 32]>, Option<String>, Vec<Vec<u8>>, Option<u16>);
 
 /// Parse the `create` options object into native config. `opts` may be absent.
 fn parse_create_opts<'js>(ctx: &Ctx<'js>, opts: Option<Object<'js>>) -> rquickjs::Result<CreateOpts> {
   let Some(opts) = opts else {
-    return Ok((None, None, Vec::new(), false, None));
+    return Ok((None, None, Vec::new(), None));
   };
   let secret = match opts.get::<_, Option<String>>("secretKey")? {
     Some(s) => Some(decode_hex32(&s).map_err(|m| Exception::throw_message(ctx, &m))?),
@@ -285,7 +283,6 @@ fn parse_create_opts<'js>(ctx: &Ctx<'js>, opts: Option<Object<'js>>) -> rquickjs
   let relay_url = opts.get::<_, Option<String>>("relayUrl")?;
   let alpns =
     opts.get::<_, Option<Vec<String>>>("protocols")?.unwrap_or_default().into_iter().map(String::into_bytes).collect();
-  let local = opts.get::<_, Option<bool>>("local")?.unwrap_or(false);
   let port = opts.get::<_, Option<u16>>("port")?;
-  Ok((secret, relay_url, alpns, local, port))
+  Ok((secret, relay_url, alpns, port))
 }
