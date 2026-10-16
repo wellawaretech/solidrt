@@ -58,7 +58,9 @@ pub use mediacodec::encode::MediaCodecEncoder;
 #[cfg(target_os = "android")]
 pub use plane::open as open_plane;
 #[cfg(feature = "video-encode")]
-pub use record::{AudioConfig, Feeder, FrameBytes, Push, Recorder, RecorderConfig, RecorderShared};
+pub use record::{
+  live_sink, AudioConfig, Feeder, FrameBytes, LiveSink, Push, Recorder, RecorderConfig, RecorderShared,
+};
 pub use texture::open as open_texture;
 pub use transport::{AudioSink, Clock, FrameSink};
 #[cfg(not(target_os = "android"))]

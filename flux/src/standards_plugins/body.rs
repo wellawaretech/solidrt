@@ -349,7 +349,7 @@ pub(crate) fn extract_streaming_body<'js>(val: &Value<'js>) -> rquickjs::Result<
 ///
 /// Touches JS values, so it runs on the QuickJS executor (a `ctx.spawn` task
 /// or a `Promised` future).
-async fn drive_async_iterable<'js>(
+pub(crate) async fn drive_async_iterable<'js>(
   ctx: &Ctx<'js>,
   iterable: Object<'js>,
   mut sink: impl AsyncFnMut(Vec<u8>) -> bool,

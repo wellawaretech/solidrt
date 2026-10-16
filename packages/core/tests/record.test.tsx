@@ -16,6 +16,10 @@ import { createVideo } from "@solidrt/core/video"
 import type { VideoStream } from "@solidrt/core/video"
 import { record } from "flux:video"
 import { file } from "flux:fs"
+import { Endpoint } from "flux:p2p"
+import type { P2pStream } from "flux:p2p"
+import { connect, listen } from "flux:net"
+import type { Conn } from "flux:net"
 import { createSignal, Show } from "solid-js"
 
 const WIDTH = 64
@@ -194,12 +198,161 @@ test("a node records its box cut out of the window", async app => {
   expect([clip?.width(), clip?.height()]).toEqual([BOX_WIDTH, BOX_HEIGHT])
 })
 
+// Frames stepped while the live loopback runs: a few seconds of app time,
+// past the live resume buffer, so the player shows frames.
+const LIVE_FRAMES = 120
+const LIVE_LATENCY_S = 0.3
+
+test("a live recording of the window plays back through a stream", async app => {
+  let [showPlayer, setShowPlayer] = createSignal(false)
+  let [left, setLeft] = createSignal(0)
+  let clip: VideoStream | undefined
+  let readable: ReadableStream<Uint8Array> | undefined
+  // The player over the recording's own stream: a loopback on one client.
+  function Live() {
+    clip = createVideo(readable!, { latency: LIVE_LATENCY_S, autoplay: true })
+    return <view />
+  }
+  let win = await app.mount(() => (
+    <view flex={1}>
+      <rect position="absolute" top={0} left={0} right={0} bottom={0} color="#2060a0" />
+      <view position="absolute" left={left()} top={10} width={BOX_WIDTH} height={BOX_HEIGHT}>
+        <rect position="absolute" top={0} left={0} right={0} bottom={0} color="#a02020" />
+      </view>
+      <Show when={showPlayer()}>
+        <Live />
+      </Show>
+    </view>
+  ))
+  await app.settle()
+  let rec = await record({ video: { node: win.record.id } }, { height: SCREEN_HEIGHT })
+  expect(rec.readable).toBeInstanceOf(ReadableStream)
+  readable = rec.readable
+  setShowPlayer(true)
+  for (let i = 0; i < LIVE_FRAMES; i++) {
+    setLeft(left() + BOX_STEP)
+    await app.frame()
+  }
+  // The open is work in flight (the header and the first keyframe cross
+  // the stream on the JS thread): settle waits for it.
+  await app.settle()
+  expect(clip?.error()).toBe(undefined)
+  expect(clip?.height()).toBe(SCREEN_HEIGHT)
+  expect(clip?.duration()).toBe(undefined)
+  expect(rec.error()).toBe(undefined)
+  await rec.stop()
+  expect(rec.recording()).toBe(false)
+})
+
+// A live recording across a real p2p stream, both ends in this one app:
+// the shower accepts, the caster connects by ticket and pipes the
+// recording into the stream, the shower plays the stream.
+const P2P_PROTOCOL = "record-test"
+// Wall time the open across the stream is given (the open itself times
+// out at 15 s).
+const P2P_SETTLE_MS = 20000
+
+test("a live recording crosses a p2p stream into a player", async app => {
+  let [showPlayer, setShowPlayer] = createSignal(false)
+  let [left, setLeft] = createSignal(0)
+  let clip: VideoStream | undefined
+  let incoming: P2pStream | undefined
+  function Live() {
+    clip = createVideo(incoming!.readable, { latency: LIVE_LATENCY_S, autoplay: true })
+    return <view />
+  }
+  let win = await app.mount(() => (
+    <view flex={1}>
+      <rect position="absolute" top={0} left={0} right={0} bottom={0} color="#2060a0" />
+      <view position="absolute" left={left()} top={10} width={BOX_WIDTH} height={BOX_HEIGHT}>
+        <rect position="absolute" top={0} left={0} right={0} bottom={0} color="#a02020" />
+      </view>
+      <Show when={showPlayer()}>
+        <Live />
+      </Show>
+    </view>
+  ))
+  await app.settle()
+  let shower = await Endpoint.create({ protocols: [P2P_PROTOCOL], local: true })
+  let caster = await Endpoint.create({ local: true })
+  let accepted = (async () => {
+    for await (let stream of shower.accept(P2P_PROTOCOL)) return stream
+    return undefined
+  })()
+  let outgoing = await caster.connect(await shower.ticket(), P2P_PROTOCOL)
+  let rec = await record({ video: { node: win.record.id } }, { height: SCREEN_HEIGHT })
+  let piped = rec.readable!.pipeTo(outgoing.writable)
+  incoming = await accepted
+  expect(incoming).toBeDefined()
+  setShowPlayer(true)
+  for (let i = 0; i < LIVE_FRAMES; i++) {
+    setLeft(left() + BOX_STEP)
+    await app.frame()
+  }
+  await app.settle({ maxMs: P2P_SETTLE_MS })
+  expect(clip?.error()).toBe(undefined)
+  expect(clip?.height()).toBe(SCREEN_HEIGHT)
+  await rec.stop()
+  await piped.catch(() => {})
+  incoming?.close()
+  outgoing.close()
+  await caster.close()
+  await shower.close()
+})
+
+// The same over a TCP connection on the loopback (flux:net), left running
+// at the end of the test: the engine's teardown must end the recording,
+// the pipe and the connection without waiting on any of them.
+test("a live recording crosses a TCP connection, and teardown ends it", async app => {
+  let [showPlayer, setShowPlayer] = createSignal(false)
+  let [left, setLeft] = createSignal(0)
+  let clip: VideoStream | undefined
+  let incoming: Conn | undefined
+  function Live() {
+    clip = createVideo(incoming!.readable, { latency: LIVE_LATENCY_S, autoplay: true })
+    return <view />
+  }
+  let win = await app.mount(() => (
+    <view flex={1}>
+      <rect position="absolute" top={0} left={0} right={0} bottom={0} color="#2060a0" />
+      <view position="absolute" left={left()} top={10} width={BOX_WIDTH} height={BOX_HEIGHT}>
+        <rect position="absolute" top={0} left={0} right={0} bottom={0} color="#a02020" />
+      </view>
+      <Show when={showPlayer()}>
+        <Live />
+      </Show>
+    </view>
+  ))
+  await app.settle()
+  let listener = await listen(0)
+  let port = Number(listener.localAddr.slice(listener.localAddr.lastIndexOf(":") + 1))
+  let accepted = (async () => {
+    for await (let conn of listener) return conn
+    return undefined
+  })()
+  let outgoing = await connect("127.0.0.1", port)
+  let rec = await record({ video: { node: win.record.id } }, { height: SCREEN_HEIGHT })
+  void rec.readable!.pipeTo(outgoing.writable).catch(() => {})
+  incoming = await accepted
+  expect(incoming).toBeDefined()
+  setShowPlayer(true)
+  for (let i = 0; i < LIVE_FRAMES; i++) {
+    setLeft(left() + BOX_STEP)
+    await app.frame()
+  }
+  await app.settle({ maxMs: P2P_SETTLE_MS })
+  expect(clip?.error()).toBe(undefined)
+  expect(clip?.height()).toBe(SCREEN_HEIGHT)
+  // Everything is left open on purpose: the recording, the pipe, both
+  // ends of the connection and the listener end with the engine.
+})
+
 test("a source that is not open rejects, and a bad argument throws", async app => {
   await app.mount(() => <view />)
   await expect(record({ video: { texture: 999999 } }, { to: file("none.webm") })).rejects.toMatchObject({ kind: "unsupported" })
   await expect(record({ audio: { id: 999999 } }, { to: file("none.webm") })).rejects.toMatchObject({ kind: "unsupported" })
   await expect(record({ video: { node: 999999 } }, { to: file("none.webm") })).rejects.toMatchObject({ kind: "unsupported" })
   expect(() => record({}, { to: file("none.webm") })).toThrow()
-  expect(() => record({ video: { texture: 1 } }, {} as never)).toThrow()
+  expect(() => record({ video: { texture: 1 } }, { to: 5 as never })).toThrow()
   expect(() => record({ video: { node: 1 } }, { to: file("none.webm"), height: 0 })).toThrow()
 })

@@ -37,6 +37,36 @@ pub const STREAM_MAX_BUFFER_BYTES: usize = 24 * 1024 * 1024;
 // The peak bitrate the byte cap is sized for (a 4K VP9 stream), for the
 // ordering test only: the cap is what binds.
 pub const PEAK_BITRATE_BPS: usize = 20_000_000;
+// Live playback (see `Live`): how far the lead may run past the resume
+// buffer before the reader drops to the newest keyframe inside it. Above
+// the buffering hysteresis, so a resume never trips a catch-up, and below
+// what a viewer would call lag.
+pub const LIVE_CATCH_UP_MARGIN_US: i64 = 500_000;
+// The least a live resume buffer is: above the low water (so buffering can
+// end) by a hysteresis a bursty source does not cross every frame.
+pub const LIVE_MIN_RESUME_US: i64 = super::transport::STREAM_LOW_WATER_US + 250_000;
+
+/// The live policy of a reader opened with a latency: the clip is played
+/// that far behind the newest packet. The resume buffer (what buffering
+/// waits for, and what playback settles at) is the latency, floored at
+/// `LIVE_MIN_RESUME_US` and capped at the file resume buffer. A lead past
+/// it by `LIVE_CATCH_UP_MARGIN_US` (a stall's backlog arriving at once, a
+/// pause) is cut: the queues drop to the newest keyframe inside the
+/// latency and a new epoch resumes there, which the player takes as a seek
+/// (the sound cleared and prerolled, the clock re-anchored). Seeking is
+/// structural (a stream cannot), the end is the stream's end.
+#[derive(Clone, Copy, Debug)]
+pub struct Live {
+  pub latency_us: i64,
+  pub resume_us: i64,
+}
+
+impl Live {
+  pub fn with_latency(latency_us: i64) -> Live {
+    let resume_us = latency_us.clamp(LIVE_MIN_RESUME_US, super::transport::STREAM_RESUME_BUFFER_US);
+    Live { latency_us, resume_us }
+  }
+}
 
 /// What a queue answers: a packet, nothing yet (the source has not
 /// delivered it: buffering, or an epoch whose seek is still in flight), or
@@ -104,6 +134,8 @@ struct State {
   // The byte source's handle, for interrupting a blocked read; set by the
   // thread as soon as the source is open, before its first blocking call.
   source: Option<Handle>,
+  // The live policy, None for a file or an on-demand stream.
+  live: Option<Live>,
 }
 
 impl State {
@@ -129,6 +161,39 @@ impl State {
       }
       _ => {}
     }
+    if let Some(live) = self.live {
+      if self.lead_us() > live.resume_us + LIVE_CATCH_UP_MARGIN_US {
+        self.catch_up(live);
+      }
+    }
+  }
+
+  /// Cut the queues to the newest keyframe inside the latency (the oldest
+  /// keyframe at or after `newest - latency`, else the newest keyframe
+  /// before it) and start a new epoch there. Nothing happens without a
+  /// keyframe to cut to.
+  fn catch_up(&mut self, live: Live) {
+    let target = self.newest_us - live.latency_us;
+    let at = self
+      .video
+      .iter()
+      .position(|au| au.sync && au.pts_us >= target)
+      .or_else(|| self.video.iter().rposition(|au| au.sync));
+    // The oldest queued frame is the one to resume at: nothing to cut.
+    let Some(at) = at.filter(|&at| at > 0) else { return };
+    let resume_us = self.video[at].pts_us;
+    let dropped_video: usize = self.video.drain(..at).map(|au| au.data.len()).sum();
+    let kept = self.audio.iter().position(|p| p.pts_us >= resume_us).unwrap_or(self.audio.len());
+    let dropped_audio: usize = self.audio.drain(..kept).map(|p| p.data.len()).sum();
+    self.bytes -= dropped_video + dropped_audio;
+    self.epoch += 1;
+    self.resume_us = Some(resume_us);
+    self.head_us = resume_us;
+    log::debug!(
+      "[forge::video] live catch-up: {} ms of backlog dropped, resuming at {} ms",
+      (resume_us - target + live.latency_us) / 1000,
+      resume_us / 1000
+    );
   }
 
   fn clear(&mut self) {
@@ -171,6 +236,12 @@ impl Reader {
   /// and the first keyframe have been read, or the failure. Dropping the
   /// receiver abandons the open: the thread stops as soon as it notices.
   pub fn open(open: Opener) -> (Reader, oneshot::Receiver<Result<MediaInfo, StreamError>>) {
+    Reader::open_with(open, None)
+  }
+
+  /// `open` under a live policy (`Live::with_latency`) when `live` is
+  /// given.
+  pub fn open_with(open: Opener, live: Option<Live>) -> (Reader, oneshot::Receiver<Result<MediaInfo, StreamError>>) {
     let shared = Arc::new(Shared {
       state: Mutex::new(State {
         epoch: 0,
@@ -188,6 +259,7 @@ impl Reader {
         play_audio: true,
         info: None,
         source: None,
+        live,
       }),
       wake: Condvar::new(),
     });
@@ -204,6 +276,11 @@ impl Reader {
   /// The stream's facts, once the open has answered.
   pub fn info(&self) -> Option<MediaInfo> {
     self.shared.lock().info.clone()
+  }
+
+  /// The live policy this reader was opened with, if any.
+  pub fn live(&self) -> Option<Live> {
+    self.shared.lock().live
   }
 
   pub fn handle(&self) -> ReaderHandle {
@@ -431,6 +508,9 @@ fn run(shared: Arc<Shared>, open: Opener, answer: oneshot::Sender<Result<MediaIn
         let mut state = shared.lock();
         if state.epoch == serving {
           state.push(packet);
+          // The push may have started an epoch of its own (a live
+          // catch-up): the thread serves it from here, no command needed.
+          serving = state.epoch;
         }
       }
       Ok(None) => {

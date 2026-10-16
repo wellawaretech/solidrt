@@ -442,16 +442,18 @@ async fn build_endpoint(
     IrohEndpoint::builder(presets::N0)
   };
   builder = builder.secret_key(secret_key).alpns(alpns);
-  if let Some(port) = bind_port {
-    // Pin the UDP port so the ticket's direct address is stable across restarts
-    // (paired with a persisted key). `clear_ip_transports` drops the
-    // pre-configured unspecified sockets, then `bind_addr` binds exactly one
-    // IPv4 socket on the requested port - IPv4-only, which is the LAN dev path.
-    builder = builder
-      .clear_ip_transports()
-      .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, port))
-      .map_err(|e| format!("invalid bind port: {e}"))?;
-  }
+  // IPv4 only: `clear_ip_transports` drops the pre-configured unspecified
+  // sockets (one per family), then `bind_addr` binds exactly one IPv4 socket,
+  // on the pinned port when there is one (so the ticket's direct address is
+  // stable across restarts, paired with a persisted key) or any free port.
+  // iroh prefers an IPv6 path when both exist, and a phone's global IPv6
+  // privacy addresses rotate under a connection (observed 2026-10-16: a
+  // stream stalled after its first packets on such a path), while the LAN
+  // path every device here shares is IPv4.
+  builder = builder
+    .clear_ip_transports()
+    .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, bind_port.unwrap_or(0)))
+    .map_err(|e| format!("invalid bind port: {e}"))?;
   if let Some(url) = relay_url {
     let relay: RelayUrl = url.parse().map_err(|e| format!("invalid relayUrl: {e}"))?;
     builder = builder.relay_mode(RelayMode::custom([relay]));

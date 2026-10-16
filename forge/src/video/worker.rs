@@ -209,6 +209,8 @@ impl Player {
       reader.set_tracks(true, false);
     }
     let handle = reader.handle();
+    // A live reader settles at its own resume buffer (see reader::Live).
+    let resume_buffer_us = reader.live().map_or(super::transport::STREAM_RESUME_BUFFER_US, |live| live.resume_us);
     let (controls, rx, shared) = Controls::new();
     let worker_shared = shared.clone();
     thread::Builder::new()
@@ -256,7 +258,7 @@ impl Player {
           show_one: false,
           epoch: 0,
           resume_pending: false,
-          buffering: Buffering::new(),
+          buffering: Buffering::with_resume(resume_buffer_us),
           input_stalled_since: None,
           pending: VecDeque::new(),
           dropped: 0,
@@ -513,10 +515,32 @@ impl Worker<'_> {
     self.reset_clock();
   }
 
+  // The reader cut its queues to a keyframe and resumes there (a live
+  // catch-up): the presenter flushes, the sound clears and prerolls from the
+  // resume position the reader publishes, the clock anchors afresh.
+  fn adopt_epoch(&mut self, epoch: u64) {
+    if let Err(e) = self.presenter.flush() {
+      log::warn!("[forge::video] catch-up: flush: {e}");
+    }
+    self.epoch = epoch;
+    self.resume_pending = true;
+    self.skip_until = None;
+    self.stop_audio();
+    self.input_eos = false;
+    self.output_eos = false;
+    self.input_stalled_since = None;
+    self.reset_clock();
+  }
+
   // Take the reader's state: the epoch's resume position once known, a
   // failure, and the supply the buffering rule judges.
   fn poll_reader(&mut self) {
     let status = self.reader.status();
+    // An epoch the reader started itself (a live catch-up): taken like a
+    // seek whose resume position is already known.
+    if status.epoch != self.epoch {
+      self.adopt_epoch(status.epoch);
+    }
     if status.epoch == self.epoch {
       if self.resume_pending {
         if let Some(resume_us) = status.resume_us {

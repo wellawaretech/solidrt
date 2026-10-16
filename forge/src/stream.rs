@@ -71,6 +71,61 @@ impl Stream for OneShot {
   }
 }
 
+/// A `ByteStream` fed through a bounded channel: the sender side pushes
+/// chunks (or one error, which ends the stream), the stream yields them in
+/// order and ends when every sender is gone. Up to `depth` chunks wait in
+/// the channel; a push past that waits for the consumer. What a producer on
+/// another thread (the recorder's live output) or on the JS executor (a JS
+/// `ReadableStream` pumped into a reader thread) hands to a consumer.
+pub fn channel(depth: usize) -> (ChunkSender, ByteStream) {
+  let (tx, rx) = tokio::sync::mpsc::channel(depth);
+  (ChunkSender(tx), Box::pin(ChannelStream(rx)))
+}
+
+/// Why a `ChunkSender::try_send` did not take the chunk.
+pub enum TrySend {
+  /// No room now; the chunk is handed back.
+  Full(Vec<u8>),
+  /// The consumer is gone.
+  Closed,
+}
+
+#[derive(Clone)]
+pub struct ChunkSender(tokio::sync::mpsc::Sender<Result<Bytes, io::Error>>);
+
+impl ChunkSender {
+  /// Push a chunk, waiting for room; false once the consumer is gone.
+  pub async fn send(&self, chunk: Vec<u8>) -> bool {
+    self.0.send(Ok(Bytes::from(chunk))).await.is_ok()
+  }
+
+  /// Push a chunk without waiting: the chunk back when the channel is
+  /// full, `Closed` once the consumer is gone. For a producer on a thread
+  /// that must stay interruptible while it waits for room.
+  pub fn try_send(&self, chunk: Vec<u8>) -> Result<(), TrySend> {
+    match self.0.try_send(Ok(Bytes::from(chunk))) {
+      Ok(()) => Ok(()),
+      Err(tokio::sync::mpsc::error::TrySendError::Full(Ok(bytes))) => Err(TrySend::Full(bytes.to_vec())),
+      Err(_) => Err(TrySend::Closed),
+    }
+  }
+
+  /// End the stream with an error (after the chunks pushed before it).
+  pub async fn fail(&self, message: String) {
+    let _ = self.0.send(Err(io::Error::other(message))).await;
+  }
+}
+
+struct ChannelStream(tokio::sync::mpsc::Receiver<Result<Bytes, io::Error>>);
+
+impl Stream for ChannelStream {
+  type Item = Result<Bytes, io::Error>;
+
+  fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    self.0.poll_recv(cx)
+  }
+}
+
 /// A stream that keeps `handle` alive as long as it lives: for a read half
 /// whose transport is only kept up by a handle (a QUIC connection), so a
 /// consumer still reading keeps it up after the duplex itself is gone.

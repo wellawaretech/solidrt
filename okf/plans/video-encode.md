@@ -198,10 +198,14 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
    on the Pixel and the tablet. Built 2026-10-16: the Pixel encodes in
    hardware (see Findings); the tablet has no VP9 encoder and `record`
    rejects there with `unsupported`, by decision (below).
-6. The live form, the transport over `flux:p2p` and the live player from a
-   JS stream (with [[video-streaming]] mode 2); the screencast is the
-   first two-device demo, one way, then the chat adds the second direction
-   and the microphone.
+6. The live form, the transport and the live player from a JS stream
+   (with [[video-streaming]] mode 2); the screencast is the first
+   two-device demo, one way, then the chat adds the second direction and
+   the microphone. Built 2026-10-16: `record` without `to`, `open` of a
+   `ReadableStream` with `latency`, `examples/screencast` over a TCP
+   connection on the local network (`flux:net`; see Findings for why not
+   `flux:p2p`), laptop to tablet, Pixel to laptop and Pixel to tablet
+   verified.
 
 ## Open
 
@@ -223,12 +227,12 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   frame is converted to I420 on the recorder thread. Cheap at 640x480; at
   720p30 measure it before deciding whether the tap should also expose the
   camera's native YUV.
-- **Transport and framing over p2p** (step 6). A QUIC stream is reliable
-  and ordered, so a lost packet stalls everything behind it. Options: WebM
-  over one stream (reuses the mode-2 reader as is), length-prefixed chunks
-  on one stream per track, or QUIC datagrams (quinn has them; `flux:p2p`
-  does not expose them) with keyframe requests for recovery. Start with
-  the simplest that holds the latency target and measure.
+- **Transport and framing** (step 6 took WebM over one reliable, ordered
+  byte stream: the mode-2 reader as is, a TCP connection or a p2p stream
+  alike; a lost packet stalls everything behind it, which the live
+  catch-up then cuts). Still open: `flux:p2p` for a phone whose direct
+  UDP drops batched sends (a self-hosted relay, never a public one), and
+  QUIC datagrams with keyframe requests if the stall-and-cut shows.
 
 ## Not in scope
 
@@ -253,7 +257,8 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   decoder, compare; Opus round trip likewise; the writer's output reads
   back through `webm.rs`, seeks through its Cues, and the live form reads
   as unbounded.
-- Two devices in a screencast and then a video call over `flux:p2p`,
+- Two devices in a screencast (done 2026-10-16, over TCP on the local
+  network) and then a video call,
   glass-to-glass latency measured and stated, a dropped connection
   recovering on a keyframe (step 6).
 
@@ -348,6 +353,54 @@ what makes a tablet's software VP9 keep up: the screencast is encoded at
   H.264, MPEG-4 and VP8 only. The earlier reading of the XML (Open, above)
   missed the variant. Decided the same day: left `unsupported` there,
   the options recorded under Open.
+- **A hardware encoder's output buffers carry padding after the frame**
+  (Pixel 7, `c2.exynos.vp9.encoder`, found 2026-10-16 on the first live
+  cast): zeros mostly, a run of 0xff on some frames (sixty of a 223-byte
+  frame). libvpx finds a frame's end where its arithmetic decoder stopped,
+  skips zero padding, and takes a nonzero run for a second frame with an
+  invalid marker, after which every frame until a keyframe is refused;
+  ffmpeg's VP9 decoder ignores trailing bytes, which hid it from the file
+  checks. Our demuxer was blameless (ffmpeg's extracts the same block). The
+  fix is on our decoder's input: a block without a superframe index is
+  handed to libvpx as a one-frame superframe stating its length (VP9 Annex
+  B), so it decodes exactly the block. The first second of such a stream
+  is a fixture (`forge/src/tests/data/pixel_live.webm`) with a test
+  decoding all sixty frames.
+- **Laptop to tablet over p2p, 2026-10-16**: the laptop's window (1280x720
+  at 720 lines, libvpx, live mode) cast to the SM-T500 over a local-only
+  IPv4 direct path, the tablet playing it through the texture player
+  (MediaCodec decode) at 59 fps with 12 missed presents per 10 s window
+  and no buffering episode; the delay read off the caster's clock in the
+  tablet's picture is about 0.8 s, which is the live resume floor (0.75 s)
+  plus the pipe, at a `latency` of 0.3 s. The sender spends 37 KB/s. A
+  debug command on each role (`ticket` on the shower, `cast <ticket>` on
+  the caster) drives a cast without the camera.
+- **The Pixel 7 as a caster stalls over `flux:p2p`'s direct UDP path**:
+  its first packets arrive (the container header, 140 bytes), then
+  nothing, while its writes keep succeeding into QUIC's send buffer; the
+  receiver's read is never woken because no data reaches it. Over the
+  earlier IPv6 or relay-mixed paths the data came late and in bursts (the
+  catch-up log cut 334 ms every second, one chunk 15 s late). quinn
+  batches UDP sends (GSO) whenever the kernel takes the socket option and
+  backs off only on an explicit send error, so a driver dropping the
+  batches silently is invisible to it, and neither iroh nor quinn-udp
+  exposes a switch; an older note records this phone rejecting ECN/GSO
+  sends. The laptop and the tablet as senders have no such trouble.
+  Decided 2026-10-16: the screencast example runs over a TCP connection
+  (`flux:net`, the receiver takes any byte stream), the QR carrying the
+  shower's local address; `flux:p2p` stays for a later item (a self-hosted
+  relay is the way to carry this phone, no public relay).
+- **Over TCP, 2026-10-16**: Pixel to laptop and Pixel to tablet both play
+  at 60 fps, about 0.8 s behind the caster's clock (the live resume floor),
+  the tablet with 1 missed present per 10 s and no buffering, the laptop
+  with 8; the Pixel's hardware encoder at the default budget for 324x720
+  (about 240 kbit/s) gives a soft picture, so the live default bitrate is
+  worth raising. Open: a reload of the caster app while it cast left the
+  Pixel's old engine stuck in its teardown once (the swap never built a
+  frame; a force-stop recovered it); the same scene headless on the laptop
+  (a TCP loopback cast left open at the test's end) tears down cleanly,
+  so the device-side cause (the MediaCodec encoder's flush, the window
+  tap, the camera) is not pinned down.
 - **A stepped test records nothing from a window at rest**: `frame()` of
   the test host steps app time without demanding a draw, so the screen
   tests move a box every frame. The recording's start demands one frame

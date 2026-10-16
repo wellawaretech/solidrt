@@ -13,7 +13,7 @@
 // for `stop` and the shared state, and the rest of the inputs are drained
 // unencoded, so a feeder never blocks on a dead recorder.
 
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -22,6 +22,75 @@ use super::encode::{open_encoder, rgba_to_i420, EncodedFrame, EncoderConfig, Vid
 use super::webm::{WebmAudioTrack, WebmSink, WebmVideoTrack, WebmWriter};
 use super::{PixelLayout, StreamError};
 use crate::audio::{OpusApplication, OpusEncoder};
+use crate::stream::{ByteStream, ChunkSender};
+
+// Chunks (one per written block, so about one per frame plus one per audio
+// packet) the live sink holds before the recorder thread blocks on it: a
+// consumer that stops pulling stalls the recorder within a second, and the
+// feeders drop frames meanwhile instead of queueing them.
+const LIVE_CHUNKS: usize = 128;
+
+// How often a recorder blocked on a full live channel looks for room, or
+// for the sink's close.
+const LIVE_WRITE_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// The live form's sink and its output: a `WebmSink::Stream` the recorder
+/// writes the container into, chunk by chunk, the byte stream a consumer
+/// pulls those chunks from, and the handle that ends the sink. Dropping the
+/// consumer's end fails the recorder's next write (`network`), which ends
+/// the recording. `LiveSink::close`, which a stop calls first, makes every
+/// later write a discard instead: a recorder blocked on a consumer that
+/// stopped pulling is freed, and the stop's own flush has nowhere to go.
+pub fn live_sink() -> (WebmSink, ByteStream, LiveSink) {
+  let (tx, stream) = crate::stream::channel(LIVE_CHUNKS);
+  let closed = Arc::new(AtomicBool::new(false));
+  (WebmSink::Stream(Box::new(ChannelWriter { tx, closed: closed.clone() })), stream, LiveSink { closed })
+}
+
+/// The live sink's close: after it, the recorder's writes are discarded.
+#[derive(Clone)]
+pub struct LiveSink {
+  closed: Arc<AtomicBool>,
+}
+
+impl LiveSink {
+  pub fn close(&self) {
+    self.closed.store(true, Ordering::Relaxed);
+  }
+}
+
+struct ChannelWriter {
+  tx: ChunkSender,
+  closed: Arc<AtomicBool>,
+}
+
+impl std::io::Write for ChannelWriter {
+  fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    if buf.is_empty() {
+      return Ok(0);
+    }
+    let mut chunk = buf.to_vec();
+    loop {
+      if self.closed.load(Ordering::Relaxed) {
+        return Ok(buf.len());
+      }
+      match self.tx.try_send(chunk) {
+        Ok(()) => return Ok(buf.len()),
+        Err(crate::stream::TrySend::Full(back)) => {
+          chunk = back;
+          std::thread::sleep(LIVE_WRITE_POLL);
+        }
+        Err(crate::stream::TrySend::Closed) => {
+          return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the live stream's consumer is gone"));
+        }
+      }
+    }
+  }
+
+  fn flush(&mut self) -> std::io::Result<()> {
+    Ok(())
+  }
+}
 
 // Inputs queued ahead of the encoder: a few frames of slack for a burst,
 // not a backlog (a slow encoder drops frames instead of falling behind).

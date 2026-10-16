@@ -130,11 +130,30 @@ declare module "flux:video" {
    * throws. A URL is read by the runtime directly: no disk cache, no
    * dev-server proxying, so the device must reach the host itself.
    */
-  export type VideoSource = string | FluxFile
+  /**
+   * What `open` plays: a path or http(s) URL (the one source rule), a
+   * `file()`, or a `ReadableStream<Uint8Array>` of WebM bytes (a p2p or
+   * socket stream's `readable`, a fetch body, a recording's `readable`):
+   * its chunks are pulled on the JS thread as the player consumes them,
+   * closing the player cancels it, and it is unseekable with no known
+   * duration.
+   */
+  export type VideoSource = string | FluxFile | ReadableStream<Uint8Array>
 
   export type VideoOpenOptions = {
     /** Where the picture goes: a texture (default) or the platform's video plane. */
     present?: "texture"
+    /**
+     * Play live, this many seconds behind the newest frame delivered (see
+     * `record` without `to`). Playback settles that far behind the live
+     * edge (at least about three quarters of a second: the buffering
+     * floor), a backlog beyond it (a stall's bytes arriving at once, a
+     * pause) is cut to the newest keyframe inside the latency, and a play
+     * after a pause resumes at the live edge. Absent, a stream without an
+     * end plays as delivered and never catches up. Seeks do nothing on a
+     * stream either way.
+     */
+    latency?: number
     /**
      * The flux:audio bus the audio track plays on (a plain name created by
      * use), so `setBusGain`, `pause({ bus })` and `stop({ bus })` reach it.
@@ -152,6 +171,8 @@ declare module "flux:video" {
     present: "plane"
     /** How the picture fits the window: letterboxed (default) or cropped to fill. */
     fit?: "contain" | "cover"
+    /** Play live, this many seconds behind the newest frame (see VideoOpenOptions). */
+    latency?: number
     /** The flux:audio bus the audio track plays on (see VideoOpenOptions). */
     bus?: string
     /** Aborting it abandons the open (see VideoOpenOptions). */
@@ -194,8 +215,16 @@ declare module "flux:video" {
   }
 
   export type RecordOptions = {
-    /** The WebM file the clip is written to (created, or truncated). */
-    to: FluxFile
+    /**
+     * The WebM file the clip is written to (created, or truncated). Omitted,
+     * the recording is live: the container's bytes come out of the handle's
+     * `readable` as they are made (one chunk per frame or audio packet), in
+     * the writer's stream form (no seek index, no duration) under the live
+     * encoder settings (constant bitrate, error-resilient frames), for
+     * `open(readable, { latency })` on the other end of a transport:
+     * `rec.readable.pipeTo(stream.writable)`.
+     */
+    to?: FluxFile
     /**
      * The encoded picture size in pixels. A node source scales into it
      * (one dimension given: the other follows the source's aspect; none:
@@ -222,8 +251,16 @@ declare module "flux:video" {
     frameRate?: number
   }
 
-  /** A recording in progress, bound to its file. */
+  /** A recording in progress, bound to its file or its live stream. */
   export type Recording = {
+    /**
+     * The live form's output (absent with `to`): the WebM bytes, pulled as
+     * the consumer reads. A consumer that stops reading holds the recorder
+     * after a bounded backlog (frames are dropped meanwhile, never queued);
+     * one that cancels ends the recording with a "network" error. Ends at
+     * `stop()`.
+     */
+    readable?: ReadableStream<Uint8Array>
     /** Whether frames and samples are being taken: false while paused, after `stop`, and after a failure. */
     recording(): boolean
     /** Seconds of media written so far. */
@@ -233,9 +270,10 @@ declare module "flux:video" {
     resume(): void
     /**
      * End the recording: the encoders flush and the file is finished (its
-     * sizes and seek index written), off the JS thread. Resolves once the
-     * file is final; rejects with the VideoError that stopped the
-     * recording early, if one did. A second call resolves at once.
+     * sizes and seek index written; a live stream ends), off the JS thread.
+     * Resolves once the file is final; rejects with the VideoError that
+     * stopped the recording early, if one did. A second call resolves at
+     * once.
      */
     stop(): Promise<void>
     /**
@@ -249,8 +287,9 @@ declare module "flux:video" {
 
   /**
    * Record the camera or the window, and/or the microphone, to a WebM
-   * file (VP9 and Opus, what `open` plays): nothing crosses into JS, the
-   * taps feed the encoders on their own threads; a window source is read
+   * file or a live stream (VP9 and Opus, what `open` plays): nothing
+   * crosses into JS but the live form's bytes, the taps feed the encoders
+   * on their own threads; a window source is read
    * back on the raster thread after each drawn frame, asynchronously, and
    * a window at rest adds no frames (the clip holds the last one).
    * Resolves once the encoders are up and the file is open. Rejects with a

@@ -421,11 +421,18 @@ pub struct AudioSupply {
 #[derive(Debug, Default)]
 pub struct Buffering {
   active: bool,
+  // What the lead must grow back to for buffering to end: the file resume
+  // buffer, or a live reader's (see reader::Live).
+  resume_us: i64,
 }
 
 impl Buffering {
   pub fn new() -> Buffering {
-    Buffering { active: false }
+    Buffering::with_resume(STREAM_RESUME_BUFFER_US)
+  }
+
+  pub fn with_resume(resume_us: i64) -> Buffering {
+    Buffering { active: false, resume_us }
   }
 
   pub fn active(&self) -> bool {
@@ -437,7 +444,7 @@ impl Buffering {
   pub fn update(&mut self, playing: bool, supply: &Supply) -> Option<bool> {
     let settled = supply.ended || supply.failed || supply.capped;
     if self.active {
-      if !playing || settled || supply.lead_us >= STREAM_RESUME_BUFFER_US {
+      if !playing || settled || supply.lead_us >= self.resume_us {
         self.active = false;
         return Some(false);
       }
@@ -447,7 +454,7 @@ impl Buffering {
       return None;
     }
     let audio_starving = supply.audio.is_some_and(|a| a.queued_packets == 0 && a.sink_us < SINK_LOW_WATER_US);
-    let short = supply.lead_us < STREAM_LOW_WATER_US || (audio_starving && supply.lead_us < STREAM_RESUME_BUFFER_US);
+    let short = supply.lead_us < STREAM_LOW_WATER_US || (audio_starving && supply.lead_us < self.resume_us);
     if short {
       self.active = true;
       return Some(true);

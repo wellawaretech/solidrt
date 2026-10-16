@@ -1,5 +1,10 @@
 declare module "flux:p2p" {
-  /** Options for {@link Endpoint.create}. */
+  /**
+   * Options for {@link Endpoint.create}. Every endpoint binds one IPv4
+   * socket: no IPv6 path is dialled or advertised (a phone's rotating global
+   * IPv6 addresses stalled streams under a connection, and the local
+   * network every device shares is IPv4).
+   */
   type EndpointOptions = {
     /**
      * 64 hex chars (32 bytes) for a stable identity across restarts. Omit for an

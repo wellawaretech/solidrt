@@ -742,9 +742,33 @@ impl Source {
       Source::Path(path) => open_file(path),
       Source::Http(url) => {
         let reader = Reader::open(HttpSource::new(url, user_agent)?, STREAM_RING_BYTES);
-        Ok(ByteSource { handle: Some(reader.handle()), inner: SourceBytes::Http(reader) })
+        Ok(ByteSource { handle: Some(reader.handle()), inner: SourceBytes::Streamed(reader) })
       }
     }
+  }
+}
+
+/// A Send byte stream as a media source: a p2p or socket stream, a fetch
+/// body, a pipe. Unseekable with no known length: the producer hands the
+/// stream out once, at offset 0, and refuses any other open (so no restart
+/// and no reconnect; the end of the stream is the end of the media).
+pub fn from_stream(stream: ByteStream) -> io::Result<ByteSource> {
+  let reader = Reader::open(StreamSource(Some(stream)), STREAM_RING_BYTES);
+  Ok(ByteSource { handle: Some(reader.handle()), inner: SourceBytes::Streamed(reader) })
+}
+
+/// The producer behind [`from_stream`]: one stream, opened once.
+struct StreamSource(Option<ByteStream>);
+
+impl Producer for StreamSource {
+  fn open(&mut self, offset: u64) -> OpenFuture<'_> {
+    let body = if offset == 0 { self.0.take() } else { None };
+    Box::pin(async move {
+      match body {
+        Some(body) => Ok(Opened { body, len: None, seekable: false }),
+        None => Err(io::Error::new(ErrorKind::Unsupported, "a byte stream cannot be reopened")),
+      }
+    })
   }
 }
 
@@ -763,7 +787,8 @@ pub fn from_seekable(mut reader: crate::seek::SeekableReader) -> io::Result<Byte
 
 enum SourceBytes {
   File(crate::seek::SeekableReader, u64),
-  Http(Reader),
+  /// Pumped through the ring: a URL, or a byte stream.
+  Streamed(Reader),
 }
 
 /// An opened media source: its reader once the facts are known, and the
@@ -784,14 +809,14 @@ impl ByteSource {
   pub fn facts(&self) -> io::Result<Facts> {
     match &self.inner {
       SourceBytes::File(_, len) => Ok(Facts { len: Some(*len), seekable: true }),
-      SourceBytes::Http(reader) => reader.facts(),
+      SourceBytes::Streamed(reader) => reader.facts(),
     }
   }
 
   pub fn into_reader(self) -> crate::seek::SeekableReader {
     match self.inner {
       SourceBytes::File(file, _) => file,
-      SourceBytes::Http(reader) => Box::new(reader),
+      SourceBytes::Streamed(reader) => Box::new(reader),
     }
   }
 }

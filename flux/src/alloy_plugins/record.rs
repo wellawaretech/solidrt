@@ -15,6 +15,13 @@
 //! The box is re-read every frame (`track_rects`) and the tap's cut-out
 //! moved when it changed; a node with no box (hidden, not laid out) records
 //! nothing until it has one again.
+//!
+//! The live form (`to` omitted): the container goes into a bounded channel
+//! instead of a file, in the writer's stream form under the live encoder
+//! settings, and the handle's `readable` pulls it chunk by chunk (one per
+//! block). A consumer that stops pulling blocks the recorder within the
+//! channel, and the feeders drop frames meanwhile; a consumer that goes
+//! away fails the recorder's next write, which ends the recording.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -29,11 +36,13 @@ use alloy::microphone::{MicWait, MicrophoneTap};
 use alloy::rendertree::{ElementKind, RenderTree};
 use alloy::{TapRect, TapSize};
 use forge::audio::OpusApplication;
+use forge::stream::ByteStream;
 use forge::video::record::{
   default_video_bitrate, DEFAULT_AUDIO_BITRATE_BPS, DEFAULT_FRAME_RATE, KEYFRAME_INTERVAL_US,
 };
 use forge::video::{
-  AudioConfig, EncodeMode, EncoderConfig, Feeder, Push, Recorder, RecorderConfig, RecorderShared, StreamError, WebmSink,
+  live_sink, AudioConfig, EncodeMode, EncoderConfig, Feeder, LiveSink, Push, Recorder, RecorderConfig, RecorderShared,
+  StreamError, WebmSink,
 };
 use rquickjs::promise::Promise;
 use rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Value};
@@ -41,6 +50,7 @@ use rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Value};
 use super::video::video_error;
 use crate::pending::{Hold, PendingOps};
 use crate::plugins::marshal::OptArg;
+use crate::standards_plugins::body::byte_stream_readable;
 
 // How long a feeder waits on its tap before looking at the stop flag.
 const FEEDER_WAIT: Duration = Duration::from_millis(100);
@@ -64,6 +74,9 @@ struct Entry {
   feeders: Vec<JoinHandle<()>>,
   paused: bool,
   screen: Option<Screen>,
+  // The live form's sink, closed ahead of the stop so a recorder blocked
+  // on a consumer that stopped pulling can be stopped.
+  live: Option<LiveSink>,
   // The recording is standing work: the engine is not at rest while one
   // runs (the app ends it).
   _hold: Hold,
@@ -85,6 +98,9 @@ impl Drop for Inner {
   fn drop(&mut self) {
     for (_, mut entry) in self.recordings.get_mut().drain() {
       entry.stop.store(true, Ordering::Relaxed);
+      if let Some(live) = entry.live.take() {
+        live.close();
+      }
       if let Some(screen) = entry.screen.take() {
         self.gui.alloy.close_window_tap(screen.tap);
       }
@@ -182,6 +198,13 @@ fn read_rate<'js>(ctx: &Ctx<'js>, opts: &Object<'js>, key: &str, default: u32) -
   }
 }
 
+/// Where a recording's bytes go: a file, or the live form's channel (the
+/// consumer's end becomes the handle's `readable`).
+enum Destination {
+  File(String),
+  Live,
+}
+
 /// record(sources, options): a malformed argument throws; a source that is
 /// not open, an encoder this build lacks or a destination that cannot be
 /// written rejects with a VideoError.
@@ -212,13 +235,17 @@ pub(super) fn record_impl<'js>(
   if video_source.is_none() && audio_id.is_none() {
     return Err(Exception::throw_type(&ctx, "record: pass at least one source, { video } or { audio }"));
   }
-  let Some(opts) = options.0 else {
-    return Err(Exception::throw_type(&ctx, "record: options with `to` (a file() from flux:fs) are required"));
+  let opts = options.0.unwrap_or(Object::new(ctx.clone())?);
+  let destination = match opts.get::<_, Option<Object>>("to")? {
+    Some(to) => Destination::File(
+      to.get::<_, Option<String>>("path")
+        .ok()
+        .flatten()
+        .ok_or_else(|| Exception::throw_type(&ctx, "record: to must be a file() from flux:fs"))?,
+    ),
+    None => Destination::Live,
   };
-  let path = opts
-    .get::<_, Option<Object>>("to")?
-    .and_then(|to| to.get::<_, Option<String>>("path").ok().flatten())
-    .ok_or_else(|| Exception::throw_type(&ctx, "record: to must be a file() from flux:fs"))?;
+  let live = matches!(destination, Destination::Live);
   let frame_rate = read_rate(&ctx, &opts, "frameRate", DEFAULT_FRAME_RATE)?;
   let size = TapSize { width: read_dimension(&ctx, &opts, "width")?, height: read_dimension(&ctx, &opts, "height")? };
   let video_bitrate = opts.get::<_, Option<f64>>("videoBitrate")?;
@@ -286,22 +313,36 @@ pub(super) fn record_impl<'js>(
     frame_rate,
     bitrate_bps: video_bitrate.map_or_else(|| default_video_bitrate(*width, *height, frame_rate), |v| v as u32),
     keyframe_interval_us: KEYFRAME_INTERVAL_US,
-    mode: EncodeMode::Recording,
+    mode: if live { EncodeMode::Live } else { EncodeMode::Recording },
   });
   let audio_config = audio.as_ref().map(|tap| AudioConfig {
     sample_rate: tap.sample_rate(),
     channels: 1,
     bitrate_bps: audio_bitrate,
-    application: OpusApplication::Audio,
+    application: if live { OpusApplication::Voip } else { OpusApplication::Audio },
   });
 
-  // The open off the JS thread: the file and the encoders.
+  // The open off the JS thread: the file and the encoders. The live form's
+  // output stream is made here and handed to the recording's object.
+  let (sink, output): (Option<WebmSink>, Option<(ByteStream, LiveSink)>) = match &destination {
+    Destination::File(_) => (None, None),
+    Destination::Live => {
+      let (sink, stream, live) = live_sink();
+      (Some(sink), Some((stream, live)))
+    }
+  };
   let hold = PendingOps::of(&ctx).in_flight("video record open");
   let task_ctx = ctx.clone();
   ctx.spawn(async move {
     let opened = tokio::task::spawn_blocking(move || -> Result<Recorder, StreamError> {
-      let file = forge::fs::create_file(&path).map_err(StreamError::network)?;
-      Recorder::open(RecorderConfig { video: video_config, audio: audio_config, sink: WebmSink::File(Box::new(file)) })
+      let sink = match (destination, sink) {
+        (Destination::File(path), _) => {
+          WebmSink::File(Box::new(forge::fs::create_file(&path).map_err(StreamError::network)?))
+        }
+        (Destination::Live, Some(sink)) => sink,
+        (Destination::Live, None) => return Err(StreamError::decode("the live sink was not made")),
+      };
+      Recorder::open(RecorderConfig { video: video_config, audio: audio_config, sink })
     })
     .await
     .unwrap_or_else(|e| Err(StreamError::decode(format!("the open task failed: {e}"))));
@@ -312,7 +353,7 @@ pub(super) fn record_impl<'js>(
       None => (None, None),
     };
     let settled = match opened {
-      Ok(recorder) => match start(ctx.clone(), &state, recorder, video_tap, screen, audio) {
+      Ok(recorder) => match start(ctx.clone(), &state, recorder, video_tap, screen, audio, output) {
         Ok(obj) => resolve.call::<_, ()>((obj,)),
         Err(e) => video_error(&ctx, &e, "record: ").and_then(|err| reject.call::<_, ()>((err,))),
       },
@@ -386,6 +427,7 @@ fn start<'js>(
   video: Option<FrameTap>,
   screen: Option<Screen>,
   audio: Option<MicrophoneTap>,
+  output: Option<(ByteStream, LiveSink)>,
 ) -> Result<Object<'js>, StreamError> {
   let stop = Arc::new(AtomicBool::new(false));
   let mut feeders = Vec::new();
@@ -401,12 +443,20 @@ fn start<'js>(
   let hold = PendingOps::of(&ctx).standing("video record");
   let id = state.0.next_id.get() + 1;
   state.0.next_id.set(id);
-  state
-    .0
-    .recordings
-    .borrow_mut()
-    .insert(id, Entry { recorder: Some(recorder), stop, feeders, paused: false, screen, _hold: hold });
-  build_object(ctx, id, shared).map_err(|e| StreamError::decode(format!("build recording object: {e}")))
+  state.0.recordings.borrow_mut().insert(
+    id,
+    Entry {
+      recorder: Some(recorder),
+      stop,
+      feeders,
+      paused: false,
+      screen,
+      live: output.as_ref().map(|(_, live)| live.clone()),
+      _hold: hold,
+    },
+  );
+  build_object(ctx, id, shared, output.map(|(stream, _)| stream))
+    .map_err(|e| StreamError::decode(format!("build recording object: {e}")))
 }
 
 fn spawn_feeder(name: &str, body: impl FnOnce() + Send + 'static) -> Result<JoinHandle<()>, StreamError> {
@@ -480,8 +530,18 @@ fn audio_feeder(mut tap: MicrophoneTap, feeder: Feeder, stop: Arc<AtomicBool>) {
   }
 }
 
-fn build_object<'js>(ctx: Ctx<'js>, id: u64, shared: Arc<RecorderShared>) -> rquickjs::Result<Object<'js>> {
+fn build_object<'js>(
+  ctx: Ctx<'js>,
+  id: u64,
+  shared: Arc<RecorderShared>,
+  output: Option<ByteStream>,
+) -> rquickjs::Result<Object<'js>> {
   let obj = Object::new(ctx.clone())?;
+  if let Some(output) = output {
+    // A read waiting on the recorder lasts until the app stops it: standing.
+    let pending = PendingOps::of(&ctx);
+    obj.set("readable", byte_stream_readable(&ctx, output, move || pending.standing("video record read"))?)?;
+  }
   obj.set("recording", Function::new(ctx.clone(), move |ctx: Ctx<'_>| recording_impl(ctx, id))?)?;
   let duration = shared.clone();
   obj.set("duration", Function::new(ctx.clone(), move || duration.duration_us() as f64 / 1_000_000.0)?)?;
@@ -545,6 +605,9 @@ fn stop_impl<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Promise<'js>> {
     return Ok(promise);
   };
   entry.stop.store(true, Ordering::Relaxed);
+  if let Some(live) = entry.live.take() {
+    live.close();
+  }
   // The tap's frame in flight is delivered before it closes, so the clip
   // ends on the last frame drawn.
   if let Some(screen) = entry.screen.take() {

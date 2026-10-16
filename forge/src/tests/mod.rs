@@ -11,6 +11,8 @@ mod image;
 mod isolate;
 #[cfg(feature = "ktx2")]
 mod ktx2;
+#[cfg(all(feature = "video-encode", not(target_os = "android")))]
+mod live;
 mod mdns;
 mod net;
 mod path;

@@ -39,7 +39,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use forge::source::Source;
-use forge::video::reader::{Opener, Reader};
+use forge::stream::ByteStream;
+use forge::video::reader::{Live, Opener, Reader};
 use forge::video::transport::Shared;
 use forge::video::{ErrorKind, MediaInfo, PixelLayout, Player, StreamError, YuvFrame};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
@@ -49,12 +50,18 @@ use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 use crate::plugins::marshal::OptArg;
 use crate::plugins::seekable::{SeekableOpener, SeekableSource};
 use crate::standards_plugins::abort::AbortSignal;
+use crate::standards_plugins::body::{drive_async_iterable, is_async_iterable};
 
 // How long an open may wait for the source to answer with the header and
 // the first keyframe before it rejects (kind "network"): a server that
 // never answers must not hold an app's open forever. Generous, since the
 // reader reconnects through short outages itself.
 const OPEN_TIMEOUT_MS: u64 = 15_000;
+// Chunks a JS stream source may run ahead of the reader thread: the pump
+// on the JS thread waits for room past this, so a stream that delivers
+// faster than the demuxer reads holds only this much in the hop.
+const STREAM_SOURCE_CHUNKS: usize = 32;
+const US_PER_S: f64 = 1_000_000.0;
 
 /// One open player: the worker's handle, its audio sink (a registry id,
 /// destroyed at close; the worker's handle on it outlives the entry), and
@@ -306,37 +313,69 @@ fn read_bus(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result<Opt
   Ok(bus)
 }
 
-/// What `open` was given: a path or URL under the one source rule, or a
-/// `file()` object's own opener (a packed asset reads out of the exe).
-enum MediaSource {
+/// What `open` was given: a path or URL under the one source rule, a
+/// `file()` object's own opener (a packed asset reads out of the exe), or
+/// a JS `ReadableStream` of bytes (a p2p or socket stream's `readable`, a
+/// fetch body), pumped from the JS thread into the reader's byte stream.
+enum MediaSource<'js> {
   Spec(Source),
   File(SeekableOpener),
+  Stream(Object<'js>),
 }
 
-impl MediaSource {
+impl<'js> MediaSource<'js> {
   /// A name for the texture label.
   fn label(&self) -> String {
     match self {
       MediaSource::Spec(Source::Path(path)) | MediaSource::Spec(Source::Http(path)) => path.clone(),
       MediaSource::File(_) => "file".to_string(),
+      MediaSource::Stream(_) => "stream".to_string(),
     }
   }
 
-  /// The opener the reader thread runs.
-  fn into_opener(self, user_agent: String) -> Opener {
+  /// The opener the reader thread runs. A JS stream's chunks cross on a
+  /// bounded channel: the pump (`pump_stream`) runs on the JS thread, the
+  /// reader thread reads the channel as a byte stream.
+  fn into_opener(self, ctx: &Ctx<'js>, user_agent: String) -> Opener {
     match self {
       MediaSource::Spec(source) => Box::new(move || source.open(&user_agent)),
       MediaSource::File(open) => Box::new(move || {
         let reader = open().map_err(io::Error::other)?;
         forge::source::from_seekable(reader)
       }),
+      MediaSource::Stream(stream) => {
+        let bytes = pump_stream(ctx, stream);
+        Box::new(move || forge::source::from_stream(bytes))
+      }
     }
   }
 }
 
+/// Drive a JS byte stream chunk by chunk into a channel, and hand the
+/// channel's end out as a `ByteStream`. The pump is a task on the JS thread
+/// that waits for room in the channel (`STREAM_SOURCE_CHUNKS`), so the JS
+/// stream is pulled only as far as the reader consumes; a reader that is
+/// gone (the player closed) ends the pump, which cancels the JS stream.
+/// A throw or a rejection in the JS stream ends the byte stream with an
+/// error, which the reader reports as `network`.
+fn pump_stream<'js>(ctx: &Ctx<'js>, stream: Object<'js>) -> ByteStream {
+  let (tx, bytes) = forge::stream::channel(STREAM_SOURCE_CHUNKS);
+  let task_ctx = ctx.clone();
+  ctx.spawn(async move {
+    let ctx = task_ctx;
+    let sender = tx.clone();
+    let driven = drive_async_iterable(&ctx, stream, async move |chunk: Vec<u8>| sender.send(chunk).await).await;
+    if let Err(e) = driven {
+      tx.fail(e).await;
+    }
+  });
+  bytes
+}
+
 // A string goes through the source rule (a bad scheme is a programming
-// error and throws); an object must be a file().
-fn read_source<'js>(ctx: &Ctx<'js>, source: Value<'js>) -> rquickjs::Result<MediaSource> {
+// error and throws); an object is a file() or a ReadableStream of bytes
+// (anything async-iterable that is not a file()).
+fn read_source<'js>(ctx: &Ctx<'js>, source: Value<'js>) -> rquickjs::Result<MediaSource<'js>> {
   if let Some(spec) = source.as_string() {
     let spec = spec.to_string()?;
     return Source::parse(&spec)
@@ -344,11 +383,30 @@ fn read_source<'js>(ctx: &Ctx<'js>, source: Value<'js>) -> rquickjs::Result<Medi
       .map_err(|e| Exception::throw_type(ctx, &format!("openVideo: {e}")));
   }
   if let Some(obj) = source.as_object() {
+    if obj.get::<_, Option<String>>("path")?.is_none() && is_async_iterable(&source)? {
+      return Ok(MediaSource::Stream(obj.clone()));
+    }
     return SeekableSource::opener(obj).map(MediaSource::File).map_err(|e| {
-      Exception::throw_type(ctx, &format!("openVideo: source must be a path, an http(s) URL or a file() ({e})"))
+      Exception::throw_type(
+        ctx,
+        &format!("openVideo: source must be a path, an http(s) URL, a file() or a ReadableStream ({e})"),
+      )
     });
   }
-  Err(Exception::throw_type(ctx, "openVideo: source must be a path, an http(s) URL or a file()"))
+  Err(Exception::throw_type(ctx, "openVideo: source must be a path, an http(s) URL, a file() or a ReadableStream"))
+}
+
+/// The `{ latency? }` option: seconds behind the live edge to play at,
+/// which makes the open a live one (see forge's `reader::Live`).
+fn read_latency(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result<Option<Live>> {
+  let Some(opts) = options.0.as_ref() else { return Ok(None) };
+  match opts.get::<_, Option<f64>>("latency")? {
+    None => Ok(None),
+    Some(v) if v.is_finite() && v >= 0.0 => Ok(Some(Live::with_latency((v * US_PER_S) as i64))),
+    Some(v) => {
+      Err(Exception::throw_type(ctx, &format!("openVideo: latency must be a non-negative number of seconds, got {v}")))
+    }
+  }
 }
 
 fn read_signal<'js>(options: &OptArg<Object<'js>>) -> rquickjs::Result<Option<Class<'js, AbortSignal<'js>>>> {
@@ -377,6 +435,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
   let present = read_present(&ctx, &options)?;
   let bus = read_bus(&ctx, &options)?;
   let source = read_source(&ctx, source)?;
+  let live = read_latency(&ctx, &options)?;
   let signal = read_signal(&options)?;
   let (promise, resolve, reject) = Promise::new(&ctx)?;
   let state = state(&ctx);
@@ -400,7 +459,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, source: Value<'js>, options: OptArg<Object<'js>
   }
   let label = source.label();
   let user_agent = crate::standards_plugins::http::user_agent(&ctx);
-  let (reader, opened) = Reader::open(source.into_opener(user_agent));
+  let (reader, opened) = Reader::open_with(source.into_opener(&ctx, user_agent), live);
   let aborted = signal.as_ref().map(|sig| sig.borrow().subscribe());
   let hold = crate::pending::PendingOps::of(&ctx).in_flight("video open");
   let task_ctx = ctx.clone();

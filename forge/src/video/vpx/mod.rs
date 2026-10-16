@@ -84,6 +84,48 @@ impl Vp9Decoder {
   }
 }
 
+// A VP9 superframe index (Annex B): a marker byte `110 mag(2) count(3)`,
+// `count + 1` little-endian frame sizes of `mag + 1` bytes each, and the
+// marker byte again. The decoder reads it from the end of the buffer.
+const SUPERFRAME_MARKER: u8 = 0b1100_0000;
+const SUPERFRAME_MARKER_MASK: u8 = 0b1110_0000;
+const SUPERFRAME_MAG_SHIFT: u8 = 3;
+const SUPERFRAME_COUNT_MASK: u8 = 0b0000_0111;
+const SUPERFRAME_MAG_MASK: u8 = 0b0000_0011;
+
+/// Whether `data` already ends in a superframe index (libvpx's own test:
+/// the marker byte last, and again at the index's start).
+fn has_superframe_index(data: &[u8]) -> bool {
+  let Some(&marker) = data.last() else { return false };
+  if marker & SUPERFRAME_MARKER_MASK != SUPERFRAME_MARKER {
+    return false;
+  }
+  let frames = (marker & SUPERFRAME_COUNT_MASK) as usize + 1;
+  let mag = ((marker >> SUPERFRAME_MAG_SHIFT) & SUPERFRAME_MAG_MASK) as usize + 1;
+  let index = 2 + mag * frames;
+  data.len() >= index && data[data.len() - index] == marker
+}
+
+/// Append a one-frame superframe index stating the buffer's length: how a
+/// frame with padding after its last tile (a hardware encoder's output
+/// buffer, padded to its alignment) is told apart from a frame followed by
+/// another. libvpx finds a frame's end where its arithmetic decoder stopped
+/// and takes any nonzero bytes after it for the next frame; with an index
+/// it decodes the stated length and nothing more.
+fn append_superframe_index(data: &mut Vec<u8>) {
+  let size = data.len();
+  let mag = match size {
+    0..=0xff => 1,
+    0x100..=0xffff => 2,
+    0x1_0000..=0xff_ffff => 3,
+    _ => 4,
+  };
+  let marker = SUPERFRAME_MARKER | (((mag - 1) as u8) << SUPERFRAME_MAG_SHIFT);
+  data.push(marker);
+  data.extend_from_slice(&size.to_le_bytes()[..mag]);
+  data.push(marker);
+}
+
 /// The context's detail on its last error, as a `: ...` suffix, or empty.
 fn error_detail(ctx: &ffi::vpx_codec_ctx_t) -> String {
   // SAFETY: the context is initialized; the detail is a static or
@@ -98,7 +140,14 @@ fn error_detail(ctx: &ffi::vpx_codec_ctx_t) -> String {
 impl VideoDecoder for Vp9Decoder {
   fn decode(&mut self, au: &VideoAu) -> Result<Vec<YuvFrame>, String> {
     self.last_pts_us = au.pts_us;
-    self.decode_into(Some(&au.data), au.pts_us)
+    if has_superframe_index(&au.data) {
+      return self.decode_into(Some(&au.data), au.pts_us);
+    }
+    // One frame, its length stated: libvpx then decodes exactly the block
+    // and never reads what follows the frame's last tile as another frame.
+    let mut framed = au.data.clone();
+    append_superframe_index(&mut framed);
+    self.decode_into(Some(&framed), au.pts_us)
   }
 
   fn flush(&mut self) -> Result<Vec<YuvFrame>, String> {
