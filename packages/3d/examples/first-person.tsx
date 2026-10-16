@@ -29,12 +29,11 @@ const PILLARS = 8
 // the floor, where one box map over the whole courtyard (32 units / 2048
 // texels = 1.6 cm) shows every texel as a 10-pixel stair. Three cascades
 // fitted to slices of the view give the near slice millimetre texels;
-// the distance caps the far one at the courtyard's diagonal.
+// the distance caps the far one at the courtyard's diagonal. The
+// remaining stair of those texels is the scene tier's filter width to
+// hide (medium: 2.5 texels, Unity's 5x5 tent); no radius is set here.
 const SHADOW_CASCADES = 3
 const SHADOW_DISTANCE = 30
-// PCF radius in map texels: the 3x3 hardware-tap kernel that hides the
-// remaining stair of the near cascade's texels.
-const SHADOW_RADIUS = 2
 // HUD refresh interval in ms: the pose readout is slow UI state, not a
 // per-frame binding.
 const HUD_MS = 100
@@ -107,7 +106,7 @@ function App() {
             position={[6, 10, 4]}
             direction={[-6, -10, -4]}
             castShadow
-            shadow={{ mapSize: 2048, normalBias: 0.02, radius: SHADOW_RADIUS, cascades: SHADOW_CASCADES, distance: SHADOW_DISTANCE }}
+            shadow={{ mapSize: 2048, normalBias: 0.02, cascades: SHADOW_CASCADES, distance: SHADOW_DISTANCE }}
           />
           <Mesh geometry={plane({ width: COURT * 2 + 2, height: COURT * 2 + 2 })} material={ground} rotation={[-Math.PI / 2, 0, 0]} />
           {walls.map(w => (

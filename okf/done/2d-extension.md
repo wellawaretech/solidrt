@@ -105,7 +105,7 @@ Closed 2026-09-29: items 1, 2, 3 and 6 landed; baked layers and atlas limits
    out of the retro presets item, which was gating a handful of lines every
    sprite population wants behind a demo kit. Shipped 2026-08-31
    (`packages/2d/src/animation.ts`, recorded in
-   okf/backlog/2d-retro-presets.md).
+   okf/done/2d-retro-presets.md).
 4. **Baked layers** (okf/done/2d-baked-layers.md), unchanged in substance
    and still the big one: primitive count is the budget on tiled GPUs. Now
    also carries the spatial index, since culling and picking want the same

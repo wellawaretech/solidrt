@@ -407,13 +407,16 @@ casting bulb a distance. No cube map: a receiver picks the face by
 the dominant axis of the light-to-point vector (SHADOW_LOOKUP), one
 projection, one hardware-compare tap - the Three/Godot/Unity-URP
 atlas route. ONE kernel softens every edge. `shadow.radius` (every
-casting light, default 1 = that one tap, a 2x2 bilinear compare)
-widens it uniformly: above 1 a disc of hardware taps spread over
-`radius` texels, Three's `shadow.radius` / Godot's `shadow_blur` - a
-Vogel spiral rotated per pixel by interleaved gradient noise, so it
-never bands at any radius; the grain is the trade (Godot's too; there
-is no TAA to hide it). A first-person eye over a floor shows the texel
-stairs at any map size; 2 is the usual figure. A light's SIZE makes the
+casting light; default null = the scene tier's width, 1.5 / 2.5 / 3.5
+texels for low / medium / high, the reach of Unity's 3x3 / 5x5 / 7x7
+soft-shadow tents; 1 = that one tap, a 2x2 bilinear compare) widens it
+uniformly: above 1 a disc of hardware taps spread over `radius`
+texels, Three's `shadow.radius` / Godot's `shadow_blur` - a Vogel
+spiral rotated per pixel by interleaved gradient noise, so it never
+bands at any radius; the grain is the trade (Godot's too; there is no
+TAA to hide it). A first-person eye over a floor shows the texel stairs
+at any map size; the tier's width is what hides them, as in Unity, so
+set a radius only to depart from it. A light's SIZE makes the
 width follow the geometry instead - contact-hardening soft shadows
 (PCSS: Unreal's source angle, Godot's `light_angular_distance` /
 `light_size`, HDRP's angular diameter / shape radius): `angularSize` on
@@ -431,9 +434,9 @@ softness; the real sun's 0.53 only shows on a map whose texel is under
 a centimetre per metre of caster height. The scene's `shadows: {
 quality }` ("hard" | "low" | "medium" (default) | "high";
 `setShadowQuality`, live, one light-set write) sets how many taps both
-regimes spend (8/8, 16/16, 24/32 search/filter; `hard` is the one tap
-for every light whatever its radius or size - the low-end profile's
-switch). Every tap wider than one compares against the RECEIVER PLANE
+regimes spend (8/8, 16/16, 24/32 search/filter) and the width of every
+light without a radius (`hard` is the one tap for every light whatever
+its radius or size - the low-end profile's switch). Every tap wider than one compares against the RECEIVER PLANE
 (the normal `lightShadow` takes, carried into the map), so a wide
 kernel on a tilted floor does not shadow itself; `bias`/`normalBias`
 apply underneath. Cost: the search and filter taps per receiving

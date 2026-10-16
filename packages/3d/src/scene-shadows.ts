@@ -31,22 +31,25 @@ const VERTICAL_LIGHT = 0.99
 // the light has no `distance` cutoff - the directional box default.
 const PERSPECTIVE_SHADOW_FAR = 500
 
-/** The soft shadow kernel's quality tier, a scene setting (Godot's soft
- * shadow filter quality, a project setting there): how many taps the
- * blocker search and the compare filter spend per receiving fragment per
- * casting light whose kernel is wider than one tap. `hard` is the one
- * hardware tap for every light, sizes and radii ignored - the low-end
- * profile's switch. Default `medium`. */
+/** The soft shadow kernel's quality tier, a scene setting (Unity's soft
+ * shadow quality on the pipeline asset, Godot's soft shadow filter
+ * quality): how many taps the blocker search and the compare filter
+ * spend per receiving fragment per casting light, and how wide the
+ * filter is for a light that sets no `shadow.radius` - the widths of
+ * Unity's Low, Medium and High tents (3x3, 5x5, 7x7 texels). `hard` is
+ * the one hardware tap for every light, sizes and radii ignored - the
+ * low-end profile's switch. Default `medium`. */
 export type ShadowQuality = "hard" | "low" | "medium" | "high"
 
-// The tap counts per tier (search, filter), at most MAX_SHADOW_TAPS each:
-// the rotation noise falls with the square root of the count, the cost
-// with the count.
-export const SHADOW_QUALITY_TAPS: Record<ShadowQuality, { search: number; filter: number }> = {
-  hard: { search: 0, filter: 0 },
-  low: { search: 8, filter: 8 },
-  medium: { search: 16, filter: 16 },
-  high: { search: 24, filter: MAX_SHADOW_TAPS },
+// Per tier: the tap counts (search, filter), at most MAX_SHADOW_TAPS
+// each - the rotation noise falls with the square root of the count, the
+// cost with the count - and the default filter radius in map texels, the
+// reach of the Unity tent each tier matches (a 5x5 tent reaches 2.5).
+export const SHADOW_QUALITY_TIERS: Record<ShadowQuality, { search: number; filter: number; radius: number }> = {
+  hard: { search: 0, filter: 0, radius: 1 },
+  low: { search: 8, filter: 8, radius: 1.5 },
+  medium: { search: 16, filter: 16, radius: 2.5 },
+  high: { search: 24, filter: MAX_SHADOW_TAPS, radius: 3.5 },
 }
 
 // Degrees added to a point-light face map's 90-degree fov: the guard

@@ -1,7 +1,8 @@
 ---
 title: Retro presets for @solidrt/2d
-description: The pixel-art identity kit - fixed logical resolution with integer nearest scaling, palette LUT, and scanline/CRT passes - as thin layers over what already exists
+description: The pixel-art identity kit - fixed logical resolution with integer nearest scaling, palette LUT, and scanline/CRT passes - as thin layers over what already exists. Closed 2026-10-16 without building it: every piece is a docs recipe over shipped machinery, not package work.
 created: 2026-08-19
+completed: 2026-10-16
 ---
 
 # Retro presets for @solidrt/2d
@@ -46,3 +47,11 @@ shipped 2026-08-31: `createAnimation(frames, fps, { loop })` in
 `packages/2d/src/animation.ts` - a clip with a shared wall-clock timer
 stepping attached sprites, play/pause, one-shot hold + `onEnd`. See the
 package AGENTS.md and `examples/anim.tsx`.
+
+## Outcome
+
+Closed 2026-10-16, not built. Nothing here extends the package: the pixel
+canvas is `<view designSize>`, the palette LUT and the CRT pass are a
+window or layer `shader` with a texture uniform, all shipped. The one real
+feature, the frame animation helper, left this item in 2026-08-31. What
+remains is demo material, written when a demo wants it.

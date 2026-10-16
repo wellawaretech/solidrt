@@ -2,6 +2,7 @@
 title: Contact-hardening soft shadows from a light's angular size
 description: A shadow edge is either uniformly hard (radius 1) or uniformly blurred (radius above 1), so softening it blurs the contact where a caster meets its receiver as much as the far tip and the caster looks like it floats; an angular size on the directional light (a source radius on spot and point) turning on a blocker-search lookup (PCSS) in SHADOW_LOOKUP.
 created: 2026-10-15
+completed: 2026-10-16
 ---
 
 # Contact-hardening soft shadows
@@ -168,113 +169,39 @@ without a size. The default sun size stays 0 until those numbers exist.
 The two caps (`SHADOW_MAX_TEXELS`, `SHADOW_SLOPE_MAX`) are the tuning
 constants.
 
-## Where to pick up (2026-10-15)
+## Closed (2026-10-16)
 
-Built, headless-tested and tablet-measured (see Findings). Open before the
-item can move to `done/`:
+Decisions taken at the close, after the pick-up round:
 
-1. **Look at `examples/first-person.tsx` on a device.** It is the one
-   app with `shadow.radius` above 1, so it now filters through the disc:
-   the grid's banding became per-pixel grain at the medium tier, exactly
-   where a first-person eye over a floor looks. A human judgment; if the
-   grain reads badly, the answer is a tier or a radius, not the grid.
-2. **Decide the softness cap.** `SHADOW_MAX_TEXELS` (8) caps the penumbra
-   in map texels, so a finer map gives a narrower maximum and the same
-   `angularSize` means less on a sharper map; the real sun's 0.53 degrees
-   barely shows at ordinary map sizes (the example exaggerates to 10).
-   Options: a cap in world units, or a higher texel cap with the tiers'
-   tap counts raised to hold the grain. Decide after item 1.
-3. **Close the test gaps.** `tests/soft-shadows.test.tsx` measures the
-   sun (box and two cascades) and the spot, not a point light with
-   `sourceRadius` and not a probe row inside a cascade blend band. Add
-   both to the example's layout and the test.
-4. **Measure the other devices.** The TV (armeabi-v7a, its own GPU) and
-   the Pixel 7 at hard, low, medium and high on the example, with the
-   protocol in Findings (a fixed idle or a thermal-zone cooldown before
-   each row).
-5. **Optional: a tighter contact under a sized light.** The blocker
-   search averages the caster's own side, so a sized light's foot
-   measures 0.10 to 0.14 world units against 0.04 for a point source.
-   A search region that shrinks near the receiver would tighten it at
-   the cost of missing far blockers. Every PCSS has this; only pursue it
-   if item 1 shows it.
+- **The quality tier sets the filter width, as Unity's does.** `low`,
+  `medium` and `high` carry a radius of 1.5, 2.5 and 3.5 texels (the
+  reach of Unity's 3x3, 5x5 and 7x7 soft-shadow tents) beside their tap
+  counts, and a light's `shadow.radius` is null by default, meaning the
+  tier's width; an explicit radius is the override and, under a sized
+  light, the floor. The first-person example dropped its hand-picked
+  radius 2 and takes the tier's 2.5. The hard tier is still the one tap
+  for every light.
+- **The texel cap stays.** Unity's penumbra is texel-based too, so an
+  `angularSize` means more on a coarser map there as well; the contract
+  is on the prop. A wider world-unit softness is a map size or a tighter
+  frustum.
+- **The soft-shadows example pins its lights at radius 1.** Its maps are
+  deliberately coarse (384 and 256 texels; 13 cm on the second cascade),
+  where the tier's 2.5 texels blur every contact a third of a metre and
+  leak at the wall's base; the example is about the contact, so it keeps
+  the hardware-tap floor and `sun({ radius: null })` shows the tier's
+  width (its own test).
+- **Fixed on the way:** `mergeSpotShadow` never copied `radius`, so a
+  spot or point light's `shadow.radius` had been silently ignored.
+- **Not done, on purpose:** a wider contact under a sized light (the
+  search region shrinking near the receiver); nothing on a device asked
+  for it.
 
-Then `git mv` to `done/` and cut Findings into a note. The specular
-half of the light size is its own item:
-[3d-light-size-specular](../backlog/3d-light-size-specular.md).
-
-## Findings
-
-- **A sized light's contact is near-hard, not hard.** The blocker search
-  averages every occluder in its region, so under a tall caster it
-  includes the caster's side up to the search radius and the foot's
-  penumbra is about the light's size times the height the search
-  reaches, not zero. Every PCSS behaves so; the headless test bounds a
-  sized foot at 0.25 world units and a point source's at 0.15.
-  Measured on the example at medium (transition width across the edge,
-  world units, foot / tip): sun box 0.04 / 0.38, sun as two cascades
-  0.10 / 0.34, spot 0.14 / 0.34; size 0 or the hard tier 0.02 to 0.04
-  everywhere.
-- **The texel cap makes softness a function of map resolution.** With
-  `SHADOW_MAX_TEXELS` 8, a finer map caps the penumbra lower in world
-  units; the example uses coarse maps (384 and 256) so the tips read.
-  The cap is deliberately not tied to the quality tier: a tier changes
-  the grain, never the look. If a scene wants wider penumbrae than its
-  map allows, the knob is `mapSize` (or a tighter frustum), and the
-  device numbers decide whether the cap itself should rise.
-- **Light layers and shadow views.** A casting light's shadow view draws
-  the meshes the SCENE draws that the light lights (its mask is the
-  scene mask AND the light's layers), so a light on a bit the scene's
-  `layers` does not hold casts nothing. The example keeps the post out
-  of the sun this way and needed `layers={3}` on the Scene for it.
-- **Adreno 610 takes one depth texture on two units, with and without
-  compare, in one draw.** The SM-T500 (release client of 2026-10-15)
-  renders the example exactly as the desktop does: hard foot, wide tip,
-  the spot's post the same; no driver or shader warning. The feared
-  R32F-copy fallback is not needed.
-- **A capped loop bound unrolls into a fixed cost.** The first kernel
-  looped to MAX_SHADOW_TAPS with a break on the tier's count, and spent
-  a sine, cosine and root per tap; on the tablet the three tiers cost
-  the same (about 2.5x a hard frame): the compiler unrolled both loops
-  to the table's length and predicated every iteration. The disc is now
-  a constant table rotated by one matrix per kernel, and the loops run to
-  the tap-count uniform itself with the table index masked, so the
-  compiler has no cap to unroll to. Costs then scale with the tier.
-- **Tablet measurements drift with heat and the clock is unreadable.**
-  Every kgsl clock node is permission-denied on the SM-T500, and the
-  same build measured 240 and 335 ms at medium minutes apart as the GPU
-  sensor climbed from 33 to 40 C. Rows are only comparable when taken
-  after a cooldown (the `cool.sh` protocol: wait for gpu-usr under 35 C
-  before each configuration) or within one short batch.
-- **The kernel must be instantiated ONCE in the fragment program.** The
-  lookup first called `shadowSample` at three sites (a point light's
-  face, the cascade, its blend partner); inlined three times the
-  program outgrew the Adreno 610 and every pixel paid, the hard path
-  included (115 ms a frame against 72 with one copy; the soft tiers two
-  and a half times their cost). Three one-site forms were tried on the
-  tablet before the one that works: a two-pass loop over the chosen
-  maps with dynamically indexed local arrays (scratch memory, hard 286
-  ms), a counted two-pass loop over scalars (unrolled into two
-  predicated copies, hard 105, medium 190), a while loop on the map
-  index with lean state (hard 105 still). The form that keeps the gain
-  is the original scan itself: ONE `for` over the light's maps with the
-  blend partner sampled by the same call on the next iteration and a
-  `blend` sentinel saying so (hard 89, low 123, medium 135, each after
-  a fixed idle). Rule for every future kernel of this size: one textual
-  call, inside the scan loop, scalars only, no counted loop around it.
-- **Cost on the SM-T500 (Adreno 610), release client, 2000x1092, the
-  example's two casters, GPU ms per frame from the compositor
-  timestamps, each row after a fixed idle of 100 s (the USB link and
-  with it the thermal sensor had dropped; the rows repeat within 3 ms):**
-
-  | configuration | ms |
-  | --- | --- |
-  | hard tier, or no size and radius 1 | 77 to 79 |
-  | low (8 / 8) | 117 |
-  | medium (16 / 16, default) | 139 to 141 |
-  | high (24 / 32) | 189 |
-
-  The soft path costs its taps and nothing else now: about 2.5 ms per
-  tap over a ground that fills the frame. A default sun size stays 0:
-  on this class of device the medium tier is a third of the frame, the
-  app's `shadows.quality` and the per-light sizes decide.
+The findings are in
+[3d-soft-shadows-findings](../notes/3d-soft-shadows-findings.md). The
+specular half of the light size is its own item:
+[3d-light-size-specular](../backlog/3d-light-size-specular.md); the
+contact leak of the uniform width on a coarse map is
+[3d-shadow-contact-leak](../backlog/3d-shadow-contact-leak.md), and the
+package-wide quality tier the close raised is
+[3d-quality-tier](../backlog/3d-quality-tier.md).

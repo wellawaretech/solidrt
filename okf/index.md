@@ -48,12 +48,6 @@ The architecture of an area and the decisions behind it, kept current. Read befo
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
-- **[Contact-hardening soft shadows from a light's angular size](plans/3d-contact-hardening-shadows.md)** [2026-10-15]
-  A shadow edge is either uniformly hard (radius 1) or uniformly blurred
-  (radius above 1), so softening it blurs the contact where a caster meets its
-  receiver as much as the far tip and the caster looks like it floats; an
-  angular size on the directional light (a source radius on spot and point)
-  turning on a blocker-search lookup (PCSS) in SHADOW_LOOKUP.
 - **[Cadence hold - a steady whole-refresh present interval below the refresh rate](plans/cadence-hold.md)** [2026-09-21]
   An app that cannot make the refresh rate is shown for an alternating number
   of refreshes per frame (3 and 4 on the Pixel 7 at 25 fps), which the eye
@@ -143,10 +137,6 @@ Shaped, not started.
   cannot be shown twice, a minimap cannot admit marker sprites only, several
   views cannot share one atlas target, and a view cannot tint itself apart
   from the layer. Each is an additive step on the landed view contract.
-- **[Retro presets for @solidrt/2d](backlog/2d-retro-presets.md)** [2026-08-19]
-  The pixel-art identity kit - fixed logical resolution with integer nearest
-  scaling, palette LUT, and scanline/CRT passes - as thin layers over what
-  already exists
 - **[2d skeletal sprites - skinned deformation over the spatial palette sink](backlog/2d-skeletal-sprites.md)** [2026-09-02]
   The 2d package has flipbook animation only; Spine/DragonBones-class skeletal
   characters (bone hierarchies deforming a textured mesh) have no path, even
@@ -229,6 +219,14 @@ Shaped, not started.
   real-world meshes (Draco/meshopt), tangents and the second UV set,
   per-material samplers, merge-by-material and runtime decoding of fetched
   content (morph targets have their own item).
+- **[One quality tier for the whole 3d package](backlog/3d-quality-tier.md)** [2026-10-16]
+  The package's quality knobs each stand alone - shadows.quality, lodBias,
+  samples, the fill density (renderScale / maxPixels), the lights' map sizes
+  and cascade counts - so an app that wants "low-end" or "high-end" sets five
+  things in five places and a knob it forgets keeps the medium default; one
+  tier every knob defaults from, each knob an override, as Unity's quality
+  settings and Godot's project settings do, and the question whether the tier
+  lives on the Scene or on the app as a device profile.
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
@@ -241,6 +239,14 @@ Shaped, not started.
   and there is no output={false}, so an app that renders only through
   <View3d>s carries a full unused scene target; @solidrt/2d took the opposite
   structure on 09-07 and layers render only through views.
+- **[A uniform shadow filter leaks light at a contact on a coarse map](backlog/3d-shadow-contact-leak.md)** [2026-10-16]
+  A light without a size filters at the tier's width (2.5 texels at medium),
+  and on a map whose texel is centimetres that kernel reaches past the
+  occluder's depth at a caster's base, so a lit sliver opens between the
+  object and its shadow (peter-panning) and the umbra near the base shows the
+  disc's noise; give the uniform width the blocker search a sized light
+  already runs, so every contact hardens to the one tap, and scale the normal
+  bias with the texel as Unity does.
 - **[A 3d world larger than memory has no residency, so every streaming app hand-rolls loading, freeing and pooling](backlog/3d-world-residency.md)** [2026-10-10]
   Culling and LOD gate drawing, not memory, so an open map or a long track
   either loads whole or streams by hand from onFrame (camera distance in JS,
@@ -982,6 +988,11 @@ Finished, kept for the reasoning.
   scene.createView contract on the sprite and tile layers - same world, its
   own camera and size - with the layers bitmask from the 3d view work when the
   second view needs a different mesh set (markers only).
+- **[Retro presets for @solidrt/2d](done/2d-retro-presets.md)** [2026-10-16]
+  The pixel-art identity kit - fixed logical resolution with integer nearest
+  scaling, palette LUT, and scanline/CRT passes - as thin layers over what
+  already exists. Closed 2026-10-16 without building it: every piece is a docs
+  recipe over shipped machinery, not package work.
 - **[Screen-space sizing for sprites (min-px floors, constant-size markers)](done/2d-screen-space-sprite-size.md)** [2026-10-05]
   Markers that must stay legible at any zoom (selection rings, map pins,
   traffic dots) have no shader-side answer, so apps rewrite w/h from JS on
@@ -1074,6 +1085,12 @@ Finished, kept for the reasoning.
   shading all have no path; Three, Godot and Unity all ship it and all mutate
   in place, where our packed Geometry wants the withColors/transformGeometry
   copy shape instead.
+- **[Contact-hardening soft shadows from a light's angular size](done/3d-contact-hardening-shadows.md)** [2026-10-16]
+  A shadow edge is either uniformly hard (radius 1) or uniformly blurred
+  (radius above 1), so softening it blurs the contact where a caster meets its
+  receiver as much as the far tip and the caster looks like it floats; an
+  angular size on the directional light (a source radius on spot and point)
+  turning on a blocker-search lookup (PCSS) in SHADOW_LOOKUP.
 - **[Scene-wide effects on custom materials - one answer for fog, shadows and what comes next](done/3d-custom-material-scene-effects.md)** [2026-08-30]
   A shaderMaterial got the scene's fog, shadows, lights and output only by
   composing each set itself, so an instanced forest stayed crisp and
@@ -2806,6 +2823,15 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   pipeline - why the resolve is a draw target, the pass cost on the Intel/Mesa
   laptop, and the bytes that prove linear-space blending, the round trip and
   the orientation.
+- **[What contact-hardening soft shadows found](notes/3d-soft-shadows-findings.md)** [2026-10-16]
+  Facts the PCSS work surfaced that hold without it - a sized light's
+  near-hard contact, the texel cap's resolution dependence, light layers and
+  shadow views, one depth texture on two units on Adreno 610, capped loops
+  unrolling on Adreno, heat drift on the tablet, one kernel instantiation per
+  program, device costs per tier (SM-T500, Pixel 7, TV), the cascade band's
+  continuity, texel-width floors leaking at contacts on coarse maps, the
+  first-person stair, the frames command for still-scene timings, and the
+  adb-drains-stdin bench trap.
 - **[The Adreno 610 breaks the first program that compares against a cleared depth texture](notes/adreno-first-comparison-draw.md)** [2026-10-06]
   On the SM-T500 (Adreno 610, OpenGL ES 3.2 V@0502.0) the first program object
   in a process to draw through a sampler2DShadow against a depth texture that
