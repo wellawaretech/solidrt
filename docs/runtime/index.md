@@ -356,11 +356,12 @@ MB, the prebuilt impeller from 228 MB to 7 MB; the symbols stay in
 
 The capabilities are not flags but lattice's cargo features, chosen in
 the runtime's `Cargo.toml`. The plain line the scaffold writes takes
-lattice's default set, the stock runtime's: `video` (playback), `ktx2`
-(compressed textures) and `wasm-native` (`flux:wasm` compiled to machine
-code where the target allows it, interpreted elsewhere; `wasm` alone is
-the interpreter everywhere). A runtime that needs less trims the line and
-names everything it keeps:
+lattice's default set, the stock runtime's: `video` (playback),
+`video-encode` (recording, `record` of `flux:video`; it implies `video`),
+`ktx2` (compressed textures) and `wasm-native` (`flux:wasm` compiled to
+machine code where the target allows it, interpreted elsewhere; `wasm`
+alone is the interpreter everywhere). A runtime that needs less trims the
+line and names everything it keeps:
 
 ```toml
 lattice = { git = "...", tag = "v...", default-features = false, features = ["video", "wasm-native"] }

@@ -244,11 +244,15 @@ pub struct VideoModule;
 impl ModuleDef for VideoModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("open")?;
+    #[cfg(feature = "video-encode")]
+    decl.declare("record")?;
     Ok(())
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     exports.export("open", Function::new(ctx.clone(), open_impl)?)?;
+    #[cfg(feature = "video-encode")]
+    exports.export("record", Function::new(ctx.clone(), super::record::record_impl)?)?;
     Ok(())
   }
 }
@@ -356,7 +360,7 @@ fn read_signal<'js>(options: &OptArg<Object<'js>>) -> rquickjs::Result<Option<Cl
 
 /// A `VideoError`: an Error whose `kind` names what went wrong, for the app
 /// to key on (a plane-to-texture fallback on "no-plane" only).
-fn video_error<'js>(ctx: &Ctx<'js>, error: &StreamError, prefix: &str) -> rquickjs::Result<Value<'js>> {
+pub(super) fn video_error<'js>(ctx: &Ctx<'js>, error: &StreamError, prefix: &str) -> rquickjs::Result<Value<'js>> {
   let err = Exception::from_message(ctx.clone(), &format!("{prefix}{}", error.message))?;
   err.set("kind", error.kind.name())?;
   Ok(err.into_value())

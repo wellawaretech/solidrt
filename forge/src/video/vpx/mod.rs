@@ -9,7 +9,12 @@
 //
 // `unsafe` stays inside this file; the rest of forge sees `Vp9Decoder`.
 
+#[cfg(feature = "video-encode")]
+mod encode;
 mod ffi;
+
+#[cfg(feature = "video-encode")]
+pub use encode::Vp9Encoder;
 
 use std::ffi::{c_long, c_uint, CStr};
 use std::ptr;
@@ -61,7 +66,7 @@ impl Vp9Decoder {
     // needs before returning.
     let err = unsafe { ffi::vpx_codec_decode(&mut *self.ctx, ptr, len, ptr::null_mut(), 0 as c_long) };
     if err != ffi::VPX_CODEC_OK {
-      return Err(format!("{}{}", err_string(err), self.error_detail()));
+      return Err(format!("{}{}", err_string(err), error_detail(&self.ctx)));
     }
     let mut frames = Vec::new();
     let mut iter: ffi::vpx_codec_iter_t = ptr::null();
@@ -77,16 +82,17 @@ impl Vp9Decoder {
     }
     Ok(frames)
   }
+}
 
-  fn error_detail(&self) -> String {
-    // SAFETY: the context is initialized; the detail is a static or
-    // context-owned NUL-terminated string, or null when there is none.
-    let detail = unsafe { ffi::vpx_codec_error_detail(&*self.ctx) };
-    if detail.is_null() {
-      return String::new();
-    }
-    format!(": {}", unsafe { CStr::from_ptr(detail) }.to_string_lossy())
+/// The context's detail on its last error, as a `: ...` suffix, or empty.
+fn error_detail(ctx: &ffi::vpx_codec_ctx_t) -> String {
+  // SAFETY: the context is initialized; the detail is a static or
+  // context-owned NUL-terminated string, or null when there is none.
+  let detail = unsafe { ffi::vpx_codec_error_detail(ctx) };
+  if detail.is_null() {
+    return String::new();
   }
+  format!(": {}", unsafe { CStr::from_ptr(detail) }.to_string_lossy())
 }
 
 impl VideoDecoder for Vp9Decoder {

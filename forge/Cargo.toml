@@ -24,6 +24,13 @@ audio = []
 # needs neither the vendor submodules nor nasm); every lattice Makefile
 # goal enables it. See okf/backlog/video-playback.md.
 video = ["audio", "dep:ndk", "dep:ndk-sys"]
+# forge::video::encode (flux:video's `record`): the VP9 encoder (the same
+# vendored libvpx with its encoder configured in, 1.28 MB of linked binary;
+# AMediaCodec on Android), the Opus encoder (in the vendored libopus already)
+# and the WebM writer. Implies `video`: the writer shares the container
+# module, and the tests decode what they encode. See
+# okf/plans/video-encode.md.
+video-encode = ["video"]
 # forge::ktx2: compressed textures - KTX2 files of Basis Universal texel data
 # transcoded to the device's block format (ETC2, BC7), and the encoder that
 # bakes them. The vendored Basis Universal (forge/vendor/basis_universal, a

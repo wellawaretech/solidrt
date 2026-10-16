@@ -22,6 +22,7 @@ mod rig;
 mod robustness;
 mod staging;
 mod storage;
+mod tap;
 mod target;
 mod texture;
 mod timing;
@@ -48,10 +49,14 @@ pub(crate) use program::{
   compile_stage, delete_stage, release_pipeline, release_program, CompiledStage, RenderPipeline, ShaderProgram,
 };
 pub(crate) use readback::{flip_rows, read_fbo0_pixels, read_texture_pixels};
-pub(crate) use rig::{forget_window_samples, msrtt, supports_invalidate, window_fast_path, MsrttFns, OffscreenRig};
+pub(crate) use rig::{
+  forget_window_samples, msrtt, supports_invalidate, window_fast_path, window_samples, MsrttFns, OffscreenRig,
+};
 pub(crate) use robustness::{ResetStatus, Robustness};
 pub(crate) use staging::UploadStaging;
 pub(crate) use storage::create_layer_target;
+pub(crate) use tap::TapReadback;
+pub use tap::TapRect;
 pub(crate) use target::{RebuildRegistries, ShaderTexture};
 pub(crate) use texture::{warm_compare_sampler, GpuTexture, SamplerCache};
 pub(crate) use timing::{PassTimer, Timed};

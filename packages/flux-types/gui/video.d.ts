@@ -1,4 +1,4 @@
-// Video playback (gui-enabled runtime only). The imperative primitive;
+// Video playback and recording (gui-enabled runtime only). The imperative primitive;
 // @solidrt/core wraps it with SolidJS reactivity. There is no video element:
 // a texture player's `texture` id is displayed with <texture>/<d-texture>,
 // and a richer Video component composes in a higher layer. A plane player
@@ -174,4 +174,92 @@ declare module "flux:video" {
    */
   export function open(source: VideoSource, options?: VideoOpenOptions): Promise<VideoPlayer>
   export function open(source: VideoSource, options: VideoPlaneOptions): Promise<VideoPlane>
+
+  /**
+   * What a recording takes its picture and sound from. The picture is a
+   * camera session (anything carrying its texture id: a `CameraSession`
+   * of flux:camera, or `{ texture: cam.texture()! }` from core's
+   * createCamera), recorded at its open size, or a render tree node by
+   * id (`{ node: ref.id }`, the id `captureSnapshot` takes): the window
+   * node records the whole window as it is on screen (window shader
+   * applied), any other node records its painted box cut out of the
+   * window, overlapping content included, following the box when it
+   * moves and recording nothing while it has none (hidden). The sound is
+   * the microphone session (anything carrying its id), at a rate Opus
+   * takes (8, 12, 16, 24 or 48 kHz; the default 16 kHz is). At least one.
+   */
+  export type RecordSources = {
+    video?: { texture: TextureId } | { node: number }
+    audio?: { id: number }
+  }
+
+  export type RecordOptions = {
+    /** The WebM file the clip is written to (created, or truncated). */
+    to: FluxFile
+    /**
+     * The encoded picture size in pixels. A node source scales into it
+     * (one dimension given: the other follows the source's aspect; none:
+     * the source's own pixel size, so the window's at the display scale);
+     * the size is fixed for the clip and stays even. A camera records at
+     * its open size: a different one rejects.
+     */
+    width?: number
+    height?: number
+    /**
+     * Video bitrate in bits per second. Default: a budget from the frame
+     * size and rate (about 0.9 Mbit/s for 640x480 at 30 fps, 2.8 for
+     * 720p30).
+     */
+    videoBitrate?: number
+    /** Audio bitrate in bits per second. Default 32000, transparent for mono voice. */
+    audioBitrate?: number
+    /**
+     * The nominal frame rate the encoder budgets for (default 30). Frames
+     * keep their own capture times: a camera slower than this yields fewer
+     * frames, a camera faster than the encoder loses frames, and the clip
+     * keeps real time either way.
+     */
+    frameRate?: number
+  }
+
+  /** A recording in progress, bound to its file. */
+  export type Recording = {
+    /** Whether frames and samples are being taken: false while paused, after `stop`, and after a failure. */
+    recording(): boolean
+    /** Seconds of media written so far. */
+    duration(): number
+    /** Take nothing until `resume`; the clip has no gap for the pause. */
+    pause(): void
+    resume(): void
+    /**
+     * End the recording: the encoders flush and the file is finished (its
+     * sizes and seek index written), off the JS thread. Resolves once the
+     * file is final; rejects with the VideoError that stopped the
+     * recording early, if one did. A second call resolves at once.
+     */
+    stop(): Promise<void>
+    /**
+     * The failure that stopped the recording, if one did: the file could
+     * not be written ("network"), or the encoder gave up ("decode").
+     * Nothing more is taken after it; `stop` still finishes the file with
+     * what was written.
+     */
+    error(): VideoError | undefined
+  }
+
+  /**
+   * Record the camera or the window, and/or the microphone, to a WebM
+   * file (VP9 and Opus, what `open` plays): nothing crosses into JS, the
+   * taps feed the encoders on their own threads; a window source is read
+   * back on the raster thread after each drawn frame, asynchronously, and
+   * a window at rest adds no frames (the clip holds the last one).
+   * Resolves once the encoders are up and the file is open. Rejects with a
+   * VideoError: "unsupported" when a source is not open (no camera streams
+   * into that texture, the microphone is closed, the node is not in the
+   * tree or has no box), when the microphone's rate is not one Opus takes,
+   * or when this build has no encoder (`Flux.capabilities` lists
+   * "video-encode" where it does); "network" when the file cannot be
+   * created. A malformed argument throws.
+   */
+  export function record(sources: RecordSources, options: RecordOptions): Promise<Recording>
 }

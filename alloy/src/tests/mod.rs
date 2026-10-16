@@ -48,6 +48,7 @@ mod texture;
 mod transitions;
 mod tree;
 mod view;
+mod window_tap;
 mod yuv;
 
 /// The shipped Noto Sans registered as "sans": the platform a test that

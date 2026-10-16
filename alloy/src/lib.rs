@@ -64,7 +64,7 @@ pub use sdl3;
 pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use cadence::CadenceHold;
-pub use context::{CaptureDone, CaptureInfo, Context, Overlay, YuvFrameSink};
+pub use context::{CaptureDone, CaptureInfo, Context, Overlay, WindowTap, YuvFrameSink};
 #[cfg(target_os = "android")]
 pub use dialog::android_result_raw;
 pub use dialog::{
@@ -76,6 +76,7 @@ pub use event::{
   Modifiers, Orientation, PointerType, SuspendHold, TextCapitalization, TextInputOptions, TextInputType,
 };
 pub use gamepad::{synthetic_axis_name, synthetic_button_name, GamepadCommand, Gamepads};
+pub use gl::TapRect;
 pub use gpu::{
   check_cube_faces, mip_levels, mip_size, GpuBufferLayoutInfo, GpuResources, LostContent, SamplerFilter,
   SamplerOptions, SamplerOverride, SamplerState, SamplerWrap, TextureBox, TextureEntry, TextureFormat, TextureRect,
@@ -95,6 +96,7 @@ pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;
 pub use mode::Mode;
 pub use present::{CountTally, Counted, RefreshCounter, RefreshCounting, SignalLedger, SignalRecord};
+pub use raster::TapSize;
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
 pub use stepped::SteppedConfig;
 pub use vsync::FramePacing;

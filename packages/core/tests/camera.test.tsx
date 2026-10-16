@@ -7,7 +7,7 @@ import { test, expect } from "@solidrt/test"
 import { createCamera } from "@solidrt/core/camera"
 import type { CameraStream } from "@solidrt/core/camera"
 import { readTexture } from "@solidrt/core/gpu"
-import { listCameras, scanImage } from "flux:camera"
+import { listCameras, open, scanImage } from "flux:camera"
 import { Show } from "solid-js"
 
 // A version-1 QR code of "solidrt" (error correction M), one character per
@@ -126,4 +126,14 @@ test("a later install shows the new image to an open camera", async app => {
   await app.camera(flat(8, 8, [0, 0, 255, 255]))
   await app.settle()
   expect(pixel(cam, 4, 4)).toEqual([0, 0, 255, 255])
+})
+
+test("open() of flux:camera resolves outside mount, with no frame driving it", async app => {
+  await app.camera(flat(8, 8, [0, 255, 0, 255]))
+  await app.mount(() => <view />)
+  await app.settle()
+  let cam = await open()
+  expect([cam.width, cam.height]).toEqual([8, 8])
+  expect(typeof cam.texture).toBe("number")
+  cam.close()
 })

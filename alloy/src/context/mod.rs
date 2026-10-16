@@ -21,6 +21,7 @@ mod program;
 mod spatial;
 mod target;
 mod texture;
+mod window_tap;
 
 pub use capture::{CaptureDone, CaptureInfo};
 pub use texture::YuvFrameSink;
@@ -28,6 +29,7 @@ pub use texture::YuvFrameSink;
 use mirror::{PipelineMirror, SubTargetMirror, TargetMirror};
 use order::InstanceOrders;
 use texture::YuvGroup;
+pub use window_tap::WindowTap;
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
 // compositing, present - runs on the raster thread, which owns the process's
@@ -136,6 +138,8 @@ pub struct Context {
   pub(crate) cameras: CameraRegistry,
   pub(crate) microphones: MicrophoneRegistry,
   pub(crate) audio: AudioRegistry,
+  // Open window taps' id allocation (see context/window_tap.rs).
+  window_taps: window_tap::WindowTapRegistry,
   // On-demand node captures (captureSnapshot, dev-server snapshot). Requests are
   // keyed by node id (many requests may target one node) and drained by the
   // paint walk when it visits that node; each carries its own completion
@@ -222,6 +226,7 @@ impl Context {
       cameras: CameraRegistry::default(),
       microphones: MicrophoneRegistry::default(),
       audio: AudioRegistry::default(),
+      window_taps: window_tap::WindowTapRegistry::default(),
       capture_requests: RefCell::new(HashMap::new()),
       capture_ready: RefCell::new(Vec::new()),
       pending_destroys: RefCell::new(Vec::new()),

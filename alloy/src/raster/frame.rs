@@ -104,6 +104,8 @@ impl RasterState {
     // so the flush below converts them and the frame samples the result.
     self.latch_video(present_at);
     self.latch_cameras();
+    // Last frame's window tap readbacks have had a whole frame to land.
+    self.complete_window_taps();
     // The frame samples shader targets (directly via <texture src>, or through
     // the window-shader layer); resolve every pending target write first.
     self.flush_dirty();
@@ -153,6 +155,9 @@ impl RasterState {
     // diagnostics, not the app's frame cost.
     if drawn {
       self.draw_overlay(size);
+      // The frame as it goes to the window, for the window taps: the read
+      // is asynchronous, completed at the next frame.
+      self.issue_window_taps((width, height), crate::sdl_utils::ticks_ns());
     }
     // A frame that is not presented has no present fence to retire it: a
     // headless or capture frame is read back, and the readback would sync

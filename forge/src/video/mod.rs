@@ -30,11 +30,15 @@
 // No GL, SDL, or scripting-engine types anywhere in this module.
 
 pub(crate) mod audio;
+#[cfg(feature = "video-encode")]
+pub mod encode;
 #[cfg(target_os = "android")]
 mod mediacodec;
 #[cfg(target_os = "android")]
 mod plane;
 pub mod reader;
+#[cfg(feature = "video-encode")]
+pub mod record;
 mod texture;
 pub mod transport;
 #[cfg(not(target_os = "android"))]
@@ -44,14 +48,26 @@ pub mod worker;
 
 use std::fmt;
 
+#[cfg(feature = "video-encode")]
+pub use crate::audio::{OpusApplication, OpusEncoder};
 pub use crate::audio::{OpusDecoder, PcmChunk};
+#[cfg(feature = "video-encode")]
+pub use encode::{open_encoder, rgba_to_i420, EncodeMode, EncodedFrame, EncoderConfig, VideoEncoder};
+#[cfg(all(feature = "video-encode", target_os = "android"))]
+pub use mediacodec::encode::MediaCodecEncoder;
 #[cfg(target_os = "android")]
 pub use plane::open as open_plane;
+#[cfg(feature = "video-encode")]
+pub use record::{AudioConfig, Feeder, FrameBytes, Push, Recorder, RecorderConfig, RecorderShared};
 pub use texture::open as open_texture;
 pub use transport::{AudioSink, Clock, FrameSink};
 #[cfg(not(target_os = "android"))]
 pub use vpx::Vp9Decoder;
+#[cfg(all(feature = "video-encode", not(target_os = "android")))]
+pub use vpx::Vp9Encoder;
 pub use webm::WebmDemuxer;
+#[cfg(feature = "video-encode")]
+pub use webm::{WebmAudioTrack, WebmSink, WebmVideoTrack, WebmWriter};
 pub use worker::Player;
 
 /// What went wrong with a stream, for the app to key on: the same kinds

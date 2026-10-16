@@ -101,6 +101,14 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
+- **[Encode video and audio](plans/video-encode.md)** [2026-10-16]
+  The runtime decodes VP9 and Opus but cannot encode either, so an app cannot
+  record its camera and microphone to a file or send them anywhere; a VP9
+  encoder (libvpx off Android, MediaCodec on it), an Opus encoder and a WebM
+  writer in forge, fed natively from the camera tap and the microphone ring,
+  surfaced as `record()` in flux:video; recording to a file first, the window
+  as a second source, video chat over p2p as the later consumer of the same
+  pipe.
 - **[Stream video from an HTTP source on the plane](plans/video-streaming.md)** [2026-09-13]
   Client-initiated streaming - open(url) plays a WebM served over HTTP on the
   Android plane with buffering, seek by Range and a cancel-safe close, built

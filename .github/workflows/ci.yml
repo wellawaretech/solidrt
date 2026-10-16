@@ -74,7 +74,7 @@ jobs:
       # included; flux stays because its headless half is what test-flux runs
       # elsewhere and the gui half has no other home.
       - name: Test
-        run: cargo test --workspace --exclude forge --features flux/video,flux/wasm-native
+        run: cargo test --workspace --exclude forge --features flux/video-encode,flux/wasm-native
 
       # `go` is not a default feature, so the step above compiles none of the
       # client-only code - including lattice's app-store and dev-server-tunnel
@@ -137,9 +137,9 @@ jobs:
       # iOS builds ship), so both engines meet the same contract on every
       # platform.
       - name: Test forge
-        run: cargo test -p forge --features video,wasm-native -- --test-threads=1
+        run: cargo test -p forge --features video-encode,wasm-native -- --test-threads=1
       - name: Test forge, interpreted wasm lane
-        run: cargo test -p forge --features video,wasm -- --test-threads=1
+        run: cargo test -p forge --features video-encode,wasm -- --test-threads=1
 
   # The headless flux runtime (QuickJS + the forge marshalling: value, time,
   # marshal, intrinsics) on the same four platforms, same principle as

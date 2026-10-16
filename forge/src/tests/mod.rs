@@ -3,6 +3,8 @@ mod audio;
 mod cache;
 mod compression;
 mod crypto;
+#[cfg(all(feature = "video-encode", not(target_os = "android")))]
+mod encode;
 mod fetch;
 mod fs;
 mod image;
@@ -15,6 +17,10 @@ mod path;
 mod process;
 #[cfg(feature = "video")]
 mod reader;
+#[cfg(all(feature = "video-encode", not(target_os = "android")))]
+mod record;
+#[cfg(all(feature = "video-encode", not(target_os = "android")))]
+mod sink;
 mod source;
 mod sqlite;
 mod stream;
@@ -28,6 +34,8 @@ mod video;
 mod wasm;
 #[cfg(feature = "video")]
 mod webm;
+#[cfg(all(feature = "video-encode", not(target_os = "android")))]
+mod webm_writer;
 #[cfg(feature = "video")]
 mod worker;
 mod workers;

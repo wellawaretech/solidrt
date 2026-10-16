@@ -16,6 +16,9 @@
 // codec buffer. Planar output (color-format 19) is interleaved to NV12 in
 // the same pass, so every device feeds the same layout downstream.
 
+#[cfg(feature = "video-encode")]
+pub(crate) mod encode;
+
 use std::time::Duration;
 
 use ndk::media::media_codec::{
@@ -33,7 +36,7 @@ use super::{PixelLayout, StreamError, YuvFrame};
 /// The MediaCodec mime for VP9 (MediaFormat.MIMETYPE_VIDEO_VP9).
 pub(crate) const MIME_VP9: &str = "video/x-vnd.on2.vp9";
 pub(crate) const FLAG_END_OF_STREAM: u32 = ndk_sys::AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM as u32;
-const FLAG_CODEC_CONFIG: u32 = ndk_sys::AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG as u32;
+pub(crate) const FLAG_CODEC_CONFIG: u32 = ndk_sys::AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG as u32;
 
 // A hardware decoder is a limited resource: the target TV allows two VP9
 // instances, so switching clips - where the incoming player is built before

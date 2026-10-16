@@ -25,14 +25,16 @@
 // (forge/vendor/libvpx, a submodule pinned to a release tag) and link it
 // statically. libvpx has its own configure + make (no cmake); the build runs
 // out of tree in OUT_DIR so the checkout stays clean, and configure runs
-// once (make is incremental after that; `cargo clean -p forge` after a
-// submodule bump that changes the configure options). The VP9 DECODER only:
-// the encoder costs 1.28 MB of linked binary (1732 KiB with it, 448 KiB
-// without, measured x86_64 2026-09-12) and no amount of not calling it helps,
-// because the RTCD tables name every dsp function and pull the encoder objects
-// in regardless. Re-enable it in the same breath as the encoder ffi, not
-// before. VP8 is not built, nor are the examples, tools and docs. Android
-// needs none of this: its VP9 decoder is MediaCodec
+// once per build directory (make is incremental after that; `cargo clean -p
+// forge` after a submodule bump that changes the configure options). The VP9
+// decoder, and with `video-encode` the encoder too: the encoder costs 1.28 MB
+// of linked binary (1732 KiB with it, 448 KiB without, measured x86_64
+// 2026-09-12) and no amount of not calling it helps, because the RTCD tables
+// name every dsp function and pull the encoder objects in regardless, so a
+// build without the feature configures it out. The two configurations build
+// in directories of their own, so flipping the feature never meets a stale
+// config.mk. VP8 is not built, nor are the examples, tools and docs. Android
+// needs none of this: its VP9 codecs are MediaCodec
 // (forge/src/video/mediacodec.rs).
 //
 // On MSVC, libvpx's make only generates a Visual Studio solution (configure
@@ -138,11 +140,12 @@ fn main() {
   let target_os = std::env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
   println!("cargo:rerun-if-changed=build.rs");
   let video = std::env::var_os("CARGO_FEATURE_VIDEO").is_some();
+  let video_encode = std::env::var_os("CARGO_FEATURE_VIDEO_ENCODE").is_some();
   let audio = std::env::var_os("CARGO_FEATURE_AUDIO").is_some();
   if target_os == "android" {
     link_android_builtins();
   } else if video {
-    build_libvpx(&target_os);
+    build_libvpx(&target_os, video_encode);
   }
   if audio {
     let opus = build_libopus();
@@ -336,7 +339,7 @@ fn link_android_builtins() {
   println!("cargo:rustc-link-lib=static={lib}");
 }
 
-fn build_libvpx(target_os: &str) {
+fn build_libvpx(target_os: &str, encoder: bool) {
   let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
   let src = manifest_dir.join("vendor").join("libvpx");
   // A submodule bump re-runs this script; make then rebuilds what changed.
@@ -356,7 +359,7 @@ fn build_libvpx(target_os: &str) {
   }
 
   let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR not set"));
-  let build_dir = out_dir.join("libvpx");
+  let build_dir = out_dir.join(if encoder { "libvpx-enc" } else { "libvpx" });
   std::fs::create_dir_all(&build_dir).expect("create the libvpx build directory");
 
   let sh = find_on_path(&["sh"]).unwrap_or_else(|| panic!("libvpx: no sh on PATH; its configure needs a POSIX shell"));
@@ -384,8 +387,8 @@ fn build_libvpx(target_os: &str) {
         "--disable-vp9-postproc",
         "--disable-webm-io",
         "--disable-libyuv",
-        "--disable-vp9-encoder",
       ])
+      .arg(if encoder { "--enable-vp9-encoder" } else { "--disable-vp9-encoder" })
       .current_dir(&build_dir);
     if msvc {
       // configure bypasses the compiler for vs targets; msbuild finds cl.

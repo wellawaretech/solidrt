@@ -19,85 +19,34 @@
 // preroll before that keyframe still plays.
 //
 // Seeking needs Cues and a seekable source. Tail Cues (ffmpeg's default
-// placement) are loaded by the first seek, never by open, so opening a
-// streamed source costs one request.
+// placement, and ours) are loaded by the first seek, never by open, so
+// opening a streamed source costs one request.
+//
+// The element ids and format facts are shared with the writer (ids.rs,
+// writer.rs under `video-encode`).
+
+mod ids;
+#[cfg(feature = "video-encode")]
+mod writer;
+
+#[cfg(feature = "video-encode")]
+pub use writer::{WebmAudioTrack, WebmSink, WebmVideoTrack, WebmWriter};
 
 use std::collections::VecDeque;
 use std::io::{self, BufReader, Read, Seek};
+
+use ids::*;
 
 use super::{AudioInfo, AudioPacket, Demuxer, ErrorKind, MediaInfo, Packet, StreamError, VideoAu};
 use crate::seek::SeekableReader;
 use crate::source::{open_file, Facts};
 
-// EBML and Matroska element ids, as they appear in the file (the id's own
-// length bits included).
-const ID_EBML: u32 = 0x1A45DFA3;
-const ID_DOCTYPE: u32 = 0x4282;
-const ID_SEGMENT: u32 = 0x18538067;
-const ID_SEEK_HEAD: u32 = 0x114D9B74;
-const ID_SEEK: u32 = 0x4DBB;
-const ID_SEEK_ID: u32 = 0x53AB;
-const ID_SEEK_POSITION: u32 = 0x53AC;
-const ID_INFO: u32 = 0x1549A966;
-const ID_TIMESTAMP_SCALE: u32 = 0x2AD7B1;
-const ID_DURATION: u32 = 0x4489;
-const ID_TRACKS: u32 = 0x1654AE6B;
-const ID_TRACK_ENTRY: u32 = 0xAE;
-const ID_TRACK_NUMBER: u32 = 0xD7;
-const ID_TRACK_TYPE: u32 = 0x83;
-const ID_CODEC_ID: u32 = 0x86;
-const ID_CODEC_PRIVATE: u32 = 0x63A2;
-const ID_SEEK_PRE_ROLL: u32 = 0x56BB;
-const ID_VIDEO: u32 = 0xE0;
-const ID_PIXEL_WIDTH: u32 = 0xB0;
-const ID_PIXEL_HEIGHT: u32 = 0xBA;
-const ID_COLOUR: u32 = 0x55B0;
-const ID_MATRIX_COEFFICIENTS: u32 = 0x55B1;
-const ID_RANGE: u32 = 0x55B9;
-const ID_AUDIO: u32 = 0xE1;
-const ID_CHANNELS: u32 = 0x9F;
-const ID_CUES: u32 = 0x1C53BB6B;
-const ID_CUE_POINT: u32 = 0xBB;
-const ID_CUE_TIME: u32 = 0xB3;
-const ID_CUE_TRACK_POSITIONS: u32 = 0xB7;
-const ID_CUE_CLUSTER_POSITION: u32 = 0xF1;
-const ID_CLUSTER: u32 = 0x1F43B675;
-const ID_CLUSTER_TIMESTAMP: u32 = 0xE7;
-const ID_SIMPLE_BLOCK: u32 = 0xA3;
-const ID_BLOCK_GROUP: u32 = 0xA0;
-const ID_BLOCK: u32 = 0xA1;
-const ID_REFERENCE_BLOCK: u32 = 0xFB;
-const ID_DISCARD_PADDING: u32 = 0x75A2;
-
 // The first four bytes of an MP4 are a box size, 0 0 0 <n> for the ftyp box
 // in every muxer's output: named in the error so a stale clip is obvious.
 const MP4_MAGIC_PREFIX: &[u8] = &[0, 0, 0, 0x1C];
-const TRACK_TYPE_VIDEO: u64 = 1;
-const TRACK_TYPE_AUDIO: u64 = 2;
-const CODEC_VP9: &str = "V_VP9";
-const CODEC_OPUS: &str = "A_OPUS";
-// TimestampScale default: cluster and block times in milliseconds.
-const DEFAULT_TIMESTAMP_SCALE_NS: u64 = 1_000_000;
-// Block header flags: keyframe (SimpleBlock only) and the lacing field.
-const BLOCK_FLAG_KEYFRAME: u8 = 0x80;
-const BLOCK_FLAG_LACING: u8 = 0x06;
-// Colour: MatrixCoefficients codes (ITU-T H.273) BT.709 and the two
-// BT.601 codes; anything else (2 = unspecified, what ffmpeg writes) falls
-// back to the resolution default. Range: 1 = broadcast (studio), 2 = full.
-const MATRIX_BT709: u64 = 1;
-const MATRIX_BT470BG: u64 = 5;
-const MATRIX_BT601: u64 = 6;
-const RANGE_FULL: u64 = 2;
 // The resolution default when the container does not say: HD content (this
 // many lines and up) is BT.709, SD is BT.601.
 const HD_LINES: u32 = 720;
-// OpusHead (RFC 7845): magic, version, channels, pre-skip (u16 LE), input
-// sample rate (u32 LE), output gain, channel mapping family.
-const OPUS_HEAD_MAGIC: &[u8] = b"OpusHead";
-const OPUS_HEAD_LEN: usize = 19;
-const OPUS_HEAD_CHANNELS: usize = 9;
-const OPUS_HEAD_PRE_SKIP: usize = 10;
-const OPUS_HEAD_MAPPING_FAMILY: usize = 18;
 // Opus decodes at 48 kHz whatever the input rate was; the WebM Audio
 // element says so too, this is the rate a sink is opened at.
 pub const OPUS_SAMPLE_RATE: u32 = 48_000;

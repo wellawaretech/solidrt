@@ -314,7 +314,7 @@ static WINDOW_SAMPLES: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI
 /// Positive when the window backbuffer itself is multisampled (Android
 /// requests this, see configure_opengl); the driver then resolves in-tile
 /// at swap and plain window frames skip the rig entirely.
-pub(super) fn window_samples(gl: &glow::Context) -> i32 {
+pub(crate) fn window_samples(gl: &glow::Context) -> i32 {
   let cached = WINDOW_SAMPLES.load(std::sync::atomic::Ordering::Relaxed);
   if cached != WINDOW_SAMPLES_UNKNOWN {
     return cached;

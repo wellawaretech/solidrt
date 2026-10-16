@@ -409,6 +409,17 @@ pub fn open_seekable(path: &str) -> Result<SeekableReader, String> {
   }
 }
 
+/// Create `path` (truncating an existing file) for a native writer to
+/// stream into on its own thread (a recording): a plain path, or a content
+/// document opened for writing. Refuses a path under the assets mount.
+pub fn create_file(path: &str) -> Result<std::fs::File, String> {
+  if is_content_uri(path) {
+    return content::open(path, OpenMode::Write);
+  }
+  check_writable(path, "create")?;
+  std::fs::File::create(path).map_err(|e| format!("create {path}: {e}"))
+}
+
 /// Whether `path` exists and is a regular file. A missing path (or any stat
 /// error) is reported as `false`, not an error.
 pub async fn file_exists(path: &str) -> bool {

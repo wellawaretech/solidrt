@@ -198,6 +198,22 @@ pub(crate) enum RasterCmd {
   /// frame the create was sized from, so that frame is the first upload)
   /// and its size matches the texture.
   AttachCameraTap { id: u64, tap: crate::camera::FrameTap, uploaded_seq: u64 },
+  /// Attach a window tap `id` (see raster/window_tap.rs): from here every
+  /// drawn frame's `rect` (None = the whole window) is read back, scaled
+  /// to `size` resolved against the source, into `tap`. The reply carries
+  /// the resolved size, which the consumer configures its encoder from.
+  AttachWindowTap {
+    id: u64,
+    tap: crate::camera::FrameTap,
+    rect: Option<crate::gl::TapRect>,
+    size: super::window_tap::TapSize,
+    reply: mpsc::Sender<Result<(u32, u32), String>>,
+  },
+  /// Move window tap `id`'s cut-out; the next frame reads the new rect.
+  SetWindowTapRect { id: u64, rect: Option<crate::gl::TapRect> },
+  /// Detach window tap `id`: its pending frame completes, its GL objects
+  /// are freed and the tap closes (every waiter on it ends).
+  DetachWindowTap { id: u64 },
   /// Compile a fragment shader into a new target texture and adopt it; the
   /// first render happens at the next dirty flush. Compile and validation
   /// errors must reach JS, hence the reply, which also carries the program's
@@ -510,6 +526,9 @@ impl RasterCmd {
         | RasterCmd::Drain { .. }
         | RasterCmd::Resync
         | RasterCmd::LoseContext { .. }
+        | RasterCmd::AttachWindowTap { .. }
+        | RasterCmd::SetWindowTapRect { .. }
+        | RasterCmd::DetachWindowTap { .. }
     )
   }
 

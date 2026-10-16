@@ -16,6 +16,8 @@ pub mod inspect;
 pub mod microphone;
 pub(crate) mod properties;
 pub mod raf;
+#[cfg(feature = "video-encode")]
+pub mod record;
 pub mod spatial;
 pub mod tree;
 pub mod value;
@@ -259,12 +261,24 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .module("flux:dialog", dialog::DialogModule);
   #[cfg(feature = "video")]
   let builder = builder.plugin(|ctx| video::store_state(&ctx)).module("flux:video", video::VideoModule);
+  #[cfg(feature = "video-encode")]
+  let builder = builder.plugin(|ctx| record::store_state(&ctx));
   builder
 }
 
 /// Capability names the gui feature adds on top of `BASE_CAPABILITIES`.
 #[cfg(feature = "video")]
-pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial", "font", "video"];
+pub const GUI_CAPABILITIES: &[&str] = &[
+  "camera",
+  "microphone",
+  "audio",
+  "gpu",
+  "spatial",
+  "font",
+  "video",
+  #[cfg(feature = "video-encode")]
+  "video-encode",
+];
 #[cfg(not(feature = "video"))]
 pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial", "font"];
 

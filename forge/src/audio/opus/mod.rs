@@ -5,7 +5,12 @@
 // framework, so going through it would cost buffer copies and gain
 // nothing (okf/done/android-video-punch-through.md).
 
+#[cfg(feature = "video-encode")]
+mod encode;
 mod ffi;
+
+#[cfg(feature = "video-encode")]
+pub use encode::{OpusApplication, OpusEncoder};
 
 use std::ffi::CStr;
 

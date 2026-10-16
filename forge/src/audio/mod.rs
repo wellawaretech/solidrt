@@ -22,6 +22,8 @@ pub(crate) mod webm;
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
+#[cfg(feature = "video-encode")]
+pub use opus::{OpusApplication, OpusEncoder};
 pub use opus::{OpusDecoder, PcmChunk};
 
 use crate::seek::SeekableReader;

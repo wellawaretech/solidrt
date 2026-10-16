@@ -1,16 +1,17 @@
 //! JS bindings for camera capture: a thin marshaling layer over alloy::camera.
 //!
-//! `camera.open()` returns a promise that settles from `tick`, the per-frame
-//! hook driven by the FrameRendered handler (like raf::flush): it pumps alloy's
-//! camera sessions (permission transitions + frame uploads) and resolves or
-//! rejects any open() promises whose session left Pending. The open is work
-//! in flight until the device answers, and the device answers to polling
-//! only, so a task of the engine pumps the one session between frames until
-//! it leaves Pending, then ends the hold and latches the frame that settles
-//! the promise (the glyph worker's pattern, font.rs `request_glyphs`): a
-//! stepped host runs no frame while work is in flight, so a hold the frame
-//! itself had to end would hang its settle. Opening is the permission
-//! request; there is no separate permission API (SDL semantics).
+//! `camera.open()` returns a promise that a task of the engine settles: the
+//! device answers to polling only, so the task pumps the one session on its
+//! own cadence until it leaves Pending, settles the promise itself (as the
+//! microphone's open does) and latches the frame that shows the first
+//! picture. No frame is involved in the settle: a stepped host runs no
+//! frame while work is in flight, and a test that opens a camera outside
+//! `mount` drives none, so a settle that waited for `tick` would hang
+//! there. `tick`, the per-frame hook driven by the FrameRendered handler
+//! (like raf::flush), pumps every session (permission transitions + frame
+//! uploads) and settles an open that left Pending under it first. Opening
+//! is the permission request; there is no separate permission API (SDL
+//! semantics).
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -27,15 +28,16 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
 }
 
+/// The settle functions of an `open()` promise, by session, until the task
+/// or a tick settles it.
 struct PendingOpen {
-  session: u64,
   resolve: Persistent<Function<'static>>,
   reject: Persistent<Function<'static>>,
 }
 
 struct Inner {
   gui: Rc<super::Gui>,
-  pending: RefCell<Vec<PendingOpen>>,
+  pending: RefCell<HashMap<u64, PendingOpen>>,
   /// The sessions this engine opened and has not closed: what its end
   /// releases (the device and the session's texture).
   sessions: RefCell<HashSet<u64>>,
@@ -64,7 +66,7 @@ pub(crate) fn store_state(ctx: &Ctx<'_>) {
   ctx
     .store_userdata(CameraPluginState(Rc::new(Inner {
       gui: super::gui(ctx),
-      pending: RefCell::new(Vec::new()),
+      pending: RefCell::new(HashMap::new()),
       sessions: RefCell::new(HashSet::new()),
       barcode_handlers: RefCell::new(HashMap::new()),
     })))
@@ -155,25 +157,30 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
   match state.0.gui.alloy.open_camera(device, facing, size, scan_qr) {
     Ok(session) => {
       state.0.sessions.borrow_mut().insert(session);
-      state.0.pending.borrow_mut().push(PendingOpen {
+      state.0.pending.borrow_mut().insert(
         session,
-        resolve: Persistent::save(&ctx, resolve),
-        reject: Persistent::save(&ctx, reject),
-      });
-      // The hold ends when the device answers, polled on the task's own
-      // cadence (a client's ticks pump the same session and may get there
-      // first); the latch and the wake bring the frame whose `tick` settles
-      // the promise, and go first, so whoever the hold's end releases finds
-      // the frame demanded. A session closed meanwhile answers None and
-      // ends the hold the same way.
+        PendingOpen { resolve: Persistent::save(&ctx, resolve), reject: Persistent::save(&ctx, reject) },
+      );
+      // The task polls on its own cadence until the device answers (a
+      // client's ticks pump the same session and may settle it first), then
+      // settles the promise with the status it left Pending on, latches
+      // and wakes the frame that shows the first picture, and ends the
+      // hold. A session closed meanwhile answers None and settles as closed.
       let hold = crate::pending::PendingOps::of(&ctx).in_flight("camera open");
       let latch = state.0.gui.platform.frame_request_handle();
       let wake = state.0.gui.alloy.frame_wake();
-      let gui = state.0.gui.clone();
+      let task_state = state.clone();
+      let task_ctx = ctx.clone();
       ctx.spawn(async move {
-        while matches!(gui.alloy.pump_camera(session), Some(CameraStatus::Pending)) {
-          tokio::time::sleep(std::time::Duration::from_millis(super::OPEN_POLL_MS)).await;
-        }
+        let status = loop {
+          match task_state.0.gui.alloy.pump_camera(session) {
+            Some(CameraStatus::Pending) => {
+              tokio::time::sleep(std::time::Duration::from_millis(super::OPEN_POLL_MS)).await;
+            }
+            status => break status,
+          }
+        };
+        settle_open(&task_ctx, &task_state, session, status);
         latch.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(wake) = &wake {
           wake();
@@ -291,51 +298,68 @@ pub(crate) fn tick(ctx: &Ctx<'_>) -> bool {
   let uploaded = state.0.gui.alloy.pump_cameras();
   dispatch_barcodes(ctx, &state);
 
-  if state.0.pending.borrow().is_empty() {
-    return uploaded;
-  }
-  let pending = std::mem::take(&mut *state.0.pending.borrow_mut());
-  for entry in pending {
-    match state.0.gui.alloy.camera_status(entry.session) {
-      Some(CameraStatus::Pending) => state.0.pending.borrow_mut().push(entry),
-      Some(CameraStatus::Ready { texture_id, width, height }) => {
-        let session = entry.session;
-        let settle = || -> rquickjs::Result<()> {
-          let obj = Object::new(ctx.clone())?;
-          obj.set("texture", texture_id)?;
-          obj.set("width", width)?;
-          obj.set("height", height)?;
-          // close()/onBarcode() are bound to this session so the raw handle
-          // never crosses into JS; they reuse the same helpers the global API did.
-          let close_fn = Function::new(ctx.clone(), move |ctx: Ctx<'_>| close_impl(ctx, session))?;
-          obj.set("close", close_fn)?;
-          let on_barcode_fn = Function::new(ctx.clone(), move |callback: Function<'_>| {
-            // Derive the Ctx from the callback so their lifetimes unify.
-            let ctx = callback.ctx().clone();
-            set_barcode_impl(ctx, session, callback);
-          })?;
-          obj.set("onBarcode", on_barcode_fn)?;
-          entry.resolve.restore(ctx)?.call::<_, ()>((obj,))
-        };
-        if let Err(e) = settle() {
-          log::warn!("[camera] resolve call failed: {e}");
-        }
-      }
-      // A rejected open hands JS nothing to close, so the session goes
-      // here: its registry entry and its texture id, the device being
-      // released already.
-      Some(CameraStatus::Denied) => {
-        close_impl(ctx.clone(), entry.session);
-        reject_with(ctx, entry.reject, "camera permission denied");
-      }
-      Some(CameraStatus::Failed(message)) => {
-        close_impl(ctx.clone(), entry.session);
-        reject_with(ctx, entry.reject, &message);
-      }
-      None => reject_with(ctx, entry.reject, "camera closed"),
+  let sessions: Vec<u64> = state.0.pending.borrow().keys().copied().collect();
+  for session in sessions {
+    match state.0.gui.alloy.camera_status(session) {
+      Some(CameraStatus::Pending) => {}
+      status => settle_open(ctx, &state, session, status),
     }
   }
   uploaded
+}
+
+/// Settle the open() promise of `session` with the status it left Pending
+/// on: Ready resolves with the bound session object; Denied or Failed
+/// close the session (a rejected open hands JS nothing to close: its
+/// registry entry and its texture id go here, the device being released
+/// already) and reject; None (closed meanwhile) rejects. A session already
+/// settled (by the tick or the task, whichever came first) is a no-op.
+fn settle_open(ctx: &Ctx<'_>, state: &CameraPluginState, session: u64, status: Option<CameraStatus>) {
+  let Some(entry) = state.0.pending.borrow_mut().remove(&session) else {
+    return;
+  };
+  match status {
+    Some(CameraStatus::Ready { texture_id, width, height }) => {
+      let settled = session_object(ctx.clone(), session, texture_id, width, height)
+        .and_then(|obj| entry.resolve.restore(ctx)?.call::<_, ()>((obj,)));
+      if let Err(e) = settled {
+        log::warn!("[camera] resolve call failed: {e}");
+      }
+    }
+    Some(CameraStatus::Denied) => {
+      close_impl(ctx.clone(), session);
+      reject_with(ctx, entry.reject, "camera permission denied");
+    }
+    Some(CameraStatus::Failed(message)) => {
+      close_impl(ctx.clone(), session);
+      reject_with(ctx, entry.reject, &message);
+    }
+    Some(CameraStatus::Pending) | None => reject_with(ctx, entry.reject, "camera closed"),
+  }
+}
+
+/// The bound session object: `{ texture, width, height, close, onBarcode }`.
+/// close()/onBarcode() are bound to the session so the raw handle never
+/// crosses into JS; they reuse the helpers the global API did.
+fn session_object(
+  ctx: Ctx<'_>,
+  session: u64,
+  texture_id: u64,
+  width: u32,
+  height: u32,
+) -> rquickjs::Result<Object<'_>> {
+  let obj = Object::new(ctx.clone())?;
+  obj.set("texture", texture_id)?;
+  obj.set("width", width)?;
+  obj.set("height", height)?;
+  obj.set("close", Function::new(ctx.clone(), move |ctx: Ctx<'_>| close_impl(ctx, session))?)?;
+  let on_barcode_fn = Function::new(ctx.clone(), move |callback: Function<'_>| {
+    // Derive the Ctx from the callback so their lifetimes unify.
+    let ctx = callback.ctx().clone();
+    set_barcode_impl(ctx, session, callback);
+  })?;
+  obj.set("onBarcode", on_barcode_fn)?;
+  Ok(obj)
 }
 
 /// Forward decoded barcodes to their session's JS callback as

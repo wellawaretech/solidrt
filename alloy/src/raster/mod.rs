@@ -27,6 +27,7 @@ mod recover;
 mod repaint;
 mod resources;
 mod targets;
+pub(crate) mod window_tap;
 
 pub(crate) use cmd::RasterCmd;
 pub use cmd::{DamageRect, PresentDamage};
@@ -37,6 +38,7 @@ use repaint::DamageTracker;
 pub(crate) use repaint::WindowRoute;
 #[cfg(test)]
 pub(crate) use targets::propagation_order;
+pub use window_tap::TapSize;
 
 use impellers::{Context as ImpellerContext, ISize};
 use std::collections::{HashMap, HashSet};
@@ -477,6 +479,9 @@ pub(crate) struct RasterState {
   // Camera stream textures with a tap (see camera/tap.rs): the newest frame
   // is uploaded here at each Frame.
   camera_taps: HashMap<u64, CameraTapEntry>,
+  // Window taps (see window_tap.rs): each drawn frame is read back into
+  // them, asynchronously, and completed at the next frame.
+  window_taps: HashMap<u64, window_tap::WindowTapEntry>,
   /// 2D names Impeller never adopted (draw targets of a format other than
   /// rgba8: sampler-only, never displayed): this thread's to delete, like
   /// every cube map's (see `release_texture`).
@@ -726,6 +731,7 @@ impl RasterState {
       textures: HashMap::new(),
       yuv_latches: HashMap::new(),
       camera_taps: HashMap::new(),
+      window_taps: HashMap::new(),
       unadopted: HashSet::new(),
       shaders: HashMap::new(),
       node_shader_passes: 0,
@@ -759,9 +765,23 @@ impl RasterState {
   /// UI thread drops its sender or the main loop stops receiving frames.
   pub(crate) fn run(mut self, rx: mpsc::Receiver<RasterCmd>) {
     'outer: loop {
-      let first = match rx.recv() {
-        Ok(cmd) => cmd,
-        Err(_) => break,
+      // A window tap readback in flight is completed at the next frame; when
+      // no frame follows (the window went idle) the wait is bounded so the
+      // frame still reaches the tap within a refresh period.
+      let first = if self.window_tap_pending() {
+        match rx.recv_timeout(Self::pending_wait()) {
+          Ok(cmd) => cmd,
+          Err(mpsc::RecvTimeoutError::Timeout) => {
+            self.complete_window_taps();
+            continue;
+          }
+          Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+      } else {
+        match rx.recv() {
+          Ok(cmd) => cmd,
+          Err(_) => break,
+        }
       };
       let batch: Vec<RasterCmd> = std::iter::once(first).chain(rx.try_iter()).collect();
       let last_frame =
@@ -877,6 +897,15 @@ impl RasterState {
           }
           RasterCmd::AttachCameraTap { id, tap, uploaded_seq } => {
             self.camera_taps.insert(id, CameraTapEntry { tap, uploaded_seq });
+          }
+          RasterCmd::AttachWindowTap { id, tap, rect, size, reply: tx } => {
+            reply(tx, self.attach_window_tap(id, tap, rect, size));
+          }
+          RasterCmd::SetWindowTapRect { id, rect } => {
+            self.set_window_tap_rect(id, rect);
+          }
+          RasterCmd::DetachWindowTap { id } => {
+            self.detach_window_tap(id);
           }
           RasterCmd::AttachYuvLatch { id, latch, sets, frame_size } => {
             self.yuv_latches.insert(id, YuvLatchEntry { latch, sets, front: 0, frame_size });

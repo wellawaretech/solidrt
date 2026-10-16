@@ -46,6 +46,7 @@ impl RasterState {
       textures,
       yuv_latches,
       camera_taps,
+      window_taps,
       unadopted,
       shaders,
       node_shader_passes,
@@ -304,6 +305,8 @@ impl RasterState {
     for (id, entry) in camera_taps {
       state.camera_taps.insert(id, CameraTapEntry { tap: entry.tap, uploaded_seq: 0 });
     }
+    // A window tap's GL objects are made again by the next drawn frame.
+    state.window_taps = super::window_tap::carry(window_taps);
     for (id, entry) in yuv_latches {
       state.yuv_latches.insert(id, entry);
     }
