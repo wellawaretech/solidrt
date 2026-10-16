@@ -14,6 +14,7 @@ import { createMicrophone } from "@solidrt/core/microphone"
 import type { MicrophoneStream } from "@solidrt/core/microphone"
 import { createVideo } from "@solidrt/core/video"
 import type { VideoStream } from "@solidrt/core/video"
+import type { TextureId } from "@solidrt/core/gpu"
 import { record } from "flux:video"
 import { file } from "flux:fs"
 import { Endpoint } from "flux:p2p"
@@ -349,10 +350,10 @@ test("a live recording crosses a TCP connection, and teardown ends it", async ap
 
 test("a source that is not open rejects, and a bad argument throws", async app => {
   await app.mount(() => <view />)
-  await expect(record({ video: { texture: 999999 } }, { to: file("none.webm") })).rejects.toMatchObject({ kind: "unsupported" })
+  await expect(record({ video: { texture: 999999 as TextureId } }, { to: file("none.webm") })).rejects.toMatchObject({ kind: "unsupported" })
   await expect(record({ audio: { id: 999999 } }, { to: file("none.webm") })).rejects.toMatchObject({ kind: "unsupported" })
   await expect(record({ video: { node: 999999 } }, { to: file("none.webm") })).rejects.toMatchObject({ kind: "unsupported" })
   expect(() => record({}, { to: file("none.webm") })).toThrow()
-  expect(() => record({ video: { texture: 1 } }, { to: 5 as never })).toThrow()
+  expect(() => record({ video: { texture: 1 as TextureId } }, { to: 5 as never })).toThrow()
   expect(() => record({ video: { node: 1 } }, { to: file("none.webm"), height: 0 })).toThrow()
 })
